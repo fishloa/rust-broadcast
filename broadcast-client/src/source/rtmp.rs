@@ -14,6 +14,7 @@
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::tshttp::{Config as TsConfig, TsHttpPolicy};
 use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
@@ -23,8 +24,8 @@ use url::{Host, Url};
 
 use crate::error::Error;
 use crate::events::{Action, ErrorKind, Event, MAX_SERVER_REFUSED_REASON_BYTES, Status};
+use crate::source::fetch::deadline;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::units::MICROS_PER_MILLI;
 
 pub(crate) const SCHEME_RTMP: &str = "rtmp";
 pub(crate) const SCHEME_RTMPS: &str = "rtmps";
@@ -403,10 +404,13 @@ impl RtmpSource {
                     self.events
                         .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
                 }
-                self.actions
-                    .push_back(Action::WakeAt(Timestamp::from_micros(
-                        now_us.saturating_add(after_ms.saturating_mul(MICROS_PER_MILLI)),
-                    )));
+                // A deadline past the end of the clock can never be reached: no wake for it.
+                if let Some(at) = deadline(
+                    Timestamp::from_micros(now_us),
+                    Duration::from_millis(after_ms),
+                ) {
+                    self.actions.push_back(Action::WakeAt(at));
+                }
             }
         }
     }

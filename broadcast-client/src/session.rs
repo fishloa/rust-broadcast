@@ -35,6 +35,7 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 use crate::tshttp::Action as TsAction;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
+use core::time::Duration;
 
 const SCHEME_HTTP: &str = "http";
 const SCHEME_HTTPS: &str = "https";
@@ -84,7 +85,7 @@ pub struct Session {
     known_conns: HashMap<u32, Url>,
     refused_conns: HashSet<u32>,
     conn_auth: HashMap<u32, ConnAuth>,
-    ts_wake: Option<u64>,
+    ts_wake: Option<Timestamp>,
     actions: VecDeque<Action>,
     events: EventQueue,
     buffer: crate::buffer::Feeder,
@@ -1471,27 +1472,25 @@ impl Session {
         let datagram = self
             .datagram
             .as_ref()
-            .and_then(|d| d.next_deadline_us(self.now_us));
+            .and_then(|d| d.next_deadline(self.now_us));
         let Some(deadline) = self
             .source
-            .next_deadline_us()
+            .next_deadline()
             .into_iter()
             .chain(datagram)
             .min()
         else {
             return;
         };
-        let at = if deadline > self.now_us {
+        let now = Timestamp::from_micros(self.now_us);
+        let at = if deadline > now {
             deadline
         } else {
-            self.now_us.saturating_add(TS_WAKE_TICK_US)
+            now.saturating_add(Duration::from_micros(TS_WAKE_TICK_US))
         };
-        let outstanding = self
-            .ts_wake
-            .is_some_and(|w| w == at || (w > self.now_us && w < at));
+        let outstanding = self.ts_wake.is_some_and(|w| w == at || (w > now && w < at));
         if !outstanding {
-            self.actions
-                .push_back(Action::WakeAt(Timestamp::from_micros(at)));
+            self.actions.push_back(Action::WakeAt(at));
             self.ts_wake = Some(at);
         }
     }

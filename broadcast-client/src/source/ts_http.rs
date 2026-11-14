@@ -17,16 +17,17 @@ use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, Stream
 use crate::{Event, Status};
 use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_SEC;
+use core::time::Duration;
 
 pub(crate) type Item = Option<Event>;
 
 struct HoldState {
-    started_us: u64,
+    started: Timestamp,
     bytes: usize,
     quiet_bytes: usize,
     first_pts: BTreeMap<TrackId, i64>,
     span_us: u64,
-    settle_from_us: u64,
+    settle_from: Timestamp,
     settle_base_span_us: u64,
 }
 
@@ -125,14 +126,21 @@ impl TsHttpSource {
         self.events.push_back(item);
     }
 
-    pub(crate) fn next_deadline_us(&self) -> Option<u64> {
-        let ts = self.ts.next_deadline().map(|d| d.as_micros());
-        let hold = self.hold.as_ref().map(|h| {
-            let wall = h.started_us.saturating_add(self.hold_limits.max_wall_us);
-            if self.active_resolved() {
-                wall.min(h.settle_from_us.saturating_add(SETTLE_US))
-            } else {
-                wall
+    pub(crate) fn next_deadline(&self) -> Option<Timestamp> {
+        let ts = self.ts.next_deadline();
+        let hold = self.hold.as_ref().and_then(|h| {
+            let wall = h
+                .started
+                .checked_add(Duration::from_micros(self.hold_limits.max_wall_us));
+            if !self.active_resolved() {
+                return wall;
+            }
+            match (
+                wall,
+                h.settle_from.checked_add(Duration::from_micros(SETTLE_US)),
+            ) {
+                (Some(wall), Some(settle)) => Some(wall.min(settle)),
+                (one, other) => one.or(other),
             }
         });
         match (ts, hold) {
@@ -213,7 +221,7 @@ impl TsHttpSource {
             && let Some(h) = self.hold.as_mut()
         {
             h.quiet_bytes = 0;
-            h.settle_from_us = self.now_us;
+            h.settle_from = Timestamp::from_micros(self.now_us);
             h.settle_base_span_us = h.span_us;
         }
     }
@@ -241,12 +249,12 @@ impl TsHttpSource {
             .is_some_and(|d| !d.all_resolved(&self.resolved))
         {
             self.hold = Some(HoldState {
-                started_us: self.now_us,
+                started: Timestamp::from_micros(self.now_us),
                 bytes: 0,
                 quiet_bytes: 0,
                 first_pts: BTreeMap::new(),
                 span_us: 0,
-                settle_from_us: self.now_us,
+                settle_from: Timestamp::from_micros(self.now_us),
                 settle_base_span_us: 0,
             });
         }
@@ -256,13 +264,21 @@ impl TsHttpSource {
         let Some(h) = self.hold.as_ref() else {
             return;
         };
-        let settled = self.now_us.saturating_sub(h.settle_from_us) >= SETTLE_US
+        let settled = Timestamp::from_micros(self.now_us)
+            .saturating_sub(h.settle_from)
+            .as_micros()
+            >= u128::from(SETTLE_US)
             || h.span_us.saturating_sub(h.settle_base_span_us) >= SETTLE_US;
         let due = self.hold_limits.reached(
             h.bytes,
             h.quiet_bytes,
             h.span_us,
-            self.now_us.saturating_sub(h.started_us),
+            u64::try_from(
+                Timestamp::from_micros(self.now_us)
+                    .saturating_sub(h.started)
+                    .as_micros(),
+            )
+            .unwrap_or(u64::MAX),
         ) || self
             .declared
             .as_ref()

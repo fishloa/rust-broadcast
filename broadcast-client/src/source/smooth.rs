@@ -18,6 +18,7 @@ use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, 
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::deadline;
 use crate::source::fetch::retry::duration_us;
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::stage::Timestamp;
@@ -146,10 +147,13 @@ impl SmoothSource {
     }
 
     fn arm_inactivity(&mut self, now: u64) {
-        self.actions
-            .push_back(HostAction::WakeAt(Timestamp::from_micros(
-                now.saturating_add(self.inactivity_us().max(1)),
-            )));
+        // A deadline past the end of the clock can never be reached: no wake for it.
+        if let Some(at) = deadline(
+            Timestamp::from_micros(now),
+            self.config.segment_inactivity_timeout,
+        ) {
+            self.actions.push_back(HostAction::WakeAt(at));
+        }
     }
 
     fn start(&mut self, mut req: Req, headers: Vec<(String, String)>, now: u64) {

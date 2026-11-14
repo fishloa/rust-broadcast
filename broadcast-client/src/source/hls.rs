@@ -4,6 +4,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, HlsClientConfig, KeyId, Output, ResourceId,
@@ -14,6 +15,7 @@ use url::Url;
 use crate::error::Error;
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::deadline;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
@@ -736,8 +738,12 @@ impl HlsSource {
             Some(count) => u64::from(count),
             None => self.attempt.bump(),
         };
-        let wait = self.backoff.delay_us(attempt).max(self.retry_after_us);
-        let at = now.saturating_add(wait);
+        let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+        // A deadline past the end of the clock can never be reached: the retry never fires.
+        let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
+            return;
+        };
+        let at = at.as_micros();
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
         self.gate.hold_until(at);
@@ -821,11 +827,12 @@ impl HlsSource {
                     self.issue(Purpose::Key(id), &url, None, now, auth);
                 }
                 HlsAction::Wait(wait) => {
-                    let at =
-                        now.saturating_add(u64::try_from(wait.as_micros()).unwrap_or(u64::MAX));
-                    self.gate.hold_until(at);
-                    self.actions
-                        .push_back(Action::WakeAt(Timestamp::from_micros(at)));
+                    // A wait past the end of the clock can never end: no wake is armed for it.
+                    let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
+                        return;
+                    };
+                    self.gate.hold_until(at.as_micros());
+                    self.actions.push_back(Action::WakeAt(at));
                 }
                 _ => {}
             }

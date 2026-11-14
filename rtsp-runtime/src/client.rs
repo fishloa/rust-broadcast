@@ -335,8 +335,7 @@ impl ClientSession {
     /// fires).
     pub fn poll_timeout(&self) -> Option<Timestamp> {
         self.session_id.as_ref()?;
-        self.last_activity?
-            .checked_add(self.keepalive_interval())
+        self.last_activity?.checked_add(self.keepalive_interval())
     }
 
     /// If `now >= poll_timeout()`, the bytes of the keepalive on the last

@@ -389,7 +389,10 @@ mod tests {
         // converted instant is never earlier than the one it names (the property a wake depends
         // on: a wake computed from a deadline can never fire before it).
         assert_eq!(Timestamp::from_nanos(1_999), Timestamp::from_micros(2));
-        assert_eq!(Timestamp::from_nanos(1_999_999), Timestamp::from_micros(2_000));
+        assert_eq!(
+            Timestamp::from_nanos(1_999_999),
+            Timestamp::from_micros(2_000)
+        );
         assert_eq!(Timestamp::from_nanos(1), Timestamp::from_micros(1));
         assert_eq!(Timestamp::from_nanos(1_000), Timestamp::from_micros(1));
         assert_eq!(

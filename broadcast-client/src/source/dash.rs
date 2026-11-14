@@ -10,6 +10,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use broadcast_hls::MediaType;
 use dash_runtime::client::{
@@ -28,6 +29,7 @@ use crate::error::Error;
 use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::deadline;
 use crate::source::fetch::failures::{Attempts, Verdict, verdict};
 use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
@@ -821,28 +823,32 @@ impl DashSource {
             self.stash.discard(&Purpose::Resource(id));
         }
         if let FailureClass::Retry { attempt, .. } = class {
-            let wait = self
-                .backoff
-                .delay_us(u64::from(attempt))
-                .max(self.retry_after_us);
-            let at = now.saturating_add(wait);
-            self.retries.insert(id, at);
-            self.events.push_back(Event::Status(Status::Reconnecting {
-                attempt: u64::from(attempt),
-            }));
-            self.actions
-                .push_back(Action::WakeAt(Timestamp::from_micros(at)));
+            let wait = Duration::from_micros(
+                self.backoff
+                    .delay_us(u64::from(attempt))
+                    .max(self.retry_after_us),
+            );
+            // A deadline past the end of the clock can never be reached: the retry never fires.
+            if let Some(at) = deadline(Timestamp::from_micros(now), wait) {
+                self.retries.insert(id, at.as_micros());
+                self.events.push_back(Event::Status(Status::Reconnecting {
+                    attempt: u64::from(attempt),
+                }));
+                self.actions.push_back(Action::WakeAt(at));
+            }
         }
     }
 
     fn schedule_mpd_retry(&mut self, now: u64, attempt: u64) {
-        let wait = self.backoff.delay_us(attempt).max(self.retry_after_us);
-        let at = now.saturating_add(wait);
-        self.mpd_retry_at = Some(at);
+        let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+        // A deadline past the end of the clock can never be reached: the retry never fires.
+        let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
+            return;
+        };
+        self.mpd_retry_at = Some(at.as_micros());
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
-        self.actions
-            .push_back(Action::WakeAt(Timestamp::from_micros(at)));
+        self.actions.push_back(Action::WakeAt(at));
     }
 
     fn go_fatal(&mut self, kind: ErrorKind) {
@@ -928,14 +934,19 @@ impl DashSource {
             return;
         };
         let at = if wake > now {
-            wake
+            Timestamp::from_micros(wake)
         } else {
-            now.saturating_add(MIN_WAKE_STEP_US)
+            match deadline(
+                Timestamp::from_micros(now),
+                Duration::from_micros(MIN_WAKE_STEP_US),
+            ) {
+                Some(at) => at,
+                None => return,
+            }
         };
-        if self.wake_pushed != Some(at) {
-            self.wake_pushed = Some(at);
-            self.actions
-                .push_back(Action::WakeAt(Timestamp::from_micros(at)));
+        if self.wake_pushed != Some(at.as_micros()) {
+            self.wake_pushed = Some(at.as_micros());
+            self.actions.push_back(Action::WakeAt(at));
         }
     }
 

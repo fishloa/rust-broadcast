@@ -360,10 +360,10 @@ impl RtspSource {
             return;
         };
         // The wake names the deadline itself, so it can never fire before it. A deadline the
-        // clock has already reached (a span that ran past the last nanosecond saturates there) is
-        // due now, not pending, and the send that reads it arms the next one; arming it again
-        // would only queue a wake the session drops on the same poll. A wake still in the future
-        // that lands at or before this deadline is kept: the deadline that matters is the earlier.
+        // clock has already reached is due now, not pending, and the send that reads it arms
+        // the next one; arming it again would only queue a wake the session drops on the same
+        // poll. A wake still in the future that lands at or before this deadline is kept: the
+        // deadline that matters is the earlier.
         let outstanding = self
             .wake_pending
             .is_some_and(|w| w == deadline || (now < w && w <= deadline));
@@ -377,25 +377,31 @@ impl RtspSource {
     /// or the start/notice/reconnect deadline of an open connection, whichever
     /// the keepalive deadline comes first.
     ///
-    /// The arithmetic is on the types: `Timestamp + Duration` saturates at the
-    /// last nanosecond, and a comparison against the caller's clock reads the
-    /// same nanosecond, so a deadline that ran past the end of a clock is due
-    /// there rather than pending.
+    /// Deadlines are `checked_add`: a deadline that ran past the last
+    /// representable instant has none, so it never fires and has no wake here.
     fn next_deadline(&self) -> Option<Timestamp> {
         match self.phase {
             Phase::Backoff(due) => Some(due),
             Phase::Awaiting(_) | Phase::Playing => {
-                let mut deadline = if self.seen_first_sample {
-                    let notice = self.last_byte_at.saturating_add(self.cfg.stall_notice);
-                    let reconnect = self.last_byte_at.saturating_add(self.cfg.stall_reconnect);
-                    self.next_notice_at.unwrap_or(notice).min(reconnect)
+                // A deadline that does not fit the clock can never be reached: it is no
+                // deadline, so whoever sends this phase on (the start timeout, the stall
+                // reconnect) still owns the session; the keepalive is only ever a conjunction.
+                let deadline = if self.seen_first_sample {
+                    let notice = self.last_byte_at.checked_add(self.cfg.stall_notice);
+                    let reconnect = self.last_byte_at.checked_add(self.cfg.stall_reconnect);
+                    match (self.next_notice_at.or(notice), reconnect) {
+                        (Some(notice), Some(reconnect)) => Some(notice.min(reconnect)),
+                        (Some(one), None) | (None, Some(one)) => Some(one),
+                        (None, None) => None,
+                    }
                 } else {
-                    self.connected_at.saturating_add(self.cfg.start_timeout)
+                    self.connected_at.checked_add(self.cfg.start_timeout)
                 };
-                if let Some(wake) = self.keepalive_wake {
-                    deadline = deadline.min(wake);
+                match (deadline, self.keepalive_wake) {
+                    (Some(due), Some(wake)) => Some(due.min(wake)),
+                    (Some(due), None) => Some(due),
+                    (None, wake) => wake,
                 }
-                Some(deadline)
             }
             Phase::Connecting | Phase::WaitingAuth(_) | Phase::Closed => None,
         }
@@ -411,7 +417,7 @@ impl RtspSource {
         self.discontinuity_pending = true;
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
-        self.phase = Phase::Backoff(now.saturating_add(floor));
+        self.phase = Phase::Backoff(now.checked_add(floor).unwrap_or(Timestamp(u64::MAX)));
     }
 
     fn reconnect_if_due(&mut self, now: Timestamp, auth: &AuthState) {
@@ -1099,7 +1105,7 @@ impl RtspSource {
         }
         match self.next_notice_at {
             None => {
-                self.next_notice_at = Some(now.saturating_add(Duration::from_secs(1)));
+                self.next_notice_at = now.checked_add(Duration::from_secs(1));
                 self.push_stalled(idle.as_secs());
             }
             Some(mut next) => {
@@ -1107,13 +1113,18 @@ impl RtspSource {
                 while now >= next && emitted < MAX_STALL_NOTICES_PER_POLL {
                     let elapsed = next.saturating_sub(self.last_byte_at);
                     self.push_stalled(elapsed.as_secs());
-                    next = next.saturating_add(Duration::from_secs(1));
+                    // At the end of the clock there is no later notice: stop here.
+                    let Some(later) = next.checked_add(Duration::from_secs(1)) else {
+                        break;
+                    };
+                    next = later;
                     emitted = emitted.saturating_add(1);
                 }
                 if now >= next {
-                    next = now.saturating_add(Duration::from_secs(1));
+                    self.next_notice_at = now.checked_add(Duration::from_secs(1));
+                } else {
+                    self.next_notice_at = Some(next);
                 }
-                self.next_notice_at = Some(next);
             }
         }
         if idle >= self.cfg.stall_reconnect {
@@ -1197,7 +1208,7 @@ impl RtspSource {
         self.events.push_back(Event::Status(Status::Reconnecting {
             attempt: u64::from(self.retry.attempts()),
         }));
-        self.phase = Phase::Backoff(now.saturating_add(wait));
+        self.phase = Phase::Backoff(now.checked_add(wait).unwrap_or(Timestamp(u64::MAX)));
     }
 }
 
