@@ -28,7 +28,6 @@ const TICK_US: u64 = 50_000;
 const GAP_US: u64 = 3_000_000;
 const GAP_AFTER_CHUNK: usize = 1_300;
 const TAIL_US: u64 = 6_000_000;
-const PCR_HZ: u64 = 27_000_000;
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
 const OTHER_AUDIO: u32 = 3;
@@ -43,7 +42,10 @@ const AF_PRESENT: u8 = 0x20;
 const URL: &str = "http://example/live.ts";
 
 fn pts27(pts: i64, timescale: u32) -> u64 {
-    u64::try_from(i128::from(pts) * i128::from(PCR_HZ) / i128::from(timescale)).unwrap()
+    u64::try_from(
+        i128::from(pts) * i128::from(broadcast_common::clock33::PCR_HZ) / i128::from(timescale),
+    )
+    .unwrap()
 }
 
 fn packet_pid(p: &[u8]) -> u16 {
@@ -130,9 +132,9 @@ impl PlayClock {
         match self.0 {
             ClockState::Idle => None,
             ClockState::Held(p) => Some(p),
-            ClockState::Playing { base, since } => {
-                Some(base + now.saturating_sub(since) * (PCR_HZ / 1_000_000))
-            }
+            ClockState::Playing { base, since } => Some(
+                base + now.saturating_sub(since) * (broadcast_common::clock33::PCR_HZ / 1_000_000),
+            ),
         }
     }
 }
@@ -508,7 +510,7 @@ impl Oracle {
                 DemuxEvent::ClockReference {
                     ticks, clock_hz, ..
                 } => {
-                    assert_eq!(u64::from(clock_hz), PCR_HZ);
+                    assert_eq!(u64::from(clock_hz), broadcast_common::clock33::PCR_HZ);
                     pcr = Some(ticks);
                 }
                 DemuxEvent::Sample {

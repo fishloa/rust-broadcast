@@ -410,6 +410,7 @@ impl Playout {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
+    use broadcast_common::clock33::PCR_HZ;
     use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264-aac.ts";
@@ -439,7 +440,7 @@ mod tests {
         assert_eq!(obs.first_pts, u64::MAX);
     }
 
-    const ONE_SECOND_TICKS: u64 = 27_000_000;
+    const ONE_SECOND_TICKS: u64 = PCR_HZ;
 
     fn audio_track() -> (TrackSpec, Vec<Sample>) {
         let data = test_fixtures::read(FIXTURE);

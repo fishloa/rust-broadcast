@@ -18,7 +18,7 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
-const TICKS_PER_SEC: u64 = 27_000_000;
+const TICKS_PER_SEC: u64 = broadcast_common::clock33::PCR_HZ;
 const TICKS_PER_MS: u64 = 27_000;
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;

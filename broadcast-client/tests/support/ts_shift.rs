@@ -3,7 +3,7 @@ pub const PACKET: usize = 188;
 pub const SYNC_BYTE: u8 = 0x47;
 pub const PTS_WRAP: i64 = 1 << 33;
 #[cfg(feature = "test-seams")]
-pub const PCR_HZ: u64 = 27_000_000;
+pub const PCR_HZ: u64 = broadcast_common::clock33::PCR_HZ;
 #[cfg(feature = "test-seams")]
 pub const VIDEO_TIMESCALE: u32 = 90_000;
 const VIDEO_STREAM_IDS: std::ops::RangeInclusive<u8> = 0xE0..=0xEF;
