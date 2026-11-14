@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `tower-http` 0.6 to 0.7 (timeout, limit, cors, gzip compression and decompression layers; no behaviour change); `rtsp-types` follows `rtsp-runtime` to 0.2.
 ### Fixed
 - A split-audio rendition's LL-HLS part target is applied to its own rendition: followers carry their rendition index instead of being paired with audio servings by position, so an earlier rendition whose selector matched nothing no longer shifts every later part target one slot (#2637).
 - A failed reload that restores a changed route keeps every DASH Period the route still listed: continuing from a route no longer drains its retained programs, so a second continuation from the same route sees them too (#2638).

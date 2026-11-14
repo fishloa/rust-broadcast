@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `rtsp-types` is bumped from 0.1 to 0.2, and its types are part of this crate's public API (`rtsp_types::Message`, `Request`, `Response`, headers, and `ParseError` as the `source` of `Error::MessageParse`). Callers that name `rtsp-types` must move to 0.2 in the same build: `rtsp_types::ParseError` has a new `Invalid(ParseSyntaxError)` variant (with `Error` and `Incomplete` kept), so exhaustive matches need an arm for it; `Error::MessageParse` now carries the real parse error, so a syntax error reports its position and expected input; the 0.2 parser rejects empty list elements, an over-64 KiB interleaved frame and conflicting duplicate `Content-Length` headers that 0.1 accepted. The own `Transport` and `Session` parser stays, since 0.2 still treats `rtp/avp/udp` and `UNICAST`/`CLIENT_PORT` as unknown, rejects quoted values and ignores an upper-case `TIMEOUT`. Wire change: responses now carry the RFC reason phrase `200 OK` where 0.1 wrote `200 Ok` (the session-transcript golden is updated).
+
+### Changed
 - Narrowed the `tokio` dev-dependency from `features = ["full"]` to the features the tests use (`net`, `io-util`, `rt`, `rt-multi-thread`, `macros`, `time`, `sync`, `test-util`).
 
 ## [0.11.0] - 2026-11-14

@@ -659,10 +659,12 @@ impl ClientSession {
                     }
                     break;
                 }
-                Err(rtsp_types::ParseError::Error) => {
+                Err(
+                    error @ (rtsp_types::ParseError::Error | rtsp_types::ParseError::Invalid(_)),
+                ) => {
                     return Err(Error::MessageParse {
                         what: MessageKind::Response,
-                        source: Box::new(rtsp_types::ParseError::Error),
+                        source: Box::new(error),
                     });
                 }
             }

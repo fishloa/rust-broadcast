@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-rtsp-types = "0.1"
+rtsp-types = "0.2"
 broadcast-auth = { path = "../broadcast-auth", version = "0.7.0" }
 broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false, features = ["url"] }
 thiserror  = "2"
