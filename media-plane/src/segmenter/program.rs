@@ -3135,30 +3135,12 @@ mod segmenter_tests {
         segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(0)));
 
         let parts = vec![
-            PartInfo {
-                bytes: vec![0u8; 4],
-                duration: 0.2,
-                independent: true,
-                segment_seq: 1,
-                part_index: 0,
-            },
-            PartInfo {
-                bytes: vec![0u8; 4],
-                duration: 0.2,
-                independent: false,
-                segment_seq: 1,
-                part_index: 1,
-            },
+            PartInfo::new(vec![0u8; 4], 0.2, 1, 0).with_independent(true),
+            PartInfo::new(vec![0u8; 4], 0.2, 1, 1).with_independent(false),
             // Segment 2's opening part — already produced (the segmenter
             // has started buffering the next segment) even though segment
             // 1 has not been queued yet in this same call.
-            PartInfo {
-                bytes: vec![0u8; 4],
-                duration: 0.2,
-                independent: true,
-                segment_seq: 2,
-                part_index: 0,
-            },
+            PartInfo::new(vec![0u8; 4], 0.2, 2, 0).with_independent(true),
         ];
         let segments = vec![ReadySegment {
             bytes: vec![1u8; 4],

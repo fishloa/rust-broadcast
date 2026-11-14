@@ -4,10 +4,11 @@
 //! may change.
 
 use crate::support;
+use url::Url;
 
 use std::collections::BTreeSet;
 
-use broadcast_client::{Action, Config, ErrorKind, Event, ResumeMode, Session, Status};
+use broadcast_client::{Action, Config, ConnId, ErrorKind, Event, ResumeMode, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -30,7 +31,7 @@ type Headers = Vec<(String, String)>;
 
 #[derive(Clone, Debug)]
 struct Req {
-    conn: u32,
+    conn: ConnId,
     url: String,
     headers: Headers,
     byte_range: Option<(u64, u64)>,
@@ -66,13 +67,14 @@ struct Drive {
     wakes: BTreeSet<u64>,
     events: Vec<Event>,
     log: Vec<Req>,
-    closes: Vec<(u32, u64)>,
+    closes: Vec<(ConnId, u64)>,
 }
 
 impl Drive {
     fn new(config: Config) -> Self {
         Self {
-            session: Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open"),
+            session: Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0))
+                .expect("open"),
             now: 0,
             pending: Vec::new(),
             wakes: BTreeSet::new(),
@@ -94,8 +96,13 @@ impl Drive {
                 } => {
                     let req = Req {
                         conn,
-                        url,
-                        headers,
+                        url: url.to_string(),
+                        headers: headers
+                            .iter()
+                            .map(|(n, v)| {
+                                (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                            })
+                            .collect(),
                         byte_range: byte_range.map(|s| (s.offset, s.len.get())),
                         at_us: self.now,
                     };
@@ -117,7 +124,7 @@ impl Drive {
         }
     }
 
-    fn deliver(&mut self, conn: u32, serve: Serve) {
+    fn deliver(&mut self, conn: ConnId, serve: Serve) {
         match serve {
             Serve::Whole(status, headers, body) => {
                 self.session
@@ -190,7 +197,7 @@ impl Drive {
             .collect()
     }
 
-    fn closed_at(&self, conn: u32) -> Option<u64> {
+    fn closed_at(&self, conn: ConnId) -> Option<u64> {
         self.closes
             .iter()
             .find(|(c, _)| *c == conn)
@@ -493,18 +500,18 @@ fn a_silent_segment_closes_at_exactly_the_inactivity_timeout_and_resumes_after_t
 
 #[test]
 fn nothing_closes_one_microsecond_before_the_timeout() {
-    fn collect(session: &mut Session, now: u64) -> (Vec<(u32, String)>, Vec<u32>) {
+    fn collect(session: &mut Session, now: u64) -> (Vec<(ConnId, String)>, Vec<ConnId>) {
         let (mut requests, mut closes) = (Vec::new(), Vec::new());
         while let Some(action) = session.poll(ts(now)) {
             match action {
-                Action::HttpRequest { conn, url, .. } => requests.push((conn, url)),
+                Action::HttpRequest { conn, url, .. } => requests.push((conn, url.to_string())),
                 Action::Close { conn } => closes.push(conn),
                 _ => {}
             }
         }
         (requests, closes)
     }
-    let mut session = Session::open(TS_PLAYLIST_URL, config(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config(), ts(0)).unwrap();
     let (opened, _) = collect(&mut session, 0);
     let playlist_conn = opened[0].0;
     let playlist = ts_playlist();
@@ -694,7 +701,7 @@ fn a_stalled_request_leaves_its_parallel_request_alone_and_keeps_the_inflight_ca
     config.max_inflight_segments = 1;
     let scenario = plain(Origin::Honours, 5_000);
     let mut drive = Drive::new(config);
-    let mut outstanding: BTreeSet<u32> = BTreeSet::new();
+    let mut outstanding: BTreeSet<ConnId> = BTreeSet::new();
     let mut peak = 0;
     let mut nth_target = 0usize;
     loop {
@@ -757,7 +764,7 @@ fn a_stalled_request_leaves_its_parallel_request_alone_and_keeps_the_inflight_ca
 fn only_the_stalled_connection_is_closed_while_a_parallel_segment_completes() {
     let scenario = plain(Origin::Honours, 5_000);
     let drive = scenario.run(config());
-    let seg1_conns: Vec<u32> = drive
+    let seg1_conns: Vec<ConnId> = drive
         .log
         .iter()
         .filter(|r| r.url == TS_SEG1_URL)
@@ -806,7 +813,7 @@ fn a_segment_that_stalls_every_time_exhausts_the_retry_budget() {
 fn a_playlist_is_exempt_and_only_the_request_timeout_bounds_it() {
     let mut config = config();
     config.request_timeout = std::time::Duration::from_secs(20);
-    let mut session = Session::open(TS_PLAYLIST_URL, config, ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).unwrap();
     let mut conn = None;
     let mut closed = false;
     for now in [0, INACTIVITY_US, 2 * INACTIVITY_US, 20 * SEC - 1, 20 * SEC] {

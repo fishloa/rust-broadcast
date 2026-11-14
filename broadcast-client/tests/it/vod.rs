@@ -1,4 +1,5 @@
 use crate::support;
+use url::Url;
 
 use broadcast_client::{Action, Config, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
@@ -17,7 +18,12 @@ fn session_finite_file_ends_without_reconnect() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -53,7 +59,12 @@ fn session_finite_file_ends_without_reconnect() {
 fn session_live_unchanged_reconnects_on_close() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -81,7 +92,12 @@ fn session_finite_event_emitted_once() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let finite_count = evs
         .iter()
@@ -98,7 +114,12 @@ fn session_reconnect_after_ended_restarts() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -131,7 +152,12 @@ fn session_206_is_finite() {
     )];
     let status = 206u16;
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let evs = feed_chunks(&mut session, &bytes, 1316, status, &headers, 0);
     let finite_count = evs
         .iter()
@@ -148,7 +174,12 @@ fn truncated_finite_transfer_reconnects() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let status = status0;
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),

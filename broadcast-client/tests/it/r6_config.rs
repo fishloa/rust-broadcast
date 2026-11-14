@@ -1,5 +1,6 @@
 use broadcast_client::{Config, Error, Session, TimelineJumpConfig};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -9,7 +10,7 @@ fn ts(us: u64) -> Timestamp {
 const URL: &str = "http://h/live.ts";
 
 fn field_of(config: Config) -> Option<&'static str> {
-    match Session::open(URL, config, ts(0)) {
+    match Session::open(Url::parse(URL).unwrap(), config, ts(0)) {
         Err(Error::InvalidConfig { field }) => Some(field),
         Err(other) => panic!("unexpected error {other}"),
         Ok(_) => None,
@@ -46,16 +47,10 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
             c.buffer.track_silence_timeout_us = buffering_runtime::Micros(0);
         }),
         ("timeline_jump.backward_us", |c| {
-            c.timeline_jump = Some(TimelineJumpConfig {
-                backward_us: 0,
-                ..TimelineJumpConfig::default()
-            });
+            c.timeline_jump = Some(TimelineJumpConfig::default().with_backward_us(0));
         }),
         ("timeline_jump.forward_slack_us", |c| {
-            c.timeline_jump = Some(TimelineJumpConfig {
-                forward_slack_us: 0,
-                ..TimelineJumpConfig::default()
-            });
+            c.timeline_jump = Some(TimelineJumpConfig::default().with_forward_slack_us(0));
         }),
     ];
     for (field, mutate) in cases {
@@ -78,10 +73,11 @@ fn the_smallest_valid_values_open() {
         new_config.segment_timeout = std::time::Duration::from_micros(1);
         new_config.segment_inactivity_timeout = std::time::Duration::from_micros(1);
         new_config.hls_key_timeout = std::time::Duration::from_micros(1);
-        new_config.timeline_jump = Some(TimelineJumpConfig {
-            backward_us: 1,
-            forward_slack_us: 1,
-        });
+        new_config.timeline_jump = Some(
+            TimelineJumpConfig::default()
+                .with_backward_us(1)
+                .with_forward_slack_us(1),
+        );
         new_config
     };
     assert_eq!(field_of(config), None);
@@ -97,10 +93,11 @@ fn a_disabled_detector_and_unbounded_thresholds_open() {
     assert_eq!(field_of(disabled), None);
     let unbounded = {
         let mut new_config = Config::default();
-        new_config.timeline_jump = Some(TimelineJumpConfig {
-            backward_us: u64::MAX,
-            forward_slack_us: u64::MAX,
-        });
+        new_config.timeline_jump = Some(
+            TimelineJumpConfig::default()
+                .with_backward_us(u64::MAX)
+                .with_forward_slack_us(u64::MAX),
+        );
         new_config
     };
     assert_eq!(field_of(unbounded), None);

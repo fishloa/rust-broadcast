@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use url::Url;
 
-use broadcast_client::{Action, Config, DashClockPolicy, Event, Session, TransportError};
+use broadcast_client::{Action, Config, ConnId, DashClockPolicy, Event, Session, TransportError};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -215,7 +216,7 @@ const SHAPES: [Shape; 6] = [
 ];
 
 struct Pending {
-    conn: u32,
+    conn: ConnId,
     method: String,
     url: String,
     headers: Vec<(String, String)>,
@@ -348,7 +349,8 @@ fn play(port: u16, shape: &Shape) -> Observed {
     let url = format!("http://127.0.0.1:{port}/livesim2/{}", shape.path);
     let start = Instant::now();
     let mono = || u64::try_from(start.elapsed().as_micros()).expect("mono fits");
-    let mut session = Session::open(&url, config_for(shape), ts(mono())).expect("open");
+    let mut session =
+        Session::open(Url::parse(&url).unwrap(), config_for(shape), ts(mono())).expect("open");
     session.set_wall_clock(ts(mono()), u64::try_from(unix_us()).expect("unix"));
     let client = http();
     let mut observed = Observed::default();
@@ -367,9 +369,14 @@ fn play(port: u16, shape: &Shape) -> Observed {
                     ..
                 } => pending.push(Pending {
                     conn,
-                    method,
-                    url,
-                    headers,
+                    method: method.as_str().to_string(),
+                    url: url.to_string(),
+                    headers: headers
+                        .iter()
+                        .map(|(n, v)| {
+                            (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect(),
                     range: byte_range.map(|s| (s.offset, s.len.get())),
                 }),
                 Action::WakeAt(t) => wake = Some(wake.map_or(t, |w| w.min(t))),

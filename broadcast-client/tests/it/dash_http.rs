@@ -544,8 +544,12 @@ fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_
         ],
     );
 
-    let mut session =
-        broadcast_client::Session::open(&url_of(MANIFEST), Config::default(), ts(0)).unwrap();
+    let mut session = broadcast_client::Session::open(
+        url_of(MANIFEST).parse().unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = loop {
         match session.poll(ts(0)) {
             Some(broadcast_client::Action::HttpRequest { conn, .. }) => break conn,
@@ -563,7 +567,7 @@ fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_
     }
     let asked: Vec<String> = std::iter::from_fn(|| session.poll(ts(0)))
         .filter_map(|a| match a {
-            broadcast_client::Action::HttpRequest { url, .. } => Some(url),
+            broadcast_client::Action::HttpRequest { url, .. } => Some(url.to_string()),
             _ => None,
         })
         .collect();

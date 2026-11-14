@@ -6,11 +6,9 @@ use multimux::push::rtsp::RtspTransportConfig;
 
 #[test]
 fn rtmp_push_config_debug_hides_the_stream_key() {
-    let cfg = RtmpTransportConfig {
-        app: "live".into(),
-        stream_key: "sk-live-9d2f-top-secret".into(),
-        ..Default::default()
-    };
+    let cfg = RtmpTransportConfig::default()
+        .with_app("live".into())
+        .with_stream_key("sk-live-9d2f-top-secret".into());
     let text = format!("{cfg:?}");
     assert!(!text.contains("sk-live-9d2f"), "{text}");
     assert!(text.contains("live"), "{text}");
@@ -19,10 +17,8 @@ fn rtmp_push_config_debug_hides_the_stream_key() {
 
 #[test]
 fn rtsp_push_config_debug_hides_the_credentials() {
-    let cfg = RtspTransportConfig {
-        credentials: Some(("operator".into(), "hunter2-password".into())),
-        ..Default::default()
-    };
+    let cfg = RtspTransportConfig::default()
+        .with_credentials("operator".into(), "hunter2-password".into());
     let text = format!("{cfg:?}");
     assert!(!text.contains("hunter2-password"), "{text}");
     assert!(!text.contains("operator"), "{text}");

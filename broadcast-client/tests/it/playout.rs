@@ -1,10 +1,11 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, Event, PauseReason, PlayoutConfig, Session,
-    SourceKind, TrackId,
+    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
+    Session, SourceKind, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -56,17 +57,14 @@ fn cfg(playout: PlayoutConfig) -> Config {
 }
 
 fn vod_lead(ms: u64) -> PlayoutConfig {
-    PlayoutConfig {
-        vod_start_lead_us: ms * MS,
-        ..PlayoutConfig::default()
-    }
+    PlayoutConfig::default().with_vod_start_lead_us(ms * MS)
 }
 
 struct Drv {
     session: Session,
     now: u64,
     chunk: usize,
-    pending: Vec<(u32, String)>,
+    pending: Vec<(ConnId, String)>,
     wakes: BTreeSet<u64>,
     events: Vec<Event>,
     bodies: HashMap<String, Vec<u8>>,
@@ -74,7 +72,7 @@ struct Drv {
 
 impl Drv {
     fn new(url: &str, config: Config, bodies: HashMap<String, Vec<u8>>) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         let mut d = Self {
             session,
             now: 0,
@@ -91,7 +89,7 @@ impl Drv {
     fn pump(&mut self) {
         while let Some(a) = self.session.poll(ts(self.now)) {
             match a {
-                Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url)),
+                Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url.to_string())),
                 Action::Close { conn } => self.pending.retain(|p| p.0 != conn),
                 Action::WakeAt(t) if t.as_micros() > self.now => {
                     self.wakes.insert(t.as_micros());
@@ -104,7 +102,7 @@ impl Drv {
         }
     }
 
-    fn respond(&mut self, conn: u32, body: &[u8]) {
+    fn respond(&mut self, conn: ConnId, body: &[u8]) {
         self.session.on_response(conn, 200, &[], ts(self.now));
         for c in body.chunks(self.chunk.max(1)) {
             self.session.on_data(conn, c, ts(self.now));
@@ -443,10 +441,7 @@ fn hls_vod_never_pauses_after_end() {
 
 #[test]
 fn hls_vod_resume_when_more_media_arrives_to_lead() {
-    let playout = PlayoutConfig {
-        resume_lead_us: Some(500 * MS),
-        ..PlayoutConfig::default()
-    };
+    let playout = PlayoutConfig::default().with_resume_lead_us(500 * MS);
     let mut d = partial_vod(playout);
     let hold = lead_points(&nb(&d.events), &[VIDEO, AUDIO])
         .pop()
@@ -470,10 +465,7 @@ fn hls_vod_resume_when_more_media_arrives_to_lead() {
 
 #[test]
 fn hls_vod_resume_immediately_when_end_arrives_while_paused() {
-    let playout = PlayoutConfig {
-        resume_lead_us: Some(60 * SEC),
-        ..PlayoutConfig::default()
-    };
+    let playout = PlayoutConfig::default().with_resume_lead_us(60 * SEC);
     let mut d = partial_vod(playout);
     let hold = lead_points(&nb(&d.events), &[VIDEO, AUDIO])
         .pop()
@@ -557,19 +549,14 @@ fn live_drv(playout: PlayoutConfig, count: usize) -> Drv {
 }
 
 fn live_lead(ms: u64) -> PlayoutConfig {
-    PlayoutConfig {
-        live_start_lead_us: ms * MS,
-        ..PlayoutConfig::default()
-    }
+    PlayoutConfig::default().with_live_start_lead_us(ms * MS)
 }
 
 #[test]
 fn hls_live_uses_live_lead_not_vod_lead() {
-    let playout = PlayoutConfig {
-        vod_start_lead_us: SEC,
-        live_start_lead_us: 3 * SEC,
-        ..PlayoutConfig::default()
-    };
+    let playout = PlayoutConfig::default()
+        .with_vod_start_lead_us(SEC)
+        .with_live_start_lead_us(3 * SEC);
     let d = live_drv(playout, 2);
     let list = nb(&d.events);
     assert!(!list.iter().any(is_ended));
@@ -656,7 +643,7 @@ fn hls_live_pause_and_resume_cycle_with_delivery_gap() {
 }
 
 fn finite_session(config: Config) -> Session {
-    Session::open(FINITE_URL, config, ts(0)).unwrap()
+    Session::open(Url::parse(FINITE_URL).unwrap(), config, ts(0)).unwrap()
 }
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
@@ -715,7 +702,8 @@ fn live_ts_http_still_uses_buffering_runtime() {
     let (status, headers) = tf1_headers!();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut s = Session::open("http://example/live.ts", config, ts(0)).unwrap();
+    let mut s =
+        Session::open(Url::parse("http://example/live.ts").unwrap(), config, ts(0)).unwrap();
     let conn = match s.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
@@ -1043,10 +1031,7 @@ fn config_knobs_change_leads() {
         )]
     );
 
-    let playout = PlayoutConfig {
-        pause_lead_us: 500 * MS,
-        ..PlayoutConfig::default()
-    };
+    let playout = PlayoutConfig::default().with_pause_lead_us(500 * MS);
     let mut p = partial_vod(playout);
     let last = lead_points(&nb(&p.events), &[VIDEO, AUDIO]).pop().unwrap();
     let threshold = last.min_end - 500 * TICKS_PER_MS;
@@ -1062,10 +1047,7 @@ fn config_knobs_change_leads() {
         }
     );
 
-    let resume = PlayoutConfig {
-        resume_lead_us: Some(2 * SEC),
-        ..PlayoutConfig::default()
-    };
+    let resume = PlayoutConfig::default().with_resume_lead_us(2 * SEC);
     let mut r = partial_vod(resume);
     let hold = lead_points(&nb(&r.events), &[VIDEO, AUDIO])
         .pop()
@@ -1140,10 +1122,7 @@ fn no_events_before_first_sample() {
 
 #[test]
 fn start_emitted_once_until_pause() {
-    let playout = PlayoutConfig {
-        resume_lead_us: Some(500 * MS),
-        ..PlayoutConfig::default()
-    };
+    let playout = PlayoutConfig::default().with_resume_lead_us(500 * MS);
     let mut d = partial_vod(playout);
     let hold = lead_points(&nb(&d.events), &[VIDEO, AUDIO])
         .pop()

@@ -3,8 +3,9 @@
 //! the callbacks a real host makes (`on_response`, `on_data`, `on_closed`). No clock is read.
 
 use std::collections::{BTreeMap, BTreeSet};
+use url::Url;
 
-use broadcast_client::{Action, Config, Event, Session, Status, TransportError};
+use broadcast_client::{Action, Config, ConnId, Event, Session, Status, TransportError};
 use transmux::Sample;
 
 use super::dash_common::loopback;
@@ -20,7 +21,7 @@ pub const SEC: u64 = 1_000_000;
 
 #[derive(Debug, Clone)]
 pub struct Logged {
-    pub conn: u32,
+    pub conn: ConnId,
     pub method: String,
     pub url: String,
     pub headers: Headers,
@@ -282,13 +283,13 @@ impl Backend for StaticBackend {
 }
 
 enum Delivery {
-    Answer { conn: u32, answer: Answer },
+    Answer { conn: ConnId, answer: Answer },
 }
 
 struct Pending {
     at: u64,
     seq: u64,
-    conn: u32,
+    conn: ConnId,
     delivery: Delivery,
 }
 
@@ -304,8 +305,8 @@ pub struct DashSim {
     pub log: Vec<Logged>,
     pub events: Vec<Event>,
     pub event_times: Vec<u64>,
-    pub closes: Vec<u32>,
-    pub close_log: Vec<(u32, u64)>,
+    pub closes: Vec<ConnId>,
+    pub close_log: Vec<(ConnId, u64)>,
     pub rtt_us: u64,
     pub chunk: usize,
     pub fault: Option<FaultFn>,
@@ -318,7 +319,8 @@ pub struct DashSim {
 
 impl DashSim {
     pub fn new(url: &str, config: Config, world: World, backend: Box<dyn Backend>) -> Self {
-        let session = Session::open(url, config, ts(world.mono())).expect("open");
+        let session =
+            Session::open(Url::parse(url).unwrap(), config, ts(world.mono())).expect("open");
         Self::with_session(session, world, backend)
     }
 
@@ -371,7 +373,7 @@ impl DashSim {
 
     fn dispatch(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         method: String,
         url: String,
         headers: Headers,
@@ -422,7 +424,7 @@ impl DashSim {
         }
     }
 
-    fn push(&mut self, at: u64, conn: u32, answer: Answer) {
+    fn push(&mut self, at: u64, conn: ConnId, answer: Answer) {
         self.seq += 1;
         self.pending.push(Pending {
             at,
@@ -448,9 +450,14 @@ impl DashSim {
                     ..
                 } => self.dispatch(
                     conn,
-                    method,
-                    url,
-                    headers,
+                    method.as_str().to_string(),
+                    url.to_string(),
+                    headers
+                        .iter()
+                        .map(|(n, v)| {
+                            (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                        })
+                        .collect(),
                     byte_range.map(|s| (s.offset, s.len.get())),
                 ),
                 Action::Close { conn } => {
@@ -467,7 +474,7 @@ impl DashSim {
         self.drain_events();
     }
 
-    fn respond(&mut self, conn: u32, answer: Answer) {
+    fn respond(&mut self, conn: ConnId, answer: Answer) {
         let now = self.world.mono();
         let chunk = self.chunk.max(1);
         match answer {
@@ -551,7 +558,7 @@ impl DashSim {
                 self.session.on_closed(conn, None, ts(now));
             }
             Answer::Unknown(inner) => {
-                const STRANGER: u32 = 9_999;
+                const STRANGER: ConnId = ConnId::new(9_999);
                 self.session.on_response(STRANGER, 200, &[], ts(now));
                 self.session.on_data(STRANGER, b"xx", ts(now));
                 self.session.on_closed(STRANGER, None, ts(now));

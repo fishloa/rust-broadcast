@@ -1,5 +1,6 @@
-use broadcast_client::{Action, Config, Session};
+use broadcast_client::{Action, Config, ConnId, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -11,7 +12,7 @@ pub const TS_URL: &str = "http://example/live.ts";
 #[derive(Debug, Clone)]
 pub struct Req {
     pub now: u64,
-    pub conn: u32,
+    pub conn: ConnId,
     pub url: String,
     pub headers: Vec<(String, String)>,
 }
@@ -58,8 +59,11 @@ pub fn requests(session: &mut Session, now: u64) -> Vec<Req> {
             out.push(Req {
                 now,
                 conn,
-                url,
-                headers,
+                url: url.to_string(),
+                headers: headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
             });
         }
     }
@@ -73,7 +77,7 @@ pub fn one(session: &mut Session, now: u64) -> Req {
 }
 
 pub fn open(url: &str, config: Config) -> Session {
-    Session::open(url, config, ts(0)).expect("open")
+    Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open")
 }
 
 pub fn respond(session: &mut Session, req: &Req, status: u16, headers: &[(String, String)]) {

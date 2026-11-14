@@ -1,11 +1,12 @@
 use crate::support;
 use crate::support::video_run::VideoRun;
+use url::Url;
 
 use std::collections::BTreeMap;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, Event, Hint, PauseReason, Session, Status, TrackId,
-    TransportError,
+    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, PauseReason, Session, Status,
+    TrackId, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
@@ -138,7 +139,7 @@ impl PlayClock {
 
 struct Host {
     session: Session,
-    conn: u32,
+    conn: ConnId,
     clock: PlayClock,
     events: Vec<Event>,
     times: Vec<u64>,
@@ -151,7 +152,8 @@ impl Host {
     fn open(seed: Option<StallMemorySnapshot>) -> Option<Self> {
         let mut config = Config::default();
         config.record_buffer_inputs = true;
-        let mut session = Session::open_with_memory(URL, config, ts(0), seed).unwrap();
+        let mut session =
+            Session::open_with_memory(Url::parse(URL).unwrap(), config, ts(0), seed).unwrap();
         let (status, headers) = support::read_tf1_headers()?;
         let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
@@ -1007,7 +1009,7 @@ fn source_ended_and_error_hints() {
 
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut forbidden = Session::open(URL, config, ts(0)).unwrap();
+    let mut forbidden = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
     let conn = match forbidden.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
@@ -1186,7 +1188,7 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(URL, config, ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),

@@ -15,9 +15,10 @@
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
+use url::Url;
 
 use broadcast_client::{
-    Action, Config, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
+    Action, Config, ConnId, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
 };
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
@@ -143,16 +144,16 @@ impl IngestSession for EventIngest {
 
 enum Message {
     Response {
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: Vec<(String, String)>,
     },
     Data {
-        conn: u32,
+        conn: ConnId,
         bytes: Vec<u8>,
     },
     Closed {
-        conn: u32,
+        conn: ConnId,
         error: Option<String>,
     },
 }
@@ -204,9 +205,9 @@ pub(crate) struct SessionStep {
     next_anchor_us: u64,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
-    requests: BTreeMap<u32, AbortHandle>,
-    sockets: BTreeMap<u32, std::sync::Arc<UdpSocket>>,
-    writers: BTreeMap<u32, BoxedWrite>,
+    requests: BTreeMap<ConnId, AbortHandle>,
+    sockets: BTreeMap<ConnId, std::sync::Arc<UdpSocket>>,
+    writers: BTreeMap<ConnId, BoxedWrite>,
     udp: UdpHost,
     tls: TlsHost,
     wakes: std::collections::BTreeSet<u64>,
@@ -229,16 +230,22 @@ impl SessionStep {
     ) -> Result<Self, MultimuxError> {
         config.preemptive_basic = true;
         let start = Instant::now();
-        let mut session =
-            Session::open(url, config, Timestamp::from_micros(0)).map_err(|e| match e {
-                Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
-                    field,
-                    reason: format!("{}: {e}", labels.what),
-                },
-                other => MultimuxError::Connect {
-                    reason: format!("{}: {other}", labels.what),
-                },
-            })?;
+        let mut session = Session::open(
+            Url::parse(url).map_err(|e| MultimuxError::Connect {
+                reason: format!("{}: {e}", labels.what),
+            })?,
+            config,
+            Timestamp::from_micros(0),
+        )
+        .map_err(|e| match e {
+            Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
+                field,
+                reason: format!("{}: {e}", labels.what),
+            },
+            other => MultimuxError::Connect {
+                reason: format!("{}: {other}", labels.what),
+            },
+        })?;
         if let Some(credentials) = credentials {
             session.set_credentials(credentials).map_err(|e| {
                 MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
@@ -442,7 +449,7 @@ impl SessionStep {
         Ok(())
     }
 
-    fn fail_connection(&mut self, conn: u32, error: String) {
+    fn fail_connection(&mut self, conn: ConnId, error: String) {
         self.transport_error = Some(error.clone());
         self.writers.remove(&conn);
         self.session.on_closed(
@@ -454,7 +461,7 @@ impl SessionStep {
         );
     }
 
-    fn register_socket(&mut self, conn: u32, socket: UdpSocket) {
+    fn register_socket(&mut self, conn: ConnId, socket: UdpSocket) {
         let socket = std::sync::Arc::new(socket);
         let task = tokio::spawn(receive(
             std::sync::Arc::clone(&socket),
@@ -734,13 +741,14 @@ impl IngestStep<EventIngest> for SessionStep {
 
 fn http_request(
     client: &reqwest::Client,
-    method: &str,
-    url: &str,
-    headers: &[(String, String)],
+    method: &http::Method,
+    url: &url::Url,
+    headers: &http::HeaderMap,
     byte_range: Option<broadcast_common::range::ByteSpan>,
 ) -> Result<reqwest::RequestBuilder, String> {
-    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut request = client.request(method, url);
+    let method =
+        reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(|e| e.to_string())?;
+    let mut request = client.request(method, url.clone());
     for (name, value) in headers {
         request = request.header(name, value);
     }
@@ -750,7 +758,7 @@ fn http_request(
     Ok(request)
 }
 
-async fn fetch(request: reqwest::RequestBuilder, conn: u32, tx: mpsc::Sender<Message>) {
+async fn fetch(request: reqwest::RequestBuilder, conn: ConnId, tx: mpsc::Sender<Message>) {
     let closed = |error: Option<String>| Message::Closed { conn, error };
     let response = match request.send().await {
         Ok(response) => response,
@@ -830,7 +838,7 @@ impl UdpHost {
     }
 }
 
-async fn receive(socket: std::sync::Arc<UdpSocket>, conn: u32, tx: mpsc::Sender<Message>) {
+async fn receive(socket: std::sync::Arc<UdpSocket>, conn: ConnId, tx: mpsc::Sender<Message>) {
     let mut buf = vec![0u8; media_plane::ts_session::MAX_TS_READ];
     loop {
         let message = match socket.recv(&mut buf).await {
@@ -887,7 +895,7 @@ async fn write_bounded(writer: &mut BoxedWrite, bytes: &[u8]) -> Result<(), Stri
     }
 }
 
-async fn read_stream(mut reader: BoxedRead, conn: u32, tx: mpsc::Sender<Message>) {
+async fn read_stream(mut reader: BoxedRead, conn: ConnId, tx: mpsc::Sender<Message>) {
     let mut buf = vec![0u8; TCP_READ_BUFFER];
     loop {
         let message = match reader.read(&mut buf).await {

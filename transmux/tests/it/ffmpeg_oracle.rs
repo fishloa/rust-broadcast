@@ -125,14 +125,10 @@ fn ffmpeg_cannot_decrypt_cbcs() {
         ("omit", ConstantIvSenc::Omit),
     ] {
         let mut m = media.clone();
-        let cfg = EncryptConfig {
-            scheme: CencScheme::Cbcs,
-            kid: KID,
-            iv: IvGen::Constant(CBCS_CONSTANT_IV),
-            pattern: Some((1, 9)),
-            subsample: SubsamplePolicy::WholeSample,
-            constant_iv_senc,
-        };
+        let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::WholeSample)
+            .with_iv(IvGen::Constant(CBCS_CONSTANT_IV))
+            .with_pattern((1, 9))
+            .with_constant_iv_senc(constant_iv_senc);
         let protected = build_protected_fmp4(&mut m, &cfg);
         let in_path = write_temp(&protected, tag);
         let out_path = std::env::temp_dir().join(format!(

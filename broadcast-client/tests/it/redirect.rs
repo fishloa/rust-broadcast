@@ -1,5 +1,6 @@
 use broadcast_client::{Action, Config, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -9,8 +10,12 @@ fn ts(us: u64) -> Timestamp {
 #[test]
 fn resolve_all_3xx_codes_session() {
     for code in [301u16, 302, 303, 307, 308] {
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            ts(0),
+        )
+        .unwrap();
         let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             _ => panic!(),
@@ -24,7 +29,7 @@ fn resolve_all_3xx_codes_session() {
         let mut saw_new = false;
         while let Some(a) = session.poll(ts(0)) {
             if let Action::HttpRequest { url, .. } = a {
-                assert!(url.ends_with("/moved.ts"));
+                assert!(url.path().ends_with("/moved.ts"));
                 saw_new = true;
             }
         }
@@ -34,7 +39,12 @@ fn resolve_all_3xx_codes_session() {
 
 #[test]
 fn redirect_limit_in_session() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -72,7 +82,12 @@ fn redirect_limit_in_session() {
 
 #[test]
 fn redirect_without_location_is_connect_error() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
@@ -94,15 +109,23 @@ fn redirect_without_location_is_connect_error() {
 #[test]
 fn cross_origin_redirect_drops_authorization() {
     use broadcast_client::Credentials;
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     session
         .set_credentials(Credentials::bearer("secret-token"))
         .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {
-            assert!(headers.iter().any(
-                |(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token"
-            ));
+            assert!(
+                headers
+                    .iter()
+                    .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                        && v.to_str().unwrap_or("") == "Bearer secret-token")
+            );
             conn
         }
         _ => panic!(),
@@ -125,7 +148,7 @@ fn cross_origin_redirect_drops_authorization() {
     let nh = new_headers.expect("redirect request");
     assert!(
         !nh.iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("authorization")),
+            .any(|(k, _)| k.as_str().eq_ignore_ascii_case("authorization")),
         "cross-origin redirect must drop Authorization"
     );
 }

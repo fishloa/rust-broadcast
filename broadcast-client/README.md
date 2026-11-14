@@ -338,9 +338,9 @@ the UTC time once:
   a UTC clock and when the clock's source changes (not on a re-sync from the same source), before the first
   sample that depends on it. `ClockSource` is `UtcTiming`, `Host` or `MpdDate`; `uncertainty_us` is the
   half-width of the error bar.
-- `Action::HttpRequest::method` is `"GET"` or `"HEAD"` (the DASH `http-head` clock method issues `HEAD` for a
-  `UTCTiming` element): pass `method` through verbatim and do not assume GET. A `HEAD` response has no body;
-  the session ignores its `Content-Length`.
+- `Action::HttpRequest::method` is an `http::Method`, `GET` or `HEAD` (the DASH `http-head` clock method issues
+  `HEAD` for a `UTCTiming` element): pass `method` through and do not assume GET. A `HEAD` response has no
+  body; the session ignores its `Content-Length`.
 - `Config::dash: DashConfig` holds the DASH-only knobs (`clock_policy`, `utc_timeout_us` 2 s, `utc_wait_us`
   5 s, `utc_max_rtt_us` 2 s, `utc_resync_us` 600 s, `host_clock_uncertainty_us` 500 ms, `live_delay_us`,
   `availability_margin_us`, `early_retry_us` 250 ms, `early_grace_us` 1 s, `min_mpd_refresh_us` 1 s,
@@ -469,10 +469,12 @@ Seeded cookies obey the same rules (over 4096 bytes dropped; `__Secure-`/`__Host
 ```rust
 use broadcast_client::{Config, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 // One host clock for every source: monotonic microseconds from the host's own epoch.
 let now = Timestamp::from_micros(0);
-let mut session = Session::open("http://example/live.ts", Config::default(), now).unwrap();
+let mut session =
+    Session::open(Url::parse("http://example/live.ts").unwrap(), Config::default(), now).unwrap();
 while let Some(action) = session.poll(now) {
     // host performs I/O based on `action`
     let _ = action;

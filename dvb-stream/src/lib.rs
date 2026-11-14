@@ -38,6 +38,7 @@ pub use ts_codec::TsDecoder;
 /// Returned by [`SectionStream::resync_stats`] and
 /// [`T2miEventStream::resync_stats`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct ResyncStats {
     /// Number of times the stream re-aligned on a new sync byte.
     pub resyncs: u64,

@@ -1,10 +1,11 @@
 #![no_main]
 
+use url::Url;
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use broadcast_client::{
-    Action, ClientIdentity, Config, Credentials, DashClockPolicy, Event, Hint, Session,
+    Action, ClientIdentity, Config, ConnId, Credentials, DashClockPolicy, Event, Hint, Session,
     SrtEntropySeed, TrackId, TransportError,
 };
 use broadcast_common::stage::Timestamp;
@@ -364,7 +365,7 @@ fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
     }
     let first = STORM_FIRST_STATUSES[byte(1) % STORM_FIRST_STATUSES.len()];
     let then = STORM_THEN_STATUSES[byte(4) % STORM_THEN_STATUSES.len()];
-    let mut answered: Vec<(u32, u16)> = Vec::new();
+    let mut answered: Vec<(ConnId, u16)> = Vec::new();
     let mut rounds = 0usize;
     loop {
         let requests = watch.actions(session, now);
@@ -432,13 +433,13 @@ fn encrypted_segment() -> &'static [u8] {
 
 #[derive(Default)]
 struct Watch {
-    live: BTreeSet<u32>,
+    live: BTreeSet<ConnId>,
     fatal: bool,
     closed: bool,
 }
 
 impl Watch {
-    fn actions(&mut self, session: &mut Session, now: u64) -> Vec<(u32, String)> {
+    fn actions(&mut self, session: &mut Session, now: u64) -> Vec<(ConnId, String)> {
         let mut requests = Vec::new();
         let mut steps = 0usize;
         loop {
@@ -459,20 +460,20 @@ impl Watch {
                     ..
                 } => {
                     assert!(
-                        identity.is_none() || url.starts_with("https://"),
+                        identity.is_none() || url.as_str().starts_with("https://"),
                         "client identity offered over plain http: {url}"
                     );
                     assert!(!self.closed, "HttpRequest after close");
                     assert!(self.live.insert(conn), "live conn id {conn} issued twice");
-                    if !url.starts_with(ORIGIN_PREFIX) {
+                    if !url.as_str().starts_with(ORIGIN_PREFIX) {
                         for (name, _) in &headers {
                             assert!(
-                                !AUDIT_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)),
+                                !AUDIT_HEADERS.iter().any(|h| name.as_str().eq_ignore_ascii_case(h)),
                                 "{name} sent to {url}"
                             );
                         }
                     }
-                    requests.push((conn, url));
+                    requests.push((conn, url.to_string()));
                 }
                 Action::TcpConnect { conn, .. } => {
                     assert!(!self.closed, "TcpConnect after close");
@@ -505,7 +506,7 @@ impl Watch {
         }
     }
 
-    fn host_closed(&mut self, conn: u32) {
+    fn host_closed(&mut self, conn: ConnId) {
         self.live.remove(&conn);
     }
 }
@@ -593,10 +594,11 @@ fn config_from(header: &[u8]) -> Config {
     config.tracks_hold_max_input_bytes = knob(header, 11, &HOLD_MAX_BYTES).max(quiet);
     config.timeline_jump = match knob(header, 12, &[0u8, 1, 2, 3]) {
         0 => None,
-        _ => Some(broadcast_client::TimelineJumpConfig {
-            backward_us: knob(header, 13, &JUMP_US),
-            forward_slack_us: knob(header, 14, &JUMP_US),
-        }),
+        _ => Some(
+            broadcast_client::TimelineJumpConfig::default()
+                .with_backward_us(knob(header, 13, &JUMP_US))
+                .with_forward_slack_us(knob(header, 14, &JUMP_US)),
+        ),
     };
     config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);
     config.playout.live_start_lead_us = knob(header, 16, &LEAD_US);
@@ -641,13 +643,13 @@ fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
 fn drive(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
     let config = config_from(header);
-    let mut session = match Session::open(url, config, Timestamp::ZERO) {
+    let mut session = match Session::open(Url::parse(url).unwrap(), config, Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
     let mut watch = Watch::default();
     let mut now = 0u64;
-    let mut conn_ids: Vec<u32> = Vec::new();
+    let mut conn_ids: Vec<ConnId> = Vec::new();
     for chunk in data.chunks(CHUNK_BYTES) {
         now = next_time(now, chunk);
         let pick = chunk.first().copied().unwrap_or(0);
@@ -788,7 +790,7 @@ fn rtsp_pump(
     session: &mut Session,
     watch: &mut Watch,
     now: u64,
-    conns: &mut Vec<u32>,
+    conns: &mut Vec<ConnId>,
     status: u16,
     tail: &[u8],
 ) {
@@ -827,13 +829,13 @@ fn rtsp_pump(
 
 fn drive_rtsp(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(url, config_from(header), Timestamp::ZERO) {
+    let mut session = match Session::open(Url::parse(url).unwrap(), config_from(header), Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
     let mut watch = Watch::default();
     let mut now = 0u64;
-    let mut conns: Vec<u32> = Vec::new();
+    let mut conns: Vec<ConnId> = Vec::new();
     let mut cursors = [0usize; RTP_TRACKS];
     for chunk in data.chunks(CHUNK_BYTES) {
         now = next_time(now, chunk);
@@ -893,7 +895,7 @@ fn drive_rtsp(url: &str, data: &[u8]) {
     finish(&mut session, &mut watch, now);
 }
 
-fn datagram_pump(session: &mut Session, watch: &mut Watch, now: u64, conn: &mut Option<u32>) {
+fn datagram_pump(session: &mut Session, watch: &mut Watch, now: u64, conn: &mut Option<ConnId>) {
     let mut steps = 0usize;
     loop {
         if steps >= MAX_PUMP_ACTIONS {
@@ -950,7 +952,7 @@ fn srt_like(chunk: &[u8], pick: u8) -> Vec<u8> {
 
 fn drive_datagram(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(url, config_from(header), Timestamp::ZERO) {
+    let mut session = match Session::open(Url::parse(url).unwrap(), config_from(header), Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -958,7 +960,7 @@ fn drive_datagram(url: &str, data: &[u8]) {
     let srt = url.starts_with("srt");
     let mut watch = Watch::default();
     let mut now = 0u64;
-    let mut conn: Option<u32> = None;
+    let mut conn: Option<ConnId> = None;
     let mut cursor = 0usize;
     let mut seq = 0u16;
     for chunk in data.chunks(CHUNK_BYTES) {

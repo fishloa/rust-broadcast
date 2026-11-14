@@ -12,6 +12,7 @@ use transmux::TrackSpec;
 
 /// Policy for choosing a variant from a multivariant (master) playlist.
 #[derive(Debug, Clone, PartialEq, Default)]
+#[non_exhaustive]
 pub struct VariantPolicy {
     /// Maximum allowed `BANDWIDTH` in bits per second.
     pub max_bandwidth: Option<u32>,
@@ -22,8 +23,32 @@ pub struct VariantPolicy {
     pub supported_codecs: Option<Vec<String>>,
 }
 
+impl VariantPolicy {
+    /// Set the maximum allowed `BANDWIDTH` in bits per second.
+    #[must_use]
+    pub fn with_max_bandwidth(mut self, max_bandwidth: u32) -> Self {
+        self.max_bandwidth = Some(max_bandwidth);
+        self
+    }
+
+    /// Set the maximum allowed resolution height in pixels.
+    #[must_use]
+    pub fn with_max_height(mut self, max_height: u32) -> Self {
+        self.max_height = Some(max_height);
+        self
+    }
+
+    /// Set the allowed codec prefixes.
+    #[must_use]
+    pub fn with_supported_codecs(mut self, supported_codecs: Vec<String>) -> Self {
+        self.supported_codecs = Some(supported_codecs);
+        self
+    }
+}
+
 /// Information about one variant stream in a master playlist.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct VariantInfo {
     /// Resolved absolute URL of the variant's media playlist.
     pub url: String,
@@ -41,8 +66,60 @@ pub struct VariantInfo {
     pub subtitles_group: Option<String>,
 }
 
+impl VariantInfo {
+    /// Build a variant description from its required URL and bandwidth.
+    #[must_use]
+    pub fn new(url: String, bandwidth: u32) -> Self {
+        Self {
+            url,
+            bandwidth,
+            average_bandwidth: None,
+            resolution: None,
+            codecs: None,
+            audio_group: None,
+            subtitles_group: None,
+        }
+    }
+
+    /// Attach `AVE-RAGE-BANDWIDTH`.
+    #[must_use]
+    pub fn with_average_bandwidth(mut self, average_bandwidth: u32) -> Self {
+        self.average_bandwidth = Some(average_bandwidth);
+        self
+    }
+
+    /// Attach `RESOLUTION`.
+    #[must_use]
+    pub fn with_resolution(mut self, resolution: (u32, u32)) -> Self {
+        self.resolution = Some(resolution);
+        self
+    }
+
+    /// Attach `CODECS`.
+    #[must_use]
+    pub fn with_codecs(mut self, codecs: String) -> Self {
+        self.codecs = Some(codecs);
+        self
+    }
+
+    /// Attach the `AUDIO` group id.
+    #[must_use]
+    pub fn with_audio_group(mut self, audio_group: String) -> Self {
+        self.audio_group = Some(audio_group);
+        self
+    }
+
+    /// Attach the `SUBTITLES` group id.
+    #[must_use]
+    pub fn with_subtitles_group(mut self, subtitles_group: String) -> Self {
+        self.subtitles_group = Some(subtitles_group);
+        self
+    }
+}
+
 /// Information about one `#EXT-X-MEDIA` rendition in a master playlist.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct RenditionInfo {
     /// Rendition type.
     pub media_type: MediaType,
@@ -59,6 +136,51 @@ pub struct RenditionInfo {
     /// Resolved absolute URI, or `None` when the rendition is carried inside
     /// the variant's own segments (e.g. closed captions).
     pub url: Option<String>,
+}
+
+impl RenditionInfo {
+    /// Build a rendition description from its required type, group id, and
+    /// name.
+    #[must_use]
+    pub fn new(media_type: MediaType, group_id: String, name: String) -> Self {
+        Self {
+            media_type,
+            group_id,
+            name,
+            language: None,
+            default: false,
+            autoselect: false,
+            url: None,
+        }
+    }
+
+    /// Attach `LANGUAGE`.
+    #[must_use]
+    pub fn with_language(mut self, language: String) -> Self {
+        self.language = Some(language);
+        self
+    }
+
+    /// Set the `DEFAULT` flag.
+    #[must_use]
+    pub fn with_default(mut self, default: bool) -> Self {
+        self.default = default;
+        self
+    }
+
+    /// Set the `AUTOSELECT` flag.
+    #[must_use]
+    pub fn with_autoselect(mut self, autoselect: bool) -> Self {
+        self.autoselect = autoselect;
+        self
+    }
+
+    /// Attach the resolved absolute URI.
+    #[must_use]
+    pub fn with_url(mut self, url: String) -> Self {
+        self.url = Some(url);
+        self
+    }
 }
 
 /// The result of selecting a variant from a master playlist.

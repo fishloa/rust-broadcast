@@ -12,6 +12,7 @@ use hls_runtime::client::{
 use transmux::TrackId;
 use url::Url;
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
@@ -115,7 +116,7 @@ pub(crate) struct HlsSource {
     window: Window<ResourceId>,
     gate: RetryGate,
     retry_refetch: Option<(u64, Url)>,
-    refused_captures: BTreeMap<u32, RefusedCapture>,
+    refused_captures: BTreeMap<ConnId, RefusedCapture>,
     init_retry: bool,
     attempt: Attempts,
     established: bool,
@@ -197,7 +198,7 @@ impl HlsSource {
         core::mem::take(&mut self.events)
     }
 
-    pub(crate) fn conns(&self) -> Vec<u32> {
+    pub(crate) fn conns(&self) -> Vec<ConnId> {
         self.flight
             .reqs
             .keys()
@@ -206,7 +207,7 @@ impl HlsSource {
             .collect()
     }
 
-    pub(crate) fn owns(&self, conn: u32) -> bool {
+    pub(crate) fn owns(&self, conn: ConnId) -> bool {
         self.flight.reqs.contains_key(&conn) || self.refused_captures.contains_key(&conn)
     }
 
@@ -291,7 +292,7 @@ impl HlsSource {
 
     pub(crate) fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: u64,
@@ -401,7 +402,7 @@ impl HlsSource {
         }
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: u64, auth: &mut AuthState) {
         if self.fatal {
             return;
         }
@@ -426,7 +427,7 @@ impl HlsSource {
 
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
@@ -884,7 +885,7 @@ impl HlsSource {
     }
 
     fn reset_in_flight(&mut self) {
-        let mut conns: Vec<u32> = self.flight.reqs.keys().copied().collect();
+        let mut conns: Vec<ConnId> = self.flight.reqs.keys().copied().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });
@@ -1209,7 +1210,7 @@ mod tests {
         assert!(source.flight.reqs.contains_key(&overdue));
 
         source.expire(timeout);
-        let closes: Vec<u32> = source
+        let closes: Vec<ConnId> = source
             .take_actions()
             .into_iter()
             .filter_map(|a| match a {

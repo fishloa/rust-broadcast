@@ -5,6 +5,7 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Event};
 use crate::playout::Source;
@@ -45,7 +46,7 @@ impl Adaptive {
         }
     }
 
-    pub(crate) fn conns(&self) -> Vec<u32> {
+    pub(crate) fn conns(&self) -> Vec<ConnId> {
         match self {
             Self::Hls(s) => s.conns(),
             Self::Dash(s) => s.conns(),
@@ -63,7 +64,7 @@ impl Adaptive {
 
     pub(crate) fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: u64,
@@ -77,7 +78,7 @@ impl Adaptive {
         }
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: u64, auth: &mut AuthState) {
         match self {
             Self::Hls(s) => s.on_data(conn, bytes, now, auth),
             Self::Dash(s) => s.on_data(conn, bytes, now, auth),
@@ -87,7 +88,7 @@ impl Adaptive {
 
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,

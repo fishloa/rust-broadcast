@@ -15,13 +15,10 @@ const BACKOFF_WITH_ZERO: [Duration; 3] = [
 
 #[test]
 fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
-    let config = Config {
-        backoff: broadcast_common::backoff::BackoffSteps {
-            steps: BACKOFF_WITH_ZERO.to_vec(),
-            cap: Duration::from_millis(10_000),
-        },
-        ..Config::default()
-    };
+    let config = Config::default().with_backoff(broadcast_common::backoff::BackoffSteps {
+        steps: BACKOFF_WITH_ZERO.to_vec(),
+        cap: Duration::from_millis(10_000),
+    });
     assert!(
         matches!(
             config.validate(),
@@ -46,13 +43,10 @@ fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
 
 #[test]
 fn a_client_never_schedules_a_zero_delay_reconnect_from_a_zero_backoff_entry() {
-    let config = Config {
-        backoff: broadcast_common::backoff::BackoffSteps {
-            steps: vec![Duration::ZERO, Duration::ZERO],
-            cap: Duration::from_millis(10_000),
-        },
-        ..Config::default()
-    };
+    let config = Config::default().with_backoff(broadcast_common::backoff::BackoffSteps {
+        steps: vec![Duration::ZERO, Duration::ZERO],
+        cap: Duration::from_millis(10_000),
+    });
     let mut client = TsHttpClient::new("u", config, ts(0));
     while client.poll().is_some() {}
     client.on_error(ts(0));

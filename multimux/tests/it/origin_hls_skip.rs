@@ -42,12 +42,7 @@ fn make_app() -> (axum::Router, Arc<RouteHandle>) {
         store
             .add_segment(
                 ProgramId(0),
-                SegmentInfo {
-                    bytes: vec![0x33; 16],
-                    duration: 4.0,
-                    segment_seq: seq,
-                    part_count: 1,
-                },
+                SegmentInfo::new(vec![0x33; 16], 4.0, seq).with_part_count(1),
             )
             .expect("add_segment");
     }

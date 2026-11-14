@@ -96,13 +96,13 @@ assert!(line.starts_with("#EXT-X-DATERANGE:"));
 assert!(line.contains("SCTE35-"));
 
 // Edge 2: SCTE-35 -> DASH emsg, and Edge 3: back to the verbatim section.
-let cfg = EmsgConfig {
-    timescale: Timescale::from_nonzero(90_000),
-    presentation: PresentationTime::Delta(0),
-    event_duration: 2_160_000, // 24 s * 90000
-    value: "34".to_string(),
-    id: event.id.unwrap_or(0),
-};
+let cfg = EmsgConfig::new(
+    Timescale::from_nonzero(90_000),
+    PresentationTime::Delta(0),
+    2_160_000, // 24 s * 90000
+    "34".to_string(),
+    event.id.unwrap_or(0),
+);
 let emsg = timeline.to_emsg(&event, &cfg).unwrap();
 assert_eq!(emsg_to_scte35(&emsg).unwrap(), raw);
 ```

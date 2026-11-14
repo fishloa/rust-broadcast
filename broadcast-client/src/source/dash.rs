@@ -25,6 +25,7 @@ use hls_runtime::client::{MasterSelection, RenditionInfo, VariantInfo};
 use transmux::{TrackId, TrackSpec};
 use url::Url;
 
+use crate::ConnId;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::playout::Source;
@@ -213,7 +214,7 @@ pub(crate) struct DashSource {
     mpd_failures: Attempts,
     mpd_accepted: bool,
     retry_after_us: u64,
-    refused_captures: BTreeMap<u32, RefusedCapture>,
+    refused_captures: BTreeMap<ConnId, RefusedCapture>,
     flight: InFlight<Purpose, DashExtra>,
     stash: Stash<Purpose>,
     parked: Vec<Req>,
@@ -344,7 +345,7 @@ impl DashSource {
         core::mem::take(&mut self.events)
     }
 
-    pub(crate) fn conns(&self) -> Vec<u32> {
+    pub(crate) fn conns(&self) -> Vec<ConnId> {
         self.flight
             .reqs
             .keys()
@@ -474,7 +475,7 @@ impl DashSource {
 
     pub(crate) fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: u64,
@@ -590,7 +591,7 @@ impl DashSource {
         }
     }
 
-    pub(crate) fn on_data(&mut self, conn: u32, bytes: &[u8], now: u64, auth: &mut AuthState) {
+    pub(crate) fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: u64, auth: &mut AuthState) {
         if self.fatal {
             return;
         }
@@ -615,7 +616,7 @@ impl DashSource {
 
     pub(crate) fn on_closed(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
@@ -1025,7 +1026,7 @@ impl DashSource {
     }
 
     fn reset_in_flight(&mut self) {
-        let mut conns: Vec<u32> = self.flight.reqs.keys().copied().collect();
+        let mut conns: Vec<ConnId> = self.flight.reqs.keys().copied().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });
@@ -1366,27 +1367,32 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
     let variants = selection
         .variants
         .iter()
-        .map(|v| VariantInfo {
-            url: v.init_url.clone().unwrap_or_default(),
-            bandwidth: u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
-            average_bandwidth: None,
-            resolution: v.resolution,
-            codecs: v.codecs.clone(),
-            audio_group: v.audio_group.clone(),
-            subtitles_group: None,
+        .map(|v| {
+            let mut info = VariantInfo::new(
+                v.init_url.clone().unwrap_or_default(),
+                u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
+            );
+            info.resolution = v.resolution;
+            info.codecs = v.codecs.clone();
+            info.audio_group = v.audio_group.clone();
+            info.subtitles_group = None;
+            info
         })
         .collect();
     let renditions = selection
         .audio
         .iter()
-        .map(|a| RenditionInfo {
-            media_type: MediaType::Audio,
-            group_id: a.group.clone().unwrap_or_else(|| a.set.to_string()),
-            name: a.name.clone(),
-            language: a.language.clone(),
-            default: a.default,
-            autoselect: a.autoselect,
-            url: a.init_url.clone(),
+        .map(|a| {
+            let mut info = RenditionInfo::new(
+                MediaType::Audio,
+                a.group.clone().unwrap_or_else(|| a.set.to_string()),
+                a.name.clone(),
+            );
+            info.language = a.language.clone();
+            info.default = a.default;
+            info.autoselect = a.autoselect;
+            info.url = a.init_url.clone();
+            info
         })
         .collect();
     MasterSelection {

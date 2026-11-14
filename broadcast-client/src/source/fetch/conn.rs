@@ -1,3 +1,4 @@
+use crate::ConnId;
 use alloc::collections::BTreeSet;
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU32, Ordering};
@@ -5,7 +6,7 @@ use std::sync::{Mutex, PoisonError};
 
 const FIRST_CONN_ID: u32 = 1;
 
-type LiveIds = Arc<Mutex<BTreeSet<u32>>>;
+type LiveIds = Arc<Mutex<BTreeSet<ConnId>>>;
 
 /// Connection-id allocator shared by every adapter of one session. An id stays reserved while its
 /// [`ConnLease`] lives, so a counter that wraps never hands out an id still in use.
@@ -18,12 +19,12 @@ pub(crate) struct ConnAlloc {
 /// A reserved connection id, released on drop.
 #[derive(Debug)]
 pub(crate) struct ConnLease {
-    id: u32,
+    id: ConnId,
     live: LiveIds,
 }
 
 impl ConnLease {
-    pub(crate) fn id(&self) -> u32 {
+    pub(crate) fn id(&self) -> ConnId {
         self.id
     }
 }
@@ -54,9 +55,9 @@ impl ConnAlloc {
                     Some(c.checked_add(1).unwrap_or(FIRST_CONN_ID))
                 })
                 .unwrap_or(FIRST_CONN_ID);
-            if live.insert(candidate) {
+            if live.insert(ConnId::new(candidate)) {
                 return ConnLease {
-                    id: candidate,
+                    id: ConnId::new(candidate),
                     live: self.live.clone(),
                 };
             }
@@ -81,7 +82,10 @@ mod tests {
         let alloc = ConnAlloc::new();
         let a = alloc.lease();
         let b = alloc.lease();
-        assert_eq!((a.id(), b.id()), (FIRST_CONN_ID, FIRST_CONN_ID + 1));
+        assert_eq!(
+            (a.id(), b.id()),
+            (ConnId::new(FIRST_CONN_ID), ConnId::new(FIRST_CONN_ID + 1))
+        );
     }
 
     #[test]
@@ -89,9 +93,12 @@ mod tests {
         let alloc = ConnAlloc::starting_at(u32::MAX - 1);
         let a = alloc.lease();
         let b = alloc.lease();
-        assert_eq!((a.id(), b.id()), (u32::MAX - 1, u32::MAX));
+        assert_eq!(
+            (a.id(), b.id()),
+            (ConnId::new(u32::MAX - 1), ConnId::new(u32::MAX))
+        );
         let c = alloc.lease();
-        assert_eq!(c.id(), FIRST_CONN_ID);
+        assert_eq!(c.id(), ConnId::new(FIRST_CONN_ID));
 
         alloc.next.store(u32::MAX - 1, Ordering::Relaxed);
         let d = alloc.lease();
@@ -105,7 +112,7 @@ mod tests {
         alloc.next.store(u32::MAX - 1, Ordering::Relaxed);
         assert_eq!(
             alloc.lease().id(),
-            u32::MAX - 1,
+            ConnId::new(u32::MAX - 1),
             "a released id is reusable"
         );
     }
@@ -132,6 +139,6 @@ mod tests {
         );
         drop(held);
         alloc.next.store(7, Ordering::Relaxed);
-        assert_eq!(alloc.lease().id(), 7);
+        assert_eq!(alloc.lease().id(), ConnId::new(7));
     }
 }

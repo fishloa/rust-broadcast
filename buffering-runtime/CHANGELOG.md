@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - BREAKING: `Micros` and `Ticks27` are `#[repr(transparent)]` newtypes over `u64` instead of type aliases, so a microsecond "now" and a 27 MHz media position can no longer be swapped at a call site (`on_chunk(now, bytes, pcr)`, `on_media(now, media_end)`). Every config field, controller argument, event field, `Stats`/`JitterEstimate` field, `StallMemorySnapshot` field and `Input` field carries the right one. Migration: build with `Micros(n)`/`Ticks27(n)` (or `::new`/`From<u64>`), read with `.0`/`get()`, and compare/print against the same newtype (`target_us() == Micros(300_000)`). Still plain data (`#[repr(transparent)]`, `serde` transparent, one `u64` per field on the C ABI); `Micros` has `saturating_add`/`saturating_sub`, `+=`/`-=` and `Ord`, and `Display`/`FromStr` on both for the input-log text format.
 
+### Changed
+- BREAKING: `EventRecord` is now `#[non_exhaustive]`; it is built by `Event::to_record` and field-assigned, never by an external struct literal (#2664).
+
 ## [0.3.0] - 2026-11-14
 ### Changed
 - `Error` derives its `Display` from `thiserror` like the workspace's other error enums; the messages are unchanged, and the crate gains a `thiserror` dependency (c6 C6-14).

@@ -102,8 +102,7 @@ use transmux::{
 };
 
 use webrtc_runtime::media::{
-    Datagram, MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
-    parse_remote_fingerprint,
+    Datagram, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };
 
 use crate::error::{MultimuxError, Result};
@@ -977,18 +976,15 @@ async fn whip_post_inner(
     let local_ice_ufrag = crate::secure_random::token(8);
     let local_ice_pwd = crate::secure_random::token(24);
     let mut media = MediaTransport::new(
-        MediaTransportConfig {
+        MediaTransportConfig::new(
             local_addr,
-            local_ice_ufrag: local_ice_ufrag.clone(),
-            local_ice_pwd: local_ice_pwd.clone(),
-            remote_ice_ufrag: parsed.remote_ufrag.clone(),
-            remote_ice_pwd: parsed.remote_pwd.clone(),
-            remote_fingerprint: parsed.remote_fingerprint.clone(),
-            is_controlling: false,
-            local_setup: SetupRole::Passive,
-            stun_server: None,
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-        },
+            local_ice_ufrag.clone(),
+            local_ice_pwd.clone(),
+            parsed.remote_ufrag.clone(),
+            parsed.remote_pwd.clone(),
+            SetupRole::Passive,
+            parsed.remote_fingerprint.clone(),
+        ),
         Instant::now(),
     )
     .map_err(|e| MultimuxError::Connect {
@@ -2139,21 +2135,19 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             Arc::new(UdpSocket::from_std(s).unwrap())
         };
         let mut media = MediaTransport::new(
-            MediaTransportConfig {
-                local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: crate::secure_random::token(8),
-                local_ice_pwd: crate::secure_random::token(24),
-                remote_ice_ufrag: crate::secure_random::token(8),
-                remote_ice_pwd: crate::secure_random::token(24),
-                remote_fingerprint: OFFER_FINGERPRINT.into(),
-                is_controlling: false,
-                local_setup: SetupRole::Passive,
-                // A STUN server arms the gatherer, which schedules a Binding
-                // retransmit — so `poll_timeout` returns `Some` with nothing
-                // inbound, the exact "vanished publisher" case under test.
-                stun_server: Some("127.0.0.1:9".parse().unwrap()),
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
-            },
+            // A STUN server arms the gatherer, which schedules a Binding
+            // retransmit — so `poll_timeout` returns `Some` with nothing
+            // inbound, the exact "vanished publisher" case under test.
+            MediaTransportConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                SetupRole::Passive,
+                OFFER_FINGERPRINT.into(),
+            )
+            .with_stun_server("127.0.0.1:9".parse().unwrap()),
             Instant::now(),
         )
         .unwrap();
@@ -2232,20 +2226,18 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         const TICK: Duration = Duration::from_micros(500);
         let t0 = clock_now();
         let mut media = MediaTransport::new(
-            MediaTransportConfig {
-                local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: crate::secure_random::token(8),
-                local_ice_pwd: crate::secure_random::token(24),
-                remote_ice_ufrag: crate::secure_random::token(8),
-                remote_ice_pwd: crate::secure_random::token(24),
-                remote_fingerprint: OFFER_FINGERPRINT.into(),
-                is_controlling: false,
-                local_setup: SetupRole::Passive,
-                // A STUN gatherer arms a retransmit schedule: a chain of
-                // timer deadlines with no inbound datagram at all.
-                stun_server: Some("127.0.0.1:9".parse().unwrap()),
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
-            },
+            // A STUN gatherer arms a retransmit schedule: a chain of
+            // timer deadlines with no inbound datagram at all.
+            MediaTransportConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                SetupRole::Passive,
+                OFFER_FINGERPRINT.into(),
+            )
+            .with_stun_server("127.0.0.1:9".parse().unwrap()),
             t0,
         )
         .unwrap();
@@ -2504,22 +2496,19 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 Arc::new(UdpSocket::from_std(s).unwrap())
             },
             media: MediaTransport::new(
-                MediaTransportConfig {
-                    local_addr: "127.0.0.1:0".parse().unwrap(),
-                    local_ice_ufrag: crate::secure_random::token(8),
-                    local_ice_pwd: crate::secure_random::token(24),
-                    remote_ice_ufrag: crate::secure_random::token(8),
-                    remote_ice_pwd: crate::secure_random::token(24),
-                    is_controlling: false,
-                    local_setup: SetupRole::Passive,
-                    stun_server: None,
-                    // This test never handshakes (it exercises the deferred
-                    // `avcC` capture gate); it only needs a transport that
-                    // `MediaTransport::new` accepts — i.e. a well-formed
-                    // fingerprint. See `OFFER_FINGERPRINT`.
-                    remote_fingerprint: OFFER_FINGERPRINT.into(),
-                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
-                },
+                // This test never handshakes (it exercises the deferred
+                // `avcC` capture gate); it only needs a transport that
+                // `MediaTransport::new` accepts — i.e. a well-formed
+                // fingerprint. See `OFFER_FINGERPRINT`.
+                MediaTransportConfig::new(
+                    "127.0.0.1:0".parse().unwrap(),
+                    crate::secure_random::token(8),
+                    crate::secure_random::token(24),
+                    crate::secure_random::token(8),
+                    crate::secure_random::token(24),
+                    SetupRole::Passive,
+                    OFFER_FINGERPRINT.into(),
+                ),
                 Instant::now(),
             )
             .unwrap(),
@@ -2590,18 +2579,15 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 Arc::new(UdpSocket::from_std(s).unwrap())
             },
             media: MediaTransport::new(
-                MediaTransportConfig {
-                    local_addr: "127.0.0.1:0".parse().unwrap(),
-                    local_ice_ufrag: crate::secure_random::token(8),
-                    local_ice_pwd: crate::secure_random::token(24),
-                    remote_ice_ufrag: crate::secure_random::token(8),
-                    remote_ice_pwd: crate::secure_random::token(24),
-                    is_controlling: false,
-                    local_setup: SetupRole::Passive,
-                    stun_server: None,
-                    remote_fingerprint: OFFER_FINGERPRINT.into(),
-                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
-                },
+                MediaTransportConfig::new(
+                    "127.0.0.1:0".parse().unwrap(),
+                    crate::secure_random::token(8),
+                    crate::secure_random::token(24),
+                    crate::secure_random::token(8),
+                    crate::secure_random::token(24),
+                    SetupRole::Passive,
+                    OFFER_FINGERPRINT.into(),
+                ),
                 Instant::now(),
             )
             .unwrap(),
@@ -2925,18 +2911,15 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     fn idle_media() -> MediaTransport {
         MediaTransport::new(
-            MediaTransportConfig {
-                local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: crate::secure_random::token(8),
-                local_ice_pwd: crate::secure_random::token(24),
-                remote_ice_ufrag: crate::secure_random::token(8),
-                remote_ice_pwd: crate::secure_random::token(24),
-                remote_fingerprint: OFFER_FINGERPRINT.into(),
-                is_controlling: false,
-                local_setup: SetupRole::Passive,
-                stun_server: None,
-                max_remote_candidates: MAX_REMOTE_CANDIDATES,
-            },
+            MediaTransportConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                SetupRole::Passive,
+                OFFER_FINGERPRINT.into(),
+            ),
             clock_now(),
         )
         .unwrap()

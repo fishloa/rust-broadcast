@@ -47,16 +47,16 @@ fn config() -> transmux::AVCDecoderConfigurationRecord {
 fn whep_answer_matches_golden() {
     let answer = multimux::output::whep::render_whep_answer_for_test(
         OFFER,
-        multimux::output::whep::WhepAnswerParams {
-            local_addr: "127.0.0.1:54321".parse().unwrap(),
-            local_ice_ufrag: "localufrag",
-            local_ice_pwd: "localpwdlocalpwdlocalpwd12",
-            setup_role: SetupRole::Active,
-            config: &config(),
-            fingerprint: "00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
+        multimux::output::whep::WhepAnswerParams::new(
+            "127.0.0.1:54321".parse().unwrap(),
+            "localufrag",
+            "localpwdlocalpwdlocalpwd12",
+            SetupRole::Active,
+            &config(),
+            "00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
          00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff",
-            candidates: &["0 1 udp 2130706431 127.0.0.1 54321 typ host".to_string()],
-        },
+            &["0 1 udp 2130706431 127.0.0.1 54321 typ host".to_string()],
+        ),
     )
     .expect("render the answer");
     let file = "golden/webrtc/whep-answer.golden";

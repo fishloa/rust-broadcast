@@ -232,16 +232,15 @@ fn starved_data_vs_nodata_classified_separately() {
 
 #[test]
 fn config_overrides_change_every_timeout() {
-    let cfg = Config {
-        start_timeout: std::time::Duration::from_millis(7),
-        stall_notice: std::time::Duration::from_millis(3),
-        stall_reconnect: std::time::Duration::from_millis(9),
-        backoff: broadcast_common::backoff::BackoffSteps {
+    let cfg = Config::default()
+        .with_start_timeout(std::time::Duration::from_millis(7))
+        .with_stall_notice(std::time::Duration::from_millis(3))
+        .with_stall_reconnect(std::time::Duration::from_millis(9))
+        .with_backoff(broadcast_common::backoff::BackoffSteps {
             steps: vec![std::time::Duration::from_millis(5)],
             cap: std::time::Duration::from_millis(11),
-        },
-        min_reconnect_interval: std::time::Duration::ZERO,
-    };
+        })
+        .with_min_reconnect_interval(std::time::Duration::ZERO);
     let mut c = TsHttpClient::new("u", cfg, ts(0));
     let _ = c.poll();
     c.on_response(200, &[], ts(0));

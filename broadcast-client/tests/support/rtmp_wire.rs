@@ -3,8 +3,9 @@ use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use url::Url;
 
-use broadcast_client::{Action, ClientIdentity, Config, Event, Session, TransportError};
+use broadcast_client::{Action, ClientIdentity, Config, ConnId, Event, Session, TransportError};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ServerConfig, ServerConnection, StreamOwned};
 
@@ -186,7 +187,7 @@ pub struct WireHost {
     pub connects: usize,
     pub offered_identity: usize,
     pub failed_connects: usize,
-    conn: Option<(u32, Wire)>,
+    conn: Option<(ConnId, Wire)>,
     start: Instant,
     server_ca: Option<Ca>,
     port: u16,
@@ -195,7 +196,7 @@ pub struct WireHost {
 impl WireHost {
     pub fn open(url: &str, config: Config, port: u16, server_ca: Option<Ca>) -> Self {
         Self {
-            session: Session::open(url, config, ts(0)).unwrap(),
+            session: Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap(),
             events: Vec::new(),
             connects: 0,
             offered_identity: 0,
@@ -281,7 +282,7 @@ impl WireHost {
         }
     }
 
-    fn close_with_error(&mut self, conn: u32, why: &str) {
+    fn close_with_error(&mut self, conn: ConnId, why: &str) {
         self.conn = None;
         self.session.on_closed(
             conn,

@@ -40,8 +40,7 @@ use sdp_types::{Attribute, Fingerprint, Session, TypedAttribute};
 use tokio::net::{TcpListener, UdpSocket};
 use tokio::sync::{mpsc, oneshot};
 use webrtc_runtime::media::{
-    MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
-    parse_remote_fingerprint,
+    MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
 };
 
 /// The WHIP-lite signalling port: OS-assigned (0) unless the first CLI
@@ -227,18 +226,15 @@ async fn main() {
     let local_ice_ufrag = rand_token(8);
     let local_ice_pwd = rand_token(24);
     let mut media = MediaTransport::new(
-        MediaTransportConfig {
+        MediaTransportConfig::new(
             local_addr,
-            local_ice_ufrag: local_ice_ufrag.clone(),
-            local_ice_pwd: local_ice_pwd.clone(),
-            remote_ice_ufrag: remote_ufrag,
-            remote_ice_pwd: remote_pwd,
-            is_controlling: false,
-            local_setup: SetupRole::Passive,
-            stun_server: None,
+            local_ice_ufrag.clone(),
+            local_ice_pwd.clone(),
+            remote_ufrag,
+            remote_pwd,
+            SetupRole::Passive,
             remote_fingerprint,
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-        },
+        ),
         std::time::Instant::now(),
     )
     .expect("build media transport");

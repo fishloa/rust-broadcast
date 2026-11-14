@@ -1,6 +1,7 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
+use url::Url;
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError};
+use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -91,7 +92,7 @@ pub enum Reply {
 
 #[derive(Debug, Clone)]
 pub struct Seen {
-    pub conn: u32,
+    pub conn: ConnId,
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub at_us: u64,
@@ -112,7 +113,7 @@ pub struct Host {
     pub chunk: usize,
     pub events: Vec<Event>,
     pub seen: Vec<Seen>,
-    pub closes: Vec<u32>,
+    pub closes: Vec<ConnId>,
     pub wakes: BTreeSet<u64>,
     routes: HashMap<String, Vec<Reply>>,
     hits: HashMap<String, usize>,
@@ -122,7 +123,7 @@ pub struct Host {
 
 impl Host {
     pub fn new(url: &str, config: Config) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         Self {
             session,
             now: 0,
@@ -167,8 +168,13 @@ impl Host {
                 } => {
                     let seen = Seen {
                         conn,
-                        url,
-                        headers,
+                        url: url.to_string(),
+                        headers: headers
+                            .iter()
+                            .map(|(n, v)| {
+                                (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
+                            })
+                            .collect(),
                         at_us: self.now,
                     };
                     self.seen.push(seen.clone());
@@ -321,11 +327,11 @@ pub fn drain_events(session: &mut Session) -> Vec<Event> {
     out
 }
 
-pub fn http_requests(actions: &[Action]) -> Vec<(u32, String)> {
+pub fn http_requests(actions: &[Action]) -> Vec<(ConnId, String)> {
     actions
         .iter()
         .filter_map(|a| match a {
-            Action::HttpRequest { conn, url, .. } => Some((*conn, url.clone())),
+            Action::HttpRequest { conn, url, .. } => Some((*conn, url.to_string())),
             _ => None,
         })
         .collect()

@@ -1,7 +1,8 @@
 use crate::support;
+use url::Url;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, Event, Hint, Session, Status, TrackId,
+    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, Session, Status, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::ts_shift::{PACKET, Shift, VIDEO_TIMESCALE, pes_starts, pts27, shift_pes};
@@ -28,7 +29,7 @@ enum ClockState {
 
 struct LiveHost {
     session: Session,
-    conn: u32,
+    conn: ConnId,
     clock: ClockState,
     events: Vec<Event>,
     times: Vec<u64>,
@@ -40,7 +41,7 @@ impl LiveHost {
     fn open(mut config: Config) -> Option<Self> {
         config.record_buffer_inputs = true;
         let (status, headers) = support::read_tf1_headers()?;
-        let mut session = Session::open(URL, config, ts(0)).unwrap();
+        let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
         let conn = loop {
             match session.poll(ts(0)).expect("first request") {
                 Action::HttpRequest { conn, .. } => break conn,
@@ -423,7 +424,7 @@ const FINITE_PLAY_TICKS: u64 = 30 * PCR_HZ_U;
 
 fn finite_pass(
     session: &mut Session,
-    conn: u32,
+    conn: ConnId,
     bytes: &[u8],
     now: u64,
     host_position: Option<u64>,
@@ -461,7 +462,7 @@ fn finite_pass(
     Some(out)
 }
 
-fn request_conn(session: &mut Session, now: u64) -> u32 {
+fn request_conn(session: &mut Session, now: u64) -> ConnId {
     let mut conn = None;
     while let Some(a) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
@@ -495,7 +496,7 @@ fn a_looped_small_finite_ts_is_not_paused_by_the_hosts_stale_position() {
 fn finite_loop(file: &[u8]) {
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(URL, config, ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
     let conn = request_conn(&mut session, 0);
     let first = skip_none!(finite_pass(&mut session, conn, file, 0, None));
     assert!(

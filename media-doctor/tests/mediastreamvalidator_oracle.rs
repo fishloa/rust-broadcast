@@ -868,37 +868,21 @@ fn origin_low_latency_shape_validates_clean() {
             uri: "seg0.ts".into(),
             duration: DecimalSeconds::new(4.0).unwrap(),
             parts: vec![
-                PartSpec {
-                    uri: "seg0.0.m4s".into(),
-                    duration: DecimalSeconds::new(1.0).unwrap(),
-                    independent: true,
-                    ..Default::default()
-                },
-                PartSpec {
-                    uri: "seg0.1.m4s".into(),
-                    duration: DecimalSeconds::new(1.0).unwrap(),
-                    ..Default::default()
-                },
-                PartSpec {
-                    uri: "seg0.2.m4s".into(),
-                    duration: DecimalSeconds::new(1.0).unwrap(),
-                    ..Default::default()
-                },
-                PartSpec {
-                    uri: "seg0.3.m4s".into(),
-                    duration: DecimalSeconds::new(1.0).unwrap(),
-                    ..Default::default()
-                },
+                PartSpec::new("seg0.0.m4s".into(), DecimalSeconds::new(1.0).unwrap())
+                    .with_independent(true),
+                PartSpec::new("seg0.1.m4s".into(), DecimalSeconds::new(1.0).unwrap()),
+                PartSpec::new("seg0.2.m4s".into(), DecimalSeconds::new(1.0).unwrap()),
+                PartSpec::new("seg0.3.m4s".into(), DecimalSeconds::new(1.0).unwrap()),
             ],
             ..Default::default()
         }],
         endlist: true,
-        low_latency: Some(LowLatencyConfig {
-            part_target: Some(DecimalSeconds::new(1.0).unwrap()),
-            part_hold_back: Some(DecimalSeconds::new(3.0).unwrap()),
-            can_block_reload: true,
-            ..LowLatencyConfig::default()
-        }),
+        low_latency: Some(
+            LowLatencyConfig::default()
+                .with_part_target(DecimalSeconds::new(1.0).unwrap())
+                .with_part_hold_back(DecimalSeconds::new(3.0).unwrap())
+                .with_can_block_reload(true),
+        ),
         ..Default::default()
     };
     fs::write(dir.join("out.m3u8"), playlist.to_m3u8().unwrap()).expect("write out.m3u8");

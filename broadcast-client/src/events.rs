@@ -565,13 +565,13 @@ pub enum Action {
         /// Connection id.
         conn: ConnId,
         /// HTTP method.
-        method: String,
+        method: http::Method,
         /// URL to request.
-        url: String,
+        url: url::Url,
         /// Headers to send. A request resuming a transfer closed for inactivity (see
         /// [`Config::segment_inactivity_timeout`]) carries its own `Range` and `If-Range`
         /// headers here and a `byte_range` of `None`; send them as given.
-        headers: Vec<(String, String)>,
+        headers: http::HeaderMap,
         /// Byte range to request (`byte_range.range_header()` is the `Range` field
         /// value): RFC 9110 §14.2, first and last inclusive.
         byte_range: Option<broadcast_common::range::ByteSpan>,
@@ -651,7 +651,7 @@ impl core::fmt::Debug for Action {
                 byte_range,
                 identity,
             } => {
-                let names: Vec<&str> = headers.iter().map(|(k, _)| k.as_str()).collect();
+                let names: Vec<&str> = headers.keys().map(|k| k.as_str()).collect();
                 f.debug_struct("HttpRequest")
                     .field("conn", conn)
                     .field("method", method)

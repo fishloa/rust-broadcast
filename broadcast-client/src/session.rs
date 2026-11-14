@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use url::Url;
 
 use crate::ClientIdentityScope;
+use crate::ConnId;
 use crate::Hint;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
@@ -81,10 +82,10 @@ pub struct Session {
     identity: Option<alloc::sync::Arc<crate::ClientIdentity>>,
     redirect_count: u32,
     next_conn: u32,
-    live_conn: Option<u32>,
-    known_conns: HashMap<u32, Url>,
-    refused_conns: HashSet<u32>,
-    conn_auth: HashMap<u32, ConnAuth>,
+    live_conn: Option<ConnId>,
+    known_conns: HashMap<ConnId, Url>,
+    refused_conns: HashSet<ConnId>,
+    conn_auth: HashMap<ConnId, ConnAuth>,
     ts_wake: Option<Timestamp>,
     actions: VecDeque<Action>,
     events: EventQueue,
@@ -100,7 +101,7 @@ pub struct Session {
 
 impl Session {
     /// Open a session.
-    pub fn open(url: &str, config: Config, now: Timestamp) -> Result<Self, Error> {
+    pub fn open(url: Url, config: Config, now: Timestamp) -> Result<Self, Error> {
         Self::open_with_memory(url, config, now, None)
     }
 
@@ -115,13 +116,13 @@ impl Session {
 
     /// Open a session seeded with stall memory.
     pub fn open_with_memory(
-        url: &str,
+        url: Url,
         config: Config,
         now: Timestamp,
         seed: Option<buffering_runtime::StallMemorySnapshot>,
     ) -> Result<Self, Error> {
         let now_us = now.as_micros();
-        let parsed = Url::parse(url).map_err(|e| Error::InvalidUrl(e.to_string()))?;
+        let parsed = url;
         let userinfo = broadcast_auth::credentials_from_url(&parsed)
             .map_err(|e| Error::InvalidUrl(e.to_string()))?;
         if let Some(creds) = &userinfo {
@@ -156,7 +157,9 @@ impl Session {
             || (is_srt_scheme && srt_allowed)
             || (is_rtmp_scheme && rtmp_allowed))
         {
-            return Err(Error::UnsupportedScheme(scheme.to_string()));
+            return Err(Error::UnsupportedScheme {
+                scheme: scheme.to_string(),
+            });
         }
         if is_rtsp_scheme && parsed.host().is_none() {
             return Err(Error::InvalidUrl("missing host".to_string()));
@@ -354,7 +357,7 @@ impl Session {
     /// Response callback; `now` is the host clock when the response head arrived.
     pub fn on_response(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         status: u16,
         headers: &[(String, String)],
         now: Timestamp,
@@ -412,9 +415,9 @@ impl Session {
                 );
                 self.actions.push_back(Action::HttpRequest {
                     conn: new_conn,
-                    method: "GET".to_string(),
-                    url: target.to_string(),
-                    headers: new_headers,
+                    method: http::Method::GET,
+                    url: target.clone(),
+                    headers: crate::headers::to_header_map(&new_headers),
                     byte_range: None,
                     identity: None,
                 });
@@ -466,9 +469,9 @@ impl Session {
                     );
                     self.actions.push_back(Action::HttpRequest {
                         conn: new_conn,
-                        method: "GET".to_string(),
-                        url: req_url.to_string(),
-                        headers: new_headers,
+                        method: http::Method::GET,
+                        url: req_url.clone(),
+                        headers: crate::headers::to_header_map(&new_headers),
                         byte_range: None,
                         identity: None,
                     });
@@ -515,7 +518,7 @@ impl Session {
     }
 
     /// Data callback.
-    pub fn on_data(&mut self, conn: u32, bytes: &[u8], now: Timestamp) {
+    pub fn on_data(&mut self, conn: ConnId, bytes: &[u8], now: Timestamp) {
         let now_us = now.as_micros();
         if self.closed {
             return;
@@ -595,7 +598,7 @@ impl Session {
     }
 
     /// Closed callback.
-    pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now: Timestamp) {
+    pub fn on_closed(&mut self, conn: ConnId, error: Option<TransportError>, now: Timestamp) {
         let now_us = now.as_micros();
         if self.closed {
             return;
@@ -655,7 +658,7 @@ impl Session {
     /// The host established the TCP connection requested by [`Action::TcpConnect`] (RTSP).
     ///
     /// A failed connect is reported with [`Session::on_closed`] and an error instead.
-    pub fn on_connected(&mut self, conn: u32) {
+    pub fn on_connected(&mut self, conn: ConnId) {
         if self.closed {
             return;
         }
@@ -1110,8 +1113,8 @@ impl Session {
             return;
         }
         self.closed = true;
-        let mut seen: BTreeSet<u32> = BTreeSet::new();
-        let mut order: Vec<u32> = Vec::new();
+        let mut seen: BTreeSet<ConnId> = BTreeSet::new();
+        let mut order: Vec<ConnId> = Vec::new();
         for action in self.actions.drain(..) {
             if let Action::Close { conn } = action
                 && seen.insert(conn)
@@ -1120,7 +1123,7 @@ impl Session {
             }
         }
         self.push_srt_shutdown();
-        let mut live: Vec<u32> = self.known_conns.keys().copied().collect();
+        let mut live: Vec<ConnId> = self.known_conns.keys().copied().collect();
         live.extend(self.refused_conns.iter().copied());
         if let Some(h) = self.adaptive.as_ref() {
             live.extend(h.conns());
@@ -1323,14 +1326,15 @@ impl Session {
         self.events.extend(evs);
     }
 
-    fn alloc_conn(&mut self, url: Url) -> u32 {
-        let id = loop {
+    fn alloc_conn(&mut self, url: Url) -> ConnId {
+        let raw = loop {
             let candidate = self.next_conn;
             self.next_conn = candidate.checked_add(1).unwrap_or(FIRST_CONN_ID);
-            if !self.known_conns.contains_key(&candidate) {
+            if !self.known_conns.contains_key(&ConnId::new(candidate)) {
                 break candidate;
             }
         };
+        let id = ConnId::new(raw);
         self.known_conns.insert(id, url);
         id
     }
@@ -1346,13 +1350,8 @@ impl Session {
                 url,
                 identity: slot,
                 ..
-            } => {
-                let Ok(target) = Url::parse(url) else {
-                    return;
-                };
-                if target.scheme() == SCHEME_HTTPS && (any || target.origin() == session.origin()) {
-                    *slot = Some(identity.clone());
-                }
+            } if url.scheme() == SCHEME_HTTPS && (any || url.origin() == session.origin()) => {
+                *slot = Some(identity.clone());
             }
             Action::TcpConnect {
                 host,
@@ -1387,14 +1386,14 @@ impl Session {
     }
 
     fn close_refused_conns(&mut self) {
-        let mut conns: Vec<u32> = self.refused_conns.drain().collect();
+        let mut conns: Vec<ConnId> = self.refused_conns.drain().collect();
         conns.sort_unstable();
         for conn in conns {
             self.actions.push_back(Action::Close { conn });
         }
     }
 
-    fn fail_connect(&mut self, conn: u32) {
+    fn fail_connect(&mut self, conn: ConnId) {
         self.known_conns.remove(&conn);
         self.conn_auth.remove(&conn);
         if self.live_conn == Some(conn) {
@@ -1527,15 +1526,15 @@ impl Session {
                 );
                 self.actions.push_back(Action::HttpRequest {
                     conn,
-                    method: "GET".to_string(),
-                    url: target.to_string(),
-                    headers,
+                    method: http::Method::GET,
+                    url: target.clone(),
+                    headers: crate::headers::to_header_map(&headers),
                     byte_range: None,
                     identity: None,
                 });
             }
             TsAction::Abort => {
-                let mut conns: Vec<u32> = self.known_conns.keys().copied().collect();
+                let mut conns: Vec<ConnId> = self.known_conns.keys().copied().collect();
                 conns.sort_unstable();
                 self.push_srt_shutdown();
                 for conn in conns {
@@ -1635,18 +1634,22 @@ mod tests {
 
     #[test]
     fn alloc_conn_skips_live_ids_when_the_counter_wraps() {
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
         let url = Url::parse("http://example/live.ts").unwrap();
         session.next_conn = u32::MAX;
         let a = session.alloc_conn(url.clone());
-        assert_eq!(a, u32::MAX);
+        assert_eq!(a, ConnId::new(u32::MAX));
         let b = session.alloc_conn(url.clone());
-        assert_eq!(b, FIRST_CONN_ID);
+        assert_eq!(b, ConnId::new(FIRST_CONN_ID));
         session.next_conn = u32::MAX;
         let c = session.alloc_conn(url);
         assert!(c != a && c != b, "reused live id {c}");
-        assert_ne!(c, 0);
+        assert_ne!(c, ConnId::new(0));
     }
 
     #[test]
@@ -1656,8 +1659,12 @@ mod tests {
         let media = transmux::TsDemux::new().unpackage(&data[..]).unwrap();
         let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
         assert_eq!(specs.len(), 2);
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
         session.source.inject(Some(Event::Tracks(specs.clone())));
         session.drain_source();
         assert!(specs.iter().all(|s| session.buffer.has_track(s.track_id)));
@@ -1697,8 +1704,12 @@ mod tests {
         };
         let low = with_id(&audio, LOW_AUDIO);
         let high = with_id(&audio, HIGH_AUDIO);
-        let mut session =
-            Session::open("http://example/live.ts", Config::default(), Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
         assert_eq!(session.default_rendered_tracks(), (None, None));
         session
             .source
@@ -1769,7 +1780,12 @@ mod tests {
             record_buffer_inputs: true,
             ..Config::default()
         };
-        let mut session = Session::open("http://example/live.ts", config, Timestamp::ZERO).unwrap();
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            config,
+            Timestamp::ZERO,
+        )
+        .unwrap();
         session
             .source
             .inject(Some(Event::Tracks(vec![video.spec.clone()])));

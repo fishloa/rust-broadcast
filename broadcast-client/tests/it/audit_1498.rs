@@ -1,6 +1,7 @@
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
-use broadcast_client::{Action, Config, Credentials, Session};
+use broadcast_client::{Action, Config, ConnId, Credentials, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -11,11 +12,17 @@ const TS_URL: &str = "http://cam.local:8080/stream/live.ts?ch=1&q=hd";
 const ORIGIN_FORM: &str = "/stream/live.ts?ch=1&q=hd";
 const REALM: &str = "cam";
 
-fn first_request(session: &mut Session, now: u64) -> (u32, Vec<(String, String)>) {
+fn first_request(session: &mut Session, now: u64) -> (ConnId, Vec<(String, String)>) {
     let mut found = None;
     while let Some(action) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn, headers, .. } = action {
-            found = Some((conn, headers));
+            found = Some((
+                conn,
+                headers
+                    .iter()
+                    .map(|(n, v)| (n.as_str().to_string(), v.to_str().unwrap_or("").to_string()))
+                    .collect(),
+            ));
         }
     }
     found.expect("an HttpRequest")
@@ -43,7 +50,7 @@ fn digest_field(header: &str, name: &str) -> String {
 fn digest_uri_is_the_origin_form_request_target_for_http() {
     let verifier =
         Verifier::new(Credentials::new("user", "pass"), REALM).expect("OS random source");
-    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -72,7 +79,12 @@ const SECOND_US: u64 = 1_000_000;
 
 #[test]
 fn cookie_max_age_counts_from_the_clock_of_the_response() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let (conn, _) = first_request(&mut session, 0);
     session.on_response(
         conn,

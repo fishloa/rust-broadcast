@@ -3,7 +3,7 @@ use crate::support;
 use std::collections::HashMap;
 
 use broadcast_client::{
-    Action, Config, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
+    Action, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -55,13 +55,13 @@ fn reconnect_attempts(events: &[Event]) -> Vec<u64> {
         .collect()
 }
 
-fn respond_ok(session: &mut Session, conn: u32, body: &[u8], now: u64) {
+fn respond_ok(session: &mut Session, conn: ConnId, body: &[u8], now: u64) {
     session.on_response(conn, 200, &[], ts(0));
     session.on_data(conn, body, ts(now));
     session.on_closed(conn, None, ts(now));
 }
 
-fn single_http_request(actions: &[Action]) -> (u32, String) {
+fn single_http_request(actions: &[Action]) -> (ConnId, String) {
     let reqs = http_requests(actions);
     assert_eq!(reqs.len(), 1, "expected exactly one request in {actions:?}");
     reqs[0].clone()
@@ -77,7 +77,7 @@ fn wake_times(actions: &[Action]) -> Vec<u64> {
         .collect()
 }
 
-fn closes(actions: &[Action]) -> Vec<u32> {
+fn closes(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -125,7 +125,8 @@ fn auto_detects_m3u8_suffix() {
         "http://origin.test/hls/index.M3U8?token=abc",
         "http://origin.test/hls/index.m3u",
     ] {
-        let mut s = Session::open(url, Config::default(), ts(0)).expect("open");
+        let mut s =
+            Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).expect("open");
         let first = drain_actions(&mut s, 0);
         let (conn, req_url) = single_http_request(&first);
         assert_eq!(req_url, url);
@@ -145,8 +146,12 @@ fn auto_detects_m3u8_suffix() {
         );
     }
 
-    let mut ts_host =
-        Session::open("http://origin.test/hls/live.ts", Config::default(), ts(0)).expect("open");
+    let mut ts_host = Session::open(
+        Url::parse("http://origin.test/hls/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ts_host, 0));
     respond_ok(&mut ts_host, conn, &ts_playlist(), 0);
     assert!(
@@ -159,7 +164,12 @@ fn auto_detects_m3u8_suffix() {
         new_config.kind = SourceKind::TsHttp;
         new_config
     };
-    let mut ts2 = Session::open("http://origin.test/hls/index.m3u8", forced, ts(0)).expect("open");
+    let mut ts2 = Session::open(
+        Url::parse("http://origin.test/hls/index.m3u8").unwrap(),
+        forced,
+        ts(0),
+    )
+    .expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ts2, 0));
     respond_ok(&mut ts2, conn, &ts_playlist(), 0);
     assert!(
@@ -279,7 +289,7 @@ fn media_playlist_fmp4_segments_emit_tracks_then_samples() {
 
 #[test]
 fn master_emits_variants_event_then_fetches_chosen_variant() {
-    let mut s = Session::open(MASTER_URL, hls_config(), ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(MASTER_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, url) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(url, MASTER_URL);
     respond_ok(&mut s, conn, two_variant_master_text().as_bytes(), 0);
@@ -304,8 +314,12 @@ fn master_emits_variants_event_then_fetches_chosen_variant() {
     let real = String::from_utf8(test_fixtures::read("hls/real/bipbop-ts/master.m3u8"))
         .expect("utf8 bipbop master");
     let n_variants = real.matches("#EXT-X-STREAM-INF").count();
-    let mut s2 =
-        Session::open("http://origin.test/bip/master.m3u8", hls_config(), ts(0)).expect("open");
+    let mut s2 = Session::open(
+        Url::parse("http://origin.test/bip/master.m3u8").unwrap(),
+        hls_config(),
+        ts(0),
+    )
+    .expect("open");
     let (c2, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c2, real.as_bytes(), 0);
     let evs = drain_events(&mut s2);
@@ -331,13 +345,11 @@ fn variant_policy_in_config_applied() {
     let by_bandwidth = {
         let mut new_config = Config::default();
         new_config.kind = SourceKind::Hls;
-        new_config.variant_policy = hls_runtime::client::VariantPolicy {
-            max_bandwidth: Some(300_000),
-            ..Default::default()
-        };
+        new_config.variant_policy =
+            hls_runtime::client::VariantPolicy::default().with_max_bandwidth(300_000);
         new_config
     };
-    let mut s = Session::open(MASTER_URL, by_bandwidth, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(MASTER_URL).unwrap(), by_bandwidth, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, two_variant_master_text().as_bytes(), 0);
     let sel = drain_events(&mut s)
@@ -354,13 +366,11 @@ fn variant_policy_in_config_applied() {
     let by_height = {
         let mut new_config = Config::default();
         new_config.kind = SourceKind::Hls;
-        new_config.variant_policy = hls_runtime::client::VariantPolicy {
-            max_height: Some(180),
-            ..Default::default()
-        };
+        new_config.variant_policy =
+            hls_runtime::client::VariantPolicy::default().with_max_height(180);
         new_config
     };
-    let mut s2 = Session::open(MASTER_URL, by_height, ts(0)).expect("open");
+    let mut s2 = Session::open(Url::parse(MASTER_URL).unwrap(), by_height, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, conn, two_variant_master_text().as_bytes(), 0);
     let (_, url2) = single_http_request(&drain_actions(&mut s2, 0));
@@ -372,7 +382,7 @@ fn select_variant_switches_and_emits_discontinuity() {
     let mut h = two_variant_host(hls_config());
     h.run_until(|evs| evs.iter().any(is_sample), 100);
     let before = h.events.len();
-    let in_flight: Vec<u32> = h.seen.iter().map(|s| s.conn).collect();
+    let in_flight: Vec<ConnId> = h.seen.iter().map(|s| s.conn).collect();
     assert!(h.hits("http://origin.test/m/high/index0.ts") == 1);
     h.session.select_variant(0).expect("select low");
     h.collect();
@@ -395,8 +405,12 @@ fn select_variant_switches_and_emits_discontinuity() {
         Err(Error::NoSuchVariant(9))
     ));
 
-    let mut ts_host =
-        Session::open("http://origin.test/x.ts", Config::default(), ts(0)).expect("open");
+    let mut ts_host = Session::open(
+        Url::parse("http://origin.test/x.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .expect("open");
     assert!(matches!(ts_host.select_variant(0), Err(Error::NotHls)));
 }
 
@@ -443,7 +457,7 @@ fn live_blocking_reload_query_in_request_url() {
               #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2.0,\nseg100.m4s\n\
               #EXT-X-PART:DURATION=0.5,URI=\"p101.0.m4s\",INDEPENDENT=YES\n";
     let url = "http://origin.test/ll/live.m3u8";
-    let mut s = Session::open(url, hls_config(), ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(url).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, first) = single_http_request(&drain_actions(&mut s, 0));
     assert_eq!(first, url, "the first fetch is a plain GET");
     respond_ok(&mut s, conn, ll.as_bytes(), 0);
@@ -464,7 +478,8 @@ fn live_blocking_reload_query_in_request_url() {
 #[test]
 fn prefetch_concurrent_connections_tracked() {
     let bodies = cmaf_bodies();
-    let mut s = Session::open(CMAF_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(CMAF_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &bodies[CMAF_PLAYLIST_URL], 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -473,7 +488,7 @@ fn prefetch_concurrent_connections_tracked() {
         4,
         "init + 3 segments in flight at once: {reqs:?}"
     );
-    let mut conns: Vec<u32> = reqs.iter().map(|(c, _)| *c).collect();
+    let mut conns: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();
     conns.sort_unstable();
     conns.dedup();
     assert_eq!(conns.len(), 4, "each prefetch has its own connection");
@@ -481,7 +496,8 @@ fn prefetch_concurrent_connections_tracked() {
     for (c, _) in &reqs {
         s.on_response(*c, 200, &[], ts(0));
     }
-    let bodies_by_conn: Vec<(u32, &Vec<u8>)> = reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
+    let bodies_by_conn: Vec<(ConnId, &Vec<u8>)> =
+        reqs.iter().map(|(c, u)| (*c, &bodies[u])).collect();
     let max_len = bodies_by_conn
         .iter()
         .map(|(_, b)| b.len())
@@ -544,7 +560,8 @@ fn session_samples_equal_bare_hls_client_oracle() {
 
 #[test]
 fn backoff_2_4_8_then_10_forever() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let mut now = 0u64;
     let mut deltas = Vec::new();
     let mut attempts = Vec::new();
@@ -750,7 +767,8 @@ fn oversized_playlist_body_closes_and_fails() {
         new_config
     };
     let exact = padded_playlist(limit);
-    let mut ok = Session::open(TS_PLAYLIST_URL, config.clone(), ts(0)).expect("open");
+    let mut ok =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config.clone(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut ok, 0));
     respond_ok(&mut ok, conn, &exact, 0);
     assert_eq!(
@@ -759,7 +777,7 @@ fn oversized_playlist_body_closes_and_fails() {
         "a body of exactly the limit is accepted"
     );
 
-    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     s.on_response(conn, 200, &[], ts(0));
     s.on_data(conn, &exact, ts(0));
@@ -789,7 +807,7 @@ fn oversized_segment_body_closes_and_fails() {
         new_config.max_segment_bytes = limit;
         new_config
     };
-    let mut s = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -811,7 +829,8 @@ fn oversized_segment_body_closes_and_fails() {
 
 #[test]
 fn request_timeout_aborts_playlist_and_segment() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     assert!(drain_actions(&mut s, 20 * SEC - 1).is_empty());
     let aborted = drain_actions(&mut s, 20 * SEC);
@@ -821,11 +840,11 @@ fn request_timeout_aborts_playlist_and_segment() {
 
     let mut config = hls_config();
     config.segment_inactivity_timeout = std::time::Duration::from_nanos(u64::MAX);
-    let mut s2 = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut s2 = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (c, _) = single_http_request(&drain_actions(&mut s2, 0));
     respond_ok(&mut s2, c, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s2, 0));
-    let seg_conns: Vec<u32> = reqs.iter().map(|(c, _)| *c).collect();
+    let seg_conns: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();
     assert_eq!(seg_conns.len(), 2);
     for t in [20 * SEC, 59 * SEC + 999_999] {
         assert!(
@@ -992,7 +1011,8 @@ fn per_request_redirect_followed_and_counted_separately() {
 
 #[test]
 fn credentials_401_on_playlist_waits_no_retry() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     s.on_response(
         conn,
@@ -1030,18 +1050,22 @@ fn credentials_401_on_playlist_waits_no_retry() {
     let (_, url) = single_http_request(&actions);
     assert_eq!(url, TS_PLAYLIST_URL);
     match &actions[0] {
-        Action::HttpRequest { headers, .. } => assert!(
-            headers
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer tok-123")
-        ),
+        Action::HttpRequest { headers, .. } => {
+            assert!(
+                headers
+                    .iter()
+                    .any(|(k, v)| k.as_str().eq_ignore_ascii_case("authorization")
+                        && v == "Bearer tok-123")
+            )
+        }
         other => panic!("{other:?}"),
     }
 }
 
 #[test]
 fn late_callbacks_after_close_ignored() {
-    let mut s = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).expect("open");
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
     respond_ok(&mut s, conn, &ts_playlist(), 0);
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -1050,7 +1074,7 @@ fn late_callbacks_after_close_ignored() {
     s.close();
     let mut closed = closes(&drain_actions(&mut s, 0));
     closed.sort_unstable();
-    let mut expected: Vec<u32> = reqs.iter().map(|(c, _)| *c).collect();
+    let mut expected: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();
     expected.sort_unstable();
     assert_eq!(closed, expected);
     for (c, _) in &reqs {
@@ -1058,7 +1082,7 @@ fn late_callbacks_after_close_ignored() {
         s.on_data(*c, &ts_segment(0), ts(0));
         s.on_closed(*c, None, ts(0));
     }
-    s.on_data(9_999, b"x", ts(0));
+    s.on_data(ConnId::new(9_999), b"x", ts(0));
     assert!(s.next_event().is_none());
     assert!(s.poll(ts(1)).is_none());
 
@@ -1068,7 +1092,7 @@ fn late_callbacks_after_close_ignored() {
         new_config.max_manifest_bytes = 100;
         new_config
     };
-    let mut o = Session::open(TS_PLAYLIST_URL, config, ts(0)).expect("open");
+    let mut o = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let (conn, _) = single_http_request(&drain_actions(&mut o, 0));
     o.on_response(conn, 200, &[], ts(1));
     o.on_data(conn, &[b'#'; 101], ts(0));

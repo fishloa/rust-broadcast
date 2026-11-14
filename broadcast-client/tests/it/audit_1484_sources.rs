@@ -1,10 +1,11 @@
 use crate::support;
+use url::Url;
 
 use std::collections::HashMap;
 
 use broadcast_client::{
-    Action, BufferEvent, Config, Credentials, ErrorKind, Event, Session, SourceKind, Status,
-    TrackId,
+    Action, BufferEvent, Config, ConnId, Credentials, ErrorKind, Event, Session, SourceKind,
+    Status, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -41,7 +42,7 @@ fn actions(session: &mut Session, now: u64) -> Vec<Action> {
     out
 }
 
-fn close_conns(actions: &[Action]) -> Vec<u32> {
+fn close_conns(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -62,7 +63,8 @@ fn encrypted_playlist(key_uri: &str) -> Vec<u8> {
 
 #[test]
 fn hls_close_drops_queued_actions_and_closes_the_live_request_once() {
-    let mut session = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).unwrap();
     let first = session.poll(ts(0)).expect("first action");
     let conn = match first {
         Action::HttpRequest { conn, .. } => conn,
@@ -81,7 +83,8 @@ fn hls_close_drops_queued_actions_and_closes_the_live_request_once() {
 
 #[test]
 fn rtsp_close_drops_queued_sends_and_closes_the_connection_once() {
-    let mut session = Session::open(RTSP_URL, Config::default(), ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse(RTSP_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = match session.poll(ts(0)) {
         Some(Action::TcpConnect { conn, .. }) => conn,
         other => panic!("{other:?}"),
@@ -128,7 +131,8 @@ fn rtsp_cseq(request: &[u8]) -> u32 {
 
 #[test]
 fn rtsp_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
-    let mut session = Session::open(RTSP_URL, Config::default(), ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse(RTSP_URL).unwrap(), Config::default(), ts(0)).unwrap();
     session
         .set_credentials(Credentials::new("user", "pass"))
         .unwrap();
@@ -282,7 +286,7 @@ fn cross_origin_key_401_reports_key_fetch_failed_once_then_fatal() {
     assert_eq!(errors.last(), Some(&(&expected, true)), "{errors:?}");
 }
 
-fn live_events(session: &mut Session, conn: u32, bytes: &[u8], base_us: u64) -> Vec<Event> {
+fn live_events(session: &mut Session, conn: ConnId, bytes: &[u8], base_us: u64) -> Vec<Event> {
     let mut out = Vec::new();
     let mut now = base_us;
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
@@ -304,7 +308,7 @@ fn live_events(session: &mut Session, conn: u32, bytes: &[u8], base_us: u64) -> 
     out
 }
 
-fn first_request(session: &mut Session, now: u64) -> u32 {
+fn first_request(session: &mut Session, now: u64) -> ConnId {
     actions(session, now)
         .into_iter()
         .find_map(|a| match a {
@@ -327,7 +331,7 @@ fn buffer_events(events: &[Event]) -> Vec<BufferEvent> {
 fn second_connection_buffer_events(first_headers: &[(String, String)]) -> Option<Vec<BufferEvent>> {
     let bytes = support::read_tf1_bytes()?;
     let (status, live_headers) = support::read_tf1_headers()?;
-    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let first = first_request(&mut session, 0);
     session.on_response(first, status, first_headers, ts(0));
     session.on_data(first, &bytes[..bytes.len() / 4], ts(0));
@@ -370,7 +374,7 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
     let drive = |config: Config| {
-        let mut s = Session::open(TS_URL, config, ts(0)).unwrap();
+        let mut s = Session::open(Url::parse(TS_URL).unwrap(), config, ts(0)).unwrap();
         let c = first_request(&mut s, 0);
         s.on_response(c, status, &headers, ts(0));
         for chunk in bytes.chunks(CHUNK) {
@@ -427,7 +431,7 @@ fn queued_sample_bytes_are_capped_by_dropping_the_oldest_samples() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
     let drive = |config: Config| {
-        let mut s = Session::open(TS_URL, config, ts(0)).unwrap();
+        let mut s = Session::open(Url::parse(TS_URL).unwrap(), config, ts(0)).unwrap();
         let c = first_request(&mut s, 0);
         s.on_response(c, status, &headers, ts(0));
         for chunk in bytes.chunks(CHUNK) {
@@ -475,8 +479,8 @@ fn kind_is_unaffected_by_rtsp_url_with_forced_ts_http() {
         new_config
     };
     assert!(matches!(
-        Session::open(RTSP_URL, config, ts(0)),
-        Err(broadcast_client::error::Error::UnsupportedScheme(..))
+        Session::open(Url::parse(RTSP_URL).unwrap(), config, ts(0)),
+        Err(broadcast_client::error::Error::UnsupportedScheme { .. })
     ));
 }
 
@@ -568,7 +572,7 @@ fn stalled_count(events: &[Event]) -> usize {
 fn ts_time_jump_does_not_flood_stall_notices() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, status, &headers, ts(0));
     for chunk in bytes.chunks(65_536) {
@@ -601,7 +605,7 @@ fn ts_time_jump_does_not_flood_stall_notices() {
 fn ts_time_jump_to_the_end_of_time_terminates() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, status, &headers, ts(0));
     for chunk in bytes.chunks(65_536) {
@@ -658,7 +662,7 @@ fn polls_until_idle(session: &mut Session, now: Timestamp) -> usize {
 fn ts_poll_at_the_end_of_time_goes_idle() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, status, &headers, ts(0));
     for chunk in bytes.chunks(65_536) {
@@ -694,8 +698,12 @@ fn rtsp_poll_at_the_end_of_time_goes_idle() {
 fn ts_session_started_at_the_end_of_time_goes_idle() {
     let bytes = tf1_bytes!();
     let (status, headers) = tf1_headers!();
-    let mut session =
-        Session::open(TS_URL, Config::default(), Timestamp::from_nanos(u64::MAX)).unwrap();
+    let mut session = Session::open(
+        Url::parse(TS_URL).unwrap(),
+        Config::default(),
+        Timestamp::from_nanos(u64::MAX),
+    )
+    .unwrap();
     let conn = match session.poll(Timestamp::from_nanos(u64::MAX)) {
         Some(Action::HttpRequest { conn, .. }) => conn,
         other => panic!("{other:?}"),
@@ -742,7 +750,7 @@ fn assert_wakes_in_the_future(actions: &[Action], now: u64) {
 
 #[test]
 fn ts_never_emits_a_wake_at_or_before_now() {
-    let mut session = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = first_request(&mut session, 0);
     session.on_response(conn, 200, &[], Timestamp::from_nanos(u64::MAX));
     for now in [1_000_000u64, 2_000_000, u64::MAX] {
@@ -754,7 +762,8 @@ fn ts_never_emits_a_wake_at_or_before_now() {
 
 #[test]
 fn rtsp_never_emits_a_wake_at_or_before_now() {
-    let mut session = Session::open(RTSP_URL, Config::default(), ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse(RTSP_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = match session.poll(ts(0)) {
         Some(Action::TcpConnect { conn, .. }) => conn,
         other => panic!("{other:?}"),
@@ -771,7 +780,8 @@ fn rtsp_never_emits_a_wake_at_or_before_now() {
 
 #[test]
 fn hls_never_emits_a_wake_at_or_before_now() {
-    let mut session = Session::open(TS_PLAYLIST_URL, hls_config(), ts(0)).unwrap();
+    let mut session =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).unwrap();
     for now in [0u64, 1_000_000, u64::MAX] {
         let batch: Vec<Action> = std::iter::from_fn(|| session.poll(ts(now)))
             .take(RUNAWAY_POLLS)

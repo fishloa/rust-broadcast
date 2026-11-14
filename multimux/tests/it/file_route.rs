@@ -31,12 +31,12 @@ const TAIL_TOLERANCE_SECS: f64 = 0.1;
 /// `File` route for `path` with `loop: false`. Short segments (0.5 s /
 /// 100 ms) so the ~3 s real fixture closes several real segments.
 fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: 0.5,
-        part_target: Duration::from_millis(100),
-        window_segments: 8,
-        routes: vec![Route {
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target(Duration::from_millis(100))
+        .with_window_segments(8)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input: InputSpec::File { path, loop_file },
             outputs: vec![OutputKind::LlHls],
@@ -49,9 +49,7 @@ fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 /// Polls `playlist_url` until its body carries a real closed-segment
