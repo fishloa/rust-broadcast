@@ -106,9 +106,9 @@ impl RtpUdpRoute {
         let mut config = Config::relay();
         config.kind = SourceKind::Rtp;
         config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
-        config.udp.sdp = Some(String::from_utf8(sdp).map_err(|e| MultimuxError::Sdp {
-            reason: format!("parse: {e}"),
-        })?);
+        config.udp.sdp = Some(
+            String::from_utf8(sdp).map_err(|e| MultimuxError::Sdp(format!("parse: {e}").into()))?,
+        );
         crate::source::udp::apply_socket_options(&mut config, &self.socket)?;
         Ok(config)
     }

@@ -717,25 +717,19 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     // stale session-level decoy (the old flat scan took the first match
     // anywhere). `session.get_first_attribute_value` exists on sdp-types 0.2.
     let remote_ufrag = ice_attr(&session, media, "ice-ufrag")
-        .ok_or_else(|| MultimuxError::Sdp {
-            reason: "whip: offer has no a=ice-ufrag".into(),
-        })?
+        .ok_or_else(|| MultimuxError::Sdp("whip: offer has no a=ice-ufrag".into()))?
         .to_string();
     let remote_pwd = ice_attr(&session, media, "ice-pwd")
-        .ok_or_else(|| MultimuxError::Sdp {
-            reason: "whip: offer has no a=ice-pwd".into(),
-        })?
+        .ok_or_else(|| MultimuxError::Sdp("whip: offer has no a=ice-pwd".into()))?
         .to_string();
-    let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp {
-        reason: "whip: offer has no a=fingerprint".into(),
-    })?;
+    let remote_fingerprint = parse_remote_fingerprint(offer)
+        .ok_or_else(|| MultimuxError::Sdp("whip: offer has no a=fingerprint".into()))?;
     let mid = offer_mid(media);
     let candidates = crate::webrtc_session::candidate_lines(media);
 
-    let (payload_type, rtpmap) =
-        crate::webrtc_session::h264_payload(media).ok_or_else(|| MultimuxError::Sdp {
-            reason: "whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
-        })?;
+    let (payload_type, rtpmap) = crate::webrtc_session::h264_payload(media).ok_or_else(|| {
+        MultimuxError::Sdp("whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into())
+    })?;
     let clock_rate = transmux::rtpmap_clock_rate(rtpmap).unwrap_or(90_000);
 
     Ok(ParsedOffer {
@@ -808,9 +802,7 @@ fn render_answer(
         &codec,
         candidates,
     )
-    .map_err(|e| MultimuxError::Sdp {
-        reason: format!("whip: render the answer: {e}"),
-    })
+    .map_err(|e| MultimuxError::Sdp(format!("whip: render the answer: {e}").into()))
 }
 
 /// Handles one accepted TCP connection end-to-end: read the POST, parse and
@@ -1763,7 +1755,7 @@ fn drain_transmit(media: &mut MediaTransport) -> Vec<Datagram> {
 /// session rather than being silently discarded.
 fn first_timer_error(events: &[MediaEvent]) -> Option<String> {
     events.iter().find_map(|e| match e {
-        MediaEvent::TimerError(err) => Some(err.clone()),
+        MediaEvent::TimerError(err) => Some(err.to_string()),
         _ => None,
     })
 }
@@ -2354,7 +2346,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         assert_eq!(
             first_timer_error(&[
                 MediaEvent::DtlsHandshakeComplete,
-                MediaEvent::IceStateChanged("connected".into()),
+                MediaEvent::IceStateChanged(webrtc_runtime::media::IceConnectionState::Connected),
             ]),
             None,
             "a non-error event must not be mistaken for a timer failure"
@@ -2394,7 +2386,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         );
         assert!(matches!(
             parse_whip_offer(&offer),
-            Err(crate::error::MultimuxError::Sdp { .. })
+            Err(crate::error::MultimuxError::Sdp(_))
         ));
     }
 
@@ -2404,7 +2396,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxxxxxxxx\r\n";
         assert!(matches!(
             parse_whip_offer(offer),
-            Err(crate::error::MultimuxError::Sdp { .. })
+            Err(crate::error::MultimuxError::Sdp(_))
         ));
     }
 
@@ -2416,7 +2408,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let offer = OFFER.replace("m=video 9", "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9");
         assert!(matches!(
             parse_whip_offer(&offer),
-            Err(crate::error::MultimuxError::Sdp { .. })
+            Err(crate::error::MultimuxError::Sdp(_))
         ));
     }
 
@@ -2439,9 +2431,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             csrc: Vec::new(),
             extension: Some(webrtc_runtime::media::DecryptedRtpExtension {
                 profile_id: 0xBEDE,
-                data: vec![0x10, 0xAA, 0x00, 0x00],
+                data: bytes::Bytes::from_static(&[0x10, 0xAA, 0x00, 0x00]),
             }),
-            payload: vec![0x55],
+            payload: bytes::Bytes::from_static(&[0x55]),
         };
         let wire = rebuild_rtp_wire(&pkt).expect("a decrypted packet re-serializes");
         assert_eq!(wire[0], 0x80 | 0x10, "version 2 with the X bit, no CSRC");
@@ -2461,7 +2453,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             ssrc: 0xDEAD_BEEF,
             csrc: vec![0x1111_2222],
             extension: None,
-            payload: vec![0xAA, 0xBB, 0xCC],
+            payload: bytes::Bytes::from_static(&[0xAA, 0xBB, 0xCC]),
         };
         let wire = rebuild_rtp_wire(&pkt).expect("a decrypted packet re-serializes");
         // Version=2, one CSRC.

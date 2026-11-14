@@ -290,18 +290,13 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
     let media = &session.medias[media_index];
 
     let remote_ufrag = ice_attr(&session, media, "ice-ufrag")
-        .ok_or_else(|| MultimuxError::Sdp {
-            reason: "whep: offer has no a=ice-ufrag".into(),
-        })?
+        .ok_or_else(|| MultimuxError::Sdp("whep: offer has no a=ice-ufrag".into()))?
         .to_string();
     let remote_pwd = ice_attr(&session, media, "ice-pwd")
-        .ok_or_else(|| MultimuxError::Sdp {
-            reason: "whep: offer has no a=ice-pwd".into(),
-        })?
+        .ok_or_else(|| MultimuxError::Sdp("whep: offer has no a=ice-pwd".into()))?
         .to_string();
-    let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp {
-        reason: "whep: offer has no a=fingerprint".into(),
-    })?;
+    let remote_fingerprint = parse_remote_fingerprint(offer)
+        .ok_or_else(|| MultimuxError::Sdp("whep: offer has no a=fingerprint".into()))?;
     let mid = offer_mid(media);
     let candidates = crate::webrtc_session::candidate_lines(media);
     let setup = media
@@ -309,10 +304,9 @@ fn parse_whep_offer(offer: &str) -> Result<ParsedWhepOffer> {
         .flatten()
         .map(str::to_string);
 
-    let (payload_type, _) =
-        crate::webrtc_session::h264_payload(media).ok_or_else(|| MultimuxError::Sdp {
-            reason: "whep: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
-        })?;
+    let (payload_type, _) = crate::webrtc_session::h264_payload(media).ok_or_else(|| {
+        MultimuxError::Sdp("whep: m=video has no H.264 (a=rtpmap naming H264) payload type".into())
+    })?;
 
     Ok(ParsedWhepOffer {
         remote_ufrag,
@@ -473,9 +467,7 @@ fn render_whep_answer(parsed: &ParsedWhepOffer, params: &WhepAnswerParams<'_>) -
         &codec,
         params.candidates,
     )
-    .map_err(|e| MultimuxError::Sdp {
-        reason: format!("whep: render the answer: {e}"),
-    })
+    .map_err(|e| MultimuxError::Sdp(format!("whep: render the answer: {e}").into()))
 }
 
 /// Verifies one request against `output_auth`, exactly mirroring
@@ -1497,7 +1489,7 @@ async fn run_whep_session_with_silence_timeout(
                     let _ = socket.send_to(&bytes, peer).await;
                 }
                 if let Some(err) = events.iter().find_map(|e| match e {
-                    MediaEvent::TimerError(err) => Some(err.as_str()),
+                    MediaEvent::TimerError(err) => Some(err.to_string()),
                     _ => None,
                 }) {
                     tracing::warn!(error = %err, "whep: transport timer error; ending session");
@@ -1832,7 +1824,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         );
         assert!(matches!(
             parse_whep_offer(&offer),
-            Err(crate::error::MultimuxError::Sdp { .. })
+            Err(crate::error::MultimuxError::Sdp(_))
         ));
     }
 
@@ -1842,7 +1834,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxxxxxxxx\r\n";
         assert!(matches!(
             parse_whep_offer(offer),
-            Err(crate::error::MultimuxError::Sdp { .. })
+            Err(crate::error::MultimuxError::Sdp(_))
         ));
     }
 
@@ -1851,7 +1843,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let offer = OFFER.replace("m=video 9", "m=audio 9 UDP/TLS/RTP/SAVPF 111\r\nm=video 9");
         assert!(matches!(
             parse_whep_offer(&offer),
-            Err(crate::error::MultimuxError::Sdp { .. })
+            Err(crate::error::MultimuxError::Sdp(_))
         ));
     }
 
@@ -2579,7 +2571,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             ssrc: 1,
             csrc: Vec::new(),
             extension: None,
-            payload: vec![0xAA],
+            payload: bytes::Bytes::from_static(&[0xAA]),
         });
         assert!(is_liveness_event(&rtp), "a decrypted RTP packet counts");
         assert!(
@@ -2587,7 +2579,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             "the one-time handshake completion counts"
         );
         assert!(
-            !is_liveness_event(&MediaEvent::IceStateChanged("connected".into())),
+            !is_liveness_event(&MediaEvent::IceStateChanged(
+                webrtc_runtime::media::IceConnectionState::Connected
+            )),
             "an ICE connection-state transition alone must not count"
         );
         assert!(

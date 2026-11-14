@@ -545,7 +545,7 @@ async fn run_no_credentials_fails() {
         .await
         .expect("the handshake must fail, not hang");
     assert!(
-        matches!(&err, MultimuxError::Auth { .. }),
+        matches!(&err, MultimuxError::Auth(_)),
         "a refused DESCRIBE credential must surface as the typed Auth error, got: {err:?}"
     );
 
@@ -744,7 +744,7 @@ async fn run_config_digest_auth_wrong_password() {
         .await
         .expect("the handshake must fail, not hang");
     assert!(
-        matches!(&err, MultimuxError::Auth { .. }),
+        matches!(&err, MultimuxError::Auth(_)),
         "a refused DESCRIBE credential must surface as the typed Auth error, got: {err:?}"
     );
 

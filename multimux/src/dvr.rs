@@ -209,6 +209,26 @@ use mpeg_ts::ts::TS_PACKET_SIZE as TS_PACKET_LEN;
 /// otherwise via `period_duration_secs`.
 const DEFAULT_PERIOD_DURATION_SECS: u64 = 10800;
 
+/// Errors from the DVR recorder.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum DvrError {
+    /// A config value failed semantic validation.
+    #[error("invalid config field {field:?}: {reason}")]
+    Config {
+        /// The offending field's name.
+        field: &'static str,
+        /// Why it's invalid.
+        reason: String,
+    },
+    /// An I/O error while reading or writing archive files.
+    #[error("io: {0}")]
+    Io(#[source] std::io::Error),
+    /// A DVB-SI section could not be parsed.
+    #[error("dvb-si: {0}")]
+    Si(#[from] dvb_si::Error),
+}
+
 /// Per-route DVR configuration.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -292,19 +312,23 @@ impl From<ArchiveOverrunSerde> for ArchiveOverrun {
 impl DvrConfig {
     /// Validate this config — returns an error with a clear field name and
     /// reason for the operator, not a cryptic I/O error at runtime.
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), DvrError> {
         if !self.enabled {
             return Ok(());
         }
         if self.archive_root.is_empty() {
-            return Err("archive_root must be set when DVR is enabled".to_string());
+            return Err(DvrError::Config {
+                field: "archive_root",
+                reason: "archive_root must be set when DVR is enabled".to_string(),
+            });
         }
         if self.retention_periods == 0 && self.retention_bytes == 0 {
-            return Err(
-                "at least one of retention_periods or retention_bytes must be > 0 \
+            return Err(DvrError::Config {
+                field: "retention",
+                reason: "at least one of retention_periods or retention_bytes must be > 0 \
                  when DVR is enabled (unbounded growth would fill the disk)"
                     .to_string(),
-            );
+            });
         }
         // `period_duration_secs: 0` disables the time-based roll, leaving the
         // current period open indefinitely. `enforce_retention` still bounds
@@ -319,13 +343,14 @@ impl DvrConfig {
             && self.dvb_service_id.is_none()
             && self.retention_bytes == 0
         {
-            return Err(
-                "period_duration_secs must be > 0 unless dvb_service_id is set or  \
+            return Err(DvrError::Config {
+                field: "period_duration_secs",
+                reason: "period_duration_secs must be > 0 unless dvb_service_id is set or  \
                 retention_bytes > 0 — with no time-based cap, no EIT boundary to roll on,  \
                 and only count-based retention, the single period file would grow without  \
                 bound (count-based retention can never evict an open period)"
                     .to_string(),
-            );
+            });
         }
         Ok(())
     }
@@ -616,19 +641,28 @@ pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> S
 /// than [`crate::config::MAX_ROUTE_NAME_LEN`] (audit run 7, A4). Applied at
 /// the point the name becomes a path (`DvrRecorder::new`), so no join can
 /// ever escape `archive_root`.
-pub(crate) fn validate_route_dir_name(name: &str) -> Result<(), String> {
+pub(crate) fn validate_route_dir_name(name: &str) -> Result<(), DvrError> {
     if name.is_empty() {
-        return Err("route name must not be empty".to_string());
+        return Err(DvrError::Config {
+            field: "route_name",
+            reason: "route name must not be empty".to_string(),
+        });
     }
     if name == "." || name == ".." {
-        return Err(format!("route name {name:?} is a path-traversal component"));
+        return Err(DvrError::Config {
+            field: "route_name",
+            reason: format!("route name {name:?} is a path-traversal component"),
+        });
     }
     if name.len() > crate::config::MAX_ROUTE_NAME_LEN {
-        return Err(format!(
-            "route name is {} bytes, over the {} limit",
-            name.len(),
-            crate::config::MAX_ROUTE_NAME_LEN
-        ));
+        return Err(DvrError::Config {
+            field: "route_name",
+            reason: format!(
+                "route name is {} bytes, over the {} limit",
+                name.len(),
+                crate::config::MAX_ROUTE_NAME_LEN
+            ),
+        });
     }
     // A path separator (either platform's), or a NUL byte (which truncates
     // an OS path), makes the name unsafe as a directory component.
@@ -637,12 +671,16 @@ pub(crate) fn validate_route_dir_name(name: &str) -> Result<(), String> {
         .chars()
         .any(|c| FORBIDDEN.contains(&c) || c == std::path::MAIN_SEPARATOR)
     {
-        return Err(format!(
-            "route name {name:?} contains a path separator or NUL byte"
-        ));
+        return Err(DvrError::Config {
+            field: "route_name",
+            reason: format!("route name {name:?} contains a path separator or NUL byte"),
+        });
     }
     if name.contains("..") {
-        return Err(format!("route name {name:?} contains a `..` component"));
+        return Err(DvrError::Config {
+            field: "route_name",
+            reason: format!("route name {name:?} contains a `..` component"),
+        });
     }
     Ok(())
 }
@@ -656,7 +694,7 @@ impl DvrRecorder {
         config: DvrConfig,
         ext: &str,
         trunk: &Arc<Trunk>,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, DvrError> {
         config.validate()?;
         // Defence in depth (audit run 7, A4): the route name is a single
         // on-disk directory component under `archive_root`. Config
@@ -731,12 +769,12 @@ impl DvrRecorder {
     /// earlier segment (audit r07-C5, issue #1083). Blocking disk I/O: runs
     /// from [`Self::poll_and_persist`], which callers dispatch to the
     /// blocking pool.
-    fn seed_from_disk(&mut self) -> Result<(), String> {
+    fn seed_from_disk(&mut self) -> Result<(), DvrError> {
         self.seeded = true;
         let entries = match fs::read_dir(&self.archive_dir) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(e) => return Err(format!("reading archive dir: {e}")),
+            Err(e) => return Err(DvrError::Io(e)),
         };
         let data_suffix = format!(".{}", &self.ext[1..]);
         let mut found: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
@@ -766,9 +804,10 @@ impl DvrRecorder {
         let Some(highest) = highest else {
             return Ok(());
         };
-        self.period = highest
-            .checked_add(1)
-            .ok_or_else(|| "archive period numbers are exhausted".to_string())?;
+        self.period = highest.checked_add(1).ok_or_else(|| DvrError::Config {
+            field: "dvr",
+            reason: "archive period numbers are exhausted".to_string(),
+        })?;
         self.periods = found
             .into_iter()
             .map(|(num, file_bytes)| PeriodRecord { num, file_bytes })
@@ -807,7 +846,7 @@ impl DvrRecorder {
     ///
     /// `ts_bytes` need not be 188-byte aligned across calls — a byte
     /// carry-over buffer handles a read that ends mid-packet.
-    pub fn feed_si(&mut self, ts_bytes: &[u8]) -> Result<(), String> {
+    pub fn feed_si(&mut self, ts_bytes: &[u8]) -> Result<(), DvrError> {
         if self.si_demux.is_none() {
             return Ok(());
         }
@@ -815,7 +854,7 @@ impl DvrRecorder {
         buf.extend_from_slice(ts_bytes);
         let mut events = std::mem::take(&mut self.si_events);
         let mut offset = 0;
-        let mut first_error: Option<String> = None;
+        let mut first_error: Option<DvrError> = None;
         while offset + TS_PACKET_LEN <= buf.len() {
             events.clear();
             if let Some(demux) = self.si_demux.as_mut() {
@@ -849,7 +888,7 @@ impl DvrRecorder {
 
     /// Inspect one completed SI section; roll the period on a genuine EIT
     /// p/f present-event transition for the tracked service.
-    fn handle_si_event(&mut self, event: SectionEvent) -> Result<(), String> {
+    fn handle_si_event(&mut self, event: SectionEvent) -> Result<(), DvrError> {
         let Some(target) = self.target_service_id else {
             return Ok(());
         };
@@ -908,18 +947,26 @@ impl DvrRecorder {
     /// yet). Called from [`Self::start_period`] every time a period opens,
     /// and from [`Self::handle_si_event`] when the programme becomes known
     /// only after the period already opened.
-    fn write_programme_sidecar(&self) -> Result<(), String> {
+    fn write_programme_sidecar(&self) -> Result<(), DvrError> {
         let Some(programme) = &self.current_programme else {
             return Ok(());
         };
-        let json = serde_json::to_vec(programme)
-            .map_err(|e| format!("serializing programme metadata: {e}"))?;
+        let json = serde_json::to_vec(programme).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("serializing programme metadata: {e}"),
+        })?;
         let tmp = self.archive_dir.join(".event.tmp");
         let dst = self
             .archive_dir
             .join(format!("p{}.event.json", self.period));
-        fs::write(&tmp, &json).map_err(|e| format!("writing programme metadata: {e}"))?;
-        fs::rename(&tmp, &dst).map_err(|e| format!("renaming programme metadata: {e}"))?;
+        fs::write(&tmp, &json).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("writing programme metadata: {e}"),
+        })?;
+        fs::rename(&tmp, &dst).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("renaming programme metadata: {e}"),
+        })?;
         Ok(())
     }
 
@@ -965,7 +1012,7 @@ impl DvrRecorder {
         }
     }
 
-    pub fn poll_and_persist(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
+    pub fn poll_and_persist(&mut self, init_bytes: Option<&[u8]>) -> Result<(), DvrError> {
         let inits: Vec<InitGeneration> = init_bytes
             .map(|init| InitGeneration {
                 first_seq: SegmentSeq::new(0),
@@ -982,7 +1029,7 @@ impl DvrRecorder {
     /// only when the first segment closed under it (or the end of the
     /// pending segments) is reached, so the last segment before a track
     /// change never lands in the new init's period.
-    pub fn poll_and_persist_inits(&mut self, inits: &[InitGeneration]) -> Result<(), String> {
+    pub fn poll_and_persist_inits(&mut self, inits: &[InitGeneration]) -> Result<(), DvrError> {
         if !self.seeded {
             self.seed_from_disk()?;
         }
@@ -1036,7 +1083,7 @@ impl DvrRecorder {
         Ok(())
     }
 
-    fn roll_to_init(&mut self, init: &[u8]) -> Result<(), String> {
+    fn roll_to_init(&mut self, init: &[u8]) -> Result<(), DvrError> {
         if self.ext != ".m4s" || self.last_init.as_deref() == Some(init) {
             return Ok(());
         }
@@ -1050,17 +1097,23 @@ impl DvrRecorder {
     /// Open a new period container file. If `init_bytes` is `Some` and the
     /// extension is `.m4s`, writes the init as the first bytes. The
     /// previous period file (if any) is left as-is on disk.
-    fn start_period(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
+    fn start_period(&mut self, init_bytes: Option<&[u8]>) -> Result<(), DvrError> {
         let rolls = !self.index.is_empty() || self.write_offset > 0;
         let next_period = if rolls { self.period + 1 } else { self.period };
         let path = self.period_path_for(next_period);
-        fs::create_dir_all(&self.archive_dir).map_err(|e| format!("creating archive dir: {e}"))?;
+        fs::create_dir_all(&self.archive_dir).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("creating archive dir: {e}"),
+        })?;
 
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
-            .map_err(|e| format!("opening period file {}: {e}", path.display()))?;
+            .map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("opening period file {}: {e}", path.display()),
+            })?;
 
         let mut write_offset = file.metadata().map(|m| m.len()).unwrap_or(0);
         let mut init_len = 0;
@@ -1073,7 +1126,7 @@ impl DvrRecorder {
             if let Err(e) = file.write_all(init).and_then(|()| file.flush()) {
                 drop(file);
                 let _ = fs::remove_file(&path);
-                return Err(format!("writing init: {e}"));
+                return Err(DvrError::Io(e));
             }
             init_len = u64::try_from(init.len()).unwrap_or(u64::MAX);
             write_offset = init_len;
@@ -1128,7 +1181,7 @@ impl DvrRecorder {
 
     /// Append one segment to the current period file, then update the index
     /// and enforce retention.
-    fn append_segment(&mut self, entry: &media_plane::trunk::SegmentEntry) -> Result<(), String> {
+    fn append_segment(&mut self, entry: &media_plane::trunk::SegmentEntry) -> Result<(), DvrError> {
         // For fMP4, refuse to append before init is written.
         if self.ext == ".m4s" && self.last_init.is_none() {
             tracing::debug!(
@@ -1146,12 +1199,13 @@ impl DvrRecorder {
             .seq_offset
             .checked_add(u64::from(entry.sequence_number.value()))
             .and_then(|public| u32::try_from(public).ok())
-            .ok_or_else(|| {
-                format!(
+            .ok_or_else(|| DvrError::Config {
+                field: "dvr",
+                reason: format!(
                     "segment {} + offset {} overflows the archive's u32 sequence range",
                     entry.sequence_number.value(),
                     self.seq_offset
-                )
+                ),
             })?;
 
         // Start the first period lazily if not yet opened (TS routes: no
@@ -1218,10 +1272,13 @@ impl DvrRecorder {
                 );
             }
             self.write_offset = byte_offset;
-            return Err(format!(
-                "writing segment {} to period file: {e}",
-                entry.sequence_number,
-            ));
+            return Err(DvrError::Config {
+                field: "dvr",
+                reason: format!(
+                    "writing segment {} to period file: {e}",
+                    entry.sequence_number,
+                ),
+            });
         }
 
         // Make the segment bytes durable on disk before the index that points
@@ -1281,15 +1338,17 @@ impl DvrRecorder {
     /// sidecar is reopened for appends. A crash can tear an in-place append;
     /// the catch-up reader recovers every complete entry from a torn tail
     /// (`crate::catchup::parse_index`).
-    fn append_index_entry(&mut self) -> Result<(), String> {
+    fn append_index_entry(&mut self) -> Result<(), DvrError> {
         let Some(entry) = self.index.last() else {
             return Ok(());
         };
         if self.index.len() > 1
             && let Some(file) = self.index_file.as_mut()
         {
-            let json =
-                serde_json::to_vec(entry).map_err(|e| format!("serializing index entry: {e}"))?;
+            let json = serde_json::to_vec(entry).map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("serializing index entry: {e}"),
+            })?;
             let mut tail = Vec::with_capacity(json.len() + 2);
             tail.push(b',');
             tail.extend_from_slice(&json);
@@ -1320,10 +1379,16 @@ impl DvrRecorder {
         let file = OpenOptions::new()
             .write(true)
             .open(self.index_path())
-            .map_err(|e| format!("reopening index for append: {e}"))?;
+            .map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("reopening index for append: {e}"),
+            })?;
         self.index_len = file
             .metadata()
-            .map_err(|e| format!("reading index length: {e}"))?
+            .map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("reading index length: {e}"),
+            })?
             .len();
         self.index_file = Some(file);
         Ok(())
@@ -1338,24 +1403,38 @@ impl DvrRecorder {
     /// the docs promised was on disk (issue #1083, W10). `sync_all` on the
     /// temp file before the rename, and a directory `sync_all` after it,
     /// makes the entry genuinely durable.
-    fn flush_index(&self) -> Result<(), String> {
-        let json =
-            serde_json::to_vec(&self.index).map_err(|e| format!("serializing index: {e}"))?;
+    fn flush_index(&self) -> Result<(), DvrError> {
+        let json = serde_json::to_vec(&self.index).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("serializing index: {e}"),
+        })?;
         let dir = self.period_dir_path();
         let tmp = dir.join(".idx.tmp");
         let dst = self.index_path();
         {
-            let mut f = File::create(&tmp).map_err(|e| format!("creating index temp: {e}"))?;
-            f.write_all(&json)
-                .map_err(|e| format!("writing index: {e}"))?;
-            f.sync_all().map_err(|e| format!("syncing index: {e}"))?;
+            let mut f = File::create(&tmp).map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("creating index temp: {e}"),
+            })?;
+            f.write_all(&json).map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("writing index: {e}"),
+            })?;
+            f.sync_all().map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("syncing index: {e}"),
+            })?;
         }
-        fs::rename(&tmp, &dst).map_err(|e| format!("renaming index: {e}"))?;
+        fs::rename(&tmp, &dst).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("renaming index: {e}"),
+        })?;
         // A rename is only durable once the containing directory is synced.
         if let Ok(dir_handle) = File::open(&dir) {
-            dir_handle
-                .sync_all()
-                .map_err(|e| format!("syncing index directory: {e}"))?;
+            dir_handle.sync_all().map_err(|e| DvrError::Config {
+                field: "dvr",
+                reason: format!("syncing index directory: {e}"),
+            })?;
         }
         Ok(())
     }
@@ -1376,33 +1455,45 @@ impl DvrRecorder {
     /// boundaries is not implemented, so a TS period whose index is lost
     /// stays unusable. Use fMP4 (`.m4s`) periods where index recovery
     /// matters.
-    pub fn rebuild_index(&self) -> Result<Vec<IndexEntry>, String> {
-        let data = fs::read(self.period_path())
-            .map_err(|e| format!("reading period file for index rebuild: {e}"))?;
+    pub fn rebuild_index(&self) -> Result<Vec<IndexEntry>, DvrError> {
+        let data = fs::read(self.period_path()).map_err(|e| DvrError::Config {
+            field: "dvr",
+            reason: format!("reading period file for index rebuild: {e}"),
+        })?;
         // A truncated period file (a power loss or full disk mid-write —
         // exactly when `rebuild_index` exists to recover) can be shorter than
         // the init prelude. Report that rather than panicking on the slice
         // (issue #1083, W10).
-        let init_len = usize::try_from(self.init_len)
-            .map_err(|_| format!("init_len {} exceeds usize", self.init_len))?;
+        let init_len = usize::try_from(self.init_len).map_err(|_| DvrError::Config {
+            field: "dvr",
+            reason: format!("init_len {} exceeds usize", self.init_len),
+        })?;
         if data.len() < init_len {
-            return Err(format!(
-                "period file is {} bytes, shorter than the {init_len}-byte init prelude —  \
+            return Err(DvrError::Config {
+                field: "dvr",
+                reason: format!(
+                    "period file is {} bytes, shorter than the {init_len}-byte init prelude —  \
                 cannot rebuild the index",
-                data.len()
-            ));
+                    data.len()
+                ),
+            });
         }
         let data = &data[init_len..];
 
         if self.ext == ".ts" {
-            return Err("TS index rebuild not yet implemented".to_string());
+            return Err(DvrError::Config {
+                field: "dvr",
+                reason: "TS index rebuild not yet implemented".to_string(),
+            });
         }
 
         // fMP4: each segment is a top-level moof+mdat pair.
         let mut entries = Vec::new();
         let mut offset: usize = 0;
-        let init_len = usize::try_from(self.init_len)
-            .map_err(|_| "init prelude length does not fit usize".to_string())?;
+        let init_len = usize::try_from(self.init_len).map_err(|_| DvrError::Config {
+            field: "dvr",
+            reason: "init prelude length does not fit usize".to_string(),
+        })?;
         while offset < data.len() {
             let (box_ref, consumed) = match transmux::parse_box(&data[offset..]) {
                 Ok(x) => x,
@@ -1490,7 +1581,7 @@ impl DvrRecorder {
         (self.config.retention_bytes / divisor.max(1)).max(1)
     }
 
-    fn enforce_retention(&mut self) -> Result<(), String> {
+    fn enforce_retention(&mut self) -> Result<(), DvrError> {
         // The currently-open period is not yet in `self.periods`, but its
         // bytes are already on disk. Counting them is what makes byte-based
         // retention actually bound the archive between rolls (issue #1083,
@@ -1657,7 +1748,7 @@ impl DvrRecorder {
 }
 
 impl SegmentEgress for DvrRecorder {
-    type Error = String;
+    type Error = DvrError;
 
     fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
         if self.terminated {
@@ -1886,7 +1977,7 @@ mod tests {
         recorder.poll_and_persist(Some(b"INIT")).expect("init");
         writer.publish_segment(dummy_segment(1, 0xEE)).unwrap();
         let err = recorder.poll_and_persist(Some(b"INIT")).unwrap_err();
-        assert!(err.contains("overflows"), "{err}");
+        assert!(err.to_string().contains("overflows"), "{err}");
         let p0 = std::fs::read(tmp.join("ovf").join("p0.m4s")).unwrap();
         assert_eq!(p0, b"INIT", "nothing but the init was written");
         cleanup_temp(&tmp);
@@ -2114,7 +2205,7 @@ mod tests {
                 Err(e) => e,
             };
             assert!(
-                !err.is_empty(),
+                !err.to_string().is_empty(),
                 "the rejection of {bad:?} must carry a reason"
             );
         }
@@ -2370,7 +2461,7 @@ mod tests {
             .rebuild_index()
             .expect_err("a period shorter than the init prelude cannot be rebuilt");
         assert!(
-            err.contains("shorter than"),
+            err.to_string().contains("shorter than"),
             "the error must explain the truncation, got {err:?}"
         );
 
@@ -3497,7 +3588,7 @@ mod tests {
         let mut input = packet_bytes.clone();
         input.extend_from_slice(&[0x47; 100]);
         let err = recorder.feed_si(&input).unwrap_err();
-        assert!(!err.is_empty());
+        assert!(!err.to_string().is_empty());
         assert_eq!(
             recorder.si_carry.len(),
             100,
