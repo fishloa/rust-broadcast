@@ -9,7 +9,7 @@
 
 use crate::support::replay::{bitrate_bps, open_live};
 use crate::support::ts_shift::{Shift, shift_pes};
-use buffering_runtime::{duration_micros, micros_as_duration};
+use buffering_runtime::{instant_micros, micros_as_duration};
 
 use broadcast_client::{BufferEvent, BufferInput, Config, Event, Session, TrackId};
 use broadcast_common::stage::Timestamp;
@@ -219,8 +219,8 @@ fn a_dropped_track_that_never_delivers_holds_the_start_only_for_the_pending_wait
         return;
     };
     let config = Config::default();
-    let wait = duration_micros(config.start_pending_track_wait);
-    let silence = duration_micros(config.controller_config().track_silence_timeout);
+    let wait = instant_micros(config.start_pending_track_wait);
+    let silence = instant_micros(config.controller_config().track_silence_timeout);
     let r = run(
         &shift_pes(&bytes, 0, -AUDIO_NEVER_90KHZ, Shift::Audio),
         false,

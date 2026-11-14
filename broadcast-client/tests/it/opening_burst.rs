@@ -9,7 +9,7 @@ use crate::support::ts_shift::{PACKET, Shift, packet_has_pcr, packet_pid, shift_
 use crate::support::video_run::VideoRun;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::{duration_micros, micros_as_duration};
+use buffering_runtime::{instant_micros, micros_as_duration};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -784,7 +784,7 @@ fn matrix(rows: &[Row]) -> Vec<(Row, Plan, Outcome)> {
         let at = schedule(&raw);
         at[at.len() - 1]
     };
-    let starve = duration_micros(Config::default().buffer.starve_threshold);
+    let starve = instant_micros(Config::default().buffer.starve_threshold);
     let mut cache: BTreeMap<(usize, String), Stream> = BTreeMap::new();
     let mut results = Vec::new();
     for row in rows {

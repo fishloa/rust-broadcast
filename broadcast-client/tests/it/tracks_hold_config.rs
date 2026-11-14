@@ -2,7 +2,7 @@ use broadcast_client::{Action, Config, ConnId, Error, Event, Session, TrackId};
 use std::time::Duration;
 
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::duration_micros;
+use buffering_runtime::instant_micros;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -139,7 +139,7 @@ fn the_default_config_holds_until_every_stream_resolves() {
 fn a_short_wall_limit_releases_a_stream_whose_declared_pid_never_sends() {
     let bytes = without_pid(&test_fixtures::read("ts/france2.ts"), LAST_FRANCE2_PID);
     let fed_until = HOLD_START_CHUNKS as u64 * STEP_US;
-    let due = fed_until + duration_micros(SHORT_WALL);
+    let due = fed_until + instant_micros(SHORT_WALL);
 
     let config = {
         let mut new_config = Config::default();

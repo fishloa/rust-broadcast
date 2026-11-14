@@ -33,7 +33,7 @@ use crate::events::{Event, EventQueue, Hint, Reason, State, Stats};
 use crate::jitter::{DeliveryJitter, SampleOutcome};
 use crate::policy::Policy;
 use crate::stall_memory::StallMemorySnapshot;
-use crate::time::{Clock27, duration_between, duration_micros, micros_as_duration};
+use crate::time::{Clock27, duration_between, instant_micros, micros_as_duration, window_micros};
 use crate::tracks::{DEFAULT_TRACK, Effective, StepRules, TrackSet};
 
 fn dur(us: u64) -> Duration {
@@ -124,7 +124,7 @@ impl BufferController {
             media_ref: None,
             below_since: None,
             over_armed: true,
-            reported_target: duration_micros(cfg.policy.min),
+            reported_target: window_micros(cfg.policy.min),
             lead: 0,
             stalls: 0,
             reprimes: 0,
@@ -336,7 +336,7 @@ impl BufferController {
             return Duration::ZERO;
         }
         let g = self.tracks.granularity(now, self.cfg.track_silence_timeout);
-        micros_as_duration(self.policy.granularity_need_us(duration_micros(g)))
+        micros_as_duration(self.policy.granularity_need_us(instant_micros(g)))
     }
 
     fn feed(&mut self, arrival: Duration, media: Clock27, bytes: u32) {
@@ -354,15 +354,15 @@ impl BufferController {
     }
 
     fn after_sample(&mut self, now: Duration) {
-        let base = duration_micros(self.jitter.baseline());
-        let peak = duration_micros(self.jitter.stall_peak_at(now));
+        let base = instant_micros(self.jitter.baseline());
+        let peak = instant_micros(self.jitter.stall_peak_at(now));
         let gran = if self.cfg.track_granularity {
-            duration_micros(self.tracks.granularity(now, self.cfg.track_silence_timeout))
+            instant_micros(self.tracks.granularity(now, self.cfg.track_silence_timeout))
         } else {
             0
         };
         let need = self.policy.need_with_granularity_us(base, peak, gran);
-        let max = duration_micros(self.cfg.policy.max);
+        let max = instant_micros(self.cfg.policy.max);
         if need > max {
             if self.over_armed {
                 self.over_armed = false;
@@ -376,12 +376,12 @@ impl BufferController {
         {
             self.over_armed = true;
         }
-        let new = self.policy.follow(need, duration_micros(now));
+        let new = self.policy.follow(need, instant_micros(now));
         let old = self.reported_target;
         if new != old {
-            let bound = new == duration_micros(self.cfg.policy.min) || new == max;
+            let bound = new == instant_micros(self.cfg.policy.min) || new == max;
             let moved = new.max(old) - new.min(old);
-            if moved >= duration_micros(self.cfg.jitter.bucket) || bound {
+            if moved >= instant_micros(self.cfg.jitter.bucket) || bound {
                 self.reported_target = new;
                 self.events.push(Event::TargetChanged {
                     old: dur(old),
@@ -415,7 +415,7 @@ impl BufferController {
             let Some(p) = playback_27mhz else { return };
             let lead = lead_between(p, media_end);
             self.lead = lead;
-            if lead <= i64::try_from(duration_micros(self.cfg.starve_threshold)).unwrap_or(i64::MAX)
+            if lead <= i64::try_from(instant_micros(self.cfg.starve_threshold)).unwrap_or(i64::MAX)
             {
                 self.pause_starved(now, p, media_end, lead);
             } else {
@@ -428,7 +428,7 @@ impl BufferController {
         };
         let lead = lead_between(origin, media_end);
         self.lead = lead;
-        let need = duration_micros(self.exit_target(now));
+        let need = instant_micros(self.exit_target(now));
         if lead >= i64::try_from(need).unwrap_or(i64::MAX) && self.granularity_ready(now) {
             self.begin_playing(now, origin, lead);
         }
@@ -541,7 +541,7 @@ impl BufferController {
         if floor == Duration::ZERO {
             return;
         }
-        if lead < i64::try_from(duration_micros(floor)).unwrap_or(i64::MAX) {
+        if lead < i64::try_from(instant_micros(floor)).unwrap_or(i64::MAX) {
             let since = *self.below_since.get_or_insert(now);
             if duration_between(since, now) >= self.cfg.policy.reprime_hold {
                 let hold_at = if lead < 0 { media_end } else { playback };
@@ -669,7 +669,7 @@ impl BufferController {
     }
 
     fn reseed(&mut self) {
-        let peak = duration_micros(self.jitter.stall_peak_at(self.latest));
+        let peak = instant_micros(self.jitter.stall_peak_at(self.latest));
         self.policy.raise(self.policy.need_us(0, peak));
         self.reported_target = self.policy.target_us();
     }
@@ -699,7 +699,7 @@ impl BufferController {
         self.below_since = None;
         self.over_armed = true;
         self.lead = 0;
-        self.reported_target = duration_micros(self.cfg.policy.min);
+        self.reported_target = instant_micros(self.cfg.policy.min);
         if let Some(s) = kept {
             self.restore_memory(s);
         }
