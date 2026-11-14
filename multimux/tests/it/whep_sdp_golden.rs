@@ -45,7 +45,7 @@ fn config() -> transmux::AVCDecoderConfigurationRecord {
 
 #[test]
 fn whep_answer_matches_golden() {
-    let answer = multimux::output::whep::render_whep_answer_for_test(
+    let answer = multimux::test_seam::whep::render_whep_answer_for_test(
         OFFER,
         multimux::output::whep::WhepAnswerParams::new(
             "127.0.0.1:54321".parse().unwrap(),

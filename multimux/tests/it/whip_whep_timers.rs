@@ -44,15 +44,15 @@ async fn post_offer_with_body(addr: std::net::SocketAddr, body: &str) -> String 
 /// holds its slot and exposes the timer-fires counter.
 #[tokio::test]
 async fn a_quiet_session_still_holds_its_slot_and_exposes_the_timer_counter() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test().await;
+    let (addr, shared, token) = multimux::test_seam::serve_whip_for_test().await;
 
     let resp = post_offer(addr).await;
     assert!(
         resp.starts_with("HTTP/1.1 201"),
         "signalling must succeed: {resp}"
     );
-    assert_eq!(route.active_sessions(), 1, "one session admitted");
-    assert_eq!(route.timer_fires(), 0, "no timer has fired yet");
+    assert_eq!(shared.active_sessions(), 1, "one session admitted");
+    assert_eq!(shared.timer_fires(), 0, "no timer has fired yet");
     token.cancel();
 }
 
@@ -67,14 +67,14 @@ async fn a_quiet_session_still_holds_its_slot_and_exposes_the_timer_counter() {
 #[tokio::test]
 async fn a_second_whip_publisher_is_admitted_while_a_first_reads_continuously() {
     use std::net::UdpSocket as StdUdp;
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, shared, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
 
     // Publisher A.
     let resp = post_offer(addr).await;
     assert!(resp.starts_with("HTTP/1.1 201"), "publisher A: {resp}");
     // Wait for the DRIVER to actually admit publisher A before starting the
     // read-load (not a fixed sleep — a bounded condition wait).
-    let admitted_a = route.wait_for_admissions(1, Duration::from_secs(2)).await;
+    let admitted_a = shared.wait_for_admissions(1, Duration::from_secs(2)).await;
     assert!(admitted_a >= 1, "the driver must admit publisher A");
 
     // Publisher A's media socket port, from the SDP answer's host candidate.
@@ -109,12 +109,12 @@ async fn a_second_whip_publisher_is_admitted_while_a_first_reads_continuously() 
     );
     // The DRIVER must admit BOTH publishers (this is what defect 2 asserts;
     // `active_sessions` alone is the handler's count and would not bite).
-    let admitted_b = route.wait_for_admissions(2, Duration::from_secs(2)).await;
+    let admitted_b = shared.wait_for_admissions(2, Duration::from_secs(2)).await;
     assert!(
         admitted_b >= 2,
         "the driver must admit both publishers under a steady read (only {admitted_b}/2)"
     );
-    assert_eq!(route.active_sessions(), 2, "both publishers admitted");
+    assert_eq!(shared.active_sessions(), 2, "both publishers admitted");
     token.cancel();
 }
 
@@ -241,8 +241,8 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
         MediaTransport, MediaTransportConfig, SetupRole, certificate_fingerprint,
     };
 
-    let (addr, route, token) =
-        multimux::source::whip::serve_for_test_with_read_load_timeout_and_policy(
+    let (addr, shared, token) =
+        multimux::test_seam::serve_for_test_with_read_load_timeout_and_policy(
             // A long read timeout: this session must be reaped by the
             // handshake deadline via the Events path, NOT the idle timeout.
             Duration::from_secs(60),
@@ -289,10 +289,10 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
 
     // Wait for the DRIVER to admit the publisher before touching its media
     // socket (a condition wait, not a sleep).
-    let admitted = route.wait_for_admissions(1, Duration::from_secs(2)).await;
+    let admitted = shared.wait_for_admissions(1, Duration::from_secs(2)).await;
     assert!(admitted >= 1, "the driver must admit the publisher");
     assert_eq!(
-        route.last_datagram_entries(),
+        shared.last_datagram_entries(),
         1,
         "one idle-clock entry held"
     );
@@ -349,15 +349,15 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
     // Bounded condition wait for the reap to drain the entry (not a sleep).
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if route.active_sessions() == 0 && route.last_datagram_entries() == 0 {
+        if shared.active_sessions() == 0 && shared.last_datagram_entries() == 0 {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(
                 "a session reaped through the Events path must drop its idle-clock entry: \
                  active_sessions={}, last_datagram_entries={}",
-                route.active_sessions(),
-                route.last_datagram_entries()
+                shared.active_sessions(),
+                shared.last_datagram_entries()
             );
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -376,15 +376,15 @@ async fn a_fatal_transport_timer_error_ends_the_whip_session() {
     // A long read timeout + unbounded handshake deadline: neither the idle
     // reap nor the handshake deadline may end this session, only the staged
     // timer error.
-    let (addr, route, token) =
-        multimux::source::whip::serve_for_test_with_read_load_timeout_and_policy(
+    let (addr, shared, token) =
+        multimux::test_seam::serve_for_test_with_read_load_timeout_and_policy(
             Duration::from_secs(60),
             Duration::from_secs(10_000),
         )
         .await;
 
     // Stage a fatal timer error on the next admitted session's transport.
-    route.force_next_timer_error("dtls handle_timeout: boom");
+    shared.force_next_timer_error("dtls handle_timeout: boom");
 
     // Admit a publisher (the staged error is applied to its transport).
     let resp = post_offer(addr).await;
@@ -394,13 +394,13 @@ async fn a_fatal_transport_timer_error_ends_the_whip_session() {
     // (a bounded condition wait, not a sleep).
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
-        if route.active_sessions() == 0 {
+        if shared.active_sessions() == 0 {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
             panic!(
                 "a fatal transport timer error must end the session: active_sessions={}",
-                route.active_sessions()
+                shared.active_sessions()
             );
         }
         tokio::time::sleep(Duration::from_millis(5)).await;

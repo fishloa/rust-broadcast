@@ -23,7 +23,7 @@ async fn post_offer(addr: std::net::SocketAddr) -> Resp {
         "POST",
         "/whep",
         &[("Content-Type", "application/sdp")],
-        multimux::output::whep::WHEP_TEST_OFFER,
+        multimux::test_seam::whep::WHEP_TEST_OFFER,
     )
     .await
 }
@@ -67,7 +67,7 @@ const OFFER_UFRAG: &str = "abcd";
 
 #[tokio::test]
 async fn delete_ends_the_viewer_drops_its_trunk_subscription_and_frees_the_slot() {
-    let h = multimux::output::whep::serve_whep_run_probed_for_test(1).await;
+    let h = multimux::test_seam::whep::serve_whep_run_probed_for_test(1).await;
     // Everything the route itself holds of the trunk, before any viewer: taken
     // once the route answers (its state, which clones the trunk, exists by then).
     assert_eq!(http(h.addr, "OPTIONS", "/whep", &[], "").await.status, 204);
@@ -140,7 +140,7 @@ async fn delete_ends_the_viewer_drops_its_trunk_subscription_and_frees_the_slot(
 
 #[tokio::test]
 async fn unknown_resources_are_404_for_patch_and_delete() {
-    let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;
+    let h = multimux::test_seam::whep::serve_whep_run_probed_for_test(4).await;
     let bogus = "/whep/session/does-not-exist";
     assert_eq!(http(h.addr, "DELETE", bogus, &[], "").await.status, 404);
     assert_eq!(
@@ -173,7 +173,7 @@ async fn unknown_resources_are_404_for_patch_and_delete() {
 /// `Access-Control-Expose-Headers`, so the player cannot read it.
 #[tokio::test]
 async fn review_cors_preflight_and_etag_exposure_on_the_session_resource() {
-    let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;
+    let h = multimux::test_seam::whep::serve_whep_run_probed_for_test(4).await;
     let created = post_offer(h.addr).await;
     let loc = resource_path(&created);
     let exposed = created
@@ -209,7 +209,7 @@ async fn review_cors_preflight_and_etag_exposure_on_the_session_resource() {
 
 #[tokio::test]
 async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
-    let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;
+    let h = multimux::test_seam::whep::serve_whep_run_probed_for_test(4).await;
     let created = post_offer(h.addr).await;
     let loc = resource_path(&created);
     let etag = etag_of(&created);
@@ -313,7 +313,7 @@ async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
 /// uses the same `restart_ice`.)
 #[tokio::test]
 async fn ice_restart_answers_new_credentials_and_etag() {
-    let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;
+    let h = multimux::test_seam::whep::serve_whep_run_probed_for_test(4).await;
     let created = post_offer(h.addr).await;
     let loc = resource_path(&created);
     let etag = etag_of(&created);
@@ -414,7 +414,7 @@ async fn ice_restart_answers_new_credentials_and_etag() {
 async fn a_route_binds_the_configured_number_of_media_sockets() {
     const SOCKETS: usize = 3;
     const ROUNDS: usize = 2;
-    let h = multimux::output::whep::serve_whep_run_probed_with_sockets_for_test(
+    let h = multimux::test_seam::whep::serve_whep_run_probed_with_sockets_for_test(
         SOCKETS * ROUNDS,
         SOCKETS,
     )

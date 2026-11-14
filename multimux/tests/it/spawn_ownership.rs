@@ -13,7 +13,7 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
     // route's own session `TaskTracker`. Cancelling the token must make
     // `run_whep` return — i.e. every tracked session has drained — and release
     // the port.
-    let (addr, sessions, handle, cancel) = multimux::output::whep::serve_whep_run_for_test().await;
+    let (addr, sessions, handle, cancel) = multimux::test_seam::whep::serve_whep_run_for_test().await;
 
     // Wait until the signalling server is actually accepting — a bounded
     // condition wait (`yield_now`, no fixed delay).
@@ -36,7 +36,7 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
     let resp = client
         .post(format!("http://{addr}/whep"))
         .header(reqwest::header::CONTENT_TYPE, "application/sdp")
-        .body(multimux::output::whep::WHEP_TEST_OFFER)
+        .body(multimux::test_seam::whep::WHEP_TEST_OFFER)
         .send()
         .await
         .expect("POST /whep must reach the WHEP signalling server");

@@ -30,7 +30,7 @@ a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f
 #[tokio::test]
 async fn whep_post_without_credentials_is_401_with_challenge_and_cors() {
     let (app, _token) =
-        multimux::output::whep::serve_whep_for_test(Some(basic_verifier("user", "pass"))).await;
+        multimux::test_seam::whep::serve_whep_for_test(Some(basic_verifier("user", "pass"))).await;
     let resp = app
         .oneshot(
             Request::builder()
@@ -58,7 +58,7 @@ async fn whep_post_without_credentials_is_401_with_challenge_and_cors() {
 /// CHARACTERISATION (pins existing behaviour across the router move).
 #[tokio::test]
 async fn whep_post_with_credentials_against_a_live_trunk_is_201_with_location() {
-    let (app, _token) = multimux::output::whep::serve_whep_for_test_with_trunk(None).await;
+    let (app, _token) = multimux::test_seam::whep::serve_whep_for_test_with_trunk(None).await;
     let resp = app
         .oneshot(
             Request::builder()
@@ -86,7 +86,7 @@ async fn whep_post_with_credentials_against_a_live_trunk_is_201_with_location() 
 /// CHARACTERISATION.
 #[tokio::test]
 async fn whep_options_preflight_is_204_with_cors() {
-    let (app, _token) = multimux::output::whep::serve_whep_for_test(None).await;
+    let (app, _token) = multimux::test_seam::whep::serve_whep_for_test(None).await;
     let resp = app
         .oneshot(
             Request::builder()
@@ -109,7 +109,7 @@ async fn whep_options_preflight_is_204_with_cors() {
 /// CHARACTERISATION: RequestBodyLimitLayer rejects on Content-Length alone.
 #[tokio::test]
 async fn a_body_over_64_kib_is_rejected_413() {
-    let (app, _token) = multimux::output::whep::serve_whep_for_test(None).await;
+    let (app, _token) = multimux::test_seam::whep::serve_whep_for_test(None).await;
     let resp = app
         .oneshot(
             Request::builder()
@@ -144,7 +144,7 @@ fn basic_verifier(username: &str, password: &str) -> std::sync::Arc<broadcast_au
 /// path is no resource at all. Full behaviour: `whep_session_resource.rs`.
 #[tokio::test]
 async fn whep_patch_and_delete_on_an_unknown_resource_are_404() {
-    let (app, _token) = multimux::output::whep::serve_whep_for_test(None).await;
+    let (app, _token) = multimux::test_seam::whep::serve_whep_for_test(None).await;
     for method in ["PATCH", "DELETE"] {
         for path in ["/whep/session/nope", "/whep/session"] {
             let resp = app

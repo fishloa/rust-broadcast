@@ -718,6 +718,7 @@ pub(crate) fn format_iso8601(t: SystemTime) -> String {
 }
 
 /// `#[doc(hidden)]` test seam over [`format_iso8601`].
+#[cfg(any(test, feature = "test-seams"))]
 #[doc(hidden)]
 pub fn format_iso8601_for_test(t: SystemTime) -> String {
     format_iso8601(t)

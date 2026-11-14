@@ -2528,7 +2528,7 @@ impl RouteHandle {
     /// drives [`crate::source::hls_pull::run_hls_pull`] itself reads back what
     /// the route published, exactly as egress would.
     #[doc(hidden)]
-    #[cfg(feature = "test-seams")]
+    #[cfg(any(test, feature = "test-seams"))]
     #[must_use]
     pub fn first_trunk_for_test(&self) -> Option<Arc<Trunk>> {
         self.first_trunk()

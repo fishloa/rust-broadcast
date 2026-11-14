@@ -66,8 +66,6 @@ use transmux::{StreamingTsMux, TsMux};
 
 pub use rtmp::{RtmpTransport, RtmpTransportConfig};
 pub use rtsp::{RtspPushError, RtspTransport, RtspTransportConfig};
-#[doc(hidden)]
-pub use srt::srt_url_outcome_for_test;
 pub(crate) use srt::validate_srt_url;
 pub use srt::{SrtTransport, SrtTransportConfig};
 

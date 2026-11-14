@@ -51,6 +51,7 @@ mod push_rtsp_bounds;
 mod push_rtsp_wire;
 mod push_ts_stream;
 mod push_wire_goldens;
+mod public_surface;
 mod reconnect_policy;
 #[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 mod rtmp_read_failure;

@@ -396,10 +396,9 @@ impl RtspTransport {
     }
 }
 
-/// `#[doc(hidden)]` test seam: parse `url` and return [`control_url`], so the
-/// URL-construction test exercises the real path. Errors (an invalid URL, or a
-/// cannot-be-a-base `rtsp:cam`) surface as a `String`, matching the seam's
-/// test-only role.
+/// `test-seams` hook: parse `url` and return [`control_url`], so the
+/// URL-construction test exercises the real path.
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub fn control_url_for_test(url: &str) -> Result<String, String> {
     let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
@@ -448,15 +447,17 @@ fn push_media() -> sdp_types::Media {
     media
 }
 
-/// `#[doc(hidden)]` test seam: the SDP the push announces, so the golden
-/// recorded in `rtsp-runtime`'s tests can reach the private builder.
+/// `test-seams` hook: the SDP the push announces, so the golden recorded in
+/// `rtsp-runtime`'s tests can reach the private builder.
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub fn push_sdp_for_test() -> Result<String, RtspPushError> {
     build_sdp()
 }
 
-/// `#[doc(hidden)]` test seam: the media sections whose `m=` block the push
-/// announces (see [`push_sdp_for_test`]).
+/// `test-seams` hook: the media sections whose `m=` block the push announces
+/// (see [`push_sdp_for_test`]).
+#[cfg(feature = "test-seams")]
 #[doc(hidden)]
 pub fn push_media_for_test() -> Vec<sdp_types::Media> {
     vec![push_media()]

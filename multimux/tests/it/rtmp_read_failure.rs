@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt as _;
 
 #[tokio::test]
 async fn a_reset_publisher_releases_its_slot_so_later_publishers_are_still_admitted() {
-    let (server_addr, route, token) = multimux::source::rtmp::serve_for_test_with_read_load().await;
+    let (server_addr, handle, token) = multimux::test_seam::serve_rtmp_for_test_with_read_load().await;
 
     let rounds = DEFAULT_RTMP_MAX_SESSIONS + 6;
     let mut admitted = Ok(0);
@@ -22,7 +22,7 @@ async fn a_reset_publisher_releases_its_slot_so_later_publishers_are_still_admit
             .set_linger(Some(Duration::ZERO))
             .unwrap();
         drop(publisher);
-        admitted = route
+        admitted = handle
             .wait_for_sessions(round + 1, Duration::from_secs(5))
             .await;
         if admitted.is_err() {

@@ -12,8 +12,8 @@
 use std::fs;
 
 use multimux::output::whep::WhepAnswerParams;
-use multimux::output::whep::render_whep_answer_for_test;
-use multimux::source::whip::render_answer_for_test;
+use multimux::test_seam::whep::render_whep_answer_for_test;
+use multimux::test_seam::render_answer_for_test;
 use webrtc_runtime::media::SetupRole;
 
 const OFFER: &str = "v=0\r\n\
@@ -112,7 +112,7 @@ fn whep_answer_matches_golden() {
 
 #[test]
 fn whip_restart_fragment_matches_golden() {
-    let answer = multimux::webrtc_ice::restart_fragment_for_test(
+    let answer = multimux::test_seam::restart_fragment_for_test(
         RESTART_FRAGMENT.as_bytes(),
         "oldufrag",
         &candidates(),

@@ -92,19 +92,13 @@ fn parse_srt_url(url: &str) -> Result<(String, SrtUrl), srt_runtime::Error> {
     Ok((parsed.dial_addr(), parsed))
 }
 
-/// `#[doc(hidden)]` golden seam (issue #2369): the parse outcome of one
-/// `srt://` URL under this push's policy, as one stable line so the pre-move
-/// record can be compared byte-for-byte.
+#[cfg(any(test, feature = "test-seams"))]
 #[doc(hidden)]
 #[must_use]
-pub fn srt_url_outcome_for_test(url: &str) -> String {
-    match parse_srt_url(url) {
-        Ok((addr, url)) => format!(
-            "ok addr={addr} stream_id={:?} latency_ms={:?}",
-            url.stream_id, url.latency_ms
-        ),
-        Err(e) => format!("err {e}"),
-    }
+pub fn parse_srt_url_for_test(
+    url: &str,
+) -> Result<(String, SrtUrl), srt_runtime::Error> {
+    parse_srt_url(url)
 }
 
 /// Validate an `srt://` push URL at config time (audit W17), so a bad URL
@@ -170,6 +164,9 @@ impl PushTransport for SrtTransport {
         self.socket = None;
     }
 }
+
+#[cfg(all(test, feature = "test-seams"))]
+mod seam_tests;
 
 #[cfg(test)]
 mod tests {

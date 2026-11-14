@@ -50,7 +50,7 @@ async fn post_offer(addr: std::net::SocketAddr) -> String {
 
 #[tokio::test]
 async fn whip_post_is_answered_201_with_a_location_and_typed_content_type() {
-    let (addr, _route, _token) = multimux::source::whip::serve_for_test().await;
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
     let resp = post_offer(addr).await;
     let lower = resp.to_ascii_lowercase();
     assert!(resp.starts_with("HTTP/1.1 201"), "{resp}");
@@ -67,7 +67,7 @@ async fn whip_post_is_answered_201_with_a_location_and_typed_content_type() {
 
 #[tokio::test]
 async fn whip_options_preflight_is_204_with_cors() {
-    let (addr, _route, _token) = multimux::source::whip::serve_for_test().await;
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
     let resp = raw(
         addr,
         "OPTIONS /whip HTTP/1.1\nHost: x\nOrigin: http://example\n\
@@ -84,7 +84,7 @@ async fn whip_options_preflight_is_204_with_cors() {
 
 #[tokio::test]
 async fn a_body_over_64_kib_is_rejected_413_before_reading() {
-    let (addr, _route, _token) = multimux::source::whip::serve_for_test().await;
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
     let resp = raw(
         addr,
         "POST /whip HTTP/1.1\nHost: x\nContent-Type: application/sdp\n\
@@ -96,7 +96,7 @@ async fn a_body_over_64_kib_is_rejected_413_before_reading() {
 
 #[tokio::test]
 async fn a_chunked_request_body_is_accepted() {
-    let (addr, _route, _token) = multimux::source::whip::serve_for_test().await;
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
     let mut s = TcpStream::connect(addr).await.unwrap();
     let body = OFFER;
     s.write_all(
@@ -125,7 +125,7 @@ async fn a_chunked_request_body_is_accepted() {
 /// path is no resource at all. Full behaviour: `whip_session_resource.rs`.
 #[tokio::test]
 async fn whip_patch_and_delete_on_an_unknown_resource_are_404() {
-    let (addr, _route, _token) = multimux::source::whip::serve_for_test().await;
+    let (addr, _shared, _token) = multimux::test_seam::serve_whip_for_test().await;
     for method in ["PATCH", "DELETE"] {
         for path in ["/whip/session/nope", "/whip/session"] {
             let resp = raw(

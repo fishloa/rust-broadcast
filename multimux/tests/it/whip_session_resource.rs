@@ -90,7 +90,7 @@ const CANDIDATE: &str = "2 1 udp 2130706431 10.0.0.9 5555 typ host";
 
 #[tokio::test]
 async fn the_201_location_is_a_distinct_resource_per_session() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let a = post_offer(addr).await;
     let b = post_offer(addr).await;
     let (la, lb) = (resource_path(&a), resource_path(&b));
@@ -106,7 +106,7 @@ async fn the_201_location_is_a_distinct_resource_per_session() {
 #[tokio::test]
 async fn delete_ends_the_session_frees_its_slot_and_is_not_repeatable() {
     let (addr, route, token) =
-        multimux::source::whip::serve_for_test_with_read_load_and_max_sessions(1).await;
+        multimux::test_seam::serve_for_test_with_read_load_and_max_sessions(1).await;
 
     let first = post_offer(addr).await;
     let loc = resource_path(&first);
@@ -158,7 +158,7 @@ async fn delete_ends_the_session_frees_its_slot_and_is_not_repeatable() {
 
 #[tokio::test]
 async fn unknown_resources_are_404_for_patch_and_delete() {
-    let (addr, _route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, _route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let bogus = "/whip/session/does-not-exist";
     assert_eq!(http(addr, "DELETE", bogus, &[], "").await.status, 404);
     assert_eq!(
@@ -185,7 +185,7 @@ async fn unknown_resources_are_404_for_patch_and_delete() {
 /// reaches the session's transport (the read loop applied it).
 #[tokio::test]
 async fn patch_trickles_a_candidate_into_the_live_transport() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     let etag = etag_of(&created);
@@ -240,7 +240,7 @@ async fn patch_trickles_a_candidate_into_the_live_transport() {
 
 #[tokio::test]
 async fn patch_rejections_follow_rfc_9725() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     let etag = etag_of(&created);
@@ -306,7 +306,7 @@ async fn patch_rejections_follow_rfc_9725() {
 /// A resource whose session ended on its own (idle reap) is not a stale 200.
 #[tokio::test]
 async fn a_session_reaped_by_idle_timeout_unregisters_its_resource() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load_and_timeout(
+    let (addr, route, token) = multimux::test_seam::serve_for_test_with_read_load_and_timeout(
         Duration::from_millis(150),
     )
     .await;
@@ -474,7 +474,7 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
         MediaTransport, MediaTransportConfig, SetupRole, certificate_fingerprint,
     };
 
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
 
     let provider = default_provider().expect("crypto provider");
     let client_cert =
@@ -691,7 +691,7 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
 /// The `/whip` endpoint itself answers its preflight `204`.
 #[tokio::test]
 async fn review_cors_preflight_on_the_session_resource_is_2xx() {
-    let (addr, _route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, _route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     for method in ["DELETE", "PATCH"] {
@@ -723,7 +723,7 @@ async fn review_cors_preflight_on_the_session_resource_is_2xx() {
 /// cross-origin browser client cannot read it at all.
 #[tokio::test]
 async fn review_etag_is_exposed_to_cross_origin_clients() {
-    let (addr, _route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, _route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let created = post_offer(addr).await;
     resource_path(&created);
     let exposed = created
@@ -746,7 +746,7 @@ async fn review_etag_is_exposed_to_cross_origin_clients() {
 /// `If-Match` is accepted `204` instead.
 #[tokio::test]
 async fn review_trickle_patch_without_if_match_is_428() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     assert!(route.wait_for_admissions(1, Duration::from_secs(2)).await >= 1);
@@ -778,7 +778,7 @@ async fn review_trickle_patch_without_if_match_is_428() {
 /// the old ETag is stale (412): the session is unrecoverable over PATCH.
 #[tokio::test]
 async fn review_ice_restart_with_empty_ufrag_is_refused_not_acknowledged() {
-    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load().await;
+    let (addr, route, token) = multimux::test_seam::serve_whip_for_test_with_read_load().await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     let etag = etag_of(&created);
@@ -817,7 +817,7 @@ async fn review_ice_restart_with_empty_ufrag_is_refused_not_acknowledged() {
 #[tokio::test]
 async fn post_with_a_closed_admit_channel_is_503_not_a_dangling_201() {
     use tower::ServiceExt as _;
-    let router = multimux::source::whip::whip_router_for_test(4, 8);
+    let router = multimux::test_seam::whip_router_for_test(4, 8);
     let resp = router
         .oneshot(
             axum::http::Request::builder()
