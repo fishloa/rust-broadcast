@@ -8,6 +8,7 @@
 use std::time::Duration;
 
 use broadcast_common::impl_spec_display;
+use broadcast_common::timescale::Timescale;
 
 use crate::error::Unsupported;
 use crate::utc_timing::UtcScheme;
@@ -261,7 +262,7 @@ pub struct CommonAttributes {
 #[non_exhaustive]
 pub struct BaseInfo {
     /// `@timescale`.
-    pub timescale: Option<u64>,
+    pub timescale: Option<Timescale>,
     /// `@presentationTimeOffset`.
     pub presentation_time_offset: Option<u64>,
     /// `@eptDelta`.
@@ -479,7 +480,7 @@ pub struct EventStream {
     /// `@value`.
     pub value: Option<String>,
     /// `@timescale`, ticks per second.
-    pub timescale: Option<u32>,
+    pub timescale: Option<Timescale>,
     /// `@presentationTimeOffset`, in the timescale.
     pub presentation_time_offset: Option<u64>,
     /// The `Event` children in document order.

@@ -52,7 +52,7 @@ crate::impl_spec_display!(Rounding);
 /// error at the parse boundary ([`Self::try_new`]), not a value to flatten to
 /// `1`. Every rescale below takes a `Timescale`, so a zero can neither reach
 /// the arithmetic nor become a silently wrong result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Timescale(pub core::num::NonZeroU32);
 
 impl Timescale {
@@ -114,6 +114,18 @@ impl Timescale {
     #[must_use]
     pub const fn get(self) -> u32 {
         self.0.get()
+    }
+}
+
+impl core::fmt::Debug for Timescale {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Debug::fmt(&self.0.get(), f)
+    }
+}
+
+impl core::fmt::Display for Timescale {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.0, f)
     }
 }
 
