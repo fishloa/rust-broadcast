@@ -29,6 +29,7 @@ const BAR_VALUE_MASK: u16 = 0x3FFF;
 /// AFD signal carried by an `afd_data()` message: either no active format
 /// (`active_format_flag == 0`) or a concrete format code.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AfdSignal {
     NoFormat,
     Format(ActiveFormatDescription),

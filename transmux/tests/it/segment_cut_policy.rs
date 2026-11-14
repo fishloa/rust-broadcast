@@ -60,9 +60,14 @@ fn require_video(rel: &str) -> Video {
 }
 
 fn span_ticks(samples: &[Sample]) -> i64 {
-    let first = samples.first().and_then(|s| s.timing.map(|t| t.dts)).expect("dts");
+    let first = samples
+        .first()
+        .and_then(|s| s.timing.map(|t| t.dts))
+        .expect("dts");
     let last = samples.last().expect("sample");
-    last.timing.map(|t| t.dts).expect("dts") + i64::from(last.timing.map(|t| t.duration).expect("duration")) - first
+    last.timing.map(|t| t.dts).expect("dts")
+        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+        - first
 }
 
 fn looped(samples: &[Sample], reps: usize) -> Vec<Sample> {
@@ -145,7 +150,11 @@ fn oracle_cuts(samples: &[Sample], timescale: u32) -> Vec<usize> {
             cuts.push(i);
             buffered = 0;
         }
-        let tick = match (s.timing.map(|t| t.duration), s.timing.map(|t| t.dts), prev_dts) {
+        let tick = match (
+            s.timing.map(|t| t.duration),
+            s.timing.map(|t| t.dts),
+            prev_dts,
+        ) {
             (Some(d), _, _) if d > 0 => u64::from(d),
             (_, Some(now), Some(prev)) => (now - prev).max(0) as u64,
             _ => 0,
@@ -466,7 +475,13 @@ fn with_sps_prefix(idr: &Sample, p_frame: &Sample, dts: i64) -> Sample {
             data.extend_from_slice(&p_frame.data[a..b]);
         }
     }
-    Sample::new(data, Some(dts), Some(dts), p_frame.timing.map(|t| t.duration), true)
+    Sample::new(
+        data,
+        Some(dts),
+        Some(dts),
+        p_frame.timing.map(|t| t.duration),
+        true,
+    )
 }
 
 #[test]

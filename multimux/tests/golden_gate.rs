@@ -502,9 +502,13 @@ async fn non_ll_full_segment_path_also_decodes() {
     // A single full segment holding every sample: a target/part duration far
     // longer than the fixture's ~3s runtime means nothing auto-splits until
     // the trailing `flush()` closes the one and only segment.
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale.into(), 3600.0, 3_600_000)
-            .expect("segmenter builds");
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![spec.clone()],
+        spec.timescale.into(),
+        3600.0,
+        3_600_000,
+    )
+    .expect("segmenter builds");
     for sample in fed_samples.clone() {
         seg.push(spec.track_id, sample).expect("push succeeds");
     }
@@ -691,9 +695,13 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
         DvrRecorder::new("replay".to_string(), cfg, ".m4s", &trunk).expect("recorder");
 
     // A real fMP4 init, then a single segment holding every sample.
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale.into(), 3600.0, 3_600_000)
-            .expect("segmenter builds");
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![spec.clone()],
+        spec.timescale.into(),
+        3600.0,
+        3_600_000,
+    )
+    .expect("segmenter builds");
     let init = seg.init_segment().expect("init segment builds");
     recorder
         .poll_and_persist(Some(&init))

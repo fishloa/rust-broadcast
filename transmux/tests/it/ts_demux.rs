@@ -174,10 +174,12 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     // so a swap changes the value being compared and this now catches it.)
     for (i, s) in vid.samples.iter().enumerate() {
         let dts = s
-            .timing.map(|t| t.dts)
+            .timing
+            .map(|t| t.dts)
             .unwrap_or_else(|| panic!("video sample {i} has no dts"));
         let pts = s
-            .timing.map(|t| t.pts)
+            .timing
+            .map(|t| t.pts)
             .unwrap_or_else(|| panic!("video sample {i} has no pts"));
         assert_eq!(
             dts,
@@ -222,10 +224,12 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     let audio_ts = aud.spec.timescale.get() as i128;
     for (i, s) in aud.samples.iter().enumerate() {
         let dts = s
-            .timing.map(|t| t.dts)
+            .timing
+            .map(|t| t.dts)
             .unwrap_or_else(|| panic!("audio sample {i} has no dts")) as i128;
         let pts = s
-            .timing.map(|t| t.pts)
+            .timing
+            .map(|t| t.pts)
             .unwrap_or_else(|| panic!("audio sample {i} has no pts")) as i128;
         assert_eq!(
             pts, dts,

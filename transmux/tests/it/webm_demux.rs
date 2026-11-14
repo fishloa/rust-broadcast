@@ -1079,7 +1079,13 @@ fn timing_holds_for_every_lacing_mode() {
         let rows: Vec<(i64, i64, u32)> = audio
             .samples
             .iter()
-            .map(|s| (s.timing.map(|t| t.dts).unwrap(), s.timing.map(|t| t.pts).unwrap(), s.timing.map(|t| t.duration).unwrap()))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.dts).unwrap(),
+                    s.timing.map(|t| t.pts).unwrap(),
+                    s.timing.map(|t| t.duration).unwrap(),
+                )
+            })
             .collect();
         assert_eq!(
             rows,
@@ -1137,13 +1143,21 @@ fn default_duration_is_rounded_not_truncated() {
         .find(|t| t.spec.track_id == TrackId::new(1))
         .expect("audio track");
 
-    let dts: Vec<i64> = audio.samples.iter().map(|s| s.timing.map(|t| t.dts).unwrap()).collect();
+    let dts: Vec<i64> = audio
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .collect();
     // 23 ms per frame, three frames in the laced block, then the boundary block
     // at 69 ms. The block timestamps are authoritative, so the third laced
     // frame sits at 46 and the boundary at 69; nothing may drift by more than
     // the one tick the rounding can absorb.
     assert_eq!(dts, vec![0, 23, 46, 69], "no cumulative drift");
-    let dur: Vec<u32> = audio.samples.iter().map(|s| s.timing.map(|t| t.duration).unwrap()).collect();
+    let dur: Vec<u32> = audio
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap())
+        .collect();
     assert_eq!(dur, vec![23, 23, 23, 23]);
 }
 

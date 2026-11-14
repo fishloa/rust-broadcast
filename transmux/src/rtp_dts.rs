@@ -244,7 +244,11 @@ impl DtsDeriver {
             dts
         };
         self.last_dts = Some(dts);
-        if let Some(t) = sample.timing.as_mut() { t.dts = dts; } else { sample.timing = Some(crate::ir::SampleTiming::new(dts, dts, 0)); }
+        if let Some(t) = sample.timing.as_mut() {
+            t.dts = dts;
+        } else {
+            sample.timing = Some(crate::ir::SampleTiming::new(dts, dts, 0));
+        }
         out.push(sample);
     }
 
@@ -279,7 +283,11 @@ impl DtsDeriver {
                 origin
             };
             self.last_dts = Some(dts);
-            if let Some(t) = s.timing.as_mut() { t.dts = dts; } else { s.timing = Some(crate::ir::SampleTiming::new(dts, dts, 0)); }
+            if let Some(t) = s.timing.as_mut() {
+                t.dts = dts;
+            } else {
+                s.timing = Some(crate::ir::SampleTiming::new(dts, dts, 0));
+            }
             out.push(s);
         }
         self.anchored = true;
@@ -324,15 +332,26 @@ mod tests {
     }
 
     fn dts_of(out: &[Sample]) -> Vec<i64> {
-        out.iter().map(|s| s.timing.map(|t| t.dts).unwrap()).collect()
+        out.iter()
+            .map(|s| s.timing.map(|t| t.dts).unwrap())
+            .collect()
     }
 
     fn assert_invariants(out: &[Sample]) {
         for w in out.windows(2) {
-            assert!(w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts), "dts not strictly increasing");
+            assert!(
+                w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts),
+                "dts not strictly increasing"
+            );
         }
         for s in out {
-            assert!(s.timing.map(|t| t.dts).unwrap_or_default() <= s.timing.map(|t| t.pts).unwrap_or_default(), "dts {:?} > pts {:?}", s.timing.map(|t| t.dts), s.timing.map(|t| t.pts));
+            assert!(
+                s.timing.map(|t| t.dts).unwrap_or_default()
+                    <= s.timing.map(|t| t.pts).unwrap_or_default(),
+                "dts {:?} > pts {:?}",
+                s.timing.map(|t| t.dts),
+                s.timing.map(|t| t.pts)
+            );
         }
     }
 
@@ -344,8 +363,16 @@ mod tests {
         assert_eq!(out.len(), wire.len());
         assert_invariants(&out);
         for (k, s) in out.iter().enumerate() {
-            assert_eq!(s.timing.map(|t| t.dts), Some((k as i64 - 2) * D), "frame {k}");
-            assert_eq!(s.timing.map(|t| t.pts), Some(wire[k]), "pts untouched, order untouched");
+            assert_eq!(
+                s.timing.map(|t| t.dts),
+                Some((k as i64 - 2) * D),
+                "frame {k}"
+            );
+            assert_eq!(
+                s.timing.map(|t| t.pts),
+                Some(wire[k]),
+                "pts untouched, order untouched"
+            );
         }
     }
 
@@ -354,7 +381,10 @@ mod tests {
         let wire: Vec<i64> = (0..10).map(|k| k * D).collect();
         let (out, _) = run(Some(0), &wire, false);
         assert_eq!(out.len(), wire.len());
-        assert!(out.iter().all(|s| s.timing.map(|t| t.dts) == s.timing.map(|t| t.pts)));
+        assert!(
+            out.iter()
+                .all(|s| s.timing.map(|t| t.dts) == s.timing.map(|t| t.pts))
+        );
     }
 
     #[test]
@@ -393,7 +423,10 @@ mod tests {
             let pending = i + 1 - out.len();
             assert!(pending < 8, "held {pending} after {} feeds", i + 1);
         }
-        assert!(out.iter().all(|s| s.timing.map(|t| t.dts) == s.timing.map(|t| t.pts)));
+        assert!(
+            out.iter()
+                .all(|s| s.timing.map(|t| t.dts) == s.timing.map(|t| t.pts))
+        );
     }
 
     #[test]
@@ -418,7 +451,12 @@ mod tests {
             assert!(w[0].timing.map(|t| t.dts) < w[1].timing.map(|t| t.dts));
         }
         let tail = &out[out.len() - 10..];
-        assert!(tail.iter().all(|s| s.timing.map(|t| t.dts).unwrap_or_default() <= s.timing.map(|t| t.pts).unwrap_or_default()), "recovers after growth");
+        assert!(
+            tail.iter()
+                .all(|s| s.timing.map(|t| t.dts).unwrap_or_default()
+                    <= s.timing.map(|t| t.pts).unwrap_or_default()),
+            "recovers after growth"
+        );
     }
 
     #[test]

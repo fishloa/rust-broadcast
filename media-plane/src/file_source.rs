@@ -252,7 +252,11 @@ impl ParsedFile {
             // with B-frames reorders, so the decode-order "last" sample is
             // not the presentation max and a loop offset based on it would
             // step backwards across the loop point.
-            let mut pres_pts: Vec<i64> = track.samples.iter().filter_map(|s| s.timing.map(|t| t.pts)).collect();
+            let mut pres_pts: Vec<i64> = track
+                .samples
+                .iter()
+                .filter_map(|s| s.timing.map(|t| t.pts))
+                .collect();
             // A track with no timed samples cannot be paced/looped; give it a
             // zero span/frame so `advance_offsets`' zip stays aligned with the
             // track table, but it contributes no `order` entries.
@@ -288,7 +292,12 @@ impl ParsedFile {
                 frame = track
                     .samples
                     .iter()
-                    .filter_map(|s| s.timing.map(|t| t.duration).map(i64::from).filter(|&d| d > 0))
+                    .filter_map(|s| {
+                        s.timing
+                            .map(|t| t.duration)
+                            .map(i64::from)
+                            .filter(|&d| d > 0)
+                    })
                     .next()
                     .unwrap_or(1);
             }
@@ -794,8 +803,16 @@ impl FileIngestSession {
             let mut sample = item.sample.clone();
             let off = self.offsets[item.track_ref];
             if let Some(t) = sample.timing.as_mut() {
-                if let Some(p) = t.pts.checked_add(off) { t.pts = p; } else { return Err(FileReaderError::OffsetOverflow); }
-                if let Some(d) = t.dts.checked_add(off) { t.dts = d; } else { return Err(FileReaderError::OffsetOverflow); }
+                if let Some(p) = t.pts.checked_add(off) {
+                    t.pts = p;
+                } else {
+                    return Err(FileReaderError::OffsetOverflow);
+                }
+                if let Some(d) = t.dts.checked_add(off) {
+                    t.dts = d;
+                } else {
+                    return Err(FileReaderError::OffsetOverflow);
+                }
             }
             let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue

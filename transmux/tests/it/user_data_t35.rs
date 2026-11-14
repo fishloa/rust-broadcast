@@ -25,10 +25,15 @@ fn afd_with_the_active_format_flag_decodes_the_code() {
     let got = afd_from_t35_payload(&afd_payload(&[0x40, 0xF4]));
     assert_eq!(
         got,
-        Some(AfdSignal::Format(ActiveFormatDescription::BoxWiderThan16x9Centre))
+        Some(AfdSignal::Format(
+            ActiveFormatDescription::BoxWiderThan16x9Centre
+        ))
     );
     let got = afd_from_t35_payload(&afd_payload(&[0x40, 0xA8]));
-    assert_eq!(got, Some(AfdSignal::Format(ActiveFormatDescription::SameAsCodedFrame)));
+    assert_eq!(
+        got,
+        Some(AfdSignal::Format(ActiveFormatDescription::SameAsCodedFrame))
+    );
 }
 
 #[test]
@@ -37,7 +42,10 @@ fn afd_with_the_flag_cleared_is_present_but_empty() {
         afd_from_t35_payload(&afd_payload(&[0x00, 0xFF])),
         Some(AfdSignal::NoFormat)
     );
-    assert_eq!(afd_from_t35_payload(&afd_payload(&[0x00])), Some(AfdSignal::NoFormat));
+    assert_eq!(
+        afd_from_t35_payload(&afd_payload(&[0x00])),
+        Some(AfdSignal::NoFormat)
+    );
 }
 
 #[test]

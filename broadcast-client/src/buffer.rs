@@ -642,7 +642,9 @@ impl Feeder {
         let Some(timescale) = self.timescale_of(track) else {
             return;
         };
-        let Some(pts) = sample.timing.map(|t| t.pts) else { return };
+        let Some(pts) = sample.timing.map(|t| t.pts) else {
+            return;
+        };
         let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
         let rendered = self.rendered.contains(&track);
         self.first_seen.entry(track).or_insert(pts);
@@ -652,7 +654,8 @@ impl Feeder {
                 Some(JoinDecision::JoinPoint(_)) if !self.video_joined.contains(&track) => {
                     self.video_joined.insert(track);
                     self.video_join_at.insert(track, (pts, timescale));
-                    let run = ReorderEnd::new(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let run =
+                        ReorderEnd::new(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
                     self.video_end.insert(track, run.end);
                     self.video_reorder.insert(track, run);
                     if rendered {
@@ -951,7 +954,11 @@ mod tests {
             t.dts = i64::MAX;
             t.duration = FAR_PTS_DURATION;
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(i64::MAX, i64::MAX, FAR_PTS_DURATION));
+            s.timing = Some(transmux::ir::SampleTiming::new(
+                i64::MAX,
+                i64::MAX,
+                FAR_PTS_DURATION,
+            ));
         }
         s
     }

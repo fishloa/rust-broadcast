@@ -781,7 +781,8 @@ fn smooth_timeline(
         .map(|(i, s)| {
             let start = starts[i];
             let own_end = SmoothPackager::to_smooth_ticks(
-                (times[i].max(0) as u64).saturating_add(u64::from(s.timing.map(|t| t.duration).unwrap_or(0))),
+                (times[i].max(0) as u64)
+                    .saturating_add(u64::from(s.timing.map(|t| t.duration).unwrap_or(0))),
                 media_timescale,
             );
             let end = match starts.get(i + 1) {

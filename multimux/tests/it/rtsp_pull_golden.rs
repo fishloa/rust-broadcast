@@ -198,11 +198,13 @@ async fn rtsp_pull_golden() {
                 (h ^ u64::from(*b)).wrapping_mul(FNV_PRIME)
             });
             let dts = sample
-                .timing.map(|t| t.dts)
+                .timing
+                .map(|t| t.dts)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string());
             let pts = sample
-                .timing.map(|t| t.pts)
+                .timing
+                .map(|t| t.pts)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string());
             rendered.push_str(&format!(

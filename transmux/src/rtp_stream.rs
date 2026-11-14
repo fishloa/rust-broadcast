@@ -281,7 +281,7 @@ pub enum RtpLossEvent {
         /// The track this occurred on.
         track_id: TrackId,
         /// The previous access unit's unwrapped presentation timestamp, in the
-        /// track's clock (the same unit as [`crate::ir::Sample::pts`]).
+        /// track's clock (the same unit as `Sample::timing` (`.pts`)).
         previous_pts: i64,
         /// This access unit's, which is earlier.
         pts: i64,
@@ -310,7 +310,7 @@ pub enum RtpLossEvent {
         /// The track this occurred on.
         track_id: TrackId,
         /// The discarded AU's unwrapped presentation timestamp, in the track's
-        /// clock (the same unit as [`crate::ir::Sample::pts`]).
+        /// clock (the same unit as `Sample::timing` (`.pts`)).
         pts: i64,
     },
 }
@@ -772,7 +772,7 @@ fn unwrap_ts(prev: Option<u64>, ts: u32) -> u64 {
 }
 
 /// Narrow an unwrapped RTP media-clock value into the `i64` range
-/// [`Sample::dts`]/[`Sample::pts`] carry (media plane step 2c). The unwrapped
+/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry (media plane step 2c). The unwrapped
 /// clock is a `u64` accumulating whole `2^32` windows, so this only clamps at
 /// values no real stream reaches (`i64::MAX` ticks is ~3 million years at
 /// 90 kHz) — it makes the narrowing checked rather than a silent truncation.
@@ -1786,7 +1786,10 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(d.flush(id).unwrap()[0].timing.map(|t| t.duration), Some(3600));
+        assert_eq!(
+            d.flush(id).unwrap()[0].timing.map(|t| t.duration),
+            Some(3600)
+        );
     }
 
     #[test]
@@ -1835,7 +1838,10 @@ mod tests {
                 .is_empty()
         );
         let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
-        let got: Vec<_> = out.iter().map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration))).collect();
+        let got: Vec<_> = out
+            .iter()
+            .map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
+            .collect();
         assert_eq!(
             got,
             alloc::vec![
@@ -1895,7 +1901,10 @@ mod tests {
                 .is_empty()
         );
         let out = d.push(id, &aac_packet(3, 15_120, &[&[6, 6]])).unwrap();
-        let got: Vec<_> = out.iter().map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration))).collect();
+        let got: Vec<_> = out
+            .iter()
+            .map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
+            .collect();
         assert_eq!(
             got,
             alloc::vec![
@@ -2150,7 +2159,10 @@ mod tests {
             let nal: &[u8] = if n == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
             let ts = 1000 + frame * 3600;
             for s in d.push(id, &vpkt(n as u16, ts, true, nal)).unwrap() {
-                emitted.push((s.timing.map(|t| t.pts).unwrap() as u64, s.timing.map(|t| t.duration).unwrap()));
+                emitted.push((
+                    s.timing.map(|t| t.pts).unwrap() as u64,
+                    s.timing.map(|t| t.duration).unwrap(),
+                ));
             }
             max_hold = max_hold.max(n + 1 - emitted.len());
         }

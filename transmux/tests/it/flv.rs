@@ -443,7 +443,10 @@ fn streaming_payloads_are_flv_shaped_not_ts_shaped() {
     // `flv_frame_payloads`'s dts-based ms rescale is the identity — the
     // first video payload's `timestamp_ms` must equal that sample's own
     // absolute `dts` exactly (bites on any accidental batch-relative reset).
-    let first_sample_dts = media.tracks[0].samples[0].timing.map(|t| t.dts).expect("video dts");
+    let first_sample_dts = media.tracks[0].samples[0]
+        .timing
+        .map(|t| t.dts)
+        .expect("video dts");
     assert_eq!(
         video_frames[0].timestamp_ms as i64, first_sample_dts,
         "first video payload ms timestamp == sample absolute dts"

@@ -73,8 +73,9 @@ fn spans(segment: &[u8]) -> (f64, Vec<f64>) {
         }
         let first = t.samples[0].timing.map(|t| t.dts).expect("dts");
         let last = t.samples.last().expect("sample");
-        let span = (last.timing.map(|t| t.dts).expect("dts") + i64::from(last.timing.map(|t| t.duration).expect("duration")) - first)
-            as f64
+        let span = (last.timing.map(|t| t.dts).expect("dts")
+            + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+            - first) as f64
             / f64::from(t.spec.timescale.get());
         match t.spec.config {
             _ if is_audio => audio.push(span),

@@ -236,7 +236,14 @@ fn batch(ts: &[u8]) -> BTreeMap<TrackId, Vec<Sample>> {
                 t.spec.track_id,
                 t.samples
                     .iter()
-                    .map(|s| (s.data.to_vec(), s.timing.map(|t| t.dts), s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
+                    .map(|s| {
+                        (
+                            s.data.to_vec(),
+                            s.timing.map(|t| t.dts),
+                            s.timing.map(|t| t.pts),
+                            s.timing.map(|t| t.duration),
+                        )
+                    })
                     .collect(),
             )
         })

@@ -133,9 +133,11 @@ impl JumpDetector {
     }
 
     pub fn begin_epoch(&mut self, jumped: TrackId, sample: &Sample) {
-        let (Some(cfg), Some(pts), Some(info)) =
-            (self.config, sample.timing.map(|t| t.pts), self.tracks.get(&jumped).copied())
-        else {
+        let (Some(cfg), Some(pts), Some(info)) = (
+            self.config,
+            sample.timing.map(|t| t.pts),
+            self.tracks.get(&jumped).copied(),
+        ) else {
             return;
         };
         if info.timescale == 0 {
@@ -162,7 +164,8 @@ impl JumpDetector {
         if !epoch.stale.contains(&track) {
             return true;
         }
-        let (Some(pts), Some(info)) = (sample.timing.map(|t| t.pts), self.tracks.get(&track)) else {
+        let (Some(pts), Some(info)) = (sample.timing.map(|t| t.pts), self.tracks.get(&track))
+        else {
             return true;
         };
         if info.timescale == 0 {
@@ -242,7 +245,9 @@ impl JumpDetector {
         now_us: u64,
     ) {
         self.delivered.insert(track);
-        let Some(pts) = sample.timing.map(|t| t.pts) else { return };
+        let Some(pts) = sample.timing.map(|t| t.pts) else {
+            return;
+        };
         let Some(info) = self.watched(track, join) else {
             return;
         };

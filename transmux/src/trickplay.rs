@@ -147,7 +147,11 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         // bump: no allocation per trick-play sample).
         derived.push(Sample {
             data: src_sample.data.clone(),
-            timing: crate::ir::SampleTiming::from_options(src_sample.timing.map(|t| t.dts), src_sample.timing.map(|t| t.pts), Some(folded_duration)),
+            timing: crate::ir::SampleTiming::from_options(
+                src_sample.timing.map(|t| t.dts),
+                src_sample.timing.map(|t| t.pts),
+                Some(folded_duration),
+            ),
             flags: crate::ir::SampleFlags::SYNC,
             provenance: src_sample.provenance,
             display: src_sample.display.clone(),

@@ -92,7 +92,9 @@ impl Truth {
                 &mut truth.audio
             };
             for s in &track.samples {
-                let Some(pts) = s.timing.map(|t| t.pts) else { continue };
+                let Some(pts) = s.timing.map(|t| t.pts) else {
+                    continue;
+                };
                 let key = if video {
                     video_key(&s.data)
                 } else {

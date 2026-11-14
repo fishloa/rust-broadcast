@@ -722,9 +722,9 @@ fn incremental_part_cuts_match_whole_segment() {
     let mut incremental_parts: Vec<PartInfo> = Vec::new();
     for cut in &part_cuts {
         while let Some(sample) = audio.samples.get(next_sample)
-            && sample
-                .timing.map(|t| t.dts)
-                .is_some_and(|d| !opens_next(d, audio.spec.timescale.get(), cut.start_dts, cut.timescale))
+            && sample.timing.map(|t| t.dts).is_some_and(|d| {
+                !opens_next(d, audio.spec.timescale.get(), cut.start_dts, cut.timescale)
+            })
         {
             incremental
                 .push(audio.spec.track_id, sample.clone())

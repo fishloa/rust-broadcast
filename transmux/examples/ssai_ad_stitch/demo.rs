@@ -343,8 +343,8 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ticks. For this capture the two happen to coincide (TS video is always
     // carried on the 90 kHz PES clock), so this is a no-op multiply here —
     // written generically so it holds for a base with a different timescale.
-    let at_ticks =
-        (at_pts_90k as u128 * video.spec.timescale.get() as u128 / timed_metadata::PTS_HZ as u128) as u64;
+    let at_ticks = (at_pts_90k as u128 * video.spec.timescale.get() as u128
+        / timed_metadata::PTS_HZ as u128) as u64;
 
     // ------------------------------------------------------------------
     // 5. The actual splice.

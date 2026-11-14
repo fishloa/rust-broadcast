@@ -164,7 +164,10 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         14400, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600,
     ];
     const EXPECTED_TOTAL: u64 = 280_800;
-    let got_durations: Vec<u32> = recovered.iter().map(|s| s.timing.map(|t| t.duration).unwrap_or(0)).collect();
+    let got_durations: Vec<u32> = recovered
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0))
+        .collect();
     assert_eq!(
         &got_durations[..EXPECTED_FIRST_DURATIONS.len()],
         &EXPECTED_FIRST_DURATIONS[..],

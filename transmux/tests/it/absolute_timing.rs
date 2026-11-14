@@ -238,7 +238,8 @@ fn ts_33bit_rollover_is_unwrapped_once_at_the_demux_edge() {
         .samples
         .iter()
         .map(|s| {
-            s.timing.map(|t| t.dts)
+            s.timing
+                .map(|t| t.dts)
                 .expect("a timed video sample must carry an absolute dts")
         })
         .collect();
@@ -342,7 +343,8 @@ fn assert_absolute_timeline(media: &Media, what: &str) {
             .samples
             .iter()
             .map(|s| {
-                s.timing.map(|t| t.dts)
+                s.timing
+                    .map(|t| t.dts)
                     .unwrap_or_else(|| panic!("{what}: track {ti} sample has no absolute dts"))
             })
             .collect();
@@ -405,7 +407,11 @@ fn flv_demux_emits_absolute_time_from_tag_timestamps() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("FLV AVC track");
-    let got: Vec<i64> = video.samples.iter().filter_map(|s| s.timing.map(|t| t.dts)).collect();
+    let got: Vec<i64> = video
+        .samples
+        .iter()
+        .filter_map(|s| s.timing.map(|t| t.dts))
+        .collect();
     assert_eq!(
         got, want,
         "FLV sample dts must be the tag timestamps verbatim (absolute ms)"
@@ -637,7 +643,8 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
     for t in &media.tracks {
         for s in &t.samples {
             assert_eq!(
-                s.timing.map(|t| t.dts), s.timing.map(|t| t.pts),
+                s.timing.map(|t| t.dts),
+                s.timing.map(|t| t.pts),
                 "WebM carries only a presentation clock, so dts must equal pts"
             );
         }
@@ -662,7 +669,8 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
             t.samples.iter().zip(oracle_samples.iter()).enumerate()
         {
             let dts = s
-                .timing.map(|t| t.dts)
+                .timing
+                .map(|t| t.dts)
                 .unwrap_or_else(|| panic!("WebM sample {i} has no dts"));
             assert_eq!(
                 dts, oracle_pts_ms,
@@ -919,7 +927,12 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     let got: Vec<(i64, i64)> = ir.tracks[0]
         .samples
         .iter()
-        .map(|s| (s.timing.map(|t| t.dts).expect("dts"), s.timing.map(|t| t.pts).expect("pts")))
+        .map(|s| {
+            (
+                s.timing.map(|t| t.dts).expect("dts"),
+                s.timing.map(|t| t.pts).expect("pts"),
+            )
+        })
         .collect();
     let want: Vec<(i64, i64)> = offsets
         .iter()

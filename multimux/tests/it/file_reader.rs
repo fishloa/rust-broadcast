@@ -222,7 +222,13 @@ fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(TrackId, i64)> {
     loop {
         match cursor.poll() {
             Some(SampleCursorItem::Timed { track_id, sample }) => {
-                out.push((track_id, sample.timing.map(|t| t.dts).expect("timed sample must carry a dts")));
+                out.push((
+                    track_id,
+                    sample
+                        .timing
+                        .map(|t| t.dts)
+                        .expect("timed sample must carry a dts"),
+                ));
             }
             Some(SampleCursorItem::Sparse { .. })
             | Some(SampleCursorItem::Lagged { .. })

@@ -272,7 +272,8 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
                 .find(|t| t.spec.track_id == TrackId::new(track_id))
                 .unwrap()
                 .spec
-                .timescale.get() as u64;
+                .timescale
+                .get() as u64;
             let total: u64 = durations.iter().sum();
             (total * 10 + ts / 2) / ts
         })

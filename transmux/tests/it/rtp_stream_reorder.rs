@@ -17,7 +17,11 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .unwrap();
-    let source_pts: Vec<i64> = track.samples.iter().map(|s| s.timing.map(|t| t.pts).unwrap()).collect();
+    let source_pts: Vec<i64> = track
+        .samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.pts).unwrap())
+        .collect();
     let mut p = RtpPacketiser {
         mtu: 1400,
         ssrc: 0x1234_5678,
@@ -54,7 +58,12 @@ fn video_durations(skip_aus: usize) -> (Vec<(i64, u32)>, Vec<i64>) {
     (
         samples
             .iter()
-            .map(|s| (s.timing.map(|t| t.pts).unwrap(), s.timing.map(|t| t.duration).unwrap_or(0)))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.pts).unwrap(),
+                    s.timing.map(|t| t.duration).unwrap_or(0),
+                )
+            })
             .collect(),
         source_pts,
     )

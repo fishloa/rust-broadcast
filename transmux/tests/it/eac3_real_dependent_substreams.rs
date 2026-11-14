@@ -190,7 +190,11 @@ fn assert_ts_recovers_the_stream(name: &str) {
     }
     let dts0 = track.samples[0].timing.map(|t| t.dts).unwrap();
     for (i, s) in track.samples.iter().enumerate() {
-        assert_eq!(s.timing.map(|t| t.duration), Some(SAMPLES_PER_AU), "{name}: AU {i}");
+        assert_eq!(
+            s.timing.map(|t| t.duration),
+            Some(SAMPLES_PER_AU),
+            "{name}: AU {i}"
+        );
         assert_eq!(
             s.timing.map(|t| t.dts),
             Some(dts0 + i as i64 * i64::from(SAMPLES_PER_AU)),

@@ -29,7 +29,7 @@
 //!
 //! # Invariants
 //!
-//! - [`Sample::dts`]/[`Sample::pts`] are stored *absolutely*, in the track's
+//! - `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) are stored *absolutely*, in the track's
 //!   media timescale (media plane step 2c) — `None` only for section-carried
 //!   tracks (SCTE-35/DSM-CC/private sections), which have no timestamp at
 //!   all, never fabricated. [`Track::start_decode_time`] is kept in lockstep

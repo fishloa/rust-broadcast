@@ -246,7 +246,11 @@ fn expected_dts(media: &Media) -> Vec<Vec<f64>> {
         .map(|t| {
             t.samples
                 .iter()
-                .map(|s| s.timing.map(|t| t.dts).unwrap() as f64 * 90_000.0 / f64::from(t.spec.timescale.get()) - origin)
+                .map(|s| {
+                    s.timing.map(|t| t.dts).unwrap() as f64 * 90_000.0
+                        / f64::from(t.spec.timescale.get())
+                        - origin
+                })
                 .collect()
         })
         .collect()

@@ -103,7 +103,10 @@ fn compose(video: &[u8], teletext: &[u8]) -> transmux::Media {
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Data { .. }))
         .expect("teletext track");
-    let first_pts = teletext.samples[0].timing.map(|t| t.pts).expect("teletext PES PTS");
+    let first_pts = teletext.samples[0]
+        .timing
+        .map(|t| t.pts)
+        .expect("teletext PES PTS");
     let shift = first_video_dts + TELETEXT_STARTS_AFTER_VIDEO_TICKS - first_pts;
     for sample in &mut teletext.samples {
         if let Some(t) = sample.timing.as_mut() {
@@ -175,13 +178,21 @@ fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool
     let mut timed: Vec<(f64, usize, usize)> = Vec::new();
     for (ti, track) in media.tracks.iter().enumerate() {
         for (si, s) in track.samples.iter().enumerate() {
-            let at = s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts)).unwrap_or(0);
+            let at = s
+                .timing
+                .map(|t| t.dts)
+                .or(s.timing.map(|t| t.pts))
+                .unwrap_or(0);
             let delay = if matches!(track.spec.config, CodecConfig::Data { .. }) {
                 TELETEXT_MUX_DELAY_SECS
             } else {
                 0.0
             };
-            timed.push((at as f64 / f64::from(track.spec.timescale.get()) + delay, ti, si));
+            timed.push((
+                at as f64 / f64::from(track.spec.timescale.get()) + delay,
+                ti,
+                si,
+            ));
         }
     }
     timed.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -219,7 +230,9 @@ impl Driver {
             let track = &self.rig.media.tracks[ti];
             let mut sample = track.samples[si].clone();
             if let Some(t) = sample.timing.as_mut() {
-                if t.dts == 0 { t.dts = t.pts; }
+                if t.dts == 0 {
+                    t.dts = t.pts;
+                }
             }
             self.writer
                 .publish(track.spec.track_id, RetentionClass::Timed, sample);

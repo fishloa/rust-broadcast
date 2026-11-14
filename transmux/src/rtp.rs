@@ -1118,7 +1118,7 @@ pub const MAX_TIMING_WARNINGS: usize = 1024;
 ///
 /// Nothing has been mis-assembled when one of these fires: the access units are
 /// byte-exact and their `pts` values are the wire's own. What it means is that
-/// the **decode timeline** (the IR's [`Sample::dts`](crate::ir::Sample::dts))
+/// the **decode timeline** (the IR's `Sample::timing` (`.dts`)(crate::ir::Sample::dts))
 /// was reconstructed rather than read — for a reordered stream it is the
 /// presentation instants re-laid in wire order and delayed by the reorder depth,
 /// which is exact, but a consumer doing its own composition-offset arithmetic
@@ -1476,7 +1476,11 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                         let duration = delta.map(|d| duration_from(d.max(1)));
                         Sample {
                             data: au.data.clone().into(),
-                            timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), duration),
+                            timing: crate::ir::SampleTiming::from_options(
+                                Some(dts),
+                                Some(pts),
+                                duration,
+                            ),
                             flags: crate::ir::SampleFlags::new(au.is_sync),
                             provenance: None,
                             display: None,
@@ -2400,7 +2404,10 @@ mod tests {
         let samples = &ir.tracks[0].samples;
         assert_eq!(samples.len(), 4);
         for (i, s) in samples.iter().enumerate() {
-            let d = s.timing.map(|t| t.duration).expect("a multi-sample track times every sample");
+            let d = s
+                .timing
+                .map(|t| t.duration)
+                .expect("a multi-sample track times every sample");
             if i + 1 < samples.len() {
                 assert!(
                     d > 0,

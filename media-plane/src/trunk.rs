@@ -374,7 +374,7 @@
 //! rather than any one track's clock. This is also why the event log is a
 //! genuinely separate ring from the sample rings, not a third
 //! [`RetentionClass`]: a [`transmux::Sample`] is timestamped in its
-//! *track's* clock ([`transmux::Sample::pts`]/`dts`, per §4 of the spec);
+//! *track's* clock (transmux::Sample::timing `.pts`/`.dts`), per §4 of the spec);
 //! an event lives on the trunk's own, track-independent clock.
 //!
 //! **Carries [`timed_metadata::TimedEvent`], not a parallel type.** It is

@@ -398,7 +398,11 @@ fn absorb_traf(
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
             samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
-                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(r.duration)),
+                timing: crate::ir::SampleTiming::from_options(
+                    Some(dts),
+                    Some(pts),
+                    Some(r.duration),
+                ),
                 flags: crate::ir::SampleFlags::new(is_sync),
                 // fMP4 sources carry no per-sample source-container
                 // timestamps distinct from the fragment's own tfdt/trun
@@ -495,9 +499,9 @@ impl Package for CmafMux {
 // ---------------------------------------------------------------------------
 
 /// The common decode-time origin of a set of tracks: the earliest first-sample
-/// [`Sample::dts`] across them, compared across timescales exactly.
+/// `Sample::timing` (`.dts`) across them, compared across timescales exactly.
 ///
-/// Every [`Sample::dts`] is absolute in its own track's timescale, so one
+/// Every `Sample::timing` (`.dts`) is absolute in its own track's timescale, so one
 /// shift applied to every track keeps inter-track offsets and gaps intact —
 /// which a per-track rebase (or a per-track `Σ duration` from zero) loses.
 #[derive(Debug, Clone, Copy)]
@@ -632,7 +636,11 @@ impl Package for HlsPackager {
         let kept: Vec<&Track> = media
             .tracks
             .iter()
-            .filter(|t| t.samples.iter().any(|s| s.timing.map(|t| t.duration).unwrap_or(0) != 0))
+            .filter(|t| {
+                t.samples
+                    .iter()
+                    .any(|s| s.timing.map(|t| t.duration).unwrap_or(0) != 0)
+            })
             .collect();
 
         // Every segment this packager names (`{prefix}{track_id}.m4s`) is
@@ -1570,7 +1578,11 @@ mod tests {
             .enumerate()
         {
             let expected = gapped_second_base as i64 + (i as i64) * i64::from(FRAME_DUR);
-            assert_eq!(s.timing.map(|t| t.dts), Some(expected), "sample {i} after the gap");
+            assert_eq!(
+                s.timing.map(|t| t.dts),
+                Some(expected),
+                "sample {i} after the gap"
+            );
         }
     }
 

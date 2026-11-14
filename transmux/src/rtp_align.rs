@@ -364,7 +364,8 @@ impl TrackAligner {
                 } else if diff > 0 {
                     lane.delta = target;
                 } else {
-                    let step = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)) / SLEW_DIVISOR;
+                    let step =
+                        i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)) / SLEW_DIVISOR;
                     lane.delta = lane.delta.saturating_add(diff.max(-step));
                 }
             }

@@ -87,19 +87,20 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
 
         let last = t.samples.last().expect("just checked non-empty");
         let dts_last = last
-            .timing.map(|t| t.dts)
+            .timing
+            .map(|t| t.dts)
             .unwrap_or_else(|| panic!("{what}: track {ti} first sample is timed but last isn't"));
         let duration_last = last.timing.map(|t| t.duration).unwrap_or(0) as i64;
 
-        let sum_duration: i64 = t
-            .samples
-            .iter()
-            .map(|s| {
-                s.timing.map(|t| t.duration)
-                    .unwrap_or_else(|| panic!("{what}: track {ti} a timed sample has no duration"))
-                    as i64
-            })
-            .sum();
+        let sum_duration: i64 =
+            t.samples
+                .iter()
+                .map(|s| {
+                    s.timing.map(|t| t.duration).unwrap_or_else(|| {
+                        panic!("{what}: track {ti} a timed sample has no duration")
+                    }) as i64
+                })
+                .sum();
 
         assert_eq!(
             sum_duration,
@@ -164,7 +165,8 @@ fn fmp4_demux_timing_invariant_holds() {
     );
     for (i, (s, o)) in video.samples.iter().zip(oracle.iter()).enumerate() {
         let dts = s
-            .timing.map(|t| t.dts)
+            .timing
+            .map(|t| t.dts)
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
         assert_eq!(
             dts,
@@ -173,7 +175,8 @@ fn fmp4_demux_timing_invariant_holds() {
             o.dts()
         );
         let duration = s
-            .timing.map(|t| t.duration)
+            .timing
+            .map(|t| t.duration)
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no duration"));
         assert_eq!(
             i64::from(duration),

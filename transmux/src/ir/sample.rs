@@ -50,7 +50,7 @@ impl SampleFlags {
 /// Debug-only provenance: the source container's **raw wire-clock**
 /// timestamps, before any rollover unwrap — e.g. the folded 33-bit TS/PES
 /// value straight off the PES optional header (ISO/IEC 13818-1 §2.4.3.7),
-/// still modulo `1 << 33`, *distinct* from [`Sample::dts`]/[`Sample::pts`]
+/// still modulo `1 << 33`, *distinct* from `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`)
 /// which carry the unwrapped absolute value. Kept for inspection when
 /// diagnosing an unwrap bug (`provenance.wire_dts % (1 << 33)` should always
 /// equal `dts as u64 % (1 << 33)`); no mux or demux logic in this crate reads
@@ -159,15 +159,24 @@ impl Sample {
     /// `from` Hz media timescale in a `to` Hz one; the instant each describes
     /// is unchanged.
     #[must_use]
-    pub fn rescale_timescale(mut self, from: broadcast_common::timescale::Timescale, to: broadcast_common::timescale::Timescale) -> Self {
+    pub fn rescale_timescale(
+        mut self,
+        from: broadcast_common::timescale::Timescale,
+        to: broadcast_common::timescale::Timescale,
+    ) -> Self {
         if from == to {
             return self;
         }
         if let Some(t) = self.timing.as_mut() {
             t.dts = rescale_i64(t.dts, from, to, Rounding::Floor);
             t.pts = rescale_i64(t.pts, from, to, Rounding::Floor);
-            t.duration = u32::try_from(rescale_i64(i64::from(t.duration), from, to, Rounding::Floor))
-                .unwrap_or(u32::MAX);
+            t.duration = u32::try_from(rescale_i64(
+                i64::from(t.duration),
+                from,
+                to,
+                Rounding::Floor,
+            ))
+            .unwrap_or(u32::MAX);
         }
         self
     }

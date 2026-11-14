@@ -513,8 +513,14 @@ fn assert_switch_after(
         "the sample right after the event is the first with its Arc"
     );
     assert_eq!(*next_sar, Some(to));
-    assert_eq!(event_dts, next_dts, "event.timing.map(|t| t.dts) is the first affected AU's");
-    assert_eq!(event_pts, next_pts, "event.timing.map(|t| t.pts) is the first affected AU's");
+    assert_eq!(
+        event_dts, next_dts,
+        "event.timing.map(|t| t.dts) is the first affected AU's"
+    );
+    assert_eq!(
+        event_pts, next_pts,
+        "event.timing.map(|t| t.pts) is the first affected AU's"
+    );
     assert_eq!(
         (*next_dts, *next_pts),
         (Some(first_affected.0), Some(first_affected.1)),

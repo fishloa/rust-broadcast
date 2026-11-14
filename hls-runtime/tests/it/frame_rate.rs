@@ -157,7 +157,11 @@ fn ts_origin_fed_with(
     for track in &tracks {
         let scale = f64::from(track.spec.timescale.get());
         for (i, sample) in track.samples.iter().enumerate() {
-            let dts = sample.timing.map(|t| t.dts).or(sample.timing.map(|t| t.pts)).expect("timed sample");
+            let dts = sample
+                .timing
+                .map(|t| t.dts)
+                .or(sample.timing.map(|t| t.pts))
+                .expect("timed sample");
             let mut sample = sample.clone();
             if shape(i, dts, &mut sample) {
                 timeline.push((dts as f64 / scale, track.spec.track_id, sample));
@@ -265,8 +269,16 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
     let Some(tracks) = ts_fixture_tracks(IPHONE_30FPS, true) else {
         return;
     };
-    let first = tracks[0].samples.first().and_then(|s| s.timing.map(|t| t.dts)).unwrap();
-    let last = tracks[0].samples.last().and_then(|s| s.timing.map(|t| t.dts)).unwrap();
+    let first = tracks[0]
+        .samples
+        .first()
+        .and_then(|s| s.timing.map(|t| t.dts))
+        .unwrap();
+    let last = tracks[0]
+        .samples
+        .last()
+        .and_then(|s| s.timing.map(|t| t.dts))
+        .unwrap();
     let midpoint = first + (last - first) / 2;
     let (origin, _segments) = ts_origin_fed_with(tracks, |i, dts, sample| {
         if dts < midpoint {

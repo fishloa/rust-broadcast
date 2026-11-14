@@ -191,8 +191,16 @@ mod tests {
         let mut m = Media::new(vec![track_at(1000, &[10])], 1000);
         m.tracks[0].samples[0].timing = None;
         rebase_to_zero(&mut m);
-        assert_eq!(m.tracks[0].samples[0].timing.map(|t| t.dts), None, "never fabricate a dts");
-        assert_eq!(m.tracks[0].samples[0].timing.map(|t| t.pts), None, "never fabricate a pts");
+        assert_eq!(
+            m.tracks[0].samples[0].timing.map(|t| t.dts),
+            None,
+            "never fabricate a dts"
+        );
+        assert_eq!(
+            m.tracks[0].samples[0].timing.map(|t| t.pts),
+            None,
+            "never fabricate a pts"
+        );
     }
 
     #[test]
@@ -214,8 +222,16 @@ mod tests {
     fn gap_extends_timeline_and_shifts_later_samples() {
         let mut t = track_at(0, &[100, 100, 100]);
         insert_discontinuity_gap(&mut t, 2, 500);
-        assert_eq!(t.samples[0].timing.map(|t| t.dts), Some(0), "earlier sample unchanged");
-        assert_eq!(t.samples[1].timing.map(|t| t.dts), Some(100), "earlier sample unchanged");
+        assert_eq!(
+            t.samples[0].timing.map(|t| t.dts),
+            Some(0),
+            "earlier sample unchanged"
+        );
+        assert_eq!(
+            t.samples[1].timing.map(|t| t.dts),
+            Some(100),
+            "earlier sample unchanged"
+        );
         assert_eq!(
             t.samples[2].timing.map(|t| t.dts),
             Some(700),

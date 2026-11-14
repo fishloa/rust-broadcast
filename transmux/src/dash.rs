@@ -1199,7 +1199,10 @@ fn frame_rate_from_samples(samples: &[crate::pipeline::Sample], timescale: u32) 
     if samples.is_empty() {
         return None;
     }
-    let total: u64 = samples.iter().map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64).sum();
+    let total: u64 = samples
+        .iter()
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .sum();
     if total == 0 {
         return None;
     }

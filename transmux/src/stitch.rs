@@ -80,7 +80,10 @@ impl Stitcher {
                 continue;
             }
             if self.pending
-                && let Some(first) = sample.timing.map(|t| t.dts).or(sample.timing.map(|t| t.pts))
+                && let Some(first) = sample
+                    .timing
+                    .map(|t| t.dts)
+                    .or(sample.timing.map(|t| t.pts))
             {
                 self.pending = false;
                 let stitch = self.tracks.values().filter_map(|t| t.end_us).max();
@@ -135,7 +138,10 @@ mod tests {
     }
 
     fn dts_of(samples: &[Sample]) -> Vec<i64> {
-        samples.iter().map(|s| s.timing.map(|t| t.dts).unwrap()).collect()
+        samples
+            .iter()
+            .map(|s| s.timing.map(|t| t.dts).unwrap())
+            .collect()
     }
 
     #[test]
@@ -197,7 +203,11 @@ mod tests {
         let mut second = [sample(0, 2_000), sample(2_000, 2_000)];
         st.apply(TrackId::new(1), &mut second);
         assert_eq!(dts_of(&second), [4_000, 6_000]);
-        assert_eq!(second[1].timing.map(|t| t.pts), Some(6_000), "pts moves with dts");
+        assert_eq!(
+            second[1].timing.map(|t| t.pts),
+            Some(6_000),
+            "pts moves with dts"
+        );
     }
 
     #[test]

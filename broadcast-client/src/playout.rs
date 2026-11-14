@@ -194,7 +194,10 @@ impl Playout {
         if matches!(join, Some(JoinDecision::Drop(_))) {
             return;
         }
-        let (Some(info), Some(pts)) = (self.infos.get(&track).copied(), sample.timing.map(|t| t.pts)) else {
+        let (Some(info), Some(pts)) = (
+            self.infos.get(&track).copied(),
+            sample.timing.map(|t| t.pts),
+        ) else {
             return;
         };
         let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
@@ -437,7 +440,11 @@ mod tests {
             t.dts = pts;
             t.duration = spec.timescale.get() as u32; // spec.timescale is Timescale? wait
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, spec.timescale.get()));
+            s.timing = Some(transmux::ir::SampleTiming::new(
+                pts,
+                pts,
+                spec.timescale.get(),
+            ));
         }
         s
     }
@@ -637,7 +644,11 @@ mod tests {
             t.dts = pts1;
             t.duration = spec.timescale.get();
         } else {
-            s1.timing = Some(transmux::ir::SampleTiming::new(pts1, pts1, spec.timescale.get()));
+            s1.timing = Some(transmux::ir::SampleTiming::new(
+                pts1,
+                pts1,
+                spec.timescale.get(),
+            ));
         }
         p.on_sample(spec.track_id, &s1, None);
         let evs = buffer_events(&mut p);
@@ -653,7 +664,11 @@ mod tests {
             t.dts = pts2;
             t.duration = spec.timescale.get();
         } else {
-            s2.timing = Some(transmux::ir::SampleTiming::new(pts2, pts2, spec.timescale.get()));
+            s2.timing = Some(transmux::ir::SampleTiming::new(
+                pts2,
+                pts2,
+                spec.timescale.get(),
+            ));
         }
         p.on_sample(spec.track_id, &s2, None);
         let _ = buffer_events(&mut p);

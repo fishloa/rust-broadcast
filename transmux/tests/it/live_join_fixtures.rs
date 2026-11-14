@@ -128,7 +128,11 @@ fn open_gop_stream_joins_on_a_recovery_point_and_drops_leading_pictures() {
     assert!(r.before.is_empty());
     assert_eq!(r.leading, vec![1, 2, 3]);
     let rap_pts = samples[0].timing.map(|t| t.pts).unwrap();
-    assert!(samples[1..=3].iter().all(|s| s.timing.map(|t| t.pts).unwrap() < rap_pts));
+    assert!(
+        samples[1..=3]
+            .iter()
+            .all(|s| s.timing.map(|t| t.pts).unwrap() < rap_pts)
+    );
     assert!(samples[4].timing.map(|t| t.pts).unwrap() > rap_pts);
     assert_eq!(r.kept_pts.len(), 147 - 3);
     assert!(r.kept_pts.iter().all(|&p| p >= rap_pts));

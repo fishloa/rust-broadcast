@@ -814,7 +814,10 @@ impl Package for MkvMux {
                     .iter()
                     .map(|s| {
                         to_matroska_ticks(
-                            s.timing.map(|t| t.pts).or(s.timing.map(|t| t.dts)).unwrap_or(0),
+                            s.timing
+                                .map(|t| t.pts)
+                                .or(s.timing.map(|t| t.dts))
+                                .unwrap_or(0),
                             timescale,
                             TIMESTAMP_SCALE_NS,
                         )
@@ -827,7 +830,11 @@ impl Package for MkvMux {
         for track in &media.tracks {
             let timescale = track.timescale();
             for sample in &track.samples {
-                let pts = sample.timing.map(|t| t.pts).or(sample.timing.map(|t| t.dts)).unwrap_or(0);
+                let pts = sample
+                    .timing
+                    .map(|t| t.pts)
+                    .or(sample.timing.map(|t| t.dts))
+                    .unwrap_or(0);
                 let end_ticks = to_matroska_ticks(
                     pts + sample.timing.map(|t| t.duration).unwrap_or(0) as i64,
                     timescale,

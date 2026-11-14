@@ -37,7 +37,9 @@ fn require_video(rel: &str) -> Video {
 fn looped(v: &Video) -> Vec<Sample> {
     let first = v.samples[0].timing.map(|t| t.dts).expect("dts");
     let last = v.samples.last().expect("sample");
-    let span = last.timing.map(|t| t.dts).expect("dts") + i64::from(last.timing.map(|t| t.duration).expect("duration")) - first;
+    let span = last.timing.map(|t| t.dts).expect("dts")
+        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+        - first;
     let want = LOOP_SECONDS * i64::from(v.spec.timescale.get());
     let reps = (want / span).max(1) + 1;
     let mut out = Vec::new();
@@ -97,7 +99,10 @@ fn open_gop_stream_falls_back_after_the_bound() {
     let ticks_per_sec = i64::from(v.spec.timescale.get());
     let within_bound = stream
         .iter()
-        .take_while(|s| s.timing.map(|t| t.dts).expect("dts") - stream[0].timing.map(|t| t.dts).expect("dts") < 2 * ticks_per_sec)
+        .take_while(|s| {
+            s.timing.map(|t| t.dts).expect("dts") - stream[0].timing.map(|t| t.dts).expect("dts")
+                < 2 * ticks_per_sec
+        })
         .count() as u64;
     assert!(
         out.dropped >= within_bound,

@@ -140,8 +140,16 @@ fn assert_matches_direct(flv: &[u8]) {
         assert_eq!(samples.len(), track.samples.len(), "same sample count");
         for (a, b) in samples.iter().zip(track.samples.iter()) {
             assert_eq!(a.data, b.data, "same coded bytes");
-            assert_eq!(a.timing.map(|t| t.dts), b.timing.map(|t| t.dts), "same decode time");
-            assert_eq!(a.timing.map(|t| t.pts), b.timing.map(|t| t.pts), "same presentation time");
+            assert_eq!(
+                a.timing.map(|t| t.dts),
+                b.timing.map(|t| t.dts),
+                "same decode time"
+            );
+            assert_eq!(
+                a.timing.map(|t| t.pts),
+                b.timing.map(|t| t.pts),
+                "same presentation time"
+            );
         }
     }
 }

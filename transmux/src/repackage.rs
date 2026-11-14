@@ -66,7 +66,7 @@ fn anchor_index(media: &Media) -> Result<usize> {
 /// track's media timescale, on the decode-time `origin` common to every track
 /// of the [`Media`]. Element `i` is `dts[i] + composition_offset[i]`, where
 /// `dts[i]` is the sample's own absolute
-/// [`Sample::dts`](crate::pipeline::Sample::dts) shifted by the origin —
+/// `Sample::timing` (`.dts`)(crate::pipeline::Sample::dts) shifted by the origin —
 /// falling back to a duration-accumulated reconstruction only for a track
 /// that carries no timestamp at all.
 ///
@@ -256,7 +256,11 @@ impl Media {
             if !kept.is_empty() {
                 kept_any = true;
             }
-            let first_dts = kept.iter().find_map(|s| s.timing.map(|t| t.dts)).unwrap_or(0).max(0) as u64;
+            let first_dts = kept
+                .iter()
+                .find_map(|s| s.timing.map(|t| t.dts))
+                .unwrap_or(0)
+                .max(0) as u64;
             out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
         }
         if !kept_any {

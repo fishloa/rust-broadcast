@@ -469,7 +469,11 @@ impl SubtitleFollower {
     }
 
     pub fn push(&mut self, sample: &Sample) {
-        let Some(pts) = sample.timing.map(|t| t.pts).or(sample.timing.and_then(|t| Some(t.dts))) else {
+        let Some(pts) = sample
+            .timing
+            .map(|t| t.pts)
+            .or(sample.timing.map(|t| t.dts))
+        else {
             return;
         };
         let wrap = i64::try_from(clock33::WRAP_33BIT).unwrap_or(i64::MAX);

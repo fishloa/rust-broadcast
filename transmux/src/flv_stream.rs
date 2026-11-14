@@ -600,7 +600,11 @@ impl StreamingFlvDemux {
                 )?;
                 let sample = Sample {
                     data: data.into(),
-                    timing: crate::ir::SampleTiming::from_options(Some(dts_abs), Some(pts_abs), None), // filled in by `TrackState::advance`/`flush`
+                    timing: crate::ir::SampleTiming::from_options(
+                        Some(dts_abs),
+                        Some(pts_abs),
+                        None,
+                    ), // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
                     provenance: None,
                     display: None,
@@ -686,7 +690,11 @@ impl StreamingFlvDemux {
                 let dts_abs = timestamp;
                 let sample = Sample {
                     data: data.to_vec().into(),
-                    timing: crate::ir::SampleTiming::from_options(Some(dts_abs), Some(dts_abs), None), // filled in by `TrackState::advance`/`flush`
+                    timing: crate::ir::SampleTiming::from_options(
+                        Some(dts_abs),
+                        Some(dts_abs),
+                        None,
+                    ), // filled in by `TrackState::advance`/`flush`
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
@@ -961,7 +969,8 @@ mod tests {
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some((
                     sample
-                        .timing.map(|t| t.duration)
+                        .timing
+                        .map(|t| t.duration)
                         .expect("FLV video samples always carry a duration"),
                     sample.data.clone(),
                 )),
@@ -1212,7 +1221,10 @@ mod tests {
         let stamps: Vec<(Option<i64>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.timing.map(|t| t.dts), sample.timing.map(|t| t.duration))),
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample.timing.map(|t| t.dts),
+                    sample.timing.map(|t| t.duration),
+                )),
                 _ => None,
             })
             .collect();

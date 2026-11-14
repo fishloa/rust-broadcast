@@ -244,7 +244,8 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
                 orig_track.spec.track_id
             );
             assert_eq!(
-                a.timing.map(|t| t.duration), b.timing.map(|t| t.duration),
+                a.timing.map(|t| t.duration),
+                b.timing.map(|t| t.duration),
                 "track {} sample {i} duration preserved",
                 orig_track.spec.track_id
             );

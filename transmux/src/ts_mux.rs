@@ -599,7 +599,7 @@ impl Package for TsMux {
 /// [`package`](Package::package) calls instead:
 ///
 /// - **Continuity counters** (ISO/IEC 13818-1 §2.4.3.3) continue on every PID.
-/// - **One time origin**: the earliest first-sample [`Sample::dts`] in the first
+/// - **One time origin**: the earliest first-sample `Sample::timing` (`.dts`) in the first
 ///   call that carries one; every later sample is stamped from its own absolute
 ///   `dts`/`pts` shifted by that same origin, so successive calls continue one
 ///   monotonic timeline and inter-track offsets survive. A sample decoding
@@ -927,7 +927,7 @@ fn hevc_parameter_sets(
 /// PAT (PID `0x0000`) + PMT, then the DTS-interleaved PES packets for the
 /// per-track `samples` (`samples[i]` is the sample slice for `tracks[i]`).
 ///
-/// Each sample is stamped from its own absolute [`Sample::dts`]/[`Sample::pts`],
+/// Each sample is stamped from its own absolute `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`),
 /// shifted by one origin common to every track (the earliest first-sample
 /// DTS), so inter-track offsets and gaps survive (issue #1020). `TsMux` calls
 /// it once over the whole input.

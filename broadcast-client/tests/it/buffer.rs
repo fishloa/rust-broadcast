@@ -462,12 +462,16 @@ impl Oracle {
                     self.joined = true;
                     self.join_27 = pts27(pts, ts.get());
                     self.video_run = VideoRun::new();
-                    let end = self.video_run.push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let end =
+                        self.video_run
+                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
                     *zero = Some((track_id, pts27(pts, ts.get())));
                     ends.insert(track_id, pts27(end, ts.get()));
                 }
                 Some(JoinDecision::Keep) if self.joined => {
-                    let end = self.video_run.push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
+                    let end =
+                        self.video_run
+                            .push(pts, sample.timing.map(|t| t.dts).unwrap_or(pts), dur);
                     ends.insert(track_id, pts27(end, ts.get()));
                 }
                 _ => {}
@@ -1254,7 +1258,9 @@ fn video_expectations(h: &Host) -> Vec<ChunkVideo> {
                     .push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
             }
             Some(JoinDecision::Keep) if run.is_some() => {
-                run.as_mut().unwrap().push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
+                run.as_mut()
+                    .unwrap()
+                    .push(pts, s.timing.map(|t| t.dts).unwrap_or(pts), dur)
             }
             _ => continue,
         };
@@ -1311,7 +1317,11 @@ fn audio_end_only_after_join_pts() {
         .filter(|(i, t, s, _)| {
             *i > join_idx
                 && t.value() == AUDIO
-                && pts27(s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()), ts_audio) <= join_27
+                && pts27(
+                    s.timing.map(|t| t.pts).unwrap()
+                        + i64::from(s.timing.map(|t| t.duration).unwrap()),
+                    ts_audio,
+                ) <= join_27
         })
         .count();
     assert!(
@@ -1329,7 +1339,12 @@ fn audio_end_only_after_join_pts() {
         .samples()
         .iter()
         .filter(|(i, t, _, _)| *i > join_idx && t.value() == AUDIO)
-        .map(|(_, _, s, _)| pts27(s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()), ts_audio))
+        .map(|(_, _, s, _)| {
+            pts27(
+                s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()),
+                ts_audio,
+            )
+        })
         .find(|&e| e > join_27)
         .unwrap();
     assert!(audio_reports[0] >= expected_first);
@@ -1385,7 +1400,10 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
         if i < switched_event_idx || t.value() != OTHER_AUDIO {
             continue;
         }
-        max_end = max_end.max(pts27(s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()), ts));
+        max_end = max_end.max(pts27(
+            s.timing.map(|t| t.pts).unwrap() + i64::from(s.timing.map(|t| t.duration).unwrap()),
+            ts,
+        ));
         expected.insert(h.chunk_of_event(i), max_end);
     }
     for (c, end) in reports {

@@ -1057,7 +1057,8 @@ impl LlHlsSegmenter {
             let offset = i128::from(first) * i128::from(origin_ts)
                 - i128::from(origin) * i128::from(t.spec.timescale.get());
             let ticks = offset / i128::from(origin_ts)
-                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale.get()) / 1_000_000_000;
+                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale.get())
+                    / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(0);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1252,8 +1253,8 @@ impl LlHlsSegmenter {
         self.next_seq += 1;
 
         // See `part_target_secs` above for why `.max(1)` guards this division.
-        let seg_duration =
-            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.get().max(1) as f64;
+        let seg_duration = self.anchor_seg_dur as f64
+            / self.tracks[self.anchor].spec.timescale.get().max(1) as f64;
         self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
@@ -1426,7 +1427,8 @@ impl LlHlsSegmenter {
         if anchor_span_ticks == 0 {
             return Ok(());
         }
-        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.get().max(1) as f64;
+        let part_secs =
+            anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.get().max(1) as f64;
 
         let seq = self.next_seq;
         let part_bytes = {

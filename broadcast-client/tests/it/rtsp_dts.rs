@@ -271,7 +271,9 @@ fn the_rtp_composition_offsets_match_the_transport_stream_of_the_same_encode() {
     let ts_offsets: Vec<i64> = video
         .samples
         .iter()
-        .map(|s| (s.timing.map(|t| t.pts).unwrap() - s.timing.map(|t| t.dts).unwrap()) / FRAME_TICKS)
+        .map(|s| {
+            (s.timing.map(|t| t.pts).unwrap() - s.timing.map(|t| t.dts).unwrap()) / FRAME_TICKS
+        })
         .collect();
     let rtp = play(&cap.sdp, &cap.packets);
     let rtp_offsets: Vec<i64> = rtp.iter().map(|s| (s.pts - s.dts) / FRAME_TICKS).collect();

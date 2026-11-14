@@ -1892,7 +1892,10 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
     let media =
         broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
             .expect("the first new segment demuxes with the new init");
-    let decode_time = media.tracks[0].samples[0].timing.map(|t| t.dts).expect("dts");
+    let decode_time = media.tracks[0].samples[0]
+        .timing
+        .map(|t| t.dts)
+        .expect("dts");
     assert_eq!(
         u64::try_from(decode_time).expect("non-negative"),
         ticks,
@@ -2186,7 +2189,13 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         broadcast_common::Unpackage::unpackage(&mut transmux::Fmp4Demux::new(), &init_and_segment)
             .expect("the first new segment demuxes with the new init");
     assert_eq!(
-        u64::try_from(media.tracks[0].samples[0].timing.map(|t| t.dts).expect("dts")).expect("non-negative"),
+        u64::try_from(
+            media.tracks[0].samples[0]
+                .timing
+                .map(|t| t.dts)
+                .expect("dts")
+        )
+        .expect("non-negative"),
         (start_number - first) * ticks,
         "@presentationTimeOffset is the first new segment's decode time"
     );

@@ -248,7 +248,10 @@ fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<u
     }
     a.iter().enumerate().position(|(i, at)| {
         at.samples.iter().any(|s| s.timing.map(|t| t.dts).is_some())
-            || b[mapping[i]].samples.iter().any(|s| s.timing.map(|t| t.dts).is_some())
+            || b[mapping[i]]
+                .samples
+                .iter()
+                .any(|s| s.timing.map(|t| t.dts).is_some())
     })
 }
 
@@ -442,7 +445,8 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
         // running duration-sum for a genuinely timestamp-less
         // (section-carried) sample, which carries no absolute `dts` at all.
         let dts = s
-            .timing.map(|t| t.dts)
+            .timing
+            .map(|t| t.dts)
             .map(|d| u64::try_from(d).unwrap_or(0))
             .unwrap_or(fallback_dts);
         if dts > at_ticks {
@@ -628,10 +632,11 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         // Resume point (the base sample that follows the ad), only if base has a
         // remainder after the split.
         if split_index < bt.samples.len() {
-            let presentation_time = match shifted_resume.first().and_then(|s| s.timing.map(|t| t.pts)) {
-                Some(p) => u64::try_from(p).unwrap_or(0),
-                None => boundary_dts.saturating_add(ad_span),
-            };
+            let presentation_time =
+                match shifted_resume.first().and_then(|s| s.timing.map(|t| t.pts)) {
+                    Some(p) => u64::try_from(p).unwrap_or(0),
+                    None => boundary_dts.saturating_add(ad_span),
+                };
             points.push(SplicePoint {
                 track_id: bt.spec.track_id,
                 sample_index: resume_index,
@@ -660,7 +665,11 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
 /// `dts` falls back to the duration-sum, same as everywhere else in this
 /// module.
 fn boundary_decode_time(track: &Track, split_index: usize) -> u64 {
-    match track.samples.get(split_index).and_then(|s| s.timing.map(|t| t.dts)) {
+    match track
+        .samples
+        .get(split_index)
+        .and_then(|s| s.timing.map(|t| t.dts))
+    {
         Some(dts) => u64::try_from(dts).unwrap_or(0),
         None if split_index >= track.samples.len() => track_end_decode_time(track),
         None => {

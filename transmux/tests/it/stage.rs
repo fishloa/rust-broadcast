@@ -145,15 +145,18 @@ fn assert_samples_match(got: &[Sample], oracle: &[Sample], what: &str) {
     );
     for (i, (g, o)) in got.iter().zip(oracle.iter()).enumerate() {
         assert_eq!(
-            g.timing.map(|t| t.dts), o.timing.map(|t| t.dts),
+            g.timing.map(|t| t.dts),
+            o.timing.map(|t| t.dts),
             "{what}: sample {i} dts must match the batch oracle"
         );
         assert_eq!(
-            g.timing.map(|t| t.pts), o.timing.map(|t| t.pts),
+            g.timing.map(|t| t.pts),
+            o.timing.map(|t| t.pts),
             "{what}: sample {i} pts must match the batch oracle"
         );
         assert_eq!(
-            g.timing.map(|t| t.duration), o.timing.map(|t| t.duration),
+            g.timing.map(|t| t.duration),
+            o.timing.map(|t| t.duration),
             "{what}: sample {i} duration must match the batch oracle"
         );
         assert_eq!(

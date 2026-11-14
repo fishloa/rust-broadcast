@@ -408,7 +408,10 @@ impl TsHlsPackager {
 /// stays with the samples around it.
 fn placement_secs(sample: &Sample, acc_ticks: u64, timescale: u64, origin_secs: f64) -> f64 {
     let timescale = timescale.max(1) as f64;
-    match (sample.timing.map(|t| t.duration).filter(|&d| d != 0), sample.timing.map(|t| t.dts)) {
+    match (
+        sample.timing.map(|t| t.duration).filter(|&d| d != 0),
+        sample.timing.map(|t| t.dts),
+    ) {
         (None, Some(dts)) => (dts.max(0) as f64 / timescale) - origin_secs,
         _ => acc_ticks as f64 / timescale,
     }
@@ -497,8 +500,10 @@ fn partition_tracks(
     let n_segs = anchor_boundaries.len();
     let anchor_samples = &tracks[anchor].samples;
     let anchor_scale = tracks[anchor].spec.timescale.get().max(1) as u64;
-    let origin_secs =
-        timeline_origin_secs(anchor_samples.first().and_then(|s| s.timing.map(|t| t.dts)), anchor_scale);
+    let origin_secs = timeline_origin_secs(
+        anchor_samples.first().and_then(|s| s.timing.map(|t| t.dts)),
+        anchor_scale,
+    );
 
     // Segment start times (seconds) on the anchor timeline; the last segment
     // runs to +∞ so it captures any trailing tail on longer tracks. Accumulated
@@ -1307,8 +1312,10 @@ impl StreamingTsHlsSegmenter {
 
         if nothing_cut_or_buffered && new_is_video && !current_anchor_is_video {
             self.anchor = new_index;
-            self.target_ticks =
-                target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale.get());
+            self.target_ticks = target_ticks_for(
+                self.target_secs,
+                self.tracks[self.anchor].spec.timescale.get(),
+            );
         }
 
         Ok(())
@@ -1343,8 +1350,10 @@ impl StreamingTsHlsSegmenter {
         self.tracks[idx].spec = spec;
         if discontinuity {
             if idx == self.anchor && self.tracks[idx].spec.timescale != old_timescale {
-                self.target_ticks =
-                    target_ticks_for(self.target_secs, self.tracks[self.anchor].spec.timescale.get());
+                self.target_ticks = target_ticks_for(
+                    self.target_secs,
+                    self.tracks[self.anchor].spec.timescale.get(),
+                );
             }
             self.mark_discontinuity();
             Ok(UpdateTrackOutcome::Changed)

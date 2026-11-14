@@ -91,7 +91,8 @@ fn ts_batch() -> Vec<bytes::Bytes> {
     for track in &mut second.tracks {
         track.samples.retain(|sample| {
             sample
-                .timing.map(|t| t.pts)
+                .timing
+                .map(|t| t.pts)
                 .is_some_and(|pts| u64::try_from(pts).is_ok_and(|p| p < SECOND))
         });
     }

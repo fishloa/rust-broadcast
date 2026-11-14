@@ -125,7 +125,10 @@ fn heaac_override_keeps_presentation_time_unchanged() {
     let seconds = |t: &transmux::Track| -> Vec<f64> {
         t.samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("audio dts") as f64 / f64::from(t.spec.timescale.get()))
+            .map(|s| {
+                s.timing.map(|t| t.dts).expect("audio dts") as f64
+                    / f64::from(t.spec.timescale.get())
+            })
             .collect()
     };
     let total = |t: &transmux::Track| -> f64 {

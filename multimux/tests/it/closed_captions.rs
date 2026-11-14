@@ -188,7 +188,11 @@ fn build_with(
             continue;
         }
         for (si, s) in track.samples.iter().enumerate() {
-            let dts = s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts)).unwrap_or(0);
+            let dts = s
+                .timing
+                .map(|t| t.dts)
+                .or(s.timing.map(|t| t.pts))
+                .unwrap_or(0);
             order.push((dts as f64 / f64::from(track.spec.timescale.get()), ti, si));
         }
     }
@@ -198,7 +202,9 @@ fn build_with(
         let mut sample = track.samples[si].clone();
         let pts = sample.timing.map(|t| t.pts);
         if let Some(t) = sample.timing.as_mut() {
-            if t.dts == 0 { t.dts = pts.unwrap_or(t.dts); }
+            if t.dts == 0 {
+                t.dts = pts.unwrap_or(t.dts);
+            }
         }
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {

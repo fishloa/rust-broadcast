@@ -83,7 +83,11 @@ impl core::fmt::Debug for TrackSpec {
 impl TrackSpec {
     /// A track spec with no TS provenance (`source_pid = None`, no ES_info
     /// descriptors) — the common case for every non-TS demuxer/transform.
-    pub fn new(track_id: TrackId, timescale: impl Into<broadcast_common::timescale::Timescale>, config: CodecConfig) -> Self {
+    pub fn new(
+        track_id: TrackId,
+        timescale: impl Into<broadcast_common::timescale::Timescale>,
+        config: CodecConfig,
+    ) -> Self {
         let display = DisplayGeometry::from_codec_config(&config);
         let hdr = match &config {
             CodecConfig::Hevc { config, .. } => HdrStaticMetadata::from_hevc_record(&config.config),
@@ -156,7 +160,7 @@ pub struct Track {
     /// Absolute decode time of the track's **first** sample, in this track's
     /// media timescale ([`TrackSpec::timescale`]) ticks.
     ///
-    /// Since media plane step 2c, [`Sample::dts`]/[`Sample::pts`] are
+    /// Since media plane step 2c, `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) are
     /// themselves absolute (in the same timescale), so this field is
     /// redundant with (and must be kept equal to) `samples.first().timing.map(|t| t.dts)` for a
     /// timed track — it survives as the anchor consumers reach for without

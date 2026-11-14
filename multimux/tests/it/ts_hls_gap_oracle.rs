@@ -94,7 +94,11 @@ impl Rig {
                     .samples
                     .into_iter()
                     .map(|mut s| {
-                        if let Some(t)=s.timing.as_mut() { if t.dts==0 { t.dts=t.pts; } }
+                        if let Some(t) = s.timing.as_mut() {
+                            if t.dts == 0 {
+                                t.dts = t.pts;
+                            }
+                        }
                         s
                     })
                     .collect();
@@ -172,7 +176,8 @@ impl Rig {
         let mut order: Vec<(i64, usize, usize)> = Vec::new();
         for (ti, (spec, samples)) in self.tracks.iter().enumerate() {
             for (si, sample) in samples.iter().enumerate() {
-                let at = sample.timing.map(|t| t.dts).unwrap_or(0) * TICKS_PER_SEC / i64::from(spec.timescale.get());
+                let at = sample.timing.map(|t| t.dts).unwrap_or(0) * TICKS_PER_SEC
+                    / i64::from(spec.timescale.get());
                 order.push((at, ti, si));
             }
         }

@@ -276,7 +276,8 @@ fn concatenated_segments_round_trip_losslessly() {
         );
         // Timing preserved (DTS delta = duration, and composition offset).
         assert_eq!(
-            b.timing.map(|t| t.duration), a.timing.map(|t| t.duration),
+            b.timing.map(|t| t.duration),
+            a.timing.map(|t| t.duration),
             "video sample {i}: duration preserved"
         );
         assert_eq!(

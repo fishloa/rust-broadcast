@@ -407,9 +407,14 @@ fn lossless_round_trip_video() {
         );
         let ts = u64::from(vid.spec.timescale.get());
         let in_10mhz = a
-            .timing.map(|t| t.duration)
+            .timing
+            .map(|t| t.duration)
             .map(|d| ((u64::from(d) * 10_000_000 + ts / 2) / ts) as u32);
-        assert_eq!(in_10mhz, b.timing.map(|t| t.duration), "duration preserved at sample {i}");
+        assert_eq!(
+            in_10mhz,
+            b.timing.map(|t| t.duration),
+            "duration preserved at sample {i}"
+        );
         assert_eq!(
             a.flags.is_sync, b.flags.is_sync,
             "sync flag preserved at sample {i}"

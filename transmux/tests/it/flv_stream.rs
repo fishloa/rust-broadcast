@@ -250,7 +250,8 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     .expect("Sample must follow its track's TrackAdded");
                 summaries[i].sample_count += 1;
                 summaries[i].total_bytes += sample.data.len();
-                summaries[i].total_duration += sample.timing.map(|t| t.duration).unwrap_or(0) as u64;
+                summaries[i].total_duration +=
+                    sample.timing.map(|t| t.duration).unwrap_or(0) as u64;
                 if sample.flags.is_sync {
                     summaries[i].keyframes += 1;
                 }

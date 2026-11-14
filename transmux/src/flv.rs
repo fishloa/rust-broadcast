@@ -782,7 +782,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let duration = delta_duration(&mut last_video_dts, dts);
                             video_samples.push(Sample {
                                 data: data.into(),
-                                timing: crate::ir::SampleTiming::from_options(Some(dts_abs), Some(pts_abs), Some(duration)),
+                                timing: crate::ir::SampleTiming::from_options(
+                                    Some(dts_abs),
+                                    Some(pts_abs),
+                                    Some(duration),
+                                ),
                                 flags: crate::ir::SampleFlags::new(
                                     frame_type == FRAME_TYPE_KEYFRAME,
                                 ),
@@ -830,7 +834,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let dts_abs = dts as i64;
                             audio_samples.push(Sample {
                                 data: data.to_vec().into(),
-                                timing: crate::ir::SampleTiming::from_options(Some(dts_abs), Some(dts_abs), Some(duration)),
+                                timing: crate::ir::SampleTiming::from_options(
+                                    Some(dts_abs),
+                                    Some(dts_abs),
+                                    Some(duration),
+                                ),
                                 flags: crate::ir::SampleFlags::SYNC,
                                 provenance: None,
                                 display: None,
@@ -1188,7 +1196,7 @@ fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
 /// already-ms-normalised file, matching [`FlvDemux`]'s output), the
 /// streaming builders below feed a live push driver that calls them once per
 /// drained batch, never once for the whole stream — "start of this batch" is
-/// not "start of the stream". They use each [`Sample::dts`]/`pts` directly
+/// not "start of the stream". They use each `Sample::timing` (`.dts`)/`pts` directly
 /// (absolute, in the track's own [`crate::pipeline::TrackSpec::timescale`],
 /// per the media-plane architecture) and rescale here instead.
 fn ticks_to_ms(ticks: i64, timescale: u32) -> Result<i64> {
@@ -1336,7 +1344,7 @@ pub fn flv_sequence_header_payloads(
 /// Build the per-frame `VIDEODATA`/`AUDIODATA` payload bodies for `media`'s
 /// samples (issue #934), interleaved by absolute timestamp across tracks —
 /// same tag-body layout [`FlvMux::package`] writes into each `OutTag`, without
-/// file/tag framing. Each sample's [`Sample::dts`](crate::pipeline::Sample::dts)
+/// file/tag framing. Each sample's `Sample::timing` (`.dts`)(crate::pipeline::Sample::dts)
 /// (absolute, in its track's own timescale) is rescaled to FLV's millisecond
 /// clock (this crate's internal `ticks_to_ms` helper) — safe to call once per
 /// drained batch from a live push driver, unlike `package`'s zero-based
@@ -1352,7 +1360,9 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
     if let Some(vt) = video {
         let timescale = vt.spec.timescale;
         for s in &vt.samples {
-            let Some(dts) = s.timing.map(|t| t.dts) else { continue };
+            let Some(dts) = s.timing.map(|t| t.dts) else {
+                continue;
+            };
             let ts_ms = clamped_ms(dts, timescale.get())?;
             let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale.get())?;
             let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
@@ -1372,7 +1382,9 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
         let timescale = at.spec.timescale;
         let sound_type = audio_sound_type(at);
         for s in &at.samples {
-            let Some(dts) = s.timing.map(|t| t.dts) else { continue };
+            let Some(dts) = s.timing.map(|t| t.dts) else {
+                continue;
+            };
             let ts_ms = clamped_ms(dts, timescale.get())?;
             let body = audio_frame_body(sound_type, &s.data);
             items.push((

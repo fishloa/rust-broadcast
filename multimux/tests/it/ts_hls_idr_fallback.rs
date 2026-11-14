@@ -444,7 +444,9 @@ fn looped_ts(rel: &str, tag: &str, skip: usize, reps: usize) -> PathBuf {
     let body = &track.samples[skip..];
     let first = body[0].timing.map(|t| t.dts).expect("dts");
     let last = body.last().expect("sample");
-    let span = last.timing.map(|t| t.dts).expect("dts") + i64::from(last.timing.map(|t| t.duration).expect("duration")) - first;
+    let span = last.timing.map(|t| t.dts).expect("dts")
+        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+        - first;
     let mut stream = Vec::new();
     for k in 0..reps as i64 {
         for s in body {

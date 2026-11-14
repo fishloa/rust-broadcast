@@ -76,7 +76,11 @@ fn load(fixture: &str) -> Vec<Source> {
                 .samples
                 .into_iter()
                 .map(|mut s| {
-                    if let Some(t)=s.timing.as_mut() { if t.dts==0 { t.dts=t.pts; } }
+                    if let Some(t) = s.timing.as_mut() {
+                        if t.dts == 0 {
+                            t.dts = t.pts;
+                        }
+                    }
                     s
                 })
                 .collect(),
@@ -694,7 +698,11 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
                 .samples
                 .into_iter()
                 .map(|mut s| {
-                    if let Some(t)=s.timing.as_mut() { if t.dts==0 { t.dts=t.pts; } }
+                    if let Some(t) = s.timing.as_mut() {
+                        if t.dts == 0 {
+                            t.dts = t.pts;
+                        }
+                    }
                     s
                 })
                 .collect(),
@@ -716,7 +724,8 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
         .filter_map(|s| s.timing.map(|t| t.dts))
         .min()
         .expect("dts");
-    let shift = video_start * i64::from(audio.spec.timescale.get()) / i64::from(video.spec.timescale.get())
+    let shift = video_start * i64::from(audio.spec.timescale.get())
+        / i64::from(video.spec.timescale.get())
         - audio_start;
     for s in &mut audio.samples {
         if let Some(t) = s.timing.as_mut() {
@@ -1606,7 +1615,11 @@ fn media_range_secs(sources: &[Source]) -> (f64, f64) {
     let times = sources
         .iter()
         .filter(|s| s.is_video() || s.is_audio())
-        .flat_map(|s| s.samples.iter().map(|x| s.secs(x.timing.map(|t| t.dts).unwrap_or(0))));
+        .flat_map(|s| {
+            s.samples
+                .iter()
+                .map(|x| s.secs(x.timing.map(|t| t.dts).unwrap_or(0)))
+        });
     times.fold((f64::MAX, f64::MIN), |(lo, hi), t| (lo.min(t), hi.max(t)))
 }
 
@@ -2223,7 +2236,8 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
     let (_, video_next) = first_tfdt(&rig.ok(&video.segments[1].uri).await);
     let (_, audio_next) = first_tfdt(&rig.ok(&audio.segments[1].uri).await);
     assert!(
-        (audio_next as f64 / f64::from(aac.spec.timescale.get()) - video_next as f64 / video_ts).abs()
+        (audio_next as f64 / f64::from(aac.spec.timescale.get()) - video_next as f64 / video_ts)
+            .abs()
             <= tolerance,
         "the second segment drifted"
     );

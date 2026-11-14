@@ -234,13 +234,19 @@ fn ts_demux_broadcast_pair() {
             Some(u32::try_from(row.duration()).unwrap()),
             "video[{i}] duration matches CSV"
         );
-        let dts = s.timing.map(|t| t.dts).unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
+        let dts = s
+            .timing
+            .map(|t| t.dts)
+            .unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
         assert_eq!(
             dts,
             i128::from(row.dts()),
             "video[{i}] DTS (actual s.timing.map(|t| t.dts)) matches CSV"
         );
-        let pts = s.timing.map(|t| t.pts).unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
+        let pts = s
+            .timing
+            .map(|t| t.pts)
+            .unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
         assert_eq!(
             pts,
             i128::from(row.pts()),

@@ -1478,7 +1478,7 @@ struct PaffPairing {
 const MAX_FIELD_PAIR_DTS_TICKS: i128 = MAX_FRAME_PERIOD_TICKS as i128;
 
 /// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
-/// [`Sample::dts`]/[`Sample::pts`] carry. `i128` is only used internally for
+/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry. `i128` is only used internally for
 /// wrap arithmetic headroom; every real value here is a small non-negative
 /// multiple of the 33-bit range and fits `i64` with room to spare for
 /// centuries of continuous 90 kHz runtime, so this never actually clamps in
@@ -2213,7 +2213,11 @@ fn flush_one_behind(
             track_id,
             sample: Sample {
                 data: p.data.into(),
-                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(last_duration)),
+                timing: crate::ir::SampleTiming::from_options(
+                    Some(dts),
+                    Some(pts),
+                    Some(last_duration),
+                ),
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
@@ -11094,7 +11098,8 @@ pub(crate) mod tests {
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .expect("h264-aac.ts has an AVC track");
         let source_dts0 = video.samples[0]
-            .timing.map(|t| t.dts)
+            .timing
+            .map(|t| t.dts)
             .expect("the fixture's AVC track is stamped");
         let mut headers = 0usize;
         for (i, sample) in video.samples.iter().enumerate() {
@@ -11152,7 +11157,10 @@ pub(crate) mod tests {
         // The dts series must advance by exactly one frame period per access
         // unit. The pre-fix behaviour gave every unstamped access unit the
         // previous one's dts, so the series alternated 0 / 3600 steps.
-        let dts: Vec<i64> = samples.iter().map(|s| s.timing.map(|t| t.dts).expect("video dts")).collect();
+        let dts: Vec<i64> = samples
+            .iter()
+            .map(|s| s.timing.map(|t| t.dts).expect("video dts"))
+            .collect();
         let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
             steps.iter().all(|&d| d == FRAME_PERIOD),
@@ -11163,7 +11171,10 @@ pub(crate) mod tests {
                 .iter()
                 .all(|s| s.timing.map(|t| t.duration) == Some(FRAME_PERIOD as u32)),
             "no zero-duration sample may survive interpolation; durations: {:?}",
-            samples.iter().map(|s| s.timing.map(|t| t.duration)).collect::<Vec<_>>()
+            samples
+                .iter()
+                .map(|s| s.timing.map(|t| t.duration))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -11533,7 +11544,9 @@ pub(crate) mod tests {
         let emitted: Vec<(Vec<u8>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.timing.map(|t| t.duration))),
+                DemuxEvent::Sample { sample, .. } => {
+                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
+                }
                 _ => None,
             })
             .collect();
@@ -11615,7 +11628,9 @@ pub(crate) mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.timing.map(|t| t.duration))),
+                DemuxEvent::Sample { sample, .. } => {
+                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
+                }
                 _ => None,
             })
             .collect()
@@ -12987,7 +13002,14 @@ pub(crate) mod tests {
         let batch: Vec<_> = media.tracks[0]
             .samples
             .iter()
-            .map(|s| (s.data.to_vec(), s.timing.map(|t| t.dts), s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
+            .map(|s| {
+                (
+                    s.data.to_vec(),
+                    s.timing.map(|t| t.dts),
+                    s.timing.map(|t| t.pts),
+                    s.timing.map(|t| t.duration),
+                )
+            })
             .collect();
         assert_eq!(batch, whole, "{label}: batch == streaming");
 

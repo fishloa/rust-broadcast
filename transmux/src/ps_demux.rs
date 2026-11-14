@@ -1000,7 +1000,7 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
 }
 
 /// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
-/// [`Sample::dts`]/[`Sample::pts`] carry (mirrors `ts_demux`'s own
+/// `Sample::timing` (`.dts`)/`Sample::timing` (`.pts`) carry (mirrors `ts_demux`'s own
 /// `to_ticks`): `i128` is used internally purely for wrap-arithmetic
 /// headroom, and every real value is a small multiple of the 33-bit range
 /// that fits `i64` with centuries of 90 kHz headroom — so this never clamps

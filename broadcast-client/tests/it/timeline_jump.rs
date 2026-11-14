@@ -1476,7 +1476,9 @@ fn video_pts_of(ids: &[TrackId], events: &[Event]) -> Vec<i64> {
     events
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if ids.contains(track) => sample.timing.map(|t| t.pts),
+            Event::Sample { track, sample, .. } if ids.contains(track) => {
+                sample.timing.map(|t| t.pts)
+            }
             _ => None,
         })
         .collect()

@@ -967,7 +967,11 @@ fn build_media(
             };
             samples.push(Sample {
                 data: data.into(),
-                timing: crate::ir::SampleTiming::from_options(Some(pts[i]), Some(pts[i]), Some(duration)),
+                timing: crate::ir::SampleTiming::from_options(
+                    Some(pts[i]),
+                    Some(pts[i]),
+                    Some(duration),
+                ),
                 flags: crate::ir::SampleFlags::new(sync[i]),
                 provenance: None,
                 display: None,
