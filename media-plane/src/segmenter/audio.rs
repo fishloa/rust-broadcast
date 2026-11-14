@@ -134,6 +134,7 @@ pub struct AudioFollower {
     part_target_sized: bool,
     init: Option<Vec<u8>>,
     part_target_event: Option<u32>,
+    rendition: Option<usize>,
 }
 
 fn part_target_for_frame_ms(part_target_ms: u32, frame_ticks: u32, timescale: u32) -> Option<u32> {
@@ -201,7 +202,20 @@ impl AudioFollower {
             part_target_sized: false,
             init: Some(init),
             part_target_event: None,
+            rendition: None,
         })
+    }
+
+    /// Tags the follower with the index of the declared rendition it serves.
+    #[must_use]
+    pub fn with_rendition(mut self, rendition: usize) -> Self {
+        self.rendition = Some(rendition);
+        self
+    }
+
+    /// The declared rendition this follower serves, when the host tagged it.
+    pub fn rendition(&self) -> Option<usize> {
+        self.rendition
     }
 
     /// The follower's init segment, once: the host serves it for the rendition.

@@ -139,6 +139,18 @@ impl SiblingTrunks for &RouteHandle {
     }
 }
 
+fn apply_audio_part_targets(segmenter: &mut ProgramSegmenter, route: &RouteHandle, trunk: &Trunk) {
+    let servings = route.audio_servings_for_trunk(trunk);
+    for follower in segmenter.followers.iter_mut() {
+        let Some(ms) = follower.take_part_target_ms() else {
+            continue;
+        };
+        if let Some(serving) = follower.rendition().and_then(|r| servings.get(r)) {
+            serving.origin.set_part_target_ms(ms);
+        }
+    }
+}
+
 pub fn pump_segmenter(
     segmenter: &mut ProgramSegmenter,
     program: ProgramId,
@@ -147,12 +159,7 @@ pub fn pump_segmenter(
 ) -> (usize, usize) {
     let mut events: Vec<SegmenterEvent> = Vec::new();
     let counts = segmenter.pump(program, trunk, &mut events, route);
-    let servings = route.audio_servings_for_trunk(trunk);
-    for (follower, serving) in segmenter.followers.iter_mut().zip(servings.iter()) {
-        if let Some(ms) = follower.take_part_target_ms() {
-            serving.origin.set_part_target_ms(ms);
-        }
-    }
+    apply_audio_part_targets(segmenter, route, trunk);
     apply_segmenter_events(route, program, events);
     counts
 }
@@ -204,19 +211,13 @@ pub fn drive_program_segmenters<S: IngestSession>(
         let (parts, segments) = segmenter.pump_batch(program, trunk, &mut events, route_handle);
         parts_total += parts;
         segments_total += segments;
-        let servings = route_handle.audio_servings_for_trunk(trunk);
-        for (follower, serving) in segmenter.followers.iter_mut().zip(servings.iter()) {
-            if let Some(ms) = follower.take_part_target_ms() {
-                serving.origin.set_part_target_ms(ms);
-            }
-        }
+        apply_audio_part_targets(segmenter, route_handle, trunk);
         apply_segmenter_events(route_handle, program, events);
     }
 
     let more = segmenters.values().any(|s| s.backlogged);
     if !more && !driver.health().is_running() {
         for segmenter in segmenters.values_mut() {
-            // need program for events; but flush has no program context here. We'll skip apply?
             let (parts, segments) = segmenter.flush();
             parts_total += parts;
             segments_total += segments;

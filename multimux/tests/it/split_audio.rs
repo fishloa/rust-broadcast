@@ -608,6 +608,22 @@ async fn assert_part_timing(rig: &Rig, uris: &[&str]) {
 }
 
 #[tokio::test]
+async fn an_unmatched_first_selector_keeps_each_renditions_part_target() {
+    let sources = france2();
+    let rig = rig(
+        sources,
+        decls(&["fre", "qad", "qaa"]),
+        vec![
+            AudioTrackSelector::Index(9),
+            AudioTrackSelector::Index(1),
+            AudioTrackSelector::Index(2),
+        ],
+        &|_, _| true,
+    );
+    assert_part_timing(&rig, &["media.m3u8", "audio/a1.m3u8", "audio/a2.m3u8"]).await;
+}
+
+#[tokio::test]
 async fn split_audio_france2_three_renditions_align_with_video() {
     let sources = france2();
     let audio: Vec<&Source> = sources.iter().filter(|s| s.is_audio()).collect();
