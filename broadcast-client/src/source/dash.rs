@@ -792,7 +792,7 @@ impl DashSource {
                     .client
                     .on_mpd_failure(Timestamp::from_micros(now), failure);
                 if let FailureClass::Retry { attempt, .. } = class {
-                    self.schedule_mpd_retry(now, u64::from(attempt));
+                    self.schedule_mpd_retry(now, attempt);
                 }
             }
             Purpose::Utc(id) => {
@@ -818,23 +818,19 @@ impl DashSource {
             self.stash.discard(&Purpose::Resource(id));
         }
         if let FailureClass::Retry { attempt, .. } = class {
-            let wait = Duration::from_micros(
-                self.backoff
-                    .delay_us(u64::from(attempt))
-                    .max(self.retry_after_us),
-            );
+            let wait =
+                Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
             // A deadline past the end of the clock can never be reached: the retry never fires.
             if let Some(at) = deadline(Timestamp::from_micros(now), wait) {
                 self.retries.insert(id, at.as_micros());
-                self.events.push_back(Event::Status(Status::Reconnecting {
-                    attempt: u64::from(attempt),
-                }));
+                self.events
+                    .push_back(Event::Status(Status::Reconnecting { attempt }));
                 self.actions.push_back(Action::WakeAt(at));
             }
         }
     }
 
-    fn schedule_mpd_retry(&mut self, now: u64, attempt: u64) {
+    fn schedule_mpd_retry(&mut self, now: u64, attempt: u32) {
         let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
         // A deadline past the end of the clock can never be reached: the retry never fires.
         let Some(at) = deadline(Timestamp::from_micros(now), wait) else {

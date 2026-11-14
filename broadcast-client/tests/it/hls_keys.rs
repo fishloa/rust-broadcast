@@ -387,7 +387,7 @@ fn key_wrong_length_calls_on_key_error_and_retries_with_backoff() {
         "the 4 s step, jittered below it: {second} us"
     );
     assert_eq!(errors(&h.events), vec![(ErrorKind::BadKey, false)]);
-    let attempts: Vec<u64> = statuses(&h.events)
+    let attempts: Vec<u32> = statuses(&h.events)
         .into_iter()
         .filter_map(|s| match s {
             Status::Reconnecting { attempt } => Some(attempt),

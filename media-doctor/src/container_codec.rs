@@ -52,8 +52,9 @@
 //!
 //! Follows the same free-function `&mut Report` out-parameter convention as
 //! [`crate::check_playlist`]; [`Location::packet`] holds the sample index (0
-//! for track-level findings) and [`Location::pid`] holds the MP4 track_id
-//! (not a TS PID — there is none for this input).
+//! for track-level findings) and [`Location::stream`] holds the MP4 track_id
+//! as [`StreamLocator::Track`] (never a TS PID — there is none for this
+//! input).
 
 use broadcast_common::{Parse, Unpackage};
 use transmux::TrackId;

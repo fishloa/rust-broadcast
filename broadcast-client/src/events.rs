@@ -114,7 +114,7 @@ pub enum Status {
     /// `Reconnecting`.
     Reconnecting {
         /// Consecutive failed attempts, `0` for a reconnect after a played connection.
-        attempt: u64,
+        attempt: u32,
     },
     /// Not found.
     NotFound,
