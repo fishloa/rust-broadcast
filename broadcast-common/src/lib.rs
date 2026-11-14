@@ -72,6 +72,7 @@ pub mod mux;
 pub mod net;
 pub mod parity;
 pub mod pusi;
+pub mod range;
 pub mod seq;
 pub mod stage;
 pub mod time;
