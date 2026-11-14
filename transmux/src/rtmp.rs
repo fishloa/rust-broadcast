@@ -34,7 +34,7 @@ use core::fmt;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::chunk::{
-    ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
+    ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE_VALUE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
 };
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
 use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
@@ -240,7 +240,8 @@ impl<'a> Unpackage for RtmpDemux<'a> {
                     if let Some(ProtocolControl::SetChunkSize(size)) =
                         ProtocolControl::from_message(&m)?
                     {
-                        assembler.set_chunk_size(size.value());
+                        assembler.compact();
+                        assembler.set_chunk_size(size);
                     }
                 }
                 MessageTypeId::Audio => {
@@ -289,7 +290,7 @@ pub struct RtmpMux {
 impl Default for RtmpMux {
     fn default() -> Self {
         Self {
-            chunk_size: usize::try_from(DEFAULT_CHUNK_SIZE).unwrap_or(usize::MAX),
+            chunk_size: usize::try_from(DEFAULT_CHUNK_SIZE_VALUE).unwrap_or(usize::MAX),
             message_stream_id: 1,
         }
     }
@@ -341,10 +342,9 @@ impl Package for RtmpMux {
 
         let mut writer = ChunkWriter::new();
         let mut out = Vec::new();
-        if chunk_size != DEFAULT_CHUNK_SIZE {
-            let control =
-                ProtocolControl::SetChunkSize(ChunkSize::new(chunk_size).unwrap_or(ChunkSize::MIN))
-                    .to_message();
+        if chunk_size != DEFAULT_CHUNK_SIZE_VALUE {
+            let chunk_size = ChunkSize::new(chunk_size)?;
+            let control = ProtocolControl::SetChunkSize(chunk_size).to_message();
             out.extend_from_slice(&writer.write(&control)?);
             writer.set_chunk_size(chunk_size);
         }

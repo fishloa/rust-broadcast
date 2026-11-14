@@ -484,7 +484,7 @@ impl ClientSession {
         let chunk_size = ChunkSize::try_new(self.config.chunk_size)?;
         let set_chunk_size = ProtocolControl::SetChunkSize(chunk_size);
         out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message())?);
-        self.writer.set_chunk_size(chunk_size.value());
+        self.writer.set_chunk_size(chunk_size);
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size);
         out.extend_from_slice(&self.writer.write(&window_ack.to_message())?);
@@ -627,7 +627,7 @@ impl ClientSession {
         if let Some(pc) = ProtocolControl::from_message(msg)? {
             match pc {
                 ProtocolControl::SetChunkSize(size) => {
-                    self.assembler.set_chunk_size(size.value());
+                    self.assembler.set_chunk_size(size);
                 }
                 ProtocolControl::WindowAckSize(size) => {
                     self.ack_threshold = size;
@@ -929,7 +929,10 @@ mod tests {
         for round in 0..4 {
             // Round 0's output starts with C2, which is not chunk data.
             let skip = if round == 0 { HANDSHAKE_PACKET_LEN } else { 0 };
-            sniff.set_chunk_size(client.config.chunk_size);
+            sniff.set_chunk_size(
+                crate::message::ChunkSize::new(client.config.chunk_size)
+                    .expect("the client's own configured size is validated before connect"),
+            );
             for m in sniff.push(&to_server[skip..]).unwrap() {
                 if m.message_type_id == MessageTypeId::CommandAmf0 {
                     let c = Command::parse(&m.payload).unwrap();

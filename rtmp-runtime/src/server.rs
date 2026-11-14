@@ -557,7 +557,7 @@ impl ServerSession {
     /// [`ProtocolControl::from_message`].
     fn handle_protocol_control(&mut self, pc: ProtocolControl) {
         match pc {
-            ProtocolControl::SetChunkSize(n) => self.assembler.set_chunk_size(n.value()),
+            ProtocolControl::SetChunkSize(n) => self.assembler.set_chunk_size(n),
             ProtocolControl::WindowAckSize(w) => self.ack_threshold = w,
             // #1108/RTMP-W7: was `self.ack_threshold = ack_window_size` —
             // conflated the peer's outbound-bandwidth limit (§5.4.5) with
@@ -664,7 +664,7 @@ impl ServerSession {
         let chunk_size = ChunkSize::try_new(self.config.chunk_size)?;
         let set_chunk_size = ProtocolControl::SetChunkSize(chunk_size).to_message();
         out.extend_from_slice(&self.writer.write(&set_chunk_size)?);
-        self.writer.set_chunk_size(chunk_size.value());
+        self.writer.set_chunk_size(chunk_size);
 
         let result = Command {
             name: "_result".to_string(),
@@ -904,6 +904,7 @@ impl ServerSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chunk::MAX_CHUNK_SIZE;
     use crate::flv::{FLV_HEADER_LEN, FLV_PREV_TAG_SIZE_LEN, FLV_TAG_HEADER_LEN, FlvHeader};
     use crate::handshake::{HANDSHAKE_PACKET_LEN, RTMP_VERSION};
     use crate::message::CONTROL_CHUNK_STREAM_ID as CTRL_CSID;
@@ -1005,7 +1006,7 @@ mod tests {
     /// needing to replay `SetChunkSize` mid-decode.
     fn decode_messages(bytes: &[u8]) -> Vec<Message> {
         let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(65536);
+        assembler.set_chunk_size(ChunkSize::new(65536).expect("a valid chunk size"));
         assembler.push(bytes).expect("well-formed reply stream")
     }
 
@@ -2073,12 +2074,9 @@ mod tests {
         // be misparsed under the *old* chunk size.
         let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
-        const NEW_CHUNK_SIZE: u32 = 4096;
+        let new_chunk_size = ChunkSize::new(4096).expect("a valid chunk size");
         let set_chunk_size_bytes = ChunkWriter::new()
-            .write(
-                &ProtocolControl::SetChunkSize(ChunkSize::new(NEW_CHUNK_SIZE).unwrap())
-                    .to_message(),
-            )
+            .write(&ProtocolControl::SetChunkSize(new_chunk_size).to_message())
             .unwrap();
 
         // A video payload bigger than the *default* 128-byte chunk size but
@@ -2087,7 +2085,7 @@ mod tests {
         // produces immediately after raising its chunk size.
         let big_payload = vec![0x17u8; 300];
         let mut client_writer = ChunkWriter::new();
-        client_writer.set_chunk_size(NEW_CHUNK_SIZE);
+        client_writer.set_chunk_size(new_chunk_size);
         let video_bytes = client_writer
             .write(&Message {
                 chunk_stream_id: 6,
@@ -2121,6 +2119,82 @@ mod tests {
                 .any(|w| w == big_payload.as_slice()),
             "the video payload must survive intact through the chunk-size change"
         );
+    }
+
+    /// #2741: a peer that announces a chunk size above the engine ceiling
+    /// used to be accepted with the size silently clamped to
+    /// `MAX_CHUNK_SIZE`; the session then parsed the peer's next chunks at a
+    /// size the peer never used, mis-framing the rest of the stream with no
+    /// signal. The announcement is now refused, so the session closes with
+    /// an error naming the field instead of corrupting what follows.
+    #[test]
+    fn an_announced_chunk_size_above_the_engine_ceiling_is_refused_not_clamped() {
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
+        let above_ceiling = MAX_CHUNK_SIZE + 1;
+        assert!(
+            ChunkSize::new(above_ceiling).is_err(),
+            "the announced value must be a legal wire size the engine cannot adopt"
+        );
+        let payload = above_ceiling.to_be_bytes().to_vec();
+        let announcement = Message {
+            chunk_stream_id: CTRL_CSID,
+            timestamp: 0,
+            message_type_id: MessageTypeId::SetChunkSize,
+            message_stream_id: 0,
+            payload,
+        };
+        let bytes = ChunkWriter::new().write(&announcement).unwrap();
+        let err = session
+            .handle_data(&bytes)
+            .expect_err("a chunk size above the engine ceiling must be refused");
+        assert!(
+            matches!(
+                err,
+                RtmpError::Malformed {
+                    what: "set chunk size value (above the engine MAX_CHUNK_SIZE ceiling)"
+                }
+            ),
+            "{err:?}"
+        );
+    }
+
+    /// #1108 incremental dispatch, carried over once the announcement is its
+    /// own message: a Set Chunk Size and the chunks framed at the new size in
+    /// the same `handle_data` call must be parsed at the new size, with
+    /// nothing parsed twice on either side of the change.
+    #[test]
+    fn a_chunk_size_announced_at_the_ceiling_takes_effect_within_the_same_call() {
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
+        let ceiling = ChunkSize::new(MAX_CHUNK_SIZE).expect("the ceiling is a valid size");
+        let announcement = ProtocolControl::SetChunkSize(ceiling).to_message();
+        let mut combined = ChunkWriter::new().write(&announcement).unwrap();
+
+        let payload = vec![0x17u8; 300];
+        let mut client_writer = ChunkWriter::new();
+        client_writer.set_chunk_size(ceiling);
+        combined.extend_from_slice(
+            &client_writer
+                .write(&Message {
+                    chunk_stream_id: 6,
+                    timestamp: 0,
+                    message_type_id: MessageTypeId::Video,
+                    message_stream_id: 1,
+                    payload: payload.clone(),
+                })
+                .unwrap(),
+        );
+
+        let (_out, events) = session
+            .handle_data(&combined)
+            .expect("the announcement and the chunks framed after it parse in one call");
+        let media = events
+            .iter()
+            .find_map(|e| match e {
+                ServerEvent::Media { flv } => Some(flv.clone()),
+                _ => None,
+            })
+            .expect("the video message is parsed into a Media event exactly once");
+        assert!(media.windows(payload.len()).any(|w| w == payload));
     }
 
     #[test]

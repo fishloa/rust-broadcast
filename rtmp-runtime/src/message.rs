@@ -16,7 +16,7 @@ use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
-use crate::chunk::Message;
+use crate::chunk::{MAX_CHUNK_SIZE, Message};
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -240,6 +240,12 @@ pub struct ChunkSize(u32);
 impl ChunkSize {
     /// Minimum valid chunk size.
     pub const MIN: ChunkSize = ChunkSize(1);
+
+    /// A size this crate's own constants already validated. Never called with
+    /// an unchecked value.
+    pub(crate) const fn new_unchecked(value: u32) -> Self {
+        Self(value)
+    }
     /// Maximum valid chunk size.
     pub const MAX: u32 = 0x7FFF_FFFF;
 
@@ -248,11 +254,20 @@ impl ChunkSize {
         Self::try_new(value)
     }
 
-    /// Construct a validated chunk size.
+    /// Construct a validated chunk size: `1..=0x7FFF_FFFF` (the 31-bit wire
+    /// field, §5.4.1) and within this engine's [`MAX_CHUNK_SIZE`] ceiling.
+    ///
+    /// The ceiling is enforced here rather than by clamping later, so the
+    /// engine never adopts a chunk size other than the one announced.
     pub const fn try_new(value: u32) -> Result<Self> {
         if value == 0 || value & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
             return Err(RtmpError::Malformed {
                 what: "set chunk size value (must be 1..=0x7FFF_FFFF)",
+            });
+        }
+        if value > MAX_CHUNK_SIZE {
+            return Err(RtmpError::Malformed {
+                what: "set chunk size value (above the engine MAX_CHUNK_SIZE ceiling)",
             });
         }
         Ok(Self(value))
@@ -372,13 +387,9 @@ impl ProtocolControl {
                         what: "set chunk size reserved top bit (must be 0)",
                     });
                 }
-                let size = raw & SET_CHUNK_SIZE_VALUE_MASK;
-                if size == 0 {
-                    return Err(RtmpError::Malformed {
-                        what: "set chunk size value (must be >= 1)",
-                    });
-                }
-                Ok(Some(ProtocolControl::SetChunkSize(ChunkSize(size))))
+                Ok(Some(ProtocolControl::SetChunkSize(ChunkSize::try_new(
+                    raw & SET_CHUNK_SIZE_VALUE_MASK,
+                )?)))
             }
             MessageTypeId::Abort => {
                 let chunk_stream_id = need_u32(payload, "abort message payload")?;

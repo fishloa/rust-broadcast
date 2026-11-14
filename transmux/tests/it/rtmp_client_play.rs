@@ -262,7 +262,10 @@ fn a_chunk_size_change_in_the_middle_of_the_stream_takes_effect_for_the_next_chu
             .unwrap();
         rig.deliver(&bytes);
     }
-    let mut wire = rig.peer.set_chunk_size(60_000).unwrap();
+    let mut wire = rig
+        .peer
+        .set_chunk_size(rtmp_runtime::ChunkSize::new(60_000).expect("a valid chunk size"))
+        .unwrap();
     for (tag_type, ts, body) in tail {
         wire.extend(
             rig.peer
@@ -277,7 +280,7 @@ fn a_chunk_size_change_in_the_middle_of_the_stream_takes_effect_for_the_next_chu
 #[test]
 fn a_chunk_size_change_announced_at_connect_is_honoured() {
     let mut cfg = peer_config();
-    cfg.chunk_size_after_connect = Some(512);
+    cfg.chunk_size_after_connect = Some(rtmp_runtime::ChunkSize::new(512).expect("a valid size"));
     let mut rig = Rig::new(play_config(STREAM), cfg);
     rig.handshake_and_play();
     play_all(&mut rig);

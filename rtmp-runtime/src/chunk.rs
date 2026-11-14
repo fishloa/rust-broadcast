@@ -19,23 +19,26 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use crate::message::ChunkSize;
 use crate::message::MessageTypeId;
 use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
-/// Default maximum chunk size (§5.3, §5.4.1): 128 bytes, in effect until a
-/// Set Chunk Size protocol control message changes it.
-pub const DEFAULT_CHUNK_SIZE: u32 = 128;
+/// Default chunk size (§5.3, §5.4.1): 128 bytes, in effect until a Set Chunk
+/// Size protocol control message changes it.
+pub const DEFAULT_CHUNK_SIZE_VALUE: u32 = 128;
+/// [`DEFAULT_CHUNK_SIZE_VALUE`] as an adopted size.
+pub const DEFAULT_CHUNK_SIZE: ChunkSize = ChunkSize::new_unchecked(DEFAULT_CHUNK_SIZE_VALUE);
 
-/// Largest chunk size [`ChunkAssembler::set_chunk_size`]/[`ChunkWriter::set_chunk_size`]
-/// will adopt from a Set Chunk Size protocol control message (§5.4.1): 16
-/// MiB. The wire field is a 31-bit value (up to ~2 GiB), but no real
-/// publisher/player needs a chunk size anywhere near that — a single chunk
-/// this large would already hold many seconds of encoded audio/video — so
-/// this is a defensive ceiling, not a spec limit: values above it are
-/// clamped down rather than rejected, matching the existing floor-of-1
-/// behaviour for values below it.
+/// Largest chunk size this engine will adopt: 16 MiB. The wire field is a
+/// 31-bit value (up to ~2 GiB), but no real publisher/player needs a chunk
+/// size anywhere near that — a single chunk this large would already hold
+/// many seconds of encoded audio/video — so this is a defensive ceiling,
+/// not a spec limit. It is enforced at construction, never by silently
+/// adopting a smaller size than was announced: a size above it is rejected
+/// (see [`ChunkSize::try_new`]'s ceiling note), because parsing chunks at
+/// any size but the announced one mis-frames every later chunk boundary.
 pub const MAX_CHUNK_SIZE: u32 = 16 * 1024 * 1024;
 
 /// Largest total `message_length` (§5.3.1.2) [`ChunkAssembler`] will begin
@@ -648,7 +651,7 @@ struct CsidState {
 /// each reassembled independently.
 #[derive(Debug)]
 pub struct ChunkAssembler {
-    chunk_size: u32,
+    chunk_size: ChunkSize,
     csids: BTreeMap<u32, CsidState>,
     /// Bytes carried over from a previous `push` call that did not yet form
     /// a complete chunk (partial basic header, message header, extended
@@ -704,10 +707,10 @@ impl ChunkAssembler {
         self
     }
 
-    /// Builder form of [`Self::set_chunk_size`] (same clamping rules).
+    /// Builder form of [`Self::set_chunk_size`].
     #[must_use]
-    pub fn with_chunk_size(mut self, n: u32) -> Self {
-        self.set_chunk_size(n);
+    pub fn with_chunk_size(mut self, chunk_size: ChunkSize) -> Self {
+        self.set_chunk_size(chunk_size);
         self
     }
 
@@ -718,17 +721,12 @@ impl ChunkAssembler {
     /// *sender* choosing what to announce — a peer that announces (and
     /// then frames its own chunks at) a smaller value is still wire-legal,
     /// and this side must parse at whatever size the peer actually
-    /// announced or every later chunk boundary is misparsed. So this only
-    /// enforces the hard `MUST >= 1` floor (a chunk size of 0 would never
-    /// make progress splitting payload) and caps at [`MAX_CHUNK_SIZE`] (a
-    /// defensive ceiling, not a spec limit — see its own doc). The wire's
-    /// reserved top bit and the `== 0` case are already rejected earlier, at
-    /// [`crate::message::ProtocolControl::from_payload`]'s parse of the Set
-    /// Chunk Size message itself, before a value ever reaches here; the
-    /// floor below is this method's own defensive backstop for any other
-    /// caller.
-    pub fn set_chunk_size(&mut self, n: u32) {
-        self.chunk_size = n.clamp(1, MAX_CHUNK_SIZE);
+    /// announced or every later chunk boundary is misparsed. So any
+    /// validated [`ChunkSize`] is adopted verbatim; it is never clamped to
+    /// a different size, since parsing at any size but the announced one
+    /// mis-frames the stream silently.
+    pub fn set_chunk_size(&mut self, chunk_size: ChunkSize) {
+        self.chunk_size = chunk_size;
     }
 
     /// Discard any partially-received message on `csid` (§5.4.2 Abort
@@ -795,6 +793,29 @@ impl ChunkAssembler {
         self.pending.extend_from_slice(input);
     }
 
+    /// Bytes [`feed`](Self::feed)ed that [`next_message`](Self::next_message)
+    /// has not yet consumed. A caller that feeds one input slice at a time
+    /// pairs this with [`swap_pending`](Self::swap_pending) to recover how
+    /// much of that slice has been parsed.
+    #[must_use]
+    pub fn pending_len(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// Replace the bytes [`feed`](Self::feed)ed so far with `now`, returning
+    /// what was there: the bytes a caller fed that are still unparsed. A
+    /// caller that has the original input still in hand (the common case:
+    /// one `on_bytes` call) passes what remains after its own offset and
+    /// gets back exactly the bytes it fed that never formed a chunk — no
+    /// re-derivation from byte counts, and nothing parsed at a stale chunk
+    /// size.
+    pub fn swap_pending(&mut self, now: &[u8]) -> Vec<u8> {
+        let unconsumed = self.pending.len() - self.cursor;
+        let previous = core::mem::replace(&mut self.pending, Vec::from(now));
+        let kept = previous.get(unconsumed..).unwrap_or_default().to_vec();
+        kept
+    }
+
     /// Parse and return the next complete [`Message`] out of the
     /// previously-[`feed`](Self::feed) bytes, or `Ok(None)` if what remains
     /// buffered isn't (yet) a complete message. Internally keeps parsing
@@ -815,7 +836,11 @@ impl ChunkAssembler {
     /// Because each call stops at one message, the caller can apply that
     /// message's effect on the chunk stream (a Set Chunk Size, §5.4.1) with
     /// [`set_chunk_size`](Self::set_chunk_size) before the next call parses
-    /// the bytes that follow it:
+    /// the bytes that follow it. When the buffered bytes and the caller's
+    /// input overlap (one input buffer carries the control message and the
+    /// chunks framed after it), [`swap_pending`](Self::swap_pending) hands
+    /// back what was fed but never parsed, so the caller can re-feed exactly
+    /// those bytes and nothing is parsed twice or at the old size:
     ///
     /// ```
     /// use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
@@ -825,7 +850,7 @@ impl ChunkAssembler {
     /// let mut wire = Vec::new();
     /// let control = ProtocolControl::SetChunkSize(ChunkSize::new(4096).unwrap()).to_message();
     /// wire.extend_from_slice(&writer.write(&control)?);
-    /// writer.set_chunk_size(4096);
+    /// writer.set_chunk_size(ChunkSize::new(4096)?);
     /// let media = Message {
     ///     chunk_stream_id: 4,
     ///     timestamp: 0,
@@ -836,14 +861,22 @@ impl ChunkAssembler {
     /// wire.extend_from_slice(&writer.write(&media)?);
     ///
     /// let mut assembler = ChunkAssembler::new();
-    /// assembler.feed(&wire);
+    /// let mut rest: &[u8] = &wire;
     /// let mut sizes = Vec::new();
-    /// while let Some(message) = assembler.next_message()? {
+    /// assembler.feed(&wire);
+    /// loop {
+    ///     let message = match assembler.next_message()? {
+    ///         Some(message) => message,
+    ///         None => break,
+    ///     };
     ///     if message.message_type_id == MessageTypeId::SetChunkSize {
     ///         if let Some(ProtocolControl::SetChunkSize(size)) =
     ///             ProtocolControl::from_message(&message)?
     ///         {
-    ///             assembler.set_chunk_size(size.value());
+    ///             let boundary = rest.len() - assembler.pending_len();
+    ///             assembler.set_chunk_size(size);
+    ///             rest = rest.get(boundary..).unwrap_or_default();
+    ///             assembler.swap_pending(rest);
     ///         }
     ///         continue;
     ///     }
@@ -962,7 +995,12 @@ impl ChunkAssembler {
     /// single message was still being reassembled out of many small chunks
     /// was, independently of the payload-clone cost, itself enough to make
     /// reassembly quadratic in the chunk count.
-    fn compact(&mut self) {
+    ///
+    /// A caller that switches chunk size between messages with
+    /// [`set_chunk_size`](Self::set_chunk_size) calls this once first, so
+    /// the bytes still buffered at the old size are re-fed and parsed at
+    /// the new one.
+    pub fn compact(&mut self) {
         if self.cursor > 0 {
             self.pending.drain(..self.cursor);
             self.cursor = 0;
@@ -983,7 +1021,7 @@ impl ChunkAssembler {
     fn try_parse_one(
         buf: &[u8],
         states: &mut BTreeMap<u32, CsidState>,
-        chunk_size: u32,
+        chunk_size: ChunkSize,
         in_progress_bytes: &mut usize,
         max_in_progress_bytes: usize,
     ) -> Result<Option<ParsedChunk>> {
@@ -1199,7 +1237,9 @@ impl ChunkAssembler {
         };
         let remaining_needed =
             (resolved.message_length as usize).saturating_sub(already_accumulated);
-        let take = (chunk_size as usize).min(remaining_needed);
+        let take = usize::try_from(chunk_size.value())
+            .unwrap_or(usize::MAX)
+            .min(remaining_needed);
 
         // #1108/RTMP-W1 aggregate budget. A new message reserves its full
         // declared length when its header validates (before the payload
@@ -1314,7 +1354,7 @@ struct ParsedChunk {
 /// does not perform.
 #[derive(Debug, Clone)]
 pub struct ChunkWriter {
-    chunk_size: u32,
+    chunk_size: ChunkSize,
 }
 
 impl Default for ChunkWriter {
@@ -1334,10 +1374,11 @@ impl ChunkWriter {
 
     /// Update the chunk size used for subsequent [`ChunkWriter::write`]
     /// calls (called on sending a Set Chunk Size protocol control message,
-    /// §5.4.1). Capped at [`MAX_CHUNK_SIZE`] (the floor-of-1 is applied in
-    /// [`ChunkWriter::write`] itself).
-    pub fn set_chunk_size(&mut self, n: u32) {
-        self.chunk_size = n.min(MAX_CHUNK_SIZE);
+    /// §5.4.1). The value is adopted verbatim — a validated [`ChunkSize`]
+    /// is never clamped — so the framing always matches the size the
+    /// matching Set Chunk Size message announced.
+    pub fn set_chunk_size(&mut self, chunk_size: ChunkSize) {
+        self.chunk_size = chunk_size;
     }
 
     /// Serialize `msg` into chunk bytes at the current chunk size: a Type 0
@@ -1364,7 +1405,7 @@ impl ChunkWriter {
                 chunk_stream_id: msg.chunk_stream_id,
             });
         }
-        let chunk_size = (self.chunk_size as usize).max(1);
+        let chunk_size = usize::try_from(self.chunk_size.value()).unwrap_or(usize::MAX);
         let message_length = broadcast_common::len::fit_u24(msg.payload.len(), "message_length")?;
         let extended = needs_extended_timestamp(msg.timestamp);
 
@@ -2135,7 +2176,7 @@ mod tests {
         // two Type 3 continuations of 4 and 2 bytes — assert the payload
         // comes back concatenated in the right order, not reordered.
         let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(4);
+        assembler.set_chunk_size(ChunkSize::new(4).expect("a valid chunk size"));
 
         let bh0 = BasicHeader {
             fmt: Fmt::Type0,
@@ -2173,7 +2214,7 @@ mod tests {
         // message completes in one go (message_length == chunk_size == 5)
         // so every header starts a fresh message on this csid.
         let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(5);
+        assembler.set_chunk_size(ChunkSize::new(5).expect("a valid chunk size"));
         let csid = 5;
 
         let mut input = Vec::new();
@@ -2287,7 +2328,7 @@ mod tests {
         let out = assembler.push(&first_bytes).unwrap();
         assert_eq!(out, vec![first]);
 
-        assembler.set_chunk_size(4);
+        assembler.set_chunk_size(ChunkSize::new(4).expect("a valid chunk size"));
         let bh0 = BasicHeader {
             fmt: Fmt::Type0,
             chunk_stream_id: csid,
@@ -2673,9 +2714,10 @@ mod tests {
     #[test]
     fn assembler_honours_a_peer_announced_chunk_size_below_128() {
         let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(64);
+        assembler.set_chunk_size(ChunkSize::new(64).expect("a valid chunk size"));
         assert_eq!(
-            assembler.chunk_size, 64,
+            assembler.chunk_size,
+            ChunkSize::new(64).expect("a valid chunk size"),
             "the announced size must not be clamped up"
         );
 
@@ -2723,8 +2765,8 @@ mod tests {
     #[test]
     fn assembler_set_chunk_size_zero_is_floored_to_one() {
         let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(0);
-        assert_eq!(assembler.chunk_size, 1, "floored at 1, not stuck at 0");
+        assert!(ChunkSize::new(0).is_err(), "a chunk size of 0 is rejected");
+        assembler.set_chunk_size(ChunkSize::MIN);
 
         // A message chunked consistently with the floored size (1 payload
         // byte per physical chunk) still assembles correctly — the floor
@@ -2827,7 +2869,7 @@ mod tests {
                 message_stream_id: 1,
             },
         );
-        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE_VALUE as usize));
 
         let err = assembler.push(&input).expect_err(
             "a message_length beyond MAX_MESSAGE_LEN must be rejected before any \
@@ -2858,7 +2900,7 @@ mod tests {
                 message_stream_id: 1,
             },
         );
-        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE as usize));
+        input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE_VALUE as usize));
 
         // Not yet complete (only one chunk of a much larger message has
         // arrived) but must not be rejected outright.
@@ -2904,15 +2946,25 @@ mod tests {
         }
     }
 
+    /// A peer that announces a size above the engine ceiling is rejected at
+    /// construction rather than adopted partly: pre-fix the assembler and
+    /// writer clamped it to [`MAX_CHUNK_SIZE`] and parsed/framed every later
+    /// chunk at a size the peer never announced, silently mis-framing the
+    /// rest of the stream.
     #[test]
-    fn set_chunk_size_is_capped_at_max_chunk_size() {
-        let mut assembler = ChunkAssembler::new();
-        assembler.set_chunk_size(u32::MAX);
-        assert_eq!(assembler.chunk_size, MAX_CHUNK_SIZE);
-
-        let mut writer = ChunkWriter::new();
-        writer.set_chunk_size(u32::MAX);
-        assert_eq!(writer.chunk_size, MAX_CHUNK_SIZE);
+    fn a_chunk_size_above_the_engine_ceiling_is_rejected_not_clamped() {
+        let announced = crate::message::ChunkSize::MAX;
+        assert!(
+            announced > MAX_CHUNK_SIZE,
+            "the case under test needs a legal wire size above the ceiling"
+        );
+        assert!(crate::message::ChunkSize::try_new(announced).is_err());
+        assert_eq!(
+            crate::message::ChunkSize::try_new(MAX_CHUNK_SIZE)
+                .expect("the ceiling itself is accepted")
+                .value(),
+            MAX_CHUNK_SIZE
+        );
     }
 
     /// #1108/RTMP-W1: a fresh message opened on `csid` declaring
@@ -2921,7 +2973,7 @@ mod tests {
     /// declared length is reserved against the aggregate budget when the
     /// header validates.
     fn open_partial_chunk(csid: u32, declared_len: u32) -> Vec<u8> {
-        let sent_len = DEFAULT_CHUNK_SIZE as usize;
+        let sent_len = DEFAULT_CHUNK_SIZE_VALUE as usize;
         assert!(sent_len < declared_len as usize);
         let mut input = Vec::new();
         write_serialized_ok(
@@ -3037,7 +3089,10 @@ mod tests {
                 chunk_stream_id: 3,
             },
         );
-        tail.extend_from_slice(&vec![0x11u8; DECL as usize - DEFAULT_CHUNK_SIZE as usize]);
+        tail.extend_from_slice(&vec![
+            0x11u8;
+            DECL as usize - DEFAULT_CHUNK_SIZE_VALUE as usize
+        ]);
         let out = assembler.push(&tail).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].payload.len(), DECL as usize);
@@ -3087,10 +3142,10 @@ mod tests {
         let original = msg(10, 0, MessageTypeId::Video, 1, payload.clone());
 
         let mut writer = ChunkWriter::new();
-        writer.set_chunk_size(1);
+        writer.set_chunk_size(ChunkSize::MIN);
         let bytes = writer.write(&original).unwrap();
 
-        let mut assembler = ChunkAssembler::new().with_chunk_size(1);
+        let mut assembler = ChunkAssembler::new().with_chunk_size(ChunkSize::MIN);
 
         reset_payload_bytes_copied_for_test();
         let out = assembler.push(&bytes).unwrap();
