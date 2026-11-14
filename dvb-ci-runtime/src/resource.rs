@@ -315,32 +315,36 @@ fn bcd(v: u64) -> u8 {
 }
 
 /// Encode a Unix timestamp as the 5-byte DVB `UTC_time` (MJD `[15:0]` + BCD
-/// HH:MM:SS), per EN 300 468 Annex C.
-fn unix_to_mjd_bcd(unix_secs: u64) -> [u8; UTC_TIME_LEN] {
-    let mjd = (MJD_UNIX_EPOCH + unix_secs / SECS_PER_DAY) as u16;
+/// HH:MM:SS), per EN 300 468 Annex C. `None` outside the 16-bit MJD range
+/// (before 1858-11-17, or from MJD 65536 = 2141-09-10 on), which the wire
+/// format cannot express.
+fn unix_to_mjd_bcd(unix_secs: u64) -> Option<[u8; UTC_TIME_LEN]> {
+    let mjd = u16::try_from(MJD_UNIX_EPOCH + unix_secs / SECS_PER_DAY).ok()?;
     let sod = unix_secs % SECS_PER_DAY;
-    [
+    Some([
         (mjd >> 8) as u8,
         mjd as u8,
         bcd(sod / 3600),
         bcd((sod % 3600) / 60),
         bcd(sod % 60),
-    ]
+    ])
 }
 
-fn system_utc() -> [u8; UTC_TIME_LEN] {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    unix_to_mjd_bcd(secs)
+/// The host clock as a 5-byte DVB `UTC_time`, or `None` when the clock reads
+/// an instant that field cannot represent (a pre-1970 clock, or one past
+/// 2141-09-09).
+fn system_utc() -> Option<[u8; UTC_TIME_LEN]> {
+    let now = std::time::SystemTime::now();
+    now.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| unix_to_mjd_bcd(d.as_secs()))
 }
 
 /// Date-Time (§8.5.2) — host-provided. On `date_time_enq` replies with the
 /// current UTC; if the enquiry's `response_interval` is non-zero, re-sends every
 /// `response_interval` seconds (driven by [`tick`](Resource::tick)).
 pub struct DateTime {
-    clock: fn() -> [u8; UTC_TIME_LEN],
+    clock: fn() -> Option<[u8; UTC_TIME_LEN]>,
     interval: u8,
     since: Duration,
 }
@@ -363,8 +367,11 @@ impl DateTime {
     }
 
     /// New handler with an injected clock (for tests / a host-supplied source).
+    ///
+    /// The clock yields `None` for an instant the 5-byte `UTC_time` field
+    /// cannot represent (a pre-1970 clock, or one past 2141-09-09).
     #[must_use]
-    pub fn with_clock(clock: fn() -> [u8; UTC_TIME_LEN]) -> Self {
+    pub fn with_clock(clock: fn() -> Option<[u8; UTC_TIME_LEN]>) -> Self {
         Self {
             clock,
             interval: 0,
@@ -372,12 +379,13 @@ impl DateTime {
         }
     }
 
-    fn reply(&self) -> dvb_ci::Result<Vec<u8>> {
-        ser(&CiDateTime {
+    fn reply(&self) -> Option<dvb_ci::Result<Vec<u8>>> {
+        let utc_time = (self.clock)()?;
+        Some(ser(&CiDateTime {
             length_form: dvb_ci::length::LengthForm::Minimal,
-            utc_time: (self.clock)(),
+            utc_time,
             local_offset: None,
-        })
+        }))
     }
 }
 
@@ -395,7 +403,10 @@ impl Resource for DateTime {
             let enq = DateTimeEnq::parse(apdu)?;
             self.interval = enq.response_interval;
             self.since = Duration::ZERO;
-            out.apdus.push(self.reply()?);
+            match self.reply() {
+                Some(reply) => out.apdus.push(reply?),
+                None => out.notify.push(Notification::ClockUnrepresentable),
+            }
         }
         Ok(out)
     }
@@ -406,7 +417,10 @@ impl Resource for DateTime {
             self.since += elapsed;
             if self.since >= Duration::from_secs(u64::from(self.interval)) {
                 self.since = Duration::ZERO;
-                out.apdus.push(self.reply()?);
+                match self.reply() {
+                    Some(reply) => out.apdus.push(reply?),
+                    None => out.notify.push(Notification::ClockUnrepresentable),
+                }
             }
         }
         Ok(out)
@@ -1016,15 +1030,51 @@ mod tests {
     #[test]
     fn mjd_bcd_encoding_is_correct() {
         // Unix epoch 1970-01-01 00:00:00 → MJD 40587 (0x9E8B), 00:00:00.
-        assert_eq!(unix_to_mjd_bcd(0), [0x9E, 0x8B, 0x00, 0x00, 0x00]);
+        assert_eq!(unix_to_mjd_bcd(0), Some([0x9E, 0x8B, 0x00, 0x00, 0x00]));
         // 1970-01-02 13:45:09 → MJD 40588 (0x9E8C), BCD 13 45 09.
         let secs = SECS_PER_DAY + 13 * 3600 + 45 * 60 + 9;
-        assert_eq!(unix_to_mjd_bcd(secs), [0x9E, 0x8C, 0x13, 0x45, 0x09]);
+        assert_eq!(unix_to_mjd_bcd(secs), Some([0x9E, 0x8C, 0x13, 0x45, 0x09]));
+    }
+
+    #[test]
+    fn mjd_beyond_its_sixteen_bits_is_refused_not_wrapped() {
+        // 2_155_507_200 is 2038-04-22; any instant below MJD 65536 still fits
+        // 16 bits and encodes normally.
+        assert_eq!(
+            unix_to_mjd_bcd(2_155_507_200 + 86_399),
+            Some([0xFF, 0xFF, 0x23, 0x59, 0x59])
+        );
+        // From 2141-09-10 (MJD 65536) the old `as u16` wrapped the date back
+        // to 1858-11-17 (MJD 0).
+        assert_eq!(unix_to_mjd_bcd(5_417_971_200), None);
+    }
+
+    #[test]
+    fn date_time_reports_an_unrepresentable_clock_instead_of_a_wrong_date() {
+        let mut h = DateTime::with_clock(|| None);
+        let out = h
+            .on_apdu(&s(&DateTimeEnq {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                response_interval: 0,
+            }))
+            .unwrap();
+        assert!(out.apdus.is_empty());
+        assert_eq!(out.notify, vec![Notification::ClockUnrepresentable]);
+    }
+
+    #[test]
+    fn system_clock_is_representable_today() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        assert_eq!(system_utc(), unix_to_mjd_bcd(now));
+        assert!(system_utc().is_some());
     }
 
     #[test]
     fn date_time_replies_to_enq_and_resends_on_interval() {
-        let fixed = || [0x9E, 0x7B, 0x00, 0x00, 0x00];
+        let fixed = || Some([0x9E, 0x7B, 0x00, 0x00, 0x00]);
         let mut h = DateTime::with_clock(fixed);
         // enquiry with a 5s response interval → immediate reply
         let enq = s(&DateTimeEnq {
@@ -1042,7 +1092,7 @@ mod tests {
 
     #[test]
     fn date_time_interval_zero_does_not_resend() {
-        let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
+        let mut h = DateTime::with_clock(|| Some([0u8; UTC_TIME_LEN]));
         h.on_apdu(&s(&DateTimeEnq {
             length_form: dvb_ci::length::LengthForm::Minimal,
             response_interval: 0,
@@ -1057,7 +1107,7 @@ mod tests {
     /// module ever sends its own `date_time_enq`.
     #[test]
     fn date_time_reset_clears_interval_and_resend_timer() {
-        let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
+        let mut h = DateTime::with_clock(|| Some([0u8; UTC_TIME_LEN]));
         h.on_apdu(&s(&DateTimeEnq {
             length_form: dvb_ci::length::LengthForm::Minimal,
             response_interval: 5,

@@ -1,5 +1,8 @@
 use broadcast_client::{Action, Config, ConnId, Error, Event, Session, TrackId};
+use std::time::Duration;
+
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::duration_micros;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -13,7 +16,7 @@ const TS_PACKET: usize = 188;
 const PID_MASK: u16 = 0x1fff;
 const LAST_FRANCE2_PID: u16 = 142;
 const HOLD_START_CHUNKS: usize = 8;
-const SHORT_WALL_US: u64 = 500_000;
+const SHORT_WALL: Duration = Duration::from_millis(500);
 
 fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
     bytes
@@ -92,7 +95,7 @@ fn a_zero_wall_limit_announces_tracks_as_each_stream_resolves() {
     let bytes = test_fixtures::read("ts/france2.ts");
     let config = {
         let mut new_config = Config::default();
-        new_config.tracks_hold_max_wall_us = 0;
+        new_config.tracks_hold_max_wall = None;
         new_config
     };
     let (mut s, c) = open_live(config);
@@ -113,7 +116,7 @@ fn a_zero_media_limit_announces_tracks_as_each_stream_resolves() {
     let bytes = test_fixtures::read("ts/france2.ts");
     let config = {
         let mut new_config = Config::default();
-        new_config.tracks_hold_max_media_us = 0;
+        new_config.tracks_hold_max_media = None;
         new_config
     };
     let (mut s, c) = open_live(config);
@@ -136,11 +139,11 @@ fn the_default_config_holds_until_every_stream_resolves() {
 fn a_short_wall_limit_releases_a_stream_whose_declared_pid_never_sends() {
     let bytes = without_pid(&test_fixtures::read("ts/france2.ts"), LAST_FRANCE2_PID);
     let fed_until = HOLD_START_CHUNKS as u64 * STEP_US;
-    let due = fed_until + SHORT_WALL_US;
+    let due = fed_until + duration_micros(SHORT_WALL);
 
     let config = {
         let mut new_config = Config::default();
-        new_config.tracks_hold_max_wall_us = SHORT_WALL_US;
+        new_config.tracks_hold_max_wall = Some(SHORT_WALL);
         new_config
     };
     let (mut s, c) = open_live(config);
@@ -193,8 +196,8 @@ fn the_documented_hold_defaults_are_unchanged_and_valid() {
     let c = Config::default();
     assert_eq!(c.tracks_hold_max_input_bytes, 4 * 1024 * 1024);
     assert_eq!(c.tracks_hold_quiet_input_bytes, 512 * 1024);
-    assert_eq!(c.tracks_hold_max_media_us, 1_000_000);
-    assert_eq!(c.tracks_hold_max_wall_us, 1_000_000);
+    assert_eq!(c.tracks_hold_max_media, Some(Duration::from_secs(1)));
+    assert_eq!(c.tracks_hold_max_wall, Some(Duration::from_secs(1)));
     assert!(Session::open(Url::parse("http://h/live.ts").unwrap(), c, ts(0)).is_ok());
 }
 
@@ -202,8 +205,8 @@ fn the_documented_hold_defaults_are_unchanged_and_valid() {
 fn zero_wall_and_media_limits_are_valid() {
     let c = {
         let mut new_config = Config::default();
-        new_config.tracks_hold_max_wall_us = 0;
-        new_config.tracks_hold_max_media_us = 0;
+        new_config.tracks_hold_max_wall = None;
+        new_config.tracks_hold_max_media = None;
         new_config
     };
     assert!(Session::open(Url::parse("http://h/live.ts").unwrap(), c, ts(0)).is_ok());

@@ -1477,7 +1477,7 @@ const LIVE_PLAYLIST_URL: &str = "http://origin.test/live/index.m3u8";
 const LIVE_SEG0_URL: &str = "http://origin.test/live/index0.ts";
 const LIVE_SEG1_URL: &str = "http://origin.test/live/index1.ts";
 const HLS_STEPS: usize = 400;
-const HLS_LIVE_START_LEAD_US: u64 = 500_000;
+const HLS_LIVE_START_LEAD_US: Duration = Duration::from_millis(500);
 
 fn hls_trace(h: &hls::Host) -> Trace {
     Trace {
@@ -1637,7 +1637,7 @@ fn hls_live_jump_resets_gate() {
     let playlist = hls::live_playlist_text(0, &["index0.ts", "index1.ts"]).into_bytes();
     let config = || {
         let mut c = hls::hls_config();
-        c.playout.live_start_lead_us = HLS_LIVE_START_LEAD_US;
+        c.playout.live_start_lead = HLS_LIVE_START_LEAD_US;
         c
     };
     let clean = hls_run(

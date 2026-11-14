@@ -62,7 +62,7 @@ use st377_1::{
     ContentStorage, Error, EssenceContainerData, EventTrack, FillerComponent, Identification,
     KlvItem, LocalSet, MaterialPackage, PartitionPack, Preface, PrimerPack, RandomIndexPack,
     Sequence, SourceClip, SourcePackage, StaticTrack, StructuralSetKind, TimecodeComponent,
-    TimelineTrack, collect_klv_items, is_fill_item_key, is_local_set_key,
+    TimelineTrack, UidBatch, collect_klv_items, is_fill_item_key, is_local_set_key,
 };
 
 fn fixture_bytes() -> Vec<u8> {
@@ -92,6 +92,36 @@ where
     );
 }
 
+/// Asserts `batch` (parsed from the Set's `name` property) writes back ITS
+/// exact original header — read here straight out of the real fixture's
+/// property bytes, not from a re-encoding — and that the property's body is
+/// the elements that were parsed. A canonical replacement of an encoder's
+/// own header (e.g. `item_len = 0` on an empty Batch) fails both halves.
+fn assert_real_batch_header(set: &LocalSet<'_>, name: &str, batch: &UidBatch, i: usize) {
+    let header = batch
+        .header()
+        .unwrap_or_else(|| panic!("item {i}: {name} Batch: a parsed Batch must retain its header"));
+    let original = set
+        .items
+        .iter()
+        .find(|item| item.value.len() >= header.len() && item.value[..header.len()] == header)
+        .map(|item| item.value)
+        .unwrap_or_else(|| panic!("item {i}: {name} Batch: no property carried that header"));
+    let elements: Vec<u8> = batch.items().concat();
+    assert_eq!(
+        &original[header.len()..],
+        elements.as_slice(),
+        "item {i}: {name} Batch elements do not match the property body"
+    );
+    assert_eq!(
+        batch
+            .serialize()
+            .unwrap_or_else(|e| panic!("item {i}: {name} Batch serialize failed: {e}")),
+        original,
+        "item {i}: {name} Batch did not reproduce the encoder's own header"
+    );
+}
+
 /// Compares every item against the TRUE original bytes at its offset
 /// (`&bytes[offset..offset + consumed]`), not a re-encoded baseline — see
 /// the module doc (issue #1047 / audit MX-C1). Previously this used
@@ -110,6 +140,11 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
     );
 
     let mut header_metadata_sets_seen = 0usize;
+    // #2759: the UID Batch properties (Tracks/StructuralComponents/...)
+    // parsed out of these Sets must reserialize to the SAME header bytes the
+    // encoder wrote (e.g. this encoder's `DMSchemes` Batch carries
+    // `item_len = 0`), not to a canonical replacement.
+    let mut uid_batches_seen = 0usize;
 
     for (i, (offset, item)) in items.iter().enumerate() {
         if is_fill_item_key(&item.key) {
@@ -198,20 +233,63 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         // SourceClip/TimecodeComponent/FillerComponent) had zero real-world
         // byte coverage.
         match set.kind() {
-            StructuralSetKind::Preface => assert_typed_round_trip::<Preface>(klv, i, "Preface"),
+            StructuralSetKind::Preface => {
+                let preface = Preface::parse(klv)
+                    .unwrap_or_else(|e| panic!("item {i}: Preface parse failed: {e}"));
+                for (name, batch) in [
+                    (
+                        "EssenceContainers",
+                        preface.essence_containers_batch.as_ref(),
+                    ),
+                    ("DMSchemes", preface.dm_schemes_batch.as_ref()),
+                    ("Identifications", preface.identifications_batch.as_ref()),
+                ] {
+                    if let Some(batch) = batch {
+                        assert_real_batch_header(&set, name, batch, i);
+                        uid_batches_seen += 1;
+                    }
+                }
+                assert_typed_round_trip::<Preface>(klv, i, "Preface");
+            }
             StructuralSetKind::Identification => {
                 assert_typed_round_trip::<Identification>(klv, i, "Identification");
             }
             StructuralSetKind::ContentStorage => {
+                let storage = ContentStorage::parse(klv)
+                    .unwrap_or_else(|e| panic!("item {i}: ContentStorage parse failed: {e}"));
+                for (name, batch) in [
+                    ("Packages", storage.packages_batch.as_ref()),
+                    (
+                        "EssenceContainerData",
+                        storage.essence_container_data_batch.as_ref(),
+                    ),
+                ] {
+                    if let Some(batch) = batch {
+                        assert_real_batch_header(&set, name, batch, i);
+                        uid_batches_seen += 1;
+                    }
+                }
                 assert_typed_round_trip::<ContentStorage>(klv, i, "ContentStorage");
             }
             StructuralSetKind::EssenceContainerData => {
                 assert_typed_round_trip::<EssenceContainerData>(klv, i, "EssenceContainerData");
             }
             StructuralSetKind::MaterialPackage => {
+                let package = MaterialPackage::parse(klv)
+                    .unwrap_or_else(|e| panic!("item {i}: MaterialPackage parse failed: {e}"));
+                if let Some(batch) = package.tracks_batch.as_ref() {
+                    assert_real_batch_header(&set, "Tracks", batch, i);
+                    uid_batches_seen += 1;
+                }
                 assert_typed_round_trip::<MaterialPackage>(klv, i, "MaterialPackage");
             }
             StructuralSetKind::SourcePackage => {
+                let package = SourcePackage::parse(klv)
+                    .unwrap_or_else(|e| panic!("item {i}: SourcePackage parse failed: {e}"));
+                if let Some(batch) = package.tracks_batch.as_ref() {
+                    assert_real_batch_header(&set, "Tracks", batch, i);
+                    uid_batches_seen += 1;
+                }
                 assert_typed_round_trip::<SourcePackage>(klv, i, "SourcePackage");
             }
             StructuralSetKind::TimelineTrack => {
@@ -224,6 +302,12 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
                 assert_typed_round_trip::<StaticTrack>(klv, i, "StaticTrack");
             }
             StructuralSetKind::Sequence => {
+                let sequence = Sequence::parse(klv)
+                    .unwrap_or_else(|e| panic!("item {i}: Sequence parse failed: {e}"));
+                if let Some(batch) = sequence.structural_components_batch.as_ref() {
+                    assert_real_batch_header(&set, "StructuralComponents", batch, i);
+                    uid_batches_seen += 1;
+                }
                 assert_typed_round_trip::<Sequence>(klv, i, "Sequence");
             }
             StructuralSetKind::SourceClip => {
@@ -252,6 +336,37 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
         header_metadata_sets_seen >= 20,
         "expected at least 20 Header Metadata Sets in the real fixture, saw {header_metadata_sets_seen}"
     );
+    assert!(
+        uid_batches_seen >= 10,
+        "expected at least 10 UID Batch properties in the real fixture's typed Sets, saw {uid_batches_seen}"
+    );
+}
+
+/// #2759: reserializing a parsed typed Preface reproduces every UID Batch
+/// header the encoder wrote (this fixture's empty `EssenceContainers` Batch
+/// carries `item_len = 0`, not this crate's canonical 16).
+#[test]
+fn typed_preface_reserializes_its_uid_batches_byte_identically() {
+    let bytes = fixture_bytes();
+    let items = collect_klv_items(&bytes).expect("collect KLV items");
+    let mut seen = 0usize;
+    for (i, (offset, item)) in items.iter().enumerate() {
+        if !is_local_set_key(&item.key) {
+            continue;
+        }
+        let (_, consumed) = KlvItem::parse_prefix(&bytes[*offset..]).unwrap();
+        let klv = &bytes[*offset..*offset + consumed];
+        let set = LocalSet::parse(klv).unwrap();
+        if set.kind() != StructuralSetKind::Preface {
+            continue;
+        }
+        let preface = Preface::parse(klv).unwrap();
+        let mut out = vec![0u8; preface.serialized_len()];
+        preface.serialize_into(&mut out).unwrap();
+        assert_eq!(out, klv, "item {i}: typed Preface parse -> serialize");
+        seen += 1;
+    }
+    assert_eq!(seen, 1, "the real fixture carries one Preface");
 }
 
 /// Real-fixture oracle for the OP1a qualifier byte (issue #1048 / audit

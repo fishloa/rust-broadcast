@@ -2,6 +2,7 @@ use crate::support;
 use url::Url;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::time::Duration;
 
 use broadcast_client::{
     AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
@@ -57,8 +58,12 @@ fn cfg(playout: PlayoutConfig) -> Config {
     }
 }
 
+fn us(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+
 fn vod_lead(ms: u64) -> PlayoutConfig {
-    PlayoutConfig::default().with_vod_start_lead_us(ms * MS)
+    PlayoutConfig::default().with_vod_start_lead(us(ms * MS))
 }
 
 struct Drv {
@@ -451,7 +456,7 @@ fn hls_vod_never_pauses_after_end() {
 
 #[test]
 fn hls_vod_resume_when_more_media_arrives_to_lead() {
-    let playout = PlayoutConfig::default().with_resume_lead_us(500 * MS);
+    let playout = PlayoutConfig::default().with_resume_lead(us(500 * MS));
     let mut d = partial_vod(playout);
     let hold = lead_points(&nb(&d.events), &[VIDEO, AUDIO])
         .pop()
@@ -475,7 +480,7 @@ fn hls_vod_resume_when_more_media_arrives_to_lead() {
 
 #[test]
 fn hls_vod_resume_immediately_when_end_arrives_while_paused() {
-    let playout = PlayoutConfig::default().with_resume_lead_us(60 * SEC);
+    let playout = PlayoutConfig::default().with_resume_lead(us(60 * SEC));
     let mut d = partial_vod(playout);
     let hold = lead_points(&nb(&d.events), &[VIDEO, AUDIO])
         .pop()
@@ -552,14 +557,14 @@ fn live_drv(playout: PlayoutConfig, count: usize) -> Drv {
 }
 
 fn live_lead(ms: u64) -> PlayoutConfig {
-    PlayoutConfig::default().with_live_start_lead_us(ms * MS)
+    PlayoutConfig::default().with_live_start_lead(us(ms * MS))
 }
 
 #[test]
 fn hls_live_uses_live_lead_not_vod_lead() {
     let playout = PlayoutConfig::default()
-        .with_vod_start_lead_us(SEC)
-        .with_live_start_lead_us(3 * SEC);
+        .with_vod_start_lead(us(SEC))
+        .with_live_start_lead(us(3 * SEC));
     let d = live_drv(playout, 2);
     let list = nb(&d.events);
     assert!(!list.iter().any(is_ended));
@@ -1012,10 +1017,10 @@ fn hls_variant_switch_resets_gate() {
 #[test]
 fn config_knobs_change_leads() {
     let default = PlayoutConfig::default();
-    assert_eq!(default.vod_start_lead_us, SEC);
-    assert_eq!(default.live_start_lead_us, 6 * SEC);
-    assert_eq!(default.resume_lead_us, None);
-    assert_eq!(default.pause_lead_us, 0);
+    assert_eq!(default.vod_start_lead, us(SEC));
+    assert_eq!(default.live_start_lead, us(6 * SEC));
+    assert_eq!(default.resume_lead, None);
+    assert_eq!(default.pause_lead, Duration::ZERO);
 
     let mut d = Drv::new(TS_PLAYLIST_URL, cfg(vod_lead(2_000)), ts_bodies());
     d.serve_all_except(&[]);
@@ -1034,7 +1039,7 @@ fn config_knobs_change_leads() {
         )]
     );
 
-    let playout = PlayoutConfig::default().with_pause_lead_us(500 * MS);
+    let playout = PlayoutConfig::default().with_pause_lead(us(500 * MS));
     let mut p = partial_vod(playout);
     let last = lead_points(&nb(&p.events), &[VIDEO, AUDIO]).pop().unwrap();
     let threshold = last.min_end - 500 * TICKS_PER_MS;
@@ -1050,7 +1055,7 @@ fn config_knobs_change_leads() {
         }
     );
 
-    let resume = PlayoutConfig::default().with_resume_lead_us(2 * SEC);
+    let resume = PlayoutConfig::default().with_resume_lead(us(2 * SEC));
     let mut r = partial_vod(resume);
     let hold = lead_points(&nb(&r.events), &[VIDEO, AUDIO])
         .pop()
@@ -1125,7 +1130,7 @@ fn no_events_before_first_sample() {
 
 #[test]
 fn start_emitted_once_until_pause() {
-    let playout = PlayoutConfig::default().with_resume_lead_us(500 * MS);
+    let playout = PlayoutConfig::default().with_resume_lead(us(500 * MS));
     let mut d = partial_vod(playout);
     let hold = lead_points(&nb(&d.events), &[VIDEO, AUDIO])
         .pop()

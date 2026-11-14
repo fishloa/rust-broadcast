@@ -540,30 +540,43 @@ impl TimelineOrigin {
 /// timescale: the sample's own absolute `dts`, falling back to the previous
 /// sample's time + duration only for a track that carries no `dts` at all
 /// (section-carried data), which then starts at the origin.
-pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
+///
+/// A sample more than the whole `i64` tick range from the origin has no
+/// representable relative decode time and is [`Error::InvalidInput`] (one
+/// shared timeline cannot express it; the old saturating subtraction placed
+/// it at the wrong end of the timeline instead).
+pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
     let base = origin.in_timescale(track.spec.timescale);
     let mut out = Vec::with_capacity(track.samples.len());
     let mut next: i64 = 0;
     for s in &track.samples {
         let t = match s.timing.and_then(|t| t.dts()) {
-            Some(d) => d.saturating_sub(base),
+            Some(d) => d.checked_sub(base).ok_or(Error::InvalidInput(
+                "sample decode time is more than i64 ticks from the timeline origin",
+            ))?,
             None => next,
         };
         out.push(t);
         next = t.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
     }
-    out
+    Ok(out)
 }
 
 /// Presentation span of `tracks` in seconds: from the earliest sample
 /// presentation time to the latest presentation end, over one common origin.
+///
+/// A sample whose presentation time (`dts` plus composition offset) does not
+/// fit `i64`, or a span whose extent is not a finite number of seconds, is
+/// [`Error::InvalidInput`] rather than a wrapped instant or an infinite
+/// `EXTINF`.
 pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> Result<f64> {
     let origin = TimelineOrigin::of(tracks.iter().copied());
     let mut span: Option<(f64, f64)> = None;
     for t in tracks {
         let ts = f64::from(t.spec.timescale.get());
-        for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
-            let pts = (dts + i64::from(s.composition_offset()?.unwrap_or(0))) as f64 / ts;
+        for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)?) {
+            let offset = i64::from(s.composition_offset()?.unwrap_or(0));
+            let pts = crate::frag_offsets::add_offset(dts, offset)? as f64 / ts;
             let end = pts + f64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)) / ts;
             span = Some(match span {
                 None => (pts, end),
@@ -571,7 +584,18 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> Result<f64> {
             });
         }
     }
-    Ok(span.map_or(0.0, |(lo, hi)| (hi - lo).max(0.0)))
+    match span {
+        None => Ok(0.0),
+        Some((lo, hi)) if hi < lo => Ok(0.0),
+        Some((lo, hi)) => {
+            let secs = hi - lo;
+            if secs.is_finite() {
+                Ok(secs)
+            } else {
+                Err(Error::InvalidInput("presentation span is not finite"))
+            }
+        }
+    }
 }
 
 /// `secs` rounded up to whole seconds, without the std-only `f64::ceil`.
@@ -693,11 +717,9 @@ impl Package for HlsPackager {
                 extra_attrs: Vec::new(),
             }),
             uri,
-            // `presentation_span_secs` is `(hi - lo).max(0.0)` or `0.0`
-            // (issue #1140): always finite (a bounded division of finite
-            // sample timestamps by a non-zero timescale) and non-negative
-            // by construction.
-            duration: DecimalSeconds::new(duration).expect("presentation span is finite, >= 0"),
+            duration: DecimalSeconds::new(duration).map_err(|_| {
+                Error::InvalidInput("presentation span is not a representable decimal seconds")
+            })?,
             discontinuous: false,
             parts: vec![],
             ..Default::default()

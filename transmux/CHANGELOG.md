@@ -85,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
 
 ### Fixed
+- The HLS packager's `EXTINF` span no longer wraps an out-of-range `dts` plus composition offset into a negative presentation time, nor emits an infinite one: the sample sum is checked and a span whose extent is not finite is `Error::InvalidInput` instead of a panic in the `DecimalSeconds` constructor; a sample more than the whole `i64` tick range from the shared timeline origin is likewise refused rather than saturated into the wrong place on the timeline (issue #2722).
 - A short bit-level input is reported in bytes everywhere: the RBSP reader, the `&[u8]` cursor reader the AC-3/DTS headers share, and the shared `BitError` mapping (used by the HDR10+ reader) all go through `broadcast_common::bits::BitError`'s one `BufferTooShort` conversion instead of each computing its own count, in bits for some and bytes for others (issue #2461).
 - Emulation-prevention unescape/escape unified into `rbsp` module; Sample-AES round trip is now byte-identical for NALs ending in `00 00 03` (#2456).
 - EBML VINT readers unified in `webm_demux` (#2460).
