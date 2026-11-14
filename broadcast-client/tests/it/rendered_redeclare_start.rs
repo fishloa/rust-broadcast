@@ -185,7 +185,7 @@ fn a_track_dropped_before_start_is_released_at_the_start() {
         return;
     };
     let mut config = Config::default();
-    config.start_pending_track_wait_us = RUN_US;
+    config.start_pending_track_wait = micros_as_duration(RUN_US);
     let r = run(
         &shift_pes(&bytes, 0, -AUDIO_BEHIND_90KHZ, Shift::Audio),
         false,
@@ -219,7 +219,7 @@ fn a_dropped_track_that_never_delivers_holds_the_start_only_for_the_pending_wait
         return;
     };
     let config = Config::default();
-    let wait = config.start_pending_track_wait_us;
+    let wait = duration_micros(config.start_pending_track_wait);
     let silence = duration_micros(config.controller_config().track_silence_timeout);
     let r = run(
         &shift_pes(&bytes, 0, -AUDIO_NEVER_90KHZ, Shift::Audio),
