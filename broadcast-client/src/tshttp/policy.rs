@@ -48,7 +48,7 @@ pub struct TsHttpPolicy {
     url: String,
     config: Config,
     phase: Phase,
-    attempt: u64,
+    attempt: u32,
     retry: ReconnectTimer,
     opens: u64,
     actions: VecDeque<Action>,
