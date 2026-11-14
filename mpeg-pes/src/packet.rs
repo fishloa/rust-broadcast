@@ -773,13 +773,15 @@ impl PesHeader<'_> {
 }
 
 /// A parsed PES packet.
+///
+/// `#[non_exhaustive]`: build with [`PesPacket::new`] and set fields, so
+/// further additions are not a breaking change.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PesPacket<'a> {
     /// stream_id (Table 2-22).
     pub stream_id: StreamId,
-    /// PES_packet_length as carried; `0` means unbounded (video).
-    pub pes_packet_length: u16,
     /// Optional PES header (absent for the special `stream_id`s).
     pub header: Option<PesHeader<'a>>,
     /// The elementary-stream bytes (`PES_packet_data_byte`s).
@@ -788,7 +790,24 @@ pub struct PesPacket<'a> {
 }
 
 impl<'a> PesPacket<'a> {
+    /// A packet with no optional header and an empty payload.
+    ///
+    /// `PES_packet_length` is not a field: [`serialize_into`](Self::serialize_into)
+    /// derives it from the header and payload.
+    #[must_use]
+    pub const fn new(stream_id: StreamId, payload: &'a [u8]) -> Self {
+        Self {
+            stream_id,
+            header: None,
+            payload,
+        }
+    }
+
     /// Parse a PES packet from the bytes starting at its `packet_start_code_prefix`.
+    ///
+    /// `PES_packet_length` bounds everything after it (ISO/IEC 13818-1
+    /// Table 2-21): a buffer shorter than the declared length is a truncated
+    /// packet, reported as `BufferTooShort` instead of a silent short read.
     pub fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, MIN_LEN, "PES packet header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
@@ -800,17 +819,19 @@ impl<'a> PesPacket<'a> {
         }
         let stream_id = StreamId(b[3]);
         let pes_packet_length = u16::from_be_bytes([b[4], b[5]]);
-        // Where the payload ends: bounded by PES_packet_length unless 0 (unbounded).
+        // Where the payload ends: bounded by PES_packet_length unless 0
+        // (unbounded: the packet runs to the end of the buffer).
         let payload_end = if pes_packet_length == 0 {
             b.len()
         } else {
-            (MIN_LEN + pes_packet_length as usize).min(b.len())
+            let end = MIN_LEN + usize::from(pes_packet_length);
+            need_in(b, end, "PES_packet_length")?;
+            end
         };
 
         if !stream_id.has_optional_header() {
             return Ok(PesPacket {
                 stream_id,
-                pes_packet_length,
                 header: None,
                 payload: &b[MIN_LEN..payload_end],
             });
@@ -962,9 +983,8 @@ impl<'a> PesPacket<'a> {
 
         Ok(PesPacket {
             stream_id,
-            pes_packet_length,
             header: Some(header),
-            payload: &b[hdr_end.min(payload_end)..payload_end],
+            payload: &b[hdr_end..payload_end],
         })
     }
 
@@ -984,7 +1004,23 @@ impl<'a> PesPacket<'a> {
         need_out(buf, len)?;
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
         buf[3] = self.stream_id.0;
-        buf[4..6].copy_from_slice(&self.pes_packet_length.to_be_bytes());
+        // PES_packet_length (ISO/IEC 13818-1 Table 2-21): every byte after the
+        // field. `0` is the unbounded form — legal only where the MPEG-2
+        // systems layer allows it (video in a transport stream), so a packet
+        // with a payload that fills the field range must fail, never wrap.
+        let body_len = len - MIN_LEN;
+        let packet_length = match u16::try_from(body_len) {
+            Ok(n) if n != 0 => n,
+            _ if self.stream_id.unbounded_length_allowed() => 0,
+            _ => {
+                return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "PES_packet_length",
+                    value: body_len as u64,
+                    max: u64::from(u16::MAX),
+                }));
+            }
+        };
+        buf[4..6].copy_from_slice(&packet_length.to_be_bytes());
         let payload_at = match &self.header {
             None => MIN_LEN,
             Some(h) => {
@@ -1175,8 +1211,9 @@ mod tests {
     #[test]
     fn pts_and_dts() {
         // PTS_DTS_flags=11, hdl=10. PTS prefix 0011, DTS prefix 0001.
+        // PES_packet_length covers 13 bytes (3 header + 10 optional region).
         let b = [
-            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0F, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0E, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
             0x11, 0x00, 0x05, 0x00, 0x01, 0xCC,
         ];
         let pkt = PesPacket::parse(&b).unwrap();
@@ -1194,7 +1231,7 @@ mod tests {
     #[test]
     fn forbidden_pts_dts_flags_01_is_rejected() {
         let mut b = [
-            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0F, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0E, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
             0x11, 0x00, 0x05, 0x00, 0x01, 0xCC,
         ];
         b[7] = 0x40; // pts_dts_flags = 01 (top two bits of f2)
@@ -1228,12 +1265,8 @@ mod tests {
             pes_extension: None,
             header_stuffing: &[],
         };
-        let pkt = PesPacket {
-            stream_id: StreamId(0xE0),
-            pes_packet_length: 0,
-            header: Some(header),
-            payload: &[0xAA],
-        };
+        let mut pkt = PesPacket::new(StreamId(0xE0), &[0xAA]);
+        pkt.header = Some(header);
         let mut buf = vec![0u8; pkt.serialized_len()];
         assert!(matches!(
             pkt.serialize_into(&mut buf),
@@ -1282,9 +1315,15 @@ mod tests {
             0x01, 0x02, 0x03,
         ];
         let pkt = PesPacket::parse(&b).unwrap();
-        assert_eq!(pkt.pes_packet_length, 0);
+        assert_eq!(&b[4..6], &[0x00, 0x00], "unbounded length on the wire");
         assert_eq!(pkt.payload, &[0x01, 0x02, 0x03]);
-        round_trip(&b);
+        // A video packet whose content fits is written with its real length;
+        // the unbounded form is used only past the length ceiling.
+        let mut out = vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut out).unwrap();
+        assert_eq!(u16::from_be_bytes([out[4], out[5]]), 11);
+        assert_eq!(&out[6..], &b[6..]);
+        assert_eq!(PesPacket::parse(&out).unwrap().payload, pkt.payload);
     }
 
     #[test]
@@ -1309,12 +1348,8 @@ mod tests {
             }),
             ..empty_header()
         };
-        let pkt = PesPacket {
-            stream_id: StreamId(0xE0),
-            pes_packet_length: 0,
-            header: Some(h),
-            payload: &[],
-        };
+        let mut pkt = PesPacket::new(StreamId(0xE0), &[]);
+        pkt.header = Some(h);
         let mut out = vec![0u8; pkt.serialized_len()];
         let err = pkt.serialize_into(&mut out).unwrap_err();
         assert!(matches!(err, Error::OptionalFieldsTooLarge(n) if n > 255));
@@ -1322,13 +1357,9 @@ mod tests {
 
     // ── Typed optional fields round-trips ──────────────────────────────────
 
-    fn build_pes(h: PesHeader<'_>, payload: &[u8]) -> alloc::vec::Vec<u8> {
-        let pkt = PesPacket {
-            stream_id: StreamId(0xE0),
-            pes_packet_length: 0, // unbounded
-            header: Some(h),
-            payload,
-        };
+    fn build_pes<'a>(h: PesHeader<'a>, payload: &'a [u8]) -> alloc::vec::Vec<u8> {
+        let mut pkt = PesPacket::new(StreamId(0xE0), payload);
+        pkt.header = Some(h);
         let mut out = vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut out).unwrap();
         out

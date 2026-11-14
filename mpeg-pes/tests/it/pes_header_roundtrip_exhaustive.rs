@@ -30,6 +30,15 @@ const PKT: usize = 188;
 /// `packet_start_code_prefix(3) + stream_id(1) + PES_packet_length(2)`.
 const PES_FIXED: usize = 6;
 
+/// Where the PES packet at the start of `raw` ends: `PES_packet_length`
+/// (Table 2-21) of `0` means unbounded, i.e. the whole buffer.
+fn pes_end(raw: &[u8]) -> usize {
+    match u16::from_be_bytes([raw[4], raw[5]]) {
+        0 => raw.len(),
+        l => (PES_FIXED + usize::from(l)).min(raw.len()),
+    }
+}
+
 fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
@@ -117,7 +126,15 @@ fn round_trip(b: &[u8]) {
     let pkt = PesPacket::parse(b).expect("parses");
     let mut out = vec![0u8; pkt.serialized_len()];
     let n = pkt.serialize_into(&mut out).expect("serializes");
-    assert_eq!(&out[..n], b, "PES packet did not round-trip byte-exactly");
+    // `PES_packet_length` is derived from the content (#2746), so it is the
+    // one field that may change; every other byte must match exactly.
+    let mut want = b.to_vec();
+    want[4..6].copy_from_slice(&out[4..6]);
+    assert_eq!(
+        &out[..n],
+        &want[..],
+        "PES packet did not round-trip byte-exactly"
+    );
 }
 
 #[derive(Default)]
@@ -143,11 +160,10 @@ fn scan(include_archive: bool) -> Report {
             let n = pes.serialize_into(&mut out).unwrap();
             // Bytes past a bounded `PES_packet_length` are TS-level padding the
             // assembler hands back, not part of the PES packet.
-            let want_len = match pes.pes_packet_length {
-                0 => raw.len(),
-                l => (PES_FIXED + usize::from(l)).min(raw.len()),
-            };
-            if out[..n] != raw[..want_len] {
+            let want_len = pes_end(raw);
+            let mut want = raw[..want_len].to_vec();
+            want[4..6].copy_from_slice(&out[4..6]);
+            if out[..n] != want[..] {
                 r.mismatches.push(format!(
                     "{}: PES #{i} want={} got={}",
                     path.display(),
@@ -276,9 +292,10 @@ fn real_archive_es_rate_marker_and_nonff_stuffing_round_trip() {
         };
         let Some(h) = &pes.header else { continue };
         if h.es_rate.is_some() && h.header_stuffing.iter().any(|&b| b != 0xFF) {
-            let want = &raw[..(PES_FIXED + usize::from(pes.pes_packet_length)).min(raw.len())];
+            let mut want = raw[..pes_end(&raw)].to_vec();
             let mut out = vec![0u8; pes.serialized_len()];
             pes.serialize_into(&mut out).unwrap();
+            want[4..6].copy_from_slice(&out[4..6]);
             assert_eq!(out, want);
             seen += 1;
         }
@@ -313,7 +330,7 @@ fn pes_extension_reserved_bits_round_trip_all_values() {
     for reserved in 0u8..=7 {
         let flags = 0x10 | (reserved << 1); // P-STD_buffer_flag + reserved(3)
         let b = [
-            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0A, 0x80, 0x01, 0x03, // hdl = 3
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x08, 0x80, 0x01, 0x03, // hdl = 3
             flags, 0x60, 0x40, // ext flags, P-STD '01' scale=1 size=0x040
             0xAA, 0xBB, // payload
         ];
@@ -388,10 +405,11 @@ fn real_tsduck_test_002_pes_header_counts_are_pinned() {
         let Ok(pes) = PesPacket::parse(&raw) else {
             continue;
         };
-        let want = &raw[..(PES_FIXED + usize::from(pes.pes_packet_length)).min(raw.len())];
+        let mut want = raw[..pes_end(&raw)].to_vec();
         let mut out = vec![0u8; pes.serialized_len()];
         let n = pes.serialize_into(&mut out).unwrap();
-        assert_eq!(&out[..n], want, "PES did not round-trip");
+        want[4..6].copy_from_slice(&out[4..6]);
+        assert_eq!(&out[..n], &want[..], "PES did not round-trip");
         parsed += 1;
         if let Some(h) = &pes.header {
             nonff += usize::from(h.header_stuffing.iter().any(|&b| b != 0xFF));
@@ -420,12 +438,8 @@ fn constructed_header_carries_spec_fill() {
         reserved: FREEZE_FRAME_RESERVED_VALUE,
     });
     h.additional_copy_info = Some(mpeg_pes::AdditionalCopyInfo::new(0x0A));
-    let p = PesPacket {
-        stream_id: StreamId(0xE0),
-        pes_packet_length: 0,
-        header: Some(h),
-        payload: &[],
-    };
+    let mut p = PesPacket::new(StreamId(0xE0), &[]);
+    p.header = Some(h);
     let mut out = vec![0u8; p.serialized_len()];
     p.serialize_into(&mut out).unwrap();
     // 9 fixed bytes, then ESCR (6), trick mode (1), additional_copy_info (1).

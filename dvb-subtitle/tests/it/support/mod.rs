@@ -3,12 +3,24 @@
 
 use std::fs;
 
-use mpeg_pes::{PesAssembler, PesPacket, StreamId};
+use mpeg_pes::{PesAssembler, StreamId};
 
 const PKT: usize = 188;
 const SUBTITLE_PID: u16 = 0x008C;
 const PRIVATE_STREAM_1: StreamId = StreamId(0xBD);
 const DATA_IDENTIFIER_DVB_SUBTITLE: u8 = 0x20;
+
+/// The `private_stream_1` payload of a reassembled PES unit, or `None` for
+/// another `stream_id`: the 3 fixed header bytes at offset 6,
+/// `PES_header_data_length` at offset 8, then the payload (ISO/IEC 13818-1
+/// Table 2-21), read directly because this capture's units are truncated.
+fn subtitle_payload(raw: &[u8]) -> Option<&[u8]> {
+    if raw.get(3) != Some(&PRIVATE_STREAM_1.0) {
+        return None;
+    }
+    let hdl = usize::from(*raw.get(8)?);
+    raw.get(9 + hdl..)
+}
 
 pub fn data_fields(max_seeds: usize) -> Vec<Vec<u8>> {
     let ts = fs::read(test_fixtures::path("ts/m6-single.ts"))
@@ -40,12 +52,16 @@ pub fn data_fields(max_seeds: usize) -> Vec<Vec<u8>> {
     }
     let mut out: Vec<Vec<u8>> = Vec::new();
     for raw in &pes {
-        let pkt = PesPacket::parse(raw).expect("subtitle PES parses");
-        if pkt.stream_id == PRIVATE_STREAM_1
-            && pkt.payload.first() == Some(&DATA_IDENTIFIER_DVB_SUBTITLE)
-            && !out.iter().any(|o| o == pkt.payload)
+        // The subtitle data field is the bytes after the PES header, read
+        // directly: this capture joins mid-PES so its units are truncated and
+        // `PesPacket::parse` reports that (#2746).
+        let Some(payload) = subtitle_payload(raw) else {
+            continue;
+        };
+        if payload.first() == Some(&DATA_IDENTIFIER_DVB_SUBTITLE)
+            && !out.iter().any(|o| o == payload)
         {
-            out.push(pkt.payload.to_vec());
+            out.push(payload.to_vec());
         }
         if out.len() >= max_seeds {
             break;

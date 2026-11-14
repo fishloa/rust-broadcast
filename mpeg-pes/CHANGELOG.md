@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `PesPacket::parse` reports a buffer shorter than the declared `PES_packet_length` as `Error::BufferTooShort` (a truncated packet) instead of a silent short read (regression from the #1159 fix that stopped re-serializing past the declared length) (#2746).
+### Changed
+- BREAKING: `PesPacket` no longer has a `pes_packet_length` field. `serialize_into` derives `PES_packet_length` from the content, writes `0` (unbounded) only for video and only when the content passes the 16-bit ceiling, and returns `Error::FieldOverflow` for an audio or special-stream packet that cannot be bounded (#2746).
+- BREAKING: `PesPacket` is `#[non_exhaustive]`; build one with the new `PesPacket::new(stream_id, payload)` and set `header` on the result (#2746).
+### Added
+- `StreamId::unbounded_length_allowed` — whether the unbounded `0` form may be written for that stream (video).
 
 ## [0.8.0] - 2026-11-14
 ### Added

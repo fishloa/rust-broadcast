@@ -118,8 +118,8 @@ fn extended_stream_id_pes_parses_and_extension_field_is_typed() {
     }
 }
 
-/// Byte-identical round trip of the full PES packet, the workspace's hard
-/// wire-codec invariant, over the real fixture bytes.
+/// Round trip of the full PES packet over the real fixture bytes: every byte
+/// but the derived `PES_packet_length` (#2746) is reproduced exactly.
 #[test]
 fn extended_stream_id_pes_round_trips_byte_identical() {
     let packets = extract_pes_packets();
@@ -128,9 +128,13 @@ fn extended_stream_id_pes_round_trips_byte_identical() {
         let mut out = vec![0u8; pes.serialized_len()];
         let n = pes.serialize_into(&mut out).expect("serialize");
         assert_eq!(n, raw.len(), "pkt {i}: serialized length mismatch");
+        // `PES_packet_length` is written from the content (#2746), so it is
+        // the one field that changes; everything else is byte-identical.
+        let mut want = raw.clone();
+        want[4..6].copy_from_slice(&out[4..6]);
         assert_eq!(
             &out[..n],
-            raw.as_slice(),
+            want.as_slice(),
             "pkt {i}: NOT byte-identical\n  orig: {}\n  out:  {}",
             raw.iter().map(|b| format!("{b:02X}")).collect::<String>(),
             out[..n]

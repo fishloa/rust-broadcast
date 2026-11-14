@@ -134,13 +134,15 @@ fn push_pes(out: &mut Vec<PesAu>, bytes: &[u8]) {
     let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
     // `PES_packet_length` counts the bytes after its own two-byte field: three
     // fixed optional-header bytes, `PES_header_data_length` optional bytes,
-    // then the payload. That length byte is read from the raw header (offset 8,
+    // then the payload. Both are read from the raw header (offsets 4-5 and 8,
     // ISO/IEC 13818-1 Table 2-21).
+    let declared_pes_len = bytes
+        .get(4..6)
+        .map(|l| usize::from(u16::from_be_bytes([l[0], l[1]])));
     let declared_payload_len = bytes.get(8).and_then(|&hdl| {
-        if pes.pes_packet_length == 0 {
-            return None;
-        }
-        (pes.pes_packet_length as usize).checked_sub(PES_OPTIONAL_HEADER_FIXED_BYTES + hdl as usize)
+        declared_pes_len
+            .filter(|&len| len != 0)
+            .and_then(|len| len.checked_sub(PES_OPTIONAL_HEADER_FIXED_BYTES + hdl as usize))
     });
     out.push(PesAu {
         payload: pes.payload.to_vec(),
