@@ -21,14 +21,16 @@ use crate::timing::clock::{AdoptReason, Anchor, ClockSource, OfferOutcome, Offer
 use crate::timing::live_edge::{join_index, oldest_in_window, presentation_delay_us};
 use crate::timing::period::duration_us;
 use crate::timing::utc_timing::{Exchange, UtcSample, sample_from_date_header};
+use core::time::Duration;
+
 use broadcast_common::stage::Timestamp;
 use broadcast_dash::descriptors::SCHEME_RESET;
 
 /// A forced second look at the UTC clock after a segment error is taken at
 /// most this often (23009-1 A.7: check the clock first, then the MPD).
-const FORCED_RESYNC_MIN_GAP_US: u64 = 30_000_000;
+const FORCED_RESYNC_MIN_GAP: core::time::Duration = core::time::Duration::from_secs(30);
 /// Cap of the early-request cadence (DESIGN 5.4: 250 ms doubling to 1 s).
-const EARLY_RETRY_CAP_US: u64 = 1_000_000;
+const EARLY_RETRY_CAP: Duration = Duration::from_secs(1);
 /// Expiries in a row on one lane before the client rejoins the live edge.
 const EXPIRED_REJOIN_RUN: u32 = 3;
 /// A closed Period's lists are final this many segment durations (or one
@@ -41,9 +43,9 @@ const EARLY_SHIFT_MAX: u32 = 20;
 
 #[derive(Default)]
 pub(super) struct Refresh {
-    pub(super) next_at: Option<u64>,
-    pub(super) forced_at: Option<u64>,
-    pub(super) last_request_us: Option<u64>,
+    pub(super) next_at: Option<Timestamp>,
+    pub(super) forced_at: Option<Timestamp>,
+    pub(super) last_request: Option<Timestamp>,
     pub(super) publish_time_us: Option<i64>,
     pub(super) body: Vec<u8>,
     pub(super) validators: MpdValidators,
@@ -54,14 +56,14 @@ pub(super) struct Refresh {
 #[derive(Default, Clone, Copy)]
 pub(super) struct Early {
     attempts: u32,
-    retry_at: Option<u64>,
+    retry_at: Option<Timestamp>,
 }
 
 pub(super) struct Live {
     pub(super) ready: bool,
     sampler: Option<UtcSampler>,
-    next_resync_us: Option<u64>,
-    last_forced_resync_us: Option<u64>,
+    next_resync: Option<Timestamp>,
+    last_forced_resync: Option<Timestamp>,
     pub(super) refresh: Refresh,
     pub(super) early: BTreeMap<ResourceId, Early>,
     missing_seen: BTreeSet<RepId>,
@@ -76,18 +78,18 @@ impl Live {
         self.early.len() + self.missing_seen.len()
     }
 
-    fn new(now_us: u64) -> Self {
+    fn new(now: Timestamp) -> Self {
         Self {
             ready: false,
             sampler: None,
-            next_resync_us: None,
-            last_forced_resync_us: None,
+            next_resync: None,
+            last_forced_resync: None,
             refresh: Refresh::default(),
             early: BTreeMap::new(),
             missing_seen: BTreeSet::new(),
             announced_clock: None,
             wake_utc: None,
-            mpd_exchange: Exchange::new(now_us, now_us),
+            mpd_exchange: Exchange::new(now, now),
             fetch_utc_us: None,
         }
     }
@@ -118,32 +120,42 @@ fn unix_i64(us: i128) -> i64 {
     i64::try_from(us.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(i64::MAX)
 }
 
+fn micros(d: core::time::Duration) -> u64 {
+    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
+}
+
+fn span_micros(d: core::time::Duration) -> i128 {
+    i128::from(micros(d))
+}
+
+fn resync_deadline(resync: Option<core::time::Duration>, now: Timestamp) -> Option<Timestamp> {
+    now.checked_add(resync.unwrap_or(core::time::Duration::MAX))
+}
+
 impl DashClient {
     // Public surface ---------------------------------------------------------
 
-    /// At the monotonic instant `now_us` the host's UTC clock read `unix_us`
-    /// microseconds since 1970-01-01T00:00:00Z (POSIX, no leap seconds). Both
-    /// reads must be taken back to back. Callable at any time and repeatedly
+    /// At the monotonic instant `now` the host's UTC clock read `unix`
+    /// (POSIX, no leap seconds). Both reads must be taken back to back. Callable at any time and repeatedly
     /// (at open, every ten minutes, on a system clock-change notification):
     /// a dynamic presentation uses it when no `UTCTiming` answer is available
     /// (or first, with [`DashClockPolicy::PreferHost`]); a static one ignores
     /// it.
-    pub fn set_wall_clock(&mut self, now: Timestamp, unix_us: u64) {
-        let now_us = now.as_micros();
+    pub fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
         if self.stopped() {
             return;
         }
         let sample = UtcSample {
-            mono_us: now_us,
-            utc_us: unix_i64(i128::from(unix_us)),
-            uncertainty_us: self.dash.host_clock_uncertainty_us,
+            mono_us: now.as_micros(),
+            utc_us: unix_i64(i128::from(unix.as_microsecond())),
+            uncertainty_us: micros(self.dash.host_clock_uncertainty),
         };
         let allow_downgrade = self.dash.clock_policy == DashClockPolicy::PreferHost;
         let outcome = self.clock.offer(
             sample,
             ClockSource::Host,
-            now_us,
-            OfferPolicy::new(self.dash.utc_resync_us, allow_downgrade),
+            now,
+            OfferPolicy::new_or_never(self.dash.utc_resync, allow_downgrade),
         );
         let stepped = matches!(outcome, OfferOutcome::Adopted(AdoptReason::Step));
         let Some(live) = self.live.as_mut() else {
@@ -153,11 +165,11 @@ impl DashClient {
             let gating = live.sampler.as_ref().is_some_and(|s| s.gating);
             if gating {
                 live.sampler = None;
-                self.finish_ladder(now_us);
+                self.finish_ladder(now);
             }
         }
         if stepped {
-            self.force_refresh(now_us);
+            self.force_refresh(now);
         }
         self.announce_clock();
     }
@@ -168,11 +180,11 @@ impl DashClient {
         self.clock.anchor().copied()
     }
 
-    /// UTC in Unix microseconds at the monotonic instant `now_us`, once an
+    /// UTC in Unix microseconds at the monotonic instant `now`, once an
     /// anchor exists.
     #[must_use]
     pub fn utc_at(&self, now: Timestamp) -> Option<i64> {
-        self.clock.utc_at(now.as_micros())
+        self.clock.utc_at(now)
     }
 
     /// The earliest monotonic instant at which [`DashClient::poll`] may have
@@ -180,25 +192,25 @@ impl DashClient {
     /// segment becoming available, an early retry, a `UTCTiming` timeout or
     /// resync. `None` when only a response (or a delivery) can move the client.
     #[must_use]
-    pub fn next_wake(&self) -> Option<u64> {
+    pub fn next_wake(&self) -> Option<Timestamp> {
         let live = self.live.as_ref()?;
         if self.stopped() {
             return None;
         }
-        let mut best: Option<u64> = None;
-        let mut take = |t: u64| best = Some(best.map_or(t, |b| b.min(t)));
+        let mut best: Option<Timestamp> = None;
+        let mut take = |t: Timestamp| best = Some(best.map_or(t, |b| b.min(t)));
         if let Some(t) = self.refresh_due_at() {
             take(t);
         }
         if let Some(s) = live.sampler.as_ref() {
-            if let Some(d) = s.deadline_us() {
+            if let Some(d) = s.deadline() {
                 take(d);
             }
-            if let Some(w) = s.wait_deadline_us.filter(|_| s.gating) {
+            if let Some(w) = s.wait_deadline.filter(|_| s.gating) {
                 take(w);
             }
         } else if live.ready
-            && let Some(t) = live.next_resync_us
+            && let Some(t) = live.next_resync
         {
             take(t);
         }
@@ -226,7 +238,6 @@ impl DashClient {
         id: UtcId,
         response: &UtcResponse<'_>,
     ) -> Result<()> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         let dash = self.dash;
         let sample = {
@@ -239,13 +250,13 @@ impl DashClient {
             sampler.on_response(id, response, &dash)
         };
         if let Some(sample) = sample {
-            self.utc_sample(now_us, sample);
+            self.utc_sample(now, sample);
         }
         Ok(())
     }
 
     /// Report a failed `UTCTiming` request (the client abandons it by itself
-    /// after `DashConfig::utc_timeout_us`; a late answer then returns
+    /// after `DashConfig::utc_timeout`; a late answer then returns
     /// [`Error::UnrequestedUtc`], which the caller ignores).
     ///
     /// # Errors
@@ -269,14 +280,13 @@ impl DashClient {
     /// # Errors
     /// [`Error::MpdNotAwaited`]; [`Error::Stopped`].
     pub fn on_mpd_unchanged(&mut self, now: Timestamp, meta: &ResponseMeta<'_>) -> Result<()> {
-        let now_us = now.as_micros();
         self.ensure_live()?;
         if !self.mpd_inflight || self.live.is_none() {
             return Err(Error::MpdNotAwaited);
         }
         self.mpd_inflight = false;
-        self.note_exchange(now_us, meta);
-        self.schedule_refresh(now_us);
+        self.note_exchange(now, meta);
+        self.schedule_refresh(now);
         Ok(())
     }
 
@@ -303,7 +313,7 @@ impl DashClient {
     /// Whether more segments may still be added to Period `pi` by a refresh:
     /// its end is unknown, or it is closed but its lists do not yet reach the
     /// end and the grace after which 5.4.1 makes them final has not passed.
-    pub(super) fn period_open(&self, pi: usize, now_us: u64) -> bool {
+    pub(super) fn period_open(&self, pi: usize, now: Timestamp) -> bool {
         if !self.live_open() {
             return false;
         }
@@ -333,7 +343,7 @@ impl DashClient {
         if reaches {
             return false;
         }
-        let Some(utc) = self.utc_now(now_us) else {
+        let Some(utc) = self.utc_now(now) else {
             return false;
         };
         let ast = i128::from(mpd.availability_start_time_us.unwrap_or(0));
@@ -356,8 +366,8 @@ impl DashClient {
                 .is_some_and(|t| t.start_us.is_some())
     }
 
-    pub(super) fn utc_now(&self, now_us: u64) -> Option<i128> {
-        self.clock.utc_at(now_us).map(i128_from_i64)
+    pub(super) fn utc_now(&self, now: Timestamp) -> Option<i128> {
+        self.clock.utc_at(now).map(i128_from_i64)
     }
 
     pub(super) fn plan_options(&self) -> PlanOptions<'static> {
@@ -390,7 +400,7 @@ impl DashClient {
         }
     }
 
-    pub(super) fn note_exhausted(&mut self, now_us: u64) {
+    pub(super) fn note_exhausted(&mut self, now: Timestamp) {
         if !self.live_open() {
             return;
         }
@@ -421,13 +431,13 @@ impl DashClient {
         for (li, cause) in failed {
             self.drop_rep(self.issue, li, cause);
         }
-        let wait = u64::try_from(tail_us.max(0)).unwrap_or(u64::MAX);
-        self.force_refresh_after(now_us, wait);
+        let wait = Duration::from_micros(u64::try_from(tail_us.max(0)).unwrap_or(u64::MAX));
+        self.force_refresh_after(now, wait);
     }
 
     // Timers ------------------------------------------------------------------
 
-    fn refresh_due_at(&self) -> Option<u64> {
+    fn refresh_due_at(&self) -> Option<Timestamp> {
         let live = self.live.as_ref()?;
         if !self.live_open() || self.mpd_inflight || self.want_mpd || live.refresh.awaiting_retry {
             return None;
@@ -438,7 +448,7 @@ impl DashClient {
         }
     }
 
-    pub(super) fn tick(&mut self, now_us: u64) {
+    pub(super) fn tick(&mut self, now: Timestamp) {
         if self.live.is_none() {
             return;
         }
@@ -446,30 +456,30 @@ impl DashClient {
             .live
             .as_ref()
             .and_then(|l| l.sampler.as_ref())
-            .is_some_and(|s| s.gating && s.wait_deadline_us.is_some_and(|d| now_us >= d));
+            .is_some_and(|s| s.gating && s.wait_deadline.is_some_and(|d| now >= d));
         if gate_expired {
             if let Some(l) = self.live.as_mut() {
                 l.sampler = None;
-                l.next_resync_us = Some(now_us.saturating_add(self.dash.utc_resync_us));
+                l.next_resync = resync_deadline(self.dash.utc_resync, now);
             }
-            self.finish_ladder(now_us);
+            self.finish_ladder(now);
             if self.stopped() {
                 return;
             }
         }
         let resync_due = self.live.as_ref().is_some_and(|l| {
-            l.ready && l.sampler.is_none() && l.next_resync_us.is_some_and(|t| now_us >= t)
+            l.ready && l.sampler.is_none() && l.next_resync.is_some_and(|t| now >= t)
         });
         if resync_due {
             if let Some(l) = self.live.as_mut() {
-                l.next_resync_us = None;
+                l.next_resync = None;
             }
-            self.start_sampler(now_us, false);
+            self.start_sampler(now, false);
         }
         let mut due: Vec<ResourceId> = Vec::new();
         if let Some(l) = self.live.as_mut() {
             for (id, e) in &mut l.early {
-                if e.retry_at.is_some_and(|t| now_us >= t) {
+                if e.retry_at.is_some_and(|t| now >= t) {
                     e.retry_at = None;
                     due.push(*id);
                 }
@@ -480,12 +490,12 @@ impl DashClient {
                 self.queue.push_front(id);
             }
         }
-        if self.refresh_due_at().is_some_and(|t| now_us >= t) {
+        if self.refresh_due_at().is_some_and(|t| now >= t) {
             self.want_mpd = true;
         }
     }
 
-    pub(super) fn mpd_action(&mut self, now_us: u64) -> Option<Action> {
+    pub(super) fn mpd_action(&mut self, now: Timestamp) -> Option<Action> {
         if !self.want_mpd || self.mpd_inflight {
             return None;
         }
@@ -494,7 +504,7 @@ impl DashClient {
         let mut url = self.mpd_url.clone();
         let mut validators = MpdValidators::default();
         if let Some(live) = self.live.as_mut() {
-            live.refresh.last_request_us = Some(now_us);
+            live.refresh.last_request = Some(now);
             live.refresh.next_at = None;
             live.refresh.forced_at = None;
             validators = live.refresh.validators.clone();
@@ -535,21 +545,21 @@ impl DashClient {
             .and_then(|r| Url::parse(r).ok())
     }
 
-    pub(super) fn utc_action(&mut self, now_us: u64) -> Option<Action> {
+    pub(super) fn utc_action(&mut self, now: Timestamp) -> Option<Action> {
         let dash = self.dash;
         let step = {
             let live = self.live.as_mut()?;
             let sampler = live.sampler.as_mut()?;
-            sampler.poll(now_us, &mut self.next_utc_id, &dash)
+            sampler.poll(now, &mut self.next_utc_id, &dash)
         };
         match step {
             Step::Fetch(a) => Some(a),
             Step::Sample(sample) => {
-                self.utc_sample(now_us, sample);
+                self.utc_sample(now, sample);
                 None
             }
             Step::Exhausted => {
-                self.sampler_exhausted(now_us);
+                self.sampler_exhausted(now);
                 None
             }
             Step::Idle => None,
@@ -558,8 +568,8 @@ impl DashClient {
 
     // Clock ladder --------------------------------------------------------------
 
-    pub(super) fn start_live(&mut self, now_us: u64, bytes: &[u8], meta: &ResponseMeta<'_>) {
-        self.live = Some(Live::new(now_us));
+    pub(super) fn start_live(&mut self, now: Timestamp, bytes: &[u8], meta: &ResponseMeta<'_>) {
+        self.live = Some(Live::new(now));
         if let Some(f) = meta.final_url
             && let Some(u) = self.accept_final_url(f)
         {
@@ -568,26 +578,26 @@ impl DashClient {
             }
             self.doc_url = Some(u);
         }
-        self.note_exchange(now_us, meta);
+        self.note_exchange(now, meta);
         if let Some(l) = self.live.as_mut() {
             l.refresh.body = bytes.to_vec();
             l.refresh.publish_time_us = self.mpd.as_ref().and_then(|m| m.publish_time_us);
-            l.refresh.last_request_us = Some(meta.sent_us.min(meta.received_us));
+            l.refresh.last_request = Some(meta.sent.min(meta.received));
         }
-        self.speculative_activate(now_us);
-        let want_sampler = self.begin_sampler(now_us, meta);
+        self.speculative_activate(now);
+        let want_sampler = self.begin_sampler(now, meta);
         if !want_sampler {
-            self.finish_ladder(now_us);
+            self.finish_ladder(now);
         }
-        self.schedule_refresh(now_us);
+        self.schedule_refresh(now);
     }
 
-    fn note_exchange(&mut self, now_us: u64, meta: &ResponseMeta<'_>) {
+    fn note_exchange(&mut self, now: Timestamp, meta: &ResponseMeta<'_>) {
         let adopted = meta.final_url.and_then(|f| self.accept_final_url(f));
         let Some(live) = self.live.as_mut() else {
             return;
         };
-        live.mpd_exchange = Exchange::new(meta.sent_us.min(meta.received_us), meta.received_us);
+        live.mpd_exchange = Exchange::new(meta.sent.min(meta.received), meta.received);
         if let Some(e) = meta.etag {
             live.refresh.validators.etag = Some(e.to_owned());
         }
@@ -600,17 +610,21 @@ impl DashClient {
         }
         if let Some(date) = meta.date {
             let exch = live.mpd_exchange;
-            if let Ok(sample) = sample_from_date_header(date, exch, self.dash.utc_max_rtt_us) {
+            if let Ok(sample) = sample_from_date_header(date, exch, self.dash.utc_max_rtt) {
                 self.clock.offer(
                     sample,
                     ClockSource::MpdDate,
-                    now_us,
-                    OfferPolicy::new(self.dash.utc_resync_us, false),
+                    now,
+                    OfferPolicy::new_or_never(self.dash.utc_resync, false),
                 );
             }
         }
-        let mid = self.live.as_ref().map_or(now_us, |l| {
-            l.mpd_exchange.sent_us + (l.mpd_exchange.received_us - l.mpd_exchange.sent_us) / 2
+        let mid = self.live.as_ref().map_or(now, |l| {
+            let half = l.mpd_exchange.received.saturating_sub(l.mpd_exchange.sent) / 2;
+            l.mpd_exchange
+                .sent
+                .checked_add(half)
+                .unwrap_or(l.mpd_exchange.sent)
         });
         let fetch_utc = self.clock.utc_at(mid).map(i128_from_i64).or_else(|| {
             self.mpd
@@ -623,7 +637,7 @@ impl DashClient {
         }
     }
 
-    fn begin_sampler(&mut self, now_us: u64, meta: &ResponseMeta<'_>) -> bool {
+    fn begin_sampler(&mut self, now: Timestamp, meta: &ResponseMeta<'_>) -> bool {
         let _ = meta;
         let host_first = self.dash.clock_policy == DashClockPolicy::PreferHost
             && self
@@ -633,10 +647,10 @@ impl DashClient {
         if host_first {
             return false;
         }
-        self.start_sampler(now_us, true)
+        self.start_sampler(now, true)
     }
 
-    fn start_sampler(&mut self, now_us: u64, gating: bool) -> bool {
+    fn start_sampler(&mut self, now: Timestamp, gating: bool) -> bool {
         let host_holds = self.dash.clock_policy == DashClockPolicy::PreferHost
             && self
                 .clock
@@ -663,7 +677,7 @@ impl DashClient {
         let exchange = self
             .live
             .as_ref()
-            .map_or(Exchange::new(now_us, now_us), |l| l.mpd_exchange);
+            .map_or(Exchange::new(now, now), |l| l.mpd_exchange);
         let mut accept = |value: &str| -> Option<Url> {
             let url = match &doc {
                 Some(d) => d.join(value).ok()?,
@@ -690,7 +704,7 @@ impl DashClient {
         }
         sampler.gating = gating;
         if gating {
-            sampler.wait_deadline_us = Some(now_us.saturating_add(self.dash.utc_wait_us));
+            sampler.wait_deadline = now.checked_add(self.dash.utc_wait);
         }
         if let Some(l) = self.live.as_mut() {
             l.sampler = Some(sampler);
@@ -698,12 +712,12 @@ impl DashClient {
         true
     }
 
-    fn utc_sample(&mut self, now_us: u64, sample: UtcSample) {
+    fn utc_sample(&mut self, now: Timestamp, sample: UtcSample) {
         let outcome = self.clock.offer(
             sample,
             ClockSource::UtcTiming,
-            now_us,
-            OfferPolicy::new(self.dash.utc_resync_us, false),
+            now,
+            OfferPolicy::new_or_never(self.dash.utc_resync, false),
         );
         let stepped = matches!(outcome, OfferOutcome::Adopted(AdoptReason::Step));
         let ready = {
@@ -711,34 +725,34 @@ impl DashClient {
                 return;
             };
             live.sampler = None;
-            live.next_resync_us = Some(now_us.saturating_add(self.dash.utc_resync_us));
+            live.next_resync = resync_deadline(self.dash.utc_resync, now);
             live.ready
         };
         if stepped {
-            self.force_refresh(now_us);
+            self.force_refresh(now);
         }
         if ready {
             self.announce_clock();
         } else {
-            self.finish_ladder(now_us);
+            self.finish_ladder(now);
         }
     }
 
-    fn sampler_exhausted(&mut self, now_us: u64) {
+    fn sampler_exhausted(&mut self, now: Timestamp) {
         let ready = {
             let Some(live) = self.live.as_mut() else {
                 return;
             };
             live.sampler = None;
-            live.next_resync_us = Some(now_us.saturating_add(self.dash.utc_resync_us));
+            live.next_resync = resync_deadline(self.dash.utc_resync, now);
             live.ready
         };
         if !ready {
-            self.finish_ladder(now_us);
+            self.finish_ladder(now);
         }
     }
 
-    fn finish_ladder(&mut self, now_us: u64) {
+    fn finish_ladder(&mut self, now: Timestamp) {
         if self.clock.anchor().is_none() {
             self.go_fatal(FatalKind::ClockUnavailable);
             return;
@@ -750,7 +764,7 @@ impl DashClient {
             live.ready = true;
         }
         self.announce_clock();
-        self.on_clock_ready(now_us);
+        self.on_clock_ready(now);
     }
 
     fn announce_clock(&mut self) {
@@ -769,23 +783,24 @@ impl DashClient {
         live.announced_clock = Some(anchor.source);
         self.outputs.push_back(Output::ClockSynced {
             source: anchor.source,
-            uncertainty_us: anchor.uncertainty_us,
+            uncertainty: Duration::from_micros(anchor.uncertainty_us),
         });
     }
 
-    fn request_resync(&mut self, now_us: u64) {
+    fn request_resync(&mut self, now: Timestamp) {
         let Some(live) = self.live.as_mut() else {
             return;
         };
         if !live.ready || live.sampler.is_some() {
             return;
         }
-        let spaced = live
-            .last_forced_resync_us
-            .is_none_or(|t| now_us >= t.saturating_add(FORCED_RESYNC_MIN_GAP_US));
+        let spaced = live.last_forced_resync.is_none_or(|t| {
+            t.checked_add(FORCED_RESYNC_MIN_GAP)
+                .is_none_or(|gap| now >= gap)
+        });
         if spaced {
-            live.last_forced_resync_us = Some(now_us);
-            live.next_resync_us = Some(now_us);
+            live.last_forced_resync = Some(now);
+            live.next_resync = Some(now);
         }
     }
 
@@ -800,7 +815,7 @@ impl DashClient {
             mpd.suggested_presentation_delay,
             max_seg,
             mpd.time_shift_buffer_depth.map(duration_us),
-            self.dash.live_delay_us.map(i128::from),
+            self.dash.live_delay.map(span_micros),
         )
     }
 
@@ -819,8 +834,8 @@ impl DashClient {
         chosen
     }
 
-    fn speculative_activate(&mut self, now_us: u64) {
-        let provisional = self.utc_now(now_us);
+    fn speculative_activate(&mut self, now: Timestamp) {
+        let provisional = self.utc_now(now);
         let pick = provisional
             .and_then(|u| self.choose_join_period(u))
             .or_else(|| {
@@ -835,8 +850,8 @@ impl DashClient {
         }
     }
 
-    fn on_clock_ready(&mut self, now_us: u64) {
-        let Some(utc) = self.utc_now(now_us) else {
+    fn on_clock_ready(&mut self, now: Timestamp) {
+        let Some(utc) = self.utc_now(now) else {
             return;
         };
         let target = self.choose_join_period(utc);
@@ -902,9 +917,9 @@ impl DashClient {
         pi: usize,
         li: usize,
         utc: i128,
-        now_us: u64,
+        now: Timestamp,
     ) -> Candidate {
-        let margin = i128::from(self.dash.availability_margin_us);
+        let margin = span_micros(self.dash.availability_margin);
         for _ in 0..MAX_LANE_STEPS {
             let lane = &self.periods[pi].lanes[li];
             let Some(rep) = lane.current() else {
@@ -945,8 +960,8 @@ impl DashClient {
                         return match first {
                             Some(a) if a > utc => Candidate::Wait(a),
                             _ => {
-                                self.force_refresh(now_us);
-                                self.request_resync(now_us);
+                                self.force_refresh(now);
+                                self.request_resync(now);
                                 Candidate::Idle
                             }
                         };
@@ -1045,7 +1060,7 @@ impl DashClient {
 
     pub(super) fn live_segment_failure(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         id: ResourceId,
         failure: Failure,
     ) -> Result<FailureClass> {
@@ -1053,13 +1068,13 @@ impl DashClient {
         if matches!(
             status,
             Some(STATUS_NOT_FOUND | STATUS_GONE | STATUS_TOO_EARLY)
-        ) && let Some(utc) = self.utc_now(now_us)
+        ) && let Some(utc) = self.utc_now(now)
         {
             let (from, until) = self
                 .reqs
                 .get(&id)
                 .map_or((None, None), |r| (r.avail_from_us, r.avail_until_us));
-            let grace = i128::from(self.dash.early_grace_us);
+            let grace = span_micros(self.dash.early_grace);
             let past_window = until.is_some_and(|u| utc > u);
             let refused_past_window = past_window
                 && status == Some(STATUS_TOO_EARLY)
@@ -1071,10 +1086,10 @@ impl DashClient {
                 && (status == Some(STATUS_TOO_EARLY)
                     || from.is_some_and(|f| utc < f.saturating_add(grace)));
             if early {
-                return Ok(self.early_wait(now_us, id, from, utc));
+                return Ok(self.early_wait(now, id, from, utc));
             }
             if past_window {
-                return Ok(self.expired_segment(now_us, id, utc));
+                return Ok(self.expired_segment(now, id, utc));
             }
         }
         let kind = failure_kind(failure);
@@ -1084,23 +1099,23 @@ impl DashClient {
                 .as_mut()
                 .is_some_and(|l| l.missing_seen.insert(id.rep()));
             if first {
-                self.force_refresh(now_us);
-                self.request_resync(now_us);
+                self.force_refresh(now);
+                self.request_resync(now);
             }
         }
-        Ok(self.count_failure(now_us, id, kind, status))
+        Ok(self.count_failure(now, id, kind, status))
     }
 
     fn early_wait(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         id: ResourceId,
         from: Option<i128>,
         utc: i128,
     ) -> FailureClass {
         self.inflight.remove(&id);
-        let base = self.dash.early_retry_us;
-        let cap = EARLY_RETRY_CAP_US.max(base);
+        let base = self.dash.early_retry;
+        let cap = EARLY_RETRY_CAP.max(base);
         let retry_at = {
             let Some(live) = self.live.as_mut() else {
                 return FailureClass::Retry {
@@ -1111,20 +1126,21 @@ impl DashClient {
             let e = live.early.entry(id).or_default();
             e.attempts = e.attempts.saturating_add(1);
             let shift = e.attempts.saturating_sub(1).min(EARLY_SHIFT_MAX);
-            let delay = base.saturating_mul(1u64 << shift).min(cap);
-            let at = now_us.saturating_add(delay);
-            e.retry_at = Some(at);
+            let delay = base.saturating_mul(1u32 << shift).min(cap);
+            let at = now.checked_add(delay);
+            e.retry_at = at;
             at
         };
         if from.is_some_and(|f| utc >= f) {
-            self.request_resync(now_us);
+            self.request_resync(now);
         }
-        FailureClass::NotYetAvailable {
-            retry_at_us: retry_at,
+        match retry_at {
+            Some(retry_at) => FailureClass::NotYetAvailable { retry_at },
+            None => self.count_failure(now, id, FailureKind::TooEarly, None),
         }
     }
 
-    fn expired_segment(&mut self, _now_us: u64, id: ResourceId, utc: i128) -> FailureClass {
+    fn expired_segment(&mut self, _now: Timestamp, id: ResourceId, utc: i128) -> FailureClass {
         self.inflight.remove(&id);
         self.failures.remove(&id);
         if let Some(live) = self.live.as_mut() {
@@ -1193,13 +1209,13 @@ impl DashClient {
         FailureClass::SegmentSkipped
     }
 
-    pub(super) fn after_rotation(&mut self, now_us: u64) {
+    pub(super) fn after_rotation(&mut self, now: Timestamp) {
         if self.is_live_mpd() {
-            self.force_refresh(now_us);
+            self.force_refresh(now);
         }
     }
 
-    pub(super) fn mpd_failed(&mut self, _now_us: u64) -> u32 {
+    pub(super) fn mpd_failed(&mut self, _now: Timestamp) -> u32 {
         self.mpd_failures = self.mpd_failures.saturating_add(1);
         if let Some(live) = self.live.as_mut() {
             live.refresh.awaiting_retry = true;
@@ -1209,12 +1225,12 @@ impl DashClient {
 
     // Refresh ---------------------------------------------------------------------
 
-    fn force_refresh(&mut self, now_us: u64) {
-        self.force_refresh_after(now_us, 0);
+    fn force_refresh(&mut self, now: Timestamp) {
+        self.force_refresh_after(now, Duration::ZERO);
     }
 
-    fn force_refresh_after(&mut self, now_us: u64, extra_us: u64) {
-        let floor = self.dash.min_mpd_refresh_us.max(extra_us);
+    fn force_refresh_after(&mut self, now: Timestamp, extra: Duration) {
+        let floor = self.dash.min_mpd_refresh.max(extra);
         let live_open = self.live_open();
         let Some(live) = self.live.as_mut() else {
             return;
@@ -1224,34 +1240,29 @@ impl DashClient {
         }
         let earliest = live
             .refresh
-            .last_request_us
-            .map_or(now_us, |t| t.saturating_add(floor))
-            .max(now_us);
+            .last_request
+            .and_then(|t| t.checked_add(floor))
+            .map_or(now, |t| t.max(now));
         live.refresh.forced_at = Some(live.refresh.forced_at.map_or(earliest, |f| f.min(earliest)));
     }
 
-    fn schedule_refresh(&mut self, _now_us: u64) {
-        let floor = self.dash.min_mpd_refresh_us;
-        let mup = self
-            .mpd
-            .as_ref()
-            .and_then(|m| m.minimum_update_period)
-            .map(|d| u64::try_from(duration_us(d)).unwrap_or(u64::MAX));
+    fn schedule_refresh(&mut self, _now: Timestamp) {
+        let floor = self.dash.min_mpd_refresh;
+        let mup = self.mpd.as_ref().and_then(|m| m.minimum_update_period);
         let Some(live) = self.live.as_mut() else {
             return;
         };
         self.mpd_failures = 0;
         live.refresh.awaiting_retry = false;
         let ex = live.mpd_exchange;
-        let mid = ex
-            .sent_us
-            .saturating_add(ex.received_us.saturating_sub(ex.sent_us) / 2);
-        live.refresh.next_at = mup.map(|m| mid.saturating_add(m.max(floor)));
+        let half = ex.received.saturating_sub(ex.sent) / 2;
+        let mid = ex.sent.checked_add(half).unwrap_or(ex.sent);
+        live.refresh.next_at = mup.and_then(|m| mid.checked_add(m.max(floor)));
     }
 
     pub(super) fn refresh_mpd(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         new: Mpd,
         bytes: &[u8],
         meta: &ResponseMeta<'_>,
@@ -1259,7 +1270,7 @@ impl DashClient {
         if self.live.is_none() {
             return;
         }
-        self.note_exchange(now_us, meta);
+        self.note_exchange(now, meta);
         let (stale, same) = {
             let live = self.live.as_ref().expect("live present");
             let stale = matches!(
@@ -1269,14 +1280,14 @@ impl DashClient {
             (stale, live.refresh.body == bytes)
         };
         if stale {
-            self.schedule_refresh(now_us);
-            let floor = self.dash.min_mpd_refresh_us;
+            self.schedule_refresh(now);
+            let floor = self.dash.min_mpd_refresh;
             if let Some(l) = self.live.as_mut() {
-                l.refresh.next_at = Some(now_us.saturating_add(floor));
+                l.refresh.next_at = now.checked_add(floor);
             }
             return;
         }
-        self.schedule_refresh(now_us);
+        self.schedule_refresh(now);
         if same {
             return;
         }
@@ -1284,15 +1295,15 @@ impl DashClient {
             l.refresh.body = bytes.to_vec();
             l.refresh.publish_time_us = new.publish_time_us.or(l.refresh.publish_time_us);
         }
-        self.apply_mpd(now_us, new);
-        self.refresh_schedule_after_apply(now_us);
+        self.apply_mpd(now, new);
+        self.refresh_schedule_after_apply(now);
     }
 
-    fn refresh_schedule_after_apply(&mut self, now_us: u64) {
-        self.schedule_refresh(now_us);
+    fn refresh_schedule_after_apply(&mut self, now: Timestamp) {
+        self.schedule_refresh(now);
     }
 
-    fn apply_mpd(&mut self, now_us: u64, new: Mpd) {
+    fn apply_mpd(&mut self, now: Timestamp, new: Mpd) {
         if new.periods.is_empty() {
             return;
         }
@@ -1325,7 +1336,7 @@ impl DashClient {
             self.notice_once(Notice::EventStreamIgnored);
         }
         if reset || !self.remap_periods() {
-            self.reset_presentation(now_us);
+            self.reset_presentation(now);
             return;
         }
         self.replan_all();
@@ -1565,7 +1576,7 @@ impl DashClient {
         }
     }
 
-    fn reset_presentation(&mut self, now_us: u64) {
+    fn reset_presentation(&mut self, now: Timestamp) {
         self.periods.clear();
         self.issue = 0;
         self.deliver = 0;
@@ -1584,7 +1595,7 @@ impl DashClient {
             live.early.clear();
             live.missing_seen.clear();
         }
-        self.on_clock_ready(now_us);
+        self.on_clock_ready(now);
     }
 }
 

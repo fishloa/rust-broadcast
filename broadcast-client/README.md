@@ -317,11 +317,11 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
 The session never reads a clock. Besides the monotonic `now_us` every call takes, a host can give it
 the UTC time once:
 
-- `Session::set_wall_clock(now_us, unix_us)`: "at the monotonic instant `now_us` my UTC clock read
-  `unix_us` microseconds since 1970-01-01T00:00:00Z" (POSIX time, no leap seconds). Read both clocks back to
-  back. Call it any time and as often as you like (after `open` and before the first `poll`, every ten
-  minutes, on a system clock-change notification, after a device wakes): the latest call replaces the
-  previous anchor, an earlier `now_us` than a previous call is accepted, no value is rejected.
+- `Session::set_wall_clock(now: Timestamp, unix: jiff::Timestamp)`: "at the monotonic instant `now` my UTC clock read
+  `unix`" (POSIX time, no leap seconds). Read both clocks back to back. Call it any time and as often as you
+  like (after `open` and before the first `poll`, every ten minutes, on a system clock-change notification,
+  after a device wakes): the latest call replaces the previous anchor, an earlier `now` than a previous call
+  is accepted, no value is rejected.
 - What it changes today: an HLS `429`/`503` whose `Retry-After` is an HTTP-date (RFC 9110 5.6.7: IMF-fixdate,
   RFC 850 and asctime forms) waits until that date, counted from the anchor, clamped to 60 s like the
   delta-seconds form, and never shorter than the backoff step. With no anchor the date is counted from the
@@ -341,15 +341,15 @@ the UTC time once:
 - `Action::HttpRequest::method` is an `http::Method`, `GET` or `HEAD` (the DASH `http-head` clock method issues
   `HEAD` for a `UTCTiming` element): pass `method` through and do not assume GET. A `HEAD` response has no
   body; the session ignores its `Content-Length`.
-- `Config::dash: DashConfig` holds the DASH-only knobs (`clock_policy`, `utc_timeout_us` 2 s, `utc_wait_us`
-  5 s, `utc_max_rtt_us` 2 s, `utc_resync_us` 600 s, `host_clock_uncertainty_us` 500 ms, `live_delay_us`,
-  `availability_margin_us`, `early_retry_us` 250 ms, `early_grace_us` 1 s, `min_mpd_refresh_us` 1 s,
-  `use_availability_time_offset`, `cross_origin_urls`). `Session::open` rejects, as
-  `Error::InvalidConfig { field: "dash.<name>" }`, a zero `utc_timeout_us`, `utc_wait_us`, `utc_max_rtt_us`,
-  `utc_resync_us`, `early_retry_us` or `min_mpd_refresh_us`, and a `utc_wait_us` shorter than `utc_timeout_us`;
-  it does so for every source kind, because a config is a value, not a promise to play DASH. `u64::MAX` is
-  accepted everywhere zero is not (read as "never"); zero is accepted for `host_clock_uncertainty_us`,
-  `availability_margin_us`, `early_grace_us` and `live_delay_us`.
+- `Config::dash: DashConfig` holds the DASH-only knobs (`clock_policy`, `utc_timeout` 2 s, `utc_wait`
+  5 s, `utc_max_rtt` 2 s, `utc_resync` `Some(600 s)`, `host_clock_uncertainty` 500 ms, `live_delay: Option<Duration>`,
+  `availability_margin`, `early_retry` 250 ms, `early_grace` 1 s, `min_mpd_refresh` 1 s,
+  `use_availability_time_offset`, `cross_origin_urls`), every span a `Duration`. `Session::open` rejects, as
+  `Error::InvalidConfig { field: "dash.<name>" }`, a zero `utc_timeout`, `utc_wait`, `utc_max_rtt`,
+  `utc_resync` (`Some(Duration::ZERO)`), `early_retry` or `min_mpd_refresh`, and a `utc_wait` shorter than
+  `utc_timeout`; it does so for every source kind, because a config is a value, not a promise to play DASH.
+  `utc_resync: None` never re-syncs on age; any `Duration` is accepted, zero excepted, and zero is accepted
+  for `host_clock_uncertainty`, `availability_margin`, `early_grace` and `live_delay`.
 
 ## DASH
 
@@ -381,7 +381,7 @@ and answers them exactly as for HLS; what differs is below.
 `max_segment_failures`, `max_inflight_segments`, `request_timeout_us` (MPD, init, index), `segment_timeout_us`, `segment_inactivity_timeout_us`,
 `max_manifest_bytes` (MPD), `max_segment_bytes`, `max_key_failures` (consecutive init and MPD-parse failures),
 `playout`, `timeline_jump` and `max_queued_events` apply as for HLS. A `UTCTiming` request is bounded by
-`dash.utc_timeout_us` and its body by 4 KiB. `Config::hls_key_timeout_us` and `max_key_bytes` are HLS-only.
+`dash.utc_timeout` and its body by 4 KiB. `Config::hls_key_timeout_us` and `max_key_bytes` are HLS-only.
 
 **What the host sees.** `Event::Variants` lists the Representations of the video AdaptationSets of the current
 Period in MPD order (`VariantInfo::url` is the Representation's initialization URL) and, as `renditions`, the

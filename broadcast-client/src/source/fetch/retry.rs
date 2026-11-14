@@ -2,8 +2,12 @@
 //! the request queue until a backoff has elapsed.
 //!
 //! ```rust
-//! use broadcast_client::fetch::retry_after_us;
-//! assert_eq!(retry_after_us(503, &[], 0, None), 0);
+//! use broadcast_client::fetch::{WallClock, retry_after_us};
+//! use broadcast_common::stage::Timestamp;
+//! assert_eq!(retry_after_us(503, &[], Timestamp::ZERO, None), 0);
+//! let ahead = WallClock::new(0, i128::from(1_793_003_944_000_000_u64));
+//! let head = [("Retry-After".to_string(), "Mon, 26 Oct 2026 08:39:34 GMT".to_string())];
+//! assert_eq!(retry_after_us(503, &head, Timestamp::ZERO, Some(&ahead)), 30_000_000);
 //! ```
 
 use alloc::string::String;
@@ -15,6 +19,7 @@ use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
 use broadcast_common::backoff::{BackoffSteps, RetrySchedule};
 use broadcast_common::http_date::parse_http_date;
+use broadcast_common::stage::Timestamp;
 
 use super::wall::WallClock;
 use broadcast_common::units::{MICROS_PER_SEC, MILLIS_PER_SEC, NANOS_PER_MILLI};
@@ -89,13 +94,13 @@ pub(crate) fn backoff_ms(steps: &BackoffSteps) -> (Vec<u64>, u64) {
 }
 
 /// Parse a `Retry-After` header for a `429`/`503` response (RFC 9110 §10.2.3), returning the
-/// wait in microseconds. Returns `0` for any other status, a missing or unparseable header, or a
-/// past HTTP-date. An HTTP-date is measured against the host wall clock when `wall` is given,
+/// wait in microseconds. Returns `0` for any other status or a missing or unparseable header; a
+/// past HTTP-date waits nothing (`0`), and the result is clamped to `0..=60 s`. An HTTP-date is measured against the host wall clock when `wall` is given,
 /// otherwise against the response `Date`. The result is clamped to 60 seconds.
 pub fn retry_after_us(
     status: u16,
     headers: &[(String, String)],
-    now_us: u64,
+    now: Timestamp,
     wall: Option<&WallClock>,
 ) -> u64 {
     if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
@@ -112,7 +117,7 @@ pub fn retry_after_us(
             return 0;
         };
         let now_unix = match wall {
-            Some(wall) => Some(wall.unix_at(now_us)),
+            Some(wall) => Some(wall.utc_at(now.as_micros())),
             None => header_value(headers, HEADER_DATE)
                 .and_then(|date| parse_http_date(date).ok())
                 .map(i128::from),
@@ -449,12 +454,16 @@ mod tests {
     }
 
     const NOW: u64 = 7_000_000;
+
+    fn at(us: u64) -> Timestamp {
+        Timestamp::from_micros(us)
+    }
     const SIXTY_S: u64 = 60_000_000;
     const RESPONSE_DATE: &str = "Mon, 26 Oct 2026 08:39:04 GMT";
     const RESPONSE_UNIX_US: u64 = 1_793_003_944 * 1_000_000;
 
     fn retry(status: u16, headers: &[(String, String)]) -> u64 {
-        retry_after_us(status, headers, NOW, None)
+        retry_after_us(status, headers, at(NOW), None)
     }
 
     fn date_pair(retry_after: &str, date: &str) -> Vec<(String, String)> {
@@ -573,7 +582,7 @@ mod tests {
     fn an_anchor_replaces_the_response_date() {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
         assert_eq!(
-            retry_after_us(503, &h, NOW, Some(&anchored())),
+            retry_after_us(503, &h, at(NOW), Some(&anchored())),
             30_000_000,
             "no Date header needed"
         );
@@ -582,14 +591,30 @@ mod tests {
             "Sun, 01 Jan 2023 00:00:00 GMT",
         );
         assert_eq!(
-            retry_after_us(503, &lying_date, NOW, Some(&anchored())),
+            retry_after_us(503, &lying_date, at(NOW), Some(&anchored())),
             30_000_000,
             "the anchor wins over a skewed server Date"
         );
         assert_eq!(
-            retry_after_us(503, &lying_date, NOW, None),
+            retry_after_us(503, &lying_date, at(NOW), None),
             SIXTY_S,
             "the same headers without an anchor count from the skewed Date"
+        );
+    }
+
+    #[test]
+    fn a_far_future_anchor_is_not_a_past_date() {
+        let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
+        let anchor = WallClock::new(0, i128::from(u64::MAX));
+        assert_eq!(
+            anchor.unix_at(0),
+            i128::from(u64::MAX),
+            "the crate's own mapping"
+        );
+        assert_eq!(
+            retry_after_us(503, &h, at(0), Some(&anchor)),
+            0,
+            "a URL past 584 557 AD is a past date, never a 584 557-year wait"
         );
     }
 
@@ -598,13 +623,19 @@ mod tests {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
         let wall = anchored();
         assert_eq!(
-            retry_after_us(503, &h, NOW + 10_000_000, Some(&wall)),
+            retry_after_us(503, &h, at(NOW + 10_000_000), Some(&wall)),
             20_000_000
         );
-        assert_eq!(retry_after_us(503, &h, NOW + 30_000_000, Some(&wall)), 0);
-        assert_eq!(retry_after_us(503, &h, NOW + 31_000_000, Some(&wall)), 0);
         assert_eq!(
-            retry_after_us(503, &h, NOW - 5_000_000, Some(&wall)),
+            retry_after_us(503, &h, at(NOW + 30_000_000), Some(&wall)),
+            0
+        );
+        assert_eq!(
+            retry_after_us(503, &h, at(NOW + 31_000_000), Some(&wall)),
+            0
+        );
+        assert_eq!(
+            retry_after_us(503, &h, at(NOW - 5_000_000), Some(&wall)),
             35_000_000,
             "a response that predates the anchor still maps by the same offset"
         );
@@ -614,15 +645,15 @@ mod tests {
     fn extreme_anchors_neither_overflow_nor_wrap() {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
         let max_unix = WallClock::new(0, u64::MAX);
-        assert_eq!(retry_after_us(503, &h, u64::MAX, Some(&max_unix)), 0);
+        assert_eq!(retry_after_us(503, &h, at(u64::MAX), Some(&max_unix)), 0);
         let zero_unix = WallClock::new(u64::MAX, 0);
         assert_eq!(
-            retry_after_us(503, &h, 0, Some(&zero_unix)),
+            retry_after_us(503, &h, Timestamp::ZERO, Some(&zero_unix)),
             SIXTY_S,
             "a response far before the anchor clamps"
         );
         let late = WallClock::new(0, 0);
-        assert_eq!(retry_after_us(503, &h, u64::MAX, Some(&late)), 0);
+        assert_eq!(retry_after_us(503, &h, at(u64::MAX), Some(&late)), 0);
     }
 
     #[test]
@@ -723,7 +754,10 @@ mod tests {
     #[test]
     fn delta_seconds_do_not_need_an_anchor_and_ignore_it() {
         let h = header("Retry-After", "5");
-        assert_eq!(retry_after_us(503, &h, NOW, Some(&anchored())), 5_000_000);
+        assert_eq!(
+            retry_after_us(503, &h, at(NOW), Some(&anchored())),
+            5_000_000
+        );
         assert_eq!(retry(503, &h), 5_000_000);
     }
 }

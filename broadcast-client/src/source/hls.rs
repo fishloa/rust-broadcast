@@ -386,7 +386,7 @@ impl HlsSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            let ra = retry_after_us(status, headers, now, wall);
+            let ra = retry_after_us(status, headers, Timestamp::from_micros(now), wall);
             self.retry_after_us = ra;
             inflight::record_refusal(
                 head,

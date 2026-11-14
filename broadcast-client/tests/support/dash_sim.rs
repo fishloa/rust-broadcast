@@ -359,9 +359,10 @@ impl DashSim {
 
     pub fn give_host_clock(&mut self) {
         let mono = self.world.mono();
-        let unix = self.world.host_unix();
-        self.session.set_wall_clock(ts(mono), unix);
-        self.host_clock_calls.push((mono, unix));
+        let wall = self.world.host_wall();
+        self.session.set_wall_clock(ts(mono), wall);
+        self.host_clock_calls
+            .push((mono, u64::try_from(wall.as_microsecond()).unwrap_or(0)));
     }
 
     fn drain_events(&mut self) {

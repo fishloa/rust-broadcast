@@ -293,7 +293,7 @@ impl TsHttpSource {
     /// Response callback.
     pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_us: u64) {
         self.now_us = now_us;
-        let retry_after = retry_after_us(status, headers, now_us, None);
+        let retry_after = retry_after_us(status, headers, Timestamp::from_micros(now_us), None);
         self.refused = (status == 429 || status == 503)
             .then(|| RefusedCapture::new(status, retry_after, headers));
         self.ts.set_retry_after(retry_after / 1000);

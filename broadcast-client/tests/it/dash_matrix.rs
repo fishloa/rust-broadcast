@@ -54,7 +54,7 @@ fn matrix_config() -> Config {
     config.max_segment_bytes = 1024 * 1024;
     config.request_timeout = std::time::Duration::from_secs(5);
     config.segment_timeout = std::time::Duration::from_secs(10);
-    config.dash.utc_timeout_us = 4 * SEC;
+    config.dash.utc_timeout = std::time::Duration::from_micros(4 * SEC);
     config.max_segment_failures = MATRIX_SEGMENT_FAILURES;
     config
 }

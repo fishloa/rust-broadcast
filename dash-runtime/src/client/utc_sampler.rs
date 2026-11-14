@@ -5,6 +5,8 @@
 //! Pure bookkeeping. The engine owns the clock and the ids; this type only
 //! decides which candidate is next and what an answer is worth.
 
+use broadcast_common::stage::Timestamp;
+
 use super::action::{Action, UtcId, UtcMethod};
 use super::config::DashConfig;
 use super::error::Failure;
@@ -27,8 +29,8 @@ enum Cand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Inflight {
     id: UtcId,
-    sent_us: u64,
-    deadline_us: u64,
+    sent: Timestamp,
+    deadline: Option<Timestamp>,
     method: UtcMethod,
     rtt_retried: bool,
 }
@@ -57,7 +59,7 @@ pub(crate) struct UtcSampler {
     reissue: Option<Reissue>,
     mpd_exchange: Exchange,
     pub(crate) gating: bool,
-    pub(crate) wait_deadline_us: Option<u64>,
+    pub(crate) wait_deadline: Option<Timestamp>,
     finished: bool,
 }
 
@@ -112,7 +114,7 @@ impl UtcSampler {
             reissue: None,
             mpd_exchange,
             gating: false,
-            wait_deadline_us: None,
+            wait_deadline: None,
             finished: false,
         }
     }
@@ -121,9 +123,10 @@ impl UtcSampler {
         self.cands.is_empty()
     }
 
-    /// The instant the in-flight request times out.
-    pub(crate) fn deadline_us(&self) -> Option<u64> {
-        self.inflight.map(|i| i.deadline_us)
+    /// The instant the in-flight request times out; `None` (a deadline past
+    /// the end of the clock) never fires.
+    pub(crate) fn deadline(&self) -> Option<Timestamp> {
+        self.inflight.and_then(|i| i.deadline)
     }
 
     fn advance(&mut self) {
@@ -132,12 +135,12 @@ impl UtcSampler {
         self.idx += 1;
     }
 
-    pub(crate) fn poll(&mut self, now_us: u64, next_id: &mut u32, cfg: &DashConfig) -> Step {
+    pub(crate) fn poll(&mut self, now: Timestamp, next_id: &mut u32, cfg: &DashConfig) -> Step {
         if self.finished {
             return Step::Exhausted;
         }
         if let Some(i) = self.inflight {
-            if now_us < i.deadline_us {
+            if i.deadline.is_none_or(|d| now < d) {
                 return Step::Idle;
             }
             self.advance();
@@ -149,7 +152,7 @@ impl UtcSampler {
             };
             match cand {
                 Cand::Direct(value) => {
-                    let r = sample_from_direct(value, self.mpd_exchange, cfg.utc_max_rtt_us);
+                    let r = sample_from_direct(value, self.mpd_exchange, cfg.utc_max_rtt);
                     match r {
                         Ok(sample) => {
                             self.finished = true;
@@ -176,8 +179,8 @@ impl UtcSampler {
                     *next_id = next_id.wrapping_add(1);
                     self.inflight = Some(Inflight {
                         id,
-                        sent_us: now_us,
-                        deadline_us: now_us.saturating_add(cfg.utc_timeout_us),
+                        sent: now,
+                        deadline: now.checked_add(cfg.utc_timeout),
                         method,
                         rtt_retried: re.is_some_and(|r| r.rtt_retried),
                     });
@@ -210,13 +213,13 @@ impl UtcSampler {
             return None;
         };
         let scheme = *scheme;
-        let exchange = Exchange::new(resp.sent_us, resp.received_us);
+        let exchange = Exchange::new(resp.sent, resp.received);
         let result = match (scheme, inflight.method) {
             (UtcScheme::HttpHead, _) => resp.date.map_or_else(
                 || Err(crate::timing::TimingError::ExchangeReversed),
-                |d| sample_from_date_header(d, exchange, cfg.utc_max_rtt_us),
+                |d| sample_from_date_header(d, exchange, cfg.utc_max_rtt),
             ),
-            _ => sample_from_body(scheme, resp.body, exchange, cfg.utc_max_rtt_us),
+            _ => sample_from_body(scheme, resp.body, exchange, cfg.utc_max_rtt),
         };
         match result {
             Ok(sample) => {

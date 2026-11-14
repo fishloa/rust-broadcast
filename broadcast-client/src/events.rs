@@ -1350,12 +1350,12 @@ impl Config {
 
 fn dash_field(name: &str) -> &'static str {
     match name {
-        "utc_timeout_us" => "dash.utc_timeout_us",
-        "utc_wait_us" => "dash.utc_wait_us",
-        "utc_max_rtt_us" => "dash.utc_max_rtt_us",
-        "utc_resync_us" => "dash.utc_resync_us",
-        "early_retry_us" => "dash.early_retry_us",
-        "min_mpd_refresh_us" => "dash.min_mpd_refresh_us",
+        "utc_timeout" => "dash.utc_timeout",
+        "utc_wait" => "dash.utc_wait",
+        "utc_max_rtt" => "dash.utc_max_rtt",
+        "utc_resync" => "dash.utc_resync",
+        "early_retry" => "dash.early_retry",
+        "min_mpd_refresh" => "dash.min_mpd_refresh",
         _ => "dash",
     }
 }

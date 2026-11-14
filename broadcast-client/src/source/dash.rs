@@ -239,7 +239,7 @@ pub(crate) struct DashSource {
     manual_audio: Option<AudioKey>,
     pending_audio: Option<Option<usize>>,
     announced_audio: Option<usize>,
-    anchor: Option<(u64, u64)>,
+    anchor: Option<(Timestamp, jiff::Timestamp)>,
     established: bool,
     live: bool,
     ended: bool,
@@ -293,7 +293,7 @@ impl DashSource {
                 Timeouts {
                     manifest_us: duration_us(config.request_timeout),
                     segment_us: duration_us(config.segment_timeout),
-                    aux_us: config.dash.utc_timeout_us,
+                    aux_us: u64::try_from(config.dash.utc_timeout.as_micros()).unwrap_or(u64::MAX),
                 },
                 duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
@@ -371,13 +371,12 @@ impl DashSource {
         }
     }
 
-    pub(crate) fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
-        self.anchor = Some((now_us, unix_us));
+    pub(crate) fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
+        self.anchor = Some((now, unix));
         if self.fatal {
             return;
         }
-        self.client
-            .set_wall_clock(Timestamp::from_micros(now_us), unix_us);
+        self.client.set_wall_clock(now, unix);
         self.drain_outputs();
     }
 
@@ -445,7 +444,7 @@ impl DashSource {
                 .with_limits(self.pull.clone()),
         );
         if let Some((mono, unix)) = self.anchor {
-            client.set_wall_clock(Timestamp::from_micros(mono), unix);
+            client.set_wall_clock(mono, unix);
         }
         self.client = client;
         self.mpd_accepted = false;
@@ -575,7 +574,7 @@ impl DashSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            let ra = retry_after_us(status, headers, now, wall);
+            let ra = retry_after_us(status, headers, Timestamp::from_micros(now), wall);
             self.retry_after_us = ra;
             inflight::record_refusal(
                 head,
@@ -662,7 +661,10 @@ impl DashSource {
     }
 
     fn meta<'r>(req: &'r Req, final_url: Option<&'r str>) -> ResponseMeta<'r> {
-        let mut meta = ResponseMeta::new(req.started_us, req.extra.received_us);
+        let mut meta = ResponseMeta::new(
+            Timestamp::from_micros(req.started_us),
+            Timestamp::from_micros(req.extra.received_us),
+        );
         if let Some(date) = req.extra.head.date.as_deref() {
             meta = meta.with_date(date);
         }
@@ -730,8 +732,11 @@ impl DashSource {
     }
 
     fn deliver_utc(&mut self, id: UtcId, req: &Req, now: u64) {
-        let mut response =
-            UtcResponse::new(req.started_us, req.extra.received_us, req.body.as_slice());
+        let mut response = UtcResponse::new(
+            Timestamp::from_micros(req.started_us),
+            Timestamp::from_micros(req.extra.received_us),
+            req.body.as_slice(),
+        );
         if let Some(date) = req.extra.head.date.as_deref() {
             response = response.with_date(date);
         }
@@ -934,8 +939,8 @@ impl DashSource {
         let Some(wake) = self.client.next_wake() else {
             return;
         };
-        let at = if wake > now {
-            Timestamp::from_micros(wake)
+        let at = if wake > Timestamp::from_micros(now) {
+            wake
         } else {
             match deadline(
                 Timestamp::from_micros(now),
@@ -1199,10 +1204,10 @@ impl DashSource {
             Output::Notice(notice) => self.on_notice(notice),
             Output::ClockSynced {
                 source,
-                uncertainty_us,
+                uncertainty,
             } => self.events.push_back(Event::ClockSynced {
                 source,
-                uncertainty_us,
+                uncertainty_us: u64::try_from(uncertainty.as_micros()).unwrap_or(u64::MAX),
             }),
             Output::SegmentLost { status, .. } => self.events.push_back(Event::Error {
                 kind: ErrorKind::SegmentFetchFailed { status },
@@ -1427,7 +1432,9 @@ mod tests {
             FailureClass::Expired,
             FailureClass::SegmentSkipped,
             FailureClass::EndTail,
-            FailureClass::NotYetAvailable { retry_at_us: 5 },
+            FailureClass::NotYetAvailable {
+                retry_at: Timestamp::from_micros(5),
+            },
         ] {
             assert!(!keeps_parked_prefix(class), "{class:?}");
         }

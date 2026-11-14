@@ -14,6 +14,7 @@ use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::smooth::SmoothSource;
 use broadcast_auth::AuthState;
+use broadcast_common::stage::Timestamp;
 
 pub(crate) enum Adaptive {
     Hls(Box<HlsSession>),
@@ -154,10 +155,13 @@ impl Adaptive {
         matches!(self, Self::Hls(_))
     }
 
-    pub(crate) fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+    pub(crate) fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
         match self {
-            Self::Dash(s) => s.set_wall_clock(now_us, unix_us),
-            Self::Smooth(s) => s.set_wall_clock(now_us, unix_us),
+            Self::Dash(s) => s.set_wall_clock(now, unix),
+            Self::Smooth(s) => s.set_wall_clock(
+                now.as_micros(),
+                u64::try_from(unix.as_microsecond()).unwrap_or(u64::MAX),
+            ),
             _ => {}
         }
     }
