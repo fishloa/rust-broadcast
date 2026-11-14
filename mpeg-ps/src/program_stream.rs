@@ -7,9 +7,9 @@
 //! The stream terminates with the `MPEG_program_end_code` `0x000001B9`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 
 use crate::Result;
 use crate::error::Error;
@@ -97,6 +97,36 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
         }),
         consumed,
     ))
+}
+
+impl Serialize for Pack<'_> {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let system_header = self
+            .system_header
+            .as_ref()
+            .map_or(0, Serialize::serialized_len);
+        let psm = self.psm.as_ref().map_or(0, Serialize::serialized_len);
+        let pes: usize = self.pes_packets.iter().map(Serialize::serialized_len).sum();
+        self.pack_header.serialized_len() + system_header + psm + pes
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        let mut at = self.pack_header.serialize_into(buf)?;
+        if let Some(sh) = &self.system_header {
+            at += sh.serialize_into(&mut buf[at..])?;
+        }
+        if let Some(psm) = &self.psm {
+            at += psm.serialize_into(&mut buf[at..])?;
+        }
+        for pes in &self.pes_packets {
+            at += pes.serialize_into(&mut buf[at..])?;
+        }
+        Ok(at)
+    }
 }
 
 /// Parse PES packets from `data` until a `pack_start_code`/`program_end_code`
@@ -296,6 +326,8 @@ mod tests {
                 stream_type: 0x02, // MPEG-2 video
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
+                pseudo_descriptor_tag: None,
+                pseudo_descriptor_length: None,
                 descriptors: &[],
             }],
             crc: 0,

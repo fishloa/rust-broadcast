@@ -126,6 +126,8 @@ fn psm_unit_round_trip() {
         stream_type: 0x02, // MPEG-2 video
         elementary_stream_id: 0xE0,
         stream_id_extension: None,
+        pseudo_descriptor_tag: None,
+        pseudo_descriptor_length: None,
         descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'],
     }];
 

@@ -29,6 +29,8 @@ pub(crate) fn psm(version: u8) -> Vec<u8> {
             stream_type: 0x02,
             elementary_stream_id: 0xE0,
             stream_id_extension: None,
+            pseudo_descriptor_tag: None,
+            pseudo_descriptor_length: None,
             descriptors: &[],
         }],
         crc: 0,
@@ -42,6 +44,30 @@ fn pack(psm_bytes: &[u8]) -> Vec<u8> {
     b.extend_from_slice(psm_bytes);
     b.extend_from_slice(PES);
     b
+}
+
+/// A PSM for one `stream_id` 0xFD elementary stream with a stream_id_extension
+/// and no descriptors: the pseudo descriptor is `pseudo_descriptor_tag` 0x01,
+/// `pseudo_descriptor_length` 1, marker + extension 0x8F (ISO/IEC 13818-1
+/// §2.5.4.2).
+pub(crate) fn psm_with_extension() -> Vec<u8> {
+    ProgramStreamMap {
+        current_next_indicator: true,
+        single_extension_stream_flag: false,
+        version: 1,
+        program_stream_info: &[],
+        elementary_stream_map: vec![EsMapEntry {
+            stream_type: 0x06,
+            elementary_stream_id: 0xFD,
+            stream_id_extension: Some(0x0F),
+            pseudo_descriptor_tag: Some(0x01),
+            pseudo_descriptor_length: Some(0x01),
+            descriptors: &[],
+        }],
+        crc: 0,
+    }
+    .try_to_bytes()
+    .expect("the vector PSM serializes")
 }
 
 /// Two packs, each a PSM (versions 1 and 2) followed by one PES; the wire PSM
