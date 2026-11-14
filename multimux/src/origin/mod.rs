@@ -106,7 +106,7 @@ const OUTPUT_AUTH_REALM: &str = "multimux";
 /// Config-surfaced via [`crate::config::Config`] (sane defaults below);
 /// [`AppState::new`] applies [`HttpLimits::default`] so existing call sites
 /// (tests, examples) are unaffected, and [`AppState::with_limits`] overrides
-/// it with `Config`'s configured values (wired by [`serve`]).
+/// it with `Config`'s configured values (wired by [`crate::Server`]).
 #[derive(Debug, Clone, Copy)]
 pub struct HttpLimits {
     /// Per-request timeout — see the struct docs.
@@ -235,7 +235,7 @@ impl AppState {
         }
     }
 
-    /// Overrides the default [`HttpLimits`] — [`serve`] uses this to apply
+    /// Overrides the default [`HttpLimits`] — [`crate::Server`] uses this to apply
     /// `Config`'s configured request-timeout/concurrency/body-size limits;
     /// callers that only want the defaults (most tests/examples) keep using
     /// [`Self::new`] unchanged.
@@ -246,7 +246,7 @@ impl AppState {
     }
 
     /// Gates every media output route behind `verifier` (issue #663 "shared
-    /// output auth") — [`serve`] uses this when
+    /// output auth") — [`crate::Server`] uses this when
     /// [`crate::config::Config::output_auth`] is configured; callers that
     /// only want the default open behaviour (most tests/examples) keep using
     /// [`Self::new`] unchanged.
@@ -443,7 +443,16 @@ pub(crate) async fn serve_hyper_util(
     app: axum::Router,
     token: tokio_util::sync::CancellationToken,
 ) -> std::io::Result<()> {
-    serve_hyper_util_with_timeout(listener, app, token, HEADER_READ_TIMEOUT, DRAIN_DEADLINE).await
+    serve_impl(
+        listener,
+        app,
+        token,
+        HEADER_READ_TIMEOUT,
+        DRAIN_DEADLINE,
+        MAX_CONNECTIONS,
+        |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
+    )
+    .await
 }
 
 /// [`serve_hyper_util`] with explicit header-read + drain timeouts (test-only).
@@ -820,7 +829,7 @@ where
 ///
 /// Builds a [`broadcast_auth::RequestContext`] carrying every request header
 /// (not just `Authorization`) plus the transport peer address (from
-/// [`ConnectInfo`], present when [`serve`] wires the router through
+/// [`ConnectInfo`], present when [`crate::Server`] wires the router through
 /// `into_make_service_with_connect_info` — `None` in a test harness that
 /// `oneshot`s the router directly), so a `Forwarded`-scheme verifier
 /// (`crate::config::OutputAuthSpec::Forwarded`) can read `X-Forwarded-User`/

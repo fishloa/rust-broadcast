@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::registry::SchemeRegistry;
 
+#[cfg(feature = "test-seams")]
 use super::PreboundListeners;
 use super::serve_with_registry_impl;
 
@@ -131,7 +132,7 @@ impl ServeRequest {
 ///
 /// Every configured [`crate::config::InputSpec`] variant drives a route
 /// (issue #805 tasks 2/4/5 — see `spawn_ingest`, which the run calls) through
-/// [`supervisor::supervise_driver`] (a `media_plane::ingress::IngestDriver`-
+/// [`crate::origin::supervisor::supervise_driver`] (a `media_plane::ingress::IngestDriver`-
 /// (or, for a push/`Listener`-shaped source like RTMP, `ListenDriver`-)
 /// driven `crate::source::*::run_*` entry point — or, for
 /// [`crate::config::InputSpec::Custom`], the equivalent driver loop a
@@ -153,16 +154,16 @@ impl Server {
         Self { request }
     }
 
-    /// Run the origin: one [`RouteHandle`] + one ingest task per
+    /// Run the origin: one [`crate::route::RouteHandle`] + one ingest task per
     /// `config.routes` entry, then bind `config.bind` and serve them all under
-    /// [`router`]. Each route is served by the [`Output`]s named in its
+    /// [`crate::origin::router`]. Each route is served by the [`crate::output::Output`]s named in its
     /// [`crate::config::Route::outputs`] (LL-HLS by default — see
     /// [`crate::output::OutputKind`]).
     ///
     /// Installs a graceful-shutdown signal (Ctrl-C, plus SIGTERM on unix): on
     /// receipt, the server stops accepting new connections and drains
     /// in-flight requests (including blocked LL-HLS long-poll reloads) up to
-    /// [`DRAIN_DEADLINE`] via the origin's `serve_hyper_util`
+    /// `DRAIN_DEADLINE` via the origin's `serve_hyper_util`
     /// `GracefulShutdown`, the same signal breaks every route's supervise
     /// loop, and `serve` joins each supervisor task (forcibly aborting one
     /// that doesn't return within a short grace period) before returning

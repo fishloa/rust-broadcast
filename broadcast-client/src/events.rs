@@ -1210,7 +1210,7 @@ impl Config {
     ///   every mapping above is applied and the one the URL resolves to takes
     ///   effect.
     /// - every other kind (TS over HTTP, RTSP, UDP, RTP, RTMP): the
-    ///   stall policy ([`Config::ts_http`], see [`crate::tshttp::Config::with_timeouts`]):
+    ///   stall policy ([`Config::ts_http`], see the TS-over-HTTP configuration’s `with_timeouts`):
     ///   `connect` is the start timeout, `read_idle` the stall-reconnect
     ///   threshold.
     ///
