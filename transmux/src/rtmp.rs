@@ -37,7 +37,7 @@ use rtmp_runtime::chunk::{
     ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
 };
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
-use rtmp_runtime::message::{ChunkSize, ProtocolControl, msg_type};
+use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
 
 use crate::flv::{FlvDemux, FlvError, FlvMux};
 use crate::media::Media;
@@ -236,22 +236,22 @@ impl<'a> Unpackage for RtmpDemux<'a> {
         let mut has_audio = false;
         while let Some(m) = assembler.next_message()? {
             match m.message_type_id {
-                msg_type::SET_CHUNK_SIZE => {
+                MessageTypeId::SetChunkSize => {
                     if let Some(ProtocolControl::SetChunkSize(size)) =
                         ProtocolControl::from_message(&m)?
                     {
                         assembler.set_chunk_size(size.value());
                     }
                 }
-                msg_type::AUDIO => {
+                MessageTypeId::Audio => {
                     has_audio = true;
                     tags.push((TagType::Audio, m.timestamp, m.payload));
                 }
-                msg_type::VIDEO => {
+                MessageTypeId::Video => {
                     has_video = true;
                     tags.push((TagType::Video, m.timestamp, m.payload));
                 }
-                msg_type::DATA_AMF0 => {
+                MessageTypeId::DataAmf0 => {
                     tags.push((TagType::Script, m.timestamp, m.payload));
                 }
                 _ => { /* control / command / user-control — not media */ }
@@ -356,10 +356,10 @@ impl Package for RtmpMux {
                 });
             }
             let (chunk_stream_id, message_type_id) = match tag.tag_type {
-                TagType::Audio => (CSID_AUDIO, msg_type::AUDIO),
-                TagType::Video => (CSID_VIDEO, msg_type::VIDEO),
-                TagType::Script | TagType::Reserved(_) => (CSID_DATA, msg_type::DATA_AMF0),
-                _ => (CSID_DATA, msg_type::DATA_AMF0),
+                TagType::Audio => (CSID_AUDIO, MessageTypeId::Audio),
+                TagType::Video => (CSID_VIDEO, MessageTypeId::Video),
+                TagType::Script | TagType::Reserved(_) => (CSID_DATA, MessageTypeId::DataAmf0),
+                _ => (CSID_DATA, MessageTypeId::DataAmf0),
             };
             let message = Message {
                 chunk_stream_id,

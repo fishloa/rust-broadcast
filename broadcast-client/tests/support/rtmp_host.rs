@@ -176,7 +176,7 @@ impl RtmpHost {
                 .peer
                 .as_mut()
                 .expect("peer")
-                .media(tag_type, ts, &body)
+                .media(tag_type.into(), ts, &body)
                 .expect("media");
             self.send_to_session(&bytes);
         }

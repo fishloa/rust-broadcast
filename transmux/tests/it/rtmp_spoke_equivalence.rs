@@ -13,13 +13,13 @@
 
 use broadcast_common::{Package, Parse, Unpackage};
 use rtmp_runtime::chunk::ChunkAssembler;
-use rtmp_runtime::message::{ChunkSize, ProtocolControl, msg_type};
+use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
 use transmux::{FlvDemux, FlvMux, Media, RtmpDemux, RtmpMux};
 
 const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
 
-const FLV_TAG_AUDIO: u8 = msg_type::AUDIO;
-const FLV_TAG_VIDEO: u8 = msg_type::VIDEO;
+const FLV_TAG_AUDIO: u8 = 8;
+const FLV_TAG_VIDEO: u8 = 9;
 
 /// Chunk sizes the spoke must round-trip: the §5.3 default, sizes that make
 /// small messages span several chunks (1, 192), a size larger than any message
@@ -58,13 +58,13 @@ fn flv_tags(flv: &[u8]) -> Vec<(u8, u32, Vec<u8>)> {
 }
 
 /// The same tags as the RTMP messages the chunk stream must carry.
-fn messages_of(tags: &[(u8, u32, Vec<u8>)]) -> Vec<(u8, u32, Vec<u8>)> {
+fn messages_of(tags: &[(u8, u32, Vec<u8>)]) -> Vec<(MessageTypeId, u32, Vec<u8>)> {
     tags.iter()
         .map(|(tag_type, timestamp, body)| {
             let message_type_id = match *tag_type {
-                FLV_TAG_AUDIO => msg_type::AUDIO,
-                FLV_TAG_VIDEO => msg_type::VIDEO,
-                _ => msg_type::DATA_AMF0,
+                FLV_TAG_AUDIO => MessageTypeId::Audio,
+                FLV_TAG_VIDEO => MessageTypeId::Video,
+                _ => MessageTypeId::DataAmf0,
             };
             (message_type_id, *timestamp, body.clone())
         })
@@ -102,7 +102,7 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
         let flv_bytes = FlvMux::new().package(&ground_truth).expect("IR to FLV");
         let expected = messages_of(&flv_tags(&flv_bytes));
         assert!(
-            expected.iter().any(|(t, ..)| *t == msg_type::DATA_AMF0),
+            expected.iter().any(|(t, ..)| *t == MessageTypeId::DataAmf0),
             "{rel}: the FLV path writes an onMetaData tag to compare against"
         );
 
@@ -114,14 +114,14 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
                 !wire.is_empty(),
                 "{rel}: the RTMP wire is non-empty at chunk size {chunk_size}"
             );
-            let carried: Vec<(u8, u32, Vec<u8>)> = {
+            let carried: Vec<(MessageTypeId, u32, Vec<u8>)> = {
                 let mut assembler = ChunkAssembler::new();
                 assembler.feed(&wire);
                 let mut out = Vec::new();
                 while let Some(m) = assembler.next_message().unwrap_or_else(|e| {
                     panic!("{rel} at chunk size {chunk_size}: chunk stream: {e}")
                 }) {
-                    if m.message_type_id == msg_type::SET_CHUNK_SIZE {
+                    if m.message_type_id == MessageTypeId::SetChunkSize {
                         if let Some(ProtocolControl::SetChunkSize(size)) =
                             ProtocolControl::from_message(&m).expect("valid set chunk size")
                         {
@@ -182,7 +182,7 @@ fn a_non_default_chunk_size_is_announced_in_band() {
     let first = first_message(&wire).expect("a non-empty chunk stream");
     assert_eq!(
         first.message_type_id,
-        msg_type::SET_CHUNK_SIZE,
+        MessageTypeId::SetChunkSize,
         "the stream opens by announcing its chunk size"
     );
     assert_eq!(
@@ -195,7 +195,7 @@ fn a_non_default_chunk_size_is_announced_in_band() {
     let default_first = first_message(&default_wire).expect("a non-empty chunk stream");
     assert_ne!(
         default_first.message_type_id,
-        msg_type::SET_CHUNK_SIZE,
+        MessageTypeId::SetChunkSize,
         "at the §5.4.1 default there is nothing to announce"
     );
 }
@@ -332,12 +332,12 @@ fn a_message_the_demuxer_would_reject_is_refused() {
 /// The messages an RTMP chunk stream carries, every Set Chunk Size applied in
 /// turn (`(message type id, body length)`): a chunk stream can carry several
 /// messages, so a whole-buffer demux is not how a receiver consumes it.
-fn carried_messages(wire: &[u8]) -> Vec<(u8, usize)> {
+fn carried_messages(wire: &[u8]) -> Vec<(MessageTypeId, usize)> {
     let mut assembler = ChunkAssembler::new();
     assembler.feed(wire);
     let mut out = Vec::new();
     while let Some(message) = assembler.next_message().expect("chunk stream parses") {
-        if message.message_type_id == msg_type::SET_CHUNK_SIZE {
+        if message.message_type_id == MessageTypeId::SetChunkSize {
             if let Some(ProtocolControl::SetChunkSize(size)) =
                 ProtocolControl::from_message(&message).expect("valid set chunk size")
             {
@@ -371,9 +371,9 @@ fn a_message_at_the_maximum_round_trips() {
             .iter()
             .map(|(tag_type, body)| {
                 let message_type_id = match *tag_type {
-                    FLV_TAG_AUDIO => msg_type::AUDIO,
-                    FLV_TAG_VIDEO => msg_type::VIDEO,
-                    _ => msg_type::DATA_AMF0,
+                    FLV_TAG_AUDIO => MessageTypeId::Audio,
+                    FLV_TAG_VIDEO => MessageTypeId::Video,
+                    _ => MessageTypeId::DataAmf0,
                 };
                 (message_type_id, body.len())
             })
@@ -392,7 +392,7 @@ fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
         .write(&rtmp_runtime::chunk::Message {
             chunk_stream_id: 2,
             timestamp: 0,
-            message_type_id: msg_type::SET_CHUNK_SIZE,
+            message_type_id: MessageTypeId::SetChunkSize,
             message_stream_id: 0,
             payload: RESERVED_BIT_CHUNK_SIZE.to_be_bytes().to_vec(),
         })

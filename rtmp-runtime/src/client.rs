@@ -19,7 +19,7 @@ use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
-use crate::message::{ChunkSize, ProtocolControl, UserControl, msg_type};
+use crate::message::{ChunkSize, MessageTypeId, ProtocolControl, UserControl};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -356,7 +356,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: 4,
             timestamp,
-            message_type_id: msg_type::AUDIO,
+            message_type_id: MessageTypeId::Audio,
             message_stream_id: self.stream_id.unwrap_or(1),
             payload: data.to_vec(),
         };
@@ -373,7 +373,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: 5,
             timestamp,
-            message_type_id: msg_type::VIDEO,
+            message_type_id: MessageTypeId::Video,
             message_stream_id: self.stream_id.unwrap_or(1),
             payload: data.to_vec(),
         };
@@ -394,7 +394,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: 4,
             timestamp: 0,
-            message_type_id: msg_type::DATA_AMF0,
+            message_type_id: MessageTypeId::DataAmf0,
             message_stream_id: self.stream_id.unwrap_or(1),
             payload,
         };
@@ -492,7 +492,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: 0,
             payload: cmd.to_body()?,
         };
@@ -520,7 +520,7 @@ impl ClientSession {
             let msg = Message {
                 chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
                 timestamp: 0,
-                message_type_id: msg_type::COMMAND_AMF0,
+                message_type_id: MessageTypeId::CommandAmf0,
                 message_stream_id: 0,
                 payload: cmd.to_body()?,
             };
@@ -543,7 +543,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: 0,
             payload: cmd.to_body()?,
         };
@@ -565,7 +565,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: self.stream_id.unwrap_or(1),
             payload: cmd.to_body()?,
         };
@@ -594,7 +594,7 @@ impl ClientSession {
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: stream_id,
             payload: cmd.to_body()?,
         };
@@ -608,7 +608,7 @@ impl ClientSession {
 
     fn emit_media(
         &mut self,
-        tag_type: u8,
+        tag_type: MessageTypeId,
         timestamp: u32,
         payload: &[u8],
         events: &mut Vec<ClientEvent>,
@@ -663,11 +663,11 @@ impl ClientSession {
             }
             return Ok(());
         }
-        if msg.message_type_id == msg_type::COMMAND_AMF0 {
+        if msg.message_type_id == MessageTypeId::CommandAmf0 {
             let cmd = Command::parse(&msg.payload)?;
             self.handle_command(&cmd, out, events)?;
         }
-        if msg.message_type_id == msg_type::COMMAND_AMF3 {
+        if msg.message_type_id == MessageTypeId::CommandAmf3 {
             let body = msg
                 .payload
                 .get(1..)
@@ -681,10 +681,10 @@ impl ClientSession {
         }
         if self.receiving_media() {
             match msg.message_type_id {
-                msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0 => {
+                MessageTypeId::Audio | MessageTypeId::Video | MessageTypeId::DataAmf0 => {
                     self.emit_media(msg.message_type_id, msg.timestamp, &msg.payload, events)?;
                 }
-                msg_type::AGGREGATE => {
+                MessageTypeId::Aggregate => {
                     unpack_aggregate(msg, |tag_type, timestamp, payload| {
                         self.emit_media(tag_type, timestamp, payload, events)
                     })?;
@@ -692,7 +692,7 @@ impl ClientSession {
                 _ => {}
             }
         }
-        if msg.message_type_id == msg_type::USER_CONTROL {
+        if msg.message_type_id == MessageTypeId::UserControl {
             // #1108/RTMP-W8: servers that probe liveness with User Control
             // PingRequest (event 6 — FMS/Wowza) got no PingResponse and may
             // have dropped the publisher; malformed/unrecognised event
@@ -931,7 +931,7 @@ mod tests {
             let skip = if round == 0 { HANDSHAKE_PACKET_LEN } else { 0 };
             sniff.set_chunk_size(client.config.chunk_size);
             for m in sniff.push(&to_server[skip..]).unwrap() {
-                if m.message_type_id == msg_type::COMMAND_AMF0 {
+                if m.message_type_id == MessageTypeId::CommandAmf0 {
                     let c = Command::parse(&m.payload).unwrap();
                     if c.name == "connect" {
                         connect_has_flash_ver = matches!(
@@ -986,7 +986,7 @@ mod tests {
         let messages = assembler.push(&out).unwrap();
         let reply = messages
             .iter()
-            .find(|m| m.message_type_id == msg_type::USER_CONTROL)
+            .find(|m| m.message_type_id == MessageTypeId::UserControl)
             .map(|m| UserControl::parse(&m.payload).unwrap());
         assert_eq!(reply, Some(UserControl::PingResponse(0xDEAD_BEEF)));
     }
@@ -1297,7 +1297,7 @@ mod tests {
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: 0,
             payload: error_cmd.to_body().unwrap(),
         };

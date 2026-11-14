@@ -1612,7 +1612,7 @@ impl Driver {
         let mut cif = vec![0u8; km.serialized_len()];
         km.serialize_into(&mut cif).ok()?;
         let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
-            control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+            control_type: crate::packet::ControlType::UserDefined.to_bits(),
             subtype,
             type_specific_info: 0,
             timestamp: self.elapsed_us(),
@@ -4250,7 +4250,7 @@ mod adapter_tests {
         let mut km_buf = vec![0u8; km.serialized_len()];
         km.serialize_into(&mut km_buf).unwrap();
         let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
-            control_type: crate::packet::control::CONTROL_TYPE_USER_DEFINED,
+            control_type: crate::packet::ControlType::UserDefined.to_bits(),
             subtype: crate::packet::handshake::EXT_TYPE_KMREQ,
             type_specific_info: 0,
             timestamp: 0,

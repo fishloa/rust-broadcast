@@ -29,26 +29,28 @@ use broadcast_common::error::ReservedBits;
 use broadcast_common::len::{need_in, need_out};
 
 /// `Control Type` wire values (`draft-sharabayko-srt-01` §3.2, Table 1).
-pub const CONTROL_TYPE_HANDSHAKE: u16 = 0x0000;
+/// Crate-private: they back [`ControlType::from_bits`]/[`ControlType::to_bits`],
+/// and [`ControlType`] is how a caller names a control type.
+pub(crate) const CONTROL_TYPE_HANDSHAKE: u16 = 0x0000;
 /// Keep-Alive (§3.2.3).
-pub const CONTROL_TYPE_KEEPALIVE: u16 = 0x0001;
+pub(crate) const CONTROL_TYPE_KEEPALIVE: u16 = 0x0001;
 /// ACK (§3.2.4).
-pub const CONTROL_TYPE_ACK: u16 = 0x0002;
+pub(crate) const CONTROL_TYPE_ACK: u16 = 0x0002;
 /// NAK / Loss Report (§3.2.5).
-pub const CONTROL_TYPE_NAK: u16 = 0x0003;
+pub(crate) const CONTROL_TYPE_NAK: u16 = 0x0003;
 /// Congestion Warning (§3.2.6).
-pub const CONTROL_TYPE_CONGESTION_WARNING: u16 = 0x0004;
+pub(crate) const CONTROL_TYPE_CONGESTION_WARNING: u16 = 0x0004;
 /// Shutdown (§3.2.7).
-pub const CONTROL_TYPE_SHUTDOWN: u16 = 0x0005;
+pub(crate) const CONTROL_TYPE_SHUTDOWN: u16 = 0x0005;
 /// ACKACK (§3.2.8).
-pub const CONTROL_TYPE_ACKACK: u16 = 0x0006;
+pub(crate) const CONTROL_TYPE_ACKACK: u16 = 0x0006;
 /// Message Drop Request (§3.2.9).
-pub const CONTROL_TYPE_DROPREQ: u16 = 0x0007;
+pub(crate) const CONTROL_TYPE_DROPREQ: u16 = 0x0007;
 /// Peer Error (§3.2.10).
-pub const CONTROL_TYPE_PEERERROR: u16 = 0x0008;
+pub(crate) const CONTROL_TYPE_PEERERROR: u16 = 0x0008;
 /// User-Defined Type (reserved value; also carries the Key Material message
 /// per §3.2.2 via `Subtype` `SRT_CMD_KMREQ`/`SRT_CMD_KMRSP`).
-pub const CONTROL_TYPE_USER_DEFINED: u16 = 0x7FFF;
+pub(crate) const CONTROL_TYPE_USER_DEFINED: u16 = 0x7FFF;
 
 /// The `Control Type` field (`draft-sharabayko-srt-01` §3.2, Table 1) — 15
 /// bits.
@@ -548,5 +550,40 @@ impl broadcast_common::Serialize for ControlPacket<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> core::result::Result<usize, Self::Error> {
         ControlPacket::serialize_into(self, buf)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_control_type_round_trips_its_table_1_wire_value() {
+        for (ty, value) in [
+            (ControlType::Handshake, 0x0000u16),
+            (ControlType::KeepAlive, 0x0001),
+            (ControlType::Ack, 0x0002),
+            (ControlType::Nak, 0x0003),
+            (ControlType::CongestionWarning, 0x0004),
+            (ControlType::Shutdown, 0x0005),
+            (ControlType::AckAck, 0x0006),
+            (ControlType::DropReq, 0x0007),
+            (ControlType::PeerError, 0x0008),
+            (ControlType::UserDefined, 0x7FFF),
+        ] {
+            assert_eq!(ty.to_bits(), value, "{}", ty.name());
+            assert_eq!(ControlType::from_bits(value), ty);
+        }
+    }
+
+    #[test]
+    fn a_control_type_off_table_1_is_reserved_and_keeps_its_value() {
+        // 0x0009..=0x7FFE are not in Table 1; the enum, not a raw constant,
+        // is the public way to name and recover them.
+        for value in [0x0009u16, 0x0010, 0x7FFE] {
+            assert_eq!(ControlType::from_bits(value), ControlType::Reserved(value));
+            assert_eq!(ControlType::from_bits(value).to_bits(), value);
+        }
+        assert_eq!(ControlType::Reserved(0x0010).name(), "reserved");
     }
 }

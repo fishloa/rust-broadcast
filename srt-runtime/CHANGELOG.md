@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- BREAKING: the `packet::control::CONTROL_TYPE_*` (`u16`) and `packet::handshake::ENCRYPTION_FIELD_*` (`u16`) / `HANDSHAKE_TYPE_*` (`u32`) constants; they duplicated the wire values of `ControlType`, `EncryptionField` and `HandshakeType`, which carry them through `from_bits`/`to_bits` (and `name()`/`Display`). Migration: `HANDSHAKE_TYPE_INDUCTION` -> `HandshakeType::Induction` (compare `handshake_type.to_bits()` with it), `CONTROL_TYPE_SHUTDOWN` -> `ControlType::Shutdown`, `ENCRYPTION_FIELD_NONE` -> `EncryptionField::NoEncryption` (#2666).
+
 ### Changed
 - BREAKING: `io::SrtConfig` is `io::SrtSocketConfig`, matching `RtspClientConfig`/`RtmpClientConfig`/`HlsClientConfig`; it is named for its role, not `SrtClientConfig`, because one config serves both the caller (`SrtSocket::connect`) and the listener (`SrtListener::bind`). Migration: every `srt_runtime::io::SrtConfig` becomes `srt_runtime::io::SrtSocketConfig`.
 

@@ -385,7 +385,7 @@ impl CallerHandshake {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::handshake::{HANDSHAKE_TYPE_INDUCTION, HS_EXT_FLAG_HSREQ};
+    use crate::packet::handshake::{HS_EXT_FLAG_HSREQ, HandshakeType};
 
     #[test]
     fn start_is_idempotent_guard() {
@@ -457,7 +457,7 @@ mod tests {
                 assert_eq!(hp.version, HANDSHAKE_VERSION_4);
                 assert_eq!(hp.encryption_field, EncryptionField::NoEncryption);
                 assert_eq!(hp.extension_field.0, INDUCTION_LEGACY_SOCKET_TYPE);
-                assert_eq!(hp.handshake_type.to_bits(), HANDSHAKE_TYPE_INDUCTION);
+                assert_eq!(hp.handshake_type, HandshakeType::Induction);
                 assert_eq!(hp.srt_socket_id, 0xAAAA_BBBB);
                 assert_eq!(hp.syn_cookie, 0);
                 assert_eq!(hp.dest_socket_id, 0);

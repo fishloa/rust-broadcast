@@ -68,7 +68,7 @@ use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::Handshake;
-use crate::message::{ChunkSize, LimitType, ProtocolControl, UserControl, msg_type};
+use crate::message::{ChunkSize, LimitType, MessageTypeId, ProtocolControl, UserControl};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -245,7 +245,7 @@ pub enum ServerEvent {
     /// is an error instead.
     Unsupported {
         /// The message type id that was dropped (§6/§7.1).
-        message_type_id: u8,
+        message_type_id: MessageTypeId,
     },
 }
 
@@ -499,7 +499,7 @@ impl ServerSession {
         }
 
         match msg.message_type_id {
-            msg_type::USER_CONTROL => {
+            MessageTypeId::UserControl => {
                 // Publish-only ingest: no inbound user control event needs
                 // a reply from us. Malformed/unrecognised event types are
                 // tolerated (accepted, not fatal) rather than aborting the
@@ -507,7 +507,7 @@ impl ServerSession {
                 let _ = UserControl::parse(&msg.payload);
                 Ok(())
             }
-            msg_type::COMMAND_AMF0 => {
+            MessageTypeId::CommandAmf0 => {
                 let command = Command::parse(&msg.payload)?;
                 self.handle_command(&command, msg, out, events)
             }
@@ -517,7 +517,7 @@ impl ServerSession {
             // different command grammar. Pre-fix, an encoder/CDN front-end
             // that opens with an AMF3 `connect` (rather than AMF0) got no
             // reply at all and hung until its own timeout.
-            msg_type::COMMAND_AMF3 => {
+            MessageTypeId::CommandAmf3 => {
                 let body =
                     msg.payload
                         .get(1..)
@@ -529,7 +529,7 @@ impl ServerSession {
                 let command = Command::parse(body)?;
                 self.handle_command(&command, msg, out, events)
             }
-            msg_type::AUDIO | msg_type::VIDEO | msg_type::DATA_AMF0 => self
+            MessageTypeId::Audio | MessageTypeId::Video | MessageTypeId::DataAmf0 => self
                 .emit_media_if_publishing(msg.message_type_id, msg.timestamp, &msg.payload, events),
             // #1108/RTMP-W6 (remainder): Aggregate(22) used to surface as
             // `Unsupported` — an encoder/relay that bundles media in
@@ -537,7 +537,7 @@ impl ServerSession {
             // still produced zero `Media` events. Now unpacked into its
             // contained sub-messages per §7.1.6 (see
             // `deliver_aggregate`).
-            msg_type::AGGREGATE => self.deliver_aggregate(msg, events),
+            MessageTypeId::Aggregate => self.deliver_aggregate(msg, events),
             // Data-AMF3(15), Shared Object(16/19), and anything
             // unrecognised: out of scope for this ingest engine (see the
             // crate's non-goals) — accepted, not fatal, but surfaced to
@@ -859,7 +859,7 @@ impl ServerSession {
         Ok(Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: request.message_stream_id,
             payload: command.to_body()?,
         })
@@ -871,7 +871,7 @@ impl ServerSession {
     /// or after a stream-key mismatch, are silently dropped — no event).
     fn emit_media_if_publishing(
         &mut self,
-        tag_type: u8,
+        tag_type: MessageTypeId,
         timestamp: u32,
         payload: &[u8],
         events: &mut Vec<ServerEvent>,
@@ -940,7 +940,7 @@ mod tests {
         Message {
             chunk_stream_id: csid,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: stream_id,
             payload: body,
         }
@@ -980,7 +980,7 @@ mod tests {
 
     fn av_bytes(
         stream_id: u32,
-        message_type_id: u8,
+        message_type_id: MessageTypeId,
         csid: u32,
         timestamp: u32,
         payload: Vec<u8>,
@@ -1012,7 +1012,7 @@ mod tests {
     fn decode_commands(bytes: &[u8]) -> Vec<Command> {
         decode_messages(bytes)
             .iter()
-            .filter(|m| m.message_type_id == msg_type::COMMAND_AMF0)
+            .filter(|m| m.message_type_id == MessageTypeId::CommandAmf0)
             .map(|m| Command::parse(&m.payload).expect("well-formed command reply"))
             .collect()
     }
@@ -1180,7 +1180,7 @@ mod tests {
         let msg = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF3,
+            message_type_id: MessageTypeId::CommandAmf3,
             message_stream_id: 0,
             payload: amf3_body,
         };
@@ -1217,7 +1217,7 @@ mod tests {
         let msg = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 0,
-            message_type_id: msg_type::AGGREGATE,
+            message_type_id: MessageTypeId::Aggregate,
             message_stream_id: 0,
             payload: vec![0xAA; 20], // opaque; not a valid aggregate body
         };
@@ -1234,11 +1234,11 @@ mod tests {
     /// sub-messages, writing the timestamps in FLV layout (24-bit high +
     /// extended low byte) and each `Back Pointer` as "size of this message
     /// including its header" (§7.1.6).
-    fn aggregate_body(subs: &[(u8, u32, &[u8])]) -> Vec<u8> {
+    fn aggregate_body(subs: &[(MessageTypeId, u32, &[u8])]) -> Vec<u8> {
         let mut body = Vec::new();
         for &(tag_type, timestamp, data) in subs {
             let data_size = data.len() as u32;
-            body.push(tag_type);
+            body.push(tag_type.to_u8());
             body.push((data_size >> 16) as u8);
             body.push((data_size >> 8) as u8);
             body.push(data_size as u8);
@@ -1256,14 +1256,17 @@ mod tests {
 
     /// Pulls the `(tag_type, timestamp)` out of one `Media` event's FLV
     /// bytes (the tag starts after the one-time FLV file header).
-    fn first_flv_tag_header(flv: &[u8]) -> (u8, u32) {
+    fn first_flv_tag_header(flv: &[u8]) -> (MessageTypeId, u32) {
         let tag = if flv.len() > 13 && flv.starts_with(b"FLV") {
             &flv[13..]
         } else {
             flv
         };
         let ts_low24 = u32::from_be_bytes([0, tag[4], tag[5], tag[6]]);
-        (tag[0], ts_low24 | (u32::from(tag[7]) << 24))
+        (
+            MessageTypeId::from_u8(tag[0]),
+            ts_low24 | (u32::from(tag[7]) << 24),
+        )
     }
 
     /// Publishes through the full handshake/connect/createStream/publish
@@ -1285,20 +1288,20 @@ mod tests {
     fn aggregate_message_is_unpacked_into_media_events() {
         let mut session = publishing_session();
         let body = aggregate_body(&[
-            (msg_type::VIDEO, 1000, &[0x17, 0x01, 0xAA, 0xBB]),
-            (msg_type::VIDEO, 1040, &[0x27, 0x01, 0xCC]),
-            (msg_type::AUDIO, 1005, &[0xAF, 0x01, 0xDD, 0xEE]),
+            (MessageTypeId::Video, 1000, &[0x17, 0x01, 0xAA, 0xBB]),
+            (MessageTypeId::Video, 1040, &[0x27, 0x01, 0xCC]),
+            (MessageTypeId::Audio, 1005, &[0xAF, 0x01, 0xDD, 0xEE]),
         ]);
         let msg = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 1000, // == first sub-message ts, so offset is 0
-            message_type_id: msg_type::AGGREGATE,
+            message_type_id: MessageTypeId::Aggregate,
             message_stream_id: 1,
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
         let (_out, events) = session.handle_data(&bytes).unwrap();
-        let tags: Vec<(u8, u32)> = events
+        let tags: Vec<(MessageTypeId, u32)> = events
             .iter()
             .map(|e| match e {
                 ServerEvent::Media { flv } => first_flv_tag_header(flv),
@@ -1308,9 +1311,9 @@ mod tests {
         assert_eq!(
             tags,
             vec![
-                (msg_type::VIDEO, 1000),
-                (msg_type::VIDEO, 1040),
-                (msg_type::AUDIO, 1005),
+                (MessageTypeId::Video, 1000),
+                (MessageTypeId::Video, 1040),
+                (MessageTypeId::Audio, 1005),
             ]
         );
     }
@@ -1322,19 +1325,19 @@ mod tests {
     fn aggregate_timestamps_are_renormalized_against_the_aggregate() {
         let mut session = publishing_session();
         let body = aggregate_body(&[
-            (msg_type::VIDEO, 50, &[0x17, 0x01]),
-            (msg_type::AUDIO, 60, &[0xAF, 0x01]),
+            (MessageTypeId::Video, 50, &[0x17, 0x01]),
+            (MessageTypeId::Audio, 60, &[0xAF, 0x01]),
         ]);
         let msg = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 100,
-            message_type_id: msg_type::AGGREGATE,
+            message_type_id: MessageTypeId::Aggregate,
             message_stream_id: 1,
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
         let (_out, events) = session.handle_data(&bytes).unwrap();
-        let tags: Vec<(u8, u32)> = events
+        let tags: Vec<(MessageTypeId, u32)> = events
             .iter()
             .map(|e| match e {
                 ServerEvent::Media { flv } => first_flv_tag_header(flv),
@@ -1342,7 +1345,10 @@ mod tests {
             })
             .collect();
         // offset = 100 − 50 = 50 added to each.
-        assert_eq!(tags, vec![(msg_type::VIDEO, 100), (msg_type::AUDIO, 110)]);
+        assert_eq!(
+            tags,
+            vec![(MessageTypeId::Video, 100), (MessageTypeId::Audio, 110)]
+        );
     }
 
     /// RTMP-W6 remainder (#1108): a truncated aggregate (last sub-message
@@ -1351,14 +1357,14 @@ mod tests {
     #[test]
     fn truncated_aggregate_message_errors() {
         let mut session = publishing_session();
-        let mut body = aggregate_body(&[(msg_type::VIDEO, 0, &[0x17, 0x01, 0xAA])]);
+        let mut body = aggregate_body(&[(MessageTypeId::Video, 0, &[0x17, 0x01, 0xAA])]);
         // Chop off the last sub-message's data + back pointer: its header
         // now claims 3 data bytes the body no longer has.
         body.truncate(body.len() - 5);
         let msg = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 0,
-            message_type_id: msg_type::AGGREGATE,
+            message_type_id: MessageTypeId::Aggregate,
             message_stream_id: 1,
             payload: body,
         };
@@ -1375,13 +1381,13 @@ mod tests {
     #[test]
     fn aggregate_with_bad_back_pointer_errors() {
         let mut session = publishing_session();
-        let mut body = aggregate_body(&[(msg_type::VIDEO, 0, &[0x17, 0x01, 0xAA])]);
+        let mut body = aggregate_body(&[(MessageTypeId::Video, 0, &[0x17, 0x01, 0xAA])]);
         let back_at = body.len() - 4;
         body[back_at] = 0xFF; // corrupt the back pointer
         let msg = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 0,
-            message_type_id: msg_type::AGGREGATE,
+            message_type_id: MessageTypeId::Aggregate,
             message_stream_id: 1,
             payload: body,
         };
@@ -1525,7 +1531,7 @@ mod tests {
 
         let messages = decode_messages(&out);
         let has_stream_begin = messages.iter().any(|m| {
-            m.message_type_id == msg_type::USER_CONTROL
+            m.message_type_id == MessageTypeId::UserControl
                 && matches!(
                     UserControl::parse(&m.payload),
                     Ok(UserControl::StreamBegin(1))
@@ -1610,7 +1616,7 @@ mod tests {
         let (_out1, events1) = session
             .handle_data(&av_bytes(
                 1,
-                msg_type::AUDIO,
+                MessageTypeId::Audio,
                 4,
                 0,
                 vec![0xAF, 0x01, 0xDE, 0xAD],
@@ -1628,7 +1634,7 @@ mod tests {
         let (_out2, events2) = session
             .handle_data(&av_bytes(
                 1,
-                msg_type::VIDEO,
+                MessageTypeId::Video,
                 6,
                 40,
                 vec![0x17, 0x01, 0x00, 0x00, 0x00, 0xDE, 0xAD, 0xBE, 0xEF],
@@ -1654,7 +1660,7 @@ mod tests {
         let (_out, events) = session
             .handle_data(&av_bytes(
                 1,
-                msg_type::AUDIO,
+                MessageTypeId::Audio,
                 4,
                 0,
                 vec![0xAF, 0x01, 0xDE, 0xAD],
@@ -1676,7 +1682,7 @@ mod tests {
         let (_out1, events1) = session
             .handle_data(&av_bytes(
                 1,
-                msg_type::AUDIO,
+                MessageTypeId::Audio,
                 4,
                 0,
                 vec![0xAF, 0x01, 1, 2, 3],
@@ -1685,7 +1691,7 @@ mod tests {
         let (_out2, events2) = session
             .handle_data(&av_bytes(
                 1,
-                msg_type::VIDEO,
+                MessageTypeId::Video,
                 6,
                 33,
                 vec![0x17, 0x01, 0, 0, 0, 4, 5, 6],
@@ -1714,7 +1720,7 @@ mod tests {
 
         // First tag (audio): TagType=8, DataSize=5.
         let tag1 = &flv_stream[13..];
-        assert_eq!(tag1[0], msg_type::AUDIO);
+        assert_eq!(tag1[0], MessageTypeId::Audio.to_u8());
         let data_size1 =
             (u32::from(tag1[1]) << 16) | (u32::from(tag1[2]) << 8) | u32::from(tag1[3]);
         assert_eq!(data_size1, 5);
@@ -1728,7 +1734,7 @@ mod tests {
 
         // Second tag (video) immediately follows.
         let tag2 = &flv_stream[13 + tag1_total..];
-        assert_eq!(tag2[0], msg_type::VIDEO);
+        assert_eq!(tag2[0], MessageTypeId::Video.to_u8());
         let data_size2 =
             (u32::from(tag2[1]) << 16) | (u32::from(tag2[2]) << 8) | u32::from(tag2[3]);
         assert_eq!(data_size2, 8);
@@ -1759,7 +1765,7 @@ mod tests {
         );
 
         let (_out, events) = session
-            .handle_data(&av_bytes(1, msg_type::DATA_AMF0, 4, 0, payload))
+            .handle_data(&av_bytes(1, MessageTypeId::DataAmf0, 4, 0, payload))
             .unwrap();
 
         assert_eq!(events.len(), 1);
@@ -1773,7 +1779,7 @@ mod tests {
         let tag_type = flv[FLV_HEADER_LEN + FLV_PREV_TAG_SIZE_LEN];
         assert_eq!(
             tag_type,
-            msg_type::DATA_AMF0,
+            MessageTypeId::DataAmf0.to_u8(),
             "Data-AMF0 message must produce a script(18) FLV tag"
         );
     }
@@ -1795,7 +1801,7 @@ mod tests {
         );
 
         let (_out, events) = session
-            .handle_data(&av_bytes(1, msg_type::DATA_AMF0, 4, 0, payload))
+            .handle_data(&av_bytes(1, MessageTypeId::DataAmf0, 4, 0, payload))
             .unwrap();
         let ServerEvent::Media { flv } = &events[0] else {
             panic!("expected Media event");
@@ -1818,7 +1824,7 @@ mod tests {
 
         // publish never called: state is Connected, not Publishing.
         let (_out, events) = session
-            .handle_data(&av_bytes(1, msg_type::AUDIO, 4, 0, vec![0xAF, 0x01]))
+            .handle_data(&av_bytes(1, MessageTypeId::Audio, 4, 0, vec![0xAF, 0x01]))
             .unwrap();
         assert!(events.is_empty());
     }
@@ -1852,7 +1858,7 @@ mod tests {
 
         // Session never entered Publishing: subsequent A/V produces no Media.
         let (_out2, events2) = session
-            .handle_data(&av_bytes(1, msg_type::AUDIO, 4, 0, vec![0xAF, 0x01]))
+            .handle_data(&av_bytes(1, MessageTypeId::Audio, 4, 0, vec![0xAF, 0x01]))
             .unwrap();
         assert!(
             events2.is_empty(),
@@ -1985,7 +1991,7 @@ mod tests {
         let bogus = Message {
             chunk_stream_id: CLIENT_CSID,
             timestamp: 0,
-            message_type_id: msg_type::COMMAND_AMF0,
+            message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: 0,
             payload: vec![0xFF, 0xFF, 0xFF, 0xFF],
         };
@@ -2086,7 +2092,7 @@ mod tests {
             .write(&Message {
                 chunk_stream_id: 6,
                 timestamp: 0,
-                message_type_id: msg_type::VIDEO,
+                message_type_id: MessageTypeId::Video,
                 message_stream_id: 1,
                 payload: big_payload.clone(),
             })
