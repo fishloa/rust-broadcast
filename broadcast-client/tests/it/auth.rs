@@ -778,11 +778,8 @@ fn set_credentials_after_a_dropped_connection_resumes_from_the_instant_the_call_
     };
     session.on_response(
         conn,
-        401,
-        &[(
-            "WWW-Authenticate".to_string(),
-            "Bearer realm=\"tv\"".to_string(),
-        )],
+        crate::support::status(401),
+        &crate::support::headers(&[("WWW-Authenticate", "Bearer realm=\"tv\"")]),
         ts(0),
     );
     while session.poll(ts(0)).is_some() {}

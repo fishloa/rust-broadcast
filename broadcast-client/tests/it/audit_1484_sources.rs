@@ -617,7 +617,12 @@ fn ts_reconnect_past_the_end_of_the_clock_emits_no_wake() {
     let mut session =
         Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).expect("open");
     let req = crate::support::ts_probe::one(&mut session, 0);
-    session.on_response(req.conn, 503, &[], ts(u64::MAX - 1));
+    session.on_response(
+        req.conn,
+        support::status(503),
+        &support::headers(&[]),
+        ts(u64::MAX - 1),
+    );
     while session.next_event().is_some() {}
     let at = u64::MAX / 2;
     let wakes: Vec<Timestamp> = actions(&mut session, at)

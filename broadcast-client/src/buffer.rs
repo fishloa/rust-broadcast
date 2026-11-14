@@ -986,11 +986,14 @@ mod tests {
         assert_eq!(PCR_TIMESCALE.as_u64(), PCR_HZ);
         assert_eq!(PCR_HZ, 27_000_000);
         assert_eq!(
-            raw_27mhz(PCR_HZ as i64, Timescale::from_nonzero(PCR_HZ as u32)),
+            raw_27mhz(
+                PCR_HZ as i64,
+                Timescale::new(PCR_HZ as u32).expect("27 MHz is a non-zero timescale")
+            ),
             i128::from(PCR_HZ)
         );
         assert_eq!(
-            pts_to_27mhz(90_000, Timescale::from_nonzero(90_000)),
+            pts_to_27mhz(90_000, Timescale::new(90_000).expect("90 kHz is a non-zero timescale")),
             PCR_HZ
         );
     }
