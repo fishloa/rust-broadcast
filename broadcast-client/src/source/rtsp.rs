@@ -73,7 +73,7 @@ enum Phase {
     Connecting,
     Awaiting(Req),
     Playing,
-    Backoff(Timestamp),
+    Backoff(Option<Timestamp>),
     WaitingAuth(Req),
     Closed,
 }
@@ -175,7 +175,7 @@ impl RtspSource {
             port: url.port().unwrap_or(default_port),
             tls,
             cfg: cfg.clone(),
-            phase: Phase::Backoff(now),
+            phase: Phase::Backoff(Some(now)),
             conn: None,
             next_conn: FIRST_CONN_ID,
             connections: 0,
@@ -383,7 +383,7 @@ impl RtspSource {
     /// representable instant has none, so it never fires and has no wake here.
     fn next_deadline(&self) -> Option<Timestamp> {
         match self.phase {
-            Phase::Backoff(due) => Some(due),
+            Phase::Backoff(due) => due,
             Phase::Awaiting(_) | Phase::Playing => {
                 // A deadline that does not fit the clock can never be reached: it is no
                 // deadline, so whoever sends this phase on (the start timeout, the stall
@@ -419,11 +419,11 @@ impl RtspSource {
         self.discontinuity_pending = true;
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
-        self.phase = Phase::Backoff(now.checked_add(floor).unwrap_or(Timestamp(u64::MAX)));
+        self.phase = Phase::Backoff(now.checked_add(floor));
     }
 
     fn reconnect_if_due(&mut self, now: Timestamp, auth: &AuthState) {
-        if let Phase::Backoff(due) = self.phase
+        if let Phase::Backoff(Some(due)) = self.phase
             && now >= due
         {
             self.retarget(self.original_url.clone());
@@ -1153,7 +1153,7 @@ impl RtspSource {
         }
         // The engine holds the activity instant as a `Timestamp`; answer it at the end of that
         // same reading so it cannot see the request as older than the clock it was due on.
-        match self.client.handle_timeout(Timestamp(u64::MAX)) {
+        match self.client.handle_timeout(now) {
             Ok(Some(bytes)) => {
                 if let Some(conn) = self.conn {
                     self.actions.push_back(Action::Send { conn, bytes });
@@ -1210,13 +1210,35 @@ impl RtspSource {
         self.events.push_back(Event::Status(Status::Reconnecting {
             attempt: u64::from(self.retry.attempts()),
         }));
-        self.phase = Phase::Backoff(now.checked_add(wait).unwrap_or(Timestamp(u64::MAX)));
+        self.phase = Phase::Backoff(now.checked_add(wait));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A reconnect timer that would land past the end of the clock is no timer
+    /// at all: the source reports no deadline and never reconnects early on a
+    /// saturated instant, instead of reading the end of the clock as "due now".
+    #[test]
+    fn a_reconnect_that_does_not_fit_the_clock_never_fires() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
+        source.take_actions();
+        source.on_connected(ConnId::new(1), Timestamp::from_micros(u64::MAX));
+        source.take_actions();
+        source.seen_first_sample = true;
+        source.after_connection_end(Timestamp::from_micros(u64::MAX));
+
+        assert_eq!(source.phase, Phase::Backoff(None));
+        assert_eq!(source.next_deadline(), None);
+        source.reconnect_if_due(
+            Timestamp::from_micros(u64::MAX),
+            &AuthState::new(url.clone(), Vec::new()),
+        );
+        assert_eq!(source.phase, Phase::Backoff(None));
+    }
 
     #[test]
     fn reconnect_never_reuses_the_live_connection_id() {
