@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `MultimuxError::Protocol` now carries `phase: Phase` and `kind: ProtocolFailure` (typed status/timeout/source) instead of `phase: &'static str, reason: String`; `Sdp` and `Auth` are now tuple variants `Sdp(#[source] SdpError)` and `Auth(#[source] broadcast_auth::Error)`; `OutputKind::build()`/`build_with_playlist_name()` now return `Result<Arc<dyn Output>, MultimuxError>`; `DvrConfig::validate()`, `DvrRecorder::feed_si`, `poll_and_persist`, `poll_and_persist_inits` now return `DvrError` (#2658).
+- BREAKING: `source::udp::UdpBindOptions` is removed in favour of `broadcast_common::net::UdpOptions` (the join now lives in `UdpOptions::join`, one `MulticastInterface` value instead of a free-text `multicast_interface`). Migration: `UdpBindOptions { recv_buffer_bytes, reuse_address, multicast_interface: Some(text), reuse_port }` becomes `UdpOptions::new().with_recv_buffer_bytes(..).with_reuse_address(..).with_reuse_port(..).with_join(MulticastJoin::new(group).with_interface(MulticastInterface::parse(text)?))`. `source::udp::bind_udp(addr, group, opts)` keeps its shape.
+- BREAKING: `TsUdpRoute::new(name, addr)` and `RtpUdpRoute::new(name, addr, sdp)` no longer take a `multicast_group`; the group is the route's socket options' join (`with_socket_options(UdpOptions { .. })`). `TsUdpRoute::with_multicast_group`/`RtpUdpRoute::with_multicast_group` are removed; `with_socket_options` now takes `UdpOptions`. Migration: `TsUdpRoute::new(name, addr, Some(group))` becomes `TsUdpRoute::new(name, addr).with_socket_options(UdpOptions::new().with_join(MulticastJoin::new(group.parse()?)))`.
+- `routes.input.multicast_interface` accepts a system interface name as well as an IPv4 address or an IPv6 interface index; a value written like an IPv4 address but not one is now a config error at load (`validate`) instead of at the first bind.
+- BREAKING: `rtsp-runtime`/`broadcast-auth` error variants are now typed (`TransportParse(TransportParseError)`, `ChallengeParse(HttpAuthError)`); migrated call sites (#2659).
+- The HTTP-JSON config keys are unchanged (`recv_buffer_bytes`, `reuse_address`, `reuse_port`, `multicast_interface`).
+### Fixed
+- A configured multicast interface of the group's other address family is refused when the route is resolved, instead of failing in the bind with a raw OS error (#2663).
+### Added
+- `source::udp::bind_options`: the `UdpOptions` a route bind asks for (`multicast_group` as the join's group, the crate's default `SO_RCVBUF` filled in), validating the join first.
 - `dvb-si` is built with its new `legacy-charsets` feature, so KS X 1001 / GB-2312 / Big5 EIT event names keep decoding (#2635).
 - `tower-http` 0.6 to 0.7 (timeout, limit, cors, gzip compression and decompression layers; no behaviour change); `rtsp-types` follows `rtsp-runtime` to 0.2.
 ### Fixed

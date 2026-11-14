@@ -144,7 +144,7 @@ fn fixture_carries_no_pcr_so_the_analyzer_clock_degenerates() {
     let mut with_pcr = 0u32;
     for chunk in data.chunks(TS_PACKET_SIZE) {
         let p = TsPacket::parse(chunk).expect("every packet in this fixture parses");
-        if p.header.has_adaptation {
+        if p.header.has_adaptation() {
             with_af += 1;
         }
         if let Some(Ok(af)) = p.adaptation_field()

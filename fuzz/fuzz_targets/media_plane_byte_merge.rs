@@ -31,7 +31,8 @@ fuzz_target!(|data: &[u8]| {
         }
     };
 
-    let mut merge = ByteMerge::new(policy, num_sources, max_queued);
+    // Both counts are at least 1 here, so the typed zero rejection cannot fire.
+    let mut merge = ByteMerge::new(policy, num_sources, max_queued).expect("counts are non-zero");
     let mut ts = 0u64;
     for rec in data[4..].chunks(6) {
         if rec.len() < 2 {

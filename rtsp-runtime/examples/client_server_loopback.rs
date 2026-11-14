@@ -80,9 +80,9 @@ fn main() {
             println!(
                 "MEDIA     channel {channel}: {} bytes (round-trips: {})",
                 data.len(),
-                data == rtp
+                data.as_ref() == rtp
             );
-            assert_eq!(data, rtp);
+            assert_eq!(data.as_ref(), rtp);
         }
     }
 

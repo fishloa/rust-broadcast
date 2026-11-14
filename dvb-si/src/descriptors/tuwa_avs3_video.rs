@@ -184,7 +184,7 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
                 .map(|c| {
                     if id_type {
                         TuwaLibraryRef::Peid {
-                            pid: Pid::new(u16::from_be_bytes([c[0], c[1]]) >> 3),
+                            pid: Pid::from_wire_masked(u16::from_be_bytes([c[0], c[1]]) >> 3),
                             reserved: c[1] & 0x07,
                         }
                     } else {
@@ -365,14 +365,14 @@ mod tests {
         assert_eq!(
             refs.refs[0],
             TuwaLibraryRef::Peid {
-                pid: Pid::new(0x0101),
+                pid: Pid::from_const(0x0101),
                 reserved: 7
             }
         );
         assert_eq!(
             refs.refs[1],
             TuwaLibraryRef::Peid {
-                pid: Pid::new(0x1FFF),
+                pid: Pid::from_const(0x1FFF),
                 reserved: 7
             }
         );
@@ -446,7 +446,7 @@ mod tests {
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.library_refs.as_mut().unwrap().refs = vec![
             TuwaLibraryRef::Peid {
-                pid: Pid::new(1),
+                pid: Pid::from_const(1),
                 reserved: 7
             };
             128

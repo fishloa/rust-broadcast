@@ -6,7 +6,7 @@
 
 use http_auth::parser::ChallengeParser;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, HttpAuthError, Result};
 
 /// Auth scheme of a challenge (RFC 9110 §11.1: ASCII case-insensitive).
 #[non_exhaustive]
@@ -155,7 +155,7 @@ pub fn parse_challenges(lines: &[&str]) -> ParsedChallenges {
                 return out;
             }
             match item
-                .map_err(|e| Error::ChallengeParse(e.to_string()))
+                .map_err(|e| Error::ChallengeParse(HttpAuthError(e.to_string())))
                 .and_then(convert)
             {
                 Ok(c) => out.challenges.push(c),

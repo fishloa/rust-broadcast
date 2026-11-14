@@ -26,7 +26,10 @@ pub fn bitrate_bps(bytes: &[u8]) -> u64 {
             continue;
         };
         let pid = packet.header.pid.value();
-        let pcr = pcr.as_27mhz();
+        let pcr = pcr
+            .to_clock27()
+            .expect("fixture PCR is on the 27 MHz clock")
+            .ticks();
         match first {
             None => first = Some((i, pid, pcr)),
             Some((_, fp, _)) if fp == pid => last = Some((i, pcr)),

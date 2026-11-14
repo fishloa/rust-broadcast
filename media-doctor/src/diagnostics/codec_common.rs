@@ -56,7 +56,7 @@ pub(crate) fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = Pid> +
 
 /// The reserved null-packet PID (`0x1FFF`), which never carries a section
 /// (ISO/IEC 13818-1 §2.4.3.3).
-const NULL_PID: Pid = Pid::new(0x1FFF);
+const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
 /// A PMT section that passed the same gates as [`current_pat`]: typed-parseable,
 /// CRC-valid (ISO/IEC 13818-1 Annex B) and current (`current_next_indicator`
@@ -238,7 +238,7 @@ pub(crate) mod tests {
     use mpeg_ts::ts::TS_PACKET_SIZE;
 
     /// PMT PID used by every test fixture built here.
-    pub(crate) const TEST_PMT_PID: Pid = Pid::new(0x0100);
+    pub(crate) const TEST_PMT_PID: Pid = Pid::from_const(0x0100);
 
     fn serialize_section<S: Serialize>(section: &S) -> Vec<u8>
     where
@@ -278,14 +278,18 @@ pub(crate) mod tests {
         let pmt_streams: Vec<PmtStream<'_>> = streams
             .iter()
             .map(|&(pid, stream_type)| {
-                PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[]))
+                PmtStream::new(
+                    stream_type,
+                    Pid::from_wire_masked(pid),
+                    DescriptorLoop::new(&[]),
+                )
             })
             .collect();
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
             1,
             dvb_si::tables::SectionVersion::new(version_number, current_next_indicator, 0, 0),
-            Pid::new(pcr_pid),
+            Pid::try_new(pcr_pid).expect("pid fits the 13-bit field"),
             DescriptorLoop::new(&[]),
             pmt_streams,
         );
@@ -330,11 +334,11 @@ pub(crate) mod tests {
             let pmt = PmtSection::new(
                 program_number,
                 dvb_si::tables::SectionVersion::new(version_number, true, 0, 0),
-                Pid::new(elementary_pid),
+                Pid::try_new(elementary_pid).expect("pid fits the 13-bit field"),
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(
                     stream_type,
-                    Pid::new(elementary_pid),
+                    Pid::try_new(elementary_pid).expect("pid fits the 13-bit field"),
                     DescriptorLoop::new(&[])
                 )],
             );
@@ -401,7 +405,7 @@ pub(crate) mod tests {
     }
 
     /// Elementary-stream PID used by every test fixture built here.
-    pub(crate) const ELEMENTARY_PID: Pid = Pid::new(0x0101);
+    pub(crate) const ELEMENTARY_PID: Pid = Pid::from_const(0x0101);
 
     pub(crate) fn pmt_packet_range(ts: &[u8]) -> core::ops::Range<usize> {
         for i in 0..ts.len() / TS_PACKET_SIZE {
@@ -489,7 +493,7 @@ mod dedup_tests {
         assert_eq!(
             declared,
             alloc::vec![DeclaredStream {
-                pid: Pid::new(0x0101),
+                pid: Pid::from_const(0x0101),
                 stream_type: StreamType::H264,
             }],
             "50 repetitions of the same PMT generation must dedup to exactly \
@@ -514,7 +518,7 @@ mod dedup_tests {
         assert_eq!(
             declared,
             alloc::vec![DeclaredStream {
-                pid: Pid::new(0x0101),
+                pid: Pid::from_const(0x0101),
                 stream_type: StreamType::Hevc,
             }],
             "the later PMT generation's stream_type must win for a repeated \

@@ -141,7 +141,7 @@ impl PlayPlan {
         let request_url = broadcast_auth::strip_userinfo(request_url).map_err(Error::from)?;
 
         let description = sdp_types::Session::parse(sdp.as_bytes())
-            .map_err(|e| Error::InvalidSdp(e.to_string()))?;
+            .map_err(|e| Error::InvalidSdp(crate::error::SdpParseError::Parse(e.to_string())))?;
 
         let aggregate = content_base
             .or(content_location)

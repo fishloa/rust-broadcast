@@ -172,26 +172,14 @@ impl CaPmtBuilt {
 
     /// Serialize the finished `ca_pmt` APDU (tag `9F 80 32` + length + body).
     ///
-    /// # Panics
-    ///
-    /// Panics when a descriptor loop has no valid `ca_pmt` encoding (e.g. a
-    /// `program_info_length` exceeding its 12-bit field). Use
-    /// [`try_to_bytes`](Self::try_to_bytes) for anything derived from
-    /// untrusted input.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        self.as_ca_pmt().try_to_bytes().unwrap()
-    }
-
-    /// Serialize like [`to_bytes`](Self::to_bytes), but return the wire
-    /// constraint error instead of panicking when a filtered descriptor loop
-    /// has no valid `ca_pmt` encoding (e.g. a loop whose final
+    /// Returns the wire constraint error when a filtered descriptor loop has
+    /// no valid `ca_pmt` encoding (e.g. a loop whose final
     /// `descriptor_length` runs past the end of the source PMT section: the
     /// projection keeps surviving bytes verbatim, and the resulting
     /// `program_info_length` then exceeds its 12-bit field). A host forwarding
     /// a CAM-supplied PMT must be able to reject such a `ca_pmt` as a value it
     /// can act on, not crash on it.
-    pub fn try_to_bytes(&self) -> crate::Result<Vec<u8>> {
+    pub fn to_bytes(&self) -> crate::Result<Vec<u8>> {
         self.as_ca_pmt().try_to_bytes()
     }
 }
@@ -223,7 +211,7 @@ mod tests {
         let pmt = PmtSection::parse(&pmt_bytes).expect("valid PMT");
 
         let built = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling);
-        let bytes = built.to_bytes();
+        let bytes = built.to_bytes().unwrap();
 
         // Round-trips through the ca_pmt parser.
         let parsed = CaPmt::parse(&bytes).unwrap();
@@ -289,7 +277,7 @@ mod tests {
         assert!(!view.streams[0].ca_descriptors.is_empty());
         assert!(view.streams[1].ca_descriptors.is_empty());
         // Round-trips.
-        assert_eq!(CaPmt::parse(&built.to_bytes()).unwrap(), view);
+        assert_eq!(CaPmt::parse(&built.to_bytes().unwrap()).unwrap(), view);
     }
 
     #[test]
@@ -326,7 +314,7 @@ mod tests {
         let pmt = PmtSection::new(
             1,
             dvb_si::tables::SectionVersion::new(0, true, 0, 0),
-            Pid::new(0x0100),
+            Pid::from_const(0x0100),
             DescriptorLoop::new(&prog_info),
             Vec::new(),
         );
@@ -341,10 +329,7 @@ mod tests {
             CaPmtCmdId::OkDescrambling,
         );
         assert!(
-            matches!(
-                built.try_to_bytes(),
-                Err(crate::Error::InvalidObject { .. })
-            ),
+            matches!(built.to_bytes(), Err(crate::Error::InvalidObject { .. })),
             "an over-long program_info_length must surface as Err, not panic"
         );
     }
@@ -361,7 +346,7 @@ mod tests {
             let pmt = PmtSection::new(
                 1,
                 dvb_si::tables::SectionVersion::new(version, true, 0, 0),
-                Pid::new(0x0100),
+                Pid::from_const(0x0100),
                 DescriptorLoop::new(&[]),
                 Vec::new(),
             );
@@ -370,7 +355,8 @@ mod tests {
                 CaPmtListManagement::Update,
                 CaPmtCmdId::OkDescrambling,
             )
-            .to_bytes();
+            .to_bytes()
+            .unwrap();
             assert_eq!(bytes[VERSION_BYTE] & 1, 1, "current_next_indicator");
             (bytes[VERSION_BYTE] >> VERSION_SHIFT) & VERSION_MASK
         };

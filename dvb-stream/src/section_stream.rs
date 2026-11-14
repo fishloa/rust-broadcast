@@ -35,7 +35,9 @@ use crate::ResyncStats;
 use crate::pump::PacketPump;
 use crate::ts_codec::TsDecoder;
 #[cfg(feature = "udp")]
-use crate::udp::{MulticastConfig, UdpPackets};
+use crate::udp::UdpPackets;
+#[cfg(feature = "udp")]
+use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 
 /// Async [`Stream`] of [`SectionEvent`]s from a raw TS byte source.
 ///
@@ -138,7 +140,8 @@ impl UdpSectionStream {
     /// Bind a UDP socket to `bind_addr` and join `multicast_addr`.
     ///
     /// Typical DVB multicast delivery uses addresses like `239.0.0.1:5004`.
-    /// Equivalent to [`bind`](Self::bind) with [`MulticastConfig::new`].
+    /// Equivalent to [`bind`](Self::bind) with a default [`UdpOptions`] that
+    /// joins `multicast_addr` on the bind address's interface.
     ///
     /// # Errors
     ///
@@ -148,19 +151,31 @@ impl UdpSectionStream {
         bind_addr: std::net::SocketAddrV4,
         multicast_addr: std::net::Ipv4Addr,
     ) -> std::io::Result<Self> {
-        Self::bind(&MulticastConfig::new(bind_addr, multicast_addr)).await
+        Self::bind(
+            std::net::SocketAddr::V4(bind_addr),
+            &MulticastJoin::new(std::net::IpAddr::V4(multicast_addr))
+                .with_interface(MulticastInterface::V4(*bind_addr.ip())),
+        )
+        .await
     }
 
-    /// Bind and join as described by `config` (`SO_RCVBUF`, reuse, interface).
+    /// Bind `bind_addr` and join `join`'s multicast group, on the OS-default
+    /// socket options; the socket itself is [`crate::udp::bind_udp`], whose
+    /// refusals apply.
     ///
     /// # Errors
     ///
-    /// Returns a [`std::io::Error`] if binding or joining the multicast group
-    /// fails.
-    pub async fn bind(config: &MulticastConfig) -> std::io::Result<Self> {
-        let std_socket = config.bind()?;
+    /// Returns a [`std::io::Error`] if `join`'s group is not a multicast
+    /// address, if its interface is of the other address family, or if binding
+    /// or joining fails.
+    pub async fn bind(
+        bind_addr: std::net::SocketAddr,
+        join: &MulticastJoin,
+    ) -> std::io::Result<Self> {
+        let std_socket =
+            crate::udp::bind_udp(bind_addr, &UdpOptions::new().with_join(join.clone()))?;
         Ok(Self::from_socket(tokio::net::UdpSocket::from_std(
-            std_socket,
+            std_socket.into(),
         )?))
     }
 

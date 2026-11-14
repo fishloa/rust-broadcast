@@ -288,7 +288,7 @@ impl<D: CaDevice> Driver<D> {
         // r10-W-20: `try_to_bytes`, not `to_bytes`.
         let built_bytes = self
             .build_ca_pmt_filtered(pmt, list_management, cmd_id)
-            .try_to_bytes()?;
+            .to_bytes()?;
         let mut pmt_raw = vec![0u8; pmt.serialized_len()];
         let n = pmt.serialize_into(&mut pmt_raw)?;
         pmt_raw.truncate(n);
@@ -645,14 +645,14 @@ impl<D: CaDevice> Driver<D> {
                 let pmt = PmtSection::parse(&s.pmt_raw).map_err(CaError::PmtParse)?;
                 let query = self
                     .build_ca_pmt_filtered(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
-                    .try_to_bytes()?;
+                    .to_bytes()?;
                 let ok_descrambling = self
                     .build_ca_pmt_filtered(
                         &pmt,
                         CaPmtListManagement::Update,
                         CaPmtCmdId::OkDescrambling,
                     )
-                    .try_to_bytes()?;
+                    .to_bytes()?;
                 Ok((query, ok_descrambling))
             })();
             match outcome {
@@ -2036,8 +2036,8 @@ pub(crate) mod tests {
     /// CRC, just not sourced from an off-air capture.
     pub(crate) fn build_ca_pmt_fixture(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0064));
-        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0065));
+        let prog_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0064));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0065));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2082,8 +2082,8 @@ pub(crate) mod tests {
     /// fixture for `required_pids`/`feed_ts` PCR routing.
     pub(crate) fn build_ca_pmt_fixture_dedicated_pcr(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0064));
-        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0065));
+        let prog_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0064));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0065));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2168,8 +2168,9 @@ pub(crate) mod tests {
         // Oracle: the same PMT built directly via dvb_ci::builder::build_ca_pmt
         // with `Only` (first-ever service on an empty managed set) +
         // `ok_descrambling`.
-        let expected =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        let expected = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected);
 
         // The service was recorded with its ES/CA PIDs.
@@ -2178,8 +2179,14 @@ pub(crate) mod tests {
             .services()
             .get(&1546)
             .expect("program_number 1546 must be tracked after add_service");
-        assert_eq!(svc.es_pids, vec![Pid::new(0x0100), Pid::new(0x0101)]);
-        assert_eq!(svc.ca_pids, vec![Pid::new(0x0064), Pid::new(0x0065)]);
+        assert_eq!(
+            svc.es_pids,
+            vec![Pid::from_const(0x0100), Pid::from_const(0x0101)]
+        );
+        assert_eq!(
+            svc.ca_pids,
+            vec![Pid::from_const(0x0064), Pid::from_const(0x0065)]
+        );
         assert_eq!(svc.cmd, CaPmtCmdId::OkDescrambling);
         assert_eq!(svc.last_ca_enable, None);
     }
@@ -2245,7 +2252,7 @@ pub(crate) mod tests {
                 CaPmtListManagement::Update,
                 CaPmtCmdId::OkDescrambling,
             )
-            .try_to_bytes()
+            .to_bytes()
             .expect("fixture precondition: the good PMT encodes");
         let corrupt_raw = pmt_bytes[..pmt_bytes.len() - 6].to_vec();
         d.managed.record(
@@ -2311,7 +2318,7 @@ pub(crate) mod tests {
         PmtSection::new(
             1,
             dvb_si::tables::SectionVersion::new(1, true, 0, 0),
-            Pid::new(0x0200),
+            Pid::from_const(0x0200),
             dvb_si::descriptors::DescriptorLoop::new(Box::leak(prog_info.into_boxed_slice())),
             Vec::new(),
         )
@@ -2320,7 +2327,7 @@ pub(crate) mod tests {
     /// r10-W-20: `add_service` must reject a PMT whose CA loop cannot be
     /// encoded into a `ca_pmt` (over-range `program_info_length`) as
     /// `CaError::Serialize` from the public entry point — pre-fix this
-    /// reached `.to_bytes()` and panicked inside the dvb-ci serializer.
+    /// reached `.to_bytes().unwrap()` and panicked inside the dvb-ci serializer.
     #[test]
     fn add_service_serialize_failure_returns_err_instead_of_panicking() {
         let mut d = driver_with_sessions();
@@ -2359,8 +2366,9 @@ pub(crate) mod tests {
         d.pump(Duration::from_millis(10)).unwrap();
 
         // Second service joins an already-active set → `Add`, not `Only`.
-        let expected2 =
-            build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling).to_bytes();
+        let expected2 = build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected2);
 
         assert_eq!(d.managed_ca().services().len(), 2);
@@ -2379,8 +2387,8 @@ pub(crate) mod tests {
     fn build_ca_pmt_fixture_two_caids(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
         const NAGRA: u16 = 0x1800;
-        let prog_ca_a = ca_descriptor(VIACCESS, Pid::new(0x0064));
-        let prog_ca_b = ca_descriptor(NAGRA, Pid::new(0x0066));
+        let prog_ca_a = ca_descriptor(VIACCESS, Pid::from_const(0x0064));
+        let prog_ca_b = ca_descriptor(NAGRA, Pid::from_const(0x0066));
         let mut prog_ca = Vec::new();
         prog_ca.extend_from_slice(&prog_ca_a);
         prog_ca.extend_from_slice(&prog_ca_b);
@@ -2449,9 +2457,11 @@ pub(crate) mod tests {
             CaPmtListManagement::Only,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
-        let unfiltered =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        .to_bytes()
+        .unwrap();
+        let unfiltered = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         assert_ne!(
             expected_filtered, unfiltered,
             "precondition: the fixture's two CAIDs must make filtered != unfiltered"
@@ -2517,22 +2527,26 @@ pub(crate) mod tests {
             CaPmtListManagement::Update,
             CaPmtCmdId::Query,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let expected_ok_filtered = dvb_ci::builder::build_ca_pmt_for_caids(
             &pmt,
             &[0x0500],
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
-        let unfiltered_query =
-            build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        .to_bytes()
+        .unwrap();
+        let unfiltered_query = build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let unfiltered_ok = build_ca_pmt(
             &pmt,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         assert_ne!(
             expected_query_filtered, unfiltered_query,
             "precondition: the fixture's two CAIDs must make filtered != unfiltered (query)"
@@ -2625,8 +2639,8 @@ pub(crate) mod tests {
         // CAT maps 0x0648 -> 0x1FF0 (advertised) and 0x0500 -> 0x1FF1 (not
         // advertised by this CAM).
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
-        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::new(0x1FF1)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::from_const(0x1FF1)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2634,7 +2648,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "0x0500 -> 0x1FF1 must be excluded: the CAM never advertised CAID 0x0500"
         );
     }
@@ -2649,8 +2663,8 @@ pub(crate) mod tests {
         d.take_notifications();
 
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
-        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::new(0x1FF1)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::from_const(0x1FF1)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2679,7 +2693,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "emm_pids must recompute once ca_info arrives, using the CAT stored by the earlier set_cat"
         );
     }
@@ -2713,8 +2727,8 @@ pub(crate) mod tests {
 
         // CAT maps BOTH CAIDs to the SAME EMM PID.
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
-        descriptors.extend_from_slice(&ca_descriptor(0x0100, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0100, Pid::from_const(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2722,7 +2736,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "0x1FF0 must appear exactly once even though two CAM-advertised CAIDs map to it, got {:?}",
             d.emm_pids()
         );
@@ -2733,8 +2747,8 @@ pub(crate) mod tests {
     /// union rather than one programme's PIDs happening to repeat.
     fn build_ca_pmt_fixture_distinct_pids(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0074));
-        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0075));
+        let prog_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0074));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0075));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2789,7 +2803,10 @@ pub(crate) mod tests {
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
 
-        assert_eq!(d.descramble_pids(), &[Pid::new(0x0100), Pid::new(0x0101)]);
+        assert_eq!(
+            d.descramble_pids(),
+            &[Pid::from_const(0x0100), Pid::from_const(0x0101)]
+        );
 
         let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
         let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
@@ -2801,10 +2818,10 @@ pub(crate) mod tests {
         assert_eq!(
             d.descramble_pids(),
             &[
-                Pid::new(0x0100),
-                Pid::new(0x0101),
-                Pid::new(0x0200),
-                Pid::new(0x0201)
+                Pid::from_const(0x0100),
+                Pid::from_const(0x0101),
+                Pid::from_const(0x0200),
+                Pid::from_const(0x0201)
             ],
             "descramble_pids must be the union across both added services"
         );
@@ -2854,7 +2871,9 @@ pub(crate) mod tests {
         // happened, so the test proves the resend below (a distinct `query`
         // cmd_id) is a genuinely different wire message, not the same bytes.
         let expected_initial_ca_pmt =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
+                .to_bytes()
+                .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected_initial_ca_pmt);
 
         // #1032: the re-query timer resends a `list_management = update`
@@ -2862,14 +2881,16 @@ pub(crate) mod tests {
         // followed by `ok_descrambling` (so descrambling is never left
         // barred, EN 50221 §8.4.3.5, whether or not the CAM answers the
         // query) — never the pre-fix `only`/`first` + `query` alone.
-        let expected_query =
-            build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        let expected_query = build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected_ok_descrambling = build_ca_pmt(
             &pmt,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let query_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_query);
         let ok_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ok_descrambling);
 
@@ -3056,14 +3077,16 @@ pub(crate) mod tests {
 
         // Count the `update`-variant bytes — the ones the timer would
         // resend if enabled — not the `only` bytes `add_service` sent.
-        let expected_query =
-            build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        let expected_query = build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected_ok_descrambling = build_ca_pmt(
             &pmt,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let query_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_query);
         let ok_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ok_descrambling);
 
@@ -3108,7 +3131,8 @@ pub(crate) mod tests {
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
 
         // Even a very long tick must not trigger a re-query once disabled.
@@ -3156,22 +3180,26 @@ pub(crate) mod tests {
         // `ok_descrambling`, for every active service — `update` acts only
         // at programme level per EN 50221 §8.4.3.4, so unlike the pre-fix
         // `first`/`more`/`last` scheme it needs no position bookkeeping).
-        let expected1_query =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        let expected1_query = build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected1_ok = build_ca_pmt(
             &pmt1,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
-        let expected2_query =
-            build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        .to_bytes()
+        .unwrap();
+        let expected2_query = build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected2_ok = build_ca_pmt(
             &pmt2,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let sends_before1_query = count_apdu_on_session(&d, CA_SESSION, &expected1_query);
         let sends_before1_ok = count_apdu_on_session(&d, CA_SESSION, &expected1_ok);
         let sends_before2_query = count_apdu_on_session(&d, CA_SESSION, &expected2_query);
@@ -3250,21 +3278,27 @@ pub(crate) mod tests {
         // — so 1546 (removed) must never be resent, and 1547 (surviving)
         // must be resent as the `query`+`ok_descrambling` pair.
         let expected_survivor_query =
-            build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+            build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query)
+                .to_bytes()
+                .unwrap();
         let expected_survivor_ok = build_ca_pmt(
             &pmt2,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let expected_removed_query =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query)
+                .to_bytes()
+                .unwrap();
         let expected_removed_ok = build_ca_pmt(
             &pmt1,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let sends_survivor_query_before =
             count_apdu_on_session(&d, CA_SESSION, &expected_survivor_query);
         let sends_survivor_ok_before = count_apdu_on_session(&d, CA_SESSION, &expected_survivor_ok);
@@ -3329,13 +3363,14 @@ pub(crate) mod tests {
         // Oracle: the same PMT re-built directly via
         // dvb_ci::builder::build_ca_pmt with `Update`/`NotSelected` (EN 50221
         // §8.4.3.4 Table 25) — the exact bytes `remove_program` sends.
-        let expected =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        let expected = build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+            .to_bytes()
+            .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected);
 
         assert_eq!(
             d.descramble_pids(),
-            &[Pid::new(0x0200), Pid::new(0x0201)],
+            &[Pid::from_const(0x0200), Pid::from_const(0x0201)],
             "1546's ES PIDs must be gone; 1547's must remain"
         );
         assert!(
@@ -3395,7 +3430,7 @@ pub(crate) mod tests {
         );
         d.take_notifications();
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
         d.set_cat(&cat).unwrap();
@@ -3520,15 +3555,16 @@ pub(crate) mod tests {
         let b_record_before = d.managed_ca().services().get(&1547).unwrap().clone();
         assert_eq!(
             a_old_record.ca_pids,
-            vec![Pid::new(0x0064), Pid::new(0x0065)],
+            vec![Pid::from_const(0x0064), Pid::from_const(0x0065)],
             "fixture sanity: A starts on the 0x0064/0x0065 ECM PIDs"
         );
 
         // Same programme number, different ECM PIDs.
         let a2_bytes = build_ca_pmt_fixture_distinct_pids(1546);
         let a2 = PmtSection::parse(&a2_bytes).unwrap();
-        let update =
-            build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::OkDescrambling).to_bytes();
+        let update = build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         let writes_before = d.device().ops.len();
 
         d.update_service(&a2).unwrap();
@@ -3544,8 +3580,8 @@ pub(crate) mod tests {
         assert_eq!(new_ca_pmt_writes, 1, "exactly one ca_pmt APDU may be sent");
 
         // The update carries the new ECM PIDs and none of the old ones.
-        let new_prog_ca = ca_descriptor(0x0500, Pid::new(0x0074));
-        let old_prog_ca = ca_descriptor(0x0500, Pid::new(0x0064));
+        let new_prog_ca = ca_descriptor(0x0500, Pid::from_const(0x0074));
+        let old_prog_ca = ca_descriptor(0x0500, Pid::from_const(0x0064));
         assert!(update.windows(new_prog_ca.len()).any(|x| x == new_prog_ca));
         assert!(!update.windows(old_prog_ca.len()).any(|x| x == old_prog_ca));
 
@@ -3553,7 +3589,7 @@ pub(crate) mod tests {
         let a_new_record = d.managed_ca().services().get(&1546).unwrap();
         assert_eq!(
             a_new_record.ca_pids,
-            vec![Pid::new(0x0074), Pid::new(0x0075)]
+            vec![Pid::from_const(0x0074), Pid::from_const(0x0075)]
         );
         assert_eq!(a_new_record.built_ca_pmt, update);
         assert_ne!(a_new_record.built_ca_pmt, a_old_record.built_ca_pmt);
@@ -3595,10 +3631,12 @@ pub(crate) mod tests {
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
 
-        let removal_new =
-            build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
-        let removal_old =
-            build_ca_pmt(&a, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        let removal_new = build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+            .to_bytes()
+            .unwrap();
+        let removal_old = build_ca_pmt(&a, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+            .to_bytes()
+            .unwrap();
         assert_ne!(
             removal_new, removal_old,
             "fixture sanity: the two PMTs differ"

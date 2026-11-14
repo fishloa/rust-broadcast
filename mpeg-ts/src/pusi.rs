@@ -125,7 +125,7 @@ mod tests {
     #[test]
     fn spanning_across_two_packets() {
         let box_bytes = synthetic_box_bytes(BIG_BOX_SIZE);
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
 
         // Split at a boundary that fits in a single TS payload (≤ 184 bytes).
         let chunk1 = &box_bytes[..184];
@@ -148,7 +148,7 @@ mod tests {
     fn boundary_two_units() {
         let unit_a = b"AAAA-first-unit-data";
         let unit_b = b"BBBB-second-unit-data";
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
 
         let mut reasm = PusiReassembler::new(pid);
 
@@ -166,14 +166,18 @@ mod tests {
 
     #[test]
     fn different_pid_ignored() {
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         // Packet with different PID should be ignored.
-        assert!(reasm.push(Pid::new(0x0100), true, b"ignored").is_none());
         assert!(
             reasm
-                .push(Pid::new(0x0100), false, b"more-ignored")
+                .push(Pid::from_const(0x0100), true, b"ignored")
+                .is_none()
+        );
+        assert!(
+            reasm
+                .push(Pid::from_const(0x0100), false, b"more-ignored")
                 .is_none()
         );
         assert!(reasm.flush().is_none());
@@ -186,13 +190,13 @@ mod tests {
 
     #[test]
     fn flush_empty_returns_none() {
-        let mut reasm = PusiReassembler::new(Pid::new(0x0004));
+        let mut reasm = PusiReassembler::new(Pid::from_const(0x0004));
         assert!(reasm.flush().is_none());
     }
 
     #[test]
     fn single_packet_unit() {
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         assert!(reasm.push(pid, true, b"single-packet-emsg").is_none());
@@ -202,7 +206,7 @@ mod tests {
 
     #[test]
     fn ignores_payload_before_first_pusi() {
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         // Feed non-PUSI payloads before any PUSI — these should be ignored.
@@ -219,7 +223,7 @@ mod tests {
 
     #[test]
     fn caps_buffer_at_default_max_unit_size() {
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         // Start with PUSI.
@@ -235,7 +239,7 @@ mod tests {
 
     #[test]
     fn custom_cap_discards_oversized_unit() {
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
         let custom_cap = 1000usize;
         let mut reasm = PusiReassembler::with_max_unit_size(pid, custom_cap);
 
@@ -260,7 +264,7 @@ mod tests {
 
     #[test]
     fn one_mib_unit_reassembles_with_default_cap() {
-        let pid = Pid::new(0x0004);
+        let pid = Pid::from_const(0x0004);
         let mut reasm = PusiReassembler::new(pid);
         let unit_size = 1024 * 1024usize;
 

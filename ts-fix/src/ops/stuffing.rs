@@ -19,12 +19,12 @@
 
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::pid::Pid;
-use mpeg_ts::ts::TS_PACKET_SIZE;
+use mpeg_ts::ts::{ContinuityCounter, TS_PACKET_SIZE};
 
 use crate::ops::{Op, StreamModel};
 
 /// Null packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: Pid = Pid::new(0x1FFF);
+const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
 /// Configuration for [`TsFixBuilder::stuffing`](crate::TsFixBuilder::stuffing).
 ///
@@ -103,7 +103,7 @@ impl Stuffing {
 
 /// Construct a standard null TS packet via the mpeg-ts writer.
 fn make_null_packet(continuity_counter: u8) -> [u8; TS_PACKET_SIZE] {
-    OwnedTsPacket::null_packet(continuity_counter)
+    OwnedTsPacket::null_packet(ContinuityCounter::from_wire_masked(continuity_counter))
 }
 
 // ── The operation ────────────────────────────────────────────────────────────

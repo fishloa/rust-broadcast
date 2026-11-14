@@ -59,7 +59,7 @@ impl<'a> Parse<'a> for Cp<'a> {
         Ok(Cp {
             cp_system_id: u16::from_be_bytes([sel[0], sel[1]]),
             reserved_future_use: sel[2] >> 5,
-            cp_pid: Pid::new(u16::from_be_bytes([sel[2], sel[3]])),
+            cp_pid: Pid::from_wire_masked(u16::from_be_bytes([sel[2], sel[3]])),
             private_data: &sel[CP_HEADER_LEN..],
         })
     }
@@ -104,7 +104,7 @@ mod tests {
         match &d.body {
             ExtensionBody::Cp(b) => {
                 assert_eq!(b.cp_system_id, 0x1234);
-                assert_eq!(b.cp_pid, Pid::new(0x0100));
+                assert_eq!(b.cp_pid, Pid::from_const(0x0100));
                 assert_eq!(b.private_data, &[0xAA, 0xBB]);
             }
             other => panic!("expected Cp, got {other:?}"),
@@ -149,7 +149,7 @@ mod tests {
     /// `new()` serializes the spec value `111`.
     #[test]
     fn default_reserved_is_spec_value() {
-        let c = Cp::new(0x1234, Pid::new(0x0100), &[]);
+        let c = Cp::new(0x1234, Pid::from_const(0x0100), &[]);
         let mut buf = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [0x12, 0x34, 0xE1, 0x00]);

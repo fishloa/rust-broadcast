@@ -43,7 +43,7 @@ fn main() {
     for chunk in output.chunks(188) {
         if chunk.len() >= 3 {
             let pid = (((chunk[1] & 0x1F) as u16) << 8) | chunk[2] as u16;
-            kept_pids.insert(Pid::new(pid));
+            kept_pids.insert(Pid::from_wire_masked(pid));
         }
     }
 
@@ -51,7 +51,7 @@ fn main() {
     println!("kept PIDs: {:#06x?}", kept_pids.iter().collect::<Vec<_>>());
 
     // Expected: PAT 0x0000, PMT 0x100, PCR 0x101, ES 0x102.
-    let expected: BTreeSet<Pid> = [0x0000, 0x0100, 0x0101, 0x0102].map(Pid::new).into();
+    let expected: BTreeSet<Pid> = [0x0000, 0x0100, 0x0101, 0x0102].map(Pid::from_const).into();
     if kept_pids == expected {
         println!("result: PASS");
     } else {
@@ -67,25 +67,25 @@ fn build_multiprogram_stream() -> Vec<u8> {
 
     // PAT section (table_id 0x00, PID 0x0000) listing both programs.
     let pat = pat_section(&[(1, 0x0100), (2, 0x0200)]);
-    out.extend_from_slice(&section_packet(Pid::new(0x0000), &pat));
+    out.extend_from_slice(&section_packet(Pid::from_const(0x0000), &pat));
 
     // PMT for program 1 (PID 0x0100): PCR PID 0x0101, ES 0x0102.
-    let pmt1 = pmt_section(1, Pid::new(0x0101), &[(0x1B, 0x0102)]);
-    out.extend_from_slice(&section_packet(Pid::new(0x0100), &pmt1));
+    let pmt1 = pmt_section(1, Pid::from_const(0x0101), &[(0x1B, 0x0102)]);
+    out.extend_from_slice(&section_packet(Pid::from_const(0x0100), &pmt1));
 
     // PMT for program 2 (PID 0x0200): PCR PID 0x0201, ES 0x0202.
-    let pmt2 = pmt_section(2, Pid::new(0x0201), &[(0x1B, 0x0202)]);
-    out.extend_from_slice(&section_packet(Pid::new(0x0200), &pmt2));
+    let pmt2 = pmt_section(2, Pid::from_const(0x0201), &[(0x1B, 0x0202)]);
+    out.extend_from_slice(&section_packet(Pid::from_const(0x0200), &pmt2));
 
     // ES payload packets for program 1 (kept after PMT resolves).
     for cc in 0..5 {
-        out.extend_from_slice(&payload_packet(Pid::new(0x0102), cc));
+        out.extend_from_slice(&payload_packet(Pid::from_const(0x0102), cc));
     }
     // PCR packet for program 1.
-    out.extend_from_slice(&payload_packet(Pid::new(0x0101), 0));
+    out.extend_from_slice(&payload_packet(Pid::from_const(0x0101), 0));
     // ES payload packets for program 2 (dropped).
     for cc in 0..3 {
-        out.extend_from_slice(&payload_packet(Pid::new(0x0202), cc));
+        out.extend_from_slice(&payload_packet(Pid::from_const(0x0202), cc));
     }
 
     out

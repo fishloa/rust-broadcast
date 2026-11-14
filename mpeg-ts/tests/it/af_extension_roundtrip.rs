@@ -18,7 +18,7 @@
 //! is the real-data check: every adaptation field in every committed `.ts`
 //! fixture must re-serialize byte-identically from its parsed form.
 
-use mpeg_ts::ts::{AdaptationField, AdaptationFieldExtension, Ltw, TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{AdaptationField, AdaptationFieldExtension, Ltw, Pcr, TS_PACKET_SIZE, TsPacket};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -402,6 +402,57 @@ fn real_archive_af_extension_packets_round_trip() {
             assert_eq!(ss.marker_bits, 0, "real marker bits are 0, not the spec 1");
         }
     }
+}
+
+/// `input/test-143.ts` pkts 1305 and 3994 are pseudo-random scrambling-test
+/// packets whose OPCR extension decodes outside 0..=299 (the 9-bit wire field
+/// spans 0..=511, the 27 MHz clock only 0..=299). The strict clock type must
+/// not make real data unparseable (issue #2656): the packets parse,
+/// re-serialize byte-identically, and report the off-clock value through the
+/// checked `Pcr::to_clock27` accessor rather than through a parse failure.
+#[test]
+fn real_off_clock_pcr_extension_parses_and_round_trips() {
+    let Some(path) = test_fixtures::tsduck("input/test-143.ts", "af_extension_roundtrip") else {
+        return;
+    };
+    let buf = fs::read(path).expect("read capture");
+    // Every packet of the capture whose PCR field carries an off-clock
+    // extension, so the check is not pinned to one index.
+    let mut seen = Vec::new();
+    for idx in 0..buf.len() / TS_PACKET_SIZE {
+        let raw: &[u8; TS_PACKET_SIZE] = buf[idx * TS_PACKET_SIZE..(idx + 1) * TS_PACKET_SIZE]
+            .try_into()
+            .unwrap();
+        let Ok(packet) = TsPacket::parse(raw) else {
+            continue;
+        };
+        let Some(Ok(af)) = packet.adaptation_field() else {
+            continue;
+        };
+        let off_clock: Vec<&Pcr> = [af.pcr.as_ref(), af.opcr.as_ref()]
+            .into_iter()
+            .flatten()
+            .filter(|pcr| pcr.to_clock27().is_err())
+            .collect();
+        if off_clock.is_empty() {
+            continue;
+        }
+        for pcr in off_clock {
+            assert!(!pcr.clock().is_valid(), "the value is off the 27 MHz clock");
+            assert!(
+                pcr.extension() >= 300,
+                "an off-clock value is an extension at or above 300"
+            );
+        }
+        seen.push(idx);
+        let body = &raw[5..5 + usize::from(raw[4])];
+        assert_eq!(
+            body_of(&parse_af(raw)),
+            body,
+            "pkt {idx}: an off-clock PCR must still re-serialize byte-exactly"
+        );
+    }
+    assert_eq!(seen, vec![1305, 3994], "{seen:?}");
 }
 
 /// Pinned real-data counts for the TSDuck streams that carry real adaptation-

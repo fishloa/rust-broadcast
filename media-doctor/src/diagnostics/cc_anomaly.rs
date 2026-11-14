@@ -26,7 +26,7 @@ use mpeg_ts::ts_dup::{DuplicateVerdict, check_duplicate};
 use crate::Diagnostic;
 use crate::Report;
 use crate::report::{Finding, Location, Severity};
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{ContinuityCounter, TS_PACKET_SIZE, TsPacket};
 
 /// `discontinuity_indicator`, the top bit of the adaptation-field flags byte
 /// (ISO/IEC 13818-1 §2.4.3.4).
@@ -47,7 +47,7 @@ struct CcState {
     /// Whether we've seen the first payload-bearing packet for this PID.
     initialized: bool,
     /// Last continuity counter value on this PID.
-    last_cc: u8,
+    last_cc: ContinuityCounter,
     /// Raw bytes of the last payload-bearing packet seen on this PID. Used
     /// with [`mpeg_ts::ts_dup::check_duplicate`] for the
     /// §2.4.3.3 legal-duplicate byte-identity rule (that function owns
@@ -84,7 +84,7 @@ impl Diagnostic for CcAnomalyCheck {
             let pid = hdr.pid;
 
             // Skip null packets — CC is undefined (§2.4.3.3).
-            if pid == Pid::new(0x1FFF) {
+            if pid == Pid::from_const(0x1FFF) {
                 continue;
             }
 
@@ -92,8 +92,8 @@ impl Diagnostic for CcAnomalyCheck {
 
             // An adaptation-only packet (AFC 10) does not increment the CC
             // (§2.4.3.3): it must repeat the PID's last value.
-            if !hdr.has_payload {
-                if hdr.has_adaptation
+            if !hdr.has_payload() {
+                if hdr.has_adaptation()
                     && let Some(state) = pid_states.get_mut(&pid)
                     && state.initialized
                 {
@@ -119,7 +119,7 @@ impl Diagnostic for CcAnomalyCheck {
 
             let state = pid_states.entry(pid).or_insert(CcState {
                 initialized: false,
-                last_cc: 0,
+                last_cc: ContinuityCounter::ZERO,
                 last_packet: [0; TS_PACKET_SIZE],
                 dup_used: false,
             });
@@ -131,7 +131,7 @@ impl Diagnostic for CcAnomalyCheck {
                 continue;
             }
 
-            let has_discontinuity = if hdr.has_adaptation {
+            let has_discontinuity = if hdr.has_adaptation() {
                 let af_len = raw[4] as usize;
                 af_len > 0 && (raw[5] & AF_DISCONTINUITY_INDICATOR) != 0
             } else {
@@ -167,7 +167,7 @@ impl Diagnostic for CcAnomalyCheck {
                     state.dup_used = true;
                 }
                 DuplicateVerdict::NotDuplicate => {
-                    let expected = (state.last_cc + 1) & 0x0F;
+                    let expected = state.last_cc.next();
                     if cc != expected {
                         report.push(Finding::new(
                             Severity::Error,

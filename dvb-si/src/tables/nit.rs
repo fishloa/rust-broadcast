@@ -17,7 +17,7 @@ pub const TABLE_ID_ACTUAL: u8 = 0x40;
 /// table_id value for NIT other (other TSes in the network).
 pub const TABLE_ID_OTHER: u8 = 0x41;
 /// Well-known PID on which NIT is carried.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0010);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0010);
 
 /// NIT kind — distinguishes `0x40` (actual) from `0x41` (other).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -976,8 +976,8 @@ mod tests {
         let replace = s(&Replace {
             length_form: dvb_ci::length::LengthForm::Minimal,
             replacement_ref: 0x07,
-            replaced_pid: Pid::new(0x0123),
-            replacement_pid: Pid::new(0x01FF),
+            replaced_pid: Pid::from_const(0x0123),
+            replacement_pid: Pid::from_const(0x01FF),
             replaced_reserved: Default::default(),
             replacement_reserved: Default::default(),
         });
@@ -985,8 +985,8 @@ mod tests {
             h.on_apdu(&replace).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::Replace {
                 replacement_ref: 0x07,
-                replaced_pid: Pid::new(0x0123),
-                replacement_pid: Pid::new(0x01FF),
+                replaced_pid: Pid::from_const(0x0123),
+                replacement_pid: Pid::from_const(0x01FF),
             })]
         );
 

@@ -264,7 +264,7 @@ mod tests {
         .expect("must return");
         server.abort();
         assert!(
-            matches!(result, Err(crate::error::MultimuxError::Auth { .. })),
+            matches!(result, Err(crate::error::MultimuxError::Auth(_))),
             "a 403 resource must fail the session"
         );
         // It must NOT have retried 8 times (~2 min of backoff).

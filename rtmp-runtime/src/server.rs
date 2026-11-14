@@ -68,7 +68,7 @@ use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::Handshake;
-use crate::message::{LimitType, ProtocolControl, UserControl, msg_type};
+use crate::message::{ChunkSize, LimitType, ProtocolControl, UserControl, msg_type};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -557,7 +557,7 @@ impl ServerSession {
     /// [`ProtocolControl::from_message`].
     fn handle_protocol_control(&mut self, pc: ProtocolControl) {
         match pc {
-            ProtocolControl::SetChunkSize(n) => self.assembler.set_chunk_size(n),
+            ProtocolControl::SetChunkSize(n) => self.assembler.set_chunk_size(n.value()),
             ProtocolControl::WindowAckSize(w) => self.ack_threshold = w,
             // #1108/RTMP-W7: was `self.ack_threshold = ack_window_size` —
             // conflated the peer's outbound-bandwidth limit (§5.4.5) with
@@ -661,10 +661,10 @@ impl ServerSession {
         .to_message();
         out.extend_from_slice(&self.writer.write(&peer_bandwidth)?);
 
-        let set_chunk_size =
-            ProtocolControl::SetChunkSize(self.config.chunk_size).try_to_message()?;
+        let chunk_size = ChunkSize::try_new(self.config.chunk_size)?;
+        let set_chunk_size = ProtocolControl::SetChunkSize(chunk_size).to_message();
         out.extend_from_slice(&self.writer.write(&set_chunk_size)?);
-        self.writer.set_chunk_size(self.config.chunk_size);
+        self.writer.set_chunk_size(chunk_size.value());
 
         let result = Command {
             name: "_result".to_string(),
@@ -2068,7 +2068,10 @@ mod tests {
 
         const NEW_CHUNK_SIZE: u32 = 4096;
         let set_chunk_size_bytes = ChunkWriter::new()
-            .write(&ProtocolControl::SetChunkSize(NEW_CHUNK_SIZE).to_message())
+            .write(
+                &ProtocolControl::SetChunkSize(ChunkSize::new(NEW_CHUNK_SIZE).unwrap())
+                    .to_message(),
+            )
             .unwrap();
 
         // A video payload bigger than the *default* 128-byte chunk size but

@@ -29,7 +29,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != Pid::new(target_pid) {
+        if pkt.header.pid != Pid::try_new(target_pid).expect("pid fits the 13-bit field") {
             continue;
         }
         if let Some(payload) = pkt.payload {
@@ -109,7 +109,7 @@ fn fixture_m6_ddb_header_prefix_links_to_dii() {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != Pid::new(0x00AB) || !pkt.header.pusi {
+        if pkt.header.pid != Pid::from_const(0x00AB) || !pkt.header.pusi {
             continue;
         }
         if let Some(payload) = pkt.payload {

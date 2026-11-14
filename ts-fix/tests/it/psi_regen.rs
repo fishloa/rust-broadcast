@@ -26,7 +26,7 @@ const PMT_TABLE_ID: u8 = pmt::TABLE_ID;
 
 /// Extract the PID from a TS packet header.
 fn pid_from_packet(pkt: &[u8]) -> Pid {
-    Pid::new((((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16)
+    Pid::from_wire_masked((((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16)
 }
 
 /// Find a PAT packet in a TS (first packet on PID 0x0000).
@@ -277,7 +277,7 @@ fn pmt_derived_mapping(ts: &[u8]) -> std::collections::BTreeMap<u16, Pid> {
     let mut map: std::collections::BTreeMap<u16, Pid> = std::collections::BTreeMap::new();
     for pkt in ts.chunks_exact(188) {
         let pid = pid_from_packet(pkt);
-        if pid == PAT_PID || pid == Pid::new(0x1FFF) {
+        if pid == PAT_PID || pid == Pid::from_const(0x1FFF) {
             continue;
         }
         // Parse the header to validate the packet; PUSI is read from byte 1.
@@ -554,7 +554,10 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         0,
         0,
         vec![
-            PatEntry::new(0, Pid::new(network_pid)),
+            PatEntry::new(
+                0,
+                Pid::try_new(network_pid).expect("pid fits the 13-bit field"),
+            ),
             PatEntry::new(1, PMT1_PID),
             PatEntry::new(2, PMT2_PID),
         ],
@@ -697,8 +700,8 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
     let phase1 = build_two_program_ts(3);
 
     // Phase 2: a 3rd program (PMT on a fresh PID) is added, repeated 3 times.
-    const PMT3_PID: Pid = Pid::new(0x0300);
-    const P3_PCR_PID: Pid = Pid::new(0x0301);
+    const PMT3_PID: Pid = Pid::from_const(0x0300);
+    const P3_PCR_PID: Pid = Pid::from_const(0x0301);
     let pmt3 = PmtSection::new(
         3,
         dvb_si::tables::SectionVersion::new(0, true, 0, 0),
@@ -836,7 +839,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
 /// which no PMT carries — was silently dropped from every regenerated PAT.
 #[test]
 fn regen_pat_preserves_network_pid_entry() {
-    const NIT_PID: Pid = Pid::new(0x0010);
+    const NIT_PID: Pid = Pid::from_const(0x0010);
     let ts = build_two_program_ts_with_nit(4, NIT_PID.value());
 
     // Sanity: the original PAT really does carry the network_pid entry.
@@ -936,7 +939,7 @@ fn regen_psi_flush_pat_flows_through_later_ops() {
 
     let pids: Vec<Pid> = output
         .chunks_exact(188)
-        .map(|p| Pid::new((((p[1] & 0x1F) as u16) << 8) | p[2] as u16))
+        .map(|p| Pid::from_wire_masked((((p[1] & 0x1F) as u16) << 8) | p[2] as u16))
         .collect();
     assert!(
         pids.contains(&PAT_PID),
@@ -951,7 +954,7 @@ fn regen_psi_flush_pat_flows_through_later_ops() {
     // pattern): the chained flush PAT must be a clean PAT section.
     if tsanalyze_available() {
         let path = write_temp_ts(&output, "tsfix-wtf4");
-        let (disc, dups) = tsanalyze_pid_stats(&path, Pid::new(0));
+        let (disc, dups) = tsanalyze_pid_stats(&path, Pid::from_const(0));
         assert_eq!(
             disc, 0,
             "tsanalyze: chained flush PAT must have no discontinuities"
@@ -1097,8 +1100,11 @@ fn assert_pat_consistent_with_pmts(output: &[u8]) -> PatSection {
 fn keep_pids_dropping_every_pmt_then_regen_keeps_a_programless_pat() {
     let ts = test_fixtures::read("ts/m6-single.ts");
     let output = run(&ts, |b| {
-        b.filter_pids(PidFilter::keep([Pid::new(120), Pid::new(130)]))
-            .regen_psi()
+        b.filter_pids(PidFilter::keep([
+            Pid::from_const(120),
+            Pid::from_const(130),
+        ]))
+        .regen_psi()
     });
     assert!(!output.is_empty());
     let pat = assert_pat_consistent_with_pmts(&output);
@@ -1111,7 +1117,7 @@ fn keep_pids_dropping_every_pmt_then_regen_keeps_a_programless_pat() {
     // The kept ES PIDs are still present.
     let pids: std::collections::BTreeSet<Pid> =
         output.chunks_exact(188).map(pid_from_packet).collect();
-    assert!(pids.contains(&Pid::new(130)));
+    assert!(pids.contains(&Pid::from_const(130)));
 }
 
 /// Two programs, both PMTs dropped (ES of program 1 kept).
@@ -1181,10 +1187,13 @@ fn pmt1_packets() -> Vec<[u8; 188]> {
 #[test]
 fn regen_pat_hints_survive_a_multi_packet_original_pat() {
     const TSID: u16 = 0x1234;
-    const NIT_PID: Pid = Pid::new(0x0010);
+    const NIT_PID: Pid = Pid::from_const(0x0010);
     let mut entries = vec![PatEntry::new(0, NIT_PID), PatEntry::new(1, PMT1_PID)];
     for n in 2..62u16 {
-        entries.push(PatEntry::new(n, Pid::new(0x0300 + n)));
+        entries.push(PatEntry::new(
+            n,
+            Pid::try_new(0x0300 + n).expect("pid fits the 13-bit field"),
+        ));
     }
     let pat = PatSection::new(TSID, 0, true, 0, 0, entries);
     let pat_pkts = SectionPacketiser::new(PAT_PID).packetise(&[&serialize_pat(&pat)]);
@@ -1282,14 +1291,14 @@ fn regen_pat_version_number_wraps_modulo_32_and_holds_when_unchanged() {
         true,
         0,
         0,
-        vec![PatEntry::new(1, Pid::new(FIRST_PMT_PID))],
+        vec![PatEntry::new(1, Pid::from_const(FIRST_PMT_PID))],
     );
     let pat_bytes = serialize_pat(&pat);
     let pat_pkts = SectionPacketiser::new(PAT_PID).packetise(&[&pat_bytes]);
 
     let mut ts = Vec::new();
     for k in 0..PHASES {
-        let pmt_pid = Pid::new(FIRST_PMT_PID + k);
+        let pmt_pid = Pid::try_new(FIRST_PMT_PID + k).expect("pid fits the 13-bit field");
         let pmt = PmtSection::new(
             1,
             dvb_si::tables::SectionVersion::new(0, true, 0, 0),

@@ -19,7 +19,7 @@ use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
-use crate::message::{ProtocolControl, UserControl, msg_type};
+use crate::message::{ChunkSize, ProtocolControl, UserControl, msg_type};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
@@ -481,9 +481,10 @@ impl ClientSession {
 
         let mut out = Vec::new();
 
-        let set_chunk_size = ProtocolControl::SetChunkSize(self.config.chunk_size);
-        out.extend_from_slice(&self.writer.write(&set_chunk_size.try_to_message()?)?);
-        self.writer.set_chunk_size(self.config.chunk_size);
+        let chunk_size = ChunkSize::try_new(self.config.chunk_size)?;
+        let set_chunk_size = ProtocolControl::SetChunkSize(chunk_size);
+        out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message())?);
+        self.writer.set_chunk_size(chunk_size.value());
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size);
         out.extend_from_slice(&self.writer.write(&window_ack.to_message())?);
@@ -626,7 +627,7 @@ impl ClientSession {
         if let Some(pc) = ProtocolControl::from_message(msg)? {
             match pc {
                 ProtocolControl::SetChunkSize(size) => {
-                    self.assembler.set_chunk_size(size);
+                    self.assembler.set_chunk_size(size.value());
                 }
                 ProtocolControl::WindowAckSize(size) => {
                     self.ack_threshold = size;
@@ -1027,6 +1028,28 @@ mod tests {
             "ack_threshold must not be overwritten by SetPeerBandwidth"
         );
         assert_eq!(client.peer_bandwidth, Some(999_999));
+    }
+
+    /// The invalid-chunk-size rejection on the wire: a client configured
+    /// with a size §5.4.1 forbids fails its `connect` with the typed
+    /// `RtmpError::Malformed`, before any `SetChunkSize` message is built,
+    /// and emits nothing. The former `try_to_message` fold-panic is
+    /// unreachable now that `ChunkSize` validates at construction.
+    #[test]
+    fn client_connect_with_invalid_chunk_size_errors_before_any_message() {
+        let config = ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test_key".to_string(),
+            chunk_size: 0x8000_0000,
+            ..ClientConfig::default()
+        };
+        let mut client = ClientSession::new(config);
+        let mut server = ServerSession::new(ServerConfig::default());
+        let c0_c1 = client.start();
+        let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
+        let err = client.handle_data(&s0_s1_s2).unwrap_err();
+        assert!(matches!(err, RtmpError::Malformed { .. }), "{err:?}");
+        assert!(!client.is_publishing());
     }
 
     #[test]

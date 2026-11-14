@@ -28,8 +28,9 @@ use tokio::time::Instant;
 use transmux::{TrackId, TrackSpec};
 
 use crate::clock::{HostClock, SystemHostClock};
-use crate::error::MultimuxError;
+use crate::error::{MultimuxError, Phase, ProtocolFailure};
 use crate::source::driver::{IngestStep, StepOutcome, ts};
+use http;
 use media_plane::ts_session::ProgramTracker;
 use transmux::stitch::Stitcher;
 
@@ -237,11 +238,11 @@ impl SessionStep {
                 },
             })?;
         if let Some(credentials) = credentials {
-            session
-                .set_credentials(credentials)
-                .map_err(|e| MultimuxError::Auth {
-                    reason: format!("{}: {e}", labels.what),
-                })?;
+            session.set_credentials(credentials).map_err(|e| {
+                MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                    broadcast_auth::HttpAuthError(format!("{labels}: {e}", labels = labels.what)),
+                ))
+            })?;
         }
         let client = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
@@ -345,13 +346,22 @@ impl SessionStep {
                     host,
                     port,
                     mode: UdpMode::Receive,
-                    multicast,
-                    recv_buffer_bytes,
+                    options,
                 } => {
-                    let socket = self
-                        .udp
-                        .bind(&host, port, multicast.as_ref(), recv_buffer_bytes)
-                        .await?;
+                    // The route's own socket options are the base when the
+                    // session leaves a value unset (the receive-buffer default
+                    // and any configured reuse); the session's join is the
+                    // route's when the route configured one.
+                    let mut merged = self.udp.options.clone();
+                    if options.recv_buffer_bytes.is_some() {
+                        merged.recv_buffer_bytes = options.recv_buffer_bytes;
+                    }
+                    merged.reuse_address |= options.reuse_address;
+                    merged.reuse_port |= options.reuse_port;
+                    if let Some(join) = options.join {
+                        merged = merged.with_join(join);
+                    }
+                    let socket = self.udp.bind(&host, port, merged).await?;
                     self.register_socket(conn, socket);
                     self.session.on_connected(conn);
                 }
@@ -499,16 +509,24 @@ impl SessionStep {
                 Event::Status(Status::NotFound) if !self.labels.session_retries => {
                     verdict = verdict.max(Verdict::Failed(match self.labels.not_found_phase {
                         Some(phase) => MultimuxError::Protocol {
-                            phase,
-                            reason: "non-success status Not Found".into(),
+                            phase: match phase {
+                                "DESCRIBE" => Phase::Describe,
+                                "SETUP" => Phase::Setup,
+                                "PLAY" => Phase::Play,
+                                "recv" => Phase::Recv,
+                                other => Phase::Other(other),
+                            },
+                            kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
                         },
                         None => self.http_error(404),
                     }));
                 }
                 Event::Forbidden { status } if self.labels.session_retries => {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
-                        reason: format!("{}: HTTP {status}", self.labels.what),
-                    }));
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
+                        broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                            format!("{}: HTTP {status}", self.labels.what),
+                        )),
+                    )));
                 }
                 Event::ServerRefused { status, .. } if !self.labels.session_retries => {
                     verdict = verdict.max(Verdict::Failed(self.http_error(status)));
@@ -517,17 +535,25 @@ impl SessionStep {
                     verdict = verdict.max(Verdict::Failed(self.http_error(status)));
                 }
                 Event::AuthRequired { .. } => {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
-                        reason: format!("{}: authentication required", self.labels.what),
-                    }));
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
+                        broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                            format!("{}: authentication required", self.labels.what),
+                        )),
+                    )));
                 }
                 Event::Error {
                     kind: ErrorKind::RequestRefused { method, status },
                     fatal: false,
                 } => {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Protocol {
-                        phase: method,
-                        reason: format!("non-success status {status}"),
+                        phase: match method {
+                            "DESCRIBE" => Phase::Describe,
+                            "SETUP" => Phase::Setup,
+                            "PLAY" => Phase::Play,
+                            "recv" => Phase::Recv,
+                            other => Phase::Other(other),
+                        },
+                        kind: ProtocolFailure::Other(format!("non-success status {status}")),
                     }));
                 }
                 Event::Error { kind, fatal: false } if kind.ends_connection() => {
@@ -539,9 +565,11 @@ impl SessionStep {
                     if self.labels.session_retries
                         && matches!(kind.refusal_status(), Some(401 | 403)) =>
                 {
-                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth {
-                        reason: format!("{}: {}", self.labels.what, kind.name()),
-                    }));
+                    verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
+                        broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                            format!("{}: {}", self.labels.what, kind.name()),
+                        )),
+                    )));
                 }
                 Event::Error { kind, fatal: false }
                     if self.labels.session_retries && kind.is_permanent() =>
@@ -565,9 +593,9 @@ impl SessionStep {
 
     fn http_error(&self, status: u16) -> MultimuxError {
         if status == reqwest::StatusCode::UNAUTHORIZED.as_u16() {
-            MultimuxError::Auth {
-                reason: format!("{}: {status}", self.labels.what),
-            }
+            MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                broadcast_auth::HttpAuthError(format!("{}: {status}", self.labels.what)),
+            ))
         } else {
             MultimuxError::Connect {
                 reason: format!("{}: HTTP {status}", self.labels.what),
@@ -760,7 +788,7 @@ async fn fetch(request: reqwest::RequestBuilder, conn: u32, tx: mpsc::Sender<Mes
 #[derive(Default)]
 pub(crate) struct UdpHost {
     pub(crate) prebound: Option<UdpSocket>,
-    pub(crate) options: crate::source::udp::UdpBindOptions,
+    pub(crate) options: broadcast_common::net::UdpOptions,
 }
 
 impl UdpHost {
@@ -768,34 +796,24 @@ impl UdpHost {
         &mut self,
         host: &str,
         port: u16,
-        multicast: Option<&broadcast_client::udp::MulticastJoin>,
-        recv_buffer_bytes: Option<u32>,
+        options: broadcast_common::net::UdpOptions,
     ) -> Result<UdpSocket, MultimuxError> {
         if let Some(socket) = self.prebound.take() {
             return Ok(socket);
         }
-        let mut options = self.options.clone();
-        if let Some(bytes) = recv_buffer_bytes {
-            options.recv_buffer_bytes = usize::try_from(bytes).ok();
-        }
-        let (addr, group) = match multicast {
-            Some(join) => {
-                if let Some(interface) = join.interface {
-                    options.multicast_interface = Some(interface.to_string());
-                } else if let Some(index) = join.interface_index {
-                    options.multicast_interface = Some(index.to_string());
-                }
+        let addr = match &options.join {
+            Some(_) => {
                 let any = if host.contains(':') {
                     "[::]"
                 } else {
                     "0.0.0.0"
                 };
-                (format!("{any}:{port}"), Some(host))
+                format!("{any}:{port}")
             }
-            None if host.contains(':') => (format!("[{host}]:{port}"), None),
-            None => (format!("{host}:{port}"), None),
+            None if host.contains(':') => format!("[{host}]:{port}"),
+            None => format!("{host}:{port}"),
         };
-        crate::source::udp::bind_udp(&addr, group, options).await
+        crate::source::udp::bind_udp(&addr, None, options).await
     }
 }
 

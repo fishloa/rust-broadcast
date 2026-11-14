@@ -248,7 +248,7 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
 
     let socket = media_doctor::udp::bind_udp(udp_addr, &udp_config)?;
     if let (Some(want), Ok(got)) = (
-        udp_config.recv_buffer,
+        udp_config.recv_buffer_bytes,
         media_doctor::udp::recv_buffer_size(&socket),
     ) && got < want
     {

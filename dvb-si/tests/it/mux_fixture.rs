@@ -62,7 +62,7 @@ fn packetiser_round_trips_real_capture_through_si_demux() {
             .filter(|(p, _)| *p == pid)
             .map(|(_, b)| b.as_slice())
             .collect();
-        let mut packetiser = SectionPacketiser::new(Pid::new(pid));
+        let mut packetiser = SectionPacketiser::new(Pid::from_wire_masked(pid));
         regenerated.extend(packetiser.packetise(&sections));
     }
 

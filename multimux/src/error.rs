@@ -51,32 +51,34 @@ pub enum MultimuxError {
         reason: String,
     },
 
-    /// An RTSP protocol exchange failed (e.g. DESCRIBE/SETUP/PLAY returned a
+    /// An RTSP/HTTP protocol exchange failed (e.g. DESCRIBE/SETUP/PLAY returned a
     /// non-2xx status, or the server's response was unusable).
-    #[error("{phase} failed: {reason}")]
+    #[error("{phase} failed: {kind}")]
     Protocol {
-        /// Which RTSP phase failed (e.g. `"DESCRIBE"`, `"SETUP"`, `"PLAY"`).
-        phase: &'static str,
+        /// Which phase failed.
+        phase: Phase,
         /// Why it failed.
-        reason: String,
+        kind: ProtocolFailure,
     },
 
     /// The DESCRIBE SDP body could not be parsed, or described media this
     /// crate doesn't support.
-    #[error("SDP error: {reason}")]
-    Sdp {
+    #[error("SDP error: {0}")]
+    Sdp(
         /// Why the SDP was rejected.
-        reason: String,
-    },
+        #[source]
+        SdpError,
+    ),
 
     /// Credential extraction/decoding failed, or the source rejected the
     /// configured credentials (e.g. a `401` that persisted after the
     /// engine's own challenge/response retry).
-    #[error("authentication error: {reason}")]
-    Auth {
+    #[error("authentication error: {0}")]
+    Auth(
         /// Why authentication failed. Never includes the raw credential.
-        reason: String,
-    },
+        #[source]
+        broadcast_auth::Error,
+    ),
 
     /// An ingest FLV tag stream (the `rtmp::RtmpRoute` publisher's media)
     /// failed to demux; the `transmux::FlvError` is kept as the source.
@@ -180,6 +182,82 @@ pub enum MultimuxError {
         /// The unknown route name.
         name: String,
     },
+    /// An [`crate::output::OutputKind`] that has no [`crate::output::Output`]
+    /// trait object (push outputs, WHEP, or a `Custom` needing a registry).
+    #[error("{kind} output cannot be built into an Output trait object")]
+    OutputNotBuildable {
+        /// The output kind's name.
+        kind: String,
+    },
+}
+
+/// Which phase of an ingest/protocol exchange failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Phase {
+    /// RTSP DESCRIBE.
+    Describe,
+    /// RTSP SETUP.
+    Setup,
+    /// RTSP PLAY.
+    Play,
+    /// Receiving media bytes.
+    Recv,
+    /// Any other phase (carries its label).
+    Other(&'static str),
+}
+
+impl Phase {
+    /// The wire/label string for this phase.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Phase::Describe => "DESCRIBE",
+            Phase::Setup => "SETUP",
+            Phase::Play => "PLAY",
+            Phase::Recv => "recv",
+            Phase::Other(s) => s,
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(Phase);
+
+/// Why a [`MultimuxError::Protocol`] failed.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum ProtocolFailure {
+    /// A non-success HTTP/RTSP status code.
+    #[error("non-success status {0}")]
+    Status(http::StatusCode),
+    /// No data arrived within the configured read timeout.
+    #[error("no data within {0:?}")]
+    RecvTimeout(std::time::Duration),
+    /// An RTSP runtime error.
+    #[error(transparent)]
+    Rtsp(#[from] rtsp_runtime::Error),
+    /// An RTMP runtime error.
+    #[error(transparent)]
+    Rtmp(#[from] rtmp_runtime::RtmpError),
+    /// A formatted reason with no typed source.
+    #[error("{0}")]
+    Other(String),
+}
+
+/// Error carrying an SDP rejection reason.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct SdpError(pub String);
+
+impl From<String> for SdpError {
+    fn from(s: String) -> Self {
+        SdpError(s)
+    }
+}
+
+impl From<&str> for SdpError {
+    fn from(s: &str) -> Self {
+        SdpError(s.to_string())
+    }
 }
 
 /// multimux result alias.

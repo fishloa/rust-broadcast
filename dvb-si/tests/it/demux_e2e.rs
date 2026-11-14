@@ -129,8 +129,8 @@ fn variant_name(result: Result<&AnyTableSection<'_>, &dvb_si::error::Error>) -> 
 /// Build the M6 demux: standard SI PIDs + AIT (0x00AA) + DSM-CC (0x00AB).
 fn m6_demux() -> SiDemux {
     SiDemux::builder()
-        .pid(Pid::new(0x00AA)) // AIT
-        .pid(Pid::new(0x00AB)) // DSM-CC HbbTV carousel
+        .pid(Pid::from_const(0x00AA)) // AIT
+        .pid(Pid::from_const(0x00AB)) // DSM-CC HbbTV carousel
         .build()
 }
 

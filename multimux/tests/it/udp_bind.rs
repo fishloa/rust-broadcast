@@ -1,12 +1,14 @@
-//! SP1.6: the UDP binds go through `socket2` with configurable `SO_RCVBUF`
-//! and `SO_REUSEADDR`. The RCVBUF assertion round-trips the REQUESTED value
+//! SP1.6: the UDP binds go through the workspace's one datagram bind with
+//! configurable `SO_RCVBUF`, `SO_REUSEADDR` and the multicast interface, all
+//! carried by `broadcast_common::net::UdpOptions` (#2663). The RCVBUF assertion round-trips the REQUESTED value
 //! (the OS clamps/doubles — Linux doubles and floors at a minimum, macOS
 //! reports set+overhead — so comparing against the OS default proves
 //! nothing; the getter proves the option was APPLIED).
 
 use std::time::Duration;
 
-use multimux::source::udp::{UdpBindOptions, bind_udp};
+use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
+use multimux::source::udp::bind_udp;
 
 /// True when the error message is a "no route/interface for this multicast
 /// join" style failure, which is a host limitation, not a bug — the same
@@ -40,10 +42,7 @@ async fn the_configured_receive_buffer_is_applied_to_the_socket() {
     // 64 KiB: below every observed OS default (macOS ~786 KiB, Linux ~208 KiB),
     // so the getter returning ~64 KiB (Linux reports the doubled 128 KiB)
     // proves the option took; a plain bind reports the untouched default.
-    let opts = UdpBindOptions {
-        recv_buffer_bytes: Some(64 * 1024),
-        ..Default::default()
-    };
+    let opts = UdpOptions::new().with_recv_buffer_bytes(64 * 1024);
     let socket = bind_udp("127.0.0.1:0", None, opts).await.unwrap();
     let got = socket.recv_buffer_size_for_test();
     // Linux doubles the request; macOS adds overhead. Accept 64..=256 KiB,
@@ -60,12 +59,10 @@ async fn the_configured_receive_buffer_is_applied_to_the_socket() {
 
 #[tokio::test]
 async fn reuse_address_is_applied_and_a_multicast_group_can_join_a_specified_interface() {
-    let opts = UdpBindOptions {
-        recv_buffer_bytes: None,
-        reuse_address: true,
-        multicast_interface: Some("0.0.0.0".into()),
-        reuse_port: false,
-    };
+    let opts = UdpOptions::new().with_reuse_address(true).with_join(
+        MulticastJoin::new("239.255.0.1".parse().unwrap())
+            .with_interface(MulticastInterface::V4(std::net::Ipv4Addr::UNSPECIFIED)),
+    );
     // A multicast join needs a group route on the host; on a host without
     // one the join errors — this test asserts the OPTION PATH, tolerating
     // the join failure only when it is EADDRNOTAVAIL/EHOSTUNREACH.
@@ -81,10 +78,7 @@ async fn reuse_address_is_applied_and_a_multicast_group_can_join_a_specified_int
 /// accepted, not required, on a fresh port).
 #[tokio::test]
 async fn an_explicit_reuse_address_bind_still_succeeds() {
-    let opts = UdpBindOptions {
-        reuse_address: true,
-        ..Default::default()
-    };
+    let opts = UdpOptions::new().with_reuse_address(true);
     let socket = tokio::time::timeout(Duration::from_secs(5), bind_udp("127.0.0.1:0", None, opts))
         .await
         .expect("bind must not hang")
@@ -117,7 +111,7 @@ async fn the_default_receive_buffer_is_larger_than_an_unconfigured_socket() {
     let plain = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let baseline = plain.recv_buffer_size_for_test();
 
-    let socket = bind_udp("127.0.0.1:0", None, UdpBindOptions::default())
+    let socket = bind_udp("127.0.0.1:0", None, UdpOptions::default())
         .await
         .unwrap();
     let got = socket.recv_buffer_size_for_test();
@@ -147,10 +141,7 @@ async fn an_explicit_receive_buffer_overrides_the_default() {
     let socket = bind_udp(
         "127.0.0.1:0",
         None,
-        UdpBindOptions {
-            recv_buffer_bytes: Some(128 * 1024),
-            ..Default::default()
-        },
+        UdpOptions::new().with_recv_buffer_bytes(128 * 1024),
     )
     .await
     .unwrap();
@@ -175,26 +166,16 @@ async fn an_explicit_receive_buffer_overrides_the_default() {
 #[tokio::test]
 async fn reuse_port_lets_two_sockets_share_a_port() {
     // First socket claims an ephemeral port (also with reuse_port).
-    let first = bind_udp(
-        "127.0.0.1:0",
-        None,
-        UdpBindOptions {
-            reuse_port: true,
-            ..Default::default()
-        },
-    )
-    .await
-    .unwrap();
+    let first = bind_udp("127.0.0.1:0", None, UdpOptions::new().with_reuse_port(true))
+        .await
+        .unwrap();
     let addr = first.local_addr().unwrap();
 
     // Second socket binds the SAME port with reuse_port => succeeds.
     let second = bind_udp(
         &addr.to_string(),
         None,
-        UdpBindOptions {
-            reuse_port: true,
-            ..Default::default()
-        },
+        UdpOptions::new().with_reuse_port(true),
     )
     .await
     .expect("a second socket with reuse_port must share the port");
@@ -203,7 +184,7 @@ async fn reuse_port_lets_two_sockets_share_a_port() {
     // Negative control: a socket binding a port held WITHOUT reuse_port fails.
     let plain = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let held = plain.local_addr().unwrap();
-    let conflict = bind_udp(&held.to_string(), None, UdpBindOptions::default()).await;
+    let conflict = bind_udp(&held.to_string(), None, UdpOptions::default()).await;
     assert!(
         matches!(
             conflict,

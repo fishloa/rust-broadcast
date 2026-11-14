@@ -13,7 +13,7 @@ use mpeg_ts::pid::Pid;
 /// PAT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x00;
 /// PAT well-known PID.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::from_const(0x0000);
 /// program_number value that carries the NIT PID rather than a PMT PID.
 pub const PROGRAM_NUMBER_NIT: u16 = 0x0000;
 
@@ -249,7 +249,7 @@ mod tests {
         for &(pn, pid) in entries {
             v.extend_from_slice(&pn.to_be_bytes());
             let mut pid_bytes = [0u8; 2];
-            crate::tables::write_pid(&mut pid_bytes, Pid::new(pid));
+            crate::tables::write_pid(&mut pid_bytes, Pid::from_wire_masked(pid));
             v.extend_from_slice(&pid_bytes);
         }
         v.extend_from_slice(&[0, 0, 0, 0]); // placeholder CRC
@@ -274,7 +274,7 @@ mod tests {
         let pat = PatSection::parse(&bytes).unwrap();
         assert_eq!(pat.entries.len(), 1);
         assert_eq!(pat.entries[0].program_number, 42);
-        assert_eq!(pat.entries[0].pid, Pid::new(0x1234));
+        assert_eq!(pat.entries[0].pid, Pid::from_const(0x1234));
     }
 
     #[test]
@@ -285,7 +285,10 @@ mod tests {
         assert_eq!(pat.entries.len(), 10);
         for (i, e) in pat.entries.iter().enumerate() {
             assert_eq!(e.program_number, (i + 1) as u16);
-            assert_eq!(e.pid, Pid::new(0x1000 + (i + 1) as u16));
+            assert_eq!(
+                e.pid,
+                Pid::try_new(0x1000 + (i + 1) as u16).expect("pid fits the 13-bit field")
+            );
         }
     }
 
@@ -318,7 +321,12 @@ mod tests {
     #[test]
     fn serialize_round_trip_many_programs() {
         let entries: Vec<PatEntry> = (1..=5)
-            .map(|i| PatEntry::new(i, Pid::new(0x1000 + i)))
+            .map(|i| {
+                PatEntry::new(
+                    i,
+                    Pid::try_new(0x1000 + i).expect("pid fits the 13-bit field"),
+                )
+            })
             .collect();
         let pat = PatSection::new(0xABCD, 3, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
@@ -333,7 +341,7 @@ mod tests {
     #[test]
     fn serialize_rejects_program_loop_exceeding_section_length() {
         let entries: Vec<PatEntry> = (0..1022u32)
-            .map(|i| PatEntry::new((i % u16::MAX as u32) as u16, Pid::new(0x0100)))
+            .map(|i| PatEntry::new((i % u16::MAX as u32) as u16, Pid::from_const(0x0100)))
             .collect();
         let pat = PatSection::new(1, 0, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
@@ -346,7 +354,7 @@ mod tests {
     #[test]
     fn serialize_accepts_program_loop_at_section_length_boundary() {
         let entries: Vec<PatEntry> = (0..1021u32)
-            .map(|i| PatEntry::new((i % u16::MAX as u32) as u16, Pid::new(0x0100)))
+            .map(|i| PatEntry::new((i % u16::MAX as u32) as u16, Pid::from_const(0x0100)))
             .collect();
         let pat = PatSection::new(1, 0, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
@@ -374,7 +382,7 @@ mod tests {
     fn network_pid_entry_identified_by_program_number_0() {
         let bytes = build_pat(1, 0, &[(0, 0x0010), (1, 0x0100)]);
         let pat = PatSection::parse(&bytes).unwrap();
-        assert_eq!(pat.nit_pid(), Some(Pid::new(0x0010)));
+        assert_eq!(pat.nit_pid(), Some(Pid::from_const(0x0010)));
         assert_eq!(pat.programmes().count(), 1);
         assert_eq!(pat.programmes().next().unwrap().program_number, 1);
     }

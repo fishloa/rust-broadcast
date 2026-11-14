@@ -17,8 +17,8 @@ fn main() {
         0,
         0,
         vec![
-            PatEntry::new(1, Pid::new(0x0100)),
-            PatEntry::new(2, Pid::new(0x0200)),
+            PatEntry::new(1, Pid::from_const(0x0100)),
+            PatEntry::new(2, Pid::from_const(0x0200)),
         ],
     );
 

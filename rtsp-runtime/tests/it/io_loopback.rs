@@ -510,7 +510,7 @@ async fn pending_media_queue_is_capped_while_exchange_waits() {
     while indices.len() < 1024 {
         match client.recv_interleaved().await.unwrap() {
             Some(ClientEvent::MediaData { data, .. }) => {
-                indices.push(u32::from_be_bytes(data.try_into().unwrap()));
+                indices.push(u32::from_be_bytes(data.as_ref().try_into().unwrap()));
             }
             Some(other) => panic!("unexpected event: {other:?}"),
             None => break,

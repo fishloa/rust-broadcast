@@ -17,14 +17,16 @@
 
 use broadcast_common::{Unpackage, crc32_mpeg2};
 use mpeg_ts::pid::Pid;
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
+use mpeg_ts::ts::{
+    AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
+};
 use transmux::{DemuxEvent, InputDegradation, StreamingTsDemux, TsDemux};
 
-const PMT_PID: Pid = Pid::new(0x1000);
-const DSMCC_PID: Pid = Pid::new(0x0300);
+const PMT_PID: Pid = Pid::from_const(0x1000);
+const DSMCC_PID: Pid = Pid::from_const(0x0300);
 const STREAM_TYPE_DSMCC: u8 = 0x0C;
 /// A PID the PMT does not declare: damage on it has no track.
-const UNDECLARED_PID: Pid = Pid::new(0x0555);
+const UNDECLARED_PID: Pid = Pid::from_const(0x0555);
 
 fn section(table_id: u8, body: &[u8]) -> Vec<u8> {
     let len = body.len() + 4;
@@ -41,10 +43,9 @@ fn packet(pid: Pid, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] 
         tei: false,
         pusi,
         pid,
-        scrambling: 0,
-        has_adaptation: false,
-        has_payload: true,
-        continuity_counter: cc,
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation: AdaptationFieldControl::PayloadOnly,
+        continuity_counter: ContinuityCounter::from_wire_masked(cc),
     }
     .serialize_into(&mut pkt)
     .unwrap();
@@ -69,7 +70,7 @@ fn stream() -> Vec<u8> {
         0,
     ]);
     let mut v = Vec::new();
-    v.extend_from_slice(&psi(Pid::new(0), 0, &pat_body, 0x00));
+    v.extend_from_slice(&psi(Pid::from_const(0), 0, &pat_body, 0x00));
     v.extend_from_slice(&psi(PMT_PID, 0, &pmt_body, 0x02));
     // Damage first, while the PID has no track yet: a counter jump (0 -> 5)
     // on the DSM-CC PID and one on an undeclared PID. Only then one complete
@@ -85,7 +86,7 @@ fn stream() -> Vec<u8> {
     v.extend_from_slice(&psi(DSMCC_PID, 6, &[0, 1, 0xC1, 0, 0, 1, 2, 3], 0x3C));
     // trailing nulls let the resynchroniser lock on the last real packet
     for _ in 0..8 {
-        v.extend_from_slice(&packet(Pid::new(0x1FFF), false, 0, &[]));
+        v.extend_from_slice(&packet(Pid::from_const(0x1FFF), false, 0, &[]));
     }
     v
 }
@@ -154,7 +155,7 @@ fn orf3_every_record_on_a_track_pid_names_that_track() {
     let carousel = media
         .tracks
         .iter()
-        .find(|t| t.spec.source_pid == Some(Pid::new(0x1C90)))
+        .find(|t| t.spec.source_pid == Some(Pid::from_const(0x1C90)))
         .expect("PID 0x1C90 is a track");
     let mut checked = 0;
     for r in &media.degraded_at {
