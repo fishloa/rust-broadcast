@@ -10,6 +10,7 @@ use crate::output::OutputKind;
 use broadcast_auth::Credentials;
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
 use std::path::Path;
 use std::time::Duration;
 
@@ -387,6 +388,13 @@ impl UdpSocketSpec {
             .with_reuse_address(self.reuse_address)
             .with_reuse_port(self.reuse_port);
         if let Some(bytes) = self.recv_buffer_bytes {
+            let bytes = u32::try_from(bytes)
+                .ok()
+                .and_then(NonZeroU32::new)
+                .ok_or_else(|| MultimuxError::ConfigInvalid {
+                    field: "routes.input.recv_buffer_bytes",
+                    reason: "must be between 1 and 4294967295".into(),
+                })?;
             options = options.with_recv_buffer_bytes(bytes);
         }
         if let Some(text) = self.multicast_interface.as_deref() {
@@ -3954,7 +3962,7 @@ mod tests {
                 assert!(socket.reuse_address);
                 assert_eq!(socket.multicast_interface.as_deref(), Some("192.168.1.10"));
                 let opts = socket.to_bind_options().unwrap();
-                assert_eq!(opts.recv_buffer_bytes, Some(4_194_304));
+                assert_eq!(opts.recv_buffer_bytes, NonZeroU32::new(4_194_304));
                 assert_eq!(
                     opts.join.unwrap().interface,
                     broadcast_common::net::MulticastInterface::V4(std::net::Ipv4Addr::new(
