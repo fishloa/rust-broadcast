@@ -187,7 +187,8 @@ fn extra_headers_never_override_session_cookie_or_authorization() {
         new_config
     };
     let mut s = ts_probe::open(TS_URL, config);
-    s.set_credentials(Credentials::bearer("tok")).unwrap();
+    s.set_credentials(ts(0), Credentials::bearer("tok"))
+        .unwrap();
     let req = one(&mut s, 0);
     assert_eq!(req.count("cookie"), 1);
     assert_eq!(req.count("authorization"), 1);

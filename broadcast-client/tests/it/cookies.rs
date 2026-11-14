@@ -304,7 +304,8 @@ fn set_cookie_on_401_response_is_stored() {
     }
     assert!(saw_required);
     assert_eq!(s.cookies(), vec![pair("sid", "from401")]);
-    s.set_credentials(Credentials::new("user", "pass")).unwrap();
+    s.set_credentials(ts(0), Credentials::new("user", "pass"))
+        .unwrap();
     let retry = one(&mut s, 1);
     assert_eq!(retry.cookie(), Some("sid=from401"));
 }
@@ -656,7 +657,8 @@ fn cookie_header_does_not_leak_into_auth_decision() {
         new_config
     };
     let mut s = open(TS_URL, config);
-    s.set_credentials(Credentials::new("user", "pass")).unwrap();
+    s.set_credentials(ts(0), Credentials::new("user", "pass"))
+        .unwrap();
     let first = one(&mut s, 0);
     assert_eq!(first.cookie(), Some("sid=1"));
     assert_eq!(first.header("authorization"), None);
@@ -683,7 +685,7 @@ fn cookie_header_does_not_leak_into_auth_decision() {
 
     let mut plain = open(TS_URL, Config::default());
     plain
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let p1 = one(&mut plain, 0);
     respond(

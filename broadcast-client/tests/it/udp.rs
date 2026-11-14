@@ -701,7 +701,7 @@ fn caller_reconnect_and_close_each_end_the_socket_once() {
     assert_eq!(host.closes, vec![first]);
     assert_eq!(host.binds.len(), 2);
     let second = host.conn.unwrap();
-    host.session.close();
+    host.session.close(ts(0));
     host.settle();
     assert_eq!(host.closes, vec![first, second]);
     host.session

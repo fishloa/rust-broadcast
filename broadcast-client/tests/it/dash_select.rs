@@ -244,7 +244,7 @@ fn two_video_representations_list_in_mpd_order_and_the_best_is_chosen() {
 fn select_variant_switches_at_the_next_segment_and_keeps_the_samples_intact() {
     let mut sim = sim_for(MANIFEST, with_two_video(), one_at_a_time(), alias_ffmpeg);
     run_until(&mut sim, |s| samples_of(s, 1) > 0);
-    sim.session.select_variant(1).unwrap();
+    sim.session.select_variant(ts(sim.world.mono()), 1).unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
@@ -276,21 +276,21 @@ fn an_unknown_variant_is_an_error_and_nothing_is_known_before_the_manifest() {
     )
     .unwrap();
     assert!(matches!(
-        early.select_variant(0),
+        early.select_variant(ts(0), 0),
         Err(Error::NoSuchVariant(0))
     ));
     assert!(matches!(
-        early.select_audio_rendition(Some(0)),
+        early.select_audio_rendition(ts(0), Some(0)),
         Err(Error::NoSuchRendition)
     ));
     let mut sim = sim_for(MANIFEST, with_two_video(), Config::default(), alias_ffmpeg);
     sim.run_to_terminal(60 * SEC);
     assert!(matches!(
-        sim.session.select_variant(2),
+        sim.session.select_variant(ts(sim.world.mono()), 2),
         Err(Error::NoSuchVariant(2))
     ));
     assert!(
-        sim.session.select_variant(1).is_ok(),
+        sim.session.select_variant(ts(sim.world.mono()), 1).is_ok(),
         "a known index after Ended is accepted"
     );
     let after = sim.events.len();
@@ -334,7 +334,9 @@ fn a_manual_variant_choice_survives_a_period_change() {
         .position(|v| v.bandwidth == 20_000)
         .unwrap();
     assert_ne!(first.chosen, low);
-    sim.session.select_variant(low).unwrap();
+    sim.session
+        .select_variant(ts(sim.world.mono()), low)
+        .unwrap();
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     let all = manifests(&sim);
@@ -408,7 +410,9 @@ fn select_audio_rendition_switches_the_audio_set_mid_stream() {
         alias_ffmpeg,
     );
     run_until(&mut sim, |s| samples_of(s, 2) > 0);
-    sim.session.select_audio_rendition(Some(1)).unwrap();
+    sim.session
+        .select_audio_rendition(ts(sim.world.mono()), Some(1))
+        .unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
@@ -433,7 +437,8 @@ fn select_audio_rendition_switches_the_audio_set_mid_stream() {
         "no audio sample lost or repeated"
     );
     assert!(matches!(
-        sim.session.select_audio_rendition(Some(2)),
+        sim.session
+            .select_audio_rendition(ts(sim.world.mono()), Some(2)),
         Err(Error::NoSuchRendition)
     ));
 }
@@ -447,7 +452,9 @@ fn audio_can_be_stopped_and_started_again() {
         alias_ffmpeg,
     );
     run_until(&mut sim, |s| samples_of(s, 2) > 0);
-    sim.session.select_audio_rendition(None).unwrap();
+    sim.session
+        .select_audio_rendition(ts(sim.world.mono()), None)
+        .unwrap();
     let stop_at = sim.events.len();
     let log_at_stop = sim.log.len();
     let audio_so_far = samples_of(&sim, 2);
@@ -497,7 +504,9 @@ fn auto_select_audio_off_plays_video_only_until_a_rendition_is_chosen() {
     );
     run_until(&mut sim, |s| samples_of(s, 1) > 0);
     assert!(audio_events(&sim).iter().all(|a| a.0.is_none()));
-    sim.session.select_audio_rendition(Some(1)).unwrap();
+    sim.session
+        .select_audio_rendition(ts(sim.world.mono()), Some(1))
+        .unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     assert_eq!(audio_events(&sim).last().map(|a| a.0), Some(Some(1)));
@@ -512,8 +521,11 @@ fn a_ts_over_http_session_has_no_variants_or_renditions() {
         ts(0),
     )
     .unwrap();
-    assert!(matches!(s.select_variant(0), Err(Error::NotHls)));
-    assert!(matches!(s.select_audio_rendition(None), Err(Error::NotHls)));
+    assert!(matches!(s.select_variant(ts(0), 0), Err(Error::NotHls)));
+    assert!(matches!(
+        s.select_audio_rendition(ts(0), None),
+        Err(Error::NotHls)
+    ));
 }
 
 fn restart_with_two_audio_sets() -> String {
@@ -549,7 +561,9 @@ fn a_manual_audio_choice_survives_a_period_change_by_name_and_language() {
     assert_eq!(text.matches("alt-p").count(), 4);
     let mut sim = sim_for(RESTART, text, one_at_a_time(), alias_restart);
     run_until(&mut sim, |s| samples_of(s, 2) > 0);
-    sim.session.select_audio_rendition(Some(1)).unwrap();
+    sim.session
+        .select_audio_rendition(ts(sim.world.mono()), Some(1))
+        .unwrap();
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
     let asked: Vec<String> = sim
@@ -587,7 +601,7 @@ fn a_variant_switch_neither_restarts_nor_pauses_the_playout_gate() {
             )
         })
     });
-    sim.session.select_variant(1).unwrap();
+    sim.session.select_variant(ts(sim.world.mono()), 1).unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended());
     assert!(

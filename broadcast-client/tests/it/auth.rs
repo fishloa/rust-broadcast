@@ -1,5 +1,7 @@
 use broadcast_auth::Scheme as AuthScheme;
-use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
+use broadcast_client::{
+    Action, Config, ConnId, Credentials, Event, Session, Status, TransportError,
+};
 use broadcast_common::stage::Timestamp;
 use url::Url;
 
@@ -17,7 +19,7 @@ fn bearer_preemptive() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::bearer("secret-token"))
+        .set_credentials(ts(0), Credentials::bearer("secret-token"))
         .unwrap();
     match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { headers, .. } => {
@@ -44,10 +46,13 @@ fn explicit_basic_is_sent_on_the_first_request_only_when_preemptive_basic_is_on(
         )
         .unwrap();
         session
-            .set_credentials(Credentials::Basic {
-                username: "user".to_string(),
-                password: "pass".to_string(),
-            })
+            .set_credentials(
+                ts(0),
+                Credentials::Basic {
+                    username: "user".to_string(),
+                    password: "pass".to_string(),
+                },
+            )
             .unwrap();
         let Some(Action::HttpRequest { headers, .. }) = session.poll(ts(0)) else {
             panic!("a first request");
@@ -121,7 +126,7 @@ fn basic_401_replay_then_200() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let conn1 = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {
@@ -173,7 +178,7 @@ fn digest_401_replay_then_200() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let conn1 = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -211,7 +216,7 @@ fn basic_digest_preemptive_after_replay() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let conn1 = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -258,7 +263,7 @@ fn digest_stale_rechallenge_replays() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let conn1 = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -401,7 +406,7 @@ fn auth_rejected_after_bad_credentials() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let conn1 = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
@@ -464,7 +469,9 @@ fn set_credentials_while_waiting_reopens() {
     );
     // consume close
     while session.poll(ts(0)).is_some() {}
-    session.set_credentials(Credentials::bearer("t")).unwrap();
+    session
+        .set_credentials(ts(0), Credentials::bearer("t"))
+        .unwrap();
     let mut saw_http = false;
     while let Some(a) = session.poll(ts(0)) {
         if matches!(a, Action::HttpRequest { .. }) {
@@ -493,7 +500,7 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
     };
     session.on_response(conn, 200, &[], ts(0));
     session
-        .set_credentials(Credentials::bearer("new-token"))
+        .set_credentials(ts(0), Credentials::bearer("new-token"))
         .unwrap();
     let mut saw_close = false;
     let mut saw_request = false;
@@ -576,7 +583,7 @@ fn debug_does_not_contain_secret() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::bearer("supersecret-token"))
+        .set_credentials(ts(0), Credentials::bearer("supersecret-token"))
         .unwrap();
     let dbg = format!("{:?}", session);
     assert!(!dbg.contains("supersecret-token"));
@@ -634,7 +641,7 @@ fn challenged_session(challenge: &str) -> Session {
 fn basic_first_request_after_set_credentials_is_already_authorized() {
     let mut session = challenged_session("Basic realm=\"tv\"");
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let (_, headers) = first_request_headers(&mut session, 1);
     assert_eq!(authorization(&headers), Some("Basic dXNlcjpwYXNz"));
@@ -644,7 +651,7 @@ fn basic_first_request_after_set_credentials_is_already_authorized() {
 fn digest_first_request_after_set_credentials_is_already_authorized() {
     let mut session = challenged_session("Digest realm=\"tv\", nonce=\"abc123\", qop=\"auth\"");
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let (_, headers) = first_request_headers(&mut session, 1);
     let auth = authorization(&headers).expect("Authorization on the first request");
@@ -658,7 +665,7 @@ fn digest_first_request_after_set_credentials_is_already_authorized() {
 fn reconnect_after_credentials_arrive_stays_preemptive() {
     let mut session = challenged_session("Basic realm=\"tv\"");
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let (conn, headers) = first_request_headers(&mut session, 1);
     assert!(authorization(&headers).is_some());
@@ -671,7 +678,9 @@ fn reconnect_after_credentials_arrive_stays_preemptive() {
 #[test]
 fn bearer_credentials_after_challenge_still_preemptive() {
     let mut session = challenged_session("Bearer realm=\"tv\"");
-    session.set_credentials(Credentials::bearer("tok")).unwrap();
+    session
+        .set_credentials(ts(0), Credentials::bearer("tok"))
+        .unwrap();
     let (_, headers) = first_request_headers(&mut session, 1);
     assert_eq!(authorization(&headers), Some("Bearer tok"));
 }
@@ -680,7 +689,7 @@ fn bearer_credentials_after_challenge_still_preemptive() {
 fn rejected_credentials_then_new_ones_use_the_new_challenge_state() {
     let mut session = challenged_session("Basic realm=\"tv\"");
     session
-        .set_credentials(Credentials::new("user", "wrong"))
+        .set_credentials(ts(0), Credentials::new("user", "wrong"))
         .unwrap();
     let (conn, headers) = first_request_headers(&mut session, 1);
     assert!(authorization(&headers).is_some());
@@ -702,8 +711,43 @@ fn rejected_credentials_then_new_ones_use_the_new_challenge_state() {
     }
     assert!(rejected);
     session
-        .set_credentials(Credentials::new("user", "right"))
+        .set_credentials(ts(0), Credentials::new("user", "right"))
         .unwrap();
     let (_, again) = first_request_headers(&mut session, 2);
     assert_eq!(authorization(&again), Some("Basic dXNlcjpyaWdodA=="));
+}
+
+#[test]
+fn set_credentials_after_the_session_dropped_its_connection_resumes_from_the_instant_it_is_given() {
+    let base = 10_000_000u64;
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
+        Action::HttpRequest { conn, .. } => conn,
+        other => panic!("{other:?}"),
+    };
+    session.on_closed(conn, Some(TransportError::Refused), ts(0));
+    let before = wakes(&mut session, 0);
+    assert!(!before.is_empty(), "the refusal backs off");
+    session
+        .set_credentials(ts(base), Credentials::new("user", "pass"))
+        .unwrap();
+    let after = wakes(&mut session, base);
+        assert!(
+        after.iter().any(|&at| at.as_micros() == base + 1_000_000),
+        "the reconnect set_credentials starts is stamped with the instant it is given, not the last one the session saw: before {before:?} after {after:?}"
+    );
+}
+
+fn wakes(session: &mut Session, now: u64) -> Vec<Timestamp> {
+    std::iter::from_fn(|| session.poll(ts(now)))
+        .filter_map(|a| match a {
+            Action::WakeAt(at) => Some(at),
+            _ => None,
+        })
+        .collect()
 }

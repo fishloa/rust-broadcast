@@ -24,7 +24,7 @@ fn main() {
         println!("event: {e:?}");
     }
     session
-        .set_credentials(Credentials::bearer("secret-token"))
+        .set_credentials(now(0), Credentials::bearer("secret-token"))
         .unwrap();
     if let Some(a) = session.poll(now(0)) {
         println!("action after creds: {a:?}");

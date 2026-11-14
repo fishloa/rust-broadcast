@@ -332,7 +332,10 @@ impl Session {
             self.settle_buffer();
         }
         while let Some(mut action) = self.actions.pop_front() {
-            if matches!(action, Action::WakeAt(at) if at <= now) {
+            if let Action::WakeAt(at) = action
+                && at <= now
+            {
+                self.ts_wake = self.ts_wake.filter(|held| *held != at);
                 continue;
             }
             self.attach_identity(&mut action);
@@ -535,7 +538,7 @@ impl Session {
                 }
             }
             if lost {
-                self.hint(Hint::SourceError);
+                self.hint(Timestamp::from_micros(now_us), Hint::SourceError);
             }
             return;
         }
@@ -613,7 +616,7 @@ impl Session {
             self.flush_rtsp();
             self.settle_buffer();
             if ended {
-                self.hint(hint);
+                self.hint(now, hint);
             }
             return;
         }
@@ -623,7 +626,7 @@ impl Session {
             self.flush_rtmp();
             self.settle_buffer();
             if ended {
-                self.hint(hint);
+                self.hint(now, hint);
             }
             return;
         }
@@ -788,12 +791,18 @@ impl Session {
         self.rtsp.as_ref().map_or(0, |r| r.rtcp_rejected())
     }
 
-    /// Set credentials.
+    /// Set credentials. `now` is the host clock at the call, as for every other input: the
+    /// requests and timers this call starts (an RTSP re-authentication, an HLS resume, a TS
+    /// reconnect) are stamped with it, not with the last instant the session saw.
     ///
     /// # Errors
     /// [`Error::InvalidCredentials`] when the token, user name or password cannot be sent in an
     /// HTTP header; the previous credentials stay in force.
-    pub fn set_credentials(&mut self, creds: crate::Credentials) -> Result<(), Error> {
+    pub fn set_credentials(
+        &mut self,
+        now: Timestamp,
+        creds: crate::Credentials,
+    ) -> Result<(), Error> {
         if self.closed {
             return Ok(());
         }
@@ -803,11 +812,13 @@ impl Session {
             self.auth.preauthorize_basic();
         }
         if let Some(r) = self.rtsp.as_mut() {
-            r.on_credentials(Timestamp::from_micros(self.now_us), &self.auth);
+            r.on_credentials(now, &self.auth);
             self.flush_rtsp();
             return Ok(());
         }
         if was_waiting {
+            self.now_us = now.as_micros();
+            self.ts_wake = None;
             if let Some(h) = self.adaptive.as_mut() {
                 h.resume(self.now_us, &mut self.auth);
                 self.flush_adaptive();
@@ -890,12 +901,14 @@ impl Session {
     /// Switch to another variant of the last [`Event::Variants`]: an HLS variant of the master
     /// playlist, or a video Representation of the current DASH Period (the switch takes effect at the
     /// next segment boundary and is kept in later Periods). After [`Status::Ended`] a known index is
-    /// accepted and ignored: nothing is started and nothing is emitted.
+    /// accepted and ignored: nothing is started and nothing is emitted. `now` is the host clock at
+    /// the call; the requests the switch schedules are stamped with it.
     ///
     /// # Errors
     /// [`Error::NotHls`] for a session that is neither HLS nor DASH, [`Error::NoSuchVariant`] for an
     /// unknown index.
-    pub fn select_variant(&mut self, index: usize) -> Result<(), Error> {
+    pub fn select_variant(&mut self, now: Timestamp, index: usize) -> Result<(), Error> {
+        self.now_us = now.as_micros();
         let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
         };
@@ -919,12 +932,18 @@ impl Session {
     /// addresses every audio AdaptationSet of the current Period in MPD order, `None` stops requesting
     /// audio and a later `Some` starts it again. A manual selection replaces automatic selection
     /// until the session ends. After [`Status::Ended`] the call is accepted and ignored: nothing is
-    /// started and nothing more is emitted.
+    /// started and nothing more is emitted. `now` is the host clock at the call; the requests the
+    /// selection schedules are stamped with it.
     ///
     /// # Errors
     /// [`Error::NotHls`] for a session that is neither HLS nor DASH, [`Error::NoSuchRendition`] for
     /// an out-of-range index or when no master playlist (or MPD selection) was seen yet.
-    pub fn select_audio_rendition(&mut self, index: Option<usize>) -> Result<(), Error> {
+    pub fn select_audio_rendition(
+        &mut self,
+        now: Timestamp,
+        index: Option<usize>,
+    ) -> Result<(), Error> {
+        self.now_us = now.as_micros();
         let Some(h) = self.adaptive.as_mut() else {
             return Err(Error::NotHls);
         };
@@ -1017,8 +1036,10 @@ impl Session {
         self.buffer.default_rendered()
     }
 
-    /// Hint passthrough.
-    pub fn hint(&mut self, h: Hint) {
+    /// Hint passthrough. `now` is the host clock at the call, which the buffer controller reads
+    /// the hint at.
+    pub fn hint(&mut self, now: Timestamp, h: Hint) {
+        self.now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1029,8 +1050,10 @@ impl Session {
         }
     }
 
-    /// Re-arm join state without PcrDiscontinuity hint or controller reset.
-    pub fn rejoin(&mut self) {
+    /// Re-arm join state without PcrDiscontinuity hint or controller reset. `now` is the host
+    /// clock at the call, as for every other input.
+    pub fn rejoin(&mut self, now: Timestamp) {
+        self.now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1105,7 +1128,9 @@ impl Session {
     /// Queued actions other than [`Action::Close`] are dropped and every live connection gets
     /// exactly one `Close`; an RTSP session with a server-side session id first queues one
     /// [`Action::Send`] carrying `TEARDOWN`. Afterwards `poll` and `next_event` return `None`.
-    pub fn close(&mut self) {
+    /// `now` is the host clock at the call, which the farewell's own timers are stamped with.
+    pub fn close(&mut self, now: Timestamp) {
+        self.now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -1491,9 +1516,13 @@ impl Session {
     /// Emit [`Action::WakeAt`] for `at` unless a wake this poll already holds fires no later, and
     /// remember it. `None` is a wake the host clock cannot reach: it is never emitted.
     fn arm_ts_wake(&mut self, at: Option<Timestamp>) {
-        let now = Timestamp::from_micros(self.now_us);
-        let outstanding = self.ts_wake == at
-            || at.is_some_and(|at| self.ts_wake.is_some_and(|w| w > now && w < at));
+        // Only a wake already queued for the same instant makes `at` redundant: each arming is one
+        // comparison of the deadlines as they stand now, not a running minimum.
+        let outstanding = at.is_some_and(|at| {
+            self.actions
+                .iter()
+                .any(|a| matches!(a, Action::WakeAt(h) if *h == at))
+        });
         if outstanding {
             return;
         }

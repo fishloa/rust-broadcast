@@ -70,7 +70,7 @@ fn hls_close_drops_queued_actions_and_closes_the_live_request_once() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.close();
+    session.close(ts(0));
     let rest = actions(&mut session, 0);
     assert!(
         rest.iter().all(|a| matches!(a, Action::Close { .. })),
@@ -90,7 +90,7 @@ fn rtsp_close_drops_queued_sends_and_closes_the_connection_once() {
         other => panic!("{other:?}"),
     };
     session.on_connected(conn);
-    session.close();
+    session.close(ts(0));
     let rest = actions(&mut session, 0);
     assert!(
         rest.iter().all(|a| matches!(a, Action::Close { .. })),
@@ -105,7 +105,7 @@ fn hls_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.route(TS_PLAYLIST_URL, vec![Reply::StatusHeaders(401, challenge)]);
     h.session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     h.run_until(|_| false, 400);
     assert!(
@@ -134,7 +134,7 @@ fn rtsp_stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     let mut session =
         Session::open(Url::parse(RTSP_URL).unwrap(), Config::default(), ts(0)).unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let mut describes = 0usize;
     let mut events = Vec::new();
@@ -203,8 +203,8 @@ fn audio_rendition_switch_after_ended_is_ignored() {
     h.collect();
     let before = h.events.len();
     let requests_before = h.seen.len();
-    assert!(h.session.select_audio_rendition(Some(1)).is_ok());
-    assert!(h.session.select_audio_rendition(None).is_ok());
+    assert!(h.session.select_audio_rendition(ts(h.now), Some(1)).is_ok());
+    assert!(h.session.select_audio_rendition(ts(h.now), None).is_ok());
     h.run_until(|_| false, 50);
     assert_eq!(
         h.events.len(),

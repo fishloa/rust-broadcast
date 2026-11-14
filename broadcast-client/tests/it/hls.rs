@@ -384,7 +384,7 @@ fn select_variant_switches_and_emits_discontinuity() {
     let before = h.events.len();
     let in_flight: Vec<ConnId> = h.seen.iter().map(|s| s.conn).collect();
     assert!(h.hits("http://origin.test/m/high/index0.ts") == 1);
-    h.session.select_variant(0).expect("select low");
+    h.session.select_variant(ts(h.now), 0).expect("select low");
     h.collect();
     assert!(
         h.events[before..]
@@ -401,7 +401,7 @@ fn select_variant_switches_and_emits_discontinuity() {
     assert!(h.hits("http://origin.test/m/low/index0.ts") >= 1);
     assert_eq!(count(&h.events, is_ended), 1);
     assert!(matches!(
-        h.session.select_variant(9),
+        h.session.select_variant(ts(h.now), 9),
         Err(Error::NoSuchVariant(9))
     ));
 
@@ -411,7 +411,10 @@ fn select_variant_switches_and_emits_discontinuity() {
         ts(0),
     )
     .expect("open");
-    assert!(matches!(ts_host.select_variant(0), Err(Error::NotHls)));
+    assert!(matches!(
+        ts_host.select_variant(ts(0), 0),
+        Err(Error::NotHls)
+    ));
 }
 
 #[test]
@@ -862,7 +865,7 @@ fn request_timeout_aborts_playlist_and_segment() {
 fn auth_bearer_on_every_request_to_origin() {
     let mut h = host_with(&ts_bodies(), TS_PLAYLIST_URL, Config::default());
     h.session
-        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .set_credentials(ts(0), Credentials::bearer(BEARER_TOKEN))
         .unwrap();
     h.run_to_end();
     assert_eq!(h.seen.len(), 3);
@@ -886,7 +889,7 @@ fn cross_origin_segment_carries_no_authorization() {
     );
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.session
-        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .set_credentials(ts(0), Credentials::bearer(BEARER_TOKEN))
         .unwrap();
     h.ok(TS_PLAYLIST_URL, playlist.into_bytes());
     h.ok(TS_SEG0_URL, ts_segment(0));
@@ -913,7 +916,7 @@ fn cross_origin_401_is_ordinary_failure_not_auth_prompt() {
     );
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.session
-        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .set_credentials(ts(0), Credentials::bearer(BEARER_TOKEN))
         .unwrap();
     h.ok(TS_PLAYLIST_URL, playlist.into_bytes());
     h.ok(TS_SEG0_URL, ts_segment(0));
@@ -989,7 +992,7 @@ fn per_request_redirect_followed_and_counted_separately() {
 
     let mut auth = Host::new(TS_PLAYLIST_URL, hls_config());
     auth.session
-        .set_credentials(Credentials::bearer(BEARER_TOKEN))
+        .set_credentials(ts(0), Credentials::bearer(BEARER_TOKEN))
         .unwrap();
     auth.ok(TS_PLAYLIST_URL, ts_playlist());
     auth.route(
@@ -1044,7 +1047,7 @@ fn credentials_401_on_playlist_waits_no_retry() {
     }
     assert!(s.next_event().is_none());
 
-    s.set_credentials(Credentials::bearer(BEARER_TOKEN))
+    s.set_credentials(ts(0), Credentials::bearer(BEARER_TOKEN))
         .unwrap();
     let actions = drain_actions(&mut s, t);
     let (_, url) = single_http_request(&actions);
@@ -1071,7 +1074,7 @@ fn late_callbacks_after_close_ignored() {
     let reqs = http_requests(&drain_actions(&mut s, 0));
     assert_eq!(reqs.len(), 2);
     let _ = drain_events(&mut s);
-    s.close();
+    s.close(ts(0));
     let mut closed = closes(&drain_actions(&mut s, 0));
     closed.sort_unstable();
     let mut expected: Vec<ConnId> = reqs.iter().map(|(c, _)| *c).collect();

@@ -212,7 +212,7 @@ fn delta_seconds_and_garbage_behave_as_before_with_an_anchor_set() {
 #[test]
 fn set_wall_clock_after_close_is_harmless() {
     let mut s = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
-    s.close();
+    s.close(ts(0));
     s.set_wall_clock(ts(1), 2);
     s.set_wall_clock(Timestamp::from_nanos(u64::MAX), u64::MAX);
     assert!(s.next_event().is_none());
@@ -511,6 +511,9 @@ fn the_not_hls_error_names_both_adaptive_sources() {
         ts(0),
     )
     .unwrap();
-    assert!(matches!(s.select_variant(0), Err(Error::NotHls)));
-    assert!(matches!(s.select_audio_rendition(None), Err(Error::NotHls)));
+    assert!(matches!(s.select_variant(ts(0), 0), Err(Error::NotHls)));
+    assert!(matches!(
+        s.select_audio_rendition(ts(0), None),
+        Err(Error::NotHls)
+    ));
 }

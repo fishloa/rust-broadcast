@@ -52,7 +52,7 @@ fn digest_uri_is_the_origin_form_request_target_for_http() {
         Verifier::new(Credentials::new("user", "pass"), REALM).expect("OS random source");
     let mut session = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     let (conn, _) = first_request(&mut session, 0);
     let challenge = verifier.challenge();

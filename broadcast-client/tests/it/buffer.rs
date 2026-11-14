@@ -1201,7 +1201,7 @@ fn vod_buffer_events_come_from_the_playout_gate_not_the_controller() {
         let now = i as u64 * STEP_US;
         session.on_data(conn, chunk, ts(now));
         session.on_playback_position(ts(now), Some(now * 27));
-        session.hint(BufferHint::SourceError);
+        session.hint(ts(0), BufferHint::SourceError);
         while let Some(e) = session.next_event() {
             events.push(e);
         }
@@ -1460,7 +1460,7 @@ fn rejoin_run(rejoin_at: usize) -> Option<(Host, usize)> {
             Step::Data(i, t) => {
                 if i == rejoin_at {
                     mark = h.log().len();
-                    h.session.rejoin();
+                    h.session.rejoin(ts(h.now));
                 }
                 h.data(chunks[i], t);
             }
@@ -1511,7 +1511,7 @@ fn rejoin_clears_pending_ends() {
         h.samples().len() > samples_before_close,
         "closing must flush demuxer samples that stay pending"
     );
-    h.session.rejoin();
+    h.session.rejoin(ts(h.now));
     let (status, headers) = tf1_headers!();
     let mut conn = None;
     while let Some(a) = h.session.poll(ts(1_300 * STEP_US)) {

@@ -26,7 +26,7 @@ fn is_adaptive(url: &str, kind: SourceKind) -> bool {
     let mut config = Config::default();
     config.kind = kind;
     let mut session = Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap();
-    !matches!(session.select_variant(0), Err(Error::NotHls))
+    !matches!(session.select_variant(ts(0), 0), Err(Error::NotHls))
 }
 
 #[test]

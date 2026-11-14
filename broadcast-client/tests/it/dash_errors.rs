@@ -622,7 +622,7 @@ fn a_closed_session_ignores_everything_and_a_dash_session_reports_ended_once() {
         after,
         "an ended presentation ignores reconnect"
     );
-    sim.session.close();
+    sim.session.close(ts(sim.world.mono()));
     assert!(sim.session.poll(ts(0)).is_none());
 }
 

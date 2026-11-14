@@ -216,7 +216,7 @@ fn key_requested_once_for_all_segments() {
 fn key_request_carries_bearer_authorization_for_session_origin() {
     let mut h = encrypted_host(hls_config(), vec![good_key()]);
     h.session
-        .set_credentials(Credentials::bearer(BEARER))
+        .set_credentials(ts(0), Credentials::bearer(BEARER))
         .unwrap();
     h.run_to_end();
     let keys = key_requests(&h, KEY_URL);
@@ -254,7 +254,7 @@ fn key_request_carries_cookie_and_extra_headers_for_session_origin() {
 fn key_on_other_origin_carries_no_authorization_cookie_or_extra_headers() {
     let mut h = encrypted_host_with(cookie_config(), OTHER_ORIGIN_KEY_URL, vec![good_key()]);
     h.session
-        .set_credentials(Credentials::bearer(BEARER))
+        .set_credentials(ts(0), Credentials::bearer(BEARER))
         .unwrap();
     h.run_to_end();
     let keys = key_requests(&h, OTHER_ORIGIN_KEY_URL);
@@ -300,7 +300,7 @@ fn key_401_emits_auth_required_then_replays_with_credentials() {
     assert!(!h.events.iter().any(is_ended));
 
     h.session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .unwrap();
     h.run_to_end();
     let keys = key_requests(&h, KEY_URL);
@@ -637,7 +637,7 @@ fn late_key_callbacks_after_close_ignored() {
         .map(|(c, _)| *c)
         .expect("key request issued");
     let _ = drain_events(&mut s);
-    s.close();
+    s.close(ts(0));
     let closing = drain_actions(&mut s, 1);
     assert!(
         closing
@@ -710,7 +710,8 @@ fn fatal_error_stops_session_no_more_requests() {
         s.on_data(*c, &plain_seg(0), ts(1));
         s.on_closed(*c, None, ts(1));
     }
-    s.set_credentials(Credentials::bearer(BEARER)).unwrap();
+    s.set_credentials(ts(0), Credentials::bearer(BEARER))
+        .unwrap();
     s.reconnect(ts(2));
     let mut t = 0u64;
     for _ in 0..50 {
@@ -790,7 +791,7 @@ fn auth_statuses_on_key_requests_are_not_error_events() {
         vec![Reply::StatusHeaders(401, challenge), good_key()],
     );
     h.session
-        .set_credentials(Credentials::bearer(BEARER))
+        .set_credentials(ts(0), Credentials::bearer(BEARER))
         .unwrap();
     h.run_until(
         |evs| evs.iter().any(|e| matches!(e, Event::AuthRejected { .. })),

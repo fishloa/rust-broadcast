@@ -303,7 +303,7 @@ fn close_is_terminal_and_emits_close_once() {
         _ => panic!(),
     };
     session.on_response(conn, status, &headers, ts(0));
-    session.close();
+    session.close(ts(0));
     let mut closes = 0;
     while let Some(a) = session.poll(ts(0)) {
         if matches!(a, Action::Close { .. }) {

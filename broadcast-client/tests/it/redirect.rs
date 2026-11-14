@@ -116,7 +116,7 @@ fn cross_origin_redirect_drops_authorization() {
     )
     .unwrap();
     session
-        .set_credentials(Credentials::bearer("secret-token"))
+        .set_credentials(ts(0), Credentials::bearer("secret-token"))
         .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {

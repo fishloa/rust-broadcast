@@ -190,7 +190,7 @@ fn credentials_are_dropped_when_the_redirect_changes_host() {
     server.auth = Some(verifier);
     let mut host = Host::new(BASE_URL, Config::default(), server);
     host.session
-        .set_credentials(Credentials::new(USER, PASSWORD))
+        .set_credentials(ts(0), Credentials::new(USER, PASSWORD))
         .unwrap();
     host.connect();
     let first = host
@@ -230,7 +230,7 @@ fn a_same_host_redirect_keeps_the_credentials() {
     server.auth = Some(verifier);
     let mut host = Host::new(BASE_URL, Config::default(), server);
     host.session
-        .set_credentials(Credentials::new(USER, PASSWORD))
+        .set_credentials(ts(0), Credentials::new(USER, PASSWORD))
         .unwrap();
     host.connect();
     serve_normally(&mut host);
@@ -258,7 +258,7 @@ fn redirect_keeps_credentials(start: &str, target: &str) {
     server.auth = Some(verifier);
     let mut host = Host::new(start, Config::default(), server);
     host.session
-        .set_credentials(Credentials::new(USER, PASSWORD))
+        .set_credentials(ts(0), Credentials::new(USER, PASSWORD))
         .unwrap();
     host.connect();
     serve_normally(&mut host);

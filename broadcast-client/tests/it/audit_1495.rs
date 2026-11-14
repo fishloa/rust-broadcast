@@ -350,16 +350,16 @@ fn hls_vod_mutators_after_ended_are_no_ops() {
     let now = h.now + SEC;
 
     h.session
-        .select_variant(0)
+        .select_variant(ts(0), 0)
         .expect("known variant is accepted");
     h.session.reconnect(ts(now));
-    h.session.select_audio_rendition(None).ok();
+    h.session.select_audio_rendition(ts(h.now), None).ok();
     let actions = drain_actions(&mut h.session, now);
     assert!(actions.is_empty(), "{actions:?}");
     let events = drain_events(&mut h.session);
     assert!(events.is_empty(), "{events:?}");
     assert!(matches!(
-        h.session.select_variant(9),
+        h.session.select_variant(ts(h.now), 9),
         Err(broadcast_client::Error::NoSuchVariant(9))
     ));
     assert!(drain_actions(&mut h.session, now + SEC).is_empty());
@@ -389,7 +389,7 @@ fn live_hls_reconnect_and_select_variant_still_restart_the_playlist() {
         "reconnect refetches the playlist: {reconnect:?} (hits before {hits})"
     );
 
-    h.session.select_variant(0).expect("variant");
+    h.session.select_variant(ts(h.now), 0).expect("variant");
     let switched = http_requests(&drain_actions(&mut h.session, h.now));
     assert!(
         switched.iter().any(|(_, u)| u.starts_with(live)),
@@ -529,7 +529,7 @@ fn the_strongest_challenge_among_all_www_authenticate_lines_is_chosen() {
 fn bearer_credentials_answer_with_bearer_whatever_the_challenge_lines() {
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .expect("credentials");
     h.route(
         TS_PLAYLIST_URL,
@@ -579,7 +579,7 @@ fn a_request_issued_at_the_end_of_time_is_not_expired_by_the_next_poll() {
         again.is_empty(),
         "a poll at the same instant churned the request: {again:?}"
     );
-    session.close();
+    session.close(ts(0));
     let tail = bounded_drain(&mut session, u64::MAX);
     assert!(tail.len() <= 2, "{tail:?}");
     assert!(
