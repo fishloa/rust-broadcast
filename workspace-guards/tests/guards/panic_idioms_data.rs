@@ -9,7 +9,19 @@ const fn plain(name: &'static str) -> Crate {
     Crate { name, allow: &[] }
 }
 
+/// `broadcast-client`: a constant-width, compile-time timescale; the match arm a
+/// non-zero constant can never take.
+const BROADCAST_CLIENT: Crate = Crate {
+    name: "broadcast-client",
+    allow: &[(
+        "src/buffer.rs",
+        "None => core::unreachable!(),",
+        "Timescale::new of a non-zero constant, checked at compile time",
+    )],
+};
+
 pub const TABLE: &[Crate] = &[
+    BROADCAST_CLIENT,
     plain("broadcast-smooth"),
     plain("smooth-runtime"),
     plain("caption-convert"),
