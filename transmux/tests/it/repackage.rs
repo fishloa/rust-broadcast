@@ -350,7 +350,7 @@ fn minimal_hevc_config() -> HEVCConfigurationBox {
 fn hevc_video_track(track_id: u32) -> TrackSpec {
     TrackSpec::new(
         TrackId::new(track_id),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Hevc {
             config: minimal_hevc_config(),
             width: 320,
@@ -381,7 +381,7 @@ fn aac_audio_track(track_id: u32) -> TrackSpec {
     ));
     TrackSpec::new(
         TrackId::new(track_id),
-        48_000,
+        Timescale::from_nonzero(48_000),
         CodecConfig::Aac {
             esds,
             channel_count: 2,
@@ -418,7 +418,7 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
             Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
         ],
     );
-    let media = Media::new(vec![audio, video], 90_000);
+    let media = Media::new(vec![audio, video], Timescale::from_nonzero(90_000));
 
     let (anchor_ticks, anchor_ts) = media
         .anchor_duration()
@@ -457,7 +457,7 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
             Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
         ],
     );
-    let media = Media::new(vec![audio, video], 90_000);
+    let media = Media::new(vec![audio, video], Timescale::from_nonzero(90_000));
 
     // Window starting at video's 2nd sample (pts 3000..6000) — mid-GOP.
     let trimmed = media.trim(3000, 9000).expect("window selects samples");
@@ -533,7 +533,7 @@ fn trim_window_follows_real_dts_not_duration_sum() {
             ),
         ],
     );
-    let media = Media::new(vec![video], 90_000);
+    let media = Media::new(vec![video], Timescale::from_nonzero(90_000));
 
     let trimmed = media.trim(9000, 12000).expect("window selects samples");
     let video_out = &trimmed.tracks[0];
@@ -626,7 +626,7 @@ fn resegment_interleaves_huge_coprime_timescales() {
             one_second_track(2, BIG_TIMESCALES[1], audio_cfg.clone(), 0xA0, 2),
             one_second_track(3, BIG_TIMESCALES[2], audio_cfg, 0xB0, 2),
         ],
-        1000,
+        Timescale::from_nonzero(1000),
     );
 
     let out = Repackage::new(2.0)

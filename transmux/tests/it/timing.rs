@@ -227,7 +227,7 @@ fn sidx_real_fixture_round_trip() {
             // Verify known values
             assert_eq!(parsed.version, 0, "sidx version");
             assert_eq!(parsed.reference_id, 1, "sidx reference_id");
-            assert_eq!(parsed.timescale, 90000, "sidx timescale");
+            assert_eq!(parsed.timescale, Timescale::from_nonzero(90000), "sidx timescale");
             assert_eq!(parsed.earliest_presentation_time, 0, "sidx EPT");
             assert_eq!(parsed.first_offset, 68, "sidx first_offset");
             assert_eq!(parsed.references.len(), 2, "sidx reference_count");

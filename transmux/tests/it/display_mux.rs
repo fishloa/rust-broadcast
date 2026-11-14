@@ -45,7 +45,7 @@ fn hevc_config() -> HEVCDecoderConfigurationRecord {
 }
 
 fn build(spec: TrackSpec) -> Vec<u8> {
-    pipeline::build_init_segment(&[spec], 90000).expect("build_init_segment")
+    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000)).expect("build_init_segment")
 }
 
 fn find_full_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
@@ -119,7 +119,7 @@ fn sar_64_45_writes_pasp() {
     );
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -140,7 +140,7 @@ fn sar_16_11_writes_pasp() {
     let g = DisplayGeometry::new(720, 576, Some(AspectRatioIdc::Sar16x11));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -160,7 +160,7 @@ fn sar_1_1_writes_no_pasp() {
     let g = DisplayGeometry::new(720, 576, Some(AspectRatioIdc::Square));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -180,7 +180,7 @@ fn sar_unspecified_writes_no_pasp() {
     let g = DisplayGeometry::new(720, 576, None);
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -205,7 +205,7 @@ fn colour_5_5_5_limited_writes_colr() {
     ));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -231,7 +231,7 @@ fn colour_bt709_full_range_writes_colr() {
     ));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -264,7 +264,7 @@ fn colr_writes_primaries_transfer_matrix_in_order() {
     ));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -290,7 +290,7 @@ fn colr_writes_primaries_transfer_matrix_in_order() {
     ));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -313,7 +313,7 @@ fn video_signal_present_colour_none_writes_no_colr() {
     g.video_signal = Some(VideoSignalType::new(VideoFormat::Component, true, None));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -332,7 +332,7 @@ fn video_signal_present_colour_none_writes_no_colr() {
 fn no_display_writes_neither() {
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -358,7 +358,7 @@ fn neither_is_byte_identical_to_display_none() {
     // matching the Square-SAR case's output (1:1).
     let spec_none = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -372,7 +372,7 @@ fn neither_is_byte_identical_to_display_none() {
     g.video_signal = Some(VideoSignalType::new(VideoFormat::Component, true, None));
     let spec_neither = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -402,7 +402,7 @@ fn order_pasp_then_colr_after_config() {
     ));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox {
                 config: avc_config(),
@@ -434,7 +434,7 @@ fn hevc_writes_pasp_and_colr() {
     ));
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Hevc {
             config: transmux::HEVCConfigurationBox {
                 config: hevc_config(),

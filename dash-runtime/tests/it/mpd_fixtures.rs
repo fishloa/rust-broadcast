@@ -138,5 +138,5 @@ fn a_representation_inherits_the_adaptation_sets_timeline() {
             .len(),
         3
     );
-    assert_eq!(info.multi.timescale, 90_000);
+    assert_eq!(info.multi.timescale, Timescale::from_nonzero(90_000));
 }

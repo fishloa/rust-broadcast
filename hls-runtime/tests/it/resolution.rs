@@ -96,7 +96,7 @@ fn first_video_track_by_track_id_wins_resolution() {
     // Two video tracks: resolution from track 1.
     let s1 = TrackSpec::new(
         transmux::TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,
@@ -120,7 +120,7 @@ fn first_video_track_by_track_id_wins_resolution() {
     let s1 = s1.with_display(Some(g));
     let s2 = TrackSpec::new(
         transmux::TrackId::new(2),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
                 configuration_version: 1,

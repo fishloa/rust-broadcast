@@ -890,7 +890,7 @@ fn duration_version_boundary_is_exact() {
         flags: 0,
         creation_time: 0,
         modification_time: 0,
-        timescale: 1000.into(),
+        timescale: Timescale::from_nonzero(1000),
         duration: u64::from(u32::MAX),
         rate: 0x0001_0000,
         volume: 0x0100,

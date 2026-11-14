@@ -203,7 +203,7 @@ fn non_dolby_vision_streams_carry_no_record() {
         return;
     };
     assert_eq!(video(&media).spec.dovi, None);
-    let init = build_init_segment(&[video(&media).spec.clone()], 1000).expect("init");
+    let init = build_init_segment(&[video(&media).spec.clone()], Timescale::from_nonzero(1000)).expect("init");
     let (fourcc, boxes) = sample_entry(&init);
     assert_eq!(fourcc, *b"hvc1");
     assert!(payload(&boxes, DVCC_FOURCC).is_none() && payload(&boxes, DVVC_FOURCC).is_none());
@@ -211,7 +211,7 @@ fn non_dolby_vision_streams_carry_no_record() {
 
 fn init_for(fixture: &str) -> Option<([u8; 4], EntryBoxes)> {
     let media = ts_media(fixture)?;
-    let init = build_init_segment(&[video(&media).spec.clone()], 1000).expect("init");
+    let init = build_init_segment(&[video(&media).spec.clone()], Timescale::from_nonzero(1000)).expect("init");
     Some(sample_entry(&init))
 }
 
@@ -281,7 +281,7 @@ fn init_round_trips_the_record_through_the_fmp4_demuxer() {
         let Some(media) = ts_media(fixture) else {
             return;
         };
-        let init = build_init_segment(&[video(&media).spec.clone()], 1000).expect("init");
+        let init = build_init_segment(&[video(&media).spec.clone()], Timescale::from_nonzero(1000)).expect("init");
         let back = Fmp4Demux::new().unpackage(&init).expect("fmp4 demux");
         let spec: &TrackSpec = &back.tracks[0].spec;
         check(spec.dovi.expect("dovi after round trip"));
@@ -338,7 +338,7 @@ fn descriptor_with_reserved_bits_set_still_signals_dolby_vision() {
         .clone()
         .with_source(mpeg_ts::pid::Pid::from_const(0x65), es_info);
     expect_p81(spec.dovi.expect("dovi despite non-zero reserved bits"));
-    let init = build_init_segment(&[spec], 1000).expect("init");
+    let init = build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("init");
     let (fourcc, boxes) = sample_entry(&init);
     assert_eq!(fourcc, *b"hvc1");
     assert!(payload(&boxes, DVVC_FOURCC).is_some());
@@ -354,7 +354,7 @@ fn record_reserved_bits_survive_an_init_segment_round_trip() {
     record.reserved[0] = 0x0A;
     record.reserved[3] = 0x5A;
     spec.dovi = Some(record);
-    let init = build_init_segment(&[spec], 1000).expect("init");
+    let init = build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("init");
     let (_, boxes) = sample_entry(&init);
     assert_eq!(
         payload(&boxes, DVVC_FOURCC).expect("dvvC"),

@@ -43,7 +43,7 @@ const GUARD: Duration = Duration::from_secs(20);
 fn opaque_spec(track_id: TrackId) -> TrackSpec {
     TrackSpec::new(
         track_id,
-        90_000,
+        Timescale::from_nonzero(90_000),
         transmux::CodecConfig::Data {
             stream_type: 0x06,
             descriptors: Vec::new(),

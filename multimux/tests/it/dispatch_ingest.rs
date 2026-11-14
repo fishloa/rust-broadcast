@@ -718,7 +718,7 @@ mod custom_dispatch_driver_backed {
                     self.announced = true;
                     let track_1 = TrackSpec::new(
                         TrackId::new(1),
-                        90_000,
+                        Timescale::from_nonzero(90_000),
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
                                 "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",
@@ -730,7 +730,7 @@ mod custom_dispatch_driver_backed {
                     );
                     let track_7 = TrackSpec::new(
                         TrackId::new(7),
-                        90_000,
+                        Timescale::from_nonzero(90_000),
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
                                 "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==",

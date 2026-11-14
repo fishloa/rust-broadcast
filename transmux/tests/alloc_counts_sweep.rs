@@ -123,7 +123,7 @@ mod rtp_stream_copies {
             TrackId::new(1),
             RtpMediaKind::H264,
             video.spec.config.clone(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let (samples, allocated) = bytes_allocated(|| {
             let mut n = 0;
@@ -236,7 +236,7 @@ mod segmenter_cuts {
         };
         TrackSpec::new(
             TrackId::new(1),
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Avc {
                 config: AVCConfigurationBox::new(record),
                 width: 16,
@@ -248,7 +248,7 @@ mod segmenter_cuts {
     /// Push `cuts` one-sample GOPs (each keyframe closes the previous segment) and
     /// return `(segments_ready, allocs)` over the push loop only.
     fn run(cuts: usize) -> (usize, usize) {
-        let mut seg = Segmenter::new(vec![spec()], 1000, 0.5).unwrap();
+        let mut seg = Segmenter::new(vec![spec()], Timescale::from_nonzero(1000), 0.5).unwrap();
         let samples: Vec<Sample> = (0..cuts)
             .map(|i| {
                 let dts = (i as i64) * 90_000;

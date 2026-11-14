@@ -134,7 +134,7 @@ fn field_pictures_use_a_depth_widened_for_fields() {
         id,
         RtpMediaKind::H264,
         config(),
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut samples = Vec::new();
     let mut seq = 0u16;

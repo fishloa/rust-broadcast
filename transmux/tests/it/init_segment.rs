@@ -93,7 +93,7 @@ fn moov_real_fixture_round_trip() {
 
     // Verify key mvhd fields
     assert_eq!(moov.mvhd.version, 0, "mvhd version");
-    assert_eq!(moov.mvhd.timescale, 1000.into(), "mvhd timescale");
+    assert_eq!(moov.mvhd.timescale, Timescale::from_nonzero(1000), "mvhd timescale");
     assert_eq!(moov.mvhd.duration, 2000, "mvhd duration");
     assert_eq!(
         moov.mvhd.next_track_id,

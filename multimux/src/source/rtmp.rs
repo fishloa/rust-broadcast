@@ -1103,7 +1103,7 @@ mod tests {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            1_000,
+            Timescale::from_nonzero(1_000),
             CodecConfig::Avc {
                 config: avc,
                 width,

@@ -1896,7 +1896,7 @@ mod tests {
             id,
             RtpMediaKind::Aac,
             dummy_avc(),
-            48_000,
+            Timescale::from_nonzero(48_000),
         )]);
         let aus: [&[u8]; 4] = [&[1, 1], &[2, 2], &[3, 3], &[4, 4]];
         assert!(d.push(id, &aac_packet(1, 10_000, &aus)).unwrap().is_empty());
@@ -1936,7 +1936,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         declare_reorder_depth(&mut d, 0);
 
@@ -1986,7 +1986,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let mut oracle_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
@@ -1999,7 +1999,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let mut staged_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
@@ -2029,8 +2029,8 @@ mod tests {
     #[test]
     fn stage_feed_errors_on_multi_track_construction() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![
-            RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, dummy_avc(), 90_000),
-            RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, dummy_avc(), Timescale::from_nonzero(90_000)),
+            RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::H264, dummy_avc(), Timescale::from_nonzero(90_000)),
         ]);
         let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
@@ -2068,7 +2068,7 @@ mod tests {
             TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         declare_reorder_depth(&mut d, 0);
 
@@ -2144,7 +2144,7 @@ mod tests {
             TrackId::new(7),
             RtpMediaKind::H264,
             dummy_avc(),
-            90_000,
+            Timescale::from_nonzero(90_000),
         )]);
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);

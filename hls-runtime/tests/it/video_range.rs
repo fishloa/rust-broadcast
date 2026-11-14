@@ -44,7 +44,7 @@ fn render(origin: &HlsOrigin) -> String {
 fn spec_with(track_id: u32, code: Option<u8>, colour: bool, display: bool) -> TrackSpec {
     let mut spec = TrackSpec::new(
         TrackId::new(track_id),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,

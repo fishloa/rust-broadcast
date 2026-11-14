@@ -35,7 +35,7 @@ fn make_app() -> (axum::Router, Arc<RouteHandle>) {
         ProgramId(0),
         vec![TrackSpec::new(
             TrackId::new(1),
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Vp8 {
                 width: 640,
                 height: 480,

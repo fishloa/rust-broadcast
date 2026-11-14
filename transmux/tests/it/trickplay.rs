@@ -42,7 +42,7 @@ const SYNTHETIC_GOP_SIZE: usize = 4;
 fn synthetic_spec() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {

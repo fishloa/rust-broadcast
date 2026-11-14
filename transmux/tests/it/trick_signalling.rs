@@ -242,7 +242,7 @@ fn dash_trick_mode_adaptation_set() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            timescale: 90000,
+            timescale: Timescale::from_nonzero(90000),
             total_duration: 900000,
         },
     };
@@ -435,7 +435,7 @@ fn minimal_video_media() -> transmux::media::Media {
     use transmux::media::Media;
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90000,
+        Timescale::from_nonzero(90000),
         CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {
@@ -465,7 +465,7 @@ fn minimal_video_media() -> transmux::media::Media {
     let track = Track::new(spec, samples);
     // `Media::new` sets an empty `pcr`/`skipped` — exactly what the struct
     // literal here spelled out before `Media` became `#[non_exhaustive]`.
-    Media::new(vec![track], 90000)
+    Media::new(vec![track], Timescale::from_nonzero(90000))
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn dash_trick_mode_naming_a_missing_main_adaptation_set_is_rejected() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            timescale: 90000,
+            timescale: Timescale::from_nonzero(90000),
             total_duration: 900000,
         },
     };

@@ -1153,7 +1153,7 @@ mod tests {
     fn subtitle_spec(track_id: u32) -> TrackSpec {
         TrackSpec::new(
             TrackId::new(track_id),
-            1000,
+            Timescale::from_nonzero(1000),
             CodecConfig::Subtitle {
                 format: transmux::ir::SubtitleFormat::Ttml,
                 sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(

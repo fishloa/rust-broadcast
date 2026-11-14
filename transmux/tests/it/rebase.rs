@@ -60,7 +60,7 @@ fn avc_spec() -> TrackSpec {
     };
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
@@ -88,7 +88,7 @@ fn media_with_anchor(start: u64, durs: &[u32]) -> Media {
         samples.push(sample_at(dts, d));
         dts += i64::from(d);
     }
-    Media::new(vec![Track::new_at(avc_spec(), samples, start)], 90_000)
+    Media::new(vec![Track::new_at(avc_spec(), samples, start)], Timescale::from_nonzero(90_000))
 }
 
 /// The absolute dts of every sample in track 0.
@@ -131,7 +131,7 @@ fn fmp4_demux_populates_start_decode_time_from_tfdt() {
     let samples = [sample_at(0, 3000), sample_at(3000, 3000)];
 
     // Build a real init + media segment at a KNOWN non-zero tfdt.
-    let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), 90_000).expect("init");
+    let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), Timescale::from_nonzero(90_000)).expect("init");
     let frag = FragmentTrackData::new(TrackId::new(1), KNOWN_BASE, &samples);
     let media_seg = build_media_segment(1, &[frag]).expect("media segment");
     fmp4.extend_from_slice(&media_seg);

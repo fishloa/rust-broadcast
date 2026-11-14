@@ -51,7 +51,7 @@ fn wvtt_media() -> Media {
     let entry = WvttSampleEntry::new("WEBVTT\n\nNOTE spec vector\n");
     let spec = TrackSpec::new(
         TrackId::new(1),
-        1000,
+        Timescale::from_nonzero(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::WebVtt,
             sample_entry: Some(SubtitleSampleEntry::WebVtt(entry)),
@@ -66,7 +66,7 @@ fn wvtt_media() -> Media {
     vttc.extend_from_slice(b"vttc");
     vttc.extend_from_slice(&payl);
     let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
-    Media::new(vec![Track::new(spec, vec![sample])], 1000)
+    Media::new(vec![Track::new(spec, vec![sample])], Timescale::from_nonzero(1000))
 }
 
 #[test]
@@ -105,13 +105,13 @@ fn dash_mpd_carries_a_wvtt_adaptation_set() {
 fn dash_still_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
     let spec = TrackSpec::new(
         TrackId::new(9),
-        1000,
+        Timescale::from_nonzero(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::DvbBitmap,
             sample_entry: None,
         },
     );
-    let media = Media::new(vec![Track::new(spec, vec![])], 1000);
+    let media = Media::new(vec![Track::new(spec, vec![])], Timescale::from_nonzero(1000));
     let err = DashPackager::default().package(&media).unwrap_err();
     assert!(
         matches!(err, transmux::Error::UnsupportedCodec { codec: "Subtitle" }),
@@ -166,13 +166,13 @@ fn smooth_wvtt_text_stream_uses_the_wvtt_fourcc() {
 fn smooth_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
     let spec = TrackSpec::new(
         TrackId::new(9),
-        1000,
+        Timescale::from_nonzero(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::Teletext,
             sample_entry: None,
         },
     );
-    let media = Media::new(vec![Track::new(spec, vec![])], 1000);
+    let media = Media::new(vec![Track::new(spec, vec![])], Timescale::from_nonzero(1000));
     assert!(matches!(
         SmoothPackager::default().package(&media),
         Err(transmux::error::Error::InvalidInput(..))

@@ -124,7 +124,7 @@ fn clean_init() -> Vec<u8> {
     let data = fixture();
     let (_, moov_bytes) = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(&moov_bytes).unwrap();
-    build_init_segment(&[video_spec(&moov)], 1000).expect("build init")
+    build_init_segment(&[video_spec(&moov)], Timescale::from_nonzero(1000)).expect("build init")
 }
 
 /// A clean media segment with the given sequence_number + base decode time,

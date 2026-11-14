@@ -562,7 +562,7 @@ mod tests {
                 msn,
                 part_index,
                 start_dts,
-                timescale: 90_000.into(),
+                timescale: Timescale::from_nonzero(90_000),
             },
             duration_secs: PART_SECS,
         }

@@ -496,7 +496,7 @@ fn inheritance_lower_level_wins_attribute_by_attribute() {
     assert_eq!(a.plan.get(0).unwrap().unwrap().reference, "p-9.m4s");
     assert_eq!(b.plan.get(0).unwrap().unwrap().reference, "b-9.m4s");
     assert_eq!(a.plan.len(), Some(3));
-    assert_eq!(a.plan.timescale(), 1000);
+    assert_eq!(a.plan.timescale(), Timescale::from_nonzero(1000));
     // A level that introduces a timeline does not inherit @duration, and a
     // child timeline under an inherited @duration is the same conflict.
     let m = mpd(
@@ -720,7 +720,7 @@ fn timescale_defaults_to_one_when_no_level_declares_it() {
            <Representation id="V300" bandwidth="300000"/></AdaptationSet></Period>"#,
     );
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
-    assert_eq!(p.plan.timescale(), 1);
+    assert_eq!(p.plan.timescale(), Timescale::from_nonzero(1));
     assert_eq!(p.plan.len(), Some(3));
     assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 2 * S);
     assert_eq!(p.plan.get(1).unwrap().unwrap().duration_us, 2 * S);
@@ -762,7 +762,7 @@ fn sidx_zero_size_reference_is_skipped_but_still_advances_the_timeline() {
         version: 0,
         flags: 0,
         reference_id: 1,
-        timescale: 1,
+        timescale: Timescale::from_nonzero(1),
         earliest_presentation_time: 0,
         first_offset: 0,
         references: vec![

@@ -85,7 +85,7 @@ fn wvtt_media() -> Media {
     let entry = WvttSampleEntry::new("WEBVTT\n\nNOTE spec vector\n");
     let spec = TrackSpec::new(
         TrackId::new(1),
-        1000,
+        Timescale::from_nonzero(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::WebVtt,
             sample_entry: Some(SubtitleSampleEntry::WebVtt(entry)),
@@ -100,7 +100,7 @@ fn wvtt_media() -> Media {
     vttc.extend_from_slice(b"vttc");
     vttc.extend_from_slice(&payl);
     let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
-    Media::new(vec![Track::new(spec, vec![sample])], 1000)
+    Media::new(vec![Track::new(spec, vec![sample])], Timescale::from_nonzero(1000))
 }
 
 /// A two-language audio pair plus a video track — the only way to reach
@@ -262,7 +262,7 @@ fn dash_mpd_variants_match_golden() {
                         bandwidth: 150_000,
                         width: Some(320),
                         height: Some(180),
-                        timescale: 90000,
+                        timescale: Timescale::from_nonzero(90000),
                         total_duration: 900000,
                     },
                 }),
@@ -291,7 +291,7 @@ fn dash_mpd_element_coverage_matches_golden() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            timescale: 90000,
+            timescale: Timescale::from_nonzero(90000),
             total_duration: 900000,
         },
     };

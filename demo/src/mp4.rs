@@ -339,7 +339,7 @@ fn build_report(
     Mp4Report {
         container: "mp4",
         parse_error: None,
-        movie_timescale: media.movie_timescale,
+        movie_timescale: media.movie_timescale.get(),
         tracks,
         skipped_tracks,
     }

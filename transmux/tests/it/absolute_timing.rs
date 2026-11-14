@@ -886,7 +886,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     };
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
@@ -910,7 +910,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
         })
         .collect();
 
-    let media = Media::new(vec![Track::new_at(spec, samples, ANCHOR)], 90_000);
+    let media = Media::new(vec![Track::new_at(spec, samples, ANCHOR)], Timescale::from_nonzero(90_000));
 
     // fMP4 #1, written by this crate.
     let fmp4_1 = CmafMux::default().package(&media).expect("mux #1");

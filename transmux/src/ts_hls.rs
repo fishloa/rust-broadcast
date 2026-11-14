@@ -1658,7 +1658,7 @@ mod tests {
     fn scte35_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -1911,7 +1911,7 @@ mod tests {
         };
         let video_spec = TrackSpec::new(
             TrackId::new(1),
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Avc {
                 config: crate::avc_config::AVCConfigurationBox::new(record),
                 width: 320,
@@ -1925,7 +1925,7 @@ mod tests {
         let audio: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
         Media::new(
             vec![Track::new(video_spec, video), Track::new(audio_spec, audio)],
-            1000,
+            Timescale::from_nonzero(1000),
         )
     }
 

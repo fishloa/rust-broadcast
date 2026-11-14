@@ -552,7 +552,7 @@ mod tests {
     fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Vp8 {
                 width: 320,
                 height: 240,

@@ -162,7 +162,7 @@ fn init_segment_from_real_config_reparses() {
     let moov = MovieBox::parse(&moov_bytes).unwrap();
     let (specs, _) = track_specs(&moov);
 
-    let init = build_init_segment(&specs, 1000).expect("build init");
+    let init = build_init_segment(&specs, Timescale::from_nonzero(1000)).expect("build init");
 
     // ftyp first, then moov.
     let (_, ftyp) = find_top_box(&init, b"ftyp");

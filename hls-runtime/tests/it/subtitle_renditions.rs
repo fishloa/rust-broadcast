@@ -60,7 +60,7 @@ fn avc_spec() -> TrackSpec {
     });
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config,
             width: 320,

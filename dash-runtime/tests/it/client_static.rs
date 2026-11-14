@@ -195,8 +195,8 @@ fn track_ids_are_one_based_video_then_audio_and_announced_once() {
     assert_eq!(tracks.len(), 1);
     let ids: Vec<u32> = tracks[0].iter().map(|t| t.track_id.value()).collect();
     assert_eq!(ids, vec![1, 2]);
-    assert_eq!(tracks[0][0].timescale, 90_000.into());
-    assert_eq!(tracks[0][1].timescale, 44_100.into());
+    assert_eq!(tracks[0][0].timescale, Timescale::from_nonzero(90_000));
+    assert_eq!(tracks[0][1].timescale, Timescale::from_nonzero(44_100));
 }
 
 #[test]

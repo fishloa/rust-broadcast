@@ -1543,7 +1543,7 @@ mod tests {
 
     #[test]
     fn empty_media_rejected() {
-        let media = Media::new(Vec::new(), 1000);
+        let media = Media::new(Vec::new(), Timescale::from_nonzero(1000));
         let mut mux = MkvMux::new();
         assert!(matches!(
             mux.package(&media),

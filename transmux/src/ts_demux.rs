@@ -11492,7 +11492,7 @@ pub(crate) mod tests {
 
             emit_audio_au(
                 &AudioKind::Aac,
-                44_100,
+                Timescale::from_nonzero(44_100),
                 &mut anchor,
                 &au,
                 dts_uw as u64 as i128,
@@ -11545,7 +11545,7 @@ pub(crate) mod tests {
         let mut anchor = AudioAnchor::default();
         emit_audio_au(
             &AudioKind::Aac,
-            44_100,
+            Timescale::from_nonzero(44_100),
             &mut anchor,
             &au,
             0,
@@ -11630,7 +11630,7 @@ pub(crate) mod tests {
         let mut anchor = AudioAnchor::default();
         emit_audio_au(
             &AudioKind::Aac,
-            44_100,
+            Timescale::from_nonzero(44_100),
             &mut anchor,
             au,
             0,

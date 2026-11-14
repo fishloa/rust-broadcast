@@ -964,20 +964,20 @@ mod tests {
         };
         let tracks = vec![
             Track::new(
-                TrackSpec::new(TrackId::new(1), 90_000, data(0x04)),
+                TrackSpec::new(TrackId::new(1), Timescale::from_nonzero(90_000), data(0x04)),
                 samples(head_aus, 3, true),
             ),
             Track::new(
-                TrackSpec::new(TrackId::new(2), 90_000, data(0x7F)),
+                TrackSpec::new(TrackId::new(2), Timescale::from_nonzero(90_000), data(0x7F)),
                 samples(600, 32, true),
             ),
             Track::new(
-                TrackSpec::new(TrackId::new(3), 90_000, data(0x7E)),
+                TrackSpec::new(TrackId::new(3), Timescale::from_nonzero(90_000), data(0x7E)),
                 samples(600, 32, true),
             ),
         ];
         transmux::TsMux::default()
-            .package(&Media::new(tracks, 90_000))
+            .package(&Media::new(tracks, Timescale::from_nonzero(90_000)))
             .expect("mux to TS")
     }
 
@@ -1324,7 +1324,7 @@ mod tests {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             transmux::pipeline::CodecConfig::Avc {
                 config: avc,
                 width,

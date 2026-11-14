@@ -375,7 +375,7 @@ fn lossless_round_trip_video() {
     // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
     // read in that timescale (issue #1022).
     let mut spec = vid.spec.clone();
-    spec.timescale = 10_000_000.into();
+    spec.timescale = Timescale::from_nonzero(10_000_000);
     let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 
@@ -542,7 +542,7 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
 
 #[test]
 fn empty_media_rejected() {
-    let media = Media::new(vec![], 90_000);
+    let media = Media::new(vec![], Timescale::from_nonzero(90_000));
     let mut pkg = SmoothPackager::default();
     assert!(
         matches!(

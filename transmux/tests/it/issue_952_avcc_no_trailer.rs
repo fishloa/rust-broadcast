@@ -101,14 +101,14 @@ fn genuinely_malformed_stsd_names_the_real_reason() {
     };
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 320,
             height: 240,
         },
     );
-    let mut moov = build_init_segment(&[spec], 90_000).expect("build a valid init segment");
+    let mut moov = build_init_segment(&[spec], Timescale::from_nonzero(90_000)).expect("build a valid init segment");
 
     // Corrupt the SPS NALU length field inside the `avcC` body (the 2 bytes
     // right after configurationVersion/profile/compat/level/lenSize/numSPS)

@@ -217,7 +217,7 @@ fn cmaf_package_is_byte_transparent_over_build_helpers() {
 /// A `Media` with no tracks is rejected by the packagers.
 #[test]
 fn empty_media_rejected() {
-    let media = Media::new(vec![], 1000);
+    let media = Media::new(vec![], Timescale::from_nonzero(1000));
     let mut mux = CmafMux::default();
     assert!(
         matches!(

@@ -578,7 +578,7 @@ fn package_rejects_oversized_composition_time() {
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
-            1000,
+            Timescale::from_nonzero(1000),
             CodecConfig::Avc {
                 config,
                 width: 320,
@@ -587,7 +587,7 @@ fn package_rejects_oversized_composition_time() {
         ),
         vec![sample],
     );
-    let media = transmux::Media::new(vec![track], 1000);
+    let media = transmux::Media::new(vec![track], Timescale::from_nonzero(1000));
 
     let mut mux = FlvMux::new();
     let err = mux
@@ -623,7 +623,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
         let track = transmux::Track::new(
             transmux::TrackSpec::new(
                 TrackId::new(1),
-                1000,
+                Timescale::from_nonzero(1000),
                 CodecConfig::Avc {
                     config: config.clone(),
                     width: 320,
@@ -632,7 +632,7 @@ fn frame_payloads_reject_out_of_range_timestamps() {
             ),
             vec![sample],
         );
-        transmux::Media::new(vec![track], 1000)
+        transmux::Media::new(vec![track], Timescale::from_nonzero(1000))
     };
     // Sanity: in-range input is accepted (so the Errs below are the guards).
     assert!(transmux::flv_frame_payloads(&media_with(0, 0)).is_ok());

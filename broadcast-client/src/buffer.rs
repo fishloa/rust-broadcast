@@ -968,9 +968,9 @@ mod tests {
 
     #[test]
     fn pts_to_27mhz_clamps_instead_of_truncating() {
-        assert_eq!(pts_to_27mhz(i64::MAX, 1.into()), u64::MAX);
-        assert_eq!(pts_to_27mhz(i64::MIN, 1.into()), 0);
-        assert_eq!(pts_to_27mhz(90_000, 90_000.into()), 27_000_000);
+        assert_eq!(pts_to_27mhz(i64::MAX, Timescale::from_nonzero(1)), u64::MAX);
+        assert_eq!(pts_to_27mhz(i64::MIN, Timescale::from_nonzero(1)), 0);
+        assert_eq!(pts_to_27mhz(90_000, Timescale::from_nonzero(90_000)), 27_000_000);
     }
 
     #[test]

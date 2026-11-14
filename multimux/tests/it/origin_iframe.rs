@@ -101,7 +101,7 @@ async fn iframe_master_variant_gating() {
     use transmux::rtp_sdp::aac_config_from_asc_hex;
     let audio_spec = TrackSpec::new(
         TrackId::new(1),
-        48000,
+        Timescale::from_nonzero(48000),
         aac_config_from_asc_hex("1210").expect("aac"),
     );
     let mut audio_batches = Vec::new();

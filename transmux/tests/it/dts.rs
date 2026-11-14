@@ -271,7 +271,7 @@ fn dtsc_init_segment_ddts_round_trip() {
         },
     )];
 
-    let init = build_init_segment(&tracks, 1000).unwrap();
+    let init = build_init_segment(&tracks, Timescale::from_nonzero(1000)).unwrap();
 
     // Navigate into moov → trak → mdia → minf → stbl → stsd → dtsc → ddts.
     let ddts_body = find_ddts_body(&init).expect("ddts box must be present in init segment");
@@ -314,7 +314,7 @@ fn stsd_round_trip_dts_entry() {
         },
     )];
 
-    let init = build_init_segment(&tracks, 1000).unwrap();
+    let init = build_init_segment(&tracks, Timescale::from_nonzero(1000)).unwrap();
 
     // Parse the moov.
     let moov = {

@@ -788,7 +788,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
         vec![Track::new(
             TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 CodecConfig::Data {
                     stream_type: 0x06,
                     descriptors: vec![],
@@ -797,13 +797,13 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
             ),
             vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
-        90_000,
+        Timescale::from_nonzero(90_000),
     );
     let vp8_media = Media::new(
         vec![Track::new(
             TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -811,7 +811,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
             ),
             vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
         )],
-        90_000,
+        Timescale::from_nonzero(90_000),
     );
 
     // A Media of a Data track must now fail with the specific, named

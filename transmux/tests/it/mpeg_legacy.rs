@@ -265,7 +265,7 @@ fn ts_demux_broadcast_pair() {
     let audio_ts = audio.timescale();
     assert_eq!(
         audio_ts,
-        44100.into(),
+        Timescale::from_nonzero(44100),
         "audio media timescale = sampling rate"
     );
     let audio_ts = audio_ts.get();

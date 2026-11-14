@@ -976,7 +976,7 @@ mod tests {
             display: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
-        let groups = segment_samples(&samples, 1.into(), 2);
+        let groups = segment_samples(&samples, Timescale::from_nonzero(1), 2);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].len(), 2);
         assert_eq!(groups[1].len(), 2);
@@ -986,7 +986,7 @@ mod tests {
     fn to_smooth_ticks_scales() {
         // 1 second at media timescale 90000 → 10_000_000 smooth ticks.
         assert_eq!(
-            SmoothPackager::to_smooth_ticks(90_000, 90_000.into()),
+            SmoothPackager::to_smooth_ticks(90_000, Timescale::from_nonzero(90_000)),
             10_000_000
         );
     }

@@ -55,7 +55,7 @@ fn reassemble_emsg_from_ts() {
     let emsg =
         mp4_emsg::EmsgBox::parse(&reassembled).expect("reassembled bytes must parse as EmsgBox");
     assert_eq!(
-        emsg.timescale, 90_000,
+        emsg.timescale, Timescale::from_nonzero(90_000),
         "expected timescale 90000 for SCTE-35 livesim emsg"
     );
 

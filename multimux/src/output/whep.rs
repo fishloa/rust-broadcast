@@ -1868,7 +1868,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     #[test]
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
-        assert_eq!(rescale_to_90k(1000, 1000.into()), VIDEO_CLOCK_RATE);
+        assert_eq!(rescale_to_90k(1000, Timescale::from_nonzero(1000)), VIDEO_CLOCK_RATE);
     }
     #[test]
     fn rescale_to_90k_wraps_modulo_2_pow_32() {

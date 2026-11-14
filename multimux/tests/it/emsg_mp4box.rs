@@ -283,7 +283,7 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
         "presentation_time must be exactly the anchored media time"
     );
     assert_eq!(
-        box0.timescale, 90_000,
+        box0.timescale, Timescale::from_nonzero(90_000),
         "the emsg timescale must be the trunk's 90 kHz clock"
     );
 }

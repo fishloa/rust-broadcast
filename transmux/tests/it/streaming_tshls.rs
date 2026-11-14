@@ -234,7 +234,7 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
 fn single_video_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,

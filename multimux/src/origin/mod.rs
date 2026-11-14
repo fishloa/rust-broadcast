@@ -2856,7 +2856,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -2976,7 +2976,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3027,7 +3027,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3195,7 +3195,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3272,7 +3272,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,

@@ -295,7 +295,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         TrackId::new(1),
         RtpMediaKind::H264,
         config,
-        90_000,
+        Timescale::from_nonzero(90_000),
     )]);
     let mut samples = Vec::new();
     for p in &stream.packets {
@@ -373,7 +373,7 @@ fn fragment_writer_outputs_are_unchanged() {
         0xb843_b6bc_d7f7_ee94,
     );
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    let mut ll = LlSegmenter::new(specs, 1000, 2.0, 5).unwrap();
+    let mut ll = LlSegmenter::new(specs, Timescale::from_nonzero(1000), 2.0, 5).unwrap();
     let chunks = ll.package(&media).unwrap();
     check(
         &mut bad,

@@ -24,7 +24,7 @@ fn mvhd(version: u8, ct: u64, mt: u64, dur: u64) -> MovieHeaderBox {
         flags: 0,
         creation_time: ct,
         modification_time: mt,
-        timescale: 1000.into(),
+        timescale: Timescale::from_nonzero(1000),
         duration: dur,
         rate: 0x0001_0000,
         volume: 0x0100,
@@ -56,7 +56,7 @@ fn mdhd(version: u8, ct: u64, mt: u64, dur: u64) -> MediaHeaderBox {
         flags: 0,
         creation_time: ct,
         modification_time: mt,
-        timescale: 90_000.into(),
+        timescale: Timescale::from_nonzero(90_000),
         duration: dur,
         language: 0x55C4,
     }

@@ -340,7 +340,7 @@ fn hdr_spec(transfer_code: u8) -> TrackSpec {
     });
     let spec = TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config,
             width: 320,
