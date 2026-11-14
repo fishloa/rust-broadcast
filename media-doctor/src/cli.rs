@@ -1,5 +1,7 @@
 //! CLI subcommands and entry-point (feature `cli`).
 
+use std::num::NonZeroU32;
+
 /// `media-doctor check-hls` — run HLS playlist validation.
 #[derive(clap::Parser, Debug)]
 pub struct CheckHlsArgs {
@@ -65,9 +67,10 @@ pub struct WatchArgs {
     pub metrics_io_timeout_ms: u64,
 
     /// Requested `SO_RCVBUF` for the UDP socket, in bytes (the kernel may cap
-    /// it; a warning is printed when it grants less than requested).
+    /// it; a warning is printed when it grants less than requested). Must be
+    /// at least 1.
     #[arg(long = "udp-rcvbuf")]
-    pub udp_rcvbuf: Option<usize>,
+    pub udp_rcvbuf: Option<NonZeroU32>,
 
     /// Set `SO_REUSEADDR` on the UDP socket (lets several probes share a
     /// multicast port).

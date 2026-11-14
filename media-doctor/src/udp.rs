@@ -6,6 +6,7 @@
 
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
+use std::num::NonZeroU32;
 
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use socket2::SockRef;
@@ -24,7 +25,7 @@ const SHARE_PORT_NEEDS_REUSE_PORT: bool = cfg!(target_vendor = "apple");
 /// port, so only enable it deliberately.
 #[must_use]
 pub fn udp_options(
-    recv_buffer: Option<usize>,
+    recv_buffer: Option<NonZeroU32>,
     reuse_addr: bool,
     interface: Option<MulticastInterface>,
 ) -> UdpOptions {
@@ -97,8 +98,8 @@ mod tests {
     #[test]
     fn the_defaults_match_a_plain_bind() {
         assert_eq!(udp_options(None, false, None), UdpOptions::default());
-        let options = udp_options(Some(1 << 20), true, None);
-        assert_eq!(options.recv_buffer_bytes, Some(1 << 20));
+        let options = udp_options(NonZeroU32::new(1 << 20), true, None);
+        assert_eq!(options.recv_buffer_bytes, NonZeroU32::new(1 << 20));
         assert!(options.reuse_address);
         assert_eq!(
             options.reuse_port, SHARE_PORT_NEEDS_REUSE_PORT,
@@ -139,7 +140,7 @@ mod tests {
     fn recv_buffer_request_is_applied_or_capped_but_never_ignored() {
         let default =
             recv_buffer_size(&bind_udp(loopback0(), &UdpOptions::default()).unwrap()).unwrap();
-        let want = 4 * 1024 * 1024;
+        let want = NonZeroU32::new(4 * 1024 * 1024).unwrap();
         let cfg = UdpOptions::new().with_recv_buffer_bytes(want);
         let got = recv_buffer_size(&bind_udp(loopback0(), &cfg).unwrap()).unwrap();
         eprintln!("SO_RCVBUF: default {default}, requested {want}, granted {got}");

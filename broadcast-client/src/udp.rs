@@ -58,9 +58,6 @@ impl UdpConfig {
         if self.reorder_wait_us == 0 {
             return invalid("udp.reorder_wait_us");
         }
-        if self.options.recv_buffer_bytes == Some(0) {
-            return invalid("udp.recv_buffer_bytes");
-        }
         Ok(())
     }
 }

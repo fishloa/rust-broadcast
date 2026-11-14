@@ -907,8 +907,8 @@ fn datagram_pump(session: &mut Session, watch: &mut Watch, now: u64, conn: &mut 
         };
         steps += 1;
         match action {
-            Action::UdpBind { conn: c, .. } => {
-                assert!(!watch.closed, "UdpBind after close");
+            Action::UdpBind { conn: c, .. } | Action::UdpConnect { conn: c, .. } => {
+                assert!(!watch.closed, "datagram bind after close");
                 assert!(watch.live.insert(c), "live conn id {c} issued twice");
                 *conn = Some(c);
                 session.on_connected(c);

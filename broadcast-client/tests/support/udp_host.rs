@@ -100,7 +100,8 @@ impl UdpHost {
         self.binds
             .iter()
             .filter_map(|a| match a {
-                Action::UdpBind { mode, .. } => Some(*mode),
+                Action::UdpBind { .. } => Some(UdpMode::Receive),
+                Action::UdpConnect { .. } => Some(UdpMode::Connect),
                 _ => None,
             })
             .collect()

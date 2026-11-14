@@ -5,6 +5,7 @@
 //! reports set+overhead — so comparing against the OS default proves
 //! nothing; the getter proves the option was APPLIED).
 
+use std::num::NonZeroU32;
 use std::time::Duration;
 
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
@@ -42,7 +43,7 @@ async fn the_configured_receive_buffer_is_applied_to_the_socket() {
     // 64 KiB: below every observed OS default (macOS ~786 KiB, Linux ~208 KiB),
     // so the getter returning ~64 KiB (Linux reports the doubled 128 KiB)
     // proves the option took; a plain bind reports the untouched default.
-    let opts = UdpOptions::new().with_recv_buffer_bytes(64 * 1024);
+    let opts = UdpOptions::new().with_recv_buffer_bytes(NonZeroU32::new(64 * 1024).unwrap());
     let socket = bind_udp("127.0.0.1:0", None, opts).await.unwrap();
     let got = socket.recv_buffer_size_for_test();
     // Linux doubles the request; macOS adds overhead. Accept 64..=256 KiB,
@@ -90,11 +91,11 @@ async fn an_explicit_reuse_address_bind_still_succeeds() {
 #[test]
 fn the_requested_receive_buffer_defaults_to_the_named_constant() {
     assert_eq!(
-        multimux::source::udp::requested_recv_buffer_bytes(None),
+        multimux::source::udp::requested_recv_buffer_bytes(None).get() as usize,
         multimux::source::udp::DEFAULT_RECV_BUFFER_BYTES
     );
     assert_eq!(
-        multimux::source::udp::requested_recv_buffer_bytes(Some(1234)),
+        multimux::source::udp::requested_recv_buffer_bytes(NonZeroU32::new(1234)).get(),
         1234
     );
 }
@@ -141,7 +142,7 @@ async fn an_explicit_receive_buffer_overrides_the_default() {
     let socket = bind_udp(
         "127.0.0.1:0",
         None,
-        UdpOptions::new().with_recv_buffer_bytes(128 * 1024),
+        UdpOptions::new().with_recv_buffer_bytes(NonZeroU32::new(128 * 1024).unwrap()),
     )
     .await
     .unwrap();

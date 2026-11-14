@@ -18,7 +18,7 @@ use std::time::Duration;
 use url::Url;
 
 use broadcast_client::{
-    Action, Config, ConnId, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
+    Action, Config, ConnId, Error, ErrorKind, Event, Session, Status, TransportError,
 };
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
@@ -352,9 +352,7 @@ impl SessionStep {
                 }
                 Action::UdpBind {
                     conn,
-                    host,
-                    port,
-                    mode: UdpMode::Receive,
+                    addr,
                     options,
                 } => {
                     // The route's own socket options are the base when the
@@ -370,17 +368,13 @@ impl SessionStep {
                     if let Some(join) = options.join {
                         merged = merged.with_join(join);
                     }
-                    let socket = self.udp.bind(&host, port, merged).await?;
+                    let socket = self.udp.bind(addr, merged).await?;
                     self.register_socket(conn, socket);
                     self.session.on_connected(conn);
                 }
-                Action::UdpBind {
-                    conn,
-                    host,
-                    port,
-                    mode: UdpMode::Connect,
-                    ..
-                } => match connect_udp(&host, port).await {
+                Action::UdpConnect {
+                    conn, host, port, ..
+                } => match connect_udp(&host.to_string(), port).await {
                     Ok(socket) => {
                         self.register_socket(conn, socket);
                         self.session.on_connected(conn);
@@ -815,26 +809,27 @@ pub(crate) struct UdpHost {
 impl UdpHost {
     async fn bind(
         &mut self,
-        host: &str,
-        port: u16,
+        addr: std::net::SocketAddr,
         options: broadcast_common::net::UdpOptions,
     ) -> Result<UdpSocket, MultimuxError> {
         if let Some(socket) = self.prebound.take() {
             return Ok(socket);
         }
-        let addr = match &options.join {
+        // A multicast bind joins the group named in `options.join` from the
+        // unspecified address of the group's family; a unicast bind is the
+        // literal `addr` itself.
+        let bind_addr = match &options.join {
             Some(_) => {
-                let any = if host.contains(':') {
-                    "[::]"
+                let any = if addr.is_ipv6() {
+                    std::net::Ipv6Addr::UNSPECIFIED.into()
                 } else {
-                    "0.0.0.0"
+                    std::net::Ipv4Addr::UNSPECIFIED.into()
                 };
-                format!("{any}:{port}")
+                std::net::SocketAddr::new(any, addr.port())
             }
-            None if host.contains(':') => format!("[{host}]:{port}"),
-            None => format!("{host}:{port}"),
+            None => addr,
         };
-        crate::source::udp::bind_udp(&addr, None, options).await
+        crate::source::udp::bind_udp(&bind_addr.to_string(), None, options).await
     }
 }
 
