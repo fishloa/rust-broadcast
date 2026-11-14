@@ -8,8 +8,8 @@
 
 use transmux::TrackId;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
 fn fnv1a(bytes: &[u8]) -> u64 {
@@ -332,9 +332,7 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     check(
         &mut bad,
         "rtp-stream",
-        fnv1a(
-            no_display_debug(&sample_timing_debug(&format!("{samples:?}"))).as_bytes(),
-        ),
+        fnv1a(no_display_debug(&sample_timing_debug(&format!("{samples:?}"))).as_bytes()),
         0x24e2_66a5_5d4e_7510,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
