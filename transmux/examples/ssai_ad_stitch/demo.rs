@@ -332,7 +332,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         pts_90k: video.start_decode_time,
         utc_epoch_ms: DEMO_EPOCH_MS,
     };
-    let mut timeline = Timeline::with_anchor(anchor);
+    let mut timeline = Timeline::new(anchor);
     let event = timeline.push_scte35(&raw_cue)?;
     let at_pts_90k = event
         .at
