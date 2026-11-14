@@ -438,7 +438,7 @@ mod tests {
         if let Some(t) = s.timing.as_mut() {
             t.pts = pts;
             t.dts = pts;
-            t.duration = spec.timescale.get() as u32; // spec.timescale is Timescale? wait
+            t.duration = spec.timescale.get();
         } else {
             s.timing = Some(transmux::ir::SampleTiming::new(
                 pts,

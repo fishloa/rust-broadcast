@@ -229,10 +229,10 @@ impl Driver {
             self.next += 1;
             let track = &self.rig.media.tracks[ti];
             let mut sample = track.samples[si].clone();
-            if let Some(t) = sample.timing.as_mut() {
-                if t.dts == 0 {
-                    t.dts = t.pts;
-                }
+            if let Some(t) = sample.timing.as_mut()
+                && t.dts == 0
+            {
+                t.dts = t.pts;
             }
             self.writer
                 .publish(track.spec.track_id, RetentionClass::Timed, sample);

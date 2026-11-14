@@ -599,7 +599,7 @@ fn render_period_document(
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).
     let nominal_ticks =
-        ((route.target_duration_secs() * f64::from(u32::from(timescale))).round() as u64).max(1);
+        ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
     let segments = if has_segments || flavour == DashFlavour::LowLatency {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,

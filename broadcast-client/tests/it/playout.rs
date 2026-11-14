@@ -510,15 +510,15 @@ fn long_stream() -> HashMap<String, Vec<u8>> {
         for (t, s) in &samples {
             let mut s = s.clone();
             let off = k * SPAN_SECS * scale(*t);
-            if let Some(d) = s.timing.map(|t| t.dts).map(|d| d + off) {
-                if let Some(t) = s.timing.as_mut() {
-                    t.dts = d;
-                }
+            if let Some(d) = s.timing.map(|t| t.dts).map(|d| d + off)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.dts = d;
             }
-            if let Some(p) = s.timing.map(|t| t.pts).map(|p| p + off) {
-                if let Some(t) = s.timing.as_mut() {
-                    t.pts = p;
-                }
+            if let Some(p) = s.timing.map(|t| t.pts).map(|p| p + off)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.pts = p;
             }
             all.push((*t, s));
         }

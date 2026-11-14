@@ -97,15 +97,15 @@ fn media_of(mut track: Track, start_decode_time: u64) -> Media {
     // time as `start_decode_time + Σ duration`).
     let delta = start_decode_time as i64;
     for s in &mut track.samples {
-        if let Some(d) = s.timing.map(|t| t.dts) {
-            if let Some(t) = s.timing.as_mut() {
-                t.dts = d + delta;
-            }
+        if let Some(d) = s.timing.map(|t| t.dts)
+            && let Some(t) = s.timing.as_mut()
+        {
+            t.dts = d + delta;
         }
-        if let Some(p) = s.timing.map(|t| t.pts) {
-            if let Some(t) = s.timing.as_mut() {
-                t.pts = p + delta;
-            }
+        if let Some(p) = s.timing.map(|t| t.pts)
+            && let Some(t) = s.timing.as_mut()
+        {
+            t.pts = p + delta;
         }
     }
     Media::new(vec![track.with_start_decode_time(start_decode_time)], 1000)
@@ -220,15 +220,15 @@ fn media_of_two(video: Track, video_start: u64, other: Track, other_start: u64) 
     fn shifted(mut t: Track, start: u64) -> Track {
         let delta = start as i64;
         for s in &mut t.samples {
-            if let Some(d) = s.timing.map(|t| t.dts) {
-                if let Some(t) = s.timing.as_mut() {
-                    t.dts = d + delta;
-                }
+            if let Some(d) = s.timing.map(|t| t.dts)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.dts = d + delta;
             }
-            if let Some(p) = s.timing.map(|t| t.pts) {
-                if let Some(t) = s.timing.as_mut() {
-                    t.pts = p + delta;
-                }
+            if let Some(p) = s.timing.map(|t| t.pts)
+                && let Some(t) = s.timing.as_mut()
+            {
+                t.pts = p + delta;
             }
         }
         t.with_start_decode_time(start)
@@ -562,8 +562,8 @@ fn concat_and_snap_honour_a_genuine_tfdt_gap() {
     let gap: i64 = 50_000;
     let last = a_track.samples.len() - 1;
     if let Some(t) = a_track.samples[last].timing.as_mut() {
-        t.dts = t.dts + gap;
-        t.pts = t.pts + gap;
+        t.dts += gap;
+        t.pts += gap;
     }
     let a = Media::new(vec![a_track], 1000);
     let true_last_dts = a.tracks[0].samples[last].timing.map(|t| t.dts).unwrap() as u64;

@@ -88,10 +88,10 @@ async fn master_without_captions_is_unchanged() {
     for (n, (_, ti, si)) in order.into_iter().enumerate() {
         let track = &media.tracks[ti];
         let mut sample = track.samples[si].clone();
-        if let Some(t) = sample.timing.as_mut() {
-            if t.dts == 0 {
-                t.dts = t.pts;
-            }
+        if let Some(t) = sample.timing.as_mut()
+            && t.dts == 0
+        {
+            t.dts = t.pts;
         }
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {

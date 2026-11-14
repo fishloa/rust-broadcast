@@ -94,10 +94,10 @@ impl Rig {
                     .samples
                     .into_iter()
                     .map(|mut s| {
-                        if let Some(t) = s.timing.as_mut() {
-                            if t.dts == 0 {
-                                t.dts = t.pts;
-                            }
+                        if let Some(t) = s.timing.as_mut()
+                            && t.dts == 0
+                        {
+                            t.dts = t.pts;
                         }
                         s
                     })

@@ -201,10 +201,10 @@ fn build_with(
         let track = &media.tracks[ti];
         let mut sample = track.samples[si].clone();
         let pts = sample.timing.map(|t| t.pts);
-        if let Some(t) = sample.timing.as_mut() {
-            if t.dts == 0 {
-                t.dts = pts.unwrap_or(t.dts);
-            }
+        if let Some(t) = sample.timing.as_mut()
+            && t.dts == 0
+        {
+            t.dts = pts.unwrap_or(t.dts);
         }
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {

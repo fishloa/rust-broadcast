@@ -76,10 +76,10 @@ fn load(fixture: &str) -> Vec<Source> {
                 .samples
                 .into_iter()
                 .map(|mut s| {
-                    if let Some(t) = s.timing.as_mut() {
-                        if t.dts == 0 {
-                            t.dts = t.pts;
-                        }
+                    if let Some(t) = s.timing.as_mut()
+                        && t.dts == 0
+                    {
+                        t.dts = t.pts;
                     }
                     s
                 })
@@ -698,10 +698,10 @@ async fn split_audio_parts_at_23_976_fps_keep_the_85_percent_floor() {
                 .samples
                 .into_iter()
                 .map(|mut s| {
-                    if let Some(t) = s.timing.as_mut() {
-                        if t.dts == 0 {
-                            t.dts = t.pts;
-                        }
+                    if let Some(t) = s.timing.as_mut()
+                        && t.dts == 0
+                    {
+                        t.dts = t.pts;
                     }
                     s
                 })
