@@ -101,7 +101,7 @@ use crate::segmenter::audio::AudioFollower;
 
 use crate::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 use crate::segmenter::subtitle::{LeaderPart, SubtitleFollower};
-use broadcast_hls::{InstreamId, MediaSequence, PartIndex as HlsPartIndex};
+use broadcast_hls::{InstreamId, PartIndex as HlsPartIndex};
 
 /// Configuration for one [`ProgramSegmenter`], replaceable on route reload:
 /// start from [`SegmenterConfig::default`] and set what differs with the
@@ -1779,10 +1779,8 @@ impl ProgramSegmenter {
             .next_timeline_ns
             .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
         if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
-            self.leader_durations.insert(
-                MediaSequence::new(u64::from(seq.value())),
-                duration.as_secs_f64(),
-            );
+            self.leader_durations
+                .insert(seq.value(), duration.as_secs_f64());
         }
         self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
             Vec::new(),
@@ -1859,10 +1857,8 @@ impl ProgramSegmenter {
             return;
         }
         for segment in segments {
-            self.leader_durations.insert(
-                MediaSequence::new(u64::from(segment.segment_seq.value())),
-                segment.duration,
-            );
+            self.leader_durations
+                .insert(segment.segment_seq.value(), segment.duration);
         }
         while self.leader_durations.len() > LEADER_DURATION_HISTORY {
             self.leader_durations.pop_first();

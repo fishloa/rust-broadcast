@@ -338,7 +338,7 @@ impl<D: CueDecoder> Core<D> {
     fn close_spans(&mut self, leaders: &LeaderDurations) {
         for (msn, span) in &mut self.spans {
             if span.end.is_none()
-                && let Some(duration) = leaders.get(msn)
+                && let Some(duration) = leaders.get(&u32::try_from(msn.value()).unwrap_or(u32::MAX))
             {
                 let ticks = (duration * PTS_HZ_TICKS as f64).round() as i64;
                 span.end = Some(span.start + ticks);
@@ -369,7 +369,7 @@ impl<D: CueDecoder> Core<D> {
             ready.push(Ready::Segment(ReadySegment {
                 msn,
                 duration_secs: leaders
-                    .get(&msn)
+                    .get(&u32::try_from(msn.value()).unwrap_or(u32::MAX))
                     .copied()
                     .unwrap_or((end - span.start) as f64 / PTS_HZ_TICKS as f64),
                 body: self.render(span.start, end),
@@ -609,7 +609,7 @@ mod tests {
         leaders: &mut LeaderDurations,
         msn: MediaSequence,
     ) -> Vec<Ready> {
-        leaders.insert(msn, TARGET_SECS);
+        leaders.insert(u32::try_from(msn.value()).unwrap_or(u32::MAX), TARGET_SECS);
         core.on_parts(&[], leaders)
     }
 
@@ -706,7 +706,7 @@ mod tests {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
         core.on_parts(&four_parts(MediaSequence::new(1), 0), &leaders);
-        leaders.insert(MediaSequence::new(1), TARGET_SECS);
+        leaders.insert(1, TARGET_SECS);
         let ready = core.on_parts(&[part(MediaSequence::new(2), 0, SEG_TICKS)], &leaders);
         let order: Vec<(char, MediaSequence)> = ready
             .iter()

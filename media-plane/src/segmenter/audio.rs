@@ -47,7 +47,7 @@ const MAX_HELD_SAMPLES: usize = 8192;
 /// Leader segment durations remembered to size gap placeholders.
 pub const LEADER_DURATION_HISTORY: usize = 512;
 
-pub type LeaderDurations = BTreeMap<broadcast_hls::MediaSequence, f64>;
+pub type LeaderDurations = BTreeMap<u32, f64>;
 
 /// Maps each rendition to the source audio track its selector names.
 /// Returns `(rendition index, source spec)` pairs; renditions whose selector
@@ -356,7 +356,7 @@ impl AudioFollower {
         }
         self.publish_ready(leaders);
         if let Some(last) = leaders.keys().next_back().copied() {
-            self.fill_gaps(u32::try_from(last.value()).unwrap_or(u32::MAX), leaders);
+            self.fill_gaps(last.saturating_add(1), leaders);
         }
         self.drain();
     }
@@ -389,7 +389,7 @@ impl AudioFollower {
     fn fill_gaps(&mut self, upto: u32, leaders: &LeaderDurations) {
         for seq in self.next_seq..upto {
             let duration = leaders
-                .get(&broadcast_hls::MediaSequence::new(u64::from(seq)))
+                .get(&seq)
                 .copied()
                 .unwrap_or(self.target_duration_secs);
             self.queue_segment(Vec::new(), seq, duration);
