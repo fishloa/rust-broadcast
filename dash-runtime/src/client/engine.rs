@@ -275,10 +275,6 @@ pub struct DashClient {
     remembered_done: VecDeque<ResourceId>,
 }
 
-/// Placeholder init-key URL for a `RepState` built before its init reference
-/// is resolved (overwritten immediately after `resolve` succeeds).
-const EMPTY_INIT_KEY_URL: &str = "data:,";
-
 fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
         && a.host_str() == b.host_str()
@@ -926,9 +922,22 @@ impl DashClient {
         reference: &str,
         media: bool,
     ) -> std::result::Result<Url, DropCause> {
-        let cand = rep
-            .candidates
-            .get(rep.cand % rep.candidates.len().max(1))
+        self.resolve_with(&rep.candidates, rep.cand, rep.query.as_ref(), reference, media)
+    }
+
+    /// [`Self::resolve`] over the parts of a Representation it reads, so a
+    /// reference can be resolved before its [`RepState`] is built (the init key
+    /// is resolved first, then the state carries it).
+    fn resolve_with(
+        &self,
+        candidates: &[BaseCandidate],
+        cand: usize,
+        query: Option<&String>,
+        reference: &str,
+        media: bool,
+    ) -> std::result::Result<Url, DropCause> {
+        let cand = candidates
+            .get(cand % candidates.len().max(1))
             .ok_or(DropCause::UnusableUrl)?;
         let mut url = match cand.resolve(self.doc_url.as_ref(), reference) {
             Err(_) => return Err(DropCause::UnusableUrl),
@@ -937,7 +946,7 @@ impl DashClient {
                 return Err(DropCause::UnusableUrl);
             }
         };
-        if media && let Some(q) = &rep.query {
+        if media && let Some(q) = query {
             let text = append_query(url.as_str(), q);
             url = Url::parse(&text).map_err(|_| DropCause::UnusableUrl)?;
         }
@@ -1176,9 +1185,15 @@ impl DashClient {
             Err(e) => return Err(DropCause::Addressing(plan_error_name(&e))),
         };
         let init_range = range_pair(init.1)?;
+        // Resolve the init reference first: the state carries the resolved key
+        // from construction, so there is no placeholder value and no panic path.
+        let init_url = self.resolve_with(&candidates, 0, query.as_ref(), &init.0, false)?;
+        let mut init_key_url = init_url;
+        init_key_url.set_query(None);
+        init_key_url.set_fragment(None);
         let id = RepId(self.next_rep);
         self.next_rep = self.next_rep.saturating_add(1);
-        let mut state = RepState {
+        let state = RepState {
             id,
             at,
             candidates,
@@ -1188,9 +1203,7 @@ impl DashClient {
             plan,
             index,
             init_key: InitKey {
-                // Placeholder: overwritten once the init reference resolves,
-                // a few lines below (the resolve needs `state` to exist).
-                url: Url::parse(EMPTY_INIT_KEY_URL).expect("constant URL"),
+                url: init_key_url,
                 range: init_range,
             },
             next_issue: 0,
@@ -1202,11 +1215,6 @@ impl DashClient {
             joined: mpd.kind != PresentationType::Dynamic,
             last_time: None,
         };
-        let init_url = self.resolve(&state, &init.0, false)?;
-        let mut init_key_url = init_url.clone();
-        init_key_url.set_query(None);
-        init_key_url.set_fragment(None);
-        state.init_key.url = init_key_url;
         if let Some(ix) = &state.index {
             range_pair(Some(ix.range))?;
             self.resolve(&state, "", false)?;
