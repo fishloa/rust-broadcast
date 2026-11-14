@@ -51,26 +51,50 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "11.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd0f70ef9d36de67089e3a89f0630d9c38a791032249c5c34f1593f8143b6551"
+checksum = "45590e2e230ffaa80c18e10b708e2a11fa3578b241d9b41afa011e5083142c6d"
 dependencies = [
+ "base64",
  "chrono",
  "erased-serde",
  "hex",
+ "iso-639",
  "quick-xml",
  "serde",
 ]
 
 [[package]]
-name = "broadcast-hls"
-version = "0.6.0"
+name = "broadcast-dash"
+version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a164899d3f65209688b6b453e28b8cfafe4649a4492b2c050e0f20b0c57fd607"
+checksum = "097506ab85a5a6deca12a3f4a474666a4404978e2e91ae336e32c771b6d67a83"
+dependencies = [
+ "broadcast-common",
+ "jiff",
+ "quick-xml",
+ "thiserror",
+]
+
+[[package]]
+name = "broadcast-hls"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "09e500f9dc341c36aed758f4ff96f00a408c22d51fa3df444aa225b350784a6e"
 dependencies = [
  "broadcast-common",
  "jiff",
  "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "broadcast-smooth"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23897602613ff527774e2841e5bab3e8f0351d3fb59773810132590dff7705e9"
+dependencies = [
+ "broadcast-common",
  "thiserror",
 ]
 
@@ -116,9 +140,9 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ffdc5945726219a04e3d2107b02ba056c537375d39bf7541cdf6532e22fa3fc"
+checksum = "accbc11c5fc1608dd56f60b3591784cfffd4a9a4a593b98ddb47064e04a784ee"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -242,9 +266,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b951918aaba50ee250051142db7cf3993388e51763acf5b0e6f93b11d596d7ea"
+checksum = "7a21c9ac623c45a65baadb4b43cc5dd728d9861d51fcd7b33dd95380f10e03cc"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -507,6 +531,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "iso-639"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ad7d3f647f560b2e5c7d7da6d9326223893247feb3e086a388a14654683aa2f2"
+
+[[package]]
 name = "jiff"
 version = "0.2.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -580,9 +610,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mp4-emsg"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71be7896741cebf4d8923cadedccbc7d44d9f57401f209113100365aeaf4fd55"
+checksum = "662b5b6cf2fb8b7e651ead526a8ae9f0aed9e29fc42d40880382fbf250d7721a"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -591,9 +621,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "89fbc0b2c9bd417a252a362d0ef15841d8cd66817be754f2b78d283d7b01c4c1"
+checksum = "c08ec15613f5fcf65dceb5ec2134089ce10263e15e0961030bc093b18d2f41c4"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -602,9 +632,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f4dfb528cec52685963fc5b993bcff43788b841e2e9abecf96f6ea36b18143e"
+checksum = "d36ba8eaee1f3de9e5d1363288b07348a1acf81859f88c4d143075f547764e14"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -614,9 +644,9 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2223d5e0ac2b26a859046855b3531d818a7c85fd9ddeaca1294f41e498201571"
+checksum = "3becd0ff359b68ce5e1e2e2d35fd8fedd31bd28ac1cb956c2207e0f6f5be8f63"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -797,10 +827,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "rtp-packet"
-version = "0.6.0"
+name = "rtmp-runtime"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4499e3084241b58b889912a9f9977d7276fa70381e8559034d9c77d4d8b04e76"
+checksum = "4382d23e657f570d3582f6d2bde22802e0a51317f418dc5a24f3a2f0d87757d2"
+dependencies = [
+ "broadcast-common",
+ "subtle",
+ "thiserror",
+]
+
+[[package]]
+name = "rtp-packet"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0ba9f85f74ba0a2869d64a6404e743a95066706fbc2511227f3b657f21942e85"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -998,14 +1039,16 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.30.0"
+version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a276448e6920e855994f181fc435b75445c70152b539197dcffe6a03cf5e4b8e"
+checksum = "5b847959525e6f0be85a8529243ef909c15966827cd14aec30b792ee75e241bf"
 dependencies = [
  "aes",
  "base64",
  "broadcast-common",
+ "broadcast-dash",
  "broadcast-hls",
+ "broadcast-smooth",
  "bytes",
  "cbc",
  "cc-data",
@@ -1019,6 +1062,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "quick-xml",
+ "rtmp-runtime",
  "rtp-packet",
  "sdp-types",
  "serde",
