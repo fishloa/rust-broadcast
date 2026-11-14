@@ -18,10 +18,20 @@ use srt_runtime::url::{SrtMode, UrlRejection};
 /// Per-connection configuration for the SRT push transport — the SRT
 /// handshake config dialed out with (latency, MTU, …).
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct SrtTransportConfig {
     /// The SRT handshake configuration used for
     /// [`SrtSocket::connect`](srt_runtime::io::SrtSocket::connect).
     pub srt_config: HandshakeConfig,
+}
+
+impl SrtTransportConfig {
+    /// Set the SRT handshake configuration.
+    #[must_use]
+    pub fn with_srt_config(mut self, srt_config: HandshakeConfig) -> Self {
+        self.srt_config = srt_config;
+        self
+    }
 }
 
 /// The SRT push transport: an owned [`SrtSocket`] in Caller mode.

@@ -152,11 +152,7 @@ impl SrtCaller {
             let mut salt = [0u8; SALT_LEN];
             salt.copy_from_slice(&derive(&seed, LABEL_SALT, attempt)[..SALT_LEN]);
             let sek = derive(&seed, LABEL_SEK, attempt)[..enc.key_length.bytes()].to_vec();
-            hs_config.crypto = Some(CryptoConfig {
-                passphrase: enc.passphrase().to_vec(),
-                salt,
-                sek,
-            });
+            hs_config.crypto = Some(CryptoConfig::new(enc.passphrase().to_vec(), salt, sek));
         }
         let ticks = hs_config.retransmit_after_ticks.max(1);
         let tick_period_us = HANDSHAKE_RETRANSMIT_PERIOD_US / u64::from(ticks);

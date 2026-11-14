@@ -30,6 +30,7 @@ const TARGET_DURATION_LEAD_FACTOR: u64 = 3;
 /// `Start` before the source ends, and a `pause_lead_us` at or above the lead the source
 /// sustains pauses on every update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PlayoutConfig {
     /// Media that must be buffered past the origin before `Start`, VOD sources.
     pub vod_start_lead_us: u64,
@@ -53,6 +54,36 @@ impl Default for PlayoutConfig {
             resume_lead_us: None,
             pause_lead_us: DEFAULT_PAUSE_LEAD_US,
         }
+    }
+}
+
+impl PlayoutConfig {
+    /// Set the VOD start lead (media buffered past the origin before `Start`).
+    #[must_use]
+    pub fn with_vod_start_lead_us(mut self, vod_start_lead_us: u64) -> Self {
+        self.vod_start_lead_us = vod_start_lead_us;
+        self
+    }
+
+    /// Set the live start lead (media buffered past the origin before `Start`).
+    #[must_use]
+    pub fn with_live_start_lead_us(mut self, live_start_lead_us: u64) -> Self {
+        self.live_start_lead_us = live_start_lead_us;
+        self
+    }
+
+    /// Set the resume lead; `None` falls back to the source kind's start lead.
+    #[must_use]
+    pub fn with_resume_lead_us(mut self, resume_lead_us: u64) -> Self {
+        self.resume_lead_us = Some(resume_lead_us);
+        self
+    }
+
+    /// Set the pause lead (a started gate pauses at or below this).
+    #[must_use]
+    pub fn with_pause_lead_us(mut self, pause_lead_us: u64) -> Self {
+        self.pause_lead_us = pause_lead_us;
+        self
     }
 }
 

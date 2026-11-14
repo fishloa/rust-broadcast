@@ -3254,12 +3254,7 @@ mod program_registry_tests {
         use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
         use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 
-        let info = |seq: u32| transmux::ll_hls::SegmentInfo {
-            bytes: vec![seq as u8; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 0,
-        };
+        let info = |seq: u32| transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], 4.0, seq);
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
@@ -3427,11 +3422,8 @@ mod program_registry_tests {
     /// segment, which DASH renders as a new Period.
     #[test]
     fn a_replacement_starts_a_new_init_generation_only_when_its_init_differs() {
-        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
-            bytes: vec![byte; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 1,
+        let info = |seq: u32, byte: u8| {
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], 4.0, seq).with_part_count(1)
         };
         let route = || {
             RouteHandle::new(
@@ -3497,11 +3489,8 @@ mod program_registry_tests {
     /// published (stalled DVR pin) still belongs to the old init.
     #[test]
     fn set_init_from_starts_the_new_init_at_the_named_segment() {
-        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
-            bytes: vec![byte; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 1,
+        let info = |seq: u32, byte: u8| {
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], 4.0, seq).with_part_count(1)
         };
         let route = RouteHandle::new(
             RouteConfig::default()
@@ -3545,11 +3534,8 @@ mod program_registry_tests {
     /// does not reuse the old origin's open segment's parts.
     #[test]
     fn a_restart_without_dvr_and_a_reconnect_never_reuse_an_immutable_name() {
-        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
-            bytes: vec![byte; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 1,
+        let info = |seq: u32, byte: u8| {
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], 4.0, seq).with_part_count(1)
         };
         // "Process" 1: segments 1..=2 served, part 0 of the open segment 3.
         let p1 = RouteHandle::new(
@@ -3564,13 +3550,7 @@ mod program_registry_tests {
         p1.add_segment(ProgramId(1), info(2, 0x12)).expect("add");
         p1.add_part(
             ProgramId(1),
-            transmux::ll_hls::PartInfo {
-                bytes: vec![0x13; 4],
-                segment_seq: 3,
-                part_index: 0,
-                duration: 0.5,
-                independent: true,
-            },
+            transmux::ll_hls::PartInfo::new(vec![0x13; 4], 0.5, 3, 0).with_independent(true),
         );
         let names1 = advertised_names(&p1, ProgramId(1));
         assert!(names1.iter().any(|n| n.starts_with("part-")), "{names1:?}");
@@ -3588,13 +3568,7 @@ mod program_registry_tests {
         p2.add_segment(ProgramId(1), info(2, 0x22)).expect("add");
         p2.add_part(
             ProgramId(1),
-            transmux::ll_hls::PartInfo {
-                bytes: vec![0x23; 4],
-                segment_seq: 3,
-                part_index: 0,
-                duration: 0.5,
-                independent: true,
-            },
+            transmux::ll_hls::PartInfo::new(vec![0x23; 4], 0.5, 3, 0).with_independent(true),
         );
         let names2 = advertised_names(&p2, ProgramId(1));
         for n in &names2 {
@@ -3609,13 +3583,7 @@ mod program_registry_tests {
         p1.add_segment(ProgramId(1), info(1, 0x31)).expect("add");
         p1.add_part(
             ProgramId(1),
-            transmux::ll_hls::PartInfo {
-                bytes: vec![0x32; 4],
-                segment_seq: 2,
-                part_index: 0,
-                duration: 0.5,
-                independent: true,
-            },
+            transmux::ll_hls::PartInfo::new(vec![0x32; 4], 0.5, 2, 0).with_independent(true),
         );
         let names3 = advertised_names(&p1, ProgramId(1));
         for n in &names3 {
@@ -3660,12 +3628,7 @@ mod program_registry_tests {
     }
 
     fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
-        transmux::ll_hls::SegmentInfo {
-            bytes: vec![seq as u8; 8],
-            duration,
-            segment_seq: seq,
-            part_count: 1,
-        }
+        transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], duration, seq).with_part_count(1)
     }
 
     /// **The headline per-program-serving-state test (issue #805 task 6).**

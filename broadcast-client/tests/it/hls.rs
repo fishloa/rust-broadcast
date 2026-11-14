@@ -345,10 +345,8 @@ fn variant_policy_in_config_applied() {
     let by_bandwidth = {
         let mut new_config = Config::default();
         new_config.kind = SourceKind::Hls;
-        new_config.variant_policy = hls_runtime::client::VariantPolicy {
-            max_bandwidth: Some(300_000),
-            ..Default::default()
-        };
+        new_config.variant_policy =
+            hls_runtime::client::VariantPolicy::default().with_max_bandwidth(300_000);
         new_config
     };
     let mut s = Session::open(Url::parse(MASTER_URL).unwrap(), by_bandwidth, ts(0)).expect("open");
@@ -368,10 +366,8 @@ fn variant_policy_in_config_applied() {
     let by_height = {
         let mut new_config = Config::default();
         new_config.kind = SourceKind::Hls;
-        new_config.variant_policy = hls_runtime::client::VariantPolicy {
-            max_height: Some(180),
-            ..Default::default()
-        };
+        new_config.variant_policy =
+            hls_runtime::client::VariantPolicy::default().with_max_height(180);
         new_config
     };
     let mut s2 = Session::open(Url::parse(MASTER_URL).unwrap(), by_height, ts(0)).expect("open");

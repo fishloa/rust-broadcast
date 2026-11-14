@@ -303,6 +303,7 @@ broadcast_common::impl_spec_display!(SetupRole);
 /// module doc): every field is a value the caller already pulled out of a
 /// negotiated SDP offer/answer.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct MediaTransportConfig {
     /// The local UDP socket address media is sent from/received on.
     pub local_addr: SocketAddr,
@@ -359,6 +360,57 @@ impl core::fmt::Debug for MediaTransportConfig {
             .field("stun_server", &self.stun_server)
             .field("max_remote_candidates", &self.max_remote_candidates)
             .finish()
+    }
+}
+
+impl MediaTransportConfig {
+    /// Build the transport config from the fields with no sensible default;
+    /// `is_controlling` (`false`), `stun_server` (`None`) and
+    /// `max_remote_candidates` ([`MAX_REMOTE_CANDIDATES`]) default via the
+    /// `with_*` setters.
+    #[must_use]
+    pub fn new(
+        local_addr: SocketAddr,
+        local_ice_ufrag: String,
+        local_ice_pwd: String,
+        remote_ice_ufrag: String,
+        remote_ice_pwd: String,
+        local_setup: SetupRole,
+        remote_fingerprint: String,
+    ) -> Self {
+        Self {
+            local_addr,
+            local_ice_ufrag,
+            local_ice_pwd,
+            remote_ice_ufrag,
+            remote_ice_pwd,
+            is_controlling: false,
+            local_setup,
+            remote_fingerprint,
+            stun_server: None,
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
+        }
+    }
+
+    /// Set whether this side is the ICE controlling agent.
+    #[must_use]
+    pub fn with_is_controlling(mut self, is_controlling: bool) -> Self {
+        self.is_controlling = is_controlling;
+        self
+    }
+
+    /// Attach a STUN server for server-reflexive candidate gathering.
+    #[must_use]
+    pub fn with_stun_server(mut self, stun_server: SocketAddr) -> Self {
+        self.stun_server = Some(stun_server);
+        self
+    }
+
+    /// Set the cap on admitted remote ICE candidates.
+    #[must_use]
+    pub fn with_max_remote_candidates(mut self, max_remote_candidates: usize) -> Self {
+        self.max_remote_candidates = max_remote_candidates;
+        self
     }
 }
 

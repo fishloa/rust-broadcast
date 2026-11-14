@@ -139,18 +139,16 @@ fn debug_never_prints_the_bearer_token_or_turn_credential() {
 #[test]
 fn media_transport_config_debug_hides_the_ice_passwords() {
     use webrtc_runtime::media::{MediaTransportConfig, SetupRole};
-    let cfg = MediaTransportConfig {
-        local_addr: "127.0.0.1:9".parse().unwrap(),
-        local_ice_ufrag: "lufrag".into(),
-        local_ice_pwd: "local-ice-password-123456".into(),
-        remote_ice_ufrag: "rufrag".into(),
-        remote_ice_pwd: "remote-ice-password-123456".into(),
-        is_controlling: false,
-        local_setup: SetupRole::Passive,
-        remote_fingerprint: "sha-256 00".into(),
-        stun_server: None,
-        max_remote_candidates: 8,
-    };
+    let cfg = MediaTransportConfig::new(
+        "127.0.0.1:9".parse().unwrap(),
+        "lufrag".into(),
+        "local-ice-password-123456".into(),
+        "rufrag".into(),
+        "remote-ice-password-123456".into(),
+        SetupRole::Passive,
+        "sha-256 00".into(),
+    )
+    .with_max_remote_candidates(8);
     let text = format!("{cfg:?}");
     assert!(!text.contains("local-ice-password"), "{text}");
     assert!(!text.contains("remote-ice-password"), "{text}");

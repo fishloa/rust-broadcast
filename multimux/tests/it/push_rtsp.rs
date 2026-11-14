@@ -336,10 +336,8 @@ async fn rtsp_push_survives_digest_auth_against_mediamtx() {
     const PATH: &str = "digest-test";
     let push_url = server.url(PATH);
     let read_url = server.url_with_creds("pushuser", "pushpass123", PATH);
-    let cfg = RtspTransportConfig {
-        credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
-        ..Default::default()
-    };
+    let cfg = RtspTransportConfig::default()
+        .with_credentials("pushuser".to_string(), "pushpass123".to_string());
     push_and_read_back(&server, cfg, push_url, read_url).await;
 }
 
@@ -352,9 +350,7 @@ async fn rtsp_push_survives_basic_auth_against_mediamtx() {
     const PATH: &str = "basic-test";
     let push_url = server.url(PATH);
     let read_url = server.url_with_creds("pushuser", "pushpass123", PATH);
-    let cfg = RtspTransportConfig {
-        credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
-        ..Default::default()
-    };
+    let cfg = RtspTransportConfig::default()
+        .with_credentials("pushuser".to_string(), "pushpass123".to_string());
     push_and_read_back(&server, cfg, push_url, read_url).await;
 }

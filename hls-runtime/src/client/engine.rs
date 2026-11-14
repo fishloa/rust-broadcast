@@ -2900,10 +2900,7 @@ mod tests {
 
         let delta = MediaPlaylist {
             media_sequence: 10, // prefix_start == 10 - 0 == 10
-            skip: Some(broadcast_hls::SkipInfo {
-                skipped_segments: u64::MAX - 5,
-                ..Default::default()
-            }),
+            skip: Some(broadcast_hls::SkipInfo::new(u64::MAX - 5)),
             segments: Vec::new(),
             ..Default::default()
         };

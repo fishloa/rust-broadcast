@@ -24,6 +24,7 @@ use std::io;
 /// `module_present`, since that is the field that toggles on physical
 /// insert/removal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub struct SlotInfo {
     /// Slot number.
     pub num: u8,

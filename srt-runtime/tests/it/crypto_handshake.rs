@@ -121,16 +121,12 @@ fn same_passphrase_negotiates_identical_sek_verified_by_matching_ciphertext() {
     let salt = [0x11u8; srt_runtime::crypto::SALT_LEN];
     let sek = vec![0x42u8; 16]; // AES-128, matching EncryptionField::Aes128.
 
-    let caller_cfg = config_with_crypto(CryptoConfig {
-        passphrase: passphrase.clone(),
-        salt,
-        sek: sek.clone(),
-    });
-    let listener_cfg = config_with_crypto(CryptoConfig {
+    let caller_cfg = config_with_crypto(CryptoConfig::new(passphrase.clone(), salt, sek.clone()));
+    let listener_cfg = config_with_crypto(CryptoConfig::new(
         passphrase,
-        salt: [0u8; srt_runtime::crypto::SALT_LEN], // unused on the responder side
-        sek: Vec::new(),                            // unused on the responder side
-    });
+        [0u8; srt_runtime::crypto::SALT_LEN], // unused on the responder side
+        Vec::new(),                           // unused on the responder side
+    ));
 
     let mut caller = CallerHandshake::new(0x1111_1111, caller_cfg);
     let mut listener = ListenerHandshake::new(0x2222_2222, 0xC0FF_EE00, listener_cfg);
@@ -211,16 +207,12 @@ fn different_passphrases_are_rejected_and_never_share_a_sek() {
     let salt = [0x22u8; srt_runtime::crypto::SALT_LEN];
     let sek = vec![0x55u8; 16];
 
-    let caller_cfg = config_with_crypto(CryptoConfig {
-        passphrase: b"passphrase A".to_vec(),
-        salt,
-        sek,
-    });
-    let listener_cfg = config_with_crypto(CryptoConfig {
-        passphrase: b"passphrase B (different)".to_vec(),
-        salt: [0u8; srt_runtime::crypto::SALT_LEN],
-        sek: Vec::new(),
-    });
+    let caller_cfg = config_with_crypto(CryptoConfig::new(b"passphrase A".to_vec(), salt, sek));
+    let listener_cfg = config_with_crypto(CryptoConfig::new(
+        b"passphrase B (different)".to_vec(),
+        [0u8; srt_runtime::crypto::SALT_LEN],
+        Vec::new(),
+    ));
 
     let mut caller = CallerHandshake::new(0x3333_3333, caller_cfg);
     let mut listener = ListenerHandshake::new(0x4444_4444, 0xDEAD_BEEF, listener_cfg);

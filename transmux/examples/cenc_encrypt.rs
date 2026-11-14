@@ -51,8 +51,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     use transmux::movie_fragment::{FragmentProtection, protect_media_segment};
     use transmux::pipeline::CodecConfig;
     use transmux::{
-        CencEncryptor, CencScheme, CmafMux, ConstantIvSenc, DashPackager, EncryptConfig, IvGen,
-        Media, SubsamplePolicy, TrackEncryption, TsDemux,
+        CencEncryptor, CencScheme, CmafMux, DashPackager, EncryptConfig, IvGen, Media,
+        SubsamplePolicy, TrackEncryption, TsDemux,
     };
 
     // A test KID/key (never a real production key) — the standard `cbcs`
@@ -99,14 +99,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     // 3. Encrypt in place: `cbcs` (AES-128-CBC, 1:9 pattern) — the CMAF-HLS
     //    case, so the HLS signalling step below has something to render.
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Constant(CONSTANT_IV),
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::Video,
-        constant_iv_senc: ConstantIvSenc::default(),
-    };
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::Video)
+        .with_iv(IvGen::Constant(CONSTANT_IV))
+        .with_pattern((1, 9));
     CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
     let track_id = media.tracks[0].spec.track_id;
     let encryption: TrackEncryption = media.tracks[0]

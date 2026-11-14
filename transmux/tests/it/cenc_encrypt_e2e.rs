@@ -172,14 +172,8 @@ fn run_e2e(
         "fixture must carry more than one sample to bite"
     );
 
-    let cfg = EncryptConfig {
-        scheme,
-        kid: KID,
-        iv,
-        pattern,
-        subsample,
-        constant_iv_senc: ConstantIvSenc::default(),
-    };
+    let mut cfg = EncryptConfig::new(scheme, KID, subsample).with_iv(iv);
+    cfg.pattern = pattern;
     let protected_bytes = build_protected_fmp4(&mut media, &cfg);
 
     let in_path = write_temp(&protected_bytes, tag);
@@ -339,14 +333,10 @@ fn cbcs_whole_sample_constant_iv_no_senc_round_trip() {
         "fixture must carry more than one sample to bite"
     );
 
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Constant(CBCS_CONSTANT_IV),
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::WholeSample,
-        constant_iv_senc: ConstantIvSenc::Omit,
-    };
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::WholeSample)
+        .with_iv(IvGen::Constant(CBCS_CONSTANT_IV))
+        .with_pattern((1, 9))
+        .with_constant_iv_senc(ConstantIvSenc::Omit);
     let protected_bytes = build_protected_fmp4(&mut media, &cfg);
 
     // Confirm the branch is genuinely hit: no senc/saiz/saio anywhere in the
@@ -436,14 +426,10 @@ fn cbcs_whole_sample_constant_iv_emit_senc_round_trip_and_mp4decrypt_interop() {
         "fixture must carry more than one sample to bite"
     );
 
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Constant(CBCS_CONSTANT_IV),
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::WholeSample,
-        constant_iv_senc: ConstantIvSenc::Emit,
-    };
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::WholeSample)
+        .with_iv(IvGen::Constant(CBCS_CONSTANT_IV))
+        .with_pattern((1, 9))
+        .with_constant_iv_senc(ConstantIvSenc::Emit);
     let protected_bytes = build_protected_fmp4(&mut media, &cfg);
 
     // Confirm the Emit branch is hit: use the proper moof parser to find
@@ -565,14 +551,7 @@ fn cbcs_counter_16_byte_iv_mp4decrypt_interop() {
         "fixture must carry more than one sample"
     );
 
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Counter,
-        pattern: None,
-        subsample: SubsamplePolicy::Video,
-        constant_iv_senc: ConstantIvSenc::default(),
-    };
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::Video);
     let protected_bytes = build_protected_fmp4(&mut media, &cfg);
 
     // The recorded per-sample IVs must be 16 bytes (the fix's whole point).

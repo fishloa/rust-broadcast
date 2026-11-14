@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `SlotInfo` is now `#[non_exhaustive]`; it is built by the device layer and field-assigned, never by an external struct literal (#2664).
 - BREAKING: `CaPmtBuilt` serialization (via `dvb-ci`) is now fallible; call sites handle `Result` (#2659).
 
 ## [0.20.0] - 2026-11-14

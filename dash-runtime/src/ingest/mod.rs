@@ -126,12 +126,50 @@ impl_spec_display!(SegmentDisposition);
 
 /// Metadata extracted from one ingest HTTP request.
 #[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
 pub struct RequestMeta<'a> {
     pub method: IngestMethod,
     pub path: &'a str,
     pub content_length: Option<u64>,
     pub chunked: bool,
     pub body_empty: bool,
+}
+
+impl<'a> RequestMeta<'a> {
+    /// Build the request metadata from its required method and path; the
+    /// `content_length`/`chunked`/`body_empty` flags default to their absent
+    /// values.
+    #[must_use]
+    pub fn new(method: IngestMethod, path: &'a str) -> Self {
+        Self {
+            method,
+            path,
+            content_length: None,
+            chunked: false,
+            body_empty: false,
+        }
+    }
+
+    /// Attach the `Content-Length`, if the request declared one.
+    #[must_use]
+    pub fn with_content_length(mut self, content_length: u64) -> Self {
+        self.content_length = Some(content_length);
+        self
+    }
+
+    /// Mark the request as chunked.
+    #[must_use]
+    pub fn with_chunked(mut self, chunked: bool) -> Self {
+        self.chunked = chunked;
+        self
+    }
+
+    /// Mark the request body as empty.
+    #[must_use]
+    pub fn with_body_empty(mut self, body_empty: bool) -> Self {
+        self.body_empty = body_empty;
+        self
+    }
 }
 
 /// Grouping extracted from a DASH MPD per §6.2.16.

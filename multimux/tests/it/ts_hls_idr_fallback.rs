@@ -120,20 +120,18 @@ struct Server {
 fn start(route: Route) -> Server {
     let (media, media_listener) = bind_tcp();
     let (admin, admin_listener) = bind_tcp();
-    let cfg = Config {
-        bind: media.to_string(),
-        target_duration_secs: TARGET_SECS,
-        part_target: Duration::from_millis(200),
-        window_segments: 64,
-        routes: vec![route],
-        admin: Some(AdminSpec {
-            bind: admin.to_string(),
-            auth: OutputAuthSpec::Bearer {
+    let cfg = Config::default()
+        .with_bind(media.to_string())
+        .with_target_duration_secs(TARGET_SECS)
+        .with_part_target(Duration::from_millis(200))
+        .with_window_segments(64)
+        .with_routes(vec![route])
+        .with_admin(AdminSpec::new(
+            admin.to_string(),
+            OutputAuthSpec::Bearer {
                 token: ADMIN_TOKEN.to_string(),
             },
-        }),
-        ..Config::default()
-    };
+        ));
     let handle = tokio::spawn(async move {
         let _ = serve_with_registry_on_admin(
             media_listener,

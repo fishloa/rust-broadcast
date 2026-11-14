@@ -238,8 +238,7 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
     use rtc_dtls::crypto::Certificate;
     use rtc_dtls::crypto_provider::default_provider;
     use webrtc_runtime::media::{
-        MAX_REMOTE_CANDIDATES, MediaTransport, MediaTransportConfig, SetupRole,
-        certificate_fingerprint,
+        MediaTransport, MediaTransportConfig, SetupRole, certificate_fingerprint,
     };
 
     let (addr, route, token) =
@@ -307,18 +306,16 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
     client_socket.set_nonblocking(true).unwrap();
 
     let mut client_media = MediaTransport::with_certificate_for_test(
-        MediaTransportConfig {
-            local_addr: client_addr,
-            local_ice_ufrag: client_ufrag,
-            local_ice_pwd: client_pwd,
-            remote_ice_ufrag: server.ufrag.clone(),
-            remote_ice_pwd: server.pwd.clone(),
-            is_controlling: true,
-            local_setup: SetupRole::Active,
-            stun_server: None,
-            remote_fingerprint: server.fingerprint.clone(),
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-        },
+        MediaTransportConfig::new(
+            client_addr,
+            client_ufrag,
+            client_pwd,
+            server.ufrag.clone(),
+            server.pwd.clone(),
+            SetupRole::Active,
+            server.fingerprint.clone(),
+        )
+        .with_is_controlling(true),
         client_cert,
         std::time::Instant::now(),
     )
