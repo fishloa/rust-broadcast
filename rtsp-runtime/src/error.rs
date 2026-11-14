@@ -64,20 +64,20 @@ pub enum Error {
 
     /// The `Transport` header value could not be parsed per RFC 2326 §12.39.
     #[error("invalid Transport header: {0}")]
-    TransportParse(String),
+    TransportParse(TransportParseError),
 
     /// A header value could not be serialized safely (control character in a value,
     /// or a name that is not an RFC 2326 §15.1 token / session-id character).
     #[error("cannot serialize header: {0}")]
-    HeaderSerialize(String),
+    HeaderSerialize(HeaderSerializeError),
 
     /// The `Session` header value could not be parsed per RFC 2326 §12.37.
     #[error("invalid Session header: {0}")]
-    SessionParse(String),
+    SessionParse(SessionParseError),
 
     /// An interleaved `$` frame was malformed (RFC 2326 §10.12).
     #[error("invalid interleaved frame: {0}")]
-    InterleavedFrame(String),
+    InterleavedFrame(FrameError),
 
     /// A request in a multi-request flow (e.g.
     /// [`AsyncRtspClient::start_record`](crate::AsyncRtspClient::start_record))
@@ -109,7 +109,7 @@ pub enum Error {
 
     /// The SDP body returned by `DESCRIBE` could not be parsed.
     #[error("invalid SDP: {0}")]
-    InvalidSdp(String),
+    InvalidSdp(SdpParseError),
 
     /// Two tracks negotiated the same interleaved channel.
     #[error("interleaved channel collision: {channel}")]
@@ -325,7 +325,9 @@ mod tests {
                 server_name: "bad name".into(),
                 source: Box::new(io()),
             },
-            Error::Auth(broadcast_auth::Error::ChallengeParse("bad".into())),
+            Error::Auth(broadcast_auth::Error::ChallengeParse(
+                broadcast_auth::HttpAuthError("bad".into()),
+            )),
         ];
         for err in &errors {
             let msgs = chain(err);
@@ -354,3 +356,184 @@ mod tests {
         assert_eq!(IoContext::TlsHandshake.to_string(), "TLS handshake");
     }
 }
+
+/// Reason a `Transport` header value could not be parsed (RFC 2326 §12.39).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TransportParseError {
+    /// The transport-spec did not have the form `transport/profile[/lower]`.
+    NotTransportSpec {
+        /// Diagnostic detail.
+        detail: String,
+    },
+    /// The transport protocol was not `RTP`.
+    UnsupportedProtocol,
+    /// The profile was not `AVP`.
+    UnknownProfile,
+    /// The lower-transport token was not `TCP`/`UDP`.
+    UnknownLowerTransport {
+        /// The rejected token.
+        value: String,
+    },
+    /// A parameter that requires a value was given none.
+    MissingValue {
+        /// The parameter name.
+        param: String,
+    },
+    /// A flag parameter was given a value.
+    UnexpectedValue {
+        /// The parameter name.
+        param: String,
+    },
+    /// `ttl` was given a range instead of a single value.
+    TtlNotSingle,
+    /// A `mode` method token was not a valid token.
+    InvalidModeMethod {
+        /// The rejected token.
+        method: String,
+    },
+    /// A port/channel/ttl range failed its range check.
+    BadPortRange {
+        /// The parameter name.
+        param: String,
+        /// The underlying lexer error.
+        reason: String,
+    },
+    /// The header contained no transport-specs.
+    NoSpecs,
+    /// A lexer error not otherwise classified.
+    Lex(String),
+    /// Any other parse failure.
+    Other(String),
+}
+
+impl core::fmt::Display for TransportParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NotTransportSpec { detail } => write!(f, "{detail}"),
+            Self::UnsupportedProtocol => f.write_str("unsupported transport protocol (only RTP)"),
+            Self::UnknownProfile => f.write_str("unsupported profile (only AVP)"),
+            Self::UnknownLowerTransport { value } => write!(f, "unknown lower-transport {value:?}"),
+            Self::MissingValue { param } => write!(f, "{param} requires a value"),
+            Self::UnexpectedValue { param } => write!(f, "{param} takes no value"),
+            Self::TtlNotSingle => f.write_str("ttl is a single value"),
+            Self::InvalidModeMethod { method } => write!(f, "invalid mode method {method:?}"),
+            Self::BadPortRange { param, reason } => write!(f, "{param}: {reason}"),
+            Self::NoSpecs => f.write_str("no transport-specs"),
+            Self::Lex(s) => f.write_str(s),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl core::error::Error for TransportParseError {}
+
+/// Reason a header value could not be serialized safely.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HeaderSerializeError {
+    /// A control character in a value.
+    ControlChar(String),
+    /// A name that is not an RFC 2326 §15.1 token.
+    NotToken {
+        /// The rejected value.
+        value: String,
+    },
+    /// Any other serialization failure.
+    Other(String),
+}
+
+impl core::fmt::Display for HeaderSerializeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ControlChar(s) => f.write_str(s),
+            Self::NotToken { value } => write!(f, "{value:?} is not a token"),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl core::error::Error for HeaderSerializeError {}
+
+/// Reason a `Session` header value could not be parsed (RFC 2326 §12.37).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionParseError {
+    /// The session id was empty.
+    Empty,
+    /// A malformed value.
+    Malformed(String),
+    /// A lexer error.
+    Lex(String),
+    /// Any other parse failure.
+    Other(String),
+}
+
+impl core::fmt::Display for SessionParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Empty => f.write_str("empty session id"),
+            Self::Malformed(s) => f.write_str(s),
+            Self::Lex(s) => f.write_str(s),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl core::error::Error for SessionParseError {}
+
+/// Reason an interleaved `$` frame was malformed (RFC 2326 §10.12).
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FrameError {
+    /// The leading byte was not the `$` magic.
+    BadMagic {
+        /// The byte that was found.
+        found: u8,
+    },
+    /// The payload exceeded the 16-bit length field.
+    TooLong {
+        /// The payload length.
+        len: usize,
+    },
+    /// Any other framing failure.
+    Other(String),
+}
+
+impl core::fmt::Display for FrameError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::BadMagic { found } => write!(f, "expected '$' (0x24), found 0x{found:02X}"),
+            Self::TooLong { len } => {
+                write!(f, "payload of {len} bytes exceeds 16-bit length field")
+            }
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl core::error::Error for FrameError {}
+
+/// Reason an SDP body could not be parsed.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SdpParseError {
+    /// The body was not valid UTF-8.
+    Utf8(String),
+    /// The SDP parser rejected the body.
+    Parse(String),
+    /// Any other failure.
+    Other(String),
+}
+
+impl core::fmt::Display for SdpParseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Utf8(s) => f.write_str(s),
+            Self::Parse(s) => f.write_str(s),
+            Self::Other(s) => f.write_str(s),
+        }
+    }
+}
+
+impl core::error::Error for SdpParseError {}

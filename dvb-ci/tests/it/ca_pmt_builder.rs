@@ -25,7 +25,7 @@ fn builds_ca_pmt_from_real_broadcast_pmt() {
     assert!(original_streams > 0, "fixture should carry ES");
 
     let built = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling);
-    let wire = built.to_bytes();
+    let wire = built.to_bytes().unwrap();
 
     // Re-parse the produced ca_pmt and confirm it round-trips byte-for-byte.
     let parsed = CaPmt::parse(&wire).expect("produced ca_pmt parses");

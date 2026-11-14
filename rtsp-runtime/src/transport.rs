@@ -40,7 +40,7 @@
 //! extensions in input order; ranges are always `lo-hi`, `ssrc` is 8 upper-case
 //! hex digits, `mode` is the quoted list.
 
-use crate::error::{Error, Result};
+use crate::error::{Error, HeaderSerializeError, Result, TransportParseError};
 use crate::rfc2326_lex as lex;
 
 /// Transport protocol token (§12.39 `transport-protocol`).
@@ -203,13 +203,9 @@ pub struct TransportSpec {
     pub extensions: Vec<(String, Option<String>)>,
 }
 
-fn bad<T>(msg: impl Into<String>) -> Result<T> {
-    Err(Error::TransportParse(msg.into()))
-}
-
 impl From<lex::LexError> for Error {
     fn from(e: lex::LexError) -> Self {
-        Error::TransportParse(e.0)
+        Error::TransportParse(TransportParseError::Lex(e.0))
     }
 }
 
@@ -244,25 +240,33 @@ impl TransportSpec {
             [p, pr] => (*p, *pr, None),
             [p, pr, l] => (*p, *pr, Some(*l)),
             _ => {
-                return bad(format!(
-                    "transport-spec {head:?} is not transport/profile[/lower]"
+                return Err(Error::TransportParse(
+                    TransportParseError::NotTransportSpec {
+                        detail: format!("transport-spec {head:?} is not transport/profile[/lower]"),
+                    },
                 ));
             }
         };
         if !proto.eq_ignore_ascii_case(PROTO_RTP) {
-            return bad(format!(
-                "unsupported transport protocol {proto:?} (only RTP)"
+            return Err(Error::TransportParse(
+                TransportParseError::UnsupportedProtocol,
             ));
         }
         if !profile.eq_ignore_ascii_case(PROFILE_AVP) {
-            return bad(format!("unsupported profile {profile:?} (only AVP)"));
+            return Err(Error::TransportParse(TransportParseError::UnknownProfile));
         }
         let mut out = TransportSpec {
             lower_transport: match lower {
                 None => None,
                 Some(l) if l.eq_ignore_ascii_case(LOWER_TCP) => Some(LowerTransport::Tcp),
                 Some(l) if l.eq_ignore_ascii_case(LOWER_UDP) => Some(LowerTransport::Udp),
-                Some(l) => return bad(format!("unknown lower-transport {l:?}")),
+                Some(l) => {
+                    return Err(Error::TransportParse(
+                        TransportParseError::UnknownLowerTransport {
+                            value: l.to_string(),
+                        },
+                    ));
+                }
             },
             ..Default::default()
         };
@@ -287,13 +291,19 @@ impl TransportSpec {
         let need = |what: &str| -> Result<&str> {
             match &value {
                 Some(v) => Ok(v.as_str()),
-                None => bad(format!("{what} requires a value")),
+                None => Err(Error::TransportParse(TransportParseError::MissingValue {
+                    param: what.to_string(),
+                })),
             }
         };
         let flag = |what: &str| -> Result<()> {
             match &value {
                 None => Ok(()),
-                Some(_) => bad(format!("{what} takes no value")),
+                Some(_) => Err(Error::TransportParse(
+                    TransportParseError::UnexpectedValue {
+                        param: what.to_string(),
+                    },
+                )),
             }
         };
         if is("unicast") {
@@ -320,7 +330,7 @@ impl TransportSpec {
         } else if is("ttl") {
             let t = lex::range(need("ttl")?, TTL_DIGITS, u8::MAX.into(), "ttl")?;
             if t.0 != t.1 {
-                return bad("ttl is a single value");
+                return Err(Error::TransportParse(TransportParseError::TtlNotSingle));
             }
             self.ttl = Some(t.0 as u8);
         } else if is("layers") {
@@ -357,7 +367,11 @@ impl TransportSpec {
                     if lex::is_token(m) {
                         Ok(TransportMode::from_token(m))
                     } else {
-                        bad(format!("invalid mode method {m:?}"))
+                        Err(Error::TransportParse(
+                            TransportParseError::InvalidModeMethod {
+                                method: m.to_string(),
+                            },
+                        ))
                     }
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -375,7 +389,9 @@ impl TransportSpec {
     /// character (CR, LF, …) in a value, or a parameter / mode name that is not an
     /// RFC 2326 §15.1 token. Nothing unsafe is ever written.
     pub fn to_header_value(&self) -> Result<String> {
-        let emit = |v: &str| lex::emit_value(v).map_err(|e| Error::HeaderSerialize(e.0));
+        let emit = |v: &str| {
+            lex::emit_value(v).map_err(|e| Error::HeaderSerialize(HeaderSerializeError::Other(e.0)))
+        };
         let mut s = format!("{PROTO_RTP}/{PROFILE_AVP}");
         if let Some(lt) = self.lower_transport {
             s.push(lex::SLASH);
@@ -437,10 +453,9 @@ impl TransportSpec {
         }
         if !self.mode.is_empty() {
             if let Some(m) = self.mode.iter().find(|m| !lex::is_token(m.name())) {
-                return Err(Error::HeaderSerialize(format!(
-                    "mode method {:?} is not a token",
-                    m.name()
-                )));
+                return Err(Error::HeaderSerialize(HeaderSerializeError::NotToken {
+                    value: m.name().to_string(),
+                }));
             }
             let list = self
                 .mode
@@ -450,14 +465,15 @@ impl TransportSpec {
                 .join(&MODE_SEP.to_string());
             param(kv(
                 "mode",
-                &lex::emit_value_quoted(&list).map_err(|e| Error::HeaderSerialize(e.0))?,
+                &lex::emit_value_quoted(&list)
+                    .map_err(|e| Error::HeaderSerialize(HeaderSerializeError::Other(e.0)))?,
             ));
         }
         for (name, value) in &self.extensions {
             if !lex::is_token(name) {
-                return Err(Error::HeaderSerialize(format!(
-                    "extension name {name:?} is not a token"
-                )));
+                return Err(Error::HeaderSerialize(HeaderSerializeError::NotToken {
+                    value: name.clone(),
+                }));
             }
             param(match value {
                 Some(v) => kv(name, &emit(v)?),
@@ -492,7 +508,7 @@ impl Transport {
             .map(TransportSpec::parse)
             .collect::<Result<Vec<_>>>()?;
         if specs.is_empty() {
-            return bad("no transport-specs");
+            return Err(Error::TransportParse(TransportParseError::NoSpecs));
         }
         Ok(Transport { specs })
     }

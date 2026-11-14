@@ -558,7 +558,9 @@ mod tests {
     #[test]
     fn is_auth_failure_true_only_for_the_auth_variant() {
         assert!(is_auth_failure(&MultimuxError::Auth(
-            broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())
+            broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                "DESCRIBE: 401 Unauthorized".into()
+            ))
         )));
         assert!(!is_auth_failure(&MultimuxError::Connect {
             reason: "connect refused".into()
@@ -588,7 +590,9 @@ mod tests {
             kind: ProtocolFailure::Status(http::StatusCode::SERVICE_UNAVAILABLE),
         }));
         assert!(!is_permanent_describe_not_found(&MultimuxError::Auth(
-            broadcast_auth::Error::ChallengeParse("DESCRIBE: 401 Unauthorized".into())
+            broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                "DESCRIBE: 401 Unauthorized".into()
+            ))
         )));
     }
 
@@ -636,7 +640,7 @@ mod tests {
         let attempt = always_fails(
             || {
                 MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
-                    "DESCRIBE: 401 Unauthorized".into(),
+                    broadcast_auth::HttpAuthError("DESCRIBE: 401 Unauthorized".into()),
                 ))
             },
             call_count.clone(),
@@ -829,7 +833,7 @@ mod tests {
                 let n = cc.fetch_add(1, Ordering::SeqCst);
                 if n < fail_times {
                     return Err(MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
-                        "DESCRIBE: 401 Unauthorized".into(),
+                        broadcast_auth::HttpAuthError("DESCRIBE: 401 Unauthorized".into()),
                     )));
                 }
                 route_handle.set_health(HealthState::Live);

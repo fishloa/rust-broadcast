@@ -13,7 +13,8 @@
 //! followed by a partial tail, it returns the complete frames plus the number of
 //! unconsumed bytes, so the caller can retain the partial tail for the next read.
 
-use crate::error::{Error, Result};
+use crate::error::{Error, FrameError, Result};
+use bytes::Bytes;
 
 /// The `$` magic byte that prefixes an interleaved data block (RFC 2326 §10.12).
 pub const MAGIC: u8 = 0x24;
@@ -30,12 +31,12 @@ pub struct InterleavedFrame {
     /// header. By convention even = RTP, odd = RTCP.
     pub channel: u8,
     /// The framed payload bytes.
-    pub payload: Vec<u8>,
+    pub payload: Bytes,
 }
 
 impl InterleavedFrame {
     /// Creates a frame for `channel` carrying `payload`.
-    pub fn new(channel: u8, payload: impl Into<Vec<u8>>) -> Self {
+    pub fn new(channel: u8, payload: impl Into<Bytes>) -> Self {
         InterleavedFrame {
             channel,
             payload: payload.into(),
@@ -64,12 +65,8 @@ impl InterleavedFrame {
     ///
     /// Returns an error if the payload exceeds the 16-bit length field.
     pub fn slice_to_bytes(channel: u8, payload: &[u8]) -> Result<Vec<u8>> {
-        let len: u16 = u16::try_from(payload.len()).map_err(|_| {
-            Error::InterleavedFrame(format!(
-                "payload of {} bytes exceeds 16-bit length field",
-                payload.len()
-            ))
-        })?;
+        let len: u16 = u16::try_from(payload.len())
+            .map_err(|_| Error::InterleavedFrame(FrameError::TooLong { len: payload.len() }))?;
         let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
         out.push(MAGIC);
         out.push(channel);
@@ -83,10 +80,9 @@ impl InterleavedFrame {
     /// Returns an error if the payload exceeds the 16-bit length field.
     pub fn serialize_into(&self, out: &mut Vec<u8>) -> Result<()> {
         let len: u16 = u16::try_from(self.payload.len()).map_err(|_| {
-            Error::InterleavedFrame(format!(
-                "payload of {} bytes exceeds 16-bit length field",
-                self.payload.len()
-            ))
+            Error::InterleavedFrame(FrameError::TooLong {
+                len: self.payload.len(),
+            })
         })?;
         out.push(MAGIC);
         out.push(self.channel);
@@ -106,10 +102,9 @@ impl InterleavedFrame {
             return Ok(None);
         }
         if buf[0] != MAGIC {
-            return Err(Error::InterleavedFrame(format!(
-                "expected '$' (0x{MAGIC:02X}), found 0x{:02X}",
-                buf[0]
-            )));
+            return Err(Error::InterleavedFrame(FrameError::BadMagic {
+                found: buf[0],
+            }));
         }
         let channel = buf[1];
         let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
@@ -119,7 +114,7 @@ impl InterleavedFrame {
         }
         let frame = InterleavedFrame {
             channel,
-            payload: buf[HEADER_LEN..total].to_vec(),
+            payload: buf[HEADER_LEN..total].to_vec().into(),
         };
         Ok(Some((frame, total)))
     }

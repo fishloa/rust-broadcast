@@ -238,10 +238,9 @@ impl SessionStep {
         })?;
         if let Some(credentials) = credentials {
             session.set_credentials(credentials).map_err(|e| {
-                MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
-                    "{labels}: {e}",
-                    labels = labels.what
-                )))
+                MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                    broadcast_auth::HttpAuthError(format!("{labels}: {e}", labels = labels.what)),
+                ))
             })?;
         }
         let client = reqwest::Client::builder()
@@ -518,9 +517,8 @@ impl SessionStep {
                 }
                 Event::Forbidden { status } if self.labels.session_retries => {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
-                        broadcast_auth::Error::ChallengeParse(format!(
-                            "{}: HTTP {status}",
-                            self.labels.what
+                        broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                            format!("{}: HTTP {status}", self.labels.what),
                         )),
                     )));
                 }
@@ -532,9 +530,8 @@ impl SessionStep {
                 }
                 Event::AuthRequired { .. } => {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
-                        broadcast_auth::Error::ChallengeParse(format!(
-                            "{}: authentication required",
-                            self.labels.what
+                        broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                            format!("{}: authentication required", self.labels.what),
                         )),
                     )));
                 }
@@ -563,10 +560,8 @@ impl SessionStep {
                         && matches!(kind.refusal_status(), Some(401 | 403)) =>
                 {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
-                        broadcast_auth::Error::ChallengeParse(format!(
-                            "{}: {}",
-                            self.labels.what,
-                            kind.name()
+                        broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
+                            format!("{}: {}", self.labels.what, kind.name()),
                         )),
                     )));
                 }
@@ -592,10 +587,9 @@ impl SessionStep {
 
     fn http_error(&self, status: u16) -> MultimuxError {
         if status == reqwest::StatusCode::UNAUTHORIZED.as_u16() {
-            MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(format!(
-                "{}: {status}",
-                self.labels.what
-            )))
+            MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
+                broadcast_auth::HttpAuthError(format!("{}: {status}", self.labels.what)),
+            ))
         } else {
             MultimuxError::Connect {
                 reason: format!("{}: HTTP {status}", self.labels.what),

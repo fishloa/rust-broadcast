@@ -7,7 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Removed
+#### Changed
+- BREAKING: uses `rtsp_runtime`'s typed `InterleavedFrame` payload (`Bytes`) and `ChunkSize` newtype (#2659).
+
+## Removed
 - Removed the unused optional `url` dependency (and the `dep:url` entry in the `std` feature): base-URL resolution goes through `broadcast-dash`/`hls-runtime`, so a `std` build of `transmux` compiles 40 fewer crates and no longer pulls the `idna`/`icu_*` stack.
 
 ## [0.31.0] - 2026-11-14
