@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Adopts `transmux::smooth_fragment::fragment_track_id`'s `TrackId` return (transmux #2647): a stream's discovered local track id is held as a `TrackId` end to end rather than a raw integer. No public API change.
 - BREAKING: `client::SYNTHETIC_MOVIE_TIMESCALE` is a `Timescale`; the client reads each stream's `Timescale` from the manifest (a stream or manifest with a zero `TimeScale` is refused by `broadcast-smooth` at parse, so the client no longer skips such streams) (#2657).
 - BREAKING: every `now` the client engine takes is a `broadcast_common::stage::Timestamp` (`poll`, `on_manifest`, `on_fragment`, `on_failure`), the clock type the server engine already takes.
 - BREAKING: `SmoothConfig`'s `backoff_ms: Vec<u64>` and `backoff_cap_ms: u64` are one `backoff: broadcast_common::backoff::BackoffSteps` (`with_backoff`), and `refresh_min_us`/`refresh_max_us` are `refresh_min`/`refresh_max: Duration` (`with_refresh_min`/`with_refresh_max`); `DEFAULT_BACKOFF_MS`/`DEFAULT_BACKOFF_CAP_MS` become `DEFAULT_BACKOFF_STEPS`/`DEFAULT_BACKOFF_CAP` and `DEFAULT_REFRESH_MIN_US`/`DEFAULT_REFRESH_MAX_US` become `DEFAULT_REFRESH_MIN`/`DEFAULT_REFRESH_MAX`.
