@@ -186,7 +186,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -221,7 +221,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         assert!(
@@ -235,7 +235,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -253,7 +253,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -291,7 +291,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -318,7 +318,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -352,7 +352,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(2.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -374,7 +374,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -414,7 +414,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -440,7 +440,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -453,7 +453,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
@@ -478,7 +478,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let resp = manifest(State(route)).await;
@@ -500,7 +500,7 @@ mod tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
         route.publish_new_program(program);

@@ -355,7 +355,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let config = TrunkConfig::default()
@@ -534,7 +534,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // HANG GUARD (issue #826): backstop around `run_smooth_pull`.
@@ -575,7 +575,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let result = tokio::time::timeout(
@@ -636,7 +636,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // DISCRIMINATOR (issue #826): must prove the operation returns
@@ -688,7 +688,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // HANG GUARD (issue #826): backstop around `run_smooth_pull` for

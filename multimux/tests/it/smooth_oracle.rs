@@ -51,7 +51,7 @@ fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
         // >= 4 s segments: the shape W13a/W13b are about (the default 0.5 s
         // would never reach it).
         target_duration_secs: 4.0,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         routes: vec![Route {
             name: "cam".to_string(),

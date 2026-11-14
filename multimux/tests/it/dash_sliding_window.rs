@@ -108,7 +108,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_SECS)
-            .with_part_target_ms(PART_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_MS)))
             .with_window_segments(WINDOW),
     ));
     let program = media_plane::ProgramId(0);

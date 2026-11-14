@@ -228,7 +228,7 @@ impl PendingRuntime {
 /// only `routes` are converged by reload, everything else needs a restart).
 struct RegistryContext {
     /// A clone of the process's [`Config`] with `routes`/`admin` cleared —
-    /// [`super::spawn_ingest`] reads `target_duration_secs`/`part_target_ms`/
+    /// [`super::spawn_ingest`] reads `target_duration_secs`/`part_target`/
     /// `window_segments`/the ingest timeouts from it; `routes` and `admin`
     /// are ignored (kept empty so nothing accidentally reads a stale route
     /// list from here instead of [`RouteRegistry::inner`]).
@@ -449,7 +449,7 @@ impl RouteRegistry {
             .collect::<crate::Result<Vec<_>>>()?;
         let route_config = RouteConfig::default()
             .with_target_duration_secs(self.ctx.base_config.target_duration_secs)
-            .with_part_target_ms(self.ctx.base_config.part_target_ms)
+            .with_part_target(self.ctx.base_config.part_target)
             .with_window_segments(self.ctx.base_config.window_segments)
             .with_container(super::route_container(route))
             .with_ts_cut_policy(route.ts_hls_cut.into())

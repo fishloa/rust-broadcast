@@ -224,7 +224,9 @@ async fn played_samples(
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
-            .with_part_target_ms(ROUTE_PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(
+                ROUTE_PART_TARGET_MS,
+            )))
             .with_window_segments(ROUTE_WINDOW_SEGMENTS),
     ));
     let config = TrunkConfig::default()

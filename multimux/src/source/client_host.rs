@@ -985,7 +985,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let error = SessionStep::open(
@@ -1018,7 +1018,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let mut step = SessionStep::open(

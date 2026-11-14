@@ -21,7 +21,7 @@ fn fmp4_route() -> Arc<RouteHandle> {
     let route = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
     route.publish_new_program(media_plane::ProgramId(0));
@@ -57,7 +57,7 @@ fn ts_route() -> Arc<RouteHandle> {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
         .with_container(Container::MpegTs),

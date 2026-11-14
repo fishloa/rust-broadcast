@@ -81,7 +81,7 @@ async fn eight_ts_http_pulls_all_progress_on_the_multi_thread_runtime() {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let config = TrunkConfig::default()
@@ -120,7 +120,7 @@ async fn cancelling_a_pull_stops_its_session_promptly() {
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
     let config = TrunkConfig::default()

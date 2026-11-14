@@ -130,20 +130,29 @@ pub struct AudioFollower {
     next_timeline_ns: u64,
     first_discontinuous: bool,
     target_duration_secs: f64,
-    part_target_ms: u32,
+    part_target: Duration,
     part_target_sized: bool,
     init: Option<Vec<u8>>,
-    part_target_event: Option<u32>,
+    part_target_event: Option<Duration>,
     rendition: Option<usize>,
 }
 
-fn part_target_for_frame_ms(part_target_ms: u32, frame_ticks: u32, timescale: u32) -> Option<u32> {
+/// A part target as whole milliseconds (the LL-HLS segmenter's own unit).
+fn part_target_millis(part_target: Duration) -> u32 {
+    u32::try_from(part_target.as_millis()).unwrap_or(u32::MAX)
+}
+
+fn part_target_for_frame_ms(
+    part_target: Duration,
+    frame_ticks: u32,
+    timescale: u32,
+) -> Option<u32> {
     if frame_ticks == 0 || timescale == 0 {
         return None;
     }
     let ticks = u128::from(frame_ticks);
     let scale = u128::from(timescale);
-    let target_ticks = u128::from(part_target_ms) * scale;
+    let target_ticks = part_target.as_millis() * scale;
     let frames = target_ticks
         .div_ceil(ticks * (MILLIS_PER_SEC as u128))
         .max(1);
@@ -158,7 +167,7 @@ impl AudioFollower {
         spec: &TrackSpec,
         trunk: &Arc<Trunk>,
         target_duration_secs: f64,
-        part_target_ms: u32,
+        part_target: Duration,
     ) -> Option<Self> {
         let writer = trunk.segment_writer()?;
         let next_seq = writer.next_sequence_number().value();
@@ -166,7 +175,7 @@ impl AudioFollower {
             vec![spec.clone()],
             transmux::VIDEO_CLOCK_RATE,
             target_duration_secs,
-            part_target_ms,
+            part_target_millis(part_target),
             next_seq,
             next_seq,
         ) {
@@ -198,7 +207,7 @@ impl AudioFollower {
             next_timeline_ns: 0,
             first_discontinuous: false,
             target_duration_secs,
-            part_target_ms,
+            part_target,
             part_target_sized: false,
             init: Some(init),
             part_target_event: None,
@@ -223,9 +232,9 @@ impl AudioFollower {
         self.init.take()
     }
 
-    /// The part target (milliseconds) the rendition's origin should advertise,
-    /// once, after the first sample fixed the frame duration.
-    pub fn take_part_target_ms(&mut self) -> Option<u32> {
+    /// The part target the rendition's origin should advertise, once, after
+    /// the first sample fixed the frame duration.
+    pub fn take_part_target(&mut self) -> Option<Duration> {
         self.part_target_event.take()
     }
 
@@ -237,9 +246,8 @@ impl AudioFollower {
             return;
         };
         self.part_target_sized = true;
-        if let Some(ms) = part_target_for_frame_ms(self.part_target_ms, frame_ticks, self.timescale)
-        {
-            self.part_target_event = Some(ms);
+        if let Some(ms) = part_target_for_frame_ms(self.part_target, frame_ticks, self.timescale) {
+            self.part_target_event = Some(Duration::from_millis(u64::from(ms)));
         }
     }
 
@@ -420,14 +428,20 @@ impl AudioFollower {
 #[cfg(test)]
 mod part_target_tests {
     use super::part_target_for_frame_ms;
+    use std::time::Duration;
+
+    /// Whole milliseconds as the part target the follower is configured with.
+    fn ms(v: u64) -> Duration {
+        Duration::from_millis(v)
+    }
 
     #[test]
     fn rounds_up_to_whole_frames() {
-        assert_eq!(part_target_for_frame_ms(200, 1536, 48_000), Some(224));
-        assert_eq!(part_target_for_frame_ms(200, 1024, 48_000), Some(214));
-        assert_eq!(part_target_for_frame_ms(200, 960, 48_000), Some(200));
-        assert_eq!(part_target_for_frame_ms(10, 1536, 48_000), Some(32));
-        assert_eq!(part_target_for_frame_ms(200, 0, 48_000), None);
+        assert_eq!(part_target_for_frame_ms(ms(200), 1536, 48_000), Some(224));
+        assert_eq!(part_target_for_frame_ms(ms(200), 1024, 48_000), Some(214));
+        assert_eq!(part_target_for_frame_ms(ms(200), 960, 48_000), Some(200));
+        assert_eq!(part_target_for_frame_ms(ms(10), 1536, 48_000), Some(32));
+        assert_eq!(part_target_for_frame_ms(ms(200), 0, 48_000), None);
     }
 }
 
@@ -448,10 +462,11 @@ mod follower_tests {
     fn the_init_is_handed_out_once_and_a_trunk_has_one_follower() {
         let trunk = trunk();
         let spec = track_spec(TrackId::new(2));
-        let mut follower = AudioFollower::try_new(&spec, &trunk, 4.0, 500).expect("follower");
+        let mut follower = AudioFollower::try_new(&spec, &trunk, 4.0, Duration::from_millis(500))
+            .expect("follower");
         assert!(follower.take_init().is_some_and(|init| !init.is_empty()));
         assert!(follower.take_init().is_none());
-        assert!(AudioFollower::try_new(&spec, &trunk, 4.0, 500).is_none());
+        assert!(AudioFollower::try_new(&spec, &trunk, 4.0, Duration::from_millis(500)).is_none());
     }
 
     /// The follower writes into the trunk it was given, whatever capacities the
@@ -461,7 +476,7 @@ mod follower_tests {
         let config: TrunkConfig = trunk_config();
         let trunk = Trunk::new(config);
         let spec = track_spec(TrackId::new(2));
-        let follower = AudioFollower::try_new(&spec, &trunk, 4.0, 500);
+        let follower = AudioFollower::try_new(&spec, &trunk, 4.0, Duration::from_millis(500));
         assert!(follower.is_some());
         assert_eq!(trunk.segment_len(), 0);
     }

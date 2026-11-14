@@ -129,7 +129,7 @@ fn fresh_route(subtitles: bool) -> Arc<RouteHandle> {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_hold_cold_playlist(false)
@@ -163,8 +163,8 @@ fn start_rig_on(media: transmux::Media, route: Arc<RouteHandle>, reconnect: bool
         segmenter.continue_after_reconnect(
             route
                 .epoch(ProgramId(0))
-                .map(|e| e.media_start_ns)
-                .unwrap_or(0),
+                .map(|e| std::time::Duration::from_nanos(e.media_start_ns))
+                .unwrap_or(std::time::Duration::ZERO),
         );
     }
     if let Some(init) = segmenter.init_segment() {

@@ -457,7 +457,7 @@ fn admin_config(media_bind: SocketAddr, admin_bind: SocketAddr, routes: Vec<Rout
     Config {
         bind: media_bind.to_string(),
         target_duration_secs: 0.2,
-        part_target_ms: 50,
+        part_target: Duration::from_millis(50),
         window_segments: 8,
         routes,
         admin: Some(AdminSpec {
@@ -2241,7 +2241,7 @@ fn initial_as_json(config: &Config) -> serde_json::Value {
     serde_json::json!({
         "bind": config.bind,
         "target_duration_secs": config.target_duration_secs,
-        "part_target_ms": config.part_target_ms,
+        "part_target_ms": u32::try_from(config.part_target.as_millis()).unwrap_or(u32::MAX),
         "window_segments": config.window_segments,
         "routes": routes,
         "admin": admin,

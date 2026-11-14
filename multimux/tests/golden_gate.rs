@@ -289,7 +289,7 @@ async fn start_ll_origin(
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(WINDOW_SEGMENTS),
     ));
     // `multimux` egress resolves what it serves through the route's program

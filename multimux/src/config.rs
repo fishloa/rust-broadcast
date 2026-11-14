@@ -11,6 +11,7 @@ use broadcast_auth::Credentials;
 use serde::Deserialize;
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
+use std::time::Duration;
 
 /// Default [`Route::outputs`] when a route's config omits the field: LL-HLS
 /// only, preserving pre-#663-P4 behaviour for every existing config.
@@ -2133,6 +2134,17 @@ impl ProgramDateTimeSource {
 }
 
 broadcast_common::impl_spec_display!(ProgramDateTimeSource);
+/// `Duration` in the JSON as whole milliseconds (the LL-HLS part target's
+/// long-standing wire unit and key name).
+mod millis_duration {
+    use serde::{Deserialize, Deserializer};
+    use std::time::Duration;
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        let ms = u32::deserialize(d)?;
+        Ok(Duration::from_millis(u64::from(ms)))
+    }
+}
 
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
@@ -2142,8 +2154,10 @@ pub struct Config {
     pub bind: String,
     /// Target full-segment duration (seconds).
     pub target_duration_secs: f64,
-    /// LL-HLS part target (milliseconds).
-    pub part_target_ms: u32,
+    /// LL-HLS part target. The JSON key stays `part_target_ms` and its value
+    /// stays whole milliseconds.
+    #[serde(rename = "part_target_ms", with = "millis_duration")]
+    pub part_target: Duration,
     /// Rolling window depth (full segments retained in RAM).
     pub window_segments: usize,
     /// Input→output routes.
@@ -2367,7 +2381,7 @@ impl Default for Config {
         Config {
             bind: "0.0.0.0:8080".to_string(),
             target_duration_secs: 4.0,
-            part_target_ms: 500,
+            part_target: Duration::from_millis(500),
             window_segments: 8,
             routes: Vec::new(),
             request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64(),
@@ -2501,9 +2515,9 @@ impl Config {
                 ),
             });
         }
-        if self.part_target_ms == 0 {
+        if self.part_target.is_zero() {
             return Err(MultimuxError::ConfigInvalid {
-                field: "part_target_ms",
+                field: "part_target",
                 reason: "must be positive".into(),
             });
         }
@@ -2513,10 +2527,10 @@ impl Config {
         // `chunk = part_target_ms / 1000` and `segment = target_duration_secs`.
         // Reject the combination here, where it can carry a clear error, rather
         // than letting every MPD request for an `ll_dash` route fail at runtime.
-        let part_target_secs = f64::from(self.part_target_ms) / 1000.0;
+        let part_target_secs = self.part_target.as_secs_f64();
         if part_target_secs > self.target_duration_secs {
             return Err(MultimuxError::ConfigInvalid {
-                field: "part_target_ms",
+                field: "part_target",
                 reason: format!(
                     "a part/chunk duration of {} s must not exceed target_duration_secs ({} s) \
                      — a part is a sub-division of a whole segment",
@@ -3061,7 +3075,8 @@ mod tests {
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.bind, "127.0.0.1:9000");
-        assert_eq!(cfg.part_target_ms, 250);
+        // the JSON key and unit are unchanged: whole milliseconds
+        assert_eq!(cfg.part_target, Duration::from_millis(250));
         assert_eq!(cfg.routes.len(), 2);
         assert_eq!(cfg.routes[1].name, "cam2");
         match &cfg.routes[1].input {
@@ -3104,13 +3119,13 @@ mod tests {
         let mut at_bound = base.clone();
         at_bound.target_duration_secs = MAX_TARGET_DURATION_SECS;
         // `part_target_ms` must not exceed the segment, so keep the part tiny.
-        at_bound.part_target_ms = 1;
+        at_bound.part_target = Duration::from_millis(1);
         at_bound
             .validate()
             .expect("exactly the 24 h bound must be accepted");
         let mut just_over = base.clone();
         just_over.target_duration_secs = MAX_TARGET_DURATION_SECS + 0.1;
-        just_over.part_target_ms = 1;
+        just_over.part_target = Duration::from_millis(1);
         let err = just_over
             .validate()
             .expect_err("just past the 24 h bound must be rejected");
@@ -3138,15 +3153,15 @@ mod tests {
         // Exactly one part long is fine; a part longer than the segment is not.
         let mut ok = base.clone();
         ok.target_duration_secs = 1.0;
-        ok.part_target_ms = 1000;
+        ok.part_target = Duration::from_millis(1000);
         ok.validate().expect("a full-segment part is valid");
 
         let mut bad = base.clone();
         bad.target_duration_secs = 0.5;
-        bad.part_target_ms = 1000;
+        bad.part_target = Duration::from_millis(1000);
         match bad.validate() {
             Err(MultimuxError::ConfigInvalid { field, reason }) => {
-                assert_eq!(field, "part_target_ms");
+                assert_eq!(field, "part_target");
                 assert!(
                     reason.contains("must not exceed target_duration_secs"),
                     "unclear reason: {reason}"
@@ -5869,5 +5884,14 @@ mod tests {
         assert!(msg.contains("bogus"), "bad value missing: {msg}");
         assert!(msg.contains("arrival"), "valid variant missing: {msg}");
         assert!(msg.contains("off"), "valid variant missing: {msg}");
+    }
+    /// The part target loads from the documented `part_target_ms` key in whole
+    /// milliseconds, not a `Duration` struct.
+    #[test]
+    fn the_part_target_key_is_whole_milliseconds() {
+        let cfg: Config = serde_json::from_str(r#"{"part_target_ms": 1500}"#).expect("parses");
+        assert_eq!(cfg.part_target, Duration::from_secs(3) / 2);
+        let missing: Config = serde_json::from_str("{}").expect("defaults");
+        assert_eq!(missing.part_target, Config::default().part_target);
     }
 }

@@ -16,7 +16,7 @@ impl SiblingTrunks for RouteHandle {
         trunk: &Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
         target_duration_secs: f64,
-        part_target_ms: u32,
+        part_target: std::time::Duration,
     ) -> Vec<media_plane::segmenter::audio::AudioFollower> {
         // Delegate to split_audio's core builder (applies init to origin).
         crate::source::split_audio::build_core_followers(
@@ -24,7 +24,7 @@ impl SiblingTrunks for RouteHandle {
             trunk,
             mapped,
             target_duration_secs,
-            part_target_ms,
+            part_target,
         )
     }
 
@@ -54,7 +54,7 @@ impl RouteHandle {
                 }
             })
             .with_target_duration_secs(self.target_duration_secs())
-            .with_part_target_ms(self.part_target_ms())
+            .with_part_target(self.part_target())
             .with_window_segments_cap(self.window_segments_cap())
             .with_route_name(self.name().to_string())
             .with_audio_rendition_sources(self.audio_rendition_sources().to_vec())
@@ -82,8 +82,8 @@ pub fn apply_segmenter_events(
                 init,
                 first_segment,
             } => route.set_init_from(program, init, first_segment),
-            SegmenterEvent::PartTargetMs(ms) => {
-                route.set_part_target_ms(program, ms);
+            SegmenterEvent::PartTarget(part_target) => {
+                route.set_part_target_ms(program, part_target);
             }
             SegmenterEvent::ClosedCaptions {
                 detected,
@@ -126,9 +126,9 @@ impl SiblingTrunks for &RouteHandle {
         trunk: &Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
         target_duration_secs: f64,
-        part_target_ms: u32,
+        part_target: std::time::Duration,
     ) -> Vec<media_plane::segmenter::audio::AudioFollower> {
-        (**self).build_audio_followers(trunk, mapped, target_duration_secs, part_target_ms)
+        (**self).build_audio_followers(trunk, mapped, target_duration_secs, part_target)
     }
     fn build_subtitle_followers(
         &self,
@@ -142,11 +142,11 @@ impl SiblingTrunks for &RouteHandle {
 fn apply_audio_part_targets(segmenter: &mut ProgramSegmenter, route: &RouteHandle, trunk: &Trunk) {
     let servings = route.audio_servings_for_trunk(trunk);
     for follower in segmenter.followers.iter_mut() {
-        let Some(ms) = follower.take_part_target_ms() else {
+        let Some(part_target) = follower.take_part_target() else {
             continue;
         };
         if let Some(serving) = follower.rendition().and_then(|r| servings.get(r)) {
-            serving.origin.set_part_target_ms(ms);
+            serving.origin.set_part_target(part_target);
         }
     }
 }
@@ -186,8 +186,8 @@ pub fn drive_program_segmenters<S: IngestSession>(
         segmenter.continue_after_reconnect(
             route_handle
                 .epoch(program)
-                .map(|e| e.media_start_ns)
-                .unwrap_or(0),
+                .map(|e| std::time::Duration::from_nanos(e.media_start_ns))
+                .unwrap_or(std::time::Duration::ZERO),
         );
         let mut init_events = Vec::new();
         // set track specs

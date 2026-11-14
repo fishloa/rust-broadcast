@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `HlsOriginBuilder::with_low_latency` takes the part target as a `Duration` instead of milliseconds (`with_low_latency(Duration::from_millis(500))`), and `HlsOrigin::set_part_target_ms(u32)` is `HlsOrigin::set_part_target(Duration)`: the origin keeps the target as a `Duration` and renders `PART-TARGET`/`PART-HOLD-BACK` from it. A zero target is still `HlsOriginBuildError::ZeroPartTarget`.
 - BREAKING: the non-blocking-reload hint is `Action::Wait(Duration)` instead of `Action::WaitMs(u64)`, so every span in the API is one type.
 - BREAKING: `HlsClient::poll_timeout` takes and returns `broadcast_common::stage::Timestamp` instead of `std::time::Instant`, so the client is driven from the same caller-supplied clock as `broadcast-client`'s sources (and from a recorded clock in a test); it is no longer `std`-only.
 

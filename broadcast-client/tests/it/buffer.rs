@@ -873,8 +873,8 @@ fn fed_pcrs(bytes: &[u8], chunk: usize) -> Vec<Option<u64>> {
     }
     h.log()
         .iter()
-        .map(|l| match l {
-            BufferInput::Chunk { pcr, .. } => pcr.map(|p| p.0),
+        .filter_map(|l| match l {
+            BufferInput::Chunk { pcr, .. } => Some(pcr.map(|p| p.0)),
             _ => None,
         })
         .collect()

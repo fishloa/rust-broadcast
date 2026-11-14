@@ -509,7 +509,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // Drive to completion: the client stops sending, so the 300 ms read
@@ -576,7 +576,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let _ = tokio::time::timeout(
@@ -631,7 +631,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let _ = tokio::time::timeout(
@@ -688,7 +688,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // DISCRIMINATOR (issue #826): must prove the operation returns
@@ -739,7 +739,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let started = std::time::Instant::now();
@@ -780,7 +780,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();
