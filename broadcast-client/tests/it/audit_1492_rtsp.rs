@@ -206,7 +206,7 @@ fn only_unsupported_codecs_are_fatal_not_a_retry_loop() {
     assert!(events.iter().any(|e| matches!(
         e,
         Event::Error {
-            kind: broadcast_client::ErrorKind::UnsupportedCodec { fourcc },
+            kind: broadcast_client::ErrorKind::UnsupportedCodec {fourcc },
             fatal: true,
         } if fourcc == "PCMU"
     )));

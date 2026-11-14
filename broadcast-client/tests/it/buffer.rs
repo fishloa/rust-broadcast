@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, PauseReason, Session, Status, TrackId,
+    TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
@@ -985,9 +986,13 @@ fn source_ended_and_error_hints() {
 
     let mut failed = skip_none!(Host::open(None));
     failed.data(&bytes[..CHUNK * 4], 1_000);
-    failed
-        .session
-        .on_closed(failed.conn, Some("connection reset".to_string()), ts(2_000));
+    failed.session.on_closed(
+        failed.conn,
+        Some(TransportError::Other {
+            reason: "connection reset".to_string(),
+        }),
+        ts(2_000),
+    );
     assert_eq!(
         hints(failed.log())
             .into_iter()
@@ -1092,7 +1097,7 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     assert_eq!(register_change(&after[0]), Some((false, AUDIO)));
     assert_eq!(register_change(&after[1]), Some((true, OTHER_AUDIO)));
     assert!(
-        matches!(after[2], BufferInput::TrackMedia { track, .. } if track == OTHER_AUDIO),
+        matches!(after[2], BufferInput::TrackMedia {track, .. } if track == OTHER_AUDIO),
         "{after:?}"
     );
     let base = h.log().len();
@@ -1106,7 +1111,7 @@ fn set_rendered_tracks_registers_and_unregisters_difference() {
     assert_eq!(after.len(), 2, "{after:?}");
     assert_eq!(register_change(&after[0]), Some((true, AUDIO)));
     assert!(
-        matches!(after[1], BufferInput::TrackMedia { track, .. } if track == AUDIO),
+        matches!(after[1], BufferInput::TrackMedia {track, .. } if track == AUDIO),
         "{after:?}"
     );
 }

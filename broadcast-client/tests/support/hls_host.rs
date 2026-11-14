@@ -1,6 +1,6 @@
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind};
+use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -238,14 +238,24 @@ impl Host {
                     .on_response(conn, 302, &[("Location".to_string(), loc)], ts(self.now));
             }
             Reply::TransportError => {
-                self.session
-                    .on_closed(conn, Some("reset".to_string()), ts(self.now));
+                self.session.on_closed(
+                    conn,
+                    Some(TransportError::Other {
+                        reason: "reset".to_string(),
+                    }),
+                    ts(self.now),
+                );
             }
             Reply::ResetMid(partial) => {
                 self.session.on_response(conn, 200, &[], ts(self.now));
                 self.session.on_data(conn, &partial, ts(self.now));
-                self.session
-                    .on_closed(conn, Some("reset".to_string()), ts(self.now));
+                self.session.on_closed(
+                    conn,
+                    Some(TransportError::Other {
+                        reason: "reset".to_string(),
+                    }),
+                    ts(self.now),
+                );
             }
             Reply::Hang => self.hung.push(req),
         }

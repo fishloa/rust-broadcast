@@ -617,7 +617,7 @@ impl Session {
         }
         if let Some(r) = self.rtmp.as_mut() {
             self.now_us = now_us;
-            let ended = r.on_closed(conn, error.as_deref(), now_us);
+            let ended = r.on_closed(conn, error.as_ref(), now_us);
             self.flush_rtmp();
             self.settle_buffer();
             if ended {
@@ -627,7 +627,7 @@ impl Session {
         }
         if let Some(h) = self.adaptive.as_mut() {
             self.now_us = now_us;
-            h.on_closed(conn, error.as_deref(), now_us, &mut self.auth);
+            h.on_closed(conn, error.as_ref(), now_us, &mut self.auth);
             self.flush_adaptive();
             return;
         }
@@ -647,7 +647,7 @@ impl Session {
         }
         self.now_us = now_us;
         self.buffer.hint(now_us, hint);
-        self.source.on_closed(error, now_us);
+        self.source.on_closed(error.as_ref(), now_us);
         self.drain_source();
         self.settle_buffer();
     }
@@ -732,7 +732,9 @@ impl Session {
                 self.events.push_back(Event::Error { kind, fatal: false });
             }
             self.actions.push_back(Action::Close { conn });
-            let error = (!clean).then(|| "srt link lost".to_string());
+            let error = (!clean).then(|| TransportError::Other {
+                reason: "srt link lost".to_string(),
+            });
             self.on_closed(conn, error, Timestamp::from_micros(now_us));
         }
     }

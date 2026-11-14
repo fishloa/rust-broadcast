@@ -4,7 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_client::{Action, Config, Event, Session, Status, TransportError};
 use transmux::Sample;
 
 use super::dash_common::loopback;
@@ -486,13 +486,25 @@ impl DashSim {
                 self.session
                     .on_response(conn, 302, &[("Location".into(), loc)], ts(now));
             }
-            Answer::TransportError => self.session.on_closed(conn, Some("reset".into()), ts(now)),
+            Answer::TransportError => self.session.on_closed(
+                conn,
+                Some(TransportError::Other {
+                    reason: "reset".to_string(),
+                }),
+                ts(now),
+            ),
             Answer::ResetMid(body) => {
                 self.session.on_response(conn, 200, &[], ts(now));
                 for c in body.chunks(chunk) {
                     self.session.on_data(conn, c, ts(now));
                 }
-                self.session.on_closed(conn, Some("reset".into()), ts(now));
+                self.session.on_closed(
+                    conn,
+                    Some(TransportError::Other {
+                        reason: "reset".to_string(),
+                    }),
+                    ts(now),
+                );
             }
             Answer::Truncated { body, declared } => {
                 self.session.on_response(
@@ -542,7 +554,13 @@ impl DashSim {
             Answer::ClosedTwice(inner) => {
                 self.respond(conn, *inner);
                 self.session.on_closed(conn, None, ts(now));
-                self.session.on_closed(conn, Some("x".into()), ts(now));
+                self.session.on_closed(
+                    conn,
+                    Some(TransportError::Other {
+                        reason: "x".to_string(),
+                    }),
+                    ts(now),
+                );
             }
             Answer::Hang | Answer::Late(..) => {}
         }

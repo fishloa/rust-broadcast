@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 
 use broadcast_client::{
     Action, ClientIdentity, Config, Credentials, DashClockPolicy, Event, Hint, Session,
-    SrtEntropySeed, TrackId,
+    SrtEntropySeed, TrackId, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
@@ -713,7 +713,7 @@ fn drive(url: &str, data: &[u8]) {
             }
             6 => {
                 if let Some(conn) = conn {
-                    session.on_closed(conn, Some("reset".to_string()), Timestamp::from_micros(now));
+                    session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), Timestamp::from_micros(now));
                     watch.host_closed(conn);
                 }
             }
@@ -857,7 +857,9 @@ fn drive_rtsp(url: &str, data: &[u8]) {
             }
             4 => {
                 if let Some(conn) = conn {
-                    let error = (second % 2 == 0).then(|| "reset".to_string());
+                    let error = (second % 2 == 0).then(|| TransportError::Other {
+                        reason: "reset".to_string(),
+                    });
                     session.on_closed(conn, error, Timestamp::from_micros(now));
                     watch.live.remove(&conn);
                 }
@@ -994,7 +996,9 @@ fn drive_datagram(url: &str, data: &[u8]) {
             }
             6 => {
                 if let Some(c) = conn {
-                    let error = (second % 2 == 0).then(|| "reset".to_string());
+                    let error = (second % 2 == 0).then(|| TransportError::Other {
+                        reason: "reset".to_string(),
+                    });
                     session.on_closed(c, error, Timestamp::from_micros(now));
                     watch.live.remove(&c);
                 }

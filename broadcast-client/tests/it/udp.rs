@@ -3,7 +3,7 @@ use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
 use broadcast_client::{
-    Action, Config, Error, Event, Session, SourceKind, Status, UdpConfig, UdpMode,
+    Action, Config, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig, UdpMode,
 };
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use broadcast_common::stage::Timestamp;
@@ -643,8 +643,13 @@ fn a_bind_failure_backs_off_and_retries() {
     let mut host = UdpHost::open(GROUP, Config::default());
     host.auto_connect = false;
     let conn = host.conn.unwrap();
-    host.session
-        .on_closed(conn, Some("address in use".to_string()), ts(host.now));
+    host.session.on_closed(
+        conn,
+        Some(TransportError::Other {
+            reason: "address in use".to_string(),
+        }),
+        ts(host.now),
+    );
     host.settle();
     assert!(host.count(|e| matches!(e, Event::Status(Status::Reconnecting { .. }))) >= 1);
     assert_eq!(host.binds.len(), 1);

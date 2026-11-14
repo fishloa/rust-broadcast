@@ -638,7 +638,7 @@ fn late_key_callbacks_after_close_ignored() {
     assert!(
         closing
             .iter()
-            .any(|a| matches!(a, Action::Close { conn } if *conn == key_conn))
+            .any(|a| matches!(a, Action::Close {conn } if *conn == key_conn))
     );
     s.on_response(key_conn, 200, &[], ts(0));
     s.on_data(key_conn, &KEY_A, ts(2));
@@ -695,7 +695,7 @@ fn fatal_error_stops_session_no_more_requests() {
         assert!(
             actions
                 .iter()
-                .any(|a| matches!(a, Action::Close { conn } if conn == c)),
+                .any(|a| matches!(a, Action::Close {conn } if conn == c)),
             "open connection {c} closed on fatal: {actions:?}"
         );
     }

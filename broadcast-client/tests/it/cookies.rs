@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{Config, Credentials, Event, Session};
+use broadcast_client::{Config, Credentials, Event, Session, TransportError};
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::ts_probe::{self, *};
@@ -627,7 +627,13 @@ fn cookie_survives_reconnect() {
     let mut s = open(TS_URL, Config::default());
     let first = one(&mut s, 0);
     ok_with_cookies(&mut s, &first, &["sid=keep; Path=/"]);
-    s.on_closed(first.conn, Some("reset".to_string()), ts(SEC));
+    s.on_closed(
+        first.conn,
+        Some(TransportError::Other {
+            reason: "reset".to_string(),
+        }),
+        ts(SEC),
+    );
     let mut found = None;
     for t in 1..=MAX_POLL_SECS {
         let mut reqs = requests(&mut s, t * SEC);

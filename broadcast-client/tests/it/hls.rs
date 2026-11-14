@@ -2,7 +2,9 @@ use crate::support;
 
 use std::collections::HashMap;
 
-use broadcast_client::{Action, Config, Credentials, Error, Event, Session, SourceKind, Status};
+use broadcast_client::{
+    Action, Config, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
+};
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use url::Url;
@@ -553,7 +555,13 @@ fn backoff_2_4_8_then_10_forever() {
             .cloned()
             .expect("a playlist request");
         assert_eq!(url, TS_PLAYLIST_URL);
-        s.on_closed(conn, Some("reset".to_string()), ts(now));
+        s.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: "reset".to_string(),
+            }),
+            ts(now),
+        );
         let after = drain_actions(&mut s, now);
         let wakes = wake_times(&after);
         assert_eq!(wakes.len(), 1, "one retry wake: {after:?}");
@@ -1069,7 +1077,13 @@ fn late_callbacks_after_close_ignored() {
     o.on_data(conn, &ts_playlist(), ts(0));
     o.on_response(conn, 200, &[], ts(1));
     o.on_closed(conn, None, ts(0));
-    o.on_closed(conn, Some("late".to_string()), ts(0));
+    o.on_closed(
+        conn,
+        Some(TransportError::Other {
+            reason: "late".to_string(),
+        }),
+        ts(0),
+    );
     assert!(
         drain_events(&mut o).is_empty(),
         "late callbacks add no events"

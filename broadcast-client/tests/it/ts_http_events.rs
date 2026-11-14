@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{Action, Config, Event, Session, StarveKind, Status};
+use broadcast_client::{Action, Config, Event, Session, StarveKind, Status, TransportError};
 use broadcast_common::stage::Timestamp;
 use support::*;
 
@@ -271,7 +271,13 @@ fn unknown_conn_callbacks_ignored() {
     session.on_response(unknown, 200, &[], ts(0));
     session.on_data(unknown, &bytes[..4096], ts(0));
     session.on_closed(unknown, None, ts(1_000));
-    session.on_closed(unknown, Some("reset".to_string()), ts(2_000));
+    session.on_closed(
+        unknown,
+        Some(TransportError::Other {
+            reason: "reset".to_string(),
+        }),
+        ts(2_000),
+    );
     let mut actions = Vec::new();
     while let Some(a) = session.poll(ts(3_000)) {
         actions.push(a);

@@ -13,7 +13,7 @@ use smooth_runtime::{
 };
 use url::Url;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, Status};
 use crate::playout::Source;
 use crate::redirect;
@@ -367,7 +367,7 @@ impl SmoothSource {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         _auth: &mut AuthState,
     ) {

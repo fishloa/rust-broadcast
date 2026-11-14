@@ -22,7 +22,7 @@ use rtmp_runtime::target::RtmpTarget;
 use transmux::{DemuxEvent, StreamingFlvDemux, TrackId, TrackSpec};
 use url::{Host, Url};
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action, ErrorKind, Event, MAX_SERVER_REFUSED_REASON_BYTES, Status};
 use crate::source::fetch::deadline;
 use broadcast_common::stage::Timestamp;
@@ -216,7 +216,12 @@ impl RtmpSource {
 
     /// Whether the live connection ended and the next connection's media will be preceded by
     /// [`Event::Discontinuity`].
-    pub(crate) fn on_closed(&mut self, conn: u32, error: Option<&str>, now_us: u64) -> bool {
+    pub(crate) fn on_closed(
+        &mut self,
+        conn: u32,
+        error: Option<&TransportError>,
+        now_us: u64,
+    ) -> bool {
         if self.closed || self.ended || self.conn != Some(conn) {
             return false;
         }

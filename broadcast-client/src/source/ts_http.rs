@@ -5,6 +5,7 @@ use alloc::vec::Vec;
 
 use url::Url;
 
+use crate::error::TransportError;
 use crate::tshttp::{Config as TsConfig, TsHttpClient};
 use broadcast_common::clock33::PCR_HZ;
 use broadcast_common::timescale::{Rounding, rescale_u64};
@@ -358,8 +359,9 @@ impl TsHttpSource {
         self.drain_ts_events();
     }
 
-    /// Closed callback at transport level.
-    pub fn on_closed(&mut self, error: Option<String>, now_us: u64) {
+    /// Closed callback at transport level. The set of errors is the session's;
+    /// this source only needs to know whether the connection ended cleanly.
+    pub fn on_closed(&mut self, error: Option<&TransportError>, now_us: u64) {
         self.now_us = now_us;
         if error.is_some() {
             self.ts.on_error(Timestamp::from_micros(now_us));

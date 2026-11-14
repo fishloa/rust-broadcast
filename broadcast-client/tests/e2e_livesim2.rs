@@ -15,7 +15,7 @@ use std::process::{Child, Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use broadcast_client::{Action, Config, DashClockPolicy, Event, Session};
+use broadcast_client::{Action, Config, DashClockPolicy, Event, Session, TransportError};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -305,7 +305,13 @@ fn perform(
                     Ok(0) => break,
                     Ok(n) => session.on_data(conn, &buf[..n], ts(mono())),
                     Err(_) => {
-                        session.on_closed(conn, Some("read".to_owned()), ts(mono()));
+                        session.on_closed(
+                            conn,
+                            Some(TransportError::Other {
+                                reason: "read".to_string(),
+                            }),
+                            ts(mono()),
+                        );
                         observed.requests.push(record);
                         return;
                     }
@@ -313,7 +319,13 @@ fn perform(
             }
             session.on_closed(conn, None, ts(mono()));
         }
-        Err(_) => session.on_closed(conn, Some("connect".to_owned()), ts(mono())),
+        Err(_) => session.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: "connect".to_string(),
+            }),
+            ts(mono()),
+        ),
     }
     observed.requests.push(record);
 }

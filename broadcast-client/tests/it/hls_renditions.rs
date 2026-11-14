@@ -940,7 +940,7 @@ fn vod_ended_only_after_both_adapters_end() {
     let last_audio = h
         .events
         .iter()
-        .rposition(|e| matches!(e, Event::Sample { track, .. } if is_audio_track(*track)))
+        .rposition(|e| matches!(e, Event::Sample {track, .. } if is_audio_track(*track)))
         .expect("audio sample");
     assert!(ended_at > last_audio, "Ended follows the last audio sample");
     assert_eq!(count_audio(&h.events), AUDIO_SAMPLES);
@@ -1031,7 +1031,7 @@ fn status_live_after_first_sample_from_either() {
     assert_eq!(lives.len(), 1, "Live exactly once");
     let first_sample = index_of(&h.events, |e| matches!(e, Event::Sample { .. })).expect("sample");
     assert!(
-        matches!(&h.events[first_sample], Event::Sample { track, .. } if is_audio_track(*track)),
+        matches!(&h.events[first_sample], Event::Sample {track, .. } if is_audio_track(*track)),
         "audio delivered first"
     );
     assert!(lives[0] < first_sample, "Live precedes the first sample");

@@ -12,7 +12,7 @@ use hls_runtime::client::{
 use transmux::TrackId;
 use url::Url;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::deadline;
@@ -427,7 +427,7 @@ impl HlsSource {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
     ) {

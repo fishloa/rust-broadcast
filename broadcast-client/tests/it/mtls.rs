@@ -11,6 +11,7 @@ fn ts(us: u64) -> Timestamp {
 }
 use broadcast_client::{
     Action, ClientIdentity, ClientIdentityScope, Config, Error, Event, Session, Status,
+    TransportError,
 };
 
 const SMALL: &str = "ts/h264-aac.ts";
@@ -289,7 +290,7 @@ fn drive(
                         }
                         session.on_closed(conn, None, ts(now));
                     }
-                    Err(e) => session.on_closed(conn, Some(e), ts(now)),
+                    Err(e) => session.on_closed(conn, Some(TransportError::from(e)), ts(now)),
                 }
             }
         }

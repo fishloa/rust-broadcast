@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind};
+use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError};
 use broadcast_common::Unpackage;
 use broadcast_common::stage::Timestamp;
 use transmux::{FlvDemux, Media};
@@ -132,7 +132,9 @@ impl RtmpHost {
                     self.fail_next_connect = false;
                     self.session.on_closed(
                         conn,
-                        Some("connection refused".to_string()),
+                        Some(TransportError::Other {
+                            reason: "connection refused".to_string(),
+                        }),
                         ts(self.now),
                     );
                 } else if self.accept_connects {
@@ -195,7 +197,7 @@ impl RtmpHost {
         let conn = self.conn.take().expect("a live connection");
         self.peer = None;
         self.session
-            .on_closed(conn, error.map(str::to_string), ts(self.now));
+            .on_closed(conn, error.map(TransportError::from), ts(self.now));
         self.collect();
     }
 

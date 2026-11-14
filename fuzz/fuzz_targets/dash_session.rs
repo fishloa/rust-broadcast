@@ -3,7 +3,9 @@
 use std::collections::BTreeMap;
 
 use broadcast_common::stage::Timestamp;
-use broadcast_client::{Action, Config, Credentials, DashClockPolicy, Event, Session, Status};
+use broadcast_client::{
+    Action, Config, Credentials, DashClockPolicy, Event, Session, Status, TransportError,
+};
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
     CAPS, DEFAULT_PUBLISH_US, DashWorld, GRACE_US, HTTP_DATES, MAX_INPUT, MICROS, PIN_ORIGIN,
@@ -252,11 +254,11 @@ fn answer(
             deliver(session, conn, now, status, &h, b"nope", chunk);
             session.on_closed(conn, None, at);
         }
-        15 => session.on_closed(conn, Some("reset".to_owned()), at),
+        15 => session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), at),
         16 => {
             let half = real.len() / 2;
             deliver(session, conn, now, 200, &headers, &real[..half], chunk);
-            session.on_closed(conn, Some("reset".to_owned()), at);
+            session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), at);
         }
         17 => {
             let status = if is_mpd { 304 } else { 200 };

@@ -16,7 +16,9 @@ use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::time::Duration;
 
-use broadcast_client::{Action, Config, Error, ErrorKind, Event, Session, Status, UdpMode};
+use broadcast_client::{
+    Action, Config, Error, ErrorKind, Event, Session, Status, TransportError, UdpMode,
+};
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
@@ -378,8 +380,13 @@ impl SessionStep {
                     }
                     Err(e) => {
                         self.transport_error = Some(e.to_string());
-                        self.session
-                            .on_closed(conn, Some(e.to_string()), self.now());
+                        self.session.on_closed(
+                            conn,
+                            Some(TransportError::Other {
+                                reason: e.to_string(),
+                            }),
+                            self.now(),
+                        );
                     }
                 },
                 Action::TcpConnect {
@@ -438,7 +445,13 @@ impl SessionStep {
     fn fail_connection(&mut self, conn: u32, error: String) {
         self.transport_error = Some(error.clone());
         self.writers.remove(&conn);
-        self.session.on_closed(conn, Some(error), self.now());
+        self.session.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: error.clone(),
+            }),
+            self.now(),
+        );
     }
 
     fn register_socket(&mut self, conn: u32, socket: UdpSocket) {
@@ -478,7 +491,8 @@ impl SessionStep {
                 if error.is_some() {
                     self.transport_error.clone_from(&error);
                 }
-                self.session.on_closed(conn, error, now);
+                self.session
+                    .on_closed(conn, error.map(TransportError::from), now);
                 false
             }
         }

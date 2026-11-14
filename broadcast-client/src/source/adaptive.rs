@@ -5,7 +5,7 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action, Event};
 use crate::playout::Source;
 use crate::source::dash::DashSource;
@@ -88,7 +88,7 @@ impl Adaptive {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
     ) {

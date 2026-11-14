@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use broadcast_client::{Action, ClientIdentity, Config, Event, Session};
+use broadcast_client::{Action, ClientIdentity, Config, Event, Session, TransportError};
 use rustls::pki_types::ServerName;
 use rustls::{ClientConfig, ServerConfig, ServerConnection, StreamOwned};
 
@@ -253,7 +253,11 @@ impl WireHost {
                         }
                         Err(e) => {
                             self.failed_connects += 1;
-                            self.session.on_closed(conn, Some(e), ts(self.now_us()));
+                            self.session.on_closed(
+                                conn,
+                                Some(TransportError::from(e)),
+                                ts(self.now_us()),
+                            );
                         }
                     }
                 }
@@ -279,8 +283,13 @@ impl WireHost {
 
     fn close_with_error(&mut self, conn: u32, why: &str) {
         self.conn = None;
-        self.session
-            .on_closed(conn, Some(why.to_string()), ts(self.now_us()));
+        self.session.on_closed(
+            conn,
+            Some(TransportError::Other {
+                reason: why.to_string(),
+            }),
+            ts(self.now_us()),
+        );
     }
 
     fn read_once(&mut self) {
