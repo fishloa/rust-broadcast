@@ -108,7 +108,7 @@ fn answer(session: &mut Session, origin: &Origin, conn: u32, url: &str, now: u64
     for chunk in body.chunks(CHUNK) {
         session.on_data(conn, chunk, ts(now));
     }
-    session.on_closed(conn, None, Timestamp::from_micros(now));
+    session.on_closed(conn, None, ts(now));
     t.drain(session);
 }
 

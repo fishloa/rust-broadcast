@@ -168,7 +168,7 @@ fn an_hls_segment_on_a_cdn_origin_gets_the_identity_only_under_any_https() {
             ts(1),
         );
         s.on_data(conn, PLAYLIST.as_bytes(), ts(2));
-        s.on_closed(conn, None, Timestamp::from_micros(3));
+        s.on_closed(conn, None, ts(3));
         let (_, url, segment) = first_http(&mut s, 3);
         assert_eq!(url, "https://cdn.example/s0.ts");
         assert_eq!(identity_handle(&segment), want, "{scope}");
@@ -287,7 +287,7 @@ fn drive(
                             now += STEP_US;
                             session.on_data(conn, part, ts(now));
                         }
-                        session.on_closed(conn, None, Timestamp::from_micros(now));
+                        session.on_closed(conn, None, ts(now));
                     }
                     Err(e) => session.on_closed(conn, Some(e), ts(now)),
                 }

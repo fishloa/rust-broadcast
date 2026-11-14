@@ -557,7 +557,7 @@ fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_
     let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
     session.on_response(conn, 200, &[], ts(0));
     session.on_data(conn, &text, ts(0));
-    session.on_closed(conn, None, Timestamp::from_micros(0));
+    session.on_closed(conn, None, ts(0));
     while let Some(e) = session.next_event() {
         assert!(!matches!(e, Event::Error { .. }), "{e:?}");
     }

@@ -109,7 +109,7 @@ fn run_vod(
             if url == playlist_url {
                 session.on_response(conn, 200, &[], ts(now));
                 session.on_data(conn, playlist, ts(now));
-                session.on_closed(conn, None, Timestamp::from_micros(now));
+                session.on_closed(conn, None, ts(now));
                 continue;
             }
             let nth = hits.entry(url.clone()).or_insert(0);
@@ -120,7 +120,7 @@ fn run_vod(
                 stats.succeeded.push(url);
                 session.on_data(conn, &body, ts(now));
             }
-            session.on_closed(conn, None, Timestamp::from_micros(now));
+            session.on_closed(conn, None, ts(now));
         } else if let Some(t) = wakes.range((now + 1)..).next().copied() {
             wakes.remove(&t);
             now = t;

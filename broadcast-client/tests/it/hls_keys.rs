@@ -624,7 +624,7 @@ fn late_key_callbacks_after_close_ignored() {
     let (playlist_conn, _) = http_requests(&first)[0].clone();
     s.on_response(playlist_conn, 200, &[], ts(0));
     s.on_data(playlist_conn, &playlist(0, &entries, true), ts(0));
-    s.on_closed(playlist_conn, None, Timestamp::from_micros(0));
+    s.on_closed(playlist_conn, None, ts(0));
     let actions = drain_actions(&mut s, 0);
     let reqs = http_requests(&actions);
     let key_conn = reqs
@@ -642,7 +642,7 @@ fn late_key_callbacks_after_close_ignored() {
     );
     s.on_response(key_conn, 200, &[], ts(0));
     s.on_data(key_conn, &KEY_A, ts(2));
-    s.on_closed(key_conn, None, Timestamp::from_micros(2));
+    s.on_closed(key_conn, None, ts(2));
     assert!(s.next_event().is_none());
     assert!(s.poll(ts(3)).is_none());
 }
@@ -674,7 +674,7 @@ fn fatal_error_stops_session_no_more_requests() {
     let (pconn, _) = http_requests(&first)[0].clone();
     s.on_response(pconn, 200, &[], ts(3));
     s.on_data(pconn, &playlist(0, &entries, true), ts(0));
-    s.on_closed(pconn, None, Timestamp::from_micros(0));
+    s.on_closed(pconn, None, ts(0));
     let reqs = http_requests(&drain_actions(&mut s, 0));
     let key_conn = reqs.iter().find(|(_, u)| u == KEY_URL).expect("key").0;
     let seg_conns: Vec<u32> = reqs
@@ -687,7 +687,7 @@ fn fatal_error_stops_session_no_more_requests() {
 
     s.on_response(key_conn, 200, &[], ts(3));
     s.on_data(key_conn, &KEY_A[..9], ts(0));
-    s.on_closed(key_conn, None, Timestamp::from_micros(0));
+    s.on_closed(key_conn, None, ts(0));
     let events = drain_events(&mut s);
     assert_eq!(errors(&events), vec![(ErrorKind::BadKey, true)]);
     let actions = drain_actions(&mut s, 0);
@@ -704,7 +704,7 @@ fn fatal_error_stops_session_no_more_requests() {
     for c in &seg_conns {
         s.on_response(*c, 200, &[], ts(3));
         s.on_data(*c, &plain_seg(0), ts(1));
-        s.on_closed(*c, None, Timestamp::from_micros(1));
+        s.on_closed(*c, None, ts(1));
     }
     s.set_credentials(Credentials::bearer(BEARER)).unwrap();
     s.reconnect(ts(2));

@@ -56,7 +56,7 @@ fn reconnect_attempts(events: &[Event]) -> Vec<u64> {
 fn respond_ok(session: &mut Session, conn: u32, body: &[u8], now: u64) {
     session.on_response(conn, 200, &[], ts(0));
     session.on_data(conn, body, ts(now));
-    session.on_closed(conn, None, Timestamp::from_micros(now));
+    session.on_closed(conn, None, ts(now));
 }
 
 fn single_http_request(actions: &[Action]) -> (u32, String) {
@@ -496,7 +496,7 @@ fn prefetch_concurrent_connections_tracked() {
         offset += chunk;
     }
     for (c, _) in reqs.iter().rev() {
-        s.on_closed(*c, None, Timestamp::from_micros(0));
+        s.on_closed(*c, None, ts(0));
     }
     let events = drain_events(&mut s);
     let expected = oracle_events(CMAF_PLAYLIST_URL, &bodies);
@@ -765,7 +765,7 @@ fn oversized_playlist_body_closes_and_fails() {
     );
     assert_eq!(wake_times(&after), vec![2 * SEC]);
     assert_eq!(reconnect_attempts(&drain_events(&mut s)), vec![1]);
-    s.on_closed(conn, None, Timestamp::from_micros(0));
+    s.on_closed(conn, None, ts(0));
     assert!(
         drain_events(&mut s).is_empty(),
         "the aborted body is never parsed"
@@ -797,7 +797,7 @@ fn oversized_segment_body_closes_and_fails() {
     let after = drain_actions(&mut s, 0);
     assert_eq!(closes(&after), vec![seg_conn]);
     assert_eq!(reconnect_attempts(&drain_events(&mut s)), vec![1]);
-    s.on_closed(seg_conn, None, Timestamp::from_micros(0));
+    s.on_closed(seg_conn, None, ts(0));
     assert_eq!(count(&drain_events(&mut s), is_sample), 0);
 }
 
@@ -1048,7 +1048,7 @@ fn late_callbacks_after_close_ignored() {
     for (c, _) in &reqs {
         s.on_response(*c, 200, &[], ts(0));
         s.on_data(*c, &ts_segment(0), ts(0));
-        s.on_closed(*c, None, Timestamp::from_micros(0));
+        s.on_closed(*c, None, ts(0));
     }
     s.on_data(9_999, b"x", ts(0));
     assert!(s.next_event().is_none());
@@ -1068,8 +1068,8 @@ fn late_callbacks_after_close_ignored() {
     assert_eq!(reconnect_attempts(&drain_events(&mut o)), vec![1]);
     o.on_data(conn, &ts_playlist(), ts(0));
     o.on_response(conn, 200, &[], ts(1));
-    o.on_closed(conn, None, Timestamp::from_micros(0));
-    o.on_closed(conn, Some("late".to_string()), Timestamp::from_micros(0));
+    o.on_closed(conn, None, ts(0));
+    o.on_closed(conn, Some("late".to_string()), ts(0));
     assert!(
         drain_events(&mut o).is_empty(),
         "late callbacks add no events"

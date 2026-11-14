@@ -179,7 +179,7 @@ fn a_refused_text_plain_response_closes_once_its_body_is_complete() {
         session.on_data(first.conn, &body[3..], ts(2));
         let after = drain(&mut session, 2);
         assert_eq!(closes(&after), vec![first.conn], "{status}: {after:?}");
-        session.on_closed(first.conn, None, Timestamp::from_micros(3));
+        session.on_closed(first.conn, None, ts(3));
         assert!(
             closes(&drain(&mut session, 3)).is_empty(),
             "exactly one Close"
@@ -194,7 +194,7 @@ fn a_refused_text_plain_response_without_a_length_closes_when_the_host_ends_it()
     let (first, at_response) = refused_with_body(&mut session, 503, &headers);
     assert!(closes(&at_response).is_empty());
     session.on_data(first.conn, b"busy", ts(1));
-    session.on_closed(first.conn, None, Timestamp::from_micros(2));
+    session.on_closed(first.conn, None, ts(2));
     assert!(
         closes(&drain(&mut session, 2)).is_empty(),
         "the host already closed it"

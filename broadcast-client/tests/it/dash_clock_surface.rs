@@ -67,7 +67,7 @@ fn gap_with_anchor(anchors: &[(u64, u64)], reply: Reply) -> u64 {
     let mut h = hls_host_with_first_segment_reply(reply);
     for (mono, unix) in anchors {
         h.session
-            .set_wall_clock(Timestamp::from_nanos(*mono), *unix);
+            .set_wall_clock(Timestamp::from_micros(*mono), *unix);
     }
     first_gap_secs(&mut h)
 }

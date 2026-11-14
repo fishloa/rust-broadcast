@@ -20,20 +20,23 @@ Does not: open sockets, parse HTTP, read a clock, decrypt, or play HLS/DASH (see
 
 ```no_run
 use broadcast_client::tshttp::{Config, TsHttpClient};
+use broadcast_common::stage::Timestamp;
 
-let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), 0);
+// The policy's own clock is milliseconds; `Timestamp` is microseconds.
+let at = |ms: u64| Timestamp::from_millis(ms);
+let mut client = TsHttpClient::new("http://example/live.ts", Config::default(), at(0));
 // Drive I/O from the host:
 let _ = client.poll();                 // -> Open
-client.on_response(200, &[], 0);            // -> Connected
-client.feed(&[0u8; 188], 1);           // body bytes
-client.poll_timeout(5_000);            // timers
+client.on_response(200, &[], at(0));   // -> Connected
+client.feed(&[0u8; 188], at(1));       // body bytes
+client.poll_timeout(at(5_000));        // timers
 while let Some(ev) = client.poll_event() {
     let _ = ev;
 }
 if let Some(a) = client.poll() {
     let _ = a;
 }
-client.on_eof(2);
+client.on_eof(at(2));
 ```
 
 ## What is implemented

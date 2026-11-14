@@ -954,7 +954,7 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
     let mut h = Host::open_plain(Config::default());
     h.feed(&bytes, &realtime(n)[..half]);
     let first = h.events.len();
-    h.session.on_closed(h.conn, None, Timestamp::from_micros(1_000_000));
+    h.session.on_closed(h.conn, None, ts(1_000_000));
     let mut conn = None;
     while let Some(a) = h.session.poll(ts(1_000_000)) {
         if let Action::HttpRequest { conn: c, .. } = a {

@@ -590,7 +590,7 @@ impl Session {
 
     /// Closed callback.
     pub fn on_closed(&mut self, conn: u32, error: Option<TransportError>, now: Timestamp) {
-        let now_us = now.as_nanos();
+        let now_us = now.as_micros();
         if self.closed {
             return;
         }
@@ -828,7 +828,7 @@ impl Session {
     /// edge) and ranks this one below a measured `UTCTiming` unless
     /// [`crate::DashConfig::clock_policy`] says otherwise.
     pub fn set_wall_clock(&mut self, now: Timestamp, unix_us: u64) {
-        let now_us = now.as_nanos();
+        let now_us = now.as_micros();
         self.wall = Some(WallClock::new(now_us, unix_us));
         if self.closed {
             return;

@@ -61,24 +61,25 @@
 //!
 //! `broadcast-common` is `#![no_std]` without the `std` feature, and
 //! `std::time::Instant` cannot exist in that build. [`Timestamp`] is a plain
-//! `u64` nanosecond count from an epoch the *driver* chooses (not the stage) —
-//! nanoseconds because milliseconds are the wrong unit for SRT pacing and
-//! catastrophically wrong for ST 2110-21 timing. A driver that does have `std`
-//! can derive one from a pair of `Instant`s via [`Timestamp::from_instant`].
-//! All arithmetic on `Timestamp` saturates instead of panicking, since a stage
-//! must never crash on a clock that runs backwards or wraps.
+//! `u64` microsecond count from an epoch the *driver* chooses (not the stage).
+//! A driver that does have `std` can derive one from a pair of `Instant`s via
+//! [`Timestamp::from_instant`]. All arithmetic on `Timestamp` saturates instead
+//! of panicking, since a stage must never crash on a clock that runs backwards
+//! or wraps.
 
 use core::time::Duration;
 
-use crate::units::{NANOS_PER_MICRO, NANOS_PER_MILLI};
+use crate::units::{MICROS_PER_MILLI, NANOS_PER_MICRO};
 
-/// Monotonic nanoseconds from an arbitrary epoch chosen by the driver.
+/// Monotonic microseconds from an arbitrary epoch chosen by the driver.
 ///
-/// Nanoseconds, not milliseconds: milliseconds are too coarse for SRT pacing
-/// and catastrophically wrong for ST 2110-21. The epoch (what `0` means) is
-/// entirely up to whatever is driving the [`Stage`] — stages must treat
-/// `Timestamp` as an opaque, monotonically non-decreasing counter and never
-/// assume it relates to wall-clock time.
+/// Microseconds, not nanoseconds: this is a host's monotonic "now" and the
+/// wall clock read beside it, never a media clock (those are
+/// [`crate::clock33`]'s 90 kHz / 27 MHz values), and a microsecond resolves
+/// every use here — a deadline, a reconnect instant, an inactivity timeout.
+/// The epoch (what `0` means) is entirely up to whatever is driving the
+/// [`Stage`] — stages must treat `Timestamp` as an opaque, monotonically
+/// non-decreasing counter and never assume it relates to wall-clock time.
 ///
 /// All arithmetic saturates rather than panicking: a [`Stage`] must not crash
 /// because a driver's clock underflowed or overflowed.
@@ -89,61 +90,69 @@ impl Timestamp {
     /// The zero timestamp — whatever epoch the driver has chosen.
     pub const ZERO: Timestamp = Timestamp(0);
 
-    /// Construct from a raw nanosecond count.
+    /// Construct from a raw nanosecond count, truncating to whole
+    /// microseconds (a driver with only a nanosecond reading).
     pub const fn from_nanos(nanos: u64) -> Self {
-        Timestamp(nanos)
+        Timestamp(nanos / NANOS_PER_MICRO)
     }
 
-    /// Construct from a whole-microsecond count, saturating at `u64::MAX`
-    /// nanoseconds.
+    /// Construct from a whole-microsecond count.
     pub const fn from_micros(micros: u64) -> Self {
-        Timestamp(micros.saturating_mul(NANOS_PER_MICRO))
+        Timestamp(micros)
     }
 
-    /// The raw nanosecond count since the driver's chosen epoch.
+    /// The raw nanosecond count, from the whole microseconds this holds.
+    ///
+    /// Saturates at `u64::MAX` for a reading past 584 942 years; no host
+    /// clock gets there.
     pub const fn as_nanos(self) -> u64 {
-        self.0
+        self.0.saturating_mul(NANOS_PER_MICRO)
     }
 
     /// Construct from a whole-millisecond count, saturating at `u64::MAX`
-    /// nanoseconds.
+    /// microseconds.
     pub const fn from_millis(millis: u64) -> Self {
-        Timestamp(millis.saturating_mul(NANOS_PER_MILLI))
+        Timestamp(millis.saturating_mul(MICROS_PER_MILLI))
     }
 
-    /// The raw nanosecond count rounded down to whole microseconds.
+    /// The raw microsecond count since the driver's chosen epoch.
     pub const fn as_micros(self) -> u64 {
-        self.0 / NANOS_PER_MICRO
+        self.0
     }
 
-    /// The raw nanosecond count rounded down to whole milliseconds.
+    /// The raw microsecond count in whole milliseconds, rounded down.
     pub const fn as_millis(self) -> u64 {
-        self.0 / NANOS_PER_MILLI
+        self.0 / MICROS_PER_MILLI
     }
 
     /// `self - other`, saturating at zero instead of underflowing.
     pub const fn saturating_sub(self, other: Timestamp) -> Duration {
-        Duration::from_nanos(self.0.saturating_sub(other.0))
+        Duration::from_micros(self.0.saturating_sub(other.0))
     }
 
-    /// `self + nanos`, saturating at `u64::MAX` instead of overflowing.
+    /// `self + nanos`, in nanoseconds: the result is the whole microsecond
+    /// the nanosecond reading falls in (rounded up), saturating at `u64::MAX`.
     pub const fn saturating_add_nanos(self, nanos: u64) -> Self {
-        Timestamp(self.0.saturating_add(nanos))
+        let micros = nanos.div_ceil(NANOS_PER_MICRO);
+        Timestamp(self.0.saturating_add(micros))
     }
 
-    /// `self + duration`, saturating at `u64::MAX` instead of overflowing.
-    ///
-    /// A `Duration` in excess of `u64::MAX` nanoseconds saturates the same way.
+    /// `self + duration`, rounded up to the whole microsecond the span ends
+    /// in (a 100 ms timeout added to microsecond `t` is the deadline at which
+    /// `now - t >= 100 ms` first holds), saturating at `u64::MAX` instead of
+    /// overflowing.
     pub fn saturating_add(self, duration: Duration) -> Self {
-        let nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
-        self.saturating_add_nanos(nanos)
+        let micros = u64::try_from(duration.as_nanos().div_ceil(u128::from(NANOS_PER_MICRO)))
+            .unwrap_or(u64::MAX);
+        Timestamp(self.0.saturating_add(micros))
     }
 }
 
 #[cfg(feature = "std")]
 impl Timestamp {
     /// Derive a [`Timestamp`] from a `std::time::Instant` pair: `now - base`,
-    /// expressed as nanoseconds since `base`.
+    /// expressed as microseconds since `base`, rounded up so two different
+    /// instants never collapse onto the same reading.
     ///
     /// `base` is whatever fixed instant the driver picked as its epoch (e.g.
     /// "when this stage was constructed"); every subsequent call converts an
@@ -152,8 +161,9 @@ impl Timestamp {
     /// subtraction; `no_std` drivers construct `Timestamp` directly.
     pub fn from_instant(base: std::time::Instant, now: std::time::Instant) -> Self {
         let elapsed = now.saturating_duration_since(base);
-        let nanos = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
-        Timestamp(nanos)
+        let micros = u64::try_from(elapsed.as_nanos().div_ceil(u128::from(NANOS_PER_MICRO)))
+            .unwrap_or(u64::MAX);
+        Timestamp(micros)
     }
 }
 
@@ -350,12 +360,41 @@ pub trait Stage {
 #[cfg(test)]
 mod tests {
     #[test]
+    fn the_clock_conversions_truncate_or_round_up_at_the_microsecond() {
+        // `from_nanos` truncates: a driver with only a nanosecond reading lands on the
+        // microsecond it is in.
+        assert_eq!(Timestamp::from_nanos(1_999), Timestamp::from_micros(1));
+        assert_eq!(
+            Timestamp::from_nanos(1_999_999),
+            Timestamp::from_micros(1_999)
+        );
+        // `saturating_add` rounds the span up: the deadline is the first microsecond at which
+        // the whole span has passed, so `now - start >= span` holds there.
+        assert_eq!(
+            Timestamp::from_micros(10).saturating_add(Duration::from_nanos(1)),
+            Timestamp::from_micros(11)
+        );
+        assert_eq!(
+            Timestamp::from_micros(10).saturating_add(Duration::from_micros(100)),
+            Timestamp::from_micros(110)
+        );
+        assert_eq!(
+            Timestamp::from_micros(10).saturating_add_nanos(2_000),
+            Timestamp::from_micros(12)
+        );
+        assert_eq!(
+            Timestamp::from_micros(10).saturating_sub(Timestamp::from_micros(4)),
+            Duration::from_micros(6)
+        );
+    }
+
+    #[test]
     fn the_clock_conversions_round_trip_whole_units() {
         assert_eq!(Timestamp::from_micros(1_500).as_micros(), 1_500);
         assert_eq!(Timestamp::from_millis(1_500).as_millis(), 1_500);
         assert_eq!(
             Timestamp::from_millis(1_500).as_nanos(),
-            1_500 * NANOS_PER_MILLI
+            1_500 * NANOS_PER_MICRO * 1_000
         );
         // A finer reading rounds down to the coarser unit, never up past the instant.
         assert_eq!(Timestamp::from_nanos(1_999).as_micros(), 1);
@@ -520,44 +559,44 @@ mod tests {
     #[test]
     fn timestamp_arithmetic_saturates_instead_of_panicking() {
         let zero = Timestamp::ZERO;
-        let small = Timestamp::from_nanos(5);
-        let big = Timestamp::from_nanos(u64::MAX);
+        let small = Timestamp::from_micros(5);
+        let big = Timestamp::from_micros(u64::MAX);
 
         // Subtracting a larger timestamp from a smaller one saturates to 0,
         // never underflows/panics.
         assert_eq!(
-            small.saturating_sub(Timestamp::from_nanos(100)),
-            Duration::from_nanos(0)
+            small.saturating_sub(Timestamp::from_micros(100)),
+            Duration::from_micros(0)
         );
         assert_eq!(
-            Timestamp::from_nanos(100).saturating_sub(small),
-            Duration::from_nanos(95)
+            Timestamp::from_micros(100).saturating_sub(small),
+            Duration::from_micros(95)
         );
 
         // Adding past u64::MAX saturates rather than wrapping/panicking.
         assert_eq!(
             big.saturating_add_nanos(10),
-            Timestamp::from_nanos(u64::MAX)
+            Timestamp::from_micros(u64::MAX)
         );
-        assert_eq!(zero.saturating_add_nanos(10), Timestamp::from_nanos(10));
+        assert_eq!(zero.saturating_add_nanos(10), Timestamp::from_micros(1));
 
         // Duration-based saturating_add, including a Duration whose
         // nanoseconds exceed u64::MAX.
         assert_eq!(
             zero.saturating_add(Duration::from_nanos(10)),
-            Timestamp::from_nanos(10)
+            Timestamp::from_micros(1)
         );
         assert_eq!(
             big.saturating_add(Duration::from_secs(1)),
-            Timestamp::from_nanos(u64::MAX)
+            Timestamp::from_micros(u64::MAX)
         );
         let huge = Duration::from_secs(u64::MAX);
-        assert_eq!(zero.saturating_add(huge), Timestamp::from_nanos(u64::MAX));
+        assert_eq!(zero.saturating_add(huge), Timestamp::from_micros(u64::MAX));
     }
 
     #[test]
     fn timestamp_ordering_and_default() {
-        assert!(Timestamp::from_nanos(1) < Timestamp::from_nanos(2));
+        assert!(Timestamp::from_micros(1) < Timestamp::from_micros(2));
         assert_eq!(Timestamp::default(), Timestamp::ZERO);
     }
 
@@ -567,7 +606,7 @@ mod tests {
         let base = std::time::Instant::now();
         let later = base + Duration::from_millis(5);
         let ts = Timestamp::from_instant(base, later);
-        assert_eq!(ts, Timestamp::from_nanos(5_000_000));
+        assert_eq!(ts, Timestamp::from_micros(5_000));
 
         // A `now` before `base` saturates to zero rather than panicking.
         let earlier = base.checked_sub(Duration::from_millis(1)).unwrap_or(base);

@@ -510,7 +510,7 @@ fn nothing_closes_one_microsecond_before_the_timeout() {
     let playlist = ts_playlist();
     session.on_response(playlist_conn, 200, &[], ts(0));
     session.on_data(playlist_conn, &playlist, ts(0));
-    session.on_closed(playlist_conn, None, Timestamp::from_micros(0));
+    session.on_closed(playlist_conn, None, ts(0));
     let (segments, _) = collect(&mut session, 0);
     let (seg_conn, _) = segments
         .iter()

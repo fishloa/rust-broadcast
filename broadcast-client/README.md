@@ -467,9 +467,12 @@ Seeded cookies obey the same rules (over 4096 bytes dropped; `__Secure-`/`__Host
 
 ```rust
 use broadcast_client::{Config, Session};
+use broadcast_common::stage::Timestamp;
 
-let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-while let Some(action) = session.poll(0) {
+// One host clock for every source: monotonic microseconds from the host's own epoch.
+let now = Timestamp::from_micros(0);
+let mut session = Session::open("http://example/live.ts", Config::default(), now).unwrap();
+while let Some(action) = session.poll(now) {
     // host performs I/O based on `action`
     let _ = action;
 }
