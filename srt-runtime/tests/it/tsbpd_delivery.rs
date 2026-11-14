@@ -48,7 +48,14 @@ fn feed(sched: &mut TsbpdScheduler, seq: u32, ts: u32, now_us: u64) -> TickOutco
 // ---------------------------------------------------------------------------
 #[test]
 fn ordered_arrivals_withhold_then_release() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     let pkts = [
         PacketInput {
@@ -99,7 +106,14 @@ fn ordered_arrivals_withhold_then_release() {
 // ---------------------------------------------------------------------------
 #[test]
 fn out_of_order_arrivals_released_in_sequence() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     // Packet 1 arrives first.
     feed(&mut sched, 1, 10_000, 0);
@@ -133,7 +147,14 @@ fn out_of_order_arrivals_released_in_sequence() {
 // ---------------------------------------------------------------------------
 #[test]
 fn packet_withheld_until_play_time() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
     feed(&mut sched, 0, 0, 0);
 
     // Tick at 1 µs before PktTsbpdTime.
@@ -160,7 +181,14 @@ fn packet_withheld_until_play_time() {
 // ---------------------------------------------------------------------------
 #[test]
 fn too_late_packet_dropped_on_arrival() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, true, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        true,
+        None,
+    );
 
     // Arrive at now much later than PktTsbpdTime for seq 0.
     let pkt_tsbpd = TIME_BASE_US + DELAY_US;
@@ -191,7 +219,14 @@ fn too_late_packet_dropped_on_arrival() {
 // ---------------------------------------------------------------------------
 #[test]
 fn drop_chain_after_gap_fill() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, true, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        true,
+        None,
+    );
 
     // Packet 1 arrives on time but buffers because 0 is missing.
     feed(&mut sched, 1, 10_000, 0);
@@ -225,7 +260,14 @@ fn drop_chain_after_gap_fill() {
 // ---------------------------------------------------------------------------
 #[test]
 fn timestamp_wrap_handling() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     // Packet just before the 32-bit wrap.
     let near_wrap: u32 = 0xFFFF_FF00u32;
@@ -267,7 +309,7 @@ fn timestamp_wrap_handling() {
 // ---------------------------------------------------------------------------
 #[test]
 fn timestamp_wrap_with_drop_enabled_does_not_drop_on_time_packets() {
-    let mut sched = TsbpdScheduler::new(ISN, 0, DELAY_MS, 0, true, None);
+    let mut sched = TsbpdScheduler::new(ISN, 0, Duration::from_millis(DELAY_MS), 0, true, None);
 
     let near_wrap: u32 = 0xFFFF_FF00u32; // ~71.58 min in
     let after_wrap: u32 = 500; // 756 us later, wrapped past 0
@@ -300,7 +342,14 @@ fn timestamp_wrap_with_drop_enabled_does_not_drop_on_time_packets() {
 // ---------------------------------------------------------------------------
 #[test]
 fn disabled_drop_delivers_late_packets() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     let very_late = TIME_BASE_US + DELAY_US + drop_threshold_us() * 10;
     let out = feed(&mut sched, 0, 0, very_late);
@@ -317,7 +366,14 @@ fn disabled_drop_delivers_late_packets() {
 // ---------------------------------------------------------------------------
 #[test]
 fn gap_blocks_delivery_until_filled() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     feed(&mut sched, 2, 20_000, 0);
     feed(&mut sched, 1, 10_000, 0);
@@ -348,7 +404,7 @@ fn custom_drop_threshold() {
     let mut sched = TsbpdScheduler::new(
         ISN,
         TIME_BASE_SEED,
-        DELAY_MS,
+        Duration::from_millis(DELAY_MS),
         0,
         true,
         Some(custom_threshold),
@@ -372,7 +428,14 @@ fn custom_drop_threshold() {
 #[test]
 fn drift_affects_play_time() {
     const DRIFT_US: u64 = 5000;
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 5000, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        5000,
+        false,
+        None,
+    );
 
     // PktTsbpdTime includes drift: TIME_BASE_US + 0 + DELAY_US + drift_us.
     let pkt_tsbpd = TIME_BASE_US + DELAY_US + DRIFT_US;
@@ -397,7 +460,14 @@ fn drift_affects_play_time() {
 // ---------------------------------------------------------------------------
 #[test]
 fn gradual_tick_releases_incrementally() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     // Feed 10 packets with 5 ms spacing.
     for i in 0..10u32 {
@@ -420,7 +490,14 @@ fn gradual_tick_releases_incrementally() {
 // ---------------------------------------------------------------------------
 #[test]
 fn duplicate_arrival_is_noop() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        Duration::from_millis(DELAY_MS),
+        0,
+        false,
+        None,
+    );
 
     let play = TIME_BASE_US + DELAY_US;
     feed(&mut sched, 0, 0, play);

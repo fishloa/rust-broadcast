@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `TsbpdScheduler::new` takes the TSBPD delay as a `core::time::Duration` instead of `tsbpd_delay_ms: u64`; the 120 ms floor is unchanged, applied to the duration's whole milliseconds. Migration: `TsbpdScheduler::new(.., 120, ..)` -> `TsbpdScheduler::new(.., Duration::from_millis(120), ..)`.
+
 ### Removed
 - BREAKING: the `packet::control::CONTROL_TYPE_*` (`u16`) and `packet::handshake::ENCRYPTION_FIELD_*` (`u16`) / `HANDSHAKE_TYPE_*` (`u32`) constants; they duplicated the wire values of `ControlType`, `EncryptionField` and `HandshakeType`, which carry them through `from_bits`/`to_bits` (and `name()`/`Display`). Migration: `HANDSHAKE_TYPE_INDUCTION` -> `HandshakeType::Induction` (compare `handshake_type.to_bits()` with it), `CONTROL_TYPE_SHUTDOWN` -> `ControlType::Shutdown`, `ENCRYPTION_FIELD_NONE` -> `EncryptionField::NoEncryption` (#2666).
 

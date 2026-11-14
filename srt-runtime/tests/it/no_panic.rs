@@ -246,7 +246,7 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
     }
 
     // --- TSBPD: arbitrary sequence numbers and timestamps (including wraps). ---
-    let mut tsbpd = TsbpdScheduler::new(0, -1_000, 120, 0, true, None);
+    let mut tsbpd = TsbpdScheduler::new(0, -1_000, Duration::from_millis(120), 0, true, None);
     let mut clock = Duration::ZERO;
     for _ in 0..ITERATIONS {
         clock += Duration::from_micros(rng.next_u64() % 5_000);

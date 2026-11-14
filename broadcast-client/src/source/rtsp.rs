@@ -1145,7 +1145,7 @@ impl RtspSource {
         let Some(conn) = self.conn else {
             return;
         };
-        match self.client.handle_timeout(now) {
+        match self.client.handle_timeout(Timestamp::from_micros(now)) {
             Ok(Some(bytes)) => self.actions.push_back(Action::Send { conn, bytes }),
             Ok(None) => {}
             Err(_) => {
@@ -1162,14 +1162,14 @@ impl RtspSource {
     /// ahead of `now`; `max(now + 1)` keeps a coarse clock from waking in a
     /// loop.
     fn arm_keepalive_wake(&mut self, now: u64) {
-        self.keepalive_wake = self
-            .client
-            .poll_timeout()
-            .map(|due| due.max(now.saturating_add(1)));
+        self.keepalive_wake = self.client.poll_timeout().map(|due| {
+            due.max(Timestamp::from_micros(now.saturating_add(1)))
+                .as_micros()
+        });
     }
 
     fn note_written(&mut self, now: u64) {
-        self.client.mark_activity(now);
+        self.client.mark_activity(Timestamp::from_micros(now));
         self.arm_keepalive_wake(now);
     }
 

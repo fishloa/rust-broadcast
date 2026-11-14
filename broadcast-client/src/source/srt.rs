@@ -247,7 +247,7 @@ impl SrtCaller {
             tsbpd: TsbpdScheduler::new(
                 peer_isn,
                 -i64::from(peer_ts_us),
-                u64::from(params.latency_ms),
+                Duration::from_millis(u64::from(params.latency_ms)),
                 DRIFT_US,
                 params.flags.tlpktdrop(),
                 None,

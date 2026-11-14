@@ -25,6 +25,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use broadcast_common::stage::Timestamp;
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
 use crate::auth::{Authenticator, Credentials, RequestContext};
@@ -38,11 +39,6 @@ type Body = Vec<u8>;
 
 /// RFC 2326 §12.37: the `Session` timeout when the server declares none.
 const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 60;
-
-/// [`Duration::as_micros`] narrowed to the `u64` clock, saturating.
-fn micros(d: Duration) -> u64 {
-    u64::try_from(d.as_micros()).unwrap_or(u64::MAX)
-}
 
 /// The keepalive is sent at `timeout / KEEPALIVE_FRACTION_DEN` after the last
 /// activity, so one lost keepalive still leaves time for a retry.
@@ -173,8 +169,8 @@ pub struct ClientSession {
     inbound: Vec<u8>,
     user_agent: String,
     /// When the caller last reported traffic (see [`ClientSession::mark_activity`]),
-    /// on the caller's own monotonic `now_us` clock.
-    last_activity_us: Option<u64>,
+    /// on the caller's own monotonic clock.
+    last_activity: Option<Timestamp>,
     /// The URI of the most recent request, reused for the keepalive.
     last_uri: Option<String>,
     /// Recoverable `Session` header problems seen so far (see `session_warnings`).
@@ -216,7 +212,7 @@ impl ClientSession {
             pending: HashMap::new(),
             inbound: Vec::new(),
             user_agent: "rtsp-runtime".to_string(),
-            last_activity_us: None,
+            last_activity: None,
             last_uri: None,
             session_warnings: Vec::new(),
             session_warning_total: 0,
@@ -312,13 +308,14 @@ impl ClientSession {
         !self.inbound.is_empty()
     }
 
-    /// Records that a request was written at `now_us`. The core never reads a
-    /// clock; `now_us` is always caller-supplied, in microseconds on whatever
-    /// monotonic clock the caller drives the session with. Only requests
-    /// count: the server's session timeout is refreshed by requests
-    /// (RFC 2326 §12.37), not by inbound media or responses.
-    pub fn mark_activity(&mut self, now_us: u64) {
-        self.last_activity_us = Some(now_us);
+    /// Records that a request was written at `now`. The core never reads a
+    /// clock; `now` is always caller-supplied, a
+    /// [`broadcast_common::stage::Timestamp`] on whatever monotonic clock the
+    /// caller drives the session with. Only requests count: the server's
+    /// session timeout is refreshed by requests (RFC 2326 §12.37), not by
+    /// inbound media or responses.
+    pub fn mark_activity(&mut self, now: Timestamp) {
+        self.last_activity = Some(now);
     }
 
     /// The keepalive interval: half the session timeout (the SETUP response's
@@ -332,20 +329,22 @@ impl ClientSession {
     }
 
     /// Next keepalive deadline — `last_activity + keepalive_interval()`, on the
-    /// caller's own `now_us` clock — once a Session id exists. `None` before
-    /// SETUP, after TEARDOWN, or if no activity was ever recorded.
-    pub fn poll_timeout(&self) -> Option<u64> {
+    /// caller's own clock — once a Session id exists. `None` before SETUP,
+    /// after TEARDOWN, or if no activity was ever recorded.
+    pub fn poll_timeout(&self) -> Option<Timestamp> {
         self.session_id.as_ref()?;
-        self.last_activity_us?
-            .checked_add(micros(self.keepalive_interval()))
+        Some(
+            self.last_activity?
+                .saturating_add(self.keepalive_interval()),
+        )
     }
 
-    /// If `now_us >= poll_timeout()`, the bytes of the keepalive on the last
-    /// request URI (and activity is re-armed at `now_us`); `Ok(None)`
+    /// If `now >= poll_timeout()`, the bytes of the keepalive on the last
+    /// request URI (and activity is re-armed at `now`); `Ok(None)`
     /// otherwise. The method is [`ClientSession::keepalive_method`].
-    pub fn handle_timeout(&mut self, now_us: u64) -> Result<Option<Vec<u8>>> {
+    pub fn handle_timeout(&mut self, now: Timestamp) -> Result<Option<Vec<u8>>> {
         match self.poll_timeout() {
-            Some(deadline) if now_us >= deadline => {}
+            Some(deadline) if now >= deadline => {}
             _ => return Ok(None),
         }
         let Some(uri) = self.last_uri.clone() else {
@@ -355,7 +354,7 @@ impl ClientSession {
             Method::GetParameter => self.get_parameter(&uri, b"")?,
             _ => self.options(&uri)?,
         };
-        self.last_activity_us = Some(now_us);
+        self.last_activity = Some(now);
         Ok(Some(bytes))
     }
 
@@ -1432,14 +1431,21 @@ mod tests {
     fn the_keepalive_interval_is_floored_and_fires_at_most_once_per_interval() {
         // timeout=1 would give a 0.5 s half-timeout; the floor makes it 1 s.
         let mut c = established(Some(1));
-        c.mark_activity(0);
-        assert_eq!(c.poll_timeout(), Some(US_PER_SEC));
-        assert!(c.handle_timeout(500_000).unwrap().is_none());
+        c.mark_activity(Timestamp::ZERO);
+        assert_eq!(c.poll_timeout(), Some(Timestamp::from_micros(US_PER_SEC)));
+        assert!(
+            c.handle_timeout(Timestamp::from_micros(500_000))
+                .unwrap()
+                .is_none()
+        );
         // hammer one instant: exactly one keepalive per floor interval
         let mut sent = 0;
         let tick = u64::try_from(MIN_KEEPALIVE_INTERVAL.as_micros()).unwrap();
         for _ in 0..1000 {
-            if c.handle_timeout(tick).unwrap().is_some() {
+            if c.handle_timeout(Timestamp::from_micros(tick))
+                .unwrap()
+                .is_some()
+            {
                 sent += 1;
             }
         }
@@ -1463,20 +1469,33 @@ mod tests {
         .unwrap();
         assert_eq!(c.session_warnings().len(), 1, "{:?}", c.session_warnings());
         assert!(c.session_warnings()[0].contains("timeout"));
-        c.mark_activity(0);
-        assert_eq!(c.poll_timeout(), Some(30 * US_PER_SEC));
+        c.mark_activity(Timestamp::ZERO);
+        assert_eq!(
+            c.poll_timeout(),
+            Some(Timestamp::from_micros(30 * US_PER_SEC))
+        );
     }
 
     #[test]
     fn keepalive_is_due_at_half_the_session_timeout() {
         let mut c = established(Some(20));
         assert_eq!(c.poll_timeout(), None, "no activity recorded yet");
-        c.mark_activity(0);
-        assert_eq!(c.poll_timeout(), Some(10 * US_PER_SEC));
-        assert_eq!(c.poll_timeout(), Some(10 * US_PER_SEC));
-        assert!(c.handle_timeout(9 * US_PER_SEC).unwrap().is_none());
+        c.mark_activity(Timestamp::ZERO);
+        assert_eq!(
+            c.poll_timeout(),
+            Some(Timestamp::from_micros(10 * US_PER_SEC))
+        );
+        assert_eq!(
+            c.poll_timeout(),
+            Some(Timestamp::from_micros(10 * US_PER_SEC))
+        );
+        assert!(
+            c.handle_timeout(Timestamp::from_micros(9 * US_PER_SEC))
+                .unwrap()
+                .is_none()
+        );
         let req = c
-            .handle_timeout(10 * US_PER_SEC)
+            .handle_timeout(Timestamp::from_micros(10 * US_PER_SEC))
             .unwrap()
             .expect("keepalive due");
         let text = String::from_utf8(req).unwrap();
@@ -1486,7 +1505,10 @@ mod tests {
         );
         assert!(text.contains("Session: abc"), "{text}");
         // re-armed from the moment it was sent
-        assert_eq!(c.poll_timeout(), Some(20 * US_PER_SEC));
+        assert_eq!(
+            c.poll_timeout(),
+            Some(Timestamp::from_micros(20 * US_PER_SEC))
+        );
     }
 
     #[test]
@@ -1495,16 +1517,18 @@ mod tests {
         // The client must ask well inside that window, so the keepalive
         // deadline — not the expiry — is what a driver waits for.
         let mut c = established(Some(10));
-        c.mark_activity(0);
+        c.mark_activity(Timestamp::ZERO);
         let deadline = c
             .poll_timeout()
             .expect("a ten second session has a deadline");
         assert!(
-            deadline < 10 * US_PER_SEC,
+            deadline < Timestamp::from_micros(10 * US_PER_SEC),
             "the keepalive must be due strictly before the session expires"
         );
         assert!(
-            c.handle_timeout(deadline - 1).unwrap().is_none(),
+            c.handle_timeout(Timestamp::from_micros(deadline.as_micros() - 1))
+                .unwrap()
+                .is_none(),
             "nothing is sent before the deadline"
         );
         assert!(
@@ -1513,7 +1537,9 @@ mod tests {
         );
         assert_eq!(
             c.poll_timeout(),
-            Some(deadline + 5 * US_PER_SEC),
+            Some(Timestamp::from_micros(
+                deadline.as_micros() + 5 * US_PER_SEC
+            )),
             "and re-armed half a timeout later"
         );
     }
@@ -1521,16 +1547,23 @@ mod tests {
     #[test]
     fn keepalive_uses_the_rfc_default_timeout_when_none_was_declared() {
         let mut c = established(None);
-        c.mark_activity(0);
-        assert_eq!(c.poll_timeout(), Some(30 * US_PER_SEC)); // 60 s / 2
+        c.mark_activity(Timestamp::ZERO);
+        assert_eq!(
+            c.poll_timeout(),
+            Some(Timestamp::from_micros(30 * US_PER_SEC))
+        ); // 60 s / 2
     }
 
     #[test]
     fn no_keepalive_before_setup_or_after_teardown() {
         let mut c = ClientSession::new();
-        c.mark_activity(0);
+        c.mark_activity(Timestamp::ZERO);
         assert_eq!(c.poll_timeout(), None);
-        assert!(c.handle_timeout(3600 * US_PER_SEC).unwrap().is_none());
+        assert!(
+            c.handle_timeout(Timestamp::from_micros(3600 * US_PER_SEC))
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -1540,9 +1573,9 @@ mod tests {
             Some("OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER"),
         );
         assert_eq!(c.keepalive_method(), Method::GetParameter);
-        c.mark_activity(0);
+        c.mark_activity(Timestamp::ZERO);
         let req = c
-            .handle_timeout(10 * US_PER_SEC)
+            .handle_timeout(Timestamp::from_micros(10 * US_PER_SEC))
             .unwrap()
             .expect("keepalive due");
         assert!(
@@ -1557,9 +1590,9 @@ mod tests {
         let mut c =
             established_publishing(Some(20), Some("OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN"));
         assert_eq!(c.keepalive_method(), Method::Options);
-        c.mark_activity(0);
+        c.mark_activity(Timestamp::ZERO);
         let req = c
-            .handle_timeout(10 * US_PER_SEC)
+            .handle_timeout(Timestamp::from_micros(10 * US_PER_SEC))
             .unwrap()
             .expect("keepalive due");
         assert!(
@@ -1574,9 +1607,9 @@ mod tests {
         let mut c = established_publishing(Some(20), None);
         assert!(c.public_methods().is_empty());
         assert_eq!(c.keepalive_method(), Method::Options);
-        c.mark_activity(0);
+        c.mark_activity(Timestamp::ZERO);
         let req = c
-            .handle_timeout(10 * US_PER_SEC)
+            .handle_timeout(Timestamp::from_micros(10 * US_PER_SEC))
             .unwrap()
             .expect("keepalive due");
         assert!(
