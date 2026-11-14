@@ -5,13 +5,22 @@ use webrtc_runtime::whep::server::WhepSession;
 use webrtc_runtime::whip::client::{self, WhipClient};
 use webrtc_runtime::whip::server::{self, WhipSession};
 
+/// The endpoint URL as the parsed value the state machines take.
+fn endpoint() -> url::Url {
+    url::Url::parse(ENDPOINT).expect("endpoint")
+}
+
+fn session_url() -> url::Url {
+    url::Url::parse(SESSION).expect("session URL")
+}
+
 const ENDPOINT: &str = "https://whip.example.com/pub";
 const SESSION: &str = "https://whip.example.com/session/abc";
 const FRAG: &[u8] = b"a=ice-ufrag:t\r\na=ice-pwd:t\r\n";
 
 fn established_client() -> WhipClient {
     let mut c = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     c.offer(b"v=0\r\n".to_vec()).unwrap();
     c.on_response(
@@ -58,7 +67,7 @@ fn offer_can_be_retried_after_a_503_or_a_redirect() {
         StatusCode::TEMPORARY_REDIRECT,
     ] {
         let mut c = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-            ENDPOINT,
+            endpoint(),
         ));
         c.offer(b"v=0\r\n".to_vec()).unwrap();
         assert!(c.on_response(client::HttpResponse::new(status)).is_err());
@@ -69,7 +78,7 @@ fn offer_can_be_retried_after_a_503_or_a_redirect() {
 
 #[test]
 fn late_ack_restart_does_not_resurrect_a_deleted_session() {
-    let mut s = WhipSession::new(SESSION.into());
+    let mut s = WhipSession::new(session_url());
     s.on_post(b"v=0\r\n".to_vec()).unwrap();
     s.accept(b"v=0\r\n".to_vec(), "e1".into());
     let mut h = trickle_ct();
@@ -84,7 +93,7 @@ fn late_ack_restart_does_not_resurrect_a_deleted_session() {
 
 #[test]
 fn accept_after_close_does_not_reopen_the_session() {
-    let mut s = WhipSession::new(SESSION.into());
+    let mut s = WhipSession::new(session_url());
     s.on_post(b"v=0\r\n".to_vec()).unwrap();
     s.accept(b"v=0\r\n".to_vec(), "e1".into());
     s.on_delete().unwrap();
@@ -95,7 +104,7 @@ fn accept_after_close_does_not_reopen_the_session() {
 
 #[test]
 fn ack_answer_outside_a_counter_offer_is_refused() {
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     let resp = s.ack_answer("e1".into());
     assert_eq!(resp.status, StatusCode::NOT_FOUND);
     assert_eq!(*s.state(), server::State::AwaitingOffer);
@@ -110,7 +119,7 @@ fn ack_answer_outside_a_counter_offer_is_refused() {
 
 #[test]
 fn ack_answer_validates_the_etag_and_sends_it() {
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     s.on_post(b"v=0\r\n".to_vec()).unwrap();
     s.counter_offer(b"v=0\r\n".to_vec(), None);
     let resp = s.ack_answer("bad\"tag".into());

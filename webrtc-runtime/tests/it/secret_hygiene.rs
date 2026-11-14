@@ -8,6 +8,11 @@ use webrtc_runtime::ice::IceServer;
 use webrtc_runtime::whep::player::{self, WhepPlayer};
 use webrtc_runtime::whip::client::{self, WhipClient};
 
+/// The endpoint URL as the parsed value the state machines take.
+fn endpoint() -> url::Url {
+    url::Url::parse(ENDPOINT).expect("endpoint")
+}
+
 const ENDPOINT: &str = "https://whip.example.com/pub";
 const SDP_OFFER: &[u8] = b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n";
 const SDP_ANSWER: &[u8] = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n";
@@ -21,7 +26,7 @@ fn bearer_of(req: &client::HttpRequest) -> Option<String> {
 
 fn established_client(location: &str) -> WhipClient {
     let mut c = WhipClient::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint()).with_credentials(
             broadcast_auth::Credentials::Bearer {
                 token: TOKEN.into(),
             },
@@ -44,7 +49,7 @@ fn established_client(location: &str) -> WhipClient {
 
 fn established_player(location: &str) -> WhepPlayer {
     let mut p = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint()).with_credentials(
             broadcast_auth::Credentials::Bearer {
                 token: TOKEN.into(),
             },
@@ -119,14 +124,14 @@ fn whep_player_sends_the_bearer_only_to_its_own_origin() {
 #[test]
 fn debug_never_prints_the_bearer_token_or_turn_credential() {
     let c = WhipClient::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint()).with_credentials(
             broadcast_auth::Credentials::Bearer {
                 token: TOKEN.into(),
             },
         ),
     );
     let p = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint()).with_credentials(
             broadcast_auth::Credentials::Bearer {
                 token: TOKEN.into(),
             },
@@ -135,7 +140,10 @@ fn debug_never_prints_the_bearer_token_or_turn_credential() {
     for text in [format!("{c:?}"), format!("{p:?}")] {
         assert!(!text.contains(TOKEN), "{text}");
         assert!(text.contains("redacted"), "{text}");
-        assert!(text.contains(ENDPOINT), "{text}");
+        assert!(
+            text.contains(endpoint().host_str().expect("endpoint host")),
+            "{text}"
+        );
     }
     let ice = IceServer {
         url: "turn:turn.example.com".into(),

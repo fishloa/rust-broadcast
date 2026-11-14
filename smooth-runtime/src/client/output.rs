@@ -58,7 +58,7 @@ pub enum Dropped {
         /// The stream it belonged to.
         stream: StreamId,
         /// The final HTTP status, when HTTP failed it.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// A fragment URL template did not resolve against the manifest URL.
     FragmentUrl {

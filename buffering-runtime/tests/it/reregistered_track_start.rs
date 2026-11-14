@@ -7,33 +7,49 @@
 //! caller that unregistered audio and ticked before registering it again (broadcast-client let a
 //! transient `[video]` declaration through); the controller's start on video alone was correct
 //! for the inputs it was given.
+use broadcast_common::clock33::{PCR_EXT_MODULUS, PCR_WRAP_27MHZ};
 
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
+}
+
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use buffering_runtime::input_log::{Input, InputLog};
-use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, PolicyConfig, Ticks27};
+use buffering_runtime::{BufferController, Clock27, ControllerConfig, Event, PolicyConfig};
+use core::time::Duration;
 
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
 const TICKS_PER_US: u64 = 27;
-const BASE: Ticks27 = Ticks27(1_000_000 * TICKS_PER_US);
-const T0: Micros = Micros(50_000_000);
-const CHUNK_US: Micros = Micros(20_000);
-const VIDEO_AHEAD_US: Micros = Micros(1_000_000);
-const AUDIO_FIRST_AT_US: Micros = Micros(400_000);
-const RUN_US: Micros = Micros(2_000_000);
+const BASE: Clock27 = match Clock27::from_parts(
+    (1_000_000 * TICKS_PER_US) / PCR_EXT_MODULUS,
+    ((1_000_000 * TICKS_PER_US) % PCR_EXT_MODULUS) as u16,
+) {
+    Ok(c) => c,
+    Err(_) => unreachable!(),
+};
+const T0: Duration = dur(50_000_000);
+const CHUNK_US: Duration = dur(20_000);
+const VIDEO_AHEAD_US: Duration = dur(1_000_000);
+const AUDIO_FIRST_AT_US: Duration = dur(400_000);
+const RUN_US: Duration = dur(2_000_000);
 
-fn at(offset_us: u64) -> Ticks27 {
-    Ticks27(BASE.0 + offset_us * TICKS_PER_US)
+fn at(offset_us: u64) -> Clock27 {
+    clock27(BASE.ticks() + offset_us * TICKS_PER_US)
 }
 
-const fn us(v: u64) -> Micros {
-    Micros(v)
+const fn us(v: u64) -> Duration {
+    dur(v)
 }
 
 fn controller() -> BufferController {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::default();
-    p.initial_us = us(500_000);
-    let cfg = ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap();
+    p.initial = us(500_000);
+    let cfg = ControllerConfig::new(d.jitter, p, d.starve_threshold, d.nodata_after).unwrap();
     BufferController::new(cfg, None).unwrap()
 }
 
@@ -41,25 +57,25 @@ fn controller() -> BufferController {
 /// `AUDIO_FIRST_AT_US`. `churn` runs once video is well ahead: `Some(false)` unregisters and
 /// re-registers audio back to back, `Some(true)` ticks in between. Returns the first `Start`
 /// instant (after `T0`) and its lead.
-fn run(churn: Option<bool>) -> Option<(Micros, Micros)> {
+fn run(churn: Option<bool>) -> Option<(Duration, Duration)> {
     let mut c = controller();
     c.register_track(VIDEO);
     c.register_track(AUDIO);
     let mut churned = false;
-    let mut t = 0;
-    while t < RUN_US.0 {
-        let now = Micros(T0.0 + t);
+    let mut t = 0u64;
+    while t < RUN_US.as_micros() as u64 {
+        let now = T0 + dur(t);
         c.on_chunk(now, 1000, None);
         if t == 0 {
             c.on_track_media(now, VIDEO, at(0));
         }
-        c.on_track_media(now, VIDEO, at(t + VIDEO_AHEAD_US.0));
-        if t >= AUDIO_FIRST_AT_US.0 {
-            c.on_track_media(now, AUDIO, at(t - AUDIO_FIRST_AT_US.0 / 2));
+        c.on_track_media(now, VIDEO, at(t + VIDEO_AHEAD_US.as_micros() as u64));
+        if t >= AUDIO_FIRST_AT_US.as_micros() as u64 {
+            c.on_track_media(now, AUDIO, at(t - AUDIO_FIRST_AT_US.as_micros() as u64 / 2));
         }
         if let Some(tick_between) = churn
             && !churned
-            && t >= AUDIO_FIRST_AT_US.0 / 2
+            && t >= AUDIO_FIRST_AT_US.as_micros() as u64 / 2
         {
             churned = true;
             c.unregister_track(AUDIO);
@@ -70,11 +86,11 @@ fn run(churn: Option<bool>) -> Option<(Micros, Micros)> {
         }
         c.on_tick(now, None);
         while let Some(e) = c.poll_event() {
-            if let Event::StartPlaying { lead_us, .. } = e {
-                return Some((Micros(t), lead_us));
+            if let Event::StartPlaying { lead, .. } = e {
+                return Some((dur(t), lead));
             }
         }
-        t += CHUNK_US.0;
+        t += CHUNK_US.as_micros() as u64;
     }
     None
 }
@@ -82,7 +98,11 @@ fn run(churn: Option<bool>) -> Option<(Micros, Micros)> {
 #[test]
 fn a_re_registered_track_holds_the_start_until_it_delivers() {
     let once = run(None).expect("starts once audio delivers");
-    assert!(once.0 >= AUDIO_FIRST_AT_US, "started at {once:?}");
+    assert!(
+        once.0 >= AUDIO_FIRST_AT_US,
+        "started at {}us",
+        once.0.as_micros()
+    );
     assert_eq!(
         run(Some(false)),
         Some(once),
@@ -95,9 +115,10 @@ fn a_tick_between_unregister_and_register_releases_the_start_as_documented() {
     let (t, lead) = run(Some(true)).expect("released");
     assert!(
         t < AUDIO_FIRST_AT_US,
-        "the tick in between starts on video alone, at {t}"
+        "the tick in between starts on video alone, at {}us",
+        t.as_micros()
     );
-    assert!(lead >= Micros(VIDEO_AHEAD_US.0 - CHUNK_US.0));
+    assert!(lead >= VIDEO_AHEAD_US - CHUNK_US);
 }
 
 fn log(name: &str) -> Option<InputLog> {
@@ -111,13 +132,13 @@ fn log(name: &str) -> Option<InputLog> {
 }
 
 /// Index of the input whose call produced the first `StartPlaying`, and the event's lead.
-fn first_start(log: &InputLog) -> (usize, Micros, Micros) {
+fn first_start(log: &InputLog) -> (usize, Duration, Duration) {
     let mut c = log.controller().unwrap();
     for (i, input) in log.inputs.iter().enumerate() {
         input.apply(&mut c);
         while let Some(e) = c.poll_event() {
-            if let Event::StartPlaying { lead_us, .. } = e {
-                return (i, input.now_us(), lead_us);
+            if let Event::StartPlaying { lead, .. } = e {
+                return (i, input.now_us(), lead);
             }
         }
     }
@@ -194,9 +215,10 @@ fn without_the_churn_the_field_log_starts_only_once_audio_covers_the_lead() {
         })
         .unwrap();
     assert!(
-        lead.0 * TICKS_PER_US <= audio_end.0 - origin.0,
-        "lead {lead} us is not covered by audio, which ends {} us past the origin",
-        (audio_end.0 - origin.0) / TICKS_PER_US
+        lead.as_micros() as u64 * TICKS_PER_US <= audio_end.ticks() - origin.ticks(),
+        "lead {}us is not covered by audio, which ends {}us past the origin",
+        lead.as_micros(),
+        (audio_end.ticks() - origin.ticks()) / TICKS_PER_US
     );
     assert_eq!((now, lead), (us(681_132), us(687_995)));
 }

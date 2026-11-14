@@ -50,8 +50,10 @@ async fn post_offer_body(addr: std::net::SocketAddr, body: &str) -> Resp {
 fn resource_path(resp: &Resp) -> String {
     assert_eq!(resp.status, 201, "{}", resp.body);
     let loc = resp.header("location").expect("201 carries a Location");
+    // The `Location` is absolute on the server's own placeholder origin; only its path names
+    // the resource.
     let id = loc
-        .strip_prefix("/whip/session/")
+        .strip_prefix("https://whip.invalid/whip/session/")
         .unwrap_or_else(|| panic!("Location must be a per-session resource: {loc}"));
     assert_eq!(id.len(), 32, "an unguessable 32-char resource id: {loc}");
     assert!(
@@ -399,7 +401,7 @@ async fn drive_client_until_srtp_ready(
             match client.recv_from(&mut buf) {
                 Ok((n, peer)) => {
                     media
-                        .handle_datagram(std::time::Instant::now(), peer, &buf[..n])
+                        .handle_datagram(media.stamp_of(std::time::Instant::now()), peer, &buf[..n])
                         .unwrap();
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -407,7 +409,7 @@ async fn drive_client_until_srtp_ready(
             }
         }
         tokio::time::sleep_until(wake).await;
-        media.handle_timeout(std::time::Instant::now());
+        media.handle_timeout(media.stamp_of(std::time::Instant::now()));
     }
 }
 
@@ -443,9 +445,11 @@ async fn drive_client_until_ice_connected(
                 Ok((n, peer)) => {
                     // A datagram the server sent under the pre-restart
                     // credentials is rejected (a stray, as on the server side).
-                    if let Ok(events) =
-                        media.handle_datagram(std::time::Instant::now(), peer, &buf[..n])
-                    {
+                    if let Ok(events) = media.handle_datagram(
+                        media.stamp_of(std::time::Instant::now()),
+                        peer,
+                        &buf[..n],
+                    ) {
                         seen |= connected(&events);
                     }
                 }
@@ -458,7 +462,7 @@ async fn drive_client_until_ice_connected(
         }
         tokio::time::sleep_until(wake.min(tokio::time::Instant::now() + Duration::from_millis(20)))
             .await;
-        seen |= connected(&media.handle_timeout(std::time::Instant::now()));
+        seen |= connected(&media.handle_timeout(media.stamp_of(std::time::Instant::now())));
     }
 }
 
@@ -516,7 +520,7 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
         )
         .with_is_controlling(true),
         client_cert,
-        std::time::Instant::now(),
+        broadcast_common::stage::Timestamp::from_micros(1),
     )
     .expect("client transport");
     client_media
@@ -627,7 +631,7 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
     // The client follows with its own side of the restart and re-connects ICE.
     client_media
         .restart_ice(
-            std::time::Instant::now(),
+            client_media.stamp_of(std::time::Instant::now()),
             new_ufrag,
             new_pwd,
             &answer.ufrag,

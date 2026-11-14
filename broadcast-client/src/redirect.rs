@@ -1,6 +1,7 @@
 //! Redirect handling.
 
 use broadcast_common::url_ref;
+use http::HeaderMap;
 use url::Url;
 
 const SCHEME_HTTP: &str = "http";
@@ -10,15 +11,12 @@ const SCHEME_RTSPS: &str = "rtsps";
 
 /// Resolve a redirect target. Only `http` and `https` targets are followed, and an `https`
 /// request is never redirected to `http`.
-pub fn resolve(req_url: &Url, headers: &[(String, String)], taken: u32, max: u32) -> Option<Url> {
+pub fn resolve(req_url: &Url, headers: &HeaderMap, taken: u32, max: u32) -> Option<Url> {
     if taken >= max {
         return None;
     }
-    let loc = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("location"))
-        .map(|(_, v)| v.clone())?;
-    let target = url_ref::resolve(req_url, &loc).ok()?;
+    let loc = crate::headers::text(headers, "location")?;
+    let target = url_ref::resolve(req_url, loc).ok()?;
     let allowed = match target.scheme() {
         SCHEME_HTTPS => true,
         SCHEME_HTTP => req_url.scheme() != SCHEME_HTTPS,
@@ -46,12 +44,22 @@ pub fn resolve_rtsp(req_url: &Url, location: &str, taken: u32, max: u32) -> Opti
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::{HeaderMap, HeaderName, HeaderValue};
     use url::Url;
+
+    fn h(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (k, v) in pairs {
+            let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
+            map.append(name, HeaderValue::from_str(v).unwrap());
+        }
+        map
+    }
 
     #[test]
     fn resolve_301_with_location() {
         let req = Url::parse("http://example/live.ts").unwrap();
-        let headers = vec![("Location".to_string(), "/moved.ts".to_string())];
+        let headers = h(&[("Location", "/moved.ts")]);
         let target = resolve(&req, &headers, 0, 5).unwrap();
         assert_eq!(target.as_str(), "http://example/moved.ts");
     }
@@ -59,7 +67,7 @@ mod tests {
     #[test]
     fn resolve_relative_location() {
         let req = Url::parse("http://example/a/live.ts").unwrap();
-        let headers = vec![("Location".to_string(), "moved.ts".to_string())];
+        let headers = h(&[("Location", "moved.ts")]);
         let target = resolve(&req, &headers, 0, 5).unwrap();
         assert_eq!(target.as_str(), "http://example/a/moved.ts");
     }
@@ -67,14 +75,14 @@ mod tests {
     #[test]
     fn resolve_max_redirects_returns_none() {
         let req = Url::parse("http://example/live.ts").unwrap();
-        let headers = vec![("Location".to_string(), "/moved.ts".to_string())];
+        let headers = h(&[("Location", "/moved.ts")]);
         assert!(resolve(&req, &headers, 5, 5).is_none());
     }
 
     #[test]
     fn resolve_without_location_returns_none() {
         let req = Url::parse("http://example/live.ts").unwrap();
-        let headers: Vec<(String, String)> = vec![];
+        let headers = h(&[]);
         assert!(resolve(&req, &headers, 0, 5).is_none());
     }
 
@@ -82,7 +90,7 @@ mod tests {
     fn redirects_only_follow_http_and_https_and_never_downgrade() {
         let https = Url::parse("https://example/live.ts").unwrap();
         let http = Url::parse("http://example/live.ts").unwrap();
-        let to = |target: &str| vec![("Location".to_string(), target.to_string())];
+        let to = |target: &str| h(&[("Location", target)]);
         let resolve = |from: &Url, target: &str| resolve(from, &to(target), 0, 5);
         for bad in [
             "file:///etc/passwd",
@@ -107,7 +115,10 @@ mod tests {
     fn a_location_with_a_control_character_or_space_is_not_followed() {
         let req = Url::parse("http://origin.example/a/live.ts").unwrap();
         for bad in ["ht\ntp://other.example/x", "/pa\tth", "x y"] {
-            let headers = vec![("Location".to_string(), bad.to_string())];
+            let mut headers = HeaderMap::new();
+            if let Ok(value) = HeaderValue::from_str(bad) {
+                headers.insert(HeaderName::from_static("location"), value);
+            }
             assert!(resolve(&req, &headers, 0, 5).is_none(), "{bad:?}");
         }
         let rtsp = Url::parse("rtsp://cam.example/live").unwrap();

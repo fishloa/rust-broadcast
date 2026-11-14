@@ -22,7 +22,7 @@ fn main() {
                 opens += 1;
                 let bytes = test_fixtures::read("ts/h264-aac.ts");
                 let bytes = &bytes[..];
-                session.on_response(conn, 200, &[], now(0));
+                session.on_response(conn, http::StatusCode::OK, &http::HeaderMap::new(), now(0));
                 session.on_data(conn, bytes, now(0));
             }
             broadcast_client::Action::Close { .. } => {}

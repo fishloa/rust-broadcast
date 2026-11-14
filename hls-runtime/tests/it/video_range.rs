@@ -1,6 +1,10 @@
 #![cfg(feature = "std")]
 //! HLS VIDEO-RANGE derivation from track display colour (Phase 4b).
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 
@@ -44,7 +48,7 @@ fn render(origin: &HlsOrigin) -> String {
 fn spec_with(track_id: u32, code: Option<u8>, colour: bool, display: bool) -> TrackSpec {
     let mut spec = TrackSpec::new(
         TrackId::new(track_id),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,

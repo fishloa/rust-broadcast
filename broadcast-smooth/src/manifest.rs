@@ -245,6 +245,17 @@ impl Namespace for Ns {
     }
 }
 
+impl From<broadcast_common::xml_chars::XmlCharError> for SmoothParseError {
+    /// A character-data or namespace failure, at the position the caller
+    /// that raised it reports (the pull reader's own offset).
+    fn from(e: broadcast_common::xml_chars::XmlCharError) -> Self {
+        Self::Xml {
+            pos: 0,
+            message: e.to_string(),
+        }
+    }
+}
+
 impl From<XmlError> for SmoothParseError {
     fn from(e: XmlError) -> Self {
         match e {
@@ -309,7 +320,7 @@ pub const SMOOTH_TIMESCALE: u64 = SMOOTH_DEFAULT_TIMESCALE.as_u64();
 
 /// The Smooth default manifest time scale as a [`Timescale`]: the value an
 /// absent `SmoothStreamingMedia@TimeScale` resolves to.
-pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = Timescale::from_nonzero(10_000_000);
+pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = broadcast_common::timescale!(10_000_000);
 
 /// `SmoothStreamingMedia@MajorVersion` a constructed manifest carries (2).
 pub const DEFAULT_MAJOR_VERSION: u32 = 2;
@@ -1239,6 +1250,10 @@ mod tests {
     use super::*;
     use alloc::format;
 
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     /// Character data inside a skipped subtree (e.g. `<Protection>`) or between
     /// elements is validated like modelled text.
     #[test]
@@ -1285,7 +1300,7 @@ mod tests {
         let m = SmoothManifest::parse(SMALL_MANIFEST).expect("parse");
         assert_eq!(m.major_version, 2);
         assert_eq!(m.minor_version, 0);
-        assert_eq!(m.timescale, Timescale::from_nonzero(10_000_000));
+        assert_eq!(m.timescale, timescale(10_000_000));
         assert_eq!(m.duration, Some(30_000_000));
         assert!(!m.is_live);
         assert_eq!(m.look_ahead_fragment_count, None);

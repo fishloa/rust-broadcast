@@ -926,6 +926,10 @@ impl Package for MkvMux {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use broadcast_common::timescale::Timescale;
 
@@ -1544,7 +1548,7 @@ mod tests {
 
     #[test]
     fn empty_media_rejected() {
-        let media = Media::new(Vec::new(), Timescale::from_nonzero(1000));
+        let media = Media::new(Vec::new(), timescale(1000));
         let mut mux = MkvMux::new();
         assert!(matches!(
             mux.package(&media),

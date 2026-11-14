@@ -30,7 +30,7 @@ use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
 use crate::auth::{Authenticator, Credentials, RequestContext};
 use crate::config::{DEFAULT_USER_AGENT, FIRST_CSEQ};
-use crate::error::{Error, MessageKind, Result};
+use crate::error::{Error, MessageKind, MessageParseError, Result};
 use crate::interleaved::{self, MAGIC};
 use crate::session_id::SessionId;
 use crate::state::{SessionState, client_next_state};
@@ -617,12 +617,10 @@ impl ClientSession {
         if self.inbound.len() > MAX_INBOUND_BYTES {
             return Err(Error::MessageParse {
                 what: MessageKind::Response,
-                source: format!(
-                    "inbound buffer of {} bytes exceeds the {MAX_INBOUND_BYTES}-byte maximum \
-                 (unterminated header or an unfulfilled Content-Length)",
-                    self.inbound.len()
-                )
-                .into(),
+                source: MessageParseError::Buffered {
+                    buffered: self.inbound.len(),
+                    limit: MAX_INBOUND_BYTES,
+                },
             });
         }
         Ok(())
@@ -678,7 +676,7 @@ impl ClientSession {
                 ) => {
                     return Err(Error::MessageParse {
                         what: MessageKind::Response,
-                        source: Box::new(error),
+                        source: MessageParseError::Codec(error),
                     });
                 }
             }

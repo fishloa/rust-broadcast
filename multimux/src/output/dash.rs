@@ -62,6 +62,7 @@
 use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_MILLI};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 #[cfg(test)]
 use transmux::TrackId;
 
@@ -813,6 +814,11 @@ pub(crate) fn xs_duration_secs_checked(field: &'static str, secs: f64) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
     use broadcast_common::timescale::Timescale;
@@ -975,7 +981,7 @@ mod tests {
     fn teletext_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),

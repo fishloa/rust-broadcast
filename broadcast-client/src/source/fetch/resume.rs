@@ -18,27 +18,12 @@ use headers::{
     Range,
 };
 use http::header::{DATE, LAST_MODIFIED};
-use http::{HeaderMap, HeaderName, HeaderValue};
+use http::{HeaderMap, StatusCode};
 
 use super::body::BodyAcc;
 
-const STATUS_OK: u16 = 200;
-const STATUS_PARTIAL_CONTENT: u16 = 206;
 const MIN_STRONG_LAST_MODIFIED_AGE_US: i64 = 1_000_000;
 const MAX_PARKED: usize = 8;
-
-pub(super) fn map_of(headers: &[(String, String)]) -> HeaderMap {
-    let mut map = HeaderMap::new();
-    for (name, value) in headers {
-        if let (Ok(name), Ok(value)) = (
-            HeaderName::from_bytes(name.as_bytes()),
-            HeaderValue::from_str(value),
-        ) {
-            map.append(name, value);
-        }
-    }
-    map
-}
 
 #[derive(Debug, Clone, PartialEq)]
 enum Validator {
@@ -94,14 +79,13 @@ pub(crate) enum Resumed {
 }
 
 impl Basis {
-    pub(crate) fn of(status: u16, headers: &[(String, String)]) -> Option<Self> {
-        let map = map_of(headers);
+    pub(crate) fn of(status: StatusCode, map: &HeaderMap) -> Option<Self> {
         if map.typed_get::<ContentEncoding>().is_some() {
             return None;
         }
-        let validator = Validator::of(&map)?;
+        let validator = Validator::of(map)?;
         match status {
-            STATUS_OK => {
+            StatusCode::OK => {
                 if !map
                     .typed_get::<AcceptRanges>()
                     .is_some_and(|ranges| ranges.is_bytes())
@@ -117,8 +101,8 @@ impl Basis {
                     end,
                 })
             }
-            STATUS_PARTIAL_CONTENT => {
-                let range = super::body::content_range(headers)?;
+            StatusCode::PARTIAL_CONTENT => {
+                let range = super::body::content_range(map)?;
                 Some(Self {
                     validator,
                     start: range.first,
@@ -157,17 +141,16 @@ impl Basis {
         self.end?.checked_sub(first)?.checked_add(1)
     }
 
-    fn accept(&mut self, status: u16, headers: &[(String, String)], received: u64) -> Resumed {
+    fn accept(&mut self, status: StatusCode, map: &HeaderMap, received: u64) -> Resumed {
         match status {
-            STATUS_OK => Resumed::Restart,
-            STATUS_PARTIAL_CONTENT => {
-                let map = map_of(headers);
+            StatusCode::OK => Resumed::Restart,
+            StatusCode::PARTIAL_CONTENT => {
                 if map.typed_get::<ContentEncoding>().is_some()
-                    || self.validator.contradicted_by(&map)
+                    || self.validator.contradicted_by(map)
                 {
                     return Resumed::Mismatch;
                 }
-                let Some(range) = super::body::content_range(headers) else {
+                let Some(range) = super::body::content_range(map) else {
                     return Resumed::Mismatch;
                 };
                 let wanted = self.start.checked_add(received);
@@ -197,8 +180,8 @@ pub(crate) fn accept_head(
     body: &mut BodyAcc,
     basis: &mut Option<Basis>,
     resume_from: &mut Option<u64>,
-    status: u16,
-    headers: &[(String, String)],
+    status: StatusCode,
+    headers: &HeaderMap,
     byte_range: Option<broadcast_common::range::ByteSpan>,
 ) -> HeadOutcome {
     if let Some(received) = resume_from.take() {
@@ -207,7 +190,7 @@ pub(crate) fn accept_head(
             .map_or(Resumed::Mismatch, |b| b.accept(status, headers, received));
         match outcome {
             Resumed::Continue => {
-                let suffix = map_of(headers)
+                let suffix = headers
                     .typed_get::<ContentLength>()
                     .map(|l| l.0)
                     .or_else(|| basis.as_ref().and_then(|b| b.remaining(received)));
@@ -290,15 +273,25 @@ impl<K: PartialEq> Stash<K> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use http::{HeaderName, HeaderValue};
 
-    fn h(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+    fn h(pairs: &[(&str, &str)]) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        for (k, v) in pairs {
+            let name = HeaderName::from_bytes(k.as_bytes()).unwrap();
+            map.append(name, HeaderValue::from_str(v).unwrap());
+        }
+        map
+    }
+
+    fn pairs(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
             .iter()
             .map(|(k, v)| ((*k).to_string(), (*v).to_string()))
             .collect()
     }
 
-    fn etag_200() -> Vec<(String, String)> {
+    fn etag_200() -> HeaderMap {
         h(&[
             ("ETag", "\"v1\""),
             ("Accept-Ranges", "bytes"),
@@ -312,23 +305,27 @@ mod tests {
 
     #[test]
     fn a_200_with_ranges_and_a_strong_etag_resumes_from_the_received_offset() {
-        let basis = Basis::of(200, &etag_200()).unwrap();
+        let basis = Basis::of(StatusCode::OK, &etag_200()).unwrap();
         assert_eq!(
             range_of(&basis, 40),
-            h(&[("range", "bytes=40-99"), ("if-range", "\"v1\"")])
+            pairs(&[("range", "bytes=40-99"), ("if-range", "\"v1\"")])
         );
     }
 
     #[test]
     fn a_200_of_unknown_length_asks_open_ended() {
-        let basis = Basis::of(200, &h(&[("ETag", "\"v1\""), ("Accept-Ranges", "bytes")])).unwrap();
+        let basis = Basis::of(
+            StatusCode::OK,
+            &h(&[("ETag", "\"v1\""), ("Accept-Ranges", "bytes")]),
+        )
+        .unwrap();
         assert_eq!(range_of(&basis, 7)[0], ("range".into(), "bytes=7-".into()));
     }
 
     #[test]
     fn a_206_resumes_inside_its_own_range() {
         let basis = Basis::of(
-            206,
+            StatusCode::PARTIAL_CONTENT,
             &h(&[("ETag", "\"v1\""), ("Content-Range", "bytes 500-1499/9000")]),
         )
         .unwrap();
@@ -340,7 +337,9 @@ mod tests {
 
     #[test]
     fn no_resume_without_a_strong_validator_or_range_support_or_with_a_content_coding() {
-        let none = |status, pairs: &[(&str, &str)]| Basis::of(status, &h(pairs)).is_none();
+        let none = |status: u16, pairs: &[(&str, &str)]| {
+            Basis::of(StatusCode::from_u16(status).unwrap(), &h(pairs)).is_none()
+        };
         assert!(none(200, &[("Accept-Ranges", "bytes")]));
         assert!(none(
             200,
@@ -363,7 +362,7 @@ mod tests {
     fn last_modified_is_a_validator_only_a_second_older_than_date() {
         let at = |date| {
             Basis::of(
-                200,
+                StatusCode::OK,
                 &h(&[
                     ("Last-Modified", "Tue, 15 Nov 1994 12:45:26 GMT"),
                     ("Date", date),
@@ -374,7 +373,7 @@ mod tests {
         assert!(at("Tue, 15 Nov 1994 12:45:27 GMT").is_some());
         assert!(at("Tue, 15 Nov 1994 12:45:26 GMT").is_none());
         let no_date = Basis::of(
-            200,
+            StatusCode::OK,
             &h(&[
                 ("Last-Modified", "Tue, 15 Nov 1994 12:45:26 GMT"),
                 ("Accept-Ranges", "bytes"),
@@ -391,7 +390,7 @@ mod tests {
     #[test]
     fn a_weak_etag_falls_back_to_a_strong_last_modified() {
         let basis = Basis::of(
-            200,
+            StatusCode::OK,
             &h(&[
                 ("ETag", "W/\"v1\""),
                 ("Last-Modified", "Tue, 15 Nov 1994 12:45:26 GMT"),
@@ -405,7 +404,7 @@ mod tests {
 
     #[test]
     fn nothing_received_or_nothing_left_has_no_request() {
-        let basis = Basis::of(200, &etag_200()).unwrap();
+        let basis = Basis::of(StatusCode::OK, &etag_200()).unwrap();
         assert!(basis.request_headers(0).is_none());
         assert!(basis.request_headers(100).is_none());
         assert!(basis.request_headers(99).is_some());
@@ -413,12 +412,19 @@ mod tests {
     }
 
     fn resumed(headers: &[(&str, &str)], status: u16, received: u64) -> (HeadOutcome, BodyAcc) {
-        let mut basis = Basis::of(200, &etag_200());
+        let mut basis = Basis::of(StatusCode::OK, &etag_200());
         let mut body = BodyAcc::new(1024);
         body.push(&vec![0u8; usize::try_from(received).unwrap()])
             .unwrap();
         let mut from = Some(received);
-        let head = accept_head(&mut body, &mut basis, &mut from, status, &h(headers), None);
+        let head = accept_head(
+            &mut body,
+            &mut basis,
+            &mut from,
+            StatusCode::from_u16(status).unwrap(),
+            &h(headers),
+            None,
+        );
         (head, body)
     }
 
@@ -504,7 +510,7 @@ mod tests {
             url: url.into(),
             byte_range: None,
             body: BodyAcc::new(8),
-            basis: Basis::of(200, &etag_200()).unwrap(),
+            basis: Basis::of(StatusCode::OK, &etag_200()).unwrap(),
         }
     }
 

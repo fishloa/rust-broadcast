@@ -10,7 +10,7 @@ use rtsp_types::Message;
 use tokio_util::codec::{Decoder, Encoder};
 
 use crate::client::{ClientEvent, ClientSession};
-use crate::error::{Error, MessageKind, Result};
+use crate::error::{Error, MessageKind, MessageParseError, Result};
 use crate::interleaved::{InterleavedFrame, MAGIC};
 use crate::limits::MAX_MESSAGE_BYTES;
 
@@ -147,10 +147,10 @@ impl Decoder for ServerCodec {
                 if want > MAX_MESSAGE_BYTES {
                     return Err(Error::MessageParse {
                         what: MessageKind::Request,
-                        source: format!(
-                            "request of at least {want} bytes exceeds the {MAX_MESSAGE_BYTES}-byte maximum"
-                        )
-                        .into(),
+                        source: MessageParseError::TooLarge {
+                            at_least: want,
+                            limit: MAX_MESSAGE_BYTES,
+                        },
                     });
                 }
                 self.skip_until = want;
@@ -161,7 +161,7 @@ impl Decoder for ServerCodec {
             Err(error @ (rtsp_types::ParseError::Error | rtsp_types::ParseError::Invalid(_))) => {
                 Err(Error::MessageParse {
                     what: MessageKind::Request,
-                    source: Box::new(error),
+                    source: MessageParseError::Codec(error),
                 })
             }
         }

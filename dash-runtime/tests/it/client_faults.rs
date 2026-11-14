@@ -88,12 +88,16 @@ fn kinds() -> Vec<(&'static str, FaultKind, Option<u16>)> {
     ]
 }
 
+fn code(status: u16) -> http::StatusCode {
+    http::StatusCode::from_u16(status).expect("a test names a real status")
+}
+
 fn is_segment_fatal(f: &Option<FatalKind>, status: Option<u16>) -> bool {
-    matches!(f, Some(FatalKind::SegmentFetchFailed { status: s, .. }) if *s == status)
+    matches!(f, Some(FatalKind::SegmentFetchFailed { status: s, .. }) if *s == status.map(code))
 }
 
 fn is_init_fatal(f: &Option<FatalKind>, status: Option<u16>) -> bool {
-    matches!(f, Some(FatalKind::InitFetchFailed { status: s, .. }) if *s == status)
+    matches!(f, Some(FatalKind::InitFetchFailed { status: s, .. }) if *s == status.map(code))
 }
 
 #[test]

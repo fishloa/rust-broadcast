@@ -317,7 +317,8 @@ mod tests {
     fn video_track_spec() -> TrackSpec {
         TrackSpec::new(
             TRACK_ID,
-            broadcast_common::timescale::Timescale::from_nonzero(VIDEO_TIMESCALE),
+            broadcast_common::timescale::Timescale::try_new(VIDEO_TIMESCALE)
+                .expect("non-zero timescale"),
             CodecConfig::Avc {
                 config: dummy_avc_config(),
                 width: 320,

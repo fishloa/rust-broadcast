@@ -31,8 +31,10 @@ async fn post_offer(addr: std::net::SocketAddr) -> Resp {
 fn resource_path(resp: &Resp) -> String {
     assert_eq!(resp.status, 201, "{}", resp.body);
     let loc = resp.header("location").expect("201 carries a Location");
+    // The `Location` is absolute on the server's own placeholder origin; only its path names
+    // the resource.
     let id = loc
-        .strip_prefix("/whep/session/")
+        .strip_prefix("https://whep.invalid/whep/session/")
         .unwrap_or_else(|| panic!("Location must be a per-session resource: {loc}"));
     assert_eq!(id.len(), 32, "an unguessable 32-char resource id: {loc}");
     loc.to_string()

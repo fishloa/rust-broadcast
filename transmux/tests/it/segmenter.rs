@@ -23,6 +23,10 @@ use transmux::{
 
 /// Wire value of a sync (random-access) `sample_flags`, per ISO/IEC 14496-12:2026
 /// §8.8.3.1 (`sample_is_non_sync_sample == 0`, `sample_depends_on == 2`).
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 const WIRE_SYNC_FLAGS: u32 = 0x0200_0000;
 
 /// Find the first top-level box of `fourcc` in a serialized segment and return
@@ -79,12 +83,7 @@ fn moof_summary(segment: &[u8]) -> Vec<(TrackId, u64, usize, u32)> {
 /// them through a segmenter with a 0.3 s target. Video keyframes every 10 AUs.
 #[test]
 fn synthetic_cuts_are_exact_and_lossless() {
-    let mut seg = Segmenter::new(
-        vec![video_track(), audio_track()],
-        Timescale::from_nonzero(1000),
-        0.3,
-    )
-    .unwrap();
+    let mut seg = Segmenter::new(vec![video_track(), audio_track()], timescale(1000), 0.3).unwrap();
 
     // 30 video AUs @ 3000 ticks (=1/30 s), IDR every 10th → keyframes at 0,10,20.
     const N_VID: usize = 30;
@@ -202,12 +201,8 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     .unwrap();
 
     // Segmenter with a 1000 s target → no mid cut. Push interleaved; flush once.
-    let mut seg = Segmenter::new(
-        vec![video_track(), audio_track()],
-        Timescale::from_nonzero(1000),
-        1000.0,
-    )
-    .unwrap();
+    let mut seg =
+        Segmenter::new(vec![video_track(), audio_track()], timescale(1000), 1000.0).unwrap();
     for v in &vid {
         seg.push(TrackId::new(1), v.clone()).unwrap();
     }
@@ -226,27 +221,22 @@ fn single_segment_is_byte_identical_to_batch_builder() {
 #[test]
 fn rejects_bad_construction() {
     assert!(
-        Segmenter::new(vec![], Timescale::from_nonzero(1000), 2.0).is_err(),
+        Segmenter::new(vec![], timescale(1000), 2.0).is_err(),
         "empty tracks"
     );
     assert!(
-        Segmenter::new(vec![video_track()], Timescale::from_nonzero(1000), 0.0).is_err(),
+        Segmenter::new(vec![video_track()], timescale(1000), 0.0).is_err(),
         "zero duration"
     );
     assert!(
-        Segmenter::new(vec![video_track()], Timescale::from_nonzero(1000), f64::NAN).is_err(),
+        Segmenter::new(vec![video_track()], timescale(1000), f64::NAN).is_err(),
         "NaN duration"
     );
     assert!(
-        Segmenter::new(
-            vec![video_track(), video_track()],
-            Timescale::from_nonzero(1000),
-            2.0
-        )
-        .is_err(),
+        Segmenter::new(vec![video_track(), video_track()], timescale(1000), 2.0).is_err(),
         "duplicate track_id"
     );
-    let mut seg = Segmenter::new(vec![video_track()], Timescale::from_nonzero(1000), 2.0).unwrap();
+    let mut seg = Segmenter::new(vec![video_track()], timescale(1000), 2.0).unwrap();
     assert!(
         seg.push(
             TrackId::new(99),
@@ -394,7 +384,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
 
     let vtrack = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config,
             width: 0,
@@ -423,7 +413,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         }
     }
 
-    let mut seg = Segmenter::new(vec![vtrack, atrack], Timescale::from_nonzero(1000), 0.5).unwrap();
+    let mut seg = Segmenter::new(vec![vtrack, atrack], timescale(1000), 0.5).unwrap();
     let init = seg.init_segment().expect("init");
     assert!(find_box_body(&init, b"ftyp").is_some() && find_box_body(&init, b"moov").is_some());
 

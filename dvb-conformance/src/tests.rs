@@ -54,7 +54,7 @@ fn make_ts_packet(
         pusi,
         pid: Pid::from_wire_masked(pid),
         scrambling: ScramblingControl::NotScrambled,
-        adaptation: AdaptationFieldControl::from_flags(has_af, !payload.is_empty()),
+        adaptation_field_control: AdaptationFieldControl::from_flags(has_af, !payload.is_empty()),
         continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     header.serialize_into(&mut pkt[..4]).unwrap();
@@ -83,7 +83,7 @@ fn make_ts_packet_with_tei(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
         pusi: false,
         pid: Pid::from_wire_masked(pid),
         scrambling: ScramblingControl::NotScrambled,
-        adaptation: AdaptationFieldControl::Reserved,
+        adaptation_field_control: AdaptationFieldControl::Reserved,
         continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
     };
     header.serialize_into(&mut pkt[..4]).unwrap();
@@ -102,7 +102,7 @@ fn make_ts_packet_with_scrambling(
         pusi: false,
         pid: Pid::from_wire_masked(pid),
         scrambling,
-        adaptation: AdaptationFieldControl::PayloadOnly,
+        adaptation_field_control: AdaptationFieldControl::PayloadOnly,
         continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     header.serialize_into(&mut pkt[..4]).unwrap();

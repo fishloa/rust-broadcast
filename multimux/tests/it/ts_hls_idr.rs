@@ -32,7 +32,7 @@ const MIN_CLOSED_SEGMENTS: usize = 3;
 const HANG_GUARD: Duration = Duration::from_secs(40);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::from_nonzero(90_000);
+    broadcast_common::timescale!(90_000);
 
 fn france2_video() -> (TrackSpec, Vec<Sample>) {
     let bytes = std::fs::read(test_fixtures::path("ts/france2.ts")).expect("france2.ts fixture");

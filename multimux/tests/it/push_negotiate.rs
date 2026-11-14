@@ -16,6 +16,10 @@ use std::sync::Arc;
 use std::time::Duration;
 use transmux::TrackId;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use crate::support::shared_it::nz;
 use broadcast_common::Unpackage;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
@@ -44,7 +48,7 @@ const GUARD: Duration = Duration::from_secs(20);
 fn opaque_spec(track_id: TrackId) -> TrackSpec {
     TrackSpec::new(
         track_id,
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         transmux::CodecConfig::Data {
             stream_type: 0x06,
             descriptors: Vec::new(),

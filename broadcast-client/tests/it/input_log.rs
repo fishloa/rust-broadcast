@@ -5,7 +5,7 @@ use broadcast_client::{
     BufferEvent, BufferInput, Config, ErrorKind, Event, InputLog, PauseReason, Session,
 };
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::Event as RtEvent;
+use buffering_runtime::{Event as RtEvent, micros_as_duration};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -122,7 +122,7 @@ fn open_placeholder() -> Session {
 fn recording() -> Config {
     let mut c = Config::default();
     c.record_buffer_inputs = true;
-    c.buffer.policy.initial_us = buffering_runtime::Micros(500_000);
+    c.buffer.policy.initial = micros_as_duration(500_000);
     c
 }
 
@@ -145,10 +145,10 @@ fn replayed_buffer_events(text: &str) -> Vec<BufferEvent> {
         .into_iter()
         .filter_map(|(_, e)| match e {
             RtEvent::StartPlaying { media_27mhz, .. } => Some(BufferEvent::Start {
-                at_27mhz: media_27mhz.0,
+                at_27mhz: media_27mhz.ticks(),
             }),
             RtEvent::Resume { media_27mhz, .. } => Some(BufferEvent::Resume {
-                at_27mhz: media_27mhz.0,
+                at_27mhz: media_27mhz.ticks(),
             }),
             RtEvent::Pause {
                 hold_at_27mhz,
@@ -156,7 +156,7 @@ fn replayed_buffer_events(text: &str) -> Vec<BufferEvent> {
                 track,
                 ..
             } => Some(BufferEvent::Pause {
-                hold_at_27mhz: hold_at_27mhz.0,
+                hold_at_27mhz: hold_at_27mhz.ticks(),
                 reason: match reason {
                     buffering_runtime::Reason::NoData => PauseReason::NoData,
                     buffering_runtime::Reason::DataArriving => PauseReason::DataArriving,

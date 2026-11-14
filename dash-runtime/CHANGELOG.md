@@ -5,6 +5,8 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `client::ResponseMeta` and `client::UtcResponse` carry typed headers: `date: Option<headers::Date>`, `etag: Option<headers::ETag>`, `last_modified: Option<headers::LastModified>` (was `Option<&str>`), and their `with_date`/`with_etag`/`with_last_modified` take those types. `ResponseMeta` is `Clone` but no longer `Copy` (an `ETag` owns its value). A header the typed reader refuses is absent, as it is in the response's own header map. Migration: read the value from the host's `http::HeaderMap` with `typed_get::<headers::Date>()` (and the same for `ETag`/`LastModified`) (#2692).
+
 - BREAKING: `client::DashClientConfig::new(url)` takes a `url::Url` (not `impl Into<String>`), `DashClientConfig::mpd_url`/`DashClient::mpd_url()`/`DashClient::set_mpd_base` are `url::Url`, and every `client::Action` URL is a `url::Url` (#2655 C2).
 - BREAKING: `client::Action`'s ranged fetches carry `byte_range: Option<broadcast_common::range::ByteSpan>` (offset + non-zero length) instead of `Option<(u64, u64)>` (#2655 C1).
 - BREAKING: `mpd::base_url::resolve`/`resolve_chain` and `mpd::urls::BaseCandidate::resolve` return `Result<ResolvedRef, ResolveError>` (a new `ResolvedRef::{Absolute(Url), Relative(String)}` and `ResolveError::{ForbiddenChar, SyntheticScheme, Join}`) instead of `Option<String>`, so an absolute URL and a relative reference are distinct and a failure names its cause (#2655 C4).

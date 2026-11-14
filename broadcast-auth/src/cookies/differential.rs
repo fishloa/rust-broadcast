@@ -496,8 +496,12 @@ fn parse(url: &str) -> Url {
     Url::parse(url).unwrap()
 }
 
-fn headers(line: &str) -> Vec<(String, String)> {
-    alloc::vec![("Set-Cookie".to_string(), line.to_string())]
+fn headers(line: &str) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    let value =
+        http::HeaderValue::from_str(line).unwrap_or_else(|_| http::HeaderValue::from_static(""));
+    map.append(http::header::SET_COOKIE, value);
+    map
 }
 
 fn run(c: &Case) -> (Option<String>, Option<String>) {

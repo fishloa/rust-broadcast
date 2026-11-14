@@ -110,7 +110,8 @@ assert!(report.findings().iter().any(|f| f.rule_id == "hls-extinf-exceeds-target
 | `check_dash_mpd` | DASH validator: `dash-static-mpd-missing-duration` (§5.3.1.2), `dash-dynamic-mpd-no-availability-start`, `dash-representation-id-duplicate` (§5.3.5.2 Table 7), `dash-segment-timeline-monotonic` (§5.3.9.6.2), `dash-period-no-adaptation-sets` (§5.3.2), `dash-parse-error` |
 
 Public types: `Diagnostic` (trait), `Finding`, `Report`, `Severity`, `Location`
-(`new`, `at_pid`, `at_track`), `run_all`, and for live monitoring `WatchState`
+(`new`, `at_pid`, `at_track`) with its `StreamLocator` (`Ts`/`Track`/`Unknown`),
+`run_all`, and for live monitoring `WatchState`
 (`feed_datagram`, `snapshot`), `WatchSnapshot`, `ConformanceSample`, `PidFlag`.
 
 ## CLI

@@ -98,10 +98,13 @@ impl Host {
     }
 
     fn open_plain(config: Config) -> Self {
-        Self::open_with(config, (200, Vec::new()))
+        Self::open_with(config, (http::StatusCode::OK, crate::support::headers(&[])))
     }
 
-    fn open_with(mut config: Config, (status, headers): (u16, Vec<(String, String)>)) -> Self {
+    fn open_with(
+        mut config: Config,
+        (status, headers): (http::StatusCode, http::HeaderMap),
+    ) -> Self {
         config.record_buffer_inputs = true;
         let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
         let conn = match session.poll(ts(0)).unwrap() {
@@ -488,7 +491,9 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let first_report_after = log[hints[0]..]
         .iter()
         .find_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => {
+                Some(end.ticks())
+            }
             _ => None,
         })
         .expect("a video media report on the new timeline");
@@ -504,7 +509,9 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let reports_after: Vec<u64> = log[hints[0]..]
         .iter()
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => {
+                Some(end.ticks())
+            }
             _ => None,
         })
         .collect();
@@ -966,7 +973,12 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
         }
     }
     h.conn = conn.expect("reconnect request");
-    h.session.on_response(h.conn, 200, &[], ts(1_000_000));
+    h.session.on_response(
+        h.conn,
+        http::StatusCode::OK,
+        &crate::support::headers(&[]),
+        ts(1_000_000),
+    );
     h.drain(1_000_000);
     for (i, c) in bytes.chunks(CHUNK).enumerate() {
         h.data(c, 2_000_000 + i as u64 * STEP_US);

@@ -37,6 +37,10 @@ use transmux::media::{Fmp4Demux, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn av_frag_fixture() -> Vec<u8> {
     let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-frag.mp4");
     fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
@@ -243,7 +247,7 @@ fn dash_trick_mode_adaptation_set() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             total_duration: 900000,
         },
     };
@@ -436,7 +440,7 @@ fn minimal_video_media() -> transmux::media::Media {
     use transmux::media::Media;
     let spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90000),
+        timescale(90000),
         CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {
@@ -466,7 +470,7 @@ fn minimal_video_media() -> transmux::media::Media {
     let track = Track::new(spec, samples);
     // `Media::new` sets an empty `pcr`/`skipped` — exactly what the struct
     // literal here spelled out before `Media` became `#[non_exhaustive]`.
-    Media::new(vec![track], Timescale::from_nonzero(90000))
+    Media::new(vec![track], timescale(90000))
 }
 
 #[test]
@@ -481,7 +485,7 @@ fn dash_trick_mode_naming_a_missing_main_adaptation_set_is_rejected() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             total_duration: 900000,
         },
     };

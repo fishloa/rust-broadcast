@@ -65,7 +65,7 @@ fn a_cannot_be_a_base_rtsp_url_is_rejected_not_panicked() {
     let err = multimux::test_seam::control_url_for_test("rtsp:cam")
         .expect_err("`rtsp:cam` has no authority and must be rejected");
     assert!(
-        err.contains("authority") || err.contains("host"),
+        matches!(err, rtsp_runtime::Error::InvalidUrl { what } if what.contains("authority")),
         "the error must explain the missing host: {err}"
     );
     // A real authority-bearing URL is still accepted.

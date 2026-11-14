@@ -11,6 +11,10 @@ use transmux::{Fmp4Demux, SmoothPackager};
 
 #[test]
 fn packager_text_stream_parses_back() {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
     let media = Fmp4Demux::new().unpackage(&bytes).expect("demux fixture");
@@ -39,7 +43,7 @@ fn packager_text_stream_parses_back() {
     // ...and the text level resolves to a muxable subtitle TrackSpec.
     let spec = transmux::track_spec_from_quality_level(
         transmux::TrackId::new(7),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         text.stream_type,
         &text.qualities[0],
     )

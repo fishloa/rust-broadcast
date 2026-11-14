@@ -37,16 +37,31 @@ impl Req {
     }
 }
 
-pub fn set_cookie(line: &str) -> (String, String) {
-    ("Set-Cookie".to_string(), line.to_string())
+fn entry(name: http::HeaderName, value: &str) -> (http::HeaderName, http::HeaderValue) {
+    (
+        name,
+        http::HeaderValue::from_str(value).expect("a test writes a valid header value"),
+    )
 }
 
-pub fn set_cookies(lines: &[&str]) -> Vec<(String, String)> {
-    lines.iter().map(|l| set_cookie(l)).collect()
+pub fn set_cookie(line: &str) -> (http::HeaderName, http::HeaderValue) {
+    entry(http::header::SET_COOKIE, line)
 }
 
-pub fn location(url: &str) -> (String, String) {
-    ("Location".to_string(), url.to_string())
+pub fn set_cookies(lines: &[&str]) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    for line in lines {
+        let (name, value) = set_cookie(line);
+        map.append(name, value);
+    }
+    map
+}
+
+pub fn location(url: &str) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    let (name, value) = entry(http::header::LOCATION, url);
+    map.append(name, value);
+    map
 }
 
 pub fn requests(session: &mut Session, now: u64) -> Vec<Req> {
@@ -80,12 +95,17 @@ pub fn open(url: &str, config: Config) -> Session {
     Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open")
 }
 
-pub fn respond(session: &mut Session, req: &Req, status: u16, headers: &[(String, String)]) {
+pub fn respond(
+    session: &mut Session,
+    req: &Req,
+    status: http::StatusCode,
+    headers: &http::HeaderMap,
+) {
     session.on_response(req.conn, status, headers, ts(req.now));
 }
 
 pub fn ok_with_cookies(session: &mut Session, req: &Req, lines: &[&str]) {
-    respond(session, req, 200, &set_cookies(lines));
+    respond(session, req, http::StatusCode::OK, &set_cookies(lines));
 }
 
 pub fn reconnect(session: &mut Session, now: u64) -> Req {
@@ -97,7 +117,7 @@ pub fn redirect_probe(start_url: &str, lines: &[&str], target: &str) -> Req {
     let mut session = open(start_url, Config::default());
     let first = one(&mut session, 0);
     let mut headers = set_cookies(lines);
-    headers.push(location(target));
-    respond(&mut session, &first, 302, &headers);
+    headers.extend(location(target));
+    respond(&mut session, &first, http::StatusCode::FOUND, &headers);
     one(&mut session, 0)
 }

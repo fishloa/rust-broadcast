@@ -492,6 +492,8 @@ pub mod test_support {
     use transmux::TrackId;
 
     use broadcast_common::Timestamp;
+    #[cfg(test)]
+    use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use transmux::TsMux;
     use transmux::media::Track;
@@ -499,6 +501,11 @@ pub mod test_support {
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
+    }
+
+    #[cfg(test)]
+    pub fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
     }
 
     /// A small `TrunkConfig`.
@@ -575,9 +582,9 @@ pub mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use super::test_support::timescale;
     use super::test_support::track_spec;
     use super::*;
-    use broadcast_common::timescale::Timescale;
     use transmux::pipeline::Sample;
 
     fn sample_at(nal: u8) -> Sample {
@@ -965,20 +972,20 @@ mod tests {
         };
         let tracks = vec![
             Track::new(
-                TrackSpec::new(TrackId::new(1), Timescale::from_nonzero(90_000), data(0x04)),
+                TrackSpec::new(TrackId::new(1), timescale(90_000), data(0x04)),
                 samples(head_aus, 3, true),
             ),
             Track::new(
-                TrackSpec::new(TrackId::new(2), Timescale::from_nonzero(90_000), data(0x7F)),
+                TrackSpec::new(TrackId::new(2), timescale(90_000), data(0x7F)),
                 samples(600, 32, true),
             ),
             Track::new(
-                TrackSpec::new(TrackId::new(3), Timescale::from_nonzero(90_000), data(0x7E)),
+                TrackSpec::new(TrackId::new(3), timescale(90_000), data(0x7E)),
                 samples(600, 32, true),
             ),
         ];
         transmux::TsMux::default()
-            .package(&Media::new(tracks, Timescale::from_nonzero(90_000)))
+            .package(&Media::new(tracks, timescale(90_000)))
             .expect("mux to TS")
     }
 
@@ -1325,7 +1332,7 @@ mod tests {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             transmux::pipeline::CodecConfig::Avc {
                 config: avc,
                 width,

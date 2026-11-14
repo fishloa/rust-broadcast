@@ -57,7 +57,7 @@ let b = EmsgBox {
     flags: EMSG_FLAGS,
     scheme_id_uri: "urn:scte:scte35:2013:bin",
     value: "",
-    timescale: Timescale::from_nonzero(90_000),
+    timescale: Timescale::try_new(90_000).expect("a non-zero timescale"),
     presentation_time: PresentationTime::Delta(0),
     event_duration: 0xFFFF_FFFF,
     id: 1,

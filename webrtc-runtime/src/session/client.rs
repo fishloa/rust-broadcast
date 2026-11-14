@@ -26,12 +26,12 @@ pub enum State {
     /// `PATCH`.
     CounterOffered {
         /// Resource URL to PATCH the SDP answer to.
-        session_url: String,
+        session_url: url::Url,
     },
     /// Session established — ICE/DTLS in progress or connected.
     Established {
         /// Resource URL returned in the `Location` header of the 201 response.
-        session_url: String,
+        session_url: url::Url,
         /// Current resource `ETag`, if the server supplied one.
         etag: Option<String>,
     },
@@ -92,7 +92,7 @@ impl<P: Profile> core::fmt::Debug for Client<P> {
 #[non_exhaustive]
 pub struct WebRtcClientConfig {
     /// The WHIP/WHEP endpoint URL requests are sent to.
-    pub endpoint_url: String,
+    pub endpoint_url: url::Url,
     /// Credentials sent with every request, if any. `Bearer` is applied
     /// directly (RFC 6750); `Basic` is applied pre-emptively (RFC 7617) so a
     /// WHIP endpoint behind a proxy that challenges for it works; `Digest`
@@ -103,9 +103,9 @@ pub struct WebRtcClientConfig {
 
 impl WebRtcClientConfig {
     /// A config targeting `endpoint_url`, with no authentication.
-    pub fn new(endpoint_url: impl Into<String>) -> Self {
+    pub fn new(endpoint_url: url::Url) -> Self {
         WebRtcClientConfig {
-            endpoint_url: endpoint_url.into(),
+            endpoint_url,
             credentials: None,
         }
     }
@@ -192,7 +192,8 @@ impl<P: Profile> Client<P> {
     fn handle_offer_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
         match resp.status {
             StatusCode::CREATED => {
-                let session_url = http_util::location_of(&resp.headers)
+                let endpoint = self.core.endpoint_url().clone();
+                let session_url = http_util::location_of(&endpoint, &resp.headers)
                     .ok_or(Error::MissingHeader { header: "Location" })?;
                 self.state = State::Established {
                     session_url,
@@ -201,7 +202,8 @@ impl<P: Profile> Client<P> {
                 Ok(Some(Event::SdpAnswer(resp.body)))
             }
             StatusCode::NOT_ACCEPTABLE if P::EGRESS => {
-                let session_url = http_util::location_of(&resp.headers)
+                let endpoint = self.core.endpoint_url().clone();
+                let session_url = http_util::location_of(&endpoint, &resp.headers)
                     .ok_or(Error::MissingHeader { header: "Location" })?;
                 self.state = State::CounterOffered { session_url };
                 Ok(Some(Event::CounterOffer(resp.body)))
@@ -266,7 +268,7 @@ impl<P: Profile> Client<P> {
         }
     }
 
-    fn established_fields(&self) -> Result<(String, Option<String>), Error> {
+    fn established_fields(&self) -> Result<(url::Url, Option<String>), Error> {
         match &self.state {
             State::Established { session_url, etag } => Ok((session_url.clone(), etag.clone())),
             _ => Err(Error::WrongState {

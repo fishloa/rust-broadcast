@@ -145,8 +145,8 @@ impl IngestSession for EventIngest {
 enum Message {
     Response {
         conn: ConnId,
-        status: u16,
-        headers: Vec<(String, String)>,
+        status: http::StatusCode,
+        headers: http::HeaderMap,
     },
     Data {
         conn: ConnId,
@@ -533,7 +533,7 @@ impl SessionStep {
                             },
                             kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
                         },
-                        None => self.http_error(404),
+                        None => self.http_error(http::StatusCode::NOT_FOUND),
                     }));
                 }
                 Event::Forbidden { status } if self.labels.session_retries => {
@@ -578,7 +578,10 @@ impl SessionStep {
                 }
                 Event::Error { kind, fatal: false }
                     if self.labels.session_retries
-                        && matches!(kind.refusal_status(), Some(401 | 403)) =>
+                        && matches!(
+                            kind.refusal_status(),
+                            Some(http::StatusCode::UNAUTHORIZED | http::StatusCode::FORBIDDEN)
+                        ) =>
                 {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
                         broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
@@ -606,8 +609,8 @@ impl SessionStep {
         verdict
     }
 
-    fn http_error(&self, status: u16) -> MultimuxError {
-        if status == reqwest::StatusCode::UNAUTHORIZED.as_u16() {
+    fn http_error(&self, status: http::StatusCode) -> MultimuxError {
+        if status == http::StatusCode::UNAUTHORIZED {
             MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
                 broadcast_auth::HttpAuthError(format!("{}: {status}", self.labels.what)),
             ))
@@ -761,20 +764,10 @@ async fn fetch(request: reqwest::RequestBuilder, conn: ConnId, tx: mpsc::Sender<
             return;
         }
     };
-    let headers = response
-        .headers()
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|v| (name.as_str().to_owned(), v.to_owned()))
-        })
-        .collect();
     let head = Message::Response {
         conn,
-        status: response.status().as_u16(),
-        headers,
+        status: response.status(),
+        headers: response.headers().clone(),
     };
     if tx.send(head).await.is_err() {
         return;
@@ -1054,8 +1047,12 @@ mod tests {
             }
         };
         let frames = 4 * EVENT_DRAIN_YIELD_EVERY as u32;
-        step.session
-            .on_response(conn, 200, &[], Timestamp::from_micros(1));
+        step.session.on_response(
+            conn,
+            http::StatusCode::OK,
+            &http::HeaderMap::new(),
+            Timestamp::from_micros(1),
+        );
         step.session.on_data(
             conn,
             &build_ts_bytes(TrackId::new(1), 0xAB, frames),

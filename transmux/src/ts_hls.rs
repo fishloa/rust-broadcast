@@ -682,7 +682,7 @@ struct StreamTrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -1636,6 +1636,11 @@ mod tests {
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     use broadcast_common::Unpackage;
+    use broadcast_common::timescale::Timescale;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
 
     fn dummy_esds() -> EsdsBox {
         EsdsBox::new(ESDescriptor::new(
@@ -1660,7 +1665,7 @@ mod tests {
     fn scte35_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -1913,7 +1918,7 @@ mod tests {
         };
         let video_spec = TrackSpec::new(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Avc {
                 config: crate::avc_config::AVCConfigurationBox::new(record),
                 width: 320,
@@ -1927,7 +1932,7 @@ mod tests {
         let audio: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
         Media::new(
             vec![Track::new(video_spec, video), Track::new(audio_spec, audio)],
-            Timescale::from_nonzero(1000),
+            timescale(1000),
         )
     }
 

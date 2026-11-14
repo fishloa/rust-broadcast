@@ -28,6 +28,10 @@ use transmux::{
 // ---------------------------------------------------------------------------
 
 /// A second, distinct AVC config (different profile_indication = 100).
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn dummy_avc_config_b() -> AVCConfigurationBox {
     AVCConfigurationBox::new(AVCDecoderConfigurationRecord {
         configuration_version: 1,
@@ -47,7 +51,7 @@ fn dummy_avc_config_b() -> AVCConfigurationBox {
 fn video_track_a() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
@@ -59,7 +63,7 @@ fn video_track_a() -> TrackSpec {
 fn video_track_b() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config_b(),
             width: 320,
@@ -72,7 +76,7 @@ fn video_track_b() -> TrackSpec {
 /// Timescale = 90_000 ticks/s; each sample is 45_000 ticks (0.5 s).
 /// Two sync samples → one cut (≥ target_ticks = 90_000).
 fn make_segmenter(track: TrackSpec) -> Segmenter {
-    Segmenter::new(vec![track], Timescale::from_nonzero(1000), 1.0).unwrap()
+    Segmenter::new(vec![track], timescale(1000), 1.0).unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -87,10 +91,8 @@ fn make_segmenter(track: TrackSpec) -> Segmenter {
 #[test]
 fn autodetect_init_change_marks_discontinuity() {
     // Build init bytes from two distinct track configs.
-    let init_a =
-        transmux::build_init_segment(&[video_track_a()], Timescale::from_nonzero(1000)).unwrap();
-    let init_b =
-        transmux::build_init_segment(&[video_track_b()], Timescale::from_nonzero(1000)).unwrap();
+    let init_a = transmux::build_init_segment(&[video_track_a()], timescale(1000)).unwrap();
+    let init_b = transmux::build_init_segment(&[video_track_b()], timescale(1000)).unwrap();
 
     // Sanity: the two inits must actually differ for the test to be non-trivial.
     assert_ne!(

@@ -3,7 +3,8 @@
 
 use std::fs;
 
-use media_doctor::{Diagnostic, PtsCheck, Report, Severity};
+use media_doctor::{Diagnostic, PtsCheck, Report, Severity, StreamLocator};
+use mpeg_ts::pid::Pid;
 
 fn read(rel: &str) -> Vec<u8> {
     let path = test_fixtures::path(rel);
@@ -28,7 +29,10 @@ fn pts_backward_detected() {
     let errors = pts_errors(&report);
     let backward: Vec<_> = errors
         .iter()
-        .filter(|f| f.rule_id == "pts-backward" && f.location.pid == 0x100)
+        .filter(|f| {
+            f.rule_id == "pts-backward"
+                && f.location.stream == StreamLocator::Ts(Pid::from_const(0x100))
+        })
         .collect();
     assert!(
         !backward.is_empty(),

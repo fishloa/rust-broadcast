@@ -921,6 +921,10 @@ pub(crate) async fn run_rtmp_with_clock(
 }
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use broadcast_common::timescale::Timescale;
     use media_plane::ts_session::test_support::{handshake, trunk_config};
@@ -1110,7 +1114,7 @@ mod tests {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(1_000),
+            timescale(1_000),
             CodecConfig::Avc {
                 config: avc,
                 width,

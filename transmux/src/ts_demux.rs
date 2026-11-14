@@ -239,7 +239,7 @@ use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{
-    ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
+    ContinuityCounter, Pcr, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
 };
 
 use crate::aac_asc::{
@@ -504,7 +504,7 @@ const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
 /// (issue #1171).
 const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
-const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(crate::rtp::VIDEO_CLOCK_RATE);
+const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 
@@ -4756,6 +4756,11 @@ pub struct StreamingTsDemux {
     skipped: BTreeSet<Pid>,
     next_track_id: TrackId,
     events: VecDeque<DemuxEvent>,
+    /// The wire `Pcr` behind each queued [`DemuxEvent::ClockReference`], in
+    /// the same FIFO order — so a batch fold can keep the parsed 33-bit
+    /// base / 9-bit extension the event's 27 MHz `ticks` cannot round-trip
+    /// (an extension in `300..=511` is off the clock).
+    wire_pcr: VecDeque<(u64, Pcr)>,
     /// Monotonic track-set generation (issue #774): bumped exactly once per
     /// *applied* PMT diff (add/update/remove), never per PID count. This is
     /// the [`DemuxEvent::TracksResolved`] de-dup key — a PID count is not
@@ -4830,6 +4835,7 @@ impl StreamingTsDemux {
             skipped: BTreeSet::new(),
             next_track_id: TrackId::new(1),
             events: VecDeque::new(),
+            wire_pcr: VecDeque::new(),
             generation: 0,
             tracks_resolved_signalled_at: None,
             cc_states: BTreeMap::new(),
@@ -5076,8 +5082,10 @@ impl StreamingTsDemux {
                 let pmts_pending = self.pmt_reasm.is_empty()
                     || self.pmt_reasm.values().any(|pmt| pmt.pcr_pid.is_none());
                 let mut emit = |program_number: Option<u16>| {
+                    let ticks = pcr.as_27mhz();
+                    self.wire_pcr.push_back((ticks, pcr));
                     self.events.push_back(DemuxEvent::ClockReference {
-                        ticks: pcr.as_27mhz(),
+                        ticks,
                         clock_hz: PCR_CLOCK_HZ,
                         discontinuous: af.discontinuity_indicator,
                         provenance: EventProvenance {
@@ -6677,16 +6685,32 @@ impl<'a> TsDemux<'a> {
                     discontinuous,
                     provenance,
                     ..
-                } => pcr.push(PcrSample {
-                    pcr_27mhz: ticks,
-                    // This batch wrapper only ever demuxes TS, whose
-                    // ClockReference always carries a PID/packet_index — the
-                    // fallbacks are unreachable in practice, not a silent
-                    // downgrade.
-                    pid: provenance.pid.unwrap_or(Pid::from_const(0)),
-                    packet_index: provenance.packet_index.unwrap_or(0),
-                    discontinuity: discontinuous,
-                }),
+                } => {
+                    // This batch wrapper only ever demuxes TS, where a
+                    // `ClockReference` is emitted straight from a parsed
+                    // adaptation-field `Pcr`: `wire_pcr` still holds it, so
+                    // keep the wire parts instead of rebuilding a `Pcr` from
+                    // the 27 MHz view (a parsed extension in `300..=511` is
+                    // off the clock and survives only as the wire value).
+                    // A mismatch falls back to the lossy rebuild.
+                    let source = match demux.wire_pcr.front() {
+                        Some(&(t, pcr)) if t == ticks => Some(pcr),
+                        _ => None,
+                    }
+                    .or_else(|| Pcr::from_27mhz(ticks).ok());
+                    if let Some(wire) = source {
+                        pcr.push(PcrSample {
+                            pcr: wire,
+                            // This batch wrapper only ever demuxes TS, whose
+                            // ClockReference always carries a PID/packet_index
+                            // — the fallbacks are unreachable in practice, not
+                            // a silent downgrade.
+                            pid: provenance.pid.unwrap_or(Pid::from_const(0)),
+                            packet_index: provenance.packet_index.unwrap_or(0),
+                            discontinuity: discontinuous,
+                        });
+                    }
+                }
                 DemuxEvent::Discontinuity { .. } => {}
                 DemuxEvent::InputDegraded {
                     track,
@@ -6740,6 +6764,12 @@ pub(crate) mod tests {
     use super::*;
     use crate::ts_mux::TsMux;
     use broadcast_common::{Package, Parse};
+
+    use broadcast_common::timescale::Timescale;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
 
     /// Every section-carried `stream_type` (Table 2-34) classifies as
     /// [`DataCarriage::Sections`]; the historical PES-carried 0x06/0x15 and
@@ -11236,7 +11266,7 @@ pub(crate) mod tests {
     fn constant_increment_44100_aac_emits_no_timeline_reanchor() {
         /// What a muxer that rounds `1024 * 90000 / 44100` to an integer emits.
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: Timescale = Timescale::from_nonzero(44_100);
+        const SAMPLE_RATE: Timescale = broadcast_common::timescale!(44_100);
         /// ~11.6 s of audio. Accumulated drift here is ~102 ticks: far past
         /// the old 3-tick threshold (which would have fired ~34 times), far
         /// short of the 1800-tick (20 ms) bound the fix derives.
@@ -11290,7 +11320,7 @@ pub(crate) mod tests {
     #[test]
     fn a_real_timeline_gap_emits_exactly_one_reanchor() {
         const PES_INCREMENT_TICKS: i128 = 2090;
-        const SAMPLE_RATE: Timescale = Timescale::from_nonzero(44_100);
+        const SAMPLE_RATE: Timescale = broadcast_common::timescale!(44_100);
         const FRAMES_BEFORE: i128 = 50;
         const FRAMES_AFTER: i128 = 50;
         /// Two seconds of 90 kHz — orders of magnitude past any muxer drift.
@@ -11492,7 +11522,7 @@ pub(crate) mod tests {
 
             emit_audio_au(
                 &AudioKind::Aac,
-                Timescale::from_nonzero(44_100),
+                timescale(44_100),
                 &mut anchor,
                 &au,
                 dts_uw as u64 as i128,
@@ -11545,7 +11575,7 @@ pub(crate) mod tests {
         let mut anchor = AudioAnchor::default();
         emit_audio_au(
             &AudioKind::Aac,
-            Timescale::from_nonzero(44_100),
+            timescale(44_100),
             &mut anchor,
             &au,
             0,
@@ -11630,7 +11660,7 @@ pub(crate) mod tests {
         let mut anchor = AudioAnchor::default();
         emit_audio_au(
             &AudioKind::Aac,
-            Timescale::from_nonzero(44_100),
+            timescale(44_100),
             &mut anchor,
             au,
             0,

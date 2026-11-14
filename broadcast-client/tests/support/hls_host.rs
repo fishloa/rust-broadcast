@@ -77,13 +77,27 @@ pub fn hls_config() -> Config {
     }
 }
 
+pub fn full(code: u16, body: Vec<u8>, headers: http::HeaderMap) -> Reply {
+    Reply::Full(super::status(code), body, headers)
+}
+
+/// A status-only reply from a numeric code.
+pub fn status_only(code: u16) -> Reply {
+    Reply::Status(super::status(code))
+}
+
+/// A statused reply with headers from a numeric code.
+pub fn status_with(code: u16, headers: http::HeaderMap) -> Reply {
+    Reply::StatusHeaders(super::status(code), headers)
+}
+
 #[derive(Debug, Clone)]
 pub enum Reply {
     Ok(Vec<u8>),
-    OkHeaders(Vec<u8>, Vec<(String, String)>),
-    Full(u16, Vec<u8>, Vec<(String, String)>),
-    Status(u16),
-    StatusHeaders(u16, Vec<(String, String)>),
+    OkHeaders(Vec<u8>, http::HeaderMap),
+    Full(http::StatusCode, Vec<u8>, http::HeaderMap),
+    Status(http::StatusCode),
+    StatusHeaders(http::StatusCode, http::HeaderMap),
     Redirect(String),
     TransportError,
     ResetMid(Vec<u8>),
@@ -202,7 +216,7 @@ impl Host {
         *n += 1;
         match self.routes.get(url) {
             Some(replies) if !replies.is_empty() => replies[idx.min(replies.len() - 1)].clone(),
-            _ => Reply::Status(404),
+            _ => Reply::Status(http::StatusCode::NOT_FOUND),
         }
     }
 
@@ -211,14 +225,20 @@ impl Host {
         let conn = req.conn;
         match reply {
             Reply::Ok(body) => {
-                self.session.on_response(conn, 200, &[], ts(self.now));
+                self.session.on_response(
+                    conn,
+                    http::StatusCode::OK,
+                    &http::HeaderMap::new(),
+                    ts(self.now),
+                );
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, ts(self.now));
                 }
                 self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::OkHeaders(body, headers) => {
-                self.session.on_response(conn, 200, &headers, ts(self.now));
+                self.session
+                    .on_response(conn, http::StatusCode::OK, &headers, ts(self.now));
                 for chunk in body.chunks(self.chunk.max(1)) {
                     self.session.on_data(conn, chunk, ts(self.now));
                 }
@@ -232,7 +252,8 @@ impl Host {
                 self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::Status(code) => {
-                self.session.on_response(conn, code, &[], ts(self.now));
+                self.session
+                    .on_response(conn, code, &http::HeaderMap::new(), ts(self.now));
                 self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::StatusHeaders(code, headers) => {
@@ -240,8 +261,13 @@ impl Host {
                 self.session.on_closed(conn, None, ts(self.now));
             }
             Reply::Redirect(loc) => {
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::LOCATION,
+                    http::HeaderValue::from_str(&loc).expect("a test writes a valid location"),
+                );
                 self.session
-                    .on_response(conn, 302, &[("Location".to_string(), loc)], ts(self.now));
+                    .on_response(conn, http::StatusCode::FOUND, &headers, ts(self.now));
             }
             Reply::TransportError => {
                 self.session.on_closed(
@@ -253,7 +279,12 @@ impl Host {
                 );
             }
             Reply::ResetMid(partial) => {
-                self.session.on_response(conn, 200, &[], ts(self.now));
+                self.session.on_response(
+                    conn,
+                    http::StatusCode::OK,
+                    &http::HeaderMap::new(),
+                    ts(self.now),
+                );
                 self.session.on_data(conn, &partial, ts(self.now));
                 self.session.on_closed(
                     conn,

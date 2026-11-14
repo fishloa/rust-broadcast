@@ -45,8 +45,10 @@ A WHIP encoder and a WHIP server resource talking to each other in memory (no HT
 use webrtc_runtime::whip::client::{Event as ClientEvent, WhipClient};
 use webrtc_runtime::whip::server::{Event as ServerEvent, WhipSession};
 
-let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new("https://whip.example.com/pub").with_credentials(broadcast_auth::Credentials::Bearer { token: "token".into() }));
-let mut session = WhipSession::new("https://whip.example.com/session/abc123".into());
+let endpoint = url::Url::parse("https://whip.example.com/pub").unwrap();
+let session_url = url::Url::parse("https://whip.example.com/session/abc123").unwrap();
+let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint).with_credentials(broadcast_auth::Credentials::Bearer { token: "token".into() }));
+let mut session = WhipSession::new(session_url);
 
 // 1. The client builds the POST; the server resource reads the offer.
 let post = client.offer(b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n".to_vec()).unwrap();

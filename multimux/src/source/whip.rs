@@ -1005,7 +1005,7 @@ async fn whip_post_inner(
             SetupRole::Passive,
             parsed.remote_fingerprint.clone(),
         ),
-        Instant::now(),
+        Timestamp::ZERO,
     )
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whip: build media transport: {e}"),
@@ -1031,7 +1031,9 @@ async fn whip_post_inner(
     // `Location` is this session's own resource (RFC 9725 section 4.2), so
     // `PATCH`/`DELETE` address exactly this session.
     let resource_id = crate::webrtc_session::new_resource_id();
-    let mut session = WhipSession::new(format!("/whip/session/{resource_id}"));
+    // The machine takes a parsed URL; a resource path is relative, so it is placed on this host's
+    // own origin (the `Location` it renders is what a peer resolves against the request).
+    let mut session = WhipSession::new(crate::webrtc_session::resource_url("whip", &resource_id));
     let _ = session.on_post(Vec::new());
     let etag = crate::secure_random::token(16);
     let response = session.accept(answer.into_bytes(), etag);
@@ -1217,7 +1219,7 @@ impl WhipIngestSession {
             control,
             _resource: crate::webrtc_session::register_session_for_test(
                 "probe",
-                WhipSession::new("/whip/session/probe".into()),
+                WhipSession::new(crate::webrtc_session::resource_url("whip", "probe")),
                 String::new(),
             )
             .1,
@@ -1532,7 +1534,7 @@ struct ReadDone {
     /// [`read_one`] calls so the [`crate::webrtc_session::MIN_TIMER_INTERVAL`]
     /// floor is measured from the real previous fire, never from "now"
     /// (issue #1150).
-    last_fire: Option<Instant>,
+    last_fire: Option<Timestamp>,
 }
 
 type BoxedRead = Pin<Box<dyn Future<Output = ReadDone> + Send>>;
@@ -1594,8 +1596,15 @@ impl DatagramIo for UdpSocket {
 /// The session clock: `std::time::Instant` as the transport wants it, read
 /// through tokio's clock so a paused-time test moves it deterministically
 /// (identical to `Instant::now()` outside a paused runtime).
-fn clock_now() -> Instant {
+/// This host's monotonic clock, as the `Instant` the session's own tasks use.
+fn clock_instant() -> Instant {
     tokio::time::Instant::now().into_std()
+}
+
+/// The transport's clock reading: [`clock_instant`] as the `Timestamp` every `MediaTransport` call
+/// takes.
+fn clock_at(media: &MediaTransport) -> Timestamp {
+    media.stamp_of(clock_instant())
 }
 
 /// Runs the transport's `handle_timeout`, sends whatever it queued, and
@@ -1605,7 +1614,7 @@ async fn fire_timer<S: DatagramIo>(
     socket: &S,
     shared: &ReadShared,
 ) -> ReadOutcome {
-    let events = media.handle_timeout(clock_now());
+    let events = media.handle_timeout(clock_at(media));
     shared.timer_fires.fetch_add(1, Ordering::Relaxed);
     shared.timer_notify.notify_waiters();
     for Datagram { peer, bytes } in drain_transmit(media) {
@@ -1632,8 +1641,8 @@ async fn fire_timer<S: DatagramIo>(
 fn read_one<S: DatagramIo>(
     socket: Arc<S>,
     mut media: MediaTransport,
-    idle_deadline: Instant,
-    mut last_fire: Option<Instant>,
+    idle_deadline: Timestamp,
+    mut last_fire: Option<Timestamp>,
     control: Arc<SessionControl>,
     shared: ReadShared,
 ) -> BoxedRead {
@@ -1651,7 +1660,8 @@ fn read_one<S: DatagramIo>(
                 last_fire,
             };
         }
-        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, clock_now());
+        let ops_now = clock_at(&media);
+        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, ops_now);
         shared
             .trickled_candidates
             .fetch_add(applied.candidates, Ordering::Relaxed);
@@ -1661,7 +1671,8 @@ fn read_one<S: DatagramIo>(
 
         // The transport's own next timer, taken BEFORE the select so a quiet
         // session still gets its ICE/DTLS retransmits (defect 1) — the timer
-        // arm fires `handle_timeout` WITHOUT ending the session.
+        // arm fires `handle_timeout` WITHOUT ending the session. Both the
+        // deadline and every `now` stay on the transport's own clock.
         let deadline = media.poll_timeout();
 
         // Issue #1150: an already-overdue deadline is serviced BEFORE reading
@@ -1671,8 +1682,8 @@ fn read_one<S: DatagramIo>(
         // indefinitely by a flood with sub-millisecond gaps. This session
         // handles at most ONE datagram per call, so the loop (and every other
         // session and admission) regains control between datagrams.
-        let now = clock_now();
-        if crate::webrtc_session::timer_due(deadline, last_fire, now) {
+        let now = clock_at(&media);
+        if crate::webrtc_session::timer_due(&media, deadline, last_fire, now) {
             let outcome = fire_timer(&mut media, socket.as_ref(), &shared).await;
             return ReadDone {
                 media,
@@ -1684,7 +1695,7 @@ fn read_one<S: DatagramIo>(
         let outcome = tokio::select! {
             received = socket.recv_from(&mut buf) => match received {
                 Ok((n, peer)) => {
-                    match media.handle_datagram(clock_now(), peer, &buf[..n]) {
+                    match media.handle_datagram(clock_at(&media), peer, &buf[..n]) {
                         Ok(events) => {
                             let outbound = drain_transmit(&mut media);
                             for Datagram { peer, bytes } in outbound {
@@ -1727,8 +1738,8 @@ fn read_one<S: DatagramIo>(
             // The read-timeout bound: a session with no datagram since
             // `idle_deadline` ends. This is the transport-timer-independent
             // "vanished publisher" reap.
-            () = sleep_until_opt(Some(idle_deadline)) => {
-                media.handle_timeout(clock_now());
+            () = sleep_until_opt(Some(media.now_at(idle_deadline))) => {
+                media.handle_timeout(clock_at(&media));
                 let outbound = drain_transmit(&mut media);
                 for Datagram { peer, bytes } in outbound {
                     let _ = socket.send_to(&bytes, peer).await;
@@ -1741,8 +1752,8 @@ fn read_one<S: DatagramIo>(
             // floored to MIN_TIMER_INTERVAL from the PREVIOUS fire (carried in
             // `last_fire`), so a stuck (always-overdue) deadline cannot fire
             // `handle_timeout` back-to-back and spin a core.
-            () = crate::webrtc_session::sleep_until_timer(deadline, last_fire) => {
-                last_fire = Some(clock_now());
+            () = crate::webrtc_session::sleep_until_timer(&media, deadline, last_fire) => {
+                last_fire = Some(clock_at(&media));
                 fire_timer(&mut media, socket.as_ref(), &shared).await
             }
             // A `PATCH`/`DELETE` landed: re-arm (the top of the next call
@@ -1787,7 +1798,7 @@ fn first_timer_error(events: &[MediaEvent]) -> Option<String> {
 /// must be treated as ready, or the transport's timer would be delayed until
 /// the read timeout.
 fn sleep_until_opt(deadline: Option<Instant>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-    let now = clock_now();
+    let now = clock_instant();
     match deadline {
         None => Box::pin(std::future::pending()),
         Some(d) if d <= now => Box::pin(std::future::ready(())),
@@ -1818,13 +1829,17 @@ async fn run_session<S: DatagramIo>(
     read_timeout: Duration,
     tx: mpsc::Sender<(SessionId, ReadOutcome)>,
 ) {
-    let mut last_input = clock_now();
+    let mut last_input = clock_instant();
     let mut last_fire = None;
     loop {
+        let idle_deadline = media
+            .stamp_of(last_input)
+            .checked_add(read_timeout)
+            .unwrap_or(Timestamp::ZERO);
         let done = read_one(
             Arc::clone(&socket),
             media,
-            last_input + read_timeout,
+            idle_deadline,
             last_fire,
             Arc::clone(&control),
             shared.clone(),
@@ -1835,7 +1850,7 @@ async fn run_session<S: DatagramIo>(
         let outcome = done.outcome;
         match &outcome {
             ReadOutcome::Timer | ReadOutcome::Control => continue,
-            ReadOutcome::Events(wire) if !wire.is_empty() => last_input = clock_now(),
+            ReadOutcome::Events(wire) if !wire.is_empty() => last_input = clock_instant(),
             ReadOutcome::Events(_) => continue,
             _ => {}
         }
@@ -2025,6 +2040,10 @@ pub(crate) async fn run_whip_with_clock(
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use crate::webrtc_session::Resource;
     use tokio::net::TcpStream;
@@ -2073,7 +2092,9 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         let resource = ResourceTable::new().insert(
             "test".to_string(),
             Resource {
-                machine: parking_lot::Mutex::new(WhipSession::new("/whip/session/test".into())),
+                machine: parking_lot::Mutex::new(WhipSession::new(
+                    crate::webrtc_session::resource_url("whip", "test"),
+                )),
                 control: Arc::clone(&control),
                 remote_ufrag: parking_lot::Mutex::new("abcd".to_string()),
                 local_candidates: Vec::new(),
@@ -2168,7 +2189,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
                 OFFER_FINGERPRINT.into(),
             )
             .with_stun_server("127.0.0.1:9".parse().unwrap()),
-            Instant::now(),
+            Timestamp::ZERO,
         )
         .unwrap();
         assert!(
@@ -2181,7 +2202,9 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         // Idle deadline far in the future so the transport-timer arm, not the
         // read-timeout arm, is what completes. No datagram is sent, so only
         // the timer arm can fire.
-        let idle_deadline = Instant::now() + Duration::from_secs(3600);
+        let idle_deadline = Timestamp::ZERO
+            .checked_add(Duration::from_secs(3600))
+            .expect("a representable idle deadline");
         let fut = read_one(
             socket,
             media,
@@ -2244,7 +2267,8 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
     #[tokio::test(start_paused = true)]
     async fn a_datagram_flood_cannot_postpone_the_transport_timer() {
         const TICK: Duration = Duration::from_micros(500);
-        let t0 = clock_now();
+        let clock_start = Instant::now();
+        let t0 = Timestamp::ZERO;
         let mut media = MediaTransport::new(
             // A STUN gatherer arms a retransmit schedule: a chain of
             // timer deadlines with no inbound datagram at all.
@@ -2263,12 +2287,17 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         .unwrap();
         let first = media.poll_timeout().expect("a STUN gatherer has a timer");
         // The first deadline is already overdue by 5 ms when the flood starts.
-        tokio::time::advance(first.saturating_duration_since(t0) + Duration::from_millis(5)).await;
+        tokio::time::advance(
+            first.saturating_duration_since(media.now_at(t0)) + Duration::from_millis(5),
+        )
+        .await;
 
         let socket = Arc::new(FloodSocket::default());
         let shared = test_shared();
         let control = SessionControl::new();
-        let idle_deadline = clock_now() + Duration::from_secs(3600);
+        let idle_deadline = t0
+            .checked_add(Duration::from_secs(3600))
+            .expect("a representable idle deadline");
         let mut last_fire = None;
         let mut max_lateness = Duration::ZERO;
         for i in 0..4000 {
@@ -2298,7 +2327,10 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             } else if matches!(done.outcome, ReadOutcome::Timer)
                 && let Some(d) = deadline
             {
-                max_lateness = max_lateness.max(clock_now().saturating_duration_since(d));
+                max_lateness = max_lateness.max(
+                    Timestamp::from_instant(clock_start, clock_instant())
+                        .saturating_sub(media.stamp_of(d)),
+                );
             }
             tokio::time::advance(TICK).await;
         }
@@ -2335,11 +2367,26 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
     async fn a_stuck_deadline_can_not_spin_faster_than_the_timer_floor() {
         // Drive many consecutive "overdue" deadlines and confirm each wait
         // advances the paused clock by at least MIN_TIMER_INTERVAL.
+        let clock_start = Instant::now();
         for _ in 0..128 {
             let before = tokio::time::Instant::now();
             {
-                let now = tokio::time::Instant::now().into_std();
-                crate::webrtc_session::sleep_until_timer(Some(now), Some(now)).await;
+                let media = MediaTransport::new(
+                    MediaTransportConfig::new(
+                        "127.0.0.1:0".parse().unwrap(),
+                        crate::secure_random::token(8),
+                        crate::secure_random::token(24),
+                        crate::secure_random::token(8),
+                        crate::secure_random::token(24),
+                        SetupRole::Passive,
+                        OFFER_FINGERPRINT.into(),
+                    ),
+                    Timestamp::ZERO,
+                )
+                .expect("a transport for the timer floor");
+                let now = Timestamp::from_instant(clock_start, clock_instant());
+                crate::webrtc_session::sleep_until_timer(&media, Some(clock_instant()), Some(now))
+                    .await;
             }
             let elapsed = before.elapsed();
             assert!(
@@ -2372,7 +2419,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
     fn parses_video_only_offer() {
         let parsed = parse_whip_offer(OFFER).expect("parse");
         assert_eq!(parsed.payload_type, 96);
-        assert_eq!(parsed.clock_rate, Timescale::from_nonzero(90_000));
+        assert_eq!(parsed.clock_rate, timescale(90_000));
         assert_eq!(parsed.remote_ufrag, "abcd");
         assert_eq!(parsed.remote_pwd, "abcdefghijklmnopqrstuvwx");
         // `parse_remote_fingerprint` returns the typed (`sdp-types`) normalised
@@ -2529,13 +2576,13 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                     SetupRole::Passive,
                     OFFER_FINGERPRINT.into(),
                 ),
-                Instant::now(),
+                Timestamp::ZERO,
             )
             .unwrap(),
             tracks: vec![WhipTrack {
                 track_id: TrackId::new(1),
                 payload_type: 96,
-                clock_rate: Timescale::from_nonzero(90_000),
+                clock_rate: timescale(90_000),
             }],
             control,
             resource,
@@ -2608,13 +2655,13 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                     SetupRole::Passive,
                     OFFER_FINGERPRINT.into(),
                 ),
-                Instant::now(),
+                Timestamp::ZERO,
             )
             .unwrap(),
             tracks: vec![WhipTrack {
                 track_id: TrackId::new(1),
                 payload_type: 96,
-                clock_rate: Timescale::from_nonzero(90_000),
+                clock_rate: timescale(90_000),
             }],
             control,
             resource,
@@ -2853,14 +2900,16 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                         "date: {date}".to_string()
                     } else if lower.starts_with("etag:") {
                         "etag: {etag}".to_string()
-                    } else if let Some(rest) = lower.strip_prefix("location: /whip/session/") {
+                    } else if let Some(rest) =
+                        lower.strip_prefix("location: https://whip.invalid/whip/session/")
+                    {
                         // The resource id is a fresh random token; pin its shape.
                         assert_eq!(
                             rest.len(),
                             crate::webrtc_session::new_resource_id().len(),
                             "the Location carries a full-length resource id: {l}"
                         );
-                        "location: /whip/session/{id}".to_string()
+                        "location: https://whip.invalid/whip/session/{id}".to_string()
                     } else {
                         l.to_string()
                     }
@@ -2940,7 +2989,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 SetupRole::Passive,
                 OFFER_FINGERPRINT.into(),
             ),
-            clock_now(),
+            Timestamp::ZERO,
         )
         .unwrap()
     }

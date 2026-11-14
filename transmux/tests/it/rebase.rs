@@ -40,6 +40,10 @@ use transmux::pipeline::{
 };
 use transmux::rebase::{apply_offset, insert_discontinuity_gap, rebase_to_zero};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 /// A minimal but real AVC track spec (track_id=1, 90 kHz) so `build_init_segment`
 /// emits a valid `avc1`/`avcC` the demuxer can round-trip.
 fn avc_spec() -> TrackSpec {
@@ -61,7 +65,7 @@ fn avc_spec() -> TrackSpec {
     };
     TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
@@ -91,7 +95,7 @@ fn media_with_anchor(start: u64, durs: &[u32]) -> Media {
     }
     Media::new(
         vec![Track::new_at(avc_spec(), samples, start)],
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     )
 }
 
@@ -135,8 +139,8 @@ fn fmp4_demux_populates_start_decode_time_from_tfdt() {
     let samples = [sample_at(0, 3000), sample_at(3000, 3000)];
 
     // Build a real init + media segment at a KNOWN non-zero tfdt.
-    let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), Timescale::from_nonzero(90_000))
-        .expect("init");
+    let mut fmp4 =
+        build_init_segment(std::slice::from_ref(&spec), timescale(90_000)).expect("init");
     let frag = FragmentTrackData::new(TrackId::new(1), KNOWN_BASE, &samples);
     let media_seg = build_media_segment(1, &[frag]).expect("media segment");
     fmp4.extend_from_slice(&media_seg);

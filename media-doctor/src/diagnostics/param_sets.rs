@@ -209,7 +209,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "missing-parameter-sets"
-                    && f.location.pid == u32::from(VIDEO_PID.value())),
+                    && f.location.stream == crate::StreamLocator::Ts(VIDEO_PID)),
             "expected missing-parameter-sets, got {:?}",
             report.findings()
         );

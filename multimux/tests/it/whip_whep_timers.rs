@@ -212,7 +212,7 @@ async fn drive_client_until_srtp_ready(
             match client.recv_from(&mut buf) {
                 Ok((n, peer)) => {
                     media
-                        .handle_datagram(std::time::Instant::now(), peer, &buf[..n])
+                        .handle_datagram(media.stamp_of(std::time::Instant::now()), peer, &buf[..n])
                         .unwrap();
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
@@ -220,7 +220,7 @@ async fn drive_client_until_srtp_ready(
             }
         }
         tokio::time::sleep_until(wake).await;
-        media.handle_timeout(std::time::Instant::now());
+        media.handle_timeout(media.stamp_of(std::time::Instant::now()));
     }
 }
 
@@ -317,7 +317,7 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
         )
         .with_is_controlling(true),
         client_cert,
-        std::time::Instant::now(),
+        broadcast_common::stage::Timestamp::from_micros(1),
     )
     .expect("client transport");
     client_media

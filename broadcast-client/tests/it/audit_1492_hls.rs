@@ -3,7 +3,7 @@ use crate::support;
 use broadcast_client::{AUDIO_TRACK_ID_OFFSET, Event};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
-use support::hls_host::{Host, Reply, SEC, hls_config, ts_segment};
+use support::hls_host::{Host, Reply, SEC, full, hls_config, ts_segment};
 use transmux::{CmafMux, TrackId, TsDemux, build_init_segment};
 
 const PLAYLIST_URL: &str = "http://origin.test/hls/index.m3u8";
@@ -82,11 +82,11 @@ fn ranged_playlist(first_len: usize, second_len: usize) -> Vec<u8> {
     .into_bytes()
 }
 
-fn content_range(start: usize, len: usize, total: usize) -> Vec<(String, String)> {
-    vec![(
-        "Content-Range".to_string(),
-        format!("bytes {start}-{}/{total}", start + len - 1),
-    )]
+fn content_range(start: usize, len: usize, total: usize) -> http::HeaderMap {
+    support::headers(&[(
+        "Content-Range",
+        &format!("bytes {start}-{}/{total}", start + len - 1),
+    )])
 }
 
 struct Ranged {
@@ -120,12 +120,12 @@ impl Ranged {
     fn exact_partial_replies(&self) -> Vec<Reply> {
         let total = self.first.len() + self.second.len();
         vec![
-            Reply::Full(
+            full(
                 206,
                 self.first.clone(),
                 content_range(0, self.first.len(), total),
             ),
-            Reply::Full(
+            full(
                 206,
                 self.second.clone(),
                 content_range(self.first.len(), self.second.len(), total),
@@ -141,8 +141,8 @@ fn a_range_ignoring_server_answering_200_has_the_sub_range_sliced_out() {
     assert!(reference.samples() > 0, "the reference path must decode");
     let whole = r.whole();
     let sliced = r.host(vec![
-        Reply::Full(200, whole.clone(), Vec::new()),
-        Reply::Full(200, whole, Vec::new()),
+        full(200, whole.clone(), http::HeaderMap::new()),
+        full(200, whole, http::HeaderMap::new()),
     ]);
     assert_eq!(
         sliced.samples(),
@@ -155,7 +155,7 @@ fn a_range_ignoring_server_answering_200_has_the_sub_range_sliced_out() {
 fn a_200_shorter_than_the_range_end_is_a_failure() {
     let r = Ranged::new();
     let short = r.first[..r.first.len() / 2].to_vec();
-    let h = r.host(vec![Reply::Full(200, short, Vec::new())]);
+    let h = r.host(vec![full(200, short, http::HeaderMap::new())]);
     assert_eq!(h.samples(), 0);
 }
 
@@ -163,7 +163,7 @@ fn a_200_shorter_than_the_range_end_is_a_failure() {
 fn a_206_whose_content_range_disagrees_with_the_request_is_a_failure() {
     let r = Ranged::new();
     let total = r.first.len() + r.second.len();
-    let h = r.host(vec![Reply::Full(
+    let h = r.host(vec![full(
         206,
         r.first.clone(),
         content_range(1, r.first.len(), total),
@@ -174,13 +174,13 @@ fn a_206_whose_content_range_disagrees_with_the_request_is_a_failure() {
 #[test]
 fn a_206_without_content_range_is_a_failure() {
     let r = Ranged::new();
-    let h = r.host(vec![Reply::Full(206, r.first.clone(), Vec::new())]);
+    let h = r.host(vec![full(206, r.first.clone(), http::HeaderMap::new())]);
     assert_eq!(h.samples(), 0);
 }
 
 const RESERVED_PLAYLIST_URL: &str = "http://origin.test/hls/reserved.m3u8";
 const FIRST_RESERVED_ID: u32 = AUDIO_TRACK_ID_OFFSET + 1;
-const MOVIE_TIMESCALE: Timescale = Timescale::from_nonzero(1_000);
+const MOVIE_TIMESCALE: Timescale = broadcast_common::timescale!(1_000);
 
 fn cmaf_with_track_ids(first_id: u32) -> (Vec<u8>, Vec<u8>) {
     let data = test_fixtures::read("ts/h264-aac.ts");

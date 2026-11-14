@@ -21,7 +21,7 @@ use rtsp_types::{Message, Method, Request, Response, StatusCode, Version, header
 use core::time::Duration;
 
 use crate::config::SessionIdSource;
-use crate::error::{Error, MessageKind, Result};
+use crate::error::{Error, MessageKind, MessageParseError, Result};
 use crate::server_config::RtspServerConfig;
 use crate::session_id::SessionId;
 use crate::state::{SessionState, server_next_state};
@@ -154,14 +154,14 @@ impl ServerSession {
         let (message, _consumed) =
             Message::<Body>::parse(data).map_err(|e| Error::MessageParse {
                 what: MessageKind::Request,
-                source: Box::new(e),
+                source: MessageParseError::Codec(e),
             })?;
         let request = match message {
             Message::Request(r) => r,
             _ => {
                 return Err(Error::MessageParse {
                     what: MessageKind::Request,
-                    source: "expected an RTSP request".into(),
+                    source: MessageParseError::NotARequest,
                 });
             }
         };

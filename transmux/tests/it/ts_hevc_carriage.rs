@@ -40,6 +40,10 @@ use transmux::{
 
 // ── Fixture loading (mirrors tests/it/ts_hevc.rs) ──────────────────────────────
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixtures_dir() -> PathBuf {
     test_fixtures::path("ts/hevc")
 }
@@ -239,7 +243,7 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
 
     let spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Hevc {
             config: parts.config.clone(),
             width: parts.width,
@@ -265,7 +269,7 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
     let sample1 = Sample::new(sample1_data, Some(90_000), Some(90_000), Some(90_000), true);
 
     let track = Track::new(spec, vec![sample0, sample1]);
-    let media = Media::new(vec![track], Timescale::from_nonzero(90_000));
+    let media = Media::new(vec![track], timescale(90_000));
 
     // 1-second target at 90 kHz: sample 0 alone reaches the target, so sample
     // 1 (an IRAP) opens segment 2.
@@ -339,7 +343,7 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
     // stream would land in a single segment.
     let audio_spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(48_000),
+        timescale(48_000),
         CodecConfig::Ac3 {
             config: dummy_ac3_config(),
             channel_count: 2,
@@ -366,7 +370,7 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
         .collect();
     let video_spec = TrackSpec::new(
         TrackId::new(2),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Hevc {
             config: parts.config,
             width: parts.width,
@@ -393,10 +397,7 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
     ];
     let video_track = Track::new(video_spec, video_samples);
 
-    let media = Media::new(
-        vec![audio_track, video_track],
-        Timescale::from_nonzero(90_000),
-    );
+    let media = Media::new(vec![audio_track, video_track], timescale(90_000));
     let out = TsHlsPackager::new(1)
         .package(&media)
         .expect("package TS-HLS");
@@ -425,7 +426,7 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     // every non-AVC video codec.
     let audio_spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(48_000),
+        timescale(48_000),
         CodecConfig::Ac3 {
             config: dummy_ac3_config(),
             channel_count: 2,
@@ -449,7 +450,7 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
         .collect();
     let video_spec = TrackSpec::new(
         TrackId::new(2),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Hevc {
             config: parts.config,
             width: parts.width,

@@ -4173,7 +4173,7 @@ pub fn playlist_reload_timeout(origin: &HlsOrigin) -> Duration {
 mod tests {
     use broadcast_common::timescale::Timescale;
 
-    const T90K: Timescale = Timescale::from_nonzero(90_000);
+    const T90K: Timescale = broadcast_common::timescale!(90_000);
 
     #[test]
     fn a_segment_with_fewer_than_two_samples_has_no_measurable_frame_rate() {

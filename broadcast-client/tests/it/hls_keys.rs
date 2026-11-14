@@ -155,7 +155,9 @@ fn header<'a>(seen: &'a Seen, name: &str) -> Option<&'a str> {
 }
 
 fn key_failed(status: Option<u16>) -> ErrorKind {
-    ErrorKind::KeyFetchFailed { status }
+    ErrorKind::KeyFetchFailed {
+        status: status.map(crate::support::status),
+    }
 }
 
 fn has_fatal(events: &[Event]) -> bool {
@@ -271,14 +273,8 @@ fn key_on_other_origin_carries_no_authorization_cookie_or_extra_headers() {
 
 #[test]
 fn key_401_emits_auth_required_then_replays_with_credentials() {
-    let challenge = vec![(
-        "WWW-Authenticate".to_string(),
-        "Basic realm=\"keys\"".to_string(),
-    )];
-    let mut h = encrypted_host(
-        hls_config(),
-        vec![Reply::StatusHeaders(401, challenge), good_key()],
-    );
+    let challenge = crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"keys\"")]);
+    let mut h = encrypted_host(hls_config(), vec![status_with(401, challenge), good_key()]);
     h.run_until(
         |evs| evs.iter().any(|e| matches!(e, Event::AuthRequired { .. })),
         1000,
@@ -391,7 +387,7 @@ fn key_wrong_length_calls_on_key_error_and_retries_with_backoff() {
         "the 4 s step, jittered below it: {second} us"
     );
     assert_eq!(errors(&h.events), vec![(ErrorKind::BadKey, false)]);
-    let attempts: Vec<u64> = statuses(&h.events)
+    let attempts: Vec<u32> = statuses(&h.events)
         .into_iter()
         .filter_map(|s| match s {
             Status::Reconnecting { attempt } => Some(attempt),
@@ -404,7 +400,7 @@ fn key_wrong_length_calls_on_key_error_and_retries_with_backoff() {
 
 #[test]
 fn key_404_retries_not_not_found_status() {
-    let mut h = encrypted_host(hls_config(), vec![Reply::Status(404), good_key()]);
+    let mut h = encrypted_host(hls_config(), vec![status_only(404), good_key()]);
     h.run_to_end();
     let st = statuses(&h.events);
     assert!(!st.contains(&Status::NotFound), "{st:?}");
@@ -626,7 +622,12 @@ fn late_key_callbacks_after_close_ignored() {
         Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
     let first = drain_actions(&mut s, 0);
     let (playlist_conn, _) = http_requests(&first)[0].clone();
-    s.on_response(playlist_conn, 200, &[], ts(0));
+    s.on_response(
+        playlist_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     s.on_data(playlist_conn, &playlist(0, &entries, true), ts(0));
     s.on_closed(playlist_conn, None, ts(0));
     let actions = drain_actions(&mut s, 0);
@@ -644,7 +645,12 @@ fn late_key_callbacks_after_close_ignored() {
             .iter()
             .any(|a| matches!(a, Action::Close {conn } if *conn == key_conn))
     );
-    s.on_response(key_conn, 200, &[], ts(0));
+    s.on_response(
+        key_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     s.on_data(key_conn, &KEY_A, ts(2));
     s.on_closed(key_conn, None, ts(2));
     assert!(s.next_event().is_none());
@@ -676,7 +682,12 @@ fn fatal_error_stops_session_no_more_requests() {
     let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
     let first = drain_actions(&mut s, 0);
     let (pconn, _) = http_requests(&first)[0].clone();
-    s.on_response(pconn, 200, &[], ts(3));
+    s.on_response(
+        pconn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(3),
+    );
     s.on_data(pconn, &playlist(0, &entries, true), ts(0));
     s.on_closed(pconn, None, ts(0));
     let reqs = http_requests(&drain_actions(&mut s, 0));
@@ -689,7 +700,12 @@ fn fatal_error_stops_session_no_more_requests() {
     assert_eq!(seg_conns.len(), 2);
     let _ = drain_events(&mut s);
 
-    s.on_response(key_conn, 200, &[], ts(3));
+    s.on_response(
+        key_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(3),
+    );
     s.on_data(key_conn, &KEY_A[..9], ts(0));
     s.on_closed(key_conn, None, ts(0));
     let events = drain_events(&mut s);
@@ -706,7 +722,12 @@ fn fatal_error_stops_session_no_more_requests() {
     assert!(http_requests(&actions).is_empty());
 
     for c in &seg_conns {
-        s.on_response(*c, 200, &[], ts(3));
+        s.on_response(
+            *c,
+            http::StatusCode::from_u16(200).expect("a test names a real status"),
+            &crate::support::headers(&[]),
+            ts(3),
+        );
         s.on_data(*c, &plain_seg(0), ts(1));
         s.on_closed(*c, None, ts(1));
     }
@@ -728,9 +749,9 @@ fn non_fatal_error_emitted_once_not_per_retry() {
     let mut h = encrypted_host(
         hls_config(),
         vec![
-            Reply::Status(500),
-            Reply::Status(500),
-            Reply::Status(500),
+            status_only(500),
+            status_only(500),
+            status_only(500),
             good_key(),
         ],
     );
@@ -753,7 +774,7 @@ fn escalates_to_fatal_after_max_key_failures() {
         new_config.max_key_failures = MAX;
         new_config
     };
-    let mut h = encrypted_host(config, vec![Reply::Status(404)]);
+    let mut h = encrypted_host(config, vec![status_only(404)]);
     run_until_fatal(&mut h);
     assert_eq!(h.hits(KEY_URL), usize::try_from(MAX).unwrap());
     assert_eq!(
@@ -771,24 +792,18 @@ fn escalates_to_fatal_after_max_key_failures() {
 
 #[test]
 fn auth_statuses_on_key_requests_are_not_error_events() {
-    let mut h = encrypted_host(hls_config(), vec![Reply::Status(403), good_key()]);
+    let mut h = encrypted_host(hls_config(), vec![status_only(403), good_key()]);
     h.run_to_end();
     assert!(
         h.events
             .iter()
-            .any(|e| matches!(e, Event::Forbidden { status: 403 }))
+            .any(|e| matches!(e, Event::Forbidden { status } if status.as_u16() == 403))
     );
     assert!(errors(&h.events).is_empty(), "{:?}", errors(&h.events));
     assert!(h.events.iter().any(is_ended));
 
-    let challenge = vec![(
-        "WWW-Authenticate".to_string(),
-        "Bearer realm=\"k\"".to_string(),
-    )];
-    let mut h = encrypted_host(
-        hls_config(),
-        vec![Reply::StatusHeaders(401, challenge), good_key()],
-    );
+    let challenge = crate::support::headers(&[("WWW-Authenticate", "Bearer realm=\"k\"")]);
+    let mut h = encrypted_host(hls_config(), vec![status_with(401, challenge), good_key()]);
     h.session
         .set_credentials(Credentials::bearer(BEARER))
         .unwrap();
@@ -799,7 +814,7 @@ fn auth_statuses_on_key_requests_are_not_error_events() {
     assert!(
         h.events
             .iter()
-            .any(|e| matches!(e, Event::AuthRejected { status: 401 }))
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401))
     );
     assert!(errors(&h.events).is_empty(), "{:?}", errors(&h.events));
 }

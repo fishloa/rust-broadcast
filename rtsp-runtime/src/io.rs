@@ -668,7 +668,7 @@ where
     let dns = rustls::pki_types::ServerName::try_from(server_name.to_string()).map_err(|e| {
         Error::Tls {
             server_name: server_name.to_string(),
-            source: Box::new(e),
+            source: e,
         }
     })?;
     let stream = bounded(timeouts.handshake, "handshake", async {
@@ -702,7 +702,7 @@ pub fn default_tls_client_config() -> crate::Result<rustls::ClientConfig> {
             rustls::crypto::aws_lc_rs::default_provider(),
         ))
         .with_safe_default_protocol_versions()
-        .map_err(|e| Error::TlsConfig(Box::new(e)))?
+        .map_err(Error::TlsConfig)?
         .with_root_certificates(roots)
         .with_no_client_auth(),
     )

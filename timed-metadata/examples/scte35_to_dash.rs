@@ -13,6 +13,10 @@ use broadcast_common::timescale::Timescale;
 use mp4_emsg::PresentationTime;
 use timed_metadata::{TimeAnchor, Timeline, convert::EmsgConfig};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn main() {
     // Real Unified Streaming splice: ID 2002, out-of-network, break_duration 24 s.
     let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
@@ -27,7 +31,7 @@ fn main() {
 
     // Build emsg config: 90 kHz timescale, segment-relative delta 0, 24 s duration.
     let cfg = EmsgConfig::new(
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         PresentationTime::Delta(0),
         2_160_000,        // 24s * 90000
         "34".to_string(), // segmentation_type_id for Provider Ad Start

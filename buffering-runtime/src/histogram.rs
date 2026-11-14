@@ -1,6 +1,9 @@
 //! NetEq-style forgetting histogram of per-interval maxima, Q15 weights.
 
+use core::time::Duration;
+
 use crate::config::{PERMILLE, Q15_ONE, Q15_SHIFT};
+use crate::time::duration_micros;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -20,13 +23,14 @@ pub struct ForgettingHistogram {
 }
 
 impl ForgettingHistogram {
-    /// New histogram. `buckets` and `bucket_us` must be non-zero (validated
-    /// by the configs; zeros are clamped to 1 here so this never panics).
+    /// New histogram. `buckets` and `bucket` must be non-zero (validated
+    /// by the configs; a zero width is clamped to one microsecond here so this
+    /// never divides by zero).
     #[must_use]
-    pub fn new(buckets: u16, bucket_us: u32, forget_q15: u16, quantile_permille: u16) -> Self {
+    pub fn new(buckets: u16, bucket: Duration, forget_q15: u16, quantile_permille: u16) -> Self {
         Self {
             w: vec![0; usize::from(buckets).max(1)],
-            bucket_us: u64::from(bucket_us).max(1),
+            bucket_us: duration_micros(bucket).max(1),
             forget_q15: u64::from(forget_q15).min(Q15_ONE - 1),
             quantile_permille: u64::from(quantile_permille),
             intervals: 0,
