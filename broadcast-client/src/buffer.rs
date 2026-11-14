@@ -7,7 +7,8 @@ use broadcast_common::clock33::pcr_signed_distance;
 use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
-    BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
+    BufferController, ControllerConfig, Event as RtEvent, Hint, Micros, StallMemorySnapshot,
+    Ticks27,
 };
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -81,8 +82,9 @@ impl InputLog {
         self.last_now_us
     }
 
-    pub(crate) fn last_now(&self) -> u64 {
-        self.last_now_us
+    /// The last recorded instant as the controller's clock.
+    pub(crate) fn last_now(&self) -> Micros {
+        Micros(self.last_now_us)
     }
 
     pub(crate) fn record(&mut self, input: Input) -> bool {
@@ -185,7 +187,7 @@ pub(crate) fn effective_controller_config(
     let floor = start_pending_track_wait_us
         .max(start_pending_track_hard_cap_us)
         .saturating_add(SILENCE_MARGIN_US);
-    cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(floor);
+    cfg.track_silence_timeout_us = cfg.track_silence_timeout_us.max(Micros(floor));
     cfg
 }
 
@@ -288,7 +290,7 @@ impl Feeder {
         self.finite = true;
         if let Some(c) = self.controller.take() {
             self.seed = Some(c.snapshot_memory());
-            self.seed_at_us = Some(self.log.last_now());
+            self.seed_at_us = Some(self.log.last_now().0);
         }
         self.pending_registered = false;
         self.started = false;
@@ -489,7 +491,7 @@ impl Feeder {
         if self.holds_start() {
             let at = self.log.last_now();
             for t in removed {
-                self.held.entry(t).or_insert(at);
+                self.held.entry(t).or_insert(at.0);
             }
         } else {
             for t in removed {
@@ -723,9 +725,12 @@ impl Feeder {
             return;
         }
         let now = self.log.last_now();
-        let seed = self
-            .seed
-            .map(|s| s.aged(self.seed_at_us.map_or(0, |at| now.saturating_sub(at))));
+        let seed = self.seed.map(|s| {
+            s.aged(Micros(
+                self.seed_at_us
+                    .map_or(0, |at| now.saturating_sub(Micros(at)).0),
+            ))
+        });
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
             self.replay_seed_value = seed;
             self.seed = None;
@@ -765,13 +770,13 @@ impl Feeder {
         self.first_media_us.get_or_insert(now_us);
         self.sync_pending(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_track_media(now_us, t.value(), end);
+            c.on_track_media(Micros(now_us), t.value(), Ticks27(end));
             rec!(
                 self,
                 Input::TrackMedia {
-                    now_us,
+                    now_us: Micros(now_us),
                     track: t.value(),
-                    end
+                    end: Ticks27(end)
                 }
             );
         }
@@ -791,13 +796,13 @@ impl Feeder {
             return;
         };
         let len = u32::try_from(bytes).unwrap_or(u32::MAX);
-        c.on_chunk(now_us, len, pcr);
+        c.on_chunk(Micros(now_us), len, pcr.map(Ticks27));
         rec!(
             self,
             Input::Chunk {
-                now_us,
+                now_us: Micros(now_us),
                 bytes: len,
-                pcr
+                pcr: pcr.map(Ticks27)
             }
         );
         self.flush_pending(now_us);
@@ -815,8 +820,14 @@ impl Feeder {
         self.log.now(now_us);
         self.ensure_controller();
         if let Some(c) = &mut self.controller {
-            c.on_hint(now_us, h);
-            rec!(self, Input::Hint { now_us, hint: h });
+            c.on_hint(Micros(now_us), h);
+            rec!(
+                self,
+                Input::Hint {
+                    now_us: Micros(now_us),
+                    hint: h
+                }
+            );
         }
     }
 
@@ -827,8 +838,14 @@ impl Feeder {
         self.sync_pending(now_us);
         self.expire_held(now_us);
         if let Some(c) = &mut self.controller {
-            c.on_tick(now_us, pts);
-            rec!(self, Input::Tick { now_us, pts });
+            c.on_tick(Micros(now_us), pts.map(Ticks27));
+            rec!(
+                self,
+                Input::Tick {
+                    now_us: Micros(now_us),
+                    pts: pts.map(Ticks27)
+                }
+            );
         }
     }
 
@@ -840,7 +857,7 @@ impl Feeder {
                     RtEvent::StartPlaying { media_27mhz, .. } => {
                         self.started = true;
                         out.push(Event::Buffer(BufferEvent::Start {
-                            at_27mhz: media_27mhz,
+                            at_27mhz: media_27mhz.0,
                         }));
                     }
                     RtEvent::Pause {
@@ -850,7 +867,7 @@ impl Feeder {
                         ..
                     } => {
                         out.push(Event::Buffer(BufferEvent::Pause {
-                            hold_at_27mhz,
+                            hold_at_27mhz: hold_at_27mhz.0,
                             reason: match rt_reason {
                                 buffering_runtime::Reason::NoData => {
                                     crate::events::PauseReason::NoData
@@ -871,7 +888,7 @@ impl Feeder {
                     }
                     RtEvent::Resume { media_27mhz, .. } => {
                         out.push(Event::Buffer(BufferEvent::Resume {
-                            at_27mhz: media_27mhz,
+                            at_27mhz: media_27mhz.0,
                         }));
                     }
                     _ => {}
@@ -903,7 +920,7 @@ impl Feeder {
                     stalls: s.stalls,
                     reprimes: s.reprimes,
                     discontinuities: s.discontinuities,
-                    longest_freeze_us: s.longest_freeze_us,
+                    longest_freeze_us: s.longest_freeze_us.0,
                 }
             })
     }
@@ -1017,7 +1034,7 @@ mod tests {
         let st = streams();
         let mut f = Feeder::new(
             ControllerConfig::default(),
-            Some(StallMemorySnapshot::new(PEAK_US, 0)),
+            Some(StallMemorySnapshot::new(Micros(PEAK_US), Micros(0))),
             crate::events::DEFAULT_START_PENDING_TRACK_WAIT_US,
             crate::events::DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
         );
@@ -1032,7 +1049,7 @@ mod tests {
         f.on_chunk(LATER_US, CHUNK, None);
         assert_eq!(
             f.stall_memory().peak_us,
-            PEAK_US,
+            Micros(PEAK_US),
             "the live controller after a finite connection lost the stall memory"
         );
         let placeholder = f
@@ -1051,7 +1068,7 @@ mod tests {
         const CHUNK: usize = 1316;
         const LATER_US: u64 = 1_000_000;
         let st = streams();
-        let first = StallMemorySnapshot::new(PEAK_US, 0);
+        let first = StallMemorySnapshot::new(Micros(PEAK_US), Micros(0));
         let mut f = Feeder::new(
             ControllerConfig::default(),
             Some(first),
@@ -1072,7 +1089,7 @@ mod tests {
             Some(first),
             "the log seed stayed the first controller's after a finite connection"
         );
-        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(PEAK_US));
+        assert_eq!(f.replay_seed().map(|s| s.peak_us), Some(Micros(PEAK_US)));
     }
 
     #[test]

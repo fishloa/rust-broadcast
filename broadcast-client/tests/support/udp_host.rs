@@ -1,5 +1,12 @@
 use broadcast_client::{Action, Config, Event, Session, UdpMode};
 use broadcast_common::Serialize;
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
+
 use rtp_packet::RtpPacket;
 
 use super::replay::{Replay, TimedEvent};
@@ -22,7 +29,7 @@ pub struct UdpHost {
 
 impl UdpHost {
     pub fn open(url: &str, config: Config) -> Self {
-        let session = Session::open(url, config, 0).unwrap();
+        let session = Session::open(url, config, ts(0)).unwrap();
         let mut host = Self {
             session,
             conn: None,
@@ -38,7 +45,7 @@ impl UdpHost {
     }
 
     pub fn settle(&mut self) {
-        while let Some(a) = self.session.poll(self.now) {
+        while let Some(a) = self.session.poll(ts(self.now)) {
             match a {
                 Action::UdpBind { conn, .. } => {
                     self.conn = Some(conn);
@@ -48,7 +55,7 @@ impl UdpHost {
                     }
                 }
                 Action::Close { conn } => self.closes.push(conn),
-                Action::WakeAt(at) => self.wake = Some(at),
+                Action::WakeAt(at) => self.wake = Some(at.as_micros()),
                 _ => {}
             }
         }
@@ -63,7 +70,7 @@ impl UdpHost {
     pub fn datagram(&mut self, bytes: &[u8]) {
         self.now += DATAGRAM_STEP_US;
         let conn = self.conn.expect("a bound socket");
-        self.session.on_data(conn, bytes, self.now);
+        self.session.on_data(conn, bytes, ts(self.now));
         self.settle();
     }
 
@@ -74,7 +81,7 @@ impl UdpHost {
 
     pub fn close_socket(&mut self) {
         let conn = self.conn.expect("a bound socket");
-        self.session.on_closed(conn, None, self.now);
+        self.session.on_closed(conn, None, ts(self.now));
         self.settle();
     }
 
@@ -99,8 +106,8 @@ impl UdpHost {
     }
 }
 
-pub fn ts_datagrams(ts: &[u8], packets_per_datagram: usize) -> Vec<Vec<u8>> {
-    let whole = &ts[..ts.len() / TS_PACKET * TS_PACKET];
+pub fn ts_datagrams(bytes: &[u8], packets_per_datagram: usize) -> Vec<Vec<u8>> {
+    let whole = &bytes[..bytes.len() / TS_PACKET * TS_PACKET];
     whole
         .chunks(packets_per_datagram * TS_PACKET)
         .map(<[u8]>::to_vec)
@@ -124,8 +131,8 @@ pub fn rtp_datagram(seq: u16, ssrc: u32, payload_type: u8, payload: &[u8]) -> Ve
     buf
 }
 
-pub fn rtp_datagrams(ts: &[u8], per: usize, first_seq: u16, ssrc: u32) -> Vec<Vec<u8>> {
-    ts_datagrams(ts, per)
+pub fn rtp_datagrams(timescale: &[u8], per: usize, first_seq: u16, ssrc: u32) -> Vec<Vec<u8>> {
+    ts_datagrams(timescale, per)
         .iter()
         .enumerate()
         .map(|(i, payload)| {

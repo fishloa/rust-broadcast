@@ -28,7 +28,7 @@ fn file_config(bind: std::net::SocketAddr, path: String, tmp: &std::path::Path) 
     Config {
         bind: bind.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         routes: vec![Route {
             name: "cam".to_string(),

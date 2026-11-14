@@ -94,7 +94,7 @@ async fn sample_trace(fixture: &str) -> String {
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
     let config = TrunkConfig::default()

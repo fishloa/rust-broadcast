@@ -193,7 +193,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
     let config = Config {
         bind: bind_addr.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         routes: vec![Route {
             name: "cam".to_string(),
@@ -280,7 +280,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
     let config = Config {
         bind: bind_addr.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         ingest_connect_timeout_secs: 3.0,
         routes: vec![Route {

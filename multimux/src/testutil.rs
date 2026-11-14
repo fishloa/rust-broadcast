@@ -252,7 +252,7 @@ pub(crate) async fn assert_dash_continues_across_a_reconnect(
     let route = std::sync::Arc::new(crate::route::RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
     let app = app_with(&route, output);

@@ -14,21 +14,25 @@ use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, Polic
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
 const TICKS_PER_US: u64 = 27;
-const BASE: Ticks27 = 1_000_000 * TICKS_PER_US;
-const T0: Micros = 50_000_000;
-const CHUNK_US: Micros = 20_000;
-const VIDEO_AHEAD_US: Micros = 1_000_000;
-const AUDIO_FIRST_AT_US: Micros = 400_000;
-const RUN_US: Micros = 2_000_000;
+const BASE: Ticks27 = Ticks27(1_000_000 * TICKS_PER_US);
+const T0: Micros = Micros(50_000_000);
+const CHUNK_US: Micros = Micros(20_000);
+const VIDEO_AHEAD_US: Micros = Micros(1_000_000);
+const AUDIO_FIRST_AT_US: Micros = Micros(400_000);
+const RUN_US: Micros = Micros(2_000_000);
 
 fn at(offset_us: u64) -> Ticks27 {
-    BASE + offset_us * TICKS_PER_US
+    Ticks27(BASE.0 + offset_us * TICKS_PER_US)
+}
+
+const fn us(v: u64) -> Micros {
+    Micros(v)
 }
 
 fn controller() -> BufferController {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::default();
-    p.initial_us = 500_000;
+    p.initial_us = us(500_000);
     let cfg = ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap();
     BufferController::new(cfg, None).unwrap()
 }
@@ -37,25 +41,25 @@ fn controller() -> BufferController {
 /// `AUDIO_FIRST_AT_US`. `churn` runs once video is well ahead: `Some(false)` unregisters and
 /// re-registers audio back to back, `Some(true)` ticks in between. Returns the first `Start`
 /// instant (after `T0`) and its lead.
-fn run(churn: Option<bool>) -> Option<(Micros, u64)> {
+fn run(churn: Option<bool>) -> Option<(Micros, Micros)> {
     let mut c = controller();
     c.register_track(VIDEO);
     c.register_track(AUDIO);
     let mut churned = false;
     let mut t = 0;
-    while t < RUN_US {
-        let now = T0 + t;
+    while t < RUN_US.0 {
+        let now = Micros(T0.0 + t);
         c.on_chunk(now, 1000, None);
         if t == 0 {
             c.on_track_media(now, VIDEO, at(0));
         }
-        c.on_track_media(now, VIDEO, at(t + VIDEO_AHEAD_US));
-        if t >= AUDIO_FIRST_AT_US {
-            c.on_track_media(now, AUDIO, at(t - AUDIO_FIRST_AT_US / 2));
+        c.on_track_media(now, VIDEO, at(t + VIDEO_AHEAD_US.0));
+        if t >= AUDIO_FIRST_AT_US.0 {
+            c.on_track_media(now, AUDIO, at(t - AUDIO_FIRST_AT_US.0 / 2));
         }
         if let Some(tick_between) = churn
             && !churned
-            && t >= AUDIO_FIRST_AT_US / 2
+            && t >= AUDIO_FIRST_AT_US.0 / 2
         {
             churned = true;
             c.unregister_track(AUDIO);
@@ -67,10 +71,10 @@ fn run(churn: Option<bool>) -> Option<(Micros, u64)> {
         c.on_tick(now, None);
         while let Some(e) = c.poll_event() {
             if let Event::StartPlaying { lead_us, .. } = e {
-                return Some((t, lead_us));
+                return Some((Micros(t), lead_us));
             }
         }
-        t += CHUNK_US;
+        t += CHUNK_US.0;
     }
     None
 }
@@ -93,7 +97,7 @@ fn a_tick_between_unregister_and_register_releases_the_start_as_documented() {
         t < AUDIO_FIRST_AT_US,
         "the tick in between starts on video alone, at {t}"
     );
-    assert!(lead >= VIDEO_AHEAD_US - CHUNK_US);
+    assert!(lead >= Micros(VIDEO_AHEAD_US.0 - CHUNK_US.0));
 }
 
 fn log(name: &str) -> Option<InputLog> {
@@ -107,7 +111,7 @@ fn log(name: &str) -> Option<InputLog> {
 }
 
 /// Index of the input whose call produced the first `StartPlaying`, and the event's lead.
-fn first_start(log: &InputLog) -> (usize, Micros, u64) {
+fn first_start(log: &InputLog) -> (usize, Micros, Micros) {
     let mut c = log.controller().unwrap();
     for (i, input) in log.inputs.iter().enumerate() {
         input.apply(&mut c);
@@ -152,7 +156,7 @@ fn the_field_start_came_from_a_tick_while_audio_was_unregistered() {
         "Start at input {start}, audio unregistered at {unregister} and re-registered at {register}"
     );
     assert!(matches!(log.inputs[start], Input::Tick { .. }));
-    assert_eq!(lead, 1_000_000);
+    assert_eq!(lead, us(1_000_000));
 }
 
 #[test]
@@ -190,11 +194,11 @@ fn without_the_churn_the_field_log_starts_only_once_audio_covers_the_lead() {
         })
         .unwrap();
     assert!(
-        lead * TICKS_PER_US <= audio_end - origin,
+        lead.0 * TICKS_PER_US <= audio_end.0 - origin.0,
         "lead {lead} us is not covered by audio, which ends {} us past the origin",
-        (audio_end - origin) / TICKS_PER_US
+        (audio_end.0 - origin.0) / TICKS_PER_US
     );
-    assert_eq!((now, lead), (681_132, 687_995));
+    assert_eq!((now, lead), (us(681_132), us(687_995)));
 }
 
 #[test]
@@ -203,5 +207,5 @@ fn the_pass_log_is_unchanged() {
         return;
     };
     let (_, now, lead) = first_start(&log);
-    assert_eq!((now, lead), (1_734_275, 543_995));
+    assert_eq!((now, lead), (us(1_734_275), us(543_995)));
 }

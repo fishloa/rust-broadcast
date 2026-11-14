@@ -816,7 +816,7 @@ mod tests {
     /// `drive_program_segmenters` (issue #805 task 2b), which every
     /// driver-backed `run_*` entry point calls; it uses
     /// `transmux::VIDEO_CLOCK_RATE` for the same movie timescale this test
-    /// hardcodes, and takes `target_duration_secs`/`part_target_ms` off the
+    /// hardcodes, and takes `target_duration_secs`/`part_target` off the
     /// route exactly as this test's literal `1.0, 250` stand in for here.
     #[test]
     fn a_segmenter_can_hold_a_segment_writer_while_ingest_holds_the_sample_writer() {

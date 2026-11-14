@@ -750,7 +750,7 @@ pub async fn serve_for_test_with_read_load() -> (
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
     // `run_rtmp`'s task owns the route (and its `OnceCell<Arc<RtmpInfra>>`),
@@ -1036,7 +1036,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1243,7 +1243,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1357,7 +1357,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1490,7 +1490,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);
@@ -1582,7 +1582,7 @@ mod tests {
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
         let route_handle_for_task = Arc::clone(&route_handle);

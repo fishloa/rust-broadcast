@@ -10,7 +10,7 @@ use hls_runtime::client::{MasterSelection, RenditionInfo};
 use transmux::TrackSpec;
 use url::Url;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
@@ -155,7 +155,7 @@ impl HlsSession {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
     ) {

@@ -17,11 +17,17 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
+use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
 };
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use url::Url;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const DEFAULT_MPD: &str = "../fixtures/dash/timeline-gpac/timeline.mpd";
 const ORIGIN: &str = "http://fixtures.invalid";
@@ -117,10 +123,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut pending: VecDeque<Action> = VecDeque::new();
     let mut samples: BTreeMap<u32, (usize, f64)> = BTreeMap::new();
     let mut discontinuities = 0usize;
-    let mut now = 0u64;
+    let mut now_us = 0u64;
 
     for _ in 0..MAX_STEPS {
-        while let Some(action) = client.poll(now) {
+        while let Some(action) = client.poll(now(now_us)) {
             pending.push_back(action);
         }
         while let Some(output) = client.next_output() {
@@ -175,21 +181,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let Some(action) = pending.pop_front() else {
             break;
         };
-        now += 1_000;
+        now_us += 1_000;
         let outcome: Result<(), Error> = match action.id() {
             None => match read(&root, action.url(), None) {
-                Ok(body) => client.on_mpd(now, &body),
+                Ok(body) => client.on_mpd(now(now_us), &body),
                 Err(_) => return Err("the MPD could not be read".into()),
             },
             Some(id) => match read(&root, action.url(), action.byte_range()) {
                 Ok(body) => match id {
-                    ResourceId::Init { .. } => client.on_init(now, id, &body),
-                    ResourceId::Index { .. } => client.on_index(now, id, &body),
-                    _ => client.on_segment(now, id, &body),
+                    ResourceId::Init { .. } => client.on_init(now(now_us), id, &body),
+                    ResourceId::Index { .. } => client.on_index(now(now_us), id, &body),
+                    _ => client.on_segment(now(now_us), id, &body),
                 },
                 Err(failure) => {
-                    if let FailureClass::Retry { .. } = client.on_failure(now, id, failure)? {
-                        client.retry(now, id);
+                    if let FailureClass::Retry { .. } =
+                        client.on_failure(now(now_us), id, failure)?
+                    {
+                        client.retry(now(now_us), id);
                     }
                     Ok(())
                 }
@@ -198,7 +206,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Err(Error::Rejected { id, class, .. }) = &outcome
             && let FailureClass::Retry { .. } = class
         {
-            client.retry(now, *id);
+            client.retry(now(now_us), *id);
         } else {
             outcome?;
         }

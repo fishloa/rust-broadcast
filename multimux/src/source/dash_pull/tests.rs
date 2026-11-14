@@ -194,7 +194,7 @@ impl Pull {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));

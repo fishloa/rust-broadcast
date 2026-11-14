@@ -16,6 +16,7 @@ use crate::source::fetch::inactivity::{Expired, Inactivity};
 use crate::source::fetch::resume::{Basis, Parked, Stash};
 use crate::source::fetch::retry::RefusedCapture;
 use broadcast_auth::{AuthDecision, AuthState};
+use broadcast_common::stage::Timestamp;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TimeoutClass {
@@ -152,12 +153,14 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
             byte_range: req.byte_range.filter(|_| resume.is_none()),
             identity: None,
         });
-        actions.push_back(Action::WakeAt(now.saturating_add(timeout)));
+        actions.push_back(Action::WakeAt(Timestamp::from_micros(
+            now.saturating_add(timeout),
+        )));
         let deadline = now.checked_add(timeout);
         if req.purpose.is_media()
             && let Some(at) = self.inactivity.arm(conn, now)
         {
-            actions.push_back(Action::WakeAt(at));
+            actions.push_back(Action::WakeAt(Timestamp::from_micros(at)));
         }
         self.reqs.insert(conn, req);
         if let Some(deadline) = deadline {
@@ -243,7 +246,7 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
     pub(crate) fn stalled_conns(&mut self, now: u64, actions: &mut VecDeque<Action>) -> Vec<u32> {
         let expired = self.inactive(now);
         for at in expired.wakes {
-            actions.push_back(Action::WakeAt(at));
+            actions.push_back(Action::WakeAt(Timestamp::from_micros(at)));
         }
         expired.stalled
     }

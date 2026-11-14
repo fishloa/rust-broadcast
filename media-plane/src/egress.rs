@@ -683,7 +683,7 @@ mod tests {
         );
         // And strictly before the deadline, the same never-arriving request
         // still legitimately Awaits.
-        let still_waiting = egress.resolve(99, Timestamp::from_nanos(999_999_999), policy);
+        let still_waiting = egress.resolve(99, Timestamp::from_nanos(999_999_000), policy);
         assert!(
             matches!(still_waiting, EgressResponse::Await { .. }),
             "expected Await strictly before the deadline, got {still_waiting:?}"

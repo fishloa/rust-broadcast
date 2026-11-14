@@ -15,6 +15,7 @@ use crate::support::segmenter_feed::{
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::StatusCode;
 use tower::ServiceExt;
@@ -57,7 +58,7 @@ async fn arrival_pdt_on_media_and_iframe() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_program_date_time(ProgramDateTimeSource::Arrival),
@@ -132,7 +133,7 @@ async fn off_emits_no_pdt() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_program_date_time(ProgramDateTimeSource::Off),
@@ -168,7 +169,7 @@ async fn ts_hls_route_carries_pdt() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_container(Container::MpegTs)
@@ -217,7 +218,7 @@ async fn pdt_validator_clean() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_program_date_time(ProgramDateTimeSource::Arrival),
@@ -338,7 +339,7 @@ fn file_config(
     let mut cfg = Config {
         bind: bind.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         routes: vec![Route {
             name: "cam".to_string(),

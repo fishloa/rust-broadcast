@@ -279,7 +279,7 @@ fn build_rig(
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_hold_cold_playlist(false)
@@ -900,7 +900,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_declared_bandwidth_bps(8_000_000)
@@ -2161,8 +2161,8 @@ async fn run_on(route: &Arc<RouteHandle>, trunk: &Arc<Trunk>, sources: &[Source]
     segmenter.continue_after_reconnect(
         route
             .epoch(ProgramId(0))
-            .map(|e| e.media_start_ns)
-            .unwrap_or(0),
+            .map(|e| std::time::Duration::from_nanos(e.media_start_ns))
+            .unwrap_or(std::time::Duration::ZERO),
     );
     if let Some(init) = segmenter.init_segment() {
         route.set_init(ProgramId(0), init);
@@ -2182,7 +2182,7 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_hold_cold_playlist(false)
@@ -2260,7 +2260,7 @@ fn sibling_trunk_carries_trunk_config_capacities() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {

@@ -108,7 +108,7 @@ fn run_vod(
                 run.key_fetches.push((id, url.clone()));
                 client.on_key(id, &keys[name])?;
             }
-            Action::WaitMs(_) => {}
+            Action::Wait(_) => {}
             other => panic!("unexpected action {other:?}"),
         }
         while let Some(o) = client.next_output() {

@@ -10,6 +10,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use broadcast_hls::MediaType;
 use dash_runtime::client::{
@@ -24,18 +25,22 @@ use hls_runtime::client::{MasterSelection, RenditionInfo, VariantInfo};
 use transmux::{TrackId, TrackSpec};
 use url::Url;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::deadline;
 use crate::source::fetch::failures::{Attempts, Verdict, verdict};
 use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
 };
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
-use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after_us};
+use crate::source::fetch::retry::{
+    Backoff, RefusedCapture, backoff_ms, duration_us, retry_after_us,
+};
 use crate::source::fetch::wall::WallClock;
 use broadcast_auth::AuthState;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
 const STATUS_FORBIDDEN: u16 = 403;
@@ -265,6 +270,7 @@ impl DashSource {
                 .with_dash(config.dash)
                 .with_limits(pull.clone()),
         );
+        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
         let mut source = Self {
             client,
             mpd_url: url.clone(),
@@ -274,7 +280,7 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
+            backoff: Backoff::new(&backoff_steps_ms, backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
             utc_credentials: config.utc_timing_credentials,
@@ -284,11 +290,11 @@ impl DashSource {
             refused_captures: BTreeMap::new(),
             flight: InFlight::new(
                 Timeouts {
-                    manifest_us: config.request_timeout_us,
-                    segment_us: config.segment_timeout_us,
+                    manifest_us: duration_us(config.request_timeout),
+                    segment_us: duration_us(config.segment_timeout),
                     aux_us: config.dash.utc_timeout_us,
                 },
-                config.segment_inactivity_timeout_us,
+                duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
             ),
             stash: Stash::new(),
@@ -369,7 +375,8 @@ impl DashSource {
         if self.fatal {
             return;
         }
-        self.client.set_wall_clock(now_us, unix_us);
+        self.client
+            .set_wall_clock(Timestamp::from_micros(now_us), unix_us);
         self.drain_outputs();
     }
 
@@ -437,7 +444,7 @@ impl DashSource {
                 .with_limits(self.pull.clone()),
         );
         if let Some((mono, unix)) = self.anchor {
-            client.set_wall_clock(mono, unix);
+            client.set_wall_clock(Timestamp::from_micros(mono), unix);
         }
         self.client = client;
         self.mpd_accepted = false;
@@ -480,7 +487,7 @@ impl DashSource {
         let Some(req) = self.flight.reqs.remove(&conn) else {
             return;
         };
-        auth.receive_cookies(&req.url, headers, now);
+        auth.receive_cookies(&req.url, headers, Timestamp::from_micros(now));
         let head = ResponseHead {
             conn,
             status,
@@ -609,7 +616,7 @@ impl DashSource {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
     ) {
@@ -672,7 +679,9 @@ impl DashSource {
 
     fn deliver_unchanged(&mut self, req: &Req, now: u64) {
         let meta = Self::meta(req, None);
-        let _ = self.client.on_mpd_unchanged(now, &meta);
+        let _ = self
+            .client
+            .on_mpd_unchanged(Timestamp::from_micros(now), &meta);
         self.mpd_failures.reset();
         self.drain_outputs();
     }
@@ -680,7 +689,10 @@ impl DashSource {
     fn deliver_mpd(&mut self, req: &Req, now: u64) {
         let final_url = (req.url.as_str() != req.original_url).then(|| req.url.to_string());
         let meta = Self::meta(req, final_url.as_deref());
-        match self.client.on_mpd_with(now, req.body.as_slice(), &meta) {
+        match self
+            .client
+            .on_mpd_with(Timestamp::from_micros(now), req.body.as_slice(), &meta)
+        {
             Ok(()) => {
                 self.mpd_failures.reset();
                 self.mpd_accepted = true;
@@ -722,14 +734,18 @@ impl DashSource {
         if let Some(date) = req.extra.head.date.as_deref() {
             response = response.with_date(date);
         }
-        let _ = self.client.on_utc_response(now, id, &response);
+        let _ = self
+            .client
+            .on_utc_response(Timestamp::from_micros(now), id, &response);
     }
 
     fn deliver_resource(&mut self, id: ResourceId, body: &[u8], now: u64) {
         let result = match id {
-            ResourceId::Init { .. } => self.client.on_init(now, id, body),
-            ResourceId::Index { .. } => self.client.on_index(now, id, body),
-            _ => self.client.on_segment(now, id, body),
+            ResourceId::Init { .. } => self.client.on_init(Timestamp::from_micros(now), id, body),
+            ResourceId::Index { .. } => self.client.on_index(Timestamp::from_micros(now), id, body),
+            _ => self
+                .client
+                .on_segment(Timestamp::from_micros(now), id, body),
         };
         match result {
             Ok(()) => {
@@ -777,17 +793,24 @@ impl DashSource {
     fn fail_purpose(&mut self, purpose: Purpose, now: u64, failure: Failure) {
         match purpose {
             Purpose::Mpd => {
-                let class = self.client.on_mpd_failure(now, failure);
+                let class = self
+                    .client
+                    .on_mpd_failure(Timestamp::from_micros(now), failure);
                 if let FailureClass::Retry { attempt, .. } = class {
                     self.schedule_mpd_retry(now, u64::from(attempt));
                 }
             }
             Purpose::Utc(id) => {
-                let _ = self.client.on_utc_failure(now, id, failure);
+                let _ = self
+                    .client
+                    .on_utc_failure(Timestamp::from_micros(now), id, failure);
             }
             Purpose::Resource(id) => {
                 self.init_undecodable.remove(&id);
-                if let Ok(class) = self.client.on_failure(now, id, failure) {
+                if let Ok(class) = self
+                    .client
+                    .on_failure(Timestamp::from_micros(now), id, failure)
+                {
                     self.after_class(id, class, now);
                 }
             }
@@ -800,23 +823,29 @@ impl DashSource {
             self.stash.discard(&Purpose::Resource(id));
         }
         if let FailureClass::Retry { attempt, .. } = class {
-            let wait = self
-                .backoff
-                .delay_us(u64::from(attempt))
-                .max(self.retry_after_us);
-            let at = now.saturating_add(wait);
-            self.retries.insert(id, at);
-            self.events.push_back(Event::Status(Status::Reconnecting {
-                attempt: u64::from(attempt),
-            }));
-            self.actions.push_back(Action::WakeAt(at));
+            let wait = Duration::from_micros(
+                self.backoff
+                    .delay_us(u64::from(attempt))
+                    .max(self.retry_after_us),
+            );
+            // A deadline past the end of the clock can never be reached: the retry never fires.
+            if let Some(at) = deadline(Timestamp::from_micros(now), wait) {
+                self.retries.insert(id, at.as_micros());
+                self.events.push_back(Event::Status(Status::Reconnecting {
+                    attempt: u64::from(attempt),
+                }));
+                self.actions.push_back(Action::WakeAt(at));
+            }
         }
     }
 
     fn schedule_mpd_retry(&mut self, now: u64, attempt: u64) {
-        let wait = self.backoff.delay_us(attempt).max(self.retry_after_us);
-        let at = now.saturating_add(wait);
-        self.mpd_retry_at = Some(at);
+        let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+        // A deadline past the end of the clock can never be reached: the retry never fires.
+        let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
+            return;
+        };
+        self.mpd_retry_at = Some(at.as_micros());
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
         self.actions.push_back(Action::WakeAt(at));
@@ -833,7 +862,7 @@ impl DashSource {
             && now >= at
         {
             self.mpd_retry_at = None;
-            self.client.retry_mpd(now);
+            self.client.retry_mpd(Timestamp::from_micros(now));
         }
         let due: Vec<ResourceId> = self
             .retries
@@ -843,7 +872,7 @@ impl DashSource {
             .collect();
         for id in due {
             self.retries.remove(&id);
-            if !self.client.retry(now, id) {
+            if !self.client.retry(Timestamp::from_micros(now), id) {
                 self.stash.discard(&Purpose::Resource(id));
             }
         }
@@ -882,7 +911,7 @@ impl DashSource {
             }
             self.run_due_retries(now);
             let mut issued = false;
-            while let Some(action) = self.client.poll(now) {
+            while let Some(action) = self.client.poll(Timestamp::from_micros(now)) {
                 issued = true;
                 self.issue(action, now, auth);
                 if self.fatal {
@@ -905,12 +934,18 @@ impl DashSource {
             return;
         };
         let at = if wake > now {
-            wake
+            Timestamp::from_micros(wake)
         } else {
-            now.saturating_add(MIN_WAKE_STEP_US)
+            match deadline(
+                Timestamp::from_micros(now),
+                Duration::from_micros(MIN_WAKE_STEP_US),
+            ) {
+                Some(at) => at,
+                None => return,
+            }
         };
-        if self.wake_pushed != Some(at) {
-            self.wake_pushed = Some(at);
+        if self.wake_pushed != Some(at.as_micros()) {
+            self.wake_pushed = Some(at.as_micros());
             self.actions.push_back(Action::WakeAt(at));
         }
     }
@@ -989,7 +1024,7 @@ impl DashSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
-        let mut headers = auth.request_headers(&req.url, now);
+        let mut headers = auth.request_headers(&req.url, Timestamp::from_micros(now));
         if !self.utc_credentials && matches!(req.purpose, Purpose::Utc(_)) {
             headers.retain(|(name, _)| !is_credential_header(name));
         }

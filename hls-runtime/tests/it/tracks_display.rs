@@ -24,7 +24,7 @@ fn drive_ts(bytes: &[u8]) -> Vec<Output> {
             Some(Action::FetchResource { id, .. }) => {
                 client.on_resource(id, bytes).expect("resource demuxes");
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             Some(other) => panic!("unexpected action: {other:?}"),
             None => break,
         }
@@ -50,7 +50,7 @@ fn drive_fmp4(playlist: &str) -> Vec<Output> {
                 let bytes = test_fixtures::read(&format!("hls/cmaf-fmp4/{name}"));
                 client.on_resource(id, &bytes).expect("resource demuxes");
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             Some(other) => panic!("unexpected action: {other:?}"),
             None => break,
         }
@@ -257,7 +257,7 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
         match a {
             Action::FetchResource { id, .. } => ids.push(id),
             Action::FetchPlaylist { .. } => {}
-            Action::WaitMs(_) => {}
+            Action::Wait(_) => {}
             other => panic!("unexpected action: {other:?}"),
         }
     }
@@ -272,7 +272,7 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
     while let Some(a) = client.poll() {
         match a {
             Action::FetchPlaylist { .. } => {}
-            Action::WaitMs(_) => {}
+            Action::Wait(_) => {}
             other => panic!("unexpected action: {other:?}"),
         }
     }
@@ -289,7 +289,7 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
         match a {
             Action::FetchResource { id, .. } => ids.push(id),
             Action::FetchPlaylist { .. } => {}
-            Action::WaitMs(_) => {}
+            Action::Wait(_) => {}
             other => panic!("unexpected action: {other:?}"),
         }
     }
@@ -304,7 +304,7 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
     while let Some(a) = client.poll() {
         match a {
             Action::FetchPlaylist { .. } => {}
-            Action::WaitMs(_) => {}
+            Action::Wait(_) => {}
             other => panic!("unexpected action: {other:?}"),
         }
     }

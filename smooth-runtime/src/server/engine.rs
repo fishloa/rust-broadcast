@@ -1342,13 +1342,16 @@ mod tests {
             Arc::new(Vec::new),
             Arc::new(Vec::new),
         ));
-        let policy = AwaitPolicy::new(Timestamp::from_nanos(10));
+        // The policy's deadline is at the tenth microsecond: an origin asked at microsecond
+        // zero still has time to wait, the one asked at the deadline has given up. A nanosecond
+        // reading would truncate both instants onto microsecond zero.
+        let policy = AwaitPolicy::new(Timestamp::from_micros(10));
         assert!(matches!(
-            origin.manifest(Timestamp::from_nanos(0), policy),
+            origin.manifest(Timestamp::from_micros(0), policy),
             EgressResponse::Await { .. }
         ));
         assert!(matches!(
-            origin.manifest(Timestamp::from_nanos(10), policy),
+            origin.manifest(Timestamp::from_micros(10), policy),
             EgressResponse::NotFound
         ));
     }

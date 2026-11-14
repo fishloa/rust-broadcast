@@ -18,7 +18,7 @@ fn llhls_route_declared(declared: u64) -> Arc<RouteHandle> {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
         .with_declared_bandwidth_bps(declared),
@@ -31,7 +31,7 @@ fn llhls_route_undeclared_unpublished() -> Arc<RouteHandle> {
     Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ))
 }
@@ -40,7 +40,7 @@ fn llhls_route_with_segment() -> Arc<RouteHandle> {
     let route = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
     route.publish_new_program(media_plane::ProgramId(0));
@@ -64,7 +64,7 @@ fn ts_route_undeclared_unpublished() -> Arc<RouteHandle> {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
         .with_container(Container::MpegTs),
@@ -164,7 +164,7 @@ fn published_without_segment(output: &Arc<dyn Output>) -> Arc<RouteHandle> {
     let mut route = RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     );
     if output.kind() == multimux::output::OutputKind::TsHls {
@@ -206,7 +206,7 @@ async fn master_ratchets_bandwidth_over_http() {
     let route = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
     route.publish_new_program(media_plane::ProgramId(0));

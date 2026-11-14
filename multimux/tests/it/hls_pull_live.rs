@@ -133,7 +133,7 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
     Config {
         bind: bind.to_string(),
         target_duration_secs: ROUTE_TARGET_DURATION_SECS,
-        part_target_ms: ROUTE_PART_TARGET_MS,
+        part_target: Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)),
         window_segments: ROUTE_WINDOW_SEGMENTS,
         routes: vec![Route {
             name: "pulled".to_string(),

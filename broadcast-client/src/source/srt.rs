@@ -9,6 +9,8 @@ use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use broadcast_common::stage::Timestamp;
+
 use sha2::{Digest, Sha256};
 use srt_runtime::arq::Receiver as ArqReceiver;
 use srt_runtime::arq::seq::{contiguous_runs, seq_diff, seq_in_closed_range, seq_lt};
@@ -63,7 +65,7 @@ pub(crate) struct Out {
 struct Handshake {
     hs: CallerHandshake,
     started_us: u64,
-    next_tick_us: u64,
+    next_tick_us: Timestamp,
     tick_period_us: u64,
 }
 
@@ -165,7 +167,9 @@ impl SrtCaller {
                 self.state = State::Handshaking(Box::new(Handshake {
                     hs,
                     started_us: now_us,
-                    next_tick_us: now_us.saturating_add(tick_period_us),
+                    next_tick_us: Timestamp::from_micros(now_us)
+                        .checked_add(Duration::from_micros(tick_period_us))
+                        .unwrap_or(Timestamp(u64::MAX)),
                     tick_period_us,
                 }));
             }
@@ -247,7 +251,7 @@ impl SrtCaller {
             tsbpd: TsbpdScheduler::new(
                 peer_isn,
                 -i64::from(peer_ts_us),
-                u64::from(params.latency_ms),
+                Duration::from_millis(u64::from(params.latency_ms)),
                 DRIFT_US,
                 params.flags.tlpktdrop(),
                 None,
@@ -306,8 +310,16 @@ impl SrtCaller {
                     self.fail_handshake();
                     return;
                 }
-                while now_us >= h.next_tick_us {
-                    h.next_tick_us = h.next_tick_us.saturating_add(h.tick_period_us.max(1));
+                while Timestamp::from_micros(now_us) >= h.next_tick_us {
+                    // A tick period that does not fit the clock ends the schedule (past the end
+                    // of the clock there is no later tick to make), so the loop stops here.
+                    let Some(next) = h
+                        .next_tick_us
+                        .checked_add(Duration::from_micros(h.tick_period_us.max(1)))
+                    else {
+                        break;
+                    };
+                    h.next_tick_us = next;
                     for output in h.hs.tick() {
                         match output {
                             HandshakeOutput::Send(b) => self.out.sends.push(b),
@@ -337,27 +349,38 @@ impl SrtCaller {
         }
     }
 
-    pub(crate) fn next_deadline_us(&self, now_us: u64) -> Option<u64> {
+    pub(crate) fn next_deadline(&self, now_us: u64) -> Option<Timestamp> {
         match &self.state {
             State::Handshaking(h) => {
-                let budget = h
-                    .started_us
-                    .saturating_add(micros(self.config.timeouts.handshake));
-                Some(budget.min(h.next_tick_us))
+                // A budget past the end of the clock can never be reached: only the next
+                // handshake tick is a deadline then.
+                let budget = Timestamp::from_micros(h.started_us)
+                    .checked_add(self.config.timeouts.handshake);
+                Some(budget.map_or(h.next_tick_us, |budget| budget.min(h.next_tick_us)))
             }
             State::Connected(link) => {
-                let idle = link
-                    .last_rx_us
-                    .saturating_add(micros(self.config.timeouts.read_idle));
-                let ack = link
-                    .epoch_us
-                    .saturating_add(micros(link.receiver.next_timeout()));
-                let mut at = idle.min(ack);
+                let idle = Timestamp::from_micros(link.last_rx_us)
+                    .checked_add(self.config.timeouts.read_idle);
+                let ack =
+                    Timestamp::from_micros(link.epoch_us).checked_add(link.receiver.next_timeout());
+                // A deadline past the end of the clock is no deadline; the others still bind.
+                let mut at = match (idle, ack) {
+                    (Some(idle), Some(ack)) => Some(idle.min(ack)),
+                    (Some(one), None) | (None, Some(one)) => Some(one),
+                    (None, None) => None,
+                };
                 let now = Duration::from_micros(now_us.saturating_sub(link.epoch_us));
                 if let Some(t) = link.tsbpd.next_release_after(now) {
-                    at = at.min(link.epoch_us.saturating_add(micros(t)));
+                    // A scheduled release past the end of the clock is no release: no deadline.
+                    let release = Timestamp::from_micros(link.epoch_us).checked_add(t);
+                    at = match (at, release) {
+                        (Some(at), Some(release)) => Some(at.min(release)),
+                        (None, Some(release)) => Some(release),
+                        (None, None) => None,
+                        (Some(_), None) => None,
+                    };
                 }
-                Some(at)
+                at
             }
             State::Idle | State::Dead => None,
         }

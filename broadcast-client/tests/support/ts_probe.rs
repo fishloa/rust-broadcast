@@ -1,4 +1,10 @@
 use broadcast_client::{Action, Config, Session};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 pub const TS_URL: &str = "http://example/live.ts";
 
@@ -44,7 +50,7 @@ pub fn location(url: &str) -> (String, String) {
 
 pub fn requests(session: &mut Session, now: u64) -> Vec<Req> {
     let mut out = Vec::new();
-    while let Some(a) = session.poll(now) {
+    while let Some(a) = session.poll(ts(now)) {
         if let Action::HttpRequest {
             conn, url, headers, ..
         } = a
@@ -67,11 +73,11 @@ pub fn one(session: &mut Session, now: u64) -> Req {
 }
 
 pub fn open(url: &str, config: Config) -> Session {
-    Session::open(url, config, 0).expect("open")
+    Session::open(url, config, ts(0)).expect("open")
 }
 
 pub fn respond(session: &mut Session, req: &Req, status: u16, headers: &[(String, String)]) {
-    session.on_response(req.conn, status, headers, req.now);
+    session.on_response(req.conn, status, headers, ts(req.now));
 }
 
 pub fn ok_with_cookies(session: &mut Session, req: &Req, lines: &[&str]) {
@@ -79,7 +85,7 @@ pub fn ok_with_cookies(session: &mut Session, req: &Req, lines: &[&str]) {
 }
 
 pub fn reconnect(session: &mut Session, now: u64) -> Req {
-    session.reconnect(now);
+    session.reconnect(ts(now));
     one(session, now)
 }
 

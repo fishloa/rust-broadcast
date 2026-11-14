@@ -419,7 +419,7 @@ mod tests {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         ));
 

@@ -14,6 +14,7 @@ use crate::error::{Error, Result};
 use crate::splice::ConditionedSplicePoint;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+use broadcast_common::stage::Timestamp;
 
 /// One session's ad break: the decision being rendered, plus the conditioned
 /// splice points it entered (and, once known, resumed) at.
@@ -94,11 +95,12 @@ impl SessionStore {
         self
     }
 
-    /// Moves the store's clock to `now_us` (microseconds on any monotonic
-    /// timeline the caller keeps; a value earlier than the current one is
-    /// ignored). Records touched from now on carry this time.
-    pub fn advance(&mut self, now_us: u64) {
-        self.now_us = self.now_us.max(now_us);
+    /// Moves the store's clock to `now` (the caller's own monotonic clock, the
+    /// `broadcast_common::stage::Timestamp` every sans-IO engine takes; a value
+    /// earlier than the current one is ignored). Records touched from now on
+    /// carry this time.
+    pub fn advance(&mut self, now: Timestamp) {
+        self.now_us = self.now_us.max(now.as_micros());
     }
 
     /// Evicts every session last touched (by [`Self::begin_break`] or
@@ -285,19 +287,19 @@ mod tests {
     fn expire_idle_drops_only_sessions_untouched_for_longer_than_the_ttl() {
         let mut store = SessionStore::new();
         let decision = AdBreakDecision::single_asset("b1", "https://x/a.m3u8");
-        store.advance(1_000);
+        store.advance(Timestamp::from_micros(1_000));
         store
             .begin_break("old", BreakState::new(decision.clone(), splice_point()))
             .unwrap();
-        store.advance(5_000);
+        store.advance(Timestamp::from_micros(5_000));
         store
             .begin_break("new", BreakState::new(decision, splice_point()))
             .unwrap();
-        store.advance(6_000);
+        store.advance(Timestamp::from_micros(6_000));
         assert_eq!(store.expire_idle(2_000), 1);
         assert!(store.get("old").is_none());
         assert!(store.get("new").is_some());
-        store.advance(1);
+        store.advance(Timestamp::from_micros(1));
         assert_eq!(
             store.expire_idle(1_000),
             0,

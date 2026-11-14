@@ -13,6 +13,8 @@
 
 use std::collections::BTreeMap;
 
+use broadcast_common::stage::Timestamp;
+
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
     ResponseMeta, UtcMethod, UtcResponse,
@@ -257,7 +259,8 @@ impl Sim {
     pub fn give_host_clock(&mut self) {
         let now = self.world.mono();
         let unix = self.world.host_unix();
-        self.client.set_wall_clock(now, unix);
+        self.client
+            .set_wall_clock(Timestamp::from_micros(now), unix);
         self.host_clock_calls.push(now);
     }
 
@@ -401,7 +404,7 @@ impl Sim {
     fn poll_all(&mut self) {
         loop {
             let now = self.world.mono();
-            let Some(a) = self.client.poll(now) else {
+            let Some(a) = self.client.poll(Timestamp::from_micros(now)) else {
                 break;
             };
             self.dispatch(a);
@@ -411,11 +414,12 @@ impl Sim {
 
     fn deliver(&mut self, d: Delivery) {
         let now = self.world.mono();
+        let at = Timestamp::from_micros(now);
         match d {
             Delivery::RetryResource(id) => {
-                self.client.retry(now, id);
+                self.client.retry(at, id);
             }
-            Delivery::RetryMpd => self.client.retry_mpd(now),
+            Delivery::RetryMpd => self.client.retry_mpd(at),
             Delivery::Response {
                 action,
                 sent_mono,
@@ -428,14 +432,14 @@ impl Sim {
         {
             let bogus = b"stale";
             let r = match old {
-                ResourceId::Init { .. } => self.client.on_init(now, old, bogus),
-                ResourceId::Index { .. } => self.client.on_index(now, old, bogus),
-                _ => self.client.on_segment(now, old, bogus),
+                ResourceId::Init { .. } => self.client.on_init(at, old, bogus),
+                ResourceId::Index { .. } => self.client.on_index(at, old, bogus),
+                _ => self.client.on_segment(at, old, bogus),
             };
             if let Err(e) = r {
                 self.errors.push(e);
             }
-            let _ = self.client.on_failure(now, old, Failure::Transport);
+            let _ = self.client.on_failure(at, old, Failure::Transport);
         }
         self.drain_outputs();
     }
@@ -457,6 +461,7 @@ impl Sim {
         received_mono: u64,
         outcome: Outcome,
     ) {
+        let at = Timestamp::from_micros(now);
         let resp = match outcome {
             Outcome::Resp(r) => Ok(r),
             Outcome::Fail(f) => Err(f),
@@ -466,7 +471,7 @@ impl Sim {
             Action::FetchMpd { .. } => match resp {
                 Ok(r) if r.status == 304 => {
                     let meta = ResponseMeta::new(sent_mono, received_mono);
-                    if let Err(e) = self.client.on_mpd_unchanged(now, &meta) {
+                    if let Err(e) = self.client.on_mpd_unchanged(at, &meta) {
                         self.errors.push(e);
                     }
                 }
@@ -481,7 +486,7 @@ impl Sim {
                     if let Some(f) = r.final_url.as_deref() {
                         meta = meta.with_final_url(f);
                     }
-                    if let Err(e) = self.client.on_mpd_with(now, &r.body, &meta) {
+                    if let Err(e) = self.client.on_mpd_with(at, &r.body, &meta) {
                         if matches!(e, Error::Mpd(_)) {
                             let at = self.world.elapsed_us + backoff_us(1);
                             self.push(at, Delivery::RetryMpd);
@@ -494,7 +499,7 @@ impl Sim {
                         Ok(r) => Failure::Status(r.status),
                         Err(f) => f,
                     };
-                    let class = self.client.on_mpd_failure(now, failure);
+                    let class = self.client.on_mpd_failure(at, failure);
                     let attempt = match class {
                         FailureClass::Retry { attempt, .. } => attempt,
                         _ => 1,
@@ -510,7 +515,7 @@ impl Sim {
                     if let Some(d) = r.date.as_deref() {
                         ur = ur.with_date(d);
                     }
-                    if let Err(e) = self.client.on_utc_response(now, id, &ur) {
+                    if let Err(e) = self.client.on_utc_response(at, id, &ur) {
                         self.errors.push(e);
                     }
                 }
@@ -519,7 +524,7 @@ impl Sim {
                         Ok(r) => Failure::Status(r.status),
                         Err(f) => f,
                     };
-                    if let Err(e) = self.client.on_utc_failure(now, id, failure) {
+                    if let Err(e) = self.client.on_utc_failure(at, id, failure) {
                         self.errors.push(e);
                     }
                 }
@@ -534,15 +539,15 @@ impl Sim {
                     Err(f) => Err(f),
                 };
                 match result {
-                    Err(f) => match self.client.on_failure(now, id, f) {
+                    Err(f) => match self.client.on_failure(at, id, f) {
                         Ok(class) => self.after_class(now, id, class),
                         Err(e) => self.errors.push(e),
                     },
                     Ok(body) => {
                         let r = match id {
-                            ResourceId::Init { .. } => self.client.on_init(now, id, &body),
-                            ResourceId::Index { .. } => self.client.on_index(now, id, &body),
-                            _ => self.client.on_segment(now, id, &body),
+                            ResourceId::Init { .. } => self.client.on_init(at, id, &body),
+                            ResourceId::Index { .. } => self.client.on_index(at, id, &body),
+                            _ => self.client.on_segment(at, id, &body),
                         };
                         match r {
                             Ok(()) => {

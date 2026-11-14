@@ -1,7 +1,7 @@
 use smooth_runtime::{Action, Output, SmoothClientConfig};
 use transmux::TrackSpec;
 
-use crate::common::{Host, fixture, is_ended, is_fatal};
+use crate::common::{Host, fixture, is_ended, is_fatal, now};
 
 const SECOND_VIDEO_BITRATE: &str = "99999";
 const FIRST_FRAGMENT: &str = "Fragments(video=0)";
@@ -23,10 +23,10 @@ fn two_quality_manifest() -> Vec<u8> {
 fn host_after_manifest() -> Host {
     let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
-    let Some(Action::FetchManifest { id, .. }) = host.client.poll(0) else {
+    let Some(Action::FetchManifest { id, .. }) = host.client.poll(now(0)) else {
         panic!("first action is the manifest fetch");
     };
-    host.client.on_manifest(0, id, &two_quality_manifest());
+    host.client.on_manifest(now(0), id, &two_quality_manifest());
     host
 }
 
@@ -76,10 +76,10 @@ fn announced_host(manifest: &[u8]) -> Host {
     let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.serve_dir("av-low");
-    let Some(Action::FetchManifest { id, .. }) = host.client.poll(0) else {
+    let Some(Action::FetchManifest { id, .. }) = host.client.poll(now(0)) else {
         panic!("first action is the manifest fetch");
     };
-    host.client.on_manifest(0, id, manifest);
+    host.client.on_manifest(now(0), id, manifest);
     while !host.has(|o| matches!(o, Output::Tracks(_))) {
         assert!(host.step(), "tracks are announced");
     }
@@ -159,10 +159,10 @@ fn the_offered_levels_index_the_stream_that_select_video_quality_switches() {
         );
     let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
-    let Some(Action::FetchManifest { id, .. }) = host.client.poll(0) else {
+    let Some(Action::FetchManifest { id, .. }) = host.client.poll(now(0)) else {
         panic!("first action is the manifest fetch");
     };
-    host.client.on_manifest(0, id, manifest.as_bytes());
+    host.client.on_manifest(now(0), id, manifest.as_bytes());
     assert_eq!(host.client.video_quality_count(), 2);
     assert!(host.client.select_video_quality(1));
     host.run_until(|o| o.iter().any(|o| is_fatal(o) || is_ended(o)));

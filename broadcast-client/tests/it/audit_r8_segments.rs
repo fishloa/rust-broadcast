@@ -6,6 +6,7 @@
 use crate::support;
 use broadcast_client::{Config, ErrorKind, Event};
 use support::fmp4_split::{group, split};
+
 use support::hls_host::{
     Host, Reply, SEC, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, is_ended, ts_playlist,
     ts_segment,
@@ -588,7 +589,7 @@ fn retry_after_is_waited_for_by_every_resource_class() {
 #[test]
 fn an_init_that_never_answers_times_out_on_the_playlist_class_timeout() {
     let mut config = hls_config();
-    config.segment_inactivity_timeout_us = u64::MAX;
+    config.segment_inactivity_timeout = std::time::Duration::from_nanos(u64::MAX);
     let mut h = fmp4_host(vec![Reply::Hang], vec![Reply::Hang], config);
     h.run_until(stop_on_end_or_fatal, STEPS);
     assert_eq!(
@@ -612,7 +613,7 @@ fn an_init_that_never_answers_times_out_on_the_playlist_class_timeout() {
 #[test]
 fn a_segment_that_never_answers_keeps_the_segment_timeout() {
     let mut config = hls_config();
-    config.segment_inactivity_timeout_us = u64::MAX;
+    config.segment_inactivity_timeout = std::time::Duration::from_nanos(u64::MAX);
     let mut h = ts_vod(vec![Reply::Hang, Reply::Ok(ts_segment(0))], config);
     h.run_until(stop_on_end_or_fatal, STEPS);
     assert!(tally(&h).ended);

@@ -102,7 +102,7 @@ fn config_with(
     Config {
         bind: bind.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         hold_cold_playlist: false,
         routes: vec![Route {

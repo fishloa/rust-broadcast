@@ -1,4 +1,10 @@
 use broadcast_client::{Action, Config, Event, Session, SrtEntropySeed};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 use super::replay::{Replay, TimedEvent};
 use super::srt_peer::SrtPeer;
@@ -49,7 +55,7 @@ impl SrtSim {
     }
 
     pub fn open_with_peers(url: &str, config: Config, peers: Vec<SrtPeer>) -> Self {
-        let session = Session::open(url, config, 0).unwrap();
+        let session = Session::open(url, config, ts(0)).unwrap();
         let mut sim = Self {
             session,
             peers,
@@ -84,7 +90,7 @@ impl SrtSim {
     fn settle(&mut self) {
         loop {
             let mut progressed = false;
-            while let Some(a) = self.session.poll(self.now) {
+            while let Some(a) = self.session.poll(ts(self.now)) {
                 progressed = true;
                 match a {
                     Action::UdpBind { conn, .. } => {
@@ -101,7 +107,7 @@ impl SrtSim {
                         }
                     }
                     Action::Close { conn } => self.closes.push(conn),
-                    Action::WakeAt(at) => self.last_wake = Some(at),
+                    Action::WakeAt(at) => self.last_wake = Some(at.as_micros()),
                     _ => {}
                 }
             }
@@ -141,7 +147,7 @@ impl SrtSim {
                 }
                 Dir::ToSession => {
                     if let Some(conn) = self.conn {
-                        self.session.on_data(conn, &bytes, self.now);
+                        self.session.on_data(conn, &bytes, ts(self.now));
                     }
                 }
             }

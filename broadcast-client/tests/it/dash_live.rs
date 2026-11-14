@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use broadcast_client::{ClockSource, Config, DashClockPolicy, ErrorKind, Event, Status};
+use broadcast_common::stage::Timestamp;
 use dash_checks::*;
 use dash_common::capture::{CaptureOrigin, Livesim2Pair};
 use dash_common::loopback::{Sig, oracle, sigs};
@@ -21,11 +22,16 @@ use dash_runtime::mpd::Mpd;
 use dash_runtime::timing::datetime::parse_xs_datetime;
 use dash_sim::{DashSim, SEC, WorldBackend};
 
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
+
 const AST_US: i64 = 1_700_000_000 * MICROS;
 const UTC_XSDATE: &str = "http://utc.test/xsdate";
 const TOLERANCE_US: i64 = 2_000;
 
-fn ts(text: &str) -> i64 {
+fn ts_unix(text: &str) -> i64 {
     parse_xs_datetime(text).unwrap().unix_us
 }
 
@@ -432,7 +438,7 @@ fn requested_files(sim: &DashSim) -> Vec<String> {
 
 #[test]
 fn the_ffmpeg_number_capture_plays_exactly_the_segments_the_clock_selects() {
-    let ast = ts("2026-10-26T09:18:04.725Z");
+    let ast = ts_unix("2026-10-26T09:18:04.725Z");
     let origin = ffmpeg_number_origin(ast);
     let url = origin.url("live.mpd");
     let world = World::new(ast + 15_300_000);
@@ -491,8 +497,8 @@ fn the_ffmpeg_number_capture_plays_exactly_the_segments_the_clock_selects() {
 
 #[test]
 fn the_ffmpeg_timeline_capture_joins_on_s_t_not_on_tfdt() {
-    let ast = ts("2026-10-26T09:18:20.766Z");
-    let publish = ts("2026-10-26T09:18:36.438Z");
+    let ast = ts_unix("2026-10-26T09:18:20.766Z");
+    let publish = ts_unix("2026-10-26T09:18:36.438Z");
     let mut origin = CaptureOrigin::new("ffmpeg-timeline", "live-timeline");
     let micros = |ticks: i64, scale: i64| ticks * MICROS / scale;
     for k in 0..4i64 {
@@ -629,7 +635,7 @@ fn reconnect_starts_a_fresh_presentation_and_keeps_the_host_clock() {
     sim.run_for(15 * SEC);
     let before = sim.events.len();
     let mpds_before = sim.log.iter().filter(|l| l.is_mpd()).count();
-    sim.session.reconnect(sim.world.mono());
+    sim.session.reconnect(ts(sim.world.mono()));
     sim.run_for(15 * SEC);
     assert!(sim.fatal().is_none(), "{:?}", sim.fatal());
     let tail = &sim.events[before..];
@@ -741,11 +747,11 @@ fn a_clock_set_after_close_changes_nothing() {
     );
     sim.run_for(SEC);
     sim.session.close();
-    while sim.session.poll(sim.world.mono()).is_some() {}
+    while sim.session.poll(ts(sim.world.mono())).is_some() {}
     while sim.session.next_event().is_some() {}
     sim.give_host_clock();
     assert!(sim.session.next_event().is_none());
-    assert!(sim.session.poll(sim.world.mono()).is_none());
+    assert!(sim.session.poll(ts(sim.world.mono())).is_none());
 }
 
 #[test]
@@ -839,7 +845,7 @@ fn a_clock_given_to_a_closed_session_produces_no_event() {
         "the ladder is still waiting for UTCTiming"
     );
     sim.session.close();
-    while sim.session.poll(sim.world.mono()).is_some() {}
+    while sim.session.poll(ts(sim.world.mono())).is_some() {}
     while sim.session.next_event().is_some() {}
     sim.give_host_clock();
     assert!(

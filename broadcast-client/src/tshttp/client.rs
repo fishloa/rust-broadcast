@@ -5,6 +5,7 @@ use transmux::{DemuxEvent, StreamingTsDemux};
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event};
 use crate::tshttp::policy::TsHttpPolicy;
+use broadcast_common::stage::Timestamp;
 
 /// TS-over-HTTP pull session client (DESIGN.md): [`TsHttpPolicy`] plus a
 /// [`StreamingTsDemux`] fed the body bytes.
@@ -30,8 +31,9 @@ impl TsHttpClient {
     ///
     /// An inconsistent `config` is replaced by [`Config::clamped`] rather
     /// than rejected; call [`Config::validate`] first to detect it.
-    pub fn new(url: impl Into<String>, config: Config, now_ms: u64) -> Self {
-        Self::with_seed(url, config, now_ms, now_ms)
+    pub fn new(url: impl Into<String>, config: Config, now: Timestamp) -> Self {
+        let seed = now.as_millis();
+        Self::with_seed(url, config, now, seed)
     }
 
     /// Create a client whose retry jitter is drawn from `seed` (see
@@ -39,10 +41,10 @@ impl TsHttpClient {
     pub(crate) fn with_seed(
         url: impl Into<String>,
         config: Config,
-        now_ms: u64,
+        now: Timestamp,
         seed: u64,
     ) -> Self {
-        let policy = TsHttpPolicy::with_seed(url, config, now_ms, seed);
+        let policy = TsHttpPolicy::with_seed(url, config, now, seed);
         let opens = policy.open_count();
         Self {
             policy,
@@ -59,11 +61,11 @@ impl TsHttpClient {
         }
     }
 
-    fn flush_demux(&mut self, now_ms: u64) {
+    fn flush_demux(&mut self, now: Timestamp) {
         self.demux.finish();
         let policy = &mut self.policy;
         if drain_demux(&mut self.demux, |ev| policy.push_event(ev)) {
-            policy.on_sample(now_ms);
+            policy.on_sample(now);
         }
     }
 
@@ -78,8 +80,8 @@ impl TsHttpClient {
     }
 
     /// Response headers received (T2-T4).
-    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_ms: u64) {
-        self.policy.on_response(status, headers, now_ms);
+    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now: Timestamp) {
+        self.policy.on_response(status, headers, now);
     }
 
     /// Server-requested retry delay (from a `Retry-After` header) in milliseconds, to be applied
@@ -89,55 +91,55 @@ impl TsHttpClient {
     }
 
     /// Feed body bytes (T5, T14).
-    pub fn feed(&mut self, chunk: &[u8], now_ms: u64) {
+    pub fn feed(&mut self, chunk: &[u8], now: Timestamp) {
         if chunk.is_empty() || !self.policy.accepts_bytes() {
             return;
         }
         self.demux.feed(chunk);
         let policy = &mut self.policy;
         let sampled = drain_demux(&mut self.demux, |ev| policy.push_event(ev));
-        policy.on_bytes(chunk.len(), now_ms, sampled);
+        policy.on_bytes(chunk.len(), now, sampled);
     }
 
     /// Body ended (T7, T8).
-    pub fn on_eof(&mut self, now_ms: u64) {
+    pub fn on_eof(&mut self, now: Timestamp) {
         if self.policy.is_ended() {
             return;
         }
-        self.flush_demux(now_ms);
-        self.policy.on_eof(now_ms);
+        self.flush_demux(now);
+        self.policy.on_eof(now);
         self.sync_demux();
     }
 
     /// Connect/read failure (T4, T7, T8).
-    pub fn on_error(&mut self, now_ms: u64) {
+    pub fn on_error(&mut self, now: Timestamp) {
         if self.policy.is_ended() {
             return;
         }
-        self.flush_demux(now_ms);
-        self.policy.on_error(now_ms);
+        self.flush_demux(now);
+        self.policy.on_error(now);
         self.sync_demux();
     }
 
     /// Caller-initiated reconnect (T13).
-    pub fn reconnect(&mut self, now_ms: u64) {
-        self.flush_demux(now_ms);
-        self.policy.reconnect(now_ms);
+    pub fn reconnect(&mut self, now: Timestamp) {
+        self.flush_demux(now);
+        self.policy.reconnect(now);
         self.sync_demux();
     }
 
     /// Advance timers (T6, T10-T12, T15).
-    pub fn poll_timeout(&mut self, now_ms: u64) {
+    pub fn poll_timeout(&mut self, now: Timestamp) {
         let demux = &mut self.demux;
-        self.policy.poll_timeout_with(now_ms, |events| {
+        self.policy.poll_timeout_with(now, |events| {
             demux.finish();
             drain_demux(demux, |ev| events.push_back(ev))
         });
         self.sync_demux();
     }
 
-    /// Earliest deadline for poll_timeout.
-    pub fn next_deadline(&self) -> Option<u64> {
+    /// Earliest deadline for [`Self::poll_timeout`].
+    pub fn next_deadline(&self) -> Option<Timestamp> {
         self.policy.next_deadline()
     }
 }

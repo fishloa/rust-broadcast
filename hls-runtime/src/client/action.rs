@@ -2,6 +2,7 @@
 //! [`crate::client::HlsClient::poll`].
 
 use alloc::string::{String, ToString};
+use core::time::Duration;
 
 /// Identifies one fetchable resource: the initialisation segment, a Low-Latency
 /// HLS partial segment ("part", RFC 8216bis §4.4.4.9), or a whole media
@@ -109,12 +110,12 @@ pub enum Action {
         /// The key URL (already resolved against the playlist URL).
         url: String,
     },
-    /// A non-blocking-reload timing hint: wait about this many milliseconds
-    /// before issuing the next `FetchPlaylist`, derived from
-    /// `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1's "SHOULD NOT ... more
-    /// frequently than once every Target Duration" reload guidance, halved
-    /// for headroom) when the origin does not support blocking reload.
-    WaitMs(u64),
+    /// A non-blocking-reload timing hint: wait about this long before issuing
+    /// the next `FetchPlaylist`, derived from `#EXT-X-TARGETDURATION`
+    /// (RFC 8216 §4.3.3.1's "SHOULD NOT ... more frequently than once every
+    /// Target Duration" reload guidance, halved for headroom) when the origin
+    /// does not support blocking reload.
+    Wait(Duration),
 }
 
 impl Action {
@@ -122,7 +123,7 @@ impl Action {
     /// `_HLS_msn`/`_HLS_part` (RFC 8216bis §6.2.5.2) appended per
     /// [`Self::FetchPlaylist`]'s `blocking` field, then `_HLS_skip=YES`
     /// (RFC 8216bis §6.2.5.1) if `skip` is set. `None` for
-    /// [`Action::FetchResource`]/[`Action::WaitMs`] (nothing to augment —
+    /// [`Action::FetchResource`]/[`Action::Wait`] (nothing to augment —
     /// use their `url`/byte-range fields directly).
     ///
     /// This is a convenience for building the real HTTP request; the typed
@@ -147,7 +148,7 @@ impl Action {
                 }
                 Some(u)
             }
-            Action::FetchResource { .. } | Action::FetchKey { .. } | Action::WaitMs(_) => None,
+            Action::FetchResource { .. } | Action::FetchKey { .. } | Action::Wait(_) => None,
         }
     }
 }

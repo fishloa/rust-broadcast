@@ -35,7 +35,7 @@ fn origin(trunk: &Arc<Trunk>) -> HlsOrigin {
     HlsOrigin::builder(Arc::clone(trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(7)
         .build()
         .expect("origin")
@@ -214,7 +214,7 @@ fn discontinuity_sequence_zero_on_iframe_playlist() {
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(7)
         .build()
         .expect("origin");

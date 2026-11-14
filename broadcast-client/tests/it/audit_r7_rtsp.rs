@@ -6,8 +6,14 @@ use crate::support;
 use std::sync::OnceLock;
 
 use broadcast_client::{Config, ErrorKind, Event};
+use broadcast_common::stage::Timestamp;
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, SEC, Server, samples_of};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const PCMA_STATIC_PAYLOAD: u8 = 8;
 const HEVC_PAYLOAD: u8 = 96;
@@ -70,7 +76,7 @@ fn play(host: &mut Host) -> Vec<Event> {
 
 fn reconnect_with(host: &mut Host, sdp: &str) -> Vec<Event> {
     host.server.sdp = sdp.as_bytes().to_vec();
-    host.session.reconnect(host.now);
+    host.session.reconnect(ts(host.now));
     host.drain();
     play(host)
 }
@@ -150,7 +156,7 @@ fn samples_held_for_a_video_that_never_arrived_are_emitted_when_the_connection_e
         host.drain();
     }
     let before = samples_of(&host.events()).len();
-    host.session.reconnect(host.now);
+    host.session.reconnect(ts(host.now));
     host.drain();
     let after = samples_of(&host.events()).len();
     assert!(

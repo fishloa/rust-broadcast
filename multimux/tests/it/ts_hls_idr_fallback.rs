@@ -123,7 +123,7 @@ fn start(route: Route) -> Server {
     let cfg = Config {
         bind: media.to_string(),
         target_duration_secs: TARGET_SECS,
-        part_target_ms: 200,
+        part_target: Duration::from_millis(200),
         window_segments: 64,
         routes: vec![route],
         admin: Some(AdminSpec {

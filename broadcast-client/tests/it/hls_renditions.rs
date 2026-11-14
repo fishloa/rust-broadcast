@@ -5,9 +5,15 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use broadcast_client::{
     AUDIO_TRACK_ID_OFFSET, Config, Credentials, Error, Event, Session, SourceKind, Status,
 };
+use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::renditions::*;
 use transmux::sample_aes::aes128_encrypt_segment;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const AUDIO2_DIR: &str = "http://origin.test/hls/a2";
 const AUDIO2_PLAYLIST_URL: &str = "http://origin.test/hls/a2/index.m3u8";
@@ -489,9 +495,10 @@ fn select_audio_rendition_switches_and_emits_audio_rendition_event() {
         ]
     );
     let before = h.events.len();
-    h.session.on_response(old_conn, 200, &[], 0);
-    h.session.on_data(old_conn, &f.audio.segments[1].1, h.now);
-    h.session.on_closed(old_conn, None, h.now);
+    h.session.on_response(old_conn, 200, &[], ts(0));
+    h.session
+        .on_data(old_conn, &f.audio.segments[1].1, ts(h.now));
+    h.session.on_closed(old_conn, None, ts(h.now));
     h.collect();
     assert_eq!(
         h.events.len(),
@@ -522,9 +529,10 @@ fn select_audio_none_stops_audio_adapter_and_closes_conns() {
     let audio_before = count_audio(&h.events);
     let requests_before = h.seen.len();
     let evs_len = h.events.len();
-    h.session.on_response(audio_conn, 200, &[], 0);
-    h.session.on_data(audio_conn, &f.audio.segments[1].1, h.now);
-    h.session.on_closed(audio_conn, None, h.now);
+    h.session.on_response(audio_conn, 200, &[], ts(0));
+    h.session
+        .on_data(audio_conn, &f.audio.segments[1].1, ts(h.now));
+    h.session.on_closed(audio_conn, None, ts(h.now));
     h.collect();
     assert_eq!(h.events.len(), evs_len);
     h.run_until(|evs| ended_count(evs) == 1, SPLIT_STEPS);
@@ -570,18 +578,18 @@ fn select_audio_out_of_range_and_before_master_error() {
     assert!(h.session.select_audio_rendition(Some(0)).is_ok());
     assert!(h.session.select_audio_rendition(None).is_ok());
 
-    let mut ts = Session::open(
+    let mut ts_host = Session::open(
         "http://origin.test/live.ts",
         {
             let mut new_config = Config::default();
             new_config.kind = SourceKind::TsHttp;
             new_config
         },
-        0,
+        ts(0),
     )
     .expect("open");
     assert!(matches!(
-        ts.select_audio_rendition(Some(0)),
+        ts_host.select_audio_rendition(Some(0)),
         Err(Error::NotHls)
     ));
 }
@@ -932,7 +940,7 @@ fn vod_ended_only_after_both_adapters_end() {
     let last_audio = h
         .events
         .iter()
-        .rposition(|e| matches!(e, Event::Sample { track, .. } if is_audio_track(*track)))
+        .rposition(|e| matches!(e, Event::Sample {track, .. } if is_audio_track(*track)))
         .expect("audio sample");
     assert!(ended_at > last_audio, "Ended follows the last audio sample");
     assert_eq!(count_audio(&h.events), AUDIO_SAMPLES);
@@ -977,14 +985,14 @@ fn late_callbacks_after_close_ignored_for_both_adapters() {
         (video_conn, &f.video.segments[0].1),
         (audio_conn, &f.audio.segments[0].1),
     ] {
-        h.session.on_response(conn, 200, &[], 0);
-        h.session.on_data(conn, body, h.now);
-        h.session.on_closed(conn, None, h.now);
+        h.session.on_response(conn, 200, &[], ts(0));
+        h.session.on_data(conn, body, ts(h.now));
+        h.session.on_closed(conn, None, ts(h.now));
     }
     h.collect();
     assert_eq!(h.events.len(), events_before);
     assert_eq!(h.seen.len(), seen_before);
-    assert!(h.session.poll(h.now + 100 * SEC).is_none());
+    assert!(h.session.poll(ts(h.now + 100 * SEC)).is_none());
     assert!(h.session.next_event().is_none());
 }
 
@@ -1023,7 +1031,7 @@ fn status_live_after_first_sample_from_either() {
     assert_eq!(lives.len(), 1, "Live exactly once");
     let first_sample = index_of(&h.events, |e| matches!(e, Event::Sample { .. })).expect("sample");
     assert!(
-        matches!(&h.events[first_sample], Event::Sample { track, .. } if is_audio_track(*track)),
+        matches!(&h.events[first_sample], Event::Sample {track, .. } if is_audio_track(*track)),
         "audio delivered first"
     );
     assert!(lives[0] < first_sample, "Live precedes the first sample");

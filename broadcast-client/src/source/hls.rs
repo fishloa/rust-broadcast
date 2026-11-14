@@ -4,6 +4,7 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, HlsClientConfig, KeyId, Output, ResourceId,
@@ -11,19 +12,22 @@ use hls_runtime::client::{
 use transmux::TrackId;
 use url::Url;
 
-use crate::error::Error;
+use crate::error::{Error, TransportError};
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::deadline;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
 };
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
-use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after_us};
+use crate::source::fetch::retry::{
+    Backoff, RefusedCapture, RetryGate, backoff_ms, duration_us, retry_after_us,
+};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 use broadcast_auth::AuthState;
-use broadcast_common::units::MICROS_PER_MILLI;
+use broadcast_common::stage::Timestamp;
 
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
@@ -132,6 +136,7 @@ impl HlsSource {
         let client = HlsClient::new(
             HlsClientConfig::new(url.as_str()).with_variant_policy(config.variant_policy.clone()),
         );
+        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
         let mut source = Self {
             client,
             body_limits: BodyLimits {
@@ -154,15 +159,15 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            backoff: Backoff::new(&config.backoff_ms, config.backoff_cap_ms, seed),
+            backoff: Backoff::new(&backoff_steps_ms, backoff_cap_ms, seed),
             max_redirects: config.max_redirects,
             flight: InFlight::new(
                 Timeouts {
-                    manifest_us: config.request_timeout_us,
-                    segment_us: config.segment_timeout_us,
-                    aux_us: config.hls_key_timeout_us,
+                    manifest_us: duration_us(config.request_timeout),
+                    segment_us: duration_us(config.segment_timeout),
+                    aux_us: duration_us(config.hls_key_timeout),
                 },
-                config.segment_inactivity_timeout_us,
+                duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
             ),
             stash: Stash::new(),
@@ -299,7 +304,7 @@ impl HlsSource {
         let Some(req) = self.flight.reqs.remove(&conn) else {
             return;
         };
-        auth.receive_cookies(&req.url, headers, now);
+        auth.receive_cookies(&req.url, headers, Timestamp::from_micros(now));
         let head = ResponseHead {
             conn,
             status,
@@ -422,7 +427,7 @@ impl HlsSource {
     pub(crate) fn on_closed(
         &mut self,
         conn: u32,
-        error: Option<&str>,
+        error: Option<&TransportError>,
         now: u64,
         auth: &mut AuthState,
     ) {
@@ -733,8 +738,12 @@ impl HlsSource {
             Some(count) => u64::from(count),
             None => self.attempt.bump(),
         };
-        let wait = self.backoff.delay_us(attempt).max(self.retry_after_us);
-        let at = now.saturating_add(wait);
+        let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+        // A deadline past the end of the clock can never be reached: the retry never fires.
+        let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
+            return;
+        };
+        let at = at.as_micros();
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
         self.gate.hold_until(at);
@@ -743,7 +752,8 @@ impl HlsSource {
         {
             self.retry_refetch = Some((at, url));
         }
-        self.actions.push_back(Action::WakeAt(at));
+        self.actions
+            .push_back(Action::WakeAt(Timestamp::from_micros(at)));
     }
 
     fn expire(&mut self, now: u64) {
@@ -816,9 +826,12 @@ impl HlsSource {
                 HlsAction::FetchKey { id, url } => {
                     self.issue(Purpose::Key(id), &url, None, now, auth);
                 }
-                HlsAction::WaitMs(ms) => {
-                    let at = now.saturating_add(ms.saturating_mul(MICROS_PER_MILLI));
-                    self.gate.hold_until(at);
+                HlsAction::Wait(wait) => {
+                    // A wait past the end of the clock can never end: no wake is armed for it.
+                    let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
+                        return;
+                    };
+                    self.gate.hold_until(at.as_micros());
                     self.actions.push_back(Action::WakeAt(at));
                 }
                 _ => {}
@@ -867,7 +880,7 @@ impl HlsSource {
 
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
-        let headers = auth.request_headers(&req.url, now);
+        let headers = auth.request_headers(&req.url, Timestamp::from_micros(now));
         req.authed = broadcast_auth::carries_credentials(&headers);
         self.flight
             .start(req, headers, METHOD_GET, now, &mut self.actions);

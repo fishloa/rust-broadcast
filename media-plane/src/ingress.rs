@@ -3373,7 +3373,9 @@ mod tests {
 
     #[test]
     fn never_completing_handshake_is_bounded_and_reported_not_leaked() {
-        const DEADLINE: Timestamp = Timestamp::from_nanos(1_000);
+        // `Timestamp` counts microseconds: 1 s, with a full microsecond to the
+        // deadline for the "strictly before" feed below.
+        const DEADLINE: Timestamp = Timestamp::from_millis(1_000);
         let mut driver = run_listen(
             StallingListener { max_sessions: 1 },
             trunk_config(),
@@ -3393,7 +3395,7 @@ mod tests {
         // a slow-but-progressing handshake is legitimate.
         assert!(
             driver
-                .feed(id, b"...", Timestamp::from_nanos(DEADLINE.as_nanos() - 1))
+                .feed(id, b"...", Timestamp::from_micros(999_999))
                 .is_none(),
             "must not time out before the deadline"
         );

@@ -3,7 +3,13 @@ use crate::support;
 use std::collections::BTreeSet;
 
 use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_common::stage::Timestamp;
 use support::ts_probe::{TS_URL, location, one, open, requests, respond, set_cookies};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const SEC: u64 = 1_000_000;
 const HTTPS_URL: &str = "https://example/live.ts";
@@ -16,7 +22,7 @@ const MAX_COOKIE_PATH: usize = 1024;
 
 fn drain(session: &mut Session, now: u64) -> Vec<Action> {
     let mut out = Vec::new();
-    while let Some(a) = session.poll(now) {
+    while let Some(a) = session.poll(ts(now)) {
         out.push(a);
     }
     out
@@ -55,7 +61,7 @@ fn action_debug_prints_header_names_never_values() {
     session
         .set_credentials(Credentials::bearer(BEARER_SECRET))
         .ok();
-    let action = session.poll(0).expect("request");
+    let action = session.poll(ts(0)).expect("request");
     let dbg = format!("{action:?}");
     assert!(!dbg.contains(BEARER_SECRET), "{dbg}");
     assert!(!dbg.contains(COOKIE_SECRET), "{dbg}");
@@ -83,7 +89,7 @@ fn action_debug_hides_basic_authorization_after_challenge() {
         authed.header("authorization"),
         Some(format!("Basic {BASIC_B64_USER_PASS}").as_str())
     );
-    session.reconnect(1);
+    session.reconnect(ts(1));
     for action in drain(&mut session, 1) {
         let dbg = format!("{action:?}");
         assert!(!dbg.contains(BASIC_B64_USER_PASS), "{dbg}");
@@ -126,7 +132,7 @@ fn redirect_over_the_limit_closes_the_connection_once() {
 fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
     let mut session = open(TS_URL, Config::default());
     let old = one(&mut session, 0);
-    session.reconnect(SEC);
+    session.reconnect(ts(SEC));
     let after = drain(&mut session, SEC);
     assert!(closes(&after).contains(&old.conn), "{after:?}");
     let new_conn = after
@@ -139,8 +145,8 @@ fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
     assert_ne!(new_conn, old.conn);
     events(&mut session);
 
-    session.on_response(old.conn, 200, &[], 0);
-    session.on_data(old.conn, &[0x47; 188], SEC);
+    session.on_response(old.conn, 200, &[], ts(0));
+    session.on_data(old.conn, &[0x47; 188], ts(SEC));
     let late = events(&mut session);
     assert!(
         !late
@@ -149,7 +155,7 @@ fn reconnect_before_any_response_closes_old_conn_and_late_200_is_ignored() {
         "a response for a closed connection took over: {late:?}"
     );
 
-    session.on_response(new_conn, 200, &[], 0);
+    session.on_response(new_conn, 200, &[], ts(0));
     let live = events(&mut session);
     assert_eq!(
         live.iter()
@@ -185,7 +191,7 @@ fn close_drops_queued_requests_and_closes_each_conn_once() {
         "each conn closed once: {actions:?}"
     );
     assert!(conns.contains(&first.conn));
-    assert!(session.poll(SEC).is_none());
+    assert!(session.poll(ts(SEC)).is_none());
 }
 
 #[test]
@@ -220,7 +226,7 @@ fn tracked_wakes(session: &mut Session, now: u64, wakes: &mut BTreeSet<u64>) -> 
     let actions = drain(session, now);
     for a in &actions {
         if let Action::WakeAt(t) = a {
-            wakes.insert(*t);
+            wakes.insert(t.as_micros());
         }
     }
     actions
@@ -257,7 +263,7 @@ fn wake_only_host_sees_start_timeout() {
             _ => None,
         })
         .expect("first request");
-    session.on_response(first_conn, 200, &[], SEC);
+    session.on_response(first_conn, 200, &[], ts(SEC));
     tracked_wakes(&mut session, 0, &mut wakes);
     let (actions, evs) = wake_only_run(&mut session, &mut wakes, 4);
     assert!(closes(&actions).contains(&first_conn), "{actions:?}");
@@ -288,9 +294,9 @@ fn wake_only_host_sees_stall_notice_and_stall_reconnect() {
             _ => None,
         })
         .expect("first request");
-    session.on_response(conn, status, &headers, SEC);
+    session.on_response(conn, status, &headers, ts(SEC));
     for chunk in bytes.chunks(65_536) {
-        session.on_data(conn, chunk, 0);
+        session.on_data(conn, chunk, ts(0));
     }
     let started = events(&mut session);
     assert!(
@@ -341,7 +347,7 @@ fn reconnect_after_a_connected_stream_is_a_discontinuity() {
     let first = one(&mut session, 0);
     respond(&mut session, &first, 200, &[]);
     events(&mut session);
-    session.reconnect(SEC);
+    session.reconnect(ts(SEC));
     let second = one(&mut session, SEC);
     respond(&mut session, &second, 200, &[]);
     let evs = events(&mut session);
@@ -364,7 +370,7 @@ fn reconnect_reopens_the_original_url_not_the_redirect_target() {
     let redirected = one(&mut session, 0);
     assert_eq!(redirected.url, "http://cdn.example/signed/live.ts?sig=1");
     respond(&mut session, &redirected, 200, &[]);
-    session.reconnect(SEC);
+    session.reconnect(ts(SEC));
     let again = one(&mut session, SEC);
     assert_eq!(again.url, TS_URL);
 }
@@ -435,7 +441,7 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
             new_config.initial_cookies = vec![(name.to_string(), "v".to_string())];
             new_config
         };
-        let result = Session::open(TS_URL, config, 0);
+        let result = Session::open(TS_URL, config, ts(0));
         assert!(
             matches!(result, Err(broadcast_client::Error::InvalidHeader { .. })),
             "{name:?} accepted"
@@ -446,7 +452,7 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
         new_config.initial_cookies = vec![("good-name_1".to_string(), "v".to_string())];
         new_config
     };
-    assert!(Session::open(TS_URL, ok, 0).is_ok());
+    assert!(Session::open(TS_URL, ok, ts(0)).is_ok());
 }
 
 fn jar_after(url: &str, lines: &[&str]) -> Vec<(String, String)> {
@@ -506,8 +512,10 @@ fn secure_cookie_from_an_http_origin_is_rejected() {
 #[test]
 fn reconnect_backoff_that_overflows_microseconds_saturates() {
     let mut config = Config::default();
-    config.ts_http.backoff_ms = vec![u64::MAX];
-    config.ts_http.backoff_cap_ms = u64::MAX;
+    config.ts_http.backoff = broadcast_common::backoff::BackoffSteps {
+        steps: vec![std::time::Duration::from_micros(u64::MAX)],
+        cap: std::time::Duration::from_micros(u64::MAX),
+    };
     let mut session = open(TS_URL, config);
     let first = one(&mut session, 0);
     respond(&mut session, &first, 503, &[]);
@@ -515,12 +523,12 @@ fn reconnect_backoff_that_overflows_microseconds_saturates() {
     let wake = actions
         .iter()
         .filter_map(|a| match a {
-            Action::WakeAt(t) => Some(*t),
+            Action::WakeAt(t) => Some(t),
             _ => None,
         })
         .max()
         .expect("a wake for the backoff");
-    assert!(wake >= u64::MAX / 2, "{wake}");
+    assert!(wake.as_nanos() >= u64::MAX / 2, "{wake:?}");
 }
 
 #[test]
@@ -544,7 +552,7 @@ fn credential_wait_freezes_timers_and_resume_restarts_the_start_timer() {
             _ => None,
         })
         .expect("request after credentials");
-    session.on_response(conn, 200, &[], SEC);
+    session.on_response(conn, 200, &[], ts(SEC));
     tracked_wakes(&mut session, late, &mut wakes);
     assert!(wakes.iter().all(|t| *t > late));
     let early = late + 14 * SEC;

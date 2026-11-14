@@ -1,13 +1,18 @@
 use broadcast_client::{Config, Credentials, Session};
 
+/// The examples' single clock instant as a [`Timestamp`] for the session boundary.
+fn now(us: u64) -> broadcast_common::stage::Timestamp {
+    broadcast_common::stage::Timestamp::from_micros(us)
+}
+
 fn main() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    if let Some(broadcast_client::Action::HttpRequest { conn, .. }) = session.poll(0) {
+    let mut session = Session::open("http://example/live.ts", Config::default(), now(0)).unwrap();
+    if let Some(broadcast_client::Action::HttpRequest { conn, .. }) = session.poll(now(0)) {
         let headers = vec![(
             "WWW-Authenticate".to_string(),
             "Bearer realm=\"example\", resource_metadata=\"https://resource.example.com/.well-known/oauth-protected-resource\"".to_string(),
         )];
-        session.on_response(conn, 401, &headers, 0);
+        session.on_response(conn, 401, &headers, now(0));
     }
     while let Some(e) = session.next_event() {
         println!("event: {e:?}");
@@ -15,7 +20,7 @@ fn main() {
     session
         .set_credentials(Credentials::bearer("secret-token"))
         .unwrap();
-    if let Some(a) = session.poll(0) {
+    if let Some(a) = session.poll(now(0)) {
         println!("action after creds: {a:?}");
     }
 }

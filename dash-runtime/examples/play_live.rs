@@ -20,6 +20,7 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
+use broadcast_common::stage::Timestamp;
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
@@ -28,6 +29,11 @@ use dash_runtime::mpd::Mpd;
 use dash_runtime::selection::RepRef;
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use url::Url;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const DEFAULT_MPD: &str = "../fixtures/dash/live-number/live.mpd";
 const DEFAULT_SECONDS: u64 = 3;
@@ -154,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         u64::try_from(true_start + i64::try_from(elapsed).unwrap_or(0) + args.skew_ms * 1_000)
             .unwrap_or(0)
     };
-    client.set_wall_clock(0, host_unix(0));
+    client.set_wall_clock(now(0), host_unix(0));
 
     let mut pending: VecDeque<(u64, Action)> = VecDeque::new();
     let mut samples: BTreeMap<u32, usize> = BTreeMap::new();
@@ -163,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let end = args.seconds * MICROS;
 
     for _ in 0..MAX_STEPS {
-        while let Some(action) = client.poll(elapsed) {
+        while let Some(action) = client.poll(now(elapsed)) {
             pending.push_back((elapsed + RTT_US, action));
         }
         while let Some(output) = client.next_output() {
@@ -211,29 +217,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         match (action.id(), body) {
             (None, Ok(b)) => {
-                if let Err(e) = client.on_mpd(elapsed, &b) {
+                if let Err(e) = client.on_mpd(now(elapsed), &b) {
                     return Err(format!("MPD rejected: {e}").into());
                 }
             }
             (None, Err(f)) => {
-                client.on_mpd_failure(elapsed, f);
-                client.retry_mpd(elapsed);
+                client.on_mpd_failure(now(elapsed), f);
+                client.retry_mpd(now(elapsed));
             }
             (Some(id), Err(f)) => {
-                if let Ok(FailureClass::Retry { .. }) = client.on_failure(elapsed, id, f) {
-                    client.retry(elapsed, id);
+                if let Ok(FailureClass::Retry { .. }) = client.on_failure(now(elapsed), id, f) {
+                    client.retry(now(elapsed), id);
                 }
             }
             (Some(id), Ok(b)) => {
                 let r: Result<(), Error> = match id {
-                    ResourceId::Init { .. } => client.on_init(elapsed, id, &b),
-                    ResourceId::Index { .. } => client.on_index(elapsed, id, &b),
-                    _ => client.on_segment(elapsed, id, &b),
+                    ResourceId::Init { .. } => client.on_init(now(elapsed), id, &b),
+                    ResourceId::Index { .. } => client.on_index(now(elapsed), id, &b),
+                    _ => client.on_segment(now(elapsed), id, &b),
                 };
                 if let Err(Error::Rejected { id, class, .. }) = r
                     && let FailureClass::Retry { .. } = class
                 {
-                    client.retry(elapsed, id);
+                    client.retry(now(elapsed), id);
                 }
             }
         }

@@ -17,6 +17,7 @@ use broadcast_client::{Config, SourceKind};
 use media_plane::ingress::{HandshakePolicy, IngestDriver};
 use media_plane::trunk::TrunkConfig;
 use std::convert::Infallible;
+use std::time::Duration;
 
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
@@ -67,14 +68,17 @@ impl crate::source::pull_target::PullDrive for HlsPullKind {
     }
 }
 
-fn retry_schedule_ms() -> Vec<u64> {
-    let mut schedule = Vec::new();
+fn retry_schedule() -> broadcast_common::backoff::BackoffSteps {
+    let mut steps = Vec::new();
     let mut delay = RESOURCE_RETRY_BASE_MS;
     for _ in 0..MAX_RESOURCE_ATTEMPTS {
-        schedule.push(delay.min(RESOURCE_RETRY_CAP_MS));
+        steps.push(Duration::from_millis(delay.min(RESOURCE_RETRY_CAP_MS)));
         delay = delay.saturating_mul(2);
     }
-    schedule
+    broadcast_common::backoff::BackoffSteps {
+        steps,
+        cap: Duration::from_millis(RESOURCE_RETRY_CAP_MS),
+    }
 }
 
 fn session_config(route: &HlsPullRoute) -> Config {
@@ -87,8 +91,7 @@ fn session_config(route: &HlsPullRoute) -> Config {
     config.max_key_bytes = MAX_KEY_BODY_BYTES;
     config.max_inflight_segments = crate::source::MAX_INFLIGHT_FETCHES;
     config.max_segment_failures = MAX_RESOURCE_ATTEMPTS;
-    config.backoff_ms = retry_schedule_ms();
-    config.backoff_cap_ms = RESOURCE_RETRY_CAP_MS;
+    config.backoff = retry_schedule();
     config
 }
 
@@ -156,7 +159,6 @@ mod tests {
     }
     use crate::testutil::MockAuthScheme;
     use broadcast_auth::Credentials;
-    use broadcast_common::Timestamp;
     use broadcast_common::timeouts::Timeouts;
     use broadcast_hls::{MediaPlaylist, MediaSegment};
     use media_plane::ingress::{HandshakePolicy, ProgramId};
@@ -244,7 +246,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let started = std::time::Instant::now();
@@ -287,7 +289,7 @@ mod tests {
     }
 
     fn handshake() -> HandshakePolicy {
-        HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
+        HandshakePolicy::establish_by(broadcast_common::stage::Timestamp::from_nanos(u64::MAX))
     }
 
     const TRACK_ID: TrackId = TrackId::new(1);
@@ -487,7 +489,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let config = TrunkConfig::default()
@@ -566,7 +568,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // HANG GUARD (issue #826): backstop around the full `run_hls_pull`
@@ -607,7 +609,7 @@ mod tests {
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -739,7 +741,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let handle = std::sync::Arc::clone(&route_handle);
@@ -857,7 +859,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let handle = std::sync::Arc::clone(&route_handle);
@@ -956,7 +958,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         let result = tokio::time::timeout(
@@ -1086,7 +1088,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         run_hls_pull(
@@ -1216,7 +1218,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
         // DISCRIMINATOR (issue #826): must prove the operation returns

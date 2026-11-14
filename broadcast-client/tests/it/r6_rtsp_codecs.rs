@@ -3,9 +3,15 @@ use crate::support;
 use std::sync::OnceLock;
 
 use broadcast_client::{Config, ErrorKind, Event, Status};
+use broadcast_common::stage::Timestamp;
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{BASE_URL, Host, MediaFixture, SEC, Server, interleaved, samples_of};
 use transmux::rtp::RtpMediaKind;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const PCMA_STATIC_PAYLOAD: u8 = 8;
 const HEVC_PAYLOAD: u8 = 96;
@@ -125,7 +131,7 @@ fn an_unplayable_media_line_beside_a_playable_one_is_reported_once_and_the_rest_
     let per_track = |t: u32| samples_of(&events).iter().filter(|s| s.0 == t).count();
     assert!(per_track(1) > 0 && per_track(2) > 0);
 
-    host.session.reconnect(host.now);
+    host.session.reconnect(ts(host.now));
     host.drain();
     host.connect();
     host.deliver_all(&fixture().frames());
@@ -146,7 +152,7 @@ fn a_reconnect_to_a_server_that_dropped_a_track_announces_only_the_new_tracks() 
     let mut video_only = parsed();
     video_only.medias.retain(|m| m.media == "video");
     host.server.sdp = write(&video_only).into_bytes();
-    host.session.reconnect(host.now);
+    host.session.reconnect(ts(host.now));
     host.drain();
     host.connect();
     let video = fixture()

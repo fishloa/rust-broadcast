@@ -30,7 +30,7 @@ use transmux::SegmentMeta;
 /// Target full-segment duration, in seconds.
 const TARGET_DURATION_SECS: f64 = 1.0;
 /// LL-HLS part target, in milliseconds.
-const PART_TARGET_MS: u32 = 500;
+const PART_TARGET: Duration = Duration::from_millis(500);
 /// Rolling window depth: full segments this origin advertises in a
 /// rendered playlist.
 const WINDOW_SEGMENTS: usize = 4;
@@ -65,7 +65,7 @@ fn main() {
     let origin = HlsOrigin::builder(std::sync::Arc::clone(&trunk))
         .with_target_duration_secs(TARGET_DURATION_SECS)
         .with_window_segments(nz(WINDOW_SEGMENTS))
-        .with_low_latency(PART_TARGET_MS)
+        .with_low_latency(PART_TARGET)
         .build()
         .expect("both required fields set");
     origin.set_init(vec![0xAA; 32]);

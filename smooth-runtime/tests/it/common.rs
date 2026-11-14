@@ -1,11 +1,17 @@
 use std::collections::HashMap;
 
+use broadcast_common::stage::Timestamp;
 use smooth_runtime::{Action, FetchFailure, Output, RequestId, SmoothClient, SmoothClientConfig};
 use transmux::{Sample, TrackId};
 use url::Url;
 
 pub const ORIGIN: &str = "http://origin.test/";
 pub const STEP_LIMIT: usize = 2_000;
+
+/// The test host's microsecond clock as the client's `now`.
+pub fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 #[derive(Clone)]
 pub enum Reply {
@@ -90,8 +96,8 @@ impl Host {
         self.requested.push(decoded.clone());
         self.request_times.push(self.now);
         match self.reply(&decoded) {
-            Reply::Body(b) if is_manifest => self.client.on_manifest(self.now, id, &b),
-            Reply::Body(b) => self.client.on_fragment(self.now, id, &b),
+            Reply::Body(b) if is_manifest => self.client.on_manifest(now(self.now), id, &b),
+            Reply::Body(b) => self.client.on_fragment(now(self.now), id, &b),
             Reply::Status(s) => self.fail(id, Some(s), 0),
             Reply::Throttled(s, wait_us) => self.fail(id, Some(s), wait_us),
             Reply::Transport => self.fail(id, None, 0),
@@ -100,7 +106,7 @@ impl Host {
 
     fn fail(&mut self, id: RequestId, status: Option<u16>, retry_after_us: u64) {
         self.client.on_failure(
-            self.now,
+            now(self.now),
             id,
             FetchFailure {
                 status,
@@ -116,7 +122,7 @@ impl Host {
     }
 
     pub fn step(&mut self) -> bool {
-        let Some(action) = self.client.poll(self.now) else {
+        let Some(action) = self.client.poll(now(self.now)) else {
             return false;
         };
         self.serve(action);
@@ -130,7 +136,7 @@ impl Host {
 
     pub fn run_until(&mut self, stop: impl Fn(&[Output]) -> bool) {
         for _ in 0..STEP_LIMIT {
-            while let Some(action) = self.client.poll(self.now) {
+            while let Some(action) = self.client.poll(now(self.now)) {
                 self.serve(action);
             }
             self.drain();
@@ -149,7 +155,7 @@ impl Host {
     pub fn run_for(&mut self, micros: u64) {
         let end = self.now.saturating_add(micros);
         for _ in 0..STEP_LIMIT {
-            while let Some(action) = self.client.poll(self.now) {
+            while let Some(action) = self.client.poll(now(self.now)) {
                 self.serve(action);
             }
             self.drain();

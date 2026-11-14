@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `SessionStore::advance` takes a `broadcast_common::stage::Timestamp` (the caller's own monotonic clock, as every sans-IO engine takes) instead of `now_us: u64`; `expire_idle`'s TTL stays in microseconds.
 
 ## [0.6.0] - 2026-11-14
 ### Added

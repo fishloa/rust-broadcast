@@ -14,6 +14,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 use test_fixtures::process::free_tcp_port;
 
+use broadcast_common::stage::Timestamp;
+
+/// The test's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use broadcast_client::{Action, AvSync, BufferEvent, Config, Event, Session, Status};
 use broadcast_common::Unpackage;
 use transmux::{CodecConfig, TsDemux};
@@ -497,13 +503,13 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         std::collections::BTreeMap::new();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut session = Session::open(&url, config, 0).expect("open");
+    let mut session = Session::open(&url, config, ts(0)).expect("open");
     let mut stream: Option<(u32, TcpStream)> = None;
     let mut events = Vec::new();
     let mut buf = vec![0u8; READ_CHUNK];
     while started.elapsed() < RUN {
         let now = micros(started);
-        while let Some(action) = session.poll(now) {
+        while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::TcpConnect {
                     conn, host, port, ..
@@ -514,7 +520,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                         stream = Some((conn, s));
                         session.on_connected(conn);
                     }
-                    Err(_) => session.on_closed(conn, None, now),
+                    Err(_) => session.on_closed(conn, None, ts(now)),
                 },
                 Action::Send { conn, bytes } => {
                     if let Some((c, s)) = stream.as_mut()
@@ -534,11 +540,11 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                 Ok(0) => {
                     let conn = *conn;
                     stream = None;
-                    session.on_closed(conn, None, micros(started));
+                    session.on_closed(conn, None, ts(micros(started)));
                 }
                 Ok(n) => {
                     wire.feed(&buf[..n], micros(started));
-                    session.on_data(*conn, &buf[..n], micros(started));
+                    session.on_data(*conn, &buf[..n], ts(micros(started)));
                 }
                 Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
                 Err(e) => panic!("read: {e}"),
@@ -547,7 +553,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
             thread::sleep(READ_TIMEOUT);
         }
         let now = micros(started);
-        session.on_playback_position(now, None);
+        session.on_playback_position(ts(now), None);
         while let Some(e) = session.next_event() {
             match &e {
                 Event::Status(crate::Status::Live) if first_live_us.is_none() => {
@@ -928,9 +934,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
 #[cfg(feature = "test-seams")]
 fn print_lead_series(label: &str, session: &Session) {
     use broadcast_client::BufferInput;
+    use buffering_runtime::Ticks27;
     use std::collections::BTreeMap;
-    let mut end: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut origin: Option<u64> = None;
+    let mut end: BTreeMap<u32, Ticks27> = BTreeMap::new();
+    let mut origin: Option<Ticks27> = None;
     let mut next_print = 0u64;
     for input in session.buffer_input_log() {
         match input {
@@ -945,20 +952,20 @@ fn print_lead_series(label: &str, session: &Session) {
             } => {
                 origin = origin.or(Some(*e));
                 end.insert(*track, *e);
-                if *now_us >= next_print {
-                    next_print = now_us + 250_000;
-                    let o = origin.unwrap_or(0);
+                if now_us.0 >= next_print {
+                    next_print = now_us.0 + 250_000;
+                    let o = origin.map_or(0, |o| o.0);
                     let per: Vec<String> = end
                         .iter()
-                        .map(|(t, e)| format!("t{t}_end={}ms", (*e as i128 - o as i128) / 27_000))
+                        .map(|(t, e)| format!("t{t}_end={}ms", (e.0 as i128 - o as i128) / 27_000))
                         .collect();
                     let lead = end
                         .values()
                         .min()
-                        .map_or(0, |m| (*m as i128 - o as i128) / 27_000);
+                        .map_or(0, |m| (m.0 as i128 - o as i128) / 27_000);
                     eprintln!(
                         "LEAD[{label}] at={}ms {} min_lead={}ms",
-                        now_us / 1000,
+                        now_us.0 / 1000,
                         per.join(" "),
                         lead
                     );

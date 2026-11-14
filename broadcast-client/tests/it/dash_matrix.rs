@@ -52,8 +52,8 @@ fn matrix_config() -> Config {
     let mut config = Config::default();
     config.max_manifest_bytes = 256 * 1024;
     config.max_segment_bytes = 1024 * 1024;
-    config.request_timeout_us = 5 * SEC;
-    config.segment_timeout_us = 10 * SEC;
+    config.request_timeout = std::time::Duration::from_secs(5);
+    config.segment_timeout = std::time::Duration::from_secs(10);
     config.dash.utc_timeout_us = 4 * SEC;
     config.max_segment_failures = MATRIX_SEGMENT_FAILURES;
     config

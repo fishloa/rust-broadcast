@@ -57,6 +57,7 @@
 
 use std::net::SocketAddr;
 use std::process::Command;
+use std::time::Duration;
 
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
@@ -185,7 +186,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
     let config = Config {
         bind: bind_addr.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         routes: vec![Route {
             name: "cam".to_string(),
@@ -302,7 +303,7 @@ async fn admin_added_route_starts_its_whep_listener() {
     let config = Config {
         bind: media_addr.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         // `/admin/routes` requires at least one route in the config's own
         // validation to reload, but add_route itself is independent — start

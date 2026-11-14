@@ -24,6 +24,7 @@ use crate::mpd::urls::{BaseCandidate, append_query, representation_candidates, s
 use crate::selection::{RepRef, Selection, SetClass, select};
 use crate::timing::clock::UtcClock;
 use crate::timing::period::period_timings;
+use broadcast_common::stage::Timestamp;
 use broadcast_dash::descriptors::SCHEME_PERIOD_CONTINUITY;
 use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};
 use broadcast_dash::{ByteRange, Descriptor, Mpd, PresentationType};
@@ -569,8 +570,9 @@ impl DashClient {
     ///
     /// # Errors
     /// As [`DashClient::on_mpd_with`].
-    pub fn on_mpd(&mut self, now_us: u64, bytes: &[u8]) -> Result<()> {
-        self.on_mpd_with(now_us, bytes, &ResponseMeta::at(now_us))
+    pub fn on_mpd(&mut self, now: Timestamp, bytes: &[u8]) -> Result<()> {
+        let now_us = now.as_micros();
+        self.on_mpd_with(now, bytes, &ResponseMeta::at(now_us))
     }
 
     /// Feed the MPD body with what the caller measured and read: the first
@@ -583,10 +585,11 @@ impl DashClient {
     /// [`Error::MpdNotAwaited`] when no MPD is awaited; [`Error::Stopped`].
     pub fn on_mpd_with(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         bytes: &[u8],
         meta: &ResponseMeta<'_>,
     ) -> Result<()> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         if !self.mpd_inflight {
             return Err(Error::MpdNotAwaited);
@@ -656,7 +659,8 @@ impl DashClient {
     /// MPD is never given up on. The caller backs off and calls
     /// [`DashClient::retry_mpd`]. The returned class carries the count of
     /// consecutive MPD failures.
-    pub fn on_mpd_failure(&mut self, now_us: u64, failure: Failure) -> FailureClass {
+    pub fn on_mpd_failure(&mut self, now: Timestamp, failure: Failure) -> FailureClass {
+        let now_us = now.as_micros();
         self.mpd_inflight = false;
         self.want_mpd = false;
         let attempt = self.mpd_failed(now_us);
@@ -671,7 +675,7 @@ impl DashClient {
     }
 
     /// Ask for the MPD again after a rejected body or a failed fetch.
-    pub fn retry_mpd(&mut self, _now_us: u64) {
+    pub fn retry_mpd(&mut self, _now: Timestamp) {
         if self.mpd_inflight || self.stopped() {
             return;
         }
@@ -687,7 +691,8 @@ impl DashClient {
     /// The next fetch the caller must perform, if any. Call it until it
     /// returns `None`, then wait for a response or for
     /// [`DashClient::next_wake`], whichever is first.
-    pub fn poll(&mut self, now_us: u64) -> Option<Action> {
+    pub fn poll(&mut self, now: Timestamp) -> Option<Action> {
+        let now_us = now.as_micros();
         if self.stopped() {
             return None;
         }
@@ -1386,7 +1391,8 @@ impl DashClient {
     /// [`FailureClass`]), also for a segment held for this init that the
     /// demuxer then refused; [`Error::UnrequestedResource`],
     /// [`Error::DuplicateResource`], [`Error::Stopped`].
-    pub fn on_init(&mut self, now_us: u64, id: ResourceId, bytes: &[u8]) -> Result<()> {
+    pub fn on_init(&mut self, now: Timestamp, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         let ResourceId::Init { rep } = id else {
             return Err(Error::UnrequestedResource { id });
@@ -1480,7 +1486,8 @@ impl DashClient {
     ///
     /// # Errors
     /// As [`DashClient::on_init`].
-    pub fn on_index(&mut self, now_us: u64, id: ResourceId, bytes: &[u8]) -> Result<()> {
+    pub fn on_index(&mut self, now: Timestamp, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         let ResourceId::Index { rep } = id else {
             return Err(Error::UnrequestedResource { id });
@@ -1535,7 +1542,8 @@ impl DashClient {
     /// # Errors
     /// As [`DashClient::on_init`]; a progressive MP4 additionally ends the
     /// presentation.
-    pub fn on_segment(&mut self, now_us: u64, id: ResourceId, bytes: &[u8]) -> Result<()> {
+    pub fn on_segment(&mut self, now: Timestamp, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         let ResourceId::Segment { rep, .. } = id else {
             return Err(Error::UnrequestedResource { id });
@@ -1600,10 +1608,11 @@ impl DashClient {
     /// [`Error::Stopped`].
     pub fn on_failure(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         id: ResourceId,
         failure: Failure,
     ) -> Result<FailureClass> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         if !self.inflight.contains(&id) {
             return Err(Error::UnrequestedResource { id });
@@ -1659,7 +1668,7 @@ impl DashClient {
     /// Request again a resource that [`DashClient::on_failure`] or a
     /// rejection classified [`FailureClass::Retry`], after the caller's
     /// backoff. `false` when `id` is not waiting for a retry.
-    pub fn retry(&mut self, _now_us: u64, id: ResourceId) -> bool {
+    pub fn retry(&mut self, _now: Timestamp, id: ResourceId) -> bool {
         if self.stopped() || !self.parked.remove(&id) {
             return false;
         }
@@ -1670,7 +1679,7 @@ impl DashClient {
     /// Give up on one segment: it counts as delivered and a
     /// [`Output::Discontinuity`] marks the gap. `false` when `id` is not a
     /// segment waiting for a retry.
-    pub fn skip(&mut self, _now_us: u64, id: ResourceId) -> bool {
+    pub fn skip(&mut self, _now: Timestamp, id: ResourceId) -> bool {
         if self.stopped() || !matches!(id, ResourceId::Segment { .. }) || !self.parked.remove(&id) {
             return false;
         }

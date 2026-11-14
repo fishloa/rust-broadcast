@@ -1,5 +1,11 @@
 use broadcast_client::{Action, Config, Event, Session};
+use broadcast_common::stage::Timestamp;
 use transmux::{DemuxEvent, StreamingTsDemux, TrackId};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 65_536;
 const STEP_US: u64 = 20_000;
@@ -10,10 +16,10 @@ struct Run {
 }
 
 fn live_run(bytes: &[u8]) -> Run {
-    let mut s = Session::open("http://h/live.ts", Config::default(), 0).unwrap();
+    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
     let mut now = 0u64;
     let mut conn = None;
-    while let Some(a) = s.poll(now) {
+    while let Some(a) = s.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -23,7 +29,7 @@ fn live_run(bytes: &[u8]) -> Run {
         c,
         200,
         &[("Content-Type".to_string(), "video/MP2T".to_string())],
-        now,
+        ts(now),
     );
     let mut run = Run {
         tracks: Vec::new(),
@@ -43,8 +49,8 @@ fn live_run(bytes: &[u8]) -> Run {
     };
     for chunk in bytes.chunks(CHUNK) {
         now += STEP_US;
-        s.on_data(c, chunk, now);
-        while s.poll(now).is_some() {}
+        s.on_data(c, chunk, ts(now));
+        while s.poll(ts(now)).is_some() {}
         drain(&mut s, &mut run);
     }
     run
@@ -153,9 +159,9 @@ fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
 }
 
 fn open_live(now: u64) -> (Session, u32) {
-    let mut s = Session::open("http://h/live.ts", Config::default(), now).unwrap();
+    let mut s = Session::open("http://h/live.ts", Config::default(), ts(now)).unwrap();
     let mut conn = None;
-    while let Some(a) = s.poll(now) {
+    while let Some(a) = s.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -165,7 +171,7 @@ fn open_live(now: u64) -> (Session, u32) {
         c,
         200,
         &[("Content-Type".to_string(), "video/MP2T".to_string())],
-        now,
+        ts(now),
     );
     (s, c)
 }
@@ -189,8 +195,8 @@ fn an_undeclared_gap_releases_the_hold_at_the_wall_limit_without_losing_samples(
     let mut events = Vec::new();
     for chunk in bytes.chunks(CHUNK).take(HOLD_START_CHUNKS) {
         now += STEP_US;
-        s.on_data(c, chunk, now);
-        while let Some(a) = s.poll(now) {
+        s.on_data(c, chunk, ts(now));
+        while let Some(a) = s.poll(ts(now)) {
             if let Action::WakeAt(t) = a {
                 wake = wake.max(Some(t));
             }
@@ -204,11 +210,11 @@ fn an_undeclared_gap_releases_the_hold_at_the_wall_limit_without_losing_samples(
         "media must be held while a declared stream is unresolved"
     );
     assert!(
-        wake.is_some_and(|t| t <= HOLD_START_CHUNKS as u64 * STEP_US + WALL_LIMIT_US),
+        wake.is_some_and(|t| t <= ts(HOLD_START_CHUNKS as u64 * STEP_US + WALL_LIMIT_US)),
         "a wake-up at the hold deadline: {wake:?}"
     );
     let due = HOLD_START_CHUNKS as u64 * STEP_US + WALL_LIMIT_US;
-    while s.poll(due).is_some() {}
+    while s.poll(ts(due)).is_some() {}
     events.extend(drain(&mut s));
     let first = events
         .iter()
@@ -258,12 +264,12 @@ fn a_connection_that_ends_while_holding_delivers_everything_in_order() {
     let mut bytes = without_pid(&test_fixtures::read("ts/h264-aac.ts"), 0x101);
     bytes.truncate(EOF_PREFIX_PACKETS * TS_PACKET);
     let (mut s, c) = open_live(0);
-    s.on_data(c, &bytes, STEP_US);
-    while s.poll(STEP_US).is_some() {}
+    s.on_data(c, &bytes, ts(STEP_US));
+    while s.poll(ts(STEP_US)).is_some() {}
     let before = drain(&mut s);
     assert!(!before.iter().any(|e| matches!(e, Event::Sample { .. })));
-    s.on_closed(c, None, 2 * STEP_US);
-    while s.poll(2 * STEP_US).is_some() {}
+    s.on_closed(c, None, ts(2 * STEP_US));
+    while s.poll(ts(2 * STEP_US)).is_some() {}
     let events = drain(&mut s);
     let tracks = events
         .iter()
@@ -303,12 +309,12 @@ fn a_track_that_resolves_after_the_hold_is_announced_as_an_update() {
     let mut events = Vec::new();
     for chunk in combined[..prefix_len].chunks(CHUNK) {
         now += STEP_US;
-        s.on_data(c, chunk, now);
-        while s.poll(now).is_some() {}
+        s.on_data(c, chunk, ts(now));
+        while s.poll(ts(now)).is_some() {}
         events.extend(drain(&mut s));
     }
     now += WALL_LIMIT_US;
-    while s.poll(now).is_some() {}
+    while s.poll(ts(now)).is_some() {}
     events.extend(drain(&mut s));
     let released = events
         .iter()
@@ -317,8 +323,8 @@ fn a_track_that_resolves_after_the_hold_is_announced_as_an_update() {
     assert_eq!(released, 1, "the hold released at its deadline");
     for chunk in combined[prefix_len..].chunks(CHUNK) {
         now += STEP_US;
-        s.on_data(c, chunk, now);
-        while s.poll(now).is_some() {}
+        s.on_data(c, chunk, ts(now));
+        while s.poll(ts(now)).is_some() {}
         events.extend(drain(&mut s));
     }
     let sets: Vec<Vec<TrackId>> = events

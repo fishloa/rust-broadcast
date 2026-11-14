@@ -109,7 +109,7 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
     let route = RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(200)
+            .with_part_target(std::time::Duration::from_millis(200))
             .with_window_segments(8),
     );
     // Publish the program into a route's serving state FIRST, so its

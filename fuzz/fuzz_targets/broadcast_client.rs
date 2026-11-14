@@ -5,8 +5,9 @@ use std::sync::OnceLock;
 
 use broadcast_client::{
     Action, ClientIdentity, Config, Credentials, DashClockPolicy, Event, Hint, Session,
-    SrtEntropySeed, TrackId,
+    SrtEntropySeed, TrackId, TransportError,
 };
+use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
 
@@ -331,6 +332,7 @@ fn seed_frame(cursors: &mut [usize; RTP_TRACKS], chunk: &[u8]) -> Vec<u8> {
 }
 
 fn player(session: &mut Session, now: u64, chunk: &[u8]) {
+    let at = Timestamp::from_micros(now);
     let byte = |i: usize| chunk.get(i).copied().unwrap_or(0);
     match byte(2) % 5 {
         0 => {
@@ -338,9 +340,9 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
                 0 => u64::MAX,
                 _ => u64::from(byte(4)) * POSITION_UNIT,
             };
-            session.on_playback_position(now, Some(position));
+            session.on_playback_position(at, Some(position));
         }
-        1 => session.on_playback_position(now, None),
+        1 => session.on_playback_position(at, None),
         2 => {
             let ids: Vec<TrackId> = RENDERED_IDS
                 .iter()
@@ -348,7 +350,7 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
                 .filter(|(n, _)| byte(3) >> (n % 8) & 1 == 1)
                 .map(|(_, id)| TrackId::new(*id))
                 .collect();
-            session.set_rendered_tracks(now, &ids);
+            session.set_rendered_tracks(at, &ids);
         }
         3 => session.rejoin(),
         _ => session.hint(PLAYER_HINTS[usize::from(byte(3)) % PLAYER_HINTS.len()]),
@@ -390,7 +392,7 @@ fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
                 headers.push(("Set-Cookie".to_string(), "storm=1".to_string()));
             }
             answered.push((conn, status));
-            session.on_response(conn, status, &headers, now);
+            session.on_response(conn, status, &headers, Timestamp::from_micros(now));
         }
     }
     if now != u64::MAX {
@@ -415,7 +417,10 @@ fn finish(session: &mut Session, watch: &mut Watch, now: u64) {
         "connections never closed after close(): {:?}",
         watch.live
     );
-    assert!(session.poll(now).is_none(), "action after drained close()");
+    assert!(
+        session.poll(Timestamp::from_micros(now)).is_none(),
+        "action after drained close()"
+    );
 }
 
 fn encrypted_segment() -> &'static [u8] {
@@ -441,7 +446,7 @@ impl Watch {
                 assert!(now == u64::MAX, "runaway action loop at {now}");
                 break;
             }
-            let Some(action) = session.poll(now) else {
+            let Some(action) = session.poll(Timestamp::from_micros(now)) else {
                 break;
             };
             steps += 1;
@@ -478,7 +483,11 @@ impl Watch {
                 }
                 Action::WakeAt(at) => {
                     assert!(!self.closed, "WakeAt after close");
-                    assert!(at > now, "WakeAt({at}) is not after now {now}");
+                    assert!(
+                        at.as_micros() > now,
+                        "WakeAt({:?}) is not after now {now}",
+                        at
+                    );
                 }
                 _ => {}
             }
@@ -541,12 +550,13 @@ fn body_for(url: &str, encrypted: bool, chunk: &[u8]) -> Vec<u8> {
 }
 
 fn serve(session: &mut Session, watch: &mut Watch, now: u64, encrypted: bool, chunk: &[u8]) {
+    let at = Timestamp::from_micros(now);
     for (conn, url) in watch.actions(session, now) {
-        session.on_response(conn, 200, &[], now);
+        session.on_response(conn, 200, &[], at);
         let body = body_for(&url, encrypted, chunk);
-        session.on_data(conn, &body, now);
-        session.on_data(conn, chunk, now);
-        session.on_closed(conn, None, now);
+        session.on_data(conn, &body, at);
+        session.on_data(conn, chunk, at);
+        session.on_closed(conn, None, at);
         watch.host_closed(conn);
     }
 }
@@ -574,8 +584,8 @@ fn config_from(header: &[u8]) -> Config {
     config.max_queued_events = knob(header, 3, &QUEUE_CAPS);
     config.max_manifest_bytes = knob(header, 4, &BYTE_LIMITS);
     config.max_segment_bytes = knob(header, 5, &BYTE_LIMITS);
-    config.request_timeout_us = knob(header, 6, &TIMEOUTS_US);
-    config.segment_timeout_us = knob(header, 7, &TIMEOUTS_US);
+    config.request_timeout = std::time::Duration::from_micros(knob(header, 6, &TIMEOUTS_US));
+    config.segment_timeout = std::time::Duration::from_micros(knob(header, 7, &TIMEOUTS_US));
     config.tracks_hold_max_wall_us = knob(header, 8, &HOLD_WALL_US);
     config.tracks_hold_max_media_us = knob(header, 9, &HOLD_MEDIA_US);
     let quiet = knob(header, 10, &HOLD_QUIET_BYTES);
@@ -621,7 +631,7 @@ fn wall_clock(session: &mut Session, now: u64, chunk: &[u8]) {
         1 => u64::MAX,
         _ => now,
     };
-    session.set_wall_clock(mono, WALL_UNIX_US[byte(4) % WALL_UNIX_US.len()]);
+    session.set_wall_clock(Timestamp::from_micros(mono), WALL_UNIX_US[byte(4) % WALL_UNIX_US.len()]);
 }
 
 fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
@@ -631,7 +641,7 @@ fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
 fn drive(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
     let config = config_from(header);
-    let mut session = match Session::open(url, config, 0) {
+    let mut session = match Session::open(url, config, Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -653,12 +663,12 @@ fn drive(url: &str, data: &[u8]) {
                     } else {
                         chunk
                     };
-                    session.on_data(conn, slice, now);
+                    session.on_data(conn, slice, Timestamp::from_micros(now));
                 }
             }
             2 => {
                 if let Some(conn) = conn {
-                    session.on_closed(conn, None, now);
+                    session.on_closed(conn, None, Timestamp::from_micros(now));
                     watch.host_closed(conn);
                 }
             }
@@ -670,7 +680,7 @@ fn drive(url: &str, data: &[u8]) {
                 };
                 let _ = session.set_credentials(creds);
             }
-            4 => session.reconnect(now),
+            4 => session.reconnect(Timestamp::from_micros(now)),
             5 => {
                 if let Some(conn) = conn {
                     let status = STATUS_CODES[second % STATUS_CODES.len()];
@@ -698,12 +708,12 @@ fn drive(url: &str, data: &[u8]) {
                             RESPONSE_DATES[second % RESPONSE_DATES.len()].to_string(),
                         ));
                     }
-                    session.on_response(conn, status, &headers, now);
+                    session.on_response(conn, status, &headers, Timestamp::from_micros(now));
                 }
             }
             6 => {
                 if let Some(conn) = conn {
-                    session.on_closed(conn, Some("reset".to_string()), now);
+                    session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), Timestamp::from_micros(now));
                     watch.host_closed(conn);
                 }
             }
@@ -788,7 +798,7 @@ fn rtsp_pump(
             assert!(now == u64::MAX, "runaway action loop at {now}");
             break;
         }
-        let Some(action) = session.poll(now) else {
+        let Some(action) = session.poll(Timestamp::from_micros(now)) else {
             break;
         };
         steps += 1;
@@ -801,9 +811,9 @@ fn rtsp_pump(
             }
             Action::Send { conn, bytes } => {
                 let reply = rtsp_reply(&bytes, status);
-                session.on_data(conn, &reply, now);
+                session.on_data(conn, &reply, Timestamp::from_micros(now));
                 if !tail.is_empty() {
-                    session.on_data(conn, tail, now);
+                    session.on_data(conn, tail, Timestamp::from_micros(now));
                 }
             }
             Action::Close { conn } => {
@@ -817,7 +827,7 @@ fn rtsp_pump(
 
 fn drive_rtsp(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(url, config_from(header), 0) {
+    let mut session = match Session::open(url, config_from(header), Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -837,33 +847,35 @@ fn drive_rtsp(url: &str, data: &[u8]) {
             2 => {
                 if let Some(conn) = conn {
                     let frame = seed_frame(&mut cursors, chunk);
-                    session.on_data(conn, &frame, now);
+                    session.on_data(conn, &frame, Timestamp::from_micros(now));
                 }
             }
             3 => {
                 if let Some(conn) = conn {
-                    session.on_data(conn, chunk, now);
+                    session.on_data(conn, chunk, Timestamp::from_micros(now));
                 }
             }
             4 => {
                 if let Some(conn) = conn {
-                    let error = (second % 2 == 0).then(|| "reset".to_string());
-                    session.on_closed(conn, error, now);
+                    let error = (second % 2 == 0).then(|| TransportError::Other {
+                        reason: "reset".to_string(),
+                    });
+                    session.on_closed(conn, error, Timestamp::from_micros(now));
                     watch.live.remove(&conn);
                 }
             }
             5 => {
                 let _ = session.set_credentials(Credentials::new("u", "p"));
             }
-            6 => session.reconnect(now),
+            6 => session.reconnect(Timestamp::from_micros(now)),
             7 => now = now.saturating_add(TIMER_JUMP_US),
             8 => {
                 if let Some(conn) = conn {
                     for _ in 0..=second % MAX_PACKET_RUN {
                         let frame = seed_frame(&mut cursors, &[chunk[0], 0, 1, 0, 0, 1]);
-                        session.on_data(conn, &frame, now);
+                        session.on_data(conn, &frame, Timestamp::from_micros(now));
                         let frame = seed_frame(&mut cursors, &[chunk[0], 1, 1, 0, 0, 1]);
-                        session.on_data(conn, &frame, now);
+                        session.on_data(conn, &frame, Timestamp::from_micros(now));
                     }
                 }
             }
@@ -888,7 +900,7 @@ fn datagram_pump(session: &mut Session, watch: &mut Watch, now: u64, conn: &mut 
             assert!(now == u64::MAX, "runaway action loop at {now}");
             break;
         }
-        let Some(action) = session.poll(now) else {
+        let Some(action) = session.poll(Timestamp::from_micros(now)) else {
             break;
         };
         steps += 1;
@@ -938,7 +950,7 @@ fn srt_like(chunk: &[u8], pick: u8) -> Vec<u8> {
 
 fn drive_datagram(url: &str, data: &[u8]) {
     let (header, data) = split_header(data);
-    let mut session = match Session::open(url, config_from(header), 0) {
+    let mut session = match Session::open(url, config_from(header), Timestamp::ZERO) {
         Ok(s) => s,
         Err(_) => return,
     };
@@ -958,9 +970,9 @@ fn drive_datagram(url: &str, data: &[u8]) {
             0 | 1 => {
                 if let Some(c) = conn {
                     if srt {
-                        session.on_data(c, &srt_like(chunk, second), now);
+                        session.on_data(c, &srt_like(chunk, second), Timestamp::from_micros(now));
                     } else {
-                        session.on_data(c, chunk, now);
+                        session.on_data(c, chunk, Timestamp::from_micros(now));
                     }
                 }
             }
@@ -972,24 +984,26 @@ fn drive_datagram(url: &str, data: &[u8]) {
                     } else {
                         seed_datagram(rtp, seq, second % 2, &mut cursor)
                     };
-                    session.on_data(c, &d, now);
+                    session.on_data(c, &d, Timestamp::from_micros(now));
                 }
             }
             5 => {
                 if let Some(c) = conn {
                     seq = seq.wrapping_add(u16::from(second) + 2);
                     let d = seed_datagram(rtp, seq, second % 2, &mut cursor);
-                    session.on_data(c, &d, now);
+                    session.on_data(c, &d, Timestamp::from_micros(now));
                 }
             }
             6 => {
                 if let Some(c) = conn {
-                    let error = (second % 2 == 0).then(|| "reset".to_string());
-                    session.on_closed(c, error, now);
+                    let error = (second % 2 == 0).then(|| TransportError::Other {
+                        reason: "reset".to_string(),
+                    });
+                    session.on_closed(c, error, Timestamp::from_micros(now));
                     watch.live.remove(&c);
                 }
             }
-            7 => session.reconnect(now),
+            7 => session.reconnect(Timestamp::from_micros(now)),
             _ => now = now.saturating_add(TIMER_JUMP_US),
         }
         if pick == u8::MAX {

@@ -89,7 +89,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),

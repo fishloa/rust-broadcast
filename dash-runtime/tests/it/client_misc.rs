@@ -4,6 +4,7 @@
 
 use crate::common;
 
+use broadcast_common::stage::Timestamp;
 use common::loopback::{
     Drive, Fault, FaultKind, Origin, Sig, assert_matches_oracle, drive, mpd_text, oracle,
 };
@@ -13,6 +14,11 @@ use dash_runtime::client::{
 };
 use dash_runtime::error::Unsupported;
 use dash_runtime::selection::DropReason;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const DIR: &str = "timeline-ffmpeg-quirk";
 const URL: &str = "http://dash.test/timeline-ffmpeg-quirk/manifest.mpd";
@@ -321,11 +327,11 @@ fn the_pin_follows_the_base_set_after_a_redirect() {
             .with_limits(PullLimits::default()),
     );
     client.set_mpd_base("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd");
-    let Some(Action::FetchMpd { .. }) = client.poll(0) else {
+    let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };
-    client.on_mpd(0, base_text().as_bytes()).unwrap();
-    let urls: Vec<String> = std::iter::from_fn(|| client.poll(0))
+    client.on_mpd(now(0), base_text().as_bytes()).unwrap();
+    let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
         .map(|a| a.url().to_owned())
         .collect();
     assert!(!urls.is_empty());
@@ -551,10 +557,10 @@ fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
             .with_limits(PullLimits::default()),
     );
     assert_eq!(c.select_representation(0), Err(Error::NotSwitchable));
-    let Some(Action::FetchMpd { .. }) = c.poll(0) else {
+    let Some(Action::FetchMpd { .. }) = c.poll(now(0)) else {
         panic!()
     };
-    c.on_mpd(0, base_text().as_bytes()).unwrap();
+    c.on_mpd(now(0), base_text().as_bytes()).unwrap();
     assert_eq!(c.select_representation(0), Err(Error::NotSwitchable));
 }
 
@@ -566,19 +572,19 @@ fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
             .with_limits(PullLimits::default()),
     );
     let mpd = base_text();
-    assert_eq!(c.on_mpd(0, mpd.as_bytes()), Err(Error::MpdNotAwaited));
-    let Some(Action::FetchMpd { url, .. }) = c.poll(0) else {
+    assert_eq!(c.on_mpd(now(0), mpd.as_bytes()), Err(Error::MpdNotAwaited));
+    let Some(Action::FetchMpd { url, .. }) = c.poll(now(0)) else {
         panic!()
     };
     assert_eq!(url, URL);
     assert!(
-        c.poll(0).is_none(),
+        c.poll(now(0)).is_none(),
         "the MPD is requested once until retried"
     );
-    c.on_mpd(0, mpd.as_bytes()).unwrap();
-    assert_eq!(c.on_mpd(0, mpd.as_bytes()), Err(Error::MpdNotAwaited));
+    c.on_mpd(now(0), mpd.as_bytes()).unwrap();
+    assert_eq!(c.on_mpd(now(0), mpd.as_bytes()), Err(Error::MpdNotAwaited));
     let init = loop {
-        match c.poll(0) {
+        match c.poll(now(0)) {
             Some(Action::FetchInit { id, .. }) => break id,
             Some(_) => {}
             None => panic!("no init"),
@@ -589,17 +595,17 @@ fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
         number: 999,
     };
     assert_eq!(
-        c.on_segment(0, seg, b"x"),
+        c.on_segment(now(0), seg, b"x"),
         Err(Error::UnrequestedResource { id: seg })
     );
     let data = test_fixtures::read("dash/timeline-ffmpeg-quirk/init-stream0.m4s");
-    c.on_init(0, init, &data).unwrap();
+    c.on_init(now(0), init, &data).unwrap();
     assert_eq!(
-        c.on_init(0, init, &data),
+        c.on_init(now(0), init, &data),
         Err(Error::DuplicateResource { id: init })
     );
-    assert!(!c.retry(0, init));
-    assert!(!c.skip(0, init));
+    assert!(!c.retry(now(0), init));
+    assert!(!c.skip(now(0), init));
 }
 
 #[test]
@@ -611,22 +617,22 @@ fn after_a_fatal_everything_is_ignored() {
             .with_dash(DashConfig::default())
             .with_limits(cfg),
     );
-    let _ = c.poll(0);
-    c.on_mpd(0, base_text().as_bytes()).unwrap();
-    let Some(Action::FetchInit { id, .. }) = c.poll(0) else {
+    let _ = c.poll(now(0));
+    c.on_mpd(now(0), base_text().as_bytes()).unwrap();
+    let Some(Action::FetchInit { id, .. }) = c.poll(now(0)) else {
         panic!()
     };
     let class = c
-        .on_failure(0, id, dash_runtime::client::Failure::Transport)
+        .on_failure(now(0), id, dash_runtime::client::Failure::Transport)
         .unwrap();
     assert_eq!(class, dash_runtime::client::FailureClass::GiveUp);
-    assert!(c.poll(0).is_none());
-    assert_eq!(c.on_init(0, id, b"x"), Err(Error::Stopped));
+    assert!(c.poll(now(0)).is_none());
+    assert_eq!(c.on_init(now(0), id, b"x"), Err(Error::Stopped));
     assert_eq!(
-        c.on_failure(0, id, dash_runtime::client::Failure::Transport),
+        c.on_failure(now(0), id, dash_runtime::client::Failure::Transport),
         Err(Error::Stopped)
     );
-    assert!(!c.retry(0, id));
+    assert!(!c.retry(now(0), id));
 }
 
 #[test]
@@ -639,8 +645,8 @@ fn accessors_report_the_presentation() {
     assert_eq!(c.mpd_url(), URL);
     assert_eq!(c.is_static(), None);
     assert_eq!(c.max_segment_duration_secs(), None);
-    let _ = c.poll(0);
-    c.on_mpd(0, base_text().as_bytes()).unwrap();
+    let _ = c.poll(now(0));
+    c.on_mpd(now(0), base_text().as_bytes()).unwrap();
     assert_eq!(c.is_static(), Some(true));
     assert_eq!(c.max_segment_duration_secs(), Some(1));
     assert!(!c.presentation_ended());
@@ -758,14 +764,14 @@ fn a_retried_resource_is_requested_before_anything_queued_behind_it() {
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    let _ = c.poll(0);
-    c.on_mpd(0, base_text().as_bytes()).unwrap();
-    let Some(Action::FetchInit { id: first, .. }) = c.poll(0) else {
+    let _ = c.poll(now(0));
+    c.on_mpd(now(0), base_text().as_bytes()).unwrap();
+    let Some(Action::FetchInit { id: first, .. }) = c.poll(now(0)) else {
         panic!("first init")
     };
-    c.on_failure(0, first, Failure::Status(503)).unwrap();
-    assert!(c.retry(0, first));
-    let Some(Action::FetchInit { id, .. }) = c.poll(0) else {
+    c.on_failure(now(0), first, Failure::Status(503)).unwrap();
+    assert!(c.retry(now(0), first));
+    let Some(Action::FetchInit { id, .. }) = c.poll(now(0)) else {
         panic!("init again")
     };
     assert_eq!(id, first, "the retry goes ahead of the second init");

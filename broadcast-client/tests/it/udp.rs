@@ -3,10 +3,16 @@ use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
 use broadcast_client::{
-    Action, Config, Error, Event, Session, SourceKind, Status, UdpConfig, UdpMode,
+    Action, Config, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig, UdpMode,
 };
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
+use broadcast_common::stage::Timestamp;
 use std::net::{IpAddr, Ipv4Addr};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const SMALL: &str = "ts/h264-aac.ts";
 const LIVE_CAPTURE: &str = "ts/live-channels/tf-1-8-mb.ts";
@@ -57,7 +63,7 @@ fn play(url: &str, datagrams: &[Vec<u8>]) -> UdpHost {
 
 fn bind_of(session: &mut Session) -> Action {
     let mut found = None;
-    while let Some(a) = session.poll(0) {
+    while let Some(a) = session.poll(ts(0)) {
         if matches!(a, Action::UdpBind { .. }) {
             found = Some(a);
         }
@@ -73,7 +79,7 @@ fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
                 .with_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))),
         );
     });
-    let mut s = Session::open(GROUP, config, 0).unwrap();
+    let mut s = Session::open(GROUP, config, ts(0)).unwrap();
     let Action::UdpBind {
         host,
         port,
@@ -103,7 +109,7 @@ fn an_ipv6_group_carries_the_interface_index_to_the_host() {
     let config = config_with(|cfg| {
         cfg.udp.options = UdpOptions::new().with_join(join_on(MulticastInterface::V6Index(7)));
     });
-    let mut s = Session::open("udp://[ff02::1]:5000", config, 0).unwrap();
+    let mut s = Session::open("udp://[ff02::1]:5000", config, ts(0)).unwrap();
     let Action::UdpBind { options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
@@ -118,14 +124,14 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
         "udp://@127.0.0.1:5000",
         "rtp://[::1]:5000",
     ] {
-        let mut s = Session::open(url, Config::default(), 0).unwrap();
+        let mut s = Session::open(url, Config::default(), ts(0)).unwrap();
         let Action::UdpBind { options, mode, .. } = bind_of(&mut s) else {
             unreachable!()
         };
         assert_eq!(options.join, None, "{url}");
         assert_eq!(mode, UdpMode::Receive, "{url}");
     }
-    let mut s = Session::open("rtp://[ff02::1]:5000", Config::default(), 0).unwrap();
+    let mut s = Session::open("rtp://[ff02::1]:5000", Config::default(), ts(0)).unwrap();
     let Action::UdpBind { host, options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
@@ -135,7 +141,7 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
 
 #[test]
 fn bad_udp_urls_and_configs_are_typed_errors() {
-    let open = |url: &str, config: Config| Session::open(url, config, 0).unwrap_err();
+    let open = |url: &str, config: Config| Session::open(url, config, ts(0)).unwrap_err();
     assert!(matches!(
         open("udp://example.com:5000", Config::default()),
         Error::InvalidUrl(_)
@@ -205,58 +211,61 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
 #[test]
 fn the_udp_kinds_and_schemes_must_agree() {
     let kind = |kind| config_with(|c| c.kind = kind);
-    assert!(Session::open(GROUP, kind(SourceKind::Udp), 0).is_ok());
-    assert!(Session::open(GROUP, kind(SourceKind::Auto), 0).is_ok());
+    assert!(Session::open(GROUP, kind(SourceKind::Udp), ts(0)).is_ok());
+    assert!(Session::open(GROUP, kind(SourceKind::Auto), ts(0)).is_ok());
     assert!(matches!(
-        Session::open(GROUP, kind(SourceKind::Rtp), 0).unwrap_err(),
+        Session::open(GROUP, kind(SourceKind::Rtp), ts(0)).unwrap_err(),
         Error::UnsupportedScheme(_)
     ));
     assert!(matches!(
-        Session::open("rtp://239.1.1.1:5000", kind(SourceKind::Udp), 0).unwrap_err(),
+        Session::open("rtp://239.1.1.1:5000", kind(SourceKind::Udp), ts(0)).unwrap_err(),
         Error::UnsupportedScheme(_)
     ));
     assert!(matches!(
-        Session::open("http://h/live.ts", kind(SourceKind::Udp), 0).unwrap_err(),
+        Session::open("http://h/live.ts", kind(SourceKind::Udp), ts(0)).unwrap_err(),
         Error::UnsupportedScheme(_)
     ));
     assert!(matches!(
-        Session::open(GROUP, kind(SourceKind::TsHttp), 0).unwrap_err(),
+        Session::open(GROUP, kind(SourceKind::TsHttp), ts(0)).unwrap_err(),
         Error::UnsupportedScheme(_)
     ));
 }
 
 #[test]
 fn udp_plays_exactly_what_ts_over_http_plays_whatever_the_datagram_size() {
-    let ts = small();
-    let want = baseline(&ts);
+    let media = small();
+    let want = baseline(&media);
     assert!(want.len() > 50, "the fixture must carry real media");
     for per in [1, 7] {
-        let got = play(GROUP, &ts_datagrams(&ts, per)).replay().samples();
+        let got = play(GROUP, &ts_datagrams(&media, per)).replay().samples();
         assert_eq!(got, want, "{per} TS packets per datagram");
     }
 }
 
 #[test]
 fn a_real_live_capture_plays_the_same_over_udp_and_rtp() {
-    let Some(ts) = test_fixtures::require_bytes(LIVE_CAPTURE, "udp") else {
+    let Some(media) = test_fixtures::require_bytes(LIVE_CAPTURE, "udp") else {
         return;
     };
-    let ts = &ts[..4_000_000 / TS_PACKET * TS_PACKET];
-    let want = baseline(ts);
+    let media = &media[..4_000_000 / TS_PACKET * TS_PACKET];
+    let want = baseline(media);
     assert!(want.len() > 100, "{} samples", want.len());
-    assert_eq!(play(GROUP, &ts_datagrams(ts, 7)).replay().samples(), want);
-    let rtp = rtp_datagrams(ts, 7, 40_000, SSRC_A);
+    assert_eq!(
+        play(GROUP, &ts_datagrams(media, 7)).replay().samples(),
+        want
+    );
+    let rtp = rtp_datagrams(media, 7, 40_000, SSRC_A);
     assert_eq!(play("rtp://239.1.1.1:5000", &rtp).replay().samples(), want);
 }
 
 #[test]
 fn rtp_plays_the_same_as_udp_and_survives_sequence_wrap() {
-    let ts = small();
-    let want = baseline(&ts);
+    let media = small();
+    let want = baseline(&media);
     for first in [0u16, 65_500] {
         let host = play(
             "rtp://239.1.1.1:5000",
-            &rtp_datagrams(&ts, 7, first, SSRC_A),
+            &rtp_datagrams(&media, 7, first, SSRC_A),
         );
         assert_eq!(host.replay().samples(), want, "first seq {first}");
         let stats = host.session.datagram_stats();
@@ -269,9 +278,9 @@ fn rtp_plays_the_same_as_udp_and_survives_sequence_wrap() {
 
 #[test]
 fn rtp_neighbours_swapped_inside_the_window_are_put_back() {
-    let ts = small();
-    let want = baseline(&ts);
-    let mut rtp = rtp_datagrams(&ts, 7, 65_530, SSRC_A);
+    let media = small();
+    let want = baseline(&media);
+    let mut rtp = rtp_datagrams(&media, 7, 65_530, SSRC_A);
     let mut swaps = 0;
     for i in (3..rtp.len() - 1).step_by(9) {
         rtp.swap(i, i + 1);
@@ -287,9 +296,9 @@ fn rtp_neighbours_swapped_inside_the_window_are_put_back() {
 
 #[test]
 fn rtp_neighbours_swapped_across_the_sequence_wrap_are_put_back() {
-    let ts = small();
-    let want = baseline(&ts);
-    let mut rtp = rtp_datagrams(&ts, 7, 65_530, SSRC_A);
+    let media = small();
+    let want = baseline(&media);
+    let mut rtp = rtp_datagrams(&media, 7, 65_530, SSRC_A);
     rtp.swap(5, 6);
     let host = play("rtp://239.1.1.1:5000", &rtp);
     assert_eq!(host.replay().samples(), want);
@@ -302,9 +311,9 @@ fn rtp_neighbours_swapped_across_the_sequence_wrap_are_put_back() {
 
 #[test]
 fn rtp_duplicates_are_dropped_and_counted() {
-    let ts = small();
-    let want = baseline(&ts);
-    let rtp = rtp_datagrams(&ts, 7, 100, SSRC_A);
+    let media = small();
+    let want = baseline(&media);
+    let rtp = rtp_datagrams(&media, 7, 100, SSRC_A);
     let mut with_dups = Vec::new();
     let mut dups = 0;
     for (i, d) in rtp.iter().enumerate() {
@@ -335,9 +344,9 @@ fn rtp_duplicates_are_dropped_and_counted() {
 
 #[test]
 fn rtp_loss_is_counted_once_the_gap_is_given_up_and_the_stream_continues() {
-    let ts = small();
-    let want = baseline(&ts);
-    let rtp = rtp_datagrams(&ts, 7, 1_000, SSRC_A);
+    let media = small();
+    let want = baseline(&media);
+    let rtp = rtp_datagrams(&media, 7, 1_000, SSRC_A);
     let kept: Vec<Vec<u8>> = rtp
         .iter()
         .enumerate()
@@ -361,8 +370,8 @@ fn rtp_loss_is_counted_once_the_gap_is_given_up_and_the_stream_continues() {
 
 #[test]
 fn a_gap_is_held_for_the_reorder_wait_and_the_wake_is_announced() {
-    let ts = small();
-    let rtp = rtp_datagrams(&ts, 7, 10, SSRC_A);
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 10, SSRC_A);
     let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
     host.datagram(&rtp[0]);
     host.datagram(&rtp[2]);
@@ -388,9 +397,9 @@ fn a_gap_is_held_for_the_reorder_wait_and_the_wake_is_announced() {
 
 #[test]
 fn a_packet_beyond_the_window_gives_up_everything_held() {
-    let ts = small();
+    let media = small();
     let window = UdpConfig::default().reorder_packets;
-    let rtp = rtp_datagrams(&ts, 1, 0, SSRC_A);
+    let rtp = rtp_datagrams(&media, 1, 0, SSRC_A);
     assert!(rtp.len() > window + 5);
     let mut host = UdpHost::open(
         "rtp://239.1.1.1:5000",
@@ -413,9 +422,9 @@ fn a_packet_beyond_the_window_gives_up_everything_held() {
 
 #[test]
 fn a_duplicate_of_a_held_packet_is_counted_and_not_delivered_twice() {
-    let ts = small();
-    let want = baseline(&ts);
-    let rtp = rtp_datagrams(&ts, 7, 7, SSRC_A);
+    let media = small();
+    let want = baseline(&media);
+    let rtp = rtp_datagrams(&media, 7, 7, SSRC_A);
     let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
     host.datagram(&rtp[0]);
     host.datagram(&rtp[2]);
@@ -435,11 +444,11 @@ fn a_duplicate_of_a_held_packet_is_counted_and_not_delivered_twice() {
 
 #[test]
 fn a_new_ssrc_restarts_the_sequence_space_with_a_discontinuity() {
-    let ts = small();
-    let half = ts.len() / TS_PACKET / 2 * TS_PACKET;
-    let mut dgrams = rtp_datagrams(&ts[..half], 7, 500, SSRC_A);
+    let media = small();
+    let half = media.len() / TS_PACKET / 2 * TS_PACKET;
+    let mut dgrams = rtp_datagrams(&media[..half], 7, 500, SSRC_A);
     let next_seq = 500 + dgrams.len() as u16;
-    dgrams.extend(rtp_datagrams(&ts[half..], 7, next_seq, SSRC_B));
+    dgrams.extend(rtp_datagrams(&media[half..], 7, next_seq, SSRC_B));
     let host = play("rtp://239.1.1.1:5000", &dgrams);
     let stats = host.session.datagram_stats();
     assert_eq!((stats.resyncs, stats.lost), (1, 0));
@@ -448,8 +457,8 @@ fn a_new_ssrc_restarts_the_sequence_space_with_a_discontinuity() {
 
 #[test]
 fn a_backward_jump_beyond_the_window_is_a_restart_and_a_forward_jump_is_loss() {
-    let ts = small();
-    let rtp = rtp_datagrams(&ts, 7, 0, SSRC_A);
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
     let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
     host.datagram(&rtp[0]);
     host.datagram(&rtp[1]);
@@ -458,13 +467,13 @@ fn a_backward_jump_beyond_the_window_is_a_restart_and_a_forward_jump_is_loss() {
         2 + window + 100,
         SSRC_A,
         MP2T_PAYLOAD_TYPE,
-        &ts[..7 * TS_PACKET],
+        &media[..7 * TS_PACKET],
     );
     host.datagram(&ahead);
     let stats = host.session.datagram_stats();
     assert_eq!(stats.lost, u64::from(window) + 100);
     assert_eq!(stats.resyncs, 0);
-    let mut run = rtp_datagrams(&ts, 7, 10, SSRC_A);
+    let mut run = rtp_datagrams(&media, 7, 10, SSRC_A);
     run.truncate(4);
     for d in &run {
         host.datagram(d);
@@ -481,8 +490,8 @@ fn a_backward_jump_beyond_the_window_is_a_restart_and_a_forward_jump_is_loss() {
 /// pre-unification heuristic resynced onto it and reported a discontinuity.
 #[test]
 fn a_single_far_behind_duplicate_is_not_a_restart() {
-    let ts = small();
-    let rtp = rtp_datagrams(&ts, 7, 0, SSRC_A);
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
     let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
     host.datagram(&rtp[0]);
     host.datagram(&rtp[1]);
@@ -493,7 +502,7 @@ fn a_single_far_behind_duplicate_is_not_a_restart() {
         behind,
         SSRC_A,
         MP2T_PAYLOAD_TYPE,
-        &ts[7 * TS_PACKET..14 * TS_PACKET],
+        &media[7 * TS_PACKET..14 * TS_PACKET],
     );
     host.datagram(&misordered);
     let stats = host.session.datagram_stats();
@@ -503,8 +512,8 @@ fn a_single_far_behind_duplicate_is_not_a_restart() {
 
 #[test]
 fn payload_bytes_counts_delivered_ts_and_not_dropped_datagrams() {
-    let ts = small();
-    let good = ts_datagrams(&ts, 7);
+    let media = small();
+    let good = ts_datagrams(&media, 7);
     let mut host = UdpHost::open(GROUP, Config::default());
     host.datagram(&good[0][..TS_PACKET - 1]);
     assert_eq!(host.session.payload_bytes(), 0);
@@ -518,8 +527,8 @@ fn payload_bytes_counts_delivered_ts_and_not_dropped_datagrams() {
 
 #[test]
 fn datagrams_that_are_not_whole_ts_packets_are_dropped_whole_and_counted() {
-    let ts = small();
-    let good = ts_datagrams(&ts, 7);
+    let media = small();
+    let good = ts_datagrams(&media, 7);
     let mut host = UdpHost::open(GROUP, Config::default());
     let mut broken_sync = good[3].clone();
     broken_sync[2 * TS_PACKET] = 0x00;
@@ -565,9 +574,9 @@ fn warmed(ts: &[u8]) -> (UdpHost, u64) {
 
 #[test]
 fn silence_is_a_stall_then_live_again_then_a_rebind() {
-    let ts = small();
-    let (mut host, last) = warmed(&ts);
-    let datagrams = ts_datagrams(&ts, 7);
+    let media = small();
+    let (mut host, last) = warmed(&media);
+    let datagrams = ts_datagrams(&media, 7);
     host.advance_to(last + STALL_NOTICE_US);
     assert!(host.count(|e| matches!(e, Event::Starved(_))) >= 1);
     assert!(host.count(|e| matches!(e, Event::Status(Status::Stalled { .. }))) >= 1);
@@ -596,12 +605,12 @@ fn silence_is_a_stall_then_live_again_then_a_rebind() {
 
 #[test]
 fn a_rebound_stream_starts_a_new_timeline_with_a_discontinuity() {
-    let ts = small();
-    let (mut host, last) = warmed(&ts);
+    let media = small();
+    let (mut host, last) = warmed(&media);
     let before = host.events.len();
     host.advance_to(last + STALL_RECONNECT_US + 1_000_000);
     assert_eq!(host.binds.len(), 2);
-    for d in ts_datagrams(&ts, 7) {
+    for d in ts_datagrams(&media, 7) {
         host.datagram(&d);
     }
     host.advance_to(host.now + 1_000_000);
@@ -634,8 +643,13 @@ fn a_bind_failure_backs_off_and_retries() {
     let mut host = UdpHost::open(GROUP, Config::default());
     host.auto_connect = false;
     let conn = host.conn.unwrap();
-    host.session
-        .on_closed(conn, Some("address in use".to_string()), host.now);
+    host.session.on_closed(
+        conn,
+        Some(TransportError::Other {
+            reason: "address in use".to_string(),
+        }),
+        ts(host.now),
+    );
     host.settle();
     assert!(host.count(|e| matches!(e, Event::Status(Status::Reconnecting { .. }))) >= 1);
     assert_eq!(host.binds.len(), 1);
@@ -645,10 +659,10 @@ fn a_bind_failure_backs_off_and_retries() {
 
 #[test]
 fn caller_reconnect_and_close_each_end_the_socket_once() {
-    let ts = small();
-    let (mut host, _) = warmed(&ts);
+    let media = small();
+    let (mut host, _) = warmed(&media);
     let first = host.conn.unwrap();
-    host.session.reconnect(host.now);
+    host.session.reconnect(ts(host.now));
     host.settle();
     assert_eq!(host.closes, vec![first]);
     assert_eq!(host.binds.len(), 2);
@@ -657,22 +671,23 @@ fn caller_reconnect_and_close_each_end_the_socket_once() {
     host.settle();
     assert_eq!(host.closes, vec![first, second]);
     host.session
-        .on_data(second, &ts_datagrams(&ts, 7)[0], host.now + 1);
-    assert!(host.session.poll(host.now + 2).is_none());
+        .on_data(second, &ts_datagrams(&media, 7)[0], ts(host.now + 1));
+    assert!(host.session.poll(ts(host.now + 2)).is_none());
 }
 
 #[test]
 fn datagrams_for_an_unknown_socket_are_ignored() {
-    let ts = small();
+    let media = small();
     let mut host = UdpHost::open(GROUP, Config::default());
     let conn = host.conn.unwrap();
-    host.session.on_data(conn + 99, &ts_datagrams(&ts, 7)[0], 1);
+    host.session
+        .on_data(conn + 99, &ts_datagrams(&media, 7)[0], ts(1));
     assert_eq!(host.session.datagram_stats().datagrams, 0);
 }
 
 #[test]
 fn stats_are_zero_for_a_source_with_no_datagrams() {
-    let s = Session::open("http://h/live.ts", Config::default(), 0).unwrap();
+    let s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
     assert_eq!(
         s.datagram_stats(),
         broadcast_client::DatagramStats::default()
