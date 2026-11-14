@@ -5,7 +5,7 @@
 //! for each section is pretty-printed via `serde_json`.
 use std::process::ExitCode;
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{
     AnyDescriptor, DescriptorLoop, DescriptorRegistry, PDS_EACEM, PDS_NORDIG,
 };
@@ -56,7 +56,7 @@ pub fn run(path: &str, json: bool) -> ExitCode {
     reg.with_logical_channel_for_pds(PDS_EACEM)
         .with_logical_channel_for_pds(PDS_NORDIG);
 
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     for packet in packets.by_ref() {
         for event in demux.feed(&packet) {
             match event.table_section() {

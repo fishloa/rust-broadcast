@@ -6,7 +6,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::Serialize;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 fn read_fixture(filename: &str) -> Vec<u8> {
@@ -92,10 +92,11 @@ fn feed_and_assert_byte_identity(demux: &mut SiDemux, data: &[u8], fixture_name:
 
 fn m6_demux() -> SiDemux {
     use mpeg_ts::pid::Pid;
-    SiDemux::builder()
-        .pid(Pid::from_const(0x00AA)) // AIT
-        .pid(Pid::from_const(0x00AB)) // DSM-CC HbbTV carousel
-        .build()
+    SiDemux::new(
+        SiDemuxConfig::default()
+            .with_pid(Pid::from_const(0x00AA)) // AIT
+            .with_pid(Pid::from_const(0x00AB)), // DSM-CC HbbTV carousel
+    )
 }
 
 #[test]
@@ -110,6 +111,6 @@ fn m6_byte_identity() {
 #[test]
 fn tnt_byte_identity() {
     let data = read_fixture("tnt-5w-12732v-isi6-10s.ts");
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     feed_and_assert_byte_identity(&mut demux, &data, "tnt-5w-12732v-isi6-10s.ts");
 }

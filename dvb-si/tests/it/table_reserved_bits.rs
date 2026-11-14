@@ -23,7 +23,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::Pid;
@@ -101,7 +101,7 @@ fn real_sections() -> Vec<(String, Vec<u8>)> {
         let Ok(data) = std::fs::read(&path) else {
             continue;
         };
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
         let mut per_tid = std::collections::BTreeMap::<u8, u32>::new();
         for chunk in data.chunks(TS_PACKET_SIZE) {
             if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {
@@ -836,7 +836,7 @@ fn archive_sections_in(path: &str, tid: u8, want: &dyn Fn(&[u8]) -> bool) -> Opt
         }
     };
     let mut extra = BTreeSet::new();
-    let mut learn = SiDemux::builder().build();
+    let mut learn = SiDemux::new(SiDemuxConfig::default());
     packets(&mut |chunk| {
         for ev in learn.feed(chunk) {
             if let Ok(AnyTableSection::PmtSection(pmt)) = ev.table_section() {
@@ -848,11 +848,11 @@ fn archive_sections_in(path: &str, tid: u8, want: &dyn Fn(&[u8]) -> bool) -> Opt
             }
         }
     });
-    let mut builder = SiDemux::builder().emit_repeats(true);
+    let mut builder = SiDemuxConfig::default().with_emit_repeats(true);
     for pid in &extra {
-        builder = builder.pid(*pid);
+        builder = builder.with_pid(*pid);
     }
-    let mut demux = builder.build();
+    let mut demux = SiDemux::new(builder);
     let mut pos = start;
     while pos + pre + TS_PACKET_SIZE <= data.len() {
         let chunk = &data[pos + pre..pos + pre + TS_PACKET_SIZE];

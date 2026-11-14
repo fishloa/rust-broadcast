@@ -8,7 +8,7 @@
 
 use std::time::Duration;
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_stream::SectionStream;
 use futures_core::stream::Stream;
 use std::pin::Pin;
@@ -49,7 +49,7 @@ async fn futures_util_poll_once<S: Stream + Unpin>(stream: &mut S) -> Option<S::
 /// Drive `SiDemux` synchronously on `data` (raw 188-byte-aligned bytes), using
 /// a fresh default demux, and return all emitted `SectionEvent`s.
 fn sync_oracle(data: &[u8]) -> Vec<dvb_si::demux::SectionEvent> {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut events = Vec::new();
     for pkt in data.chunks_exact(188) {
         for ev in demux.feed(pkt) {

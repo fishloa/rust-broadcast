@@ -5,7 +5,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{
     avc_timing_and_hrd::AvcTimingAndHrdDescriptor, maximum_bitrate::MaximumBitrateDescriptor,
     mvc_extension::MvcExtensionDescriptor, smoothing_buffer::SmoothingBufferDescriptor,
@@ -114,7 +114,7 @@ fn survey_real_reserved_bits() {
         let Ok(data) = std::fs::read(&p) else {
             continue;
         };
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
         for chunk in data.chunks(TS_PACKET_SIZE) {
             if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {
                 continue;

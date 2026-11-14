@@ -10,7 +10,7 @@
 //! the lower-level `SectionReassembler`.
 #![cfg(feature = "ts")]
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
@@ -22,7 +22,7 @@ fn read_fixture(name: &str) -> Vec<u8> {
 /// Demux a capture into the unique current sections it carries, as
 /// `(pid, section_bytes)` in discovery order.
 fn collect_sections(data: &[u8]) -> Vec<(u16, Vec<u8>)> {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut out = Vec::new();
     for chunk in data.chunks(TS_PACKET_SIZE) {
         if chunk.len() != TS_PACKET_SIZE || chunk[0] != TS_SYNC_BYTE {
@@ -67,7 +67,7 @@ fn packetiser_round_trips_real_capture_through_si_demux() {
     }
 
     // Feed the regenerated stream through a fresh demux.
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut round = Vec::new();
     for pkt in &regenerated {
         for ev in demux.feed(pkt) {

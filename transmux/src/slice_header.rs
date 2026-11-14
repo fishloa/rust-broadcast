@@ -683,9 +683,19 @@ mod tests {
         let a = AvcFieldInfo::new(false, 3, true, true);
         let b = AvcFieldInfo::new(true, 3, true, false);
         assert!(a.pairs_with(&b)); // IDR first field + non-IDR second
-        assert!(!a.pairs_with(&AvcFieldInfo::new(false, b.frame_num, b.is_reference, b.idr))); // same parity
+        assert!(!a.pairs_with(&AvcFieldInfo::new(
+            false,
+            b.frame_num,
+            b.is_reference,
+            b.idr
+        ))); // same parity
         assert!(!a.pairs_with(&AvcFieldInfo::new(b.bottom, 4, b.is_reference, b.idr))); // frame_num
         assert!(!a.pairs_with(&AvcFieldInfo::new(b.bottom, b.frame_num, false, b.idr))); // ref/non-ref mix
-        assert!(!a.pairs_with(&AvcFieldInfo::new(b.bottom, b.frame_num, b.is_reference, true))); // second field IDR
+        assert!(!a.pairs_with(&AvcFieldInfo::new(
+            b.bottom,
+            b.frame_num,
+            b.is_reference,
+            true
+        ))); // second field IDR
     }
 }

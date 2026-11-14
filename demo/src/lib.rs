@@ -30,7 +30,7 @@ use std::time::Duration;
 
 use broadcast_common::Parse;
 use dvb_conformance::{ConformanceEvent, ConformanceMonitor, Priority};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::pmt::StreamType;
 use mpeg_pes::{PesAssembler, PesPacket};
@@ -557,7 +557,7 @@ fn extract_services(tables: &[TableEntry]) -> Vec<ServiceEntry> {
 /// Never panics on malformed input: bad packets, bad sections, bad PES and
 /// bad SCTE-35 sections are all counted and skipped, not raised.
 fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut conformance = ConformanceMonitor::new();
 
     let mut tables: Vec<TableEntry> = Vec::new();

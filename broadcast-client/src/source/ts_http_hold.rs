@@ -4,7 +4,7 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{aac, ac3, dts, enhanced_ac3};
 use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::pmt::{PmtStream, StreamType};
@@ -106,10 +106,11 @@ impl DeclaredStreams {
     pub(crate) fn new() -> Self {
         Self {
             resync: TsResync::new(),
-            si: SiDemux::builder()
-                .dvb_si_pids(false)
-                .pid(well_known::PAT)
-                .build(),
+            si: SiDemux::new(
+                SiDemuxConfig::default()
+                    .with_dvb_si_pids(false)
+                    .with_pid(well_known::PAT),
+            ),
             programs: BTreeSet::new(),
             seen_pmts: BTreeSet::new(),
             declared: BTreeSet::new(),

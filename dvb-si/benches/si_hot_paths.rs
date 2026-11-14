@@ -9,7 +9,7 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::parse_loop;
 use dvb_si::tables::AnyTableSection;
 use dvb_si::text::DvbText;
@@ -27,7 +27,7 @@ const TS_PACKET_SIZE: usize = 188;
 
 /// Run a SiDemux over an entire fixture consuming all events; return (packets, events).
 fn demux_fixture(data: &[u8]) -> (u64, u64) {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut events = 0u64;
     for pkt in data.chunks(TS_PACKET_SIZE) {
         if pkt.len() < TS_PACKET_SIZE {
@@ -43,7 +43,7 @@ fn demux_fixture(data: &[u8]) -> (u64, u64) {
 
 /// Collect section bytes emitted by a full demux pass (emit_repeats=true).
 fn collect_sections(data: &[u8]) -> Vec<Vec<u8>> {
-    let mut demux = SiDemux::builder().emit_repeats(true).build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default().with_emit_repeats(true));
     let mut sections = Vec::new();
     for pkt in data.chunks(TS_PACKET_SIZE) {
         if pkt.len() < TS_PACKET_SIZE {

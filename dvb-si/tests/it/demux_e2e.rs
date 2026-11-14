@@ -34,7 +34,7 @@
 
 use std::collections::BTreeSet;
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
@@ -128,10 +128,11 @@ fn variant_name(result: Result<&AnyTableSection<'_>, &dvb_si::error::Error>) -> 
 
 /// Build the M6 demux: standard SI PIDs + AIT (0x00AA) + DSM-CC (0x00AB).
 fn m6_demux() -> SiDemux {
-    SiDemux::builder()
-        .pid(Pid::from_const(0x00AA)) // AIT
-        .pid(Pid::from_const(0x00AB)) // DSM-CC HbbTV carousel
-        .build()
+    SiDemux::new(
+        SiDemuxConfig::default()
+            .with_pid(Pid::from_const(0x00AA)) // AIT
+            .with_pid(Pid::from_const(0x00AB)), // DSM-CC HbbTV carousel
+    )
 }
 
 /// Test 1 — m6-single.ts: exact table-set pin.
@@ -278,7 +279,7 @@ fn m6_version_gate_suppresses_second_pass() {
 #[test]
 fn tnt_table_set() {
     let data = read_fixture("tnt-5w-12732v-isi6-10s.ts");
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let (names, events) = feed_all(&mut demux, &data);
 
     println!("tnt-5w table variants:");
@@ -351,7 +352,7 @@ fn tnt_table_set() {
 #[test]
 fn tnt_version_gate_suppresses_second_pass() {
     let data = read_fixture("tnt-5w-12732v-isi6-10s.ts");
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
 
     let (_names, _events) = feed_all(&mut demux, &data);
     let first_emitted = demux.stats().emitted;
@@ -405,7 +406,7 @@ fn tnt_decoded_json_acceptance() {
     use dvb_si::tables::sdt::SdtSection;
 
     let data = read_fixture("tnt-5w-12732v-isi6-10s.ts");
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let (_names, events) = feed_all(&mut demux, &data);
 
     // ── SDT service_name acceptance (typed loop, no manual parse_loop) ────

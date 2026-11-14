@@ -11,7 +11,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
 use dvb_si::tables::AnyTableSection;
@@ -21,7 +21,7 @@ use mpeg_ts::ts::TS_PACKET_SIZE;
 /// `(file, expected ES_info loop bytes of the 0x2D stream)`.
 fn pmt_es_descriptor_bytes(name: &str) -> Option<(StreamType, Vec<Vec<u8>>)> {
     let data = test_fixtures::require_bytes(&format!("audio/mpegh/{name}.ts"), "downloaded_mpegh")?;
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     for chunk in data.chunks(TS_PACKET_SIZE) {
         if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {
             continue;

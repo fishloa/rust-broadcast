@@ -80,7 +80,7 @@ use mpeg_ts::pid::Pid;
 
 use crate::diagnostics::codec_common::has_adts_sync;
 use dvb_conformance::ConformanceMonitor;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::pmt::StreamType;
 use mpeg_pes::{PesAssembler, PesPacket};
@@ -277,7 +277,7 @@ impl WatchState {
         Self {
             resync: TsResync::new(),
             conformance: ConformanceMonitor::new(),
-            demux: SiDemux::builder().build(),
+            demux: SiDemux::new(SiDemuxConfig::default()),
             es_tracks: BTreeMap::new(),
             scte35_tracks: BTreeMap::new(),
             pmt_generations: BTreeMap::new(),
