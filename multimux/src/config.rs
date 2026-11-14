@@ -342,6 +342,7 @@ pub enum InputSpec {
 /// the input object. All optional; the defaults are the pre-SP1.6 behaviour
 /// except for the receive buffer, which is only requested when set.
 #[derive(Clone, Deserialize, PartialEq, Default)]
+#[non_exhaustive]
 pub struct UdpSocketSpec {
     /// Requested `SO_RCVBUF` in bytes (a request: the kernel may clamp or
     /// double it). `None` leaves the OS default.
@@ -368,6 +369,36 @@ impl std::fmt::Debug for UdpSocketSpec {
             .field("multicast_interface", &self.multicast_interface)
             .field("reuse_port", &self.reuse_port)
             .finish()
+    }
+}
+
+impl UdpSocketSpec {
+    /// Set the requested `SO_RCVBUF` in bytes.
+    #[must_use]
+    pub fn with_recv_buffer_bytes(mut self, recv_buffer_bytes: usize) -> Self {
+        self.recv_buffer_bytes = Some(recv_buffer_bytes);
+        self
+    }
+
+    /// Set `SO_REUSEADDR`.
+    #[must_use]
+    pub fn with_reuse_address(mut self, reuse_address: bool) -> Self {
+        self.reuse_address = reuse_address;
+        self
+    }
+
+    /// Set the multicast join interface.
+    #[must_use]
+    pub fn with_multicast_interface(mut self, multicast_interface: String) -> Self {
+        self.multicast_interface = Some(multicast_interface);
+        self
+    }
+
+    /// Set `SO_REUSEPORT`.
+    #[must_use]
+    pub fn with_reuse_port(mut self, reuse_port: bool) -> Self {
+        self.reuse_port = reuse_port;
+        self
     }
 }
 
@@ -515,6 +546,7 @@ broadcast_common::impl_spec_display!(PushFormat);
 
 /// Reconnect policy for push outputs.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[non_exhaustive]
 pub struct ReconnectPolicy {
     #[serde(default = "ReconnectPolicy::default_initial_backoff_ms")]
     pub initial_backoff_ms: u64,
@@ -531,6 +563,29 @@ impl Default for ReconnectPolicy {
             max_backoff_ms: 30_000,
             max_attempts: None,
         }
+    }
+}
+
+impl ReconnectPolicy {
+    /// Set the initial backoff, in milliseconds.
+    #[must_use]
+    pub fn with_initial_backoff_ms(mut self, initial_backoff_ms: u64) -> Self {
+        self.initial_backoff_ms = initial_backoff_ms;
+        self
+    }
+
+    /// Set the maximum backoff, in milliseconds.
+    #[must_use]
+    pub fn with_max_backoff_ms(mut self, max_backoff_ms: u64) -> Self {
+        self.max_backoff_ms = max_backoff_ms;
+        self
+    }
+
+    /// Set the maximum number of attempts (`None` = never give up).
+    #[must_use]
+    pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
+        self.max_attempts = Some(max_attempts);
+        self
     }
 }
 
@@ -720,12 +775,21 @@ pub enum OutputAuthSpec {
 /// `OutputAuthSpec`'s other secret fields use — a plain config string, not a
 /// separately-encoded byte blob).
 #[derive(Clone, Deserialize, PartialEq)]
+#[non_exhaustive]
 pub struct SignedUrlKeySpec {
     /// The key id a token's `kid` query parameter selects.
     pub kid: String,
     /// The HMAC secret, as raw UTF-8 bytes — must be at least
     /// `broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN` (32) bytes.
     pub secret: String,
+}
+
+impl SignedUrlKeySpec {
+    /// Build a signed-URL key from its id and secret.
+    #[must_use]
+    pub fn new(kid: String, secret: String) -> Self {
+        Self { kid, secret }
+    }
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): `secret` must never
@@ -983,6 +1047,7 @@ impl OutputAuthSpec {
 ///   before the process ever binds a socket. There is no way to start the
 ///   admin listener unauthenticated.
 #[derive(Debug, Clone, Deserialize)]
+#[non_exhaustive]
 pub struct AdminSpec {
     /// `host:port` the admin HTTP API binds. Must differ from
     /// [`Config::bind`] — see this struct's own docs.
@@ -994,6 +1059,15 @@ pub struct AdminSpec {
     /// instance from [`Config::output_auth`], so the admin credential can
     /// (and should) differ from whatever gates media playback.
     pub auth: OutputAuthSpec,
+}
+
+impl AdminSpec {
+    /// Build the admin API configuration from its bind address and mandatory
+    /// auth.
+    #[must_use]
+    pub fn new(bind: String, auth: OutputAuthSpec) -> Self {
+        Self { bind, auth }
+    }
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec::Rtsp`]'s
@@ -2137,6 +2211,7 @@ broadcast_common::impl_spec_display!(ProgramDateTimeSource);
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+#[non_exhaustive]
 pub struct Config {
     /// `host:port` the HTTP origin binds.
     pub bind: String,
@@ -2257,15 +2332,15 @@ pub struct Config {
     /// of re-binding, so no test reserves a port and then races to re-bind it
     /// (SP7.1). Keyed by the exact `host:port` string the route configures.
     ///
-    /// **Feature-unification hazard.** `Config` is a `pub`, exhaustive struct
-    /// (no `#[non_exhaustive]`), and this field exists only when some crate in
+    /// **Feature-unification hazard.** `Config` is `#[non_exhaustive]`, and
+    /// this field exists only when some crate in
     /// the build graph enables `test-seams`. So a downstream that enables it
     /// *anywhere* (including transitively, e.g. via `test-hooks`) makes every
-    /// `Config { .. }` struct literal outside this crate fail to compile unless
-    /// it ends in `..Default::default()`. Gating the field keeps it out of the
-    /// default published API, but it cannot keep it out of a graph that opted
-    /// in. Prefer `Config::default()` + field assignment at construction sites
-    /// that must survive the feature being toggled.
+    /// `Config { .. }` struct literal outside this crate fail to compile. Gating
+    /// the field keeps it out of the default published API, but it cannot keep
+    /// it out of a graph that opted in. Use `Config::default()` + the `with_*`
+    /// builders (or field assignment) at construction sites that must survive
+    /// the feature being toggled.
     #[cfg(feature = "test-seams")]
     #[serde(skip)]
     pub prebound: PreboundBinds,
@@ -2388,6 +2463,155 @@ impl Default for Config {
             #[cfg(feature = "test-seams")]
             prebound: PreboundBinds::default(),
         }
+    }
+}
+
+impl Config {
+    /// Set the `host:port` the HTTP origin binds.
+    #[must_use]
+    pub fn with_bind(mut self, bind: String) -> Self {
+        self.bind = bind;
+        self
+    }
+
+    /// Set the target full-segment duration (seconds).
+    #[must_use]
+    pub fn with_target_duration_secs(mut self, target_duration_secs: f64) -> Self {
+        self.target_duration_secs = target_duration_secs;
+        self
+    }
+
+    /// Set the LL-HLS part target (milliseconds).
+    #[must_use]
+    pub fn with_part_target_ms(mut self, part_target_ms: u32) -> Self {
+        self.part_target_ms = part_target_ms;
+        self
+    }
+
+    /// Set the rolling window depth.
+    #[must_use]
+    pub fn with_window_segments(mut self, window_segments: usize) -> Self {
+        self.window_segments = window_segments;
+        self
+    }
+
+    /// Set the input→output routes.
+    #[must_use]
+    pub fn with_routes(mut self, routes: Vec<Route>) -> Self {
+        self.routes = routes;
+        self
+    }
+
+    /// Set the per-request HTTP timeout (seconds).
+    #[must_use]
+    pub fn with_request_timeout_secs(mut self, request_timeout_secs: f64) -> Self {
+        self.request_timeout_secs = request_timeout_secs;
+        self
+    }
+
+    /// Set the maximum number of requests serviced concurrently.
+    #[must_use]
+    pub fn with_max_concurrent_requests(mut self, max_concurrent_requests: usize) -> Self {
+        self.max_concurrent_requests = max_concurrent_requests;
+        self
+    }
+
+    /// Set the maximum blocking-reload requests parked per route.
+    #[must_use]
+    pub fn with_max_blocking_reloads_per_route(
+        mut self,
+        max_blocking_reloads_per_route: usize,
+    ) -> Self {
+        self.max_blocking_reloads_per_route = max_blocking_reloads_per_route;
+        self
+    }
+
+    /// Set the maximum cold-egress warm-ups per route.
+    #[must_use]
+    pub fn with_max_concurrent_warms_per_route(
+        mut self,
+        max_concurrent_warms_per_route: usize,
+    ) -> Self {
+        self.max_concurrent_warms_per_route = max_concurrent_warms_per_route;
+        self
+    }
+
+    /// Set the UDP media sockets a WHEP output binds per advertised IP.
+    #[must_use]
+    pub fn with_whep_media_sockets_per_ip(mut self, whep_media_sockets_per_ip: usize) -> Self {
+        self.whep_media_sockets_per_ip = whep_media_sockets_per_ip;
+        self
+    }
+
+    /// Set the maximum accepted request body size (bytes).
+    #[must_use]
+    pub fn with_max_request_body_bytes(mut self, max_request_body_bytes: usize) -> Self {
+        self.max_request_body_bytes = max_request_body_bytes;
+        self
+    }
+
+    /// Set the concurrency-queue timeout (seconds).
+    #[must_use]
+    pub fn with_concurrency_queue_timeout_secs(mut self, concurrency_queue_timeout_secs: f64) -> Self {
+        self.concurrency_queue_timeout_secs = concurrency_queue_timeout_secs;
+        self
+    }
+
+    /// Set the ingest connect-handshake timeout (seconds).
+    #[must_use]
+    pub fn with_ingest_connect_timeout_secs(mut self, ingest_connect_timeout_secs: f64) -> Self {
+        self.ingest_connect_timeout_secs = ingest_connect_timeout_secs;
+        self
+    }
+
+    /// Set the ingest per-read timeout (seconds).
+    #[must_use]
+    pub fn with_ingest_read_timeout_secs(mut self, ingest_read_timeout_secs: f64) -> Self {
+        self.ingest_read_timeout_secs = ingest_read_timeout_secs;
+        self
+    }
+
+    /// Set the media-playlist filename served at `/{stream}/{playlist_name}`.
+    #[must_use]
+    pub fn with_playlist_name(mut self, playlist_name: String) -> Self {
+        self.playlist_name = playlist_name;
+        self
+    }
+
+    /// Set where live HLS playlists' `#EXT-X-PROGRAM-DATE-TIME` come from.
+    #[must_use]
+    pub fn with_program_date_time(mut self, program_date_time: ProgramDateTimeSource) -> Self {
+        self.program_date_time = program_date_time;
+        self
+    }
+
+    /// Set whether a cold media-playlist request is held until the first
+    /// segment closes.
+    #[must_use]
+    pub fn with_hold_cold_playlist(mut self, hold_cold_playlist: bool) -> Self {
+        self.hold_cold_playlist = hold_cold_playlist;
+        self
+    }
+
+    /// Set the server-side output auth.
+    #[must_use]
+    pub fn with_output_auth(mut self, output_auth: OutputAuthSpec) -> Self {
+        self.output_auth = Some(output_auth);
+        self
+    }
+
+    /// Set the runtime admin API.
+    #[must_use]
+    pub fn with_admin(mut self, admin: AdminSpec) -> Self {
+        self.admin = Some(admin);
+        self
+    }
+
+    /// Permit ingest listeners on a non-loopback address with no auth.
+    #[must_use]
+    pub fn with_allow_open_ingest(mut self, allow_open_ingest: bool) -> Self {
+        self.allow_open_ingest = allow_open_ingest;
+        self
     }
 }
 

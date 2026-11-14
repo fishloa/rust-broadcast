@@ -4,10 +4,7 @@ const BACKOFF_WITH_ZERO: [u64; 3] = [2_000, 0, 8_000];
 
 #[test]
 fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
-    let config = Config {
-        backoff_ms: BACKOFF_WITH_ZERO.to_vec(),
-        ..Config::default()
-    };
+    let config = Config::default().with_backoff_ms(BACKOFF_WITH_ZERO.to_vec());
     assert!(
         matches!(
             config.validate(),
@@ -25,10 +22,7 @@ fn a_zero_backoff_entry_is_rejected_and_clamped_to_one_millisecond() {
 
 #[test]
 fn a_client_never_schedules_a_zero_delay_reconnect_from_a_zero_backoff_entry() {
-    let config = Config {
-        backoff_ms: vec![0, 0],
-        ..Config::default()
-    };
+    let config = Config::default().with_backoff_ms(vec![0, 0]);
     let mut client = TsHttpClient::new("u", config, 0);
     while client.poll().is_some() {}
     client.on_error(0);

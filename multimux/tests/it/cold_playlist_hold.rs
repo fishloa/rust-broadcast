@@ -286,12 +286,12 @@ const FFMPEG_DEADLINE: Duration = Duration::from_secs(60);
 const FFMPEG_READ_SECS: &str = "3";
 
 fn fixture_config(bind: std::net::SocketAddr, loop_file: bool) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: FIXTURE_TARGET_SECS,
-        part_target_ms: FIXTURE_PART_TARGET_MS,
-        window_segments: FIXTURE_WINDOW_SEGMENTS,
-        routes: vec![Route {
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(FIXTURE_TARGET_SECS)
+        .with_part_target_ms(FIXTURE_PART_TARGET_MS)
+        .with_window_segments(FIXTURE_WINDOW_SEGMENTS)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input: InputSpec::File {
                 path: test_fixtures::path("ts/h264-aac.ts")
@@ -309,9 +309,7 @@ fn fixture_config(bind: std::net::SocketAddr, loop_file: bool) -> Config {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 async fn first_answered_playlist(client: &reqwest::Client, url: &str) -> String {

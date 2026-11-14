@@ -14,23 +14,21 @@ use multimux::serve_with_registry_on;
 use transmux::validate::{Severity, validate_media_segment};
 
 fn dvr_config(tmp: &std::path::Path) -> DvrConfig {
-    DvrConfig {
-        enabled: true,
-        archive_root: tmp.to_string_lossy().to_string(),
-        retention_periods: 1,
-        retention_bytes: 0,
-        period_duration_secs: 1,
-        ..DvrConfig::default()
-    }
+    DvrConfig::default()
+        .with_enabled(true)
+        .with_archive_root(tmp.to_string_lossy().to_string())
+        .with_retention_periods(1)
+        .with_retention_bytes(0)
+        .with_period_duration_secs(1)
 }
 
 fn file_config(bind: std::net::SocketAddr, path: String, tmp: &std::path::Path) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: 0.5,
-        part_target_ms: 100,
-        window_segments: 8,
-        routes: vec![Route {
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target_ms(100)
+        .with_window_segments(8)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input: InputSpec::File {
                 path,
@@ -46,9 +44,7 @@ fn file_config(bind: std::net::SocketAddr, path: String, tmp: &std::path::Path) 
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 #[tokio::test]

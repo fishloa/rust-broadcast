@@ -110,12 +110,12 @@ fn reserve_tcp_addr() -> SocketAddr {
 /// least one real segment (two keyframes comfortably land inside the fed
 /// data) well within this file's polling hang guards.
 fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: 0.5,
-        part_target_ms: 100,
-        window_segments: 8,
-        routes: vec![Route {
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target_ms(100)
+        .with_window_segments(8)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input,
             outputs: vec![OutputKind::LlHls],
@@ -128,9 +128,7 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 /// Polls `playlist_url` until its body carries a real closed-segment

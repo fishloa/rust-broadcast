@@ -87,11 +87,9 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
 
     // The client side: exactly what `crate::origin::spawn_push_outputs` +
     // `crate::push::drive_push` drive for a configured `rtmp_push` output.
-    let cfg = RtmpTransportConfig {
-        app: "live".to_string(),
-        stream_key: "test".to_string(),
-        ..Default::default()
-    };
+    let cfg = RtmpTransportConfig::default()
+        .with_app("live".to_string())
+        .with_stream_key("test".to_string());
     let url = format!("rtmp://{addr}/live/test");
     let mut transport = tokio::time::timeout(GUARD, RtmpTransport::connect(&url, &cfg))
         .await

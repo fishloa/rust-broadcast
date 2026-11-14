@@ -19,6 +19,7 @@ use crate::Error;
 
 /// An HTTP request the caller must send on behalf of a state machine.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HttpRequest {
     /// HTTP method to use.
     pub method: Method,
@@ -31,6 +32,31 @@ pub struct HttpRequest {
 }
 
 impl HttpRequest {
+    /// Build a request from its method and URL, with no headers or body.
+    #[must_use]
+    pub fn new(method: Method, url: String) -> Self {
+        Self {
+            method,
+            url,
+            headers: HeaderMap::new(),
+            body: Vec::new(),
+        }
+    }
+
+    /// Attach request headers.
+    #[must_use]
+    pub fn with_headers(mut self, headers: HeaderMap) -> Self {
+        self.headers = headers;
+        self
+    }
+
+    /// Attach a request body.
+    #[must_use]
+    pub fn with_body(mut self, body: Vec<u8>) -> Self {
+        self.body = body;
+        self
+    }
+
     /// The typed `Content-Type` header, if the request carries one.
     pub fn content_type(&self) -> Option<ContentType> {
         self.headers.typed_get()
@@ -45,6 +71,7 @@ impl HttpRequest {
 /// An HTTP response: the one a server-side state machine asks the caller to
 /// send, or the one a client-side state machine is fed from the peer.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct HttpResponse {
     /// HTTP status code.
     pub status: StatusCode,

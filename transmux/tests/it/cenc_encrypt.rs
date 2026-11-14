@@ -39,7 +39,7 @@ use transmux::TrackId;
 use broadcast_common::{Encrypt, Unpackage};
 use bytes::Bytes;
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy,
+    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy,
     Track,
 };
 use transmux::{Media, TsDemux};
@@ -156,14 +156,7 @@ fn snapshot(media: &Media) -> Vec<Bytes> {
 }
 
 fn cenc_cfg() -> EncryptConfig {
-    EncryptConfig {
-        scheme: CencScheme::Cenc,
-        kid: KID_A,
-        iv: IvGen::Counter,
-        pattern: None,
-        subsample: SubsamplePolicy::Video,
-        constant_iv_senc: ConstantIvSenc::default(),
-    }
+    EncryptConfig::new(CencScheme::Cenc, KID_A, SubsamplePolicy::Video)
 }
 
 /// `cenc` IR round trip: two encrypt passes with the identical deterministic
@@ -212,14 +205,8 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
     let mut media_a = clear_video_media();
     let original = snapshot(&media_a);
 
-    let cfg_a = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID_A,
-        iv: IvGen::Counter,
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::Video,
-        constant_iv_senc: ConstantIvSenc::default(),
-    };
+    let cfg_a = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video)
+        .with_pattern((1, 9));
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media_a, &cfg_a)
         .expect("encrypt (key A)");
@@ -266,10 +253,7 @@ fn cbcs_encrypt_changes_bytes_and_records_well_formed_metadata() {
 #[test]
 fn whole_sample_policy_yields_empty_subsample_map() {
     let mut media = clear_video_media();
-    let cfg = EncryptConfig {
-        subsample: SubsamplePolicy::WholeSample,
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .expect("encrypt");
@@ -287,10 +271,7 @@ fn explicit_iv_count_mismatch_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
     assert!(n > 1, "fixture must have more than one sample to bite");
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(vec![vec![0u8; 8]; n - 1]),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![0u8; 8]; n - 1]));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -305,10 +286,7 @@ fn explicit_iv_count_mismatch_errors() {
 fn explicit_iv_too_long_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(vec![vec![0u8; 17]; n]),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![0u8; 17]; n]));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -326,10 +304,7 @@ fn explicit_iv_too_long_errors() {
 fn explicit_iv_empty_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(vec![vec![]; n]),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![]; n]));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -345,10 +320,7 @@ fn explicit_iv_empty_errors() {
 fn explicit_iv_wrong_uniform_length_errors() {
     let mut media = clear_video_media();
     let n = media.tracks[0].samples.len();
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(vec![vec![0u8; 12]; n]),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(vec![vec![0u8; 12]; n]));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -384,10 +356,7 @@ fn explicit_iv_valid_lengths_are_ok() {
     for len in [8usize, 16] {
         let mut media = clear_video_media();
         let n = media.tracks[0].samples.len();
-        let cfg = EncryptConfig {
-            iv: IvGen::Explicit(distinct_ivs(n, len)),
-            ..cenc_cfg()
-        };
+        let cfg = cenc_cfg().with_iv(IvGen::Explicit(distinct_ivs(n, len)));
         CencEncryptor::new(KEY_A)
             .encrypt(&mut media, &cfg)
             .unwrap_or_else(|e| panic!("{len}-byte explicit IV must be accepted: {e:?}"));
@@ -406,10 +375,7 @@ fn explicit_duplicate_ivs_error() {
     assert!(n > 1, "fixture must have more than one sample to bite");
     let mut ivs = distinct_ivs(n, 8);
     ivs[n - 1] = ivs[0].clone(); // one repeat, everything else distinct
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(ivs),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(ivs));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -435,10 +401,7 @@ fn explicit_iv_count_is_per_media_not_per_track() {
     );
 
     // Old (per-track) meaning: rejected.
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(distinct_ivs(first_track_n, 8)),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(distinct_ivs(first_track_n, 8)));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -450,10 +413,7 @@ fn explicit_iv_count_is_per_media_not_per_track() {
     // New (per-Media) meaning: accepted, and every recorded IV is the one
     // supplied for that (track, sample) position, in order.
     let ivs = distinct_ivs(total, 8);
-    let cfg = EncryptConfig {
-        iv: IvGen::Explicit(ivs.clone()),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Explicit(ivs.clone()));
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .expect("a Media-wide IV list must be accepted");
@@ -472,10 +432,7 @@ fn explicit_iv_count_is_per_media_not_per_track() {
 #[test]
 fn constant_iv_under_cenc_errors() {
     let mut media = clear_video_media();
-    let cfg = EncryptConfig {
-        iv: IvGen::Constant([0x5Au8; 16]),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_iv(IvGen::Constant([0x5Au8; 16]));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -501,12 +458,10 @@ fn constant_iv_under_cbcs_still_works() {
         0xff,
     ];
     let original = snapshot(&media);
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        iv: IvGen::Constant(CONSTANT_IV),
-        pattern: Some((1, 9)),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg()
+        .with_scheme(CencScheme::Cbcs)
+        .with_iv(IvGen::Constant(CONSTANT_IV))
+        .with_pattern((1, 9));
     CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .expect("cbcs + constant IV is the standard convention and must be accepted");
@@ -531,11 +486,7 @@ fn constant_iv_under_cbcs_still_works() {
 #[test]
 fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
     let mut media = clear_video_media();
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        pattern: Some((0, 9)),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_scheme(CencScheme::Cbcs).with_pattern((0, 9));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();
@@ -550,11 +501,7 @@ fn cbcs_pattern_zero_crypt_nonzero_skip_errors() {
 #[test]
 fn cbcs_pattern_component_too_large_errors() {
     let mut media = clear_video_media();
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        pattern: Some((17, 9)),
-        ..cenc_cfg()
-    };
+    let cfg = cenc_cfg().with_scheme(CencScheme::Cbcs).with_pattern((17, 9));
     let err = CencEncryptor::new(KEY_A)
         .encrypt(&mut media, &cfg)
         .unwrap_err();

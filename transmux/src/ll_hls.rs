@@ -57,6 +57,7 @@ use broadcast_common::units::MILLIS_PER_SEC;
 /// to the part's own URI (`#EXT-X-PART:...,URI="<uri>"`) and can serve them
 /// before the parent segment is complete.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PartInfo {
     /// The part bytes: a bare `moof`+`mdat` fragment (no `styp`).
     pub bytes: Vec<u8>,
@@ -72,9 +73,31 @@ pub struct PartInfo {
     pub part_index: u32,
 }
 
+impl PartInfo {
+    /// Build a part record from its bytes, duration, and sequence numbers.
+    #[must_use]
+    pub fn new(bytes: Vec<u8>, duration: f64, segment_seq: u32, part_index: u32) -> Self {
+        Self {
+            bytes,
+            duration,
+            independent: false,
+            segment_seq,
+            part_index,
+        }
+    }
+
+    /// Set whether this part begins with a sync sample.
+    #[must_use]
+    pub fn with_independent(mut self, independent: bool) -> Self {
+        self.independent = independent;
+        self
+    }
+}
+
 /// A finished full segment emitted by [`LlHlsSegmenter`] once its parts have all
 /// been produced (the parent `styp`+`moof`+`mdat` covering the same samples).
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct SegmentInfo {
     /// The whole-segment bytes (`styp`+`moof`+`mdat`), byte-identical to
     /// [`crate::build_media_segment`] for the segment's samples.
@@ -85,6 +108,26 @@ pub struct SegmentInfo {
     pub segment_seq: u32,
     /// Number of parts that made up this segment.
     pub part_count: u32,
+}
+
+impl SegmentInfo {
+    /// Build a segment record from its bytes, duration, and sequence number.
+    #[must_use]
+    pub fn new(bytes: Vec<u8>, duration: f64, segment_seq: u32) -> Self {
+        Self {
+            bytes,
+            duration,
+            segment_seq,
+            part_count: 0,
+        }
+    }
+
+    /// Set the number of parts in this segment.
+    #[must_use]
+    pub fn with_part_count(mut self, part_count: u32) -> Self {
+        self.part_count = part_count;
+        self
+    }
 }
 
 /// A typed external-cut plan fed to a follower [`LlHlsSegmenter`] so it cuts

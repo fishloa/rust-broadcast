@@ -43,11 +43,9 @@ impl PushTransport for NeverConnect {
 /// Zero backoff so the retry-wait is skipped and the only parking point in
 /// `drive_push` is the `None` (no free waiter slot) branch.
 fn zero_backoff() -> ReconnectPolicy {
-    ReconnectPolicy {
-        initial_backoff_ms: 0,
-        max_backoff_ms: 0,
-        max_attempts: None,
-    }
+    ReconnectPolicy::default()
+        .with_initial_backoff_ms(0)
+        .with_max_backoff_ms(0)
 }
 
 /// With every waiter slot held, `trunk.listen()` returns `None`; cancelling the

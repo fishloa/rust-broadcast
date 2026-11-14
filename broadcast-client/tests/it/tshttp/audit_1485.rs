@@ -85,11 +85,9 @@ fn host_loop_over_ten_minutes_of_silence_is_bounded() {
 
 #[test]
 fn host_loop_with_reconnect_below_notice_is_bounded() {
-    let config = Config {
-        stall_notice_ms: 5_000,
-        stall_reconnect_ms: 3_000,
-        ..Config::default()
-    };
+    let config = Config::default()
+        .with_stall_notice_ms(5_000)
+        .with_stall_reconnect_ms(3_000);
     let n = run_host_loop(config, true);
     assert!(n < ITERATION_BOUND, "{n}");
 }
@@ -203,10 +201,7 @@ fn one_sample_then_close_server_spaces_opens_by_the_floor() {
 
 #[test]
 fn stall_catch_up_after_one_hour_jump_emits_one_notice() {
-    let config = Config {
-        stall_reconnect_ms: 10_000_000,
-        ..Config::default()
-    };
+    let config = Config::default().with_stall_reconnect_ms(10_000_000);
     let mut c = playing(config);
     c.poll_timeout(5_000);
     assert_eq!(stall_notices(&events(&mut c)), vec![5]);
@@ -222,10 +217,7 @@ fn stall_catch_up_after_one_hour_jump_emits_one_notice() {
 
 #[test]
 fn stall_notice_arithmetic_does_not_overflow_near_u64_max() {
-    let config = Config {
-        stall_reconnect_ms: u64::MAX,
-        ..Config::default()
-    };
+    let config = Config::default().with_stall_reconnect_ms(u64::MAX);
     let mut c = playing(config);
     c.poll_timeout(u64::MAX - 1);
     assert_eq!(stall_notices(&events(&mut c)).len(), 1);
@@ -349,14 +341,13 @@ fn validate_rejects_each_inconsistent_field() {
 #[test]
 fn clamped_config_always_validates_and_leaves_valid_config_alone() {
     assert_eq!(Config::default().clamped(), Config::default());
-    let worst = Config {
-        start_timeout_ms: 0,
-        stall_notice_ms: 0,
-        stall_reconnect_ms: 0,
-        backoff_ms: Vec::new(),
-        backoff_cap_ms: 0,
-        min_reconnect_interval_ms: 0,
-    };
+    let worst = Config::default()
+        .with_start_timeout_ms(0)
+        .with_stall_notice_ms(0)
+        .with_stall_reconnect_ms(0)
+        .with_backoff_ms(Vec::new())
+        .with_backoff_cap_ms(0)
+        .with_min_reconnect_interval_ms(0);
     let c = worst.clamped();
     assert_eq!(c.validate(), Ok(()));
     assert_eq!(
@@ -368,14 +359,13 @@ fn clamped_config_always_validates_and_leaves_valid_config_alone() {
 
 #[test]
 fn empty_backoff_and_zero_timeouts_do_not_spin_the_client() {
-    let config = Config {
-        start_timeout_ms: 0,
-        stall_notice_ms: 0,
-        stall_reconnect_ms: 0,
-        backoff_ms: Vec::new(),
-        backoff_cap_ms: 500,
-        min_reconnect_interval_ms: 0,
-    };
+    let config = Config::default()
+        .with_start_timeout_ms(0)
+        .with_stall_notice_ms(0)
+        .with_stall_reconnect_ms(0)
+        .with_backoff_ms(Vec::new())
+        .with_backoff_cap_ms(500)
+        .with_min_reconnect_interval_ms(0);
     let mut c = TsHttpClient::new("u", config, 0);
     let _ = actions(&mut c);
     c.poll_timeout(1);

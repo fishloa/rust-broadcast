@@ -678,15 +678,13 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
     );
     let seg_writer = trunk.segment_writer().expect("segment writer");
 
-    let cfg = DvrConfig {
-        enabled: true,
-        archive_root: dir.to_string_lossy().to_string(),
-        retention_periods: 8,
-        retention_bytes: 0,
-        period_duration_secs: 3600,
-        overrun: ArchiveOverrunSerde::Gap,
-        dvb_service_id: None,
-    };
+    let cfg = DvrConfig::default()
+        .with_enabled(true)
+        .with_archive_root(dir.to_string_lossy().to_string())
+        .with_retention_periods(8)
+        .with_retention_bytes(0)
+        .with_period_duration_secs(3600)
+        .with_overrun(ArchiveOverrunSerde::Gap);
     let mut recorder =
         DvrRecorder::new("replay".to_string(), cfg, ".m4s", &trunk).expect("recorder");
 

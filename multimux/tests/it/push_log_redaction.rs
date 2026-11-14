@@ -69,11 +69,10 @@ where
             .with_event_capacity(nz(1))
             .with_part_capacity(nz(1)),
     );
-    let reconnect = ReconnectPolicy {
-        initial_backoff_ms: 1,
-        max_backoff_ms: 1,
-        max_attempts: Some(2),
-    };
+    let reconnect = ReconnectPolicy::default()
+        .with_initial_backoff_ms(1)
+        .with_max_backoff_ms(1)
+        .with_max_attempts(2);
     let url = url.to_string();
     async move {
         tokio::time::timeout(

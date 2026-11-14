@@ -454,20 +454,18 @@ fn route_json(route: &Route) -> serde_json::Value {
 }
 
 fn admin_config(media_bind: SocketAddr, admin_bind: SocketAddr, routes: Vec<Route>) -> Config {
-    Config {
-        bind: media_bind.to_string(),
-        target_duration_secs: 0.2,
-        part_target_ms: 50,
-        window_segments: 8,
-        routes,
-        admin: Some(AdminSpec {
-            bind: admin_bind.to_string(),
-            auth: OutputAuthSpec::Bearer {
+    Config::default()
+        .with_bind(media_bind.to_string())
+        .with_target_duration_secs(0.2)
+        .with_part_target_ms(50)
+        .with_window_segments(8)
+        .with_routes(routes)
+        .with_admin(AdminSpec::new(
+            admin_bind.to_string(),
+            OutputAuthSpec::Bearer {
                 token: ADMIN_TOKEN.to_string(),
             },
-        }),
-        ..Config::default()
-    }
+        ))
 }
 
 /// Polls `playlist_url` until its body carries a real closed-segment

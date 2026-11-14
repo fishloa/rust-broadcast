@@ -4654,17 +4654,17 @@ mod tests {
 
         // An Emsg-sourced event, Media-anchored inside segment 1's span — the
         // kinds of event that legitimately cannot become a DATERANGE.
-        let emsg_ev = TimedEvent {
-            id: Some(7),
-            kind: EventKind::Unspecified,
-            at: Some(MediaTime(2_000_000)),
-            duration: Some(MediaDuration(2_000_000)),
-            source: SourcePayload::Emsg {
+        let emsg_ev = TimedEvent::new(
+            EventKind::Unspecified,
+            SourcePayload::Emsg {
                 scheme_id_uri: "urn:example".to_string(),
                 value: "1".to_string(),
                 raw: vec![0x01, 0x02],
             },
-        };
+        )
+        .with_id(7)
+        .with_at(MediaTime(2_000_000))
+        .with_duration(MediaDuration(2_000_000));
         let trunk_writer = trunk.writer().expect("first trunk writer");
         trunk_writer.publish_event(emsg_ev, EventAnchor::Media(MediaTime(2_000_000)));
 

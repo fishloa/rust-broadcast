@@ -76,11 +76,11 @@ fn crypto_config(passphrase: &str) -> HandshakeConfig {
         .with_encryption_field(EncryptionField::Aes128)
         .with_retransmit_after_ticks(1)
         .with_max_retries(1_000)
-        .with_crypto(Some(CryptoConfig {
-            passphrase: passphrase.as_bytes().to_vec(),
-            salt: SALT,
-            sek: SEK.to_vec(),
-        }))
+        .with_crypto(Some(CryptoConfig::new(
+            passphrase.as_bytes().to_vec(),
+            SALT,
+            SEK.to_vec(),
+        )))
 }
 
 enum CallerResult {
@@ -231,11 +231,11 @@ fn our_listener_recovers_libsrts_sek_and_decrypts_its_data() {
         0x0C0F_FEE0,
         0x1357_9BDF,
         HandshakeConfig::default()
-            .with_crypto(Some(CryptoConfig {
-                passphrase: PASSPHRASE.as_bytes().to_vec(),
-                salt: [0; SALT_LEN],
-                sek: Vec::new(),
-            }))
+            .with_crypto(Some(CryptoConfig::new(
+                PASSPHRASE.as_bytes().to_vec(),
+                [0; SALT_LEN],
+                Vec::new(),
+            )))
             .with_encryption_field(EncryptionField::Aes128),
     );
 

@@ -40,8 +40,7 @@ use tokio_util::task::TaskTracker;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{TrackId, avc_config_from_sprop};
 use webrtc_runtime::media::{
-    MAX_REMOTE_CANDIDATES, MediaEvent, MediaTransport, MediaTransportConfig, SetupRole,
-    certificate_fingerprint,
+    MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, certificate_fingerprint,
 };
 
 use crate::support::raw_http::http;
@@ -157,18 +156,16 @@ async fn viewer(
         "the route is the DTLS server for an actpass offer"
     );
     let mut media = match MediaTransport::with_certificate_for_test(
-        MediaTransportConfig {
+        MediaTransportConfig::new(
             local_addr,
-            local_ice_ufrag: ufrag,
-            local_ice_pwd: pwd,
-            remote_ice_ufrag: answer.ufrag,
-            remote_ice_pwd: answer.pwd,
-            is_controlling: true,
-            local_setup: SetupRole::Active,
-            stun_server: None,
-            remote_fingerprint: answer.fingerprint,
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-        },
+            ufrag,
+            pwd,
+            answer.ufrag,
+            answer.pwd,
+            SetupRole::Active,
+            answer.fingerprint,
+        )
+        .with_is_controlling(true),
         cert,
         Instant::now(),
     ) {

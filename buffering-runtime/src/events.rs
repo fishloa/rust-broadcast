@@ -270,6 +270,7 @@ pub mod kind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[repr(C)]
+#[non_exhaustive]
 pub struct EventRecord {
     /// Event kind code (see [`kind`]).
     pub kind: u32,

@@ -26,7 +26,7 @@ use transmux::cenc::{
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild, protect_init_segment};
 use transmux::movie_fragment::{FragmentProtection, MovieFragmentBox, protect_media_segment};
 use transmux::{
-    CencEncryptor, CencScheme, CmafMux, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, Media,
     SubsamplePolicy, TsDemux,
 };
 
@@ -136,14 +136,7 @@ fn parse_senc(senc_bytes: &[u8], per_sample_iv_size: u8) -> SampleEncryptionBox 
 }
 
 fn cenc_cfg(subsample: SubsamplePolicy) -> EncryptConfig {
-    EncryptConfig {
-        scheme: CencScheme::Cenc,
-        kid: KID,
-        iv: IvGen::Counter,
-        pattern: None,
-        subsample,
-        constant_iv_senc: ConstantIvSenc::default(),
-    }
+    EncryptConfig::new(CencScheme::Cenc, KID, subsample)
 }
 
 /// Mux `media` through the real `CmafMux` packager, then apply both

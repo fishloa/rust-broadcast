@@ -25,13 +25,13 @@ fn main() {
     let event = timeline.push_scte35(&raw).expect("valid splice");
 
     // Build emsg config: 90 kHz timescale, segment-relative delta 0, 24 s duration.
-    let cfg = EmsgConfig {
-        timescale: 90_000,
-        presentation: PresentationTime::Delta(0),
-        event_duration: 2_160_000, // 24s * 90000
-        value: "34".to_string(),   // segmentation_type_id for Provider Ad Start
-        id: event.id.unwrap_or(0),
-    };
+    let cfg = EmsgConfig::new(
+        90_000,
+        PresentationTime::Delta(0),
+        2_160_000,              // 24s * 90000
+        "34".to_string(),       // segmentation_type_id for Provider Ad Start
+        event.id.unwrap_or(0),
+    );
 
     let emsg_bytes = timeline
         .to_emsg(&event, &cfg)

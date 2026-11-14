@@ -99,13 +99,13 @@ fn config_with(
     prebound: multimux::config::PreboundBinds,
     publishing_point: &str,
 ) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: 0.5,
-        part_target_ms: 100,
-        window_segments: 8,
-        hold_cold_playlist: false,
-        routes: vec![Route {
+    let mut cfg = Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(0.5)
+        .with_part_target_ms(100)
+        .with_window_segments(8)
+        .with_hold_cold_playlist(false)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input: InputSpec::DashifIngest {
                 listen: ingest.to_string(),
@@ -124,10 +124,9 @@ fn config_with(
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        prebound,
-        ..Config::default()
-    }
+        }]);
+    cfg.prebound = prebound;
+    cfg
 }
 
 /// A running route: ingest endpoint + the LL-HLS origin it feeds.

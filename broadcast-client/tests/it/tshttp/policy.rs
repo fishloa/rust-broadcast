@@ -226,14 +226,13 @@ fn starved_data_vs_nodata_classified_separately() {
 
 #[test]
 fn config_overrides_change_every_timeout() {
-    let cfg = Config {
-        start_timeout_ms: 7,
-        stall_notice_ms: 3,
-        stall_reconnect_ms: 9,
-        backoff_ms: vec![5],
-        backoff_cap_ms: 11,
-        min_reconnect_interval_ms: 0,
-    };
+    let cfg = Config::default()
+        .with_start_timeout_ms(7)
+        .with_stall_notice_ms(3)
+        .with_stall_reconnect_ms(9)
+        .with_backoff_ms(vec![5])
+        .with_backoff_cap_ms(11)
+        .with_min_reconnect_interval_ms(0);
     let mut c = TsHttpClient::new("u", cfg, 0);
     let _ = c.poll();
     c.on_response(200, &[], 0);

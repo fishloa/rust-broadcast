@@ -46,7 +46,7 @@ use test_alloc::ThreadCounting;
 
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
-    CencEncryptor, CencScheme, CodecConfig, ConstantIvSenc, EncryptConfig, IvGen, Media,
+    CencEncryptor, CencScheme, CodecConfig, EncryptConfig, Media,
     RtpPacketiser, Sample, SubsamplePolicy, TsDemux,
 };
 
@@ -136,14 +136,7 @@ fn cenc_encrypt_allocation_count_over_real_fixture() {
     // rewrite overhead (subsample-map Vecs, IV buffers) does not.
     let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
 
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cenc,
-        kid: KID,
-        iv: IvGen::Counter,
-        pattern: None,
-        subsample: SubsamplePolicy::Video,
-        constant_iv_senc: ConstantIvSenc::default(),
-    };
+    let cfg = EncryptConfig::new(CencScheme::Cenc, KID, SubsamplePolicy::Video);
 
     reset_counters();
     CencEncryptor::new(KEY)
@@ -212,14 +205,7 @@ fn cbcs_encrypt_allocation_count_over_real_fixture() {
     let sample_count = media.tracks[0].samples.len();
     let total_payload: usize = media.tracks[0].samples.iter().map(|s| s.data.len()).sum();
 
-    let cfg = EncryptConfig {
-        scheme: CencScheme::Cbcs,
-        kid: KID,
-        iv: IvGen::Counter,
-        pattern: Some((1, 9)),
-        subsample: SubsamplePolicy::Video,
-        constant_iv_senc: ConstantIvSenc::default(),
-    };
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::Video).with_pattern((1, 9));
 
     reset_counters();
     CencEncryptor::new(KEY)

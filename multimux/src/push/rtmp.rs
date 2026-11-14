@@ -42,6 +42,7 @@ fn on_metadata_values(
 
 /// Per-connection configuration for the RTMP push transport.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct RtmpTransportConfig {
     /// RTMP `app` name.
     pub app: String,
@@ -72,6 +73,29 @@ impl Default for RtmpTransportConfig {
             stream_key: String::new(),
             timeouts: broadcast_common::timeouts::Timeouts::default(),
         }
+    }
+}
+
+impl RtmpTransportConfig {
+    /// Set the RTMP `app` name.
+    #[must_use]
+    pub fn with_app(mut self, app: String) -> Self {
+        self.app = app;
+        self
+    }
+
+    /// Set the publishing name (stream key).
+    #[must_use]
+    pub fn with_stream_key(mut self, stream_key: String) -> Self {
+        self.stream_key = stream_key;
+        self
+    }
+
+    /// Set the IO timeouts (SP6.1).
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: broadcast_common::timeouts::Timeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 }
 

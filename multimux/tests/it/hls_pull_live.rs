@@ -130,12 +130,12 @@ async fn serve_origin(mode: Mode) -> (String, Arc<Origin>) {
 }
 
 fn route_config(bind: SocketAddr, upstream: String) -> Config {
-    Config {
-        bind: bind.to_string(),
-        target_duration_secs: ROUTE_TARGET_DURATION_SECS,
-        part_target_ms: ROUTE_PART_TARGET_MS,
-        window_segments: ROUTE_WINDOW_SEGMENTS,
-        routes: vec![Route {
+    Config::default()
+        .with_bind(bind.to_string())
+        .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
+        .with_part_target_ms(ROUTE_PART_TARGET_MS)
+        .with_window_segments(ROUTE_WINDOW_SEGMENTS)
+        .with_routes(vec![Route {
             name: "pulled".to_string(),
             input: InputSpec::HlsPull {
                 url: upstream,
@@ -151,9 +151,7 @@ fn route_config(bind: SocketAddr, upstream: String) -> Config {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

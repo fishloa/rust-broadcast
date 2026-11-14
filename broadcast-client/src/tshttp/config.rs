@@ -9,6 +9,7 @@ use broadcast_common::timeouts::Timeouts;
 /// [`Config::clamped`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[non_exhaustive]
 pub struct Config {
     /// Start timeout in milliseconds, measured from `Open` (T6, T20).
     pub start_timeout_ms: u64,
@@ -48,6 +49,48 @@ impl Config {
         self.start_timeout_ms = millis(timeouts.connect).max(MIN_START_TIMEOUT_MS);
         self.stall_notice_ms = reconnect / STALL_NOTICE_DIVISOR;
         self.stall_reconnect_ms = reconnect;
+        self
+    }
+
+    /// Set the start timeout (`T6`, `T20`).
+    #[must_use]
+    pub fn with_start_timeout_ms(mut self, start_timeout_ms: u64) -> Self {
+        self.start_timeout_ms = start_timeout_ms;
+        self
+    }
+
+    /// Set the stall notice threshold (`T11`, `T14`, `T15`).
+    #[must_use]
+    pub fn with_stall_notice_ms(mut self, stall_notice_ms: u64) -> Self {
+        self.stall_notice_ms = stall_notice_ms;
+        self
+    }
+
+    /// Set the stall reconnect threshold (`T12`).
+    #[must_use]
+    pub fn with_stall_reconnect_ms(mut self, stall_reconnect_ms: u64) -> Self {
+        self.stall_reconnect_ms = stall_reconnect_ms;
+        self
+    }
+
+    /// Set the backoff schedule (`T9`).
+    #[must_use]
+    pub fn with_backoff_ms(mut self, backoff_ms: alloc::vec::Vec<u64>) -> Self {
+        self.backoff_ms = backoff_ms;
+        self
+    }
+
+    /// Set the backoff cap (`T9`).
+    #[must_use]
+    pub fn with_backoff_cap_ms(mut self, backoff_cap_ms: u64) -> Self {
+        self.backoff_cap_ms = backoff_cap_ms;
+        self
+    }
+
+    /// Set the minimum reconnect interval (`T8`).
+    #[must_use]
+    pub fn with_min_reconnect_interval_ms(mut self, min_reconnect_interval_ms: u64) -> Self {
+        self.min_reconnect_interval_ms = min_reconnect_interval_ms;
         self
     }
 }

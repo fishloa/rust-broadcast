@@ -173,11 +173,9 @@ fn the_schedule_yields_attempts_past_a_short_attempt_bound() {
 fn a_policy_maps_to_the_same_min_and_cap() {
     // The push-output entry point: the policy's millisecond bounds become the
     // schedule's floor and ceiling.
-    let policy = ReconnectPolicy {
-        initial_backoff_ms: 250,
-        max_backoff_ms: 4_000,
-        max_attempts: None,
-    };
+    let policy = ReconnectPolicy::default()
+        .with_initial_backoff_ms(250)
+        .with_max_backoff_ms(4_000);
     let s = schedule(&policy);
     for i in 0..32 {
         let d = s.delay_for_attempt(i);
@@ -204,11 +202,12 @@ fn a_clone_reseeds_and_fresh_schedules_do_not_share_a_sequence() {
 
 #[test]
 fn a_push_destination_that_connects_then_drops_hits_max_attempts() {
-    let mut engine = ReconnectEngine::new(ReconnectPolicy {
-        initial_backoff_ms: 1_000,
-        max_backoff_ms: 30_000,
-        max_attempts: Some(3),
-    });
+    let mut engine = ReconnectEngine::new(
+        ReconnectPolicy::default()
+            .with_initial_backoff_ms(1_000)
+            .with_max_backoff_ms(30_000)
+            .with_max_attempts(3),
+    );
     for _ in 0..10 {
         engine.on_connect();
         engine.on_disconnect();
@@ -221,11 +220,11 @@ fn a_push_destination_that_connects_then_drops_hits_max_attempts() {
 
 #[test]
 fn a_push_destination_that_connects_then_drops_is_backed_off_progressively() {
-    let mut engine = ReconnectEngine::new(ReconnectPolicy {
-        initial_backoff_ms: 1_000,
-        max_backoff_ms: 30_000,
-        max_attempts: None,
-    });
+    let mut engine = ReconnectEngine::new(
+        ReconnectPolicy::default()
+            .with_initial_backoff_ms(1_000)
+            .with_max_backoff_ms(30_000),
+    );
     for _ in 0..6 {
         engine.on_connect();
         engine.on_disconnect();

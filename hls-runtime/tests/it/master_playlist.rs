@@ -50,9 +50,8 @@ const TIE_MASTER: &str =
 fn selection_policy_table() {
     let bipbop = || test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     let hevc = || test_fixtures::read("hls/real/bipbop-fmp4-hevc/master.m3u8");
-    let codecs = |names: [&str; 2]| VariantPolicy {
-        supported_codecs: Some(names.iter().map(|n| (*n).to_string()).collect()),
-        ..Default::default()
+    let codecs = |names: [&str; 2]| {
+        VariantPolicy::default().with_supported_codecs(names.iter().map(|n| (*n).to_string()).collect())
     };
     let cases: Vec<(&str, Vec<u8>, VariantPolicy, Expect)> = vec![
         (
@@ -64,19 +63,13 @@ fn selection_policy_table() {
         (
             "max_bandwidth picks the highest not above",
             bipbop(),
-            VariantPolicy {
-                max_bandwidth: Some(1_000_000),
-                ..Default::default()
-            },
+            VariantPolicy::default().with_max_bandwidth(1_000_000),
             Expect::Bandwidth(915905),
         ),
         (
             "max_height filters by resolution",
             bipbop(),
-            VariantPolicy {
-                max_height: Some(540),
-                ..Default::default()
-            },
+            VariantPolicy::default().with_max_height(540),
             Expect::Bandwidth(915905),
         ),
         (
@@ -94,10 +87,7 @@ fn selection_policy_table() {
         (
             "none fit falls back to the lowest bandwidth",
             bipbop(),
-            VariantPolicy {
-                max_bandwidth: Some(1),
-                ..Default::default()
-            },
+            VariantPolicy::default().with_max_bandwidth(1),
             Expect::LowestBandwidth,
         ),
         (

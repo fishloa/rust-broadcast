@@ -232,6 +232,7 @@ pub enum DvrError {
 /// Per-route DVR configuration.
 #[derive(Debug, Clone, PartialEq, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct DvrConfig {
     /// Enable DVR recording for this route. `false` by default — recording
     /// must be explicitly opted in.
@@ -310,6 +311,55 @@ impl From<ArchiveOverrunSerde> for ArchiveOverrun {
 }
 
 impl DvrConfig {
+    /// Enable DVR recording for this route.
+    #[must_use]
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Set the archive root directory.
+    #[must_use]
+    pub fn with_archive_root(mut self, archive_root: String) -> Self {
+        self.archive_root = archive_root;
+        self
+    }
+
+    /// Set the period duration (seconds).
+    #[must_use]
+    pub fn with_period_duration_secs(mut self, period_duration_secs: u64) -> Self {
+        self.period_duration_secs = period_duration_secs;
+        self
+    }
+
+    /// Set count-based retention.
+    #[must_use]
+    pub fn with_retention_periods(mut self, retention_periods: usize) -> Self {
+        self.retention_periods = retention_periods;
+        self
+    }
+
+    /// Set byte-based retention.
+    #[must_use]
+    pub fn with_retention_bytes(mut self, retention_bytes: u64) -> Self {
+        self.retention_bytes = retention_bytes;
+        self
+    }
+
+    /// Set the archive-overrun policy.
+    #[must_use]
+    pub fn with_overrun(mut self, overrun: ArchiveOverrunSerde) -> Self {
+        self.overrun = overrun;
+        self
+    }
+
+    /// Set the DVB service id for programme-aligned rolling.
+    #[must_use]
+    pub fn with_dvb_service_id(mut self, dvb_service_id: u16) -> Self {
+        self.dvb_service_id = Some(dvb_service_id);
+        self
+    }
+
     /// Validate this config — returns an error with a clear field name and
     /// reason for the operator, not a cryptic I/O error at runtime.
     pub fn validate(&self) -> Result<(), DvrError> {

@@ -14,6 +14,7 @@
 /// clients, or the RTSP request URI (e.g. `rtsp://host/stream`) for RTSP —
 /// never translate one into the other (RFC 2326 §14).
 #[derive(Clone, Copy)]
+#[non_exhaustive]
 pub struct RequestContext<'a> {
     /// The request method (`"GET"`, `"DESCRIBE"`, …).
     pub method: &'a str,

@@ -46,14 +46,14 @@ fn have_oracle(bin: &str) -> bool {
 }
 
 fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
-    Config {
-        bind: bind.to_string(),
+    Config::default()
+        .with_bind(bind.to_string())
         // >= 4 s segments: the shape W13a/W13b are about (the default 0.5 s
         // would never reach it).
-        target_duration_secs: 4.0,
-        part_target_ms: 100,
-        window_segments: 8,
-        routes: vec![Route {
+        .with_target_duration_secs(4.0)
+        .with_part_target_ms(100)
+        .with_window_segments(8)
+        .with_routes(vec![Route {
             name: "cam".to_string(),
             input,
             outputs: vec![OutputKind::Smooth],
@@ -66,9 +66,7 @@ fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    }
+        }])
 }
 
 /// Polls the Smooth Manifest until it advertises at least `min_chunks` chunks.

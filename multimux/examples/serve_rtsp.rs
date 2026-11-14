@@ -59,8 +59,7 @@ async fn main() {
         .expect("usage: serve_rtsp <rtsp://host/stream> [--dash | --outputs llhls,dash]");
     let outputs = parse_outputs(&args[1..]);
 
-    let config = Config {
-        routes: vec![Route {
+    let config = Config::default().with_routes(vec![Route {
             name: STREAM_NAME.to_string(),
             input: InputSpec::Rtsp {
                 url: rtsp_url,
@@ -76,9 +75,7 @@ async fn main() {
             closed_caption_overrides: Vec::new(),
             audio_profiles: Vec::new(),
             subtitles: true,
-        }],
-        ..Config::default()
-    };
+        }]);
     config.validate().expect("valid config");
 
     println!(

@@ -23,6 +23,7 @@ pub const DEFAULT_JUMP_FORWARD_SLACK_US: u64 = 5_000_000;
 /// `step > elapsed_us + forward_slack_us`, where `elapsed_us` is the session clock time between
 /// the deliveries of the two samples (zero inside one burst).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct TimelineJumpConfig {
     /// A backward step larger than this is a new timeline, microseconds. B-frame reordering
     /// stays far below the default.
@@ -30,6 +31,22 @@ pub struct TimelineJumpConfig {
     /// A forward step larger than the elapsed delivery time plus this is a new timeline,
     /// microseconds.
     pub forward_slack_us: u64,
+}
+
+impl TimelineJumpConfig {
+    /// Set the backward-jump threshold (microseconds).
+    #[must_use]
+    pub fn with_backward_us(mut self, backward_us: u64) -> Self {
+        self.backward_us = backward_us;
+        self
+    }
+
+    /// Set the forward-slack threshold (microseconds).
+    #[must_use]
+    pub fn with_forward_slack_us(mut self, forward_slack_us: u64) -> Self {
+        self.forward_slack_us = forward_slack_us;
+        self
+    }
 }
 
 impl Default for TimelineJumpConfig {

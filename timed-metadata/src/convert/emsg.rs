@@ -18,6 +18,7 @@ pub const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
 
 /// Parameters for emitting a SCTE-35-carrying `emsg`.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct EmsgConfig {
     /// `timescale` (ticks/second) for the emsg time fields.
     pub timescale: u32,
@@ -29,6 +30,26 @@ pub struct EmsgConfig {
     pub value: String,
     /// `id` — unique event identifier (u32).
     pub id: u32,
+}
+
+impl EmsgConfig {
+    /// Build the emsg parameters from their required values.
+    #[must_use]
+    pub fn new(
+        timescale: u32,
+        presentation: PresentationTime,
+        event_duration: u32,
+        value: String,
+        id: u32,
+    ) -> Self {
+        Self {
+            timescale,
+            presentation,
+            event_duration,
+            value,
+            id,
+        }
+    }
 }
 
 /// Wrap a verbatim `splice_info_section` as a SCTE-35 `emsg` box (serialized bytes).
