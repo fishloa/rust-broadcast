@@ -995,18 +995,9 @@ mod tests {
     fn the_27mhz_conversions_use_the_shared_pcr_clock() {
         assert_eq!(PCR_TIMESCALE.as_u64(), PCR_HZ);
         assert_eq!(PCR_HZ, 27_000_000);
+        assert_eq!(raw_27mhz(PCR_HZ as i64, PCR_TIMESCALE), i128::from(PCR_HZ));
         assert_eq!(
-            raw_27mhz(
-                PCR_HZ as i64,
-                Timescale::new(PCR_HZ as u32).expect("27 MHz is a non-zero timescale")
-            ),
-            i128::from(PCR_HZ)
-        );
-        assert_eq!(
-            pts_to_27mhz(
-                90_000,
-                Timescale::new(90_000).expect("90 kHz is a non-zero timescale")
-            ),
+            pts_to_27mhz(90_000, broadcast_common::clock33::PTS_TIMESCALE),
             PCR_HZ
         );
     }
