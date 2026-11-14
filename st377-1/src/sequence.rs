@@ -18,7 +18,7 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
     get_required_fixed, get_required_raw,
 };
-use crate::types::{StrongRef, UlBytes, parse_uid_batch, serialize_uid_batch};
+use crate::types::{StrongRef, UlBytes, parse_uid_batch, serialize_uid_batch_owned};
 
 // ── Structural Component base tags (B.8) ────────────────────────────────
 
@@ -111,7 +111,7 @@ impl Sequence {
         }
         out.push(LocalSetOwnedItem::owned(
             TAG_STRUCTURAL_COMPONENTS,
-            serialize_uid_batch(&self.structural_components),
+            serialize_uid_batch_owned(&self.structural_components),
         ));
         out
     }

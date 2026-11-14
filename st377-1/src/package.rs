@@ -24,7 +24,7 @@ use crate::sets::{
 };
 use crate::types::{
     MxfTimestamp, PackageId, StrongRef, TIMESTAMP_LEN, decode_utf16_be, encode_utf16_be,
-    parse_uid_batch, serialize_uid_batch,
+    parse_uid_batch, serialize_uid_batch_owned,
 };
 
 // ── Generic Package local tags (B.1) ────────────────────────────────────
@@ -168,7 +168,7 @@ impl MaterialPackage {
         encode_timestamp_item(&mut out, TAG_MODIFIED_DATE, &self.modified_date);
         out.push(LocalSetOwnedItem::owned(
             TAG_TRACKS,
-            serialize_uid_batch(&self.tracks),
+            serialize_uid_batch_owned(&self.tracks),
         ));
         out
     }
@@ -285,7 +285,7 @@ impl SourcePackage {
         encode_timestamp_item(&mut out, TAG_MODIFIED_DATE, &self.modified_date);
         out.push(LocalSetOwnedItem::owned(
             TAG_TRACKS,
-            serialize_uid_batch(&self.tracks),
+            serialize_uid_batch_owned(&self.tracks),
         ));
         out.push(LocalSetOwnedItem::fixed(TAG_DESCRIPTOR, self.descriptor));
         out

@@ -12,7 +12,7 @@ use crate::local_set::{LocalSet, StructuralSetKind};
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_raw, get_required_raw,
 };
-use crate::types::{UlBytes, parse_uid_batch, serialize_uid_batch};
+use crate::types::{UlBytes, parse_uid_batch, serialize_uid_batch_owned};
 
 /// Local tag: Packages (A.4).
 pub const TAG_PACKAGES: u16 = 0x1901;
@@ -83,12 +83,12 @@ impl ContentStorage {
         self.interchange.encode_into(&mut out);
         out.push(LocalSetOwnedItem::owned(
             TAG_PACKAGES,
-            serialize_uid_batch(&self.packages),
+            serialize_uid_batch_owned(&self.packages),
         ));
         if let Some(ecd) = &self.essence_container_data {
             out.push(LocalSetOwnedItem::owned(
                 TAG_ESSENCE_CONTAINER_DATA,
-                serialize_uid_batch(ecd),
+                serialize_uid_batch_owned(ecd),
             ));
         }
         out

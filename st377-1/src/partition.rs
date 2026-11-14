@@ -355,7 +355,7 @@ impl Serialize for PartitionPack {
         let total = self.serialized_len();
         need_out(buf, total)?;
         buf[0..16].copy_from_slice(&Self::key(self.kind, self.status));
-        let batch = serialize_uid_batch(&self.essence_containers);
+        let batch = serialize_uid_batch(&self.essence_containers)?;
         let value_len = 2 + 2 + 4 + 8 + 8 + 8 + 8 + 8 + 4 + 8 + 4 + 16 + batch.len();
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;

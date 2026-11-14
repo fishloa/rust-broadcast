@@ -14,7 +14,7 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed, get_optional_raw,
     get_required_fixed, get_required_raw,
 };
-use crate::types::{MxfTimestamp, UlBytes, parse_uid_batch, serialize_uid_batch};
+use crate::types::{MxfTimestamp, UlBytes, parse_uid_batch, serialize_uid_batch_owned};
 
 // ORDER: Annex A.2 property-table order (spec clause order), not numeric.
 /// Local tag: Last Modified Date (A.2).
@@ -205,7 +205,7 @@ impl Preface {
         if let Some(ref ids) = self.identifications {
             out.push(LocalSetOwnedItem::owned(
                 TAG_IDENTIFICATIONS,
-                serialize_uid_batch(ids),
+                serialize_uid_batch_owned(ids),
             ));
         }
         out.push(LocalSetOwnedItem::fixed(
@@ -218,11 +218,11 @@ impl Preface {
         ));
         out.push(LocalSetOwnedItem::owned(
             TAG_ESSENCE_CONTAINERS,
-            serialize_uid_batch(&self.essence_containers),
+            serialize_uid_batch_owned(&self.essence_containers),
         ));
         out.push(LocalSetOwnedItem::owned(
             TAG_DM_SCHEMES,
-            serialize_uid_batch(&self.dm_schemes),
+            serialize_uid_batch_owned(&self.dm_schemes),
         ));
         out
     }

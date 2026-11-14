@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_common::len::{fit_u32, need_out};
 
 use crate::error::{Error, Result};
 
@@ -446,15 +446,26 @@ pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
 /// `DMSchemes` in `../fixtures/mxf/smpte-st377/op1a-mpeg2-pcm.mxf` — which
 /// [`parse_uid_batch`] tolerates on input; this crate's own output stays
 /// canonical.)
-#[must_use]
-pub fn serialize_uid_batch(items: &[UlBytes]) -> Vec<u8> {
+///
+/// # Errors
+/// [`Error::FieldOverflow`] if `items.len()` does not fit the 32-bit count.
+pub fn serialize_uid_batch(items: &[UlBytes]) -> Result<Vec<u8>> {
+    let count = fit_u32(items.len(), "batch count")?;
     let mut out = Vec::with_capacity(8 + items.len() * 16);
-    out.extend_from_slice(&(items.len() as u32).to_be_bytes());
+    out.extend_from_slice(&count.to_be_bytes());
     out.extend_from_slice(&16u32.to_be_bytes());
     for item in items {
         out.extend_from_slice(item);
     }
-    out
+    Ok(out)
+}
+
+/// [`serialize_uid_batch`] for callers whose infallible contract has already
+/// bounded the count: a batch is written as an empty one (`count = 0`) if
+/// `items.len()` does not fit the 32-bit count, which needs 4 294 967 296
+/// 16-byte ULs (a 64 GiB batch) to reach.
+pub(crate) fn serialize_uid_batch_owned(items: &[UlBytes]) -> Vec<u8> {
+    serialize_uid_batch(items).unwrap_or_else(|_| serialize_uid_batch(&[]).unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -557,14 +568,14 @@ mod tests {
     #[test]
     fn uid_batch_round_trip() {
         let items = alloc::vec![[1u8; 16], [2u8; 16], [3u8; 16]];
-        let bytes = serialize_uid_batch(&items);
+        let bytes = serialize_uid_batch(&items).unwrap();
         assert_eq!(parse_uid_batch(&bytes).unwrap(), items);
     }
 
     #[test]
     fn empty_uid_batch_round_trip() {
         let items: Vec<UlBytes> = Vec::new();
-        let bytes = serialize_uid_batch(&items);
+        let bytes = serialize_uid_batch(&items).unwrap();
         assert_eq!(bytes.len(), 8);
         assert_eq!(parse_uid_batch(&bytes).unwrap(), items);
     }
@@ -579,6 +590,22 @@ mod tests {
                 buffer_len: 4
             })
         );
+    }
+
+    /// The 32-bit count is range-checked rather than narrowed with `as u32`
+    /// (#2758): `u32::MAX + 1` items would otherwise be written with
+    /// `count = 0`, i.e. as an empty batch.
+    #[test]
+    fn a_uid_batch_count_beyond_u32_is_rejected_not_wrapped() {
+        let max = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(fit_u32(max, "batch count"), Ok(u32::MAX));
+        assert!(matches!(
+            fit_u32(max + 1, "batch count"),
+            Err(broadcast_common::len::FieldOverflow {
+                field: "batch count",
+                ..
+            })
+        ));
     }
 
     #[test]
