@@ -221,9 +221,9 @@ impl Track {
         self.spec.track_id
     }
 
-    /// Media timescale (ticks per second).
-    pub fn timescale(&self) -> u32 {
-        self.spec.timescale.get()
+    /// Media timescale (ticks per second); non-zero by construction.
+    pub fn timescale(&self) -> broadcast_common::timescale::Timescale {
+        self.spec.timescale
     }
 
     /// Codec configuration.

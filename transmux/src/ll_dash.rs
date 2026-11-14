@@ -158,7 +158,7 @@ struct TrackState {
 /// ```
 pub struct LlSegmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: u32,
+    movie_timescale: broadcast_common::timescale::Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -202,10 +202,11 @@ impl LlSegmenter {
     /// or no track is anchor-capable (every track is section-carried).
     pub fn new(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
         target_duration_secs: f64,
         chunk_samples: usize,
     ) -> Result<Self> {
+        let movie_timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput("ll segmenter needs at least one track"));
         }
@@ -375,7 +376,7 @@ impl LlSegmenter {
         // first `chunk_samples` of the anchor's pending samples. Every track then
         // drains its own samples that fall inside that span, so audio rides each
         // chunk instead of only the segment's final one (audit r05-W27).
-        let anchor_scale = self.tracks[anchor].spec.timescale.get().max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let anchor_take = if final_chunk {
             self.tracks[anchor].pending.len()
         } else {
@@ -408,7 +409,7 @@ impl LlSegmenter {
                 if i == anchor {
                     return anchor_take;
                 }
-                let track_scale = t.spec.timescale.get().max(1) as u64;
+                let track_scale = t.spec.timescale.get() as u64;
                 let track_span = chunk_span.saturating_mul(track_scale) / anchor_scale;
                 take_span(t, track_span)
             })
@@ -571,7 +572,7 @@ impl Package for LlSegmenter {
             .iter()
             .map(|t| Cursor {
                 track_id: t.spec.track_id,
-                timescale: (t.spec.timescale.get() as u64).max(1),
+                timescale: u64::from(t.spec.timescale.get()),
                 samples: &t.samples,
                 idx: 0,
                 dts_ticks: 0,

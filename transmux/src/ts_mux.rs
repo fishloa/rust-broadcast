@@ -310,6 +310,13 @@ const PCR_FIELD_LEN: usize = 6;
 const STUFFING_BYTE: u8 = 0xFF;
 
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
+/// The 90 kHz MPEG-2 Systems clock, both as a `Timescale` and as the `u64`
+/// scaling factor the rate arithmetic below uses.
+const TS_CLOCK: broadcast_common::timescale::Timescale =
+    match broadcast_common::timescale::Timescale::new(90_000) {
+        Some(t) => t,
+        None => unreachable!(),
+    };
 const TS_CLOCK_HZ: u64 = 90_000;
 /// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7) — alias of
 /// [`broadcast_common::clock33::WRAP_33BIT`], the shared owner.
@@ -1169,7 +1176,7 @@ fn mux_tracks_timed_with_cc(
     let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
-        let ts_scale = track.spec.timescale.get() as u64;
+        let ts_scale = track.spec.timescale;
         // Interleave keys only ever grow within one track, so the global sort
         // never reorders a track's own packets (issue #576).
         let mut last_key: u64 = 0;
@@ -1414,13 +1421,13 @@ fn write_pcr_only_packet(
 
 /// Rescale `ticks` from a track's `timescale` to the 90 kHz TS clock, rounding to
 /// nearest, and reduce modulo the 33-bit timestamp field.
-fn rescale(ticks: u64, timescale: u64) -> u64 {
+fn rescale(ticks: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
     rescale_for_ordering(ticks, timescale) % TS_TIMESTAMP_MOD
 }
 
 /// Rescale a possibly-negative tick count (used for `pts = dts + composition`),
 /// clamping negatives to 0, then reduce modulo the 33-bit field.
-fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
+fn rescale_signed(ticks: i64, timescale: broadcast_common::timescale::Timescale) -> u64 {
     if ticks <= 0 {
         return 0;
     }
@@ -1438,8 +1445,8 @@ fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
 /// cumulative decode time would cross the 33-bit wrap point (issue #576: an
 /// opaque `CodecConfig::Data` track's recovered durations are untrusted
 /// input that can otherwise do exactly that).
-fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
-    rescale_u64(ticks, timescale, TS_CLOCK_HZ, Rounding::Nearest)
+fn rescale_for_ordering(ticks: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+    rescale_u64(ticks, timescale, TS_CLOCK, Rounding::Nearest)
 }
 
 /// Build the elementary-stream PES payload for one sample:

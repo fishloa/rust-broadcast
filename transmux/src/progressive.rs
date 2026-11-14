@@ -34,7 +34,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, rescale, rescale_i64, rescale_u64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale, rescale_i64, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize};
 
 use crate::box_types::{BoxHeader, BoxType, find_top_box};
@@ -50,8 +50,6 @@ use crate::timing::{
     CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,
 };
 
-/// Default movie timescale used when a [`Media`] does not specify one.
-const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
 /// `ftyp` major brand for a progressive (non-fragmented) MP4.
 const FTYP_MAJOR_BRAND: [u8; 4] = *b"isom";
 /// `ftyp` minor version.
@@ -344,7 +342,7 @@ const INTERLEAVE_CHUNK_MS: u64 = 500;
 
 /// Milliseconds per second, for converting [`INTERLEAVE_CHUNK_MS`] into a
 /// movie-timescale tick budget.
-const MS_PER_SECOND: u64 = 1_000;
+const MS_PER_SECOND: u32 = 1_000;
 
 /// Lay the tracks' samples out in the `mdat` payload, interleaved in about
 /// [`INTERLEAVE_CHUNK_MS`]-sized runs.
@@ -353,11 +351,12 @@ const MS_PER_SECOND: u64 = 1_000;
 /// interleave interval, then the chunks of every track are merged by start
 /// time (ties broken by track order, so the result is deterministic). Every
 /// sample of a track still appears exactly once, in decode order.
-fn plan_mdat_layout(media: &Media, movie_timescale: u32) -> Result<MdatLayout> {
-    let to_movie = |ticks: i64, ts: u32| rescale_i64(ticks, ts, movie_timescale, Rounding::Floor);
+fn plan_mdat_layout(media: &Media, movie_timescale: Timescale) -> Result<MdatLayout> {
+    let to_movie =
+        |ticks: i64, ts: Timescale| rescale_i64(ticks, ts, movie_timescale, Rounding::Floor);
     let chunk_ticks = rescale_u64(
         INTERLEAVE_CHUNK_MS,
-        MS_PER_SECOND,
+        MS_PER_SECOND.into(),
         movie_timescale,
         Rounding::Floor,
     );
@@ -481,11 +480,7 @@ impl Package for ProgressiveMux {
         // surfaces the same named error every other mux entry point does.
         // The caller must pre-filter first, e.g. with
         // `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
-        let movie_timescale = if media.movie_timescale == 0 {
-            DEFAULT_MOVIE_TIMESCALE
-        } else {
-            media.movie_timescale
-        };
+        let movie_timescale = media.movie_timescale;
 
         // Reuse the sample-entry + trak skeleton machinery: build the fragmented
         // init moov, parse it back, then overwrite each track's sample tables
@@ -705,10 +700,11 @@ struct TrackTiming {
 /// an `elst` (ISO/IEC 14496-12:2026 §8.6.6) delays a track that starts after
 /// the earliest one by an empty edit and skips its composition lead-in, so the
 /// inter-track offsets of the IR survive into the file.
-fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
+fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> {
     let origin = TimelineOrigin::of(&media.tracks);
-    let to_movie =
-        |ticks: i64, ts: u32| rescale(i128::from(ticks), ts, movie_timescale, Rounding::Floor);
+    let to_movie = |ticks: i64, ts: Timescale| {
+        rescale(i128::from(ticks), ts, movie_timescale, Rounding::Floor)
+    };
 
     struct Span {
         times: Vec<i64>,

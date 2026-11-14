@@ -435,7 +435,6 @@ impl Package for RtpPacketiser {
                 CodecConfig::Aac {
                     esds,
                     channel_count,
-                    sample_rate,
                     ..
                 } => {
                     let pt = match next_audio_pt.take() {
@@ -447,12 +446,7 @@ impl Package for RtpPacketiser {
                             "no dynamic RTP payload type left (RFC 3551 §6's range is 96-127): too many streams share this session",
                         ))?,
                     };
-                    let clock = if track.spec.timescale.get() != 0 {
-                        track.spec.timescale.get()
-                    } else {
-                        *sample_rate
-                    };
-                    let packets = self.packetise_audio(track, pt, clock)?;
+                    let packets = self.packetise_audio(track, pt, track.spec.timescale)?;
                     streams.push(RtpStream {
                         pt,
                         kind: RtpMediaKind::Aac,
@@ -460,7 +454,12 @@ impl Package for RtpPacketiser {
                     });
                     let asc = asc_bytes(esds)?;
                     #[cfg(feature = "std")]
-                    sdp_media.push(sdp_audio(pt, clock, *channel_count, asc));
+                    sdp_media.push(sdp_audio(
+                        pt,
+                        track.spec.timescale.get(),
+                        *channel_count,
+                        asc,
+                    ));
                     #[cfg(not(feature = "std"))]
                     let _ = (asc, channel_count);
                 }
@@ -490,11 +489,9 @@ impl RtpPacketiser {
     /// Public for the zero-copy allocation test (`alloc_measurement.rs`);
     /// the main consumer calls [`Package::package`] instead.
     pub fn packetise_video(&self, track: &crate::media::Track, pt: u8) -> Result<Vec<RtpPacket>> {
-        let timescale = if track.spec.timescale.get() != 0 {
-            track.spec.timescale.get()
-        } else {
-            VIDEO_CLOCK_RATE
-        };
+        // The IR timescale is the RTP clock: a `Timescale` is non-zero by
+        // construction, so there is no "unknown" case to fall back from.
+        let timescale = track.spec.timescale;
         let mut packets = Vec::new();
         let mut seq = SeqCounter::new(0);
         let mut timestamp: u32 = 0;
@@ -521,7 +518,7 @@ impl RtpPacketiser {
 
         for (i, sample) in track.samples.iter().enumerate() {
             // Rescale to the 90 kHz RTP clock if the IR timescale differs.
-            timestamp = rescale_ts(sample_pts(track, i), timescale, VIDEO_CLOCK_RATE);
+            timestamp = rescale_ts(sample_pts(track, i), timescale, VIDEO_CLOCK_RATE.into());
             let nals = split_length_prefixed(&sample.data)?;
             if nals.is_empty() {
                 continue;
@@ -576,15 +573,11 @@ impl RtpPacketiser {
         &self,
         track: &crate::media::Track,
         pt: u8,
-        clock: u32,
+        clock: broadcast_common::timescale::Timescale,
     ) -> Result<Vec<RtpPacket>> {
         let mut packets = Vec::with_capacity(track.samples.len());
         let mut seq = SeqCounter::new(0);
-        let timescale = if track.spec.timescale.get() != 0 {
-            track.spec.timescale.get()
-        } else {
-            clock
-        };
+        let timescale = clock;
         let per_packet = self
             .mtu
             .checked_sub(RTP_HEADER_LEN + AAC_AU_HEADERS_LENGTH_LEN + AAC_AU_HEADER_LEN)
@@ -677,7 +670,11 @@ fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
 ///
 /// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the result wraps
 /// into the 32-bit range rather than saturating or erroring.
-pub fn rescale_ts(ticks: u64, from: u32, to: u32) -> u32 {
+pub fn rescale_ts(
+    ticks: u64,
+    from: broadcast_common::timescale::Timescale,
+    to: broadcast_common::timescale::Timescale,
+) -> u32 {
     let v = rescale_u64(ticks, from, to, Rounding::Nearest);
     (v & u64::from(u32::MAX)) as u32
 }

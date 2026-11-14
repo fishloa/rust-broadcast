@@ -571,11 +571,12 @@ struct BlockEvent {
 /// (the inverse of `webm_demux::parse_block`'s `raw_ticks * scale_ns /
 /// ns_per_ir_tick`): `ticks / track_timescale` seconds, expressed in
 /// [`TIMESTAMP_SCALE_NS`]-sized ticks.
-fn to_matroska_ticks(ticks: i64, track_timescale: u32, timestamp_scale_ns: u64) -> i64 {
-    if track_timescale == 0 {
-        return 0;
-    }
-    let ns = (ticks as i128) * (NS_PER_SECOND as i128) / (track_timescale as i128);
+fn to_matroska_ticks(
+    ticks: i64,
+    track_timescale: broadcast_common::timescale::Timescale,
+    timestamp_scale_ns: u64,
+) -> i64 {
+    let ns = (ticks as i128) * (NS_PER_SECOND as i128) / i128::from(track_timescale.get());
     (ns / timestamp_scale_ns as i128) as i64
 }
 

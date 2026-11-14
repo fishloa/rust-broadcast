@@ -41,7 +41,7 @@ fn track_specs(ir: &Media) -> Vec<TrackSpec> {
 fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
     let mut items: Vec<(f64, usize, usize)> = Vec::new();
     for (tpos, t) in ir.tracks.iter().enumerate() {
-        let scale = t.spec.timescale.get().max(1) as u64;
+        let scale = t.spec.timescale.get() as u64;
         let mut acc: u64 = 0;
         for (i, s) in t.samples.iter().enumerate() {
             let start_secs = acc as f64 / scale as f64;

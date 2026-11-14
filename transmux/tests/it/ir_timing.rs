@@ -164,11 +164,12 @@ fn cumulative_starts(lens: &[usize]) -> Vec<usize> {
 /// are in the **track** timescale (an audio track's is its sample rate), while
 /// the PES clock is always 90 kHz (ISO/IEC 13818-1 §2.4.3.7). For a 90 kHz
 /// (video / opaque `Data`) track this is the identity.
-fn pes_ts_in_track_ticks(pes_ts: u64, timescale: u32) -> u64 {
+fn pes_ts_in_track_ticks(pes_ts: u64, timescale: broadcast_common::timescale::Timescale) -> u64 {
+    let timescale = timescale.get();
     if timescale == 90_000 {
         return pes_ts;
     }
-    ((pes_ts as u128 * timescale as u128) / 90_000u128) as u64
+    ((pes_ts as u128 * u128::from(timescale)) / 90_000u128) as u64
 }
 
 /// Assert that splitting a track's PES access units into `samples` lost no
@@ -178,7 +179,11 @@ fn pes_ts_in_track_ticks(pes_ts: u64, timescale: u32) -> u64 {
 /// PES PTS (media plane step 2c; tolerance per issue B5, media plane step-2
 /// fix wave 1 — see the comment inline below for why 1 tick, not 0, is now
 /// the right bar).
-fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32) {
+fn assert_pes_boundary_timing(
+    samples: &[Sample],
+    pes: &[PesAu],
+    timescale: broadcast_common::timescale::Timescale,
+) {
     let sample_lens: Vec<usize> = samples.iter().map(|s| s.data.len()).collect();
     let sample_starts = cumulative_starts(&sample_lens);
     let pes_lens: Vec<usize> = pes.iter().map(|p| p.payload.len()).collect();

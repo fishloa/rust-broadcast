@@ -8,7 +8,7 @@ use crate::JoinDecision;
 use crate::Sample;
 use crate::TrackId;
 use crate::TrackSpec;
-use broadcast_common::timescale::{Rounding, to_micros};
+use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 
 /// Default backward step that marks a new timeline, microseconds.
 pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
@@ -51,7 +51,7 @@ enum Role {
 #[derive(Debug, Clone, Copy)]
 struct TrackInfo {
     role: Role,
-    timescale: u32,
+    timescale: Timescale,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -113,7 +113,7 @@ impl JumpDetector {
                 spec.track_id,
                 TrackInfo {
                     role,
-                    timescale: spec.timescale.get(),
+                    timescale: spec.timescale,
                 },
             );
         }
@@ -140,9 +140,6 @@ impl JumpDetector {
         ) else {
             return;
         };
-        if info.timescale == 0 {
-            return;
-        }
         let stale: BTreeSet<TrackId> = self
             .delivered
             .iter()
@@ -168,9 +165,6 @@ impl JumpDetector {
         else {
             return true;
         };
-        if info.timescale == 0 {
-            return true;
-        }
         let offset = Self::to_us(pts, info.timescale) - epoch.reference_us;
         if offset.abs() <= epoch.window_us {
             epoch.stale.remove(&track);
@@ -209,10 +203,10 @@ impl JumpDetector {
             Role::Audio => !self.has_video() && self.first_rendered_audio() == Some(track),
             Role::Other => false,
         };
-        (eligible && info.timescale != 0).then_some(info)
+        eligible.then_some(info)
     }
 
-    fn to_us(pts: i64, timescale: u32) -> i128 {
+    fn to_us(pts: i64, timescale: Timescale) -> i128 {
         to_micros(i128::from(pts), timescale, Rounding::TowardZero)
     }
 

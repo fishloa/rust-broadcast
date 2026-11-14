@@ -4,7 +4,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 
 use broadcast_common::clock33::pcr_signed_distance;
-use broadcast_common::timescale::{Rounding, rescale};
+use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
     BufferController, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
@@ -122,20 +122,23 @@ macro_rules! rec {
     };
 }
 
-const TICKS_PER_SEC_27MHZ: u64 = 27_000_000;
+const TICKS_PER_SEC_27MHZ: u32 = 27_000_000;
+
+/// [`TICKS_PER_SEC_27MHZ`] as a [`Timescale`].
+const CLOCK_27MHZ: Timescale = match Timescale::new(TICKS_PER_SEC_27MHZ) {
+    Some(t) => t,
+    None => core::unreachable!(),
+};
 
 /// Controller key of the placeholder for a declared stream that has not resolved yet; a real
 /// `TrackId` never takes it.
 const PENDING_TRACK_KEY: u32 = u32::MAX;
 
-pub(crate) fn raw_27mhz(pts: i64, timescale: u32) -> i128 {
-    if timescale == 0 {
-        return 0;
-    }
+pub(crate) fn raw_27mhz(pts: i64, timescale: Timescale) -> i128 {
     rescale(
         i128::from(pts),
         timescale,
-        TICKS_PER_SEC_27MHZ,
+        CLOCK_27MHZ,
         Rounding::TowardZero,
     )
 }
@@ -144,13 +147,13 @@ pub(crate) fn negative_origin(raw: i128) -> i128 {
     raw.min(0)
 }
 
-pub(crate) fn pts_to_27mhz_from(pts: i64, timescale: u32, origin: i128) -> u64 {
+pub(crate) fn pts_to_27mhz_from(pts: i64, timescale: Timescale, origin: i128) -> u64 {
     let v = raw_27mhz(pts, timescale).saturating_sub(origin);
     u64::try_from(v).unwrap_or(if v < 0 { 0 } else { u64::MAX })
 }
 
 #[cfg(test)]
-pub(crate) fn pts_to_27mhz(pts: i64, timescale: u32) -> u64 {
+pub(crate) fn pts_to_27mhz(pts: i64, timescale: Timescale) -> u64 {
     pts_to_27mhz_from(pts, timescale, 0)
 }
 
@@ -199,9 +202,9 @@ pub(crate) struct Feeder {
     live_joins: BTreeMap<TrackId, VideoJoin>,
     track_specs: BTreeMap<TrackId, TrackSpec>,
     pending_ends: BTreeMap<TrackId, u64>,
-    pending_zero: BTreeMap<TrackId, (i64, u32)>,
+    pending_zero: BTreeMap<TrackId, (i64, Timescale)>,
     video_joined: BTreeSet<TrackId>,
-    video_join_at: BTreeMap<TrackId, (i64, u32)>,
+    video_join_at: BTreeMap<TrackId, (i64, Timescale)>,
     video_reorder: BTreeMap<TrackId, ReorderEnd>,
     video_end: BTreeMap<TrackId, i64>,
     audio_max_end: BTreeMap<TrackId, i64>,
@@ -575,18 +578,18 @@ impl Feeder {
         }
     }
 
-    fn conv(&self, pts: i64, timescale: u32) -> u64 {
+    fn conv(&self, pts: i64, timescale: Timescale) -> u64 {
         pts_to_27mhz_from(pts, timescale, self.origin.unwrap_or(0))
     }
 
-    fn arm_origin(&mut self, pts: i64, timescale: u32) {
+    fn arm_origin(&mut self, pts: i64, timescale: Timescale) {
         if self.origin.is_none() {
             self.origin = Some(negative_origin(raw_27mhz(pts, timescale)));
         }
     }
 
-    fn timescale_of(&self, t: TrackId) -> Option<u32> {
-        self.track_specs.get(&t).map(|s| s.timescale.get())
+    fn timescale_of(&self, t: TrackId) -> Option<Timescale> {
+        self.track_specs.get(&t).map(|s| s.timescale)
     }
 
     fn queue_video_join(&mut self, t: TrackId) {
@@ -965,10 +968,9 @@ mod tests {
 
     #[test]
     fn pts_to_27mhz_clamps_instead_of_truncating() {
-        assert_eq!(pts_to_27mhz(i64::MAX, 1), u64::MAX);
-        assert_eq!(pts_to_27mhz(i64::MIN, 1), 0);
-        assert_eq!(pts_to_27mhz(90_000, 90_000), 27_000_000);
-        assert_eq!(pts_to_27mhz(1, 0), 0);
+        assert_eq!(pts_to_27mhz(i64::MAX, 1.into()), u64::MAX);
+        assert_eq!(pts_to_27mhz(i64::MIN, 1.into()), 0);
+        assert_eq!(pts_to_27mhz(90_000, 90_000.into()), 27_000_000);
     }
 
     #[test]
@@ -1165,7 +1167,7 @@ mod tests {
     const AUDIO_B_ID: u32 = 3;
     const SLICES_PER_SEC: i64 = 10;
     const TICK_STEP_US: u64 = 50_000;
-    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ;
+    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ as u64;
 
     struct Rig {
         f: Feeder,
@@ -1247,7 +1249,7 @@ mod tests {
         fn position(&self) -> Option<u64> {
             match (self.playing, self.held) {
                 (Some((base, since)), _) => {
-                    Some(base + (self.now - since) * (TICKS_PER_SEC_27MHZ / 1_000_000))
+                    Some(base + (self.now - since) * u64::from(TICKS_PER_SEC_27MHZ / 1_000_000))
                 }
                 (None, held) => held,
             }
@@ -1324,7 +1326,7 @@ mod tests {
 
         fn emitted_end_27mhz(&self) -> u64 {
             let secs = 1 + self.next_slice / SLICES_PER_SEC;
-            u64::try_from(secs).unwrap() * TICKS_PER_SEC_27MHZ
+            u64::try_from(secs).unwrap() * u64::from(TICKS_PER_SEC_27MHZ)
         }
 
         fn pauses_after(&self, t: u64) -> Vec<(u64, BufferEvent)> {

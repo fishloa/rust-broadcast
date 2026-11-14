@@ -258,7 +258,7 @@ async fn heaac_route_init_mdhd_uses_output_rate() {
         .as_ref()
         .and_then(|m| m.mdhd.as_ref())
         .expect("mdhd");
-    assert_eq!(mdhd.timescale, OUTPUT_HZ);
+    assert_eq!(mdhd.timescale, OUTPUT_HZ.into());
     let audio_id = audio.tkhd.track_id;
 
     let text = String::from_utf8(ok(&app, "media.m3u8").await).expect("utf8");

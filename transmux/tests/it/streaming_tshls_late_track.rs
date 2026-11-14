@@ -72,8 +72,8 @@ fn add_track_registers_audio_after_video_only_segments_were_already_cut() {
 
     let video_track_id = video_spec.track_id;
     let audio_track_id = audio_spec.track_id;
-    let video_scale = video_spec.timescale.get().max(1) as u64;
-    let audio_scale = audio_spec.timescale.get().max(1) as u64;
+    let video_scale = video_spec.timescale.get() as u64;
+    let audio_scale = audio_spec.timescale.get() as u64;
 
     // ── Phase 1: build video-only (as if audio hadn't resolved yet) ─────────
     let mut seg = StreamingTsHlsSegmenter::new(vec![video_spec], 1, usize::MAX)

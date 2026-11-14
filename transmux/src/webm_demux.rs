@@ -1014,7 +1014,12 @@ struct BlockSpan {
 /// (i.e. via whole milliseconds) loses up to a millisecond per frame, which
 /// accumulates across every frame of a laced run.
 pub fn ns_to_ir_ticks(ns: u64) -> u64 {
-    rescale_u64(ns, NS_PER_SECOND, IR_TIMESCALE, Rounding::Nearest)
+    rescale_u64(
+        ns,
+        (NS_PER_SECOND as u32).into(),
+        IR_TIMESCALE.into(),
+        Rounding::Nearest,
+    )
 }
 
 /// The nominal per-frame duration (IR ticks) for a track whose TrackEntry

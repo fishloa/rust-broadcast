@@ -9,6 +9,7 @@ use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event, PauseReason};
+use broadcast_common::timescale::Timescale;
 use broadcast_common::units::MICROS_PER_SEC;
 
 /// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS), microseconds.
@@ -71,7 +72,7 @@ enum Kind {
 #[derive(Debug, Clone, Copy)]
 struct TrackInfo {
     kind: Kind,
-    timescale: u32,
+    timescale: Timescale,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -153,7 +154,7 @@ impl Playout {
                 spec.track_id,
                 TrackInfo {
                     kind,
-                    timescale: spec.timescale.get(),
+                    timescale: spec.timescale,
                 },
             );
         }

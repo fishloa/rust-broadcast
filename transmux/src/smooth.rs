@@ -294,7 +294,7 @@ struct FragmentTiming {
 impl SmoothPackager {
     /// Convert a tick count in the track's media timescale to
     /// [`SMOOTH_TIMESCALE`] ticks with integer round-to-nearest (`no_std`-safe).
-    fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
+    fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale::Timescale) -> u64 {
         to_smooth_ticks(ticks, media_timescale)
     }
 
@@ -315,7 +315,7 @@ impl SmoothPackager {
         next_seq: &mut u32,
         fragments_out: &mut Vec<SmoothFragment>,
     ) -> Result<StreamInfo> {
-        let media_timescale = track.spec.timescale.get().max(1);
+        let media_timescale = track.spec.timescale;
         let codec = resolve_codec(&track.spec.config)?;
 
         let timeline = smooth_timeline(track, origin, media_timescale)?;
@@ -414,7 +414,7 @@ impl SmoothPackager {
                 "cannot package a Smooth fragment from a track with no samples",
             ));
         }
-        let media_timescale = track.spec.timescale.get().max(1);
+        let media_timescale = track.spec.timescale;
         // Times relative to the track's own first sample: only the *durations*
         // and composition offsets are used from here (the fragment's absolute
         // start is the caller's `start_smooth`, not the derived one).
@@ -629,8 +629,13 @@ fn aac_codec_private_data(esds: &crate::mp4esds::EsdsBox) -> Result<Vec<u8>> {
 
 /// Convert a tick count in `media_timescale` to [`SMOOTH_TIMESCALE`] ticks with
 /// integer round-to-nearest.
-pub fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
-    rescale_u64(ticks, media_timescale, SMOOTH_TIMESCALE, Rounding::Nearest)
+pub fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale::Timescale) -> u64 {
+    rescale_u64(
+        ticks,
+        media_timescale,
+        (SMOOTH_TIMESCALE as u32).into(),
+        Rounding::Nearest,
+    )
 }
 
 /// Resolve the Smooth stream type, FourCC, `CodecPrivateData` and per-kind
@@ -725,14 +730,15 @@ pub fn resolve_codec(config: &CodecConfig) -> Result<SmoothCodec> {
 /// random-access point, no sample is dropped or reordered.
 fn segment_samples(
     samples: &[Sample],
-    media_timescale: u32,
+    media_timescale: broadcast_common::timescale::Timescale,
     target_secs: u32,
 ) -> Vec<core::ops::Range<usize>> {
     let mut groups = Vec::new();
     if samples.is_empty() {
         return groups;
     }
-    let target_ticks = (target_secs.max(1) as u64).saturating_mul(media_timescale.max(1) as u64);
+    let target_ticks =
+        (u64::from(target_secs.max(1))).saturating_mul(u64::from(media_timescale.get()));
 
     let mut start = 0usize;
     let mut acc_dur = 0u64;
@@ -767,7 +773,7 @@ struct SmoothSampleTime {
 fn smooth_timeline(
     track: &Track,
     origin: &TimelineOrigin,
-    media_timescale: u32,
+    media_timescale: broadcast_common::timescale::Timescale,
 ) -> Result<Vec<SmoothSampleTime>> {
     let times = relative_decode_times(track, origin);
     let starts: Vec<u64> = times
@@ -799,7 +805,7 @@ fn smooth_timeline(
             let cto = rescale_i64(
                 i64::from(s.composition_offset()),
                 media_timescale,
-                SMOOTH_TIMESCALE,
+                (SMOOTH_TIMESCALE as u32).into(),
                 Rounding::Nearest,
             );
             let composition_offset = i32::try_from(cto).map_err(|_| {
@@ -970,7 +976,7 @@ mod tests {
             display: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
-        let groups = segment_samples(&samples, 1, 2);
+        let groups = segment_samples(&samples, 1.into(), 2);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].len(), 2);
         assert_eq!(groups[1].len(), 2);
@@ -979,6 +985,9 @@ mod tests {
     #[test]
     fn to_smooth_ticks_scales() {
         // 1 second at media timescale 90000 → 10_000_000 smooth ticks.
-        assert_eq!(SmoothPackager::to_smooth_ticks(90_000, 90_000), 10_000_000);
+        assert_eq!(
+            SmoothPackager::to_smooth_ticks(90_000, 90_000.into()),
+            10_000_000
+        );
     }
 }

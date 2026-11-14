@@ -75,8 +75,8 @@ fn run() -> Run {
     let audio: Vec<Sample> = ir.tracks[apos].samples.clone();
     let vid = video_spec.track_id;
     let aid = audio_spec.track_id;
-    let vscale = u64::from(video_spec.timescale.get().max(1));
-    let ascale = u64::from(audio_spec.timescale.get().max(1));
+    let vscale = u64::from(video_spec.timescale.get());
+    let ascale = u64::from(audio_spec.timescale.get());
 
     let mut seg = StreamingTsHlsSegmenter::new(vec![video_spec], 1, usize::MAX).unwrap();
     let mut before = Vec::new();

@@ -128,11 +128,10 @@ fn check_media(media: &Media, report: &mut Report) {
             continue;
         }
         let mean_duration = total_duration as f64 / track.samples.len() as f64;
-        let timescale = track.timescale();
-        if timescale == 0 {
-            continue;
-        }
-        let measured_fps = timescale as f64 / mean_duration;
+        // A `Timescale` is non-zero by construction, so there is no
+        // zero-timescale track to skip.
+        let timescale = track.timescale().get();
+        let measured_fps = f64::from(timescale) / mean_duration;
 
         let relative_diff =
             (measured_fps - declared_fps as f64).abs() / declared_fps.max(1.0) as f64;

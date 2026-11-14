@@ -70,6 +70,7 @@ fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
         .as_ref()
         .unwrap()
         .timescale
+        .get()
 }
 
 /// Build a single-video-track spec from the fixture's real avcC.

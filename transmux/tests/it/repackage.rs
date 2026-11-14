@@ -163,7 +163,8 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     let ir = oracle_ir();
     let (total, ts) = anchor_total(&ir);
     assert_eq!(
-        ts, ir.movie_timescale,
+        ts,
+        ir.movie_timescale.get(),
         "video anchor drives movie timescale"
     );
 

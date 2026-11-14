@@ -98,7 +98,9 @@ pub struct Media {
     /// Elementary tracks, in the order they appear in the source movie.
     pub tracks: Vec<Track>,
     /// Movie timescale (`mvhd.timescale`), preserved for lossless re-muxing.
-    pub movie_timescale: u32,
+    /// Non-zero by construction: a wire `mvhd.timescale` of `0` is refused when
+    /// the box is parsed ([`MovieHeaderBox::parse`](crate::MovieHeaderBox)).
+    pub movie_timescale: broadcast_common::timescale::Timescale,
     /// PCR timeline recovered from the source, in wire order
     /// ([`PcrSample`], ISO/IEC 13818-1 §2.4.3.4). Empty for every demuxer that
     /// does not read a TS adaptation field (i.e. every non-[`TsDemux`](crate::ts_demux::TsDemux) source).
@@ -127,10 +129,13 @@ pub struct Media {
 impl Media {
     /// Create a `Media` from tracks and a movie timescale, with an empty PCR
     /// timeline and no skipped tracks.
-    pub fn new(tracks: Vec<Track>, movie_timescale: u32) -> Self {
+    pub fn new(
+        tracks: Vec<Track>,
+        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
+    ) -> Self {
         Self {
             tracks,
-            movie_timescale,
+            movie_timescale: movie_timescale.into(),
             pcr: Vec::new(),
             skipped: Vec::new(),
             degraded: Vec::new(),

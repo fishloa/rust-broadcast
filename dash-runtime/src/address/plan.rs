@@ -32,7 +32,18 @@ use broadcast_dash::{BaseInfo, ByteRange, UrlType};
 const MICROS: i128 = 1_000_000;
 
 fn us_to_ticks_ceil(us: i128, timescale: u64) -> u64 {
-    u64::try_from(from_micros(us.max(0), timescale, Rounding::Ceil)).unwrap_or(u64::MAX)
+    let Ok(scale) = u32::try_from(timescale) else {
+        return u64::MAX;
+    };
+    let Some(scale) = broadcast_common::timescale::Timescale::new(scale) else {
+        // `@timescale="0"`: an MPD carries no readable time base. No tick at
+        // any rate can be placed on it, so the plan gets no index offsets
+        // rather than an invented 1 Hz one (the MPD parser already refuses a
+        // literal zero; this is the last line of defence for an inherited
+        // `u64`).
+        return u64::MAX;
+    };
+    u64::try_from(from_micros(us.max(0), scale, Rounding::Ceil)).unwrap_or(u64::MAX)
 }
 
 /// What a dynamic MPD adds to the plan.

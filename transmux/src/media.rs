@@ -34,7 +34,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use broadcast_common::timescale::{Rounding, cmp_ticks, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
@@ -68,9 +68,6 @@ use alloc::sync::Arc;
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
 pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
-
-/// Default movie timescale used when a source does not specify one.
-const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
 
 /// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) —
 /// ISO/IEC 14496-1 §7.2.6.6 Table 5.
@@ -468,12 +465,7 @@ impl Package for CmafMux {
         // before calling `package`. This is the single shared check every
         // fMP4/CMAF mux entry point uses, not a `CmafMux`-only one.
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let movie_timescale = if media.movie_timescale == 0 {
-            DEFAULT_MOVIE_TIMESCALE
-        } else {
-            media.movie_timescale
-        };
-        let mut out = build_init_segment(&specs, movie_timescale)?;
+        let mut out = build_init_segment(&specs, media.movie_timescale)?;
 
         // Each track's single-segment fragment is anchored at the track's
         // absolute decode time (its `tfdt` baseMediaDecodeTime, ISO/IEC
@@ -507,18 +499,18 @@ impl Package for CmafMux {
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TimelineOrigin {
     ticks: i64,
-    timescale: u32,
+    timescale: Timescale,
 }
 
 impl TimelineOrigin {
     /// The origin of `tracks`; `0` when no sample carries a `dts`.
     pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
-        let mut best: Option<(i64, u32)> = None;
+        let mut best: Option<(i64, Timescale)> = None;
         for t in tracks {
             let Some(d) = t.samples.iter().find_map(|s| s.timing.map(|t| t.dts)) else {
                 continue;
             };
-            let ts = t.spec.timescale.get().max(1);
+            let ts = t.spec.timescale;
             let earlier = match best {
                 None => true,
                 Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
@@ -527,12 +519,12 @@ impl TimelineOrigin {
                 best = Some((d, ts));
             }
         }
-        let (ticks, timescale) = best.unwrap_or((0, 1));
+        let (ticks, timescale) = best.unwrap_or((0, Timescale::from(1u32)));
         Self { ticks, timescale }
     }
 
     /// The origin expressed in `timescale` ticks, rounded down.
-    pub(crate) fn in_timescale(&self, timescale: u32) -> i64 {
+    pub(crate) fn in_timescale(&self, timescale: Timescale) -> i64 {
         rescale_i64(self.ticks, self.timescale, timescale, Rounding::Floor)
     }
 }
@@ -542,7 +534,7 @@ impl TimelineOrigin {
 /// sample's time + duration only for a track that carries no `dts` at all
 /// (section-carried data), which then starts at the origin.
 pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
-    let base = origin.in_timescale(track.spec.timescale.get());
+    let base = origin.in_timescale(track.spec.timescale);
     let mut out = Vec::with_capacity(track.samples.len());
     let mut next: i64 = 0;
     for s in &track.samples {
@@ -562,7 +554,7 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
     let origin = TimelineOrigin::of(tracks.iter().copied());
     let mut span: Option<(f64, f64)> = None;
     for t in tracks {
-        let ts = f64::from(t.spec.timescale.get().max(1));
+        let ts = f64::from(t.spec.timescale.get());
         for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
             let pts = (dts + i64::from(s.composition_offset())) as f64 / ts;
             let end = pts + f64::from(s.timing.map(|t| t.duration).unwrap_or(0)) / ts;
@@ -662,11 +654,7 @@ impl Package for HlsPackager {
         // movie_timescale), the same inputs `CmafMux` uses, so this computes
         // the true offset without needing the actual segment bytes in hand.
         let specs: Vec<TrackSpec> = kept.iter().map(|t| t.spec.clone()).collect();
-        let movie_timescale = if media.movie_timescale == 0 {
-            DEFAULT_MOVIE_TIMESCALE
-        } else {
-            media.movie_timescale
-        };
+        let movie_timescale = media.movie_timescale;
         let init_len = if specs.is_empty() {
             0
         } else {

@@ -105,7 +105,7 @@
 
 use crate::TrackId;
 use alloc::vec::Vec;
-use broadcast_common::timescale::{Rounding, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::error::{Error, Result};
 use crate::media::{Media, Track};
@@ -219,9 +219,6 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
                 "splice: matched tracks have incompatible codecs",
             ));
         }
-        if at.spec.timescale.get() == 0 || bt.spec.timescale.get() == 0 {
-            return Err(Error::InvalidInput("timescale must be non-zero"));
-        }
         if at.spec.timescale != bt.spec.timescale {
             return Err(Error::InvalidInput(
                 "splice: matched tracks have incompatible timescales",
@@ -258,9 +255,8 @@ fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<u
 /// Rescale an absolute tick value from one track's media timescale into
 /// another's, in 128-bit arithmetic to avoid overflow. Truncates toward zero
 /// on a non-exact ratio (matching `repackage::rescale_floor`/`ts_mux::rescale`'s
-/// existing technique elsewhere in this crate) — timescales are always
-/// positive on a real track; an identity is returned for a degenerate zero or
-/// an already-equal pair, with no arithmetic at all.
+/// existing technique elsewhere in this crate). Both timescales are
+/// [`Timescale`]s (non-zero by construction), so no zero denominator exists.
 ///
 /// Used to convert the *single* splice offset derived from one reference
 /// track ([`pick_reference_track`]) into every other matched track's own
@@ -270,16 +266,8 @@ fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<u
 /// samples — never an already-rescaled delta carried over from a previous
 /// splice — which is what keeps sub-tick rounding from compounding across a
 /// chain of splices (see the module-level doc).
-fn rescale_ticks(ticks: i64, from_timescale: u32, to_timescale: u32) -> Result<i64> {
-    if from_timescale == 0 || to_timescale == 0 {
-        return Err(Error::InvalidInput("timescale must be non-zero"));
-    }
-    Ok(rescale_i64(
-        ticks,
-        from_timescale,
-        to_timescale,
-        Rounding::TowardZero,
-    ))
+fn rescale_ticks(ticks: i64, from_timescale: Timescale, to_timescale: Timescale) -> i64 {
+    rescale_i64(ticks, from_timescale, to_timescale, Rounding::TowardZero)
 }
 
 /// Shift every sample's absolute `dts`/`pts` — when present — by `offset`
@@ -378,8 +366,8 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
         let shifted = match ref_shift {
             Some((ref_ts, join_dts_ref, incoming_ref_start)) => {
                 let track_ts = at.spec.timescale;
-                let offset = rescale_ticks(join_dts_ref, ref_ts.get(), track_ts.get())?
-                    - rescale_ticks(incoming_ref_start, ref_ts.get(), track_ts.get())?;
+                let offset = rescale_ticks(join_dts_ref, ref_ts, track_ts)
+                    - rescale_ticks(incoming_ref_start, ref_ts, track_ts);
                 shift_samples(&bt.samples, offset)
             }
             None => bt.samples.clone(),
@@ -513,7 +501,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         snap_to_preceding_sync(&base.tracks[video_idx], at_ticks).ok_or(Error::InvalidInput(
             "splice_insert: base video track has no samples",
         ))?;
-    let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.get().max(1));
+    let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.get());
     // The snapped cut's **absolute** decode time (the media plane's own clock),
     // which is what every other track's cut is measured against — see the
     // `split_index` computation below. This is in the video track's own
@@ -559,7 +547,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         let split_index = if i == video_idx {
             video_split
         } else {
-            let track_timescale = u128::from(bt.spec.timescale.get().max(1));
+            let track_timescale = u128::from(bt.spec.timescale.get());
             // Ceiling, not floor (review round 3). Flooring the rescale picks a
             // tick *before* the instant the video was cut at, so the audio cut
             // lands one sample early and drops a sample the video still has —
@@ -587,8 +575,8 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         // video track), rescaled into this track's own timescale — never
         // computed independently from this track's own boundary (that would
         // re-derive a per-track alignment and destroy A/V sync).
-        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale.get(), track_ts.get())?
-            - rescale_ticks(incoming_ref_start, ref_timescale.get(), track_ts.get())?;
+        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale, track_ts)
+            - rescale_ticks(incoming_ref_start, ref_timescale, track_ts);
         let shifted_ad = shift_samples(&adt.samples, ad_offset);
 
         let ad_span: u64 = adt

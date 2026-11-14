@@ -63,14 +63,19 @@ impl IdrWait {
     }
 
     /// Account one dropped video `sample` (clock rate `timescale` ticks per
-    /// second). Returns `true` exactly once: when the bound is first reached.
-    pub fn observe_dropped(&mut self, sample: &crate::Sample, timescale: u32) -> bool {
+    /// second; non-zero by construction). Returns `true` exactly once: when the
+    /// bound is first reached.
+    pub fn observe_dropped(
+        &mut self,
+        sample: &crate::Sample,
+        timescale: broadcast_common::timescale::Timescale,
+    ) -> bool {
         self.waited_ticks = self.waited_ticks.saturating_add(self.clock.tick(sample));
-        if self.tripped || timescale == 0 {
+        if self.tripped {
             return false;
         }
         let waited_ns =
-            u128::from(self.waited_ticks) * (NANOS_PER_SEC as u128) / u128::from(timescale);
+            u128::from(self.waited_ticks) * (NANOS_PER_SEC as u128) / u128::from(timescale.get());
         self.tripped = waited_ns >= self.bound.as_nanos();
         self.tripped
     }

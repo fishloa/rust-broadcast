@@ -67,6 +67,7 @@ fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
         .as_ref()
         .unwrap()
         .timescale
+        .get()
 }
 
 /// Build the two [`TrackSpec`]s from the fixture's real avcC + esds.

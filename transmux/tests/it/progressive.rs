@@ -529,7 +529,7 @@ fn huge_timescale_media() -> Media {
             }
         }
     }
-    media.movie_timescale = HUGE_TIMESCALE;
+    media.movie_timescale = HUGE_TIMESCALE.into();
     media
 }
 
@@ -890,7 +890,7 @@ fn duration_version_boundary_is_exact() {
         flags: 0,
         creation_time: 0,
         modification_time: 0,
-        timescale: 1000,
+        timescale: 1000.into(),
         duration: u64::from(u32::MAX),
         rate: 0x0001_0000,
         volume: 0x0100,
@@ -961,7 +961,7 @@ fn non_monotonic_dts_still_packages() {
         .iter()
         .position(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("a video track");
-    let ts = i64::from(media.tracks[video].spec.timescale.get().max(1));
+    let ts = i64::from(media.tracks[video].spec.timescale.get());
     // Sample 0 sits at t=0 and the rest advance 40 ms each, except that a run
     // jumps *forward* 60 s and the samples after it resume roughly where they
     // were — so one chunk start lands far ahead and a later chunk start lands

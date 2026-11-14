@@ -240,7 +240,7 @@ fn fragment_c_timeline() {
             .iter()
             .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        let ts = track.spec.timescale.get().max(1) as u64;
+        let ts = track.spec.timescale.get() as u64;
         let expected = (media_ticks * 10_000_000 + ts / 2) / ts;
         // The fragments tile the track's timeline from its (rounded) absolute
         // start, so the sum may differ from the rounded total by one tick.

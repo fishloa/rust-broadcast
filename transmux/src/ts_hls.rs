@@ -323,7 +323,7 @@ impl Package for TsHlsPackager {
                 ticks[ti] = segment_ticks;
             }
             let anchor_ticks = ticks[anchor];
-            let ts_scale = media.tracks[anchor].spec.timescale.get().max(1) as u64;
+            let ts_scale = media.tracks[anchor].spec.timescale.get() as u64;
             // #EXT-X-TARGETDURATION is an integer ≥ every #EXTINF (RFC 8216
             // §4.3.3.1: the rounded max segment duration).
             let (duration, ceil_secs) = segment_duration_secs(anchor_ticks, ts_scale);
@@ -407,6 +407,8 @@ impl TsHlsPackager {
 /// information anywhere in the IR; it keeps the accumulator's value, i.e. it
 /// stays with the samples around it.
 fn placement_secs(sample: &Sample, acc_ticks: u64, timescale: u64, origin_secs: f64) -> f64 {
+    // Every caller passes a track's `Timescale` (non-zero by construction);
+    // the `.max(1)` only keeps a future raw-`u64` caller honest.
     let timescale = timescale.max(1) as f64;
     match (
         sample.timing.map(|t| t.duration).filter(|&d| d != 0),
@@ -499,7 +501,7 @@ fn partition_tracks(
 ) -> Vec<SegmentRanges> {
     let n_segs = anchor_boundaries.len();
     let anchor_samples = &tracks[anchor].samples;
-    let anchor_scale = tracks[anchor].spec.timescale.get().max(1) as u64;
+    let anchor_scale = tracks[anchor].spec.timescale.get() as u64;
     let origin_secs = timeline_origin_secs(
         anchor_samples.first().and_then(|s| s.timing.map(|t| t.dts)),
         anchor_scale,
@@ -546,7 +548,7 @@ fn partition_tracks(
         }
 
         // Time-based split for non-anchor tracks.
-        let scale = track.spec.timescale.get().max(1) as u64;
+        let scale = track.spec.timescale.get() as u64;
         // For each segment, find the [start_idx, end_idx) of samples whose
         // decode-start time falls in this segment's window.
         let mut seg = 0usize;
@@ -1073,7 +1075,7 @@ impl StreamingTsHlsSegmenter {
             }
             if !self.opens_segment(&sample) {
                 self.dropped_leading_aus += 1;
-                let timescale = self.tracks[self.anchor].spec.timescale.get();
+                let timescale = self.tracks[self.anchor].spec.timescale;
                 if let Some(wait) = self.idr_wait.as_mut()
                     && wait.observe_dropped(&sample, timescale)
                 {
@@ -1111,7 +1113,7 @@ impl StreamingTsHlsSegmenter {
             if self.origin_secs.is_none() {
                 self.origin_secs = Some(timeline_origin_secs(
                     sample.timing.map(|t| t.dts),
-                    self.tracks[self.anchor].spec.timescale.get().max(1) as u64,
+                    self.tracks[self.anchor].spec.timescale.get() as u64,
                 ));
             }
             self.anchor_pending_dur += self.anchor_clock.tick(&sample);
@@ -1125,7 +1127,7 @@ impl StreamingTsHlsSegmenter {
     fn cut_or_defer(&mut self) -> Result<()> {
         self.complete_deferred()?;
         let anchor = self.anchor;
-        let anchor_scale = self.tracks[anchor].spec.timescale.get().max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let next_start_ticks = self.tracks[anchor].base_decode + self.anchor_pending_dur;
         let next_start_secs = next_start_ticks as f64 / anchor_scale as f64;
         if !self.audio_lags(next_start_secs) {
@@ -1151,7 +1153,7 @@ impl StreamingTsHlsSegmenter {
         let Some(cut) = self.deferred_cut else {
             return Ok(());
         };
-        let scale = self.tracks[self.anchor].spec.timescale.get().max(1) as u64;
+        let scale = self.tracks[self.anchor].spec.timescale.get() as u64;
         let waited_out = self.anchor_pending_dur >= CATCH_UP_MAX_SECS.saturating_mul(scale);
         if waited_out || !self.audio_lags(cut.next_start_secs) {
             self.complete_deferred()?;
@@ -1170,7 +1172,7 @@ impl StreamingTsHlsSegmenter {
             {
                 return false;
             }
-            let scale = t.spec.timescale.get().max(1) as u64;
+            let scale = t.spec.timescale.get() as u64;
             let mut acc = t.base_decode;
             let mut clock = MediaClock::resumed_at(t.flush_clock.last_dts());
             for s in &t.pending {
@@ -1428,7 +1430,7 @@ impl StreamingTsHlsSegmenter {
     fn cut_segment_with(&mut self, final_cut: bool, deferred: Option<DeferredCut>) -> Result<()> {
         let closed_anchor_dur = deferred.map_or(self.anchor_pending_dur, |d| d.closed_anchor_dur);
         let anchor = self.anchor;
-        let anchor_scale = self.tracks[anchor].spec.timescale.get().max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get() as u64;
         let origin_secs = self.origin_secs.unwrap_or(0.0);
         // The new segment's start time = this track's cumulative decode time
         // so far (already-flushed ticks + the pending anchor buffer) — the
@@ -1450,7 +1452,7 @@ impl StreamingTsHlsSegmenter {
                 if i == anchor {
                     return deferred.map_or(t.pending.len(), |d| d.anchor_split);
                 }
-                let scale = t.spec.timescale.get().max(1) as u64;
+                let scale = t.spec.timescale.get() as u64;
                 let mut acc = t.base_decode;
                 // Same `MediaClock`/`placement_secs` pair the batch
                 // `partition_tracks` uses, so both paths place a given sample

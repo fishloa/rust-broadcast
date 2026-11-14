@@ -463,7 +463,7 @@ fn ac3_media(spacing_ticks: i64) -> Media {
     let ts = std::fs::read(test_fixtures::path("ts/dolby/ac3.ts")).expect("ac3 fixture must exist");
     let mut ir = TsDemux::new().unpackage(&ts).expect("demux AC-3 fixture");
     let t = ir.tracks.get_mut(0).expect("one AC-3 track");
-    let scale = t.spec.timescale.get().max(1) as i64;
+    let scale = t.spec.timescale.get() as i64;
     // 4 samples, `spacing_ticks` apart (the first at 0).
     t.samples.truncate(4);
     for (i, s) in t.samples.iter_mut().enumerate() {

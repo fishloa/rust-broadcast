@@ -122,8 +122,8 @@ pub struct AudioFollower {
     pending: VecDeque<PendingPublish>,
     pending_since: Option<Instant>,
     held: VecDeque<Sample>,
-    origin: Option<(i64, u32)>,
-    timescale: u32,
+    origin: Option<(i64, broadcast_common::timescale::Timescale)>,
+    timescale: broadcast_common::timescale::Timescale,
     cuts: VecDeque<PartCutReady>,
     newest_dts: Option<i64>,
     next_seq: u32,
@@ -137,12 +137,16 @@ pub struct AudioFollower {
     rendition: Option<usize>,
 }
 
-fn part_target_for_frame_ms(part_target_ms: u32, frame_ticks: u32, timescale: u32) -> Option<u32> {
-    if frame_ticks == 0 || timescale == 0 {
+fn part_target_for_frame_ms(
+    part_target_ms: u32,
+    frame_ticks: u32,
+    timescale: broadcast_common::timescale::Timescale,
+) -> Option<u32> {
+    if frame_ticks == 0 {
         return None;
     }
     let ticks = u128::from(frame_ticks);
-    let scale = u128::from(timescale);
+    let scale = u128::from(timescale.get());
     let target_ticks = u128::from(part_target_ms) * scale;
     let frames = target_ticks
         .div_ceil(ticks * (MILLIS_PER_SEC as u128))
@@ -191,7 +195,7 @@ impl AudioFollower {
             pending_since: None,
             held: VecDeque::new(),
             origin: None,
-            timescale: spec.timescale.get(),
+            timescale: spec.timescale,
             cuts: VecDeque::new(),
             newest_dts: None,
             next_seq,
@@ -423,11 +427,17 @@ mod part_target_tests {
 
     #[test]
     fn rounds_up_to_whole_frames() {
-        assert_eq!(part_target_for_frame_ms(200, 1536, 48_000), Some(224));
-        assert_eq!(part_target_for_frame_ms(200, 1024, 48_000), Some(214));
-        assert_eq!(part_target_for_frame_ms(200, 960, 48_000), Some(200));
-        assert_eq!(part_target_for_frame_ms(10, 1536, 48_000), Some(32));
-        assert_eq!(part_target_for_frame_ms(200, 0, 48_000), None);
+        assert_eq!(
+            part_target_for_frame_ms(200, 1536, 48_000.into()),
+            Some(224)
+        );
+        assert_eq!(
+            part_target_for_frame_ms(200, 1024, 48_000.into()),
+            Some(214)
+        );
+        assert_eq!(part_target_for_frame_ms(200, 960, 48_000.into()), Some(200));
+        assert_eq!(part_target_for_frame_ms(10, 1536, 48_000.into()), Some(32));
+        assert_eq!(part_target_for_frame_ms(200, 0, 48_000.into()), None);
     }
 }
 

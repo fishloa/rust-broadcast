@@ -679,10 +679,10 @@ fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
 /// AAC samples), which is exactly the quantity every downstream consumer
 /// (RTP packetisation, segmentation, `tfdt`) reads. For a 90 kHz track (video,
 /// opaque `Data`) this is the identity.
-fn rescale_to_track(anchor_90k: i128, timescale: u32) -> i64 {
+fn rescale_to_track(anchor_90k: i128, timescale: broadcast_common::timescale::Timescale) -> i64 {
     to_ticks(rescale(
         anchor_90k,
-        VIDEO_TIMESCALE,
+        VIDEO_TIMESCALE.into(),
         timescale,
         Rounding::Floor,
     ))
@@ -2569,8 +2569,8 @@ fn emit_audio_au(
         // (Re-)anchoring on the wire stamp: it describes the first frame that
         // commences in this PES, which is `lead_ticks` after a carried frame.
         _ => (
-            rescale_to_track(dts_uw, sample_rate) - lead_ticks,
-            rescale_to_track(pts_uw, sample_rate) - lead_ticks,
+            rescale_to_track(dts_uw, sample_rate.into()) - lead_ticks,
+            rescale_to_track(pts_uw, sample_rate.into()) - lead_ticks,
         ),
     };
 

@@ -32,7 +32,7 @@
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 
-use broadcast_common::timescale::{Rounding, rescale_i64, to_micros};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64, to_micros};
 
 use crate::TrackId;
 use crate::pipeline::Sample;
@@ -93,7 +93,7 @@ pub enum AlignOut {
 }
 
 struct Lane {
-    timescale: u32,
+    timescale: Timescale,
     first_pts: Option<i64>,
     delta: i64,
     target: Option<i64>,
@@ -115,7 +115,7 @@ pub struct TrackAligner {
     sender_reports_refused: bool,
 }
 
-fn rescale(ticks: i64, from: u32, to: u32) -> i64 {
+fn rescale(ticks: i64, from: Timescale, to: Timescale) -> i64 {
     rescale_i64(ticks, from, to, Rounding::Nearest)
 }
 
@@ -124,13 +124,17 @@ fn wrapped_gap(rtptime: u32, reference: i64) -> i64 {
     i64::from(i32::from_ne_bytes(rtptime.wrapping_sub(low).to_ne_bytes()))
 }
 
-fn ticks_to_us(ticks: i64, timescale: u32) -> i128 {
+fn ticks_to_us(ticks: i64, timescale: Timescale) -> i128 {
     to_micros(i128::from(ticks), timescale, Rounding::TowardZero)
 }
 
 impl TrackAligner {
     /// `tracks` is `(track id, is the video track, RTP clock rate)`; fewer than two tracks
-    /// pass every sample through untouched.
+    /// pass every sample through untouched. A zero clock rate (unrepresentable
+    /// once it is a [`Timescale`]) is read as 1 Hz rather than refused: every
+    /// real caller takes the rate from an SDP `a=rtpmap` clock rate or a
+    /// depacketiser that already validated it, so this is the type's own
+    /// `From<u32>` and not a wire-boundary decision.
     #[must_use]
     pub fn new(tracks: &[(TrackId, bool, u32)]) -> Self {
         let lanes = tracks
@@ -139,7 +143,7 @@ impl TrackAligner {
                 (
                     id,
                     Lane {
-                        timescale,
+                        timescale: timescale.into(),
                         first_pts: None,
                         delta: 0,
                         target: None,
@@ -343,7 +347,10 @@ impl TrackAligner {
         };
         let mut discontinuity = false;
         if track != anchor {
-            let anchor_scale = self.lanes.get(&anchor).map_or(1, |l| l.timescale);
+            let anchor_scale = self
+                .lanes
+                .get(&anchor)
+                .map_or(Timescale::from(1u32), |l| l.timescale);
             let Some(lane) = self.lanes.get_mut(&track) else {
                 out.push(AlignOut::Sample(track, sample));
                 return;
@@ -557,7 +564,7 @@ mod tests {
                 };
                 let us = to_micros(
                     i128::from(sample.timing.map(|t| t.pts).expect("pts")),
-                    rate,
+                    rate.into(),
                     Rounding::TowardZero,
                 );
                 if id == VIDEO {

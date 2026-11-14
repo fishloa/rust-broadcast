@@ -255,6 +255,17 @@ pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
 
+/// Serialize a [`Timescale`](broadcast_common::timescale::Timescale) as the
+/// plain ticks-per-second integer it wraps, so a serde-JSON consumer sees the
+/// same number the wire box carries (not a `NonZeroU32` newtype object).
+#[cfg(feature = "serde")]
+fn ser_timescale<S: serde::Serializer>(
+    timescale: &broadcast_common::timescale::Timescale,
+    serializer: S,
+) -> core::result::Result<S::Ok, S::Error> {
+    serializer.serialize_u32(timescale.get())
+}
+
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
     HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,

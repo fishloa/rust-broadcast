@@ -30,7 +30,12 @@ struct HoldState {
 }
 
 fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
-    rescale_u64(ticks, clock_hz, PCR_HZ, Rounding::TowardZero)
+    rescale_u64(
+        ticks,
+        clock_hz.into(),
+        (PCR_HZ as u32).into(),
+        Rounding::TowardZero,
+    )
 }
 
 /// Adapter around the TS-over-HTTP client.
@@ -279,7 +284,7 @@ impl TsHttpSource {
         let (Some(pts), Some(spec)) = (pts, self.tracks.get(&track)) else {
             return;
         };
-        let timescale = i128::from(spec.timescale.get().max(1));
+        let timescale = i128::from(spec.timescale.get());
         let Some(h) = self.hold.as_mut() else {
             return;
         };

@@ -227,7 +227,7 @@ fn timing_is_monotonic_and_matches_first_pes_pts() {
     // (ISO/IEC 13818-1 §2.4.3.7) — rescale with the same floor the demuxer
     // uses so this stays an exact equality, not a tolerance.
     let expected_first_pts =
-        ((first_pes_pts as u128 * track.timescale() as u128) / 90_000u128) as u64;
+        ((first_pes_pts as u128 * u128::from(track.timescale().get())) / 90_000u128) as u64;
     assert_eq!(
         first_pts as u64, expected_first_pts,
         "first sample PTS must equal the first PES packet's PTS"

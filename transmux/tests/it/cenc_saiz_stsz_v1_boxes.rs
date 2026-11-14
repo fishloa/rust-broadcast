@@ -153,7 +153,7 @@ fn mvhd_v1_matches_mp4box_diso() {
 
     let mvhd = MovieHeaderBox::parse(mvhd_bytes).expect("parse v1 mvhd");
     assert_eq!(mvhd.version, 1);
-    assert_eq!(mvhd.timescale, 2_000_000_000);
+    assert_eq!(mvhd.timescale, 2_000_000_000.into());
     assert_eq!(mvhd.duration, 6_000_000_000);
     assert_eq!(
         mvhd.next_track_id,

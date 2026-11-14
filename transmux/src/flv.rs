@@ -54,7 +54,7 @@ use rtmp_runtime::flv::FlvHeader;
 use rtmp_runtime::flv::FlvTag as RtmpFlvTag;
 use rtmp_runtime::flv::TagType;
 
-use broadcast_common::timescale::{Rounding, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 
 use crate::aac_asc::AudioSpecificConfig;
@@ -1199,33 +1199,19 @@ fn audio_frame_body(sound_type: u8, data: &[u8]) -> Vec<u8> {
 /// not "start of the stream". They use each `Sample::timing` (`.dts`)/`pts` directly
 /// (absolute, in the track's own [`crate::pipeline::TrackSpec::timescale`],
 /// per the media-plane architecture) and rescale here instead.
-fn ticks_to_ms(ticks: i64, timescale: u32) -> Result<i64> {
-    if timescale == 0 {
-        return Err(Error::InvalidInput(
-            "FLV mux requires a non-zero track timescale",
-        ));
-    }
+fn ticks_to_ms(ticks: i64, timescale: Timescale) -> Result<i64> {
     Ok(rescale_i64(
         ticks,
         timescale,
-        FLV_TIMESCALE,
+        FLV_TIMESCALE.into(),
         Rounding::TowardZero,
     ))
 }
 
 /// [`ticks_to_ms`] for a value that must land in an FLV `Timestamp` (the UI24
 /// low field plus the UI8 extended high byte, i.e. a 32-bit millisecond clock,
-/// §E.4.1): a value outside `u32` is an error, never a silent wrap, and a
-/// `timescale` of `0` is an error too — [`ticks_to_ms`] returns `0` for it as a
-/// placeholder, which here would silently stamp *every* tag at millisecond 0.
-/// (A track really can arrive that way: the IR does not forbid it, and
-/// `RtpDepacketiser` has produced exactly that — see audit r04-W30.)
-fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
-    if timescale == 0 {
-        return Err(FlvError::Codec(Error::InvalidInput(
-            "FLV mux requires a non-zero track timescale",
-        )));
-    }
+/// §E.4.1): a value outside `u32` is an error, never a silent wrap.
+fn ms_from_ticks(ticks: i64, timescale: Timescale) -> core::result::Result<u32, FlvError> {
     let ms = ticks_to_ms(ticks, timescale)?;
     if ms < 0 || ms > u32::MAX as i64 {
         return Err(FlvError::Codec(Error::InvalidInput(
@@ -1238,7 +1224,7 @@ fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvErr
 /// [`ticks_to_ms`] for the RTMP/FLV payload path: a negative value (a DTS
 /// before the clock origin) clamps to 0 as before, but a value past the 32-bit
 /// millisecond clock is an error rather than a silent `as u32` wrap (#1129).
-fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
+fn clamped_ms(ticks: i64, timescale: Timescale) -> core::result::Result<u32, FlvError> {
     u32::try_from(ticks_to_ms(ticks, timescale)?.max(0)).map_err(|_| {
         FlvError::Codec(Error::InvalidInput(
             "FLV tag timestamp does not fit the 32-bit millisecond clock",
@@ -1250,7 +1236,7 @@ fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError>
 /// 24-bit value in FLV's millisecond clock. `offset` is in `timescale` ticks,
 /// so it is rescaled first; a value that does not fit SI24 is an error rather
 /// than the silent truncation the raw write used to perform.
-fn composition_time_ms(offset: i64, timescale: u32) -> core::result::Result<i32, FlvError> {
+fn composition_time_ms(offset: i64, timescale: Timescale) -> core::result::Result<i32, FlvError> {
     let ms = ticks_to_ms(offset, timescale)?;
     if ms < SI24_MIN as i64 || ms > SI24_MAX as i64 {
         return Err(FlvError::Codec(Error::InvalidInput(
@@ -1363,8 +1349,8 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
             let Some(dts) = s.timing.map(|t| t.dts) else {
                 continue;
             };
-            let ts_ms = clamped_ms(dts, timescale.get())?;
-            let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale.get())?;
+            let ts_ms = clamped_ms(dts, timescale)?;
+            let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale)?;
             let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
             items.push((
                 ts_ms,
@@ -1385,7 +1371,7 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
             let Some(dts) = s.timing.map(|t| t.dts) else {
                 continue;
             };
-            let ts_ms = clamped_ms(dts, timescale.get())?;
+            let ts_ms = clamped_ms(dts, timescale)?;
             let body = audio_frame_body(sound_type, &s.data);
             items.push((
                 ts_ms,
@@ -1475,8 +1461,8 @@ impl Package for FlvMux {
                 // rounded deltas) keeps the tag clock non-decreasing: the
                 // running tick sum is monotonic by construction, so truncating
                 // division cannot step it backwards.
-                let dts = ms_from_ticks(ticks, timescale.get())?;
-                let comp = composition_time_ms(s.composition_offset() as i64, timescale.get())?;
+                let dts = ms_from_ticks(ticks, timescale)?;
+                let comp = composition_time_ms(s.composition_offset() as i64, timescale)?;
                 let body = video_frame_body(s.flags.is_sync, comp, &s.data);
                 items.push((
                     dts,
@@ -1495,7 +1481,7 @@ impl Package for FlvMux {
             let timescale = at.spec.timescale;
             let mut ticks = 0i64;
             for s in &at.samples {
-                let dts = ms_from_ticks(ticks, timescale.get())?;
+                let dts = ms_from_ticks(ticks, timescale)?;
                 let body = audio_frame_body(sound_type, &s.data);
                 items.push((
                     dts,
@@ -1547,12 +1533,7 @@ fn media_duration_seconds(media: &Media) -> f64 {
             .iter()
             .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        let ts = if t.spec.timescale.get() == 0 {
-            FLV_TIMESCALE
-        } else {
-            t.spec.timescale.get()
-        } as f64;
-        let secs = ticks as f64 / ts;
+        let secs = ticks as f64 / f64::from(t.spec.timescale.get());
         if secs > max {
             max = secs;
         }
@@ -1796,21 +1777,22 @@ mod tests {
         );
     }
 
+    /// A zero track timescale never reaches these helpers (it is a
+    /// `Timescale`, non-zero by construction), so the boundary that reads a
+    /// wire `mdhd.timescale` is where a real zero is refused, with a typed
+    /// error naming the field.
     #[test]
     fn a_zero_track_timescale_is_a_typed_error() {
-        // Audit #2462: `ticks_to_ms` returned 0 for timescale 0 while
-        // `ms_from_ticks` (its FLV `Timestamp` sibling) already errored.
-        let e = ticks_to_ms(90_000, 0).expect_err("zero timescale must error");
-        assert!(matches!(
-            e,
-            Error::InvalidInput("FLV mux requires a non-zero track timescale")
-        ));
-        assert!(matches!(
-            ms_from_ticks(90_000, 0),
-            Err(FlvError::Codec(Error::InvalidInput(
-                "FLV mux requires a non-zero track timescale"
-            )))
-        ));
-        assert_eq!(ticks_to_ms(90_000, 90_000), Ok(1000));
+        let err = Timescale::try_new(0).expect_err("a zero mdhd.timescale is an error");
+        assert_eq!(err.field, "timescale");
+        assert_eq!(err.reason, "must be non-zero");
+        assert_eq!(
+            ticks_to_ms(90_000, Timescale::try_new(90_000).expect("non-zero")),
+            Ok(1000)
+        );
+        assert_eq!(
+            ms_from_ticks(90_000, Timescale::try_new(90_000).expect("non-zero")),
+            Ok(1000)
+        );
     }
 }

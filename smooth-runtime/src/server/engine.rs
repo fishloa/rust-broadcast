@@ -769,7 +769,7 @@ fn chunk_timeline(
         };
         // A sample without a `dts` starts at 0; a negative one (only a
         // rebased B-frame lead-in) has no earlier position to report.
-        let timescale = track.spec.timescale.get().max(1);
+        let timescale = track.spec.timescale;
         let decode_time = first.timing.map(|t| t.dts).unwrap_or(0).max(0);
         let absolute = u64::try_from(decode_time).unwrap_or(u64::MAX);
         let start = chunks

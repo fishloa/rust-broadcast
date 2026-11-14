@@ -1235,14 +1235,20 @@ impl ProgramSegmenter {
                         self.start_gate_dropped += 1;
                         if is_video_sample {
                             self.start_gate_video_dropped += 1;
+                            // A track this program knows about always has a
+                            // non-zero `Timescale`; a track it does not know
+                            // has no clock at all, so there is nothing to
+                            // account to the IDR wait. The sample is still
+                            // gated away below, exactly as before.
                             let timescale = tracks
                                 .iter()
                                 .find(|t| t.track_id == track_id)
-                                .map_or(0, |t| t.timescale.get());
-                            let waiting = self.idr_wait_applies();
-                            let tripped =
-                                waiting && self.idr_wait.observe_dropped(&sample, timescale);
-                            if waiting && self.config.ts_idr_fallback.falls_back() {
+                                .map(|t| t.timescale);
+                            let tripped = self.idr_wait_applies()
+                                && timescale.is_some_and(|timescale| {
+                                    self.idr_wait.observe_dropped(&sample, timescale)
+                                });
+                            if self.idr_wait_applies() && self.config.ts_idr_fallback.falls_back() {
                                 self.hold_for_fallback(is_video_sample, track_id, sample);
                             }
                             if tripped {
@@ -1405,7 +1411,7 @@ impl ProgramSegmenter {
             self.timeline.record(track_id, &sample, None, now_us);
             if re_anchor {
                 let fresh = MediaAnchor {
-                    source_90k: rescale_to_90k(pts, timescale.get()),
+                    source_90k: rescale_to_90k(pts, timescale),
                     timeline_ns: self.next_timeline_ns,
                 };
                 if self.anchor.is_none() {
@@ -1904,7 +1910,12 @@ impl ProgramSegmenter {
         // offset — no per-segment rounding accumulation (issue #1083, E).
         if let Some(anchor) = self.anchor {
             let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
-            let delta_90k = rescale_u64(delta_ns, NANOS_PER_SEC, PTS_HZ, Rounding::Floor);
+            let delta_90k = rescale_u64(
+                delta_ns,
+                (NANOS_PER_SEC as u32).into(),
+                (PTS_HZ as u32).into(),
+                Rounding::Floor,
+            );
             let start_90k = anchor.source_90k.saturating_add(delta_90k);
             self.segment_writer
                 .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));
@@ -2018,14 +2029,14 @@ fn timescale_moves(
 /// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed
 /// 90 kHz clock (issue #1083, W9). Rounds down, saturating — a value that
 /// overflows `u64` is clamped, never wrapped.
-fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
+fn rescale_to_90k(pts: i64, timescale: broadcast_common::timescale::Timescale) -> u64 {
     // A negative PTS (a pre-roll/PTS-base offset a demuxer may produce) is
     // clamped to 0: the event ring has no representation for a time before
     // zero, and a segment starting there simply begins the timeline.
     rescale_u64(
         u64::try_from(pts).unwrap_or(0),
         timescale,
-        PTS_HZ,
+        (PTS_HZ as u32).into(),
         Rounding::Floor,
     )
 }
@@ -2228,9 +2239,15 @@ mod segmenter_tests {
             .with_part_target_ms(250)
     }
 
+    /// A zero timescale is an error where it is read, never a silent 1 Hz:
+    /// the typed boundary refuses it (`Timescale::try_new(0)`), and
+    /// `rescale_to_90k` only ever sees a non-zero `Timescale`.
     #[test]
-    pub(super) fn a_zero_timescale_rescales_without_dividing_by_zero() {
-        assert_eq!(rescale_to_90k(7, 0), 7 * 90_000);
+    pub(super) fn a_zero_timescale_is_a_typed_error_not_a_silent_one() {
+        let err = Timescale::try_new(0).expect_err("a zero timescale is an error");
+        assert_eq!(err.field, "timescale");
+        assert_eq!(err.reason, "must be non-zero");
+        assert_eq!(rescale_to_90k(7, 1.into()), 7 * 90_000);
     }
 
     /// Issue #1083 W9: the production segmenter must call

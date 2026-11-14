@@ -335,7 +335,7 @@ struct TrackState {
 /// ```
 pub struct Segmenter {
     tracks: Vec<TrackState>,
-    movie_timescale: u32,
+    movie_timescale: broadcast_common::timescale::Timescale,
     /// Index into `tracks` of the segmentation anchor (keyframe cut boundary).
     anchor: usize,
     /// Target segment duration in the *anchor track's* media timescale.
@@ -374,9 +374,10 @@ impl Segmenter {
     /// ever advance — see [`choose_anchor`]).
     pub fn new(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
         target_duration_secs: f64,
     ) -> Result<Self> {
+        let movie_timescale: broadcast_common::timescale::Timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput("segmenter needs at least one track"));
         }

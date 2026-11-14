@@ -139,7 +139,7 @@ pub(super) fn build_followers(
         .into_iter()
         .filter_map(|(page, serving)| {
             let spec = tracks.iter().find(|t| t.track_id == page.source_track)?;
-            SubtitleFollower::try_new(&page, spec.timescale.get(), &serving.trunk)
+            SubtitleFollower::try_new(&page, spec.timescale, &serving.trunk)
         })
         .collect()
 }

@@ -3,13 +3,19 @@
 //! One home for `ticks * to / from` so the rounding mode is explicit at every
 //! call site and the edge cases are decided once:
 //!
-//! - Timescales are any unsigned integer type up to `u64`. A timescale of `0`
-//!   (a parsed `mdhd`/`TimeScale` field can carry it) is treated as `1` on
-//!   either side; the functions never divide by zero.
+//! - A timescale is a [`Timescale`], which is non-zero by construction, so a
+//!   rescale never divides by zero and there is no "treat `0` as `1`" path to
+//!   inherit: a zero timescale arriving from the wire (`mdhd`/`TimeScale`, an
+//!   MPD `@timescale`, a manifest) is an error at the boundary that parses it
+//!   ([`Timescale::try_new`]), never a silently wrong value here.
 //! - The multiply saturates instead of wrapping, so an absurd tick count
 //!   clamps rather than producing a small wrong value.
 //! - The `_i64` / `_u64` forms saturate to the target type; `_u64` clamps a
 //!   negative result to `0`.
+//!
+//! [`rescale`]: self::rescale
+
+use crate::error::InvalidValue;
 
 /// How a fractional result is brought to a whole tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -39,11 +45,110 @@ impl Rounding {
 
 crate::impl_spec_display!(Rounding);
 
+/// A media timescale (ticks per second), guaranteed non-zero.
+///
+/// The wire can carry a zero timescale (a parsed `mdhd`/`TimeScale` field, an
+/// MPD `@timescale`, a Smooth `StreamIndex@TimeScale`); such a field is an
+/// error at the parse boundary ([`Self::try_new`]), not a value to flatten to
+/// `1`. Every rescale below takes a `Timescale`, so a zero can neither reach
+/// the arithmetic nor become a silently wrong result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Timescale(pub core::num::NonZeroU32);
+
+impl Timescale {
+    /// Ticks per second of the microsecond timescale.
+    pub const MICROS: Self = Self(match core::num::NonZeroU32::new(MICROS_PER_SECOND) {
+        Some(nz) => nz,
+        None => unreachable!(),
+    });
+
+    /// Construct from a raw value, returning `None` for zero.
+    #[must_use]
+    pub const fn new(value: u32) -> Option<Self> {
+        match core::num::NonZeroU32::new(value) {
+            Some(nz) => Some(Self(nz)),
+            None => None,
+        }
+    }
+
+    /// Fallible constructor; zero is an error.
+    ///
+    /// # Errors
+    /// [`InvalidValue`] (`field: "timescale"`) when `value` is zero.
+    pub fn try_new(value: u32) -> Result<Self, InvalidValue> {
+        core::num::NonZeroU32::new(value)
+            .map(Self)
+            .ok_or(InvalidValue {
+                field: "timescale",
+                value: u64::from(value),
+                reason: "must be non-zero",
+            })
+    }
+
+    /// The same timescale as a `u64` (the wire/form fields that carry it
+    /// wider than 32 bits, e.g. an MPD `@timescale`).
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0.get() as u64
+    }
+
+    /// The underlying ticks-per-second value.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl From<core::num::NonZeroU32> for Timescale {
+    fn from(v: core::num::NonZeroU32) -> Self {
+        Self(v)
+    }
+}
+
+impl From<Timescale> for u32 {
+    fn from(t: Timescale) -> Self {
+        t.0.get()
+    }
+}
+
+impl From<Timescale> for u64 {
+    fn from(t: Timescale) -> Self {
+        t.0.get() as u64
+    }
+}
+
+impl From<Timescale> for core::num::NonZeroU32 {
+    fn from(t: Timescale) -> Self {
+        t.0
+    }
+}
+
+impl From<u32> for Timescale {
+    fn from(v: u32) -> Self {
+        Self(core::num::NonZeroU32::new(v).unwrap_or(core::num::NonZeroU32::MIN))
+    }
+}
+
+impl From<Timescale> for i128 {
+    fn from(t: Timescale) -> Self {
+        i128::from(t.0.get())
+    }
+}
+
+impl From<Timescale> for usize {
+    fn from(t: Timescale) -> Self {
+        t.0.get() as usize
+    }
+}
+
+/// Ticks per second of the microsecond timescale ([`Timescale::MICROS`]).
+pub const MICROS_PER_SECOND: u32 = 1_000_000;
+
 /// `ticks` rescaled from `from` to `to` ticks per second.
 #[must_use]
-pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: Rounding) -> i128 {
-    let den = i128::from(from.into().max(1));
-    let num = ticks.saturating_mul(i128::from(to.into().max(1)));
+pub fn rescale(ticks: i128, from: Timescale, to: Timescale, rounding: Rounding) -> i128 {
+    let den = i128::from(from.get());
+    let num = ticks.saturating_mul(i128::from(to.get()));
     match rounding {
         Rounding::Floor => num.div_euclid(den),
         Rounding::Ceil => {
@@ -66,117 +171,36 @@ pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: 
     }
 }
 
-/// A media timescale (ticks per second), guaranteed non-zero.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct Timescale(pub core::num::NonZeroU32);
-
-impl Timescale {
-    /// Construct from a raw value, returning `None` for zero.
-    #[must_use]
-    pub const fn new(value: u32) -> Option<Self> {
-        match core::num::NonZeroU32::new(value) {
-            Some(nz) => Some(Self(nz)),
-            None => None,
-        }
-    }
-
-    /// Fallible constructor; zero is an error.
-    pub fn try_new(value: u32) -> Result<Self, crate::error::InvalidValue> {
-        core::num::NonZeroU32::new(value)
-            .map(Self)
-            .ok_or(crate::error::InvalidValue {
-                field: "timescale",
-                value: value as u64,
-                reason: "must be non-zero",
-            })
-    }
-
-    /// The underlying ticks-per-second value.
-    #[must_use]
-    pub const fn get(self) -> u32 {
-        self.0.get()
-    }
-}
-
-impl From<core::num::NonZeroU32> for Timescale {
-    fn from(v: core::num::NonZeroU32) -> Self {
-        Self(v)
-    }
-}
-
-impl From<Timescale> for u32 {
-    fn from(t: Timescale) -> u32 {
-        t.0.get()
-    }
-}
-
-impl From<Timescale> for u64 {
-    fn from(t: Timescale) -> u64 {
-        t.0.get() as u64
-    }
-}
-
-impl From<u32> for Timescale {
-    fn from(v: u32) -> Self {
-        Self(core::num::NonZeroU32::new(v).unwrap_or(core::num::NonZeroU32::new(1).unwrap()))
-    }
-}
-
-impl From<Timescale> for usize {
-    fn from(t: Timescale) -> usize {
-        t.0.get() as usize
-    }
-}
-
-/// Ticks per second of the microsecond timescale.
-pub const MICROS_PER_SECOND: u32 = 1_000_000;
-
 /// `ticks` at `timescale` as microseconds.
 #[must_use]
-pub fn to_micros(ticks: i128, timescale: impl Into<u64>, rounding: Rounding) -> i128 {
-    rescale(ticks, timescale, MICROS_PER_SECOND, rounding)
+pub fn to_micros(ticks: i128, timescale: Timescale, rounding: Rounding) -> i128 {
+    rescale(ticks, timescale, Timescale::MICROS, rounding)
 }
 
 /// `us` microseconds as ticks at `timescale`.
 #[must_use]
-pub fn from_micros(us: i128, timescale: impl Into<u64>, rounding: Rounding) -> i128 {
-    rescale(us, MICROS_PER_SECOND, timescale, rounding)
+pub fn from_micros(us: i128, timescale: Timescale, rounding: Rounding) -> i128 {
+    rescale(us, Timescale::MICROS, timescale, rounding)
 }
 
 /// Exact comparison of `a / a_ts` with `b / b_ts` seconds, without rounding.
-/// A timescale of `0` counts as `1`, as in [`rescale`].
 #[must_use]
-pub fn cmp_ticks(
-    a: i64,
-    a_ts: impl Into<u64>,
-    b: i64,
-    b_ts: impl Into<u64>,
-) -> core::cmp::Ordering {
-    let a_ts = i128::from(a_ts.into().max(1));
-    let b_ts = i128::from(b_ts.into().max(1));
+pub fn cmp_ticks(a: i64, a_ts: Timescale, b: i64, b_ts: Timescale) -> core::cmp::Ordering {
+    let a_ts = i128::from(a_ts.get());
+    let b_ts = i128::from(b_ts.get());
     (i128::from(a) * b_ts).cmp(&(i128::from(b) * a_ts))
 }
 
 /// [`rescale`] on `i64` ticks, saturating to the `i64` range.
 #[must_use]
-pub fn rescale_i64(
-    ticks: i64,
-    from: impl Into<u64>,
-    to: impl Into<u64>,
-    rounding: Rounding,
-) -> i64 {
+pub fn rescale_i64(ticks: i64, from: Timescale, to: Timescale, rounding: Rounding) -> i64 {
     let scaled = rescale(i128::from(ticks), from, to, rounding);
     i64::try_from(scaled).unwrap_or(if scaled < 0 { i64::MIN } else { i64::MAX })
 }
 
 /// [`rescale`] on `u64` ticks, saturating to the `u64` range.
 #[must_use]
-pub fn rescale_u64(
-    ticks: u64,
-    from: impl Into<u64>,
-    to: impl Into<u64>,
-    rounding: Rounding,
-) -> u64 {
+pub fn rescale_u64(ticks: u64, from: Timescale, to: Timescale, rounding: Rounding) -> u64 {
     let scaled = rescale(i128::from(ticks), from, to, rounding);
     u64::try_from(scaled).unwrap_or(if scaled < 0 { 0 } else { u64::MAX })
 }
@@ -186,76 +210,87 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
 
+    const T1: Timescale = match Timescale::new(1) {
+        Some(t) => t,
+        None => unreachable!(),
+    };
+    const T48K: Timescale = match Timescale::new(48_000) {
+        Some(t) => t,
+        None => unreachable!(),
+    };
+    const T90K: Timescale = match Timescale::new(90_000) {
+        Some(t) => t,
+        None => unreachable!(),
+    };
+
     #[test]
     fn rounding_modes_differ_on_a_half_and_a_negative() {
-        assert_eq!(rescale(3, 2u32, 1u32, Rounding::Floor), 1);
-        assert_eq!(rescale(3, 2u32, 1u32, Rounding::Nearest), 2);
-        assert_eq!(rescale(3, 2u32, 1u32, Rounding::TowardZero), 1);
-        assert_eq!(rescale(-3, 2u32, 1u32, Rounding::Floor), -2);
-        assert_eq!(rescale(-3, 2u32, 1u32, Rounding::Nearest), -2);
-        assert_eq!(rescale(-3, 2u32, 1u32, Rounding::TowardZero), -1);
+        let two = Timescale::from(2u32);
+        assert_eq!(rescale(3, two, T1, Rounding::Floor), 1);
+        assert_eq!(rescale(3, two, T1, Rounding::Nearest), 2);
+        assert_eq!(rescale(3, two, T1, Rounding::TowardZero), 1);
+        assert_eq!(rescale(-3, two, T1, Rounding::Floor), -2);
+        assert_eq!(rescale(-3, two, T1, Rounding::Nearest), -2);
+        assert_eq!(rescale(-3, two, T1, Rounding::TowardZero), -1);
     }
 
     #[test]
     fn micros_helpers_are_rescale_against_one_million() {
-        assert_eq!(to_micros(90_000, 90_000u32, Rounding::Floor), 1_000_000);
-        assert_eq!(to_micros(1, 3u32, Rounding::TowardZero), 333_333);
-        assert_eq!(to_micros(-1, 3u32, Rounding::Floor), -333_334);
-        assert_eq!(from_micros(1_000_001, 90_000u32, Rounding::Ceil), 90_001);
-        assert_eq!(from_micros(1_000_001, 90_000u32, Rounding::Floor), 90_000);
-        assert_eq!(to_micros(5, 0u32, Rounding::Floor), 5_000_000);
+        let three = Timescale::from(3u32);
+        assert_eq!(to_micros(90_000, T90K, Rounding::Floor), 1_000_000);
+        assert_eq!(to_micros(1, three, Rounding::TowardZero), 333_333);
+        assert_eq!(to_micros(-1, three, Rounding::Floor), -333_334);
+        assert_eq!(from_micros(1_000_001, T90K, Rounding::Ceil), 90_001);
+        assert_eq!(from_micros(1_000_001, T90K, Rounding::Floor), 90_000);
+        assert_eq!(to_micros(5, T1, Rounding::Floor), 5_000_000);
     }
 
     #[test]
     fn identity_and_known_conversion() {
-        assert_eq!(
-            rescale(90_000, 90_000u32, 90_000u32, Rounding::Nearest),
-            90_000
-        );
-        assert_eq!(
-            rescale(48_000, 48_000u32, 90_000u32, Rounding::Floor),
-            90_000
-        );
-        assert_eq!(
-            rescale_u64(1024, 48_000u32, 90_000u32, Rounding::Nearest),
-            1920
-        );
+        assert_eq!(rescale(90_000, T90K, T90K, Rounding::Nearest), 90_000);
+        assert_eq!(rescale(48_000, T48K, T90K, Rounding::Floor), 90_000);
+        assert_eq!(rescale_u64(1024, T48K, T90K, Rounding::Nearest), 1920);
     }
 
+    /// A zero timescale cannot reach the arithmetic: the type has no zero
+    /// value, and the boundary that reads a wire value refuses it with a
+    /// typed error naming the field instead of flattening it to `1`.
     #[test]
-    fn zero_timescale_is_one_never_a_divide_by_zero() {
-        assert_eq!(rescale(7, 0u32, 1u32, Rounding::Floor), 7);
-        assert_eq!(rescale(7, 1u32, 0u32, Rounding::Floor), 7);
-        assert_eq!(rescale_i64(-7, 0u32, 0u32, Rounding::TowardZero), -7);
+    fn zero_timescale_is_rejected_not_flattened_to_one() {
+        assert_eq!(Timescale::new(0), None);
+        let err = Timescale::try_new(0).expect_err("a zero timescale is an error");
+        assert_eq!(err.field, "timescale");
+        assert_eq!(err.value, 0);
+        assert_eq!(err.reason, "must be non-zero");
+        assert_eq!(Timescale::try_new(1).map(Timescale::get), Ok(1));
+        assert_eq!(Timescale::try_new(90_000).map(Timescale::get), Ok(90_000));
+        // 1 Hz is the identity timescale, never a stand-in for "unknown".
+        assert_eq!(to_micros(7, T1, Rounding::Floor), 7_000_000);
     }
 
     #[test]
     fn saturates_instead_of_wrapping() {
+        let max = Timescale::from(u32::MAX);
+        assert_eq!(rescale_i64(i64::MAX, T1, max, Rounding::Floor), i64::MAX);
+        assert_eq!(rescale_i64(i64::MIN, T1, max, Rounding::Floor), i64::MIN);
+        assert_eq!(rescale_u64(u64::MAX, T1, max, Rounding::Nearest), u64::MAX);
+        assert_eq!(rescale_u64(0, T1, T1, Rounding::Nearest), 0);
         assert_eq!(
-            rescale_i64(i64::MAX, 1u32, u32::MAX, Rounding::Floor),
-            i64::MAX
+            rescale(i128::MAX, T1, Timescale::from(2u32), Rounding::Floor),
+            i128::MAX
         );
-        assert_eq!(
-            rescale_i64(i64::MIN, 1u32, u32::MAX, Rounding::Floor),
-            i64::MIN
-        );
-        assert_eq!(
-            rescale_u64(u64::MAX, 1u32, u32::MAX, Rounding::Nearest),
-            u64::MAX
-        );
-        assert_eq!(rescale_u64(0, 1u32, 1u32, Rounding::Nearest), 0);
-        assert_eq!(rescale(i128::MAX, 1u32, 2u32, Rounding::Floor), i128::MAX);
     }
 
     #[test]
     fn ceil_rounds_toward_positive_infinity() {
-        assert_eq!(rescale(3, 2u32, 1u32, Rounding::Ceil), 2);
-        assert_eq!(rescale(4, 2u32, 1u32, Rounding::Ceil), 2);
-        assert_eq!(rescale(-3, 2u32, 1u32, Rounding::Ceil), -1);
-        assert_eq!(rescale(-4, 2u32, 1u32, Rounding::Ceil), -2);
-        assert_eq!(rescale(5, 0u32, 1u32, Rounding::Ceil), 5);
+        let two = Timescale::from(2u32);
+        assert_eq!(rescale(3, two, T1, Rounding::Ceil), 2);
+        assert_eq!(rescale(4, two, T1, Rounding::Ceil), 2);
+        assert_eq!(rescale(-3, two, T1, Rounding::Ceil), -1);
+        assert_eq!(rescale(-4, two, T1, Rounding::Ceil), -2);
+        assert_eq!(rescale(5, T1, T1, Rounding::Ceil), 5);
         assert_eq!(
-            rescale_i64(i64::MAX, 1u32, u32::MAX, Rounding::Ceil),
+            rescale_i64(i64::MAX, T1, Timescale::from(u32::MAX), Rounding::Ceil),
             i64::MAX
         );
     }
@@ -263,10 +298,16 @@ mod tests {
     #[test]
     fn cmp_ticks_is_exact_across_timescales() {
         use core::cmp::Ordering::{Equal, Greater, Less};
-        assert_eq!(cmp_ticks(90_000, 90_000u32, 48_000, 48_000u32), Equal);
-        assert_eq!(cmp_ticks(1, 3u32, 1, 2u32), Less);
-        assert_eq!(cmp_ticks(i64::MAX, 1u32, i64::MAX, 2u32), Greater);
-        assert_eq!(cmp_ticks(5, 0u32, 5, 1u32), Equal);
+        assert_eq!(cmp_ticks(90_000, T90K, 48_000, T48K), Equal);
+        assert_eq!(
+            cmp_ticks(1, Timescale::from(3u32), 1, Timescale::from(2u32)),
+            Less
+        );
+        assert_eq!(
+            cmp_ticks(i64::MAX, T1, i64::MAX, Timescale::from(2u32)),
+            Greater
+        );
+        assert_eq!(cmp_ticks(5, T1, 5, T1), Equal);
     }
 
     #[test]

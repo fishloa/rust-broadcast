@@ -139,7 +139,7 @@ fn segments_are_whole_packets_with_pat_pmt_and_expected_count() {
         .iter()
         .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
-    let scale = ir.tracks[v].spec.timescale.get().max(1) as u64;
+    let scale = ir.tracks[v].spec.timescale.get() as u64;
     let target = 1u64; // seconds
     let expected = total_ticks.div_ceil(target * scale).max(1) as usize;
     assert_eq!(
@@ -230,7 +230,7 @@ fn playlist_is_consistent_with_segments() {
         .iter()
         .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
-    let scale = ir.tracks[v].spec.timescale.get().max(1) as f64;
+    let scale = ir.tracks[v].spec.timescale.get() as f64;
     let total_secs = total_ticks as f64 / scale;
     let sum: f64 = extinfs.iter().sum();
     assert!(

@@ -24,7 +24,15 @@ pub fn ato_seconds_to_us(seconds: f64) -> i128 {
 /// Ticks to microseconds, rounded toward negative infinity.
 #[must_use]
 pub fn ticks_to_us(ticks: i128, timescale: u64) -> i128 {
-    to_micros(ticks, timescale, Rounding::Floor)
+    let Ok(scale) = u32::try_from(timescale) else {
+        return 0;
+    };
+    let Some(scale) = broadcast_common::timescale::Timescale::new(scale) else {
+        // `@timescale="0"` names no time base; nothing is measurable against
+        // it, so the conversion yields nothing rather than an invented 1 Hz.
+        return 0;
+    };
+    to_micros(ticks, scale, Rounding::Floor)
 }
 
 /// [`segment_available_from`] for a segment given in ticks: the end of the

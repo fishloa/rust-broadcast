@@ -651,7 +651,7 @@ impl DashPackager {
     /// Resolve every presentation parameter for one track.
     fn repr_info(&self, track: &Track) -> Result<ReprInfo> {
         let config = &track.spec.config;
-        let timescale = track.spec.timescale.get().max(1);
+        let timescale = track.spec.timescale.get();
         let total_duration: u64 = track
             .samples
             .iter()

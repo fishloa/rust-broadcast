@@ -1058,8 +1058,8 @@ fn trunk_with_avc_track() -> Arc<Trunk> {
 /// long-running session's large absolute tick count.
 /// RTP timestamps are modulo 2^32 (RFC 3550 §5.1), so the rescaled
 /// value wraps into the 32-bit range before it is placed in the header.
-fn rescale_to_90k(ticks: u64, from_timescale: u32) -> u32 {
-    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_RATE)
+fn rescale_to_90k(ticks: u64, from_timescale: broadcast_common::timescale::Timescale) -> u32 {
+    transmux::rtp::rescale_ts(ticks, from_timescale, VIDEO_CLOCK_RATE.into())
 }
 
 /// Overwrites an RTP packet's `sequence number` and `timestamp` fields on
@@ -1251,7 +1251,7 @@ async fn send_sample(
     let Some(dts) = sample.timing.map(|t| t.dts) else {
         return;
     };
-    let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale.get());
+    let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale);
 
     let packets = match session.packets.packets(session.spec, sample, dts) {
         Ok(p) => p,
@@ -1862,18 +1862,18 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     #[test]
     fn rescale_to_90k_is_identity_at_90k() {
-        assert_eq!(rescale_to_90k(12345, VIDEO_CLOCK_RATE), 12345);
+        assert_eq!(rescale_to_90k(12345, VIDEO_CLOCK_RATE.into()), 12345);
     }
 
     #[test]
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
-        assert_eq!(rescale_to_90k(1000, 1000), VIDEO_CLOCK_RATE);
+        assert_eq!(rescale_to_90k(1000, 1000.into()), VIDEO_CLOCK_RATE);
     }
     #[test]
     fn rescale_to_90k_wraps_modulo_2_pow_32() {
         let ticks = u64::from(u32::MAX) + 1;
-        assert_eq!(rescale_to_90k(ticks, VIDEO_CLOCK_RATE), 0);
+        assert_eq!(rescale_to_90k(ticks, VIDEO_CLOCK_RATE.into()), 0);
     }
 
     #[test]

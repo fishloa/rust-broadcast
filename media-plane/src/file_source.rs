@@ -246,7 +246,7 @@ impl ParsedFile {
         let mut ranges: Vec<PassRange> = Vec::new();
 
         for (ti, track) in self.tracks.iter().enumerate() {
-            let timescale = track.spec.timescale.get().max(1) as f64;
+            let timescale = track.spec.timescale.get() as f64;
             // Both the pass span and the frame period must reflect the
             // track's **presentation** timeline, not decode order — a track
             // with B-frames reorders, so the decode-order "last" sample is

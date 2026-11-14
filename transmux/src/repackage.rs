@@ -35,7 +35,7 @@
 use alloc::vec::Vec;
 
 use broadcast_common::Unpackage;
-use broadcast_common::timescale::{Rounding, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_i64};
 
 use crate::error::{Error, Result};
 use crate::media::{Fmp4Demux, Media, TimelineOrigin, Track, relative_decode_times};
@@ -92,16 +92,13 @@ fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
 /// Convert a window edge given in the movie timescale to a track's media
 /// timescale, rounding down (`floor`) so the half-open `[start, end)` semantics
 /// are preserved without dropping a boundary sample.
-fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> Result<i64> {
-    if from_timescale == 0 || to_timescale == 0 {
-        return Err(Error::InvalidInput("timescale must be non-zero"));
-    }
-    Ok(rescale_i64(
+fn rescale_floor(ticks: u64, from_timescale: Timescale, to_timescale: Timescale) -> i64 {
+    rescale_i64(
         i64::try_from(ticks).unwrap_or(i64::MAX),
         from_timescale,
         to_timescale,
         Rounding::Floor,
-    ))
+    )
 }
 
 /// The index of the track whose next un-fed sample has the earliest decode
@@ -112,10 +109,11 @@ fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> Result<i
 /// the timescales: the timescales come from untrusted `mdhd` boxes, and three
 /// large coprime ones make that LCM exceed `u64`, so an `a / gcd * b` fold
 /// panics in debug and wraps in release. A `u128` cross-multiply cannot
-/// overflow for any pair of `u32` timescales. A timescale of 0 is treated as 1
-/// (a track with no timescale still has to be placeable). Ties go to the
-/// **lowest track index**, so the order is deterministic. Returns `None` when
-/// every track's samples have been consumed.
+/// overflow for any pair of `u32` timescales. A track's timescale is a
+/// [`Timescale`] (non-zero by construction), so no zero denominator ever
+/// reaches this comparison. Ties go to the **lowest track index**, so the
+/// order is deterministic. Returns `None` when every track's samples have been
+/// consumed.
 fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) -> Option<usize> {
     let mut best: Option<usize> = None;
     for (ti, track) in media.tracks.iter().enumerate() {
@@ -126,8 +124,8 @@ fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) ->
             best = Some(ti);
             continue;
         };
-        let lhs = dts[ti] * media.tracks[current].spec.timescale.get().max(1) as u128;
-        let rhs = dts[current] * track.spec.timescale.get().max(1) as u128;
+        let lhs = dts[ti] * media.tracks[current].spec.timescale.get() as u128;
+        let rhs = dts[current] * track.spec.timescale.get() as u128;
         if lhs < rhs {
             best = Some(ti);
         }
@@ -216,8 +214,8 @@ impl Media {
         let anchor_track = &self.tracks[anchor];
         let anchor_ts = anchor_track.spec.timescale;
         let anchor_pts = presentation_times(anchor_track, &origin);
-        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts.get())?;
-        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts.get())?;
+        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts);
+        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts);
         let snapped = anchor_pts
             .iter()
             .position(|&p| p >= anchor_lo && p < anchor_hi)
@@ -233,14 +231,14 @@ impl Media {
         for (ti, track) in self.tracks.iter().enumerate() {
             let ts = track.spec.timescale;
             let pts = presentation_times(track, &origin);
-            let hi = rescale_floor(end, self.movie_timescale, ts.get())?;
+            let hi = rescale_floor(end, self.movie_timescale, ts);
             let start_idx = if ti == anchor {
                 snapped
             } else {
                 // Lower edge = the snapped anchor start, else the raw window.
                 let lo = match snapped {
                     Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
-                    None => rescale_floor(start, self.movie_timescale, ts.get())?,
+                    None => rescale_floor(start, self.movie_timescale, ts),
                 };
                 pts.iter().position(|&p| p >= lo && p < hi)
             };
@@ -458,6 +456,7 @@ mod tests {
     use crate::ir::CodecConfig;
     use crate::pipeline::Sample;
     use alloc::vec;
+    use broadcast_common::Parse;
 
     /// A track with `count` samples one tick apart, at `timescale`.
     fn track(timescale: u32, count: usize) -> Track {
@@ -497,6 +496,16 @@ mod tests {
 
     fn media(timescales: &[u32]) -> Media {
         Media::new(timescales.iter().map(|&t| track(t, 4)).collect(), 1000)
+    }
+
+    /// A minimal `mdhd` **v0** box carrying `timescale` (ISO/IEC 14496-12:2026
+    /// §8.4.2). The demux boundary is where a real wire zero is read.
+    fn mdhd_v0(timescale: u32) -> alloc::vec::Vec<u8> {
+        let mut body = alloc::vec![0u8; 32];
+        body[4..8].copy_from_slice(b"mdhd");
+        body[20..24].copy_from_slice(&timescale.to_be_bytes());
+        body[28..30].copy_from_slice(&0x55C4u16.to_be_bytes()); // "und"
+        body
     }
 
     /// `dts[i]` is the running decode time *per track index*; `cursors` names
@@ -553,21 +562,6 @@ mod tests {
         assert_eq!(order, vec![0, 1, 1, 0, 1, 1, 0, 0]);
     }
 
-    /// A zero timescale is treated as 1 Hz rather than dividing by zero or
-    /// comparing against a zero denominator.
-    #[test]
-    fn zero_timescale_is_treated_as_one() {
-        let m = media(&[0, 1]);
-        // Track 0 at "1 Hz": 0 ticks = 0 s. Track 1 at 1 Hz: 0 ticks = 0 s.
-        // A tie -> index 0. Then track 0 with 1 tick = 1 s vs track 1's 1 tick
-        // = 1 s -> still a tie -> index 0.
-        assert_eq!(pick(&m, &[0, 0], &[0, 0]), Some(0));
-        assert_eq!(pick(&m, &[1, 1], &[0, 0]), Some(0));
-        // And a real timescale can beat the zero one.
-        let m = media(&[1, 1_000_000]);
-        assert_eq!(pick(&m, &[1, 0], &[0, 0]), Some(1));
-    }
-
     /// Exhausted tracks are skipped, and `None` comes back when there is
     /// nothing left.
     #[test]
@@ -610,13 +604,36 @@ mod tests {
         assert!(lcm_overflows > u64::MAX as u128);
     }
 
+    /// A zero timescale is an error at the boundary that reads it, never a
+    /// silent 1 Hz: a wire `mdhd.timescale` of `0` makes the box fail to parse
+    /// with a typed error naming the field, and a zero movie timescale
+    /// (`mvhd.timescale`) is refused the same way — so the interleave
+    /// comparison and `trim` can never see a zero denominator.
     #[test]
-    fn trimming_a_zero_timescale_media_is_a_typed_error() {
-        // Audit #2462: a zero timescale was silently read as 1 Hz here.
-        let m = Media::new(vec![track(0, 4), track(1000, 4)], 0);
-        assert!(matches!(
-            m.trim(0, 2),
-            Err(Error::InvalidInput("timescale must be non-zero"))
-        ));
+    fn a_zero_timescale_media_is_a_typed_error_not_flattened_to_one() {
+        let err = crate::init_segment::MediaHeaderBox::parse(&mdhd_v0(0))
+            .expect_err("a wire mdhd.timescale of 0 must not parse");
+        assert_eq!(
+            err,
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "timescale",
+                value: 0,
+                reason: "must be non-zero",
+            })
+        );
+        let mut mvhd = alloc::vec![0u8; 108];
+        mvhd[4..8].copy_from_slice(b"mvhd");
+        mvhd[20..24].copy_from_slice(&0u32.to_be_bytes()); // timescale = 0
+        mvhd[104..108].copy_from_slice(&2u32.to_be_bytes()); // next_track_id
+        let err = crate::init_segment::MovieHeaderBox::parse(&mvhd)
+            .expect_err("a wire mvhd.timescale of 0 must not parse");
+        assert_eq!(
+            err,
+            Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "timescale",
+                value: 0,
+                reason: "must be non-zero",
+            })
+        );
     }
 }
