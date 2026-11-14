@@ -28,7 +28,7 @@ serde      = "1"
 serde_json = "1"
 # Consumed by VERSION (from crates.io), not path — keeps the binding decoupled
 # from the workspace and its MSRV/lockstep.
-dvb-si     = { version = "13", features = ["ts", "serde", "chrono"] }
-dvb-t2mi   = { version = "13", features = ["ts", "serde"] }
+dvb-si     = { version = "14", features = ["ts", "serde", "chrono"] }
+dvb-t2mi   = { version = "14", features = ["ts", "serde"] }
 # `T2miPump::new` takes the typed 13-bit `mpeg_ts::pid::Pid` (dvb-t2mi 13).
-mpeg-ts    = "0.7"
+mpeg-ts    = "0.8"

@@ -19,9 +19,9 @@ checksum = "f2032f911046de80f0a198e0901378627c33f59ea0ac00e363d481118bd70a53"
 
 [[package]]
 name = "broadcast-common"
-version = "11.0.0"
+version = "12.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd0f70ef9d36de67089e3a89f0630d9c38a791032249c5c34f1593f8143b6551"
+checksum = "45590e2e230ffaa80c18e10b708e2a11fa3578b241d9b41afa011e5083142c6d"
 dependencies = [
  "chrono",
  "erased-serde",
@@ -83,9 +83,9 @@ checksum = "7f8f80099a98041a3d1622845c271458a2d73e688351bf3cb999266764b81d48"
 
 [[package]]
 name = "dvb-bbframe"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0774f72123006f8833886f3636949b38e3dcbc4a4f9ded23c553d6932d6daa56"
+checksum = "ffe6a68927dde25792fb2baef45b4ce3a8eab958df54af19b441b768ab2f1458"
 dependencies = [
  "broadcast-common",
  "num_enum",
@@ -95,9 +95,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b951918aaba50ee250051142db7cf3993388e51763acf5b0e6f93b11d596d7ea"
+checksum = "7a21c9ac623c45a65baadb4b43cc5dd728d9861d51fcd7b33dd95380f10e03cc"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -124,9 +124,9 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "13.0.0"
+version = "14.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81062663a6886a239f702aa2ce4db01819eb9c68a950d18c772024b682128b68"
+checksum = "9e46c248097465a9d46e5a4f8de8552ab71785354d137af5f80bad4f1b9abfdd"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -288,9 +288,9 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "mpeg-ts"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2223d5e0ac2b26a859046855b3531d818a7c85fd9ddeaca1294f41e498201571"
+checksum = "3becd0ff359b68ce5e1e2e2d35fd8fedd31bd28ac1cb956c2207e0f6f5be8f63"
 dependencies = [
  "broadcast-common",
  "bytes",
