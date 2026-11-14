@@ -73,9 +73,9 @@ fn run(spec: &transmux::TrackSpec, samples: &[Sample], cut: usize, policy: JoinP
                     r.join_index = Some(i);
                     r.kind = Some(k);
                 }
-                r.kept_pts.push(s.pts.unwrap());
+                r.kept_pts.push(s.timing.map(|t| t.pts).unwrap());
             }
-            JoinDecision::Keep => r.kept_pts.push(s.pts.unwrap()),
+            JoinDecision::Keep => r.kept_pts.push(s.timing.map(|t| t.pts).unwrap()),
             _ => unreachable!("non_exhaustive: new decision needs a test"),
         }
     }
@@ -104,7 +104,7 @@ fn closed_gop_idr_stream_cut_mid_gop_drops_exactly_up_to_the_next_idr() {
         assert!(r.leading.is_empty());
         assert_eq!(r.kept_pts.len(), samples.len() - next_idr);
         // The first kept sample is the IDR; nothing kept precedes it in output.
-        let rap_pts = samples[next_idr].pts.unwrap();
+        let rap_pts = samples[next_idr].timing.map(|t| t.pts).unwrap();
         assert!(r.kept_pts.iter().all(|&p| p >= rap_pts));
     }
 }
@@ -127,9 +127,9 @@ fn open_gop_stream_joins_on_a_recovery_point_and_drops_leading_pictures() {
     assert_eq!((r.join_index, r.kind), (Some(0), Some(rp)));
     assert!(r.before.is_empty());
     assert_eq!(r.leading, vec![1, 2, 3]);
-    let rap_pts = samples[0].pts.unwrap();
-    assert!(samples[1..=3].iter().all(|s| s.pts.unwrap() < rap_pts));
-    assert!(samples[4].pts.unwrap() > rap_pts);
+    let rap_pts = samples[0].timing.map(|t| t.pts).unwrap();
+    assert!(samples[1..=3].iter().all(|s| s.timing.map(|t| t.pts).unwrap() < rap_pts));
+    assert!(samples[4].timing.map(|t| t.pts).unwrap() > rap_pts);
     assert_eq!(r.kept_pts.len(), 147 - 3);
     assert!(r.kept_pts.iter().all(|&p| p >= rap_pts));
 
@@ -146,10 +146,10 @@ fn open_gop_stream_joins_on_a_recovery_point_and_drops_leading_pictures() {
         assert_eq!(r.join_index, Some(next), "cut {cut}");
         assert_eq!(r.kind, Some(rp));
         assert_eq!(r.before, (cut..next).collect::<Vec<_>>());
-        let rap_pts = samples[next].pts.unwrap();
+        let rap_pts = samples[next].timing.map(|t| t.pts).unwrap();
         // Leading = the samples right after the join point with pts below it.
         let want_leading: Vec<usize> = (next + 1..samples.len())
-            .take_while(|&i| samples[i].pts.unwrap() < rap_pts)
+            .take_while(|&i| samples[i].timing.map(|t| t.pts).unwrap() < rap_pts)
             .collect();
         assert_eq!(r.leading, want_leading, "cut {cut}");
         // The GOP at 114 has no leading pictures; the others have 3.

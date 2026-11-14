@@ -315,7 +315,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             .specs
             .iter()
             .find(|s| s.track_id == track_id)
-            .map_or(1, |s| s.timescale);
+            .map_or(1, |s| s.timescale.get());
         let tracks = self
             .specs
             .iter()

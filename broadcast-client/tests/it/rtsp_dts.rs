@@ -54,9 +54,9 @@ fn play(sdp: &str, packets: &[Vec<u8>]) -> Vec<Stamp> {
         while let Some(e) = host.session.next_event() {
             if let Event::Sample { sample, .. } = e {
                 out.push(Stamp {
-                    dts: sample.dts.expect("dts"),
-                    pts: sample.pts.expect("pts"),
-                    duration: sample.duration.expect("duration"),
+                    dts: sample.timing.map(|t| t.dts).expect("dts"),
+                    pts: sample.timing.map(|t| t.pts).expect("pts"),
+                    duration: sample.timing.map(|t| t.duration).expect("duration"),
                 });
             }
         }
@@ -271,7 +271,7 @@ fn the_rtp_composition_offsets_match_the_transport_stream_of_the_same_encode() {
     let ts_offsets: Vec<i64> = video
         .samples
         .iter()
-        .map(|s| (s.pts.unwrap() - s.dts.unwrap()) / FRAME_TICKS)
+        .map(|s| (s.timing.map(|t| t.pts).unwrap() - s.timing.map(|t| t.dts).unwrap()) / FRAME_TICKS)
         .collect();
     let rtp = play(&cap.sdp, &cap.packets);
     let rtp_offsets: Vec<i64> = rtp.iter().map(|s| (s.pts - s.dts) / FRAME_TICKS).collect();
@@ -285,7 +285,7 @@ fn the_rtp_composition_offsets_match_the_transport_stream_of_the_same_encode() {
     let ts_steps: Vec<i64> = video
         .samples
         .windows(2)
-        .map(|w| w[1].dts.unwrap() - w[0].dts.unwrap())
+        .map(|w| w[1].timing.map(|t| t.dts).unwrap() - w[0].timing.map(|t| t.dts).unwrap())
         .collect();
     assert!(ts_steps.iter().all(|&s| s == FRAME_TICKS));
 }

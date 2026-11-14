@@ -1176,7 +1176,7 @@ impl WhipIngestSession {
             spec.track_id,
             transmux::rtp::RtpMediaKind::H264,
             spec.config.clone(),
-            spec.timescale,
+            spec.timescale.get(),
         )]);
         let control = SessionControl::new();
         WhipIngestSession {
@@ -1191,7 +1191,7 @@ impl WhipIngestSession {
             media: parking_lot::Mutex::new(None),
             depacketiser,
             pt_to_track: std::iter::once((payload_type, spec.track_id)).collect(),
-            clock_rate_by_track: std::iter::once((spec.track_id, spec.timescale)).collect(),
+            clock_rate_by_track: std::iter::once((spec.track_id, spec.timescale.get())).collect(),
             captured: std::iter::once((
                 spec.track_id,
                 Some(match &spec.config {

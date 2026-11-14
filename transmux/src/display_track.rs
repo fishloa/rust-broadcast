@@ -128,12 +128,8 @@ pub(crate) struct Activation {
     pub(crate) coverage: PpsCoverage,
     /// The access unit is an H.264 IDR, or an H.265 IDR / BLA.
     pub(crate) random_access: bool,
-    /// AFD message present in this AU.
-    pub(crate) afd_present: bool,
-    /// Parsed AFD (None if flag cleared).
-    pub(crate) afd: Option<ActiveFormatDescription>,
-    /// Bar data message present.
-    pub(crate) bar_present: bool,
+    /// AFD signal present in this AU.
+    pub(crate) afd: Option<crate::user_data::AfdSignal>,
     /// Parsed bar data.
     pub(crate) bar_data: Option<BarData>,
 }
@@ -487,16 +483,14 @@ impl SpsTracker {
             if payload_type != user_data::SEI_PAYLOAD_TYPE_USER_DATA_REGISTERED_ITU_T_T35 {
                 continue;
             }
-            if !activation.afd_present
-                && let Some(afd) = user_data::afd_from_t35_payload(&payload)
+            if activation.afd.is_none()
+                && let Some(signal) = user_data::afd_from_t35_payload(&payload)
             {
-                activation.afd_present = true;
-                activation.afd = afd;
+                activation.afd = Some(signal);
             }
-            if !activation.bar_present
+            if activation.bar_data.is_none()
                 && let Some(bd) = user_data::bar_data_from_t35_payload(&payload)
             {
-                activation.bar_present = true;
                 activation.bar_data = Some(bd);
             }
         }
@@ -521,17 +515,17 @@ impl SpsTracker {
         };
         let previous_active = self.state.as_ref().and_then(|s| s.active_format.clone());
         let mut new_active = previous_active.clone();
-        if activation.afd_present {
+        if let Some(signal) = &activation.afd {
+            let afd_val = match signal {
+                user_data::AfdSignal::NoFormat => None,
+                user_data::AfdSignal::Format(a) => Some(*a),
+            };
             new_active = Some(ActiveFormat {
-                afd: activation.afd,
-                bar_data: if activation.bar_present {
-                    activation.bar_data.clone()
-                } else {
-                    None
-                },
+                afd: afd_val,
+                bar_data: activation.bar_data.clone(),
                 carriage,
             });
-        } else if activation.bar_present {
+        } else if activation.bar_data.is_some() {
             match &mut new_active {
                 Some(af) => af.bar_data = activation.bar_data.clone(),
                 None => {
@@ -543,7 +537,7 @@ impl SpsTracker {
                 }
             }
         }
-        if !activation.afd_present
+        if activation.afd.is_none()
             && self.afd_persistence == AfdPersistence::ResetAtRandomAccess
             && activation.random_access
         {

@@ -92,7 +92,7 @@ fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let own = s.duration.unwrap_or(0);
+            let own = s.timing.map(|t| t.duration).unwrap_or(0);
             match (times.get(i), times.get(i + 1)) {
                 (Some(&now), Some(&next)) if next >= now => {
                     u32::try_from(next - now).unwrap_or(own)
@@ -692,9 +692,9 @@ fn assemble_moov(
 /// duration, and the edit list that places it on the movie timeline.
 struct TrackTiming {
     deltas: Vec<u32>,
-    /// `mdhd.duration`: Σ decode deltas, in the media timescale.
+    /// `mdhd.timing.map(|t| t.duration)`: Σ decode deltas, in the media timescale.
     media_duration: u64,
-    /// `tkhd.duration`: the presentation length on the movie timeline
+    /// `tkhd.timing.map(|t| t.duration)`: the presentation length on the movie timeline
     /// (including a leading empty edit), in the movie timescale.
     presentation_duration: u64,
     edts: Option<EditBox>,
@@ -722,7 +722,7 @@ fn track_timings(media: &Media, movie_timescale: u32) -> Vec<TrackTiming> {
             let times = relative_decode_times(t, &origin);
             let pres = t.samples.iter().zip(&times).fold(None, |acc, (s, &d)| {
                 let p = d.saturating_add(i64::from(s.composition_offset()));
-                let e = p.saturating_add(i64::from(s.duration.unwrap_or(0)));
+                let e = p.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
                 Some(match acc {
                     None => (p, e),
                     Some((lo, hi)) => (p.min(lo), e.max(hi)),

@@ -248,7 +248,7 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![spec],
-        movie_timescale,
+        movie_timescale.into(),
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -445,7 +445,7 @@ fn dropped_sample_changes_the_decoded_frame_count() {
         "fixture must have more than one sample to drop one meaningfully"
     );
 
-    let init = transmux::build_init_segment(std::slice::from_ref(&spec), spec.timescale)
+    let init = transmux::build_init_segment(std::slice::from_ref(&spec), spec.timescale.into())
         .expect("build init segment");
 
     let dir = scratch_dir("ll-hls-golden-gate-mutation");
@@ -503,7 +503,7 @@ async fn non_ll_full_segment_path_also_decodes() {
     // longer than the fixture's ~3s runtime means nothing auto-splits until
     // the trailing `flush()` closes the one and only segment.
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale, 3600.0, 3_600_000)
+        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale.into(), 3600.0, 3_600_000)
             .expect("segmenter builds");
     for sample in fed_samples.clone() {
         seg.push(spec.track_id, sample).expect("push succeeds");
@@ -692,7 +692,7 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
 
     // A real fMP4 init, then a single segment holding every sample.
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale, 3600.0, 3_600_000)
+        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale.into(), 3600.0, 3_600_000)
             .expect("segmenter builds");
     let init = seg.init_segment().expect("init segment builds");
     recorder

@@ -160,7 +160,7 @@ impl LiveHost {
         for e in &self.events {
             if let Event::Tracks(specs) = e {
                 for s in specs {
-                    if s.timescale == VIDEO_TIMESCALE && found.is_none() {
+                    if s.timescale.get() == VIDEO_TIMESCALE && found.is_none() {
                         found = Some(s.track_id);
                     }
                 }
@@ -180,7 +180,7 @@ impl LiveHost {
                     track,
                     sample,
                     join,
-                } if *track == vid => Some((i, sample.pts.unwrap(), *join)),
+                } if *track == vid => Some((i, sample.timing.map(|t| t.pts).unwrap(), *join)),
                 _ => None,
             })
             .collect()
@@ -639,8 +639,8 @@ fn audio_track_of(h: &LiveHost) -> (TrackId, u32) {
     for e in &h.events {
         if let Event::Tracks(specs) = e {
             for s in specs {
-                if s.timescale != VIDEO_TIMESCALE && found.is_none() {
-                    found = Some((s.track_id, s.timescale));
+                if s.timescale.get() != VIDEO_TIMESCALE && found.is_none() {
+                    found = Some((s.track_id, s.timescale.get()));
                 }
             }
         }
@@ -669,7 +669,7 @@ fn no_old_timeline_audio_follows_a_detected_jump() {
     let after: Vec<i64> = h.events[d..]
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if *track == audio => sample.pts,
+            Event::Sample { track, sample, .. } if *track == audio => sample.timing.map(|t| t.pts),
             _ => None,
         })
         .collect();

@@ -76,15 +76,15 @@ async fn master_without_captions_is_unchanged() {
             continue;
         }
         for (si, s) in track.samples.iter().enumerate() {
-            let dts = s.dts.or(s.pts).unwrap_or(0);
-            order.push((dts as f64 / f64::from(track.spec.timescale), ti, si));
+            let dts = s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts)).unwrap_or(0);
+            order.push((dts as f64 / f64::from(track.spec.timescale.get()), ti, si));
         }
     }
     order.sort_by(|a, b| a.0.total_cmp(&b.0));
     for (n, (_, ti, si)) in order.into_iter().enumerate() {
         let track = &media.tracks[ti];
         let mut sample = track.samples[si].clone();
-        sample.dts = sample.dts.or(sample.pts);
+        if let Some(t)=sample.timing.as_mut() { if t.dts==0 { t.dts=t.pts; } }
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {
             multimux::source::segment::pump_segmenter(&mut segmenter, ProgramId(0), &trunk, &route);

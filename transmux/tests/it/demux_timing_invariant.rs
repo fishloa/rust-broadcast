@@ -11,10 +11,10 @@
 //! produces (an untimed, section-carried track — `dts.is_none()` — is
 //! explicitly out of scope and skipped):
 //!
-//! 1. `Track::start_decode_time == samples[0].dts.unwrap()` — the anchor a
+//! 1. `Track::start_decode_time == samples[0].timing.map(|t| t.dts).unwrap()` — the anchor a
 //!    demuxer publishes must be exactly the first sample's own dts, not an
 //!    independently-rounded approximation of it.
-//! 2. `sum(sample.duration) == dts_last - dts_first + duration_last` — the
+//! 2. `sum(sample.timing.map(|t| t.duration)) == dts_last - dts_first + duration_last` — the
 //!    duration timeline and the dts timeline must agree: walking the samples
 //!    by summing durations must land on exactly the same place the
 //!    demuxer's own absolute dts sequence does. A demuxer that re-derives
@@ -71,7 +71,7 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
         if t.samples.is_empty() {
             continue;
         }
-        let Some(dts_first) = t.samples[0].dts else {
+        let Some(dts_first) = t.samples[0].timing.map(|t| t.dts) else {
             // Untimed / section-carried track (e.g. SCTE-35/DSM-CC/private
             // sections) — explicitly out of scope, never fabricated.
             continue;
@@ -81,21 +81,21 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
         assert_eq!(
             t.start_decode_time as i64, dts_first,
             "{what}: track {ti} Track::start_decode_time ({}) must equal \
-             samples[0].dts ({dts_first})",
+             samples[0].timing.map(|t| t.dts) ({dts_first})",
             t.start_decode_time
         );
 
         let last = t.samples.last().expect("just checked non-empty");
         let dts_last = last
-            .dts
+            .timing.map(|t| t.dts)
             .unwrap_or_else(|| panic!("{what}: track {ti} first sample is timed but last isn't"));
-        let duration_last = last.duration.unwrap_or(0) as i64;
+        let duration_last = last.timing.map(|t| t.duration).unwrap_or(0) as i64;
 
         let sum_duration: i64 = t
             .samples
             .iter()
             .map(|s| {
-                s.duration
+                s.timing.map(|t| t.duration)
                     .unwrap_or_else(|| panic!("{what}: track {ti} a timed sample has no duration"))
                     as i64
             })
@@ -164,7 +164,7 @@ fn fmp4_demux_timing_invariant_holds() {
     );
     for (i, (s, o)) in video.samples.iter().zip(oracle.iter()).enumerate() {
         let dts = s
-            .dts
+            .timing.map(|t| t.dts)
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
         assert_eq!(
             dts,
@@ -173,7 +173,7 @@ fn fmp4_demux_timing_invariant_holds() {
             o.dts()
         );
         let duration = s
-            .duration
+            .timing.map(|t| t.duration)
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no duration"));
         assert_eq!(
             i64::from(duration),

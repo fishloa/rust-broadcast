@@ -250,7 +250,7 @@ fn lead_points_from(nb_events: &[Event], rendered: &[u32], from: usize) -> Vec<P
                 for s in specs {
                     kind.insert(
                         s.track_id,
-                        (s.config.audio_sample_rate().is_none(), s.timescale),
+                        (s.config.audio_sample_rate().is_none(), s.timescale.get()),
                     );
                 }
             }
@@ -263,8 +263,8 @@ fn lead_points_from(nb_events: &[Event], rendered: &[u32], from: usize) -> Vec<P
                     continue;
                 }
                 let (is_video, ts) = kind[track];
-                let pts = sample.pts.unwrap();
-                let dur = i64::from(sample.duration.unwrap_or(0));
+                let pts = sample.timing.map(|t| t.pts).unwrap();
+                let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
                 first.entry(*track).or_insert_with(|| to27(pts, ts));
                 let m = max_pts.entry(*track).or_insert(pts);
                 *m = (*m).max(pts);
@@ -338,7 +338,7 @@ fn first_video_pts_after(nb_events: &[Event], from: usize) -> u64 {
             && track.value() == VIDEO
             && !matches!(join, Some(JoinDecision::Drop(_)))
         {
-            return to27(sample.pts.unwrap(), ts[track]);
+            return to27(sample.timing.map(|t| t.pts).unwrap(), ts[track].get());
         }
     }
     panic!("no video sample after {from}");
@@ -495,18 +495,22 @@ fn long_stream() -> HashMap<String, Vec<u8>> {
             _ => {}
         }
     }
-    let scale = |t: TrackId| i64::from(specs.iter().find(|s| s.track_id == t).unwrap().timescale);
+    let scale = |t: TrackId| i64::from(specs.iter().find(|s| s.track_id == t).unwrap().timescale.get());
     let mut all = Vec::new();
     for k in 0..LONG_REPEATS {
         for (t, s) in &samples {
             let mut s = s.clone();
             let off = k * SPAN_SECS * scale(*t);
-            s.dts = s.dts.map(|d| d + off);
-            s.pts = s.pts.map(|p| p + off);
+            if let Some(d) = s.timing.map(|t| t.dts).map(|d| d + off) {
+                if let Some(t) = s.timing.as_mut() { t.dts = d; }
+            }
+            if let Some(p) = s.timing.map(|t| t.pts).map(|p| p + off) {
+                if let Some(t) = s.timing.as_mut() { t.pts = p; }
+            }
             all.push((*t, s));
         }
     }
-    all.sort_by_key(|(t, s)| i128::from(s.dts.unwrap()) * 90_000 / i128::from(scale(*t)));
+    all.sort_by_key(|(t, s)| i128::from(s.timing.map(|t| t.dts).unwrap()) * 90_000 / i128::from(scale(*t)));
     let mut seg = StreamingTsHlsSegmenter::new(specs, LONG_TARGET_SECS, LONG_WINDOW).unwrap();
     for (t, s) in all {
         seg.push(t, s).unwrap();

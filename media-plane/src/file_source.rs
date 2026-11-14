@@ -246,13 +246,13 @@ impl ParsedFile {
         let mut ranges: Vec<PassRange> = Vec::new();
 
         for (ti, track) in self.tracks.iter().enumerate() {
-            let timescale = track.spec.timescale.max(1) as f64;
+            let timescale = track.spec.timescale.get().max(1) as f64;
             // Both the pass span and the frame period must reflect the
             // track's **presentation** timeline, not decode order — a track
             // with B-frames reorders, so the decode-order "last" sample is
             // not the presentation max and a loop offset based on it would
             // step backwards across the loop point.
-            let mut pres_pts: Vec<i64> = track.samples.iter().filter_map(|s| s.pts).collect();
+            let mut pres_pts: Vec<i64> = track.samples.iter().filter_map(|s| s.timing.map(|t| t.pts)).collect();
             // A track with no timed samples cannot be paced/looped; give it a
             // zero span/frame so `advance_offsets`' zip stays aligned with the
             // track table, but it contributes no `order` entries.
@@ -288,7 +288,7 @@ impl ParsedFile {
                 frame = track
                     .samples
                     .iter()
-                    .filter_map(|s| s.duration.map(i64::from).filter(|&d| d > 0))
+                    .filter_map(|s| s.timing.map(|t| t.duration).map(i64::from).filter(|&d| d > 0))
                     .next()
                     .unwrap_or(1);
             }
@@ -308,8 +308,8 @@ impl ParsedFile {
                 .samples
                 .iter()
                 .filter_map(|s| {
-                    let pts = s.pts?;
-                    let dts = s.dts.or(s.pts)?;
+                    let pts = s.timing.map(|t| t.pts)?;
+                    let dts = s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts))?;
                     Some((dts as f64 / timescale, pts as f64 / timescale, s.clone()))
                 })
                 .collect();
@@ -793,11 +793,9 @@ impl FileIngestSession {
         for item in &self.order {
             let mut sample = item.sample.clone();
             let off = self.offsets[item.track_ref];
-            if let Some(p) = sample.pts {
-                sample.pts = Some(p.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?);
-            }
-            if let Some(d) = sample.dts {
-                sample.dts = Some(d.checked_add(off).ok_or(FileReaderError::OffsetOverflow)?);
+            if let Some(t) = sample.timing.as_mut() {
+                if let Some(p) = t.pts.checked_add(off) { t.pts = p; } else { return Err(FileReaderError::OffsetOverflow); }
+                if let Some(d) = t.dts.checked_add(off) { t.dts = d; } else { return Err(FileReaderError::OffsetOverflow); }
             }
             let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue
@@ -924,7 +922,8 @@ mod tests {
             if let SessionEvent::Sample {
                 track_id, sample, ..
             } = ev
-                && let Some(d) = sample.dts
+                && let Some(t) = sample.timing
+                && let d = t.dts
             {
                 dts.push((track_id, d));
             }
@@ -1185,8 +1184,13 @@ mod tests {
             session.queue.clear();
             for i in 0..burst {
                 let mut sample = template.1.clone();
-                sample.dts = Some(i64::try_from(i).unwrap());
-                sample.pts = sample.dts;
+                let dts = i64::try_from(i).unwrap();
+                if let Some(t) = sample.timing.as_mut() {
+                    t.dts = dts;
+                    t.pts = dts;
+                } else {
+                    sample.timing = Some(transmux::ir::SampleTiming::new(dts, dts, 0));
+                }
                 session.queue.push_back((template.0, sample, 0.0));
             }
             session.pass_wall_start =

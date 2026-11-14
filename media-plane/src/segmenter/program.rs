@@ -80,7 +80,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use broadcast_common::clock33::PTS_HZ;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::TrackId;
 
 use crate::ingress::ProgramId;
@@ -602,7 +602,7 @@ pub struct ProgramSegmenter {
     /// `audio_profiles` HE-AAC override moves it to the output rate): the
     /// `(trunk, declared)` timescales its samples are re-expressed between
     /// on their way into the segmenter.
-    pub(crate) timescale_moves: HashMap<TrackId, (u32, u32)>,
+    pub(crate) timescale_moves: HashMap<TrackId, (Timescale, Timescale)>,
     pub(crate) segment_writer: SegmentWriter,
     pub(crate) seg: AnySegmenter,
     /// The next segment published opens a replacement run, so it carries
@@ -1184,7 +1184,7 @@ impl ProgramSegmenter {
                     }
                     continue;
                 }
-                self.observe_captions(track_id, &sample.data, sample.dts);
+                self.observe_captions(track_id, &sample.data, sample.timing.map(|t| t.dts));
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
                 // contains a video track, drop every timed sample until the
@@ -1238,7 +1238,7 @@ impl ProgramSegmenter {
                             let timescale = tracks
                                 .iter()
                                 .find(|t| t.track_id == track_id)
-                                .map_or(0, |t| t.timescale);
+                                .map_or(0, |t| t.timescale.get());
                             let waiting = self.idr_wait_applies();
                             let tripped =
                                 waiting && self.idr_wait.observe_dropped(&sample, timescale);
@@ -1362,7 +1362,7 @@ impl ProgramSegmenter {
             return;
         };
         let started = *self.caption_scan_started.entry(track_id).or_insert(dts);
-        let window_ticks = i64::from(timescale) * CAPTION_SCAN_WINDOW_SECS;
+        let window_ticks = i64::from(timescale.get()) * CAPTION_SCAN_WINDOW_SECS;
         if dts.saturating_sub(started) >= window_ticks {
             self.captions_scan_complete = true;
             self.captions_unreported = true;
@@ -1388,13 +1388,13 @@ impl ProgramSegmenter {
         // boundary. This is what makes `note_segment_start` (below)
         // report the source clock the SCTE-35 events are on, not the
         // segmenter's own restart-from-zero timeline.
-        if let Some(pts) = sample.pts
+        if let Some(pts) = sample.timing.map(|t| t.pts)
             && let Some(timescale) = self
                 .published_tracks
                 .iter()
                 .find(|t| t.track_id == track_id)
                 .map(|t| t.timescale)
-            && timescale > 0
+            && timescale.get() > 0
         {
             let now_us =
                 u64::try_from(self.ingest_origin.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -1405,7 +1405,7 @@ impl ProgramSegmenter {
             self.timeline.record(track_id, &sample, None, now_us);
             if re_anchor {
                 let fresh = MediaAnchor {
-                    source_90k: rescale_to_90k(pts, timescale),
+                    source_90k: rescale_to_90k(pts, timescale.get()),
                     timeline_ns: self.next_timeline_ns,
                 };
                 if self.anchor.is_none() {
@@ -1989,7 +1989,7 @@ impl ProgramSegmenter {
 }
 
 fn in_declared_timescale(
-    moves: &HashMap<TrackId, (u32, u32)>,
+    moves: &HashMap<TrackId, (Timescale, Timescale)>,
     track_id: TrackId,
     sample: Sample,
 ) -> Sample {
@@ -2002,7 +2002,7 @@ fn in_declared_timescale(
 fn timescale_moves(
     published: &[TrackSpec],
     declared: &[TrackSpec],
-) -> HashMap<TrackId, (u32, u32)> {
+) -> HashMap<TrackId, (Timescale, Timescale)> {
     declared
         .iter()
         .filter_map(|d| {
@@ -2010,7 +2010,7 @@ fn timescale_moves(
                 .iter()
                 .find(|t| t.track_id == d.track_id)?
                 .timescale;
-            (from != d.timescale && from > 0).then_some((d.track_id, (from, d.timescale)))
+            (from != d.timescale && from.get() > 0).then_some((d.track_id, (from, d.timescale)))
         })
         .collect()
 }
@@ -2571,7 +2571,7 @@ mod segmenter_tests {
             );
         }
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = 45_000;
+        changed.timescale = 45_000.into();
         writer.set_tracks(vec![changed.clone()]);
         assert_eq!(trunk.track_generation(), 2);
         let mut events = Vec::new();
@@ -2582,7 +2582,7 @@ mod segmenter_tests {
                 .any(|e| matches!(e, SegmenterEvent::TrackSpecs(_))),
             "the in-band marker must announce the new specs: {events:?}"
         );
-        assert_eq!(segmenter.published_tracks[0].timescale, 45_000);
+        assert_eq!(segmenter.published_tracks[0].timescale.get(), 45_000);
     }
 
     /// Item 5 (unit): a discontinuity recorded while a segment is in progress
@@ -2765,7 +2765,7 @@ mod segmenter_tests {
 
         // Changed spec: bump the timescale (a discontinuity trigger).
         let mut changed = track_spec(TrackId::new(1));
-        changed.timescale = 45_000;
+        changed.timescale = 45_000.into();
         writer.set_tracks(vec![changed.clone()]);
         segmenter.published_tracks = trunk.tracks();
         let mut events = Vec::new();
@@ -3224,8 +3224,12 @@ mod segmenter_tests {
             for i in first..first + count {
                 let pts = pts_at(i);
                 let mut sample = sample_at(i, i.is_multiple_of(GOP));
-                sample.pts = Some(pts);
-                sample.dts = Some(pts);
+                if let Some(t) = sample.timing.as_mut() {
+                    t.pts = pts;
+                    t.dts = pts;
+                } else {
+                    sample.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+                }
                 self.writer
                     .publish(TrackId::new(1), RetentionClass::Timed, sample);
                 let mut events = Vec::new();
@@ -3345,8 +3349,13 @@ mod segmenter_gate_tests {
         let offset = 10 * i64::from(transmux::VIDEO_CLOCK_RATE);
         let at = |i: u32, is_sync: bool| {
             let mut s = sample_at(i, is_sync);
-            s.pts = Some(offset + i64::from(i) * i64::from(FRAME_DUR));
-            s.dts = s.pts;
+            let pts = offset + i64::from(i) * i64::from(FRAME_DUR);
+            if let Some(t) = s.timing.as_mut() {
+                t.pts = pts;
+                t.dts = pts;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+            }
             s
         };
         for i in 0..100u32 {

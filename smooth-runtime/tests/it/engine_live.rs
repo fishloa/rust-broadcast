@@ -97,7 +97,7 @@ fn a_refresh_that_adds_a_chunk_fetches_exactly_that_chunk() {
     assert!(
         host.samples()
             .iter()
-            .any(|(_, s)| s.dts.is_some_and(|d| d >= 30_000_000))
+            .any(|(_, s)| s.timing.map(|t| t.dts).is_some_and(|d| d >= 30_000_000))
     );
 }
 
@@ -133,7 +133,7 @@ fn a_live_fragment_that_keeps_failing_is_skipped_with_a_discontinuity() {
     assert!(host.has(|o| matches!(o, Output::Discontinuity)));
     host.run_for(20 * SECOND_MICROS);
     let video_after_gap = host.samples().iter().any(|(t, s)| {
-        t.value() == 1 && s.dts.is_some_and(|d| (20_000_000..30_000_000).contains(&d))
+        t.value() == 1 && s.timing.map(|t| t.dts).is_some_and(|d| (20_000_000..30_000_000).contains(&d))
     });
     assert!(
         video_after_gap,

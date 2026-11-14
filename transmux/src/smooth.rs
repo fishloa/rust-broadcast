@@ -315,7 +315,7 @@ impl SmoothPackager {
         next_seq: &mut u32,
         fragments_out: &mut Vec<SmoothFragment>,
     ) -> Result<StreamInfo> {
-        let media_timescale = track.spec.timescale.max(1);
+        let media_timescale = track.spec.timescale.get().max(1);
         let codec = resolve_codec(&track.spec.config)?;
 
         let timeline = smooth_timeline(track, origin, media_timescale)?;
@@ -414,7 +414,7 @@ impl SmoothPackager {
                 "cannot package a Smooth fragment from a track with no samples",
             ));
         }
-        let media_timescale = track.spec.timescale.max(1);
+        let media_timescale = track.spec.timescale.get().max(1);
         // Times relative to the track's own first sample: only the *durations*
         // and composition offsets are used from here (the fragment's absolute
         // start is the caller's `start_smooth`, not the derived one).
@@ -743,7 +743,7 @@ fn segment_samples(
             start = i;
             acc_dur = 0;
         }
-        acc_dur += s.duration.unwrap_or(0) as u64;
+        acc_dur += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     groups.push(start..samples.len());
     groups
@@ -781,7 +781,7 @@ fn smooth_timeline(
         .map(|(i, s)| {
             let start = starts[i];
             let own_end = SmoothPackager::to_smooth_ticks(
-                (times[i].max(0) as u64).saturating_add(u64::from(s.duration.unwrap_or(0))),
+                (times[i].max(0) as u64).saturating_add(u64::from(s.timing.map(|t| t.duration).unwrap_or(0))),
                 media_timescale,
             );
             let end = match starts.get(i + 1) {
@@ -963,9 +963,7 @@ mod tests {
         let mk = |sync: bool| Sample {
             data: alloc::vec![0u8; 4].into(),
             // Grouping is duration-driven; absolute time is irrelevant here.
-            dts: None,
-            pts: None,
-            duration: Some(1),
+            timing: crate::ir::SampleTiming::from_options(None, None, Some(1)),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,

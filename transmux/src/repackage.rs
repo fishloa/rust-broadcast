@@ -107,8 +107,8 @@ fn rescale_floor(ticks: u64, from_timescale: u32, to_timescale: u32) -> Result<i
 /// The index of the track whose next un-fed sample has the earliest decode
 /// time, compared as exact rationals (`dts / timescale`).
 ///
-/// The comparison cross-multiplies in `u128` (`a.dts * b.timescale` against
-/// `b.dts * a.timescale`) rather than scaling every track onto a common LCM of
+/// The comparison cross-multiplies in `u128` (`a.timing.map(|t| t.dts) * b.timescale` against
+/// `b.timing.map(|t| t.dts) * a.timescale`) rather than scaling every track onto a common LCM of
 /// the timescales: the timescales come from untrusted `mdhd` boxes, and three
 /// large coprime ones make that LCM exceed `u64`, so an `a / gcd * b` fold
 /// panics in debug and wraps in release. A `u128` cross-multiply cannot
@@ -126,8 +126,8 @@ fn earliest_decode_time_track(media: &Media, dts: &[u128], cursors: &[usize]) ->
             best = Some(ti);
             continue;
         };
-        let lhs = dts[ti] * media.tracks[current].spec.timescale.max(1) as u128;
-        let rhs = dts[current] * track.spec.timescale.max(1) as u128;
+        let lhs = dts[ti] * media.tracks[current].spec.timescale.get().max(1) as u128;
+        let rhs = dts[current] * track.spec.timescale.get().max(1) as u128;
         if lhs < rhs {
             best = Some(ti);
         }
@@ -216,8 +216,8 @@ impl Media {
         let anchor_track = &self.tracks[anchor];
         let anchor_ts = anchor_track.spec.timescale;
         let anchor_pts = presentation_times(anchor_track, &origin);
-        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts)?;
-        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts)?;
+        let anchor_lo = rescale_floor(start, self.movie_timescale, anchor_ts.get())?;
+        let anchor_hi = rescale_floor(end, self.movie_timescale, anchor_ts.get())?;
         let snapped = anchor_pts
             .iter()
             .position(|&p| p >= anchor_lo && p < anchor_hi)
@@ -233,14 +233,14 @@ impl Media {
         for (ti, track) in self.tracks.iter().enumerate() {
             let ts = track.spec.timescale;
             let pts = presentation_times(track, &origin);
-            let hi = rescale_floor(end, self.movie_timescale, ts)?;
+            let hi = rescale_floor(end, self.movie_timescale, ts.get())?;
             let start_idx = if ti == anchor {
                 snapped
             } else {
                 // Lower edge = the snapped anchor start, else the raw window.
                 let lo = match snapped {
                     Some(idx) => rescale_i64(anchor_pts[idx], anchor_ts, ts, Rounding::Floor),
-                    None => rescale_floor(start, self.movie_timescale, ts)?,
+                    None => rescale_floor(start, self.movie_timescale, ts.get())?,
                 };
                 pts.iter().position(|&p| p >= lo && p < hi)
             };
@@ -256,7 +256,7 @@ impl Media {
             if !kept.is_empty() {
                 kept_any = true;
             }
-            let first_dts = kept.iter().find_map(|s| s.dts).unwrap_or(0).max(0) as u64;
+            let first_dts = kept.iter().find_map(|s| s.timing.map(|t| t.dts)).unwrap_or(0).max(0) as u64;
             out_tracks.push(Track::new_at(track.spec.clone(), kept, first_dts));
         }
         if !kept_any {
@@ -281,9 +281,9 @@ impl Media {
         let ticks: u64 = t
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        Some((ticks, t.spec.timescale))
+        Some((ticks, t.spec.timescale.get()))
     }
 }
 
@@ -401,7 +401,7 @@ impl Repackage {
             let track = &media.tracks[ti];
             let sample = &track.samples[cursors[ti]];
             seg.push(track.spec.track_id, sample.clone())?;
-            dts[ti] += sample.duration.unwrap_or(0) as u128;
+            dts[ti] += sample.timing.map(|t| t.duration).unwrap_or(0) as u128;
             cursors[ti] += 1;
             for s in seg.take_ready() {
                 seg_ready.push(s);
@@ -609,7 +609,7 @@ mod tests {
     #[test]
     fn trimming_a_zero_timescale_media_is_a_typed_error() {
         // Audit #2462: a zero timescale was silently read as 1 Hz here.
-        let m = media(&[0, 1000]);
+        let m = Media::new(vec![track(0, 4), track(1000, 4)], 0);
         assert!(matches!(
             m.trim(0, 2),
             Err(Error::InvalidInput("timescale must be non-zero"))

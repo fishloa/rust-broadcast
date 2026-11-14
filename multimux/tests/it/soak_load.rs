@@ -149,7 +149,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
                     continue;
                 };
                 if let SampleCursorItem::Timed { sample, .. } = item
-                    && let Some(at) = sample.pts
+                    && let Some(at) = sample.timing.map(|t| t.pts)
                 {
                     latencies.push(stamp(base).saturating_sub(at as u64));
                 }

@@ -223,7 +223,7 @@ pub(crate) async fn served_first_dts(app: &axum::Router, seq: u64) -> i64 {
     let media = transmux::Fmp4Demux::new()
         .unpackage(&[init, segment].concat())
         .expect("demux");
-    media.tracks[0].samples[0].dts.expect("dts")
+    media.tracks[0].samples[0].timing.map(|t| t.dts).expect("dts")
 }
 
 pub(crate) fn mpd_attribute(xml: &str, key: &str) -> String {

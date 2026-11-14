@@ -180,7 +180,7 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     let mut dts: i64 = 0;
     for s in &vid.samples {
         pts.push(dts + s.composition_offset() as i64);
-        dts += s.duration.unwrap_or(0) as i64;
+        dts += s.timing.map(|t| t.duration).unwrap_or(0) as i64;
     }
     let first_in = pts
         .iter()
@@ -403,8 +403,8 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
     let audio = Track::new(
         aac_audio_track(1),
         vec![
-            Sample::new(vec![0xAAu8; 8], None, None, Some(1024), true),
-            Sample::new(vec![0xABu8; 8], None, None, Some(1024), true),
+            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true),
+            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true),
         ],
     );
     // Deliberately different sample count / duration per sample from audio,
@@ -412,9 +412,9 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
     let video = Track::new(
         hevc_video_track(2),
         vec![
-            Sample::new(vec![0x01u8; 8], None, None, Some(3000), true),
-            Sample::new(vec![0x02u8; 8], None, None, Some(3000), false),
-            Sample::new(vec![0x03u8; 8], None, None, Some(3000), false),
+            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true),
+            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false),
+            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
         ],
     );
     let media = Media::new(vec![audio, video], 90_000);
@@ -441,9 +441,9 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let audio = Track::new(
         aac_audio_track(1),
         vec![
-            Sample::new(vec![0xAAu8; 8], None, None, Some(1024), true),
-            Sample::new(vec![0xABu8; 8], None, None, Some(1024), true),
-            Sample::new(vec![0xACu8; 8], None, None, Some(1024), true),
+            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true),
+            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true),
+            Sample::new(vec![0xACu8; 8], Some(2048), Some(2048), Some(1024), true),
         ],
     );
     // IDR, then two non-sync samples: a window starting mid-GOP must snap
@@ -451,9 +451,9 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let video = Track::new(
         hevc_video_track(2),
         vec![
-            Sample::new(vec![0x01u8; 8], None, None, Some(3000), true),
-            Sample::new(vec![0x02u8; 8], None, None, Some(3000), false),
-            Sample::new(vec![0x03u8; 8], None, None, Some(3000), false),
+            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true),
+            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false),
+            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
         ],
     );
     let media = Media::new(vec![audio, video], 90_000);

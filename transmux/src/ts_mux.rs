@@ -664,7 +664,7 @@ impl Package for StreamingTsMux {
         let has_dts = media
             .tracks
             .iter()
-            .any(|t| t.samples.iter().any(|s| s.dts.is_some()));
+            .any(|t| t.samples.iter().any(|s| s.timing.map(|t| t.dts).is_some()));
         if !has_dts && self.origin.is_none() {
             // Nothing to anchor the timeline on yet; emit nothing rather than
             // fixing a bogus origin of 0.
@@ -981,7 +981,7 @@ pub(crate) fn mux_tracks_at_continuing(
             ss.iter()
                 .map(|s| {
                     let now = t;
-                    t = t.saturating_add(i64::from(s.duration.unwrap_or(0)));
+                    t = t.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
                     now
                 })
                 .collect()
@@ -1167,7 +1167,7 @@ fn mux_tracks_timed_with_cc(
     let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
         let track = &tracks[track_idx];
-        let ts_scale = track.spec.timescale.max(1) as u64;
+        let ts_scale = track.spec.timescale.get() as u64;
         // Interleave keys only ever grow within one track, so the global sort
         // never reorders a track's own packets (issue #576).
         let mut last_key: u64 = 0;

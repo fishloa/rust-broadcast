@@ -164,7 +164,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         14400, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600, 3600,
     ];
     const EXPECTED_TOTAL: u64 = 280_800;
-    let got_durations: Vec<u32> = recovered.iter().map(|s| s.duration.unwrap_or(0)).collect();
+    let got_durations: Vec<u32> = recovered.iter().map(|s| s.timing.map(|t| t.duration).unwrap_or(0)).collect();
     assert_eq!(
         &got_durations[..EXPECTED_FIRST_DURATIONS.len()],
         &EXPECTED_FIRST_DURATIONS[..],
@@ -211,7 +211,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         .expect("build_media_segment (part 1) must succeed");
     let part1_total: u64 = part1
         .iter()
-        .map(|s| u64::from(s.duration.unwrap_or(0)))
+        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
         .sum();
     let seg2 = build_media_segment(
         2,
@@ -1090,7 +1090,7 @@ fn resync_accounts_for_every_held_reorder_window_au() {
     let mut pts = Vec::new();
     for (i, &(seq, ts)) in pairs.iter().enumerate() {
         for s in d.push(TrackId::new(1), &seq_pkt(seq, ts, i as u8)).unwrap() {
-            pts.push(s.pts.unwrap());
+            pts.push(s.timing.map(|t| t.pts).unwrap());
         }
     }
     let mut events = Vec::new();

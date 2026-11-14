@@ -398,9 +398,7 @@ fn absorb_traf(
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
             samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
-                dts: Some(dts),
-                pts: Some(pts),
-                duration: Some(r.duration),
+                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(r.duration)),
                 flags: crate::ir::SampleFlags::new(is_sync),
                 // fMP4 sources carry no per-sample source-container
                 // timestamps distinct from the fragment's own tfdt/trun
@@ -513,10 +511,10 @@ impl TimelineOrigin {
     pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
         let mut best: Option<(i64, u32)> = None;
         for t in tracks {
-            let Some(d) = t.samples.iter().find_map(|s| s.dts) else {
+            let Some(d) = t.samples.iter().find_map(|s| s.timing.map(|t| t.dts)) else {
                 continue;
             };
-            let ts = t.spec.timescale.max(1);
+            let ts = t.spec.timescale.get().max(1);
             let earlier = match best {
                 None => true,
                 Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
@@ -540,16 +538,16 @@ impl TimelineOrigin {
 /// sample's time + duration only for a track that carries no `dts` at all
 /// (section-carried data), which then starts at the origin.
 pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> Vec<i64> {
-    let base = origin.in_timescale(track.spec.timescale);
+    let base = origin.in_timescale(track.spec.timescale.get());
     let mut out = Vec::with_capacity(track.samples.len());
     let mut next: i64 = 0;
     for s in &track.samples {
-        let t = match s.dts {
+        let t = match s.timing.map(|t| t.dts) {
             Some(d) => d.saturating_sub(base),
             None => next,
         };
         out.push(t);
-        next = t.saturating_add(i64::from(s.duration.unwrap_or(0)));
+        next = t.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
     }
     out
 }
@@ -560,10 +558,10 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
     let origin = TimelineOrigin::of(tracks.iter().copied());
     let mut span: Option<(f64, f64)> = None;
     for t in tracks {
-        let ts = f64::from(t.spec.timescale.max(1));
+        let ts = f64::from(t.spec.timescale.get().max(1));
         for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
             let pts = (dts + i64::from(s.composition_offset())) as f64 / ts;
-            let end = pts + f64::from(s.duration.unwrap_or(0)) / ts;
+            let end = pts + f64::from(s.timing.map(|t| t.duration).unwrap_or(0)) / ts;
             span = Some(match span {
                 None => (pts, end),
                 Some((lo, hi)) => (lo.min(pts), hi.max(end)),
@@ -634,7 +632,7 @@ impl Package for HlsPackager {
         let kept: Vec<&Track> = media
             .tracks
             .iter()
-            .filter(|t| t.samples.iter().any(|s| s.duration.is_some()))
+            .filter(|t| t.samples.iter().any(|s| s.timing.map(|t| t.duration).unwrap_or(0) != 0))
             .collect();
 
         // Every segment this packager names (`{prefix}{track_id}.m4s`) is
@@ -1559,7 +1557,7 @@ mod tests {
         // fragment's own declared tfdt, NOT on the running duration sum.
         let first_post_gap = &track.samples[FRAMES_PER_FRAGMENT as usize];
         assert_eq!(
-            first_post_gap.dts,
+            first_post_gap.timing.map(|t| t.dts),
             Some(gapped_second_base as i64),
             "post-gap dts must come from the second fragment's tfdt \
              ({gapped_second_base}), not the pure duration sum \
@@ -1572,7 +1570,7 @@ mod tests {
             .enumerate()
         {
             let expected = gapped_second_base as i64 + (i as i64) * i64::from(FRAME_DUR);
-            assert_eq!(s.dts, Some(expected), "sample {i} after the gap");
+            assert_eq!(s.timing.map(|t| t.dts), Some(expected), "sample {i} after the gap");
         }
     }
 
@@ -1626,7 +1624,7 @@ mod tests {
         let got: Vec<i64> = media.tracks[0]
             .samples
             .iter()
-            .filter_map(|s| s.dts)
+            .filter_map(|s| s.timing.map(|t| t.dts))
             .collect();
         let want: Vec<i64> = (0..FRAMES * 2)
             .map(|i| i64::from(i) * i64::from(FRAME_DUR))
@@ -1753,9 +1751,7 @@ mod tests {
         // One access unit, two NALs, each with a 2-byte length prefix.
         let sample = Sample {
             data: vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            dts: Some(0),
-            pts: Some(0),
-            duration: Some(1000),
+            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

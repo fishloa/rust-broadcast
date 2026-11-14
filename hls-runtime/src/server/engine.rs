@@ -849,13 +849,13 @@ fn ts_video_rate(segment: &[u8]) -> Option<u32> {
     let ticks: u64 = track
         .samples
         .iter()
-        .filter_map(|sample| sample.duration)
+        .filter_map(|sample| sample.timing.map(|t| t.duration))
         .map(u64::from)
         .sum();
     segment_frame_rate_millihertz(
         u64::try_from(track.samples.len()).ok()?,
         ticks,
-        track.spec.timescale,
+        track.spec.timescale.get(),
     )
 }
 
@@ -2956,7 +2956,7 @@ impl HlsOrigin {
         let video_timescale = locked(&self.track_specs)
             .iter()
             .find(|spec| spec.config.is_video())
-            .map(|spec| spec.timescale);
+            .map(|spec| spec.timescale.get());
         let mut prepared = Vec::with_capacity(polled.len());
         for item in polled {
             match item {

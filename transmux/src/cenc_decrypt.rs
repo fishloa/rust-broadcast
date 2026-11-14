@@ -833,9 +833,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
                     // behaviour); `None` is the honest representation now
                     // that a fabricated placeholder timestamp is no longer
                     // required to populate the struct.
-                    dts: None,
-                    pts: None,
-                    duration: None,
+                    timing: crate::ir::SampleTiming::from_options(None, None, None),
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
@@ -978,9 +976,7 @@ fn absorb_protected_fragment(
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
         out.push(Sample {
             data: file.slice(r.start..r.end),
-            dts: Some(dts),
-            pts: Some(pts),
-            duration: Some(r.duration),
+            timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(r.duration)),
             flags: crate::ir::SampleFlags::new(is_sync),
             provenance: None,
             display: None,
@@ -1286,9 +1282,7 @@ mod tests {
                 cenc_crypto::apply_ctr(iv, &KEY, &[], &mut buf).expect("encrypt");
                 Sample {
                     data: buf.into(),
-                    dts: None,
-                    pts: None,
-                    duration: None,
+                    timing: crate::ir::SampleTiming::from_options(None, None, None),
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,

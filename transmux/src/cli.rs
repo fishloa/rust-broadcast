@@ -617,13 +617,13 @@ fn segment_media(media: &Media, target_secs: u32) -> CliResult<(Vec<u8>, Vec<Vec
     let origin = crate::media::TimelineOrigin::of(media.tracks.iter());
     let mut merged: Vec<(OrderedKey, usize, usize)> = Vec::new();
     for (ti, t) in media.tracks.iter().enumerate() {
-        let scale = t.spec.timescale.max(1);
+        let scale = t.spec.timescale.get().max(1);
         for si in 0..t.samples.len() {
             let sample = &t.samples[si];
             // Section-carried samples have no dts; they belong to the segment
             // their neighbours are in, so they sort just after their own
             // track's last timed sample (`OrderedKey::Untimed`).
-            let key = match sample.dts {
+            let key = match sample.timing.map(|t| t.dts) {
                 Some(dts) => OrderedKey::Timed {
                     // Relative to the common origin, in ticks, kept as a
                     // rational `(ticks, timescale)` so two tracks' keys compare
@@ -729,7 +729,7 @@ fn segment_track_ranges(media: &Media, target_secs: u32) -> CliResult<Vec<TrackS
         cursor += count;
         boundaries_anchor.push(acc);
     }
-    let anchor_scale = u64::from(media.tracks[anchor_idx].spec.timescale.max(1));
+    let anchor_scale = u64::from(media.tracks[anchor_idx].spec.timescale.get().max(1));
 
     // Per track: split at those same instants. A sample belongs to the segment
     // whose half-open start-time interval contains it, so a segment's samples
@@ -740,7 +740,7 @@ fn segment_track_ranges(media: &Media, target_secs: u32) -> CliResult<Vec<TrackS
     let mut per_track: Vec<Vec<(core::ops::Range<usize>, u64)>> =
         Vec::with_capacity(media.tracks.len());
     for t in media.tracks.iter() {
-        let scale = u64::from(t.spec.timescale.max(1));
+        let scale = u64::from(t.spec.timescale.get().max(1));
         let mut ranges = Vec::with_capacity(boundaries_anchor.len());
         let mut start_idx = 0usize;
         let mut clock = MediaClock::new();
@@ -857,7 +857,7 @@ fn segment_secs(segment: &[u8], media: &Media) -> CliResult<f64> {
                     .tracks
                     .iter()
                     .find(|t| t.spec.track_id == traf.tfhd.track_id)
-                    .map(|t| f64::from(t.spec.timescale.max(1)))
+                    .map(|t| f64::from(t.spec.timescale.get().max(1)))
                     .ok_or(crate::Error::InvalidInput(
                         "media segment names a track not present in the input",
                     ))?;

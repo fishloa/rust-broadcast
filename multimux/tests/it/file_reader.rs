@@ -207,7 +207,7 @@ fn source_track_dts(rel: &str, track_id: TrackId) -> Vec<i64> {
             continue;
         };
         if id == track_id
-            && let Some(d) = sample.dts
+            && let Some(d) = sample.timing.map(|t| t.dts)
         {
             dts.push(d);
         }
@@ -222,7 +222,7 @@ fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(TrackId, i64)> {
     loop {
         match cursor.poll() {
             Some(SampleCursorItem::Timed { track_id, sample }) => {
-                out.push((track_id, sample.dts.expect("timed sample must carry a dts")));
+                out.push((track_id, sample.timing.map(|t| t.dts).expect("timed sample must carry a dts")));
             }
             Some(SampleCursorItem::Sparse { .. })
             | Some(SampleCursorItem::Lagged { .. })
@@ -263,7 +263,7 @@ async fn ts_with_a_silent_declared_pid_publishes_everything_at_end_of_input() {
         if let DemuxEvent::Sample {
             track_id, sample, ..
         } = ev
-            && sample.pts.is_some()
+            && sample.timing.map(|t| t.pts).is_some()
         {
             *expected.entry(track_id).or_default() += 1;
         }
@@ -620,13 +620,13 @@ fn fixture_content_duration_secs(rel: &str) -> f64 {
             DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
                 spans
                     .entry(spec.track_id)
-                    .or_insert((i64::MAX, i64::MIN, spec.timescale))
-                    .2 = spec.timescale;
+                    .or_insert((i64::MAX, i64::MIN, spec.timescale.get()))
+                    .2 = spec.timescale.get();
             }
             DemuxEvent::Sample {
                 track_id, sample, ..
             } => {
-                if let Some(pts) = sample.pts
+                if let Some(pts) = sample.timing.map(|t| t.pts)
                     && let Some(span) = spans.get_mut(&track_id)
                 {
                     span.0 = span.0.min(pts);

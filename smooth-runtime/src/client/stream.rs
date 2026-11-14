@@ -136,15 +136,17 @@ pub(crate) fn demux_fragment(
         .into_iter()
         .filter(|t| t.spec.track_id == TrackId::new(local_track_id))
     {
-        let Some(first_dts) = track.samples.first().map(|s| s.dts.unwrap_or_default()) else {
+        let Some(first_dts) = track.samples.first().and_then(|s| s.timing.map(|t| t.dts)) else {
             continue;
         };
         let offset = desired
             .checked_sub(first_dts)
             .ok_or(FragmentFault::TimeOutOfRange)?;
         for mut sample in track.samples {
-            sample.dts = shift(sample.dts, offset)?;
-            sample.pts = shift(sample.pts, offset)?;
+            if let Some(t) = sample.timing.as_mut() {
+                t.dts = shift(Some(t.dts), offset)?.unwrap_or(t.dts);
+                t.pts = shift(Some(t.pts), offset)?.unwrap_or(t.pts);
+            }
             out.push(sample);
         }
     }

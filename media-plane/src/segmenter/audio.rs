@@ -191,7 +191,7 @@ impl AudioFollower {
             pending_since: None,
             held: VecDeque::new(),
             origin: None,
-            timescale: spec.timescale,
+            timescale: spec.timescale.get(),
             cuts: VecDeque::new(),
             newest_dts: None,
             next_seq,
@@ -233,7 +233,7 @@ impl AudioFollower {
         if self.part_target_sized {
             return;
         }
-        let Some(frame_ticks) = sample.duration else {
+        let Some(frame_ticks) = sample.timing.map(|t| t.duration) else {
             return;
         };
         self.part_target_sized = true;
@@ -267,7 +267,7 @@ impl AudioFollower {
     }
 
     fn precedes_origin(&self, sample: &Sample) -> bool {
-        match (self.origin, sample.dts) {
+        match (self.origin, sample.timing.map(|t| t.dts)) {
             (Some((origin, origin_ts)), Some(dts)) => {
                 cmp_ticks(dts, self.timescale, origin, origin_ts).is_lt()
             }
@@ -276,7 +276,7 @@ impl AudioFollower {
     }
 
     fn push_now(&mut self, sample: Sample) {
-        if let Some(dts) = sample.dts {
+        if let Some(dts) = sample.timing.map(|t| t.dts) {
             self.newest_dts = Some(self.newest_dts.map_or(dts, |n| n.max(dts)));
         }
         if let Err(e) = self.seg.push(self.source_track_id, sample) {
@@ -329,7 +329,7 @@ impl AudioFollower {
         }
         if first {
             for sample in std::mem::take(&mut self.held) {
-                let at_or_after = sample.dts.is_some_and(|d| {
+                let at_or_after = sample.timing.map(|t| t.dts).is_some_and(|d| {
                     cmp_ticks(d, self.timescale, cut.start_dts, cut.timescale).is_ge()
                 });
                 if at_or_after {

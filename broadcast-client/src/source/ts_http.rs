@@ -279,7 +279,7 @@ impl TsHttpSource {
         let (Some(pts), Some(spec)) = (pts, self.tracks.get(&track)) else {
             return;
         };
-        let timescale = i128::from(spec.timescale.max(1));
+        let timescale = i128::from(spec.timescale.get().max(1));
         let Some(h) = self.hold.as_mut() else {
             return;
         };
@@ -428,7 +428,7 @@ impl TsHttpSource {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => {
-                    let pts = sample.pts;
+                    let pts = sample.timing.map(|t| t.pts);
                     if !self.conn_seen_first_sample {
                         self.start_hold_if_unresolved();
                         self.conn_seen_first_sample = true;

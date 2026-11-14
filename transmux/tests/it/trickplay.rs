@@ -118,7 +118,7 @@ fn synthetic_duration_folding() {
     let source_total: u64 = src
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
 
     let trick = derive_iframe_track(&src).expect("derive must succeed");
@@ -138,7 +138,7 @@ fn synthetic_duration_folding() {
     // Duration of keyframe 0 spans indices 0..4 → 4 × 100 = 400.
     let expected_dur_0 = (SYNTHETIC_GOP_SIZE as u32) * SYNTHETIC_SAMPLE_DURATION;
     assert_eq!(
-        trick.samples[0].duration,
+        trick.samples[0].timing.map(|t| t.duration),
         Some(expected_dur_0),
         "first keyframe duration must fold in the following non-sync samples"
     );
@@ -146,7 +146,7 @@ fn synthetic_duration_folding() {
     // Duration of keyframe 1 (index 4) spans indices 4..8 → 4 × 100 = 400.
     let expected_dur_1 = (SYNTHETIC_GOP_SIZE as u32) * SYNTHETIC_SAMPLE_DURATION;
     assert_eq!(
-        trick.samples[1].duration,
+        trick.samples[1].timing.map(|t| t.duration),
         Some(expected_dur_1),
         "second keyframe duration must fold in the tail non-sync samples"
     );
@@ -155,7 +155,7 @@ fn synthetic_duration_folding() {
     let derived_total: u64 = trick
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
     assert_eq!(
         derived_total, source_total,
@@ -182,7 +182,7 @@ fn synthetic_duration_folding() {
 /// **Why it bites:**
 /// - Asserts `output_count < source_count` — proves the track was actually
 ///   thinned (guards against a passthrough returning all samples).
-/// - Asserts `sum(output.duration) == sum(source.duration)` — proves duration
+/// - Asserts `sum(output.timing.map(|t| t.duration)) == sum(source.timing.map(|t| t.duration))` — proves duration
 ///   conservation across a real GOP structure.
 /// - Asserts every output sample `is_sync` — proves no non-sync samples leaked.
 #[test]
@@ -208,7 +208,7 @@ fn real_fixture_video_trickplay() {
     let source_total: u64 = video
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
 
     // Sanity: the fixture must have at least one sync sample for the test to
@@ -243,7 +243,7 @@ fn real_fixture_video_trickplay() {
     let derived_total: u64 = trick
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
     assert_eq!(
         derived_total, source_total,

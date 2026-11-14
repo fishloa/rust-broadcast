@@ -177,7 +177,7 @@ fn tfdts(segment: &[u8]) -> Vec<(TrackId, u64)> {
 // ── C1: a `duration` of Some(0) on the anchor must still cut segments ───────
 //
 // Pre-fix, every one of the four assertions below saw ZERO segments: the
-// accumulator was `+= sample.duration.unwrap_or(0)`, so it never reached the
+// accumulator was `+= sample.timing.map(|t| t.duration).unwrap_or(0)`, so it never reached the
 // target and no cut ever fired, while `pending` grew for the whole stream.
 //
 // With `MediaClock`, the anchor advances on the dts delta instead. The first
@@ -615,7 +615,7 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     // cut attributed to the push that produced it, and `streamed` in cut order
     // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
-        if !pushed_cue && s.dts.unwrap_or(0) >= CUE_DTS {
+        if !pushed_cue && s.timing.map(|t| t.dts).unwrap_or(0) >= CUE_DTS {
             seg.push(TrackId::new(SCTE_ID), section.clone())
                 .expect("push cue");
             streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));

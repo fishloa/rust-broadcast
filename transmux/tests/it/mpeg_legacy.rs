@@ -219,32 +219,32 @@ fn ts_demux_broadcast_pair() {
     assert_eq!(csv_audio.len(), 39);
 
     // Video timing: samples are decode-ordered (ascending DTS) — the CSV video
-    // rows are in the same order. Compare each sample's ACTUAL `s.dts`/`s.pts`
+    // rows are in the same order. Compare each sample's ACTUAL `s.timing.map(|t| t.dts)`/`s.timing.map(|t| t.pts)`
     // (MPEG-2 video's track timescale is the 90 kHz PES clock, same units as
     // the CSV, so this is a direct field comparison, not a rescale) against
     // the CSV row. (Previously this reconstructed `dts` purely from
-    // `dts0 + sum(s.duration)` and never read `s.dts`/`s.pts` at all, so a bug
+    // `dts0 + sum(s.timing.map(|t| t.duration))` and never read `s.timing.map(|t| t.dts)`/`s.timing.map(|t| t.pts)` at all, so a bug
     // that wrote the wrong absolute value into either field — a dts/pts swap,
     // an anchor error — would not have been caught here; video's own dts !=
     // pts under B-frame reordering, so a swap now changes the compared value.)
     for (i, s) in video.samples.iter().enumerate() {
         let row = csv_video[i];
         assert_eq!(
-            s.duration,
+            s.timing.map(|t| t.duration),
             Some(u32::try_from(row.duration()).unwrap()),
             "video[{i}] duration matches CSV"
         );
-        let dts = s.dts.unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
+        let dts = s.timing.map(|t| t.dts).unwrap_or_else(|| panic!("video[{i}] has no dts")) as i128;
         assert_eq!(
             dts,
             i128::from(row.dts()),
-            "video[{i}] DTS (actual s.dts) matches CSV"
+            "video[{i}] DTS (actual s.timing.map(|t| t.dts)) matches CSV"
         );
-        let pts = s.pts.unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
+        let pts = s.timing.map(|t| t.pts).unwrap_or_else(|| panic!("video[{i}] has no pts")) as i128;
         assert_eq!(
             pts,
             i128::from(row.pts()),
-            "video[{i}] PTS (actual s.pts) matches CSV"
+            "video[{i}] PTS (actual s.timing.map(|t| t.pts)) matches CSV"
         );
         assert_eq!(
             s.flags.is_sync,
@@ -266,11 +266,11 @@ fn ts_demux_broadcast_pair() {
         // duration is one MP2 frame = samples_per_frame ticks at the audio
         // timescale; converting to 90 kHz matches the CSV within a rounding tick.
         assert_eq!(
-            s.duration,
+            s.timing.map(|t| t.duration),
             Some(samples_per_frame),
             "audio[{i}] duration = 1 MP2 frame"
         );
-        let dur_90k = s.duration.unwrap_or(0) as i128 * 90_000 / audio_ts as i128;
+        let dur_90k = s.timing.map(|t| t.duration).unwrap_or(0) as i128 * 90_000 / audio_ts as i128;
         assert!(
             (dur_90k - i128::from(csv_audio[i].duration())).abs() <= 1,
             "audio[{i}] duration matches CSV @90kHz within rounding"
@@ -282,7 +282,7 @@ fn ts_demux_broadcast_pair() {
     let apts0 = i128::from(csv_audio[0].pts());
     let total_90k: i128 = audio.samples[..audio.samples.len() - 1]
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as i128 * 90_000 / audio_ts as i128)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as i128 * 90_000 / audio_ts as i128)
         .sum();
     let span_last = apts0 + total_90k;
     let csv_last = i128::from(csv_audio[csv_audio.len() - 1].pts());

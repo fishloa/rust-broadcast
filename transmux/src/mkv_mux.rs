@@ -814,7 +814,7 @@ impl Package for MkvMux {
                     .iter()
                     .map(|s| {
                         to_matroska_ticks(
-                            s.pts.or(s.dts).unwrap_or(0),
+                            s.timing.map(|t| t.pts).or(s.timing.map(|t| t.dts)).unwrap_or(0),
                             timescale,
                             TIMESTAMP_SCALE_NS,
                         )
@@ -827,9 +827,9 @@ impl Package for MkvMux {
         for track in &media.tracks {
             let timescale = track.timescale();
             for sample in &track.samples {
-                let pts = sample.pts.or(sample.dts).unwrap_or(0);
+                let pts = sample.timing.map(|t| t.pts).or(sample.timing.map(|t| t.dts)).unwrap_or(0);
                 let end_ticks = to_matroska_ticks(
-                    pts + sample.duration.unwrap_or(0) as i64,
+                    pts + sample.timing.map(|t| t.duration).unwrap_or(0) as i64,
                     timescale,
                     TIMESTAMP_SCALE_NS,
                 );
@@ -1039,8 +1039,10 @@ mod tests {
         let shift: i64 = -30_000;
         for track in &mut media.tracks {
             for s in &mut track.samples {
-                s.dts = s.dts.map(|v| v.saturating_add(shift));
-                s.pts = s.pts.map(|v| v.saturating_add(shift));
+                if let Some(t) = s.timing.as_mut() {
+                    t.dts = t.dts.saturating_add(shift);
+                    t.pts = t.pts.saturating_add(shift);
+                }
             }
             // `start_decode_time` is unsigned; clamping to 0 is fine here
             // because the blocks' own `pts` carry the real negative base.
@@ -1188,8 +1190,10 @@ mod tests {
                 &(|m: &mut crate::media::Media| {
                     for track in &mut m.tracks {
                         for s in &mut track.samples {
-                            s.dts = s.dts.map(|v| v.saturating_sub(500));
-                            s.pts = s.pts.map(|v| v.saturating_sub(500));
+                            if let Some(t) = s.timing.as_mut() {
+                                t.dts = t.dts.saturating_sub(500);
+                                t.pts = t.pts.saturating_sub(500);
+                            }
                         }
                     }
                 }) as &dyn Fn(&mut crate::media::Media),
@@ -1203,8 +1207,10 @@ mod tests {
                     // forward-only span rule kept in one Cluster.
                     let half = m.tracks[0].samples.len() / 2;
                     for s in &mut m.tracks[0].samples[half..] {
-                        s.dts = s.dts.map(|v| v.saturating_sub(10_000));
-                        s.pts = s.pts.map(|v| v.saturating_sub(10_000));
+                        if let Some(t) = s.timing.as_mut() {
+                            t.dts = t.dts.saturating_sub(10_000);
+                            t.pts = t.pts.saturating_sub(10_000);
+                        }
                     }
                 }) as &dyn Fn(&mut crate::media::Media),
             ),
@@ -1438,8 +1444,10 @@ mod tests {
         for cut in [n / 4, n / 2, 3 * n / 4] {
             if cut < n {
                 for s in &mut media.tracks[0].samples[cut..] {
-                    s.dts = s.dts.map(|v| v.saturating_sub(5_000));
-                    s.pts = s.pts.map(|v| v.saturating_sub(5_000));
+                    if let Some(t) = s.timing.as_mut() {
+                        t.dts = t.dts.saturating_sub(5_000);
+                        t.pts = t.pts.saturating_sub(5_000);
+                    }
                 }
             }
         }

@@ -34,7 +34,7 @@ fn live_run(bytes: &[u8]) -> Run {
             match e {
                 Event::Tracks(v) => run.tracks.push(v.iter().map(|t| t.track_id).collect()),
                 Event::Sample { track, sample, .. } => {
-                    run.samples.push((track, sample.pts, sample.data.len()));
+                    run.samples.push((track, sample.timing.map(|t| t.pts), sample.data.len()));
                 }
                 _ => {}
             }
@@ -59,7 +59,7 @@ fn reference_samples(bytes: &[u8]) -> Vec<(TrackId, Option<i64>, usize)> {
                 track_id, sample, ..
             } = e
             {
-                out.push((track_id, sample.pts, sample.data.len()));
+                out.push((track_id, sample.timing.map(|t| t.pts), sample.data.len()));
             }
         }
     }
@@ -229,7 +229,7 @@ fn an_undeclared_gap_releases_the_hold_at_the_wall_limit_without_losing_samples(
     let held: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } => Some((*track, sample.pts, sample.data.len())),
+            Event::Sample { track, sample, .. } => Some((*track, sample.timing.map(|t| t.pts), sample.data.len())),
             _ => None,
         })
         .collect();
@@ -331,7 +331,7 @@ fn a_track_that_resolves_after_the_hold_is_announced_as_an_update() {
     let delivered: Vec<_> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } => Some((*track, sample.pts, sample.data.len())),
+            Event::Sample { track, sample, .. } => Some((*track, sample.timing.map(|t| t.pts), sample.data.len())),
             _ => None,
         })
         .collect();

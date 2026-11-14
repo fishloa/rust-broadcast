@@ -195,15 +195,15 @@ impl MediaClock {
     /// as the baseline for the next call. See the type docs for the
     /// duration-then-dts-delta rule.
     pub fn tick(&mut self, sample: &Sample) -> u64 {
-        let increment = match sample.duration {
+        let increment = match sample.timing.map(|t| t.duration) {
             Some(duration) if duration > 0 => u64::from(duration),
-            _ => match (self.last_dts, sample.dts) {
+            _ => match (self.last_dts, sample.timing.map(|t| t.dts)) {
                 (Some(previous), Some(now)) => now.saturating_sub(previous).max(0) as u64,
                 _ => 0,
             },
         };
-        if sample.dts.is_some() {
-            self.last_dts = sample.dts;
+        if sample.timing.map(|t| t.dts).is_some() {
+            self.last_dts = sample.timing.map(|t| t.dts);
         }
         increment
     }
@@ -408,7 +408,7 @@ impl Segmenter {
         // boundary at all and is refused here rather than stalling later.
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
-        let anchor_timescale = tracks[anchor].timescale as f64;
+        let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = (target_duration_secs * anchor_timescale) as u64;
         let target_ticks = target_ticks.max(1); // never a zero-length target
 

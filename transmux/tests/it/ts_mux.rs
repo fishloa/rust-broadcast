@@ -169,7 +169,7 @@ fn timing_preserved_for_video() {
     // Per-sample DTS delta (== duration) and composition offset (PTS − DTS).
     for (i, (a, b)) in v0.samples.iter().zip(&v2.samples).enumerate() {
         assert_eq!(
-            b.duration, a.duration,
+            b.timing.map(|t| t.duration), a.timing.map(|t| t.duration),
             "video sample {i}: DTS delta (duration) must be preserved"
         );
         assert_eq!(
@@ -462,14 +462,18 @@ fn ac3_media(spacing_ticks: i64) -> Media {
     let ts = std::fs::read(test_fixtures::path("ts/dolby/ac3.ts")).expect("ac3 fixture must exist");
     let mut ir = TsDemux::new().unpackage(&ts).expect("demux AC-3 fixture");
     let t = ir.tracks.get_mut(0).expect("one AC-3 track");
-    let scale = t.spec.timescale.max(1) as i64;
+    let scale = t.spec.timescale.get().max(1) as i64;
     // 4 samples, `spacing_ticks` apart (the first at 0).
     t.samples.truncate(4);
     for (i, s) in t.samples.iter_mut().enumerate() {
         let dts = (i as i64) * spacing_ticks;
-        s.dts = Some(dts);
-        s.pts = Some(dts);
-        s.duration = Some(u32::try_from(scale).unwrap_or(u32::MAX));
+        if let Some(t) = s.timing.as_mut() {
+            t.dts = dts;
+            t.pts = dts;
+            t.duration = u32::try_from(scale).unwrap_or(u32::MAX);
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(dts, dts, u32::try_from(scale).unwrap_or(u32::MAX)));
+        }
     }
     let _ = scale;
     ir

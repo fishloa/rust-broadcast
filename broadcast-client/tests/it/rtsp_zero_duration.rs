@@ -23,8 +23,8 @@ fn collect(host: &mut Host, samples: &mut Vec<(u32, i64, u32)>) {
         if let Event::Sample { track, sample, .. } = e {
             samples.push((
                 track.value(),
-                sample.pts.unwrap_or(0),
-                sample.duration.unwrap_or(0),
+                sample.timing.map(|t| t.pts).unwrap_or(0),
+                sample.timing.map(|t| t.duration).unwrap_or(0),
             ));
         }
     }

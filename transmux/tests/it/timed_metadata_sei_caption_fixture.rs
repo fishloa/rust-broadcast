@@ -225,7 +225,7 @@ fn extract_sei_frames_from_ts(data: &[u8]) -> Vec<(u64, Vec<u8>)> {
         // than reconstructed from the track anchor + a running duration sum +
         // `composition_offset`.
         let pts = sample
-            .pts
+            .timing.map(|t| t.pts)
             .expect("a demuxed H.264 video sample always carries an absolute pts")
             .max(0) as u64;
         let cc = caption_cc_data(NalCodec::Avc, &sample.data, true);

@@ -236,7 +236,7 @@ pub(crate) fn select_representable_track(specs: &[TrackSpec]) -> Option<TrackSpe
 fn track_is_representable(spec: &TrackSpec) -> bool {
     let media = Media::new(
         vec![Track::new(spec.clone(), Vec::new())],
-        spec.timescale.max(1),
+        spec.timescale.get().max(1),
     );
     DashPackager::default().package(&media).is_ok()
 }
@@ -584,7 +584,7 @@ fn render_period_document(
     // model") regardless of which track this route's own PMT numbered it.
     let mut spec = select_representable_track(specs)?;
     spec.track_id = DEFAULT_TRACK_ID;
-    let timescale = spec.timescale.max(1);
+    let timescale = spec.timescale.get().max(1);
 
     // `@startNumber` is the number of the first segment this program EVER
     // published ([`FIRST_SEGMENT_NUMBER`]), fixed for its life -- never the
@@ -599,7 +599,7 @@ fn render_period_document(
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).
     let nominal_ticks =
-        ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
+        ((route.target_duration_secs() * f64::from(u32::from(timescale))).round() as u64).max(1);
     let segments = if has_segments || flavour == DashFlavour::LowLatency {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,

@@ -1546,7 +1546,7 @@ struct LiveTrack {
     config: CodecConfig,
     /// This track's media timescale, for the same [`DemuxEvent::TrackUpdated`]
     /// reconstruction.
-    timescale: u32,
+    timescale: broadcast_common::timescale::Timescale,
     /// The AVC/HEVC parameter sets this track has seen, tracked as each appears
     /// so a re-probe can tell a real change from a repeat and is not blind to a
     /// parameter set that arrived in an earlier access unit (r04-W51).
@@ -1669,7 +1669,7 @@ enum TrackState {
 /// per-PID `StreamState` stays small.
 struct ParkedTrack {
     config: CodecConfig,
-    timescale: u32,
+    timescale: broadcast_common::timescale::Timescale,
     kind: LiveKind,
     backlog: Vec<BufferedAu>,
 }
@@ -2139,9 +2139,7 @@ fn advance_one_behind(
             track_id,
             sample: Sample {
                 data: prev.data.into(),
-                dts: Some(dts),
-                pts: Some(pts),
-                duration: Some(duration),
+                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(duration)),
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
@@ -2213,9 +2211,7 @@ fn flush_one_behind(
             track_id,
             sample: Sample {
                 data: p.data.into(),
-                dts: Some(dts),
-                pts: Some(pts),
-                duration: Some(last_duration),
+                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(last_duration)),
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
@@ -3194,7 +3190,7 @@ fn harvest_damaged_au(
                     stream.damaged_promotion = true;
                     TrackState::Parked(Box::new(ParkedTrack {
                         config,
-                        timescale,
+                        timescale: timescale.into(),
                         kind,
                         backlog,
                     }))
@@ -3832,7 +3828,7 @@ fn advance_track(
             };
             if let Some((config, timescale)) = new_config {
                 live.config = config;
-                live.timescale = timescale;
+                live.timescale = broadcast_common::timescale::Timescale::from(timescale);
                 let updated = TrackSpec::new(live.track_id, live.timescale, live.config.clone())
                     .with_source(pid, stream.descriptors.clone())
                     .with_hdr10plus(live.hdr10plus);
@@ -4005,7 +4001,7 @@ fn advance_track(
             match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked(Box::new(ParkedTrack {
                     config,
-                    timescale,
+                    timescale: timescale.into(),
                     kind,
                     backlog,
                 })),
@@ -5940,7 +5936,7 @@ impl StreamingTsDemux {
                     // event (issue #774 reshape dropped it along with
                     // `samples`/`encryption` when `TrackAdded` became
                     // `TrackSpec`-only) — every consumer that builds a `Track`
-                    // derives it from `samples[0].dts` instead (media plane
+                    // derives it from `samples[0].timing.map(|t| t.dts)` instead (media plane
                     // step 2c invariant: the two are always equal), so no
                     // anchor value needs computing here at all.
                     let hdr10plus = matches!(config, CodecConfig::Hevc { .. })
@@ -6391,7 +6387,7 @@ impl StreamingTsDemux {
             stream.track = Some(match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked(Box::new(ParkedTrack {
                     config,
-                    timescale,
+                    timescale: timescale.into(),
                     kind,
                     backlog,
                 })),
@@ -6645,7 +6641,7 @@ impl<'a> TsDemux<'a> {
                     // invariant, unconditionally true for every track
                     // kind), so derive it here instead.
                     if track.samples.is_empty()
-                        && let Some(dts) = sample.dts
+                        && let Some(dts) = sample.timing.map(|t| t.dts)
                     {
                         track.start_decode_time = dts as u64;
                     }
@@ -8914,7 +8910,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.dts
+                && let Some(dts) = sample.timing.map(|t| t.dts)
             {
                 samples_by_pid
                     .entry(Pid::new((*pid).value()))
@@ -9052,7 +9048,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.dts
+                && let Some(dts) = sample.timing.map(|t| t.dts)
             {
                 by_pid.entry(*pid).or_default().push(dts);
             }
@@ -9180,7 +9176,7 @@ pub(crate) mod tests {
         demux.finish();
         let got: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -9283,7 +9279,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -9435,7 +9431,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -9527,7 +9523,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -10474,7 +10470,7 @@ pub(crate) mod tests {
         );
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.dts.expect("stamped dts"))
+            .map(|s| s.timing.map(|t| t.dts).expect("stamped dts"))
             .collect();
         assert!(
             dts.len() >= FRAMES,
@@ -10588,7 +10584,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.dts,
+                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
                 _ => None,
             })
             .collect();
@@ -11091,7 +11087,7 @@ pub(crate) mod tests {
             .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
             .expect("h264-aac.ts has an AVC track");
         let source_dts0 = video.samples[0]
-            .dts
+            .timing.map(|t| t.dts)
             .expect("the fixture's AVC track is stamped");
         let mut headers = 0usize;
         for (i, sample) in video.samples.iter().enumerate() {
@@ -11149,7 +11145,7 @@ pub(crate) mod tests {
         // The dts series must advance by exactly one frame period per access
         // unit. The pre-fix behaviour gave every unstamped access unit the
         // previous one's dts, so the series alternated 0 / 3600 steps.
-        let dts: Vec<i64> = samples.iter().map(|s| s.dts.expect("video dts")).collect();
+        let dts: Vec<i64> = samples.iter().map(|s| s.timing.map(|t| t.dts).expect("video dts")).collect();
         let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
             steps.iter().all(|&d| d == FRAME_PERIOD),
@@ -11158,9 +11154,9 @@ pub(crate) mod tests {
         assert!(
             samples
                 .iter()
-                .all(|s| s.duration == Some(FRAME_PERIOD as u32)),
+                .all(|s| s.timing.map(|t| t.duration) == Some(FRAME_PERIOD as u32)),
             "no zero-duration sample may survive interpolation; durations: {:?}",
-            samples.iter().map(|s| s.duration).collect::<Vec<_>>()
+            samples.iter().map(|s| s.timing.map(|t| t.duration)).collect::<Vec<_>>()
         );
     }
 
@@ -11530,7 +11526,7 @@ pub(crate) mod tests {
         let emitted: Vec<(Vec<u8>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.duration)),
+                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.timing.map(|t| t.duration))),
                 _ => None,
             })
             .collect();
@@ -11612,7 +11608,7 @@ pub(crate) mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.duration)),
+                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.timing.map(|t| t.duration))),
                 _ => None,
             })
             .collect()
@@ -11834,7 +11830,7 @@ pub(crate) mod tests {
                     descriptors: Vec::new(),
                     carriage,
                 },
-                timescale: VIDEO_TIMESCALE,
+                timescale: VIDEO_TIMESCALE.into(),
                 kind: LiveKind::Data {
                     pending: None,
                     last_duration: 0,
@@ -12914,9 +12910,9 @@ pub(crate) mod tests {
                 match e {
                     DemuxEvent::Sample { sample, .. } => samples.push((
                         sample.data.to_vec(),
-                        sample.dts,
-                        sample.pts,
-                        sample.duration,
+                        sample.timing.map(|t| t.dts),
+                        sample.timing.map(|t| t.pts),
+                        sample.timing.map(|t| t.duration),
                     )),
                     DemuxEvent::Discontinuity { .. } => disc += 1,
                     _ => {}
@@ -12984,7 +12980,7 @@ pub(crate) mod tests {
         let batch: Vec<_> = media.tracks[0]
             .samples
             .iter()
-            .map(|s| (s.data.to_vec(), s.dts, s.pts, s.duration))
+            .map(|s| (s.data.to_vec(), s.timing.map(|t| t.dts), s.timing.map(|t| t.pts), s.timing.map(|t| t.duration)))
             .collect();
         assert_eq!(batch, whole, "{label}: batch == streaming");
 

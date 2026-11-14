@@ -887,7 +887,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
         .collect();
 
     // Anchor = the first decode-ordered sample's absolute DTS, kept in
-    // lockstep with `samples[0].dts` per the crate-wide IR invariant.
+    // lockstep with `samples[0].timing.map(|t| t.dts)` per the crate-wide IR invariant.
     let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
     Ok(Some(Track::new_at(
         TrackSpec::new(
@@ -1194,10 +1194,10 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
     }
 
     // Anchor = the first sample's absolute DTS when known (lockstep with
-    // `samples[0].dts`), else 0.
+    // `samples[0].timing.map(|t| t.dts)`), else 0.
     let anchor = samples
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .map(|d| d.max(0) as u64)
         .unwrap_or(0);
     Some(Track::new_at(

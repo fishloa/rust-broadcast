@@ -398,8 +398,8 @@ async fn ingest(
             samples.push((
                 format!("{track_id:?}"),
                 sample.data.to_vec(),
-                sample.pts,
-                sample.dts,
+                sample.timing.map(|t| t.pts),
+                sample.timing.map(|t| t.dts),
             ));
         }
     }

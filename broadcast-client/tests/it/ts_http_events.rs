@@ -327,13 +327,13 @@ fn media_flushed_at_connection_close_reaches_the_controller_in_the_same_call() {
             match e {
                 Event::Tracks(specs) => {
                     for t in specs {
-                        timescale.insert(t.track_id.value(), t.timescale);
+                        timescale.insert(t.track_id.value(), t.timescale.get());
                     }
                 }
                 Event::Sample { track, sample, .. } => {
                     let ts = u64::from(timescale[&track.value()]);
                     let end = u64::try_from(
-                        sample.pts.unwrap() + i64::from(sample.duration.unwrap_or(0)),
+                        sample.timing.map(|t| t.pts).unwrap() + i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)),
                     )
                     .unwrap();
                     let e27 = end * 27_000_000 / ts;

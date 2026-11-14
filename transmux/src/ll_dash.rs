@@ -241,7 +241,7 @@ impl LlSegmenter {
         // the *audio* track and its segments did not begin on an IRAP.
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
-        let anchor_timescale = tracks[anchor].timescale as f64;
+        let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
 
         let tracks = tracks
@@ -375,7 +375,7 @@ impl LlSegmenter {
         // first `chunk_samples` of the anchor's pending samples. Every track then
         // drains its own samples that fall inside that span, so audio rides each
         // chunk instead of only the segment's final one (audit r05-W27).
-        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get().max(1) as u64;
         let anchor_take = if final_chunk {
             self.tracks[anchor].pending.len()
         } else {
@@ -408,7 +408,7 @@ impl LlSegmenter {
                 if i == anchor {
                     return anchor_take;
                 }
-                let track_scale = t.spec.timescale.max(1) as u64;
+                let track_scale = t.spec.timescale.get().max(1) as u64;
                 let track_span = chunk_span.saturating_mul(track_scale) / anchor_scale;
                 take_span(t, track_span)
             })
@@ -571,7 +571,7 @@ impl Package for LlSegmenter {
             .iter()
             .map(|t| Cursor {
                 track_id: t.spec.track_id,
-                timescale: (t.spec.timescale as u64).max(1),
+                timescale: (t.spec.timescale.get() as u64).max(1),
                 samples: &t.samples,
                 idx: 0,
                 dts_ticks: 0,
@@ -593,7 +593,7 @@ impl Package for LlSegmenter {
                 best = Some(match best {
                     None => i,
                     Some(b) => {
-                        // c.dts (sec) < best.dts (sec)  ⇔  c.ticks*best.ts < best.ticks*c.ts
+                        // c.timing.map(|t| t.dts) (sec) < best.dts (sec)  ⇔  c.ticks*best.ts < best.ticks*c.ts
                         let lhs = c.dts_ticks as u128 * cursors[b].timescale as u128;
                         let rhs = cursors[b].dts_ticks as u128 * c.timescale as u128;
                         if lhs < rhs || (lhs == rhs && !c.is_anchor && cursors[b].is_anchor) {

@@ -738,7 +738,7 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let handler = track_handler(&kind);
     let minf = track_media_information(kind, stbl, minf_header);
     let mdia = MediaBox::new(
-        Some(track_media_header(t.timescale)),
+        Some(track_media_header(t.timescale.get())),
         Some(handler),
         Some(minf),
         vec![],
@@ -824,7 +824,7 @@ pub(crate) fn build_chunk(
         let (tfhd, trun) = media_fragment_run(
             ft.track_id,
             ft.samples.iter().map(|s| MediaRunSample {
-                duration: s.duration.unwrap_or(0),
+                duration: s.timing.map(|t| t.duration).unwrap_or(0),
                 size: s.data.len(),
                 is_sync: s.flags.is_sync,
                 composition_offset: s.composition_offset(),

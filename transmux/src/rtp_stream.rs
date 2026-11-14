@@ -1773,7 +1773,7 @@ mod tests {
         );
         let out = d.flush(id).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].duration, Some(90_000 / 25));
+        assert_eq!(out[0].timing.map(|t| t.duration), Some(90_000 / 25));
     }
 
     #[test]
@@ -1786,7 +1786,7 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        assert_eq!(d.flush(id).unwrap()[0].duration, Some(3600));
+        assert_eq!(d.flush(id).unwrap()[0].timing.map(|t| t.duration), Some(3600));
     }
 
     #[test]
@@ -1801,7 +1801,7 @@ mod tests {
         assert!(d.flush(id).unwrap().is_empty());
         let out = d.push(id, &vpkt(2, 4000, true, &[0x41, 0xBB])).unwrap();
         assert_eq!(out.len(), 1);
-        assert_eq!(out[0].duration, Some(3000));
+        assert_eq!(out[0].timing.map(|t| t.duration), Some(3000));
     }
 
     #[test]
@@ -1817,7 +1817,7 @@ mod tests {
             );
             let out = d.flush(id).unwrap();
             assert_eq!(out.len(), 1);
-            assert_eq!(out[0].duration, Some(expected));
+            assert_eq!(out[0].timing.map(|t| t.duration), Some(expected));
         }
     }
 
@@ -1835,7 +1835,7 @@ mod tests {
                 .is_empty()
         );
         let out = d.push(id, &aac_packet(3, 12_000, &[&[6]])).unwrap();
-        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        let got: Vec<_> = out.iter().map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration))).collect();
         assert_eq!(
             got,
             alloc::vec![
@@ -1895,7 +1895,7 @@ mod tests {
                 .is_empty()
         );
         let out = d.push(id, &aac_packet(3, 15_120, &[&[6, 6]])).unwrap();
-        let got: Vec<_> = out.iter().map(|s| (s.pts, s.duration)).collect();
+        let got: Vec<_> = out.iter().map(|s| (s.timing.map(|t| t.pts), s.timing.map(|t| t.duration))).collect();
         assert_eq!(
             got,
             alloc::vec![
@@ -1938,18 +1938,18 @@ mod tests {
         // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
         let s0 = d.push(TrackId::new(1), &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
-        assert_eq!(s0[0].duration, Some(3000));
+        assert_eq!(s0[0].timing.map(|t| t.duration), Some(3000));
         assert!(s0[0].flags.is_sync);
         assert_eq!(s0[0].composition_offset(), 0);
         // AU2 arrives → AU1 emitted, duration 3000, is_sync=false.
         let s1 = d.push(TrackId::new(1), &vpkt(3, 7000, true, &non)).unwrap();
         assert_eq!(s1.len(), 1);
-        assert_eq!(s1[0].duration, Some(3000));
+        assert_eq!(s1[0].timing.map(|t| t.duration), Some(3000));
         assert!(!s1[0].flags.is_sync);
         // flush → AU2 emitted with the last-known duration (3000).
         let s2 = d.flush(TrackId::new(1)).unwrap();
         assert_eq!(s2.len(), 1);
-        assert_eq!(s2[0].duration, Some(3000));
+        assert_eq!(s2[0].timing.map(|t| t.duration), Some(3000));
     }
 
     /// [`Stage::feed`]/[`Stage::poll`]/[`Stage::finish`] on a single-track
@@ -2001,9 +2001,9 @@ mod tests {
 
         assert_eq!(staged_samples.len(), oracle_samples.len());
         for (s, o) in staged_samples.iter().zip(oracle_samples.iter()) {
-            assert_eq!(s.dts, o.dts);
-            assert_eq!(s.pts, o.pts);
-            assert_eq!(s.duration, o.duration);
+            assert_eq!(s.timing.map(|t| t.dts), o.timing.map(|t| t.dts));
+            assert_eq!(s.timing.map(|t| t.pts), o.timing.map(|t| t.pts));
+            assert_eq!(s.timing.map(|t| t.duration), o.timing.map(|t| t.duration));
             assert_eq!(s.flags.is_sync, o.flags.is_sync);
             assert_eq!(s.data, o.data);
         }
@@ -2114,7 +2114,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(s.len(), 1);
-        assert_eq!(s[0].duration, Some(3000));
+        assert_eq!(s[0].timing.map(|t| t.duration), Some(3000));
         assert!(s[0].flags.is_sync);
         assert!(
             d.poll_loss_event().is_none(),
@@ -2135,7 +2135,7 @@ mod tests {
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);
         assert_eq!(specs[0].track_id, TrackId::new(7));
-        assert_eq!(specs[0].timescale, 90_000);
+        assert_eq!(specs[0].timescale.get(), 90_000);
     }
     fn max_hold_in_aus(
         presentation_order_of_wire: &[u32],
@@ -2150,7 +2150,7 @@ mod tests {
             let nal: &[u8] = if n == 0 { &[0x65, 0xAA] } else { &[0x41, 0xBB] };
             let ts = 1000 + frame * 3600;
             for s in d.push(id, &vpkt(n as u16, ts, true, nal)).unwrap() {
-                emitted.push((s.pts.unwrap() as u64, s.duration.unwrap()));
+                emitted.push((s.timing.map(|t| t.pts).unwrap() as u64, s.timing.map(|t| t.duration).unwrap()));
             }
             max_hold = max_hold.max(n + 1 - emitted.len());
         }

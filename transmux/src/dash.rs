@@ -651,11 +651,11 @@ impl DashPackager {
     /// Resolve every presentation parameter for one track.
     fn repr_info(&self, track: &Track) -> Result<ReprInfo> {
         let config = &track.spec.config;
-        let timescale = track.spec.timescale.max(1);
+        let timescale = track.spec.timescale.get().max(1);
         let total_duration: u64 = track
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
         let total_bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
 
@@ -1199,7 +1199,7 @@ fn frame_rate_from_samples(samples: &[crate::pipeline::Sample], timescale: u32) 
     if samples.is_empty() {
         return None;
     }
-    let total: u64 = samples.iter().map(|s| s.duration.unwrap_or(0) as u64).sum();
+    let total: u64 = samples.iter().map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64).sum();
     if total == 0 {
         return None;
     }

@@ -377,7 +377,7 @@ fn first_presentation(file: &[u8], media: &Media) -> (f64, f64) {
             .find(|t| t.spec.track_id == TrackId::new(id))
             .unwrap()
             .spec
-            .timescale as f64
+            .timescale.get() as f64
     };
     let moof = child(file, b"moof").expect("moof");
     let mut v = None;

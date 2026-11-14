@@ -276,9 +276,9 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
     let total_ticks: u64 = track
         .samples
         .iter()
-        .map(|s| u64::from(s.duration.unwrap_or(0)))
+        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
         .sum();
-    let timescale = track.spec.timescale.max(1);
+    let timescale = track.spec.timescale.get().max(1);
     let duration_seconds = total_ticks as f64 / f64::from(timescale);
     let bitrate_bps = if duration_seconds > 0.0 {
         (total_bytes as f64 * 8.0) / duration_seconds
@@ -294,7 +294,7 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
 
     Mp4Track {
         track_id: track.track_id().value(),
-        timescale: track.spec.timescale,
+        timescale: track.spec.timescale.get(),
         kind: track_kind(config),
         codec: codec_label(config),
         codec_string: codec_string(config),

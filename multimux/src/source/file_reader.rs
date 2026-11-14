@@ -454,17 +454,19 @@ async fn publish_one_pass(
             }
         }
         let mut sample = item.sample.clone();
-        if let Some(pts) = sample.pts {
-            sample.pts = Some(
-                pts.checked_add(offset)
-                    .ok_or(FileReaderError::OffsetOverflow)?,
-            );
+        if let Some(pts) = sample.timing.map(|t| t.pts) {
+            if let Some(t) = sample.timing.as_mut() {
+                t.pts = pts
+                    .checked_add(offset)
+                    .ok_or(FileReaderError::OffsetOverflow)?;
+            }
         }
-        if let Some(dts) = sample.dts {
-            sample.dts = Some(
-                dts.checked_add(offset)
-                    .ok_or(FileReaderError::OffsetOverflow)?,
-            );
+        if let Some(dts) = sample.timing.map(|t| t.dts) {
+            if let Some(t) = sample.timing.as_mut() {
+                t.dts = dts
+                    .checked_add(offset)
+                    .ok_or(FileReaderError::OffsetOverflow)?;
+            }
         }
         writer.publish(
             track_refs[item.track_ref].track_id,

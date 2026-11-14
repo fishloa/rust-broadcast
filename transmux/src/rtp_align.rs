@@ -199,7 +199,7 @@ impl TrackAligner {
         track: TrackId,
         sample: Sample,
     ) -> Vec<AlignOut> {
-        let (true, Some(pts)) = (self.active, sample.pts) else {
+        let (true, Some(pts)) = (self.active, sample.timing.map(|t| t.pts)) else {
             return alloc::vec![AlignOut::Sample(track, sample)];
         };
         let mut out = Vec::new();
@@ -364,12 +364,14 @@ impl TrackAligner {
                 } else if diff > 0 {
                     lane.delta = target;
                 } else {
-                    let step = i64::from(sample.duration.unwrap_or(0)) / SLEW_DIVISOR;
+                    let step = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)) / SLEW_DIVISOR;
                     lane.delta = lane.delta.saturating_add(diff.max(-step));
                 }
             }
-            sample.pts = sample.pts.map(|p| p.saturating_add(lane.delta));
-            sample.dts = sample.dts.map(|d| d.saturating_add(lane.delta));
+            if let Some(t) = sample.timing.as_mut() {
+                t.pts = t.pts.saturating_add(lane.delta);
+                t.dts = t.dts.saturating_add(lane.delta);
+            }
         }
         let state = self.current_state(anchor);
         if discontinuity {
@@ -553,7 +555,7 @@ mod tests {
                     self.other_rate
                 };
                 let us = to_micros(
-                    i128::from(sample.pts.expect("pts")),
+                    i128::from(sample.timing.map(|t| t.pts).expect("pts")),
                     rate,
                     Rounding::TowardZero,
                 );

@@ -115,9 +115,9 @@ fn one_shot_full() -> Vec<FullTrack> {
                     .iter()
                     .map(|s| FullSample {
                         data: s.data.clone(),
-                        dts: s.dts,
-                        pts: s.pts,
-                        duration: s.duration,
+                        dts: s.timing.map(|t| t.dts),
+                        pts: s.timing.map(|t| t.pts),
+                        duration: s.timing.map(|t| t.duration),
                         is_sync: s.flags.is_sync,
                         composition_offset: s.composition_offset(),
                     })
@@ -153,9 +153,9 @@ fn full_from_events(events: &[DemuxEvent]) -> Vec<FullTrack> {
                     .expect("Sample must follow its track's TrackAdded");
                 tracks[i].samples.push(FullSample {
                     data: sample.data.clone(),
-                    dts: sample.dts,
-                    pts: sample.pts,
-                    duration: sample.duration,
+                    dts: sample.timing.map(|t| t.dts),
+                    pts: sample.timing.map(|t| t.pts),
+                    duration: sample.timing.map(|t| t.duration),
                     is_sync: sample.flags.is_sync,
                     composition_offset: sample.composition_offset(),
                 });
@@ -250,7 +250,7 @@ fn summarize(events: &[DemuxEvent]) -> Vec<TrackSummary> {
                     .expect("Sample must follow its track's TrackAdded");
                 summaries[i].sample_count += 1;
                 summaries[i].total_bytes += sample.data.len();
-                summaries[i].total_duration += sample.duration.unwrap_or(0) as u64;
+                summaries[i].total_duration += sample.timing.map(|t| t.duration).unwrap_or(0) as u64;
                 if sample.flags.is_sync {
                     summaries[i].keyframes += 1;
                 }
@@ -272,7 +272,7 @@ fn sample_tuples(
             } => Some((
                 *track_id,
                 sample.data.clone(),
-                sample.duration,
+                sample.timing.map(|t| t.duration),
                 sample.flags.is_sync,
             )),
             _ => None,

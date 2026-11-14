@@ -153,7 +153,7 @@ impl Playout {
                 spec.track_id,
                 TrackInfo {
                     kind,
-                    timescale: spec.timescale,
+                    timescale: spec.timescale.get(),
                 },
             );
         }
@@ -194,10 +194,10 @@ impl Playout {
         if matches!(join, Some(JoinDecision::Drop(_))) {
             return;
         }
-        let (Some(info), Some(pts)) = (self.infos.get(&track).copied(), sample.pts) else {
+        let (Some(info), Some(pts)) = (self.infos.get(&track).copied(), sample.timing.map(|t| t.pts)) else {
             return;
         };
-        let dur = i64::from(sample.duration.unwrap_or(0));
+        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
         let timescale = info.timescale;
         let shift = *self
             .origin_shift
@@ -392,8 +392,12 @@ mod tests {
         p.engage(Source::Vod);
         p.on_tracks(std::slice::from_ref(&track.spec));
         let mut s = track.samples[0].clone();
-        s.pts = Some(i64::MAX);
-        s.duration = Some(3_000);
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = i64::MAX;
+            t.duration = 3_000;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(i64::MAX, i64::MAX, 3_000));
+        }
         p.on_sample(track.spec.track_id, &s, None);
         let obs = p.obs.get(&track.spec.track_id).unwrap();
         assert_eq!(obs.end, u64::MAX);
@@ -425,11 +429,16 @@ mod tests {
     }
 
     fn one_second_sample(template: &Sample, spec: &TrackSpec, index: i64) -> Sample {
-        let timescale = i64::from(spec.timescale);
+        let timescale = i64::from(spec.timescale.get());
         let mut s = template.clone();
-        s.pts = Some(index * timescale);
-        s.dts = s.pts;
-        s.duration = Some(spec.timescale);
+        let pts = index * timescale;
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = pts;
+            t.dts = pts;
+            t.duration = spec.timescale.get() as u32; // spec.timescale is Timescale? wait
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, spec.timescale.get()));
+        }
         s
     }
 
@@ -619,12 +628,17 @@ mod tests {
         let mut p = Playout::new(PlayoutConfig::default());
         p.engage(Source::Vod);
         p.on_tracks(std::slice::from_ref(&spec));
-        let ts = i64::from(spec.timescale);
+        let ts = i64::from(spec.timescale.get());
         let base: i64 = 1 << 33;
         let mut s1 = samples[0].clone();
-        s1.pts = Some(base + 5 * ts);
-        s1.dts = s1.pts;
-        s1.duration = Some(spec.timescale);
+        let pts1 = base + 5 * ts;
+        if let Some(t) = s1.timing.as_mut() {
+            t.pts = pts1;
+            t.dts = pts1;
+            t.duration = spec.timescale.get();
+        } else {
+            s1.timing = Some(transmux::ir::SampleTiming::new(pts1, pts1, spec.timescale.get()));
+        }
         p.on_sample(spec.track_id, &s1, None);
         let evs = buffer_events(&mut p);
         assert!(
@@ -633,9 +647,14 @@ mod tests {
         );
         let first_end = p.obs.get(&spec.track_id).unwrap().end;
         let mut s2 = samples[0].clone();
-        s2.pts = Some(base + 6 * ts);
-        s2.dts = s2.pts;
-        s2.duration = Some(spec.timescale);
+        let pts2 = base + 6 * ts;
+        if let Some(t) = s2.timing.as_mut() {
+            t.pts = pts2;
+            t.dts = pts2;
+            t.duration = spec.timescale.get();
+        } else {
+            s2.timing = Some(transmux::ir::SampleTiming::new(pts2, pts2, spec.timescale.get()));
+        }
         p.on_sample(spec.track_id, &s2, None);
         let _ = buffer_events(&mut p);
         let second_end = p.obs.get(&spec.track_id).unwrap().end;

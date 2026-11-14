@@ -37,7 +37,7 @@ fn dts_pts(samples: &[transmux::Sample]) -> Vec<(u64, i64)> {
     for s in samples {
         let pts = dts as i64 + s.composition_offset() as i64;
         out.push((dts, pts));
-        dts += s.duration.unwrap_or(0) as u64;
+        dts += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     out
 }
@@ -132,7 +132,7 @@ fn demux_h264_aac_prog_video_sample_timing_and_sync() {
     let total_duration: u64 = video
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
     assert_eq!(total_duration, 25600);
 
@@ -173,7 +173,7 @@ fn demux_h264_aac_prog_audio_sample_timing_and_sync() {
     assert_eq!(&timing[84..88], &expected_last, "last 4 audio (dts,pts)");
 
     assert_eq!(
-        audio.samples.last().unwrap().duration,
+        audio.samples.last().unwrap().timing.map(|t| t.duration),
         Some(136),
         "final audio sample duration (short close-out frame)"
     );
@@ -244,7 +244,7 @@ fn round_trip_progressive_to_fmp4_preserves_samples_and_codec() {
                 orig_track.spec.track_id
             );
             assert_eq!(
-                a.duration, b.duration,
+                a.timing.map(|t| t.duration), b.timing.map(|t| t.duration),
                 "track {} sample {i} duration preserved",
                 orig_track.spec.track_id
             );

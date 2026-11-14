@@ -442,17 +442,17 @@ fn looped_ts(rel: &str, tag: &str, skip: usize, reps: usize) -> PathBuf {
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC");
     let body = &track.samples[skip..];
-    let first = body[0].dts.expect("dts");
+    let first = body[0].timing.map(|t| t.dts).expect("dts");
     let last = body.last().expect("sample");
-    let span = last.dts.expect("dts") + i64::from(last.duration.expect("duration")) - first;
+    let span = last.timing.map(|t| t.dts).expect("dts") + i64::from(last.timing.map(|t| t.duration).expect("duration")) - first;
     let mut stream = Vec::new();
     for k in 0..reps as i64 {
         for s in body {
             stream.push(Sample::new(
                 s.data.to_vec(),
-                s.dts.map(|d| d + span * k),
-                s.pts.map(|p| p + span * k),
-                s.duration,
+                s.timing.map(|t| t.dts).map(|d| d + span * k),
+                s.timing.map(|t| t.pts).map(|p| p + span * k),
+                s.timing.map(|t| t.duration),
                 s.flags.is_sync,
             ));
         }

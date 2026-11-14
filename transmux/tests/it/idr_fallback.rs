@@ -35,19 +35,19 @@ fn require_video(rel: &str) -> Video {
 }
 
 fn looped(v: &Video) -> Vec<Sample> {
-    let first = v.samples[0].dts.expect("dts");
+    let first = v.samples[0].timing.map(|t| t.dts).expect("dts");
     let last = v.samples.last().expect("sample");
-    let span = last.dts.expect("dts") + i64::from(last.duration.expect("duration")) - first;
-    let want = LOOP_SECONDS * i64::from(v.spec.timescale);
+    let span = last.timing.map(|t| t.dts).expect("dts") + i64::from(last.timing.map(|t| t.duration).expect("duration")) - first;
+    let want = LOOP_SECONDS * i64::from(v.spec.timescale.get());
     let reps = (want / span).max(1) + 1;
     let mut out = Vec::new();
     for k in 0..reps {
         for s in &v.samples {
             out.push(Sample::new(
                 s.data.to_vec(),
-                s.dts.map(|d| d + span * k),
-                s.pts.map(|p| p + span * k),
-                s.duration,
+                s.timing.map(|t| t.dts).map(|d| d + span * k),
+                s.timing.map(|t| t.pts).map(|p| p + span * k),
+                s.timing.map(|t| t.duration),
                 s.flags.is_sync,
             ));
         }
@@ -94,10 +94,10 @@ fn open_gop_stream_falls_back_after_the_bound() {
     let stream = looped(&v);
     let out = run(&v, &stream, Some(FALLBACK_BOUND));
     assert!(out.fell_back);
-    let ticks_per_sec = i64::from(v.spec.timescale);
+    let ticks_per_sec = i64::from(v.spec.timescale.get());
     let within_bound = stream
         .iter()
-        .take_while(|s| s.dts.expect("dts") - stream[0].dts.expect("dts") < 2 * ticks_per_sec)
+        .take_while(|s| s.timing.map(|t| t.dts).expect("dts") - stream[0].timing.map(|t| t.dts).expect("dts") < 2 * ticks_per_sec)
         .count() as u64;
     assert!(
         out.dropped >= within_bound,
@@ -105,8 +105,8 @@ fn open_gop_stream_falls_back_after_the_bound() {
         out.dropped
     );
     let first = *out.cuts.first().expect("a segment after the fallback");
-    let first_dts = stream[0].dts.expect("dts");
-    let cut_dts = stream[first].dts.expect("dts");
+    let first_dts = stream[0].timing.map(|t| t.dts).expect("dts");
+    let cut_dts = stream[first].timing.map(|t| t.dts).expect("dts");
     assert!(
         cut_dts - first_dts >= 2 * ticks_per_sec,
         "first segment cut before the {FALLBACK_BOUND:?} bound"

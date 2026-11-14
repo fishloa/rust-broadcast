@@ -138,8 +138,8 @@ fn cmaf_package_reunpackage_preserves_structure() {
                 a.track_id()
             );
             assert_eq!(
-                sa.duration,
-                sb.duration,
+                sa.timing.map(|t| t.duration),
+                sb.timing.map(|t| t.duration),
                 "track {} sample {i} duration preserved",
                 a.track_id()
             );

@@ -782,9 +782,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let duration = delta_duration(&mut last_video_dts, dts);
                             video_samples.push(Sample {
                                 data: data.into(),
-                                dts: Some(dts_abs),
-                                pts: Some(pts_abs),
-                                duration: Some(duration),
+                                timing: crate::ir::SampleTiming::from_options(Some(dts_abs), Some(pts_abs), Some(duration)),
                                 flags: crate::ir::SampleFlags::new(
                                     frame_type == FRAME_TYPE_KEYFRAME,
                                 ),
@@ -832,9 +830,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             let dts_abs = dts as i64;
                             audio_samples.push(Sample {
                                 data: data.to_vec().into(),
-                                dts: Some(dts_abs),
-                                pts: Some(dts_abs),
-                                duration: Some(duration),
+                                timing: crate::ir::SampleTiming::from_options(Some(dts_abs), Some(dts_abs), Some(duration)),
                                 flags: crate::ir::SampleFlags::SYNC,
                                 provenance: None,
                                 display: None,
@@ -940,21 +936,26 @@ fn backfill_last_duration(samples: &mut [Sample]) {
     // `duration[i]` currently holds dts[i]-dts[i-1] (0 for i==0). Rebuild as the
     // forward delta dts[i+1]-dts[i] by shifting left by one.
     for i in 0..n.saturating_sub(1) {
-        samples[i].duration = samples[i + 1].duration;
+        let dur = samples[i + 1].timing.map(|t| t.duration);
+        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur) {
+            a.duration = d;
+        }
     }
     if n >= 2 {
-        // Last sample: reuse the previous forward delta as a best estimate.
-        samples[n - 1].duration = samples[n - 2].duration;
+        let dur = samples[n - 2].timing.map(|t| t.duration);
+        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur) {
+            a.duration = d;
+        }
     }
 }
 
 /// The AVC track's `Track::start_decode_time` anchor: the first video
 /// sample's absolute dts (media plane step 2c) — kept in lockstep with
-/// `samples[0].dts` per the crate-wide invariant.
+/// `samples[0].timing.map(|t| t.dts)` per the crate-wide invariant.
 fn anchor_of(samples: &[Sample]) -> u64 {
     samples
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .map(|d| d.max(0) as u64)
         .unwrap_or(0)
 }
@@ -1351,9 +1352,9 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
     if let Some(vt) = video {
         let timescale = vt.spec.timescale;
         for s in &vt.samples {
-            let Some(dts) = s.dts else { continue };
-            let ts_ms = clamped_ms(dts, timescale)?;
-            let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale)?;
+            let Some(dts) = s.timing.map(|t| t.dts) else { continue };
+            let ts_ms = clamped_ms(dts, timescale.get())?;
+            let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale.get())?;
             let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
             items.push((
                 ts_ms,
@@ -1371,8 +1372,8 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
         let timescale = at.spec.timescale;
         let sound_type = audio_sound_type(at);
         for s in &at.samples {
-            let Some(dts) = s.dts else { continue };
-            let ts_ms = clamped_ms(dts, timescale)?;
+            let Some(dts) = s.timing.map(|t| t.dts) else { continue };
+            let ts_ms = clamped_ms(dts, timescale.get())?;
             let body = audio_frame_body(sound_type, &s.data);
             items.push((
                 ts_ms,
@@ -1462,8 +1463,8 @@ impl Package for FlvMux {
                 // rounded deltas) keeps the tag clock non-decreasing: the
                 // running tick sum is monotonic by construction, so truncating
                 // division cannot step it backwards.
-                let dts = ms_from_ticks(ticks, timescale)?;
-                let comp = composition_time_ms(s.composition_offset() as i64, timescale)?;
+                let dts = ms_from_ticks(ticks, timescale.get())?;
+                let comp = composition_time_ms(s.composition_offset() as i64, timescale.get())?;
                 let body = video_frame_body(s.flags.is_sync, comp, &s.data);
                 items.push((
                     dts,
@@ -1475,14 +1476,14 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                ticks = ticks.saturating_add(s.duration.unwrap_or(0) as i64);
+                ticks = ticks.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as i64);
             }
         }
         if let Some(at) = audio {
             let timescale = at.spec.timescale;
             let mut ticks = 0i64;
             for s in &at.samples {
-                let dts = ms_from_ticks(ticks, timescale)?;
+                let dts = ms_from_ticks(ticks, timescale.get())?;
                 let body = audio_frame_body(sound_type, &s.data);
                 items.push((
                     dts,
@@ -1494,7 +1495,7 @@ impl Package for FlvMux {
                     },
                 ));
                 seq += 1;
-                ticks = ticks.saturating_add(s.duration.unwrap_or(0) as i64);
+                ticks = ticks.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as i64);
             }
         }
         // Stable sort by DTS, tie-broken by original emission order.
@@ -1532,12 +1533,12 @@ fn media_duration_seconds(media: &Media) -> f64 {
         let ticks: u64 = t
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
-        let ts = if t.spec.timescale == 0 {
+        let ts = if t.spec.timescale.get() == 0 {
             FLV_TIMESCALE
         } else {
-            t.spec.timescale
+            t.spec.timescale.get()
         } as f64;
         let secs = ticks as f64 / ts;
         if secs > max {

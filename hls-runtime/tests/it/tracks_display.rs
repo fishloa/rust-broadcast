@@ -72,7 +72,7 @@ fn ts_emits_tracks_before_init() {
         assert!(
             specs.iter().any(|s| {
                 matches!(s.config, CodecConfig::Avc { .. } | CodecConfig::Hevc { .. })
-                    && s.timescale > 0
+                    && s.timescale.get() > 0
             }),
             "expected a video spec with non-empty codec config: {specs:?}"
         );
@@ -104,7 +104,7 @@ fn ts_tracks_match_oracle() {
                 oracle.push((
                     spec.track_id,
                     format!("{:?}", std::mem::discriminant(&spec.config)),
-                    spec.timescale,
+                    spec.timescale.get(),
                 ));
             }
             _ => {}
@@ -116,7 +116,7 @@ fn ts_tracks_match_oracle() {
             (
                 s.track_id,
                 format!("{:?}", std::mem::discriminant(&s.config)),
-                s.timescale,
+                s.timescale.get(),
             )
         })
         .collect();

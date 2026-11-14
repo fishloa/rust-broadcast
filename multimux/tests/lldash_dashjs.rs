@@ -125,7 +125,7 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
     let movie_timescale = spec.timescale;
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![spec],
-        movie_timescale,
+        movie_timescale.into(),
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )

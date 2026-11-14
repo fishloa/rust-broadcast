@@ -559,7 +559,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                             s.track_id.value(),
                             u8::try_from(index).expect("track index") * CHANNELS_PER_TRACK,
                         );
-                        track_timescale.insert(s.track_id.value(), s.timescale);
+                        track_timescale.insert(s.track_id.value(), s.timescale.get());
                         let is_video = matches!(s.config, transmux::CodecConfig::Avc { .. });
                         track_is_video.insert(s.track_id.value(), is_video);
                     }
@@ -569,23 +569,23 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     let tid = track.value();
                     let is_video = track_is_video.get(&tid).copied().unwrap_or(false);
                     let now = micros(started);
-                    if !is_video && sample.pts.is_some() {
+                    if !is_video && sample.timing.map(|t| t.pts).is_some() {
                         audio_count += 1;
                     }
                     if is_video {
                         if first_video_sample_us.is_none() {
                             first_video_sample_us = Some(now);
-                            first_video_sample_pts = sample.pts;
+                            first_video_sample_pts = sample.timing.map(|t| t.pts);
                         }
                         if sample.flags.is_sync && first_video_keyframe_us.is_none() {
                             first_video_keyframe_us = Some(now);
-                            first_video_keyframe_pts = sample.pts;
+                            first_video_keyframe_pts = sample.timing.map(|t| t.pts);
                         }
                     } else if first_audio_sample_us.is_none() {
                         first_audio_sample_us = Some(now);
-                        first_audio_sample_pts = sample.pts;
+                        first_audio_sample_pts = sample.timing.map(|t| t.pts);
                     }
-                    if let Some(pts) = sample.pts {
+                    if let Some(pts) = sample.timing.map(|t| t.pts) {
                         let ts = track_timescale.get(&tid).copied().unwrap_or(1).max(1);
                         let seconds = pts as f64 / f64::from(ts);
                         first_sample_pts.entry(tid).or_insert(pts);
@@ -596,7 +596,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                         }
                         let slot = max_pts_seconds.entry(is_video).or_insert(seconds);
                         *slot = slot.max(seconds);
-                        let dur = i64::from(sample.duration.unwrap_or(0));
+                        let dur = i64::from(sample.timing.map(|t| t.duration).unwrap_or(0));
                         let end27 = (i128::from(pts + dur) * i128::from(27_000_000i64)
                             / i128::from(ts)) as u64;
                         last_media_end_27.insert(tid, end27);
@@ -652,7 +652,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
     let zero_indices: Vec<usize> = samples
         .iter()
         .enumerate()
-        .filter(|(_, (_, s))| s.duration.unwrap_or(0) == 0)
+        .filter(|(_, (_, s))| s.timing.map(|t| t.duration).unwrap_or(0) == 0)
         .map(|(i, _)| i)
         .collect();
     if !zero_indices.is_empty() {
@@ -670,9 +670,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     format!(
                         "prev track={} pts={} dts={} dur={:?}",
                         ptr,
-                        ps.pts.unwrap_or(0),
-                        ps.dts.unwrap_or(0),
-                        ps.duration
+                        ps.timing.map(|t| t.pts).unwrap_or(0),
+                        ps.timing.map(|t| t.dts).unwrap_or(0),
+                        ps.timing.map(|t| t.duration)
                     )
                 })
                 .unwrap_or_else(|| "prev=none".to_string());
@@ -682,9 +682,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                     format!(
                         "next track={} pts={} dts={} dur={:?}",
                         ntr,
-                        ns.pts.unwrap_or(0),
-                        ns.dts.unwrap_or(0),
-                        ns.duration
+                        ns.timing.map(|t| t.pts).unwrap_or(0),
+                        ns.timing.map(|t| t.dts).unwrap_or(0),
+                        ns.timing.map(|t| t.duration)
                     )
                 })
                 .unwrap_or_else(|| "next=none".to_string());
@@ -692,9 +692,9 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
                 "  idx={} track={} pts={} dts={} dur={:?} | {} | {}",
                 i,
                 tr,
-                s.pts.unwrap_or(0),
-                s.dts.unwrap_or(0),
-                s.duration,
+                s.timing.map(|t| t.pts).unwrap_or(0),
+                s.timing.map(|t| t.dts).unwrap_or(0),
+                s.timing.map(|t| t.duration),
                 prev,
                 next
             );

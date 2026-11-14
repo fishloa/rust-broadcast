@@ -175,7 +175,7 @@ fn rtsp_samples_carry_positive_durations_once_a_frame_period_is_known() {
     assert!(!samples.is_empty(), "no samples");
     let zero = samples
         .iter()
-        .filter(|s| s.duration.unwrap_or(0) == 0)
+        .filter(|s| s.timing.map(|t| t.duration).unwrap_or(0) == 0)
         .count();
     assert_eq!(
         zero,

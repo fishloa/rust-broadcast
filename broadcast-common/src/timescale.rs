@@ -66,6 +66,68 @@ pub fn rescale(ticks: i128, from: impl Into<u64>, to: impl Into<u64>, rounding: 
     }
 }
 
+/// A media timescale (ticks per second), guaranteed non-zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Timescale(pub core::num::NonZeroU32);
+
+impl Timescale {
+    /// Construct from a raw value, returning `None` for zero.
+    #[must_use]
+    pub const fn new(value: u32) -> Option<Self> {
+        match core::num::NonZeroU32::new(value) {
+            Some(nz) => Some(Self(nz)),
+            None => None,
+        }
+    }
+
+    /// Fallible constructor; zero is an error.
+    pub fn try_new(value: u32) -> Result<Self, crate::error::InvalidValue> {
+        core::num::NonZeroU32::new(value)
+            .map(Self)
+            .ok_or(crate::error::InvalidValue {
+                field: "timescale",
+                value: value as u64,
+                reason: "must be non-zero",
+            })
+    }
+
+    /// The underlying ticks-per-second value.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.0.get()
+    }
+}
+
+impl From<core::num::NonZeroU32> for Timescale {
+    fn from(v: core::num::NonZeroU32) -> Self {
+        Self(v)
+    }
+}
+
+impl From<Timescale> for u32 {
+    fn from(t: Timescale) -> u32 {
+        t.0.get()
+    }
+}
+
+impl From<Timescale> for u64 {
+    fn from(t: Timescale) -> u64 {
+        t.0.get() as u64
+    }
+}
+
+impl From<u32> for Timescale {
+    fn from(v: u32) -> Self {
+        Self(core::num::NonZeroU32::new(v).unwrap_or(core::num::NonZeroU32::new(1).unwrap()))
+    }
+}
+
+impl From<Timescale> for usize {
+    fn from(t: Timescale) -> usize {
+        t.0.get() as usize
+    }
+}
+
 /// Ticks per second of the microsecond timescale.
 pub const MICROS_PER_SECOND: u32 = 1_000_000;
 

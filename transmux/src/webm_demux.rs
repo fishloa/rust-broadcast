@@ -967,9 +967,7 @@ fn build_media(
             };
             samples.push(Sample {
                 data: data.into(),
-                dts: Some(pts[i]),
-                pts: Some(pts[i]),
-                duration: Some(duration),
+                timing: crate::ir::SampleTiming::from_options(Some(pts[i]), Some(pts[i]), Some(duration)),
                 flags: crate::ir::SampleFlags::new(sync[i]),
                 provenance: None,
                 display: None,
@@ -977,7 +975,7 @@ fn build_media(
         }
 
         // Anchor at the first block's absolute pts, kept in lockstep with
-        // `samples[0].dts` (media plane step 2c) — WebM does carry a real
+        // `samples[0].timing.map(|t| t.dts)` (media plane step 2c) — WebM does carry a real
         // absolute clock, unlike the demuxers with no anchor at all.
         let anchor = pts.first().map(|&p| p.max(0) as u64).unwrap_or(0);
         out_tracks.push(Track::new_at(
@@ -1832,9 +1830,7 @@ mod tests {
         // Two NALs, each with a 2-byte length prefix, in *one* access unit.
         let sample = Sample {
             data: alloc::vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            dts: Some(0),
-            pts: Some(0),
-            duration: Some(1000),
+            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
@@ -1941,9 +1937,7 @@ mod tests {
         };
         let sample = Sample {
             data: alloc::vec![0x00, 0x04, 0x26, 0x01, 0xAF, 0x09].into(),
-            dts: Some(0),
-            pts: Some(0),
-            duration: Some(1000),
+            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

@@ -197,7 +197,7 @@ fn assert_pes_boundary_timing(samples: &[Sample], pes: &[PesAu], timescale: u32)
             .position(|&s| s == pes_start)
             .expect("every PES boundary must align exactly with a sample boundary");
         let sample_pts = samples[idx]
-            .pts
+            .timing.map(|t| t.pts)
             .expect("a PES-boundary sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
             let oracle = pes_ts_in_track_ticks(pts, timescale);
@@ -249,7 +249,7 @@ fn ac3_syncframe_splitting_exact_pts_and_duration() {
     assert_pes_boundary_timing(&track.samples, &pes, track.timescale());
     for s in &track.samples {
         assert_eq!(
-            s.duration,
+            s.timing.map(|t| t.duration),
             Some(transmux::ac3::AC3_SAMPLES_PER_SYNCFRAME),
             "every AC-3 sample duration must be 1536 (6 blocks x 256 samples)"
         );
@@ -283,7 +283,7 @@ fn eac3_syncframe_splitting_exact_pts_and_duration() {
     assert_pes_boundary_timing(&track.samples, &pes, track.timescale());
     for s in &track.samples {
         assert_eq!(
-            s.duration,
+            s.timing.map(|t| t.duration),
             Some(expected_duration),
             "every E-AC-3 sample duration must be numblks * 256"
         );
@@ -321,7 +321,7 @@ fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
         video_track
             .samples
             .iter()
-            .all(|s| s.dts.is_some() && s.pts.is_some()),
+            .all(|s| s.timing.map(|t| t.dts).is_some() && s.timing.map(|t| t.pts).is_some()),
         "every H.264 sample must carry absolute dts/pts (issue #556 / step 2c)"
     );
     let first_video_pes = &video_pes[0];
@@ -333,11 +333,11 @@ fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
     let first = &video_track.samples[0];
     let vts = video_track.timescale();
     assert_eq!(
-        first.pts.expect("first video sample has an absolute pts") as u64,
+        first.timing.map(|t| t.pts).expect("first video sample has an absolute pts") as u64,
         pes_ts_in_track_ticks(expected_pts, vts)
     );
     assert_eq!(
-        first.dts.expect("first video sample has an absolute dts") as u64,
+        first.timing.map(|t| t.dts).expect("first video sample has an absolute dts") as u64,
         pes_ts_in_track_ticks(expected_dts, vts)
     );
 
@@ -359,7 +359,7 @@ fn aac_exact_pes_boundary_pts_and_absolute_video_timing() {
     );
     for (pes_au, &boundary_idx) in audio_pes.iter().zip(pes_boundary_indices.iter()) {
         let sample_pts = audio_track.samples[boundary_idx]
-            .pts
+            .timing.map(|t| t.pts)
             .expect("a PES-boundary AAC sample must carry an absolute pts");
         if let Some(pts) = pes_au.pts {
             // Issue B5 (media plane step-2 fix wave 1): tolerance, not exact
@@ -592,7 +592,7 @@ fn data_track_subtitle_pes_passthrough() {
         let matched = &all_pes[cursor + at];
         cursor += at + 1;
         let sample_pts = sample
-            .pts
+            .timing.map(|t| t.pts)
             .expect("every PES-carried Data sample carries an absolute pts")
             as u64;
         if let Some(wire_pts) = matched.pts {
@@ -755,7 +755,7 @@ fn cmaf_mux_ac3_durations_no_longer_zero() {
     assert!(!ac3_track.samples.is_empty());
     for s in &ac3_track.samples {
         assert_ne!(
-            s.duration,
+            s.timing.map(|t| t.duration),
             Some(0),
             "AC-3 trun durations must be non-zero after issue #556 (pre-#556 they were all 0)"
         );
@@ -872,8 +872,8 @@ fn provenance_builder_round_trips() {
     // pre-unwrap wire stamps survive only as debug-only `Provenance`.
     let s = Sample::from_raw(vec![0u8; 4], Some(12000), Some(12345), Some(100))
         .with_provenance(transmux::Provenance::new(Some(12000), Some(12345)));
-    assert_eq!(s.dts, Some(12000), "absolute dts is carried on the sample");
-    assert_eq!(s.pts, Some(12345), "absolute pts is carried on the sample");
+    assert_eq!(s.timing.map(|t| t.dts), Some(12000), "absolute dts is carried on the sample");
+    assert_eq!(s.timing.map(|t| t.pts), Some(12345), "absolute pts is carried on the sample");
     assert_eq!(s.composition_offset(), 345, "pts - dts");
     let p = s.provenance.expect("with_provenance must set the field");
     assert_eq!(p.wire_dts, Some(12000));

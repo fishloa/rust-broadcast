@@ -44,11 +44,11 @@ fn rtsp_pull_golden() {
             "track={} dts={} pts={} sync={} len={} fnv={:016x}\n",
             track,
             sample
-                .dts
+                .timing.map(|t| t.dts)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string()),
             sample
-                .pts
+                .timing.map(|t| t.pts)
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string()),
             sample.flags.is_sync,

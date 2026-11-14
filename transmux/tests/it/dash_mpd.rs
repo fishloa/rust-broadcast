@@ -79,7 +79,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
         .iter()
         .map(|t| Cursor {
             track_id: t.spec.track_id.value(),
-            timescale: (t.spec.timescale as u64).max(1),
+            timescale: (t.spec.timescale.get() as u64).max(1),
             samples: &t.samples,
             idx: 0,
             dts_ticks: 0,
@@ -110,7 +110,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
         let (track_id, sample) = {
             let c = &mut cursors[i];
             let s = c.samples[c.idx].clone();
-            c.dts_ticks += s.duration.unwrap_or(0) as u64;
+            c.dts_ticks += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
             c.idx += 1;
             (c.track_id, s)
         };
@@ -139,7 +139,7 @@ fn recover_segment_timing(
             let dur: u64 = t
                 .samples
                 .iter()
-                .map(|s| s.duration.unwrap_or(0) as u64)
+                .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
                 .sum();
             let entry = out.entry(t.spec.track_id.value()).or_default();
             entry.0.push(dur);
@@ -248,7 +248,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
             .expect("track")
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
         assert_eq!(
             sum_of_real_segments, track_total,
@@ -272,7 +272,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
                 .find(|t| t.spec.track_id == TrackId::new(track_id))
                 .unwrap()
                 .spec
-                .timescale as u64;
+                .timescale.get() as u64;
             let total: u64 = durations.iter().sum();
             (total * 10 + ts / 2) / ts
         })

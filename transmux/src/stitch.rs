@@ -55,12 +55,12 @@ impl Stitcher {
     pub fn set_tracks(&mut self, specs: &[TrackSpec]) {
         for spec in specs {
             let clock = self.tracks.entry(spec.track_id).or_insert(TrackClock {
-                timescale: spec.timescale,
+                timescale: spec.timescale.get(),
                 end_us: None,
                 generation: self.generation,
                 offset_ticks: 0,
             });
-            clock.timescale = spec.timescale;
+            clock.timescale = spec.timescale.get();
         }
     }
 
@@ -80,7 +80,7 @@ impl Stitcher {
                 continue;
             }
             if self.pending
-                && let Some(first) = sample.dts.or(sample.pts)
+                && let Some(first) = sample.timing.map(|t| t.dts).or(sample.timing.map(|t| t.pts))
             {
                 self.pending = false;
                 let stitch = self.tracks.values().filter_map(|t| t.end_us).max();
@@ -97,10 +97,13 @@ impl Stitcher {
                 clock.offset_ticks = us_to_ticks(self.offset_us, timescale);
             }
             let shift = clock.offset_ticks;
-            sample.dts = sample.dts.map(|t| t.saturating_add(shift));
-            sample.pts = sample.pts.map(|t| t.saturating_add(shift));
-            if let Some(dts) = sample.dts {
-                let end = dts.saturating_add(i64::from(sample.duration.unwrap_or(0)));
+            if let Some(t) = sample.timing.as_mut() {
+                t.dts = t.dts.saturating_add(shift);
+                t.pts = t.pts.saturating_add(shift);
+            }
+            if let Some(dts) = sample.timing.map(|t| t.dts) {
+                let dur = sample.timing.map(|t| t.duration).unwrap_or(0);
+                let end = dts.saturating_add(i64::from(dur));
                 clock.end_us = Some(ticks_to_us(end, timescale));
             }
         }
@@ -123,7 +126,7 @@ mod tests {
             .remove(0)
             .spec;
         spec.track_id = TrackId::new(id);
-        spec.timescale = timescale;
+        spec.timescale = timescale.into();
         spec
     }
 
@@ -132,7 +135,7 @@ mod tests {
     }
 
     fn dts_of(samples: &[Sample]) -> Vec<i64> {
-        samples.iter().map(|s| s.dts.unwrap()).collect()
+        samples.iter().map(|s| s.timing.map(|t| t.dts).unwrap()).collect()
     }
 
     #[test]
@@ -194,7 +197,7 @@ mod tests {
         let mut second = [sample(0, 2_000), sample(2_000, 2_000)];
         st.apply(TrackId::new(1), &mut second);
         assert_eq!(dts_of(&second), [4_000, 6_000]);
-        assert_eq!(second[1].pts, Some(6_000), "pts moves with dts");
+        assert_eq!(second[1].timing.map(|t| t.pts), Some(6_000), "pts moves with dts");
     }
 
     #[test]

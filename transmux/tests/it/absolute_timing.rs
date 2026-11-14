@@ -238,7 +238,7 @@ fn ts_33bit_rollover_is_unwrapped_once_at_the_demux_edge() {
         .samples
         .iter()
         .map(|s| {
-            s.dts
+            s.timing.map(|t| t.dts)
                 .expect("a timed video sample must carry an absolute dts")
         })
         .collect();
@@ -266,7 +266,7 @@ fn ts_33bit_rollover_is_unwrapped_once_at_the_demux_edge() {
         let p = s
             .provenance
             .expect("a TS-demuxed timed sample carries debug Provenance");
-        let abs = s.dts.unwrap();
+        let abs = s.timing.map(|t| t.dts).unwrap();
         assert_eq!(
             p.wire_dts,
             Some((abs as u64) % (TS_WRAP as u64)),
@@ -307,7 +307,7 @@ fn ts_rollover_survives_ts_ir_ts_round_trip() {
             .expect("AVC track");
         t.samples
             .iter()
-            .filter_map(|s| s.dts)
+            .filter_map(|s| s.timing.map(|t| t.dts))
             .collect::<Vec<_>>()
             .windows(2)
             .map(|w| w[1] - w[0])
@@ -342,13 +342,13 @@ fn assert_absolute_timeline(media: &Media, what: &str) {
             .samples
             .iter()
             .map(|s| {
-                s.dts
+                s.timing.map(|t| t.dts)
                     .unwrap_or_else(|| panic!("{what}: track {ti} sample has no absolute dts"))
             })
             .collect();
         for s in &t.samples {
             assert!(
-                s.pts.is_some(),
+                s.timing.map(|t| t.pts).is_some(),
                 "{what}: track {ti} sample has no absolute pts"
             );
         }
@@ -405,7 +405,7 @@ fn flv_demux_emits_absolute_time_from_tag_timestamps() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("FLV AVC track");
-    let got: Vec<i64> = video.samples.iter().filter_map(|s| s.dts).collect();
+    let got: Vec<i64> = video.samples.iter().filter_map(|s| s.timing.map(|t| t.dts)).collect();
     assert_eq!(
         got, want,
         "FLV sample dts must be the tag timestamps verbatim (absolute ms)"
@@ -637,7 +637,7 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
     for t in &media.tracks {
         for s in &t.samples {
             assert_eq!(
-                s.dts, s.pts,
+                s.timing.map(|t| t.dts), s.timing.map(|t| t.pts),
                 "WebM carries only a presentation clock, so dts must equal pts"
             );
         }
@@ -662,7 +662,7 @@ fn webm_demux_emits_absolute_time_from_cluster_timecodes() {
             t.samples.iter().zip(oracle_samples.iter()).enumerate()
         {
             let dts = s
-                .dts
+                .timing.map(|t| t.dts)
                 .unwrap_or_else(|| panic!("WebM sample {i} has no dts"));
             assert_eq!(
                 dts, oracle_pts_ms,
@@ -707,7 +707,7 @@ fn rtmp_demux_emits_absolute_time_from_message_timestamps() {
             .map(|t| {
                 t.samples
                     .iter()
-                    .filter_map(|s| s.dts)
+                    .filter_map(|s| s.timing.map(|t| t.dts))
                     .collect::<Vec<_>>()
                     .windows(2)
                     .map(|w| w[1] - w[0])
@@ -798,12 +798,12 @@ fn rtp_depacketiser_emits_absolute_time_from_rtp_timestamps() {
     let got_pts: Vec<i64> = recovered.tracks[0]
         .samples
         .iter()
-        .filter_map(|s| s.pts)
+        .filter_map(|s| s.timing.map(|t| t.pts))
         .collect();
     let got_dts: Vec<i64> = recovered.tracks[0]
         .samples
         .iter()
-        .filter_map(|s| s.dts)
+        .filter_map(|s| s.timing.map(|t| t.dts))
         .collect();
     assert_eq!(got_pts.len(), want.len(), "one pts per access unit");
     let shift = got_pts[0] - want[0];
@@ -919,7 +919,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     let got: Vec<(i64, i64)> = ir.tracks[0]
         .samples
         .iter()
-        .map(|s| (s.dts.expect("dts"), s.pts.expect("pts")))
+        .map(|s| (s.timing.map(|t| t.dts).expect("dts"), s.timing.map(|t| t.pts).expect("pts")))
         .collect();
     let want: Vec<(i64, i64)> = offsets
         .iter()
@@ -1038,8 +1038,8 @@ fn audio_and_video_of_one_program_share_one_unroll_epoch_across_2_33() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("aac track");
-    let v0 = video.samples[0].dts.expect("video dts");
-    let a0 = audio.samples[0].dts.expect("audio dts");
+    let v0 = video.samples[0].timing.map(|t| t.dts).expect("video dts");
+    let a0 = audio.samples[0].timing.map(|t| t.dts).expect("audio dts");
     let a0_90k = a0 * 90_000 / AAC_RATE;
     let skew = (a0_90k - v0).abs();
     assert!(

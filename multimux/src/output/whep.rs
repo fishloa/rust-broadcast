@@ -1256,10 +1256,10 @@ async fn send_sample(
     session: &SessionMedia<'_>,
     sample: &Sample,
 ) {
-    let Some(dts) = sample.dts else {
+    let Some(dts) = sample.timing.map(|t| t.dts) else {
         return;
     };
-    let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale);
+    let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale.get());
 
     let packets = match session.packets.packets(session.spec, sample, dts) {
         Ok(p) => p,

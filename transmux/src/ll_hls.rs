@@ -387,11 +387,11 @@ impl LlHlsSegmenter {
         // `INDEPENDENT=YES` on parts that actually start mid-GOP.
         let anchor = choose_anchor(tracks.iter().map(|t| &t.config))?;
 
-        let anchor_timescale = tracks[anchor].timescale as f64;
+        let anchor_timescale = tracks[anchor].timescale.get() as f64;
         let target_ticks = ((target_duration_secs * anchor_timescale) as u64).max(1);
         // part_target_ms / 1000 * timescale, integer-safe.
         let part_target_ticks =
-            ((part_target_ms as u64 * tracks[anchor].timescale as u64) / 1000).max(1);
+            ((part_target_ms as u64 * tracks[anchor].timescale.get() as u64) / 1000).max(1);
 
         let tracks = tracks
             .into_iter()
@@ -449,7 +449,7 @@ impl LlHlsSegmenter {
         // `ts_hls.rs:225`), so a malformed zero timescale can't turn this
         // into `inf`/`NaN` rendered straight into `#EXT-X-PART-INF` (audit
         // finding #5).
-        self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64
+        self.part_target_ticks as f64 / self.tracks[self.anchor].spec.timescale.get().max(1) as f64
     }
 
     /// The part target in whole milliseconds, the value to advertise as
@@ -545,7 +545,7 @@ impl LlHlsSegmenter {
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
 
         if self.external_cuts {
-            if sample.dts.is_none() {
+            if sample.timing.map(|t| t.dts).is_none() {
                 return Err(Error::InvalidInput(
                     "follower segmenter push: sample has no dts",
                 ));
@@ -640,9 +640,6 @@ impl LlHlsSegmenter {
         if plan.timescale == 0 {
             return Err(Error::InvalidInput("follow: plan timescale must be > 0"));
         }
-        if self.tracks.iter().any(|t| t.spec.timescale == 0) {
-            return Err(Error::InvalidInput("follow: track timescale must be > 0"));
-        }
         let mut previous_part: Option<(i64, u32)> = None;
         for p in &plan.parts {
             let ts = p.effective_timescale(plan.timescale);
@@ -714,11 +711,6 @@ impl LlHlsSegmenter {
     ) -> Result<()> {
         if timescale == 0 {
             return Err(Error::InvalidInput("follow_part: timescale must be > 0"));
-        }
-        if self.tracks.iter().any(|t| t.spec.timescale == 0) {
-            return Err(Error::InvalidInput(
-                "follow_part: track timescale must be > 0",
-            ));
         }
         if !self.incremental {
             let cut_on_own = !self.ready.is_empty()
@@ -1063,9 +1055,9 @@ impl LlHlsSegmenter {
             t.gap_pending = false;
             let first = follower_dts(&t.pending[0]);
             let offset = i128::from(first) * i128::from(origin_ts)
-                - i128::from(origin) * i128::from(t.spec.timescale);
+                - i128::from(origin) * i128::from(t.spec.timescale.get());
             let ticks = offset / i128::from(origin_ts)
-                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale) / 1_000_000_000;
+                + i128::from(self.start_time_ns) * i128::from(t.spec.timescale.get()) / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(0);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1148,7 +1140,7 @@ impl LlHlsSegmenter {
         }
         self.start_time_ns = start_ns;
         for t in &mut self.tracks {
-            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale) / 1_000_000_000;
+            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale.get()) / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
             t.part_base_decode = t.seg_base_decode;
         }
@@ -1233,7 +1225,7 @@ impl LlHlsSegmenter {
             let t = &self.tracks[self.anchor];
             t.pending
                 .first()
-                .and_then(|s| s.dts)
+                .and_then(|s| s.timing.map(|t| t.dts))
                 .unwrap_or_else(|| ticks_to_i64(t.seg_base_decode))
         };
         // Any samples buffered since the last part become the segment's final
@@ -1261,7 +1253,7 @@ impl LlHlsSegmenter {
 
         // See `part_target_secs` above for why `.max(1)` guards this division.
         let seg_duration =
-            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.max(1) as f64;
+            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.get().max(1) as f64;
         self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
@@ -1273,7 +1265,7 @@ impl LlHlsSegmenter {
             self.ready_cuts.push_back(CutPlan::new(
                 self.current_segment,
                 segment_start,
-                self.tracks[self.anchor].spec.timescale,
+                self.tracks[self.anchor].spec.timescale.get(),
                 cuts,
             ));
         }
@@ -1317,7 +1309,7 @@ impl LlHlsSegmenter {
         if (frames - 1) * hi >= frames * lo {
             return;
         }
-        let timescale = u64::from(self.tracks[self.anchor].spec.timescale.max(1));
+        let timescale = u64::from(self.tracks[self.anchor].spec.timescale.get().max(1));
         let ms = (frames * hi * MILLIS_PER_SEC).div_ceil(timescale);
         let Ok(ms) = u32::try_from(ms) else {
             return;
@@ -1355,7 +1347,7 @@ impl LlHlsSegmenter {
             let t = &self.tracks[anchor];
             t.pending
                 .get(t.part_start)
-                .and_then(|s| s.dts)
+                .and_then(|s| s.timing.map(|t| t.dts))
                 .unwrap_or_else(|| ticks_to_i64(t.part_base_decode))
         };
 
@@ -1364,7 +1356,7 @@ impl LlHlsSegmenter {
         // (`anchor_part_dur`). A regular part must not exceed the part target
         // (RFC 8216bis §4.4.4.9), so the drain stops at the first sample that
         // would cross it; the final part of a segment drains everything.
-        let anchor_scale = self.tracks[anchor].spec.timescale.max(1) as u64;
+        let anchor_scale = self.tracks[anchor].spec.timescale.get().max(1) as u64;
         let part_span = if final_part {
             u64::MAX
         } else {
@@ -1383,7 +1375,7 @@ impl LlHlsSegmenter {
                 if final_part {
                     return t.pending.len();
                 }
-                let track_scale = t.spec.timescale.max(1) as u64;
+                let track_scale = t.spec.timescale.get().max(1) as u64;
                 let track_span = if part_span == u64::MAX {
                     u64::MAX
                 } else {
@@ -1434,7 +1426,7 @@ impl LlHlsSegmenter {
         if anchor_span_ticks == 0 {
             return Ok(());
         }
-        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.max(1) as f64;
+        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.get().max(1) as f64;
 
         let seq = self.next_seq;
         let part_bytes = {
@@ -1497,7 +1489,7 @@ impl LlHlsSegmenter {
             self.current_cuts.push(PartCut::new(
                 part_index,
                 part_start,
-                self.tracks[anchor].spec.timescale,
+                self.tracks[anchor].spec.timescale.get(),
             ));
         }
         if self.record_part_cuts {
@@ -1505,7 +1497,7 @@ impl LlHlsSegmenter {
                 msn: self.current_segment,
                 part_index,
                 start_dts: part_start,
-                timescale: self.tracks[anchor].spec.timescale,
+                timescale: self.tracks[anchor].spec.timescale.get(),
             });
         }
         Ok(())
@@ -1693,7 +1685,7 @@ fn ticks_to_i64(ticks: u64) -> i64 {
 
 /// Decode time a follower segmenter cuts on; `push` rejects samples without one.
 fn follower_dts(sample: &Sample) -> i64 {
-    sample.dts.unwrap_or(i64::MIN)
+    sample.timing.map(|t| t.dts).unwrap_or(i64::MIN)
 }
 
 /// Duration in seconds of `track.pending[from..to]`.
@@ -1701,9 +1693,9 @@ fn span_secs(track: &TrackState, from: usize, to: usize) -> f64 {
     let mut clock = MediaClock::resumed_at(
         from.checked_sub(1)
             .and_then(|i| track.pending.get(i))
-            .and_then(|s| s.dts)
+            .and_then(|s| s.timing.map(|t| t.dts))
             .or(track.seg_clock.last_dts()),
     );
     let ticks: u64 = track.pending[from..to].iter().map(|s| clock.tick(s)).sum();
-    ticks as f64 / f64::from(track.spec.timescale.max(1))
+    ticks as f64 / f64::from(track.spec.timescale.get())
 }

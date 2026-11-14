@@ -159,15 +159,15 @@ pub struct SpliceResult {
 /// absolute `dts` to read).
 fn track_end_decode_time(track: &Track) -> u64 {
     if let Some(last) = track.samples.last()
-        && let Some(dts) = last.dts
+        && let Some(dts) = last.timing.map(|t| t.dts)
     {
         let dts = u64::try_from(dts).unwrap_or(0);
-        return dts.saturating_add(last.duration.unwrap_or(0) as u64);
+        return dts.saturating_add(last.timing.map(|t| t.duration).unwrap_or(0) as u64);
     }
     let span: u64 = track
         .samples
         .iter()
-        .map(|s| s.duration.unwrap_or(0) as u64)
+        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
         .sum();
     track.start_decode_time.saturating_add(span)
 }
@@ -219,7 +219,7 @@ fn match_tracks(a: &Media, b: &Media) -> Result<Vec<usize>> {
                 "splice: matched tracks have incompatible codecs",
             ));
         }
-        if at.spec.timescale == 0 || bt.spec.timescale == 0 {
+        if at.spec.timescale.get() == 0 || bt.spec.timescale.get() == 0 {
             return Err(Error::InvalidInput("timescale must be non-zero"));
         }
         if at.spec.timescale != bt.spec.timescale {
@@ -247,8 +247,8 @@ fn pick_reference_track(a: &[Track], b: &[Track], mapping: &[usize]) -> Option<u
         return Some(i);
     }
     a.iter().enumerate().position(|(i, at)| {
-        at.samples.iter().any(|s| s.dts.is_some())
-            || b[mapping[i]].samples.iter().any(|s| s.dts.is_some())
+        at.samples.iter().any(|s| s.timing.map(|t| t.dts).is_some())
+            || b[mapping[i]].samples.iter().any(|s| s.timing.map(|t| t.dts).is_some())
     })
 }
 
@@ -291,11 +291,9 @@ fn shift_samples(samples: &[Sample], offset: i64) -> Vec<Sample> {
         .iter()
         .cloned()
         .map(|mut s| {
-            if let Some(d) = s.dts {
-                s.dts = Some(d + offset);
-            }
-            if let Some(p) = s.pts {
-                s.pts = Some(p + offset);
+            if let Some(t) = s.timing.as_mut() {
+                t.dts += offset;
+                t.pts += offset;
             }
             s
         })
@@ -310,7 +308,7 @@ fn shift_samples(samples: &[Sample], offset: i64) -> Vec<Sample> {
 fn result_start_decode_time(samples: &[Sample], fallback: u64) -> u64 {
     samples
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .map(|d| u64::try_from(d).unwrap_or(0))
         .unwrap_or(fallback)
 }
@@ -361,7 +359,7 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
         let incoming_ref_start = bt
             .samples
             .first()
-            .and_then(|s| s.dts)
+            .and_then(|s| s.timing.map(|t| t.dts))
             .unwrap_or(bt.start_decode_time as i64);
         (ref_timescale, join_dts_ref, incoming_ref_start)
     });
@@ -377,8 +375,8 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
         let shifted = match ref_shift {
             Some((ref_ts, join_dts_ref, incoming_ref_start)) => {
                 let track_ts = at.spec.timescale;
-                let offset = rescale_ticks(join_dts_ref, ref_ts, track_ts)?
-                    - rescale_ticks(incoming_ref_start, ref_ts, track_ts)?;
+                let offset = rescale_ticks(join_dts_ref, ref_ts.get(), track_ts.get())?
+                    - rescale_ticks(incoming_ref_start, ref_ts.get(), track_ts.get())?;
                 shift_samples(&bt.samples, offset)
             }
             None => bt.samples.clone(),
@@ -394,7 +392,7 @@ pub fn concat(a: &Media, b: &Media) -> Result<SpliceResult> {
             // `pts` when it has one; a section-carried leading sample (no
             // timestamp at all) falls back to `a`'s reference-track end, the
             // best information available.
-            let presentation_time = match shifted[0].pts {
+            let presentation_time = match shifted[0].timing.map(|t| t.pts) {
                 Some(p) => u64::try_from(p).unwrap_or(0),
                 None => track_end_decode_time(at),
             };
@@ -444,7 +442,7 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
         // running duration-sum for a genuinely timestamp-less
         // (section-carried) sample, which carries no absolute `dts` at all.
         let dts = s
-            .dts
+            .timing.map(|t| t.dts)
             .map(|d| u64::try_from(d).unwrap_or(0))
             .unwrap_or(fallback_dts);
         if dts > at_ticks {
@@ -453,7 +451,7 @@ pub fn snap_to_preceding_sync(track: &Track, at_ticks: u64) -> Option<(u64, usiz
         if s.flags.is_sync {
             best = (dts, i);
         }
-        fallback_dts = dts.saturating_add(s.duration.unwrap_or(0) as u64);
+        fallback_dts = dts.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as u64);
     }
     Some(best)
 }
@@ -511,7 +509,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         snap_to_preceding_sync(&base.tracks[video_idx], at_ticks).ok_or(Error::InvalidInput(
             "splice_insert: base video track has no samples",
         ))?;
-    let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.max(1));
+    let video_timescale = u128::from(base.tracks[video_idx].spec.timescale.get().max(1));
     // The snapped cut's **absolute** decode time (the media plane's own clock),
     // which is what every other track's cut is measured against — see the
     // `split_index` computation below. This is in the video track's own
@@ -530,7 +528,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
     let incoming_ref_start = ad_video
         .samples
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .unwrap_or(ad_video.start_decode_time as i64);
 
     let mut out_tracks = Vec::with_capacity(base.tracks.len());
@@ -557,7 +555,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         let split_index = if i == video_idx {
             video_split
         } else {
-            let track_timescale = u128::from(bt.spec.timescale.max(1));
+            let track_timescale = u128::from(bt.spec.timescale.get().max(1));
             // Ceiling, not floor (review round 3). Flooring the rescale picks a
             // tick *before* the instant the video was cut at, so the audio cut
             // lands one sample early and drops a sample the video still has —
@@ -585,14 +583,14 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         // video track), rescaled into this track's own timescale — never
         // computed independently from this track's own boundary (that would
         // re-derive a per-track alignment and destroy A/V sync).
-        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale, track_ts)?
-            - rescale_ticks(incoming_ref_start, ref_timescale, track_ts)?;
+        let ad_offset = rescale_ticks(join_dts_ref, ref_timescale.get(), track_ts.get())?
+            - rescale_ticks(incoming_ref_start, ref_timescale.get(), track_ts.get())?;
         let shifted_ad = shift_samples(&adt.samples, ad_offset);
 
         let ad_span: u64 = adt
             .samples
             .iter()
-            .map(|s| s.duration.unwrap_or(0) as u64)
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
             .sum();
 
         // Resume shift: push the remainder of base forward so — on THIS
@@ -602,7 +600,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         // ad contribution with no timestamp on this track at all has no
         // "where the ad ends" to read; falls back to the span alone (there
         // is nothing else to derive it from).
-        let resume_shift: i64 = match shifted_ad.first().and_then(|s| s.dts) {
+        let resume_shift: i64 = match shifted_ad.first().and_then(|s| s.timing.map(|t| t.dts)) {
             Some(new_ad_first_dts) => new_ad_first_dts + ad_span as i64 - boundary_dts as i64,
             None => ad_span as i64,
         };
@@ -617,7 +615,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
 
         // Ad-in point.
         if !shifted_ad.is_empty() {
-            let presentation_time = match shifted_ad[0].pts {
+            let presentation_time = match shifted_ad[0].timing.map(|t| t.pts) {
                 Some(p) => u64::try_from(p).unwrap_or(0),
                 None => boundary_dts,
             };
@@ -630,7 +628,7 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
         // Resume point (the base sample that follows the ad), only if base has a
         // remainder after the split.
         if split_index < bt.samples.len() {
-            let presentation_time = match shifted_resume.first().and_then(|s| s.pts) {
+            let presentation_time = match shifted_resume.first().and_then(|s| s.timing.map(|t| t.pts)) {
                 Some(p) => u64::try_from(p).unwrap_or(0),
                 None => boundary_dts.saturating_add(ad_span),
             };
@@ -662,14 +660,14 @@ pub fn splice_insert(base: &Media, ad: &Media, at_ticks: u64) -> Result<SpliceRe
 /// `dts` falls back to the duration-sum, same as everywhere else in this
 /// module.
 fn boundary_decode_time(track: &Track, split_index: usize) -> u64 {
-    match track.samples.get(split_index).and_then(|s| s.dts) {
+    match track.samples.get(split_index).and_then(|s| s.timing.map(|t| t.dts)) {
         Some(dts) => u64::try_from(dts).unwrap_or(0),
         None if split_index >= track.samples.len() => track_end_decode_time(track),
         None => {
             track.start_decode_time
                 + track.samples[..split_index]
                     .iter()
-                    .map(|s| s.duration.unwrap_or(0) as u64)
+                    .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
                     .sum::<u64>()
         }
     }
@@ -701,14 +699,14 @@ fn sample_index_at_absolute_dts(track: &Track, cut_ticks: u64) -> usize {
     // simply "before the cut" rather than "past the end".
     let cut = i128::from(cut_ticks);
     for (i, s) in track.samples.iter().enumerate() {
-        let absolute = match s.dts {
+        let absolute = match s.timing.map(|t| t.dts) {
             Some(dts) => i128::from(dts),
             None => i128::from(acc),
         };
         if absolute >= cut {
             return i;
         }
-        acc = acc.saturating_add(s.duration.unwrap_or(0) as u64);
+        acc = acc.saturating_add(s.timing.map(|t| t.duration).unwrap_or(0) as u64);
     }
     track.samples.len()
 }

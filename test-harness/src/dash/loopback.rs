@@ -427,9 +427,9 @@ pub struct Sig {
 pub fn sig(s: &Sample) -> Sig {
     Sig {
         data: s.data.to_vec(),
-        pts: s.pts,
-        dts: s.dts,
-        duration: s.duration,
+        pts: s.timing.map(|t| t.pts),
+        dts: s.timing.map(|t| t.dts),
+        duration: s.timing.map(|t| t.duration),
         flags: format!("{:?}", s.flags),
     }
 }
