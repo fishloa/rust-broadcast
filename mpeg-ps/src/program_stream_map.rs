@@ -118,8 +118,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         // `program_stream_map_length` max 1018 (Table 2-41), the same ceiling
         // the serializer enforces, so every accepted PSM can be written back
         // (#2744).
-        if map_length > MAP_LENGTH_MAX || map_length < FIXED_BODY_LEN + CRC_LEN || b.len() < crc_end
-        {
+        if !(FIXED_BODY_LEN + CRC_LEN..=MAP_LENGTH_MAX).contains(&map_length) || b.len() < crc_end {
             return Err(Error::MapLengthOverflow {
                 map_length,
                 available: b.len().saturating_sub(PREFIX_LEN),

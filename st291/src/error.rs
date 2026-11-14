@@ -37,14 +37,6 @@ pub enum Error {
     /// `descriptor_tag` was not `0xC4`.
     #[error("invalid anc_data_descriptor tag: {0:#04X} (expected 0xC4)")]
     BadDescriptorTag(u8),
-    /// `PES_packet_length` overflows the available buffer.
-    #[error("PES_packet_length {len} exceeds available bytes ({available})")]
-    PesLengthOverflow {
-        /// The `PES_packet_length` value.
-        len: usize,
-        /// Bytes available after the length field.
-        available: usize,
-    },
     /// A serialized structure exceeded a 16-bit length field.
     #[error("PES_packet_length {0} exceeds the 16-bit field maximum (65535)")]
     PesLengthTooLarge(usize),

@@ -447,15 +447,6 @@ impl AncDataPacket {
                 found: 0,
             }))?;
         let payload = packet.payload;
-        let pes_packet_length = usize::from(packet.pes_packet_length);
-        let pes_length_end = PES_PREFIX_LEN.saturating_add(pes_packet_length);
-        if pes_length_end > b.len() {
-            return Err(Error::PesLengthOverflow {
-                len: pes_packet_length,
-                available: b.len().saturating_sub(PES_PREFIX_LEN),
-            });
-        }
-
         let mut anc_packets = Vec::new();
         let mut pos = 0usize;
         while pos < payload.len() {
