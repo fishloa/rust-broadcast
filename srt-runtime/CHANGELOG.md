@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `km_refresh::KmRefreshThresholds` is `#[non_exhaustive]` with private fields; build it with `KmRefreshThresholds::new(refresh_period, pre_announcement_period)`, which rejects `pre_announcement_period == 0` and any pre-announcement at or past the refresh period, and read it back with `refresh_period()`/`pre_announcement_period()`. A zero refresh period no longer rotates the active key on every packet. Migration: `KmRefreshThresholds { refresh_period: r, pre_announcement_period: p }` -> `KmRefreshThresholds::new(r, p)` (#2753, #2771).
+- `KmRefreshDriver::on_packet_sent` rotates through every cycle a batch crosses, returning each cycle's PreAnnounce/Switchover/Decommission in order, instead of at most one switchover per call (#2753).
+
 ### Fixed
 - A truncated handshake extension block header now reports the bytes actually available in `BufferTooShort::have` instead of always `0` (#2752).
 
