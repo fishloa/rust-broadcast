@@ -12,6 +12,62 @@
 /// Widest supported space: a signed `i32` distance must fit, so 31 bits.
 pub const MAX_SEQ_BITS: u32 = 31;
 
+/// A sequence space wider than `1..=MAX_SEQ_BITS` cannot exist.
+///
+/// No signed distance fits a space of 32 bits or more (two numbers could be
+/// more than `i32::MAX` apart), and a space of no bits has no number in it at
+/// all. Reported by [`SeqSpace::try_new`]; there is no panicking constructor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvalidSeqSpace {
+    /// The width that was asked for.
+    pub bits: u32,
+}
+
+impl core::fmt::Display for InvalidSeqSpace {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "sequence space of {} bits is outside 1..={}",
+            self.bits, MAX_SEQ_BITS
+        )
+    }
+}
+
+impl core::error::Error for InvalidSeqSpace {}
+
+/// A sequence space of a literal width the compiler can prove in range.
+///
+/// The whole check happens at compile time: the `match` sits in an inline
+/// `const` block, so `seq_space!(32)` is a compile error even inside a `fn`
+/// and there is no runtime path that could reach the `panic!`. A runtime
+/// width goes through [`SeqSpace::try_new`].
+///
+/// ```compile_fail
+/// // A 32-bit space has no representable signed distance, not even in a fn.
+/// fn wide() -> broadcast_common::seq::SeqSpace {
+///     broadcast_common::seq_space!(32)
+/// }
+/// ```
+///
+/// ```
+/// let s = broadcast_common::seq_space!(16);
+/// assert_eq!(s.bits(), 16);
+/// assert_eq!(s.modulus(), 65_536);
+/// ```
+#[macro_export]
+macro_rules! seq_space {
+    ($value:expr) => {
+        const {
+            match $value {
+                bits if bits >= 1 && bits <= $crate::seq::MAX_SEQ_BITS => {
+                    $crate::seq::SeqSpace::from_valid_bits(bits)
+                }
+                _ => panic!("a sequence space is 1..=MAX_SEQ_BITS bits wide"),
+            }
+        }
+    };
+}
+
 /// A modular sequence-number space of `bits` bits (`1..=31`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SeqSpace {
@@ -21,16 +77,32 @@ pub struct SeqSpace {
 impl SeqSpace {
     /// A `bits`-wide space.
     ///
-    /// # Panics
-    /// In a `const` context (compile error) or at runtime if `bits` is `0`
-    /// or exceeds [`MAX_SEQ_BITS`].
+    /// # Errors
+    /// [`InvalidSeqSpace`] when `bits` is `0` or exceeds [`MAX_SEQ_BITS`];
+    /// the width is reported unchanged, never clamped to a space the caller
+    /// did not ask for.
+    pub const fn try_new(bits: u32) -> Result<Self, InvalidSeqSpace> {
+        if bits >= 1 && bits <= MAX_SEQ_BITS {
+            Ok(Self { bits })
+        } else {
+            Err(InvalidSeqSpace { bits })
+        }
+    }
+
+    /// A `bits`-wide space from a width already proven in range.
+    ///
+    /// A literal belongs in [`seq_space!`](crate::seq_space!), which proves it
+    /// in range at compile time; a runtime width goes through
+    /// [`Self::try_new`], which reports the out-of-range one instead.
     #[must_use]
-    pub const fn new(bits: u32) -> Self {
-        assert!(
-            bits >= 1 && bits <= MAX_SEQ_BITS,
-            "SeqSpace bits out of range"
-        );
+    pub const fn from_valid_bits(bits: u32) -> Self {
         Self { bits }
+    }
+
+    /// The width of the space, in bits.
+    #[must_use]
+    pub const fn bits(self) -> u32 {
+        self.bits
     }
 
     /// Number of distinct sequence numbers: `2^bits`.
@@ -118,8 +190,36 @@ impl SeqSpace {
 mod tests {
     use super::*;
 
-    const S16: SeqSpace = SeqSpace::new(16);
-    const S31: SeqSpace = SeqSpace::new(31);
+    const S16: SeqSpace = crate::seq_space!(16);
+    const S31: SeqSpace = crate::seq_space!(31);
+
+    /// A width the space cannot hold is a typed error, never a panic a caller
+    /// cannot see in the signature or a silently clamped space: `0` has no
+    /// number in it, and 32 bits has no representable signed distance.
+    #[test]
+    fn an_out_of_range_width_is_a_typed_error_not_a_panic() {
+        assert_eq!(SeqSpace::try_new(0), Err(InvalidSeqSpace { bits: 0 }));
+        assert_eq!(
+            SeqSpace::try_new(MAX_SEQ_BITS + 1),
+            Err(InvalidSeqSpace {
+                bits: MAX_SEQ_BITS + 1
+            })
+        );
+        assert_eq!(
+            SeqSpace::try_new(u32::MAX),
+            Err(InvalidSeqSpace { bits: u32::MAX })
+        );
+        assert_eq!(SeqSpace::try_new(1).map(SeqSpace::bits), Ok(1));
+        assert_eq!(
+            SeqSpace::try_new(MAX_SEQ_BITS).map(SeqSpace::bits),
+            Ok(MAX_SEQ_BITS)
+        );
+        assert_eq!(crate::seq_space!(8).bits(), 8);
+        assert_eq!(
+            InvalidSeqSpace { bits: 32 }.to_string(),
+            "sequence space of 32 bits is outside 1..=31"
+        );
+    }
 
     #[test]
     fn wraps_at_the_space_boundary() {
@@ -145,7 +245,9 @@ mod tests {
     #[test]
     fn ordering_is_antisymmetric_at_exactly_half_the_space() {
         for bits in [8u32, 16, 31] {
-            let s = SeqSpace::new(bits);
+            let Some(s) = SeqSpace::try_new(bits).ok() else {
+                return;
+            };
             let half = (s.modulus() / 2) as u32;
             assert!(!(s.gt(half, 0) && s.gt(0, half)), "bits={bits}");
             assert!(!(s.lt(half, 0) && s.lt(0, half)), "bits={bits}");
