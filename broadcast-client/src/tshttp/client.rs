@@ -116,13 +116,6 @@ impl TsHttpClient {
         self.sync_demux();
     }
 
-    /// Caller-initiated reconnect (T13).
-    pub fn reconnect(&mut self, now: Timestamp) {
-        self.flush_demux(now);
-        self.policy.reconnect(now);
-        self.sync_demux();
-    }
-
     /// Advance timers (T6, T10-T12, T15).
     pub fn poll_timeout(&mut self, now: Timestamp) {
         let demux = &mut self.demux;

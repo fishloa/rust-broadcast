@@ -46,8 +46,11 @@ const SCHEME_RTP: &str = "rtp";
 const SCHEME_SRT: &str = "srt";
 const RTSPS_DEFAULT_PORT: u16 = 322;
 const HTTPS_DEFAULT_PORT: u16 = 443;
-const TS_WAKE_TICK: Duration = Duration::from_secs(1);
 const FIRST_CONN_ID: u32 = 1;
+
+/// The wake a credential wait arms past its outermost frozen deadline (and the one a session with
+/// no deadline left falls back to when its source clock cannot be named).
+const TS_WAKE_TICK: Duration = Duration::from_secs(1);
 
 const MAX_UNAUTHENTICATED_REPLAYS: u32 = 2;
 
@@ -332,16 +335,26 @@ impl Session {
             self.settle_buffer();
         }
         while let Some(mut action) = self.actions.pop_front() {
-            if let Action::WakeAt(at) = action
-                && at <= now
-            {
-                self.ts_wake = self.ts_wake.filter(|held| *held != at);
+            if self.drop_past_wake(&action, now) {
                 continue;
             }
             self.attach_identity(&mut action);
             return Some(action);
         }
         None
+    }
+
+    /// Whether `action` is a wake at or before `now`: its deadline passed, so the work it names is
+    /// due on this poll and the wake is dropped rather than sent (with its held instant).
+    fn drop_past_wake(&mut self, action: &Action, now: Timestamp) -> bool {
+        let Action::WakeAt(at) = action else {
+            return false;
+        };
+        if *at > now {
+            return false;
+        }
+        self.ts_wake = self.ts_wake.filter(|held| held != at);
+        true
     }
 
     /// Poll next event.
@@ -816,16 +829,18 @@ impl Session {
             self.flush_rtsp();
             return Ok(());
         }
+        // Every source resumes from the instant this call is given, not from the last one the
+        // session saw: a host that idled would otherwise schedule its next request in the past.
+        // A join is left to notice the instant it is re-armed at.
+        self.now_us = now.as_micros();
+        if was_waiting && let Some(h) = self.adaptive.as_mut() {
+            h.resume(self.now_us, &mut self.auth);
+            self.flush_adaptive();
+            return Ok(());
+        }
         if was_waiting {
-            self.now_us = now.as_micros();
-            self.ts_wake = None;
-            if let Some(h) = self.adaptive.as_mut() {
-                h.resume(self.now_us, &mut self.auth);
-                self.flush_adaptive();
-            } else {
-                self.source.reconnect(self.now_us);
-                self.drain_source();
-            }
+            self.source.reconnect(self.now_us);
+            self.drain_source();
         }
         Ok(())
     }
@@ -1489,44 +1504,65 @@ impl Session {
     }
 
     fn sync_ts_wake(&mut self) {
-        if self.closed || self.auth.is_waiting() {
+        if self.closed {
             return;
         }
+        if self.auth.is_waiting() {
+            // Credentials freeze every timer, but a host holding no wake at all never polls again
+            // to learn the wait ended: one wake beyond the outermost frozen deadline keeps the
+            // session reachable, and it is cleared the moment the credentials resume it.
+            let datagram = self
+                .datagram
+                .as_ref()
+                .and_then(|d| d.next_deadline(self.now_us));
+            let next = self
+                .source
+                .next_deadline()
+                .into_iter()
+                .chain(datagram)
+                .min();
+            let Some(at) = next.and_then(|at| at.checked_add(TS_WAKE_TICK)) else {
+                return;
+            };
+            self.arm_ts_wake(Some(at));
+            return;
+        }
+        let now = Timestamp::from_micros(self.now_us);
         let datagram = self
             .datagram
             .as_ref()
             .and_then(|d| d.next_deadline(self.now_us));
-        let Some(deadline) = self
+        let next = self
             .source
             .next_deadline()
             .into_iter()
             .chain(datagram)
-            .min()
-        else {
-            return;
-        };
-        let now = Timestamp::from_micros(self.now_us);
-        if deadline <= now {
-            self.arm_ts_wake(now.checked_add(TS_WAKE_TICK));
-            return;
-        }
-        self.arm_ts_wake(Some(deadline));
+            .min();
+        // A deadline the host's instant has already reached was due on this poll (the step above
+        // raised the work), so it is not a wake; a deadline that fits no instant is none either.
+        let at = next.filter(|at| *at > now);
+        self.arm_ts_wake(at);
     }
 
-    /// Emit [`Action::WakeAt`] for `at` unless a wake this poll already holds fires no later, and
-    /// remember it. `None` is a wake the host clock cannot reach: it is never emitted.
+    /// Emit [`Action::WakeAt`] for `at` unless it is already the pending wake, and remember it.
+    /// `None` is a wake the host clock cannot reach: it is never emitted.
+    ///
+    /// Emitting only when the deadline has moved is what lets a poll at one instant drain: the
+    /// host already holds the instant last emitted, and re-emitting it each poll never ends.
     fn arm_ts_wake(&mut self, at: Option<Timestamp>) {
-        // Only a wake already queued for the same instant makes `at` redundant: each arming is one
-        // comparison of the deadlines as they stand now, not a running minimum.
-        let outstanding = at.is_some_and(|at| {
-            self.actions
-                .iter()
-                .any(|a| matches!(a, Action::WakeAt(h) if *h == at))
-        });
-        if outstanding {
-            return;
-        }
-        if let Some(at) = at {
+        let outstanding = match at {
+            Some(at) => {
+                self.ts_wake == Some(at)
+                    || self
+                        .actions
+                        .iter()
+                        .any(|a| matches!(a, Action::WakeAt(h) if *h == at))
+            }
+            None => self.ts_wake.is_none(),
+        };
+        if !outstanding
+            && let Some(at) = at
+        {
             self.actions.push_back(Action::WakeAt(at));
         }
         self.ts_wake = at;
@@ -1535,8 +1571,14 @@ impl Session {
     /// Wait `after` before reopening a TS source: the policy's own backoff, measured from the
     /// last instant the host gave the session.
     fn schedule_reconnect(&mut self, after: Duration) {
-        let at = Timestamp::from_micros(self.now_us).checked_add(after);
-        self.arm_ts_wake(at);
+        let Some(at) = Timestamp::from_micros(self.now_us).checked_add(after) else {
+            return;
+        };
+        // A reopen at or before the instant the host gave is due on this poll (the poll raises
+        // the work), so it is not a wake: one would be dropped as past the moment it is sent.
+        if at > Timestamp::from_micros(self.now_us) {
+            self.arm_ts_wake(Some(at));
+        }
     }
 
     fn map_source_action(&mut self, a: TsAction) {

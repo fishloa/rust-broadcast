@@ -1,9 +1,10 @@
 use broadcast_auth::Scheme as AuthScheme;
-use broadcast_client::{
-    Action, Config, ConnId, Credentials, Event, Session, Status, TransportError,
-};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 use url::Url;
+
+/// How many actions one poll-at-a-stale-instant may yield before it counts as never draining.
+const POLL_BOUND: usize = 32;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -348,15 +349,20 @@ fn no_credentials_401_waits_no_timers() {
             .iter()
             .any(|e| matches!(e, Event::Status(Status::WaitingForCredentials)))
     );
-    // close action
+    // close action, and the one wake that keeps a host polling only on wakes reachable while the
+    // wait has no timer of its own (issue #2691)
     let mut saw_close = false;
+    let mut wakes = 0;
     while let Some(a) = session.poll(ts(0)) {
-        if matches!(a, Action::Close { .. }) {
-            saw_close = true;
+        match a {
+            Action::Close { .. } => saw_close = true,
+            Action::WakeAt(_) => wakes += 1,
+            Action::HttpRequest { .. } => panic!("a request while the credentials wait"),
+            _ => {}
         }
-        assert!(!matches!(a, Action::WakeAt(_) | Action::HttpRequest { .. }));
     }
     assert!(saw_close);
+    assert!(wakes <= 1, "{wakes} wakes while the credentials wait");
     for _ in 0..50 {
         assert!(session.poll(ts(1_000_000)).is_none());
     }
@@ -718,33 +724,60 @@ fn rejected_credentials_then_new_ones_use_the_new_challenge_state() {
 }
 
 #[test]
-fn set_credentials_after_the_session_dropped_its_connection_resumes_from_the_instant_it_is_given() {
-    let base = 10_000_000u64;
+fn set_credentials_after_a_dropped_connection_resumes_from_the_instant_the_call_is_given() {
+    let late = 10_000_000u64;
     let mut session = Session::open(
         Url::parse("http://example/live.ts").unwrap(),
         Config::default(),
         ts(0),
     )
     .unwrap();
-    let conn = match session.poll(ts(0)).unwrap() {
-        Action::HttpRequest { conn, .. } => conn,
-        other => panic!("{other:?}"),
-    };
-    session.on_closed(conn, Some(TransportError::Refused), ts(0));
-    let before = wakes(&mut session, 0);
-    assert!(!before.is_empty(), "the refusal backs off");
-    session
-        .set_credentials(ts(base), Credentials::new("user", "pass"))
-        .unwrap();
-    let after = wakes(&mut session, base);
-        assert!(
-        after.iter().any(|&at| at.as_micros() == base + 1_000_000),
-        "the reconnect set_credentials starts is stamped with the instant it is given, not the last one the session saw: before {before:?} after {after:?}"
+    while session.poll(ts(0)).is_some() {}
+    while session.next_event().is_some() {}
+    session.reconnect(ts(late));
+    while session.next_event().is_some() {}
+    session.set_credentials(ts(late), Credentials::new("user", "pass")).unwrap();
+    let resumed = drain_at(&mut session, late);
+    let tail = wakes(&mut session, late);
+    let deadline: Vec<Timestamp> = resumed
+        .iter()
+        .chain(&[])
+        .filter_map(|a| match a {
+            Action::WakeAt(at) => Some(*at),
+            _ => None,
+        })
+        .chain(tail.iter().copied())
+        .collect();
+    assert!(
+        resumed
+            .iter()
+            .any(|a| matches!(a, Action::HttpRequest { .. })),
+        "the authorized request is stamped from the instant set_credentials is given: {resumed:?}"
     );
+    let start = late + 1_000_000;
+    assert!(
+        deadline
+            .iter()
+            .any(|at| at.as_micros() >= start && at.as_micros() <= start + 1_000_000),
+        "and its deadline counts from that instant, not from the last one the session saw: {resumed:?} {tail:?}"
+    );
+}
+/// Every action a poll at `now` yields, failing instead of spinning when the session never drains.
+fn drain_at(session: &mut Session, now: u64) -> Vec<Action> {
+    let drained: Vec<Action> = std::iter::from_fn(|| session.poll(ts(now)))
+        .take(POLL_BOUND)
+        .collect();
+    assert!(
+        drained.len() < POLL_BOUND,
+        "poll never drained at {now}: {} actions",
+        drained.len()
+    );
+    drained
 }
 
 fn wakes(session: &mut Session, now: u64) -> Vec<Timestamp> {
-    std::iter::from_fn(|| session.poll(ts(now)))
+    drain_at(session, now)
+        .into_iter()
         .filter_map(|a| match a {
             Action::WakeAt(at) => Some(at),
             _ => None,

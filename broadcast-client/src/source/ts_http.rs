@@ -41,6 +41,8 @@ fn to_27mhz(ticks: u64, clock_hz: Timescale) -> u64 {
 pub struct TsHttpSource {
     ts: TsHttpClient,
     url: Url,
+    seed: u64,
+    ts_config: TsConfig,
     events: VecDeque<Item>,
     tracks: BTreeMap<TrackId, TrackSpec>,
     tracks_dirty: bool,
@@ -74,8 +76,15 @@ impl TsHttpSource {
     /// fixed one.
     pub(crate) fn with_seed(url: Url, config: TsConfig, now_us: u64, seed: u64) -> Self {
         Self {
-            ts: TsHttpClient::with_seed(url.as_str(), config, Timestamp::from_micros(now_us), seed),
+            ts: TsHttpClient::with_seed(
+                url.as_str(),
+                config.clone(),
+                Timestamp::from_micros(now_us),
+                seed,
+            ),
             url,
+            seed,
+            ts_config: config,
             events: VecDeque::new(),
             tracks: BTreeMap::new(),
             tracks_dirty: false,
@@ -377,14 +386,27 @@ impl TsHttpSource {
         self.drain_ts_events();
     }
 
-    /// Reconnect.
+    /// Reconnect at `now_us`.
+    ///
+    /// The policy is rebuilt at that instant rather than told to resume: a policy that reopens
+    /// after a refused credentials response keeps `last_byte_at` at the instant it raised that
+    /// wait, and a host that idled would then reconnect from the last instant it polled instead
+    /// of the one it asked for.
     pub fn reconnect(&mut self, now_us: u64) {
         self.now_us = now_us;
-        self.ts.reconnect(Timestamp::from_micros(now_us));
-        while let Some(action) = self.ts.poll() {
+        let mut fresh = TsHttpClient::with_seed(
+            self.url.as_str(),
+            self.ts_config.clone(),
+            Timestamp::from_micros(now_us),
+            self.seed,
+        );
+        while let Some(action) = fresh.poll() {
             self.caller_actions.push_back(action);
         }
-        self.drain_ts_events();
+        while let Some(ev) = fresh.poll_event() {
+            self.map_ts_event(ev);
+        }
+        self.ts = fresh;
     }
 
     fn drain_ts_events(&mut self) {

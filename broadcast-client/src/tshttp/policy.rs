@@ -15,6 +15,10 @@ use broadcast_common::stage::Timestamp;
 const RETRY_SEED: u64 = 0x5EED_2471;
 
 const STALL_NOTICE_REPEAT: Duration = Duration::from_secs(1);
+
+/// How much longer each repeat of a stall notice waits than the one before: a stalled stream
+/// reports once a second, then doubles.
+const NOTICE_STEP_GROWTH: u32 = 2;
 const IDENTITY_CODING: &str = "identity";
 const HEADER_CONTENT_ENCODING: &str = "content-encoding";
 const HEADER_CONTENT_LENGTH: &str = "content-length";
@@ -57,6 +61,7 @@ pub struct TsHttpPolicy {
     last_sample_at: Timestamp,
     first_notice_at: Option<Timestamp>,
     next_notice_at: Option<Timestamp>,
+    notice_step: Duration,
     starved_data_fired: bool,
     starved_nodata_fired: bool,
     finite: bool,
@@ -101,6 +106,7 @@ impl TsHttpPolicy {
             last_sample_at: now,
             first_notice_at: None,
             next_notice_at: None,
+            notice_step: STALL_NOTICE_REPEAT,
             starved_data_fired: false,
             starved_nodata_fired: false,
             finite: false,
@@ -164,9 +170,9 @@ impl TsHttpPolicy {
         }
     }
 
-    /// Allowed to schedule the reopen? `false` when waiting out the backoff would put the
-    /// reopen past the end of the clock: that deadline is never reached, so the policy never
-    /// reopens and arms no wake for it (the backoff stays outstanding).
+    /// Allowed to act on a queued reopen now? `false` when the backoff it waits out would end
+    /// past the end of the clock: that deadline is never reached, so the policy never reopens and
+    /// raises no wake for it (the backoff stays outstanding, and `Ended` is never entered).
     pub(crate) fn reconnect_ready(&self, now: Timestamp) -> bool {
         match self.phase {
             Phase::Backoff { due } => due > now,
@@ -368,25 +374,23 @@ impl TsHttpPolicy {
 
     /// Caller-initiated reconnect (T13).
     pub fn reconnect(&mut self, now: Timestamp) {
-        match self.phase {
-            Phase::Opening { .. } | Phase::Awaiting { .. } | Phase::Playing | Phase::Ended => {
-                self.attempt = 0;
-                self.finite = false;
-                self.expected_bytes = 0;
-                self.received_bytes = 0;
-                self.finite_done = false;
-                self.starved_data_fired = false;
-                self.starved_nodata_fired = false;
-                self.first_notice_at = None;
-                self.next_notice_at = None;
-                self.actions.push_back(Action::Abort);
-                self.actions.push_back(Action::Reconnect {
-                    after: Duration::ZERO,
-                });
-                self.phase = Phase::Backoff { due: now };
-            }
-            Phase::Backoff { .. } => {}
+        if matches!(self.phase, Phase::Ended) {
+            return;
         }
+        self.attempt = 0;
+        self.finite = false;
+        self.expected_bytes = 0;
+        self.received_bytes = 0;
+        self.finite_done = false;
+        self.starved_data_fired = false;
+        self.starved_nodata_fired = false;
+        self.first_notice_at = None;
+        self.next_notice_at = None;
+        self.actions.push_back(Action::Abort);
+        self.actions.push_back(Action::Reconnect {
+            after: Duration::ZERO,
+        });
+        self.phase = Phase::Backoff { due: now };
     }
 
     /// Advance timers, calling `flush` right before a terminal start/stall
@@ -438,6 +442,7 @@ impl TsHttpPolicy {
                 }
                 if self.first_notice_at.is_none() {
                     self.first_notice_at = Some(now);
+                    self.notice_step = STALL_NOTICE_REPEAT;
                     self.next_notice_at = now.checked_add(STALL_NOTICE_REPEAT);
                     self.events.push_back(Event::StallNotice {
                         secs: idle.as_secs(),
@@ -448,14 +453,9 @@ impl TsHttpPolicy {
                     self.events.push_back(Event::StallNotice {
                         secs: idle.as_secs(),
                     });
-                    let steps =
-                        u32::try_from(since(now, n).as_nanos() / STALL_NOTICE_REPEAT.as_nanos())
-                            .unwrap_or(u32::MAX)
-                            .saturating_add(1);
-                    self.next_notice_at = STALL_NOTICE_REPEAT
-                        .checked_mul(steps)
-                        .and_then(|repeat| n.checked_add(repeat))
-                        .or(self.next_notice_at);
+                    self.notice_step = self.notice_step.saturating_mul(NOTICE_STEP_GROWTH);
+                    // A next notice past the end of the clock never fires, so none is armed.
+                    self.next_notice_at = n.checked_add(self.notice_step);
                 }
                 // stall_reconnect
                 if idle >= self.config.stall_reconnect {
@@ -530,10 +530,18 @@ impl TsHttpPolicy {
         });
     }
 
-    /// When a connection waits `after` from `now` reopens. An instant past the end of the
-    /// clock is no deadline, so the policy keeps the backoff outstanding and never reopens.
-    fn reopen_at(&self, now: Timestamp, after: Duration) -> Timestamp {
-        now.checked_add(after).unwrap_or(now)
+    /// Enter the backoff that reopens `after` from `now`.
+    ///
+    /// A reopen past the end of the clock is no deadline: the policy takes no `Reconnect` action
+    /// and stays in `Ended`, which arms no wake and so never reopens. A saturated action would
+    /// read as due on every poll forever.
+    fn back_off(&mut self, now: Timestamp, after: Duration) {
+        let Some(due) = now.checked_add(after) else {
+            self.phase = Phase::Ended;
+            return;
+        };
+        self.actions.push_back(Action::Reconnect { after });
+        self.phase = Phase::Backoff { due };
     }
 
     fn fail_before_playing(&mut self, now: Timestamp) {
@@ -541,13 +549,10 @@ impl TsHttpPolicy {
         let wait = self.retry.on_disconnected_exact(now.as_micros());
         let after = wait.max(self.retry_after);
         self.retry_after = Duration::ZERO;
-        self.actions.push_back(Action::Reconnect { after });
         self.events.push_back(Event::Reconnecting {
             attempt: self.attempt,
         });
-        self.phase = Phase::Backoff {
-            due: self.reopen_at(now, after),
-        };
+        self.back_off(now, after);
     }
 
     fn played_ended(&mut self, now: Timestamp) {
@@ -559,9 +564,6 @@ impl TsHttpPolicy {
         self.retry.reset();
         let lasted = since(now, self.open_at);
         let after = self.config.min_reconnect_interval.saturating_sub(lasted);
-        self.actions.push_back(Action::Reconnect { after });
-        self.phase = Phase::Backoff {
-            due: self.reopen_at(now, after),
-        };
+        self.back_off(now, after);
     }
 }

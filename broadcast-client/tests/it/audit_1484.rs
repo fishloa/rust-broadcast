@@ -527,9 +527,12 @@ fn reconnect_backoff_past_the_end_of_the_clock_is_no_wake_rather_than_a_saturate
     let mut session = open(TS_URL, config);
     let first = one(&mut session, 0);
     respond(&mut session, &first, 503, &[]);
+    let saturated = Timestamp::from_micros(u64::MAX);
     let actions = drain(&mut session, SEC);
     assert!(
-        !actions.iter().any(|a| matches!(a, Action::WakeAt(_))),
+        !actions
+            .iter()
+            .any(|a| matches!(a, Action::WakeAt(at) if *at >= saturated)),
         "a deadline that does not fit the clock never fires, so it is never armed: {actions:?}"
     );
 }

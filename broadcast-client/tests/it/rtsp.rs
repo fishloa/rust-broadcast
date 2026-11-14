@@ -548,7 +548,7 @@ fn auth_basic_challenge_flow() {
         "a 401 without credentials is not retried"
     );
     host.session
-        .set_credentials(ts(0), user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.drain();
     let describes: Vec<_> = host
@@ -587,7 +587,7 @@ fn auth_digest_challenge_flow() {
         Event::AuthRequired {scheme: AuthScheme::Digest, realm: Some(r), .. } if r == REALM
     )));
     host.session
-        .set_credentials(ts(0), user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.drain();
     let second = host
@@ -655,7 +655,7 @@ fn credentials_rejected_emits_auth_rejected() {
     );
     assert_eq!(host.server.log.len(), sent);
     host.session
-        .set_credentials(ts(0), user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.drain();
     assert_eq!(
@@ -1110,7 +1110,7 @@ fn late_callbacks_after_close_ignored() {
         ts(host.now),
     );
     host.session
-        .set_credentials(ts(0), user_credentials(PASSWORD))
+        .set_credentials(ts(host.now), user_credentials(PASSWORD))
         .unwrap();
     host.session.reconnect(ts(host.now));
     assert!(host.session.poll(ts(host.now + 100 * SEC)).is_none());
