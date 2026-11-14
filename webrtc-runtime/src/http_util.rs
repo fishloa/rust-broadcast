@@ -176,6 +176,14 @@ pub(crate) fn bearer(token: &str) -> Result<Authorization<headers::authorization
     })
 }
 
+/// An `Authorization: Basic <base64>` typed header (RFC 7617).
+pub(crate) fn basic(
+    username: &str,
+    password: &str,
+) -> Result<Authorization<headers::authorization::Basic>, Error> {
+    Ok(Authorization::basic(username, password))
+}
+
 /// A `Retry-After: <seconds>` typed header.
 pub(crate) fn retry_after(delay: Duration) -> RetryAfter {
     RetryAfter::delay(delay)

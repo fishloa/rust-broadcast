@@ -22,7 +22,7 @@ fn bearer_of(req: &client::HttpRequest) -> Option<String> {
 fn established_client(location: &str) -> WhipClient {
     let mut c = WhipClient::new(
         webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+            .with_credentials(broadcast_auth::Credentials::Bearer { token: TOKEN.into() }),
     );
     let _ = c.offer(SDP_OFFER.to_vec()).unwrap();
     c.on_response(
@@ -42,7 +42,7 @@ fn established_client(location: &str) -> WhipClient {
 fn established_player(location: &str) -> WhepPlayer {
     let mut p = WhepPlayer::new(
         webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+            .with_credentials(broadcast_auth::Credentials::Bearer { token: TOKEN.into() }),
     );
     let _ = p.offer(SDP_OFFER.to_vec()).unwrap();
     p.on_response(
@@ -114,11 +114,11 @@ fn whep_player_sends_the_bearer_only_to_its_own_origin() {
 fn debug_never_prints_the_bearer_token_or_turn_credential() {
     let c = WhipClient::new(
         webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+            .with_credentials(broadcast_auth::Credentials::Bearer { token: TOKEN.into() }),
     );
     let p = WhepPlayer::new(
         webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(TOKEN.into()),
+            .with_credentials(broadcast_auth::Credentials::Bearer { token: TOKEN.into() }),
     );
     for text in [format!("{c:?}"), format!("{p:?}")] {
         assert!(!text.contains(TOKEN), "{text}");
