@@ -19,7 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common   = { path = "../broadcast-common", version = "12.0.0", default-features = false }
 dvb-bbframe  = { path = "../dvb-bbframe", version = "14.0.0", optional = true, default-features = false }
 mpeg-ts      = { path = "../mpeg-ts", version = "0.8.0", optional = true, default-features = false }
-chrono       = { workspace = true, optional = true, features = ["alloc"] }
+jiff         = { version = "0.2", default-features = false, optional = true }
 thiserror = { version = "2", default-features = false }
 num_enum = { workspace = true }
 bytes        = { version = "1", default-features = false, optional = true }
@@ -45,17 +45,17 @@ required-features = ["ts"]
 default = ["std", "ts"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-# Every optional feature except `std` itself (`ts`, `serde`, `chrono`, `yoke`) is
+# Every optional feature except `std` itself (`ts`, `serde`, `jiff`, `yoke`) is
 # no_std+alloc-clean and is built on thumbv7em in CI.
-std     = ["broadcast-common/std", "dvb-bbframe?/std", "mpeg-ts?/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "serde?/std", "bytes?/std"]
+std     = ["broadcast-common/std", "dvb-bbframe?/std", "mpeg-ts?/std", "jiff?/std", "thiserror/std", "num_enum/std", "serde?/std", "bytes?/std"]
 # `ts`: the feed-and-iterate pump (feed_ts) and the InnerTsRecovery driver,
 # which pulls in `bytes` and the `dvb-bbframe` BBFrame extractor.
 ts      = ["dep:bytes", "dep:dvb-bbframe", "dep:mpeg-ts"]
 serde   = ["dep:serde", "broadcast-common/serde", "mpeg-ts?/serde"]
 
-# `chrono`: decoded UTC emission-time accessor on T2TimestampPayload.
-# Mirrors dvb-si's chrono feature; OFF by default.
-chrono  = ["dep:chrono", "broadcast-common/chrono"]
+# `jiff`: decoded UTC emission-time accessor on T2TimestampPayload
+# (`jiff::Timestamp`). Mirrors dvb-si's jiff feature; OFF by default.
+jiff    = ["dep:jiff", "broadcast-common/jiff"]
 
 # yoke::Yokeable on the zero-copy payload view types (mirrors dvb-si's `yoke`
 # feature) — own a parsed T2-MI payload past the input buffer's borrow.

@@ -150,9 +150,9 @@ impl ExtensionBodyDef<'_> for NetworkChangeNotify {
 impl NetworkChange {
     /// `start_time_of_change` (40-bit MJD + BCD UTC) as a UTC datetime; `None`
     /// if a field is out of range.
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[must_use]
-    pub fn start_time_of_change_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn start_time_of_change_utc(&self) -> Option<jiff::Timestamp> {
         let raw = self.start_time_of_change.to_be_bytes();
         broadcast_common::time::decode_mjd_bcd_utc([raw[3], raw[4], raw[5], raw[6], raw[7]])
     }
@@ -474,10 +474,10 @@ mod tests {
                 assert_eq!(ch1.start_time_of_change, 0xE5E2023456);
                 assert_eq!(ch1.change_duration, 0x113245);
                 assert_eq!(ch1.change_duration_secs(), Some(11 * 3600 + 32 * 60 + 45));
-                #[cfg(feature = "chrono")]
+                #[cfg(feature = "jiff")]
                 {
-                    use chrono::{Datelike, Timelike};
-                    let start = ch1.start_time_of_change_utc().expect("valid MJD+BCD");
+                    let start = jiff::tz::TimeZone::UTC
+                        .to_datetime(ch1.start_time_of_change_utc().expect("valid MJD+BCD"));
                     assert_eq!((start.year(), start.month(), start.day()), (2020, 1, 2));
                     assert_eq!((start.hour(), start.minute(), start.second()), (2, 34, 56));
                 }

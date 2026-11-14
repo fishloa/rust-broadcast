@@ -1,6 +1,12 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- BREAKING: the default `chrono` feature is replaced by `jiff` (no alias), and `chrono` is no longer a dependency. Every decoded instant that was `chrono::DateTime<Utc>` is now `jiff::Timestamp` (TDT/TOT `utc_time`/`set_utc_time`, `EitEvent::set_start_time`, `collect::eit` `start_time`, `MjdBcdTime::to_datetime`/`from_datetime`, `LocalTimeOffsetEntry::time_of_change`/`set_time_of_change`, network_change_notify `start_time_of_change_utc`, `epg::EpgEvent::start_time`, `EpgStore::now_and_next`/`schedule`), local time offsets are `jiff::SignedDuration` instead of `chrono::Duration`, and `EitEvent::start_time_chrono` is renamed `start_time_utc`. The MJD + BCD decoding is unchanged; `serde` now serializes those instants through jiff (RFC 3339, `Z`) (#2635).
+### Added
+- Feature `legacy-charsets` (on by default) carries `encoding_rs`, which is now needed only for the EN 300 468 Annex A KS X 1001, GB-2312 and Big5 selectors (0x12–0x14); `std` no longer pulls it in. With the feature off, `text::try_decode_dvb_string` and `DvbText::try_decode` return the new `Error::CharsetNotEnabled { charset: text::LegacyCharset }` for those three selectors, and the infallible `decode` yields U+FFFD per byte (#2635).
+### Changed
+- ISO/IEC 8859-2 … -15 text (selectors 0x01–0x0B and 0x10 0x00 nn) is decoded from tables in the crate, pinned byte for byte against `encoding_rs`, so it no longer needs `encoding_rs` and now also decodes under `no_std` instead of yielding U+FFFD (#2635).
 
 ## [14.0.0] - 2026-11-14
 ### Changed

@@ -216,7 +216,7 @@
 //! | [`text`] | [`text::DvbText`] / [`text::LangCode`] — EN 300 468 Annex A decoding |
 //! | [`collect`] | multi-section collection: [`collect::SectionSetCollector`], [`collect::EitCollector`], complete NIT/BAT/SDT/EIT views |
 //! | `demux` | [`SiDemux`](crate::demux::SiDemux): PID-filtered, CRC-checked, version-gated section pump (feature `ts`) |
-//! | `epg` | `EpgStore`: bounded EPG with now/next and schedules (feature `chrono`) |
+//! | `epg` | `EpgStore`: bounded EPG with now/next and schedules (feature `jiff`) |
 //! | `owned` | `Owned<T>`: keep a zero-copy view past its buffer (feature `yoke`) |
 //! | [`table_id`] / [`descriptor_tag`] | the typed [`TableId`] / [`DescriptorTag`] enums |
 //! | [`traits`] | `TableDef` / `DescriptorDef` — the per-type consts the dispatch lists are generated from |
@@ -307,8 +307,9 @@
 //!
 //! | Feature | Default | Enables |
 //! |---|---|---|
-//! | `std` | on | Links `std`. Off → `#![no_std]` + `alloc`; the non-Latin text charsets and wall-clock time need `std`. |
-//! | `chrono` | on | MJD + BCD time fields also decode to `chrono::DateTime<Utc>` (EIT `start_time_chrono()`, TDT/TOT `utc_time()`), local time offsets to `chrono::Duration`; the `epg` module. Off → `broadcast_common::time::MjdBcdDateTime` and raw bytes only. |
+//! | `std` | on | Links `std`. Off → `#![no_std]` + `alloc`; wall-clock time needs `std`. |
+//! | `legacy-charsets` | on | KS X 1001 / GB-2312 / Big5 text (Annex A selectors 0x12–0x14) via `encoding_rs` (implies `std`). Off → [`DvbText::try_decode`](crate::text::DvbText::try_decode) returns [`Error::CharsetNotEnabled`] for those three and `decode()` yields U+FFFD; every other Annex A charset, ISO 8859 included, still decodes. |
+//! | `jiff` | on | MJD + BCD time fields also decode to `jiff::Timestamp` (EIT `start_time_utc()`, TDT/TOT `utc_time()`), local time offsets to `jiff::SignedDuration`; the `epg` module. Off → `broadcast_common::time::MjdBcdDateTime` and raw bytes only. |
 //! | `ts` | on | [`demux::SiDemux`] over 188-byte TS packets (framing from the `mpeg-ts` crate). Off → bring your own complete section bytes. |
 //! | `serde` | off | **Serialize-only** — for display/export (JSON via serde_json); parsing FROM JSON is deliberately unsupported, re-parse from wire bytes. `Serialize` on every table/descriptor; [`text::DvbText`] serializes as its **decoded** UTF-8 string (camelCase JSON). |
 //! | `yoke` | off | `yoke::Yokeable` on every zero-copy view type + the `owned::Owned` wrapper — own a parsed view past the input buffer's borrow (store/cache/send across threads) without re-parsing or a mirror type. |
@@ -343,7 +344,7 @@ pub mod collect;
 pub mod compatibility;
 pub mod descriptor_tag;
 pub mod descriptors;
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 pub mod epg;
 pub mod error;
 pub(crate) mod h222_bits;

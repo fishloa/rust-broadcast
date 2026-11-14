@@ -153,8 +153,9 @@ memory-capped. Layering: `dvb-si/src/carousel/mod.rs`.
 | Feature | Default | Effect |
 |---|---|---|
 | `std` | on | off → `#![no_std]` + `alloc` |
+| `legacy-charsets` | on | KS X 1001 / GB-2312 / Big5 text via `encoding_rs`; off → `DvbText::try_decode` is `Error::CharsetNotEnabled` for those |
 | `ts` | on | `demux::SiDemux`; off → bring your own section bytes |
-| `chrono` | on | MJD+BCD → `chrono::DateTime<Utc>` helpers, `epg` module |
+| `jiff` | on | MJD+BCD → `jiff::Timestamp` helpers, `epg` module |
 | `serde` | off | serialize-only JSON support |
 | `yoke` | off | `owned::Owned<T>` to keep a parsed view past its buffer |
 | `flate2` | off | zlib decompression of compressed carousel modules |
@@ -179,8 +180,8 @@ memory-capped. Layering: `dvb-si/src/carousel/mod.rs`.
   A steady carousel produces one event, not one per cycle; that is not a
   parser bug. Use `emit_repeats(true)` if you really want every repeat.
 - **Times are MJD + BCD, not UNIX time.** `start_time_raw` is a 16-bit MJD
-  followed by BCD `HHMMSS`; decode with `start_time_chrono()` (feature
-  `chrono`) or `broadcast_common::time::decode_mjd_bcd`, and encode with
+  followed by BCD `HHMMSS`; decode with `start_time_utc()` (feature
+  `jiff`) or `broadcast_common::time::decode_mjd_bcd`, and encode with
   `set_start_time(..)`/`set_duration(..)` (which return `ValueOutOfRange` when
   the value does not fit).
 - **Text is Annex A, not UTF-8.** Always go through `DvbText::decode()` (or

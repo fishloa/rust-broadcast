@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `epg` prints event start times as RFC 3339 with a `Z` suffix (jiff's `Timestamp`) instead of `+00:00`; `dvb-si` is built with its `jiff` feature in place of the removed `chrono` (#2635).
 
 ## [14.0.0] - 2026-11-14
 ### Changed

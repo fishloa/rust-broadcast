@@ -29,7 +29,7 @@ impl MjdBcdTime {
         self.0
     }
 
-    /// Decode to `(mjd, hours, minutes, seconds)` without `chrono`. Each BCD
+    /// Decode to `(mjd, hours, minutes, seconds)` without `jiff`. Each BCD
     /// component is `None` if its nibbles are not decimal digits.
     #[must_use]
     pub fn parts(&self) -> (u16, Option<u8>, Option<u8>, Option<u8>) {
@@ -42,9 +42,9 @@ impl MjdBcdTime {
     }
 
     /// Decode to a UTC datetime. `None` if a field is out of range.
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[must_use]
-    pub fn to_datetime(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn to_datetime(&self) -> Option<jiff::Timestamp> {
         broadcast_common::time::decode_mjd_bcd_utc(self.0)
     }
 
@@ -52,8 +52,8 @@ impl MjdBcdTime {
     ///
     /// # Errors
     /// [`Error::ValueOutOfRange`] if the date is outside the 16-bit MJD range.
-    #[cfg(feature = "chrono")]
-    pub fn from_datetime(dt: chrono::DateTime<chrono::Utc>) -> Result<Self> {
+    #[cfg(feature = "jiff")]
+    pub fn from_datetime(dt: jiff::Timestamp) -> Result<Self> {
         broadcast_common::time::encode_mjd_bcd_utc(dt)
             .map(Self::from_raw)
             .ok_or(Error::ValueOutOfRange {
@@ -133,17 +133,20 @@ mod tests {
         ));
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn from_datetime_encodes_a_known_vector_and_inverts_to_datetime() {
-        use chrono::TimeZone;
-        let dt = chrono::Utc
-            .with_ymd_and_hms(2023, 1, 1, 12, 34, 56)
-            .unwrap();
+        let utc = |y, mo, d, h, mi, s| {
+            jiff::tz::TimeZone::UTC
+                .to_timestamp(jiff::civil::date(y, mo, d).at(h, mi, s, 0))
+                .unwrap()
+        };
+        let dt = utc(2023, 1, 1, 12, 34, 56);
         let t = MjdBcdTime::from_datetime(dt).unwrap();
         assert_eq!(t.raw(), [0xEA, 0x29, 0x12, 0x34, 0x56]);
         assert_eq!(t.to_datetime(), Some(dt));
-        let far_future = chrono::Utc.with_ymd_and_hms(9999, 12, 31, 0, 0, 0).unwrap();
+        // jiff's last representable day is 9999-12-30 (UTC).
+        let far_future = utc(9999, 12, 30, 0, 0, 0);
         assert!(matches!(
             MjdBcdTime::from_datetime(far_future),
             Err(Error::ValueOutOfRange { .. })

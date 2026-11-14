@@ -80,7 +80,7 @@ pub fn run(path: &str, json: bool) -> ExitCode {
                     for evt in events {
                         let start = evt
                             .start_time
-                            .map(|t| t.to_rfc3339())
+                            .map(|t| t.to_string())
                             .unwrap_or_else(|| "?".to_string());
                         let duration = evt
                             .duration

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- BREAKING: the `chrono` feature is replaced by `jiff` (no alias): `T2TimestampPayload::emission_time_utc` returns and `set_emission_time_utc` takes `jiff::Timestamp` instead of `chrono::DateTime<Utc>`; `chrono` is no longer a dependency (#2635).
 
 ## [14.0.0] - 2026-11-14
 ### Changed

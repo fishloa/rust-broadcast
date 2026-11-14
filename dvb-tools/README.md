@@ -111,7 +111,7 @@ LCN    1  onid=0x20FA tsid=0x0006 service=0x0601  H.264/AVC HD digital televisio
 
 $ dvb-tools epg fixtures/ts/tnt-5w-12732v-isi6-10s.ts
 service 0x0601  TF1
-    event_id=0x7857  start=2026-04-11T00:45:00+00:00  duration=0h32m00s  "50' inside. "Le mag" (55/106)"
+    event_id=0x7857  start=2026-04-11T00:45:00Z  duration=0h32m00s  "50' inside. "Le mag" (55/106)"
 ...
 ```
 

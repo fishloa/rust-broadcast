@@ -533,11 +533,11 @@ def apply_partial(impls: list[Impl]) -> None:
 # Annex A charset decoders: Charset variant -> (selector(s), table, decoding).
 CHARSETS = {
     "Iso6937": ("none (first byte ≥ 0x20) or 0x00", "Figure A.1 default Latin (ISO/IEC 6937 superset, € at 0xA4)", "built-in, glyph-for-glyph; combining-diacritic row → precomposed or base + combining mark", "no"),
-    "Iso8859": ("0x01–0x07, 0x09–0x0B; 0x10 0x00 nn", "ISO/IEC 8859-5 … -15 (no -12); two-byte form any -n", "`encoding_rs` (8859-1 built-in)", "yes, except 8859-1"),
+    "Iso8859": ("0x01–0x07, 0x09–0x0B; 0x10 0x00 nn", "ISO/IEC 8859-5 … -15 (no -12); two-byte form any -n", "built-in tables (`text::iso8859`, pinned to `encoding_rs` in tests; 8859-1 is the identity)", "no"),
     "Ucs2Be": ("0x11", "ISO/IEC 10646 Basic Multilingual Plane", "built-in UCS-2 big-endian", "no"),
-    "Ksx1001": ("0x12", "KS X 1001 (Korean)", "`encoding_rs` EUC-KR", "yes"),
-    "Gb2312": ("0x13", "GB-2312-1980 (Simplified Chinese)", "`encoding_rs` GBK (a GB-2312 superset)", "yes"),
-    "Big5": ("0x14", "Big5 (Traditional Chinese)", "`encoding_rs` Big5", "yes"),
+    "Ksx1001": ("0x12", "KS X 1001 (Korean)", "`encoding_rs` EUC-KR", "`legacy-charsets` (default)"),
+    "Gb2312": ("0x13", "GB-2312-1980 (Simplified Chinese)", "`encoding_rs` GBK (a GB-2312 superset)", "`legacy-charsets` (default)"),
+    "Big5": ("0x14", "Big5 (Traditional Chinese)", "`encoding_rs` Big5", "`legacy-charsets` (default)"),
     "Utf8": ("0x15", "UTF-8 encoding of ISO/IEC 10646", "passthrough (lossy on invalid bytes)", "no"),
     "Unsupported": ("0x1F + encoding_type_id; reserved 0x08, 0x0C–0x0F, 0x16–0x1E", "no registered broadcast encodings / reserved", "U+FFFD (never panics)", "no"),
 }
@@ -549,6 +549,12 @@ def load_charsets() -> list[str]:
     if not m:
         raise GenError(f"{rel(path)}: `enum Charset` not found")
     variants = re.findall(r"^\s{4}(\w+)", strip_line_comments(m.group(1)), re.M)
+    if "Legacy" in variants:
+        legacy = re.search(r"pub enum LegacyCharset \{(.*?)\n\}", read(path), re.S)
+        if not legacy:
+            raise GenError(f"{rel(path)}: `enum LegacyCharset` not found")
+        at = variants.index("Legacy")
+        variants[at:at + 1] = re.findall(r"^\s{4}(\w+)", strip_line_comments(legacy.group(1)), re.M)
     if set(variants) != set(CHARSETS):
         raise GenError(
             f"{rel(path)}: Charset variants {sorted(variants)} differ from the generator's "
@@ -587,7 +593,7 @@ LAYERS = [
     ("collect/mod.rs", "SectionSetCollector", "assemble every long-form table across `section_number 0..=last_section_number`", ""),
     ("collect/eit.rs", "EitCollector", "EIT schedule collection across `last_table_id` (the rule section numbers alone miss)", ""),
     ("collect/nit.rs", "CompleteNit", "flattened logical NIT (also `CompleteBat`, `CompleteSdt`, `CompleteEit`)", ""),
-    ("epg.rs", "EpgStore", "bounded EPG: deduplicated events, decoded extended text, now/next, SDT name join", "chrono"),
+    ("epg.rs", "EpgStore", "bounded EPG: deduplicated events, decoded extended text, now/next, SDT name join", "jiff"),
     ("descriptors/registry.rs", "DescriptorRegistry", "runtime registration of private descriptor tags, PDS-scoped", ""),
     ("descriptors/extension/registry.rs", "ExtensionRegistry", "runtime registration of private descriptor_tag_extension bodies", ""),
     ("tables/registry.rs", "TableRegistry", "runtime registration of private table_ids", ""),
@@ -1275,7 +1281,7 @@ def render_coverage(m: Model) -> str:
         "for both the single-byte (0x80–0x9F) and two-byte (Table A.2) forms: emphasis dropped,",
         "CR/LF → space, reserved controls stripped.",
         "",
-        "| Selector (Table A.3) | Character table | Decoder | Needs `std` |",
+        "| Selector (Table A.3) | Character table | Decoder | Needs feature |",
         "|---|---|---|---|",
     ]
     for v in m.charsets:
@@ -1286,12 +1292,12 @@ def render_coverage(m: Model) -> str:
         "- **MJD + BCD UTC** (EN 300 468 Annex C) for EIT `start_time`, TDT/TOT `UTC_time`,",
         "  local_time_offset `time_of_change`, network_change_notify `start_time_of_change`:",
         "  always decoded to `broadcast_common::time::MjdBcdDateTime` (e.g. `EitEvent::start_time()`,",
-        "  `TdtSection::utc_time_decoded()`), additionally to `chrono::DateTime<Utc>` with the",
-        "  `chrono` feature (`start_time_chrono()`, `utc_time()`); `*_raw()` returns the wire bytes.",
+        "  `TdtSection::utc_time_decoded()`), additionally to `jiff::Timestamp` with the",
+        "  `jiff` feature (`start_time_utc()`, `utc_time()`); `*_raw()` returns the wire bytes.",
         "- **2038 MJD wrap rule** (EN 300 468 V1.20.1 clauses 5.2.4–5.2.6, 6.2.20, 6.4.9): an MJD",
         "  whose most significant bit is 0 is read as `0x10000 + MJD`.",
         "- **BCD durations**: EIT `duration()` → `core::time::Duration`; local_time_offset",
-        "  `local_time_offset()` / `next_time_offset()` → `chrono::Duration` (feature `chrono`).",
+        "  `local_time_offset()` / `next_time_offset()` → `jiff::SignedDuration` (feature `jiff`).",
         "",
         "## Higher layers",
         "",

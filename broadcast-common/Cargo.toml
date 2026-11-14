@@ -16,12 +16,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 [features]
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
-# needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only;
-# the parse/serialize/CRC/BCD/MJD core is fully no_std.
-std = ["chrono?/std", "chrono?/clock", "serde?/std", "erased-serde?/std"]
-# MJD↔calendar conversion for the UTC time codec. Off = the BCD/duration
-# helpers remain available; only the chrono-typed UTC functions are gated.
-chrono = ["dep:chrono"]
+# needs only `alloc`. The std `Error` glue is std-only; the
+# parse/serialize/CRC/BCD/MJD core is fully no_std.
+std = ["jiff?/std", "serde?/std", "erased-serde?/std"]
+# `jiff::Timestamp` faces of the UTC time codecs (`time::decode_mjd_bcd_utc`
+# and friends). Off = the MJD/BCD/duration codecs remain available; only the
+# jiff-typed functions are gated. no_std compatible.
+jiff = ["dep:jiff"]
 # `serde::Serialize` derives on the shared spec types (currently
 # `cenc::CencScheme`). Off by default: the parse/serialize core needs no
 # serialization framework, and a consumer that wants one enables it through
@@ -45,10 +46,7 @@ url = ["dep:url"]
 
 [dependencies]
 # Default build stays lean — consumers of broadcast_common pay for nothing they aren't
-# already paying for downstream. `chrono` is pulled only when the `chrono`
-# feature is enabled (e.g. by dvb-si's own `chrono` feature); it is configured
-# `no_std + alloc` so it composes with the crate's `no_std` build.
-chrono = { workspace = true, optional = true, features = ["alloc"] }
+# already paying for downstream.
 # Hex codec backing `hex::hex_encode` (SP5). `alloc` only: the crate stays no_std.
 hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # ISO 639 code tables (alpha-2/alpha-3 B and T) for canonicalising language codes
@@ -56,8 +54,9 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 iso-639 = { version = "0.1", optional = true, default-features = false }
 # Base64 codec backing `base64::*`. `alloc` only; no_std compatible.
 base64 = { version = "0.23", optional = true, default-features = false, features = ["alloc"] }
-# HTTP-date parsing (RFC 9110 §5.6.7). Pulled in only by the `http-date` feature.
-jiff = { version = "0.2", default-features = false, features = ["std"], optional = true }
+# Date/time: the `jiff` feature (UTC time codecs, no_std) and the `http-date`
+# feature (RFC 9110 §5.6.7, std). `std` turns on `jiff/std`.
+jiff = { version = "0.2", default-features = false, optional = true }
 # RFC 3986 reference resolution, behind the `url` feature (no_std + alloc).
 url = { version = "2", optional = true, default-features = false }
 # Only pulled in by the `serde` feature — see its comment above. Configured

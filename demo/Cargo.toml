@@ -17,7 +17,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
-dvb-si           = { path = "../dvb-si",           features = ["ts", "serde", "chrono"] }
+dvb-si           = { path = "../dvb-si",           features = ["ts", "serde", "jiff"] }
 mpeg-ts          = { path = "../mpeg-ts",          version = "0.8.0", default-features = false }
 dvb-conformance  = { path = "../dvb-conformance",  version = "14.0.0", features = ["serde"] }
 scte35-splice    = { path = "../scte35-splice",    version = "6.0.0", features = ["serde"] }

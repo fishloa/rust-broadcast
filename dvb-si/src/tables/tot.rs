@@ -49,7 +49,7 @@ pub struct TotSection<'a> {
 }
 
 impl<'a> TotSection<'a> {
-    /// Decode the UTC time to a plain date-time struct (no `chrono` feature
+    /// Decode the UTC time to a plain date-time struct (no `jiff` feature
     /// required).
     ///
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
@@ -94,14 +94,14 @@ impl<'a> TotSection<'a> {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(feature = "jiff")]
 impl TotSection<'_> {
     /// Decode `utc_time_raw` (16-bit MJD + 24-bit BCD UTC) to a UTC datetime.
     ///
     /// Returns `None` if the date/time fields are out of range. MJD→calendar
     /// conversion per ETSI EN 300 468 Annex C.
     #[must_use]
-    pub fn utc_time(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn utc_time(&self) -> Option<jiff::Timestamp> {
         broadcast_common::time::decode_mjd_bcd_utc(self.utc_time_raw)
     }
 
@@ -110,7 +110,7 @@ impl TotSection<'_> {
     /// # Errors
     /// [`ValueOutOfRange`](crate::Error::ValueOutOfRange) if the date is
     /// outside the representable 16-bit MJD range.
-    pub fn set_utc_time(&mut self, utc_time: chrono::DateTime<chrono::Utc>) -> Result<()> {
+    pub fn set_utc_time(&mut self, utc_time: jiff::Timestamp) -> Result<()> {
         self.utc_time_raw =
             broadcast_common::time::encode_mjd_bcd_utc(utc_time).ok_or(Error::ValueOutOfRange {
                 field: "TotSection::utc_time",

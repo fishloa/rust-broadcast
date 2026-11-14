@@ -385,15 +385,15 @@ impl T2TimestampPayload {
     }
 }
 
-#[cfg(feature = "chrono")]
-#[cfg_attr(docsrs, doc(cfg(feature = "chrono")))]
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 impl T2TimestampPayload {
     /// The emission time as civil UTC: `UTC = DVB-T2 time - utco`
     /// (ETSI TS 102 773 §5.2.7 and Annex F).
     ///
-    /// `None` for a Null timestamp or a value `chrono` cannot represent.
+    /// `None` for a Null timestamp or a value `jiff::Timestamp` cannot represent.
     #[must_use]
-    pub fn emission_time_utc(&self) -> Option<chrono::DateTime<chrono::Utc>> {
+    pub fn emission_time_utc(&self) -> Option<jiff::Timestamp> {
         let offset = self.emission_offset()?;
         broadcast_common::time::decode_seconds_since_2000_utc(
             offset.as_secs(),
@@ -415,7 +415,7 @@ impl T2TimestampPayload {
     /// bits; `self` is unchanged.
     pub fn set_emission_time_utc(
         &mut self,
-        dt: chrono::DateTime<chrono::Utc>,
+        dt: jiff::Timestamp,
         utco: u16,
     ) -> Result<(), crate::error::Error> {
         if utco > UTCO_MAX {
@@ -763,13 +763,20 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
+    fn utc(y: i16, mo: i8, d: i8, h: i8, mi: i8, s: i8) -> jiff::Timestamp {
+        jiff::tz::TimeZone::UTC
+            .to_timestamp(jiff::civil::date(y, mo, d).at(h, mi, s, 0))
+            .unwrap()
+    }
+
+    #[cfg(feature = "jiff")]
     #[test]
     fn emission_time_utc_subtracts_utco() {
-        use chrono::{Datelike, Timelike};
-        let at_epoch = payload(Bandwidth::Mhz8, 0, 0, 0)
-            .emission_time_utc()
-            .unwrap();
+        let civil = |p: T2TimestampPayload| {
+            jiff::tz::TimeZone::UTC.to_datetime(p.emission_time_utc().unwrap())
+        };
+        let at_epoch = civil(payload(Bandwidth::Mhz8, 0, 0, 0));
         assert_eq!(
             (at_epoch.year(), at_epoch.month(), at_epoch.day()),
             (2000, 1, 1)
@@ -778,9 +785,7 @@ mod tests {
             (at_epoch.hour(), at_epoch.minute(), at_epoch.second()),
             (0, 0, 0)
         );
-        let with_utco = payload(Bandwidth::Mhz8, 0, 0, 37)
-            .emission_time_utc()
-            .unwrap();
+        let with_utco = civil(payload(Bandwidth::Mhz8, 0, 0, 37));
         assert_eq!(
             (with_utco.year(), with_utco.month(), with_utco.day()),
             (1999, 12, 31)
@@ -797,7 +802,7 @@ mod tests {
         )
         .emission_time_utc()
         .unwrap();
-        assert_eq!(half_second.nanosecond(), 500_000_000);
+        assert_eq!(half_second.subsec_nanosecond(), 500_000_000);
         assert!(
             payload(
                 Bandwidth::Mhz8,
@@ -810,28 +815,24 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn set_emission_time_utc_inverts_emission_time_utc() {
-        use chrono::TimeZone;
-        let dt = chrono::Utc
-            .with_ymd_and_hms(2023, 6, 8, 12, 34, 56)
-            .unwrap();
+        let dt = utc(2023, 6, 8, 12, 34, 56);
         let mut p = payload(Bandwidth::Mhz8, 0, 0, 0);
         p.set_emission_time_utc(dt, 37).unwrap();
         assert_eq!(p.utco, 37);
         assert_eq!(p.emission_time_utc(), Some(dt));
-        let expected_seconds = u64::try_from(dt.timestamp() - 946_684_800).unwrap() + 37;
+        let expected_seconds = u64::try_from(dt.as_second() - 946_684_800).unwrap() + 37;
         assert_eq!(p.seconds_since_2000, expected_seconds);
     }
 
-    #[cfg(feature = "chrono")]
+    #[cfg(feature = "jiff")]
     #[test]
     fn set_emission_time_utc_rejects_bad_input_and_leaves_self_unchanged() {
-        use chrono::TimeZone;
         let mut p = payload(Bandwidth::Mhz8, 7, 9, 1);
         let before = p.clone();
-        let before_2000 = chrono::Utc.with_ymd_and_hms(1999, 1, 1, 0, 0, 0).unwrap();
+        let before_2000 = utc(1999, 1, 1, 0, 0, 0);
         assert_eq!(
             p.set_emission_time_utc(before_2000, 0).err(),
             Some(crate::Error::InvalidField(
@@ -841,7 +842,7 @@ mod tests {
                 }
             ))
         );
-        let dt = chrono::Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap();
+        let dt = utc(2023, 1, 1, 0, 0, 0);
         assert_eq!(
             p.set_emission_time_utc(dt, UTCO_MAX + 1).err(),
             Some(crate::Error::FieldOverflow(

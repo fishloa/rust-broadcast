@@ -204,7 +204,7 @@ list_services`), and the [`dvb-tools`](https://crates.io/crates/dvb-tools) CLI
 | complete section bytes of unknown type | `tables::AnyTableSection::parse` | `AnyTableSection::parse_with(&TableRegistry, …)` adds private table_ids |
 | complete section bytes of a known type | `tables::<table>::<Name>Section::parse` | e.g. `tables::sdt::SdtSection::parse` |
 | a table that spans several sections | `collect::SectionSetCollector` (`.nit()`, `.bat()`, `.sdt()`, `.eit()`, `.table::<T>()`) | `collect::EitCollector` for EIT schedules (spans table_ids) |
-| a programme guide to query | `epg::EpgStore` (`now_and_next`, `schedule`) | feature `chrono` |
+| a programme guide to query | `epg::EpgStore` (`now_and_next`, `schedule`) | feature `jiff` |
 | a descriptor loop (`DescriptorLoop`) | `.iter()` → `AnyDescriptor` | unknown tags surface as `AnyDescriptor::Unknown`, never panic |
 | private / regional descriptors | `descriptors::DescriptorRegistry` + `.iter_with(&reg)` | PDS-/registration-scoped: NorDig LCN, EACEM LCN, AVS2/AVS3, China captions, ATSC captions (0x86, via `with_atsc_caption_service`), your own |
 | private extension descriptors (0x7F) | `descriptors::ExtensionRegistry` + `.iter_with_extensions` | |
@@ -247,8 +247,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 | Feature | Default | Enables |
 |---|---|---|
-| `std` | yes | Links `std`. Off → `#![no_std]` + `alloc`. The non-Latin text charsets (`encoding_rs`) and wall-clock time need it. |
-| `chrono` | yes | MJD + BCD fields also as `chrono::DateTime<Utc>` (EIT `start_time_chrono()`, TDT/TOT `utc_time()`), local time offsets as `chrono::Duration`; the `epg` module. Off → `MjdBcdDateTime` and raw bytes only. |
+| `std` | yes | Links `std`. Off → `#![no_std]` + `alloc`. Wall-clock time needs it. |
+| `legacy-charsets` | yes | KS X 1001 / GB-2312 / Big5 text (Annex A selectors 0x12–0x14) via `encoding_rs` (implies `std`). Off → `DvbText::try_decode` returns `Error::CharsetNotEnabled` for those three and `decode()` yields U+FFFD; every other Annex A charset, ISO 8859 included, decodes without it. |
+| `jiff` | yes | MJD + BCD fields also as `jiff::Timestamp` (EIT `start_time_utc()`, TDT/TOT `utc_time()`), local time offsets as `jiff::SignedDuration`; the `epg` module. Off → `MjdBcdDateTime` and raw bytes only. |
 | `ts` | yes | `demux::SiDemux` over 188-byte packets (framing from [`mpeg-ts`](https://crates.io/crates/mpeg-ts)). Off → bring your own section bytes. |
 | `serde` | no | `Serialize` on every table, descriptor and text type (`DvbText` as its decoded string). Serialize-only by design. |
 | `yoke` | no | `Yokeable` on the zero-copy views + `owned::Owned<T>`. |

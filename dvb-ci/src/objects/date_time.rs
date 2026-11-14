@@ -7,7 +7,7 @@
 //! (The PDF mislabels both tables "Date-Time Enquiry"; Table 32 is the
 //! `date_time()` object — see `private/specs-verified/dvb/dvb-ci/en_50221/datetime.md`.) The `UTC_time` is
 //! carried as the verbatim 5 wire bytes (MJD+BCD, EN 300 468 Annex C) so it
-//! round-trips without needing the `chrono` feature.
+//! round-trips without needing a date/time library.
 
 use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};

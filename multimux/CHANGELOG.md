@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- `dvb-si` is built with its new `legacy-charsets` feature, so KS X 1001 / GB-2312 / Big5 EIT event names keep decoding (#2635).
 - `tower-http` 0.6 to 0.7 (timeout, limit, cors, gzip compression and decompression layers; no behaviour change); `rtsp-types` follows `rtsp-runtime` to 0.2.
 ### Fixed
 - A split-audio rendition's LL-HLS part target is applied to its own rendition: followers carry their rendition index instead of being paired with audio servings by position, so an earlier rendition whose selector matched nothing no longer shifts every later part target one slot (#2637).

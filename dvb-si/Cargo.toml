@@ -20,7 +20,7 @@ broadcast-common  = { path = "../broadcast-common", version = "12.0.0", default-
 mpeg-ts     = { path = "../mpeg-ts",    version = "0.8.0", default-features = false }
 thiserror = { version = "2", default-features = false }
 num_enum = { workspace = true }
-chrono      = { workspace = true, optional = true, features = ["alloc"] }
+jiff        = { version = "0.2", default-features = false, optional = true }
 serde         = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 bytes         = { version = "1", optional = true, default-features = false }
 yoke          = { workspace = true, optional = true, features = ["derive"] }
@@ -34,6 +34,8 @@ test-alloc = { path = "../test-alloc" }
 quick-xml = { workspace = true }
 serde_json = { workspace = true }
 criterion  = { workspace = true, features = ["html_reports"] }
+# Oracle for the tabulated ISO 8859 parts (`text::iso8859` tests).
+encoding_rs = { version = "0.8" }
 
 [[bench]]
 name     = "si_hot_paths"
@@ -41,20 +43,27 @@ harness  = false
 required-features = ["ts"]
 
 [features]
-default = ["std", "chrono", "ts"]
+default = ["std", "jiff", "ts", "legacy-charsets"]
 
 # `std` links the standard library. Without it the crate is `#![no_std]` and
-# needs only `alloc`. chrono's wall-clock and the std `Error` glue are std-only.
-std      = ["broadcast-common/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std", "dep:encoding_rs", "bytes?/std", "mpeg-ts/std", "serde?/std"]
+# needs only `alloc`. jiff's wall-clock and the std `Error` glue are std-only.
+std      = ["broadcast-common/std", "jiff?/std", "thiserror/std", "num_enum/std", "bytes?/std", "mpeg-ts/std", "serde?/std"]
 
-# Date/time decoding (MJD + BCD -> chrono DateTime<Utc>). Off = raw bytes returned.
-chrono   = ["dep:chrono", "broadcast-common/chrono"]
+# EN 300 468 Annex A KS X 1001 / GB-2312 / Big5 text (selectors 0x12-0x14),
+# decoded with `encoding_rs`'s codec tables. Off = those three selectors are
+# `Error::CharsetNotEnabled` from `try_decode` (U+FFFD from `decode`); every
+# other Annex A charset, ISO 8859 included, decodes without it.
+legacy-charsets = ["std", "dep:encoding_rs"]
+
+# Date/time decoding (MJD + BCD -> jiff::Timestamp, BCD offsets ->
+# jiff::SignedDuration) and the `epg` module. Off = MjdBcdDateTime / raw bytes.
+jiff     = ["dep:jiff", "broadcast-common/jiff"]
 
 # MPEG-TS packet + SectionReassembler helpers. Off = bring-your-own section bytes.
 ts       = ["dep:bytes"]
 
-# JSON / generic serialization on parsed + owned variants. Propagates to chrono.
-serde    = ["dep:serde", "broadcast-common/serde", "chrono?/serde", "mpeg-ts/serde"]
+# JSON / generic serialization on parsed + owned variants. Propagates to jiff.
+serde    = ["dep:serde", "broadcast-common/serde", "jiff?/serde", "mpeg-ts/serde"]
 
 # Yokeable impls on the zero-copy view types + the `Owned<T>` wrapper, so a
 # parsed table/descriptor can be retained past the input buffer's borrow
