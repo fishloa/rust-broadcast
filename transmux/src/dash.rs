@@ -656,7 +656,7 @@ impl DashPackager {
         let total_duration: u64 = track
             .samples
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
             .sum();
         let total_bytes: u64 = track.samples.iter().map(|s| s.data.len() as u64).sum();
 
@@ -1205,7 +1205,7 @@ fn frame_rate_from_samples(
     }
     let total: u64 = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum();
     if total == 0 {
         return None;

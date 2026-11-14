@@ -740,23 +740,24 @@ async fn every_period_plays_and_the_timeline_continues_across_the_boundary() {
     for (name, samples, boundary) in [("video", &video, p1v.len()), ("audio", &audio, p1a.len())] {
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("dts"))
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
             .collect();
         assert!(
             dts.windows(2).all(|w| w[0] < w[1]),
             "{name}: the stitched timeline is strictly increasing"
         );
         let last_of_first = &samples[boundary - 1];
-        let end = last_of_first.timing.map(|t| t.dts).unwrap()
-            + i64::from(last_of_first.timing.map(|t| t.duration).unwrap());
-        let first_of_second = samples[boundary].timing.map(|t| t.dts).unwrap();
+        let end = last_of_first.timing.and_then(|t| t.dts()).unwrap()
+            + i64::from(last_of_first.timing.and_then(|t| t.duration()).unwrap());
+        let first_of_second = samples[boundary].timing.and_then(|t| t.dts()).unwrap();
         assert!(
             first_of_second >= end,
             "{name}: the second Period starts after the first one ended ({first_of_second} < {end})"
         );
     }
     assert!(
-        p2v[0].timing.map(|t| t.dts).unwrap() < p1v.last().unwrap().timing.map(|t| t.dts).unwrap(),
+        p2v[0].timing.and_then(|t| t.dts()).unwrap()
+            < p1v.last().unwrap().timing.and_then(|t| t.dts()).unwrap(),
         "the source's second Period restarts its clock, so the stitch is what makes it monotonic"
     );
 }
@@ -1776,7 +1777,7 @@ async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
     for (name, samples) in [("video", &video), ("audio", &audio)] {
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("dts"))
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
             .collect();
         assert!(
             dts.windows(2).all(|w| w[0] < w[1]),
@@ -1787,11 +1788,11 @@ async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
     // Audio continues across every boundary (it plays in all three Periods).
     let audio_dts: Vec<i64> = audio
         .iter()
-        .map(|s| s.timing.map(|t| t.dts).expect("dts"))
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
         .collect();
     let audio_dur: Vec<i64> = audio
         .iter()
-        .map(|s| i64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .collect();
     for boundary in [p1a.len(), p1a.len() + p2a.len()] {
         let prev_end = audio_dts[boundary - 1] + audio_dur[boundary - 1];
@@ -1816,7 +1817,7 @@ async fn bltrackid_multi_period_audio_only_middle_keeps_track_ids_stable() {
     // rather than overlapping Period 1.
     let video_dts: Vec<i64> = video
         .iter()
-        .map(|s| s.timing.map(|t| t.dts).expect("dts"))
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
         .collect();
     let v_boundary = p1v.len();
     assert!(

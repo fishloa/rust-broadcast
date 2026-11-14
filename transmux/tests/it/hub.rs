@@ -143,8 +143,8 @@ fn cmaf_package_reunpackage_preserves_structure() {
                 a.track_id()
             );
             assert_eq!(
-                sa.timing.map(|t| t.duration),
-                sb.timing.map(|t| t.duration),
+                sa.timing.and_then(|t| t.duration()),
+                sb.timing.and_then(|t| t.duration()),
                 "track {} sample {i} duration preserved",
                 a.track_id()
             );
@@ -155,8 +155,8 @@ fn cmaf_package_reunpackage_preserves_structure() {
                 a.track_id()
             );
             assert_eq!(
-                sa.composition_offset(),
-                sb.composition_offset(),
+                sa.composition_offset().expect("offset").expect("offset"),
+                sb.composition_offset().expect("offset").expect("offset"),
                 "track {} sample {i} composition offset preserved",
                 a.track_id()
             );

@@ -216,7 +216,7 @@ impl Host {
                 } if *t == track => Some(Rec {
                     idx: i,
                     now: self.times[i],
-                    pts: sample.timing.map(|t| t.pts).unwrap(),
+                    pts: sample.timing.and_then(|t| t.pts()).unwrap(),
                     join: *join,
                 }),
                 _ => None,
@@ -441,7 +441,7 @@ fn detection_happens_before_the_sample_is_emitted() {
             join,
         } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.timing.map(|t| t.pts), Some(first_new.pts));
+            assert_eq!(sample.timing.and_then(|t| t.pts()), Some(first_new.pts));
             assert!(
                 matches!(join, Some(JoinDecision::Drop(_))),
                 "judged by the fresh join state: {join:?}"
@@ -639,7 +639,7 @@ fn same_capture_fed_twice_after_3s_pause_emits_discontinuity_before_first_new_sa
         } => {
             assert_eq!(*track, vid);
             assert_eq!(
-                sample.timing.map(|t| t.pts),
+                sample.timing.and_then(|t| t.pts()),
                 Some(first_pts),
                 "first sample of the second pass"
             );
@@ -819,7 +819,10 @@ fn audio_only_stream_jump_detected() {
     match &h.events[d + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, a);
-            assert!(sample.timing.map(|t| t.pts).unwrap() - samples[0].pts > 29 * AUDIO_ONLY_RATE);
+            assert!(
+                sample.timing.and_then(|t| t.pts()).unwrap() - samples[0].pts
+                    > 29 * AUDIO_ONLY_RATE
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -884,7 +887,7 @@ fn unflagged_jumps(h: &Host) -> Vec<(TrackId, i64, i64)> {
                 let rec = Rec {
                     idx: i,
                     now: h.times[i],
-                    pts: sample.timing.map(|t| t.pts).unwrap(),
+                    pts: sample.timing.and_then(|t| t.pts()).unwrap(),
                     join: *join,
                 };
                 let is_video = join.is_some();
@@ -1205,7 +1208,7 @@ impl Trace {
                 } if *t == track => Some(Rec {
                     idx: i,
                     now: self.times[i],
-                    pts: sample.timing.map(|t| t.pts).unwrap(),
+                    pts: sample.timing.and_then(|t| t.pts()).unwrap(),
                     join: *join,
                 }),
                 _ => None,
@@ -1342,7 +1345,10 @@ fn rtsp_jump_detected() {
     match &jumped.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.timing.map(|t| t.pts), Some(got[RTSP_VIDEO_AU].pts));
+            assert_eq!(
+                sample.timing.and_then(|t| t.pts()),
+                Some(got[RTSP_VIDEO_AU].pts)
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -1458,7 +1464,10 @@ fn multiple_video_tracks_tracked_independently() {
     match &t.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, ids[1]);
-            assert_eq!(sample.timing.map(|t| t.pts), Some(b[RTSP_VIDEO_AU].pts));
+            assert_eq!(
+                sample.timing.and_then(|t| t.pts()),
+                Some(b[RTSP_VIDEO_AU].pts)
+            );
         }
         other => panic!("{other:?}"),
     }
@@ -1511,7 +1520,7 @@ fn video_pts_of(ids: &[TrackId], events: &[Event]) -> Vec<i64> {
         .iter()
         .filter_map(|e| match e {
             Event::Sample { track, sample, .. } if ids.contains(track) => {
-                sample.timing.map(|t| t.pts)
+                sample.timing.and_then(|t| t.pts())
             }
             _ => None,
         })

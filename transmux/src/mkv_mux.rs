@@ -816,8 +816,8 @@ impl Package for MkvMux {
                     .map(|s| {
                         to_matroska_ticks(
                             s.timing
-                                .map(|t| t.pts)
-                                .or(s.timing.map(|t| t.dts))
+                                .and_then(|t| t.pts())
+                                .or(s.timing.and_then(|t| t.dts()))
                                 .unwrap_or(0),
                             timescale,
                             TIMESTAMP_SCALE_NS,
@@ -833,11 +833,11 @@ impl Package for MkvMux {
             for sample in &track.samples {
                 let pts = sample
                     .timing
-                    .map(|t| t.pts)
-                    .or(sample.timing.map(|t| t.dts))
+                    .and_then(|t| t.pts())
+                    .or(sample.timing.and_then(|t| t.dts()))
                     .unwrap_or(0);
                 let end_ticks = to_matroska_ticks(
-                    pts + sample.timing.map(|t| t.duration).unwrap_or(0) as i64,
+                    pts + sample.timing.and_then(|t| t.duration()).unwrap_or(0) as i64,
                     timescale,
                     TIMESTAMP_SCALE_NS,
                 );
@@ -1053,8 +1053,7 @@ mod tests {
         for track in &mut media.tracks {
             for s in &mut track.samples {
                 if let Some(t) = s.timing.as_mut() {
-                    t.dts = t.dts.saturating_add(shift);
-                    t.pts = t.pts.saturating_add(shift);
+                    t.shift(shift);
                 }
             }
             // `start_decode_time` is unsigned; clamping to 0 is fine here
@@ -1204,8 +1203,7 @@ mod tests {
                     for track in &mut m.tracks {
                         for s in &mut track.samples {
                             if let Some(t) = s.timing.as_mut() {
-                                t.dts = t.dts.saturating_sub(500);
-                                t.pts = t.pts.saturating_sub(500);
+                                t.shift(-500);
                             }
                         }
                     }
@@ -1221,8 +1219,7 @@ mod tests {
                     let half = m.tracks[0].samples.len() / 2;
                     for s in &mut m.tracks[0].samples[half..] {
                         if let Some(t) = s.timing.as_mut() {
-                            t.dts = t.dts.saturating_sub(10_000);
-                            t.pts = t.pts.saturating_sub(10_000);
+                            t.shift(-10_000);
                         }
                     }
                 }) as &dyn Fn(&mut crate::media::Media),
@@ -1458,8 +1455,7 @@ mod tests {
             if cut < n {
                 for s in &mut media.tracks[0].samples[cut..] {
                     if let Some(t) = s.timing.as_mut() {
-                        t.dts = t.dts.saturating_sub(5_000);
-                        t.pts = t.pts.saturating_sub(5_000);
+                        t.shift(-5_000);
                     }
                 }
             }

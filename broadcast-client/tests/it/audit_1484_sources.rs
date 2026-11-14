@@ -402,8 +402,8 @@ fn queued_events_are_capped_by_dropping_the_oldest_samples() {
     let key = |e: &Event| match e {
         Event::Sample { track, sample, .. } => Some((
             *track,
-            sample.timing.map(|t| t.pts),
-            sample.timing.map(|t| t.dts),
+            sample.timing.and_then(|t| t.pts()),
+            sample.timing.and_then(|t| t.dts()),
         )),
         _ => None,
     };

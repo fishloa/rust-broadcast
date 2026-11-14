@@ -199,7 +199,7 @@ impl TrackAligner {
         track: TrackId,
         sample: Sample,
     ) -> Vec<AlignOut> {
-        let (true, Some(pts)) = (self.active, sample.timing.map(|t| t.pts)) else {
+        let (true, Some(pts)) = (self.active, sample.timing.and_then(|t| t.pts())) else {
             return alloc::vec![AlignOut::Sample(track, sample)];
         };
         let mut out = Vec::new();
@@ -367,14 +367,13 @@ impl TrackAligner {
                 } else if diff > 0 {
                     lane.delta = target;
                 } else {
-                    let step =
-                        i64::from(sample.timing.map(|t| t.duration).unwrap_or(0)) / SLEW_DIVISOR;
+                    let step = i64::from(sample.timing.and_then(|t| t.duration()).unwrap_or(0))
+                        / SLEW_DIVISOR;
                     lane.delta = lane.delta.saturating_add(diff.max(-step));
                 }
             }
             if let Some(t) = sample.timing.as_mut() {
-                t.pts = t.pts.saturating_add(lane.delta);
-                t.dts = t.dts.saturating_add(lane.delta);
+                t.shift(lane.delta);
             }
         }
         let state = self.current_state(anchor);
@@ -566,7 +565,7 @@ mod tests {
                     self.other_rate
                 };
                 let us = to_micros(
-                    i128::from(sample.timing.map(|t| t.pts).expect("pts")),
+                    i128::from(sample.timing.and_then(|t| t.pts()).expect("pts")),
                     Timescale::try_new(rate).expect("rate"),
                     Rounding::TowardZero,
                 );

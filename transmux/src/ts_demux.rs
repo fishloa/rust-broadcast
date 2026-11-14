@@ -2143,7 +2143,9 @@ fn advance_one_behind(
             track_id,
             sample: Sample {
                 data: prev.data.into(),
-                timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(duration)),
+                timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                    dts, pts, duration,
+                )),
                 flags: SampleFlags::new(prev.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: prev.display,
@@ -2215,11 +2217,11 @@ fn flush_one_behind(
             track_id,
             sample: Sample {
                 data: p.data.into(),
-                timing: crate::ir::SampleTiming::from_options(
-                    Some(dts),
-                    Some(pts),
-                    Some(last_duration),
-                ),
+                timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                    dts,
+                    pts,
+                    last_duration,
+                )),
                 flags: SampleFlags::new(p.is_sync),
                 provenance: Some(ts_provenance(dts, pts)),
                 display: p.display,
@@ -5968,7 +5970,7 @@ impl StreamingTsDemux {
                     // event (issue #774 reshape dropped it along with
                     // `samples`/`encryption` when `TrackAdded` became
                     // `TrackSpec`-only) — every consumer that builds a `Track`
-                    // derives it from `samples[0].timing.map(|t| t.dts)` instead (media plane
+                    // derives it from `samples[0].timing.and_then(|t| t.dts())` instead (media plane
                     // step 2c invariant: the two are always equal), so no
                     // anchor value needs computing here at all.
                     let hdr10plus = matches!(config, CodecConfig::Hevc { .. })
@@ -6673,7 +6675,7 @@ impl<'a> TsDemux<'a> {
                     // invariant, unconditionally true for every track
                     // kind), so derive it here instead.
                     if track.samples.is_empty()
-                        && let Some(dts) = sample.timing.map(|t| t.dts)
+                        && let Some(dts) = sample.timing.and_then(|t| t.dts())
                     {
                         track.start_decode_time = dts as u64;
                     }
@@ -8964,7 +8966,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.timing.map(|t| t.dts)
+                && let Some(dts) = sample.timing.and_then(|t| t.dts())
             {
                 samples_by_pid
                     .entry(Pid::try_new((*pid).value()).expect("pid fits the 13-bit field"))
@@ -9102,7 +9104,7 @@ pub(crate) mod tests {
         for event in &events {
             if let DemuxEvent::Sample { track_id, sample } = event
                 && let Some(pid) = ids.get(track_id)
-                && let Some(dts) = sample.timing.map(|t| t.dts)
+                && let Some(dts) = sample.timing.and_then(|t| t.dts())
             {
                 by_pid.entry(*pid).or_default().push(dts);
             }
@@ -9230,7 +9232,7 @@ pub(crate) mod tests {
         demux.finish();
         let got: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -9333,7 +9335,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -9485,7 +9487,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -9577,7 +9579,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -10524,7 +10526,7 @@ pub(crate) mod tests {
         );
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("stamped dts"))
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("stamped dts"))
             .collect();
         assert!(
             dts.len() >= FRAMES,
@@ -10638,7 +10640,7 @@ pub(crate) mod tests {
         demux.finish();
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => sample.timing.map(|t| t.dts),
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
                 _ => None,
             })
             .collect();
@@ -11142,7 +11144,7 @@ pub(crate) mod tests {
             .expect("h264-aac.ts has an AVC track");
         let source_dts0 = video.samples[0]
             .timing
-            .map(|t| t.dts)
+            .and_then(|t| t.dts())
             .expect("the fixture's AVC track is stamped");
         let mut headers = 0usize;
         for (i, sample) in video.samples.iter().enumerate() {
@@ -11202,7 +11204,7 @@ pub(crate) mod tests {
         // previous one's dts, so the series alternated 0 / 3600 steps.
         let dts: Vec<i64> = samples
             .iter()
-            .map(|s| s.timing.map(|t| t.dts).expect("video dts"))
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("video dts"))
             .collect();
         let steps: Vec<i64> = dts.windows(2).map(|w| w[1] - w[0]).collect();
         assert!(
@@ -11212,11 +11214,11 @@ pub(crate) mod tests {
         assert!(
             samples
                 .iter()
-                .all(|s| s.timing.map(|t| t.duration) == Some(FRAME_PERIOD as u32)),
+                .all(|s| s.timing.and_then(|t| t.duration()) == Some(FRAME_PERIOD as u32)),
             "no zero-duration sample may survive interpolation; durations: {:?}",
             samples
                 .iter()
-                .map(|s| s.timing.map(|t| t.duration))
+                .map(|s| s.timing.and_then(|t| t.duration()))
                 .collect::<Vec<_>>()
         );
     }
@@ -11587,9 +11589,10 @@ pub(crate) mod tests {
         let emitted: Vec<(Vec<u8>, Option<u32>)> = events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => {
-                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
-                }
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample.data.to_vec(),
+                    sample.timing.and_then(|t| t.duration()),
+                )),
                 _ => None,
             })
             .collect();
@@ -11671,9 +11674,10 @@ pub(crate) mod tests {
         events
             .iter()
             .filter_map(|e| match e {
-                DemuxEvent::Sample { sample, .. } => {
-                    Some((sample.data.to_vec(), sample.timing.map(|t| t.duration)))
-                }
+                DemuxEvent::Sample { sample, .. } => Some((
+                    sample.data.to_vec(),
+                    sample.timing.and_then(|t| t.duration()),
+                )),
                 _ => None,
             })
             .collect()
@@ -12975,9 +12979,9 @@ pub(crate) mod tests {
                 match e {
                     DemuxEvent::Sample { sample, .. } => samples.push((
                         sample.data.to_vec(),
-                        sample.timing.map(|t| t.dts),
-                        sample.timing.map(|t| t.pts),
-                        sample.timing.map(|t| t.duration),
+                        sample.timing.and_then(|t| t.dts()),
+                        sample.timing.and_then(|t| t.pts()),
+                        sample.timing.and_then(|t| t.duration()),
                     )),
                     DemuxEvent::Discontinuity { .. } => disc += 1,
                     _ => {}
@@ -13048,9 +13052,9 @@ pub(crate) mod tests {
             .map(|s| {
                 (
                     s.data.to_vec(),
-                    s.timing.map(|t| t.dts),
-                    s.timing.map(|t| t.pts),
-                    s.timing.map(|t| t.duration),
+                    s.timing.and_then(|t| t.dts()),
+                    s.timing.and_then(|t| t.pts()),
+                    s.timing.and_then(|t| t.duration()),
                 )
             })
             .collect();

@@ -308,7 +308,7 @@ fn run_scenario(
                     }
                 }
                 Event::Sample { track, sample, .. } => {
-                    let pts = sample.timing.map(|t| t.pts).expect("pts") as f64;
+                    let pts = sample.timing.and_then(|t| t.pts()).expect("pts") as f64;
                     let scale = if is_video[track] {
                         out.video_timescale
                     } else {

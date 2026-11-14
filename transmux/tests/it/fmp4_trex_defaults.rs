@@ -32,12 +32,12 @@ fn a_trun_without_durations_takes_the_trex_default() {
     for (i, sample) in track.samples.iter().enumerate() {
         let i = i64::try_from(i).unwrap();
         assert_eq!(
-            sample.timing.map(|t| t.duration),
+            sample.timing.and_then(|t| t.duration()),
             Some(512),
             "sample {i} duration"
         );
         assert_eq!(
-            sample.timing.map(|t| t.dts),
+            sample.timing.and_then(|t| t.dts()),
             Some(i * VIDEO_TIMESCALE_TICKS_PER_FRAME),
             "sample {i} dts"
         );
@@ -53,7 +53,7 @@ fn consecutive_fragments_join_without_a_gap_once_durations_are_known() {
     let dts: Vec<i64> = track
         .samples
         .iter()
-        .map(|s| s.timing.map(|t| t.dts).unwrap())
+        .map(|s| s.timing.and_then(|t| t.dts()).unwrap())
         .collect();
     assert!(dts.windows(2).all(|w| w[0] < w[1]), "strictly increasing");
     assert_eq!(

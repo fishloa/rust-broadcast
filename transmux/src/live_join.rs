@@ -305,7 +305,7 @@ impl LiveJoin {
                 Some(kind) => {
                     self.state = JoinState::Joined {
                         kind,
-                        pts: sample.timing.map(|t| t.pts),
+                        pts: sample.timing.and_then(|t| t.pts()),
                         in_leading_run: true,
                     };
                     JoinDecision::JoinPoint(kind)
@@ -316,7 +316,7 @@ impl LiveJoin {
                 pts,
                 in_leading_run: true,
             } => {
-                if is_leading(self.codec, &au, sample.timing.map(|t| t.pts), pts) {
+                if is_leading(self.codec, &au, sample.timing.and_then(|t| t.pts()), pts) {
                     JoinDecision::Drop(DropReason::LeadingPicture)
                 } else {
                     self.state = JoinState::Joined {

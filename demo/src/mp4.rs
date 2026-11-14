@@ -276,7 +276,7 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
     let total_ticks: u64 = track
         .samples
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum();
     let timescale = track.spec.timescale.get();
     let duration_seconds = total_ticks as f64 / f64::from(timescale);

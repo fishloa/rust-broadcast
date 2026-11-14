@@ -43,9 +43,9 @@ fn avc_samples(m: &Media) -> Vec<S> {
         .iter()
         .map(|s| S {
             data: s.data.to_vec(),
-            dts: s.timing.map(|t| t.dts),
-            pts: s.timing.map(|t| t.pts),
-            duration: s.timing.map(|t| t.duration),
+            dts: s.timing.and_then(|t| t.dts()),
+            pts: s.timing.and_then(|t| t.pts()),
+            duration: s.timing.and_then(|t| t.duration()),
             sync: s.flags.is_sync,
         })
         .collect()
@@ -77,9 +77,9 @@ fn streaming(ts: &[u8], chunk: usize) -> Vec<S> {
             {
                 out.push(S {
                     data: sample.data.to_vec(),
-                    dts: sample.timing.map(|t| t.dts),
-                    pts: sample.timing.map(|t| t.pts),
-                    duration: sample.timing.map(|t| t.duration),
+                    dts: sample.timing.and_then(|t| t.dts()),
+                    pts: sample.timing.and_then(|t| t.pts()),
+                    duration: sample.timing.and_then(|t| t.duration()),
                     sync: sample.flags.is_sync,
                 });
             }

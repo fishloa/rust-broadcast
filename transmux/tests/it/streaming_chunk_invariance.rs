@@ -38,9 +38,9 @@ fn summarize(ev: &DemuxEvent) -> String {
             track_id, sample, ..
         } => format!(
             "Sample track={track_id} pts={:?} dts={:?} dur={:?} len={} hash={:016x} sync={}",
-            sample.timing.map(|t| t.pts),
-            sample.timing.map(|t| t.dts),
-            sample.timing.map(|t| t.duration),
+            sample.timing.and_then(|t| t.pts()),
+            sample.timing.and_then(|t| t.dts()),
+            sample.timing.and_then(|t| t.duration()),
             sample.data.len(),
             fnv(&sample.data),
             sample.flags.is_sync

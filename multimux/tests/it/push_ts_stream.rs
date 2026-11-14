@@ -58,7 +58,7 @@ fn interleaved(media: &Media) -> Vec<(usize, Sample)> {
     for (ti, t) in media.tracks.iter().enumerate() {
         let ts = i128::from(t.spec.timescale.get());
         for s in &t.samples {
-            let dts = i128::from(s.timing.map(|t| t.dts).expect("timed sample"));
+            let dts = i128::from(s.timing.and_then(|t| t.dts()).expect("timed sample"));
             all.push((dts * TS_HZ / ts, ti, s.clone()));
         }
     }
@@ -236,7 +236,7 @@ fn expected_dts(media: &Media) -> Vec<Vec<f64>> {
         .tracks
         .iter()
         .map(|t| {
-            let d = t.samples[0].timing.map(|t| t.dts).unwrap() as f64;
+            let d = t.samples[0].timing.and_then(|t| t.dts()).unwrap() as f64;
             d * 90_000.0 / f64::from(t.spec.timescale.get())
         })
         .fold(f64::MAX, f64::min);
@@ -247,7 +247,7 @@ fn expected_dts(media: &Media) -> Vec<Vec<f64>> {
             t.samples
                 .iter()
                 .map(|s| {
-                    s.timing.map(|t| t.dts).unwrap() as f64 * 90_000.0
+                    s.timing.and_then(|t| t.dts()).unwrap() as f64 * 90_000.0
                         / f64::from(t.spec.timescale.get())
                         - origin
                 })

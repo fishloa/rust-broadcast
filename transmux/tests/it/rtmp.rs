@@ -97,8 +97,8 @@ fn rtmp_demux_matches_flv_demux() {
             assert_eq!(rs.data, fs.data, "sample {i} payload bytes");
             assert_eq!(rs.flags.is_sync, fs.flags.is_sync, "sample {i} sync flag");
             assert_eq!(
-                rs.composition_offset(),
-                fs.composition_offset(),
+                rs.composition_offset().expect("offset").expect("offset"),
+                fs.composition_offset().expect("offset").expect("offset"),
                 "sample {i} composition offset"
             );
         }

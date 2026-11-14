@@ -185,8 +185,8 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     let mut pts = Vec::with_capacity(75);
     let mut dts: i64 = 0;
     for s in &vid.samples {
-        pts.push(dts + s.composition_offset() as i64);
-        dts += s.timing.map(|t| t.duration).unwrap_or(0) as i64;
+        pts.push(dts + s.composition_offset().expect("offset").unwrap_or(0) as i64);
+        dts += s.timing.and_then(|t| t.duration()).unwrap_or(0) as i64;
     }
     let first_in = pts
         .iter()

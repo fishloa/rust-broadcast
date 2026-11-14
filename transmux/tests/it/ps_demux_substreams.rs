@@ -204,7 +204,7 @@ fn ac3_frames_are_split_by_declared_length() {
                 "sample {n} must begin at an AC-3 syncword"
             );
             assert_eq!(
-                sample.timing.map(|t| t.duration),
+                sample.timing.and_then(|t| t.duration()),
                 Some(1536),
                 "each syncframe is 1536 samples (ETSI TS 102 366 §4.1)"
             );

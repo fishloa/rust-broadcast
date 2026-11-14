@@ -459,15 +459,15 @@ fn section_tracks_carry_valid_reassembled_sections() {
             // timestamp, so dts/pts/duration must ALL stay `None` — never
             // fabricated (SCTE-35 / DSM-CC / private sections).
             assert!(
-                sample.timing.map(|t| t.dts).is_none(),
+                sample.timing.and_then(|t| t.dts()).is_none(),
                 "a section sample must carry no DTS (dts: None), never a fabricated one"
             );
             assert!(
-                sample.timing.map(|t| t.pts).is_none(),
+                sample.timing.and_then(|t| t.pts()).is_none(),
                 "a section sample must carry no PTS (pts: None), never a fabricated one"
             );
             assert!(
-                sample.timing.map(|t| t.duration).is_none(),
+                sample.timing.and_then(|t| t.duration()).is_none(),
                 "a section sample must carry no duration either"
             );
         }

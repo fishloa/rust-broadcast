@@ -213,7 +213,7 @@ fn samples_of(events: &[Event]) -> Vec<Fingerprint> {
                 });
                 Some((
                     track.value(),
-                    format!("{:?}", sample.timing.map(|t| t.dts)),
+                    format!("{:?}", sample.timing.and_then(|t| t.dts())),
                     sample.data.len(),
                     digest,
                 ))

@@ -654,8 +654,14 @@ impl RtpPacketiser {
 /// series (in that case `dts == pts` at every sample, and both paths agree).
 fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
     if let (Some(first), Some(cur)) = (
-        track.samples.first().and_then(|s| s.timing.map(|t| t.pts)),
-        track.samples.get(i).and_then(|s| s.timing.map(|t| t.pts)),
+        track
+            .samples
+            .first()
+            .and_then(|s| s.timing.and_then(|t| t.pts())),
+        track
+            .samples
+            .get(i)
+            .and_then(|s| s.timing.and_then(|t| t.pts())),
     ) {
         // A hostile pair of timestamps can invert the subtraction; the
         // conversion is checked rather than an `as` cast, which would wrap a
@@ -664,7 +670,7 @@ fn sample_pts(track: &crate::media::Track, i: usize) -> u64 {
     }
     track.samples[..i]
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum()
 }
 
@@ -1304,7 +1310,7 @@ impl RtpWrapState {
 ///
 /// The whole timeline is then translated so its first decode instant is 0 —
 /// the IR's `Track::start_decode_time` is a `u64` anchor that must equal
-/// `samples[0].timing.map(|t| t.dts)`, and both series shift together, so every delta, the
+/// `samples[0].timing.and_then(|t| t.dts())`, and both series shift together, so every delta, the
 /// ordering, and `dts <= pts` are preserved exactly.
 ///
 /// Returns `(dts, pts)` per sample, in wire order.
@@ -1390,7 +1396,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
     // Phase 2: one origin for the whole `Media`, applied to every track, so a
     // reordered video track and a non-reordered audio track share one epoch
     // and no `dts` is negative. The IR's `Track::start_decode_time` is a `u64`
-    // anchor that must equal `samples[0].timing.map(|t| t.dts)`, which a negative value cannot
+    // anchor that must equal `samples[0].timing.and_then(|t| t.dts())`, which a negative value cannot
     // be; zero-basing only the reordered tracks (the previous behaviour) put
     // them on a different epoch from their own siblings. `crate::rebase`
     // shifts every track of a `Media` together, so keeping the shift here
@@ -1475,11 +1481,11 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                         let duration = delta.map(|d| duration_from(d.max(1)));
                         Sample {
                             data: au.data.clone().into(),
-                            timing: crate::ir::SampleTiming::from_options(
-                                Some(dts),
-                                Some(pts),
-                                duration,
-                            ),
+                            timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                                dts,
+                                pts,
+                                duration.unwrap_or(0),
+                            )),
                             flags: crate::ir::SampleFlags::new(au.is_sync),
                             provenance: None,
                             display: None,
@@ -1491,7 +1497,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
                 // minimal AVC spec (never serialized to a container here).
                 let anchor = samples
                     .first()
-                    .and_then(|s| s.timing.map(|t| t.dts))
+                    .and_then(|s| s.timing.and_then(|t| t.dts()))
                     .map(|d| u64::try_from(d.max(0)).unwrap_or(0))
                     .unwrap_or(0);
                 Ok(crate::media::Track::new_at(spec, samples, anchor))
@@ -2405,7 +2411,7 @@ mod tests {
         for (i, s) in samples.iter().enumerate() {
             let d = s
                 .timing
-                .map(|t| t.duration)
+                .and_then(|t| t.duration())
                 .expect("a multi-sample track times every sample");
             if i + 1 < samples.len() {
                 assert!(
@@ -2413,15 +2419,15 @@ mod tests {
                     "non-final sample {i} must not have a zero duration: {:?}",
                     samples
                         .iter()
-                        .map(|s| s.timing.map(|t| t.duration))
+                        .map(|s| s.timing.and_then(|t| t.duration()))
                         .collect::<alloc::vec::Vec<_>>()
                 );
             }
         }
         // The repeated instant's AU reuses the previous frame's period.
-        assert_eq!(samples[1].timing.map(|t| t.duration), Some(3000));
+        assert_eq!(samples[1].timing.and_then(|t| t.duration()), Some(3000));
         assert_eq!(
-            samples[2].timing.map(|t| t.duration),
+            samples[2].timing.and_then(|t| t.duration()),
             Some(3000),
             "the duplicate instant must reuse the previous non-zero duration"
         );

@@ -66,8 +66,8 @@
 //!
 //! // Two keyframes kept; durations folded to span the gaps.
 //! assert_eq!(trick.samples.len(), 2);
-//! assert_eq!(trick.samples[0].timing.map(|t| t.duration), Some(400));
-//! assert_eq!(trick.samples[1].timing.map(|t| t.duration), Some(400));
+//! assert_eq!(trick.samples[0].timing.and_then(|t| t.duration()), Some(400));
+//! assert_eq!(trick.samples[1].timing.and_then(|t| t.duration()), Some(400));
 //! ```
 
 use alloc::vec::Vec;
@@ -135,7 +135,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
 
         let folded_duration: u32 = src.samples[idx..span_end]
             .iter()
-            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0))
+            .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0))
             .fold(0u32, |acc, d| acc.saturating_add(d));
 
         let src_sample = &src.samples[idx];
@@ -145,13 +145,20 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         // replaces. A source sample carrying no timestamp stays `None` — never
         // fabricated. The display tag is the source sample's own (an `Arc`
         // bump: no allocation per trick-play sample).
+        let timing = src_sample
+            .timing
+            .map(|timing| match (timing.dts(), timing.pts()) {
+                (Some(dts), Some(pts)) => {
+                    crate::ir::SampleTiming::timed_with_duration(dts, pts, folded_duration)
+                }
+                _ => crate::ir::SampleTiming::DurationOnly {
+                    duration: core::num::NonZeroU32::new(folded_duration)
+                        .unwrap_or_else(|| core::num::NonZeroU32::new(1).expect("one is non-zero")),
+                },
+            });
         derived.push(Sample {
             data: src_sample.data.clone(),
-            timing: crate::ir::SampleTiming::from_options(
-                src_sample.timing.map(|t| t.dts),
-                src_sample.timing.map(|t| t.pts),
-                Some(folded_duration),
-            ),
+            timing,
             flags: crate::ir::SampleFlags::SYNC,
             provenance: src_sample.provenance,
             display: src_sample.display.clone(),
@@ -162,7 +169,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
     // is the source's first sync sample, whose dts is unchanged.
     let anchor = derived
         .first()
-        .and_then(|s| s.timing.map(|t| t.dts))
+        .and_then(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| d.max(0) as u64)
         .unwrap_or(src.start_decode_time);
     Ok(Track::new_at(src.spec.clone(), derived, anchor))

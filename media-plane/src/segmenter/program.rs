@@ -1193,7 +1193,7 @@ impl ProgramSegmenter {
                     }
                     continue;
                 }
-                self.observe_captions(track_id, &sample.data, sample.timing.map(|t| t.dts));
+                self.observe_captions(track_id, &sample.data, sample.timing.and_then(|t| t.dts()));
                 // Start-gate (Apple authoring 7.4 MUST: segments start on a
                 // sync/IDR picture, issue #1425): for a program whose track set
                 // contains a video track, drop every timed sample until the
@@ -1403,7 +1403,7 @@ impl ProgramSegmenter {
         // boundary. This is what makes `note_segment_start` (below)
         // report the source clock the SCTE-35 events are on, not the
         // segmenter's own restart-from-zero timeline.
-        if let Some(pts) = sample.timing.map(|t| t.pts)
+        if let Some(pts) = sample.timing.and_then(|t| t.pts())
             && let Some(timescale) = self
                 .published_tracks
                 .iter()
@@ -3231,10 +3231,9 @@ mod segmenter_tests {
                 let pts = pts_at(i);
                 let mut sample = sample_at(i, i.is_multiple_of(GOP));
                 if let Some(t) = sample.timing.as_mut() {
-                    t.pts = pts;
-                    t.dts = pts;
+                    t.shift(pts - t.dts().unwrap_or(pts));
                 } else {
-                    sample.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+                    sample.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
                 }
                 self.writer
                     .publish(TrackId::new(1), RetentionClass::Timed, sample);
@@ -3357,10 +3356,9 @@ mod segmenter_gate_tests {
             let mut s = sample_at(i, is_sync);
             let pts = offset + i64::from(i) * i64::from(FRAME_DUR);
             if let Some(t) = s.timing.as_mut() {
-                t.pts = pts;
-                t.dts = pts;
+                t.shift(pts - t.dts().unwrap_or(pts));
             } else {
-                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+                s.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
             }
             s
         };

@@ -56,9 +56,9 @@ fn play_with(
         if let Event::Sample { track, sample, .. } = e {
             out.push((
                 track.value(),
-                sample.timing.map(|t| t.pts).unwrap_or(0),
-                sample.timing.map(|t| t.dts).unwrap_or(0),
-                sample.timing.map(|t| t.duration).unwrap_or(0),
+                sample.timing.and_then(|t| t.pts()).unwrap_or(0),
+                sample.timing.and_then(|t| t.dts()).unwrap_or(0),
+                sample.timing.and_then(|t| t.duration()).unwrap_or(0),
             ));
         }
     }

@@ -48,9 +48,9 @@ fn fnv1a_trace_line(track: u32, sample: &transmux::Sample) -> String {
     format!(
         "sample track={} dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}\n",
         track,
-        sample.timing.map(|t| t.dts),
-        sample.timing.map(|t| t.pts),
-        sample.timing.map(|t| t.duration),
+        sample.timing.and_then(|t| t.dts()),
+        sample.timing.and_then(|t| t.pts()),
+        sample.timing.and_then(|t| t.duration()),
         sample.flags.is_sync,
         sample.data.len(),
         fnv1a(&sample.data),

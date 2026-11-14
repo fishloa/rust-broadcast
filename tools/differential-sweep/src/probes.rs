@@ -66,7 +66,7 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
                     a.samples += 1;
                     a.bytes += sample.data.len() as u64;
                     a.hasher.extend_from_slice(&sample.data);
-                    match sample.timing.map(|t| t.dts) {
+                    match sample.timing.and_then(|t| t.dts()) {
                         Some(t) => {
                             a.first_dts.get_or_insert(t);
                             a.last_dts = Some(t);
@@ -168,7 +168,7 @@ pub fn multimux_ts_ingest(fx: &Fixture, _: &Cfg) -> Option<Value> {
                     a.samples += 1;
                     a.bytes += sample.data.len() as u64;
                     a.hasher.extend_from_slice(&sample.data);
-                    if let Some(t) = sample.timing.map(|t| t.dts) {
+                    if let Some(t) = sample.timing.and_then(|t| t.dts()) {
                         a.first_dts.get_or_insert(t);
                         a.last_dts = Some(t);
                     }

@@ -24,12 +24,12 @@ impl SyncJoin {
                 return JoinDecision::Drop(DropReason::BeforeRandomAccessPoint);
             }
             self.joined = true;
-            self.join_pts = sample.timing.map(|t| t.pts);
+            self.join_pts = sample.timing.and_then(|t| t.pts());
             self.leading_run = true;
             return JoinDecision::JoinPoint(RapKind::Idr);
         }
         if self.leading_run {
-            let leading = matches!((sample.timing.map(|t| t.pts), self.join_pts), (Some(p), Some(j)) if p < j);
+            let leading = matches!((sample.timing.and_then(|t| t.pts()), self.join_pts), (Some(p), Some(j)) if p < j);
             if leading {
                 return JoinDecision::Drop(DropReason::LeadingPicture);
             }

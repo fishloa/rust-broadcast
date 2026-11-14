@@ -199,12 +199,12 @@ async fn rtsp_pull_golden() {
             });
             let dts = sample
                 .timing
-                .map(|t| t.dts)
+                .and_then(|t| t.dts())
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string());
             let pts = sample
                 .timing
-                .map(|t| t.pts)
+                .and_then(|t| t.pts())
                 .map(|v| v.to_string())
                 .unwrap_or_else(|| "none".to_string());
             rendered.push_str(&format!(

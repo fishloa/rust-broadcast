@@ -1249,7 +1249,7 @@ async fn send_sample(
     session: &SessionMedia<'_>,
     sample: &Sample,
 ) {
-    let Some(dts) = sample.timing.map(|t| t.dts) else {
+    let Some(dts) = sample.timing.and_then(|t| t.dts()) else {
         return;
     };
     let timestamp = rescale_to_90k(dts.max(0) as u64, session.spec.timescale);

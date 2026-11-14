@@ -349,9 +349,9 @@ fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
             }
             Sample::new(
                 big,
-                s.timing.map(|t| t.dts),
-                s.timing.map(|t| t.pts),
-                s.timing.map(|t| t.duration),
+                s.timing.and_then(|t| t.dts()),
+                s.timing.and_then(|t| t.pts()),
+                s.timing.and_then(|t| t.duration()),
                 s.flags.is_sync,
             )
         })

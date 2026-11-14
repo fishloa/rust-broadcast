@@ -596,7 +596,7 @@ impl LlHlsSegmenter {
             .ok_or(Error::InvalidInput("push: unknown track_id"))?;
 
         if self.external_cuts {
-            if sample.timing.map(|t| t.dts).is_none() {
+            if sample.timing.and_then(|t| t.dts()).is_none() {
                 return Err(Error::InvalidInput(
                     "follower segmenter push: sample has no dts",
                 ));
@@ -1290,7 +1290,7 @@ impl LlHlsSegmenter {
             let t = &self.tracks[self.anchor];
             t.pending
                 .first()
-                .and_then(|s| s.timing.map(|t| t.dts))
+                .and_then(|s| s.timing.and_then(|t| t.dts()))
                 .unwrap_or_else(|| ticks_to_i64(t.seg_base_decode))
         };
         // Any samples buffered since the last part become the segment's final
@@ -1412,7 +1412,7 @@ impl LlHlsSegmenter {
             let t = &self.tracks[anchor];
             t.pending
                 .get(t.part_start)
-                .and_then(|s| s.timing.map(|t| t.dts))
+                .and_then(|s| s.timing.and_then(|t| t.dts()))
                 .unwrap_or_else(|| ticks_to_i64(t.part_base_decode))
         };
 
@@ -1750,7 +1750,7 @@ fn ticks_to_i64(ticks: u64) -> i64 {
 
 /// Decode time a follower segmenter cuts on; `push` rejects samples without one.
 fn follower_dts(sample: &Sample) -> i64 {
-    sample.timing.map(|t| t.dts).unwrap_or(i64::MIN)
+    sample.timing.and_then(|t| t.dts()).unwrap_or(i64::MIN)
 }
 
 /// Duration in seconds of `track.pending[from..to]`.
@@ -1758,7 +1758,7 @@ fn span_secs(track: &TrackState, from: usize, to: usize) -> f64 {
     let mut clock = MediaClock::resumed_at(
         from.checked_sub(1)
             .and_then(|i| track.pending.get(i))
-            .and_then(|s| s.timing.map(|t| t.dts))
+            .and_then(|s| s.timing.and_then(|t| t.dts()))
             .or(track.seg_clock.last_dts()),
     );
     let ticks: u64 = track.pending[from..to].iter().map(|s| clock.tick(s)).sum();
