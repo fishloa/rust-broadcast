@@ -42,11 +42,12 @@
 //! ```
 //! use broadcast_common::stage::Timestamp;
 //! use dash_runtime::client::{Action, DashClient, DashConfig, PullLimits};
+//! use url::Url;
 //!
 //! let at = |us: u64| Timestamp::from_micros(us);
-//! let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new("https://origin.example/vod/manifest.mpd").with_dash(DashConfig::default()).with_limits(PullLimits::default()));
+//! let mut client = DashClient::new(dash_runtime::client::DashClientConfig::new(Url::parse("https://origin.example/vod/manifest.mpd").unwrap()).with_dash(DashConfig::default()).with_limits(PullLimits::default()));
 //! let Some(Action::FetchMpd { url, .. }) = client.poll(at(0)) else { unreachable!() };
-//! assert_eq!(url, "https://origin.example/vod/manifest.mpd");
+//! assert_eq!(url.as_str(), "https://origin.example/vod/manifest.mpd");
 //! // The MPD is requested once until the caller reports a failure and retries.
 //! assert!(client.poll(at(0)).is_none());
 //! ```

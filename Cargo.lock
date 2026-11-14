@@ -4837,6 +4837,7 @@ version = "0.7.0"
 dependencies = [
  "aes 0.9.4",
  "axum",
+ "broadcast-auth",
  "broadcast-common",
  "bytes",
  "cipher 0.5.2",

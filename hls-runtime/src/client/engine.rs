@@ -619,6 +619,15 @@ impl HlsClient {
         &self.playlist_url
     }
 
+    /// Set the URL relative playlist URIs resolve against: the final URL of the next playlist
+    /// response after redirects (RFC 3986 section 5.1.3). Reloads keep requesting
+    /// [`HlsClient::playlist_url`]; the base is cleared when the client switches to another
+    /// playlist URL. A pull client that follows redirects uses this per response (the config's
+    /// [`HlsClientConfig::playlist_base`] is only the initial value).
+    pub fn set_playlist_base(&mut self, base: Url) {
+        self.base_override = Some(base);
+    }
+
     fn base(&self) -> &Url {
         self.base_override.as_ref().unwrap_or(&self.playlist_url)
     }

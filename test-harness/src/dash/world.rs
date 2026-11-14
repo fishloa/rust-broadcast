@@ -426,7 +426,7 @@ impl Sim {
                 sent_mono,
                 received_mono,
                 outcome,
-            } => self.deliver_response(now, action, sent_mono, received_mono, outcome),
+            } => self.deliver_response(now, *action, sent_mono, received_mono, outcome),
         }
         if self.inject_stale
             && let Some(old) = self.stale_pool.first().copied()
