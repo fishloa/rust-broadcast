@@ -348,7 +348,7 @@ pub enum ErrorKind {
     /// [`ErrorKind::UnsupportedEncryption`]). Reported once per track per source; the other
     /// tracks play, and a stream with no playable track ends fatally after these reports.
     TrackDropped {
-        /// The dropped track's id (remapped for an audio rendition); [`TrackId::new(0)`] for a
+        /// The dropped track's id (remapped for an audio rendition); `TrackId::new(0)` for a
         /// track the fMP4 demuxer could not name. For RTSP it is not the id of an announced track:
         /// it is the 1-based position of the dropped `m=` line among all media lines of the
         /// DESCRIBE SDP, whatever the other lines are.
