@@ -120,6 +120,7 @@ mod pipeline;
 mod pmt_version_diff;
 mod pps_real_capture;
 mod presentation_size;
+mod presentation_span_overflow;
 mod progressive;
 mod progressive_demux;
 mod ps_demux;
