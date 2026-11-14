@@ -993,7 +993,10 @@ mod tests {
             i128::from(PCR_HZ)
         );
         assert_eq!(
-            pts_to_27mhz(90_000, Timescale::new(90_000).expect("90 kHz is a non-zero timescale")),
+            pts_to_27mhz(
+                90_000,
+                Timescale::new(90_000).expect("90 kHz is a non-zero timescale")
+            ),
             PCR_HZ
         );
     }

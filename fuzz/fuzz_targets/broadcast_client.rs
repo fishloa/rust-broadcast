@@ -380,15 +380,15 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
                 .collect();
             session.set_rendered_tracks(at, &ids);
         }
-        3 => session.rejoin(),
-        _ => session.hint(PLAYER_HINTS[usize::from(byte(3)) % PLAYER_HINTS.len()]),
+        3 => session.rejoin(at),
+        _ => session.hint(at, PLAYER_HINTS[usize::from(byte(3)) % PLAYER_HINTS.len()]),
     }
 }
 
 fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
     let byte = |i: usize| usize::from(chunk.get(i).copied().unwrap_or(0));
     if byte(3) % 3 != 0 {
-        let _ = session.set_credentials(Credentials::new("user", "pass"));
+        let _ = session.set_credentials(Timestamp::from_micros(now), Credentials::new("user", "pass"));
     }
     let first = STORM_FIRST_STATUSES[byte(1) % STORM_FIRST_STATUSES.len()];
     let then = STORM_THEN_STATUSES[byte(4) % STORM_THEN_STATUSES.len()];
@@ -440,7 +440,7 @@ fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
 
 fn finish(session: &mut Session, watch: &mut Watch, now: u64) {
     if !watch.closed {
-        session.close();
+        session.close(Timestamp::from_micros(now));
         watch.closed = true;
     }
     watch.actions(session, now);
@@ -712,7 +712,7 @@ fn drive(url: &str, data: &[u8]) {
                 } else {
                     Credentials::new("user", "pass")
                 };
-                let _ = session.set_credentials(creds);
+                let _ = session.set_credentials(Timestamp::from_micros(now), creds);
             }
             4 => session.reconnect(Timestamp::from_micros(now)),
             5 => {
@@ -757,13 +757,14 @@ fn drive(url: &str, data: &[u8]) {
                 }
             }
             7 => {
-                let _ = session.select_variant(second);
+                let _ = session.select_variant(Timestamp::from_micros(now), second);
             }
             8 => serve(&mut session, &mut watch, now, true, chunk),
             10 => player(&mut session, now, chunk),
             11 => storm(&mut session, &mut watch, now, chunk),
             _ => {
                 let _ = session.select_audio_rendition(
+                    Timestamp::from_micros(now),
                     chunk
                         .get(1)
                         .copied()
@@ -773,7 +774,7 @@ fn drive(url: &str, data: &[u8]) {
             }
         }
         if pick == u8::MAX {
-            session.close();
+            session.close(Timestamp::from_micros(now));
             watch.closed = true;
         }
         for (conn, _) in watch.actions(&mut session, now) {
@@ -904,7 +905,8 @@ fn drive_rtsp(url: &str, data: &[u8]) {
                 }
             }
             5 => {
-                let _ = session.set_credentials(Credentials::new("u", "p"));
+                let _ =
+                    session.set_credentials(Timestamp::from_micros(now), Credentials::new("u", "p"));
             }
             6 => session.reconnect(Timestamp::from_micros(now)),
             7 => now = now.saturating_add(TIMER_JUMP_US),
@@ -921,7 +923,7 @@ fn drive_rtsp(url: &str, data: &[u8]) {
             _ => player(&mut session, now, chunk),
         }
         if pick == u8::MAX {
-            session.close();
+            session.close(Timestamp::from_micros(now));
             watch.closed = true;
         }
         rtsp_pump(&mut session, &mut watch, now, &mut conns, 200, chunk);
@@ -1046,7 +1048,7 @@ fn drive_datagram(url: &str, data: &[u8]) {
             _ => now = now.saturating_add(TIMER_JUMP_US),
         }
         if pick == u8::MAX {
-            session.close();
+            session.close(Timestamp::from_micros(now));
             watch.closed = true;
         }
         datagram_pump(&mut session, &mut watch, now, &mut conn);
