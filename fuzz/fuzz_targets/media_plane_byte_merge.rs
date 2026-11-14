@@ -4,6 +4,7 @@ use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
 use media_plane::{ByteMerge, MergePolicy, SourceId};
+use std::num::NonZeroUsize;
 use std::time::Duration;
 
 // `ByteMerge` (media-plane step 3f acceptance): the one place N byte sources
@@ -31,7 +32,7 @@ fuzz_target!(|data: &[u8]| {
         }
     };
 
-    let mut merge = ByteMerge::new(policy, num_sources, max_queued);
+    let mut merge = ByteMerge::new(policy, NonZeroUsize::new(num_sources).unwrap(), NonZeroUsize::new(max_queued).unwrap()).unwrap();
     let mut ts = 0u64;
     for rec in data[4..].chunks(6) {
         if rec.len() < 2 {
