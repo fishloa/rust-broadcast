@@ -57,4 +57,27 @@ pub enum Error {
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+
+    /// The packet has no adaptation field, so it has no PCR (and no OPCR)
+    /// slot to rewrite.
+    #[error("packet has no adaptation field")]
+    NoAdaptationField,
+
+    /// The adaptation field has no PCR (or OPCR) slot: either it is shorter
+    /// than the flags byte plus the 6-byte field, or the packet's own flag
+    /// byte does not set the corresponding flag.
+    #[error("packet has no {which} slot")]
+    NoClockReference {
+        /// The missing field: `"PCR"` or `"OPCR"`.
+        which: &'static str,
+    },
+
+    /// The adaptation field is shorter than the field being written into it.
+    #[error("adaptation field is {have} bytes, {need} needed")]
+    AdaptationFieldTooShort {
+        /// Bytes the write needs.
+        need: usize,
+        /// `adaptation_field_length` the packet declares.
+        have: usize,
+    },
 }

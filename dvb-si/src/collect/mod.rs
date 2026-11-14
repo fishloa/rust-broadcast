@@ -376,7 +376,7 @@ impl SectionSetCollector {
                 last_section_number: section.last_section_number,
             });
         }
-        section.validate_crc(raw)?;
+        mpeg_ts::section::validate_crc(raw)?;
 
         let key = SectionSetKey {
             pid,

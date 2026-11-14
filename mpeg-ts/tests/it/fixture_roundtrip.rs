@@ -5,6 +5,7 @@
 //! feeds the PAT PID through `SectionReassembler` to verify the CRC.
 
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::Pcr;
 use std::collections::HashMap;
 use std::fs;
 
@@ -223,6 +224,43 @@ fn real_fixture_sections_round_trip_through_the_generic_section() {
         }
     }
     assert!(checked > 0, "fixture must carry at least one PSI section");
+}
+
+#[test]
+fn real_fixture_pcr_rewrite_keeps_every_other_byte() {
+    // An in-place PCR rewrite must change the 6 PCR bytes and nothing else,
+    // including the PCR's own reserved bits (a real capture carries `0`).
+    let buf = fs::read(test_fixtures::path("ts/af-pcr-stuffing.ts"))
+        .expect("af-pcr-stuffing.ts fixture must be present");
+    let target = Pcr::from_parts(12_345, 7).expect("in range");
+    let mut rewritten = 0usize;
+    for pkt in buf.chunks_exact(TS_PACKET_SIZE) {
+        let Ok(parsed) = TsPacket::parse(pkt) else {
+            continue;
+        };
+        let Some(Ok(af)) = parsed.adaptation_field() else {
+            continue;
+        };
+        if af.pcr.is_none() {
+            continue;
+        }
+        let mut raw: [u8; TS_PACKET_SIZE] = pkt.try_into().expect("188 bytes");
+        let before = raw;
+        let before_reserved = af.pcr_reserved;
+        mpeg_ts::OwnedTsPacket::set_pcr(&mut raw, target).expect("PCR slot present");
+        let reparsed = TsPacket::parse(&raw).expect("still parses");
+        let af = reparsed.adaptation_field().expect("AF").expect("AF parses");
+        assert_eq!(af.pcr, Some(target));
+        assert_eq!(af.pcr_reserved, before_reserved, "reserved bits kept");
+        for (i, (old, new)) in before.iter().zip(raw.iter()).enumerate() {
+            if (6..12).contains(&i) {
+                continue;
+            }
+            assert_eq!(old, new, "byte {i} must not change");
+        }
+        rewritten += 1;
+    }
+    assert!(rewritten > 0, "fixture must carry at least one PCR packet");
 }
 
 #[test]

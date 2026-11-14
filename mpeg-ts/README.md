@@ -130,7 +130,7 @@ Runnable examples: `cargo run -p mpeg-ts --example demux`, `--example iter_packe
 | Module | Public API | Purpose |
 |---|---|---|
 | `ts` | `TsPacket<'a>`, `TsHeader`, `ContinuityCounter`, `AdaptationField<'a>`, `AdaptationFieldExtension<'a>`, `Pcr`, `Ltw`, `LtwOffset`, `PiecewiseRate`, `SeamlessSplice`, `ScramblingControl`, `AdaptationFieldControl`, `SectionReassembler`, `iter_packets`, `extract_ts_payload`, `TS_PACKET_SIZE`, `TS_BYTES_PER_DATAGRAM`, `MAX_DATAGRAM_PAYLOAD` | Zero-copy packet view, bit-exact adaptation field, PCR (27 MHz) and per-PID PSI section reassembly (`SectionReassembler::feed_with_continuity` drops a legally retransmitted same-counter continuation packet, and processes it when `discontinuity_indicator` is set) |
-| `owned` | `OwnedTsPacket` | Owned 188-byte packet: build (`null_packet`, `serialize_with_payload`), mutate (`set_continuity_counter`, `set_pcr`, `payload_mut`), inspect |
+| `owned` | `OwnedTsPacket` | Owned 188-byte packet: build (`null_packet`, `serialize_with_payload`), mutate (`set_continuity_counter`, `set_pcr`, `set_opcr`, `payload_mut`), inspect |
 | `pid` | `Pid` (`try_new`, `from_wire_masked`, `from_const`), `PidOutOfRange`, `well_known::{PAT, CAT, TSDT, IPMP_CIT, NIT, SDT_BAT, EIT, RST, TDT_TOT, NETWORK_SYNC, RNT, SAT, MEASUREMENT, DIT, SIT, ATSC_PSIP, NULL}` | Typed 13-bit PID newtype |
 | `section` | `Section<'a>` | Generic section header (`table_id`, syntax indicator, length, version, section numbers, CRC validation) |
 | `mux` | `SectionPacketiser`, `SiMux` (`upsert`, `upsert_pmt`, `upsert_sdt_actual`, `upsert_tdt`, `upsert_tot`, `poll`, `poll_into`), `SectionInterval` | Sections to TS packets with continuity and stuffing; interval-scheduled SI repetition |

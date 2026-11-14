@@ -151,7 +151,7 @@ impl EitCollector {
                 last_section_number: section.last_section_number,
             });
         }
-        section.validate_crc(raw)?;
+        mpeg_ts::section::validate_crc(raw)?;
 
         let eit = eit::EitSection::parse(raw)?;
         let logical_key = EitLogicalKey {

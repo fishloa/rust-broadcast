@@ -555,11 +555,13 @@ pub(crate) const AF_TRANSPORT_PRIVATE_DATA_FLAG: u8 = 0x02;
 pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
 /// PCR field byte 4 bits 6-1: six reserved bits, all set to `1`
 /// (ISO/IEC 13818-1 §2.4.3.5).
-const PCR_RESERVED_BITS: u8 = 0x7E;
+pub(crate) const PCR_RESERVED_BITS: u8 = 0x7E;
 /// Number of reserved bits beside the PCR/OPCR base bits (six).
 const PCR_RESERVED_BITS_COUNT: u32 = 6;
 /// The 6 reserved bits sit at bits 6-1 of PCR byte 4.
-const PCR_RESERVED_SHIFT: u32 = 1;
+pub(crate) const PCR_RESERVED_SHIFT: u32 = 1;
+/// Byte offset of the reserved bits inside the 6-byte PCR/OPCR field.
+pub(crate) const PCR_RESERVED_BYTE_OFFSET: usize = 4;
 /// 6-bit value of those reserved bits per the spec convention (all `1`).
 const PCR_RESERVED_VALUE: u8 = 0x3F;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
@@ -661,6 +663,18 @@ impl Pcr {
             (((b & 0x01) as u8) << 7) | PCR_RESERVED_BITS | ((e >> 8) as u8 & 0x01),
             (e & 0xFF) as u8,
         ]
+    }
+
+    /// The 6-byte PCR/OPCR field, keeping the 6 `reserved` bits a captured
+    /// packet already carries in `reserved`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::FieldOverflow`] when `reserved` is wider than the 6-bit field.
+    pub fn to_field_bytes_with_reserved(self, reserved: u8) -> Result<[u8; PCR_FIELD_LEN]> {
+        let mut field = self.to_field_bytes();
+        set_pcr_reserved(&mut field, reserved)?;
+        Ok(field)
     }
 
     /// Decode six PCR/OPCR field bytes (`buf[from..from + 6]`).
@@ -1192,7 +1206,7 @@ impl Default for AdaptationField<'_> {
 }
 
 /// Overwrite the 6 reserved bits of an encoded PCR/OPCR field.
-fn set_pcr_reserved(field: &mut [u8], reserved: u8) -> Result<()> {
+pub(crate) fn set_pcr_reserved(field: &mut [u8], reserved: u8) -> Result<()> {
     let reserved = broadcast_common::len::fit_bits(
         u64::from(reserved),
         PCR_RESERVED_BITS_COUNT,
