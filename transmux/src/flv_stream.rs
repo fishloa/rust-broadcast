@@ -367,11 +367,14 @@ impl StreamingFlvDemux {
                 }
                 let header = match rtmp_runtime::flv::FlvHeader::parse(&self.pending) {
                     Ok(header) => header,
-                    Err(
-                        err @ RtmpError::Malformed {
+                    Err(RtmpError::Malformed {
+                        what: crate::flv::FLV_DATA_OFFSET,
+                    }) => {
+                        return Err(FlvError::Header(RtmpError::Malformed {
                             what: crate::flv::FLV_DATA_OFFSET,
-                        },
-                    ) => return Err(FlvError::Header(err)),
+                        }));
+                    }
+                    Err(err @ RtmpError::FieldOverflow(_)) => return Err(FlvError::Header(err)),
                     Err(_) => {
                         return Err(FlvError::BadSignature([
                             self.pending[0],
@@ -820,8 +823,7 @@ mod tests {
         let mut header = rtmp_runtime::flv::FlvHeader::new(false, true);
         header.extra = &extra;
         let mut bytes = header.try_to_bytes().expect("header framing");
-        let field = u32::try_from(data_offset).unwrap_or_default();
-        bytes[5..FLV_HEADER_LEN].copy_from_slice(&field.to_be_bytes());
+        bytes[5..FLV_HEADER_LEN].copy_from_slice(&data_offset.to_be_bytes());
         bytes
     }
 

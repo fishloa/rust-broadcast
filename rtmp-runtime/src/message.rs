@@ -208,15 +208,13 @@ impl LimitType {
     /// Decode the wire byte (0..=2) into a [`LimitType`].
     ///
     /// # Errors
-    /// [`RtmpError::Malformed`] if `v` is not in `0..=2`.
+    /// [`RtmpError::InvalidLimitType`] if `v` is not in `0..=2`.
     pub const fn from_u8(v: u8) -> core::result::Result<Self, RtmpError> {
         match v {
             0 => Ok(LimitType::Hard),
             1 => Ok(LimitType::Soft),
             2 => Ok(LimitType::Dynamic),
-            _ => Err(RtmpError::Malformed {
-                what: "set peer bandwidth limit type (must be 0..=2)",
-            }),
+            value => Err(RtmpError::InvalidLimitType { value }),
         }
     }
 
@@ -261,14 +259,10 @@ impl ChunkSize {
     /// engine never adopts a chunk size other than the one announced.
     pub const fn try_new(value: u32) -> Result<Self> {
         if value == 0 || value & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
-            return Err(RtmpError::Malformed {
-                what: "set chunk size value (must be 1..=0x7FFF_FFFF)",
-            });
+            return Err(RtmpError::chunk_size_out_of_range(value));
         }
         if value > MAX_CHUNK_SIZE {
-            return Err(RtmpError::Malformed {
-                what: "set chunk size value (above the engine MAX_CHUNK_SIZE ceiling)",
-            });
+            return Err(RtmpError::chunk_size_out_of_range(value));
         }
         Ok(Self(value))
     }
@@ -383,9 +377,7 @@ impl ProtocolControl {
             MessageTypeId::SetChunkSize => {
                 let raw = need_u32(payload, "set chunk size payload")?;
                 if raw & SET_CHUNK_SIZE_RESERVED_MASK != 0 {
-                    return Err(RtmpError::Malformed {
-                        what: "set chunk size reserved top bit (must be 0)",
-                    });
+                    return Err(RtmpError::chunk_size_out_of_range(raw));
                 }
                 Ok(Some(ProtocolControl::SetChunkSize(ChunkSize::try_new(
                     raw & SET_CHUNK_SIZE_VALUE_MASK,
@@ -628,9 +620,7 @@ impl<'a> Parse<'a> for UserControl {
                 data,
                 "ping response event data",
             )?)),
-            _ => Err(RtmpError::Unsupported {
-                what: "user control event type (unrecognised)",
-            }),
+            other => Err(RtmpError::UnsupportedUserControlEvent { value: other }),
         }
     }
 }
@@ -696,11 +686,11 @@ mod tests {
     fn invalid_chunk_size_never_reaches_a_message() {
         assert!(matches!(
             ChunkSize::try_new(0),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkSizeOutOfRange { value: 0 })
         ));
         assert!(matches!(
             ChunkSize::try_new(0x8000_0000),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkSizeOutOfRange { value: 0x8000_0000 })
         ));
         let msg = ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()).to_message();
         assert_eq!(msg.message_type_id, MessageTypeId::SetChunkSize);
@@ -726,7 +716,7 @@ mod tests {
     fn limit_type_out_of_range_is_malformed() {
         assert!(matches!(
             LimitType::from_u8(3),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::InvalidLimitType { value: 3 })
         ));
     }
 
@@ -783,7 +773,7 @@ mod tests {
         let bytes = 0x8000_1000u32.to_be_bytes().to_vec();
         assert!(matches!(
             ProtocolControl::from_payload(MessageTypeId::SetChunkSize, &bytes),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkSizeOutOfRange { value: 0x8000_1000 })
         ));
     }
 
@@ -792,7 +782,7 @@ mod tests {
         let bytes = 0u32.to_be_bytes().to_vec();
         assert!(matches!(
             ProtocolControl::from_payload(MessageTypeId::SetChunkSize, &bytes),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkSizeOutOfRange { value: 0 })
         ));
         assert!(ChunkSize::try_new(0).is_err());
     }
@@ -916,7 +906,7 @@ mod tests {
         let bytes = [0x00, 0x05, 0x00, 0x00, 0x00, 0x01];
         assert!(matches!(
             UserControl::parse(&bytes),
-            Err(RtmpError::Unsupported { .. })
+            Err(RtmpError::UnsupportedUserControlEvent { value: 5 })
         ));
     }
 

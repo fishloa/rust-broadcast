@@ -21,7 +21,7 @@
 //! Number, Boolean, String, Object, Null, Undefined, ECMA Array, Strict
 //! Array, plus Date and Long String (trivial once String/Number exist).
 //!
-//! Out of scope, and rejected as [`RtmpError::Unsupported`] rather than
+//! Out of scope, and rejected as [`RtmpError::UnsupportedAmf0Marker`] rather than
 //! panicking or silently misparsing: `movieclip-marker` (`0x04`, reserved),
 //! `reference-marker` (`0x07`), `unsupported-marker` (`0x0D`),
 //! `recordset-marker` (`0x0E`, reserved), `xml-document-marker` (`0x0F`),
@@ -75,7 +75,7 @@ pub mod marker {
 
 /// Maximum AMF0 container nesting depth (Object/ECMA Array/Strict Array)
 /// [`Amf0Value::parse`] will descend into. Bounds recursion so a
-/// pathologically nested input returns [`RtmpError::Unsupported`] instead of
+/// pathologically nested input returns [`RtmpError::Amf0DepthExceeded`] instead of
 /// overflowing the native call stack — the guard is checked on *entering*
 /// each nested container, so recursion never actually reaches an
 /// attacker-chosen depth, only this constant.
@@ -137,9 +137,9 @@ fn buffer_too_short(need: usize, have: usize, what: &'static str) -> RtmpError {
 /// Returns the decoded string and the total bytes consumed (`2 + len`).
 /// Used for both the String value body and Object/ECMA-Array keys, which
 /// share this exact encoding (§2.4 / §2.5).
-fn read_utf8_short(bytes: &[u8], what: &'static str) -> Result<(String, usize)> {
+fn read_utf8_short(bytes: &[u8]) -> Result<(String, usize)> {
     if bytes.len() < U16_LEN {
-        return Err(buffer_too_short(U16_LEN, bytes.len(), what));
+        return Err(buffer_too_short(U16_LEN, bytes.len(), "AMF0 string length"));
     }
     let len = u16::from_be_bytes([bytes[0], bytes[1]]) as usize;
     // `len` is at most `u16::MAX`, so `U16_LEN + len` cannot actually
@@ -147,21 +147,29 @@ fn read_utf8_short(bytes: &[u8], what: &'static str) -> Result<(String, usize)> 
     // a bare `+`) so this stays correct even on a hypothetical narrow
     // `usize` platform, and matches the same guard on `read_utf8_long`
     // below where the addend genuinely can overflow.
-    let total = U16_LEN
-        .checked_add(len)
-        .ok_or(RtmpError::Malformed { what })?;
+    let total = U16_LEN.checked_add(len).ok_or(RtmpError::FieldOverflow(
+        broadcast_common::len::FieldOverflow {
+            field: "AMF0 string length",
+            value: u64::from(u16::MAX),
+            max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+        },
+    ))?;
     if bytes.len() < total {
-        return Err(buffer_too_short(total, bytes.len(), what));
+        return Err(buffer_too_short(total, bytes.len(), "AMF0 string"));
     }
     let s = String::from_utf8(bytes[U16_LEN..total].to_vec())
-        .map_err(|_| RtmpError::Malformed { what })?;
+        .map_err(|_| RtmpError::Amf0Utf8 { what: "string" })?;
     Ok((s, total))
 }
 
 /// Read a `U32`-length-prefixed UTF-8 string (Long String, §2.14).
-fn read_utf8_long(bytes: &[u8], what: &'static str) -> Result<(String, usize)> {
+fn read_utf8_long(bytes: &[u8]) -> Result<(String, usize)> {
     if bytes.len() < U32_LEN {
-        return Err(buffer_too_short(U32_LEN, bytes.len(), what));
+        return Err(buffer_too_short(
+            U32_LEN,
+            bytes.len(),
+            "AMF0 long string length",
+        ));
     }
     let len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
     // `len` can be up to `u32::MAX`: on a 32-bit target, `U32_LEN + len`
@@ -169,14 +177,19 @@ fn read_utf8_long(bytes: &[u8], what: &'static str) -> Result<(String, usize)> {
     // `bytes.len() < total` compare against a garbage-small wrapped value
     // and misparse a length claim that should instead be rejected as too
     // short. `checked_add` catches that instead of wrapping.
-    let total = U32_LEN
-        .checked_add(len)
-        .ok_or(RtmpError::Malformed { what })?;
+    let total = U32_LEN.checked_add(len).ok_or(RtmpError::FieldOverflow(
+        broadcast_common::len::FieldOverflow {
+            field: "AMF0 long string length",
+            value: u64::from(u32::MAX),
+            max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+        },
+    ))?;
     if bytes.len() < total {
-        return Err(buffer_too_short(total, bytes.len(), what));
+        return Err(buffer_too_short(total, bytes.len(), "AMF0 long string"));
     }
-    let s = String::from_utf8(bytes[U32_LEN..total].to_vec())
-        .map_err(|_| RtmpError::Malformed { what })?;
+    let s = String::from_utf8(bytes[U32_LEN..total].to_vec()).map_err(|_| RtmpError::Amf0Utf8 {
+        what: "long string",
+    })?;
     Ok((s, total))
 }
 
@@ -189,7 +202,7 @@ fn parse_pairs(bytes: &[u8], depth: usize) -> Result<(Vec<(String, Amf0Value)>, 
     let mut consumed = 0;
     let mut pairs = Vec::new();
     loop {
-        let (key, key_len) = read_utf8_short(&bytes[consumed..], "amf0 object key")?;
+        let (key, key_len) = read_utf8_short(&bytes[consumed..])?;
         let after_key = consumed + key_len;
         if key.is_empty() {
             if bytes.len() < after_key + MARKER_LEN {
@@ -207,9 +220,14 @@ fn parse_pairs(bytes: &[u8], depth: usize) -> Result<(Vec<(String, Amf0Value)>, 
         pairs.push((key, value));
         consumed = after_key
             .checked_add(value_len)
-            .ok_or(RtmpError::Malformed {
-                what: "amf0 object pair length",
-            })?;
+            .ok_or(RtmpError::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "AMF0 object pair length",
+                    value: u64::from(u32::try_from(after_key).unwrap_or(u32::MAX))
+                        + u64::from(u32::try_from(value_len).unwrap_or(u32::MAX)),
+                    max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+                },
+            ))?;
     }
 }
 
@@ -235,7 +253,10 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             }
             let mut b = [0u8; NUMBER_LEN];
             b.copy_from_slice(&body[..NUMBER_LEN]);
-            Ok((Amf0Value::Number(f64::from_be_bytes(b)), MARKER_LEN + NUMBER_LEN))
+            Ok((
+                Amf0Value::Number(f64::from_be_bytes(b)),
+                MARKER_LEN + NUMBER_LEN,
+            ))
         }
         marker::BOOLEAN => {
             if body.is_empty() {
@@ -244,13 +265,13 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             Ok((Amf0Value::Boolean(body[0] != 0), MARKER_LEN + BOOLEAN_LEN))
         }
         marker::STRING => {
-            let (s, len) = read_utf8_short(body, "amf0 string")?;
+            let (s, len) = read_utf8_short(body)?;
             Ok((Amf0Value::String(s), MARKER_LEN + len))
         }
         marker::OBJECT => {
             if depth >= MAX_AMF0_DEPTH {
-                return Err(RtmpError::Unsupported {
-                    what: "amf0 nesting depth exceeded",
+                return Err(RtmpError::Amf0DepthExceeded {
+                    max: MAX_AMF0_DEPTH,
                 });
             }
             let (pairs, len) = parse_pairs(body, depth + 1)?;
@@ -260,8 +281,8 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
         marker::UNDEFINED => Ok((Amf0Value::Undefined, MARKER_LEN)),
         marker::ECMA_ARRAY => {
             if depth >= MAX_AMF0_DEPTH {
-                return Err(RtmpError::Unsupported {
-                    what: "amf0 nesting depth exceeded",
+                return Err(RtmpError::Amf0DepthExceeded {
+                    max: MAX_AMF0_DEPTH,
                 });
             }
             if body.len() < U32_LEN {
@@ -280,8 +301,8 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
         }
         marker::STRICT_ARRAY => {
             if depth >= MAX_AMF0_DEPTH {
-                return Err(RtmpError::Unsupported {
-                    what: "amf0 nesting depth exceeded",
+                return Err(RtmpError::Amf0DepthExceeded {
+                    max: MAX_AMF0_DEPTH,
                 });
             }
             if body.len() < U32_LEN {
@@ -297,16 +318,21 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             for _ in 0..count {
                 let (value, consumed) = parse_value(rest, depth + 1)?;
                 values.push(value);
-                rest = rest.get(consumed..).ok_or(RtmpError::Malformed {
-                    what: "amf0 strict array element length",
-                })?;
+                rest = rest.get(consumed..).ok_or(RtmpError::FieldOverflow(
+                    broadcast_common::len::FieldOverflow {
+                        field: "AMF0 strict array element length",
+                        value: u64::try_from(consumed).unwrap_or(u64::MAX),
+                        max: u64::try_from(rest.len()).unwrap_or(u64::MAX),
+                    },
+                ))?;
             }
-            let elements_len = body[U32_LEN..]
-                .len()
-                .checked_sub(rest.len())
-                .ok_or(RtmpError::Malformed {
-                    what: "amf0 strict array element length",
-                })?;
+            let elements_len =
+                body[U32_LEN..]
+                    .len()
+                    .checked_sub(rest.len())
+                    .ok_or(RtmpError::Malformed {
+                        what: "AMF0 strict array body",
+                    })?;
             Ok((
                 Amf0Value::StrictArray(values),
                 MARKER_LEN + U32_LEN + elements_len,
@@ -324,9 +350,7 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             b.copy_from_slice(&body[..NUMBER_LEN]);
             let tz = u16::from_be_bytes([body[NUMBER_LEN], body[NUMBER_LEN + 1]]);
             if tz != 0 {
-                return Err(RtmpError::Malformed {
-                    what: "amf0 date reserved time zone (must be 0x0000)",
-                });
+                return Err(RtmpError::Amf0DateTimeZone { value: tz });
             }
             Ok((
                 Amf0Value::Date(f64::from_be_bytes(b)),
@@ -334,12 +358,10 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             ))
         }
         marker::LONG_STRING => {
-            let (s, len) = read_utf8_long(body, "amf0 long string")?;
+            let (s, len) = read_utf8_long(body)?;
             Ok((Amf0Value::LongString(s), MARKER_LEN + len))
         }
-        _ => Err(RtmpError::Unsupported {
-            what: "amf0 value marker (reserved, legacy, or amf3-switch)",
-        }),
+        other => Err(RtmpError::UnsupportedAmf0Marker { marker: other }),
     }
 }
 
@@ -441,9 +463,7 @@ impl Serialize for Amf0Value {
             }
             Amf0Value::String(s) => {
                 if s.len() > usize::from(u16::MAX) {
-                    return Err(RtmpError::Unsupported {
-                        what: "amf0 string exceeds u16 length (use long string)",
-                    });
+                    return Err(RtmpError::Amf0StringTooLong { len: s.len() });
                 }
                 marker_byte[0] = marker::STRING;
                 body[..U16_LEN].copy_from_slice(&(s.len() as u16).to_be_bytes());
@@ -515,45 +535,41 @@ impl Command {
     /// until `payload` is exhausted.
     ///
     /// # Errors
-    /// [`RtmpError::Malformed`] if the first value is not a String or the
-    /// second is not a Number; [`RtmpError::BufferTooShort`] /
-    /// [`RtmpError::Unsupported`] propagated from [`Amf0Value::parse`].
+    /// [`RtmpError::CommandNameNotString`] if the first value is not a
+    /// String, [`RtmpError::CommandTransactionIdNotNumber`] if the second is
+    /// not a Number; the remaining variants are propagated from
+    /// [`Amf0Value::parse`].
     pub fn parse(payload: &[u8]) -> Result<Self> {
         let (name_value, name_len) = parse_value(payload, 0)?;
         let mut offset = name_len;
         let name = match name_value {
             Amf0Value::String(s) => s,
-            _ => {
-                return Err(RtmpError::Malformed {
-                    what: "rtmp command name (expected amf0 string)",
-                });
-            }
+            value => return Err(RtmpError::CommandNameNotString { value }),
         };
 
-        let (txn_value, txn_len) = parse_value(
-            payload.get(offset..).unwrap_or_default(),
-            0,
-        )?;
-        offset = offset
-            .checked_add(txn_len)
-            .ok_or(RtmpError::Malformed {
-                what: "rtmp command transaction id length",
-            })?;
+        let (txn_value, txn_len) = parse_value(payload.get(offset..).unwrap_or_default(), 0)?;
+        offset = offset.checked_add(txn_len).ok_or(RtmpError::FieldOverflow(
+            broadcast_common::len::FieldOverflow {
+                field: "RTMP command transaction id offset",
+                value: u64::try_from(offset).unwrap_or(u64::MAX),
+                max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+            },
+        ))?;
         let transaction_id = match txn_value {
             Amf0Value::Number(n) => n,
-            _ => {
-                return Err(RtmpError::Malformed {
-                    what: "rtmp command transaction id (expected amf0 number)",
-                });
-            }
+            value => return Err(RtmpError::CommandTransactionIdNotNumber { value }),
         };
 
         let mut arguments = Vec::new();
         while offset < payload.len() {
             let (value, len) = parse_value(&payload[offset..], 0)?;
-            offset = offset.checked_add(len).ok_or(RtmpError::Malformed {
-                what: "rtmp command argument length",
-            })?;
+            offset = offset.checked_add(len).ok_or(RtmpError::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "RTMP command argument offset",
+                    value: u64::try_from(offset).unwrap_or(u64::MAX),
+                    max: u64::try_from(usize::MAX).unwrap_or(u64::MAX),
+                },
+            ))?;
             arguments.push(value);
         }
 
@@ -663,7 +679,9 @@ mod tests {
         let command = Command::parse(&payload).expect("any boolean byte is legal AMF0");
         assert_eq!(
             command.arguments,
-            (0..8u8).map(|i| Amf0Value::Boolean(i != 0)).collect::<Vec<_>>()
+            (0..8u8)
+                .map(|i| Amf0Value::Boolean(i != 0))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -701,15 +719,14 @@ mod tests {
     }
 
     /// The AMF0 String marker carries a 16-bit length prefix, so a longer
-    /// value is rejected (`Unsupported`, pointing at the Long String marker)
-    /// rather than written with a wrapped length.
+    /// value is rejected rather than written with a wrapped length.
     #[test]
     fn string_beyond_the_16_bit_prefix_is_rejected() {
         let value = Amf0Value::String("x".repeat(0x1_0000));
         let err = value.try_to_bytes().unwrap_err();
         assert!(
-            matches!(err, RtmpError::Unsupported { .. }),
-            "expected Unsupported for a 65 536-byte string, got {err:?}"
+            matches!(err, RtmpError::Amf0StringTooLong { len } if len == 0x1_0000),
+            "expected Amf0StringTooLong for a 65 536-byte string, got {err:?}"
         );
         let boundary = Amf0Value::String("x".repeat(usize::from(u16::MAX)));
         round_trip(&boundary);
@@ -817,7 +834,10 @@ mod tests {
         }
 
         let result = Amf0Value::parse(&inner);
-        assert!(matches!(result, Err(RtmpError::Unsupported { .. })));
+        assert!(matches!(
+            result,
+            Err(RtmpError::Amf0DepthExceeded { max }) if max == MAX_AMF0_DEPTH
+        ));
     }
 
     #[test]
@@ -868,7 +888,7 @@ mod tests {
         bytes.extend_from_slice(&[0xFF, 0xFE]); // invalid UTF-8
         assert!(matches!(
             Amf0Value::parse(&bytes),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::Amf0Utf8 { what: "string" })
         ));
     }
 
@@ -876,11 +896,11 @@ mod tests {
     fn unsupported_marker_is_rejected_not_panicking() {
         assert!(matches!(
             Amf0Value::parse(&[0x11]), // avmplus-object-marker (AMF3 switch)
-            Err(RtmpError::Unsupported { .. })
+            Err(RtmpError::UnsupportedAmf0Marker { marker: 0x11 })
         ));
         assert!(matches!(
             Amf0Value::parse(&[0x07]), // reference-marker
-            Err(RtmpError::Unsupported { .. })
+            Err(RtmpError::UnsupportedAmf0Marker { marker: 0x07 })
         ));
     }
 
@@ -891,7 +911,7 @@ mod tests {
         bytes.extend_from_slice(&1u16.to_be_bytes()); // reserved must be 0
         assert!(matches!(
             Amf0Value::parse(&bytes),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::Amf0DateTimeZone { value: 1 })
         ));
     }
 
@@ -963,7 +983,7 @@ mod tests {
         let bytes = Amf0Value::Number(1.0).try_to_bytes().unwrap();
         assert!(matches!(
             Command::parse(&bytes),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::CommandNameNotString { .. })
         ));
     }
 
@@ -979,7 +999,7 @@ mod tests {
         );
         assert!(matches!(
             Command::parse(&bytes),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::CommandTransactionIdNotNumber { .. })
         ));
     }
 

@@ -403,8 +403,8 @@ fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
     assert!(matches!(
         RtmpDemux::new().unpackage(&wire),
         Err(transmux::rtmp::RtmpFlvError::Rtmp(
-            rtmp_runtime::RtmpError::Malformed { .. }
-        ))
+            rtmp_runtime::RtmpError::ChunkSizeOutOfRange { value }
+        )) if value == RESERVED_BIT_CHUNK_SIZE
     ));
 }
 

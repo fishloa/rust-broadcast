@@ -57,16 +57,49 @@ impl core::fmt::Debug for RtmpTarget {
     }
 }
 
+/// An RTMP URL scheme: [`SCHEME_RTMP`] or [`SCHEME_RTMPS`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Scheme {
+    /// `rtmp://`.
+    Rtmp,
+    /// `rtmps://`.
+    Rtmps,
+    /// Any other scheme, as written.
+    Other(String),
+}
+
+impl Scheme {
+    /// The scheme this URL text carries; an unknown one is kept verbatim.
+    fn parse(text: &str) -> Self {
+        match text {
+            SCHEME_RTMP => Scheme::Rtmp,
+            SCHEME_RTMPS => Scheme::Rtmps,
+            other => Scheme::Other(other.to_string()),
+        }
+    }
+}
+
+impl core::fmt::Display for Scheme {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Scheme::Rtmp => f.write_str(SCHEME_RTMP),
+            Scheme::Rtmps => f.write_str(SCHEME_RTMPS),
+            Scheme::Other(text) => f.write_str(text),
+        }
+    }
+}
+
 /// Why an RTMP URL was rejected.
 #[derive(Debug, thiserror::Error, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RtmpUrlError {
-    /// The text is not a URL.
+    /// The text is not a URL (RFC 3986 §3).
     #[error("invalid URL: {0}")]
-    Parse(String),
-    /// The scheme is not `rtmp`.
-    #[error("unsupported scheme {0:?} (only rtmp and rtmps)")]
-    Scheme(String),
+    Parse(#[from] url::ParseError),
+    /// The URL's scheme is not `rtmp` or `rtmps`.
+    #[error("unsupported scheme {0} (only rtmp and rtmps)")]
+    Scheme(Scheme),
     /// A percent-decoded path segment is not valid UTF-8.
     #[error("percent-decoded path is not valid UTF-8")]
     PathNotUtf8,
@@ -149,9 +182,9 @@ impl RtmpTarget {
 }
 
 fn parse_base(url: &str) -> Result<Url, RtmpUrlError> {
-    let u = Url::parse(url).map_err(|e| RtmpUrlError::Parse(e.to_string()))?;
+    let u = Url::parse(url)?;
     if u.scheme() != SCHEME_RTMP && u.scheme() != SCHEME_RTMPS {
-        return Err(RtmpUrlError::Scheme(u.scheme().to_string()));
+        return Err(RtmpUrlError::Scheme(Scheme::parse(u.scheme())));
     }
     Ok(u)
 }
@@ -228,7 +261,7 @@ mod tests {
         ));
         assert!(matches!(
             RtmpTarget::parse("http://h/live/k"),
-            Err(RtmpUrlError::Scheme(_))
+            Err(RtmpUrlError::Scheme(Scheme::Other(_)))
         ));
         assert!(matches!(
             RtmpTarget::parse("not a url"),

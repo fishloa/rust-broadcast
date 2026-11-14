@@ -184,7 +184,7 @@ impl Fmt {
     /// Decode the 2-bit wire value (0..=3) into a [`Fmt`].
     ///
     /// # Errors
-    /// [`RtmpError::Malformed`] if `bits` is not in `0..=3`.
+    /// [`RtmpError::ChunkStreamState`] if `bits` is not in `0..=3`.
     pub const fn from_bits(bits: u8) -> core::result::Result<Self, RtmpError> {
         match bits {
             0 => Ok(Fmt::Type0),
@@ -812,8 +812,7 @@ impl ChunkAssembler {
     pub fn swap_pending(&mut self, now: &[u8]) -> Vec<u8> {
         let unconsumed = self.pending.len() - self.cursor;
         let previous = core::mem::replace(&mut self.pending, Vec::from(now));
-        let kept = previous.get(unconsumed..).unwrap_or_default().to_vec();
-        kept
+        previous.get(unconsumed..).unwrap_or_default().to_vec()
     }
 
     /// Parse and return the next complete [`Message`] out of the
@@ -899,8 +898,8 @@ impl ChunkAssembler {
         // feeding unparsed input despite errors) plus at most one
         // unreserved in-flight header's worth.
         if self.pending.len() - self.cursor > max_in_progress_bytes * 2 {
-            return Err(RtmpError::Malformed {
-                what: "pending input buffer exceeds the per-connection budget",
+            return Err(RtmpError::InputBudgetExceeded {
+                max: max_in_progress_bytes * 2,
             });
         }
         {
@@ -948,8 +947,9 @@ impl ChunkAssembler {
                             chunk_stream_id: parsed.csid,
                             timestamp: state.timestamp,
                             message_type_id: state.message_type_id.ok_or(
-                                RtmpError::Malformed {
-                                    what: "completed message on a csid that never set its message type id",
+                                RtmpError::ChunkStreamState {
+                                    chunk_stream_id: parsed.csid,
+                                    what: "completed message has no message type id",
                                 },
                             )?,
                             message_stream_id: state.message_stream_id,
@@ -1063,9 +1063,7 @@ impl ChunkAssembler {
         // `CsidState`, each with its own payload buffer, per bogus csid).
         // Reject before the caller ever inserts a new entry for this csid.
         if existing.is_none() && states.len() >= MAX_CSIDS {
-            return Err(RtmpError::Malformed {
-                what: "too many concurrent chunk stream ids (csid flood)",
-            });
+            return Err(RtmpError::TooManyChunkStreams { max: MAX_CSIDS });
         }
 
         let rest = &buf[header_len..];
@@ -1121,12 +1119,14 @@ impl ChunkAssembler {
                     message_type_id,
                 },
             ) => {
-                let existing = existing.ok_or(RtmpError::Malformed {
-                    what: "type 1 chunk header on a csid with no prior chunk to inherit from",
+                let existing = existing.ok_or(RtmpError::ChunkStreamState {
+                    chunk_stream_id: bh.chunk_stream_id,
+                    what: "type 1 header with no prior chunk to inherit from",
                 })?;
                 if existing.in_progress {
-                    return Err(RtmpError::Malformed {
-                        what: "type 1 chunk header mid-message (prior message on this csid not yet complete)",
+                    return Err(RtmpError::ChunkStreamState {
+                        chunk_stream_id: bh.chunk_stream_id,
+                        what: "type 1 header mid-message",
                     });
                 }
                 let used_extended = mh_consumed > TYPE1_LEN;
@@ -1143,18 +1143,24 @@ impl ChunkAssembler {
                 )
             }
             (Fmt::Type2, MessageHeader::Type2 { timestamp_delta }) => {
-                let existing = existing.ok_or(RtmpError::Malformed {
-                    what: "type 2 chunk header on a csid with no prior chunk to inherit from",
+                let existing = existing.ok_or(RtmpError::ChunkStreamState {
+                    chunk_stream_id: bh.chunk_stream_id,
+                    what: "type 2 header with no prior chunk to inherit from",
                 })?;
                 if existing.in_progress {
-                    return Err(RtmpError::Malformed {
-                        what: "type 2 chunk header mid-message (prior message on this csid not yet complete)",
+                    return Err(RtmpError::ChunkStreamState {
+                        chunk_stream_id: bh.chunk_stream_id,
+                        what: "type 2 header mid-message",
                     });
                 }
                 let used_extended = mh_consumed > TYPE2_LEN;
-                let message_type_id = existing.message_type_id.ok_or(RtmpError::Malformed {
-                    what: "type 2 chunk header on a csid with no message type id to inherit",
-                })?;
+                let message_type_id =
+                    existing
+                        .message_type_id
+                        .ok_or(RtmpError::ChunkStreamState {
+                            chunk_stream_id: bh.chunk_stream_id,
+                            what: "type 2 header with no message type id to inherit",
+                        })?;
                 (
                     ResolvedHeader {
                         timestamp: existing.timestamp.wrapping_add(timestamp_delta),
@@ -1168,13 +1174,18 @@ impl ChunkAssembler {
                 )
             }
             (Fmt::Type3, MessageHeader::Type3) => {
-                let existing = existing.ok_or(RtmpError::Malformed {
-                    what: "type 3 chunk header on a csid with no prior chunk to inherit from",
+                let existing = existing.ok_or(RtmpError::ChunkStreamState {
+                    chunk_stream_id: bh.chunk_stream_id,
+                    what: "type 3 header with no prior chunk to inherit from",
                 })?;
                 let continuation = existing.in_progress;
-                let message_type_id = existing.message_type_id.ok_or(RtmpError::Malformed {
-                    what: "type 3 chunk header on a csid with no message type id to inherit",
-                })?;
+                let message_type_id =
+                    existing
+                        .message_type_id
+                        .ok_or(RtmpError::ChunkStreamState {
+                            chunk_stream_id: bh.chunk_stream_id,
+                            what: "type 3 header with no message type id to inherit",
+                        })?;
                 if existing.extended {
                     if buf.len() < consumed + EXTENDED_TIMESTAMP_LEN {
                         return Ok(None);
@@ -1225,9 +1236,13 @@ impl ChunkAssembler {
         // buffer for this message is allocated — see `MAX_MESSAGE_LEN`'s
         // doc for why this bound is safe for real RTMP traffic.
         if resolved.message_length > MAX_MESSAGE_LEN {
-            return Err(RtmpError::Malformed {
-                what: "message length exceeds the maximum accepted message size",
-            });
+            return Err(RtmpError::FieldOverflow(
+                broadcast_common::len::FieldOverflow {
+                    field: "message_length",
+                    value: u64::from(resolved.message_length),
+                    max: u64::from(MAX_MESSAGE_LEN),
+                },
+            ));
         }
 
         let already_accumulated = if starts_new {
@@ -1257,8 +1272,8 @@ impl ChunkAssembler {
                 .saturating_sub(prior)
                 .saturating_add(resolved.message_length as usize);
             if new_total > max_in_progress_bytes {
-                return Err(RtmpError::Malformed {
-                    what: "aggregate in-progress message bytes exceed the per-connection budget",
+                return Err(RtmpError::InputBudgetExceeded {
+                    max: max_in_progress_bytes,
                 });
             }
             *in_progress_bytes = new_total;
@@ -2544,7 +2559,13 @@ mod tests {
             0x08, // message_type_id
         ];
         let err = assembler.push(&type1_chunk).unwrap_err();
-        assert!(matches!(err, RtmpError::Malformed { .. }));
+        assert!(matches!(
+            err,
+            RtmpError::ChunkStreamState {
+                chunk_stream_id: 12,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -2584,7 +2605,10 @@ mod tests {
         input.extend_from_slice(&[0, 0, 0]);
         assert!(matches!(
             assembler.push(&input),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkStreamState {
+                chunk_stream_id: 20,
+                ..
+            })
         ));
     }
 
@@ -2601,7 +2625,10 @@ mod tests {
         );
         assert!(matches!(
             assembler.push(&input),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkStreamState {
+                chunk_stream_id: 21,
+                ..
+            })
         ));
     }
 
@@ -2698,7 +2725,10 @@ mod tests {
         write_serialized_ok(&mut input, &MessageHeader::Type2 { timestamp_delta: 5 });
         assert!(matches!(
             assembler.push(&input),
-            Err(RtmpError::Malformed { .. })
+            Err(RtmpError::ChunkStreamState {
+                chunk_stream_id: 22,
+                ..
+            })
         ));
     }
 
@@ -2875,7 +2905,13 @@ mod tests {
             "a message_length beyond MAX_MESSAGE_LEN must be rejected before any \
              message_length-sized buffer is allocated",
         );
-        assert!(matches!(err, RtmpError::Malformed { .. }));
+        assert!(matches!(
+            err,
+            RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                field: "message_length",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -2929,7 +2965,10 @@ mod tests {
         let err = assembler
             .push(&single_chunk(flood_csid, &[0xCD]))
             .expect_err("a new csid beyond MAX_CSIDS must be rejected, not silently accepted");
-        assert!(matches!(err, RtmpError::Malformed { .. }));
+        assert!(matches!(
+            err,
+            RtmpError::TooManyChunkStreams { max } if max == MAX_CSIDS
+        ));
     }
 
     #[test]
@@ -3040,8 +3079,8 @@ mod tests {
                 }
                 Err(err) => {
                     assert!(
-                        matches!(&err, RtmpError::Malformed { .. }),
-                        "budget overrun must be Malformed (push #{hoarded}), got {err:?}"
+                        matches!(&err, RtmpError::InputBudgetExceeded { .. }),
+                        "budget overrun must be InputBudgetExceeded (push #{hoarded}), got {err:?}"
                     );
                     break;
                 }

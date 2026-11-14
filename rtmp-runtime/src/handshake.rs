@@ -284,7 +284,10 @@ impl Handshake {
                 // accepted, only to fail later as a confusing chunk-parse
                 // error instead of a clear one here.
                 if c0.0 != RTMP_VERSION {
-                    return Err(RtmpError::Malformed { what: "C0 version" });
+                    return Err(RtmpError::HandshakeVersion {
+                        value: c0.0,
+                        expected: RTMP_VERSION,
+                    });
                 }
                 let c1 = HandshakePacket::parse(&input[VERSION_LEN..need])?;
 
@@ -541,7 +544,13 @@ mod tests {
         let mut c0_c1 = build_c0_c1(0, patterned_random(3));
         c0_c1[0] = 6; // RTMPE, not plain RTMP
         let err = hs.read(&c0_c1).unwrap_err();
-        assert!(matches!(err, RtmpError::Malformed { what: "C0 version" }));
+        assert!(matches!(
+            err,
+            RtmpError::HandshakeVersion {
+                value: 6,
+                expected: RTMP_VERSION
+            }
+        ));
     }
 
     #[test]

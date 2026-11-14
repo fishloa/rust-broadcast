@@ -49,7 +49,10 @@ fn a_peer_chunk_size_above_the_engine_ceiling_closes_the_session() {
     let err = session
         .handle_data(&wire)
         .expect_err("a chunk size the engine cannot adopt must be refused");
-    assert!(matches!(err, RtmpError::Malformed { .. }), "{err:?}");
+    assert!(
+        matches!(err, RtmpError::ChunkSizeOutOfRange { value } if value == above_ceiling),
+        "{err:?}"
+    );
 }
 
 #[test]

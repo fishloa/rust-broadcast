@@ -501,11 +501,15 @@ impl ServerSession {
         match msg.message_type_id {
             MessageTypeId::UserControl => {
                 // Publish-only ingest: no inbound user control event needs
-                // a reply from us. Malformed/unrecognised event types are
-                // tolerated (accepted, not fatal) rather than aborting the
-                // whole session over a benign/unknown control event.
-                let _ = UserControl::parse(&msg.payload);
-                Ok(())
+                // a reply from us. An event type this engine does not
+                // decode (including a newer one a player may send) is
+                // tolerated rather than aborting the whole session over a
+                // benign/unknown control event; a structurally malformed
+                // one still fails.
+                match UserControl::parse(&msg.payload) {
+                    Ok(_) | Err(RtmpError::UnsupportedUserControlEvent { .. }) => Ok(()),
+                    Err(e) => Err(e),
+                }
             }
             MessageTypeId::CommandAmf0 => {
                 let command = Command::parse(&msg.payload)?;
@@ -629,8 +633,8 @@ impl ServerSession {
         }
 
         let Some(Amf0Value::Object(pairs)) = command.arguments.first() else {
-            return Err(RtmpError::Malformed {
-                what: "connect command object / app",
+            return Err(RtmpError::UnexpectedState {
+                what: "connect carries no command object",
             });
         };
         let Some(app) = pairs.iter().find_map(|(k, v)| {
@@ -643,8 +647,8 @@ impl ServerSession {
                 None
             }
         }) else {
-            return Err(RtmpError::Malformed {
-                what: "connect command object / app",
+            return Err(RtmpError::UnexpectedState {
+                what: "connect command object carries no string app",
             });
         };
 
@@ -767,8 +771,8 @@ impl ServerSession {
         let stream_key = match command.arguments.get(1) {
             Some(Amf0Value::String(s)) => s.clone(),
             _ => {
-                return Err(RtmpError::Malformed {
-                    what: "publish command missing its publishing-name (string) argument",
+                return Err(RtmpError::UnexpectedState {
+                    what: "publish carries no publishing-name (string) argument",
                 });
             }
         };
@@ -1152,7 +1156,10 @@ mod tests {
         session.handle_data(&build_c0_c1()).unwrap();
         session.handle_data(&build_c2()).unwrap();
         let err = session.handle_data(&connect_bytes("live")).unwrap_err();
-        assert!(matches!(err, RtmpError::Malformed { .. }), "{err:?}");
+        assert!(
+            matches!(err, RtmpError::ChunkSizeOutOfRange { value: 0 }),
+            "{err:?}"
+        );
     }
 
     /// RTMP-W6 (#1108): an AMF3-encoded `connect` (message type 17) is a
@@ -1409,7 +1416,7 @@ mod tests {
         // No arguments at all: arg0 (the command object) is missing.
         let err = session.handle_data(&connect_bytes_no_args()).unwrap_err();
         assert!(
-            matches!(err, RtmpError::Malformed { .. }),
+            matches!(err, RtmpError::UnexpectedState { .. }),
             "connect with no command-object argument must error, not default app to \"\""
         );
     }
@@ -1432,7 +1439,7 @@ mod tests {
 
         let err = session.handle_data(&bytes).unwrap_err();
         assert!(
-            matches!(err, RtmpError::Malformed { .. }),
+            matches!(err, RtmpError::UnexpectedState { .. }),
             "connect with object missing 'app' key must error"
         );
     }
@@ -1458,7 +1465,7 @@ mod tests {
 
         let err = session.handle_data(&bytes).unwrap_err();
         assert!(
-            matches!(err, RtmpError::Malformed { .. }),
+            matches!(err, RtmpError::UnexpectedState { .. }),
             "connect with app as Number must error, not accept numeric value"
         );
     }
@@ -1514,7 +1521,7 @@ mod tests {
                 .handle_data(&publish_bytes(1, &key))
                 .expect_err("overflowing onStatus description must be an Err");
             assert!(
-                matches!(err, RtmpError::Unsupported { .. }),
+                matches!(err, RtmpError::Amf0StringTooLong { .. }),
                 "len {len}: {err:?}"
             );
         }
@@ -2000,7 +2007,7 @@ mod tests {
         let err = session.handle_data(&bytes).unwrap_err();
         assert!(matches!(
             err,
-            RtmpError::Unsupported { .. }
+            RtmpError::UnsupportedAmf0Marker { .. }
                 | RtmpError::Malformed { .. }
                 | RtmpError::BufferTooShort(..)
         ));
@@ -2150,9 +2157,7 @@ mod tests {
         assert!(
             matches!(
                 err,
-                RtmpError::Malformed {
-                    what: "set chunk size value (above the engine MAX_CHUNK_SIZE ceiling)"
-                }
+                RtmpError::ChunkSizeOutOfRange { value } if value == MAX_CHUNK_SIZE + 1
             ),
             "{err:?}"
         );
