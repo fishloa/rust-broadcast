@@ -71,6 +71,8 @@ mod soak_whep_peers;
 mod spawn_disposition;
 mod spawn_ownership;
 mod split_audio;
+#[cfg(feature = "test-seams")]
+mod srt_url_golden;
 mod subtitle_webvtt;
 #[path = "../support/mod.rs"]
 mod support;
