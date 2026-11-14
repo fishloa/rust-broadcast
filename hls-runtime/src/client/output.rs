@@ -5,6 +5,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use broadcast_hls::MediaType;
 use transmux::TrackId;
+use url::Url;
 
 use transmux::DisplayInfo;
 use transmux::Sample;
@@ -50,10 +51,16 @@ impl VariantPolicy {
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct VariantInfo {
-    /// Resolved absolute URL of the variant's media playlist.
-    pub url: String,
-    /// `BANDWIDTH` in bits per second.
-    pub bandwidth: u32,
+    /// The absolute URL the manifest declares for it: an HLS master's media playlist, a DASH
+    /// Representation's Initialization Segment. `None` for a protocol whose variant has no URI
+    /// of its own (Smooth, whose fragments live under the manifest's URL).
+    pub uri: Option<Url>,
+    /// Its peak bandwidth in bits per second.
+    ///
+    /// [`u64`] because the protocols that report one do not share a width: an HLS
+    /// `BANDWIDTH` and a DASH `@bandwidth` are a `u32` and a `u64` (both range-checked where
+    /// they parse), and every value is carried as given rather than clamped into the narrower.
+    pub bandwidth: u64,
     /// `AVERAGE-BANDWIDTH`, if present.
     pub average_bandwidth: Option<u32>,
     /// `RESOLUTION` as `(width, height)`, if present.
@@ -67,11 +74,11 @@ pub struct VariantInfo {
 }
 
 impl VariantInfo {
-    /// Build a variant description from its required URL and bandwidth.
+    /// Build a variant description from its URI (when the protocol declares one) and bandwidth.
     #[must_use]
-    pub fn new(url: String, bandwidth: u32) -> Self {
+    pub fn new(uri: Option<Url>, bandwidth: u64) -> Self {
         Self {
-            url,
+            uri,
             bandwidth,
             average_bandwidth: None,
             resolution: None,

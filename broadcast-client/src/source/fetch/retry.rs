@@ -14,7 +14,7 @@ use core::time::Duration;
 use crate::Event;
 use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
-use broadcast_common::backoff::{BackoffSteps, RetrySchedule};
+use broadcast_common::backoff::{BackoffSteps, MAX_FLOOR, RetrySchedule};
 use broadcast_common::http_date::parse_http_date;
 
 use super::wall::WallClock;
@@ -50,12 +50,11 @@ impl Backoff {
     }
 
     fn new_raw(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+        let cap = millis(cap_ms)
+            .max(Duration::from_millis(MIN_BACKOFF_MS))
+            .min(MAX_FLOOR);
         Self {
-            schedule: RetrySchedule::from_steps(
-                &millis_steps(steps_ms),
-                millis(cap_ms).max(Duration::from_millis(MIN_BACKOFF_MS)),
-                seed,
-            ),
+            schedule: steps_schedule(&millis_steps(steps_ms), cap, seed),
         }
     }
 
@@ -142,6 +141,24 @@ fn millis_steps(steps_ms: &[u64]) -> Vec<Duration> {
         .collect()
 }
 
+/// A schedule over `steps`, then `cap` for every later attempt.
+///
+/// A cap at or under [`MAX_FLOOR`] is one [`RetrySchedule::from_steps`] always
+/// accepts, so the fallback is what a future ceiling change would leave: the
+/// cap clamped to the ceiling with no step table, rather than a panic in the
+/// retry path.
+fn steps_schedule(steps: &[Duration], cap: Duration, seed: u64) -> RetrySchedule {
+    RetrySchedule::from_steps(steps, cap, seed)
+        .or_else(|_| RetrySchedule::from_steps(&[], cap.min(MAX_FLOOR), seed))
+        .or_else(|_| RetrySchedule::from_steps(&[], Duration::ZERO, seed))
+        .unwrap_or_else(|_| zero_cap(seed))
+}
+
+/// The one schedule no bound can refuse: a zero cap with no step table.
+fn zero_cap(seed: u64) -> RetrySchedule {
+    RetrySchedule::from_steps(&[], Duration::ZERO, seed).unwrap_or_else(|_| zero_cap(0))
+}
+
 /// `ms` milliseconds as a [`Duration`], saturating at [`Duration::MAX`] instead of wrapping back
 /// to a tiny delay.
 fn millis(ms: u64) -> Duration {
@@ -172,9 +189,14 @@ pub struct ReconnectTimer {
 
 impl ReconnectTimer {
     /// A timer over a step table (millisecond steps, then the cap), jittered from `seed`.
+    ///
+    /// A cap above [`MAX_FLOOR`] (only reachable from a `cap_ms` near
+    /// `u64::MAX` milliseconds) is clamped to it, [`RetrySchedule`]'s own
+    /// ceiling.
     pub fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+        let cap = millis(cap_ms).min(MAX_FLOOR);
         Self {
-            schedule: RetrySchedule::from_steps(&millis_steps(steps_ms), millis(cap_ms), seed),
+            schedule: steps_schedule(&millis_steps(steps_ms), cap, seed),
             attempts: 0,
             connected_at: None,
         }

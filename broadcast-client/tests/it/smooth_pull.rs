@@ -182,8 +182,16 @@ fn smooth_variants_follow_the_shared_policy() {
         |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
         10_000,
     );
-    let has_v = h.events.iter().any(|e| matches!(e, Event::Variants(_)));
-    assert!(has_v);
+    let selection = h.events.iter().find_map(|e| match e {
+        Event::Variants(selection) => Some(selection),
+        _ => None,
+    });
+    let selection = selection.expect("a Variants event");
+    assert!(
+        selection.variants.iter().all(|v| v.uri.is_none()),
+        "a Smooth variant has no URI of its own: {:?}",
+        selection.variants
+    );
 }
 
 #[test]

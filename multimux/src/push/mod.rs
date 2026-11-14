@@ -883,6 +883,7 @@ mod tests {
             2.0,
             0x5EED,
         )
+        .unwrap()
         .with_offset(1);
         let mut distinct = std::collections::HashSet::new();
         for _ in 0..40 {

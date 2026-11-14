@@ -1357,11 +1357,14 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
     let variants = selection
         .variants
         .iter()
+        .filter(|v| {
+            v.init_url
+                .as_deref()
+                .is_some_and(|url| Url::parse(url).is_ok())
+        })
         .map(|v| {
-            let mut info = VariantInfo::new(
-                v.init_url.clone().unwrap_or_default(),
-                u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
-            );
+            let uri = v.init_url.as_deref().and_then(|url| Url::parse(url).ok());
+            let mut info = VariantInfo::new(uri, v.bandwidth);
             info.resolution = v.resolution;
             info.codecs = v.codecs.clone();
             info.audio_group = v.audio_group.clone();

@@ -716,6 +716,15 @@ fn cookie_header_does_not_leak_into_auth_decision() {
 }
 
 #[test]
+fn a_set_cookie_value_http_cannot_carry_drops_the_whole_cookie_header() {
+    // DEL is legal to the `cookie` crate's parser but not in an HTTP field value, so the
+    // next request's `Cookie` cannot be represented: the header goes out without it.
+    let mut s = session_with_cookies(TS_URL, &["good=1; Path=/", "bad=a\u{7f}b; Path=/"]);
+    let next = reconnect(&mut s, SEC);
+    assert_eq!(next.cookie(), None);
+}
+
+#[test]
 fn set_cookie_header_name_is_case_insensitive_and_garbage_lines_ignored() {
     let mut s = open(TS_URL, Config::default());
     let first = one(&mut s, 0);

@@ -153,6 +153,8 @@ pub const TABLE: &[Crate] = &[
         // own traversal stack, not a label. `MulticastInterface` and
         // `JoinMismatch`: how a UDP socket's multicast join is chosen and why
         // one is refused (a config selector and an error), not spec labels.
+        // `InvalidBackoff`: why a retry schedule's bounds are refused (an
+        // error), not a spec label.
         skip: &[
             "BitError",
             "KlvError",
@@ -163,6 +165,7 @@ pub const TABLE: &[Crate] = &[
             "HttpDateError",
             "MulticastInterface",
             "JoinMismatch",
+            "InvalidBackoff",
         ],
         expected: None,
         min_enums: None,
