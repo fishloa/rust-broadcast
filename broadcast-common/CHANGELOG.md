@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- `backoff::ReconnectPolicy`: the workspace's one reconnect/backoff policy (a `BackoffSteps` schedule plus an `Option<NonZeroU32>` attempt bound), `ReconnectPolicy::doubling` (an exponential schedule from two bounds), and `ReconnectPolicy::exhausted` (#2690).
 - `clock33::Clock27::from_27mhz_wrapping`: the infallible position a raw 27 MHz count names, reduced modulo `PCR_WRAP_27MHZ` when it is past the wrap (a counter that has run over it), unchanged below it; `from_27mhz` stays the checked one (#2687).
 - `range::ByteSpan`: the one byte-range type the pull clients carry (`offset` + non-zero `len`), rendering the `Range: bytes=<first>-<last>` field value via `range_header()`; `broadcast-hls`/`broadcast-dash` convert their own `ByteRange` to and from it at the parser edge (#2655 C1). Needs `serde` for its optional derive.
 - `timescale::Timescale`: `Display`, a transparent `Debug` (the bare number), `serde::Serialize` (transparent, `serde` feature), `Timescale::NANOS`, and `clock33::PTS_TIMESCALE` / `clock33::PCR_TIMESCALE` (the 90 kHz and 27 MHz clocks as `Timescale`s) (#2657).

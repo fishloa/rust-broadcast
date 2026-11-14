@@ -93,7 +93,7 @@ fn smooth_manifest_url_is_selected_case_insensitively() {
     c.kind = SourceKind::Auto;
     let mut s = Session::open(Url::parse("http://h/x/Manifest").unwrap(), c, ts(0)).unwrap();
     assert!(matches!(
-        s.select_variant(0),
+        s.select_variant(ts(0), 0),
         Err(broadcast_client::Error::NoSuchVariant(_))
     ));
 }
@@ -109,7 +109,7 @@ fn smooth_manifest_format_query_is_not_smooth() {
     )
     .unwrap();
     assert!(matches!(
-        s.select_variant(0),
+        s.select_variant(ts(0), 0),
         Err(broadcast_client::Error::NotHls)
     ));
 }
@@ -519,7 +519,9 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
         ts(0),
     )
     .unwrap();
-    session.set_credentials(Credentials::new("u", "p")).unwrap();
+    session
+        .set_credentials(ts(0), Credentials::new("u", "p"))
+        .unwrap();
     // drive manually using host? Host owns session, but we created session separately. Use host instead.
     let mut h2 = Host::new("http://origin.test/Manifest", smooth_config());
     h2.route(
@@ -545,7 +547,7 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
     );
     // set credentials on the host's session
     h2.session
-        .set_credentials(Credentials::new("u", "p"))
+        .set_credentials(ts(0), Credentials::new("u", "p"))
         .unwrap();
     h2.run_until(
         |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
@@ -748,7 +750,9 @@ fn smooth_select_variant_switches_the_quality_of_later_fragments() {
         |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
         10_000,
     );
-    h.session.select_variant(1).expect("select the low variant");
+    h.session
+        .select_variant(ts(h.now), 1)
+        .expect("select the low variant");
     h.run_until(
         |evs| {
             evs.iter()

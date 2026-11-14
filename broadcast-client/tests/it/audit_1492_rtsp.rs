@@ -287,7 +287,7 @@ fn digest_server() -> Server {
 fn keepalive_challenges_with_rotating_nonces_never_exhaust_the_replay_budget() {
     let mut host = Host::new(BASE_URL, quiet_config(), digest_server());
     host.session
-        .set_credentials(Credentials::new(USER, PASSWORD))
+        .set_credentials(ts(0), Credentials::new(USER, PASSWORD))
         .expect("credentials");
     host.connect();
     for cycle in 1..=KEEPALIVE_CYCLES {

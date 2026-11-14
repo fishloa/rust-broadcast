@@ -165,7 +165,9 @@ fn eof_with_only_flushed_sample_counts_as_played() {
         }
     }
     while let Some(a) = c.poll() {
-        if a == (Action::Reconnect { after_ms: 0 }) {
+        if a == (Action::Reconnect {
+            after: std::time::Duration::from_millis(0),
+        }) {
             saw_zero = true;
         }
     }

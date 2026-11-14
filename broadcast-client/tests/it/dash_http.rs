@@ -99,7 +99,7 @@ fn whole(rel: &str) -> Vec<Sig> {
 fn credentials_cookies_and_headers_reach_every_request_class_on_the_session_origin() {
     let mut sim = DashSim::static_origin(&url_of(SIDX), secured());
     sim.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .unwrap();
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
@@ -121,7 +121,7 @@ fn credentials_cookies_and_headers_reach_every_request_class_on_the_session_orig
 fn a_utc_server_and_a_cdn_on_other_origins_receive_nothing_the_session_origin_does() {
     let mut sim = live_with_utc(UTC_URL, secured());
     sim.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .unwrap();
     sim.run_for(15 * SEC);
     let utc: Vec<&Logged> = sim
@@ -141,7 +141,7 @@ fn a_utc_server_and_a_cdn_on_other_origins_receive_nothing_the_session_origin_do
 
     let mut sim = with_cdn(MANIFEST, secured());
     sim.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .unwrap();
     sim.run_to_terminal(60 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
@@ -171,7 +171,7 @@ fn a_utc_server_on_the_session_origin_gets_the_credentials_too() {
         Box::new(backend),
     );
     sim.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .unwrap();
     sim.run_for(15 * SEC);
     let utc: Vec<&Logged> = sim
@@ -201,7 +201,7 @@ fn a_utc_server_on_the_session_origin_gets_no_credentials_when_the_session_is_to
         Box::new(backend),
     );
     sim.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .unwrap();
     sim.run_for(15 * SEC);
     let utc: Vec<&Logged> = sim
@@ -256,7 +256,7 @@ fn a_401_waits_for_credentials_and_replays_the_parked_request() {
     sim.run_for(60 * SEC);
     assert_eq!(sim.log.len(), waiting, "no request is made while waiting");
     sim.session
-        .set_credentials(Credentials::new("u", "p"))
+        .set_credentials(ts(0), Credentials::new("u", "p"))
         .unwrap();
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended(), "{:?}", sim.errors());
@@ -331,7 +331,7 @@ fn a_segment_redirect_to_a_cdn_is_followed_without_credentials() {
         Box::new(StaticBackend(origin)),
     );
     sim.session
-        .set_credentials(Credentials::bearer("tok"))
+        .set_credentials(ts(0), Credentials::bearer("tok"))
         .unwrap();
     sim.fault = Some(Box::new(|req: &Logged, _| {
         (req.url == "http://dash.test/chunk-stream0-00002.m4s")

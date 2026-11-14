@@ -42,7 +42,7 @@ fn a_playlist_redirected_to_another_origin_resolves_relative_segments_there() {
 fn credentials_stay_scoped_to_the_playlist_origin_after_a_redirect() {
     let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
     h.session
-        .set_credentials(broadcast_client::Credentials::bearer("secret"))
+        .set_credentials(ts(0), broadcast_client::Credentials::bearer("secret"))
         .unwrap();
     h.route(
         TS_PLAYLIST_URL,

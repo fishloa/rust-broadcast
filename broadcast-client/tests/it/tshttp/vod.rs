@@ -64,7 +64,9 @@ fn chunked_without_length_stays_live() {
     let mut reconnect0 = false;
     let mut ended = false;
     while let Some(a) = c.poll() {
-        if matches!(a, Action::Reconnect { after_ms: 0 }) {
+        if matches!(a, Action::Reconnect {
+            after: std::time::Duration::from_millis(0),
+        }) {
             reconnect0 = true;
         }
     }
@@ -88,7 +90,9 @@ fn no_content_length_http2_style_stays_live() {
     c.on_eof(ts(60_000));
     let mut reconnect0 = false;
     while let Some(a) = c.poll() {
-        if matches!(a, Action::Reconnect { after_ms: 0 }) {
+        if matches!(a, Action::Reconnect {
+            after: std::time::Duration::from_millis(0),
+        }) {
             reconnect0 = true;
         }
     }
@@ -169,7 +173,9 @@ fn finite_eof_before_all_bytes_is_failure_backoff() {
         }
     }
     assert!(reconnecting);
-    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2000 }));
+    assert_eq!(c.poll(), Some(Action::Reconnect {
+            after: std::time::Duration::from_millis(2000),
+        }));
 }
 
 #[test]
@@ -251,7 +257,9 @@ fn caller_reconnect_from_ended_reopens_and_resets_attempts() {
     while c.poll().is_some() {}
     c.reconnect(ts(5));
     assert_eq!(c.poll(), Some(Action::Abort));
-    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
+    assert_eq!(c.poll(), Some(Action::Reconnect {
+            after: std::time::Duration::from_millis(0),
+        }));
     c.poll_timeout(ts(5));
     assert_eq!(
         c.poll(),

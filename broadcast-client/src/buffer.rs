@@ -4,7 +4,7 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use broadcast_common::clock33::pcr_signed_distance;
+use broadcast_common::clock33::{PCR_TIMESCALE, pcr_signed_distance};
 use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
@@ -130,11 +130,6 @@ macro_rules! rec {
     };
 }
 
-const TICKS_PER_SEC_27MHZ: u32 = 27_000_000;
-
-/// [`TICKS_PER_SEC_27MHZ`] as a [`Timescale`].
-const CLOCK_27MHZ: Timescale = broadcast_common::timescale!(TICKS_PER_SEC_27MHZ);
-
 /// Controller key of the placeholder for a declared stream that has not resolved yet; a real
 /// `TrackId` never takes it.
 const PENDING_TRACK_KEY: u32 = u32::MAX;
@@ -143,7 +138,7 @@ pub(crate) fn raw_27mhz(pts: i64, timescale: Timescale) -> i128 {
     rescale(
         i128::from(pts),
         timescale,
-        CLOCK_27MHZ,
+        PCR_TIMESCALE,
         Rounding::TowardZero,
     )
 }
@@ -932,6 +927,7 @@ impl Feeder {
 mod tests {
     use super::*;
     use broadcast_common::Unpackage;
+    use broadcast_common::clock33::PCR_HZ;
     use transmux::{LiveJoin, TsDemux};
 
     const FIXTURE: &str = "ts/h264-aac.ts";
@@ -983,6 +979,26 @@ mod tests {
             ));
         }
         s
+    }
+
+    #[test]
+    fn the_27mhz_conversions_use_the_shared_pcr_clock() {
+        assert_eq!(PCR_TIMESCALE.as_u64(), PCR_HZ);
+        assert_eq!(PCR_HZ, 27_000_000);
+        assert_eq!(
+            raw_27mhz(
+                PCR_HZ as i64,
+                Timescale::new(PCR_HZ as u32).expect("27 MHz is a non-zero timescale")
+            ),
+            i128::from(PCR_HZ)
+        );
+        assert_eq!(
+            pts_to_27mhz(
+                90_000,
+                Timescale::new(90_000).expect("90 kHz is a non-zero timescale")
+            ),
+            PCR_HZ
+        );
     }
 
     #[test]
@@ -1204,7 +1220,7 @@ mod tests {
     const AUDIO_B_ID: u32 = 3;
     const SLICES_PER_SEC: i64 = 10;
     const TICK_STEP_US: u64 = 50_000;
-    const STARVE_MARGIN_27MHZ: u64 = TICKS_PER_SEC_27MHZ as u64;
+    const STARVE_MARGIN_27MHZ: u64 = PCR_HZ;
 
     struct Rig {
         f: Feeder,
@@ -1285,9 +1301,7 @@ mod tests {
 
         fn position(&self) -> Option<u64> {
             match (self.playing, self.held) {
-                (Some((base, since)), _) => {
-                    Some(base + (self.now - since) * u64::from(TICKS_PER_SEC_27MHZ / 1_000_000))
-                }
+                (Some((base, since)), _) => Some(base + (self.now - since) * PCR_HZ / 1_000_000),
                 (None, held) => held,
             }
         }
@@ -1363,7 +1377,7 @@ mod tests {
 
         fn emitted_end_27mhz(&self) -> u64 {
             let secs = 1 + self.next_slice / SLICES_PER_SEC;
-            u64::try_from(secs).unwrap() * u64::from(TICKS_PER_SEC_27MHZ)
+            u64::try_from(secs).unwrap() * PCR_HZ
         }
 
         fn pauses_after(&self, t: u64) -> Vec<(u64, BufferEvent)> {

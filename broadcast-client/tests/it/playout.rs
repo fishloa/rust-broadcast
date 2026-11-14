@@ -19,7 +19,7 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
-const TICKS_PER_SEC: u64 = 27_000_000;
+const TICKS_PER_SEC: u64 = broadcast_common::clock33::PCR_HZ;
 const TICKS_PER_MS: u64 = 27_000;
 const VIDEO: u32 = 1;
 const AUDIO: u32 = 2;
@@ -932,7 +932,7 @@ fn set_rendered_tracks_audio_only_uses_audio_origin() {
 fn rejoin_resets_origin_and_restarts() {
     let mut d = partial_vod(vod_lead(500));
     assert_eq!(names(&d.events), vec!["start"]);
-    d.session.rejoin();
+    d.session.rejoin(ts(0));
     d.pump();
     let from = nb(&d.events).len();
     finish_vod(&mut d);
@@ -993,7 +993,7 @@ fn hls_variant_switch_resets_gate() {
     d.serve_all_except(&["http://origin.test/hls/high/index1.ts"]);
     assert_eq!(names(&d.events), vec!["start"]);
     let from = nb(&d.events).len();
-    d.session.select_variant(0).expect("select");
+    d.session.select_variant(ts(0), 0).expect("select");
     d.serve_all_except(&[]);
     let list = nb(&d.events);
     let disc = from
@@ -1181,7 +1181,9 @@ fn playout_audio_rendition_switch_does_not_pin_stale_audio_obs() {
     r.serve_all_except(&withheld_refs);
 
     // Switch to the other audio rendition mid-play; its segments are not served.
-    r.session.select_audio_rendition(Some(1)).expect("switch");
+    r.session
+        .select_audio_rendition(ts(0), Some(1))
+        .expect("switch");
     r.pump();
 
     // Advance playback position to the old audio end; must not spuriously pause

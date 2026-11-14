@@ -14,7 +14,6 @@ fn ts(us: u64) -> Timestamp {
 }
 pub const TS_PACKET: usize = 188;
 const PCR_BASE_MODULUS_27MHZ: u64 = (1 << 33) * 300;
-const PCR_HZ: u64 = 27_000_000;
 const FALLBACK_BPS: u64 = 12_000_000;
 const MICROS: u64 = 1_000_000;
 
@@ -46,7 +45,7 @@ pub fn bitrate_bps(bytes: &[u8]) -> u64 {
     if dt == 0 || li <= fi {
         return FALLBACK_BPS;
     }
-    ((li - fi) as u64 * TS_PACKET as u64 * 8 * PCR_HZ / dt).max(1)
+    ((li - fi) as u64 * TS_PACKET as u64 * 8 * broadcast_common::clock33::PCR_HZ / dt).max(1)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -130,7 +129,7 @@ pub fn replay_paced(bytes: &[u8], config: Config, chunk: usize, bps: u64) -> Rep
     replay_with_host(bytes, config, chunk, bps, None).0
 }
 
-const PTS_HZ_27MHZ: i128 = 27_000_000;
+const PTS_HZ_27MHZ: i128 = broadcast_common::clock33::PCR_HZ as i128;
 const MICROS_PER_SEC: i128 = 1_000_000;
 
 #[derive(Debug, Default, Clone)]

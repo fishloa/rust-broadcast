@@ -51,11 +51,11 @@ fn a_client_never_schedules_a_zero_delay_reconnect_from_a_zero_backoff_entry() {
     let mut client = TsHttpClient::with_seed("u", config, ts(0), ts(0).as_millis());
     while client.poll().is_some() {}
     client.on_error(ts(0));
-    let delays: Vec<u64> = std::iter::from_fn(|| client.poll())
+    let delays: Vec<Duration> = std::iter::from_fn(|| client.poll())
         .filter_map(|a| match a {
-            Action::Reconnect { after_ms } => Some(after_ms),
+            Action::Reconnect { after } => Some(after),
             _ => None,
         })
         .collect();
-    assert_eq!(delays, vec![1]);
+    assert_eq!(delays, vec![Duration::from_millis(1)]);
 }

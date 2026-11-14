@@ -300,7 +300,7 @@ fn a_reconnect_onto_a_lower_pts_base_starts_playing_on_the_new_timeline() {
     );
 }
 
-const PCR_HZ_U: u64 = 27_000_000;
+const PCR_HZ_U: u64 = broadcast_common::clock33::PCR_HZ;
 const GO_DEADLINE_US: u64 = 5_000_000;
 
 #[test]

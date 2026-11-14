@@ -21,7 +21,6 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
-use broadcast_client::fetch::{WallClock, retry_after_us};
 use broadcast_client::{
     Action, ClockSource, Config, DashClockPolicy, DashConfig, Error, ErrorKind, Event, Session,
 };
@@ -204,29 +203,6 @@ fn extreme_anchors_are_accepted_and_do_not_wrap() {
 }
 
 #[test]
-fn a_past_http_date_on_a_refusal_asks_for_no_server_wait() {
-    let anchor = WallClock::new(0, i128::from(BASE_UNIX_US + 100 * SEC));
-    let past = retry_after_us(
-        http::StatusCode::SERVICE_UNAVAILABLE,
-        &crate::support::headers(&[("Retry-After", PLUS_30S)]),
-        Timestamp::ZERO,
-        Some(&anchor),
-    );
-    assert_eq!(past, 0, "the date is behind the anchor");
-    let ahead = WallClock::new(0, i128::from(BASE_UNIX_US));
-    assert_eq!(
-        retry_after_us(
-            http::StatusCode::SERVICE_UNAVAILABLE,
-            &crate::support::headers(&[("Retry-After", PLUS_30S)]),
-            Timestamp::ZERO,
-            Some(&ahead)
-        ) / SEC,
-        30,
-        "the same header ahead of the anchor"
-    );
-}
-
-#[test]
 fn delta_seconds_and_garbage_behave_as_before_with_an_anchor_set() {
     let cases = [
         ("30", 30),
@@ -246,7 +222,7 @@ fn delta_seconds_and_garbage_behave_as_before_with_an_anchor_set() {
 #[test]
 fn set_wall_clock_after_close_is_harmless() {
     let mut s = Session::open(Url::parse(URL).unwrap(), hls_config(), ts(0)).unwrap();
-    s.close();
+    s.close(ts(0));
     s.set_wall_clock(ts(1), wall(2).unwrap());
     assert_eq!(wall(u64::MAX), None, "a date past 9999 has no reading");
     s.set_wall_clock(Timestamp::from_nanos(u64::MAX), wall(2).unwrap());
@@ -551,6 +527,9 @@ fn the_not_hls_error_names_both_adaptive_sources() {
         ts(0),
     )
     .unwrap();
-    assert!(matches!(s.select_variant(0), Err(Error::NotHls)));
-    assert!(matches!(s.select_audio_rendition(None), Err(Error::NotHls)));
+    assert!(matches!(s.select_variant(ts(0), 0), Err(Error::NotHls)));
+    assert!(matches!(
+        s.select_audio_rendition(ts(0), None),
+        Err(Error::NotHls)
+    ));
 }
