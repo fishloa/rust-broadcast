@@ -320,9 +320,7 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
         url,
         config_with_bounds(),
         PushFormat::Ts,
-        ReconnectPolicy::default()
-            .with_initial_backoff_ms(0)
-            .with_max_backoff_ms(0),
+        ReconnectPolicy::doubling(Duration::ZERO, Duration::ZERO),
         cancel.clone(),
     ));
     // Wait for the FIRST connection before publishing anything: `drive_push`

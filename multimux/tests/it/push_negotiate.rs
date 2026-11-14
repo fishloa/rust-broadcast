@@ -155,9 +155,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
             url,
             cfg,
             PushFormat::Ts,
-            ReconnectPolicy::default()
-                .with_initial_backoff_ms(100)
-                .with_max_backoff_ms(1_000),
+            ReconnectPolicy::doubling(Duration::from_millis(100), Duration::from_millis(1_000)),
             push_cancel,
         )
         .await

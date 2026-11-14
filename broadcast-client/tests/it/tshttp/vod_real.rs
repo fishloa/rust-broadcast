@@ -74,7 +74,9 @@ fn real_live_capture() {
     c.on_eof(ts(60_000));
     let mut reconnect0 = false;
     while let Some(a) = c.poll() {
-        if matches!(a, Action::Reconnect { after_ms: 0 }) {
+        if matches!(a, Action::Reconnect {
+            after: std::time::Duration::from_millis(0),
+        }) {
             reconnect0 = true;
         }
     }

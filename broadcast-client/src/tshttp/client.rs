@@ -1,4 +1,5 @@
 use alloc::string::String;
+use core::time::Duration;
 
 use transmux::{DemuxEvent, StreamingTsDemux};
 
@@ -79,10 +80,10 @@ impl TsHttpClient {
         self.policy.on_response(status, headers, now);
     }
 
-    /// Server-requested retry delay (from a `Retry-After` header) in milliseconds, to be applied
-    /// to the next failed response. Call before [`Self::on_response`].
-    pub fn set_retry_after(&mut self, retry_after_ms: u64) {
-        self.policy.set_retry_after(retry_after_ms);
+    /// Server-requested retry delay (from a `Retry-After` header), to be applied to the next failed
+    /// response. Call before [`Self::on_response`].
+    pub fn set_retry_after(&mut self, retry_after: Duration) {
+        self.policy.set_retry_after(retry_after);
     }
 
     /// Feed body bytes (T5, T14).

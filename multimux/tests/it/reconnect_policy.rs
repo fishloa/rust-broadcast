@@ -16,18 +16,13 @@ use multimux::push::ReconnectEngine;
 
 /// A push output's backoff doubles on every attempt (the policy's documented
 /// series, `RECONNECT_BACKOFF_FACTOR` in `multimux::config`).
-const BACKOFF_FACTOR: f64 = 2.0;
-
-/// The push output's schedule: the policy's bounds and factor, as
-/// `ReconnectPolicy::backoff_for` builds it.
+/// The push output's schedule: the policy's `BackoffSteps` step table, drawn
+/// as the shared [`RetrySchedule`].
 fn schedule(policy: &ReconnectPolicy) -> RetrySchedule {
-    RetrySchedule::new(
-        Duration::from_millis(policy.initial_backoff_ms),
-        Duration::from_millis(policy.max_backoff_ms),
-        BACKOFF_FACTOR,
-        0x5EED,
-    )
-    .expect("the policy's own bounds")
+    policy
+        .backoff
+        .schedule(0x5EED)
+        .expect("the policy's own bounds")
 }
 
 /// The same for the supervisor's production series (500 ms, 30 s, x2).
@@ -172,11 +167,10 @@ fn the_schedule_yields_attempts_past_a_short_attempt_bound() {
 
 #[test]
 fn a_policy_maps_to_the_same_min_and_cap() {
-    // The push-output entry point: the policy's millisecond bounds become the
+    // The push-output entry point: the policy's step table becomes the
     // schedule's floor and ceiling.
-    let policy = ReconnectPolicy::default()
-        .with_initial_backoff_ms(250)
-        .with_max_backoff_ms(4_000);
+    let policy =
+        ReconnectPolicy::doubling(Duration::from_millis(250), Duration::from_millis(4_000));
     let s = schedule(&policy);
     for i in 0..32 {
         let d = s.delay_for_attempt(i);
@@ -204,10 +198,7 @@ fn a_clone_reseeds_and_fresh_schedules_do_not_share_a_sequence() {
 #[test]
 fn a_push_destination_that_connects_then_drops_hits_max_attempts() {
     let mut engine = ReconnectEngine::new(
-        ReconnectPolicy::default()
-            .with_initial_backoff_ms(1_000)
-            .with_max_backoff_ms(30_000)
-            .with_max_attempts(3),
+        ReconnectPolicy::default().with_max_attempts(std::num::NonZeroU32::new(3).unwrap()),
     );
     for _ in 0..10 {
         engine.on_connect();
@@ -221,11 +212,7 @@ fn a_push_destination_that_connects_then_drops_hits_max_attempts() {
 
 #[test]
 fn a_push_destination_that_connects_then_drops_is_backed_off_progressively() {
-    let mut engine = ReconnectEngine::new(
-        ReconnectPolicy::default()
-            .with_initial_backoff_ms(1_000)
-            .with_max_backoff_ms(30_000),
-    );
+    let mut engine = ReconnectEngine::new(ReconnectPolicy::default());
     for _ in 0..6 {
         engine.on_connect();
         engine.on_disconnect();

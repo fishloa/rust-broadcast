@@ -359,7 +359,10 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     if head[7] & 1 != 0 {
-        let _ = session.set_credentials(Credentials::new("user", "pass"));
+        let _ = session.set_credentials(
+            Timestamp::from_micros(0),
+            Credentials::new("user", "pass"),
+        );
     }
     let give_clock = |session: &mut Session, now: u64, skew: i64| {
         let unix = publish
@@ -409,15 +412,18 @@ fuzz_target!(|data: &[u8]| {
         }
         match pick % 16 {
             0 => {
-                let _ = session.select_variant(usize::from(aux % 4));
+                let _ =
+                    session.select_variant(Timestamp::from_micros(now), usize::from(aux % 4));
             }
             1 => {
-                let _ = session
-                    .select_audio_rendition(Some(usize::from(aux % 3)).filter(|_| aux % 5 != 0));
+                let _ = session.select_audio_rendition(
+                    Timestamp::from_micros(now),
+                    Some(usize::from(aux % 3)).filter(|_| aux % 5 != 0),
+                );
             }
             2 => session.reconnect(Timestamp::from_micros(now)),
             3 if aux == u8::MAX => {
-                session.close();
+                session.close(Timestamp::from_micros(now));
                 watch.closed = true;
                 break;
             }
@@ -447,7 +453,7 @@ fuzz_target!(|data: &[u8]| {
         watch.events(&mut session);
     }
     if !watch.closed {
-        session.close();
+        session.close(Timestamp::from_micros(now));
         watch.closed = true;
     }
     watch.live.clear();

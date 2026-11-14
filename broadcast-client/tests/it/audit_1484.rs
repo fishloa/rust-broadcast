@@ -60,7 +60,7 @@ fn action_debug_prints_header_names_never_values() {
     };
     let mut session = open(TS_URL, config);
     session
-        .set_credentials(Credentials::bearer(BEARER_SECRET))
+        .set_credentials(ts(0), Credentials::bearer(BEARER_SECRET))
         .ok();
     let action = session.poll(ts(0)).expect("request");
     let dbg = format!("{action:?}");
@@ -78,7 +78,7 @@ fn action_debug_hides_basic_authorization_after_challenge() {
     let mut session = open(TS_URL, Config::default());
     let first = one(&mut session, 0);
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .ok();
     respond(
         &mut session,
@@ -198,7 +198,7 @@ fn close_drops_queued_requests_and_closes_each_conn_once() {
         support::status(302),
         &location("http://example/moved.ts"),
     );
-    session.close();
+    session.close(ts(0));
     let actions = drain(&mut session, 0);
     assert!(
         actions.iter().all(|a| matches!(a, Action::Close { .. })),
@@ -220,7 +220,7 @@ fn close_drops_queued_requests_and_closes_each_conn_once() {
 fn stale_rechallenge_is_replayed_at_most_once_then_rejected() {
     let mut session = open(TS_URL, Config::default());
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .ok();
     let mut sent = 0usize;
     let mut pending = requests(&mut session, 0);
@@ -436,7 +436,7 @@ fn reconnect_reopens_the_original_url_not_the_redirect_target() {
 fn authenticated_replay_after_redirect_targets_the_redirected_url() {
     let mut session = open(TS_URL, Config::default());
     session
-        .set_credentials(Credentials::new("user", "pass"))
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
         .ok();
     let first = one(&mut session, 0);
     respond(
@@ -463,7 +463,7 @@ fn authenticated_replay_after_redirect_targets_the_redirected_url() {
 #[test]
 fn invalid_bearer_token_never_reaches_a_header() {
     let mut session = open(TS_URL, Config::default());
-    let result = session.set_credentials(Credentials::bearer("tok\r\nX-Evil: 1"));
+    let result = session.set_credentials(ts(0), Credentials::bearer("tok\r\nX-Evil: 1"));
     let actions = drain(&mut session, 0);
     for a in &actions {
         if let Action::HttpRequest { headers, .. } = a {
@@ -482,12 +482,12 @@ fn invalid_bearer_token_never_reaches_a_header() {
 #[test]
 fn control_characters_in_basic_credentials_are_rejected() {
     let mut session = open(TS_URL, Config::default());
-    let result = session.set_credentials(Credentials::new("us\ner", "pass"));
+    let result = session.set_credentials(ts(0), Credentials::new("us\ner", "pass"));
     assert!(
         matches!(result, Err(broadcast_client::Error::InvalidCredentials)),
         "{result:?}"
     );
-    let ok = session.set_credentials(Credentials::new("user", "pass"));
+    let ok = session.set_credentials(ts(0), Credentials::new("user", "pass"));
     assert!(ok.is_ok());
 }
 
@@ -573,7 +573,7 @@ fn secure_cookie_from_an_http_origin_is_rejected() {
 }
 
 #[test]
-fn reconnect_backoff_that_overflows_microseconds_saturates() {
+fn reconnect_backoff_past_the_end_of_the_clock_is_no_wake_rather_than_a_saturated_one() {
     let mut config = Config::default();
     config.ts_http.backoff = broadcast_common::backoff::BackoffSteps {
         steps: vec![std::time::Duration::from_micros(u64::MAX)],
@@ -587,16 +587,14 @@ fn reconnect_backoff_that_overflows_microseconds_saturates() {
         support::status(503),
         &support::headers(&[]),
     );
+    let saturated = Timestamp::from_micros(u64::MAX);
     let actions = drain(&mut session, SEC);
-    let wake = actions
-        .iter()
-        .filter_map(|a| match a {
-            Action::WakeAt(t) => Some(t),
-            _ => None,
-        })
-        .max()
-        .expect("a wake for the backoff");
-    assert!(wake.as_nanos() >= u64::MAX / 2, "{wake:?}");
+    assert!(
+        !actions
+            .iter()
+            .any(|a| matches!(a, Action::WakeAt(at) if *at >= saturated)),
+        "a deadline that does not fit the clock never fires, so it is never armed: {actions:?}"
+    );
 }
 
 #[test]
@@ -615,7 +613,9 @@ fn credential_wait_freezes_timers_and_resume_restarts_the_start_timer() {
     assert!(drain(&mut session, late).is_empty());
     assert!(events(&mut session).is_empty());
 
-    session.set_credentials(Credentials::bearer("tok")).unwrap();
+    session
+        .set_credentials(ts(0), Credentials::bearer("tok"))
+        .unwrap();
     let mut wakes = BTreeSet::new();
     let actions = tracked_wakes(&mut session, late, &mut wakes);
     let conn = actions

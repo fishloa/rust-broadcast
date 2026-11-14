@@ -3,6 +3,7 @@ use crate::support;
 use std::sync::OnceLock;
 
 use broadcast_client::Config;
+use broadcast_common::stage::Timestamp;
 use sdp_types::Attribute;
 use support::rtsp_host::{
     BASE_URL, Host, MediaFixture, OPTIONS, PLAY, SEC, SETUP, Server, TEARDOWN, quiet_config,
@@ -11,6 +12,10 @@ use support::rtsp_host::{
 const AGGREGATE: &str = "rtsp://cam.test/live/agg";
 const KEEPALIVE_SECS: u64 = 30;
 const RTX_PT: &str = "97";
+
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 fn fixture() -> &'static MediaFixture {
     static FIXTURE: OnceLock<MediaFixture> = OnceLock::new();
@@ -58,7 +63,7 @@ fn a_session_level_control_is_the_aggregate_url_for_play_options_and_teardown() 
     host.advance_to(KEEPALIVE_SECS * SEC);
     // This server advertises no `GET_PARAMETER`, so its keepalive is OPTIONS.
     assert_eq!(uris(&host, OPTIONS), [AGGREGATE]);
-    host.session.close();
+    host.session.close(ts(host.now));
     host.drain();
     let teardown = host.sent_methods().iter().any(|m| m == TEARDOWN);
     assert!(teardown, "{:?}", host.sent_methods());

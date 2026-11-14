@@ -2,38 +2,41 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use core::time::Duration;
 
-use crate::source::fetch::retry::{ReconnectTimer, backoff_ms};
+use crate::source::fetch::retry::ReconnectTimer;
 use crate::tshttp::config::Config;
 use crate::tshttp::events::{Action, Event, StarveKind};
 use broadcast_common::stage::Timestamp;
-use broadcast_common::units::MICROS_PER_MILLI;
 use http::{HeaderMap, StatusCode};
 
 /// The retry jitter's seed [`TsHttpPolicy::new`] uses: a policy takes no clock, so the seed is a
 /// fixed one and two policies built from one configuration replay identically. It is chosen so
 /// that the draws that matter most land exactly on their step — the first four, and the capped
 /// band a long outage sits in — which is why TS-over-HTTP's scripted traces keep their exact
-/// `Reconnect { after_ms }`; [`TsHttpPolicy::with_seed`] takes any other.
+/// `Reconnect { after }`; [`TsHttpPolicy::with_seed`] takes any other.
 const RETRY_SEED: u64 = 0x5EED_2471;
 
-const STALL_NOTICE_REPEAT_MS: u64 = 1_000;
+const STALL_NOTICE_REPEAT: Duration = Duration::from_secs(1);
+
+/// How much longer each repeat of a stall notice waits than the one before: a stalled stream
+/// reports once a second, then doubles.
+const NOTICE_STEP_GROWTH: u32 = 2;
 const IDENTITY_CODING: &str = "identity";
 const HEADER_CONTENT_ENCODING: &str = "content-encoding";
 const HEADER_CONTENT_LENGTH: &str = "content-length";
 const HEADER_CONTENT_RANGE: &str = "content-range";
 
-/// A [`Duration`] as whole milliseconds, saturating at `u64::MAX`; the policy's own clock is
-/// milliseconds, so every configured span is read at that resolution.
-fn millis(d: Duration) -> u64 {
-    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
+/// The span from `from` to `to` on the monotonic clock, never negative: a clock that went
+/// backwards reads as no time passed.
+fn since(to: Timestamp, from: Timestamp) -> Duration {
+    to.saturating_sub(from)
 }
 
 #[derive(Debug, Clone, Copy)]
 enum Phase {
-    Opening { open_at: u64 },
-    Awaiting { open_at: u64 },
+    Opening { open_at: Timestamp },
+    Awaiting { open_at: Timestamp },
     Playing,
-    Backoff { due: u64 },
+    Backoff { due: Timestamp },
     Ended,
 }
 
@@ -49,18 +52,19 @@ pub struct TsHttpPolicy {
     opens: u64,
     actions: VecDeque<Action>,
     events: VecDeque<Event>,
-    open_at: u64,
-    last_byte_at: u64,
-    last_sample_at: u64,
-    first_notice_at: Option<u64>,
-    next_notice_at: Option<u64>,
+    open_at: Timestamp,
+    last_byte_at: Timestamp,
+    last_sample_at: Timestamp,
+    first_notice_at: Option<Timestamp>,
+    next_notice_at: Option<Timestamp>,
+    notice_step: Duration,
     starved_data_fired: bool,
     starved_nodata_fired: bool,
     finite: bool,
     expected_bytes: u64,
     received_bytes: u64,
     finite_done: bool,
-    retry_after_ms: u64,
+    retry_after: Duration,
 }
 
 impl TsHttpPolicy {
@@ -79,33 +83,34 @@ impl TsHttpPolicy {
     /// several sessions against one origin passes each a seed mixed from its own instant, and a
     /// test that asserts an exact delay passes a fixed one.
     pub fn with_seed(url: impl Into<String>, config: Config, now: Timestamp, seed: u64) -> Self {
-        let now_ms = now.as_millis();
         let config = config.clamped();
-        let (steps_ms, cap_ms) = backoff_ms(&config.backoff);
-        let retry = ReconnectTimer::new(&steps_ms, cap_ms, seed);
+        let retry = ReconnectTimer::new(&config.backoff.steps, config.backoff.cap, seed);
         let mut c = Self {
             url: url.into(),
             config,
-            phase: Phase::Backoff { due: 0 },
+            phase: Phase::Backoff {
+                due: Timestamp::ZERO,
+            },
             attempt: 0,
             retry,
             opens: 0,
             actions: VecDeque::new(),
             events: VecDeque::new(),
-            open_at: now_ms,
-            last_byte_at: now_ms,
-            last_sample_at: now_ms,
+            open_at: now,
+            last_byte_at: now,
+            last_sample_at: now,
             first_notice_at: None,
             next_notice_at: None,
+            notice_step: STALL_NOTICE_REPEAT,
             starved_data_fired: false,
             starved_nodata_fired: false,
             finite: false,
             expected_bytes: 0,
             received_bytes: 0,
             finite_done: false,
-            retry_after_ms: 0,
+            retry_after: Duration::ZERO,
         };
-        c.start_open(now_ms);
+        c.start_open(now);
         c
     }
 
@@ -121,7 +126,6 @@ impl TsHttpPolicy {
 
     /// Response headers received (T2-T4).
     pub fn on_response(&mut self, status: StatusCode, headers: &HeaderMap, now: Timestamp) {
-        let now_ms = now.as_millis();
         if !matches!(self.phase, Phase::Opening { .. }) {
             return;
         }
@@ -136,7 +140,7 @@ impl TsHttpPolicy {
             self.expected_bytes = expected;
             self.received_bytes = 0;
             self.finite_done = false;
-            self.retry_after_ms = 0;
+            self.retry_after = Duration::ZERO;
             if finite && expected == 0 {
                 self.finite_done = true;
             }
@@ -147,23 +151,23 @@ impl TsHttpPolicy {
                 });
             }
             self.phase = Phase::Awaiting { open_at };
-            self.last_byte_at = now_ms;
-            self.last_sample_at = now_ms;
+            self.last_byte_at = now;
+            self.last_sample_at = now;
             self.starved_data_fired = false;
             self.starved_nodata_fired = false;
             self.first_notice_at = None;
             self.next_notice_at = None;
         } else if status == StatusCode::NOT_FOUND || status == StatusCode::GONE {
             self.push_event(Event::NotFound);
-            self.fail_before_playing(now_ms);
+            self.fail_before_playing(now);
         } else {
-            self.fail_before_playing(now_ms);
+            self.fail_before_playing(now);
         }
     }
 
-    /// Server-requested retry delay, milliseconds, applied to the next failure.
-    pub fn set_retry_after(&mut self, retry_after_ms: u64) {
-        self.retry_after_ms = retry_after_ms;
+    /// Server-requested retry delay (a `Retry-After`), applied to the next failure.
+    pub fn set_retry_after(&mut self, retry_after: Duration) {
+        self.retry_after = retry_after;
     }
 
     fn header_values<'a>(headers: &'a HeaderMap, name: &str) -> alloc::vec::Vec<&'a str> {
@@ -276,11 +280,10 @@ impl TsHttpPolicy {
     /// A chunk of `len` body bytes arrived (T5, T14). `sampled` is true when
     /// the bytes produced at least one sample.
     pub fn on_bytes(&mut self, len: usize, now: Timestamp, sampled: bool) {
-        let now_ms = now.as_millis();
         if len == 0 || !self.accepts_bytes() {
             return;
         }
-        self.last_byte_at = now_ms;
+        self.last_byte_at = now;
         self.first_notice_at = None;
         self.next_notice_at = None;
         if self.finite {
@@ -296,10 +299,10 @@ impl TsHttpPolicy {
             }
         }
         if sampled {
-            self.on_sample_ms(now_ms);
+            self.on_sample(now);
         } else if !(self.starved_data_fired || (self.finite && self.finite_done)) {
             let baseline = self.last_sample_at;
-            if now_ms.saturating_sub(baseline) >= millis(self.config.stall_notice) {
+            if since(now, baseline) >= self.config.stall_notice {
                 self.events.push_back(Event::Starved(StarveKind::Data));
                 self.starved_data_fired = true;
             }
@@ -309,16 +312,11 @@ impl TsHttpPolicy {
     /// A sample was produced (T5): Awaiting becomes Playing and the
     /// starvation episode resets.
     pub fn on_sample(&mut self, now: Timestamp) {
-        let now_ms = now.as_millis();
-        self.on_sample_ms(now_ms);
-    }
-
-    fn on_sample_ms(&mut self, now_ms: u64) {
         if matches!(self.phase, Phase::Awaiting { .. }) {
             self.phase = Phase::Playing;
             self.attempt = 0;
         }
-        self.last_sample_at = now_ms;
+        self.last_sample_at = now;
         self.starved_data_fired = false;
         self.starved_nodata_fired = false;
         self.first_notice_at = None;
@@ -327,17 +325,15 @@ impl TsHttpPolicy {
 
     /// Body ended (T7, T8).
     pub fn on_eof(&mut self, now: Timestamp) {
-        let now_ms = now.as_millis();
-        self.on_eof_inner(now_ms);
+        self.on_eof_inner(now);
     }
 
     /// Connect/read failure (T4, T7, T8); handled exactly as a body end.
     pub fn on_error(&mut self, now: Timestamp) {
-        let now_ms = now.as_millis();
-        self.on_eof_inner(now_ms);
+        self.on_eof_inner(now);
     }
 
-    fn on_eof_inner(&mut self, now_ms: u64) {
+    fn on_eof_inner(&mut self, now: Timestamp) {
         if matches!(self.phase, Phase::Ended) {
             return;
         }
@@ -347,13 +343,13 @@ impl TsHttpPolicy {
             return;
         }
         match self.phase {
-            Phase::Opening { .. } => self.fail_before_playing(now_ms),
-            Phase::Awaiting { .. } => self.fail_before_playing(now_ms),
+            Phase::Opening { .. } => self.fail_before_playing(now),
+            Phase::Awaiting { .. } => self.fail_before_playing(now),
             Phase::Playing => {
                 if self.finite {
-                    self.fail_before_playing(now_ms);
+                    self.fail_before_playing(now);
                 } else {
-                    self.played_ended(now_ms);
+                    self.played_ended(now);
                 }
             }
             Phase::Backoff { .. } => {}
@@ -362,25 +358,27 @@ impl TsHttpPolicy {
     }
 
     /// Caller-initiated reconnect (T13).
+    ///
+    /// Resets whatever phase the policy is in: a connection that was waiting out a backoff (a
+    /// refused response) restarts its reopen from `now` instead of from the stale instant it first
+    /// raised that wait, so a host that idled reconnects from the instant it asked for, not the
+    /// last one the policy happened to see. A finite source restarts from `Ended` too.
     pub fn reconnect(&mut self, now: Timestamp) {
-        let now_ms = now.as_millis();
-        match self.phase {
-            Phase::Opening { .. } | Phase::Awaiting { .. } | Phase::Playing | Phase::Ended => {
-                self.attempt = 0;
-                self.finite = false;
-                self.expected_bytes = 0;
-                self.received_bytes = 0;
-                self.finite_done = false;
-                self.starved_data_fired = false;
-                self.starved_nodata_fired = false;
-                self.first_notice_at = None;
-                self.next_notice_at = None;
-                self.actions.push_back(Action::Abort);
-                self.actions.push_back(Action::Reconnect { after_ms: 0 });
-                self.phase = Phase::Backoff { due: now_ms };
-            }
-            Phase::Backoff { .. } => {}
-        }
+        self.attempt = 0;
+        self.finite = false;
+        self.expected_bytes = 0;
+        self.received_bytes = 0;
+        self.finite_done = false;
+        self.starved_data_fired = false;
+        self.starved_nodata_fired = false;
+        self.first_notice_at = None;
+        self.next_notice_at = None;
+        self.notice_step = STALL_NOTICE_REPEAT;
+        self.actions.push_back(Action::Abort);
+        self.actions.push_back(Action::Reconnect {
+            after: Duration::ZERO,
+        });
+        self.phase = Phase::Backoff { due: now };
     }
 
     /// Advance timers, calling `flush` right before a terminal start/stall
@@ -391,79 +389,73 @@ impl TsHttpPolicy {
     where
         F: FnMut(&mut VecDeque<Event>) -> bool,
     {
-        let now_ms = now.as_millis();
         if matches!(self.phase, Phase::Ended) {
             return;
         }
         // Backoff due -> Open
         if let Phase::Backoff { due } = self.phase
-            && now_ms >= due
+            && now >= due
         {
-            self.start_open(now_ms);
+            self.start_open(now);
             return;
         }
         if let Phase::Opening { open_at } = self.phase {
-            if now_ms.saturating_sub(open_at) >= millis(self.config.start_timeout) {
+            if since(now, open_at) >= self.config.start_timeout {
                 self.actions.push_back(Action::Abort);
-                self.fail_before_playing(now_ms);
+                self.fail_before_playing(now);
             }
             return;
         }
         if let Phase::Awaiting { open_at } = self.phase
             && !(self.finite && self.finite_done)
-            && now_ms.saturating_sub(open_at) >= millis(self.config.start_timeout)
+            && since(now, open_at) >= self.config.start_timeout
         {
-            self.flush_via(&mut flush, now_ms);
+            self.flush_via(&mut flush, now);
             if matches!(self.phase, Phase::Playing) {
                 self.actions.push_back(Action::Abort);
-                self.played_ended(now_ms);
+                self.played_ended(now);
             } else {
                 self.actions.push_back(Action::Abort);
-                self.fail_before_playing(now_ms);
+                self.fail_before_playing(now);
             }
             return;
         }
         // Playing stall timers (disabled once finite transfer complete)
         if matches!(self.phase, Phase::Playing) && !(self.finite && self.finite_done) {
-            let idle = now_ms.saturating_sub(self.last_byte_at);
-            if idle >= millis(self.config.stall_notice) {
+            let idle = since(now, self.last_byte_at);
+            if idle >= self.config.stall_notice {
                 if !self.starved_nodata_fired {
                     self.events.push_back(Event::Starved(StarveKind::NoData));
                     self.starved_nodata_fired = true;
                 }
                 if self.first_notice_at.is_none() {
-                    self.first_notice_at = Some(now_ms);
-                    self.next_notice_at = Some(now_ms.saturating_add(STALL_NOTICE_REPEAT_MS));
-                    self.events.push_back(Event::StallNotice {
-                        stalled: Duration::from_millis(idle),
-                    });
+                    self.first_notice_at = Some(now);
+                    self.notice_step = STALL_NOTICE_REPEAT;
+                    self.next_notice_at = now.checked_add(STALL_NOTICE_REPEAT);
+                    self.events.push_back(Event::StallNotice { stalled: idle });
                 } else if let Some(n) = self.next_notice_at
-                    && now_ms >= n
+                    && now >= n
                 {
-                    self.events.push_back(Event::StallNotice {
-                        stalled: Duration::from_millis(idle),
-                    });
-                    let steps = (now_ms - n) / STALL_NOTICE_REPEAT_MS + 1;
-                    self.next_notice_at =
-                        Some(n.saturating_add(steps.saturating_mul(STALL_NOTICE_REPEAT_MS)));
+                    self.events.push_back(Event::StallNotice { stalled: idle });
+                    self.notice_step = self.notice_step.saturating_mul(NOTICE_STEP_GROWTH);
+                    // A next notice past the end of the clock never fires, so none is armed.
+                    self.next_notice_at = n.checked_add(self.notice_step);
                 }
                 // stall_reconnect
-                if idle >= millis(self.config.stall_reconnect) {
-                    self.flush_via(&mut flush, now_ms);
+                if idle >= self.config.stall_reconnect {
+                    self.flush_via(&mut flush, now);
                     self.actions.push_back(Action::Abort);
-                    self.played_ended(now_ms);
+                    self.played_ended(now);
                 }
             }
         }
     }
 
     /// Earliest deadline for [`Self::poll_timeout`].
+    ///
+    /// `None` is a timer that never fires: no phase is waiting, or the timer is at the `Ended`
+    /// phase, or its instant does not fit in the clock.
     pub fn next_deadline(&self) -> Option<Timestamp> {
-        self.next_deadline_ms().map(Timestamp::from_millis)
-    }
-
-    /// [`Self::next_deadline`] on the policy's own millisecond clock.
-    fn next_deadline_ms(&self) -> Option<u64> {
         if matches!(self.phase, Phase::Ended) {
             return None;
         }
@@ -472,91 +464,91 @@ impl TsHttpPolicy {
         }
         match self.phase {
             Phase::Backoff { due } => Some(due),
-            Phase::Awaiting { open_at } => {
-                Some(open_at.saturating_add(millis(self.config.start_timeout)))
-            }
+            Phase::Awaiting { open_at } => open_at.checked_add(self.config.start_timeout),
             Phase::Playing => {
                 let notice = self
                     .last_byte_at
-                    .saturating_add(millis(self.config.stall_notice));
-                let reconnect = self
-                    .last_byte_at
-                    .saturating_add(millis(self.config.stall_reconnect));
-                let next_notice = match self.first_notice_at {
-                    Some(_) => self.next_notice_at.unwrap_or(notice),
-                    None => notice,
+                    .checked_add(self.config.stall_notice)
+                    .or(self.next_notice_at);
+                let reconnect = self.last_byte_at.checked_add(self.config.stall_reconnect);
+                let next_notice = if self.first_notice_at.is_some() {
+                    self.next_notice_at.or(notice)
+                } else {
+                    notice
                 };
-                Some(next_notice.min(reconnect))
+                next_notice
+                    .zip(reconnect)
+                    .map_or(next_notice.or(reconnect), |(n, r)| Some(n.min(r)))
             }
-            Phase::Opening { open_at } => {
-                Some(open_at.saturating_add(millis(self.config.start_timeout)))
-            }
+            Phase::Opening { open_at } => open_at.checked_add(self.config.start_timeout),
             Phase::Ended => None,
         }
     }
 
-    fn flush_via<F>(&mut self, flush: &mut F, now_ms: u64)
+    fn flush_via<F>(&mut self, flush: &mut F, now: Timestamp)
     where
         F: FnMut(&mut VecDeque<Event>) -> bool,
     {
         if flush(&mut self.events) {
-            self.on_sample_ms(now_ms);
+            self.on_sample(now);
         }
     }
 
-    fn start_open(&mut self, now_ms: u64) {
+    fn start_open(&mut self, now: Timestamp) {
         self.opens = self.opens.saturating_add(1);
-        self.phase = Phase::Opening { open_at: now_ms };
-        self.open_at = now_ms;
-        self.last_byte_at = now_ms;
-        self.last_sample_at = now_ms;
+        self.phase = Phase::Opening { open_at: now };
+        self.open_at = now;
+        self.last_byte_at = now;
+        self.last_sample_at = now;
         self.first_notice_at = None;
         self.next_notice_at = None;
+        self.notice_step = STALL_NOTICE_REPEAT;
         self.starved_data_fired = false;
         self.starved_nodata_fired = false;
         self.finite = false;
         self.expected_bytes = 0;
         self.received_bytes = 0;
         self.finite_done = false;
-        self.retry_after_ms = 0;
+        self.retry_after = Duration::ZERO;
         self.actions.push_back(Action::Open {
             url: self.url.clone(),
         });
     }
 
-    fn fail_before_playing(&mut self, now_ms: u64) {
+    /// Enter the backoff that reopens `after` from `now`.
+    ///
+    /// A reopen past the end of the clock is no deadline: the policy takes no `Reconnect` action
+    /// and stays in `Ended`, which arms no wake and so never reopens. A saturated action would
+    /// read as due on every poll forever.
+    fn back_off(&mut self, now: Timestamp, after: Duration) {
+        let Some(due) = now.checked_add(after) else {
+            self.phase = Phase::Ended;
+            return;
+        };
+        self.actions.push_back(Action::Reconnect { after });
+        self.phase = Phase::Backoff { due };
+    }
+
+    fn fail_before_playing(&mut self, now: Timestamp) {
         self.attempt = self.attempt.saturating_add(1);
-        let wait = self
-            .retry
-            .on_disconnected_exact(now_ms.saturating_mul(MICROS_PER_MILLI));
-        let after = u64::try_from(wait.as_micros())
-            .unwrap_or(u64::MAX)
-            .div_ceil(MICROS_PER_MILLI);
-        let after = after.max(self.retry_after_ms);
-        self.retry_after_ms = 0;
-        self.actions
-            .push_back(Action::Reconnect { after_ms: after });
+        let wait = self.retry.on_disconnected(now);
+        let after = wait.max(self.retry_after);
+        self.retry_after = Duration::ZERO;
         self.events.push_back(Event::Reconnecting {
             attempt: self.attempt,
         });
-        self.phase = Phase::Backoff {
-            due: now_ms.saturating_add(after),
-        };
+        self.back_off(now, after);
     }
 
-    fn played_ended(&mut self, now_ms: u64) {
+    fn played_ended(&mut self, now: Timestamp) {
         // A connection that played and then ended is a healthy one: the
         // failure counter restarts at its floor, and the retry series is
         // rewound rather than charged for this reconnect — its whole wait is
         // `min_reconnect_interval`.
         self.attempt = 0;
         self.retry.reset();
-        let lasted = now_ms.saturating_sub(self.open_at);
-        let after = millis(self.config.min_reconnect_interval).saturating_sub(lasted);
-        self.actions
-            .push_back(Action::Reconnect { after_ms: after });
-        self.phase = Phase::Backoff {
-            due: now_ms.saturating_add(after),
-        };
+        let lasted = since(now, self.open_at);
+        let after = self.config.min_reconnect_interval.saturating_sub(lasted);
+        self.back_off(now, after);
     }
 }

@@ -230,6 +230,7 @@ impl SessionStep {
     ) -> Result<Self, MultimuxError> {
         config.preemptive_basic = true;
         let start = Instant::now();
+        let now = Timestamp::from_micros(0);
         let mut session = Session::open(
             Url::parse(url).map_err(|e| MultimuxError::Connect {
                 reason: format!("{}: {e}", labels.what),
@@ -247,7 +248,7 @@ impl SessionStep {
             },
         })?;
         if let Some(credentials) = credentials {
-            session.set_credentials(credentials).map_err(|e| {
+            session.set_credentials(now, credentials).map_err(|e| {
                 MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
                     broadcast_auth::HttpAuthError(format!("{labels}: {e}", labels = labels.what)),
                 ))
@@ -742,7 +743,7 @@ impl IngestStep<EventIngest> for SessionStep {
     }
 
     async fn farewell(&mut self) {
-        self.session.close();
+        self.session.close(self.now());
         if let Err(e) = self.perform_actions().await {
             tracing::debug!(error = %e, "{}: farewell not delivered", self.labels.what);
         }

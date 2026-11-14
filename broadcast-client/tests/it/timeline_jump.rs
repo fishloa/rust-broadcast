@@ -1014,7 +1014,7 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
     let mut r = Host::open_plain(Config::default());
     let sched = realtime(n);
     r.feed(&bytes, &sched[..half]);
-    r.session.rejoin();
+    r.session.rejoin(ts(0));
     let starts = pes_starts(&bytes, Shift::Video);
     let resume = starts
         .iter()
@@ -1051,8 +1051,9 @@ fn hint_pcr_discontinuity_from_player_still_works() {
             )
         })
         .count();
-    h.session.hint(BufferHint::PcrDiscontinuity);
-    h.drain(0);
+    let resumed_at = ts(realtime(n)[n / 2 - 1]);
+    h.session.hint(resumed_at, BufferHint::PcrDiscontinuity);
+    h.drain(realtime(n)[n / 2 - 1]);
     let after = h
         .log()
         .iter()
@@ -1089,7 +1090,7 @@ fn rejoin_from_player_still_works() {
         .count();
     assert_eq!(joins_before, 1);
     let log_len = h.log().len();
-    h.session.rejoin();
+    h.session.rejoin(ts(realtime(n)[n / 2 - 1]));
     assert_eq!(
         h.log().len(),
         log_len,

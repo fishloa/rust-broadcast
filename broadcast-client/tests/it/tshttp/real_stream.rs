@@ -91,7 +91,9 @@ fn first_sample_moves_to_playing() {
     }
     assert!(sampled, "no Sample in the whole fixture");
     c.on_eof(ts(5_000));
-    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
+    assert_eq!(c.poll(), Some(Action::Reconnect {
+            after: std::time::Duration::from_millis(0),
+        }));
     assert_eq!(c.poll(), None);
 }
 
@@ -102,7 +104,9 @@ fn eof_before_any_sample_backs_off() {
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
     c.on_eof(ts(5_000));
-    assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2_000 }));
+    assert_eq!(c.poll(), Some(Action::Reconnect {
+            after: std::time::Duration::from_millis(2000),
+        }));
 }
 
 #[test]

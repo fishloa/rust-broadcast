@@ -13,10 +13,10 @@ pub enum Action {
         /// URL to open.
         url: String,
     },
-    /// Wait then reopen after `after_ms`.
+    /// Wait `after`, then reopen.
     Reconnect {
         /// Delay before reopen.
-        after_ms: u64,
+        after: Duration,
     },
     /// Drop the current connection.
     Abort,
