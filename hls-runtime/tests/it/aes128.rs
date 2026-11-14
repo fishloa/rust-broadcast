@@ -6,7 +6,8 @@
 
 use std::collections::BTreeMap;
 
-use hls_runtime::client::{Action, Error, HlsClient, KeyId, Output, ResourceId};
+use hls_runtime::client::{Action, Error, HlsClient, HlsClientConfig, KeyId, Output, ResourceId};
+use url::Url;
 use transmux::sample_aes::aes128_encrypt_segment;
 
 const URL: &str = "http://fixture/index.m3u8";
@@ -78,7 +79,7 @@ fn has_samples(outputs: &[Output]) -> bool {
 
 struct Run {
     outputs: Vec<Output>,
-    key_fetches: Vec<(KeyId, String)>,
+    key_fetches: Vec<(KeyId, Url)>,
 }
 
 fn run_vod(
@@ -86,7 +87,7 @@ fn run_vod(
     files: &BTreeMap<&str, Vec<u8>>,
     keys: &BTreeMap<&str, Vec<u8>>,
 ) -> Result<Run, Error> {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     let mut run = Run {
         outputs: Vec::new(),
         key_fetches: Vec::new(),
@@ -100,11 +101,11 @@ fn run_vod(
                 client.on_playlist(text.as_bytes())?;
             }
             Action::FetchResource { id, url, .. } => {
-                let name = url.rsplit('/').next().unwrap();
+                let name = url.path().rsplit("/").next().unwrap();
                 client.on_resource(id, &files[name])?;
             }
             Action::FetchKey { id, url } => {
-                let name = url.rsplit('/').next().unwrap();
+                let name = url.path().rsplit("/").next().unwrap();
                 run.key_fetches.push((id, url.clone()));
                 client.on_key(id, &keys[name])?;
             }
@@ -209,7 +210,7 @@ fn key_fetched_once_per_uri_across_segments() {
     let text = playlist(0, "", &entries);
     let run = run_vod(&text, &enc_files(&KEY_A, &iv0, &KEY_A, &iv1), &key_files()).unwrap();
     assert_eq!(run.key_fetches.len(), 1, "{:?}", run.key_fetches);
-    assert_eq!(run.key_fetches[0].1, "http://fixture/key.bin");
+    assert_eq!(run.key_fetches[0].1.as_str(), "http://fixture/key.bin");
     assert!(has_samples(&run.outputs));
 }
 
@@ -223,7 +224,7 @@ fn segment_waits_for_key_then_decrypts_in_order() {
     ];
     let text = playlist(0, "", &entries);
     let files = enc_files(&KEY_A, &iv0, &KEY_A, &iv1);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client.on_playlist(text.as_bytes()).unwrap();
     let actions = drain(&mut client);
@@ -277,7 +278,7 @@ fn bad_key_length_is_error() {
         (key_tag("key.bin", Some(&iv1)), "index1.ts"),
     ];
     let text = playlist(0, "", &entries);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client.on_playlist(text.as_bytes()).unwrap();
     let id = drain(&mut client)
@@ -320,7 +321,7 @@ fn wrong_key_gives_decrypt_failed_not_garbage_samples() {
     ];
     let text = playlist(0, "", &entries);
     let files = enc_files(&KEY_A, &iv0, &KEY_A, &iv1);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client.on_playlist(text.as_bytes()).unwrap();
     let id = drain(&mut client)
@@ -351,7 +352,7 @@ fn segment_not_multiple_of_16_is_decrypt_failed() {
     let text = playlist(0, "", &entries);
     let cipher = aes128_encrypt_segment(&KEY_A, &iv0, seg0());
     for bad in [&cipher[..cipher.len() - 1], &cipher[..0]] {
-        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+        let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
         drain(&mut client);
         client.on_playlist(text.as_bytes()).unwrap();
         let id = drain(&mut client)
@@ -397,7 +398,7 @@ fn unsupported_encryption_is_an_error_never_plaintext() {
         Some("I-FRAMES-ONLY"),
     ));
     for (label, text, what_contains) in cases {
-        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+        let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
         drain(&mut client);
         let err = client.on_playlist(text.as_bytes()).unwrap_err();
         assert!(
@@ -417,7 +418,7 @@ fn unsupported_encryption_is_an_error_never_plaintext() {
 
 #[test]
 fn plaintext_playlist_unchanged_no_key_actions() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client
         .on_playlist(playlist(0, "", &plain_entries()).as_bytes())
@@ -470,7 +471,7 @@ fn on_key_error_then_reload_requests_key_again() {
     ];
     let text = playlist(0, "", &entries);
     let files = enc_files(&KEY_A, &iv0, &KEY_A, &iv1);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client.on_playlist(text.as_bytes()).unwrap();
     let first = drain(&mut client);
@@ -497,7 +498,10 @@ fn on_key_error_then_reload_requests_key_again() {
             _ => None,
         })
         .collect();
-    assert_eq!(refetch, vec![(id, "http://fixture/key.bin".to_string())]);
+    assert_eq!(
+        refetch,
+        vec![(id, Url::parse("http://fixture/key.bin").expect("URL"))]
+    );
     client
         .on_resource(ResourceId::Segment { msn: 0 }, &files["index0.ts"])
         .unwrap();
@@ -515,7 +519,7 @@ fn on_key_error_then_reload_requests_key_again() {
 fn client_debug_never_prints_key_octets() {
     let iv0 = iv_seq(0x07);
     let text = playlist(0, "", &[(key_tag("key.bin", Some(&iv0)), "index0.ts")]);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client.on_playlist(text.as_bytes()).unwrap();
     let id = drain(&mut client)

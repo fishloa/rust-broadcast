@@ -4,7 +4,9 @@
 //! builder appended a query pair after a fragment); the `..` rows (the defect)
 //! are asserted in Task 11's unit tests, not in this golden.
 
-use hls_runtime::client::{Action, BlockingReload, HlsClient};
+use hls_runtime::client::{Action, BlockingReload, HlsClient, PlaylistRequest};
+
+use url::Url;
 
 const LIVE: &str = "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:2\n\
 #EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,CAN-SKIP-UNTIL=12.0\n\
@@ -21,7 +23,7 @@ fn client_actions_and_request_urls_match_golden() {
         "http://h.example:8080/live/stream.m3u8?_HLS_msn=3&k=v",
         "https://h.example/a/b/stream.m3u8#frag",
     ] {
-        let mut c = HlsClient::new(hls_runtime::client::HlsClientConfig::new(base));
+        let mut c = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(base).expect("URL")));
         out.push_str(&format!("base {base}\n"));
         out.push_str(&format!("  first {:?}\n", c.poll()));
         c.on_playlist(LIVE.as_bytes()).unwrap();
@@ -50,14 +52,14 @@ fn client_actions_and_request_urls_match_golden() {
             "http://h/p.m3u8?a=1",
             "http://h/p.m3u8?a=1&b=2#f",
         ] {
-            let a = Action::FetchPlaylist {
-                url: url.into(),
+            let a = Action::FetchPlaylist(PlaylistRequest {
+                url: Url::parse(url).expect("URL"),
                 blocking,
                 skip,
-            };
+            });
             out.push_str(&format!(
                 "matrix {url} blocking={blocking:?} skip={skip} -> {:?}\n",
-                a.playlist_request_url()
+                a.playlist_request_url().map(|u| u.to_string())
             ));
         }
     }

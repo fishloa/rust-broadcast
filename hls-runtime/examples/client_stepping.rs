@@ -18,6 +18,7 @@ use std::time::Duration;
 use broadcast_common::Timestamp;
 use hls_runtime::client::{Action, HlsClient};
 use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
+use url::Url;
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
@@ -100,18 +101,19 @@ fn main() {
     let playlist = canned_playlist();
     println!("--- canned media.m3u8 ---\n{playlist}");
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("playlist URL"),
+    ));
 
     // The client always seeds a plain (non-blocking) GET first — it hasn't
     // seen a playlist yet, so it doesn't know the origin supports blocking
     // reload.
     match client.poll() {
-        Some(Action::FetchPlaylist {
-            url,
-            blocking,
-            skip,
-        }) => {
-            assert_eq!(url, PLAYLIST_URL);
+        Some(Action::FetchPlaylist(request)) => {
+            let url = request.url;
+            let blocking = request.blocking;
+            let skip = request.skip;
+            assert_eq!(url.as_str(), PLAYLIST_URL);
             assert!(blocking.is_none());
             assert!(!skip);
             println!("action: FetchPlaylist {{ url: {url:?}, blocking: None }}");
@@ -135,23 +137,18 @@ fn main() {
             Action::FetchResource { id, url, .. } => {
                 println!("action: FetchResource {{ id: {id:?}, url: {url:?} }}");
             }
-            Action::FetchPlaylist {
-                url,
-                blocking: Some(b),
-                ..
-            } => {
-                println!(
-                    "action: FetchPlaylist {{ url: {url:?}, blocking: {b:?} }}  <- blocking reload"
-                );
-                saw_blocking_reload = true;
-            }
-            Action::FetchPlaylist {
-                url,
-                blocking: None,
-                ..
-            } => {
-                println!("action: FetchPlaylist {{ url: {url:?}, blocking: None }}");
-            }
+            Action::FetchPlaylist(request) => match request {
+                _ if request.blocking.is_some() => {
+                    println!(
+                        "action: FetchPlaylist {{ url: {:?}, blocking: {:?} }}  <- blocking reload",
+                        request.url, request.blocking
+                    );
+                    saw_blocking_reload = true;
+                }
+                _ => {
+                    println!("action: FetchPlaylist {{ url: {:?}, blocking: None }}", request.url);
+                }
+            },
             Action::Wait(wait) => println!("action: Wait({wait:?})"),
             // `Action` is `#[non_exhaustive]` — a future variant is simply
             // not printed by this demo, not a compile break.

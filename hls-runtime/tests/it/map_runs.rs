@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use broadcast_common::Unpackage;
 use fmp4_split::{Split, split};
 use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
+use url::Url;
 use transmux::sample_aes::aes128_encrypt_segment;
 
 const URL: &str = "http://o/v/index.m3u8";
@@ -63,7 +64,7 @@ fn fetches(actions: &[Action]) -> Vec<(ResourceId, String)> {
     actions
         .iter()
         .filter_map(|a| match a {
-            Action::FetchResource { id, url, .. } => Some((*id, url.clone())),
+            Action::FetchResource { id, url, .. } => Some((*id, url.as_str().to_string())),
             _ => None,
         })
         .collect()
@@ -109,7 +110,7 @@ fn collect_outputs(client: &mut HlsClient, seen: &mut Seen) {
 fn segments_delivered_out_of_order_still_use_their_own_init() {
     let first = source(H264_AAC);
     let second = source(HEVC);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client
         .on_playlist(two_run_playlist(&first, &second, "").as_bytes())
@@ -169,7 +170,7 @@ fn segments_delivered_out_of_order_still_use_their_own_init() {
 fn each_init_is_fetched_once_across_reloads() {
     let first = source(H264_AAC);
     let second = source(HEVC);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     let text = two_run_playlist(&first, &second, "").replace("#EXT-X-ENDLIST\n", "");
     client.on_playlist(text.as_bytes()).unwrap();
@@ -197,7 +198,7 @@ fn each_init_is_fetched_once_across_reloads() {
 fn a_failed_init_fetch_is_asked_for_again_without_losing_the_queue() {
     let first = source(H264_AAC);
     let second = source(HEVC);
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client
         .on_playlist(two_run_playlist(&first, &second, "").as_bytes())
@@ -232,7 +233,7 @@ fn a_map_run_with_its_own_key_decrypts_its_own_init() {
         "#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\",IV=0x{}\n",
         IV.iter().map(|b| format!("{b:02x}")).collect::<String>()
     );
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
     drain(&mut client);
     client
         .on_playlist(two_run_playlist(&first, &second, &key_line).as_bytes())

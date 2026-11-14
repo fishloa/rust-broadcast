@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use hls_runtime::client::{Action, HlsClient, Output};
+use url::Url;
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 use transmux::{CodecConfig, TrackId};
 
@@ -12,7 +13,7 @@ const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
 fn drive_ts(bytes: &[u8]) -> Vec<Output> {
     let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
                     #EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg.ts\n#EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
     let mut outputs = Vec::new();
     loop {
         match client.poll() {
@@ -36,7 +37,7 @@ fn drive_ts(bytes: &[u8]) -> Vec<Output> {
 }
 
 fn drive_fmp4(playlist: &str) -> Vec<Output> {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
     let mut outputs = Vec::new();
     loop {
         match client.poll() {
@@ -46,7 +47,7 @@ fn drive_fmp4(playlist: &str) -> Vec<Output> {
                     .expect("playlist parses");
             }
             Some(Action::FetchResource { id, url, .. }) => {
-                let name = url.rsplit('/').next().expect("url path");
+                let name = url.path().rsplit("/").next().expect("url path");
                 let bytes = test_fixtures::read(&format!("hls/cmaf-fmp4/{name}"));
                 client.on_resource(id, &bytes).expect("resource demuxes");
             }
@@ -244,7 +245,7 @@ fn fmp4_new_init_with_changed_specs_re_emits_tracks() {
         test_fixtures::read(rel)
     }
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(PLAYLIST_URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
     let mut outputs = Vec::new();
 
     // First playlist.
