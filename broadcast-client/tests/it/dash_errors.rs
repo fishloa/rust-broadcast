@@ -6,6 +6,8 @@ use crate::support::dash_common;
 use crate::support::dash_sim;
 use crate::support::fmp4_split;
 
+use std::time::Duration;
+
 use broadcast_client::{BufferEvent, Config, ErrorKind, Event, Status, TrackId};
 use broadcast_common::stage::Timestamp;
 use dash_common::loopback::Origin;
@@ -579,16 +581,16 @@ fn the_vod_playout_gate_starts_at_the_vod_lead_and_the_live_gate_at_the_segment_
             .count()
     };
     let mut short = Config::default();
-    short.playout.vod_start_lead_us = 500_000;
+    short.playout.vod_start_lead = Duration::from_millis(500);
     let mut long = Config::default();
-    long.playout.vod_start_lead_us = 2_500_000;
+    long.playout.vod_start_lead = Duration::from_micros(2_500_000);
     let a = finished(DashSim::static_origin(&url_of(MANIFEST), short));
     let b = finished(DashSim::static_origin(&url_of(MANIFEST), long));
     assert!(samples_before_start(&a) < samples_before_start(&b));
 
-    let live = |lead_us: u64| {
+    let live = |lead: Duration| {
         let mut config = Config::default();
-        config.playout.live_start_lead_us = lead_us;
+        config.playout.live_start_lead = lead;
         let synth = Synth::new(AST_US, Addressing::Number)
             .with_utc("http-xsdate", "http://utc.test/xsdate");
         let mut sim = DashSim::new(
@@ -600,9 +602,9 @@ fn the_vod_playout_gate_starts_at_the_vod_lead_and_the_live_gate_at_the_segment_
         sim.run_for(30 * SEC);
         sim
     };
-    let quick = live(SEC);
-    let slow = live(1_000 * SEC);
-    let cap = live(6 * SEC);
+    let quick = live(Duration::from_secs(1));
+    let slow = live(Duration::from_secs(1_000));
+    let cap = live(Duration::from_secs(6));
     assert!(samples_before_start(&quick) < samples_before_start(&slow));
     assert_eq!(
         samples_before_start(&slow),

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `PesHeader::flag_bytes`, `PesHeader::serialize_optional_fields` and a public `PesHeader::optional_len`: the one implementation of the PES optional-header bytes (flag bytes, PTS/DTS, ESCR, ES_rate, trick mode, copy info, CRC, extension, stuffing), so a crate that frames its own PES payload (e.g. `st291`'s ANC PES) can build on this codec instead of re-implementing the timestamp coding (#2762). `PesPacket::serialize_into` now calls them; its output is unchanged (every round-trip test stays byte-identical).
 
 ## [0.8.0] - 2026-11-14
 ### Added

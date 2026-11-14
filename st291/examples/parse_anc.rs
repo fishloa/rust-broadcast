@@ -35,7 +35,7 @@ fn main() {
             anc.horizontal_offset,
             anc.did,
             anc.sdid,
-            anc.data_count,
+            anc.data_count().unwrap(),
         );
         for (j, w) in anc.user_data_words.iter().enumerate() {
             if j > 0 {
@@ -43,7 +43,7 @@ fn main() {
             }
             print!("{w:#05X}");
         }
-        println!("] checksum={:#05X}", anc.checksum);
+        println!("] checksum={:#05X}", anc.checksum().unwrap());
     }
     println!("stuffing bytes: {}", pkt.stuffing_bytes);
 

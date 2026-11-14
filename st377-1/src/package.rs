@@ -18,13 +18,13 @@ use broadcast_common::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
+use crate::sets::batch_bytes;
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_raw, get_required_fixed,
     get_required_raw,
 };
 use crate::types::{
-    MxfTimestamp, PackageId, StrongRef, TIMESTAMP_LEN, decode_utf16_be, encode_utf16_be,
-    parse_uid_batch, serialize_uid_batch,
+    MxfTimestamp, PackageId, StrongRef, TIMESTAMP_LEN, UidBatch, decode_utf16_be, encode_utf16_be,
 };
 
 // ── Generic Package local tags (B.1) ────────────────────────────────────
@@ -78,7 +78,7 @@ const SOURCE_KNOWN_TAGS: [u16; 9] = [
 /// 14/15 = `0x01`/`0x36`): the top-level composition that describes the
 /// final timeline of the file.  Carries only the Generic Package
 /// properties (B.1) — no additional fields.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct MaterialPackage {
     /// Interchange Object (A.1) base properties.
     pub interchange: InterchangeObjectFields,
@@ -92,9 +92,30 @@ pub struct MaterialPackage {
     pub modified_date: MxfTimestamp,
     /// Tracks (`0x4403`, Req) — strong references to this package's Tracks.
     pub tracks: Vec<StrongRef>,
+    /// The Tracks Batch exactly as parsed (`None` for a freshly built
+    /// value), so its header reproduces byte-for-byte on serialize.
+    pub tracks_batch: Option<UidBatch>,
     /// Unrecognized properties preserved for round-trip fidelity.
     pub dark: Vec<(u16, Vec<u8>)>,
 }
+
+impl PartialEq for MaterialPackage {
+    fn eq(&self, other: &Self) -> bool {
+        self.interchange == other.interchange
+            && self.package_uid == other.package_uid
+            && self.name == other.name
+            && self.creation_date == other.creation_date
+            && self.modified_date == other.modified_date
+            && self.tracks == other.tracks
+            && match (&self.tracks_batch, &other.tracks_batch) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
+            && self.dark == other.dark
+    }
+}
+
+impl Eq for MaterialPackage {}
 
 impl<'a> Parse<'a> for MaterialPackage {
     type Error = Error;
@@ -133,12 +154,13 @@ impl<'a> Parse<'a> for MaterialPackage {
             "Package Modified Date",
             "Material Package",
         )?)?;
-        let tracks = parse_uid_batch(get_required_raw(
+        let tracks_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_TRACKS,
             "Tracks",
             "Material Package",
         )?)?;
+        let tracks = tracks_batch.items().to_vec();
         let dark = collect_dark(items, &MATERIAL_KNOWN_TAGS);
 
         Ok(MaterialPackage {
@@ -148,6 +170,7 @@ impl<'a> Parse<'a> for MaterialPackage {
             creation_date,
             modified_date,
             tracks,
+            tracks_batch: Some(tracks_batch),
             dark,
         })
     }
@@ -168,7 +191,7 @@ impl MaterialPackage {
         encode_timestamp_item(&mut out, TAG_MODIFIED_DATE, &self.modified_date);
         out.push(LocalSetOwnedItem::owned(
             TAG_TRACKS,
-            serialize_uid_batch(&self.tracks),
+            batch_bytes(self.tracks_batch.as_ref(), &self.tracks),
         ));
         out
     }
@@ -184,7 +207,7 @@ crate::sets::declare_set_serialize!(MaterialPackage, MaterialPackage);
 /// 14/15 = `0x01`/`0x37`): references the file's actual essence via a
 /// `Descriptor` strong reference, plus the Generic Package properties
 /// (B.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct SourcePackage {
     /// Interchange Object (A.1) base properties.
     pub interchange: InterchangeObjectFields,
@@ -198,6 +221,9 @@ pub struct SourcePackage {
     pub modified_date: MxfTimestamp,
     /// Tracks (`0x4403`, Req) — strong references to this package's Tracks.
     pub tracks: Vec<StrongRef>,
+    /// The Tracks Batch exactly as parsed (`None` for a freshly built
+    /// value), so its header reproduces byte-for-byte on serialize.
+    pub tracks_batch: Option<UidBatch>,
     /// Descriptor (`0x4701`, Req) — strong reference to the top-level
     /// Descriptor (or Multiple Descriptor) for this package's essence.
     ///
@@ -209,6 +235,25 @@ pub struct SourcePackage {
     /// Unrecognized properties preserved for round-trip fidelity.
     pub dark: Vec<(u16, Vec<u8>)>,
 }
+
+impl PartialEq for SourcePackage {
+    fn eq(&self, other: &Self) -> bool {
+        self.interchange == other.interchange
+            && self.package_uid == other.package_uid
+            && self.name == other.name
+            && self.creation_date == other.creation_date
+            && self.modified_date == other.modified_date
+            && self.tracks == other.tracks
+            && match (&self.tracks_batch, &other.tracks_batch) {
+                (Some(a), Some(b)) => a.header() == b.header(),
+                _ => true,
+            }
+            && self.descriptor == other.descriptor
+            && self.dark == other.dark
+    }
+}
+
+impl Eq for SourcePackage {}
 
 impl<'a> Parse<'a> for SourcePackage {
     type Error = Error;
@@ -247,12 +292,13 @@ impl<'a> Parse<'a> for SourcePackage {
             "Package Modified Date",
             "Source Package",
         )?)?;
-        let tracks = parse_uid_batch(get_required_raw(
+        let tracks_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_TRACKS,
             "Tracks",
             "Source Package",
         )?)?;
+        let tracks = tracks_batch.items().to_vec();
         let descriptor =
             get_required_fixed::<16>(items, TAG_DESCRIPTOR, "Descriptor", "Source Package")?;
         let dark = collect_dark(items, &SOURCE_KNOWN_TAGS);
@@ -264,6 +310,7 @@ impl<'a> Parse<'a> for SourcePackage {
             creation_date,
             modified_date,
             tracks,
+            tracks_batch: Some(tracks_batch),
             descriptor,
             dark,
         })
@@ -285,7 +332,7 @@ impl SourcePackage {
         encode_timestamp_item(&mut out, TAG_MODIFIED_DATE, &self.modified_date);
         out.push(LocalSetOwnedItem::owned(
             TAG_TRACKS,
-            serialize_uid_batch(&self.tracks),
+            batch_bytes(self.tracks_batch.as_ref(), &self.tracks),
         ));
         out.push(LocalSetOwnedItem::fixed(TAG_DESCRIPTOR, self.descriptor));
         out
@@ -332,6 +379,7 @@ mod tests {
             creation_date: sample_timestamp(),
             modified_date: sample_timestamp(),
             tracks: alloc::vec![[0x44; 16], [0x55; 16]],
+            tracks_batch: None,
             dark: Vec::new(),
         }
     }
@@ -348,6 +396,7 @@ mod tests {
             creation_date: sample_timestamp(),
             modified_date: sample_timestamp(),
             tracks: alloc::vec![[0xCC; 16]],
+            tracks_batch: None,
             descriptor: [0xDD; 16],
             dark: Vec::new(),
         }
