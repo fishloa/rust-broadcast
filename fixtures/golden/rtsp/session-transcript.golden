@@ -4,7 +4,7 @@ CSeq: 1
 User-Agent: golden-ua
 
 --- OPTIONS response ---
-RTSP/1.0 200 Ok
+RTSP/1.0 200 OK
 CSeq: 1
 Public: OPTIONS, DESCRIBE, ANNOUNCE, GET_PARAMETER, SET_PARAMETER, SETUP, PLAY, PAUSE, RECORD, TEARDOWN
 Server: rtsp-runtime
@@ -22,7 +22,7 @@ Transport: RTP/AVP/TCP;unicast;interleaved=0-1
 User-Agent: golden-ua
 
 --- SETUP response ---
-RTSP/1.0 200 Ok
+RTSP/1.0 200 OK
 CSeq: 3
 Server: rtsp-runtime
 Session: 000000000000abcd;timeout=60
@@ -35,7 +35,7 @@ Session: 000000000000abcd
 User-Agent: golden-ua
 
 --- PLAY response ---
-RTSP/1.0 200 Ok
+RTSP/1.0 200 OK
 CSeq: 4
 Server: rtsp-runtime
 Session: 000000000000abcd
@@ -53,7 +53,7 @@ Session: 000000000000abcd
 User-Agent: golden-ua
 
 --- PAUSE response ---
-RTSP/1.0 200 Ok
+RTSP/1.0 200 OK
 CSeq: 6
 Server: rtsp-runtime
 Session: 000000000000abcd
@@ -65,7 +65,7 @@ Session: 000000000000abcd
 User-Agent: golden-ua
 
 --- TEARDOWN response ---
-RTSP/1.0 200 Ok
+RTSP/1.0 200 OK
 CSeq: 7
 Server: rtsp-runtime
 Session: 000000000000abcd
