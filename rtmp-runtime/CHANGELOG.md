@@ -7,7 +7,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 #### Added
-- `message::wire`: the §7.1 message type ids as one private, ascending table the `MessageTypeId` enum's `from_u8`/`to_u8` arms read, so a type id is stated once instead of repeated between the two conversions (pinned by `message_type_ids_round_trip_the_spec_table` and by the workspace's ordering tripwire).
 - `io::RtmpClientConfig { target, timeouts }` (`new(target)`, `with_timeouts`) and `io::RtmpServerConfig { session, timeouts }` (`Default`, `with_session`, `with_timeouts`): the same config shape as the RTSP and SRT adapters, so a host maps its timeout config once per role (#2660).
 
 #### Removed

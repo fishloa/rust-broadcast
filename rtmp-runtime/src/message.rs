@@ -22,39 +22,6 @@ type Result<T> = core::result::Result<T, RtmpError>;
 
 // ── Message type ids (§6 / §7.1) ────────────────────────────────────────
 
-/// The §7.1 message type ids in ascending wire order: the reference the enum,
-/// its `from_u8`/`to_u8` arms and its `name()` arms must agree with, kept once so
-/// a new id has one place to state its number (the ordering tripwire checks this
-/// block, and the conversion tests pin the enum to it).
-mod wire {
-    /// `1` — Set Chunk Size (§5.4.1).
-    pub const SET_CHUNK_SIZE: u8 = 1;
-    /// `2` — Abort Message (§5.4.2).
-    pub const ABORT: u8 = 2;
-    /// `3` — Acknowledgement (§5.4.3).
-    pub const ACKNOWLEDGEMENT: u8 = 3;
-    /// `4` — User Control Message (§6.2/§7.1.7).
-    pub const USER_CONTROL: u8 = 4;
-    /// `5` — Window Acknowledgement Size (§5.4.4).
-    pub const WINDOW_ACK_SIZE: u8 = 5;
-    /// `6` — Set Peer Bandwidth (§5.4.5).
-    pub const SET_PEER_BANDWIDTH: u8 = 6;
-    /// `8` — Audio Message (§7.1.4).
-    pub const AUDIO: u8 = 8;
-    /// `9` — Video Message (§7.1.5).
-    pub const VIDEO: u8 = 9;
-    /// `15` — Data Message, AMF3-encoded (§7.1.2).
-    pub const DATA_AMF3: u8 = 15;
-    /// `17` — Command Message, AMF3-encoded (§7.1.1).
-    pub const COMMAND_AMF3: u8 = 17;
-    /// `18` — Data Message, AMF0-encoded (§7.1.2).
-    pub const DATA_AMF0: u8 = 18;
-    /// `20` — Command Message, AMF0-encoded (§7.1.1).
-    pub const COMMAND_AMF0: u8 = 20;
-    /// `22` — Aggregate Message (§7.1.6).
-    pub const AGGREGATE: u8 = 22;
-}
-
 /// RTMP message type id (§6, RTMP Message Types §7.1; the `Message Type ID`
 /// field of the chunk message header, §5.3.1). Ids `1..=6` are
 /// Chunk-Stream-layer protocol control (§5.4); the rest are streaming-layer
@@ -101,19 +68,19 @@ impl MessageTypeId {
     #[must_use]
     pub fn from_u8(v: u8) -> Self {
         match v {
-            wire::SET_CHUNK_SIZE => MessageTypeId::SetChunkSize,
-            wire::ABORT => MessageTypeId::Abort,
-            wire::ACKNOWLEDGEMENT => MessageTypeId::Acknowledgement,
-            wire::USER_CONTROL => MessageTypeId::UserControl,
-            wire::WINDOW_ACK_SIZE => MessageTypeId::WindowAckSize,
-            wire::SET_PEER_BANDWIDTH => MessageTypeId::SetPeerBandwidth,
-            wire::AUDIO => MessageTypeId::Audio,
-            wire::VIDEO => MessageTypeId::Video,
-            wire::DATA_AMF3 => MessageTypeId::DataAmf3,
-            wire::COMMAND_AMF3 => MessageTypeId::CommandAmf3,
-            wire::DATA_AMF0 => MessageTypeId::DataAmf0,
-            wire::COMMAND_AMF0 => MessageTypeId::CommandAmf0,
-            wire::AGGREGATE => MessageTypeId::Aggregate,
+            1 => MessageTypeId::SetChunkSize,
+            2 => MessageTypeId::Abort,
+            3 => MessageTypeId::Acknowledgement,
+            4 => MessageTypeId::UserControl,
+            5 => MessageTypeId::WindowAckSize,
+            6 => MessageTypeId::SetPeerBandwidth,
+            8 => MessageTypeId::Audio,
+            9 => MessageTypeId::Video,
+            15 => MessageTypeId::DataAmf3,
+            17 => MessageTypeId::CommandAmf3,
+            18 => MessageTypeId::DataAmf0,
+            20 => MessageTypeId::CommandAmf0,
+            22 => MessageTypeId::Aggregate,
             other => MessageTypeId::Other(other),
         }
     }
@@ -122,19 +89,19 @@ impl MessageTypeId {
     #[must_use]
     pub fn to_u8(self) -> u8 {
         match self {
-            MessageTypeId::SetChunkSize => wire::SET_CHUNK_SIZE,
-            MessageTypeId::Abort => wire::ABORT,
-            MessageTypeId::Acknowledgement => wire::ACKNOWLEDGEMENT,
-            MessageTypeId::UserControl => wire::USER_CONTROL,
-            MessageTypeId::WindowAckSize => wire::WINDOW_ACK_SIZE,
-            MessageTypeId::SetPeerBandwidth => wire::SET_PEER_BANDWIDTH,
-            MessageTypeId::Audio => wire::AUDIO,
-            MessageTypeId::Video => wire::VIDEO,
-            MessageTypeId::DataAmf3 => wire::DATA_AMF3,
-            MessageTypeId::CommandAmf3 => wire::COMMAND_AMF3,
-            MessageTypeId::DataAmf0 => wire::DATA_AMF0,
-            MessageTypeId::CommandAmf0 => wire::COMMAND_AMF0,
-            MessageTypeId::Aggregate => wire::AGGREGATE,
+            MessageTypeId::SetChunkSize => 1,
+            MessageTypeId::Abort => 2,
+            MessageTypeId::Acknowledgement => 3,
+            MessageTypeId::UserControl => 4,
+            MessageTypeId::WindowAckSize => 5,
+            MessageTypeId::SetPeerBandwidth => 6,
+            MessageTypeId::Audio => 8,
+            MessageTypeId::Video => 9,
+            MessageTypeId::DataAmf3 => 15,
+            MessageTypeId::CommandAmf3 => 17,
+            MessageTypeId::DataAmf0 => 18,
+            MessageTypeId::CommandAmf0 => 20,
+            MessageTypeId::Aggregate => 22,
             MessageTypeId::Other(v) => v,
         }
     }
@@ -967,45 +934,26 @@ mod tests {
     }
 
     #[test]
-    fn message_type_ids_round_trip_the_spec_table() {
-        // Every id §7.1 defines, taken from the one table the ordering tripwire checks, in
-        // ascending wire order: a new id is added there, and the conversions must follow it.
-        for (value, id) in [
-            (wire::SET_CHUNK_SIZE, MessageTypeId::SetChunkSize),
-            (wire::ABORT, MessageTypeId::Abort),
-            (wire::ACKNOWLEDGEMENT, MessageTypeId::Acknowledgement),
-            (wire::USER_CONTROL, MessageTypeId::UserControl),
-            (wire::WINDOW_ACK_SIZE, MessageTypeId::WindowAckSize),
-            (wire::SET_PEER_BANDWIDTH, MessageTypeId::SetPeerBandwidth),
-            (wire::AUDIO, MessageTypeId::Audio),
-            (wire::VIDEO, MessageTypeId::Video),
-            (wire::DATA_AMF3, MessageTypeId::DataAmf3),
-            (wire::COMMAND_AMF3, MessageTypeId::CommandAmf3),
-            (wire::DATA_AMF0, MessageTypeId::DataAmf0),
-            (wire::COMMAND_AMF0, MessageTypeId::CommandAmf0),
-            (wire::AGGREGATE, MessageTypeId::Aggregate),
+    fn message_type_ids_round_trip_every_defined_value() {
+        for (id, value) in [
+            (MessageTypeId::SetChunkSize, 1u8),
+            (MessageTypeId::Abort, 2),
+            (MessageTypeId::Acknowledgement, 3),
+            (MessageTypeId::UserControl, 4),
+            (MessageTypeId::WindowAckSize, 5),
+            (MessageTypeId::SetPeerBandwidth, 6),
+            (MessageTypeId::Audio, 8),
+            (MessageTypeId::Video, 9),
+            (MessageTypeId::DataAmf3, 15),
+            (MessageTypeId::CommandAmf3, 17),
+            (MessageTypeId::DataAmf0, 18),
+            (MessageTypeId::CommandAmf0, 20),
+            (MessageTypeId::Aggregate, 22),
         ] {
             assert_eq!(id.to_u8(), value, "{}", id.name());
             assert_eq!(MessageTypeId::from_u8(value), id);
             assert_eq!(id.to_string(), id.name());
         }
-        // The table is strictly ascending, so an id can only be added at its numeric place.
-        let table = [
-            wire::SET_CHUNK_SIZE,
-            wire::ABORT,
-            wire::ACKNOWLEDGEMENT,
-            wire::USER_CONTROL,
-            wire::WINDOW_ACK_SIZE,
-            wire::SET_PEER_BANDWIDTH,
-            wire::AUDIO,
-            wire::VIDEO,
-            wire::DATA_AMF3,
-            wire::COMMAND_AMF3,
-            wire::DATA_AMF0,
-            wire::COMMAND_AMF0,
-            wire::AGGREGATE,
-        ];
-        assert!(table.windows(2).all(|w| w[0] < w[1]), "{table:?}");
     }
 
     #[test]
