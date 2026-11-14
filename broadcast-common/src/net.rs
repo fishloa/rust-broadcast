@@ -8,6 +8,7 @@
 //! the socket2 one) applies it; no crate keeps a second copy of these fields.
 
 use core::net::{IpAddr, Ipv4Addr};
+use core::num::NonZeroU32;
 
 /// Socket options for one UDP datagram bind.
 ///
@@ -18,7 +19,7 @@ use core::net::{IpAddr, Ipv4Addr};
 pub struct UdpOptions {
     /// Requested `SO_RCVBUF` in bytes; `None` keeps the OS default. A larger
     /// buffer absorbs a burst that arrives between two reads.
-    pub recv_buffer_bytes: Option<usize>,
+    pub recv_buffer_bytes: Option<NonZeroU32>,
     /// Set `SO_REUSEADDR` before the bind. Default `false`.
     pub reuse_address: bool,
     /// Set `SO_REUSEPORT` before the bind, where the platform has it (Unix,
@@ -44,7 +45,7 @@ impl UdpOptions {
 
     /// Request an `SO_RCVBUF` of `bytes` (the kernel may round or clamp it).
     #[must_use]
-    pub const fn with_recv_buffer_bytes(mut self, bytes: usize) -> Self {
+    pub const fn with_recv_buffer_bytes(mut self, bytes: NonZeroU32) -> Self {
         self.recv_buffer_bytes = Some(bytes);
         self
     }
@@ -326,11 +327,11 @@ mod tests {
             .with_interface(MulticastInterface::V4(Ipv4Addr::new(192, 168, 1, 10)))
             .with_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7)));
         let options = UdpOptions::new()
-            .with_recv_buffer_bytes(4 << 20)
+            .with_recv_buffer_bytes(NonZeroU32::new(4 << 20).unwrap())
             .with_reuse_address(true)
             .with_reuse_port(false)
             .with_join(join.clone());
-        assert_eq!(options.recv_buffer_bytes, Some(4 << 20));
+        assert_eq!(options.recv_buffer_bytes, NonZeroU32::new(4 << 20));
         assert!(options.reuse_address);
         assert!(!options.reuse_port);
         assert_eq!(options.join, Some(join.clone()));
@@ -340,6 +341,23 @@ mod tests {
             Ipv4Addr::new(192, 168, 1, 10),
             "an IPv4 address joins with itself"
         );
+    }
+
+    /// A requested receive buffer is a `NonZeroU32`, so a `Some(0)` request (which
+    /// the kernel would read as "keep the OS default", indistinguishable from
+    /// `None`) cannot be expressed.
+    #[test]
+    fn a_receive_buffer_request_is_never_zero() {
+        assert_eq!(NonZeroU32::new(0), None);
+        assert_eq!(
+            UdpOptions::new().with_recv_buffer_bytes(NonZeroU32::MIN),
+            UdpOptions {
+                recv_buffer_bytes: NonZeroU32::new(1),
+                ..UdpOptions::new()
+            }
+        );
+        let options = UdpOptions::new().with_recv_buffer_bytes(NonZeroU32::MAX);
+        assert_eq!(options.recv_buffer_bytes, NonZeroU32::new(u32::MAX));
     }
 
     #[test]

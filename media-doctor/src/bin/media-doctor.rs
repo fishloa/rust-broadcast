@@ -250,7 +250,7 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
     if let (Some(want), Ok(got)) = (
         udp_config.recv_buffer_bytes,
         media_doctor::udp::recv_buffer_size(&socket),
-    ) && got < want
+    ) && got < want.get() as usize
     {
         eprintln!(
             "media-doctor watch: warning: SO_RCVBUF requested {want} bytes, kernel granted {got}"

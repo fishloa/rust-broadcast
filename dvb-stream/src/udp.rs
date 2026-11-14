@@ -5,6 +5,7 @@
 
 use std::io;
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
@@ -75,7 +76,11 @@ pub fn check_udp(addr: SocketAddr, options: &UdpOptions) -> io::Result<()> {
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error.reason()))
 }
 
-fn open(addr: SocketAddr, options: &UdpOptions, recv_buffer: Option<usize>) -> io::Result<Socket> {
+fn open(
+    addr: SocketAddr,
+    options: &UdpOptions,
+    recv_buffer: Option<NonZeroU32>,
+) -> io::Result<Socket> {
     let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
     if options.reuse_address {
         socket.set_reuse_address(true)?;
@@ -94,7 +99,7 @@ fn open(addr: SocketAddr, options: &UdpOptions, recv_buffer: Option<usize>) -> i
         socket.set_reuse_port(true)?;
     }
     if let Some(n) = recv_buffer {
-        socket.set_recv_buffer_size(n)?;
+        socket.set_recv_buffer_size(usize::try_from(n.get()).unwrap_or(usize::MAX))?;
     }
     socket.bind(&SockAddr::from(addr))?;
     if let Some(join) = &options.join {

@@ -51,6 +51,28 @@ fn clear_sim() -> SrtSim {
     )
 }
 
+/// The SRT caller asks the host to **connect** (not bind): the action carries the
+/// peer host and port so the host resolves the name (the session never does), and
+/// it is `UdpConnect`, not `UdpBind`.
+#[test]
+fn the_srt_caller_asks_the_host_to_connect_to_its_host_and_port() {
+    let mut session = Session::open(
+        Url::parse("srt://stream.example.test:9100").unwrap(),
+        cfg(|_| {}),
+        stamp(0),
+    )
+    .unwrap();
+    let mut found = None;
+    while let Some(a) = session.poll(stamp(0)) {
+        if let broadcast_client::Action::UdpConnect { host, port, .. } = a {
+            found = Some((host, port));
+        }
+    }
+    let (host, port) = found.expect("a UdpConnect");
+    assert_eq!(host, url::Host::Domain("stream.example.test".to_string()));
+    assert_eq!(port, 9100);
+}
+
 fn stream(sim: &mut SrtSim, ts: &[u8], per: usize) {
     for d in ts_datagrams(ts, per) {
         sim.send_data(&d);
@@ -748,7 +770,7 @@ fn a_rejection_is_reported_from_the_callback_without_a_poll() {
     .unwrap();
     let mut conn = None;
     while let Some(a) = session.poll(stamp(0)) {
-        if let Action::UdpBind { conn: c, .. } = a {
+        if let Action::UdpConnect { conn: c, .. } = a {
             conn = Some(c);
         }
     }

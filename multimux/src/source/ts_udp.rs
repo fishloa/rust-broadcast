@@ -351,7 +351,7 @@ mod tests {
     #[test]
     fn the_session_config_carries_the_socket_options() {
         let options = UdpOptions::new()
-            .with_recv_buffer_bytes(1 << 20)
+            .with_recv_buffer_bytes(std::num::NonZeroU32::new(1 << 20).unwrap())
             .with_reuse_address(true)
             .with_join(
                 MulticastJoin::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
@@ -365,7 +365,10 @@ mod tests {
             ),
         );
         let config = route.session_config().unwrap();
-        assert_eq!(config.udp.options.recv_buffer_bytes, Some(1 << 20));
+        assert_eq!(
+            config.udp.options.recv_buffer_bytes,
+            std::num::NonZeroU32::new(1 << 20)
+        );
         assert!(config.udp.options.reuse_address);
         assert_eq!(
             config.udp.options.join,

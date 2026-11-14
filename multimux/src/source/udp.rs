@@ -27,6 +27,7 @@
 //! silently mis-set.
 
 use std::net::{IpAddr, SocketAddr};
+use std::num::NonZeroU32;
 
 use broadcast_common::net::{MulticastJoin, UdpOptions};
 use tokio::net::UdpSocket;
@@ -84,8 +85,10 @@ pub const DEFAULT_RECV_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 /// The `SO_RCVBUF` size the bind will request: the caller's explicit value,
 /// or [`DEFAULT_RECV_BUFFER_BYTES`] when none was given. A pure function so the
 /// choice of default is unit-testable without a socket (I-B).
-pub fn requested_recv_buffer_bytes(recv_buffer_bytes: Option<usize>) -> usize {
-    recv_buffer_bytes.unwrap_or(DEFAULT_RECV_BUFFER_BYTES)
+pub fn requested_recv_buffer_bytes(recv_buffer_bytes: Option<NonZeroU32>) -> NonZeroU32 {
+    let default = u32::try_from(DEFAULT_RECV_BUFFER_BYTES).ok();
+    recv_buffer_bytes
+        .unwrap_or_else(|| default.and_then(NonZeroU32::new).unwrap_or(NonZeroU32::MIN))
 }
 
 /// The [`UdpOptions`] a route's bind asks for: the caller's socket options,
@@ -157,7 +160,7 @@ pub async fn bind_udp(
         })?;
     if let Some(requested) = wanted_recv {
         match std_socket.recv_buffer_size() {
-            Ok(actual) if actual < requested => {
+            Ok(actual) if actual < usize::try_from(requested.get()).unwrap_or(usize::MAX) => {
                 tracing::debug!(requested, actual, "SO_RCVBUF clamped by the kernel")
             }
             Ok(_) => {}
@@ -207,14 +210,14 @@ mod tests {
     #[test]
     fn the_bind_options_carry_the_caller_options() {
         let options = UdpOptions::new()
-            .with_recv_buffer_bytes(1024)
+            .with_recv_buffer_bytes(NonZeroU32::new(1024).unwrap())
             .with_reuse_address(true)
             .with_join(
                 MulticastJoin::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
                     .with_interface(MulticastInterface::V4(Ipv4Addr::LOCALHOST)),
             );
         let bind = bind_options("127.0.0.1:5004", Some("239.255.42.1"), &options).unwrap();
-        assert_eq!(bind.recv_buffer_bytes, Some(1024));
+        assert_eq!(bind.recv_buffer_bytes, NonZeroU32::new(1024));
         assert!(bind.reuse_address);
         assert!(!bind.reuse_port);
         assert_eq!(
@@ -226,11 +229,42 @@ mod tests {
         );
     }
 
+    /// A `NonZeroU32` receive-buffer request survives the whole path: config spec
+    /// -> `UdpOptions` -> `bind_options` -> the value the socket bind is handed,
+    /// unchanged, so the `usize` the socket call wants is the one the operator
+    /// asked for (and never a silent 0).
+    #[test]
+    fn a_non_zero_receive_buffer_request_survives_to_the_bind() {
+        let spec = crate::config::UdpSocketSpec {
+            recv_buffer_bytes: Some(3 * 1024 * 1024),
+            ..crate::config::UdpSocketSpec::default()
+        };
+        let options = spec.to_bind_options().unwrap();
+        assert_eq!(options.recv_buffer_bytes, NonZeroU32::new(3 * 1024 * 1024));
+        let bind = bind_options("127.0.0.1:5004", None, &options).unwrap();
+        let requested = bind.recv_buffer_bytes.expect("a request");
+        assert_eq!(requested.get(), 3 * 1024 * 1024);
+        assert_eq!(
+            requested,
+            requested_recv_buffer_bytes(Some(requested)),
+            "an explicit request is returned as-is, not replaced by the default"
+        );
+        // A zero request is unrepresentable: the spec rejects it before this point.
+        let zero = crate::config::UdpSocketSpec {
+            recv_buffer_bytes: Some(0),
+            ..crate::config::UdpSocketSpec::default()
+        };
+        assert!(zero.to_bind_options().is_err());
+    }
+
     #[test]
     fn the_bind_options_default_the_receive_buffer_and_the_interface() {
         let bind =
             bind_options("0.0.0.0:5004", Some("239.255.42.1"), &UdpOptions::default()).unwrap();
-        assert_eq!(bind.recv_buffer_bytes, Some(DEFAULT_RECV_BUFFER_BYTES));
+        assert_eq!(
+            bind.recv_buffer_bytes.map(|n| n.get() as usize),
+            Some(DEFAULT_RECV_BUFFER_BYTES)
+        );
         assert_eq!(
             bind.join,
             Some(MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(
