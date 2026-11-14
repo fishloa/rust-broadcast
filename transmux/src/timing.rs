@@ -18,6 +18,7 @@ use crate::init_segment::{bounded_entry_count, flat_table_len, serialize_flat_ta
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::timescale::Timescale;
 
 use broadcast_common::{Parse, Serialize};
 
@@ -574,7 +575,7 @@ pub struct SegmentIndexBox {
     pub version: u8,
     pub flags: u32,
     pub reference_id: u32,
-    pub timescale: u32,
+    pub timescale: Timescale,
     pub earliest_presentation_time: u64,
     pub first_offset: u64,
     pub references: Vec<SidxReference>,
@@ -589,7 +590,12 @@ impl SegmentIndexBox {
         let mut c = FULLBOX_EXTRA_SIZE; // skip past version/flags to payload
         let reference_id = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
         c += 4;
-        let timescale = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
+        let timescale = Timescale::try_new(u32::from_be_bytes([
+            body[c],
+            body[c + 1],
+            body[c + 2],
+            body[c + 3],
+        ]))?;
         c += 4;
         let (ept, first_offset) = if version == 0 {
             let ept = u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]) as u64;
@@ -717,7 +723,7 @@ impl Serialize for SegmentIndexBox {
         )?;
         buf[c..c + 4].copy_from_slice(&self.reference_id.to_be_bytes());
         c += 4;
-        buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.timescale.get().to_be_bytes());
         c += 4;
         if self.version == 0 {
             let ept = broadcast_common::len::fit_bits(

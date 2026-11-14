@@ -73,6 +73,7 @@ timed-metadata = { version = "0.10", features = ["serde"] }
 ## Quick start
 
 ```rust
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::PresentationTime;
 use timed_metadata::convert::{EmsgConfig, emsg_to_scte35};
 use timed_metadata::{TimeAnchor, Timeline};
@@ -96,7 +97,7 @@ assert!(line.contains("SCTE35-"));
 
 // Edge 2: SCTE-35 -> DASH emsg, and Edge 3: back to the verbatim section.
 let cfg = EmsgConfig {
-    timescale: 90_000,
+    timescale: Timescale::from_nonzero(90_000),
     presentation: PresentationTime::Delta(0),
     event_duration: 2_160_000, // 24 s * 90000
     value: "34".to_string(),

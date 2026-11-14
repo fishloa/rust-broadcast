@@ -188,6 +188,7 @@ use crate::rtp_dts::DtsDeriver;
 use crate::slice_header::{AvcParamSets, AvcPicture};
 use alloc::collections::{BTreeMap, VecDeque};
 use alloc::vec::Vec;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 use rtp_packet::{MIN_SEQUENTIAL, RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict};
 
@@ -331,7 +332,7 @@ pub struct RtpStreamTrack {
     /// Real codec config (e.g. from [`crate::rtp_sdp`]).
     pub config: CodecConfig,
     /// RTP clock rate (Hz) — also used as the IR track timescale.
-    pub clock_rate: u32,
+    pub clock_rate: Timescale,
     /// Bounded reorder-buffer depth (packets) — see [`DEFAULT_REORDER_DEPTH`].
     reorder_depth: usize,
 }
@@ -343,7 +344,7 @@ impl RtpStreamTrack {
         track_id: TrackId,
         kind: RtpMediaKind,
         config: CodecConfig,
-        clock_rate: u32,
+        clock_rate: Timescale,
     ) -> Self {
         Self {
             track_id,
@@ -598,7 +599,7 @@ impl SeqState {
 struct TrackState {
     kind: RtpMediaKind,
     config: CodecConfig,
-    clock_rate: u32,
+    clock_rate: Timescale,
     /// RTP timestamp of the packets currently buffered in `cur_pkts` (the
     /// access unit still being assembled).
     cur_ts: Option<u32>,
@@ -698,7 +699,7 @@ pub struct WallSkewExceeded {
 /// clock_rate` (RFC 3550 §6.4.1's NTP/RTP correlation, generalised from the
 /// SR's own instant to any AU on the same RTP clock). `None` when the distance
 /// is not representable.
-fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> Option<f64> {
+fn wall_seconds(anchor: &SrAnchor, clock_rate: Timescale, au_unwrapped_ts: u64) -> Option<f64> {
     let rate = i128::from(clock_rate);
     if rate == 0 {
         return None;
@@ -706,7 +707,7 @@ fn wall_seconds(anchor: &SrAnchor, clock_rate: u32, au_unwrapped_ts: u64) -> Opt
     let delta = i128::from(au_unwrapped_ts) - i128::from(anchor.rtp_ts);
     let whole = i32::try_from(delta.div_euclid(rate)).ok()?;
     let remainder = u32::try_from(delta.rem_euclid(rate)).ok()?;
-    Some(anchor.ntp_seconds + f64::from(whole) + f64::from(remainder) / f64::from(clock_rate))
+    Some(anchor.ntp_seconds + f64::from(whole) + f64::from(remainder) / f64::from(clock_rate.get()))
 }
 
 /// Extend a 32-bit wire RTP timestamp to the 64-bit value nearest `reference`
@@ -799,7 +800,11 @@ const MAX_REORDER_WINDOW: usize = 256;
 /// constraint, which is still its own declaration and is used only after every
 /// observed duration. AAC: `AudioSpecificConfig::samples_per_frame` scaled from the
 /// ASC sampling rate to the RTP clock rate. `None` when nothing is declared.
-fn declared_au_duration(kind: RtpMediaKind, config: &CodecConfig, clock_rate: u32) -> Option<u32> {
+fn declared_au_duration(
+    kind: RtpMediaKind,
+    config: &CodecConfig,
+    clock_rate: Timescale,
+) -> Option<u32> {
     let ticks = match (kind, config) {
         (RtpMediaKind::H264, CodecConfig::Avc { config, .. }) => {
             let sps = config.config.sps.first()?;
@@ -1077,7 +1082,7 @@ impl RtpStreamDepacketiser {
     pub fn try_sync_start_decode_times(
         &self,
     ) -> core::result::Result<Vec<(TrackId, u64)>, WallSkewExceeded> {
-        let anchored: Vec<(TrackId, f64, u32)> = self
+        let anchored: Vec<(TrackId, f64, Timescale)> = self
             .tracks
             .iter()
             .filter_map(|(id, st)| {
@@ -1106,7 +1111,7 @@ impl RtpStreamDepacketiser {
         Ok(anchored
             .into_iter()
             .map(|(id, wall, clock_rate)| {
-                let raw_ticks = ((wall - origin) * f64::from(clock_rate)).max(0.0);
+                let raw_ticks = ((wall - origin) * f64::from(clock_rate.get())).max(0.0);
                 // `f64::round` is a `std`-only inherent method (it needs
                 // libm), unavailable in this crate's `no_std` core build —
                 // round-half-up via a truncating cast instead, which is

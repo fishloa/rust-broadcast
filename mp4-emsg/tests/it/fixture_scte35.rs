@@ -11,6 +11,7 @@
 //! Asserts the decoded fields, a byte-exact round-trip, and that `size`
 //! recomputes to the fixture length.
 
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
@@ -25,7 +26,7 @@ fn parses_scte35_emsg_fields() {
     assert_eq!(b.version(), EmsgVersion::SegmentRelative);
     assert_eq!(b.scheme_id_uri, "urn:scte:scte35:2013:bin");
     assert_eq!(b.value, "");
-    assert_eq!(b.timescale, 90_000);
+    assert_eq!(b.timescale, Timescale::from_nonzero(90_000));
     assert_eq!(b.presentation_time, PresentationTime::Delta(0));
     assert_eq!(b.event_duration, 0xFFFF_FFFF);
     assert_eq!(b.id, 1);

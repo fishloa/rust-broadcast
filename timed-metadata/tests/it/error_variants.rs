@@ -1,11 +1,13 @@
 //! Exact error variants (and fields) of the converters and the DATERANGE parser.
 
+use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EMSG_FLAGS, EmsgBox, PresentationTime};
 use timed_metadata::convert::{SegmentTiming, emsg_to_scte35, emsg_to_v0, emsg_to_v1};
 use timed_metadata::{DateRange, Error};
 
 const SCTE35_SCHEME: &str = "urn:scte:scte35:2013:bin";
-const TIMESCALE: u32 = 90_000;
+const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
+const MILLIS: Timescale = Timescale::from_nonzero(1_000);
 
 fn emsg(scheme: &'static str, presentation_time: PresentationTime) -> EmsgBox<'static> {
     EmsgBox {
@@ -73,19 +75,19 @@ fn a_presentation_time_before_the_segment_start_cannot_be_a_v0_delta() {
 fn a_timescale_mismatch_reports_both_timescales() {
     let e = emsg(SCTE35_SCHEME, PresentationTime::Delta(1));
     let mut t = timing(0);
-    t.timescale = 1_000;
+    t.timescale = MILLIS;
     assert!(matches!(
         emsg_to_v1(&e, &t),
         Err(Error::EmsgTimescaleMismatch {
             emsg: TIMESCALE,
-            timing: 1_000
+            timing: MILLIS
         })
     ));
     assert!(matches!(
         emsg_to_v0(&e, &t),
         Err(Error::EmsgTimescaleMismatch {
             emsg: TIMESCALE,
-            timing: 1_000
+            timing: MILLIS
         })
     ));
 }

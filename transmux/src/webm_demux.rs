@@ -54,7 +54,7 @@ use broadcast_common::error::{BufferTooShort, InvalidValue};
 use broadcast_common::len::need_in;
 use core::marker::PhantomData;
 
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Parse, Unpackage};
 
 use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
@@ -207,9 +207,11 @@ const fn ebml_lace_delta_bias(vint_len: usize) -> i64 {
 /// Default `TimestampScale` when the `Info` element omits it (RFC 9559 §27): 1 ms.
 const DEFAULT_TIMESTAMP_SCALE_NS: u64 = 1_000_000;
 /// The IR timescale (ticks per second) this demuxer emits: milliseconds.
-pub const IR_TIMESCALE: u32 = 1000;
+pub const IR_TIMESCALE: Timescale = Timescale::from_nonzero(1000);
 /// Nanoseconds per second (TimestampScale → IR-tick conversion).
 const NS_PER_SECOND: u64 = 1_000_000_000;
+/// Nanoseconds as a [`Timescale`] (a `DefaultDuration` is a count of ns).
+const NS_TIMESCALE: Timescale = Timescale::from_nonzero(1_000_000_000);
 /// OpusHead identification-header magic (RFC 7845 §5.1).
 const OPUS_HEAD_MAGIC: &[u8; 8] = b"OpusHead";
 /// Minimum OpusHead length: magic(8) + version(1) + channels(1) + pre-skip(2) +
@@ -662,7 +664,7 @@ fn parse_block(
         "webm block timestamp: cluster_ts + rel_ts overflowed i64",
     ))?;
     let ns = raw_ticks.saturating_mul(timestamp_scale_ns as i64);
-    let ns_per_ir_tick = (NS_PER_SECOND / IR_TIMESCALE as u64) as i64;
+    let ns_per_ir_tick = (NS_PER_SECOND / IR_TIMESCALE.as_u64()) as i64;
     let pts_ticks = ns / ns_per_ir_tick;
 
     Ok(RawBlock {
@@ -1014,12 +1016,7 @@ struct BlockSpan {
 /// (i.e. via whole milliseconds) loses up to a millisecond per frame, which
 /// accumulates across every frame of a laced run.
 pub fn ns_to_ir_ticks(ns: u64) -> u64 {
-    rescale_u64(
-        ns,
-        (NS_PER_SECOND as u32).into(),
-        IR_TIMESCALE.into(),
-        Rounding::Nearest,
-    )
+    rescale_u64(ns, NS_TIMESCALE, IR_TIMESCALE, Rounding::Nearest)
 }
 
 /// The nominal per-frame duration (IR ticks) for a track whose TrackEntry

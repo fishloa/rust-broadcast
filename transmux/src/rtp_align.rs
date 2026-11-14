@@ -130,20 +130,16 @@ fn ticks_to_us(ticks: i64, timescale: Timescale) -> i128 {
 
 impl TrackAligner {
     /// `tracks` is `(track id, is the video track, RTP clock rate)`; fewer than two tracks
-    /// pass every sample through untouched. A zero clock rate (unrepresentable
-    /// once it is a [`Timescale`]) is read as 1 Hz rather than refused: every
-    /// real caller takes the rate from an SDP `a=rtpmap` clock rate or a
-    /// depacketiser that already validated it, so this is the type's own
-    /// `From<u32>` and not a wire-boundary decision.
+    /// pass every sample through untouched.
     #[must_use]
-    pub fn new(tracks: &[(TrackId, bool, u32)]) -> Self {
+    pub fn new(tracks: &[(TrackId, bool, Timescale)]) -> Self {
         let lanes = tracks
             .iter()
             .map(|&(id, _, timescale)| {
                 (
                     id,
                     Lane {
-                        timescale: timescale.into(),
+                        timescale,
                         first_pts: None,
                         delta: 0,
                         target: None,
@@ -347,10 +343,10 @@ impl TrackAligner {
         };
         let mut discontinuity = false;
         if track != anchor {
-            let anchor_scale = self
-                .lanes
-                .get(&anchor)
-                .map_or(Timescale::from(1u32), |l| l.timescale);
+            let Some(anchor_scale) = self.lanes.get(&anchor).map(|l| l.timescale) else {
+                out.push(AlignOut::Sample(track, sample));
+                return;
+            };
             let Some(lane) = self.lanes.get_mut(&track) else {
                 out.push(AlignOut::Sample(track, sample));
                 return;

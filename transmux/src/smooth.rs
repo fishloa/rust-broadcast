@@ -60,7 +60,7 @@ use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`); the single definition
 /// lives in `broadcast-smooth`, which owns the manifest syntax.
-pub use broadcast_smooth::SMOOTH_TIMESCALE;
+pub use broadcast_smooth::{SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE};
 
 /// The `tfxd` `uuid` extended-type — [MS-SSTR] §2.2.4.4
 /// (`6d1d9b05-42d5-44e6-80e2-141daff757b2`).
@@ -633,7 +633,7 @@ pub fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale:
     rescale_u64(
         ticks,
         media_timescale,
-        (SMOOTH_TIMESCALE as u32).into(),
+        SMOOTH_DEFAULT_TIMESCALE,
         Rounding::Nearest,
     )
 }
@@ -805,7 +805,7 @@ fn smooth_timeline(
             let cto = rescale_i64(
                 i64::from(s.composition_offset()),
                 media_timescale,
-                (SMOOTH_TIMESCALE as u32).into(),
+                SMOOTH_DEFAULT_TIMESCALE,
                 Rounding::Nearest,
             );
             let composition_offset = i32::try_from(cto).map_err(|_| {

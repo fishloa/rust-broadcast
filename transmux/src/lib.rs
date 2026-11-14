@@ -406,7 +406,7 @@ pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
     KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
     RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser, RtpStream, RtpTimingWarning,
-    VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
+    VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
@@ -443,8 +443,9 @@ pub use segments::{
 };
 #[cfg(feature = "std")]
 pub use smooth::{
-    FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothCodec, SmoothFragment, SmoothOutput,
-    SmoothPackager, SmoothStreamType, TFXD_UUID, TfxdBox, resolve_codec, to_smooth_ticks,
+    FOURCC_AACL, FOURCC_H264, SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE, SmoothCodec,
+    SmoothFragment, SmoothOutput, SmoothPackager, SmoothStreamType, TFXD_UUID, TfxdBox,
+    resolve_codec, to_smooth_ticks,
 };
 pub use timeline::{
     DEFAULT_JUMP_BACKWARD_US, DEFAULT_JUMP_FORWARD_SLACK_US, JumpDetector, TimelineJumpConfig,

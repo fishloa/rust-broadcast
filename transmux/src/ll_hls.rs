@@ -494,7 +494,7 @@ impl LlHlsSegmenter {
     #[doc(hidden)]
     pub fn with_part_target_at(
         tracks: Vec<TrackSpec>,
-        movie_timescale: u32,
+        movie_timescale: impl Into<Timescale>,
         target_duration_secs: f64,
         part_target_ms: u32,
         next_seq: u32,

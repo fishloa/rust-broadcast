@@ -685,7 +685,13 @@ fn mpd_with_template(attrs: &str) -> Vec<u8> {
 fn a_present_zero_timescale_is_a_typed_error_on_every_element_that_carries_it() {
     let template = Mpd::parse(&mpd_with_template("timescale=\"0\"")).unwrap_err();
     assert!(
-        matches!(&template, MpdError::Invalid { what: "timescale", .. }),
+        matches!(
+            &template,
+            MpdError::Invalid {
+                what: "timescale",
+                ..
+            }
+        ),
         "{template:?}"
     );
     let event_stream = format!(
@@ -693,7 +699,13 @@ fn a_present_zero_timescale_is_a_typed_error_on_every_element_that_carries_it() 
     );
     let event = Mpd::parse(event_stream.as_bytes()).unwrap_err();
     assert!(
-        matches!(&event, MpdError::Invalid { what: "timescale", .. }),
+        matches!(
+            &event,
+            MpdError::Invalid {
+                what: "timescale",
+                ..
+            }
+        ),
         "{event:?}"
     );
 }
@@ -705,7 +717,10 @@ fn an_absent_timescale_stays_absent_in_the_model_and_resolves_to_one() {
     let period = &mpd.periods[0];
     let set = &period.adaptation_sets[0];
     let rep = &set.representations[0];
-    assert_eq!(set.segment.template.as_ref().unwrap().multi.base.timescale, None);
+    assert_eq!(
+        set.segment.template.as_ref().unwrap().multi.base.timescale,
+        None
+    );
     let info = broadcast_dash::inherit::resolve_segment_info(period, set, rep).unwrap();
     let broadcast_dash::inherit::SegmentInfo::Template(t) = info else {
         panic!("expected a template");

@@ -67,7 +67,7 @@ use alloc::format;
 use alloc::vec::Vec;
 use broadcast_common::error::{BufferTooShort, InvalidValue};
 
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use rtp_packet::RtpPacket as RtpPacketWire;
@@ -107,6 +107,8 @@ const DYNAMIC_PT_MIN: u8 = 96;
 const DYNAMIC_PT_MAX: u8 = 127;
 /// Default video RTP clock rate (RFC 6184 — H.264 is carried at 90 kHz).
 pub const VIDEO_CLOCK_RATE: u32 = 90_000;
+/// [`VIDEO_CLOCK_RATE`] as a [`Timescale`], for the IR timescale of a 90 kHz track.
+pub const VIDEO_CLOCK_TIMESCALE: Timescale = Timescale::from_nonzero(VIDEO_CLOCK_RATE);
 /// Default audio RTP clock rate used by [`RtpInputStream::new`] when the
 /// caller does not supply the stream's own (RFC 3551 §4.5 lists 48000 as a
 /// registered audio clock rate; the negotiated rate belongs in the SDP's
@@ -518,7 +520,7 @@ impl RtpPacketiser {
 
         for (i, sample) in track.samples.iter().enumerate() {
             // Rescale to the 90 kHz RTP clock if the IR timescale differs.
-            timestamp = rescale_ts(sample_pts(track, i), timescale, VIDEO_CLOCK_RATE.into());
+            timestamp = rescale_ts(sample_pts(track, i), timescale, VIDEO_CLOCK_TIMESCALE);
             let nals = split_length_prefixed(&sample.data)?;
             if nals.is_empty() {
                 continue;
@@ -985,7 +987,7 @@ impl RtpInputStream {
     /// make the depacketiser parse one payload format as another. Both are
     /// caller mistakes with no sensible interpretation, so they are errors
     /// rather than silent adjustments.
-    fn validated_clock_rate(&self) -> Result<u32> {
+    fn validated_clock_rate(&self) -> Result<Timescale> {
         match &self.config {
             Some(CodecConfig::Aac { sample_rate, .. }) => {
                 if self.kind != RtpMediaKind::Aac {
@@ -1003,7 +1005,7 @@ impl RtpInputStream {
                                  AudioSpecificConfig's sample rate",
                     }));
                 }
-                Ok(*sample_rate)
+                Ok(Timescale::try_new(*sample_rate)?)
             }
             Some(CodecConfig::Avc { .. }) => {
                 if self.kind != RtpMediaKind::H264 {
@@ -1019,7 +1021,7 @@ impl RtpInputStream {
                         reason: "RFC 6184 §8.1 fixes the H.264 RTP clock rate at 90 kHz",
                     }));
                 }
-                Ok(self.clock_rate)
+                Ok(VIDEO_CLOCK_TIMESCALE)
             }
             // A config for some other codec, or none at all: the caller has
             // declared the clock itself, so honour it (the batch path fills in
@@ -1031,7 +1033,7 @@ impl RtpInputStream {
 stream's own clock (RFC 3550 §5.1), so a track cannot be timed without it",
                     ));
                 }
-                Ok(self.clock_rate)
+                Ok(Timescale::try_new(self.clock_rate)?)
             }
         }
     }
@@ -1221,7 +1223,7 @@ impl Unpackage for RtpDepacketiser {
 struct RtpTrack {
     id: TrackId,
     kind: RtpMediaKind,
-    clock_rate: u32,
+    clock_rate: Timescale,
     config: Option<CodecConfig>,
     samples: Vec<ReassembledAu>,
 }
@@ -1499,7 +1501,7 @@ fn rtp_tracks_to_media(tracks: Vec<RtpTrack>) -> Result<Media> {
     // The movie timescale is the video clock (the same choice `ts_demux`
     // makes): a non-zero movie timescale is what every consumer's rescale
     // arithmetic divides by, and RTP's own are the only rates known here.
-    Ok(Media::new(ir_tracks, VIDEO_CLOCK_RATE))
+    Ok(Media::new(ir_tracks, VIDEO_CLOCK_TIMESCALE))
 }
 
 /// The IR [`TrackSpec`] for a depacketised stream: its own kind and RTP

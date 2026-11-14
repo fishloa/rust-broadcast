@@ -230,6 +230,7 @@ use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use broadcast_common::timescale::Timescale;
 use core::marker::PhantomData;
 use mpeg_ts::pid::Pid;
 
@@ -503,7 +504,7 @@ const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
 /// (issue #1171).
 const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
-const VIDEO_TIMESCALE: u32 = 90_000;
+const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(crate::rtp::VIDEO_CLOCK_RATE);
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
 const AAC_SAMPLES_PER_FRAME: u32 = 1024;
 
@@ -534,7 +535,7 @@ const TS_WRAP_MASK: u64 = TS_WRAP - 1;
 /// access unit that followed (r04-W48/W50 review). No real frame rate is below
 /// 1 fps, so a second is a generous ceiling that still excludes every gap,
 /// splice and clock jump this is meant to reject.
-const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE as u64;
+const MAX_FRAME_PERIOD_TICKS: u64 = VIDEO_TIMESCALE.as_u64();
 
 /// How many recent inter-access-unit steps
 /// [`StreamState::recent_steps`] keeps for the median estimate. Five is the
@@ -1422,9 +1423,10 @@ const AUDIO_REANCHOR_THRESHOLD_MS: i128 = 20;
 /// the identical 90 kHz-PES-stamp-vs-sample_rate-track-clock re-anchoring
 /// problem (found via the FIX C invariant test, media plane step-2 fix
 /// wave 1).
-pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: u32) -> i128 {
-    let one_sample_period = (VIDEO_TIMESCALE as u128).div_ceil(sample_rate.max(1) as u128) as i128;
-    let ms_bound = (VIDEO_TIMESCALE as i128 * AUDIO_REANCHOR_THRESHOLD_MS) / 1000;
+pub(crate) fn audio_discontinuity_threshold_90k(sample_rate: Timescale) -> i128 {
+    let one_sample_period =
+        u128::from(VIDEO_TIMESCALE.get()).div_ceil(u128::from(sample_rate.get())) as i128;
+    let ms_bound = (i128::from(VIDEO_TIMESCALE) * AUDIO_REANCHOR_THRESHOLD_MS) / 1000;
     ms_bound.max(one_sample_period * 2)
 }
 
@@ -1512,7 +1514,7 @@ enum LiveKind {
     },
     /// AAC/AC-3/E-AC-3/MPEG audio: zero-lookahead, intrinsic-duration frames.
     Audio {
-        sample_rate: u32,
+        sample_rate: Timescale,
         kind: AudioKind,
         /// Frame-exact dts/pts accumulator (issue B5, media plane step-2 fix
         /// wave 1) — see [`AudioAnchor`].
@@ -2450,7 +2452,7 @@ fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>
 /// samples, exactly as before.
 fn emit_audio_au(
     kind: &AudioKind,
-    sample_rate: u32,
+    sample_rate: Timescale,
     anchor: &mut AudioAnchor,
     au_data: &[u8],
     pts_uw: i128,
@@ -2508,8 +2510,8 @@ fn emit_audio_au(
         None => true,
         Some(seed) => {
             let expected_dts_uw = seed.anchor_dts_uw
-                + ((seed.ticks_since_anchor + lead_ticks) as i128 * VIDEO_TIMESCALE as i128)
-                    / sample_rate.max(1) as i128;
+                + ((seed.ticks_since_anchor + lead_ticks) as i128 * i128::from(VIDEO_TIMESCALE))
+                    / i128::from(sample_rate);
             (dts_uw - expected_dts_uw).abs() > audio_discontinuity_threshold_90k(sample_rate)
         }
     };
@@ -2569,8 +2571,8 @@ fn emit_audio_au(
         // (Re-)anchoring on the wire stamp: it describes the first frame that
         // commences in this PES, which is `lead_ticks` after a carried frame.
         _ => (
-            rescale_to_track(dts_uw, sample_rate.into()) - lead_ticks,
-            rescale_to_track(pts_uw, sample_rate.into()) - lead_ticks,
+            rescale_to_track(dts_uw, sample_rate) - lead_ticks,
+            rescale_to_track(pts_uw, sample_rate) - lead_ticks,
         ),
     };
 
@@ -2919,7 +2921,7 @@ fn reprobe_if_config_changed(
     stream: &mut StreamState,
     live: &mut LiveTrack,
     data: &[u8],
-) -> Option<(CodecConfig, u32)> {
+) -> Option<(CodecConfig, Timescale)> {
     let changed = match stream.codec {
         Codec::H264 | Codec::Hevc => {
             observe_parameter_sets(stream.codec, data, &mut live.parameter_sets)
@@ -3247,7 +3249,7 @@ fn finalize_probe(
     descriptors: &[u8],
     probe: &mut ConfigProbe,
     latest: &[u8],
-) -> Option<(CodecConfig, u32, LiveKind)> {
+) -> Option<(CodecConfig, Timescale, LiveKind)> {
     // One pass over the newest access unit — the thing the r04-W47 bound is
     // about. Counted here so the H.264/HEVC arms, whose NAL walk has no
     // byte-by-byte sync scanner to count, are covered too.
@@ -3529,6 +3531,7 @@ fn finalize_probe(
             // sync.
             let (_, first) = find_mpeg_audio_sync(latest)?;
             let sample_rate = first.sample_rate;
+            let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = first.channels;
             let samples_per_frame = first.samples_per_frame;
             let oti = if *is_mpeg2 {
@@ -3562,9 +3565,9 @@ fn finalize_probe(
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::MpegAudio { samples_per_frame },
                     anchor: AudioAnchor::default(),
                 },
@@ -3613,7 +3616,11 @@ fn finalize_probe(
                     .unwrap_or(config),
                 None => config,
             };
-            let timescale = config.audio_sample_rate().unwrap_or(sample_rate);
+            let core_rate = Timescale::try_new(sample_rate).ok()?;
+            let timescale = match config.audio_sample_rate() {
+                Some(rate) => Timescale::try_new(rate).ok()?,
+                None => core_rate,
+            };
             Some((
                 config,
                 timescale,
@@ -3621,7 +3628,7 @@ fn finalize_probe(
                     sample_rate: timescale,
                     kind: AudioKind::Aac,
                     anchor: AudioAnchor {
-                        duration_scale: timescale / sample_rate.max(1),
+                        duration_scale: timescale.get() / core_rate.get(),
                         ..AudioAnchor::default()
                     },
                 },
@@ -3631,6 +3638,7 @@ fn finalize_probe(
             let start = first_sync_offset::<Ac3Sync>(latest)?;
             let info = Ac3SyncframeInfo::from_es(&latest[start..]).ok()?;
             let sample_rate = info.sample_rate;
+            let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = info.channel_count() as u16;
             let config = info.into_dac3();
             Some((
@@ -3640,9 +3648,9 @@ fn finalize_probe(
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::Ac3,
                     anchor: AudioAnchor::default(),
                 },
@@ -3652,6 +3660,7 @@ fn finalize_probe(
         ConfigProbe::Dts => {
             let info = DtsCoreFrameInfo::from_es(latest).ok()?;
             let sample_rate = info.sample_rate;
+            let timescale = Timescale::try_new(sample_rate).ok()?;
             let channel_count = info.channels as u16;
             let config = info.into_ddts();
             Some((
@@ -3662,9 +3671,9 @@ fn finalize_probe(
                     sample_rate,
                     sample_size: AUDIO_SAMPLE_SIZE_BITS,
                 },
-                sample_rate,
+                timescale,
                 LiveKind::Audio {
-                    sample_rate,
+                    sample_rate: timescale,
                     kind: AudioKind::Dts,
                     anchor: AudioAnchor::default(),
                 },
@@ -4238,7 +4247,10 @@ enum Eac3Accept {
 /// verified frames carry (`Ec3SyncframeInfo::first_crc_verified_bsmod`: a frame
 /// without `infomdate` carries none, which says nothing about the stream).
 /// [`Eac3Accept`] says how much of that the first access unit must show.
-fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, u32, LiveKind)> {
+fn eac3_probe_result(
+    latest: &[u8],
+    accept: Eac3Accept,
+) -> Option<(CodecConfig, Timescale, LiveKind)> {
     let verified = matches!(accept, Eac3Accept::ChainVerified | Eac3Accept::BrokenChain);
     let start = first_eac3_independent_offset(latest, verified)?;
     let mut frames: alloc::vec::Vec<Ec3SyncframeInfo> = match accept {
@@ -4265,6 +4277,7 @@ fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, 
     }
     let info = *frames.first()?;
     let sample_rate = info.sample_rate;
+    let timescale = Timescale::try_new(sample_rate).ok()?;
     let channel_count = info.channel_count() as u16;
     let config = Ec3SpecificBox::from_syncframes(&frames).ok()?;
     Some((
@@ -4274,9 +4287,9 @@ fn eac3_probe_result(latest: &[u8], accept: Eac3Accept) -> Option<(CodecConfig, 
             sample_rate,
             sample_size: AUDIO_SAMPLE_SIZE_BITS,
         },
-        sample_rate,
+        timescale,
         LiveKind::Audio {
-            sample_rate,
+            sample_rate: timescale,
             kind: AudioKind::Eac3,
             anchor: AudioAnchor::default(),
         },

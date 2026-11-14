@@ -171,7 +171,7 @@ pub(crate) mod aac_packet_type {
 /// so sample durations / composition offsets round-trip losslessly.
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
-pub(crate) const FLV_TIMESCALE: u32 = 1000;
+pub(crate) const FLV_TIMESCALE: Timescale = Timescale::from_nonzero(1000);
 
 /// Smallest `CompositionTime` representable as the signed 24-bit field
 /// `SI24` of an `AVCVIDEOPACKET` (§E.4.3.2).
@@ -1203,7 +1203,7 @@ fn ticks_to_ms(ticks: i64, timescale: Timescale) -> Result<i64> {
     Ok(rescale_i64(
         ticks,
         timescale,
-        FLV_TIMESCALE.into(),
+        FLV_TIMESCALE,
         Rounding::TowardZero,
     ))
 }

@@ -62,6 +62,7 @@ use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Stage, Timestamp};
 
 use crate::error::{Error, Result};
@@ -557,7 +558,7 @@ impl Package for LlSegmenter {
         // accumulated from sample durations.
         struct Cursor<'a> {
             track_id: TrackId,
-            timescale: u64,
+            timescale: Timescale,
             samples: &'a [Sample],
             idx: usize,
             dts_ticks: u64,
@@ -572,7 +573,7 @@ impl Package for LlSegmenter {
             .iter()
             .map(|t| Cursor {
                 track_id: t.spec.track_id,
-                timescale: u64::from(t.spec.timescale.get()),
+                timescale: t.spec.timescale,
                 samples: &t.samples,
                 idx: 0,
                 dts_ticks: 0,
@@ -595,8 +596,8 @@ impl Package for LlSegmenter {
                     None => i,
                     Some(b) => {
                         // c.timing.map(|t| t.dts) (sec) < best.dts (sec)  ⇔  c.ticks*best.ts < best.ticks*c.ts
-                        let lhs = c.dts_ticks as u128 * cursors[b].timescale as u128;
-                        let rhs = cursors[b].dts_ticks as u128 * c.timescale as u128;
+                        let lhs = c.dts_ticks as u128 * u128::from(cursors[b].timescale.get());
+                        let rhs = cursors[b].dts_ticks as u128 * u128::from(c.timescale.get());
                         if lhs < rhs || (lhs == rhs && !c.is_anchor && cursors[b].is_anchor) {
                             i
                         } else {

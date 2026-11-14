@@ -35,6 +35,7 @@
 use crate::TrackId;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidValue;
+use broadcast_common::timescale::Timescale;
 
 use broadcast_smooth::{QualityLevel, StreamType};
 
@@ -86,7 +87,7 @@ const AVC_NAL_PPS: u8 = 8;
 /// `aacl`); any unrecognised token is [`crate::Error::UnsupportedCodec`].
 pub fn track_spec_from_quality_level(
     track_id: TrackId,
-    timescale: u32,
+    timescale: Timescale,
     stream_type: StreamType,
     quality: &QualityLevel,
 ) -> CrateResult<TrackSpec> {

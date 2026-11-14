@@ -53,6 +53,8 @@ crate::impl_spec_display!(Rounding);
 /// `1`. Every rescale below takes a `Timescale`, so a zero can neither reach
 /// the arithmetic nor become a silently wrong result.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Timescale(pub core::num::NonZeroU32);
 
 impl Timescale {
@@ -329,7 +331,12 @@ mod tests {
         assert_eq!(rescale(-4, two, T1, Rounding::Ceil), -2);
         assert_eq!(rescale(5, T1, T1, Rounding::Ceil), 5);
         assert_eq!(
-            rescale_i64(i64::MAX, T1, Timescale::from_nonzero(u32::MAX), Rounding::Ceil),
+            rescale_i64(
+                i64::MAX,
+                T1,
+                Timescale::from_nonzero(u32::MAX),
+                Rounding::Ceil
+            ),
             i64::MAX
         );
     }

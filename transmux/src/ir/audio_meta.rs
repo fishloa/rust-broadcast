@@ -364,7 +364,7 @@ impl TrackSpec {
     pub fn with_explicit_he_aac(mut self, profile: HeAacProfile) -> crate::error::Result<Self> {
         self.config = self.config.with_explicit_he_aac(profile)?;
         if let Some(output_hz) = self.config.audio_sample_rate() {
-            self.timescale = output_hz.into();
+            self.timescale = broadcast_common::timescale::Timescale::try_new(output_hz)?;
         }
         Ok(self)
     }

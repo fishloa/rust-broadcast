@@ -342,7 +342,7 @@ const INTERLEAVE_CHUNK_MS: u64 = 500;
 
 /// Milliseconds per second, for converting [`INTERLEAVE_CHUNK_MS`] into a
 /// movie-timescale tick budget.
-const MS_PER_SECOND: u32 = 1_000;
+const MS_PER_SECOND: Timescale = Timescale::from_nonzero(1_000);
 
 /// Lay the tracks' samples out in the `mdat` payload, interleaved in about
 /// [`INTERLEAVE_CHUNK_MS`]-sized runs.
@@ -356,7 +356,7 @@ fn plan_mdat_layout(media: &Media, movie_timescale: Timescale) -> Result<MdatLay
         |ticks: i64, ts: Timescale| rescale_i64(ticks, ts, movie_timescale, Rounding::Floor);
     let chunk_ticks = rescale_u64(
         INTERLEAVE_CHUNK_MS,
-        MS_PER_SECOND.into(),
+        MS_PER_SECOND,
         movie_timescale,
         Rounding::Floor,
     );

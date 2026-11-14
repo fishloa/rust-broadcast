@@ -519,8 +519,13 @@ impl TimelineOrigin {
                 best = Some((d, ts));
             }
         }
-        let (ticks, timescale) = best.unwrap_or((0, Timescale::from(1u32)));
-        Self { ticks, timescale }
+        match best {
+            Some((ticks, timescale)) => Self { ticks, timescale },
+            None => Self {
+                ticks: 0,
+                timescale: Timescale::from_nonzero(1),
+            },
+        }
     }
 
     /// The origin expressed in `timescale` ticks, rounded down.
