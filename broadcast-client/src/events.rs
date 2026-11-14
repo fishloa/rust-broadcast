@@ -596,33 +596,46 @@ pub enum Action {
         /// when `tls` is true and [`Config::client_identity`] applies to this host.
         identity: Option<Arc<crate::identity::ClientIdentity>>,
     },
-    /// Open a datagram socket (UDP, RTP and SRT sources). The host reports the outcome with
-    /// [`crate::Session::on_connected`], or [`crate::Session::on_closed`] with an error; every
-    /// datagram it then receives goes to [`crate::Session::on_data`], one call per datagram.
+    /// Bind a local datagram socket (UDP and RTP sources; a literal local or multicast address).
+    /// The host reports the outcome with [`crate::Session::on_connected`], or
+    /// [`crate::Session::on_closed`] with an error; every datagram it then receives goes to
+    /// [`crate::Session::on_data`], one call per datagram. The session never resolves a name: a
+    /// UDP/RTP URL whose host is not a literal IP is [`crate::Error::DatagramHostNotIp`] at open,
+    /// so this action always carries a [`core::net::SocketAddr`].
     ///
-    /// With `socket2` the host does, in `Receive` mode: `Socket::new(DGRAM)`, `set_reuse_address`
-    /// (and `set_reuse_port`) when `options` asks, `set_recv_buffer_size(recv_buffer_bytes)`,
-    /// `bind(host:port)`, then for a multicast `host` `join_multicast_v4(group, interface)` or
+    /// With `socket2` the host does: `Socket::new(DGRAM)`, `set_reuse_address` (and
+    /// `set_reuse_port`) when `options` asks, `set_recv_buffer_size(options.recv_buffer_bytes)`,
+    /// `bind(addr)`, then for a multicast `addr` `join_multicast_v4(group, interface)` or
     /// `join_ssm_v4(source, group, interface)` (the v6 forms with an interface index), as
-    /// `options.join` describes ([`broadcast_common::net::UdpOptions`]; the crate's
-    /// [`crate::udp::UdpMode::Receive`] docs describe the ordered step list); in `Connect` mode it
-    /// resolves `host`, binds an ephemeral local port and `connect`s to `host:port`.
+    /// `options.join` describes ([`broadcast_common::net::UdpOptions`]). Use
+    /// [`Self::UdpConnect`] for a peer that must be resolved first.
     UdpBind {
         /// Connection id.
         conn: ConnId,
-        /// IP literal to bind or join (`Receive`, IPv6 without brackets), or the peer's name or
-        /// address (`Connect`).
-        host: String,
-        /// UDP port.
-        port: u16,
-        /// What to do with the socket.
-        mode: crate::udp::UdpMode,
+        /// The local (or multicast) address to bind.
+        addr: core::net::SocketAddr,
         /// The socket options to apply: `SO_RCVBUF`, `SO_REUSEADDR`/`SO_REUSEPORT`, and the
-        /// multicast join (`options.join`, whose `group` is `host` in `Receive` mode).
+        /// multicast join (`options.join`, whose `group` is `addr.ip()` for a multicast bind).
         options: broadcast_common::net::UdpOptions,
     },
-    /// Write bytes to an open TCP connection (RTSP), or send them as one datagram on a
-    /// [`crate::udp::UdpMode::Connect`] socket (SRT).
+    /// Open a datagram socket connected to a peer that may be a host name (the SRT caller). The
+    /// host **resolves** `host` (a name or a literal IP), binds an ephemeral local port and
+    /// `connect`s to `host:port`, so the session never resolves a name; every datagram it then
+    /// receives goes to [`crate::Session::on_data`], one call per datagram. The host reports the
+    /// outcome with [`crate::Session::on_connected`], or [`crate::Session::on_closed`] with an
+    /// error.
+    UdpConnect {
+        /// Connection id.
+        conn: ConnId,
+        /// The peer to resolve and connect to (a name or a literal IP).
+        host: url::Host,
+        /// UDP port.
+        port: u16,
+        /// The socket options to apply (`SO_RCVBUF`, `SO_REUSEADDR`/`SO_REUSEPORT`).
+        options: broadcast_common::net::UdpOptions,
+    },
+    /// Write bytes to an open TCP connection (RTSP), or send them as one datagram on the socket a
+    /// [`Self::UdpConnect`] opened (SRT).
     Send {
         /// Connection id.
         conn: ConnId,
@@ -677,16 +690,24 @@ impl core::fmt::Debug for Action {
                 .finish(),
             Self::UdpBind {
                 conn,
-                host,
-                port,
-                mode,
+                addr,
                 options,
             } => f
                 .debug_struct("UdpBind")
                 .field("conn", conn)
+                .field("addr", addr)
+                .field("options", options)
+                .finish(),
+            Self::UdpConnect {
+                conn,
+                host,
+                port,
+                options,
+            } => f
+                .debug_struct("UdpConnect")
+                .field("conn", conn)
                 .field("host", host)
                 .field("port", port)
-                .field("mode", mode)
                 .field("options", options)
                 .finish(),
             Self::Send { conn, bytes } => f

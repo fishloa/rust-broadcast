@@ -91,6 +91,7 @@ fn udp_options_apply_the_socket_options() {
     // 64 KiB is below the default `SO_RCVBUF` of both macOS (~768 KiB) and Linux (~208 KiB),
     // so the assertion discriminates "option applied" from "OS default" on either.
     const REQUESTED: usize = 64 * 1024;
+    let requested = std::num::NonZeroU32::new(u32::try_from(REQUESTED).unwrap()).unwrap();
     let bind_addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0);
     let join = MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(239, 255, 42, 1)))
         .with_interface(MulticastInterface::V4(*bind_addr.ip()));
@@ -100,7 +101,7 @@ fn udp_options_apply_the_socket_options() {
         "default matches the plain UdpSocket::bind it replaces (no address reuse)"
     );
     let cfg = cfg
-        .with_recv_buffer_bytes(REQUESTED)
+        .with_recv_buffer_bytes(requested)
         .with_reuse_address(true);
     // Join may be refused in a sandbox with no multicast route: that is an environment limit,
     // not a failure of the option wiring, so only the Ok path asserts.
