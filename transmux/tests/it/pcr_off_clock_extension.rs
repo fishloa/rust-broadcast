@@ -46,7 +46,7 @@ fn pcr_packet(pcr: Pcr, field_bytes: [u8; PCR_FIELD_LEN]) -> Vec<u8> {
         pusi: false,
         pid: Pid::from_const(PCR_PID),
         scrambling: ScramblingControl::NotScrambled,
-        adaptation: AdaptationFieldControl::AdaptationAndPayload,
+        adaptation_field_control: AdaptationFieldControl::AdaptationAndPayload,
         continuity_counter: ContinuityCounter::ZERO,
     };
     header
