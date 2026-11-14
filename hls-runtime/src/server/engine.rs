@@ -4898,14 +4898,14 @@ mod tests {
     #[test]
     fn awaiting_part_is_bounded_by_await_policy_deadline() {
         let (_trunk, origin, _writer) = make_origin();
-        let deadline = Timestamp::from_nanos(1_000_000_000);
+        let deadline = Timestamp::from_millis(1_000);
         let policy = AwaitPolicy::new(deadline);
 
         let still_waiting = origin.resolve(
             HlsRequest::Resource {
                 name: "part-1-7-1.0.m4s".to_string(),
             },
-            Timestamp::from_nanos(999_999_999),
+            Timestamp::from_millis(999),
             policy,
         );
         assert!(matches!(still_waiting, EgressResponse::Await { .. }));
