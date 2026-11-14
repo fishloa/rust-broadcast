@@ -124,7 +124,7 @@ pub enum ClientEvent {
         /// The interleaved channel id.
         channel: u8,
         /// The payload bytes (one upper-layer PDU).
-        data: Vec<u8>,
+        data: bytes::Bytes,
     },
 }
 
@@ -535,8 +535,11 @@ impl ClientSession {
         body: &[u8],
         extra: &[(headers::HeaderName, String)],
     ) -> Result<Request<Body>> {
-        let url = rtsp_types::Url::parse(uri)
-            .map_err(|e| Error::TransportParse(format!("invalid request URI {uri:?}: {e}")))?;
+        let url = rtsp_types::Url::parse(uri).map_err(|e| {
+            Error::TransportParse(crate::error::TransportParseError::Other(format!(
+                "invalid request URI {uri:?}: {e}"
+            )))
+        })?;
         let mut builder = Request::builder(method.clone(), Version::V1_0)
             .request_uri(url)
             .header(headers::CSEQ, cseq.to_string())
@@ -831,7 +834,7 @@ impl ClientSession {
             Message::Data(data) => {
                 events.push(ClientEvent::MediaData {
                     channel: data.channel_id(),
-                    data: data.into_body(),
+                    data: data.into_body().into(),
                 });
                 Ok(())
             }

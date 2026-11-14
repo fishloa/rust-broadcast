@@ -18,7 +18,7 @@ fn main() {
     let pmt = PmtSection::parse(&pmt_bytes).expect("valid PMT");
 
     let built = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling);
-    let wire = built.to_bytes();
+    let wire = built.to_bytes().unwrap();
 
     println!("ca_pmt APDU ({} bytes): {:02X?}", wire.len(), wire);
 

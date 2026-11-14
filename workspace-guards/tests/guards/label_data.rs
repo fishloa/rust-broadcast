@@ -902,6 +902,8 @@ pub const TABLE: &[Crate] = &[
             "MergePolicy",
             // Structured `thiserror` error enum — no spec label.
             "MergeError",
+            // Reason enum for ByteMerge construction-time config errors.
+            "MergeConfigError",
             // --- publish_queue.rs ---
             // Data-carrying ADT: each variant holds the entry it queues.
             "PendingPublish",
@@ -1367,6 +1369,12 @@ pub const TABLE: &[Crate] = &[
             "Error",       // structured thiserror error
             "ClientEvent", // data-carrying ADT (Response/AuthRetry/MediaData)
             "ServerEvent", // data-carrying ADT (RequestAccepted/MethodNotValid/SessionSetup)
+            // Reason enums for stringly-typed protocol errors (issue #2659).
+            "TransportParseError",
+            "HeaderSerializeError",
+            "SessionParseError",
+            "FrameError",
+            "SdpParseError",
         ],
         expected: None,
         min_enums: None,

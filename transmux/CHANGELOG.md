@@ -7,12 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
+#### Changed
 - PSI parsing/building in `ts_demux`/`ts_mux` now uses `dvb_si::tables::pat::PatSection` and `dvb_si::tables::pmt::PmtSection` instead of hand-rolled copies; behaviour and goldens unchanged (#2667).
 
 - BREAKING: `Sample` timing is now a single optional `SampleTiming { dts, pts, duration }` (`Sample.timing`) instead of separate `dts`/`pts`/`duration` fields; `TrackSpec.timescale` and `Track.timescale()` are now `broadcast_common::timescale::Timescale` (non-zero) instead of `u32`. Call sites that read `sample.dts`/`sample.pts`/`sample.duration` must go through `sample.timing.map(|t| t.dts)` etc., and timescale values through `.get()` (#2657).
 
-### Removed
+- BREAKING: uses `rtsp_runtime`'s typed `InterleavedFrame` payload (`Bytes`) and `ChunkSize` newtype (#2659).
+
+## Removed
 - Removed the unused optional `url` dependency (and the `dep:url` entry in the `std` feature): base-URL resolution goes through `broadcast-dash`/`hls-runtime`, so a `std` build of `transmux` compiles 40 fewer crates and no longer pulls the `idna`/`icu_*` stack.
 
 ## [0.31.0] - 2026-11-14

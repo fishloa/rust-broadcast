@@ -20,7 +20,7 @@ pub use authenticator::{Authenticator, respond};
 pub use challenge::{BearerError, Challenge, ParsedChallenges, Scheme, parse_challenges};
 pub use constant_time::constant_time_eq;
 pub use credentials::Credentials;
-pub use error::{Error, Result};
+pub use error::{Error, HttpAuthError, Result};
 pub use request::RequestContext;
 pub use server::{AuthResult, DIGEST_NC_TRACK_CAP, DIGEST_NONCE_LIFETIME, NC_WINDOW, Verifier};
 pub use signed_url::SignedUrlKeySet;

@@ -817,11 +817,11 @@ impl ChunkAssembler {
     ///
     /// ```
     /// use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
-    /// use rtmp_runtime::message::{msg_type, ProtocolControl};
+    /// use rtmp_runtime::message::{ChunkSize, msg_type, ProtocolControl};
     ///
     /// let mut writer = ChunkWriter::new();
     /// let mut wire = Vec::new();
-    /// let control = ProtocolControl::SetChunkSize(4096).try_to_message()?;
+    /// let control = ProtocolControl::SetChunkSize(ChunkSize::new(4096).unwrap()).to_message();
     /// wire.extend_from_slice(&writer.write(&control)?);
     /// writer.set_chunk_size(4096);
     /// let media = Message {
@@ -841,7 +841,7 @@ impl ChunkAssembler {
     ///         if let Some(ProtocolControl::SetChunkSize(size)) =
     ///             ProtocolControl::from_message(&message)?
     ///         {
-    ///             assembler.set_chunk_size(size);
+    ///             assembler.set_chunk_size(size.value());
     ///         }
     ///         continue;
     ///     }

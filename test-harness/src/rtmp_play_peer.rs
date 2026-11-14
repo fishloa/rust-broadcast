@@ -11,7 +11,7 @@ use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
 use rtmp_runtime::handshake::Handshake;
-use rtmp_runtime::message::{LimitType, ProtocolControl, UserControl, msg_type};
+use rtmp_runtime::message::{ChunkSize, LimitType, ProtocolControl, UserControl, msg_type};
 
 pub const COMMAND_CSID: u32 = 3;
 pub const AUDIO_CSID: u32 = 4;
@@ -153,8 +153,8 @@ impl PlayPeer {
         if let Some(pc) = ProtocolControl::from_message(msg)? {
             match pc {
                 ProtocolControl::SetChunkSize(n) => {
-                    self.assembler.set_chunk_size(n);
-                    self.seen.push(Seen::SetChunkSize(n));
+                    self.assembler.set_chunk_size(n.value());
+                    self.seen.push(Seen::SetChunkSize(n.value()));
                 }
                 ProtocolControl::Acknowledgement(n) => self.seen.push(Seen::Acknowledgement(n)),
                 ProtocolControl::WindowAckSize(n) => self.seen.push(Seen::WindowAckSize(n)),
@@ -317,7 +317,7 @@ impl PlayPeer {
     pub fn set_chunk_size(&mut self, n: u32) -> Result<Vec<u8>, RtmpError> {
         let bytes = self
             .writer
-            .write(&ProtocolControl::SetChunkSize(n).try_to_message()?)?;
+            .write(&ProtocolControl::SetChunkSize(ChunkSize::new(n).unwrap()).to_message())?;
         self.writer.set_chunk_size(n);
         Ok(self.counted(bytes))
     }

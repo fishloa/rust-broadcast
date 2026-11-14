@@ -6,6 +6,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `Error::ChallengeParse` and `Error::ResponseCompute` now wrap `HttpAuthError` (which implements `std::error::Error` as `#[source]`) instead of a bare `String`; construct via `HttpAuthError(...)` (#2659).
+
 ## [0.7.0] - 2026-11-14
 ### Changed
 - BREAKING: `Verifier::new` returns `Result<Verifier>`; building a Digest verifier when the OS random source is unavailable is the new `Error::RandomSource` instead of a panic. There is no panicking variant (#2591).

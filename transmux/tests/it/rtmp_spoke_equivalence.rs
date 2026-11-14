@@ -13,7 +13,7 @@
 
 use broadcast_common::{Package, Parse, Unpackage};
 use rtmp_runtime::chunk::ChunkAssembler;
-use rtmp_runtime::message::{ProtocolControl, msg_type};
+use rtmp_runtime::message::{ChunkSize, ProtocolControl, msg_type};
 use transmux::{FlvDemux, FlvMux, Media, RtmpDemux, RtmpMux};
 
 const FIXTURES: &[&str] = &["flv/av.flv", "flv/aac-7-1.flv"];
@@ -125,7 +125,7 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
                         if let Some(ProtocolControl::SetChunkSize(size)) =
                             ProtocolControl::from_message(&m).expect("valid set chunk size")
                         {
-                            assembler.set_chunk_size(size);
+                            assembler.set_chunk_size(size.value());
                         }
                         continue;
                     }
@@ -187,7 +187,7 @@ fn a_non_default_chunk_size_is_announced_in_band() {
     );
     assert_eq!(
         ProtocolControl::from_message(&first).expect("valid protocol control"),
-        Some(ProtocolControl::SetChunkSize(4096)),
+        Some(ProtocolControl::SetChunkSize(ChunkSize::new(4096).unwrap())),
         "the announced size is the one the muxer chunks at"
     );
 
@@ -210,7 +210,7 @@ fn the_largest_chunk_size_round_trips_through_the_demuxer() {
         ProtocolControl::from_message(&first_message(&wire).expect("a non-empty stream"))
             .expect("valid protocol control"),
         Some(ProtocolControl::SetChunkSize(
-            rtmp_runtime::chunk::MAX_CHUNK_SIZE
+            ChunkSize::new(rtmp_runtime::chunk::MAX_CHUNK_SIZE).unwrap()
         )),
         "the announced size is the maximum, not a clamped one"
     );
@@ -341,7 +341,7 @@ fn carried_messages(wire: &[u8]) -> Vec<(u8, usize)> {
             if let Some(ProtocolControl::SetChunkSize(size)) =
                 ProtocolControl::from_message(&message).expect("valid set chunk size")
             {
-                assembler.set_chunk_size(size);
+                assembler.set_chunk_size(size.value());
             }
             continue;
         }

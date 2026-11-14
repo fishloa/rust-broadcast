@@ -6,7 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
+#### Changed
+- BREAKING: `ProtocolControl::SetChunkSize` now wraps a validated `ChunkSize` newtype (1..=0x7FFF_FFFF); `to_message` is total and `try_to_message` is removed (#2659).
+
+## Changed
 - Narrowed the `tokio` dev-dependency from `features = ["full"]` to the features the tests use (`net`, `io-util`, `rt`, `rt-multi-thread`, `macros`, `time`, `sync`, `test-util`).
 
 ## [0.10.0] - 2026-11-14

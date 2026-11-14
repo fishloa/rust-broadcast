@@ -6,7 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Added
+#### Changed
+- BREAKING: `ByteMerge::new` returns `Result<Self, MergeConfigError>` instead of panicking; the three assertions it made are now the typed variants `MergeConfigError::ZeroSources`, `MergeConfigError::ZeroMaxQueued` and `MergeConfigError::FailoverOutOfRange`. Migration: `ByteMerge::new(policy, 2, 8)` becomes `ByteMerge::new(policy, 2, 8).expect("counts are valid")`; a config-file count is checked with `if n == 0 { .. }` or by matching the error (#2659).
+
+## Added
 - `AudioFollower::with_rendition` and `AudioFollower::rendition`: the declared rendition a follower serves, so a host pairs it with its serving by identity (#2637).
 
 

@@ -266,7 +266,7 @@ fn gate4b_client_emits_media_data_for_interleaved() {
         events,
         vec![ClientEvent::MediaData {
             channel: 0,
-            data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            data: vec![0xDE, 0xAD, 0xBE, 0xEF].into(),
         }]
     );
 }
@@ -471,11 +471,11 @@ fn terminal_error_still_returns_the_events_decoded_before_it() {
     assert_response(&out.events[..1], 3, Method::Play, StatusCode::Ok);
     assert!(matches!(
         &out.events[1],
-        ClientEvent::MediaData { channel: 0, data } if data == &[0x80, 1, 2, 3]
+        ClientEvent::MediaData { channel: 0, data } if data.as_ref() == [0x80, 1, 2, 3]
     ));
     assert!(matches!(
         &out.events[2],
-        ClientEvent::MediaData { channel: 1, data } if data == &[0x81, 4, 5]
+        ClientEvent::MediaData { channel: 1, data } if data.as_ref() == [0x81, 4, 5]
     ));
 
     // The all-or-nothing form keeps its documented behaviour: the error, and

@@ -37,7 +37,7 @@ use rtmp_runtime::chunk::{
     ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE, MAX_MESSAGE_LEN, Message,
 };
 use rtmp_runtime::flv::{FlvHeader, FlvTag, TagType};
-use rtmp_runtime::message::{ProtocolControl, msg_type};
+use rtmp_runtime::message::{ChunkSize, ProtocolControl, msg_type};
 
 use crate::flv::{FlvDemux, FlvError, FlvMux};
 use crate::media::Media;
@@ -240,7 +240,7 @@ impl<'a> Unpackage for RtmpDemux<'a> {
                     if let Some(ProtocolControl::SetChunkSize(size)) =
                         ProtocolControl::from_message(&m)?
                     {
-                        assembler.set_chunk_size(size);
+                        assembler.set_chunk_size(size.value());
                     }
                 }
                 msg_type::AUDIO => {
@@ -342,7 +342,9 @@ impl Package for RtmpMux {
         let mut writer = ChunkWriter::new();
         let mut out = Vec::new();
         if chunk_size != DEFAULT_CHUNK_SIZE {
-            let control = ProtocolControl::SetChunkSize(chunk_size).try_to_message()?;
+            let control =
+                ProtocolControl::SetChunkSize(ChunkSize::new(chunk_size).unwrap_or(ChunkSize::MIN))
+                    .to_message();
             out.extend_from_slice(&writer.write(&control)?);
             writer.set_chunk_size(chunk_size);
         }

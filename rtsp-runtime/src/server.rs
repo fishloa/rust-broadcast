@@ -63,7 +63,7 @@ pub enum ServerEvent {
         /// The interleaved channel id.
         channel: u8,
         /// The payload bytes (one upper-layer PDU).
-        data: Vec<u8>,
+        data: bytes::Bytes,
     },
 }
 

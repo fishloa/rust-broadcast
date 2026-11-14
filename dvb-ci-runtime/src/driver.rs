@@ -288,7 +288,7 @@ impl<D: CaDevice> Driver<D> {
         // r10-W-20: `try_to_bytes`, not `to_bytes`.
         let built_bytes = self
             .build_ca_pmt_filtered(pmt, list_management, cmd_id)
-            .try_to_bytes()?;
+            .to_bytes()?;
         let mut pmt_raw = vec![0u8; pmt.serialized_len()];
         let n = pmt.serialize_into(&mut pmt_raw)?;
         pmt_raw.truncate(n);
@@ -645,14 +645,14 @@ impl<D: CaDevice> Driver<D> {
                 let pmt = PmtSection::parse(&s.pmt_raw).map_err(CaError::PmtParse)?;
                 let query = self
                     .build_ca_pmt_filtered(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
-                    .try_to_bytes()?;
+                    .to_bytes()?;
                 let ok_descrambling = self
                     .build_ca_pmt_filtered(
                         &pmt,
                         CaPmtListManagement::Update,
                         CaPmtCmdId::OkDescrambling,
                     )
-                    .try_to_bytes()?;
+                    .to_bytes()?;
                 Ok((query, ok_descrambling))
             })();
             match outcome {
@@ -2168,8 +2168,9 @@ pub(crate) mod tests {
         // Oracle: the same PMT built directly via dvb_ci::builder::build_ca_pmt
         // with `Only` (first-ever service on an empty managed set) +
         // `ok_descrambling`.
-        let expected =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        let expected = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected);
 
         // The service was recorded with its ES/CA PIDs.
@@ -2251,7 +2252,7 @@ pub(crate) mod tests {
                 CaPmtListManagement::Update,
                 CaPmtCmdId::OkDescrambling,
             )
-            .try_to_bytes()
+            .to_bytes()
             .expect("fixture precondition: the good PMT encodes");
         let corrupt_raw = pmt_bytes[..pmt_bytes.len() - 6].to_vec();
         d.managed.record(
@@ -2326,7 +2327,7 @@ pub(crate) mod tests {
     /// r10-W-20: `add_service` must reject a PMT whose CA loop cannot be
     /// encoded into a `ca_pmt` (over-range `program_info_length`) as
     /// `CaError::Serialize` from the public entry point — pre-fix this
-    /// reached `.to_bytes()` and panicked inside the dvb-ci serializer.
+    /// reached `.to_bytes().unwrap()` and panicked inside the dvb-ci serializer.
     #[test]
     fn add_service_serialize_failure_returns_err_instead_of_panicking() {
         let mut d = driver_with_sessions();
@@ -2365,8 +2366,9 @@ pub(crate) mod tests {
         d.pump(Duration::from_millis(10)).unwrap();
 
         // Second service joins an already-active set → `Add`, not `Only`.
-        let expected2 =
-            build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling).to_bytes();
+        let expected2 = build_ca_pmt(&pmt2, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected2);
 
         assert_eq!(d.managed_ca().services().len(), 2);
@@ -2455,9 +2457,11 @@ pub(crate) mod tests {
             CaPmtListManagement::Only,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
-        let unfiltered =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+        .to_bytes()
+        .unwrap();
+        let unfiltered = build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         assert_ne!(
             expected_filtered, unfiltered,
             "precondition: the fixture's two CAIDs must make filtered != unfiltered"
@@ -2523,22 +2527,26 @@ pub(crate) mod tests {
             CaPmtListManagement::Update,
             CaPmtCmdId::Query,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let expected_ok_filtered = dvb_ci::builder::build_ca_pmt_for_caids(
             &pmt,
             &[0x0500],
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
-        let unfiltered_query =
-            build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        .to_bytes()
+        .unwrap();
+        let unfiltered_query = build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let unfiltered_ok = build_ca_pmt(
             &pmt,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         assert_ne!(
             expected_query_filtered, unfiltered_query,
             "precondition: the fixture's two CAIDs must make filtered != unfiltered (query)"
@@ -2863,7 +2871,9 @@ pub(crate) mod tests {
         // happened, so the test proves the resend below (a distinct `query`
         // cmd_id) is a genuinely different wire message, not the same bytes.
         let expected_initial_ca_pmt =
-            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling).to_bytes();
+            build_ca_pmt(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling)
+                .to_bytes()
+                .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected_initial_ca_pmt);
 
         // #1032: the re-query timer resends a `list_management = update`
@@ -2871,14 +2881,16 @@ pub(crate) mod tests {
         // followed by `ok_descrambling` (so descrambling is never left
         // barred, EN 50221 §8.4.3.5, whether or not the CAM answers the
         // query) — never the pre-fix `only`/`first` + `query` alone.
-        let expected_query =
-            build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        let expected_query = build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected_ok_descrambling = build_ca_pmt(
             &pmt,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let query_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_query);
         let ok_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ok_descrambling);
 
@@ -3065,14 +3077,16 @@ pub(crate) mod tests {
 
         // Count the `update`-variant bytes — the ones the timer would
         // resend if enabled — not the `only` bytes `add_service` sent.
-        let expected_query =
-            build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        let expected_query = build_ca_pmt(&pmt, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected_ok_descrambling = build_ca_pmt(
             &pmt,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let query_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_query);
         let ok_sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ok_descrambling);
 
@@ -3117,7 +3131,8 @@ pub(crate) mod tests {
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let sends_before = count_apdu_on_session(&d, CA_SESSION, &expected_ca_pmt);
 
         // Even a very long tick must not trigger a re-query once disabled.
@@ -3165,22 +3180,26 @@ pub(crate) mod tests {
         // `ok_descrambling`, for every active service — `update` acts only
         // at programme level per EN 50221 §8.4.3.4, so unlike the pre-fix
         // `first`/`more`/`last` scheme it needs no position bookkeeping).
-        let expected1_query =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        let expected1_query = build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected1_ok = build_ca_pmt(
             &pmt1,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
-        let expected2_query =
-            build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+        .to_bytes()
+        .unwrap();
+        let expected2_query = build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query)
+            .to_bytes()
+            .unwrap();
         let expected2_ok = build_ca_pmt(
             &pmt2,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let sends_before1_query = count_apdu_on_session(&d, CA_SESSION, &expected1_query);
         let sends_before1_ok = count_apdu_on_session(&d, CA_SESSION, &expected1_ok);
         let sends_before2_query = count_apdu_on_session(&d, CA_SESSION, &expected2_query);
@@ -3259,21 +3278,27 @@ pub(crate) mod tests {
         // — so 1546 (removed) must never be resent, and 1547 (surviving)
         // must be resent as the `query`+`ok_descrambling` pair.
         let expected_survivor_query =
-            build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+            build_ca_pmt(&pmt2, CaPmtListManagement::Update, CaPmtCmdId::Query)
+                .to_bytes()
+                .unwrap();
         let expected_survivor_ok = build_ca_pmt(
             &pmt2,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let expected_removed_query =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query).to_bytes();
+            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::Query)
+                .to_bytes()
+                .unwrap();
         let expected_removed_ok = build_ca_pmt(
             &pmt1,
             CaPmtListManagement::Update,
             CaPmtCmdId::OkDescrambling,
         )
-        .to_bytes();
+        .to_bytes()
+        .unwrap();
         let sends_survivor_query_before =
             count_apdu_on_session(&d, CA_SESSION, &expected_survivor_query);
         let sends_survivor_ok_before = count_apdu_on_session(&d, CA_SESSION, &expected_survivor_ok);
@@ -3338,8 +3363,9 @@ pub(crate) mod tests {
         // Oracle: the same PMT re-built directly via
         // dvb_ci::builder::build_ca_pmt with `Update`/`NotSelected` (EN 50221
         // §8.4.3.4 Table 25) — the exact bytes `remove_program` sends.
-        let expected =
-            build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        let expected = build_ca_pmt(&pmt1, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+            .to_bytes()
+            .unwrap();
         assert_apdu_on_session(&d, CA_SESSION, &expected);
 
         assert_eq!(
@@ -3536,8 +3562,9 @@ pub(crate) mod tests {
         // Same programme number, different ECM PIDs.
         let a2_bytes = build_ca_pmt_fixture_distinct_pids(1546);
         let a2 = PmtSection::parse(&a2_bytes).unwrap();
-        let update =
-            build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::OkDescrambling).to_bytes();
+        let update = build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::OkDescrambling)
+            .to_bytes()
+            .unwrap();
         let writes_before = d.device().ops.len();
 
         d.update_service(&a2).unwrap();
@@ -3604,10 +3631,12 @@ pub(crate) mod tests {
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
 
-        let removal_new =
-            build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
-        let removal_old =
-            build_ca_pmt(&a, CaPmtListManagement::Update, CaPmtCmdId::NotSelected).to_bytes();
+        let removal_new = build_ca_pmt(&a2, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+            .to_bytes()
+            .unwrap();
+        let removal_old = build_ca_pmt(&a, CaPmtListManagement::Update, CaPmtCmdId::NotSelected)
+            .to_bytes()
+            .unwrap();
         assert_ne!(
             removal_new, removal_old,
             "fixture sanity: the two PMTs differ"

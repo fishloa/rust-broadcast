@@ -4,7 +4,7 @@ use headers::{Authorization, Header};
 use http_auth::{PasswordClient, PasswordParams};
 
 use crate::credentials::Credentials;
-use crate::error::{Error, Result};
+use crate::error::{Error, HttpAuthError, Result};
 use crate::request::RequestContext;
 
 /// Per-scheme state an [`Authenticator`] carries between calls.
@@ -45,7 +45,7 @@ impl Authenticator {
             Credentials::Bearer { .. } => SchemeState::Bearer,
             Credentials::Basic { .. } | Credentials::Digest { .. } => {
                 let client = PasswordClient::try_from(www_authenticate)
-                    .map_err(|e| Error::ChallengeParse(e.to_string()))?;
+                    .map_err(|e| Error::ChallengeParse(HttpAuthError(e)))?;
                 SchemeState::Password(client)
             }
         };
@@ -85,7 +85,7 @@ impl Authenticator {
                         method: ctx.method,
                         body: ctx.body,
                     })
-                    .map_err(|e| Error::ResponseCompute(e.to_string()))
+                    .map_err(|e| Error::ResponseCompute(HttpAuthError(e)))
             }
         }
     }
