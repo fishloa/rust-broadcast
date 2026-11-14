@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `TsResync` reports the bytes before the first lock as a `ResyncLoss` too: they were counted in `ResyncStats::dropped_bytes` but never surfaced, so a capture that starts mid-packet disagreed with `take_losses()` (#2765). Every byte in `dropped_bytes` is now accounted for by a loss.
 ### Added
 - `OwnedTsPacket::set_opcr` rewrites the OPCR in place, and `Pcr::to_field_bytes_with_reserved` encodes the 6-byte field keeping a packet's own reserved bits (#2764).
 ### Changed
