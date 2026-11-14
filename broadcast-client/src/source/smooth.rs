@@ -18,7 +18,7 @@ use crate::events::{Action as HostAction, Config, ErrorKind, Event, ResumeMode, 
 use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
-use crate::source::fetch::retry::{backoff_ms, duration_us};
+use crate::source::fetch::retry::duration_us;
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::stage::Timestamp;
 
@@ -71,12 +71,10 @@ fn variant_info(q: &QualityInfo) -> VariantInfo {
 
 fn engine_config(config: &Config, jitter_seed: u64) -> SmoothConfig {
     let policy = config.variant_policy.clone();
-    let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
     SmoothConfig::default()
         .with_max_fragment_failures(config.max_segment_failures)
         .with_max_manifest_failures(config.max_key_failures)
-        .with_backoff_ms(backoff_steps_ms)
-        .with_backoff_cap_ms(backoff_cap_ms)
+        .with_backoff(config.backoff.clone())
         .with_jitter_seed(jitter_seed)
         .with_video_quality(QualitySelector::new(move |qualities| {
             let variants: Vec<VariantInfo> = qualities.iter().map(variant_info).collect();
@@ -171,7 +169,7 @@ impl SmoothSource {
     }
 
     fn pump(&mut self, now: u64) {
-        while let Some(action) = self.client.poll(now) {
+        while let Some(action) = self.client.poll(Timestamp::from_micros(now)) {
             let (kind, id, url) = match action {
                 Action::FetchManifest { id, url } => (ReqKind::Manifest, id, url),
                 Action::FetchFragment { id, url, .. } => (ReqKind::Fragment, id, url),
@@ -247,7 +245,7 @@ impl SmoothSource {
 
     fn fail_request(&mut self, req: &Req, status: Option<u16>, now: u64) {
         self.client.on_failure(
-            now,
+            Timestamp::from_micros(now),
             req.id,
             FetchFailure {
                 status,
@@ -281,7 +279,11 @@ impl SmoothSource {
                 self.events.push_back(Event::Status(Status::RequestStalled {
                     resume: ResumeMode::Full,
                 }));
-                self.client.on_failure(now, req.id, FetchFailure::default());
+                self.client.on_failure(
+                    Timestamp::from_micros(now),
+                    req.id,
+                    FetchFailure::default(),
+                );
             }
         }
         self.pump(now);
@@ -374,8 +376,14 @@ impl SmoothSource {
             return self.fail_request(&req, http_status, now);
         }
         match req.kind {
-            ReqKind::Manifest => self.client.on_manifest(now, req.id, &req.body),
-            ReqKind::Fragment => self.client.on_fragment(now, req.id, &req.body),
+            ReqKind::Manifest => {
+                self.client
+                    .on_manifest(Timestamp::from_micros(now), req.id, &req.body)
+            }
+            ReqKind::Fragment => {
+                self.client
+                    .on_fragment(Timestamp::from_micros(now), req.id, &req.body)
+            }
         }
         self.pump(now);
     }

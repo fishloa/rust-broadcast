@@ -27,7 +27,7 @@ fn a_transient_fragment_failure_is_retried_and_playback_completes() {
 #[test]
 fn retries_wait_out_the_configured_backoff() {
     let good = fixture(&format!("av/{FIRST_VIDEO}"));
-    let mut host = av_host(SmoothConfig::default().with_backoff_ms(vec![1_000]));
+    let mut host = av_host(SmoothConfig::default().with_backoff(steps(&[1_000], 1_000)));
     host.route(FIRST_VIDEO, vec![Reply::Transport, Reply::Body(good)]);
     host.run_until(|o| o.iter().any(is_ended));
     let times = host.times_of(FIRST_VIDEO);
@@ -38,13 +38,23 @@ fn retries_wait_out_the_configured_backoff() {
 const STEPS_MS: [u64; 3] = [2_000, 4_000, 8_000];
 const CAP_MS: u64 = 10_000;
 
+/// A step table in milliseconds, then its cap, as the config's one backoff value.
+fn steps(steps_ms: &[u64], cap_ms: u64) -> broadcast_common::backoff::BackoffSteps {
+    broadcast_common::backoff::BackoffSteps {
+        steps: steps_ms
+            .iter()
+            .map(|ms| std::time::Duration::from_millis(*ms))
+            .collect(),
+        cap: std::time::Duration::from_millis(cap_ms),
+    }
+}
+
 /// The waits between the attempts of a fragment that fails `failures` times before it is served.
 fn retry_waits_us(seed: u64, failures: usize) -> Vec<u64> {
     let good = fixture(&format!("av/{FIRST_VIDEO}"));
     let mut host = av_host(
         SmoothConfig::default()
-            .with_backoff_ms(STEPS_MS.to_vec())
-            .with_backoff_cap_ms(CAP_MS)
+            .with_backoff(steps(&STEPS_MS, CAP_MS))
             .with_jitter_seed(seed),
     );
     let mut replies = vec![Reply::Transport; failures];
@@ -100,7 +110,7 @@ fn retries_follow_the_shared_retry_schedule() {
 #[test]
 fn a_fragment_retry_waits_out_the_server_retry_after_over_the_backoff() {
     let good = fixture(&format!("av/{FIRST_VIDEO}"));
-    let mut host = av_host(SmoothConfig::default().with_backoff_ms(vec![1_000]));
+    let mut host = av_host(SmoothConfig::default().with_backoff(steps(&[1_000], 1_000)));
     host.route(
         FIRST_VIDEO,
         vec![Reply::Throttled(503, 2_000_000), Reply::Body(good)],
@@ -113,7 +123,7 @@ fn a_fragment_retry_waits_out_the_server_retry_after_over_the_backoff() {
 
 #[test]
 fn a_manifest_retry_waits_out_the_server_retry_after_over_the_backoff() {
-    let mut host = av_host(SmoothConfig::default().with_backoff_ms(vec![1_000]));
+    let mut host = av_host(SmoothConfig::default().with_backoff(steps(&[1_000], 1_000)));
     host.route(
         "Manifest",
         vec![

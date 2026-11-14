@@ -11,8 +11,14 @@
 
 use std::path::PathBuf;
 
+use broadcast_common::stage::Timestamp;
 use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothConfig};
 use url::Url;
+
+/// The example's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const FIXTURE_DIR: &str = "../fixtures/smooth/av";
 const ORIGIN: &str = "http://origin.test/";
@@ -36,12 +42,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = SmoothConfig::default().with_live_join_fragments(look_ahead);
     let mut client = SmoothClient::new(Url::parse(&format!("{ORIGIN}Manifest"))?, config);
     let mut requested = Vec::new();
-    let mut now = 0u64;
-    while now < RUN_US {
-        while let Some(action) = client.poll(now) {
+    let mut now_us = 0u64;
+    while now_us < RUN_US {
+        while let Some(action) = client.poll(now(now_us)) {
             match action {
                 Action::FetchManifest { id, .. } => {
-                    client.on_manifest(now, id, manifest.as_bytes())
+                    client.on_manifest(now(now_us), id, manifest.as_bytes())
                 }
                 Action::FetchFragment { id, url, start, .. } => {
                     requested.push(format!("{} (start {start})", url.path()));
@@ -51,9 +57,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .replace("%28", "(")
                         .replace("%29", ")");
                     match std::fs::read(dir.join(relative)) {
-                        Ok(body) => client.on_fragment(now, id, &body),
+                        Ok(body) => client.on_fragment(now(now_us), id, &body),
                         Err(_) => client.on_failure(
-                            now,
+                            now(now_us),
                             id,
                             FetchFailure {
                                 status: Some(404),
@@ -71,7 +77,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         match client.next_deadline() {
-            Some(t) => now = now.max(t),
+            Some(t) => now_us = now_us.max(t),
             None => break,
         }
     }
