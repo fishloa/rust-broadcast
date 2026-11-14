@@ -9,6 +9,7 @@ use core::time::Duration;
 use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
+use ::url::Url;
 use broadcast_common::Unpackage;
 use broadcast_common::range::ByteSpan;
 use broadcast_common::timescale::Timescale;
@@ -19,7 +20,6 @@ use broadcast_hls::{
 };
 use transmux::sample_aes::{BLOCK_LEN, KEY_LEN, aes128_decrypt_segment};
 use transmux::{DemuxEvent, Fmp4Demux, InputDegradation, Sample, StreamingTsDemux, TrackSpec};
-use ::url::Url;
 
 use super::action::{Action, BlockingReload, KeyId, ResourceId};
 use super::error::{Error, Result};
@@ -671,13 +671,12 @@ impl HlsClient {
         self.pending_actions.clear();
         self.playlist_url = url.clone();
         self.base_override = None;
-        self.pending_actions.push_back(Action::FetchPlaylist(
-            super::action::PlaylistRequest {
+        self.pending_actions
+            .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
                 url,
                 blocking: None,
                 skip: false,
-            },
-        ));
+            }));
         if let Some(m) = &mut self.master {
             m.chosen = index;
         }
@@ -789,13 +788,12 @@ impl HlsClient {
             self.playlist_url = chosen_url.clone();
             self.base_override = None;
             self.pending_actions.clear();
-            self.pending_actions.push_back(Action::FetchPlaylist(
-                super::action::PlaylistRequest {
+            self.pending_actions
+                .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
                     url: chosen_url,
                     blocking: None,
                     skip: false,
-                },
-            ));
+                }));
             return Ok(());
         }
         let playlist = MediaPlaylist::parse(text)?;
@@ -971,13 +969,12 @@ impl HlsClient {
                 .and_then(|ll| ll.can_skip_until)
                 .is_some();
             let skip = can_skip && self.last_full_playlist.is_some();
-            self.pending_actions.push_back(Action::FetchPlaylist(
-                super::action::PlaylistRequest {
+            self.pending_actions
+                .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
                     url: self.playlist_url.clone(),
                     blocking,
                     skip,
-                },
-            ));
+                }));
             if blocking.is_none() {
                 self.pending_actions
                     .push_back(Action::Wait(reload_wait(playlist.target_duration)));
@@ -1003,13 +1000,12 @@ impl HlsClient {
                 .push_back(Action::Wait(reload_wait(delta.target_duration)));
         }
         self.full_reload_requested = true;
-        self.pending_actions.push_back(Action::FetchPlaylist(
-            super::action::PlaylistRequest {
+        self.pending_actions
+            .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
                 url: self.playlist_url.clone(),
                 blocking: None,
                 skip: false,
-            },
-        ));
+            }));
         Error::DeltaNotMergeable {
             media_sequence: delta.media_sequence,
             skipped_segments: delta.skip.as_ref().map_or(0, |s| s.skipped_segments),
@@ -1027,13 +1023,12 @@ impl HlsClient {
         {
             return false;
         }
-        self.pending_actions.push_back(Action::FetchPlaylist(
-            super::action::PlaylistRequest {
+        self.pending_actions
+            .push_back(Action::FetchPlaylist(super::action::PlaylistRequest {
                 url: self.playlist_url.clone(),
                 blocking: None,
                 skip: false,
-            },
-        ));
+            }));
         true
     }
 
@@ -2771,7 +2766,11 @@ mod tests {
     fn on_resource_accepts_a_previously_requested_id() {
         let mut client = HlsClient::new(config("http://example.com/playlist.m3u8"));
         let id = ResourceId::Segment { msn: 0 };
-        client.request_resource(id, Url::parse("http://example.com/seg0.m4s").expect("URL"), None);
+        client.request_resource(
+            id,
+            Url::parse("http://example.com/seg0.m4s").expect("URL"),
+            None,
+        );
 
         // No init segment cached yet, so this is buffered rather than
         // demuxed — the point here is only that it is *not* rejected as

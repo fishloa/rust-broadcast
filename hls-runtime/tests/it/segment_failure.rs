@@ -6,9 +6,9 @@
 //! Spec: ISO/IEC 13818-1 §2.4.3.2 (TS `sync_byte`, 188-byte packets), ISO/IEC 14496-12:2026 §8.8.4
 //! (`moof` then `mdat`), RFC 8216 §4.3.4.3.
 
+use broadcast_common::range::ByteSpan;
 use hls_runtime::client::{Action, Error, HlsClient, Output, ResourceId};
 use url::Url;
-use broadcast_common::range::ByteSpan;
 
 const URL: &str = "http://origin/v/media.m3u8";
 const TS_PACKET_LEN: usize = 188;
@@ -68,7 +68,9 @@ fn a_body_that_is_not_media_is_not_media_and_can_be_retried_without_a_playlist()
         b"<html>503</html>".to_vec(),
         vec![TS_SYNC_BYTE; 1],
     ] {
-        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+            Url::parse(URL).expect("URL"),
+        ));
         let _ = fetches(&mut client);
         client.on_playlist(vod().as_bytes()).unwrap();
         let first = fetches(&mut client);
@@ -106,7 +108,9 @@ fn media_that_yields_no_samples_is_accepted_and_never_retried() {
     };
     let psi_only = ts("index0.ts")[..2 * TS_PACKET_LEN].to_vec();
     for body in [one_null_packet, psi_only] {
-        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+            Url::parse(URL).expect("URL"),
+        ));
         let _ = fetches(&mut client);
         client.on_playlist(vod().as_bytes()).unwrap();
         let _ = fetches(&mut client);
@@ -119,7 +123,9 @@ fn media_that_yields_no_samples_is_accepted_and_never_retried() {
 fn a_lane_lattice_below_half_sync_is_not_media() {
     let mut body = vec![0u8; 4 * TS_PACKET_LEN];
     body[0] = TS_SYNC_BYTE;
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(vod().as_bytes()).unwrap();
     let _ = fetches(&mut client);
@@ -131,7 +137,9 @@ fn a_lane_lattice_below_half_sync_is_not_media() {
 
 #[test]
 fn retry_resource_has_nothing_for_unknown_or_delivered_ids_and_never_for_init() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     assert!(!client.retry_resource(SEG0));
     client.on_playlist(vod().as_bytes()).unwrap();
@@ -146,11 +154,16 @@ fn retry_resource_has_nothing_for_unknown_or_delivered_ids_and_never_for_init() 
 fn a_retried_byte_range_is_requested_with_its_original_range() {
     let ranged = "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
                   #EXTINF:2.0,\n#EXT-X-BYTERANGE:1000@500\nall.ts\n#EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(ranged.as_bytes()).unwrap();
     let first = fetches(&mut client);
-    assert_eq!(first[0].2.map(|r| (r.offset, r.len.get())), Some((500, 1000)));
+    assert_eq!(
+        first[0].2.map(|r| (r.offset, r.len.get())),
+        Some((500, 1000))
+    );
     assert!(matches!(
         client.on_resource(SEG0, &garbage()),
         Err(Error::NotMedia { .. })
@@ -162,7 +175,9 @@ fn a_retried_byte_range_is_requested_with_its_original_range() {
 
 #[test]
 fn skipping_a_segment_signals_a_discontinuity_and_it_is_never_requested_again() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(live().as_bytes()).unwrap();
     let _ = fetches(&mut client);
@@ -191,7 +206,9 @@ fn skipping_a_segment_signals_a_discontinuity_and_it_is_never_requested_again() 
 
 #[test]
 fn skipping_the_last_open_segment_of_an_ended_playlist_ends_the_stream() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(vod().as_bytes()).unwrap();
     let _ = fetches(&mut client);
@@ -207,7 +224,9 @@ fn skipping_the_last_open_segment_of_an_ended_playlist_ends_the_stream() {
 
 #[test]
 fn init_cannot_be_skipped() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.skip_resource(ResourceId::Init);
     assert!(outputs(&mut client).is_empty());
@@ -217,7 +236,9 @@ const MID_PACKET_CUT: usize = 100;
 const PACKETS_PER_PROBE: usize = 40;
 
 fn accepted(body: &[u8]) -> bool {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(vod().as_bytes()).unwrap();
     let _ = fetches(&mut client);
@@ -229,7 +250,9 @@ fn accepted(body: &[u8]) -> bool {
 }
 
 fn samples_of(body: &[u8]) -> usize {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(vod().as_bytes()).unwrap();
     let _ = fetches(&mut client);
@@ -319,7 +342,9 @@ fn mp4_box(kind: &[u8; 4], body: &[u8]) -> Vec<u8> {
 fn fmp4_client() -> HlsClient {
     let pl = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
               #EXT-X-MAP:URI=\"i.mp4\"\n#EXTINF:1.0,\ns0.m4s\n#EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetches(&mut client);
     client.on_playlist(pl.as_bytes()).unwrap();
     let _ = fetches(&mut client);

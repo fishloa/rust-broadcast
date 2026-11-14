@@ -325,8 +325,11 @@ fn whip_client_terminate_ack_with_204_transitions_to_closed() {
 fn whip_client_bearer_auth() {
     let token = "my-secret-token";
     let mut client = WhipClient::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_credentials(broadcast_auth::Credentials::Bearer { token: token.into() }),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+            broadcast_auth::Credentials::Bearer {
+                token: token.into(),
+            },
+        ),
     );
 
     // POST offer — should have Authorization header

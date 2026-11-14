@@ -20,7 +20,9 @@ const URL: &str = "http://origin/v/media.m3u8";
 fn fetched_urls(client: &mut HlsClient) -> Vec<String> {
     std::iter::from_fn(|| client.poll())
         .filter_map(|a| match a {
-            Action::FetchResource { url, .. } | Action::FetchKey { url, .. } => Some(url.as_str().to_string()),
+            Action::FetchResource { url, .. } | Action::FetchKey { url, .. } => {
+                Some(url.as_str().to_string())
+            }
             _ => None,
         })
         .collect()
@@ -34,7 +36,9 @@ fn outputs(client: &mut HlsClient) -> Vec<Output> {
 fn a_segment_reference_with_a_tab_is_never_fetched() {
     let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
                     #EXTINF:2.0,\nseg\t1.m4s\n#EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetched_urls(&mut client);
     client.on_playlist(playlist.as_bytes()).unwrap();
     assert_eq!(fetched_urls(&mut client), Vec::<String>::new());
@@ -52,7 +56,9 @@ fn a_segment_reference_with_a_tab_is_never_fetched() {
 fn a_segment_reference_with_a_crlf_is_never_fetched() {
     let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
                     #EXTINF:2.0,\nseg\r\n1.m4s\n#EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetched_urls(&mut client);
     let err = client.on_playlist(playlist.as_bytes()).unwrap_err();
     assert!(
@@ -68,7 +74,9 @@ fn an_aes_key_reference_with_a_tab_is_never_fetched() {
     let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
                     #EXT-X-KEY:METHOD=AES-128,URI=\"key\t1.bin\"\n#EXTINF:2.0,\nseg0.m4s\n\
                     #EXT-X-ENDLIST\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetched_urls(&mut client);
     let err = client.on_playlist(playlist.as_bytes()).unwrap_err();
     assert!(
@@ -87,7 +95,9 @@ fn an_aes_key_reference_with_a_tab_is_never_fetched() {
 fn a_master_playlist_variant_with_a_tab_is_not_selected() {
     let playlist = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=800000\nseg\t1.m3u8\n\
                     #EXT-X-STREAM-INF:BANDWIDTH=400000\nlow.m3u8\n";
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     let _ = fetched_urls(&mut client);
     client.on_playlist(playlist.as_bytes()).unwrap();
     let urls = fetched_urls(&mut client);

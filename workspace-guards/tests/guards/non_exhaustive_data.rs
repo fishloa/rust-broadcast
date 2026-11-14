@@ -56,7 +56,13 @@ pub const TABLE: &[Crate] = &[
         skip: &[],
         variants: true,
     },
-    plain("dash-runtime"),
+    Crate {
+        name: "dash-runtime",
+        // `ResolvedRef` is a closed two-variant sum (absolute or relative);
+        // callers match it exhaustively on purpose.
+        skip: &["ResolvedRef"],
+        variants: false,
+    },
     plain("smooth-runtime"),
     plain("dvb-bbframe"),
     plain("dvb-ci-runtime"),

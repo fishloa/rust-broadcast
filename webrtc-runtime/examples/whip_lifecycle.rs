@@ -10,7 +10,9 @@ fn main() {
         webrtc_runtime::session::client::WebRtcClientConfig::new(
             "https://origin.example/whip/live",
         )
-        .with_credentials(broadcast_auth::Credentials::Bearer { token: "my-token".into() }),
+        .with_credentials(broadcast_auth::Credentials::Bearer {
+            token: "my-token".into(),
+        }),
     );
 
     // Step 1: generate the SDP offer POST request.

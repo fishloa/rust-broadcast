@@ -10,8 +10,8 @@
 //! engines themselves never carry a raw `(u64, u64)` tuple with an
 //! undocumented convention.
 
-use core::num::NonZeroU64;
 use core::fmt;
+use core::num::NonZeroU64;
 
 use alloc::string::String;
 

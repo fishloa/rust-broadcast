@@ -55,7 +55,10 @@ impl SessionCore {
     ) -> core::fmt::Result {
         f.debug_struct(name)
             .field("endpoint_url", &self.endpoint_url)
-            .field("credentials", &self.credentials.as_ref().map(|_| "<redacted>"))
+            .field(
+                "credentials",
+                &self.credentials.as_ref().map(|_| "<redacted>"),
+            )
             .field("state", state)
             .field("pending", &self.pending)
             .finish()

@@ -4,7 +4,9 @@
 //! crate implements the WHATWG URL algorithm, which differs from strict RFC
 //! 3986 in exactly the rows listed in `WHATWG_DIFFERENCES`.
 
-use dash_runtime::mpd::base_url::{first_forbidden_char, resolve, resolve_chain, ResolveError, ResolvedRef};
+use dash_runtime::mpd::base_url::{
+    ResolveError, ResolvedRef, first_forbidden_char, resolve, resolve_chain,
+};
 use url::Url;
 
 fn flat(r: Result<ResolvedRef, ResolveError>) -> Option<String> {
@@ -173,7 +175,10 @@ fn the_mpd_url_or_a_file_url_is_the_base() {
 
 #[test]
 fn relative_results_stay_relative_when_there_is_no_base() {
-    assert_eq!(flat(resolve(None, "seg/1.m4s")).as_deref(), Some("seg/1.m4s"));
+    assert_eq!(
+        flat(resolve(None, "seg/1.m4s")).as_deref(),
+        Some("seg/1.m4s")
+    );
     assert_eq!(
         flat(resolve(None, "seg.m4s?x=1#f")).as_deref(),
         Some("seg.m4s?x=1#f")
@@ -183,19 +188,30 @@ fn relative_results_stay_relative_when_there_is_no_base() {
         Some("video/seg-1.m4s")
     );
     assert_eq!(
-        flat(resolve_chain(None, &["a/".to_string(), "../b/".to_string()], "s.m4s")).as_deref(),
+        flat(resolve_chain(
+            None,
+            &["a/".to_string(), "../b/".to_string()],
+            "s.m4s"
+        ))
+        .as_deref(),
         Some("b/s.m4s")
     );
 }
 
 #[test]
 fn an_absolute_path_reference_is_not_mistaken_for_a_relative_one() {
-    assert_eq!(flat(resolve(None, "/abs/x.m4s")).as_deref(), Some("/abs/x.m4s"));
+    assert_eq!(
+        flat(resolve(None, "/abs/x.m4s")).as_deref(),
+        Some("/abs/x.m4s")
+    );
     assert_eq!(
         flat(resolve(None, "//cdn.example/x.m4s")).as_deref(),
         Some("//cdn.example/x.m4s")
     );
-    assert_eq!(flat(resolve(None, "http://x/y")).as_deref(), Some("http://x/y"));
+    assert_eq!(
+        flat(resolve(None, "http://x/y")).as_deref(),
+        Some("http://x/y")
+    );
 }
 
 /// Containment: with no base, a relative input never resolves to an absolute
@@ -235,7 +251,10 @@ fn encoded_dot_segments_behave_like_plain_ones() {
 /// still clamped at the root); a relative one never becomes absolute after it.
 #[test]
 fn absolute_path_references_are_absolute_only_when_written_so() {
-    assert_eq!(flat(resolve(None, "/abs/x.m4s")).as_deref(), Some("/abs/x.m4s"));
+    assert_eq!(
+        flat(resolve(None, "/abs/x.m4s")).as_deref(),
+        Some("/abs/x.m4s")
+    );
     assert_eq!(flat(resolve(None, "/../../x")).as_deref(), Some("/x"));
     let chain = vec!["/a/".to_string()];
     assert_eq!(
@@ -361,7 +380,10 @@ fn control_characters_and_whitespace_are_rejected_before_parsing() {
         "seg\u{1b}[31m",
     ] {
         assert!(first_forbidden_char(evil).is_some(), "{evil:?}");
-        assert!(flat(resolve(Some(&base), evil)).as_deref().is_none(), "{evil:?}");
+        assert!(
+            flat(resolve(Some(&base), evil)).as_deref().is_none(),
+            "{evil:?}"
+        );
         assert!(flat(resolve(None, evil)).as_deref().is_none(), "{evil:?}");
     }
     assert_eq!(
@@ -404,7 +426,11 @@ fn unparseable_references_are_none_not_a_panic() {
 #[test]
 fn the_public_entry_points_resolve_the_same_reference() {
     assert_eq!(
-        flat(resolve(Some(&Url::parse("http://a/b/c/d;p?q").unwrap()), "g")).as_deref(),
+        flat(resolve(
+            Some(&Url::parse("http://a/b/c/d;p?q").unwrap()),
+            "g"
+        ))
+        .as_deref(),
         Some("http://a/b/c/g")
     );
     assert_eq!(

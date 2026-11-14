@@ -5,7 +5,6 @@
 use crate::common;
 
 use broadcast_common::stage::Timestamp;
-use url::Url;
 use common::loopback::{
     Drive, Fault, FaultKind, Origin, Sig, assert_matches_oracle, drive, mpd_text, oracle,
 };
@@ -15,6 +14,7 @@ use dash_runtime::client::{
 };
 use dash_runtime::error::Unsupported;
 use dash_runtime::selection::DropReason;
+use url::Url;
 
 /// The test's microsecond clock as the client's `now`.
 fn now(us: u64) -> Timestamp {
@@ -327,7 +327,9 @@ fn the_pin_follows_the_base_set_after_a_redirect() {
             .with_dash(dash)
             .with_limits(PullLimits::default()),
     );
-    client.set_mpd_base(Url::parse("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd").expect("URL"));
+    client.set_mpd_base(
+        Url::parse("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd").expect("URL"),
+    );
     let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };

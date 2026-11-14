@@ -7,8 +7,8 @@
 use std::collections::BTreeMap;
 
 use hls_runtime::client::{Action, Error, HlsClient, HlsClientConfig, KeyId, Output, ResourceId};
-use url::Url;
 use transmux::sample_aes::aes128_encrypt_segment;
+use url::Url;
 
 const URL: &str = "http://fixture/index.m3u8";
 const TS_PACKET_LEN: usize = 188;

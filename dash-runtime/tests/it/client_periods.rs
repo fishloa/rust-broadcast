@@ -133,10 +133,14 @@ fn restart_period_two_inits_are_requested_while_period_one_is_in_flight() {
         urls.push(a.url().to_owned());
     }
     assert!(
-        urls.iter().any(|u| u.as_str().contains("p2_dash_track1_init")),
+        urls.iter()
+            .any(|u| u.as_str().contains("p2_dash_track1_init")),
         "{urls:?}"
     );
-    assert!(urls.iter().any(|u| u.as_str().contains("p1_dash_track1_1.m4s")));
+    assert!(
+        urls.iter()
+            .any(|u| u.as_str().contains("p1_dash_track1_1.m4s"))
+    );
 }
 
 #[test]

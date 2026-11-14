@@ -21,10 +21,10 @@ use broadcast_hls::{
     DecimalSeconds, LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
 };
 use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
-use url::Url;
 use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 use transmux::{CodecConfig, Sample, TrackSpec};
+use url::Url;
 
 use crate::dummy_avc_config::dummy_avc_config;
 
@@ -324,7 +324,9 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     };
 
     // === Drive the client ===
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
 
     // 1. First action: fetch the playlist (no LL info known yet).
     let first = client.poll().expect("first action");
@@ -558,7 +560,9 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         ..Default::default()
     };
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     let _ = client.poll(); // discard the initial plain GET
     client
         .on_playlist(pl.to_m3u8().expect("valid playlist").as_bytes())
@@ -649,7 +653,9 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
         ..Default::default()
     };
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     let _ = client.poll();
     client
         .on_playlist(pl.to_m3u8().expect("valid playlist").as_bytes())

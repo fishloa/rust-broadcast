@@ -9,6 +9,7 @@ use dash_runtime::address::template::{
 };
 use dash_runtime::address::timeline::TimelineIndex;
 use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
+use dash_runtime::mpd::base_url::{ResolveError, ResolvedRef};
 use dash_runtime::mpd::inherit::InheritError;
 use dash_runtime::mpd::urls::{
     append_query, base_candidates, representation_candidates, segment_url_query,
@@ -21,7 +22,6 @@ use dash_runtime::timing::live_edge::{
 };
 use dash_runtime::timing::period::{PeriodKind, period_timings};
 use url::Url;
-use dash_runtime::mpd::base_url::{ResolveError, ResolvedRef};
 
 const S: i128 = 1_000_000;
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";

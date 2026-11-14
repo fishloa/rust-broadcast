@@ -18,11 +18,11 @@ use std::time::Duration;
 use broadcast_common::Timestamp;
 use hls_runtime::client::{Action, HlsClient};
 use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
-use url::Url;
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
+use url::Url;
 
 const PLAYLIST_URL: &str = "http://origin/live/media.m3u8";
 
@@ -146,7 +146,10 @@ fn main() {
                     saw_blocking_reload = true;
                 }
                 _ => {
-                    println!("action: FetchPlaylist {{ url: {:?}, blocking: None }}", request.url);
+                    println!(
+                        "action: FetchPlaylist {{ url: {:?}, blocking: None }}",
+                        request.url
+                    );
                 }
             },
             Action::Wait(wait) => println!("action: Wait({wait:?})"),

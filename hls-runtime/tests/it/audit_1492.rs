@@ -36,7 +36,9 @@ fn window(first: u64, entries: &[(&str, u32)]) -> String {
 }
 
 fn second_window_outputs(first: &str, second: &str) -> Vec<Output> {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client.on_playlist(first.as_bytes()).unwrap();
     drain(&mut client);
@@ -73,7 +75,9 @@ fn map_playlist(key_lines: &str) -> String {
 
 #[test]
 fn a_later_identity_key_line_replaces_the_earlier_key_for_the_init() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client
         .on_playlist(
@@ -86,7 +90,9 @@ fn a_later_identity_key_line_replaces_the_earlier_key_for_the_init() {
 
 #[test]
 fn a_non_identity_key_line_leaves_the_identity_key_in_effect() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client
         .on_playlist(
@@ -108,7 +114,9 @@ fn an_unusable_identity_key_line_fails_the_playlist_instead_of_keeping_the_earli
         "#EXT-X-KEY:METHOD=AES-128\n",
         "#EXT-X-KEY:METHOD=BOGUS,URI=\"x\"\n",
     ] {
-        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+            Url::parse(URL).expect("URL"),
+        ));
         drain(&mut client);
         let result = client.on_playlist(map_playlist(bad).as_bytes());
         assert!(

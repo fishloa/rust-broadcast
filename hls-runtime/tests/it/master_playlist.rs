@@ -13,7 +13,9 @@ const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
 #[test]
 fn master_emits_selection_then_fetches_chosen_variant_playlist() {
     let master_url = Url::parse("http://example.com/bipbop/master.m3u8").expect("URL");
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(master_url.clone()));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        master_url.clone(),
+    ));
     let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     client.on_playlist(&bytes).expect("master parses");
 
@@ -113,8 +115,10 @@ fn selection_policy_table() {
     ];
     for (label, master, policy, expect) in cases {
         let mut client = HlsClient::new(
-            hls_runtime::client::HlsClientConfig::new(Url::parse("http://example.com/bipbop/master.m3u8").expect("URL"))
-                .with_variant_policy(policy),
+            hls_runtime::client::HlsClientConfig::new(
+                Url::parse("http://example.com/bipbop/master.m3u8").expect("URL"),
+            )
+            .with_variant_policy(policy),
         );
         client.on_playlist(&master).expect("master parses");
         let sel = match client.next_output().unwrap() {
@@ -145,7 +149,8 @@ fn selection_policy_table() {
 
 #[test]
 fn master_exposes_audio_renditions_with_resolved_urls() {
-    let master_url = Url::parse("http://example.com/9.6-multivariant-alternative-audio.m3u8").expect("URL");
+    let master_url =
+        Url::parse("http://example.com/9.6-multivariant-alternative-audio.m3u8").expect("URL");
     let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(master_url));
     let Some(bytes) = test_fixtures::require_bytes(
         "hls/spec/9.6-multivariant-alternative-audio.m3u8",
@@ -230,7 +235,9 @@ fn relative_and_absolute_variant_uris_resolve_against_master_url() {
 #[test]
 fn select_variant_switches_emits_discontinuity_and_repoints() {
     let master_url = Url::parse("http://example.com/bipbop/master.m3u8").expect("URL");
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(master_url.clone()));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        master_url.clone(),
+    ));
     let bytes = test_fixtures::read("hls/real/bipbop-ts/master.m3u8");
     client.on_playlist(&bytes).expect("master parses");
     let _ = client.next_output(); // Master

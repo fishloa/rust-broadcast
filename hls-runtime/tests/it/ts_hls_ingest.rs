@@ -25,8 +25,8 @@ use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use hls_runtime::client::{Action, HlsClient, Output};
-use url::Url;
 use transmux::{CodecConfig, TsDemux};
+use url::Url;
 
 const PLAYLIST_URL: &str = "http://fixture/index.m3u8";
 const TS_SYNC_BYTE: u8 = 0x47;
@@ -71,7 +71,11 @@ fn drive_to_end(client: &mut HlsClient) -> Vec<Output> {
                 client.on_playlist(&text).expect("fixture playlist parses");
             }
             Some(Action::FetchResource { id, url, .. }) => {
-                let name = url.path().rsplit("/").next().expect("url has a path segment");
+                let name = url
+                    .path()
+                    .rsplit("/")
+                    .next()
+                    .expect("url has a path segment");
                 let bytes = read_fixture(name);
                 client
                     .on_resource(id, &bytes)
@@ -140,7 +144,9 @@ fn client_ingests_classic_ts_segment_hls_end_to_end() {
     let playlist_text_str = String::from_utf8(playlist_text).expect("playlist is UTF-8");
     let segment_names = segment_names_from_playlist(&playlist_text_str);
 
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     let outputs = drive_to_end(&mut client);
 
     assert!(
@@ -331,7 +337,9 @@ fn timing_of(media: &transmux::Media, pick: impl Fn(&CodecConfig) -> bool) -> (u
 
 /// Drive `client` over `segments` (url basename -> bytes) with `playlist`.
 fn drive_in_memory(playlist: &str, segments: &[(&str, Vec<u8>)]) -> Vec<Output> {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     let mut outputs = Vec::new();
     loop {
         match client.poll() {
@@ -529,7 +537,9 @@ fn track_set_change_across_a_discontinuity_re_emits_init() {
 /// (r09-W16), checked against a real demuxable segment.
 #[test]
 fn duplicate_ts_segment_delivery_emits_samples_once() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(PLAYLIST_URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(PLAYLIST_URL).expect("URL"),
+    ));
     while client.poll().is_some() {}
     client
         .on_playlist(&read_fixture("index.m3u8"))

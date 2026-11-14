@@ -210,7 +210,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         requests += 1;
         let true_utc = true_start + i64::try_from(elapsed).unwrap_or(0);
-        let too_early = avail.get(action.url().as_str()).is_some_and(|a| true_utc < *a);
+        let too_early = avail
+            .get(action.url().as_str())
+            .is_some_and(|a| true_utc < *a);
         let body = if too_early {
             Err(Failure::Status(404))
         } else {

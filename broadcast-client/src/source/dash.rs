@@ -994,13 +994,7 @@ impl DashSource {
             ),
             _ => return,
         };
-        let mut req = new_req(
-            purpose,
-            method,
-            url,
-            byte_range,
-            self.body_limit(purpose),
-        );
+        let mut req = new_req(purpose, method, url, byte_range, self.body_limit(purpose));
         req.extra.conditional = conditional;
         if let Some(parked) = self.stash.take(&purpose, &req.original_url, byte_range) {
             req.resume_from = Some(u64::try_from(parked.body.len()).unwrap_or(u64::MAX));

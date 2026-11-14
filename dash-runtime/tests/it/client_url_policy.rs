@@ -4,12 +4,12 @@
 use crate::common;
 
 use broadcast_common::stage::Timestamp;
-use url::Url;
 use common::loopback::{Drive, Fault, FaultKind, Origin, drive, mpd_text};
 use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
 };
 use dash_runtime::error::Unsupported;
+use url::Url;
 
 /// The test's microsecond clock as the client's `now`.
 fn now(us: u64) -> Timestamp {

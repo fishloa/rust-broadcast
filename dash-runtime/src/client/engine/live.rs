@@ -527,7 +527,12 @@ impl DashClient {
                 }
             }
         }
-        self.live.as_ref()?.refresh.redirect_url.as_deref().and_then(|r| Url::parse(r).ok())
+        self.live
+            .as_ref()?
+            .refresh
+            .redirect_url
+            .as_deref()
+            .and_then(|r| Url::parse(r).ok())
     }
 
     pub(super) fn utc_action(&mut self, now_us: u64) -> Option<Action> {

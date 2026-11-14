@@ -187,7 +187,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(body) => client.on_mpd(now(now_us), &body),
                 Err(_) => return Err("the MPD could not be read".into()),
             },
-            Some(id) => match read(&root, action.url().as_str(), action.byte_range().map(|s| (s.offset, s.len.get()))) {
+            Some(id) => match read(
+                &root,
+                action.url().as_str(),
+                action.byte_range().map(|s| (s.offset, s.len.get())),
+            ) {
                 Ok(body) => match id {
                     ResourceId::Init { .. } => client.on_init(now(now_us), id, &body),
                     ResourceId::Index { .. } => client.on_index(now(now_us), id, &body),

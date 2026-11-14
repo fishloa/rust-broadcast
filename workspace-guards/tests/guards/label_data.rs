@@ -424,6 +424,8 @@ pub const TABLE: &[Crate] = &[
             "Output",
             "Failure",
             "FailureClass",
+            "ResolvedRef",
+            "ResolveError",
         ],
         expected: None,
         min_enums: Some(15),

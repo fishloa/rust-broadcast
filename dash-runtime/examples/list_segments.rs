@@ -130,7 +130,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .resolve(Some(&doc), &init.reference)
                                 .ok()
                                 .map(|r| match r {
-                                    dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => u.to_string(),
+                                    dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => {
+                                        u.to_string()
+                                    }
                                     dash_runtime::mpd::base_url::ResolvedRef::Relative(s) => s,
                                 })
                                 .unwrap_or_default();
@@ -141,7 +143,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 .resolve(Some(&doc), &seg.reference)
                                 .ok()
                                 .map(|r| match r {
-                                    dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => u.to_string(),
+                                    dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => {
+                                        u.to_string()
+                                    }
                                     dash_runtime::mpd::base_url::ResolvedRef::Relative(s) => s,
                                 })
                                 .unwrap_or_default();

@@ -251,7 +251,10 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
             }
             other => {
                 let Some(id) = other.id() else { continue };
-                let real = world.real_body(other.url().as_str(), other.byte_range().map(|s| (s.offset, s.len.get())));
+                let real = world.real_body(
+                    other.url().as_str(),
+                    other.byte_range().map(|s| (s.offset, s.len.get())),
+                );
                 match answer(real, mode, aux, &mut tail_data, None) {
                     Answer::Fail(f) => {
                         if let Ok(FailureClass::Retry { .. }) = client.on_failure(

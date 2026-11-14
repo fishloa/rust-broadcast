@@ -19,7 +19,9 @@ fn fetched(actions: &[Action]) -> Vec<String> {
 
 #[test]
 fn clear_segments_after_a_fairplay_key_and_method_none_are_fetched() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(Url::parse(URL).expect("URL")));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let text = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n\
 #EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"skd://k\",KEYFORMAT=\"com.apple.streamingkeydelivery\",KEYFORMATVERSIONS=\"1\"\n\
