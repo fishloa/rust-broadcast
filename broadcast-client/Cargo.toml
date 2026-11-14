@@ -54,7 +54,7 @@ transmux = { path = "../transmux", version = "0.31.0" }
 broadcast-auth = { path = "../broadcast-auth", version = "0.7.0" }
 rtsp-runtime = { path = "../rtsp-runtime", version = "0.11.0", default-features = false }
 sdp-types = { workspace = true }
-rtsp-types = "0.1"
+rtsp-types = "0.2"
 url = "2"
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 serde_json = { workspace = true }

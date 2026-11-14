@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Dev-dependency `rtsp-types` 0.1 to 0.2, following `rtsp-runtime`.
 ### Fixed
 - `Config::with_timeouts` maps SRT exactly as `SrtConfig::with_timeouts` does (`handshake` to the handshake bound, `read_idle` to the peer-idle bound; it used `connect` for the handshake), and under the default `SourceKind::Auto` applies every protocol's mapping so the one the URL resolves to takes effect, instead of only the TS-over-HTTP stall policy (#2639).
 

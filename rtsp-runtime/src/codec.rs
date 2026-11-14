@@ -158,10 +158,12 @@ impl Decoder for ServerCodec {
             }
             // Terminator present yet no length: rtsp_types wants more input.
             Err(rtsp_types::ParseError::Incomplete(None)) => Ok(None),
-            Err(rtsp_types::ParseError::Error) => Err(Error::MessageParse {
-                what: MessageKind::Request,
-                source: Box::new(rtsp_types::ParseError::Error),
-            }),
+            Err(error @ (rtsp_types::ParseError::Error | rtsp_types::ParseError::Invalid(_))) => {
+                Err(Error::MessageParse {
+                    what: MessageKind::Request,
+                    source: Box::new(error),
+                })
+            }
         }
     }
 }
