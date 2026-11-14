@@ -178,7 +178,8 @@ impl TryFrom<ByteRange> for broadcast_common::range::ByteSpan {
     }
 }
 
-/// An HLS [`ByteRange`] with a zero length cannot name a [`ByteSpan`], whose
+/// An HLS [`ByteRange`] with a zero length cannot name a
+/// [`broadcast_common::range::ByteSpan`], whose
 /// length is always at least one byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]

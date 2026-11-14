@@ -175,7 +175,7 @@ One credentials model and one challenge-response helper for clients, plus one se
 - **Cargo description:** Shared multi-scheme HTTP/RTSP auth: Basic/Digest (RFC 7235, RFC 2326 §14) via http-auth, Bearer (RFC 6750); one Credentials model + challenge->response helper for rtsp-runtime and multimux's HTTP clients.
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`rtsp-runtime`](#rtsp-runtime), [`webrtc-runtime`](#webrtc-runtime)
 - **Links:** [README](../broadcast-auth/README.md) · [CHANGELOG](../broadcast-auth/CHANGELOG.md) · [crates.io](https://crates.io/crates/broadcast-auth) · [docs.rs](https://docs.rs/broadcast-auth)
 
 ### MPEG-2 TS / PES / PS framing
@@ -587,7 +587,7 @@ WHIP ingest and WHEP egress session establishment as state machines over `http` 
 - **Standards:** RFC 9725 (WHIP); draft-ietf-wish-whep-04; optional ICE/DTLS-SRTP transport (`media`)
 - **Cargo description:** Sans-IO WHIP (RFC 9725) + WHEP (draft-ietf-wish-whep) HTTP signalling engine — SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. No IO adapter; caller drives HTTP.
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 2
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** [`multimux`](#multimux)
 - **Links:** [README](../webrtc-runtime/README.md) · [CHANGELOG](../webrtc-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/webrtc-runtime) · [docs.rs](https://docs.rs/webrtc-runtime)
 
@@ -1096,6 +1096,7 @@ flowchart BT
   ts_fix --> mpeg_pes
   ttml_subtitle --> broadcast_common
   ule --> broadcast_common
+  webrtc_runtime --> broadcast_auth
   webrtc_runtime --> rtp_packet
 ```
 <!-- END GENERATED: crate-index -->

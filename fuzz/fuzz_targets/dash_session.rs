@@ -93,7 +93,7 @@ impl Watch {
                     let request = Request {
                         method,
                         url,
-                        byte_range,
+                        byte_range: byte_range.map(|s| (s.offset, s.len.get())),
                         sent: now,
                     };
                     assert!(

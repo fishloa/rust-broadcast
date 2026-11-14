@@ -64,7 +64,7 @@ mod tests {
     fn the_range_header_is_first_last_inclusive() {
         let span = ByteSpan::new(0, NonZeroU64::new(10).expect("nonzero"));
         assert_eq!(span.range_header(), "bytes=0-9");
-        assert_eq!(span.to_string(), "0-9");
+        assert_eq!(alloc::format!("{span}"), "0-9");
     }
 
     #[test]

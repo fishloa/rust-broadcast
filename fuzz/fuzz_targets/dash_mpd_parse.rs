@@ -37,7 +37,7 @@ fuzz_target!(|data: &[u8]| {
                     let _ = planned
                         .candidates
                         .first()
-                        .and_then(|c| c.resolve(None, &seg.reference));
+                        .map(|c| c.resolve(None, &seg.reference));
                 }
                 if plan.is_dynamic() {
                     let _ = newest_complete(plan, SAMPLE_CLOCK_US);
