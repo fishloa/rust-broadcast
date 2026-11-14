@@ -175,7 +175,7 @@ fn independent_flag_tracks_sync_first_sample() {
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 1,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".into(),
@@ -266,7 +266,7 @@ fn playlist_low_latency_directives_present_and_opt_in() {
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 1,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg0.m4s".into(),
@@ -590,7 +590,7 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 1,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg1.m4s".into(),

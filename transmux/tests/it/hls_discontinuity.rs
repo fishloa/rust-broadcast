@@ -148,7 +148,7 @@ fn autodetect_init_change_marks_discontinuity() {
     let pl = MediaPlaylist {
         version: 6,
         target_duration: 2,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![
             entries.remove(0).1.clone(),
@@ -218,7 +218,7 @@ fn autodetect_init_change_marks_discontinuity() {
     let pl_neg = MediaPlaylist {
         version: 6,
         target_duration: 2,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![
             same.remove(0).1.clone(),
@@ -327,7 +327,7 @@ fn explicit_mark_discontinuity_bites() {
     let pl = MediaPlaylist {
         version: 6,
         target_duration: 2,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: pl_segments,
         endlist: true,
@@ -387,7 +387,7 @@ fn discontinuity_sequence_increments_as_segments_roll_off() {
         MediaPlaylist {
             version: 6,
             target_duration: 6,
-            media_sequence: disc_seq, // media_sequence advances in lock-step for realism
+            msn: broadcast_hls::MediaSequence::new(disc_seq), // the MSN advances in lock-step
             discontinuity_sequence: disc_seq,
             segments: segs,
             endlist: false,
@@ -457,7 +457,7 @@ fn discontinuity_tag_placement_immediately_before_extinf() {
     let pl = MediaPlaylist {
         version: 6,
         target_duration: 6,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![
             MediaSegment {

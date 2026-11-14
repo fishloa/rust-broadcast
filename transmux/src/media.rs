@@ -599,7 +599,7 @@ pub struct HlsPackager {
     /// `#EXT-X-VERSION`.
     pub version: u8,
     /// `#EXT-X-MEDIA-SEQUENCE`.
-    pub media_sequence: u64,
+    pub msn: broadcast_hls::MediaSequence,
     /// URI prefix for the generated per-track segment entries.
     pub uri_prefix: String,
 }
@@ -608,7 +608,7 @@ impl Default for HlsPackager {
     fn default() -> Self {
         Self {
             version: 7,
-            media_sequence: 0,
+            msn: broadcast_hls::MediaSequence::new(0),
             uri_prefix: String::from("seg"),
         }
     }
@@ -703,7 +703,7 @@ impl Package for HlsPackager {
         let playlist = MediaPlaylist {
             version: self.version,
             target_duration: target_secs,
-            media_sequence: self.media_sequence,
+            msn: self.msn,
             discontinuity_sequence: 0,
             segments,
             endlist: true,

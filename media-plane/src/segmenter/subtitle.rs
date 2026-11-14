@@ -55,6 +55,7 @@ use crate::ids::{PartIndex, SegmentSeq};
 use crate::publish_queue::{PendingPublish, drain_publish_queue};
 use crate::segmenter::audio::LeaderDurations;
 use crate::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk};
+use broadcast_hls::{MediaSequence, PartIndex as HlsPartIndex};
 
 const PTS_HZ_TICKS: i128 = clock33::PTS_HZ as i128;
 const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
@@ -198,14 +199,14 @@ struct Span {
 }
 
 struct ReadySegment {
-    msn: u32,
+    msn: MediaSequence,
     duration_secs: f64,
     body: String,
 }
 
 struct ReadyPart {
-    msn: u32,
-    part_index: u32,
+    msn: MediaSequence,
+    part_index: HlsPartIndex,
     duration_secs: f64,
     body: String,
 }
@@ -227,8 +228,8 @@ struct Core<D: CueDecoder> {
     decoder: D,
     origin_raw: Option<u64>,
     origin_dts: Option<(i64, Timescale)>,
-    spans: BTreeMap<u32, Span>,
-    next_msn: Option<u32>,
+    spans: BTreeMap<MediaSequence, Span>,
+    next_msn: Option<MediaSequence>,
     closed: Vec<Cue>,
     edge: i64,
     mpegts_at_origin: u64,
@@ -302,7 +303,7 @@ impl<D: CueDecoder> Core<D> {
         if let Some(previous) = cut.msn.checked_sub(1)
             && let Some(span) = self.spans.get_mut(&previous)
             && span.end.is_none()
-            && cut.part_index == 0
+            && cut.part_index == HlsPartIndex::ZERO
         {
             span.end = Some(local);
         }
@@ -356,7 +357,7 @@ impl<D: CueDecoder> Core<D> {
 
     fn publish_segments(
         &mut self,
-        before: Option<u32>,
+        before: Option<MediaSequence>,
         leaders: &LeaderDurations,
         ready: &mut Vec<Ready>,
     ) {
@@ -374,7 +375,7 @@ impl<D: CueDecoder> Core<D> {
                 body: self.render(span.start, end),
             }));
             self.spans.remove(&msn);
-            self.next_msn = Some(msn.saturating_add(1));
+            self.next_msn = msn.checked_next();
             let boundary = end;
             let retained: Vec<Cue> = std::mem::take(&mut self.closed)
                 .into_iter()
@@ -502,8 +503,8 @@ impl SubtitleFollower {
                 Ready::Part(part) => {
                     self.pending.push_back(PendingPublish::Part(PartEntry::new(
                         part.body.into_bytes(),
-                        SegmentSeq::new(part.msn),
-                        PartIndex::new(part.part_index),
+                        SegmentSeq::new(u32::try_from(part.msn.value()).unwrap_or(u32::MAX)),
+                        PartIndex::new(part.part_index.value()),
                         Duration::from_secs_f64(part.duration_secs),
                         true,
                     )));
@@ -516,7 +517,7 @@ impl SubtitleFollower {
                     self.pending
                         .push_back(PendingPublish::Segment(SegmentEntry::new(
                             segment.body.into_bytes(),
-                            SegmentSeq::new(segment.msn),
+                            SegmentSeq::new(u32::try_from(segment.msn.value()).unwrap_or(u32::MAX)),
                             Duration::from_secs_f64(segment.duration_secs),
                             Timestamp::from_nanos(start_ns),
                             SegmentMeta {
@@ -556,11 +557,11 @@ mod tests {
         fn finalize(&mut self, _end_pts_33: u64) {}
     }
 
-    fn part(msn: u32, part_index: u32, start_dts: i64) -> LeaderPart {
+    fn part(msn: MediaSequence, part_index: u32, start_dts: i64) -> LeaderPart {
         LeaderPart {
             cut: PartCutReady {
                 msn,
-                part_index,
+                part_index: HlsPartIndex::new(part_index),
                 start_dts,
                 timescale: Timescale::from_nonzero(90_000),
             },
@@ -592,11 +593,11 @@ mod tests {
             .collect()
     }
 
-    fn msns(ready: &[Ready]) -> Vec<u32> {
+    fn msns(ready: &[Ready]) -> Vec<MediaSequence> {
         segments(ready).iter().map(|s| s.msn).collect()
     }
 
-    fn four_parts(msn: u32, first_start: i64) -> Vec<LeaderPart> {
+    fn four_parts(msn: MediaSequence, first_start: i64) -> Vec<LeaderPart> {
         (0..4)
             .map(|i| part(msn, i, first_start + i64::from(i) * PART_TICKS))
             .collect()
@@ -606,7 +607,7 @@ mod tests {
     fn close_segment(
         core: &mut Core<Scripted>,
         leaders: &mut LeaderDurations,
-        msn: u32,
+        msn: MediaSequence,
     ) -> Vec<Ready> {
         leaders.insert(msn, TARGET_SECS);
         core.on_parts(&[], leaders)
@@ -628,7 +629,7 @@ mod tests {
         let leaders = LeaderDurations::new();
         core.decoder.open = Some((10_000, "hello".into()));
 
-        let ready = core.on_parts(&[part(1, 0, 0)], &leaders);
+        let ready = core.on_parts(&[part(MediaSequence::new(1), 0, 0)], &leaders);
         let first = parts(&ready);
         assert_eq!(first.len(), 1);
         assert!(first[0].body.starts_with(HEADER), "{}", first[0].body);
@@ -640,7 +641,7 @@ mod tests {
             first[0].body
         );
 
-        let ready = core.on_parts(&[part(1, 1, PART_TICKS)], &leaders);
+        let ready = core.on_parts(&[part(MediaSequence::new(1), 1, PART_TICKS)], &leaders);
         assert!(
             parts(&ready)[0]
                 .body
@@ -652,7 +653,7 @@ mod tests {
         core.decoder.open = None;
         core.decoder.closed.push(cue(10_000, 120_000, "hello"));
         core.push_sample(0, &[]);
-        let ready = core.on_parts(&[part(1, 2, 2 * PART_TICKS)], &leaders);
+        let ready = core.on_parts(&[part(MediaSequence::new(1), 2, 2 * PART_TICKS)], &leaders);
         assert!(
             parts(&ready)[0]
                 .body
@@ -666,7 +667,10 @@ mod tests {
     fn a_reconnected_run_maps_local_zero_to_its_start_on_the_media_timeline() {
         let mut core = core();
         core.mpegts_at_origin = 8 * 90_000;
-        let ready = core.on_parts(&[part(9, 0, 0)], &LeaderDurations::new());
+        let ready = core.on_parts(
+            &[part(MediaSequence::new(9), 0, 0)],
+            &LeaderDurations::new(),
+        );
         assert_eq!(
             parts(&ready)[0].body,
             "WEBVTT\nX-TIMESTAMP-MAP=LOCAL:00:00:00.000,MPEGTS:720000\n\n"
@@ -676,7 +680,10 @@ mod tests {
     #[test]
     fn a_part_without_cues_is_a_complete_document() {
         let mut core = core();
-        let ready = core.on_parts(&[part(1, 0, 0)], &LeaderDurations::new());
+        let ready = core.on_parts(
+            &[part(MediaSequence::new(1), 0, 0)],
+            &LeaderDurations::new(),
+        );
         assert_eq!(parts(&ready)[0].body, HEADER);
         assert!((parts(&ready)[0].duration_secs - PART_SECS).abs() < 1e-9);
     }
@@ -685,11 +692,11 @@ mod tests {
     fn a_segment_is_published_when_the_leader_closes_it() {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
-        let ready = core.on_parts(&four_parts(1, 0), &leaders);
+        let ready = core.on_parts(&four_parts(MediaSequence::new(1), 0), &leaders);
         assert!(segments(&ready).is_empty(), "the leader has not closed it");
         assert_eq!(parts(&ready).len(), 4);
-        let ready = close_segment(&mut core, &mut leaders, 1);
-        assert_eq!(msns(&ready), [1]);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
         assert_eq!(segments(&ready)[0].body, HEADER);
         assert!((segments(&ready)[0].duration_secs - TARGET_SECS).abs() < 1e-9);
     }
@@ -698,17 +705,20 @@ mod tests {
     fn parts_of_a_segment_precede_the_segment_and_follow_the_previous_one() {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
-        core.on_parts(&four_parts(1, 0), &leaders);
-        leaders.insert(1, TARGET_SECS);
-        let ready = core.on_parts(&[part(2, 0, SEG_TICKS)], &leaders);
-        let order: Vec<(char, u32)> = ready
+        core.on_parts(&four_parts(MediaSequence::new(1), 0), &leaders);
+        leaders.insert(MediaSequence::new(1), TARGET_SECS);
+        let ready = core.on_parts(&[part(MediaSequence::new(2), 0, SEG_TICKS)], &leaders);
+        let order: Vec<(char, MediaSequence)> = ready
             .iter()
             .map(|r| match r {
                 Ready::Segment(s) => ('s', s.msn),
                 Ready::Part(p) => ('p', p.msn),
             })
             .collect();
-        assert_eq!(order, [('s', 1), ('p', 2)]);
+        assert_eq!(
+            order,
+            [('s', MediaSequence::new(1)), ('p', MediaSequence::new(2))]
+        );
     }
 
     #[test]
@@ -716,8 +726,8 @@ mod tests {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
         core.decoder.open = Some((100_000, "hello".into()));
-        core.on_parts(&four_parts(1, 0), &leaders);
-        let ready = close_segment(&mut core, &mut leaders, 1);
+        core.on_parts(&four_parts(MediaSequence::new(1), 0), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
         assert!(
             segments(&ready)[0]
                 .body
@@ -725,8 +735,8 @@ mod tests {
             "{}",
             segments(&ready)[0].body
         );
-        core.on_parts(&four_parts(2, SEG_TICKS), &leaders);
-        let ready = close_segment(&mut core, &mut leaders, 2);
+        core.on_parts(&four_parts(MediaSequence::new(2), SEG_TICKS), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(2));
         assert!(
             segments(&ready)[0]
                 .body
@@ -740,14 +750,23 @@ mod tests {
     fn a_segment_carries_cues_that_closed_during_its_earlier_parts() {
         let mut core = core();
         let mut leaders = LeaderDurations::new();
-        core.on_parts(&[part(1, 0, 0), part(1, 1, PART_TICKS)], &leaders);
+        core.on_parts(
+            &[
+                part(MediaSequence::new(1), 0, 0),
+                part(MediaSequence::new(1), 1, PART_TICKS),
+            ],
+            &leaders,
+        );
         core.decoder.closed.push(cue(1_000, 20_000, "early"));
         core.push_sample(30_000, &[]);
         core.on_parts(
-            &[part(1, 2, 2 * PART_TICKS), part(1, 3, 3 * PART_TICKS)],
+            &[
+                part(MediaSequence::new(1), 2, 2 * PART_TICKS),
+                part(MediaSequence::new(1), 3, 3 * PART_TICKS),
+            ],
             &leaders,
         );
-        let ready = close_segment(&mut core, &mut leaders, 1);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
         assert!(
             segments(&ready)[0]
                 .body
@@ -763,21 +782,21 @@ mod tests {
         let mut leaders = LeaderDurations::new();
         core.decoder.closed.push(cue(150_000, 250_000, "across"));
         core.push_sample(0, &[]);
-        core.on_parts(&four_parts(1, 0), &leaders);
-        let ready = close_segment(&mut core, &mut leaders, 1);
-        assert_eq!(msns(&ready), [1]);
+        core.on_parts(&four_parts(MediaSequence::new(1), 0), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
         assert!(
             segments(&ready)[0]
                 .body
                 .contains("00:00:01.666 --> 00:00:02.777\nacross")
         );
-        let ready = core.on_parts(&four_parts(2, SEG_TICKS), &leaders);
+        let ready = core.on_parts(&four_parts(MediaSequence::new(2), SEG_TICKS), &leaders);
         assert!(
             parts(&ready)[0]
                 .body
                 .contains("00:00:01.666 --> 00:00:02.777\nacross")
         );
-        let ready = close_segment(&mut core, &mut leaders, 2);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(2));
         assert!(
             segments(&ready)[0]
                 .body
@@ -794,9 +813,9 @@ mod tests {
             .closed
             .push(cue(origin as u64 - 90_000, origin as u64 + 45_000, "early"));
         core.push_sample(0, &[]);
-        core.on_parts(&four_parts(1, origin), &leaders);
-        let ready = close_segment(&mut core, &mut leaders, 1);
-        assert_eq!(msns(&ready), [1]);
+        core.on_parts(&four_parts(MediaSequence::new(1), origin), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
         assert!(
             segments(&ready)[0]
                 .body
@@ -812,8 +831,8 @@ mod tests {
             .closed
             .push(cue(1_000, 90_000, "a < b & c > d"));
         core.push_sample(0, &[]);
-        core.on_parts(&four_parts(1, 0), &leaders);
-        let ready = close_segment(&mut core, &mut leaders, 1);
+        core.on_parts(&four_parts(MediaSequence::new(1), 0), &leaders);
+        let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
         assert!(segments(&ready)[0].body.contains("a &lt; b &amp; c &gt; d"));
     }
 }

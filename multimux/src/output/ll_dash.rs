@@ -87,7 +87,13 @@ mod tests {
     use transmux::ll_hls::PartInfo;
 
     fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo::new(vec![0x40 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
+        PartInfo::new(
+            vec![0x40 + idx as u8; 4],
+            0.5,
+            seq,
+            broadcast_hls::PartIndex::new(idx),
+        )
+        .with_independent(idx == 0)
     }
 
     fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {

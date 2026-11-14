@@ -14,8 +14,12 @@ const URL: &str = "http://origin/v/media.m3u8";
 const TS_PACKET_LEN: usize = 188;
 const TS_SYNC_BYTE: u8 = 0x47;
 const GARBAGE_LEN: usize = 4096;
-const SEG0: ResourceId = ResourceId::Segment { msn: 0 };
-const SEG1: ResourceId = ResourceId::Segment { msn: 1 };
+const SEG0: ResourceId = ResourceId::Segment {
+    msn: broadcast_hls::MediaSequence::new(0),
+};
+const SEG1: ResourceId = ResourceId::Segment {
+    msn: broadcast_hls::MediaSequence::new(1),
+};
 
 fn ts(name: &str) -> Vec<u8> {
     std::fs::read(test_fixtures::path(&format!("hls/ts-hls/{}", name))).unwrap()

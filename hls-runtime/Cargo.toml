@@ -56,7 +56,7 @@ default = ["std"]
 # follow along when a caller does want `std`.
 std = ["broadcast-common/std", "broadcast-common/lang", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "mpeg-ts/std", "dep:bytes", "url/std", "jiff/std", "serde?/std"]
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
-serde = ["dep:serde", "broadcast-common/serde", "url/serde"]
+serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "url/serde"]
 
 [dev-dependencies]
 # Loopback mock HTTP servers (tokio is

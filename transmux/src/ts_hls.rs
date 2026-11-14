@@ -177,7 +177,7 @@ pub struct TsHlsPackager {
     /// `#EXT-X-VERSION` written to the playlist.
     pub version: u8,
     /// `#EXT-X-MEDIA-SEQUENCE` of the first segment.
-    pub media_sequence: u64,
+    pub msn: broadcast_hls::MediaSequence,
     /// URI prefix for the generated `.ts` segment entries (`{prefix}{i}.ts`).
     pub uri_prefix: String,
 }
@@ -196,7 +196,7 @@ impl TsHlsPackager {
         Self {
             target_secs: target_secs.max(1),
             version: DEFAULT_HLS_VERSION,
-            media_sequence: 0,
+            msn: broadcast_hls::MediaSequence::new(0),
             uri_prefix: String::from("seg"),
         }
     }
@@ -345,7 +345,7 @@ impl Package for TsHlsPackager {
         let playlist = MediaPlaylist {
             version: self.version,
             target_duration: target_duration.max(1),
-            media_sequence: self.media_sequence,
+            msn: self.msn,
             discontinuity_sequence: 0,
             segments: playlist_segments,
             endlist: true,
@@ -1389,12 +1389,14 @@ impl StreamingTsHlsSegmenter {
             })
             .collect();
 
-        let media_sequence = self.total_segments - self.window_segments.len() as u64;
+        let msn = broadcast_hls::MediaSequence::new(
+            self.total_segments - self.window_segments.len() as u64,
+        );
 
         Ok(MediaPlaylist {
             version: self.version,
             target_duration: self.target_duration.max(1),
-            media_sequence,
+            msn,
             discontinuity_sequence: self.discontinuity_sequence,
             segments,
             endlist: self.finished,

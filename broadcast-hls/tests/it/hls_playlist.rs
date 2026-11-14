@@ -16,7 +16,7 @@ fn media_playlist_rfc_valid() {
     let pl = MediaPlaylist {
         version: 3,
         target_duration: 10,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![
             MediaSegment {
@@ -159,7 +159,7 @@ fn cbcs_emits_ext_x_key_sample_aes() {
     let pl = MediaPlaylist {
         version: 6,
         target_duration: 6,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![MediaSegment {
             uri: "seg0.m4s".into(),
@@ -231,7 +231,10 @@ fn rendition_report_without_last_msn_is_rejected() {
          #EXT-X-RENDITION-REPORT:URI=\"b.m3u8\",LAST-MSN=42\n#EXT-X-ENDLIST\n",
     )
     .expect("LAST-MSN present must parse");
-    assert_eq!(ok.rendition_reports[0].last_msn, 42);
+    assert_eq!(
+        ok.rendition_reports[0].last_msn,
+        broadcast_hls::MediaSequence::new(42)
+    );
 }
 
 #[test]

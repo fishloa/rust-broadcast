@@ -2879,11 +2879,23 @@ mod tests {
         // Live parts of the in-progress segment (seq 2) -- not yet closed.
         store.add_part(
             crate::route::SPTS_PROGRAM_ID,
-            transmux::ll_hls::PartInfo::new(vec![0x50; 4], 0.5, 2, 0).with_independent(true),
+            transmux::ll_hls::PartInfo::new(
+                vec![0x50; 4],
+                0.5,
+                2,
+                broadcast_hls::PartIndex::new(0),
+            )
+            .with_independent(true),
         );
         store.add_part(
             crate::route::SPTS_PROGRAM_ID,
-            transmux::ll_hls::PartInfo::new(vec![0x51; 4], 0.5, 2, 1).with_independent(false),
+            transmux::ll_hls::PartInfo::new(
+                vec![0x51; 4],
+                0.5,
+                2,
+                broadcast_hls::PartIndex::new(1),
+            )
+            .with_independent(false),
         );
 
         let mut streams = HashMap::new();

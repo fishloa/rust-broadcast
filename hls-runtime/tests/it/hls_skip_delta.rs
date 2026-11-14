@@ -88,7 +88,7 @@ fn skip_delta_count_and_media_sequence() {
     }
     let full = render(&origin, None);
     let parsed_full = MediaPlaylist::parse(&full).expect("parse full");
-    let full_msn = parsed_full.media_sequence;
+    let full_msn = parsed_full.msn;
 
     let delta = render(&origin, Some(SkipDirective::Yes));
     let parsed = MediaPlaylist::parse(&delta).expect("parse delta");
@@ -99,7 +99,7 @@ fn skip_delta_count_and_media_sequence() {
         "skipped={}",
         skip.skipped_segments
     );
-    assert_eq!(parsed.media_sequence, full_msn, "MEDIA-SEQUENCE unchanged");
+    assert_eq!(parsed.msn, full_msn, "MEDIA-SEQUENCE unchanged");
     // re-serialise round trips
     let reser = parsed.to_m3u8().expect("reserialise");
     let reparsed = MediaPlaylist::parse(&reser).expect("reparse");

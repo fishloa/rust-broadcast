@@ -9,7 +9,7 @@ fn main() {
     let playlist = MediaPlaylist {
         version: 3,
         target_duration: 10,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: vec![
             MediaSegment {

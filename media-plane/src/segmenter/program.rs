@@ -101,7 +101,7 @@ use crate::segmenter::audio::AudioFollower;
 
 use crate::segmenter::audio::{LEADER_DURATION_HISTORY, LeaderDurations, leader_tracks};
 use crate::segmenter::subtitle::{LeaderPart, SubtitleFollower};
-use broadcast_hls::InstreamId;
+use broadcast_hls::{InstreamId, MediaSequence, PartIndex as HlsPartIndex};
 
 /// Configuration for one [`ProgramSegmenter`], replaceable on route reload:
 /// start from [`SegmenterConfig::default`] and set what differs with the
@@ -1779,8 +1779,10 @@ impl ProgramSegmenter {
             .next_timeline_ns
             .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
         if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
-            self.leader_durations
-                .insert(seq.value(), duration.as_secs_f64());
+            self.leader_durations.insert(
+                MediaSequence::new(u64::from(seq.value())),
+                duration.as_secs_f64(),
+            );
         }
         self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
             Vec::new(),
@@ -1857,8 +1859,10 @@ impl ProgramSegmenter {
             return;
         }
         for segment in segments {
-            self.leader_durations
-                .insert(segment.segment_seq.value(), segment.duration);
+            self.leader_durations.insert(
+                MediaSequence::new(u64::from(segment.segment_seq.value())),
+                segment.duration,
+            );
         }
         while self.leader_durations.len() > LEADER_DURATION_HISTORY {
             self.leader_durations.pop_first();
@@ -1873,9 +1877,10 @@ impl ProgramSegmenter {
         }
         cuts.iter()
             .filter_map(|cut| {
-                let part = parts
-                    .iter()
-                    .find(|p| p.segment_seq == cut.msn && p.part_index == cut.part_index)?;
+                let part = parts.iter().find(|p| {
+                    u64::from(p.segment_seq) == u64::from(cut.msn)
+                        && HlsPartIndex::new(p.part_index.value()) == cut.part_index
+                })?;
                 Some(LeaderPart {
                     cut: *cut,
                     duration_secs: part.duration,
@@ -3135,12 +3140,12 @@ mod segmenter_tests {
         segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(0)));
 
         let parts = vec![
-            PartInfo::new(vec![0u8; 4], 0.2, 1, 0).with_independent(true),
-            PartInfo::new(vec![0u8; 4], 0.2, 1, 1).with_independent(false),
+            PartInfo::new(vec![0u8; 4], 0.2, 1, HlsPartIndex::new(0)).with_independent(true),
+            PartInfo::new(vec![0u8; 4], 0.2, 1, HlsPartIndex::new(1)).with_independent(false),
             // Segment 2's opening part — already produced (the segmenter
             // has started buffering the next segment) even though segment
             // 1 has not been queued yet in this same call.
-            PartInfo::new(vec![0u8; 4], 0.2, 2, 0).with_independent(true),
+            PartInfo::new(vec![0u8; 4], 0.2, 2, HlsPartIndex::new(0)).with_independent(true),
         ];
         let segments = vec![ReadySegment {
             bytes: vec![1u8; 4],

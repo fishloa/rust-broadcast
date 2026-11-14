@@ -894,7 +894,7 @@ mod tests {
             segment_writer.publish_part(PartEntry::new(
                 part.bytes,
                 crate::ids::SegmentSeq::new(part.segment_seq),
-                crate::ids::PartIndex::new(part.part_index),
+                crate::ids::PartIndex::new(part.part_index.value()),
                 StdDuration::from_secs_f64(part.duration),
                 part.independent,
             ));

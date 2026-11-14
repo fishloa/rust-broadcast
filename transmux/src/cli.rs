@@ -1036,7 +1036,7 @@ fn render_cmaf_hls_playlist(segments: &[(Vec<u8>, f64)]) -> CliResult<String> {
     let playlist = MediaPlaylist {
         version: HLS_CMAF_VERSION,
         target_duration,
-        media_sequence: 0,
+        msn: broadcast_hls::MediaSequence::new(0),
         discontinuity_sequence: 0,
         segments: segs,
         endlist: true,

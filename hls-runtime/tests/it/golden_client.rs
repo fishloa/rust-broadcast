@@ -3,6 +3,7 @@
 //! it byte-for-byte except the three `#f` matrix rows Task 11 reviews (the old
 //! builder appended a query pair after a fragment); the `..` rows (the defect)
 //! are asserted in Task 11's unit tests, not in this golden.
+use broadcast_hls::PartIndex;
 
 use hls_runtime::client::{Action, BlockingReload, HlsClient, PlaylistRequest};
 
@@ -39,11 +40,17 @@ fn client_actions_and_request_urls_match_golden() {
     // request URL matrix (blocking x skip), independent of the engine
     for (blocking, skip) in [
         (None, false),
-        (Some(BlockingReload { msn: 5, part: None }), false),
         (
             Some(BlockingReload {
-                msn: 5,
-                part: Some(2),
+                msn: broadcast_hls::MediaSequence::new(5),
+                part: None,
+            }),
+            false,
+        ),
+        (
+            Some(BlockingReload {
+                msn: broadcast_hls::MediaSequence::new(5),
+                part: Some(PartIndex::new(2)),
             }),
             true,
         ),

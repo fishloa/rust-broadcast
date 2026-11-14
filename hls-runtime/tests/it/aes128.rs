@@ -236,10 +236,20 @@ fn segment_waits_for_key_then_decrypts_in_order() {
         })
         .expect("a key fetch is issued");
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, &files["index1.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(1),
+            },
+            &files["index1.ts"],
+        )
         .unwrap();
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, &files["index0.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            &files["index0.ts"],
+        )
         .unwrap();
     assert!(
         drain_outputs(&mut client).is_empty(),
@@ -304,7 +314,12 @@ fn bad_key_length_is_error() {
     ));
     let files = enc_files(&KEY_A, &iv0, &KEY_A, &iv1);
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, &files["index0.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            &files["index0.ts"],
+        )
         .unwrap();
     assert!(!has_samples(&drain_outputs(&mut client)));
     client.on_key(id, &KEY_A).unwrap();
@@ -332,10 +347,20 @@ fn wrong_key_gives_decrypt_failed_not_garbage_samples() {
         })
         .unwrap();
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, &files["index0.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            &files["index0.ts"],
+        )
         .unwrap();
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, &files["index1.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(1),
+            },
+            &files["index1.ts"],
+        )
         .unwrap();
     let err = client.on_key(id, &KEY_WRONG).unwrap_err();
     assert!(
@@ -364,7 +389,12 @@ fn segment_not_multiple_of_16_is_decrypt_failed() {
             .unwrap();
         client.on_key(id, &KEY_A).unwrap();
         let err = client
-            .on_resource(ResourceId::Segment { msn: 0 }, bad)
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                bad,
+            )
             .unwrap_err();
         assert!(matches!(err, Error::DecryptFailed { .. }), "{err:?}");
         assert!(!has_samples(&drain_outputs(&mut client)));
@@ -503,10 +533,20 @@ fn on_key_error_then_reload_requests_key_again() {
         vec![(id, Url::parse("http://fixture/key.bin").expect("URL"))]
     );
     client
-        .on_resource(ResourceId::Segment { msn: 0 }, &files["index0.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            },
+            &files["index0.ts"],
+        )
         .unwrap();
     client
-        .on_resource(ResourceId::Segment { msn: 1 }, &files["index1.ts"])
+        .on_resource(
+            ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(1),
+            },
+            &files["index1.ts"],
+        )
         .unwrap();
     client.on_key(id, &KEY_A).unwrap();
     assert_eq!(

@@ -613,7 +613,7 @@ pub(crate) fn render_playlist(
     }
     let playlist = broadcast_hls::MediaPlaylist {
         target_duration,
-        media_sequence,
+        msn: broadcast_hls::MediaSequence::new(media_sequence),
         segments: hls_segments,
         endlist,
         playlist_type,

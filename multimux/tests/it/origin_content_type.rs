@@ -35,7 +35,8 @@ fn fmp4_route() -> Arc<RouteHandle> {
         .expect("add_segment");
     route.add_part(
         media_plane::ProgramId(0),
-        PartInfo::new(vec![0x10; 4], 0.5, 2, 0).with_independent(true),
+        PartInfo::new(vec![0x10; 4], 0.5, 2, broadcast_hls::PartIndex::new(0))
+            .with_independent(true),
     );
     route
 }
