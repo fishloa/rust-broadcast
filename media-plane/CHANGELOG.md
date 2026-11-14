@@ -6,11 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-#### Changed
+### Dependencies
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
+
+### Changed
 - BREAKING: the subtitle follower's internal segment number is a `broadcast_hls::MediaSequence` (and its part index a `PartIndex`), matching the cuts a leader hands it; `LeaderDurations` keeps its `u32` key, since it holds a segment duration per leader segment for every follower, not a playlist number (#2699).
 - BREAKING: `ProgramSegmenter::continue_after_reconnect` takes the media start as a `Duration` (it was `media_start_ns: u64`), `SegmenterConfig::part_target_ms: u32` is `part_target: Duration` (constructed with `with_part_target(Duration)`), `SiblingTrunks::build_audio_followers` takes that `Duration`, and `SegmenterEvent::PartTargetMs(u32)` is `SegmenterEvent::PartTarget(Duration)`. Migration: `continue_after_reconnect(ns)` becomes `continue_after_reconnect(Duration::from_nanos(ns))`, `.with_part_target_ms(250)` becomes `.with_part_target(Duration::from_millis(250))`, and a host matching `PartTargetMs(ms)` matches `PartTarget(d)`.
 - BREAKING: `ByteMerge::new` returns `Result<Self, MergeConfigError>` instead of panicking; the three assertions it made are now the typed variants `MergeConfigError::ZeroSources`, `MergeConfigError::ZeroMaxQueued` and `MergeConfigError::FailoverOutOfRange`. Migration: `ByteMerge::new(policy, 2, 8)` becomes `ByteMerge::new(policy, 2, 8).expect("counts are valid")`; a config-file count is checked with `if n == 0 { .. }` or by matching the error (#2659).
 - BREAKING: `ingress::ReconnectPolicy` is `broadcast_common::backoff::ReconnectPolicy` (`backoff` + `max_attempts: Option<NonZeroU32>`); its old `new(max_attempts: NonZeroU32)` is `ReconnectPolicy::default().with_max_attempts(nonzero)`, and a `DialSupervisor` reads the bound through `ReconnectPolicy::exhausted` (#2690).
+- BREAKING: `ByteTap::new` returns `Result<Self, TapError>` instead of panicking, and the failure is a typed `TapError::ZeroCapacity` (exposed as `media_plane::TapError`): a zero-capacity ring is reported rather than asserted, so the same call works from a configuration validator (#2733).
 
 #### Fixed
 - `epoch_ms_to_media` floors its media tick like `TimeAnchor::media_to_epoch_ms` now does instead of truncating toward zero, so a UTC instant just before a millisecond the forward direction floors onto no longer resolves to an inconsistent tick (issue #2724).

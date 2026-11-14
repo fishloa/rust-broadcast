@@ -15,7 +15,7 @@ use broadcast_client::{Action, BufferEvent, Config, ConnId, ErrorKind, Event, Se
 use broadcast_common::cenc::CencScheme;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::duration_micros;
+use buffering_runtime::instant_micros;
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended};
 use support::ts_host::Host as TsHost;
@@ -597,7 +597,7 @@ fn a_40_stream_pmt_with_a_never_sent_private_audio_still_starts_within_the_wait(
     assert!(
         start
             <= first
-                + duration_micros(DEFAULT_START_PENDING_TRACK_HARD_CAP)
+                + instant_micros(DEFAULT_START_PENDING_TRACK_HARD_CAP)
                 + START_BOUND_AFTER_WAIT_US,
         "start {start} us, first sample {first} us"
     );

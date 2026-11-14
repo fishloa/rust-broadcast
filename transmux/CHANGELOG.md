@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
+
 ### Changed
 - BREAKING: `SampleTiming` is now an enum instead of a struct. A sample with a clock carries `SampleTiming::Timed { dts, pts, duration: Option<NonZeroU32> }` (the span is stated where the source had one, `None` where it did not); a sample with only a span carries `SampleTiming::DurationOnly { duration: NonZeroU32 }`; and a section-carried track stays `timing: None`. `SampleTiming::from_options` is removed (use `SampleTiming::timed`, `SampleTiming::timed_with_duration` or `SampleTiming::duration_only`), and `Sample::composition_offset` now returns `Result<Option<i32>>` via `checked_sub` + `i32::try_from` instead of silently clamping an over-range offset (#2688).
 - BREAKING: `PcrSample::pcr_27mhz: u64` is `PcrSample::pcr: mpeg_ts::Pcr` and `PcrSample::new` takes that `Pcr`. A PCR is a 33-bit base plus a 9-bit extension (ISO/IEC 13818-1 §2.4.3.5), so a capture's off-clock extension in `300..=511` now survives into the IR instead of being lost to a 27 MHz integer; the previous reading is `PcrSample::pcr_27mhz()`, which is `None` for such a value. Migration: `PcrSample::new(pcr.as_27mhz(), pid, index, discontinuity)` becomes `PcrSample::new(pcr, pid, index, discontinuity)` with the parsed `Pcr`, and `sample.pcr_27mhz` becomes `sample.pcr_27mhz()` (#2652).

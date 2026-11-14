@@ -35,13 +35,19 @@ pub fn need_out(buf: &[u8], need: usize) -> Result<(), OutputBufferTooSmall> {
 /// `value` if it fits in an unsigned field of `bits` bits, else `Err`.
 ///
 /// The comparison happens in `u64` before any narrowing, so a value that an
-/// `as` cast would silently truncate is reported instead. Panics if `bits` is
-/// 0 or greater than 64: that is a programming error, not a wire condition.
+/// `as` cast would silently truncate is reported instead. A `bits` of 0 (or
+/// above 64) is a caller mistake, not a wire condition: a zero-width field
+/// holds no value, and a width past `u64` holds every one, so both are
+/// answered with [`FieldOverflow`] rather than a panic a caller cannot see in
+/// the signature (a width of 64 is the whole `u64` and is accepted).
 pub fn fit_bits(value: u64, bits: u32, field: &'static str) -> Result<u64, FieldOverflow> {
-    assert!(
-        (1..=64).contains(&bits),
-        "fit_bits: bits must be in 1..=64, got {bits}"
-    );
+    if bits == 0 || bits > 64 {
+        return Err(FieldOverflow {
+            field,
+            value,
+            max: 0,
+        });
+    }
     let max = if bits == 64 {
         u64::MAX
     } else {
@@ -235,6 +241,31 @@ mod tests {
         );
     }
 
+    /// A width outside `1..=64` is a typed error, never a panic a caller
+    /// cannot see in the signature: no unsigned field is zero bits wide, and
+    /// nothing is wider than the `u64` the value already is.
+    #[test]
+    fn fit_bits_out_of_range_width_is_a_typed_error_not_a_panic() {
+        assert_eq!(
+            fit_bits(0, 0, "x"),
+            Err(FieldOverflow {
+                field: "x",
+                value: 0,
+                max: 0
+            })
+        );
+        assert_eq!(
+            fit_bits(7, 65, "x"),
+            Err(FieldOverflow {
+                field: "x",
+                value: 7,
+                max: 0
+            })
+        );
+        assert_eq!(fit_bits(u64::MAX, 64, "x"), Ok(u64::MAX));
+        assert_eq!(fit_bits(1, 1, "x"), Ok(1));
+    }
+
     #[test]
     fn fit_bits_arbitrary_widths() {
         assert_eq!(fit_bits(4095, 12, "x"), Ok(4095));
@@ -280,18 +311,6 @@ mod tests {
                 max: 65_535
             })
         );
-    }
-
-    #[test]
-    #[should_panic(expected = "bits must be in 1..=64")]
-    fn fit_bits_rejects_zero_bits() {
-        let _ = fit_bits(1, 0, "x");
-    }
-
-    #[test]
-    #[should_panic(expected = "bits must be in 1..=64")]
-    fn fit_bits_rejects_65_bits() {
-        let _ = fit_bits(1, 65, "x");
     }
 
     #[test]

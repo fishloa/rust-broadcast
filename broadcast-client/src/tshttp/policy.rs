@@ -84,7 +84,9 @@ impl TsHttpPolicy {
     /// test that asserts an exact delay passes a fixed one.
     pub fn with_seed(url: impl Into<String>, config: Config, now: Timestamp, seed: u64) -> Self {
         let config = config.clamped();
-        let retry = ReconnectTimer::new(&config.backoff.steps, config.backoff.cap, seed);
+        // `clamped` caps the schedule at its ceiling, so it is accepted.
+        let retry = ReconnectTimer::new(&config.backoff, seed)
+            .unwrap_or_else(|_| ReconnectTimer::no_delay());
         let mut c = Self {
             url: url.into(),
             config,

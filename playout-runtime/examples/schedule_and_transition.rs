@@ -5,16 +5,14 @@
 //! cargo run -p playout-runtime --example schedule_and_transition
 //! ```
 
+use broadcast_common::timescale;
 use broadcast_common::timescale::Timescale;
 use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry};
 use playout_runtime::transition::next_transition;
 
 /// The channel clock: 90 kHz, the unit SCTE-35 cues use, and the natural
 /// choice for a schedule that ultimately emits them.
-const CLOCK: Timescale = match Timescale::new(90_000) {
-    Some(t) => t,
-    None => unreachable!(),
-};
+const CLOCK: Timescale = timescale!(90_000);
 /// One second on the channel clock.
 const TICKS_PER_SECOND: u64 = 90_000;
 

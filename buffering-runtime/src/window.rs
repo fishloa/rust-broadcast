@@ -1,7 +1,7 @@
 //! Sliding minimum over a trailing time window (monotonic deque).
 
 use crate::error::Error;
-use crate::time::duration_micros;
+use crate::time::window_micros;
 use alloc::collections::VecDeque;
 
 /// Monotonic-deque sliding minimum of `(time, value)` samples.
@@ -24,7 +24,7 @@ impl MinWindow {
     /// # Errors
     /// [`Error::ZeroLengthWindow`] when `window` is zero.
     pub fn new(window: core::time::Duration, max_samples: u16) -> Result<Self, Error> {
-        let window_us = duration_micros(window);
+        let window_us = window_micros(window);
         if window_us == 0 {
             return Err(Error::ZeroLengthWindow);
         }

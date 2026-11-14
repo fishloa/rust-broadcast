@@ -20,8 +20,17 @@ use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};
 use playout_runtime::transition::TransitionPlan;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
+use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};
+use scte35_splice::time::SpliceTime;
 use std::fs;
 use std::time::Duration;
+/// The one program-mode `splice_time()` an emitted cue carries.
+fn program_splice_time(cue: &SpliceInsert) -> SpliceTime {
+    match &cue.mode {
+        SpliceMode::Program(ProgramSplice::At(splice_time)) => *splice_time,
+        other => panic!("expected a scheduled program splice, got {other:?}"),
+    }
+}
 
 /// The real nearest video keyframe's PTS, independently measured straight
 /// from this same capture's `moof`/`traf`/`tfdt`/`trun` boxes
@@ -127,12 +136,12 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
         on_the_pts_circle(NEAREST_KEYFRAME_PTS)
     );
     assert_eq!(
-        insert.splice_time.unwrap().pts_time,
+        program_splice_time(&insert).pts_time.map(|c| c.ticks()),
         Some(NEAREST_KEYFRAME_PTS % clock33::WRAP_33BIT),
         "the emitted cue must carry the conditioned (snapped) instant, not the raw request"
     );
     assert_ne!(
-        insert.splice_time.unwrap().pts_time,
+        program_splice_time(&insert).pts_time.map(|c| c.ticks()),
         Some(requested_pts % (1u64 << 33)),
         "the emitted cue must not be a passthrough of the raw, non-aligned request"
     );
@@ -164,7 +173,9 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
             assert_eq!(reparsed_insert.splice_event_id, 0x6A78_D416);
             assert!(reparsed_insert.out_of_network_indicator);
             assert_eq!(
-                reparsed_insert.splice_time.unwrap().pts_time,
+                program_splice_time(&reparsed_insert)
+                    .pts_time
+                    .map(|c| c.ticks()),
                 Some(NEAREST_KEYFRAME_PTS % clock33::WRAP_33BIT)
             );
             assert_eq!(reparsed_insert.break_duration.unwrap().duration, 1_800_000);

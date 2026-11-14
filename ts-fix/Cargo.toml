@@ -41,7 +41,7 @@ required-features = ["cli"]
 # `--no-default-features` lane whenever nothing else had built the binary.
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-scte35-splice = { path = "../scte35-splice", version = "6.0.0", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "7.0.0", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true

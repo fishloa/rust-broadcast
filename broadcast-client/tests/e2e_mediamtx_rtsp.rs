@@ -898,7 +898,7 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
         "A/V offset (median audio pts-minus-RTP-packet-arrival minus the same for video, after SenderReport sync) is {av_offset} s"
     );
     let configured_start_lead_us =
-        buffering_runtime::duration_micros(Config::default().buffer.policy.initial);
+        buffering_runtime::instant_micros(Config::default().buffer.policy.initial);
     let origin_27 = first_video_keyframe_pts.map(|pts| {
         let ts = track_timescale
             .values()
@@ -954,8 +954,8 @@ fn print_lead_series(label: &str, session: &Session) {
             } => {
                 origin = origin.or(Some(*e));
                 end.insert(*track, *e);
-                if buffering_runtime::duration_micros(*now_us) >= next_print {
-                    next_print = buffering_runtime::duration_micros(*now_us) + 250_000;
+                if buffering_runtime::instant_micros(*now_us) >= next_print {
+                    next_print = buffering_runtime::instant_micros(*now_us) + 250_000;
                     let o = origin.map_or(0, |o| o.ticks());
                     let per: Vec<String> = end
                         .iter()
@@ -969,7 +969,7 @@ fn print_lead_series(label: &str, session: &Session) {
                         .map_or(0, |m| (m.ticks() as i128 - o as i128) / 27_000);
                     eprintln!(
                         "LEAD[{label}] at={}ms {} min_lead={}ms",
-                        buffering_runtime::duration_micros(*now_us) / 1000,
+                        buffering_runtime::instant_micros(*now_us) / 1000,
                         per.join(" "),
                         lead
                     );
