@@ -13,6 +13,11 @@ pub fn now(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
+/// The status type a test's numeric code names.
+pub fn code(status: u16) -> http::StatusCode {
+    http::StatusCode::from_u16(status).expect("a test names a real status")
+}
+
 #[derive(Clone)]
 pub enum Reply {
     Body(Vec<u8>),
@@ -98,13 +103,13 @@ impl Host {
         match self.reply(&decoded) {
             Reply::Body(b) if is_manifest => self.client.on_manifest(now(self.now), id, &b),
             Reply::Body(b) => self.client.on_fragment(now(self.now), id, &b),
-            Reply::Status(s) => self.fail(id, Some(s), 0),
-            Reply::Throttled(s, wait_us) => self.fail(id, Some(s), wait_us),
+            Reply::Status(s) => self.fail(id, Some(code(s)), 0),
+            Reply::Throttled(s, wait_us) => self.fail(id, Some(code(s)), wait_us),
             Reply::Transport => self.fail(id, None, 0),
         }
     }
 
-    fn fail(&mut self, id: RequestId, status: Option<u16>, retry_after_us: u64) {
+    fn fail(&mut self, id: RequestId, status: Option<http::StatusCode>, retry_after_us: u64) {
         self.client.on_failure(
             now(self.now),
             id,

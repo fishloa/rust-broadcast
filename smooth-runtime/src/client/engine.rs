@@ -27,7 +27,7 @@ use broadcast_common::units::MICROS_PER_SEC;
 /// The shortest retry delay: a zero step must never become a burst of retries at one instant.
 const MIN_BACKOFF: Duration = Duration::from_millis(1);
 const REFRESH_DIVISOR: u64 = 2;
-const FIRST_TRACK_ID: u32 = 1;
+const FIRST_TRACK_ID: TrackId = TrackId::new(1);
 const FOURCC_AVC: [&str; 2] = ["H264", "AVC1"];
 const FOURCC_HEVC: [&str; 3] = ["H265", "HEVC", "HVC1"];
 const FOURCC_HEVC_ALT: &str = "HEV1";
@@ -94,16 +94,20 @@ impl SmoothClient {
     /// ([`SmoothClientConfig::new`]); the first [`Action`] is its fetch.
     pub fn new(config: SmoothClientConfig) -> Self {
         let backoff = &config.backoff;
-        let retry = RetrySchedule::from_steps(
-            &backoff
-                .steps
-                .iter()
-                .map(|d| (*d).max(MIN_BACKOFF))
-                .collect::<Vec<_>>(),
+        let steps = backoff
+            .steps
+            .iter()
+            .map(|d| (*d).max(MIN_BACKOFF))
+            .collect::<Vec<_>>();
+        let (retry, invalid) = match RetrySchedule::from_steps(
+            &steps,
             backoff.cap.max(MIN_BACKOFF),
             mix_seed(config.jitter_seed),
-        );
-        Self {
+        ) {
+            Ok(retry) => (retry, None),
+            Err(error) => (Self::plain_schedule(), Some(error)),
+        };
+        let mut client = Self {
             config,
             streams: Vec::new(),
             started: false,
@@ -119,7 +123,25 @@ impl SmoothClient {
             next_request: 0,
             actions: VecDeque::new(),
             outputs: VecDeque::new(),
+        };
+        if let Some(error) = invalid {
+            client.fail(SmoothError::InvalidBackoff(error));
         }
+        client
+    }
+
+    /// The schedule an invalid configuration is paired with: a valid one (the
+    /// engine still has to hold something) the client never consults, since it
+    /// fails at construction.
+    fn plain_schedule() -> RetrySchedule {
+        RetrySchedule::from_steps(&[], MIN_BACKOFF, 0)
+            .unwrap_or_else(|_| Self::no_delay_schedule(0))
+    }
+
+    /// The schedule no bound can refuse: a zero cap with no step table.
+    fn no_delay_schedule(seed: u64) -> RetrySchedule {
+        RetrySchedule::from_steps(&[], Duration::ZERO, seed)
+            .unwrap_or_else(|_| Self::no_delay_schedule(0))
     }
 
     /// Re-base relative fragment URLs on `url`, after a redirect of the manifest.
@@ -182,7 +204,7 @@ impl SmoothClient {
         let stream = &self.streams[si];
         codec_family(&stream.applied.four_cc) == codec_family(&candidate.four_cc)
             && track_spec_from_quality_level(
-                TrackId::new(FIRST_TRACK_ID),
+                FIRST_TRACK_ID,
                 stream.timescale,
                 stream.index.stream_type,
                 candidate,
@@ -407,7 +429,7 @@ impl SmoothClient {
         now: u64,
         si: usize,
         chunk: Chunk,
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
         wait_us: u64,
     ) {
         self.streams[si].failures += 1;
@@ -493,14 +515,10 @@ impl SmoothClient {
             .qualities
             .iter()
             .map(|q| {
-                let codecs = track_spec_from_quality_level(
-                    TrackId::new(FIRST_TRACK_ID),
-                    timescale,
-                    index.stream_type,
-                    q,
-                )
-                .ok()
-                .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
+                let codecs =
+                    track_spec_from_quality_level(FIRST_TRACK_ID, timescale, index.stream_type, q)
+                        .ok()
+                        .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
                 QualityInfo {
                     bitrate: q.bitrate,
                     resolution: q.width.zip(q.height),
@@ -579,7 +597,9 @@ impl SmoothClient {
         let mut specs = Vec::new();
         for (position, &si) in live.iter().enumerate() {
             let global = TrackId::new(
-                FIRST_TRACK_ID.saturating_add(u32::try_from(position).unwrap_or(u32::MAX)),
+                FIRST_TRACK_ID
+                    .value()
+                    .saturating_add(u32::try_from(position).unwrap_or(u32::MAX)),
             );
             let local = self.streams[si].local_track_id.unwrap_or(FIRST_TRACK_ID);
             let quality = self.streams[si]
@@ -607,13 +627,13 @@ impl SmoothClient {
     fn setup_track(
         &mut self,
         si: usize,
-        local: u32,
+        local: TrackId,
         global: TrackId,
         quality: &broadcast_smooth::QualityLevel,
     ) -> Result<TrackSpec, String> {
         let stream = &self.streams[si];
         let mut spec = track_spec_from_quality_level(
-            TrackId::new(local),
+            local,
             stream.timescale,
             stream.index.stream_type,
             quality,

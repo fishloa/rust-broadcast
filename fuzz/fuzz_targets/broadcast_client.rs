@@ -74,6 +74,26 @@ const DATAGRAM_URLS: [&str; 5] = [
 const SRT_ENTROPY_SEED: [u8; 32] = [7; 32];
 const CLIENT_IDENTITY_HANDLE: u64 = 1;
 const SRT_HEADER_BYTES: usize = 16;
+
+/// A fuzz-table status code as the typed value the session's callback takes.
+fn code(status: u16) -> http::StatusCode {
+    http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::OK)
+}
+
+/// Reply headers from fuzz-derived pairs; a name or value the header type refuses is dropped,
+/// as a host's own header map would.
+fn header_map(pairs: &[(String, String)]) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    for (name, value) in pairs {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            map.append(name, value);
+        }
+    }
+    map
+}
 const SRT_CONTROL_TYPES: u8 = 8;
 const SRT_CONTROL_BIT: u8 = 0x80;
 const RTP_VERSION_BYTE: u8 = 0x80;
@@ -407,7 +427,12 @@ fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
                 headers.push(("Set-Cookie".to_string(), "storm=1".to_string()));
             }
             answered.push((conn, status));
-            session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+            session.on_response(
+                conn,
+                code(status),
+                &header_map(&headers),
+                Timestamp::from_micros(now),
+            );
         }
     }
     if now != u64::MAX {
@@ -567,7 +592,7 @@ fn body_for(url: &str, encrypted: bool, chunk: &[u8]) -> Vec<u8> {
 fn serve(session: &mut Session, watch: &mut Watch, now: u64, encrypted: bool, chunk: &[u8]) {
     let at = Timestamp::from_micros(now);
     for (conn, url) in watch.actions(session, now) {
-        session.on_response(conn, 200, &[], at);
+        session.on_response(conn, http::StatusCode::OK, &http::HeaderMap::new(), at);
         let body = body_for(&url, encrypted, chunk);
         session.on_data(conn, &body, at);
         session.on_data(conn, chunk, at);
@@ -729,7 +754,12 @@ fn drive(url: &str, data: &[u8]) {
                             RESPONSE_DATES[second % RESPONSE_DATES.len()].to_string(),
                         ));
                     }
-                    session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+                    session.on_response(
+                conn,
+                code(status),
+                &header_map(&headers),
+                Timestamp::from_micros(now),
+            );
                 }
             }
             6 => {
@@ -1071,7 +1101,12 @@ fn drive_ts_http(data: &[u8]) {
                         )],
                         _ => Vec::new(),
                     };
-                    session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+                    session.on_response(
+                conn,
+                code(status),
+                &header_map(&headers),
+                Timestamp::from_micros(now),
+            );
                 }
             }
             1 => {

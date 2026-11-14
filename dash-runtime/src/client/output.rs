@@ -242,7 +242,7 @@ pub enum Output {
         /// The segment.
         id: ResourceId,
         /// Status of the last failure, when it was an HTTP status.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// The presentation cannot continue; nothing follows.
     Fatal(FatalKind),

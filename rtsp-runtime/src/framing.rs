@@ -34,7 +34,10 @@ pub(crate) fn head_end(buf: &[u8], scanned: usize) -> Result<Option<usize>> {
     if head_len > MAX_HEAD_BYTES {
         return Err(Error::MessageParse {
             what: MessageKind::Framing,
-            source: format!("header block over {MAX_HEAD_BYTES} bytes without a terminator").into(),
+            source: crate::error::MessageParseError::HeaderUnterminated {
+                at_least: head_len,
+                limit: MAX_HEAD_BYTES,
+            },
         });
     }
     Ok(end)

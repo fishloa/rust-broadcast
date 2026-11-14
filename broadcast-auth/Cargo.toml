@@ -40,6 +40,9 @@ subtle    = { version = "2", default-features = false }
 zeroize   = { version = "1", default-features = false, features = ["alloc"] }
 # Typed `Authorization` (Basic/Bearer, token68 schemes `http-auth` cannot parse; SP2.4).
 headers   = { workspace = true }
+# HTTP method/status/header types on the request/response surfaces (`RequestContext`,
+# `AuthState::handle_unauthorized`, `AuthState::receive_cookies`).
+http      = { workspace = true }
 # Digest `username*` (RFC 7616 §3.4.4 / RFC 8187 ext-value) percent-decoding.
 percent-encoding = "2"
 # Digest `uri` substitution guard (`server::digest_uri_matches`, SP2.4): normalised-spelling check.

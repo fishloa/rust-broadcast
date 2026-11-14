@@ -4,6 +4,7 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::stage::Timestamp;
+use http::{HeaderMap, StatusCode};
 
 use url::Url;
 
@@ -17,7 +18,6 @@ const AUTHORIZATION: &str = "Authorization";
 const PROXY_AUTHORIZATION: &str = "Proxy-Authorization";
 const WWW_AUTHENTICATE: &str = "www-authenticate";
 const PROXY_AUTHENTICATE: &str = "proxy-authenticate";
-const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const CHALLENGE_SEPARATOR: &str = ", ";
 const PREEMPTIVE_BASIC_CHALLENGE: &str = "Basic realm=\"\"";
 
@@ -80,19 +80,17 @@ pub enum AuthEvent {
     /// Credentials were rejected.
     AuthRejected {
         /// HTTP status.
-        status: u16,
+        status: StatusCode,
     },
     /// Waiting for credentials.
     StatusWaitingForCredentials,
 }
 
 /// Whether a request's headers carry credentials for the origin or for a proxy.
-pub fn carries_credentials(headers: &[(String, String)]) -> bool {
+pub fn carries_credentials(headers: &HeaderMap) -> bool {
     const AUTHORIZATION: &str = "Authorization";
     const PROXY_AUTHORIZATION: &str = "Proxy-Authorization";
-    headers.iter().any(|(k, _)| {
-        k.eq_ignore_ascii_case(AUTHORIZATION) || k.eq_ignore_ascii_case(PROXY_AUTHORIZATION)
-    })
+    headers.contains_key(AUTHORIZATION) || headers.contains_key(PROXY_AUTHORIZATION)
 }
 
 /// A read handle on one [`AuthState`]'s cookie jar, kept by the caller that
@@ -174,7 +172,7 @@ impl AuthState {
     }
 
     /// Store the `Set-Cookie` lines of a response; ignored unless the response is from the origin.
-    pub fn receive_cookies(&mut self, url: &Url, headers: &[(String, String)], now: Timestamp) {
+    pub fn receive_cookies(&mut self, url: &Url, headers: &HeaderMap, now: Timestamp) {
         self.jar.receive(url, headers, now.as_micros());
     }
 
@@ -284,12 +282,12 @@ impl AuthState {
     /// replay.
     pub fn handle_unauthorized(
         &mut self,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         had_auth: bool,
         stale_replayed: bool,
     ) -> AuthDecision {
-        self.proxy = status == STATUS_PROXY_AUTH_REQUIRED;
+        self.proxy = status == StatusCode::PROXY_AUTHENTICATION_REQUIRED;
         let preferred = if self.proxy {
             PROXY_AUTHENTICATE
         } else {
@@ -298,9 +296,9 @@ impl AuthState {
         let select = |wanted: &[&str]| -> Vec<String> {
             headers
                 .iter()
-                .filter(|(k, _)| wanted.iter().any(|w| k.eq_ignore_ascii_case(w)))
-                .map(|(_, v)| v.clone())
-                .collect()
+                .filter(|(k, _)| wanted.iter().any(|w| k.as_str().eq_ignore_ascii_case(w)))
+                .filter_map(|(_, v)| v.to_str().ok().map(String::from))
+                .collect::<Vec<String>>()
         };
         let mut challenge_lines = select(&[preferred]);
         if challenge_lines.is_empty() {

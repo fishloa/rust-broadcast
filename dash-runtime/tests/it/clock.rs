@@ -9,6 +9,7 @@ use crate::common;
 
 use common::Rng;
 use dash_runtime::timing::TimingError;
+use headers::HeaderMapExt;
 
 use dash_runtime::timing::clock::{
     AdoptReason, Anchor, ClockSource, OfferOutcome, OfferPolicy, RejectReason, UtcClock,
@@ -139,18 +140,23 @@ fn midpoint_and_uncertainty_follow_the_exchange() {
 
 #[test]
 fn date_header_gets_the_half_second() {
-    let s = sample_from_date_header(
-        "Mon, 26 Oct 2026 08:39:04 GMT",
-        Exchange::new(at(0), at(100)),
-        MAX_RTT,
-    )
-    .unwrap();
+    let mut headers = http::HeaderMap::new();
+    headers.insert(
+        http::header::DATE,
+        http::HeaderValue::from_static("Mon, 26 Oct 2026 08:39:04 GMT"),
+    );
+    let date = headers
+        .typed_get::<headers::Date>()
+        .expect("a captured Date header");
+    let s = sample_from_date_header(date, Exchange::new(at(0), at(100)), MAX_RTT).unwrap();
     assert_eq!(s.utc_us, 1_793_003_944 * 1_000_000 + 500_000);
     assert_eq!(s.uncertainty_us, 50 + 500_000);
-    assert!(matches!(
-        sample_from_date_header("garbage", Exchange::new(at(0), at(1)), MAX_RTT),
-        Err(dash_runtime::timing::TimingError::HttpDate(..))
-    ));
+    let mut garbage = http::HeaderMap::new();
+    garbage.insert(
+        http::header::DATE,
+        http::HeaderValue::from_static("garbage"),
+    );
+    assert!(garbage.typed_get::<headers::Date>().is_none());
 }
 
 #[test]

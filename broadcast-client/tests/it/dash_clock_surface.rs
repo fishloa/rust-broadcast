@@ -37,18 +37,17 @@ const MAX_RETRY_AFTER_SECS: u64 = 60;
 const BASE_UNIX_US: u64 = 1_793_003_944 * SEC;
 const MINUS_1S: &str = "Mon, 26 Oct 2026 08:39:03 GMT";
 
-fn header(name: &str, value: &str) -> (String, String) {
-    (name.to_string(), value.to_string())
-}
-
 fn retry_after(status: u16, value: &str) -> Reply {
-    Reply::StatusHeaders(status, vec![header("Retry-After", value)])
+    Reply::StatusHeaders(
+        super::support::status(status),
+        super::support::headers(&[("Retry-After", value)]),
+    )
 }
 
 fn retry_after_with_date(value: &str, date: &str) -> Reply {
     Reply::StatusHeaders(
-        503,
-        vec![header("Date", date), header("Retry-After", value)],
+        super::support::status(503),
+        super::support::headers(&[("Date", date), ("Retry-After", value)]),
     )
 }
 
@@ -208,8 +207,8 @@ fn extreme_anchors_are_accepted_and_do_not_wrap() {
 fn a_past_http_date_on_a_refusal_asks_for_no_server_wait() {
     let anchor = WallClock::new(0, i128::from(BASE_UNIX_US + 100 * SEC));
     let past = retry_after_us(
-        503,
-        &[header("Retry-After", PLUS_30S)],
+        http::StatusCode::SERVICE_UNAVAILABLE,
+        &crate::support::headers(&[("Retry-After", PLUS_30S)]),
         Timestamp::ZERO,
         Some(&anchor),
     );
@@ -217,8 +216,8 @@ fn a_past_http_date_on_a_refusal_asks_for_no_server_wait() {
     let ahead = WallClock::new(0, i128::from(BASE_UNIX_US));
     assert_eq!(
         retry_after_us(
-            503,
-            &[header("Retry-After", PLUS_30S)],
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            &crate::support::headers(&[("Retry-After", PLUS_30S)]),
             Timestamp::ZERO,
             Some(&ahead)
         ) / SEC,
@@ -294,8 +293,8 @@ fn a_ts_http_session_ignores_the_anchor_even_with_an_http_date_retry_after() {
                 if let Action::HttpRequest { conn, .. } = &a {
                     s.on_response(
                         *conn,
-                        503,
-                        &[header("Retry-After", PLUS_30S), header("Date", BASE_DATE)],
+                        support::status(503),
+                        &support::headers(&[("Retry-After", PLUS_30S), ("Date", BASE_DATE)]),
                         ts(now),
                     );
                     s.on_closed(*conn, None, ts(now));

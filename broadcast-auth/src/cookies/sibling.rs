@@ -9,14 +9,19 @@ use broadcast_common::stage::Timestamp;
 
 const ORIGIN: &str = "https://a.example.com/live/x.m3u8";
 
+fn set_cookie(line: &str) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    map.insert(
+        http::header::SET_COOKIE,
+        http::HeaderValue::from_str(line).expect("a test writes a cookie line"),
+    );
+    map
+}
+
 fn state_with(origin: &str, line: &str) -> AuthState {
     let url = Url::parse(origin).unwrap();
     let mut auth = AuthState::new(url.clone(), Vec::new());
-    auth.receive_cookies(
-        &url,
-        &[("Set-Cookie".to_string(), line.to_string())],
-        Timestamp::from_micros(0),
-    );
+    auth.receive_cookies(&url, &set_cookie(line), Timestamp::from_micros(0));
     auth
 }
 
@@ -89,11 +94,7 @@ fn foreign_domain_cookie_is_refused() {
         "a=1; Domain=b.example.com",
         "a=1; Domain=x.a.example.com",
     ] {
-        auth.receive_cookies(
-            &url,
-            &[("Set-Cookie".to_string(), line.to_string())],
-            Timestamp::from_micros(0),
-        );
+        auth.receive_cookies(&url, &set_cookie(line), Timestamp::from_micros(0));
     }
     assert_eq!(auth.cookies(Timestamp::from_micros(0)), Vec::new());
 }

@@ -108,7 +108,7 @@ fn run_vod(
         stats.steps += 1;
         if let Some((conn, url)) = outstanding.pop_front() {
             if url == playlist_url {
-                session.on_response(conn, 200, &[], ts(now));
+                session.on_response(conn, support::status(200), &support::headers(&[]), ts(now));
                 session.on_data(conn, playlist, ts(now));
                 session.on_closed(conn, None, ts(now));
                 continue;
@@ -116,7 +116,8 @@ fn run_vod(
             let nth = hits.entry(url.clone()).or_insert(0);
             let code = segment_status(&url, *nth);
             *nth += 1;
-            session.on_response(conn, code, &[], ts(now));
+            let status = support::status(code);
+            session.on_response(conn, status, &support::headers(&[]), ts(now));
             if code == 200 {
                 stats.succeeded.push(url);
                 session.on_data(conn, &body, ts(now));
@@ -315,7 +316,7 @@ fn zero_backoff_entries_and_cap_are_floored_at_one_millisecond() {
         new_config
     };
     let mut h = Host::new(TS_PLAYLIST_URL, config);
-    h.route(TS_PLAYLIST_URL, vec![Reply::Status(500)]);
+    h.route(TS_PLAYLIST_URL, vec![Reply::Status(support::status(500))]);
     for _ in 0..300 {
         if !h.step() {
             break;
@@ -402,7 +403,10 @@ fn finite_ts_reconnect_after_ended_still_restarts() {
     let bytes = tf1_bytes!();
     let (status, base_headers) = tf1_headers!();
     let mut headers = base_headers;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
     let mut session = Session::open(
         Url::parse("http://example/live.ts").unwrap(),
         Config::default(),
@@ -443,11 +447,8 @@ fn a_407_is_answered_with_proxy_authorization_not_authorization() {
         TS_PLAYLIST_URL,
         vec![
             Reply::StatusHeaders(
-                407,
-                vec![(
-                    "Proxy-Authenticate".to_string(),
-                    BASIC_CHALLENGE.to_string(),
-                )],
+                support::status(407),
+                support::headers(&[("Proxy-Authenticate", BASIC_CHALLENGE)]),
             ),
             Reply::Ok(ts_playlist()),
         ],
@@ -479,8 +480,8 @@ fn a_401_is_still_answered_with_authorization() {
         TS_PLAYLIST_URL,
         vec![
             Reply::StatusHeaders(
-                401,
-                vec![("WWW-Authenticate".to_string(), BASIC_CHALLENGE.to_string())],
+                support::status(401),
+                support::headers(&[("WWW-Authenticate", BASIC_CHALLENGE)]),
             ),
             Reply::Ok(ts_playlist()),
         ],
@@ -505,11 +506,11 @@ fn the_strongest_challenge_among_all_www_authenticate_lines_is_chosen() {
         TS_PLAYLIST_URL,
         vec![
             Reply::StatusHeaders(
-                401,
-                vec![
-                    ("WWW-Authenticate".to_string(), BASIC_CHALLENGE.to_string()),
-                    ("WWW-Authenticate".to_string(), DIGEST_CHALLENGE.to_string()),
-                ],
+                support::status(401),
+                support::headers(&[
+                    ("WWW-Authenticate", BASIC_CHALLENGE),
+                    ("WWW-Authenticate", DIGEST_CHALLENGE),
+                ]),
             ),
             Reply::Ok(ts_playlist()),
         ],
@@ -535,11 +536,11 @@ fn bearer_credentials_answer_with_bearer_whatever_the_challenge_lines() {
         TS_PLAYLIST_URL,
         vec![
             Reply::StatusHeaders(
-                401,
-                vec![
-                    ("WWW-Authenticate".to_string(), BASIC_CHALLENGE.to_string()),
-                    ("WWW-Authenticate".to_string(), DIGEST_CHALLENGE.to_string()),
-                ],
+                support::status(401),
+                support::headers(&[
+                    ("WWW-Authenticate", BASIC_CHALLENGE),
+                    ("WWW-Authenticate", DIGEST_CHALLENGE),
+                ]),
             ),
             Reply::Ok(ts_playlist()),
         ],

@@ -98,9 +98,15 @@ pub struct HttpReq {
 pub struct HttpResp {
     pub status: u16,
     pub body: Vec<u8>,
-    pub date: Option<String>,
-    pub etag: Option<String>,
+    pub date: Option<headers::Date>,
+    pub etag: Option<headers::ETag>,
+    pub last_modified: Option<headers::LastModified>,
     pub final_url: Option<String>,
+}
+
+/// Parse an `ETag` field value (quotes included) as an origin would send it.
+pub fn etag(text: &str) -> headers::ETag {
+    text.parse().expect("a test writes a valid ETag")
 }
 
 impl HttpResp {
@@ -483,11 +489,14 @@ impl Sim {
                 }
                 Ok(r) if (200..300).contains(&r.status) => {
                     let mut meta = ResponseMeta::new(sent_mono, received_mono);
-                    if let Some(d) = r.date.as_deref() {
+                    if let Some(d) = r.date {
                         meta = meta.with_date(d);
                     }
-                    if let Some(e) = r.etag.as_deref() {
+                    if let Some(e) = r.etag.clone() {
                         meta = meta.with_etag(e);
+                    }
+                    if let Some(m) = r.last_modified {
+                        meta = meta.with_last_modified(m);
                     }
                     if let Some(f) = r.final_url.as_deref() {
                         meta = meta.with_final_url(f);
@@ -518,7 +527,7 @@ impl Sim {
             Action::FetchUtcTiming { id, .. } => match resp {
                 Ok(r) if (200..300).contains(&r.status) => {
                     let mut ur = UtcResponse::new(sent_mono, received_mono, &r.body);
-                    if let Some(d) = r.date.as_deref() {
+                    if let Some(d) = r.date {
                         ur = ur.with_date(d);
                     }
                     if let Err(e) = self.client.on_utc_response(at, id, &ur) {
@@ -679,6 +688,16 @@ impl Sim {
 pub fn http_date(us: i64) -> String {
     let ts = jiff::Timestamp::from_microsecond(us).expect("timestamp in range");
     ts.strftime("%a, %d %b %Y %H:%M:%S GMT").to_string()
+}
+
+/// The same instant as the `Date` header type a client is handed.
+pub fn date_header(us: i64) -> headers::Date {
+    let seconds = us.div_euclid(1_000_000);
+    let unix = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(
+            u64::try_from(seconds).expect("a test date is after the epoch"),
+        );
+    headers::Date::from(unix)
 }
 
 pub fn xs_datetime_ms(us: i64) -> String {

@@ -4,10 +4,18 @@
 //! ```rust
 //! use broadcast_client::fetch::{WallClock, retry_after_us};
 //! use broadcast_common::stage::Timestamp;
-//! assert_eq!(retry_after_us(503, &[], Timestamp::ZERO, None), 0);
+//! use http::StatusCode;
+//! assert_eq!(
+//!     retry_after_us(StatusCode::SERVICE_UNAVAILABLE, &http::HeaderMap::new(), Timestamp::ZERO, None),
+//!     0
+//! );
 //! let ahead = WallClock::new(0, i128::from(1_793_003_944_000_000_u64));
-//! let head = [("Retry-After".to_string(), "Mon, 26 Oct 2026 08:39:34 GMT".to_string())];
-//! assert_eq!(retry_after_us(503, &head, Timestamp::ZERO, Some(&ahead)), 30_000_000);
+//! let mut head = http::HeaderMap::new();
+//! head.insert("retry-after", http::HeaderValue::from_static("Mon, 26 Oct 2026 08:39:34 GMT"));
+//! assert_eq!(
+//!     retry_after_us(StatusCode::SERVICE_UNAVAILABLE, &head, Timestamp::ZERO, Some(&ahead)),
+//!     30_000_000
+//! );
 //! ```
 
 use alloc::string::String;
@@ -17,19 +25,20 @@ use core::time::Duration;
 use crate::Event;
 use crate::events::MAX_SERVER_REFUSED_REASON_BYTES;
 
-use broadcast_common::backoff::{BackoffSteps, RetrySchedule};
+use broadcast_common::backoff::{BackoffSteps, MAX_FLOOR, RetrySchedule};
 use broadcast_common::http_date::parse_http_date;
 use broadcast_common::stage::Timestamp;
 
 use super::wall::WallClock;
 use broadcast_common::units::{MICROS_PER_SEC, MILLIS_PER_SEC, NANOS_PER_MILLI};
+use http::{HeaderMap, StatusCode};
 
 const MIN_BACKOFF_MS: u64 = 1;
 const MAX_RETRY_AFTER_SECS: u64 = 60;
-const STATUS_TOO_MANY_REQUESTS: u16 = 429;
-const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
 const HEADER_RETRY_AFTER: &str = "retry-after";
 const HEADER_DATE: &str = "date";
+const HEADER_CONTENT_TYPE: &str = "content-type";
+const HEADER_CONTENT_LENGTH: &str = "content-length";
 
 /// The retry schedule every broadcast-client adapter waits out: `steps_ms[attempt - 1]`, then
 /// `cap_ms` forever, configured as one [`RetrySchedule`] (issue #2471).
@@ -53,33 +62,32 @@ impl Backoff {
     }
 
     fn new_raw(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+        let cap = millis(cap_ms)
+            .max(Duration::from_millis(MIN_BACKOFF_MS))
+            .min(MAX_FLOOR);
         Self {
-            schedule: RetrySchedule::from_steps(
-                &millis_steps(steps_ms),
-                millis(cap_ms).max(Duration::from_millis(MIN_BACKOFF_MS)),
-                seed,
-            ),
+            schedule: steps_schedule(&millis_steps(steps_ms), cap, seed),
         }
     }
 
     /// The unjittered step for `attempt` (1-based): `steps_ms[attempt - 1]`, or `cap_ms` once the
     /// steps are exhausted. Attempts beyond the table keep the cap.
     #[cfg(test)]
-    pub(crate) fn raw_delay_us(&self, attempt: u64) -> u64 {
+    pub(crate) fn raw_delay_us(&self, attempt: u32) -> u64 {
         // Attempt 0 is a caller that has taken no attempt yet: it takes the first step.
-        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+        let index = attempt.saturating_sub(1);
         duration_us(self.schedule.raw_delay_for_attempt(index))
     }
 
     /// The jittered delay for `attempt` (1-based): in `[raw_delay_us * 5/6, raw_delay_us]`, and
     /// exactly `raw_delay_us` for the first.
     #[cfg(test)]
-    pub(crate) fn jittered_delay_us(&self, attempt: u64) -> u64 {
-        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+    pub(crate) fn jittered_delay_us(&self, attempt: u32) -> u64 {
+        let index = attempt.saturating_sub(1);
         duration_us(self.schedule.delay_for_attempt(index))
     }
-    pub(crate) fn delay_us(&self, attempt: u64) -> u64 {
-        let index = u32::try_from(attempt.saturating_sub(1)).unwrap_or(u32::MAX);
+    pub(crate) fn delay_us(&self, attempt: u32) -> u64 {
+        let index = attempt.saturating_sub(1);
         duration_us(self.schedule.delay_for_attempt(index))
     }
 }
@@ -98,15 +106,15 @@ pub(crate) fn backoff_ms(steps: &BackoffSteps) -> (Vec<u64>, u64) {
 /// past HTTP-date waits nothing (`0`), and the result is clamped to `0..=60 s`. An HTTP-date is measured against the host wall clock when `wall` is given,
 /// otherwise against the response `Date`. The result is clamped to 60 seconds.
 pub fn retry_after_us(
-    status: u16,
-    headers: &[(String, String)],
+    status: StatusCode,
+    headers: &HeaderMap,
     now: Timestamp,
     wall: Option<&WallClock>,
 ) -> u64 {
-    if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
+    if status != StatusCode::TOO_MANY_REQUESTS && status != StatusCode::SERVICE_UNAVAILABLE {
         return 0;
     }
-    let Some(value) = header_value(headers, HEADER_RETRY_AFTER).map(str::trim) else {
+    let Some(value) = crate::headers::text(headers, HEADER_RETRY_AFTER).map(str::trim) else {
         return 0;
     };
     let wait_us = if !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()) {
@@ -118,7 +126,7 @@ pub fn retry_after_us(
         };
         let now_unix = match wall {
             Some(wall) => Some(wall.utc_at(now.as_micros())),
-            None => header_value(headers, HEADER_DATE)
+            None => crate::headers::text(headers, HEADER_DATE)
                 .and_then(|date| parse_http_date(date).ok())
                 .map(i128::from),
         };
@@ -129,13 +137,6 @@ pub fn retry_after_us(
     };
     let capped = wait_us.min(i128::from(MAX_RETRY_AFTER_SECS * MICROS_PER_SEC));
     u64::try_from(capped).unwrap_or(0)
-}
-
-fn header_value<'h>(headers: &'h [(String, String)], name: &str) -> Option<&'h str> {
-    headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v.as_str())
 }
 
 /// A wait in whole microseconds, saturating instead of wrapping.
@@ -150,6 +151,24 @@ fn millis_steps(steps_ms: &[u64]) -> Vec<Duration> {
         .iter()
         .map(|ms| millis((*ms).max(MIN_BACKOFF_MS)))
         .collect()
+}
+
+/// A schedule over `steps`, then `cap` for every later attempt.
+///
+/// A cap at or under [`MAX_FLOOR`] is one [`RetrySchedule::from_steps`] always
+/// accepts, so the fallback is what a future ceiling change would leave: the
+/// cap clamped to the ceiling with no step table, rather than a panic in the
+/// retry path.
+fn steps_schedule(steps: &[Duration], cap: Duration, seed: u64) -> RetrySchedule {
+    RetrySchedule::from_steps(steps, cap, seed)
+        .or_else(|_| RetrySchedule::from_steps(&[], cap.min(MAX_FLOOR), seed))
+        .or_else(|_| RetrySchedule::from_steps(&[], Duration::ZERO, seed))
+        .unwrap_or_else(|_| zero_cap(seed))
+}
+
+/// The one schedule no bound can refuse: a zero cap with no step table.
+fn zero_cap(seed: u64) -> RetrySchedule {
+    RetrySchedule::from_steps(&[], Duration::ZERO, seed).unwrap_or_else(|_| zero_cap(0))
 }
 
 /// `ms` milliseconds as a [`Duration`], saturating at [`Duration::MAX`] instead of wrapping back
@@ -182,9 +201,14 @@ pub struct ReconnectTimer {
 
 impl ReconnectTimer {
     /// A timer over a step table (millisecond steps, then the cap), jittered from `seed`.
+    ///
+    /// A cap above [`MAX_FLOOR`] (only reachable from a `cap_ms` near
+    /// `u64::MAX` milliseconds) is clamped to it, [`RetrySchedule`]'s own
+    /// ceiling.
     pub fn new(steps_ms: &[u64], cap_ms: u64, seed: u64) -> Self {
+        let cap = millis(cap_ms).min(MAX_FLOOR);
         Self {
-            schedule: RetrySchedule::from_steps(&millis_steps(steps_ms), millis(cap_ms), seed),
+            schedule: steps_schedule(&millis_steps(steps_ms), cap, seed),
             attempts: 0,
             connected_at: None,
         }
@@ -296,7 +320,7 @@ fn is_text_plain_utf8(content_type: &str) -> bool {
 /// [`Event::ServerRefused`] emitted when the connection closes.
 #[derive(Debug)]
 pub(crate) struct RefusedCapture {
-    status: u16,
+    status: StatusCode,
     retry_after_us: u64,
     content_type: Option<String>,
     declared_len: Option<u64>,
@@ -305,19 +329,14 @@ pub(crate) struct RefusedCapture {
 }
 
 impl RefusedCapture {
-    pub(crate) fn new(status: u16, retry_after_us: u64, headers: &[(String, String)]) -> Self {
-        let content_type = headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("content-type"))
-            .map(|(_, v)| v.clone());
+    pub(crate) fn new(status: StatusCode, retry_after_us: u64, headers: &HeaderMap) -> Self {
+        let content_type = crate::headers::text(headers, HEADER_CONTENT_TYPE).map(String::from);
         Self {
             status,
             retry_after_us,
             content_type,
-            declared_len: headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case("content-length"))
-                .and_then(|(_, v)| v.trim().parse().ok()),
+            declared_len: crate::headers::text(headers, HEADER_CONTENT_LENGTH)
+                .and_then(|v| v.trim().parse().ok()),
             received: 0,
             body: Vec::new(),
         }
@@ -387,8 +406,11 @@ mod tests {
     use super::*;
     use broadcast_common::units::MICROS_PER_MILLI;
 
-    fn header(name: &str, value: &str) -> Vec<(String, String)> {
-        vec![(name.to_string(), value.to_string())]
+    fn header(name: &str, value: &str) -> HeaderMap {
+        let mut map = HeaderMap::new();
+        let name = http::HeaderName::from_bytes(name.as_bytes()).unwrap();
+        map.append(name, http::HeaderValue::from_str(value).unwrap());
+        map
     }
 
     #[test]
@@ -398,7 +420,7 @@ mod tests {
         assert_eq!(backoff.raw_delay_us(2), 4_000_000);
         assert_eq!(backoff.raw_delay_us(3), 8_000_000);
         assert_eq!(backoff.raw_delay_us(4), 10_000_000);
-        assert_eq!(backoff.raw_delay_us(u64::MAX), 10_000_000);
+        assert_eq!(backoff.raw_delay_us(u32::MAX), 10_000_000);
     }
 
     #[test]
@@ -463,15 +485,17 @@ mod tests {
     const RESPONSE_DATE: &str = "Mon, 26 Oct 2026 08:39:04 GMT";
     const RESPONSE_UNIX_US: u64 = 1_793_003_944 * 1_000_000;
 
-    fn retry(status: u16, headers: &[(String, String)]) -> u64 {
+    fn retry(status: StatusCode, headers: &HeaderMap) -> u64 {
         retry_after_us(status, headers, at(NOW), None)
     }
 
-    fn date_pair(retry_after: &str, date: &str) -> Vec<(String, String)> {
-        vec![
-            ("Date".to_string(), date.to_string()),
-            ("Retry-After".to_string(), retry_after.to_string()),
-        ]
+    fn date_pair(retry_after: &str, date: &str) -> HeaderMap {
+        let mut map = header("Retry-After", retry_after);
+        map.append(
+            http::header::DATE,
+            http::HeaderValue::from_str(date).unwrap(),
+        );
+        map
     }
 
     fn anchored() -> WallClock {
@@ -481,24 +505,49 @@ mod tests {
     #[test]
     fn retry_after_is_honoured_only_for_429_and_503() {
         let h = header("Retry-After", "5");
-        assert_eq!(retry(429, &h), 5_000_000);
-        assert_eq!(retry(503, &h), 5_000_000);
+        assert_eq!(retry(StatusCode::from_u16(429).unwrap(), &h), 5_000_000);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 5_000_000);
         for status in [200, 404, 500, 502, 504] {
+            let status = StatusCode::from_u16(status).unwrap();
             assert_eq!(retry(status, &h), 0, "{status}");
         }
     }
 
     #[test]
     fn retry_after_is_clamped_to_sixty_seconds() {
-        assert_eq!(retry(503, &header("retry-after", "60")), SIXTY_S);
-        assert_eq!(retry(503, &header("retry-after", "61")), SIXTY_S);
-        assert_eq!(retry(503, &header("retry-after", "86400")), SIXTY_S);
         assert_eq!(
-            retry(503, &header("retry-after", &u64::MAX.to_string())),
+            retry(
+                StatusCode::from_u16(503).unwrap(),
+                &header("retry-after", "60")
+            ),
             SIXTY_S
         );
         assert_eq!(
-            retry(503, &header("retry-after", "99999999999999999999999999")),
+            retry(
+                StatusCode::from_u16(503).unwrap(),
+                &header("retry-after", "61")
+            ),
+            SIXTY_S
+        );
+        assert_eq!(
+            retry(
+                StatusCode::from_u16(503).unwrap(),
+                &header("retry-after", "86400")
+            ),
+            SIXTY_S
+        );
+        assert_eq!(
+            retry(
+                StatusCode::from_u16(503).unwrap(),
+                &header("retry-after", &u64::MAX.to_string())
+            ),
+            SIXTY_S
+        );
+        assert_eq!(
+            retry(
+                StatusCode::from_u16(503).unwrap(),
+                &header("retry-after", "99999999999999999999999999")
+            ),
             SIXTY_S,
             "a delta beyond u64 is still delta-seconds, clamped"
         );
@@ -516,63 +565,95 @@ mod tests {
             "0x10",
             "Wed, 99 Oct 2026",
         ] {
-            assert_eq!(retry(503, &header("Retry-After", value)), 0, "{value:?}");
+            assert_eq!(
+                retry(
+                    StatusCode::from_u16(503).unwrap(),
+                    &header("Retry-After", value)
+                ),
+                0,
+                "{value:?}"
+            );
         }
-        assert_eq!(retry(503, &[]), 0);
-        assert_eq!(retry(503, &header("X-Other", "5")), 0);
+        assert_eq!(
+            retry(StatusCode::from_u16(503).unwrap(), &header("X-Other", "1")),
+            0
+        );
+        assert_eq!(
+            retry(StatusCode::from_u16(503).unwrap(), &header("X-Other", "5")),
+            0
+        );
     }
 
     #[test]
     fn retry_after_tolerates_whitespace_and_header_case() {
-        assert_eq!(retry(429, &header("RETRY-AFTER", "  3 ")), 3_000_000);
+        assert_eq!(
+            retry(
+                StatusCode::from_u16(429).unwrap(),
+                &header("RETRY-AFTER", "  3 ")
+            ),
+            3_000_000
+        );
     }
 
     #[test]
     fn an_http_date_without_an_anchor_counts_from_the_response_date() {
         let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &h), 30_000_000);
-        assert_eq!(retry(429, &h), 30_000_000);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 30_000_000);
+        assert_eq!(retry(StatusCode::from_u16(429).unwrap(), &h), 30_000_000);
     }
 
     #[test]
     fn an_http_date_without_an_anchor_or_a_date_header_is_ignored() {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
-        assert_eq!(retry(503, &h), 0);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 0);
     }
 
     #[test]
     fn an_http_date_with_a_garbage_date_header_is_ignored() {
         let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", "yesterday");
-        assert_eq!(retry(503, &h), 0);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 0);
     }
 
     #[test]
     fn an_http_date_in_the_past_waits_nothing() {
         let h = date_pair("Mon, 26 Oct 2026 08:39:03 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &h), 0);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 0);
         let h = date_pair(RESPONSE_DATE, RESPONSE_DATE);
-        assert_eq!(retry(503, &h), 0, "now is not in the future");
+        assert_eq!(
+            retry(StatusCode::from_u16(503).unwrap(), &h),
+            0,
+            "now is not in the future"
+        );
         let h = date_pair("Thu, 01 Jan 1970 00:00:00 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &h), 0);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 0);
     }
 
     #[test]
     fn an_http_date_in_the_future_is_clamped_to_sixty_seconds() {
         let at_cap = date_pair("Mon, 26 Oct 2026 08:40:04 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &at_cap), SIXTY_S);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &at_cap), SIXTY_S);
         let past_cap = date_pair("Mon, 26 Oct 2026 08:40:05 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &past_cap), SIXTY_S);
+        assert_eq!(
+            retry(StatusCode::from_u16(503).unwrap(), &past_cap),
+            SIXTY_S
+        );
         let far = date_pair("Thu, 30 Dec 9999 00:00:00 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &far), SIXTY_S);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &far), SIXTY_S);
         let one_second_short = date_pair("Mon, 26 Oct 2026 08:40:03 GMT", RESPONSE_DATE);
-        assert_eq!(retry(503, &one_second_short), SIXTY_S - 1_000_000);
+        assert_eq!(
+            retry(StatusCode::from_u16(503).unwrap(), &one_second_short),
+            SIXTY_S - 1_000_000
+        );
     }
 
     #[test]
     fn the_obsolete_http_date_forms_count_too() {
         for value in ["Monday, 26-Oct-26 08:39:34 GMT", "Mon Oct 26 08:39:34 2026"] {
             assert_eq!(
-                retry(503, &date_pair(value, RESPONSE_DATE)),
+                retry(
+                    StatusCode::from_u16(503).unwrap(),
+                    &date_pair(value, RESPONSE_DATE)
+                ),
                 30_000_000,
                 "{value}"
             );
@@ -583,7 +664,12 @@ mod tests {
     fn an_anchor_replaces_the_response_date() {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
         assert_eq!(
-            retry_after_us(503, &h, at(NOW), Some(&anchored())),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW),
+                Some(&anchored())
+            ),
             30_000_000,
             "no Date header needed"
         );
@@ -592,12 +678,22 @@ mod tests {
             "Sun, 01 Jan 2023 00:00:00 GMT",
         );
         assert_eq!(
-            retry_after_us(503, &lying_date, at(NOW), Some(&anchored())),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &lying_date,
+                at(NOW),
+                Some(&anchored())
+            ),
             30_000_000,
             "the anchor wins over a skewed server Date"
         );
         assert_eq!(
-            retry_after_us(503, &lying_date, at(NOW), None),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &lying_date,
+                at(NOW),
+                None
+            ),
             SIXTY_S,
             "the same headers without an anchor count from the skewed Date"
         );
@@ -613,7 +709,7 @@ mod tests {
             "the crate's own mapping"
         );
         assert_eq!(
-            retry_after_us(503, &h, at(0), Some(&anchor)),
+            retry_after_us(StatusCode::from_u16(503).unwrap(), &h, at(0), Some(&anchor)),
             0,
             "a URL past 584 557 AD is a past date, never a 584 557-year wait"
         );
@@ -623,7 +719,12 @@ mod tests {
     fn a_seconds_long_wait_keeps_its_milliseconds() {
         let h = header("Retry-After", "4");
         assert_eq!(
-            retry_after_us(503, &h, at(NOW), Some(&anchored())),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW),
+                Some(&anchored())
+            ),
             4_000_000,
             "a server wait is a whole span, not whole seconds"
         );
@@ -634,19 +735,39 @@ mod tests {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
         let wall = anchored();
         assert_eq!(
-            retry_after_us(503, &h, at(NOW + 10_000_000), Some(&wall)),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW + 10_000_000),
+                Some(&wall)
+            ),
             20_000_000
         );
         assert_eq!(
-            retry_after_us(503, &h, at(NOW + 30_000_000), Some(&wall)),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW + 30_000_000),
+                Some(&wall)
+            ),
             0
         );
         assert_eq!(
-            retry_after_us(503, &h, at(NOW + 31_000_000), Some(&wall)),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW + 31_000_000),
+                Some(&wall)
+            ),
             0
         );
         assert_eq!(
-            retry_after_us(503, &h, at(NOW - 5_000_000), Some(&wall)),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW - 5_000_000),
+                Some(&wall)
+            ),
             35_000_000,
             "a response that predates the anchor still maps by the same offset"
         );
@@ -656,15 +777,36 @@ mod tests {
     fn extreme_anchors_neither_overflow_nor_wrap() {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
         let max_unix = WallClock::new(0, u64::MAX);
-        assert_eq!(retry_after_us(503, &h, at(u64::MAX), Some(&max_unix)), 0);
+        assert_eq!(
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(u64::MAX),
+                Some(&max_unix)
+            ),
+            0
+        );
         let zero_unix = WallClock::new(u64::MAX, 0);
         assert_eq!(
-            retry_after_us(503, &h, Timestamp::ZERO, Some(&zero_unix)),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                Timestamp::ZERO,
+                Some(&zero_unix)
+            ),
             SIXTY_S,
             "a response far before the anchor clamps"
         );
         let late = WallClock::new(0, 0);
-        assert_eq!(retry_after_us(503, &h, at(u64::MAX), Some(&late)), 0);
+        assert_eq!(
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(u64::MAX),
+                Some(&late)
+            ),
+            0
+        );
     }
 
     #[test]
@@ -755,9 +897,22 @@ mod tests {
     }
 
     #[test]
+    fn an_exhausted_attempt_series_saturates_instead_of_wrapping_to_a_fresh_series() {
+        let mut timer = ReconnectTimer::new(&[1_000], 30_000, 0x5EED);
+        timer.attempts = u32::MAX;
+        let _ = timer.on_disconnected(0);
+        assert_eq!(
+            timer.attempts(),
+            u32::MAX,
+            "a counter that wrapped to 0 would report a reconnect after a played connection"
+        );
+    }
+
+    #[test]
     fn an_http_date_is_ignored_for_statuses_that_ignore_retry_after() {
         let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
         for status in [200, 302, 404, 500, 502, 504] {
+            let status = StatusCode::from_u16(status).unwrap();
             assert_eq!(retry(status, &h), 0, "{status}");
         }
     }
@@ -766,9 +921,14 @@ mod tests {
     fn delta_seconds_do_not_need_an_anchor_and_ignore_it() {
         let h = header("Retry-After", "5");
         assert_eq!(
-            retry_after_us(503, &h, at(NOW), Some(&anchored())),
+            retry_after_us(
+                StatusCode::from_u16(503).unwrap(),
+                &h,
+                at(NOW),
+                Some(&anchored())
+            ),
             5_000_000
         );
-        assert_eq!(retry(503, &h), 5_000_000);
+        assert_eq!(retry(StatusCode::from_u16(503).unwrap(), &h), 5_000_000);
     }
 }

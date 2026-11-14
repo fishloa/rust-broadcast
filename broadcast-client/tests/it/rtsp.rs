@@ -63,7 +63,7 @@ fn statuses(events: &[Event]) -> Vec<Status> {
         .collect()
 }
 
-fn reconnecting_attempts(events: &[Event]) -> Vec<u64> {
+fn reconnecting_attempts(events: &[Event]) -> Vec<u32> {
     statuses(events)
         .into_iter()
         .filter_map(|s| match s {
@@ -642,7 +642,11 @@ fn credentials_rejected_emits_auth_rejected() {
         .unwrap();
     host.drain();
     let events = host.events();
-    assert!(events.contains(&Event::AuthRejected { status: 401 }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401))
+    );
     assert!(statuses(&events).contains(&Status::WaitingForCredentials));
     host.clear_actions();
     let sent = host.server.log.len();
@@ -672,7 +676,11 @@ fn forbidden_403_event() {
     s.describe_status = Some(403);
     let mut host = connected(Config::default(), s);
     let events = host.events();
-    assert!(events.contains(&Event::Forbidden { status: 403 }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Forbidden { status } if status.as_u16() == 403))
+    );
     assert_eq!(reconnecting_attempts(&events), [1]);
     assert_eq!(closes(&host), 1);
     assert_eq!(wakes(&host.actions).last(), Some(&(2 * SEC)));
@@ -756,7 +764,7 @@ fn connect_failure_backoff_2_4_8_then_10_forever() {
         let events = host.events();
         assert_eq!(
             reconnecting_attempts(&events),
-            [u64::try_from(index).expect("small") + 1]
+            [u32::try_from(index).expect("small") + 1]
         );
         let due = wakes(&host.actions).last().copied().expect("a retry wake");
         assert!(

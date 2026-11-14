@@ -469,7 +469,7 @@ pub fn choose_variant(variants: &[VariantInfo], policy: &VariantPolicy) -> usize
     for (i, v) in variants.iter().enumerate() {
         let mut ok = true;
         if let Some(max_bw) = policy.max_bandwidth
-            && v.bandwidth > max_bw
+            && v.bandwidth > u64::from(max_bw)
         {
             ok = false;
         }
@@ -655,18 +655,12 @@ impl HlsClient {
         if index >= variants_len {
             return Err(Error::NoSuchVariant { index });
         }
-        let variant_url = self
+        let url = self
             .master
             .as_ref()
             .and_then(|m| m.variants.get(index))
-            .map(|v| v.url.clone())
+            .and_then(|v| v.uri.clone())
             .ok_or(Error::NoSuchVariant { index })?;
-        let url = url_ref::resolve(self.base(), &variant_url).map_err(|source| {
-            Error::UnresolvableReference {
-                uri: variant_url.clone(),
-                source,
-            }
-        })?;
         self.restart_after_regression()?;
         self.pending_actions.clear();
         self.playlist_url = url.clone();
@@ -738,8 +732,8 @@ impl HlsClient {
                     continue;
                 };
                 variants.push(VariantInfo {
-                    url: resolved,
-                    bandwidth: v.bandwidth,
+                    uri: Url::parse(&resolved).ok(),
+                    bandwidth: u64::from(v.bandwidth),
                     average_bandwidth: v.average_bandwidth,
                     resolution: v.resolution,
                     codecs: v.codecs.clone(),
@@ -775,16 +769,10 @@ impl HlsClient {
                 .master
                 .as_ref()
                 .and_then(|m| m.variants.get(chosen))
-                .map(|v| v.url.clone())
+                .and_then(|v| v.uri.clone())
             else {
                 return Err(Error::NoSuchVariant { index: chosen });
             };
-            let chosen_url = url_ref::resolve(&base, &chosen_url).map_err(|source| {
-                Error::UnresolvableReference {
-                    uri: chosen_url,
-                    source,
-                }
-            })?;
             self.playlist_url = chosen_url.clone();
             self.base_override = None;
             self.pending_actions.clear();

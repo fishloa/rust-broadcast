@@ -244,7 +244,9 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.metrics_addr
         )
     })?;
-    let udp_config = args.udp_config()?;
+    let udp_config = args
+        .udp_config()
+        .map_err(|e| format!("invalid --udp-interface: {e}"))?;
 
     let socket = media_doctor::udp::bind_udp(udp_addr, &udp_config)?;
     if let (Some(want), Ok(got)) = (

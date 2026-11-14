@@ -12,7 +12,7 @@ pub use broadcast_dash::utc_timing::UtcScheme;
 use broadcast_dash::xs_datetime::{XsDateTime, parse_ntp_timestamp, parse_xs_datetime};
 
 use super::TimingError;
-use super::http_date::parse_http_date;
+use broadcast_common::http_date::date_to_epoch_us;
 use broadcast_common::stage::Timestamp;
 
 /// 5.8.5.7: `urn:mpeg:dash:utc:ntp:2014`.
@@ -139,11 +139,11 @@ pub fn sample_from_body(
 /// # Errors
 /// [`TimingError`] when the header is not a date or the exchange is bad.
 pub fn sample_from_date_header(
-    date: &str,
+    date: headers::Date,
     exchange: Exchange,
     max_rtt: Duration,
 ) -> Result<UtcSample, TimingError> {
-    let seconds_us = parse_http_date(date)?;
+    let seconds_us = date_to_epoch_us(date)?;
     let half_second = i64::try_from(DATE_HEADER_HALF_SECOND.as_micros()).unwrap_or(i64::MAX);
     sample_from_exchange(
         exchange,

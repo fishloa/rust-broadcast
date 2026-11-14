@@ -13,6 +13,7 @@
 
 use broadcast_common::timescale::Timescale;
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::Pcr;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use transmux::TrackId;
@@ -64,7 +65,7 @@ fn equivalence_fixture_files() -> Vec<PathBuf> {
 fn assemble(mut demux: StreamingTsDemux) -> Media {
     let mut tracks: Vec<Track> = Vec::new();
     let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
-    let mut pcr: Vec<PcrSample> = Vec::new();
+    let mut pcr_samples: Vec<PcrSample> = Vec::new();
     while let Some(event) = demux.poll_event() {
         match event {
             DemuxEvent::TrackAdded(spec) => {
@@ -99,17 +100,24 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                 discontinuous,
                 provenance,
                 ..
-            } => pcr.push(PcrSample::new(
-                ticks,
-                provenance.pid.unwrap_or(Pid::from_const(0)),
-                provenance.packet_index.unwrap_or(0),
-                discontinuous,
-            )),
+            } => {
+                // The event carries the 27 MHz ticks only, so the mirror
+                // rebuilds the `Pcr` from them (the fixtures carry no
+                // off-clock extension).
+                let wire = Pcr::from_27mhz(ticks)
+                    .unwrap_or_else(|e| panic!("clock reference {ticks} is not a PCR: {e}"));
+                pcr_samples.push(PcrSample::new(
+                    wire,
+                    provenance.pid.unwrap_or(Pid::from_const(0)),
+                    provenance.packet_index.unwrap_or(0),
+                    discontinuous,
+                ));
+            }
             DemuxEvent::Discontinuity { .. } => {}
             _ => {}
         }
     }
-    Media::new(tracks, Timescale::from_nonzero(90_000)).with_pcr(pcr)
+    Media::new(tracks, Timescale::from_nonzero(90_000)).with_pcr(pcr_samples)
 }
 
 fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {

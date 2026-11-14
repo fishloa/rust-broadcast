@@ -53,11 +53,15 @@ pub(crate) const MIN_TIMER_INTERVAL: std::time::Duration = std::time::Duration::
 /// time back — provided `last_fire` is the REAL previous fire, carried across
 /// iterations (issue #1150), not "now".
 pub(crate) fn timer_fire_at(
+    media: &webrtc_runtime::media::MediaTransport,
     deadline: Option<std::time::Instant>,
-    last_fire: Option<std::time::Instant>,
+    last_fire: Option<broadcast_common::stage::Timestamp>,
 ) -> Option<tokio::time::Instant> {
     deadline.map(|d| {
-        let at = last_fire.map_or(d, |l| d.max(l + MIN_TIMER_INTERVAL));
+        // `last_fire` is a `Timestamp` (the clock type the transport takes), so the floor is
+        // measured in that domain and placed back on the transport's own `Instant` epoch.
+        let floor = last_fire.map(|l| media.now_at(l) + MIN_TIMER_INTERVAL);
+        let at = floor.map_or(d, |l| d.max(l));
         tokio::time::Instant::from_std(at)
     })
 }
@@ -68,19 +72,21 @@ pub(crate) fn timer_fire_at(
 /// postpone an overdue timer (issue #1150).
 #[cfg(feature = "whip")]
 pub(crate) fn timer_due(
+    media: &webrtc_runtime::media::MediaTransport,
     deadline: Option<std::time::Instant>,
-    last_fire: Option<std::time::Instant>,
-    now: std::time::Instant,
+    last_fire: Option<broadcast_common::stage::Timestamp>,
+    now: broadcast_common::stage::Timestamp,
 ) -> bool {
-    timer_fire_at(deadline, last_fire).is_some_and(|at| at <= tokio::time::Instant::from_std(now))
+    timer_fire_at(media, deadline, last_fire).is_some_and(|at| at.into_std() <= media.now_at(now))
 }
 
 /// Sleep until [`timer_fire_at`], or forever when there is no deadline.
 pub(crate) fn sleep_until_timer(
+    media: &webrtc_runtime::media::MediaTransport,
     deadline: Option<std::time::Instant>,
-    last_fire: Option<std::time::Instant>,
+    last_fire: Option<broadcast_common::stage::Timestamp>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
-    match timer_fire_at(deadline, last_fire) {
+    match timer_fire_at(media, deadline, last_fire) {
         None => Box::pin(std::future::pending()),
         Some(at) => Box::pin(tokio::time::sleep_until(at)),
     }
@@ -648,10 +654,20 @@ pub(crate) struct AppliedOps {
 /// order. A change the transport refuses (an unparsable or over-cap candidate,
 /// bad restart credentials) is logged and skipped, like the offer's own
 /// candidates.
+/// The resource URL a WHIP/WHEP session answers at, on this host's own placeholder origin: the
+/// relative `Location` a peer gets must resolve back to this origin, and only the path identifies
+/// the resource.
+pub(crate) fn resource_url(kind: &str, resource_id: &str) -> url::Url {
+    let text = format!("https://{kind}.invalid/{kind}/session/{resource_id}");
+    url::Url::parse(&text).unwrap_or_else(|_| {
+        url::Url::parse("https://invalid.invalid/").unwrap_or_else(|_| unreachable!())
+    })
+}
+
 pub(crate) fn apply_ice_ops(
     media: &mut webrtc_runtime::media::MediaTransport,
     ops: Vec<IceOp>,
-    now: std::time::Instant,
+    now: broadcast_common::stage::Timestamp,
 ) -> AppliedOps {
     let mut done = AppliedOps::default();
     for op in ops {
@@ -1116,6 +1132,25 @@ mod tests {
 
     use std::time::Duration;
 
+    use broadcast_common::stage::Timestamp;
+
+    /// A transport whose epoch is `start`, the instant the tests' `std_now` counts from.
+    fn test_transport(start: std::time::Instant) -> webrtc_runtime::media::MediaTransport {
+        webrtc_runtime::media::MediaTransport::new(
+            webrtc_runtime::media::MediaTransportConfig::new(
+                "127.0.0.1:0".parse().unwrap(),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                crate::secure_random::token(8),
+                crate::secure_random::token(24),
+                webrtc_runtime::media::SetupRole::Passive,
+                "sha-256 5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A:5A".into(),
+            ),
+            Timestamp::from_instant(start, start),
+        )
+        .expect("a transport for the timer tests")
+    }
+
     fn std_now() -> std::time::Instant {
         tokio::time::Instant::now().into_std()
     }
@@ -1125,8 +1160,14 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_real_deadline_fires_on_time_regardless_of_the_last_fire() {
         let start = tokio::time::Instant::now();
-        let last_fire = Some(std_now() - Duration::from_secs(10));
-        sleep_until_timer(Some(std_now() + Duration::from_millis(500)), last_fire).await;
+        let media = test_transport(std_now());
+        let last_fire = Some(media.stamp_of(std_now() - Duration::from_secs(10)));
+        sleep_until_timer(
+            &media,
+            Some(std_now() + Duration::from_millis(500)),
+            last_fire,
+        )
+        .await;
         assert_eq!(start.elapsed(), Duration::from_millis(500));
     }
 
@@ -1135,14 +1176,15 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn steady_inbound_datagrams_do_not_starve_the_transport_timer() {
         let start = tokio::time::Instant::now();
-        let last_fire = Some(std_now() - Duration::from_secs(10));
+        let media = test_transport(std_now());
+        let last_fire = Some(media.stamp_of(std_now() - Duration::from_secs(10)));
         let deadline = std_now() + Duration::from_millis(500);
         let mut datagrams = tokio::time::interval(Duration::from_millis(10));
         datagrams.tick().await;
         loop {
             tokio::select! {
                 _ = datagrams.tick() => {}
-                () = sleep_until_timer(Some(deadline), last_fire) => break,
+                () = sleep_until_timer(&media, Some(deadline), last_fire) => break,
             }
             assert!(start.elapsed() < Duration::from_secs(2), "timer starved");
         }
@@ -1152,9 +1194,19 @@ mod tests {
     /// An overdue deadline is floored to `last_fire + MIN_TIMER_INTERVAL`.
     #[tokio::test(start_paused = true)]
     async fn an_overdue_deadline_is_floored_from_the_last_fire() {
-        let start = tokio::time::Instant::now();
+        let media = test_transport(std_now());
+        // The last fire sits a clear second in the past on the transport's own clock; the
+        // deadline is already overdue, so the fire must be floored to `last_fire + floor`, which
+        // this test reads back through the converter the sleep uses.
         let now = std_now();
-        sleep_until_timer(Some(now - Duration::from_secs(1)), Some(now)).await;
-        assert_eq!(start.elapsed(), MIN_TIMER_INTERVAL);
+        let fired_at = Timestamp::from_instant(now, now - Duration::from_secs(1));
+        let fire_at = timer_fire_at(&media, Some(now), Some(fired_at)).expect("a deadline");
+        assert_eq!(
+            fire_at,
+            tokio::time::Instant::from_std(media.now_at(fired_at) + MIN_TIMER_INTERVAL)
+        );
+        let start = tokio::time::Instant::now();
+        sleep_until_timer(&media, Some(now), Some(fired_at)).await;
+        assert!(start.elapsed() >= MIN_TIMER_INTERVAL);
     }
 }

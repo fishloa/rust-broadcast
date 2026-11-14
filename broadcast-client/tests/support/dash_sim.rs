@@ -12,7 +12,7 @@ use super::dash_common::loopback;
 use super::dash_common::world::{self, HttpReq, Method, Outcome, World};
 use super::ts;
 
-pub type Headers = Vec<(String, String)>;
+pub type Headers = http::HeaderMap;
 
 pub const SIM_ETAG: &str = "\"sim-v1\"";
 pub const MS: u64 = 1_000;
@@ -28,15 +28,12 @@ pub struct Logged {
     pub byte_range: Option<(u64, u64)>,
     pub send_elapsed_us: u64,
     pub send_utc_us: i64,
-    pub status: Option<u16>,
+    pub status: Option<http::StatusCode>,
 }
 
 impl Logged {
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case(name))
-            .map(|(_, v)| v.as_str())
+        self.headers.get(name).and_then(|value| value.to_str().ok())
     }
 
     pub fn is_mpd(&self) -> bool {
@@ -50,7 +47,7 @@ impl Logged {
 #[derive(Debug, Clone)]
 pub enum Answer {
     Full {
-        status: u16,
+        status: http::StatusCode,
         headers: Headers,
         body: Vec<u8>,
     },
@@ -63,7 +60,7 @@ pub enum Answer {
     },
     Stall(Vec<u8>),
     StallWith {
-        status: u16,
+        status: http::StatusCode,
         headers: Headers,
         body: Vec<u8>,
     },
@@ -77,23 +74,23 @@ pub enum Answer {
 impl Answer {
     pub fn ok(body: Vec<u8>) -> Self {
         Self::Full {
-            status: 200,
-            headers: Vec::new(),
+            status: http::StatusCode::OK,
+            headers: Headers::new(),
             body,
         }
     }
 
     pub fn status(status: u16) -> Self {
         Self::Full {
-            status,
-            headers: Vec::new(),
+            status: crate::support::status(status),
+            headers: Headers::new(),
             body: Vec::new(),
         }
     }
 
     pub fn status_with(status: u16, headers: Headers) -> Self {
         Self::Full {
-            status,
+            status: crate::support::status(status),
             headers,
             body: Vec::new(),
         }
@@ -106,7 +103,7 @@ impl Answer {
                 mut headers,
                 body,
             } => {
-                headers.push((name.to_string(), value.to_string()));
+                insert_header(&mut headers, name, value);
                 Self::Full {
                     status,
                     headers,
@@ -115,6 +112,23 @@ impl Answer {
             }
             other => other,
         }
+    }
+}
+
+/// Set a reply header from test text, replacing any earlier value of that name.
+fn insert_header(headers: &mut Headers, name: &str, value: &str) {
+    let name = http::HeaderName::from_bytes(name.as_bytes()).expect("a fixture names a header");
+    let value = http::HeaderValue::from_str(value).expect("a fixture writes a valid header value");
+    headers.insert(name, value);
+}
+
+/// Append a validator `ETag` (quoted, as the origin sends it).
+fn append_etag(headers: &mut Headers, etag: headers::ETag) {
+    use headers::HeaderMapExt;
+    let mut map = http::HeaderMap::new();
+    map.typed_insert(etag);
+    if let Some(value) = map.get(http::header::ETAG) {
+        headers.append(http::header::ETAG, value.clone());
     }
 }
 
@@ -128,7 +142,7 @@ fn parse_open_range(value: &str) -> Option<(u64, Option<u64>)> {
 /// the requested slice as a `206`, or the untouched `200` when `If-Range` names another validator.
 pub fn range_answer(answer: Answer, range: &str, if_range: Option<&str>) -> Answer {
     let Answer::Full {
-        status: 200,
+        status: http::StatusCode::OK,
         mut headers,
         body,
     } = answer
@@ -137,39 +151,38 @@ pub fn range_answer(answer: Answer, range: &str, if_range: Option<&str>) -> Answ
     };
     let Some((first, last)) = parse_open_range(range) else {
         return Answer::Full {
-            status: 200,
+            status: http::StatusCode::OK,
             headers,
             body,
         };
     };
     let etag = headers
-        .iter()
-        .find(|(k, _)| k.eq_ignore_ascii_case("etag"))
-        .map_or_else(|| SIM_ETAG.to_string(), |(_, v)| v.clone());
+        .get(http::header::ETAG)
+        .and_then(|v| v.to_str().ok())
+        .map_or_else(|| SIM_ETAG.to_string(), str::to_owned);
     let total = body.len() as u64;
     let last = last.map_or(total.saturating_sub(1), |l| l.min(total.saturating_sub(1)));
     if if_range.is_some_and(|validator| validator != etag) || first > last {
         return Answer::Full {
-            status: 200,
+            status: http::StatusCode::OK,
             headers,
             body,
         };
     }
-    headers.retain(|(k, _)| {
-        !["etag", "content-length", "content-range"]
-            .iter()
-            .any(|n| k.eq_ignore_ascii_case(n))
-    });
+    headers.remove(http::header::ETAG);
+    headers.remove(http::header::CONTENT_LENGTH);
+    headers.remove(http::header::CONTENT_RANGE);
     let slice = body[usize::try_from(first).unwrap()..=usize::try_from(last).unwrap()].to_vec();
-    headers.push(("ETag".into(), etag));
-    headers.push(("Accept-Ranges".into(), "bytes".into()));
-    headers.push((
-        "Content-Range".into(),
-        format!("bytes {first}-{last}/{total}"),
-    ));
-    headers.push(("Content-Length".into(), slice.len().to_string()));
+    insert_header(&mut headers, "ETag", &etag);
+    insert_header(&mut headers, "Accept-Ranges", "bytes");
+    insert_header(
+        &mut headers,
+        "Content-Range",
+        &format!("bytes {first}-{last}/{total}"),
+    );
+    insert_header(&mut headers, "Content-Length", &slice.len().to_string());
     Answer::Full {
-        status: 206,
+        status: http::StatusCode::PARTIAL_CONTENT,
         headers,
         body: slice,
     }
@@ -179,7 +192,7 @@ pub fn range_answer(answer: Answer, range: &str, if_range: Option<&str>) -> Answ
 /// silent, carrying the validators a resumable origin sends.
 pub fn stall_after(good: &Answer, sent: usize) -> Option<Answer> {
     let Answer::Full {
-        status: status @ (200 | 206),
+        status: status @ (http::StatusCode::OK | http::StatusCode::PARTIAL_CONTENT),
         headers,
         body,
     } = good
@@ -187,14 +200,12 @@ pub fn stall_after(good: &Answer, sent: usize) -> Option<Answer> {
         return None;
     };
     let mut headers = headers.clone();
-    headers.retain(|(k, _)| {
-        !["etag", "accept-ranges", "content-length"]
-            .iter()
-            .any(|n| k.eq_ignore_ascii_case(n))
-    });
-    headers.push(("ETag".into(), SIM_ETAG.into()));
-    headers.push(("Accept-Ranges".into(), "bytes".into()));
-    headers.push(("Content-Length".into(), body.len().to_string()));
+    headers.remove(http::header::ETAG);
+    headers.remove(http::header::ACCEPT_RANGES);
+    headers.remove(http::header::CONTENT_LENGTH);
+    insert_header(&mut headers, "ETag", SIM_ETAG);
+    insert_header(&mut headers, "Accept-Ranges", "bytes");
+    insert_header(&mut headers, "Content-Length", &body.len().to_string());
     Some(Answer::StallWith {
         status: *status,
         headers,
@@ -230,16 +241,17 @@ impl<O: world::Origin> Backend for WorldBackend<O> {
             Outcome::Resp(r) => {
                 let mut headers = Headers::new();
                 if let Some(d) = r.date {
-                    headers.push(("Date".into(), d));
+                    use headers::HeaderMapExt;
+                    headers.typed_insert(d);
                 }
                 if let Some(e) = r.etag {
-                    headers.push(("ETag".into(), e));
+                    append_etag(&mut headers, e);
                 }
                 if let Some(loc) = r.final_url {
                     return Answer::Redirect(loc);
                 }
                 Answer::Full {
-                    status: r.status,
+                    status: crate::support::status(r.status),
                     headers,
                     body: r.body,
                 }
@@ -267,13 +279,14 @@ impl Backend for StaticBackend {
                 if resp.status == 206
                     && let Some((off, len)) = req.byte_range
                 {
-                    headers.push((
-                        "Content-Range".into(),
-                        format!("bytes {off}-{}/*", off + len.saturating_sub(1)),
-                    ));
+                    insert_header(
+                        &mut headers,
+                        "Content-Range",
+                        &format!("bytes {off}-{}/*", off + len.saturating_sub(1)),
+                    );
                 }
                 Answer::Full {
-                    status: resp.status,
+                    status: crate::support::status(resp.status),
                     headers,
                     body: resp.body,
                 }
@@ -406,7 +419,7 @@ impl DashSim {
         let mut logged = logged;
         logged.status = match &answer {
             Answer::Full { status, .. } => Some(*status),
-            Answer::Redirect(_) => Some(302),
+            Answer::Redirect(_) => Some(http::StatusCode::FOUND),
             Answer::StallWith { status, .. } => Some(*status),
             Answer::Late(inner, _)
             | Answer::Duplicate(inner)
@@ -453,12 +466,7 @@ impl DashSim {
                     conn,
                     method.as_str().to_string(),
                     url.to_string(),
-                    headers
-                        .iter()
-                        .map(|(n, v)| {
-                            (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
-                        })
-                        .collect(),
+                    headers,
                     byte_range.map(|s| (s.offset, s.len.get())),
                 ),
                 Action::Close { conn } => {
@@ -484,11 +492,10 @@ impl DashSim {
                 mut headers,
                 body,
             } => {
-                if !headers
-                    .iter()
-                    .any(|(k, _)| k.eq_ignore_ascii_case("content-length"))
+                if !headers.contains_key(http::header::CONTENT_LENGTH)
+                    && let Ok(len) = http::HeaderValue::from_str(&body.len().to_string())
                 {
-                    headers.push(("Content-Length".into(), body.len().to_string()));
+                    headers.insert(http::header::CONTENT_LENGTH, len);
                 }
                 self.session.on_response(conn, status, &headers, ts(now));
                 for c in body.chunks(chunk) {
@@ -497,8 +504,13 @@ impl DashSim {
                 self.session.on_closed(conn, None, ts(now));
             }
             Answer::Redirect(loc) => {
+                let mut headers = http::HeaderMap::new();
+                headers.insert(
+                    http::header::LOCATION,
+                    http::HeaderValue::from_str(&loc).expect("a fixture writes a valid location"),
+                );
                 self.session
-                    .on_response(conn, 302, &[("Location".into(), loc)], ts(now));
+                    .on_response(conn, http::StatusCode::FOUND, &headers, ts(now));
             }
             Answer::TransportError => self.session.on_closed(
                 conn,
@@ -508,7 +520,12 @@ impl DashSim {
                 ts(now),
             ),
             Answer::ResetMid(body) => {
-                self.session.on_response(conn, 200, &[], ts(now));
+                self.session.on_response(
+                    conn,
+                    http::StatusCode::OK,
+                    &http::HeaderMap::new(),
+                    ts(now),
+                );
                 for c in body.chunks(chunk) {
                     self.session.on_data(conn, c, ts(now));
                 }
@@ -523,8 +540,8 @@ impl DashSim {
             Answer::Truncated { body, declared } => {
                 self.session.on_response(
                     conn,
-                    200,
-                    &[("Content-Length".into(), declared.to_string())],
+                    http::StatusCode::OK,
+                    &crate::support::headers(&[("Content-Length", &declared.to_string())]),
                     ts(now),
                 );
                 for c in body.chunks(chunk) {
@@ -533,7 +550,12 @@ impl DashSim {
                 self.session.on_closed(conn, None, ts(now));
             }
             Answer::Stall(body) => {
-                self.session.on_response(conn, 200, &[], ts(now));
+                self.session.on_response(
+                    conn,
+                    http::StatusCode::OK,
+                    &http::HeaderMap::new(),
+                    ts(now),
+                );
                 for c in body.chunks(chunk) {
                     self.session.on_data(conn, c, ts(now));
                 }
@@ -554,13 +576,23 @@ impl DashSim {
                     _ => Vec::new(),
                 };
                 self.respond(conn, *inner);
-                self.session.on_response(conn, 200, &[], ts(now));
+                self.session.on_response(
+                    conn,
+                    http::StatusCode::OK,
+                    &http::HeaderMap::new(),
+                    ts(now),
+                );
                 self.session.on_data(conn, &replay, ts(now));
                 self.session.on_closed(conn, None, ts(now));
             }
             Answer::Unknown(inner) => {
                 const STRANGER: ConnId = ConnId::new(9_999);
-                self.session.on_response(STRANGER, 200, &[], ts(now));
+                self.session.on_response(
+                    STRANGER,
+                    http::StatusCode::OK,
+                    &http::HeaderMap::new(),
+                    ts(now),
+                );
                 self.session.on_data(STRANGER, b"xx", ts(now));
                 self.session.on_closed(STRANGER, None, ts(now));
                 self.respond(conn, *inner);

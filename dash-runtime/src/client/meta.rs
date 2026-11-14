@@ -2,6 +2,7 @@
 //! measured on its own monotonic clock and the headers the client reads.
 
 use broadcast_common::stage::Timestamp;
+use headers::{Date, ETag, LastModified};
 
 /// An MPD response as the caller observed it.
 ///
@@ -10,19 +11,19 @@ use broadcast_common::stage::Timestamp;
 /// places the server's `FetchTime` at their midpoint (23009-1 A.2). Every
 /// header is optional: a client with none of them still plays, it just
 /// refreshes unconditionally and has no `Date` clock fallback.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct ResponseMeta<'a> {
     /// Monotonic instant the request was sent.
     pub sent: Timestamp,
     /// Monotonic instant the first response byte arrived.
     pub received: Timestamp,
-    /// The `Date` header, verbatim.
-    pub date: Option<&'a str>,
-    /// The `ETag` header, verbatim.
-    pub etag: Option<&'a str>,
-    /// The `Last-Modified` header, verbatim.
-    pub last_modified: Option<&'a str>,
+    /// The `Date` header.
+    pub date: Option<Date>,
+    /// The `ETag` header.
+    pub etag: Option<ETag>,
+    /// The `Last-Modified` header.
+    pub last_modified: Option<LastModified>,
     /// The URL the response came from after redirects, when it differs from
     /// the URL requested.
     pub final_url: Option<&'a str>,
@@ -50,21 +51,21 @@ impl<'a> ResponseMeta<'a> {
 
     /// Set the `Date` header.
     #[must_use]
-    pub fn with_date(mut self, date: &'a str) -> Self {
+    pub fn with_date(mut self, date: Date) -> Self {
         self.date = Some(date);
         self
     }
 
     /// Set the `ETag` header.
     #[must_use]
-    pub fn with_etag(mut self, etag: &'a str) -> Self {
+    pub fn with_etag(mut self, etag: ETag) -> Self {
         self.etag = Some(etag);
         self
     }
 
     /// Set the `Last-Modified` header.
     #[must_use]
-    pub fn with_last_modified(mut self, last_modified: &'a str) -> Self {
+    pub fn with_last_modified(mut self, last_modified: LastModified) -> Self {
         self.last_modified = Some(last_modified);
         self
     }
@@ -86,7 +87,7 @@ pub struct UtcResponse<'a> {
     /// Monotonic instant the first response byte arrived.
     pub received: Timestamp,
     /// The `Date` header (the time of an `http-head` exchange).
-    pub date: Option<&'a str>,
+    pub date: Option<Date>,
     /// The body, empty for a `HEAD`.
     pub body: &'a [u8],
 }
@@ -105,7 +106,7 @@ impl<'a> UtcResponse<'a> {
 
     /// Set the `Date` header.
     #[must_use]
-    pub fn with_date(mut self, date: &'a str) -> Self {
+    pub fn with_date(mut self, date: Date) -> Self {
         self.date = Some(date);
         self
     }

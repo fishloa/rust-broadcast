@@ -5,7 +5,7 @@
 use crate::support;
 use broadcast_client::{ErrorKind, Event, events::DEFAULT_MAX_KEY_FAILURES};
 use support::fmp4_split::{group, split};
-use support::hls_host::{Host, Reply, hls_config, is_ended};
+use support::hls_host::{Host, Reply, hls_config, is_ended, status_only};
 
 const BASE: &str = "http://origin.test/v";
 const PL: &str = "http://origin.test/v/index.m3u8";
@@ -88,7 +88,7 @@ fn vod_init_transient_503_recovers_and_plays_everything() {
     let want = clean_samples(&["i1.mp4"]);
     let mut h = vod_host(
         &["i1.mp4"],
-        &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])],
+        &[("i1.mp4", vec![status_only(503), Reply::Ok(parts().0)])],
     );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
@@ -101,13 +101,15 @@ fn vod_init_transient_503_recovers_and_plays_everything() {
 
 #[test]
 fn vod_init_permanent_404_is_one_typed_fatal_after_the_cap() {
-    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(404)])]);
+    let mut h = vod_host(&["i1.mp4"], &[("i1.mp4", vec![status_only(404)])]);
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
     assert!(!t.ended, "{t:?}");
     assert_eq!(
         t.fatals,
-        vec![ErrorKind::InitFetchFailed { status: Some(404) }]
+        vec![ErrorKind::InitFetchFailed {
+            status: Some(crate::support::status(404))
+        }]
     );
     assert_eq!(
         h.hits(&format!("{BASE}/i1.mp4")),
@@ -128,7 +130,7 @@ fn vod_second_map_init_transient_failure_recovers() {
     let want = clean_samples(&maps);
     let mut h = vod_host(
         &maps,
-        &[("i2.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])],
+        &[("i2.mp4", vec![status_only(503), Reply::Ok(parts().0)])],
     );
     h.run_until(stop_on_end_or_fatal, STEPS);
     let t = tally(&h);
@@ -146,7 +148,7 @@ fn init_failure_cap_follows_max_key_failures() {
     let (init, segs) = parts();
     let mut h = Host::new(PL, cfg);
     h.ok(PL, vod_playlist(&["i1.mp4"]));
-    h.route(&format!("{BASE}/i1.mp4"), vec![Reply::Status(500)]);
+    h.route(&format!("{BASE}/i1.mp4"), vec![status_only(500)]);
     h.ok(&format!("{BASE}/s0.m4s"), segs[0].clone());
     let _ = init;
     h.run_until(stop_on_end_or_fatal, STEPS);
@@ -158,7 +160,7 @@ fn init_failure_cap_follows_max_key_failures() {
 fn vod_init_retry_does_not_refetch_the_ended_playlist() {
     let mut h = vod_host(
         &["i1.mp4"],
-        &[("i1.mp4", vec![Reply::Status(503), Reply::Ok(parts().0)])],
+        &[("i1.mp4", vec![status_only(503), Reply::Ok(parts().0)])],
     );
     h.run_until(stop_on_end_or_fatal, STEPS);
     assert!(tally(&h).ended);
@@ -293,7 +295,7 @@ fn failed_resigned_init_is_retried_with_the_newest_url() {
     }
     let mut h = Host::new(PL, hls_config());
     h.route(PL, pl);
-    h.route(&format!("{BASE}/init.mp4?sig=0"), vec![Reply::Status(503)]);
+    h.route(&format!("{BASE}/init.mp4?sig=0"), vec![status_only(503)]);
     for r in 1..8 {
         h.ok(&format!("{BASE}/init.mp4?sig={r}"), init.clone());
     }
@@ -373,8 +375,10 @@ fn a_permanent_init_failure_is_one_typed_fatal() {
     let cases: [(&str, Build, ErrorKind, bool); 5] = [
         (
             "vod 503",
-            || vod_host(&["i1.mp4"], &[("i1.mp4", vec![Reply::Status(503)])]),
-            ErrorKind::InitFetchFailed { status: Some(503) },
+            || vod_host(&["i1.mp4"], &[("i1.mp4", vec![status_only(503)])]),
+            ErrorKind::InitFetchFailed {
+                status: Some(crate::support::status(503)),
+            },
             false,
         ),
         (
@@ -385,19 +389,18 @@ fn a_permanent_init_failure_is_one_typed_fatal() {
         ),
         (
             "live 404",
-            || live_host(vec![Reply::Status(404)]),
-            ErrorKind::InitFetchFailed { status: Some(404) },
+            || live_host(vec![status_only(404)]),
+            ErrorKind::InitFetchFailed {
+                status: Some(crate::support::status(404)),
+            },
             false,
         ),
         (
             "vod second map 404",
-            || {
-                vod_host(
-                    &["i1.mp4", "i2.mp4"],
-                    &[("i2.mp4", vec![Reply::Status(404)])],
-                )
+            || vod_host(&["i1.mp4", "i2.mp4"], &[("i2.mp4", vec![status_only(404)])]),
+            ErrorKind::InitFetchFailed {
+                status: Some(crate::support::status(404)),
             },
-            ErrorKind::InitFetchFailed { status: Some(404) },
             true,
         ),
         (
@@ -419,7 +422,7 @@ fn a_permanent_init_failure_is_one_typed_fatal() {
 #[test]
 fn a_transient_live_init_failure_recovers() {
     let cases: [(&str, Vec<Reply>); 2] = [
-        ("503", vec![Reply::Status(503), Reply::Ok(parts().0)]),
+        ("503", vec![status_only(503), Reply::Ok(parts().0)]),
         ("garbage", garbage_then_good()),
     ];
     for (why, replies) in cases {

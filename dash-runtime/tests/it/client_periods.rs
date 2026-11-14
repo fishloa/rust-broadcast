@@ -192,7 +192,7 @@ fn a_missing_full_length_last_segment_is_not_a_tail() {
     assert!(matches!(
         run.fatal,
         Some(FatalKind::SegmentFetchFailed {
-            status: Some(404),
+            status: Some(http::StatusCode::NOT_FOUND),
             ..
         })
     ));

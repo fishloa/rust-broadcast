@@ -306,7 +306,7 @@ const GO_DEADLINE_US: u64 = 5_000_000;
 #[test]
 fn a_played_reconnect_reports_attempt_zero_then_live_without_a_climbing_counter() {
     let r = skip_none!(lower_base_reconnect(0));
-    let attempts: Vec<u64> = r
+    let attempts: Vec<u32> = r
         .host
         .statuses_since(r.mark)
         .into_iter()
@@ -436,8 +436,11 @@ fn finite_pass(
     host_position: Option<u64>,
 ) -> Option<Vec<Event>> {
     let mut headers = support::read_tf1_headers()?.1;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    session.on_response(conn, 200, &headers, ts(now));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
+    session.on_response(conn, http::StatusCode::OK, &headers, ts(now));
     let mut out = Vec::new();
     let mut at = now;
     let mut position = host_position;

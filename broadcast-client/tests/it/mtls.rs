@@ -126,8 +126,8 @@ fn redirect_target_identity(scope: ClientIdentityScope, to: &str) -> Option<u64>
     assert_eq!(identity_handle(&first), Some(HANDLE));
     s.on_response(
         conn,
-        302,
-        &[("Location".to_string(), to.to_string())],
+        http::StatusCode::FOUND,
+        &crate::support::headers(&[("Location", to)]),
         ts(1),
     );
     let (_, url, identity) = first_http(&mut s, 1);
@@ -172,11 +172,8 @@ fn an_hls_segment_on_a_cdn_origin_gets_the_identity_only_under_any_https() {
         assert_eq!(identity_handle(&manifest), Some(HANDLE));
         s.on_response(
             conn,
-            200,
-            &[(
-                "Content-Type".to_string(),
-                "application/vnd.apple.mpegurl".to_string(),
-            )],
+            http::StatusCode::OK,
+            &crate::support::headers(&[("Content-Type", "application/vnd.apple.mpegurl")]),
             ts(1),
         );
         s.on_data(conn, PLAYLIST.as_bytes(), ts(2));

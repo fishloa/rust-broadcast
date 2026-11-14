@@ -97,8 +97,8 @@ fn pts_33bit_wrap_through_session_playout() {
     };
     session.on_response(
         conn,
-        200,
-        &[("Content-Length".to_string(), bytes.len().to_string())],
+        http::StatusCode::OK,
+        &crate::support::headers(&[("Content-Length", &bytes.len().to_string())]),
         ts(0),
     );
     for chunk in bytes.chunks(1316) {

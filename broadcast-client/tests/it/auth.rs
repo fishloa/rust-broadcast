@@ -8,6 +8,14 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
+fn www_authenticate(line: &str) -> http::HeaderMap {
+    crate::support::headers(&[("WWW-Authenticate", line)])
+}
+
+fn proxy_authenticate(line: &str) -> http::HeaderMap {
+    crate::support::headers(&[("Proxy-Authenticate", line)])
+}
+
 #[test]
 fn bearer_preemptive() {
     let mut session = Session::open(
@@ -77,11 +85,8 @@ fn an_empty_username_in_the_url_userinfo_is_credentials() {
     assert!(!url.as_str().contains("pw"), "{url}");
     session.on_response(
         conn,
-        401,
-        &[(
-            "WWW-Authenticate".to_string(),
-            "Basic realm=\"test\"".to_string(),
-        )],
+        crate::support::status(401),
+        &www_authenticate("Basic realm=\"test\""),
         ts(0),
     );
     let replay = std::iter::from_fn(|| session.poll(ts(0))).find_map(|a| match a {
@@ -102,14 +107,22 @@ fn an_empty_username_in_the_url_userinfo_is_credentials() {
 fn error_kinds_report_their_refusal_status_and_permanence() {
     use broadcast_client::ErrorKind;
     assert_eq!(
-        ErrorKind::KeyFetchFailed { status: Some(403) }.refusal_status(),
-        Some(403)
+        ErrorKind::KeyFetchFailed {
+            status: Some(crate::support::status(403))
+        }
+        .refusal_status(),
+        Some(crate::support::status(403))
     );
     assert_eq!(ErrorKind::DecryptFailed.refusal_status(), None);
     assert!(ErrorKind::DecryptFailed.is_permanent());
     assert!(ErrorKind::InitDecodeFailed.is_permanent());
     assert!(!ErrorKind::BadKey.is_permanent());
-    assert!(!ErrorKind::SegmentFetchFailed { status: Some(404) }.is_permanent());
+    assert!(
+        !ErrorKind::SegmentFetchFailed {
+            status: Some(crate::support::status(404))
+        }
+        .is_permanent()
+    );
 }
 
 #[test]
@@ -137,8 +150,8 @@ fn basic_401_replay_then_200() {
     let challenge = "Basic realm=\"test\"";
     session.on_response(
         conn1,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     let mut conn2 = None;
@@ -161,7 +174,12 @@ fn basic_401_replay_then_200() {
     }
     assert!(saw_close);
     let c2 = conn2.unwrap();
-    session.on_response(c2, 200, &[], ts(0));
+    session.on_response(
+        c2,
+        crate::support::status(200),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
 }
 
 #[test]
@@ -182,8 +200,8 @@ fn digest_401_replay_then_200() {
     let challenge = "Digest realm=\"test\", nonce=\"abc123\", qop=\"auth\"";
     session.on_response(
         conn1,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     let mut conn2 = None;
@@ -199,7 +217,12 @@ fn digest_401_replay_then_200() {
         }
     }
     let c2 = conn2.unwrap();
-    session.on_response(c2, 200, &[], ts(0));
+    session.on_response(
+        c2,
+        crate::support::status(200),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
 }
 
 #[test]
@@ -220,8 +243,8 @@ fn basic_digest_preemptive_after_replay() {
     let challenge = "Basic realm=\"test\"";
     session.on_response(
         conn1,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     // consume replay
@@ -232,7 +255,12 @@ fn basic_digest_preemptive_after_replay() {
         }
     }
     let c2 = conn2.unwrap();
-    session.on_response(c2, 200, &[], ts(0));
+    session.on_response(
+        c2,
+        crate::support::status(200),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     // trigger reconnect -> new request should be preemptive
     session.reconnect(ts(1_000));
     let mut saw_auth = false;
@@ -267,8 +295,8 @@ fn digest_stale_rechallenge_replays() {
     let challenge = "Digest realm=\"test\", nonce=\"abc\", qop=\"auth\"";
     session.on_response(
         conn1,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     let mut conn2 = None;
@@ -281,8 +309,8 @@ fn digest_stale_rechallenge_replays() {
     let stale_challenge = "Digest realm=\"test\", nonce=\"def\", qop=\"auth\", stale=true";
     session.on_response(
         c2,
-        401,
-        &[("WWW-Authenticate".to_string(), stale_challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(stale_challenge),
         ts(0),
     );
     let mut conn3 = None;
@@ -321,8 +349,8 @@ fn no_credentials_401_waits_no_timers() {
     let challenge = "Bearer realm=\"example\", resource_metadata=\"https://resource.example.com/.well-known/oauth-protected-resource\"";
     session.on_response(
         conn,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     let mut events = Vec::new();
@@ -372,8 +400,8 @@ fn no_credentials_407_waits() {
     let challenge = "Basic realm=\"proxy\"";
     session.on_response(
         conn,
-        407,
-        &[("Proxy-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(407),
+        &proxy_authenticate(challenge),
         ts(0),
     );
     let mut events = Vec::new();
@@ -410,8 +438,8 @@ fn auth_rejected_after_bad_credentials() {
     let challenge = "Basic realm=\"test\"";
     session.on_response(
         conn1,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     let mut conn2 = None;
@@ -423,8 +451,8 @@ fn auth_rejected_after_bad_credentials() {
     let c2 = conn2.unwrap();
     session.on_response(
         c2,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     let mut events = Vec::new();
@@ -434,7 +462,7 @@ fn auth_rejected_after_bad_credentials() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::AuthRejected { status: 401 }))
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401))
     );
     assert!(
         events
@@ -458,8 +486,8 @@ fn set_credentials_while_waiting_reopens() {
     let challenge = "Bearer realm=\"example\"";
     session.on_response(
         conn,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     // consume close
@@ -491,7 +519,12 @@ fn set_credentials_while_streaming_stored_not_interrupt() {
         }
         _ => panic!(),
     };
-    session.on_response(conn, 200, &[], ts(0));
+    session.on_response(
+        conn,
+        crate::support::status(200),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     session
         .set_credentials(Credentials::bearer("new-token"))
         .unwrap();
@@ -543,7 +576,12 @@ fn forbidden_then_retry_policy() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, 403, &[], ts(0));
+    session.on_response(
+        conn,
+        crate::support::status(403),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     let mut events = Vec::new();
     while let Some(e) = session.next_event() {
         events.push(e);
@@ -551,7 +589,7 @@ fn forbidden_then_retry_policy() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, Event::Forbidden { status: 403 }))
+            .any(|e| matches!(e, Event::Forbidden { status } if status.as_u16() == 403))
     );
     // retry policy produces a timer (WakeAt) via source.on_error
     let mut saw_timer = false;
@@ -615,8 +653,8 @@ fn challenged_session(challenge: &str) -> Session {
     assert!(authorization(&headers).is_none());
     session.on_response(
         conn,
-        401,
-        &[("WWW-Authenticate".to_string(), challenge.to_string())],
+        crate::support::status(401),
+        &www_authenticate(challenge),
         ts(0),
     );
     while session.poll(ts(0)).is_some() {}
@@ -662,7 +700,12 @@ fn reconnect_after_credentials_arrive_stays_preemptive() {
         .unwrap();
     let (conn, headers) = first_request_headers(&mut session, 1);
     assert!(authorization(&headers).is_some());
-    session.on_response(conn, 200, &[], ts(0));
+    session.on_response(
+        conn,
+        crate::support::status(200),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     session.reconnect(ts(2));
     let (_, again) = first_request_headers(&mut session, 2);
     assert_eq!(authorization(&again), Some("Basic dXNlcjpwYXNz"));
@@ -686,11 +729,8 @@ fn rejected_credentials_then_new_ones_use_the_new_challenge_state() {
     assert!(authorization(&headers).is_some());
     session.on_response(
         conn,
-        401,
-        &[(
-            "WWW-Authenticate".to_string(),
-            "Basic realm=\"tv\"".to_string(),
-        )],
+        crate::support::status(401),
+        &www_authenticate("Basic realm=\"tv\""),
         ts(0),
     );
     while session.poll(ts(1)).is_some() {}

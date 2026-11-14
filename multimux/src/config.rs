@@ -611,14 +611,20 @@ impl ReconnectPolicy {
         30_000
     }
 
+    /// The delay before attempt `attempt`: the shared schedule over this
+    /// policy's bounds.
+    ///
+    /// A policy [`Self::validate`] rejects (a cap under the floor) has no
+    /// schedule; it falls back to its cap rather than to a repaired one.
     pub fn backoff_for(&self, attempt: u32) -> std::time::Duration {
+        let cap = std::time::Duration::from_millis(self.max_backoff_ms);
         broadcast_common::backoff::RetrySchedule::new(
             std::time::Duration::from_millis(self.initial_backoff_ms),
-            std::time::Duration::from_millis(self.max_backoff_ms),
+            cap,
             RECONNECT_BACKOFF_FACTOR,
             crate::source::seed_entropy(),
         )
-        .delay_for_attempt(attempt)
+        .map_or(cap, |schedule| schedule.delay_for_attempt(attempt))
     }
 
     /// Validate the policy (audit run 7, W19): a zero backoff (either bound)

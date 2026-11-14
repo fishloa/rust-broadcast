@@ -9,7 +9,6 @@
 //! foreign-namespace extensions are both readable through [`Elem::attr_in`].
 
 use alloc::borrow::ToOwned;
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
@@ -153,10 +152,10 @@ struct Reader<'a, N> {
 }
 
 fn ns_of<N: Namespace>(result: ResolveResult<'_>) -> Result<N, String> {
-    match result {
-        ResolveResult::Unbound => Ok(N::NONE),
-        ResolveResult::Bound(ns) => Ok(N::classify(ns.into_inner())),
-        ResolveResult::Unknown(prefix) => Err(format!("unknown namespace prefix '{prefix}'")),
+    match crate::xml_chars::namespace_of(result) {
+        Ok(None) => Ok(N::NONE),
+        Ok(Some(uri)) => Ok(N::classify(&uri)),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -185,7 +184,7 @@ impl<N: Namespace> Reader<'_, N> {
     }
 
     fn char_data(&self, event: &Event<'_>) -> Result<Option<String>, XmlError> {
-        crate::xml_chars::char_data(event).map_err(|m| self.fail(m))
+        crate::xml_chars::char_data(event).map_err(|e| self.fail(e.to_string()))
     }
 
     fn fail(&self, message: impl Into<String>) -> XmlError {

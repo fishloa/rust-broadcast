@@ -10,6 +10,15 @@ use webrtc_runtime::Error;
 use webrtc_runtime::whip::client::{self, WhipClient};
 use webrtc_runtime::whip::server::{self, WhipSession};
 
+/// The endpoint and session URL as the parsed values the state machines take.
+fn endpoint() -> url::Url {
+    url::Url::parse(ENDPOINT).expect("endpoint")
+}
+
+fn session_url() -> url::Url {
+    url::Url::parse(SESSION).expect("session URL")
+}
+
 const ENDPOINT: &str = "https://whip.example.com/pub";
 const SESSION: &str = "https://whip.example.com/session/abc123";
 const SDP_OFFER: &[u8] = b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n";
@@ -40,14 +49,14 @@ fn trickle_ct() -> HeaderMap {
 #[test]
 fn whip_client_full_lifecycle() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     assert_eq!(*client.state(), client::State::Idle);
 
     // 1. offer() — transitions Idle -> OfferSent
     let req = client.offer(SDP_OFFER.to_vec()).unwrap();
     assert_eq!(req.method, http::Method::POST);
-    assert_eq!(req.url, ENDPOINT);
+    assert_eq!(req.url.as_str(), ENDPOINT);
     assert_eq!(req.content_type().unwrap().to_string(), "application/sdp");
     assert_eq!(req.body, SDP_OFFER);
     assert_eq!(*client.state(), client::State::OfferSent);
@@ -69,13 +78,13 @@ fn whip_client_full_lifecycle() {
     assert!(matches!(
         client.state(),
         client::State::Established { session_url, etag }
-            if session_url == SESSION && etag.as_deref() == Some("etag1")
+            if session_url.as_str() == SESSION && etag.as_deref() == Some("etag1")
     ));
 
     // 3. flush_candidates() — stays Established, sends PATCH
     let req = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
     assert_eq!(req.method, http::Method::PATCH);
-    assert_eq!(req.url, SESSION);
+    assert_eq!(req.url.as_str(), SESSION);
     assert_eq!(
         req.content_type().unwrap().to_string(),
         "application/trickle-ice-sdpfrag"
@@ -94,7 +103,7 @@ fn whip_client_full_lifecycle() {
     // 5. terminate() — sends DELETE
     let req = client.terminate().unwrap();
     assert_eq!(req.method, http::Method::DELETE);
-    assert_eq!(req.url, SESSION);
+    assert_eq!(req.url.as_str(), SESSION);
     assert!(req.body.is_empty());
 
     // 6. on_response(200, no ETag) — transitions Established -> Closed
@@ -108,7 +117,7 @@ fn whip_client_full_lifecycle() {
 #[test]
 fn whip_client_wrong_state_errors() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
 
     // flush_candidates in Idle -> error
@@ -190,7 +199,7 @@ fn whip_client_wrong_state_errors() {
 #[test]
 fn whip_client_ice_restart() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
@@ -210,7 +219,7 @@ fn whip_client_ice_restart() {
     let restart_frag = b"a=ice-ufrag:new\r\na=ice-pwd:new\r\n";
     let req = client.ice_restart(restart_frag.to_vec()).unwrap();
     assert_eq!(req.method, http::Method::PATCH);
-    assert_eq!(req.url, SESSION);
+    assert_eq!(req.url.as_str(), SESSION);
     let if_match = req.headers.get("If-Match").map(|v| v.to_str().unwrap());
     assert_eq!(if_match, Some("*"));
 
@@ -254,7 +263,7 @@ fn whip_client_ice_restart() {
 #[test]
 fn whip_client_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
@@ -297,7 +306,7 @@ fn whip_client_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
 #[test]
 fn whip_client_terminate_ack_with_204_transitions_to_closed() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
@@ -325,7 +334,7 @@ fn whip_client_terminate_ack_with_204_transitions_to_closed() {
 fn whip_client_bearer_auth() {
     let token = "my-secret-token";
     let mut client = WhipClient::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint()).with_credentials(
             broadcast_auth::Credentials::Bearer {
                 token: token.into(),
             },
@@ -374,7 +383,7 @@ fn whip_client_bearer_auth() {
 #[test]
 fn whip_client_missing_location_on_201() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -395,7 +404,7 @@ fn whip_client_missing_location_on_201() {
 #[test]
 fn whip_client_http_error_propagated() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
 
@@ -409,9 +418,9 @@ fn whip_client_http_error_propagated() {
 
 #[test]
 fn whip_server_full_lifecycle() {
-    let mut session = WhipSession::new(SESSION.into());
+    let mut session = WhipSession::new(session_url());
     assert_eq!(*session.state(), server::State::AwaitingOffer);
-    assert_eq!(session.session_url(), SESSION);
+    assert_eq!(session.session_url().as_str(), SESSION);
 
     // 1. on_post() — emits SdpOffer event
     let event = session.on_post(SDP_OFFER.to_vec()).unwrap();
@@ -462,7 +471,7 @@ fn whip_server_full_lifecycle() {
 
 #[test]
 fn whip_server_ice_restart() {
-    let mut session = WhipSession::new(SESSION.into());
+    let mut session = WhipSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e1".into());
 
@@ -495,7 +504,7 @@ fn whip_server_ice_restart() {
 
 #[test]
 fn whip_server_etag_mismatch() {
-    let mut session = WhipSession::new(SESSION.into());
+    let mut session = WhipSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "correct".into());
 
@@ -508,7 +517,7 @@ fn whip_server_etag_mismatch() {
 
 #[test]
 fn whip_server_wrong_state_errors() {
-    let mut session = WhipSession::new(SESSION.into());
+    let mut session = WhipSession::new(session_url());
 
     // PATCH before offer accepted -> error
     let err = session.on_patch(ICE_FRAG.to_vec(), &HeaderMap::new());
@@ -542,7 +551,7 @@ fn whip_server_wrong_state_errors() {
 
 #[test]
 fn whip_server_trickle_without_if_match_is_428() {
-    let mut session = WhipSession::new(SESSION.into());
+    let mut session = WhipSession::new(session_url());
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
 
@@ -556,7 +565,7 @@ fn whip_server_trickle_without_if_match_is_428() {
 #[test]
 fn whip_client_406_is_a_plain_http_error_not_a_counter_offer() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let err = client
@@ -574,7 +583,7 @@ fn whip_client_406_is_a_plain_http_error_not_a_counter_offer() {
 #[test]
 fn whip_client_409_is_a_plain_http_error_not_no_publisher() {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let err = client
@@ -585,7 +594,7 @@ fn whip_client_409_is_a_plain_http_error_not_no_publisher() {
 
 fn established_client() -> WhipClient {
     let mut client = WhipClient::new(webrtc_runtime::session::client::WebRtcClientConfig::new(
-        ENDPOINT,
+        endpoint(),
     ));
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client

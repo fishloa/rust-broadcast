@@ -95,16 +95,18 @@ impl WatchArgs {
     ///
     /// # Errors
     ///
-    /// A message naming `--udp-interface` when its value is neither an IPv4
-    /// address nor an interface index.
-    pub fn udp_config(&self) -> Result<broadcast_common::net::UdpOptions, String> {
+    /// [`broadcast_common::net::InterfaceError`] when `--udp-interface` is
+    /// neither an IPv4 address nor an interface index; the binary renders it
+    /// next to the flag name.
+    pub fn udp_config(
+        &self,
+    ) -> Result<broadcast_common::net::UdpOptions, broadcast_common::net::InterfaceError> {
         use broadcast_common::net::MulticastInterface;
         let interface = self
             .udp_interface
             .as_deref()
             .map(MulticastInterface::parse)
-            .transpose()
-            .map_err(|error| format!("invalid --udp-interface {error}"))?;
+            .transpose()?;
         Ok(crate::udp::udp_options(
             self.udp_rcvbuf,
             self.udp_reuse_addr,

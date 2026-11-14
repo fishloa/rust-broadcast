@@ -6,6 +6,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use std::collections::HashMap;
 
+use http::{HeaderMap, StatusCode};
+
 use hls_runtime::client::{MasterSelection, VariantInfo, choose_variant};
 use smooth_runtime::{
     Action, Dropped, FetchFailure, Output, QualityInfo, QualitySelector, RequestId, SmoothClient,
@@ -20,11 +22,11 @@ use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::deadline;
+use crate::source::fetch::inflight::REDIRECT_STATUSES;
 use crate::source::fetch::retry::duration_us;
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::stage::Timestamp;
 
-const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const HTTP_UNAUTHORIZED: u16 = 401;
 const HTTP_PROXY_AUTH_REQUIRED: u16 = 407;
 const SMOOTH_MANIFEST_REASON: &str = "smooth_manifest";
@@ -40,7 +42,7 @@ struct Req {
     id: RequestId,
     url: Url,
     body: Vec<u8>,
-    status: Option<u16>,
+    status: Option<StatusCode>,
     started_us: u64,
     last_activity_us: u64,
     authed: bool,
@@ -60,7 +62,7 @@ pub(crate) struct SmoothSource {
 }
 
 fn variant_info(q: &QualityInfo) -> VariantInfo {
-    let mut info = VariantInfo::new(String::new(), u32::try_from(q.bitrate).unwrap_or(u32::MAX));
+    let mut info = VariantInfo::new(None, q.bitrate);
     info.resolution = q.resolution;
     info.codecs = q.codecs.clone();
     info
@@ -243,7 +245,7 @@ impl SmoothSource {
         self.events.push_back(Event::Error { kind, fatal: false });
     }
 
-    fn fail_request(&mut self, req: &Req, status: Option<u16>, now: u64) {
+    fn fail_request(&mut self, req: &Req, status: Option<StatusCode>, now: u64) {
         self.client.on_failure(
             Timestamp::from_micros(now),
             req.id,
@@ -292,8 +294,8 @@ impl SmoothSource {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         _wall: Option<&crate::source::fetch::wall::WallClock>,
         auth: &mut AuthState,
@@ -343,7 +345,7 @@ impl SmoothSource {
             }
             return;
         }
-        if !(200..300).contains(&status) {
+        if !status.is_success() {
             self.actions.push_back(HostAction::Close { conn });
             self.fail_request(&req, Some(status), now);
             return;
@@ -370,7 +372,7 @@ impl SmoothSource {
         let Some(req) = self.reqs.remove(&conn) else {
             return;
         };
-        let ok = req.status.is_some_and(|s| (200..300).contains(&s));
+        let ok = req.status.is_some_and(|s| s.is_success());
         if error.is_some() || !ok {
             let http_status = if error.is_some() { None } else { req.status };
             return self.fail_request(&req, http_status, now);
