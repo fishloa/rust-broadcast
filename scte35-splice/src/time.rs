@@ -7,6 +7,7 @@
 //! pattern), so callers never re-derive the 90 kHz scaling by hand.
 
 use crate::error::{Error, Result};
+use broadcast_common::clock33::Clock33;
 use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
@@ -63,10 +64,11 @@ pub fn pts_add_wrapping(pts_time: u64, pts_adjustment: u64) -> u64 {
 /// (`time_specified_flag == 0`) it signals an immediate command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct SpliceTime {
     /// 33-bit `pts_time` in 90 kHz ticks, or `None` when
     /// `time_specified_flag == 0`.
-    pub pts_time: Option<u64>,
+    pub pts_time: Option<Clock33>,
 }
 
 impl SpliceTime {
@@ -76,17 +78,23 @@ impl SpliceTime {
     /// Length when `time_specified_flag == 0`.
     pub const LEN_NO_TIME: usize = 1;
 
-    /// A `splice_time()` carrying an explicit 33-bit `pts_time` (ticks).
+    /// A `splice_time()` carrying an explicit [`Clock33`] `pts_time`.
     ///
-    /// `pts_time` wraps modulo `2^33` (matching [`pts_add_wrapping`]'s
-    /// carry-ignored policy), so the result always serializes; construct
-    /// [`SpliceTime`] directly and let [`Serialize::serialize_into`] reject an
-    /// out-of-range value instead, if wrapping is not what the caller wants.
+    /// The type already guarantees `pts_time < 2^33`, so every value this
+    /// accepts serializes: there is no second, masking path beside the
+    /// serializer's range check.
     #[must_use]
-    pub fn with_pts(pts_time: u64) -> Self {
+    pub const fn at(pts_time: Clock33) -> Self {
         Self {
-            pts_time: Some(pts_time & PTS_MAX),
+            pts_time: Some(pts_time),
         }
+    }
+
+    /// The `time_specified_flag == 0` form: no time, the splicer acts at the
+    /// nearest opportunity.
+    #[must_use]
+    pub const fn immediate() -> Self {
+        Self { pts_time: None }
     }
 }
 
@@ -103,8 +111,15 @@ impl<'a> Parse<'a> for SpliceTime {
                 | (u64::from(bytes[2]) << 16)
                 | (u64::from(bytes[3]) << 8)
                 | u64::from(bytes[4]);
+            let pts_time = Clock33::try_new(pts).map_err(|e| {
+                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "splice_time.pts_time",
+                    value: e.value,
+                    reason: "pts_time is a 33-bit field; the flag bit set means the top data bit cannot be set",
+                })
+            })?;
             Ok(Self {
-                pts_time: Some(pts),
+                pts_time: Some(pts_time),
             })
         } else {
             Ok(Self { pts_time: None })
@@ -125,14 +140,8 @@ impl Serialize for SpliceTime {
         let need = self.serialized_len();
         need_out(buf, need)?;
         match self.pts_time {
-            Some(pts) => {
-                if pts > PTS_MAX {
-                    return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
-                        field: "splice_time.pts_time",
-                        value: pts,
-                        max: PTS_MAX,
-                    }));
-                }
+            Some(clock) => {
+                let pts = clock.ticks();
                 // time_specified_flag=1, 6 reserved bits = 1, top pts bit.
                 buf[0] = 0x80 | 0x7E | ((pts >> 32) as u8 & 0x01);
                 buf[1] = (pts >> 24) as u8;
@@ -263,7 +272,7 @@ mod tests {
     #[test]
     fn splice_time_round_trip_with_and_without_pts() {
         for st in [
-            SpliceTime::with_pts(0x1_2345_6789 & PTS_MAX),
+            SpliceTime::at(Clock33::try_new(0x1_2345_6789 & PTS_MAX).expect("in range")),
             SpliceTime::default(),
         ] {
             let bytes = st.try_to_bytes().unwrap();
@@ -275,31 +284,30 @@ mod tests {
 
     #[test]
     fn splice_time_max_pts_round_trips() {
-        let st = SpliceTime::with_pts(PTS_MAX);
+        let st = SpliceTime::at(Clock33::try_new(PTS_MAX).expect("in range"));
         let bytes = st.try_to_bytes().unwrap();
-        assert_eq!(SpliceTime::parse(&bytes).unwrap().pts_time, Some(PTS_MAX));
+        assert_eq!(
+            SpliceTime::parse(&bytes).unwrap().pts_time,
+            Some(Clock33::try_new(PTS_MAX).expect("in range"))
+        );
     }
 
-    /// SC-W4 (#1129): `SpliceTime::serialize_into` used to mask `pts_time`
-    /// with `& PTS_MAX` instead of erroring, while
-    /// `SpliceInfoSection::serialize_into` rejects an out-of-range
-    /// `pts_adjustment` — the two paths disagreed. Confirmed pre-fix: a
-    /// `pts_time` of `1 << 33` serialized as PTS 0 with `Ok`.
+    /// Audit 19b, finding 17: the public construction path accepts only a
+    /// validated clock reading, so a value cannot be masked into a different
+    /// cue. The old code had two policies for one field — `SpliceTime::with_pts`
+    /// masked its argument with `& PTS_MAX` while `serialize_into` rejected
+    /// anything above it — so asking for 2^33 produced PTS 0 in a section
+    /// that serialized perfectly: the scheduled-cue-silently-changed shape
+    /// the audit reported.
     #[test]
-    fn splice_time_over_33_bits_is_rejected_not_masked() {
-        let st = SpliceTime {
-            pts_time: Some(1u64 << 33),
-        };
-        assert_eq!(
-            st.try_to_bytes().err(),
-            Some(crate::error::Error::FieldOverflow(
-                broadcast_common::len::FieldOverflow {
-                    field: "splice_time.pts_time",
-                    value: 1u64 << 33,
-                    max: PTS_MAX
-                }
-            ))
+    fn splice_time_constructs_only_from_a_validated_clock() {
+        assert!(
+            Clock33::try_new(1u64 << 33).is_err(),
+            "2^33 is off the 33-bit clock, so no SpliceTime can carry it"
         );
+        let worst_case = SpliceTime::at(Clock33::try_new(PTS_MAX).expect("in range"));
+        let bytes = worst_case.try_to_bytes().unwrap();
+        assert_eq!(SpliceTime::parse(&bytes).unwrap(), worst_case);
     }
 
     #[test]

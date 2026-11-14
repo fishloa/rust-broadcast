@@ -1,6 +1,6 @@
 [package]
 name         = "scte35-splice"
-version      = "6.0.0"
+version      = "7.0.0"
 edition      = "2024"
 description  = "ANSI/SCTE 35 splice information (DPI cueing) — parser + serializer, no_std."
 license      = "MIT OR Apache-2.0"
@@ -36,7 +36,7 @@ std  = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 
 # JSON / generic serialization on parsed + owned variants (Serialize-only,
 # mirroring the workspace posture — there is no Deserialize).
-serde = ["dep:serde"]
+serde = ["dep:serde", "broadcast-common/serde"]
 
 [lints]
 workspace = true

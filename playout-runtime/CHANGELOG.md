@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
+
 
 ### Changed
 - BREAKING: `build_splice_insert` takes `requested_pts: Clock33`, `candidates: &[Clock33]`, `max_delta: Duration` and `break_duration: Option<Duration>` instead of raw `u64` tick counts (audit 19, issue #2726). It now delegates to the one `ssai_runtime::splice::condition_splice_point`; the returned `ConditionedSplicePoint` reports the reduced 33-bit instant and boundary that the emitted `splice_time().pts_time` carries, so the two can no longer disagree. `Error::BreakDurationTooLong`'s field is `nanos: u64` (the rejected duration in nanoseconds).
