@@ -62,6 +62,24 @@ impl Timescale {
         None => unreachable!(),
     });
 
+    /// Construct from a value the compiler can prove non-zero: a literal or a
+    /// named `const`. A `0` is a compile error, so no runtime value can be
+    /// silently flattened to `1`; a runtime `u32` goes through the fallible
+    /// [`TryFrom<u32>`], which errors on zero.
+    ///
+    /// ```compile_fail
+    /// // A zero timescale cannot be named, not even as a literal.
+    /// const _: broadcast_common::timescale::Timescale =
+    ///     broadcast_common::timescale::Timescale::from_nonzero(0);
+    /// ```
+    #[must_use]
+    pub const fn from_nonzero(value: u32) -> Self {
+        match core::num::NonZeroU32::new(value) {
+            Some(nz) => Self(nz),
+            None => panic!("Timescale cannot be zero"),
+        }
+    }
+
     /// Construct from a raw value, returning `None` for zero.
     #[must_use]
     pub const fn new(value: u32) -> Option<Self> {
@@ -123,9 +141,13 @@ impl From<Timescale> for core::num::NonZeroU32 {
     }
 }
 
-impl From<u32> for Timescale {
-    fn from(v: u32) -> Self {
-        Self(core::num::NonZeroU32::new(v).unwrap_or(core::num::NonZeroU32::MIN))
+impl TryFrom<u32> for Timescale {
+    type Error = InvalidValue;
+
+    /// The only lossless way to convert a runtime `u32`: a `0` is the same
+    /// typed error [`Timescale::try_new`] returns, never a silent `1`.
+    fn try_from(v: u32) -> Result<Self, Self::Error> {
+        Self::try_new(v)
     }
 }
 
@@ -210,22 +232,13 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
 
-    const T1: Timescale = match Timescale::new(1) {
-        Some(t) => t,
-        None => unreachable!(),
-    };
-    const T48K: Timescale = match Timescale::new(48_000) {
-        Some(t) => t,
-        None => unreachable!(),
-    };
-    const T90K: Timescale = match Timescale::new(90_000) {
-        Some(t) => t,
-        None => unreachable!(),
-    };
+    const T1: Timescale = Timescale::from_nonzero(1);
+    const T48K: Timescale = Timescale::from_nonzero(48_000);
+    const T90K: Timescale = Timescale::from_nonzero(90_000);
 
     #[test]
     fn rounding_modes_differ_on_a_half_and_a_negative() {
-        let two = Timescale::from(2u32);
+        let two = Timescale::from_nonzero(2);
         assert_eq!(rescale(3, two, T1, Rounding::Floor), 1);
         assert_eq!(rescale(3, two, T1, Rounding::Nearest), 2);
         assert_eq!(rescale(3, two, T1, Rounding::TowardZero), 1);
@@ -236,7 +249,7 @@ mod tests {
 
     #[test]
     fn micros_helpers_are_rescale_against_one_million() {
-        let three = Timescale::from(3u32);
+        let three = Timescale::from_nonzero(3);
         assert_eq!(to_micros(90_000, T90K, Rounding::Floor), 1_000_000);
         assert_eq!(to_micros(1, three, Rounding::TowardZero), 333_333);
         assert_eq!(to_micros(-1, three, Rounding::Floor), -333_334);
@@ -268,29 +281,43 @@ mod tests {
         assert_eq!(to_micros(7, T1, Rounding::Floor), 7_000_000);
     }
 
+    /// The fallible conversion is the only way a runtime `u32` becomes a
+    /// `Timescale`, so `.try_into()` on a wire zero is that same typed error
+    /// — it can never be flattened to `1` Hz.
+    #[test]
+    fn timescale_try_from_u32_rejects_zero() {
+        let err = Timescale::try_from(0u32).expect_err("a zero timescale is an error");
+        assert_eq!(err.field, "timescale");
+        assert_eq!(err.value, 0);
+        assert_eq!(err.reason, "must be non-zero");
+        let ok: Timescale = 90_000u32.try_into().expect("non-zero converts");
+        assert_eq!(ok, T90K);
+        assert_eq!(u32::from(ok), 90_000);
+    }
+
     #[test]
     fn saturates_instead_of_wrapping() {
-        let max = Timescale::from(u32::MAX);
+        let max = Timescale::from_nonzero(u32::MAX);
         assert_eq!(rescale_i64(i64::MAX, T1, max, Rounding::Floor), i64::MAX);
         assert_eq!(rescale_i64(i64::MIN, T1, max, Rounding::Floor), i64::MIN);
         assert_eq!(rescale_u64(u64::MAX, T1, max, Rounding::Nearest), u64::MAX);
         assert_eq!(rescale_u64(0, T1, T1, Rounding::Nearest), 0);
         assert_eq!(
-            rescale(i128::MAX, T1, Timescale::from(2u32), Rounding::Floor),
+            rescale(i128::MAX, T1, Timescale::from_nonzero(2), Rounding::Floor),
             i128::MAX
         );
     }
 
     #[test]
     fn ceil_rounds_toward_positive_infinity() {
-        let two = Timescale::from(2u32);
+        let two = Timescale::from_nonzero(2);
         assert_eq!(rescale(3, two, T1, Rounding::Ceil), 2);
         assert_eq!(rescale(4, two, T1, Rounding::Ceil), 2);
         assert_eq!(rescale(-3, two, T1, Rounding::Ceil), -1);
         assert_eq!(rescale(-4, two, T1, Rounding::Ceil), -2);
         assert_eq!(rescale(5, T1, T1, Rounding::Ceil), 5);
         assert_eq!(
-            rescale_i64(i64::MAX, T1, Timescale::from(u32::MAX), Rounding::Ceil),
+            rescale_i64(i64::MAX, T1, Timescale::from_nonzero(u32::MAX), Rounding::Ceil),
             i64::MAX
         );
     }
@@ -300,11 +327,11 @@ mod tests {
         use core::cmp::Ordering::{Equal, Greater, Less};
         assert_eq!(cmp_ticks(90_000, T90K, 48_000, T48K), Equal);
         assert_eq!(
-            cmp_ticks(1, Timescale::from(3u32), 1, Timescale::from(2u32)),
+            cmp_ticks(1, Timescale::from_nonzero(3), 1, Timescale::from_nonzero(2)),
             Less
         );
         assert_eq!(
-            cmp_ticks(i64::MAX, T1, i64::MAX, Timescale::from(2u32)),
+            cmp_ticks(i64::MAX, T1, i64::MAX, Timescale::from_nonzero(2)),
             Greater
         );
         assert_eq!(cmp_ticks(5, T1, 5, T1), Equal);
