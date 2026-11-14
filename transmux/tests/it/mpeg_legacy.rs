@@ -6,6 +6,7 @@
 //! and byte-exact sample + esds round-trips. Every assertion is derived from
 //! the fixtures / the ffprobe CSV oracle — no hardcoded offsets.
 
+use broadcast_common::timescale::Timescale;
 use std::fs;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};

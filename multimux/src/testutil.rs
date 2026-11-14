@@ -20,6 +20,7 @@
 //! than a second, independently-behaving oracle.
 
 use crate::route::RouteConfig;
+use broadcast_common::timescale::Timescale;
 use std::sync::Arc;
 
 use axum::Router;

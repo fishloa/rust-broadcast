@@ -8,6 +8,7 @@
 //! ffprobe.
 
 use broadcast_common::Parse;
+use broadcast_common::timescale::Timescale;
 use transmux::ir::{
     AspectRatioIdc, CodecConfig, ColourDescription, DisplayGeometry, VideoFormat, VideoSignalType,
 };
@@ -45,7 +46,8 @@ fn hevc_config() -> HEVCDecoderConfigurationRecord {
 }
 
 fn build(spec: TrackSpec) -> Vec<u8> {
-    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000)).expect("build_init_segment")
+    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000))
+        .expect("build_init_segment")
 }
 
 fn find_full_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {

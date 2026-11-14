@@ -6,9 +6,9 @@ use super::{
     rtpmap_clock_rate,
 };
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-use broadcast_common::timescale::Timescale;
 use crate::pipeline::CodecConfig;
 use alloc::vec::Vec;
+use broadcast_common::timescale::Timescale;
 
 /// `configurationVersion` of the placeholder `avcC` of a track whose parameter sets arrive in-band.
 const AVC_CONFIGURATION_VERSION: u8 = 1;

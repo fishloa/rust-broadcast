@@ -6,8 +6,8 @@ use std::sync::{Arc, LazyLock};
 
 use url::Url;
 
-use broadcast_common::timescale::Timescale;
 use super::output::QualityInfo;
+use broadcast_common::timescale::Timescale;
 
 /// Fragments before the live edge a live join starts at.
 pub const DEFAULT_LIVE_JOIN_FRAGMENTS: usize = 2;

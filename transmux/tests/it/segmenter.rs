@@ -11,6 +11,7 @@
 
 use crate::hub_fixtures::{audio_track, video_track};
 use broadcast_common::Serialize;
+use broadcast_common::timescale::Timescale;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use transmux::TrackId;
@@ -78,7 +79,12 @@ fn moof_summary(segment: &[u8]) -> Vec<(TrackId, u64, usize, u32)> {
 /// them through a segmenter with a 0.3 s target. Video keyframes every 10 AUs.
 #[test]
 fn synthetic_cuts_are_exact_and_lossless() {
-    let mut seg = Segmenter::new(vec![video_track(), audio_track()], Timescale::from_nonzero(1000), 0.3).unwrap();
+    let mut seg = Segmenter::new(
+        vec![video_track(), audio_track()],
+        Timescale::from_nonzero(1000),
+        0.3,
+    )
+    .unwrap();
 
     // 30 video AUs @ 3000 ticks (=1/30 s), IDR every 10th → keyframes at 0,10,20.
     const N_VID: usize = 30;
@@ -196,7 +202,12 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     .unwrap();
 
     // Segmenter with a 1000 s target → no mid cut. Push interleaved; flush once.
-    let mut seg = Segmenter::new(vec![video_track(), audio_track()], Timescale::from_nonzero(1000), 1000.0).unwrap();
+    let mut seg = Segmenter::new(
+        vec![video_track(), audio_track()],
+        Timescale::from_nonzero(1000),
+        1000.0,
+    )
+    .unwrap();
     for v in &vid {
         seg.push(TrackId::new(1), v.clone()).unwrap();
     }
@@ -214,7 +225,10 @@ fn single_segment_is_byte_identical_to_batch_builder() {
 
 #[test]
 fn rejects_bad_construction() {
-    assert!(Segmenter::new(vec![], Timescale::from_nonzero(1000), 2.0).is_err(), "empty tracks");
+    assert!(
+        Segmenter::new(vec![], Timescale::from_nonzero(1000), 2.0).is_err(),
+        "empty tracks"
+    );
     assert!(
         Segmenter::new(vec![video_track()], Timescale::from_nonzero(1000), 0.0).is_err(),
         "zero duration"
@@ -224,7 +238,12 @@ fn rejects_bad_construction() {
         "NaN duration"
     );
     assert!(
-        Segmenter::new(vec![video_track(), video_track()], Timescale::from_nonzero(1000), 2.0).is_err(),
+        Segmenter::new(
+            vec![video_track(), video_track()],
+            Timescale::from_nonzero(1000),
+            2.0
+        )
+        .is_err(),
         "duplicate track_id"
     );
     let mut seg = Segmenter::new(vec![video_track()], Timescale::from_nonzero(1000), 2.0).unwrap();

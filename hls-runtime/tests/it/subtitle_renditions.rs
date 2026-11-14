@@ -4,6 +4,7 @@
 //! origin's media playlist. Content-type of served segments is decided in
 //! `multimux`, not here, so there is no `text/vtt` test in this crate.
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;

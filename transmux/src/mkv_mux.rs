@@ -927,6 +927,7 @@ impl Package for MkvMux {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
 
     /// T15: an `avcC` with more than 31 SPS cannot be encoded (5-bit count);
     /// the Matroska CodecPrivate build must return `Err`, not panic.

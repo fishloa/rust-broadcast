@@ -12,8 +12,8 @@ use transmux::smooth_fragment::{
 use transmux::{TrackId, TrackSpec, track_spec_from_quality_level};
 use url::Url;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::backoff::{RetrySchedule, mix_seed};
+use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
 
 use super::action::{Action, FetchFailure, RequestId, StreamId};
@@ -47,9 +47,10 @@ fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Timescale {
 }
 
 fn primary_video(manifest: &SmoothManifest) -> Option<&StreamIndex> {
-    manifest.streams.iter().find(|s| {
-        s.stream_type == StreamType::Video && !s.qualities.is_empty()
-    })
+    manifest
+        .streams
+        .iter()
+        .find(|s| s.stream_type == StreamType::Video && !s.qualities.is_empty())
 }
 
 #[derive(Debug, Clone, Copy)]

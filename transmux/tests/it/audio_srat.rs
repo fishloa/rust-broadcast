@@ -17,6 +17,7 @@
 //! external tool parsing our builder's bytes, not our parser agreeing with our
 //! writer.
 
+use broadcast_common::timescale::Timescale;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use test_fixtures::process::tool_available;
@@ -83,7 +84,10 @@ fn mux_one(rate: u32) -> Vec<u8> {
         )],
     );
     transmux::CmafMux::new(1)
-        .package(&transmux::Media::new(vec![track], Timescale::from_nonzero(1000)))
+        .package(&transmux::Media::new(
+            vec![track],
+            Timescale::from_nonzero(1000),
+        ))
         .expect("mux flac")
 }
 
@@ -428,7 +432,8 @@ fn built_init_segment_emits_v1_and_srat_for_192k() {
             sample_size: 16,
         },
     );
-    let init = transmux::build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("build init");
+    let init =
+        transmux::build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("build init");
     let stsd_at = box_start(&init, b"stsd");
     let stsd = SampleDescriptionBox::parse(&init[stsd_at..]).expect("parse stsd");
     assert_eq!(stsd.version, AudioSampleEntryV1::STSD_VERSION);
@@ -472,7 +477,8 @@ fn built_init_segment_keeps_v0_for_a_fitting_rate() {
             sample_size: 16,
         },
     );
-    let init = transmux::build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("build init");
+    let init =
+        transmux::build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("build init");
     let stsd_at = box_start(&init, b"stsd");
     let stsd = SampleDescriptionBox::parse(&init[stsd_at..]).expect("parse stsd");
     assert_eq!(stsd.version, 0);

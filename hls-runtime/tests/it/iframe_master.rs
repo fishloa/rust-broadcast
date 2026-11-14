@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 //! I-frame master playlist advertising (P2b).
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;

@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `convert::EmsgConfig::timescale` and `convert::SegmentTiming::timescale` are `Timescale` (was `u32`), and `Error::EmsgTimescaleMismatch` carries `Timescale`s, following `mp4_emsg::EmsgBox::timescale` (#2657).
 
 ## [0.10.0] - 2026-11-14
 ### Changed

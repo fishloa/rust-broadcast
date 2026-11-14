@@ -3525,6 +3525,7 @@ pub(crate) fn wait_until_stalled(trunk: &Trunk, n: usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use std::sync::mpsc;
     use std::thread;
     use transmux::pipeline::{CodecConfig, DataCarriage};

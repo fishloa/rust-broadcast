@@ -24,6 +24,7 @@
 //! walk, a WebM cluster/block-timecode walk, or the RTP header timestamps),
 //! never against the demuxer's own bookkeeping.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 
@@ -910,7 +911,10 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
         })
         .collect();
 
-    let media = Media::new(vec![Track::new_at(spec, samples, ANCHOR)], Timescale::from_nonzero(90_000));
+    let media = Media::new(
+        vec![Track::new_at(spec, samples, ANCHOR)],
+        Timescale::from_nonzero(90_000),
+    );
 
     // fMP4 #1, written by this crate.
     let fmp4_1 = CmafMux::default().package(&media).expect("mux #1");

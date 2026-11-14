@@ -1,6 +1,7 @@
 //! Every committed DASH MPD parses, and the parse is pinned against values read
 //! out of the real files.
 
+use broadcast_common::timescale::Timescale;
 use std::path::{Path, PathBuf};
 
 use dash_runtime::mpd::{Mpd, PresentationType};

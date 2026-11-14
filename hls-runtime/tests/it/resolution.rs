@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 //! HLS RESOLUTION derivation from track display geometry (Q8).
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 
 use broadcast_hls::MasterPlaylist;

@@ -15,6 +15,7 @@
 //!    `EXT-X-MAP`-like prefix), never appears after it.
 
 use crate::hub_fixtures::dummy_avc_config;
+use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
 use transmux::TrackId;
 use transmux::{
@@ -86,8 +87,10 @@ fn make_segmenter(track: TrackSpec) -> Segmenter {
 #[test]
 fn autodetect_init_change_marks_discontinuity() {
     // Build init bytes from two distinct track configs.
-    let init_a = transmux::build_init_segment(&[video_track_a()], Timescale::from_nonzero(1000)).unwrap();
-    let init_b = transmux::build_init_segment(&[video_track_b()], Timescale::from_nonzero(1000)).unwrap();
+    let init_a =
+        transmux::build_init_segment(&[video_track_a()], Timescale::from_nonzero(1000)).unwrap();
+    let init_b =
+        transmux::build_init_segment(&[video_track_b()], Timescale::from_nonzero(1000)).unwrap();
 
     // Sanity: the two inits must actually differ for the test to be non-trivial.
     assert_ne!(

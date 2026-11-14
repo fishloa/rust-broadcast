@@ -5,6 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `address::MediaSegment::timescale` and `SegmentPlan::timescale()` are `Timescale` (was `u64`), and `timing::availability::{ticks_to_us, segment_available_from_ticks, segment_available_until_ticks, complete_count_constant}` take a `Timescale`. The zero-timescale branches (a plan with no index offsets, a conversion yielding 0) are gone: a zero `@timescale` is refused by `broadcast-dash` at parse and cannot be constructed here (#2657).
 - `quick-xml` is a dev-dependency only (its parser is reached through `broadcast-common::xml`), so it no longer appears in the built dependency graph.
 
 ## [0.4.0] - 2026-11-14

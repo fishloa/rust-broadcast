@@ -346,6 +346,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
 
     /// A fake transport double: no real socket, just an in-memory record of

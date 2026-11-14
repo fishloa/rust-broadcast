@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- BREAKING: every timescale is a `Timescale` end to end; none is a raw integer a consumer decides the meaning of zero for. `SegmentIndexBox::timescale`, `rtp::RtpStreamTrack::{clock_rate, new}`, `SdpTrack::clock_rate`, `TrackAligner::new` (its `(TrackId, bool, Timescale)` tuples, no longer reading a zero rate as 1 Hz), `DemuxEvent::ClockReference::clock_hz` and `clock_reference`, `IR_TIMESCALE`, `track_spec_from_quality_level`, `dash::TrickModeRepr::timescale` and `LlHlsSegmenter::with_part_target_at` take or hold `Timescale`; a zero `sidx.timescale` is `Error::InvalidValue`, and `CencDecryptor::demux` refuses a zero or missing `mvhd`/`mdhd` timescale (typed error) instead of falling back to 1000 Hz / the movie timescale. Added `VIDEO_CLOCK_TIMESCALE` and `SMOOTH_DEFAULT_TIMESCALE`. Migration: `90_000` -> `Timescale::from_nonzero(90_000)`; a runtime `u32` -> `Timescale::try_new(v)?` (#2657).
 - The RTMP spokes match `rtmp_runtime::message::MessageTypeId` instead of the `msg_type` byte constants for the message types they dispatch on (`SetChunkSize`, `Audio`, `Video`, `DataAmf0`); no public transmux type changes (#2666).
 
 #### Changed

@@ -8,6 +8,7 @@
 
 use crate::box_walk::find_box_range;
 use broadcast_common::Parse;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::{
     CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,

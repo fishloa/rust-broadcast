@@ -30,12 +30,7 @@ struct HoldState {
 }
 
 fn to_27mhz(ticks: u64, clock_hz: Timescale) -> u64 {
-    rescale_u64(
-        ticks,
-        clock_hz,
-        PCR_TIMESCALE,
-        Rounding::TowardZero,
-    )
+    rescale_u64(ticks, clock_hz, PCR_TIMESCALE, Rounding::TowardZero)
 }
 
 /// Adapter around the TS-over-HTTP client.

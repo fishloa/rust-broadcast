@@ -1,5 +1,6 @@
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};

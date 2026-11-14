@@ -16,6 +16,7 @@
 //! - a non-LL playlist (no PART tags at all) still plays via the full-segment
 //!   fallback path.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_hls::{
     DecimalSeconds, LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
 };
@@ -216,7 +217,13 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // --- Build the origin: one closed segment (3 parts) + an open second
     // segment with 1 known part and a preload hint for its next (not-yet-
     // available) part. ---
-    let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], Timescale::from_nonzero(1000), 1.0, 334).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        Timescale::from_nonzero(1000),
+        1.0,
+        334,
+    )
+    .unwrap();
     let mut fed_samples: Vec<Sample> = Vec::new();
     for i in 0..30u8 {
         let s = vsample(i == 0, i);
@@ -586,8 +593,13 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
 
 #[test]
 fn non_ll_playlist_plays_via_full_segment_fallback() {
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], Timescale::from_nonzero(1000), 1.0, 100_000).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        Timescale::from_nonzero(1000),
+        1.0,
+        100_000,
+    )
+    .unwrap();
     let mut fed_samples: Vec<Sample> = Vec::new();
     for i in 0..30u8 {
         let s = vsample(i == 0, i);

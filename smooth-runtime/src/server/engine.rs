@@ -1028,6 +1028,7 @@ pub const MANIFEST_FILE_NAME: &str = "Manifest";
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::time::Duration;
 

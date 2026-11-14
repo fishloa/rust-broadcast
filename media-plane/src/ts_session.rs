@@ -577,6 +577,7 @@ pub mod test_support {
 mod tests {
     use super::test_support::track_spec;
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use transmux::pipeline::Sample;
 
     fn sample_at(nal: u8) -> Sample {

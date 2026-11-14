@@ -6,6 +6,7 @@ use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
 };
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;

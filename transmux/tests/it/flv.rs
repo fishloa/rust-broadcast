@@ -12,6 +12,7 @@
 //! 5. Cross-hub: FLV.as_slice() → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
 use broadcast_common::error::BufferTooShort;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use test_fixtures::ffprobe;

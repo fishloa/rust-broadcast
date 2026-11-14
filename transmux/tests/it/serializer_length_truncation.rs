@@ -8,6 +8,7 @@
 //! workspace-guards.
 
 use broadcast_common::Serialize;
+use broadcast_common::timescale::Timescale;
 use transmux::{MediaHeaderBox, MovieHeaderBox, ProducerReferenceTimeBox, TrackHeaderBox, TrackId};
 
 const OVER_U32: u64 = 0x1_0000_0000;

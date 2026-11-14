@@ -528,6 +528,7 @@ pub trait SegmentEgress: Send {
 mod tests {
     use super::*;
     use crate::trunk::{ArchiveOverrun, SegmentEntry, Trunk, TrunkConfig};
+    use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::sync::Mutex;
     use std::time::Duration;

@@ -1,5 +1,6 @@
 //! tkhd presentation size (Phase 5): cropped output size rescaled by SAR.
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
 use transmux::ir::{AspectRatioIdc, CodecConfig};
 use transmux::pipeline;
@@ -16,7 +17,8 @@ fn spec_from_fixture(fixture: &str) -> Option<TrackSpec> {
 }
 
 fn build(spec: TrackSpec) -> Vec<u8> {
-    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000)).expect("build_init_segment")
+    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000))
+        .expect("build_init_segment")
 }
 
 fn tkhd_dims(data: &[u8]) -> (u32, u32) {

@@ -10,6 +10,7 @@
 //! strongest bite: round-tripping the real writer's output.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Unpackage};

@@ -6,6 +6,7 @@
 //! instead of comparing; a run with `CI` set refuses to write.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -100,7 +101,10 @@ fn wvtt_media() -> Media {
     vttc.extend_from_slice(b"vttc");
     vttc.extend_from_slice(&payl);
     let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
-    Media::new(vec![Track::new(spec, vec![sample])], Timescale::from_nonzero(1000))
+    Media::new(
+        vec![Track::new(spec, vec![sample])],
+        Timescale::from_nonzero(1000),
+    )
 }
 
 /// A two-language audio pair plus a video track — the only way to reach

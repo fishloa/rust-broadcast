@@ -356,9 +356,13 @@ mod tests {
             0xCE, 0x3C, 0x80,
         ];
         let quality = QualityLevel::new("H264".to_string(), 500_000, cpd);
-        let spec =
-            track_spec_from_quality_level(TrackId::new(1), Timescale::from_nonzero(90_000), StreamType::Video, &quality)
-                .expect("build video TrackSpec");
+        let spec = track_spec_from_quality_level(
+            TrackId::new(1),
+            Timescale::from_nonzero(90_000),
+            StreamType::Video,
+            &quality,
+        )
+        .expect("build video TrackSpec");
         match spec.config {
             CodecConfig::Avc { config, .. } => {
                 assert_eq!(config.config.sps.len(), 1);
@@ -376,9 +380,13 @@ mod tests {
     #[test]
     fn track_spec_from_quality_level_audio_aac() {
         let quality = QualityLevel::new("AACL".to_string(), 128_000, alloc::vec![0x12, 0x10]);
-        let spec =
-            track_spec_from_quality_level(TrackId::new(2), Timescale::from_nonzero(44_100), StreamType::Audio, &quality)
-                .expect("build audio TrackSpec");
+        let spec = track_spec_from_quality_level(
+            TrackId::new(2),
+            Timescale::from_nonzero(44_100),
+            StreamType::Audio,
+            &quality,
+        )
+        .expect("build audio TrackSpec");
         match spec.config {
             CodecConfig::Aac {
                 sample_rate,
@@ -399,7 +407,12 @@ mod tests {
         // an AAC track. The gate is the FourCC itself (the bytes are
         // deliberately a plausible ASC, so only the FourCC check stops it).
         let quality = QualityLevel::new("EC-3".to_string(), 128_000, alloc::vec![0x10, 0x3D]);
-        match track_spec_from_quality_level(TrackId::new(2), Timescale::from_nonzero(48_000), StreamType::Audio, &quality) {
+        match track_spec_from_quality_level(
+            TrackId::new(2),
+            Timescale::from_nonzero(48_000),
+            StreamType::Audio,
+            &quality,
+        ) {
             Err(CrateError::UnsupportedCodec { codec }) => {
                 assert_eq!(codec, "Smooth audio FourCC (only AACL/AACH is synthesised)");
             }
@@ -411,7 +424,12 @@ mod tests {
             quality.codec_private_data.clone(),
         );
         assert!(matches!(
-            track_spec_from_quality_level(TrackId::new(2), Timescale::from_nonzero(48_000), StreamType::Audio, &quality),
+            track_spec_from_quality_level(
+                TrackId::new(2),
+                Timescale::from_nonzero(48_000),
+                StreamType::Audio,
+                &quality
+            ),
             Err(CrateError::UnsupportedCodec { .. })
         ));
     }
@@ -425,7 +443,12 @@ mod tests {
             1_000_000,
             alloc::vec![0x00, 0x00, 0x00, 0x01, 0x67, 0x42, 0xC0, 0x1E, 0xAB],
         );
-        match track_spec_from_quality_level(TrackId::new(1), Timescale::from_nonzero(90_000), StreamType::Video, &quality) {
+        match track_spec_from_quality_level(
+            TrackId::new(1),
+            Timescale::from_nonzero(90_000),
+            StreamType::Video,
+            &quality,
+        ) {
             Err(CrateError::UnsupportedCodec { codec }) => {
                 assert_eq!(codec, "Smooth video FourCC (only H264/AVC1 is synthesised)");
             }
@@ -447,8 +470,13 @@ mod tests {
                 ],
             );
             assert!(
-                track_spec_from_quality_level(TrackId::new(1), Timescale::from_nonzero(90_000), StreamType::Video, &quality)
-                    .is_ok(),
+                track_spec_from_quality_level(
+                    TrackId::new(1),
+                    Timescale::from_nonzero(90_000),
+                    StreamType::Video,
+                    &quality
+                )
+                .is_ok(),
                 "video FourCC {cc} must be accepted"
             );
         }
@@ -456,8 +484,13 @@ mod tests {
         for cc in ["AACL", "aacl", "AACH", "aach"] {
             let quality = QualityLevel::new(cc.to_string(), 128_000, alloc::vec![0x12, 0x10]);
             assert!(
-                track_spec_from_quality_level(TrackId::new(2), Timescale::from_nonzero(44_100), StreamType::Audio, &quality)
-                    .is_ok(),
+                track_spec_from_quality_level(
+                    TrackId::new(2),
+                    Timescale::from_nonzero(44_100),
+                    StreamType::Audio,
+                    &quality
+                )
+                .is_ok(),
                 "audio FourCC {cc} must be accepted"
             );
         }
@@ -484,9 +517,13 @@ mod tests {
         assert_eq!(asc.sampling_frequency_index.raw(), 4);
         assert_eq!(asc.channel_configuration.raw(), 2);
 
-        let spec =
-            track_spec_from_quality_level(TrackId::new(2), Timescale::from_nonzero(44_100), StreamType::Audio, &quality)
-                .expect("empty CodecPrivateData must synthesise an ASC");
+        let spec = track_spec_from_quality_level(
+            TrackId::new(2),
+            Timescale::from_nonzero(44_100),
+            StreamType::Audio,
+            &quality,
+        )
+        .expect("empty CodecPrivateData must synthesise an ASC");
         let CodecConfig::Aac {
             sample_rate,
             channel_count,
@@ -521,9 +558,13 @@ mod tests {
             .with_audio(44_100, 2, 16, 0, 0);
         // Through the real entry point, so the AOT the caller picks is what
         // actually lands in the esds.
-        let spec =
-            track_spec_from_quality_level(TrackId::new(3), Timescale::from_nonzero(44_100), StreamType::Audio, &quality)
-                .expect("AACH must synthesise a core ASC");
+        let spec = track_spec_from_quality_level(
+            TrackId::new(3),
+            Timescale::from_nonzero(44_100),
+            StreamType::Audio,
+            &quality,
+        )
+        .expect("AACH must synthesise a core ASC");
         let CodecConfig::Aac {
             sample_rate,
             channel_count,
@@ -638,7 +679,12 @@ mod tests {
         let decoded = crate::sps::decode_avc_sps(&quality.codec_private_data[4..])
             .expect("the oversize SPS decodes");
         assert_eq!(decoded.width, 65_536);
-        match track_spec_from_quality_level(TrackId::new(1), Timescale::from_nonzero(90_000), StreamType::Video, &quality) {
+        match track_spec_from_quality_level(
+            TrackId::new(1),
+            Timescale::from_nonzero(90_000),
+            StreamType::Video,
+            &quality,
+        ) {
             Err(CrateError::InvalidValue(InvalidValue {
                 field: "SPS sps_pic_width_max_in_luma_samples",
                 value: 65_536,
@@ -659,7 +705,12 @@ mod tests {
             alloc::vec![0x00, 0x00, 0x00, 0x01, 0x67, 0xFF, 0xFF, 0xFF, 0xFF,],
         )
         .with_size(70_000, 360);
-        match track_spec_from_quality_level(TrackId::new(1), Timescale::from_nonzero(90_000), StreamType::Video, &quality) {
+        match track_spec_from_quality_level(
+            TrackId::new(1),
+            Timescale::from_nonzero(90_000),
+            StreamType::Video,
+            &quality,
+        ) {
             Err(CrateError::InvalidValue(InvalidValue {
                 field: "QualityLevel@MaxWidth",
                 value: 70_000,
@@ -673,7 +724,12 @@ mod tests {
     fn track_spec_from_quality_level_text_unsupported() {
         let quality = QualityLevel::new("TTML".to_string(), 1, Vec::new());
         assert!(matches!(
-            track_spec_from_quality_level(TrackId::new(3), Timescale::from_nonzero(1000), StreamType::Text, &quality),
+            track_spec_from_quality_level(
+                TrackId::new(3),
+                Timescale::from_nonzero(1000),
+                StreamType::Text,
+                &quality
+            ),
             Err(crate::error::Error::UnsupportedCodec { .. })
         ));
     }
@@ -682,7 +738,12 @@ mod tests {
     fn track_spec_from_quality_level_video_no_sps_errors_not_panics() {
         let quality = QualityLevel::new("H264".to_string(), 1, Vec::new());
         assert!(matches!(
-            track_spec_from_quality_level(TrackId::new(1), Timescale::from_nonzero(90_000), StreamType::Video, &quality),
+            track_spec_from_quality_level(
+                TrackId::new(1),
+                Timescale::from_nonzero(90_000),
+                StreamType::Video,
+                &quality
+            ),
             Err(crate::error::Error::InvalidInput(..))
         ));
     }

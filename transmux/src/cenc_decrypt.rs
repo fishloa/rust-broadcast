@@ -1285,7 +1285,11 @@ mod tests {
             .collect();
         Media::new(
             alloc::vec![Track::new(
-                TrackSpec::new(track_id, Timescale::from_nonzero(90_000), test_codec_config()),
+                TrackSpec::new(
+                    track_id,
+                    Timescale::from_nonzero(90_000),
+                    test_codec_config()
+                ),
                 samples,
             )],
             Timescale::from_nonzero(90_000),

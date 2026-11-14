@@ -916,6 +916,7 @@ pub(crate) async fn run_rtmp_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use media_plane::ts_session::test_support::{handshake, trunk_config};
     use rtmp_runtime::server::ServerSession;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};

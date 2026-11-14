@@ -2,8 +2,8 @@
 
 use std::collections::VecDeque;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use broadcast_smooth::{QualityLevel, SmoothManifest, StreamIndex};
 use transmux::smooth_fragment::fragment_tfxd;
 use transmux::{Fmp4Demux, Sample, TrackId, TrackSpec};

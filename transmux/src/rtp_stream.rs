@@ -2029,8 +2029,18 @@ mod tests {
     #[test]
     fn stage_feed_errors_on_multi_track_construction() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![
-            RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, dummy_avc(), Timescale::from_nonzero(90_000)),
-            RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::H264, dummy_avc(), Timescale::from_nonzero(90_000)),
+            RtpStreamTrack::new(
+                TrackId::new(1),
+                RtpMediaKind::H264,
+                dummy_avc(),
+                Timescale::from_nonzero(90_000)
+            ),
+            RtpStreamTrack::new(
+                TrackId::new(2),
+                RtpMediaKind::H264,
+                dummy_avc(),
+                Timescale::from_nonzero(90_000)
+            ),
         ]);
         let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));

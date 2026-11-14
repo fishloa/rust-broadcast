@@ -3,6 +3,7 @@
 //! (the oracle never sees the client).
 
 use crate::common;
+use broadcast_common::timescale::Timescale;
 
 use common::loopback::{
     Drive, Order, Origin, Run, Sig, assert_matches_oracle, drive, oracle, play,

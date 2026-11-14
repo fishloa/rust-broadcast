@@ -13,6 +13,7 @@
 use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
@@ -633,7 +634,10 @@ fn too_many_elementary_streams_is_refused() {
         .expect("16 video streams must fit");
     assert_eq!(ts.len() % TS, 0);
     let err = TsMux::new()
-        .package(&Media::new(clone_n(video, 17), Timescale::from_nonzero(90_000)))
+        .package(&Media::new(
+            clone_n(video, 17),
+            Timescale::from_nonzero(90_000),
+        ))
         .unwrap_err();
     match err {
         transmux::Error::TooManyElementaryStreams { family, max } => {
@@ -649,7 +653,10 @@ fn too_many_elementary_streams_is_refused() {
         .package(&ok)
         .expect("32 audio streams must fit");
     let err = TsMux::new()
-        .package(&Media::new(clone_n(audio, 33), Timescale::from_nonzero(48_000)))
+        .package(&Media::new(
+            clone_n(audio, 33),
+            Timescale::from_nonzero(48_000),
+        ))
         .unwrap_err();
     match err {
         transmux::Error::TooManyElementaryStreams { family, max } => {

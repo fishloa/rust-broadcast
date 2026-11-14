@@ -185,6 +185,7 @@ pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use transmux::rtp::RtpMediaKind;
 
     // Minimal H.264 SDP (one video media) with a real sprop-parameter-sets

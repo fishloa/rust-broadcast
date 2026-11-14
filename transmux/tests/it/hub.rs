@@ -12,6 +12,7 @@
 //! 3. `CmafMux::package` bytes == `build_init_segment ++ build_media_segment`
 //!    for the equivalent input (the wrapper is byte-transparent).
 
+use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 

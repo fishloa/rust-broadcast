@@ -6,6 +6,7 @@
 //! AVC + `stpp`/TTML; see PROVENANCE.md there). `wvtt` has no real producer
 //! available (ffmpeg cannot write it), so it is a spec-vector round trip.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, WvttSampleEntry};
@@ -106,7 +107,10 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
         vttc
     };
     let sample = Sample::new(cue.clone(), Some(0), Some(0), Some(1000), true);
-    let media = Media::new(vec![Track::new(spec, vec![sample])], Timescale::from_nonzero(1000));
+    let media = Media::new(
+        vec![Track::new(spec, vec![sample])],
+        Timescale::from_nonzero(1000),
+    );
     let out = CmafMux::default().package(&media).expect("wvtt muxes");
     assert!(find(&out, b"nmhd").is_some() && find(&out, b"text").is_some());
     let round = Fmp4Demux::new().unpackage(&out).unwrap();
@@ -128,7 +132,10 @@ fn entryless_subtitle_is_still_rejected_by_name() {
             sample_entry: None,
         },
     );
-    let media = Media::new(vec![Track::new(spec, vec![])], Timescale::from_nonzero(1000));
+    let media = Media::new(
+        vec![Track::new(spec, vec![])],
+        Timescale::from_nonzero(1000),
+    );
     let err = CmafMux::default().package(&media).unwrap_err();
     assert!(
         matches!(err, transmux::Error::UnmuxableSubtitleTrack { .. }),

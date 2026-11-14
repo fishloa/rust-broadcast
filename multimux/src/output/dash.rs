@@ -234,10 +234,7 @@ pub(crate) fn select_representable_track(specs: &[TrackSpec]) -> Option<TrackSpe
 /// DSM-CC, SCTE-35) fails this — the exact case issue #776 exists to skip
 /// over rather than reject the whole route for.
 fn track_is_representable(spec: &TrackSpec) -> bool {
-    let media = Media::new(
-        vec![Track::new(spec.clone(), Vec::new())],
-        spec.timescale,
-    );
+    let media = Media::new(vec![Track::new(spec.clone(), Vec::new())], spec.timescale);
     DashPackager::default().package(&media).is_ok()
 }
 
@@ -555,7 +552,8 @@ fn set_presentation_time_offset(
         for template in templates.filter_map(|layer| layer.template.as_mut()) {
             let timescale = template.multi.base.effective_timescale();
             let nanos_per_sec = u128::from(broadcast_common::units::NANOS_PER_SEC);
-            let ticks = (u128::from(media_start_ns) * u128::from(timescale.get()) + nanos_per_sec / 2)
+            let ticks = (u128::from(media_start_ns) * u128::from(timescale.get())
+                + nanos_per_sec / 2)
                 / nanos_per_sec;
             let ticks = u64::try_from(ticks).ok()?;
             template.multi.base.presentation_time_offset = (ticks > 0).then_some(ticks);
@@ -815,6 +813,7 @@ mod tests {
     use super::*;
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
+    use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
 
     const CONCURRENT_MANIFESTS: usize = 64;

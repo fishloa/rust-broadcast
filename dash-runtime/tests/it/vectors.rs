@@ -2,6 +2,7 @@
 //! the DASH-IF IOP v4.3 Table 10 worked example.
 
 use crate::common;
+use broadcast_common::timescale::Timescale;
 
 use dash_runtime::address::template::{
     TemplateFault, TemplateUse, scan, scan_initialization, scan_media, substitute,

@@ -8,6 +8,7 @@
 //! cannot pass this.
 
 use broadcast_common::Parse;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::{
     CodecConfig, EsdsBox, FragmentTrackData, MediaDataBox, MovieBox, MovieFragmentBox, Sample,

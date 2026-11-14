@@ -120,6 +120,7 @@ mod tests {
     use crate::media::Track;
     use crate::pipeline::{Sample, TrackSpec};
     use alloc::vec;
+    use broadcast_common::timescale::Timescale;
 
     fn sample(dts: i64, duration: u32) -> Sample {
         Sample {
@@ -174,7 +175,10 @@ mod tests {
 
     #[test]
     fn rebase_to_zero_clears_anchor_and_samples() {
-        let mut m = Media::new(vec![track_at(90_000, &[3000, 3000])], Timescale::from_nonzero(1000));
+        let mut m = Media::new(
+            vec![track_at(90_000, &[3000, 3000])],
+            Timescale::from_nonzero(1000),
+        );
         rebase_to_zero(&mut m);
         assert_eq!(m.tracks[0].start_decode_time, 0);
         assert_eq!(m.tracks[0].samples[0].timing.map(|t| t.dts), Some(0));

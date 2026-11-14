@@ -1,5 +1,6 @@
 //! Dummy codec configs and track specs shared by the transmux segmenter tests.
 
+use broadcast_common::timescale::Timescale;
 use transmux::pipeline::{CodecConfig, TrackSpec};
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, DecoderConfigDescriptor,

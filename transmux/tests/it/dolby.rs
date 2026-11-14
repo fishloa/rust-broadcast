@@ -4,6 +4,7 @@
 //! The test demuxes real TS fixtures, parses the syncframe BSI, builds the
 //! config box, and asserts byte-exact match with ffmpeg's output.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 

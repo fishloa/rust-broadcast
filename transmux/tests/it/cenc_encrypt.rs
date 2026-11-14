@@ -34,6 +34,7 @@
 
 #![cfg(feature = "cenc")]
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use broadcast_common::{Encrypt, Unpackage};
@@ -637,7 +638,10 @@ fn avc_media(valid_count: usize, with_bad_sample: bool) -> Media {
             false,
         ));
     }
-    Media::new(vec![Track::new(avc_spec(1), samples)], Timescale::from_nonzero(90_000))
+    Media::new(
+        vec![Track::new(avc_spec(1), samples)],
+        Timescale::from_nonzero(90_000),
+    )
 }
 
 /// Every sample's bytes of every track, in (track, sample) order.

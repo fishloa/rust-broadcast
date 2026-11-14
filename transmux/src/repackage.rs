@@ -495,7 +495,10 @@ mod tests {
     }
 
     fn media(timescales: &[u32]) -> Media {
-        Media::new(timescales.iter().map(|&t| track(t, 4)).collect(), Timescale::from_nonzero(1000))
+        Media::new(
+            timescales.iter().map(|&t| track(t, 4)).collect(),
+            Timescale::from_nonzero(1000),
+        )
     }
 
     /// A minimal `mdhd` **v0** box carrying `timescale` (ISO/IEC 14496-12:2026

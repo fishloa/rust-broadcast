@@ -16,6 +16,7 @@ use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, VIDEO_TIMESCALE,
     feed_via_segmenter as feed_segments, video_track_spec_sized,
 };
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;

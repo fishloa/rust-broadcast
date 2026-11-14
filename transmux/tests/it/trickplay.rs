@@ -15,6 +15,7 @@
 //! 3. **No-sync error**: a track with no sync samples returns
 //!    [`Error::InvalidInput`] rather than producing an empty track.
 
+use broadcast_common::timescale::Timescale;
 use std::fs;
 use transmux::TrackId;
 

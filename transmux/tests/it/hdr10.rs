@@ -8,6 +8,7 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::ir::{CodecConfig, TrackSpec};
 use transmux::ts_demux::TsDemux;
 use transmux::{ChromaticityXy, HdrStaticMetadata, build_init_segment};

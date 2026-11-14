@@ -155,6 +155,7 @@ fn check_media(media: &Media, report: &mut Report) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
 
     /// The sample-duration sum must widen from `u32` and saturate rather than
     /// wrap.

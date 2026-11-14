@@ -13,6 +13,7 @@
 //! CENC entries); no sample byte, timestamp or duration changed.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;

@@ -18,8 +18,9 @@
 //! numbers no real short fixture naturally produces.
 #![cfg(feature = "std")]
 
-#[cfg(feature = "std")]
 use crate::sdp_session;
+#[cfg(feature = "std")]
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use std::collections::HashSet;
 use transmux::TrackId;
@@ -197,7 +198,8 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
 
     // Recovered video samples build a valid fMP4 init + media segment + part.
     let specs = d.track_specs();
-    let init = build_init_segment(&specs, Timescale::from_nonzero(90_000)).expect("build_init_segment must succeed");
+    let init = build_init_segment(&specs, Timescale::from_nonzero(90_000))
+        .expect("build_init_segment must succeed");
     assert!(!init.is_empty(), "init segment non-empty");
     let init_issues = validate_init_segment(&init);
     assert!(
@@ -313,8 +315,13 @@ fn run_video(
     reorder_depth: usize,
 ) -> (Vec<bytes::Bytes>, bool) {
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config.clone(), Timescale::from_nonzero(90_000))
-            .with_reorder_depth(reorder_depth),
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            config.clone(),
+            Timescale::from_nonzero(90_000),
+        )
+        .with_reorder_depth(reorder_depth),
     ]);
     let mut out = Vec::new();
     for pkt in pkts {
@@ -462,10 +469,20 @@ fn clean_capture_emits_zero_loss_signals() {
         .clone();
 
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, vconfig, Timescale::from_nonzero(90_000)),
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            vconfig,
+            Timescale::from_nonzero(90_000),
+        ),
         // Clock rate is irrelevant to sequence-gate correctness (only
         // timing derivation, not under test here).
-        RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::Aac, aconfig, Timescale::from_nonzero(48_000)),
+        RtpStreamTrack::new(
+            TrackId::new(2),
+            RtpMediaKind::Aac,
+            aconfig,
+            Timescale::from_nonzero(48_000),
+        ),
     ]);
 
     for pkt in &video_stream(&out).packets {
@@ -593,8 +610,13 @@ fn reorder_buffer_is_bounded_under_a_flood_of_out_of_order_packets() {
 
     let config = tiny_avc_config();
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config, Timescale::from_nonzero(90_000))
-            .with_reorder_depth(DEPTH),
+        RtpStreamTrack::new(
+            TrackId::new(1),
+            RtpMediaKind::H264,
+            config,
+            Timescale::from_nonzero(90_000),
+        )
+        .with_reorder_depth(DEPTH),
     ]);
 
     // Establish `expected` with one in-order packet (seq 0).

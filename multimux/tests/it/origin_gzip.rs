@@ -2,6 +2,7 @@
 //! `application/vnd.apple.mpegurl` (and `application/dash+xml`) responses get
 //! `Content-Encoding: gzip`; segments/init/parts stay byte-exact.
 
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::io::Read;

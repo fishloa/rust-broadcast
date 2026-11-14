@@ -11,6 +11,7 @@
 //! (b) never even attempt to carry a track FLV.as_slice() cannot hold, rather than
 //! either refusing the whole push or crashing trying to frame it?
 
+use broadcast_common::timescale::Timescale;
 use std::sync::Arc;
 use std::time::Duration;
 use transmux::TrackId;

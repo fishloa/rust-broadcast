@@ -423,6 +423,7 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
 
 mod custom_dispatch_driver_backed {
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::num::NonZeroUsize;

@@ -11,6 +11,7 @@
 //! the crate itself computes, not hardcoded literals.
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 

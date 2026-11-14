@@ -15,9 +15,9 @@
 //! | `dash-dynamic-mpd-no-availability-start` | Error | Dynamic MPD missing `availabilityStartTime` | ISO/IEC 23009-1:2012 §5.3.1.2 Table 3 (CM — must be present for @type='dynamic') |
 //! | `dash-period-no-adaptation-sets` | Error | Period has no AdaptationSets | §5.3.2 |
 
-use broadcast_common::timescale::Timescale;
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::collections::BTreeMap;
+use broadcast_common::timescale::Timescale;
 use broadcast_dash::PresentationType;
 use broadcast_dash::inherit::{SegmentInfo, resolve_segment_info};
 

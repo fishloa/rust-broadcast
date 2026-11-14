@@ -27,6 +27,7 @@
 //! HEVC's).
 
 use crate::ts_psi::{first_section, parse_pat, parse_pmt, split_lp};
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
@@ -392,7 +393,10 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
     ];
     let video_track = Track::new(video_spec, video_samples);
 
-    let media = Media::new(vec![audio_track, video_track], Timescale::from_nonzero(90_000));
+    let media = Media::new(
+        vec![audio_track, video_track],
+        Timescale::from_nonzero(90_000),
+    );
     let out = TsHlsPackager::new(1)
         .package(&media)
         .expect("package TS-HLS");

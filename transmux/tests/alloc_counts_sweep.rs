@@ -80,6 +80,7 @@ mod ts_demux_copies {
 
 mod rtp_stream_copies {
     use super::bytes_allocated;
+    use broadcast_common::timescale::Timescale;
     use broadcast_common::{Package, Unpackage};
     use transmux::TrackId;
     use transmux::pipeline::CodecConfig;

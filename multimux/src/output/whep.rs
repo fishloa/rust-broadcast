@@ -111,7 +111,8 @@ use tokio_util::sync::CancellationToken;
 use transmux::ir::Track;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::{
-    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE,
+    DEFAULT_AUDIO_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT, RtpPacket, RtpPacketiser, VIDEO_CLOCK_RATE,
+    VIDEO_CLOCK_TIMESCALE,
 };
 
 use webrtc_runtime::media::{
@@ -1764,6 +1765,7 @@ pub async fn run_whep_on_probed_with_limits(
 mod tests {
     use super::*;
     use crate::webrtc_session::Resource;
+    use broadcast_common::timescale::Timescale;
     use tokio::io::AsyncWriteExt as _;
     use tokio::net::TcpStream;
 
@@ -1868,7 +1870,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     #[test]
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
-        assert_eq!(rescale_to_90k(1000, Timescale::from_nonzero(1000)), VIDEO_CLOCK_RATE);
+        assert_eq!(
+            rescale_to_90k(1000, Timescale::from_nonzero(1000)),
+            VIDEO_CLOCK_RATE
+        );
     }
     #[test]
     fn rescale_to_90k_wraps_modulo_2_pow_32() {

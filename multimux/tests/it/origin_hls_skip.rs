@@ -1,5 +1,6 @@
 //! Router-level coverage for `_HLS_skip` delivery directives (#blskip).
 
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;

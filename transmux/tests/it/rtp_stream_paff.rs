@@ -6,6 +6,7 @@
 #![cfg(feature = "std")]
 
 use crate::bit_writer::BitWriter;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;

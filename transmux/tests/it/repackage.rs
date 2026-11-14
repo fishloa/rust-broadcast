@@ -6,6 +6,7 @@
 //! crate's own [`Fmp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 

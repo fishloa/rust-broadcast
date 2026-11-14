@@ -1909,12 +1909,7 @@ impl ProgramSegmenter {
         // offset — no per-segment rounding accumulation (issue #1083, E).
         if let Some(anchor) = self.anchor {
             let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
-            let delta_90k = rescale_u64(
-                delta_ns,
-                Timescale::NANOS,
-                PTS_TIMESCALE,
-                Rounding::Floor,
-            );
+            let delta_90k = rescale_u64(delta_ns, Timescale::NANOS, PTS_TIMESCALE, Rounding::Floor);
             let start_90k = anchor.source_90k.saturating_add(delta_90k);
             self.segment_writer
                 .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));

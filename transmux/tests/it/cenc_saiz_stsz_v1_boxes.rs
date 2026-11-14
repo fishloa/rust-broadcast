@@ -9,6 +9,7 @@
 //! inspector (`MP4Box -diso`), never derived from this crate's own
 //! serializer.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use transmux::TrackId;
 use transmux::cenc::SampleAuxInfoSizesBox;

@@ -1,6 +1,7 @@
 #![cfg(feature = "std")]
 //! HLS VIDEO-RANGE derivation from track display colour (Phase 4b).
 
+use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 
 use hls_runtime::server::HlsOrigin;

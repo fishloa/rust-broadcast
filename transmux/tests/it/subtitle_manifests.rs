@@ -14,6 +14,7 @@
 //! AVC + `stpp`/TTML). `wvtt` has no real producer available (ffmpeg
 //! cannot write it), so it is a spec-vector.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::{
@@ -66,7 +67,10 @@ fn wvtt_media() -> Media {
     vttc.extend_from_slice(b"vttc");
     vttc.extend_from_slice(&payl);
     let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
-    Media::new(vec![Track::new(spec, vec![sample])], Timescale::from_nonzero(1000))
+    Media::new(
+        vec![Track::new(spec, vec![sample])],
+        Timescale::from_nonzero(1000),
+    )
 }
 
 #[test]
@@ -111,7 +115,10 @@ fn dash_still_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
             sample_entry: None,
         },
     );
-    let media = Media::new(vec![Track::new(spec, vec![])], Timescale::from_nonzero(1000));
+    let media = Media::new(
+        vec![Track::new(spec, vec![])],
+        Timescale::from_nonzero(1000),
+    );
     let err = DashPackager::default().package(&media).unwrap_err();
     assert!(
         matches!(err, transmux::Error::UnsupportedCodec { codec: "Subtitle" }),
@@ -172,7 +179,10 @@ fn smooth_rejects_a_subtitle_track_with_no_isobmff_sample_entry() {
             sample_entry: None,
         },
     );
-    let media = Media::new(vec![Track::new(spec, vec![])], Timescale::from_nonzero(1000));
+    let media = Media::new(
+        vec![Track::new(spec, vec![])],
+        Timescale::from_nonzero(1000),
+    );
     assert!(matches!(
         SmoothPackager::default().package(&media),
         Err(transmux::error::Error::InvalidInput(..))

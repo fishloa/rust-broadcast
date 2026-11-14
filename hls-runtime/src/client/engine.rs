@@ -8,8 +8,8 @@ use container_probe::segment;
 use mpeg_ts::ts::TS_SYNC_BYTE;
 use transmux::TrackId;
 
-use broadcast_common::timescale::Timescale;
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
 use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
