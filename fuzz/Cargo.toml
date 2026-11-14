@@ -378,12 +378,6 @@ test = false
 doc  = false
 
 [[bin]]
-name = "tshttp_runtime"
-path = "fuzz_targets/tshttp_runtime.rs"
-test = false
-doc  = false
-
-[[bin]]
 name = "broadcast_client"
 path = "fuzz_targets/broadcast_client.rs"
 test = false
