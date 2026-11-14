@@ -363,9 +363,9 @@ broadcast_common::impl_spec_display!(ChannelConfiguration, Reserved);
 
 // --- AudioSpecificConfig §1.6.2.1 ---
 ///
-/// Build it by parsing a decoder-specific config
-/// ([`Parse::parse`](broadcast_common::Parse::parse)): the parser is the only
-/// producer, so a newly decoded field is an additive change for a consumer.
+/// Build it by parsing a decoder-specific config (`Parse::parse`): the parser
+/// is the only producer, so a newly decoded field is an additive change for a
+/// consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]

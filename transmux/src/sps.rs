@@ -171,10 +171,6 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _, _)| info)
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one argument per `AvcSpsInfo` field, at the one place that decodes them"
-)]
 fn build_avc_sps_info(
     profile_idc: u8,
     constraint_flags: u8,
@@ -186,9 +182,7 @@ fn build_avc_sps_info(
     frame_mbs_only: bool,
     width: u32,
     height: u32,
-    num_units_in_tick: Option<u32>,
-    time_scale: Option<u32>,
-    fps: Option<f32>,
+    timing: (Option<u32>, Option<u32>, Option<f32>),
 ) -> AvcSpsInfo {
     AvcSpsInfo {
         profile_idc,
@@ -201,9 +195,9 @@ fn build_avc_sps_info(
         frame_mbs_only,
         width,
         height,
-        num_units_in_tick,
-        time_scale,
-        fps,
+        num_units_in_tick: timing.0,
+        time_scale: timing.1,
+        fps: timing.2,
     }
 }
 
@@ -566,9 +560,7 @@ fn decode_avc_sps_inner(
             frame_mbs_only,
             width as u32,
             height as u32,
-            num_units_in_tick,
-            time_scale,
-            fps,
+            (num_units_in_tick, time_scale, fps),
         ),
         AvcSliceSps {
             sps_id,
@@ -886,10 +878,7 @@ pub struct HevcSpsInfo {
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
     decode_hevc_sps_inner(sps_bytes).map(|(info, _, _, _)| info)
 }
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one argument per `HevcSpsInfo` field, at the one place that decodes them"
-)]
+
 fn build_hevc_sps_info(
     general_profile_space: u8,
     general_tier_flag: bool,
@@ -902,9 +891,7 @@ fn build_hevc_sps_info(
     bit_depth_chroma: u8,
     width: u32,
     height: u32,
-    num_units_in_tick: Option<u32>,
-    time_scale: Option<u32>,
-    fps: Option<f32>,
+    timing: (Option<u32>, Option<u32>, Option<f32>),
 ) -> HevcSpsInfo {
     HevcSpsInfo {
         general_profile_space,
@@ -918,9 +905,9 @@ fn build_hevc_sps_info(
         bit_depth_chroma,
         width,
         height,
-        num_units_in_tick,
-        time_scale,
-        fps,
+        num_units_in_tick: timing.0,
+        time_scale: timing.1,
+        fps: timing.2,
     }
 }
 
@@ -1241,9 +1228,7 @@ fn decode_hevc_sps_inner(
             bit_depth_chroma,
             width as u32,
             height as u32,
-            num_units_in_tick,
-            time_scale,
-            fps,
+            (num_units_in_tick, time_scale, fps),
         ),
         interlace,
         display,
