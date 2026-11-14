@@ -131,10 +131,10 @@ builds (see the table above against the in-tree versions below).
 | [`ssai-runtime`](#ssai-runtime) | Servers, runtimes and tools | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/ssai-runtime.svg)](https://crates.io/crates/ssai-runtime) | yes | 2 | on crates.io |
 | [`dvb-tools`](#dvb-tools) | Servers, runtimes and tools | 14.0.0 | [![crates.io](https://img.shields.io/crates/v/dvb-tools.svg)](https://crates.io/crates/dvb-tools) | no | 3 | on crates.io |
 | [`playout-runtime`](#playout-runtime) | Servers, runtimes and tools | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/playout-runtime.svg)](https://crates.io/crates/playout-runtime) | yes | 3 | on crates.io |
+| [`media-doctor`](#media-doctor) | Servers, runtimes and tools | 0.15.0 | [![crates.io](https://img.shields.io/crates/v/media-doctor.svg)](https://crates.io/crates/media-doctor) | yes | 4 | on crates.io |
 | [`ts-fix`](#ts-fix) | Servers, runtimes and tools | 0.9.0 | [![crates.io](https://img.shields.io/crates/v/ts-fix.svg)](https://crates.io/crates/ts-fix) | yes | 4 | on crates.io |
 | [`media-plane`](#media-plane) | Servers, runtimes and tools | 0.11.0 | [![crates.io](https://img.shields.io/crates/v/media-plane.svg)](https://crates.io/crates/media-plane) | yes | 5 | on crates.io |
-| [`media-doctor`](#media-doctor) | Servers, runtimes and tools | 0.15.0 | [![crates.io](https://img.shields.io/crates/v/media-doctor.svg)](https://crates.io/crates/media-doctor) | yes | 7 | on crates.io |
-| [`compliance-probe`](#compliance-probe) | Servers, runtimes and tools | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/compliance-probe.svg)](https://crates.io/crates/compliance-probe) | yes | 8 | on crates.io |
+| [`compliance-probe`](#compliance-probe) | Servers, runtimes and tools | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/compliance-probe.svg)](https://crates.io/crates/compliance-probe) | yes | 6 | on crates.io |
 | [`multimux`](#multimux) | Servers, runtimes and tools | 0.18.0 | [![crates.io](https://img.shields.io/crates/v/multimux.svg)](https://crates.io/crates/multimux) | no | 8 | on crates.io |
 | [`multimux-cli`](#multimux-cli) | Servers, runtimes and tools | 0.16.0 | [![crates.io](https://img.shields.io/crates/v/multimux-cli.svg)](https://crates.io/crates/multimux-cli) | no | 9 | on crates.io |
 | [`rdd29`](#rdd29) | Professional media (SMPTE / AES / Dolby) | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/rdd29.svg)](https://crates.io/crates/rdd29) | yes | 1 | on crates.io |
@@ -389,7 +389,7 @@ Converts between caption formats using the decoders already in the workspace rat
 - **Cargo description:** Convert CEA-608/708 and EBU Teletext captions to WebVTT, and WebVTT <-> SRT. DVB bitmap subtitles and TTML/IMSC conversion are documented gaps (see crate docs), never silently degraded.
 - **Version (in-tree):** 0.6.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 4
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`cc-data`](#cc-data), [`dvb-vbi`](#dvb-vbi), [`timed-metadata`](#timed-metadata)
-- **Used by (workspace):** [`media-plane`](#media-plane), [`multimux`](#multimux)
+- **Used by (workspace):** [`media-plane`](#media-plane)
 - **Links:** [README](../caption-convert/README.md) · [CHANGELOG](../caption-convert/CHANGELOG.md) · [crates.io](https://crates.io/crates/caption-convert) · [docs.rs](https://docs.rs/caption-convert)
 
 ### Metadata and ad-insertion signalling
@@ -599,7 +599,7 @@ The player on top of `broadcast-dash` (the MPD model and parser live there): a l
 - **Cargo description:** Sans-IO MPEG-DASH (ISO/IEC 23009-1): MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static and dynamic presentations. No I/O, no clock reads.
 - **Version (in-tree):** 0.4.0 · **Status:** not on crates.io · **`no_std` proven in CI:** no · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`container-probe`](#container-probe), [`media-plane`](#media-plane), [`transmux`](#transmux)
-- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`media-doctor`](#media-doctor), [`multimux`](#multimux), [`test-harness`](#test-harness)
+- **Used by (workspace):** [`broadcast-client`](#broadcast-client), [`multimux`](#multimux), [`test-harness`](#test-harness)
 - **Links:** [README](../dash-runtime/README.md) · [CHANGELOG](../dash-runtime/CHANGELOG.md) · [docs + spec pointer](../dash-runtime/docs/)
 
 #### hls-runtime
@@ -672,6 +672,17 @@ Assembles a linear channel from an ordered programme/ad/slate schedule, plans ea
 - **Used by (workspace):** none
 - **Links:** [README](../playout-runtime/README.md) · [CHANGELOG](../playout-runtime/CHANGELOG.md) · [crates.io](https://crates.io/crates/playout-runtime) · [docs.rs](https://docs.rs/playout-runtime)
 
+#### media-doctor
+
+A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PMT versioning, continuity, PCR, PTS/DTS monotonicity, SCTE 35 splice consistency) and produces findings, plus HLS playlist, DASH MPD and fMP4/CMAF structural validation. Features `net`/`metrics` serve Prometheus; `cli` builds the `media-doctor` binary.
+
+- **Standards:** Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35
+- **Cargo description:** Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation.
+- **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 4
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
+- **Used by (workspace):** [`compliance-probe`](#compliance-probe)
+- **Links:** [README](../media-doctor/README.md) · [CHANGELOG](../media-doctor/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-doctor) · [docs.rs](https://docs.rs/media-doctor)
+
 #### ts-fix
 
 A builder-driven streaming engine that takes 188-byte packets in and emits repaired packets out; each operation is opt-in and the engine fixes their order. Container layer only, no codec parsing. The `cli` feature builds the binary.
@@ -694,24 +705,13 @@ Four layers (`Dialer`/`Listener` -> byte stages -> `IngestSession` -> IR transfo
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`dash-runtime`](#dash-runtime), [`hls-runtime`](#hls-runtime), [`multimux`](#multimux), [`smooth-runtime`](#smooth-runtime)
 - **Links:** [README](../media-plane/README.md) · [CHANGELOG](../media-plane/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-plane) · [docs.rs](https://docs.rs/media-plane)
 
-#### media-doctor
-
-A pluggable diagnostics harness: each `Diagnostic` checks one rule (sync, PAT/PMT versioning, continuity, PCR, PTS/DTS monotonicity, SCTE 35 splice consistency) and produces findings, plus HLS playlist, DASH MPD and fMP4/CMAF structural validation. Features `net`/`metrics` serve Prometheus; `cli` (opt-in, not default) builds the `media-doctor` binary: `cargo install media-doctor --features cli`.
-
-- **Standards:** Checks against ISO/IEC 13818-1, RFC 8216, ISO/IEC 23009-1, SCTE 35
-- **Cargo description:** Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation.
-- **Version (in-tree):** 0.15.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 7
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-conformance`](#dvb-conformance), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`mpeg-pes`](#mpeg-pes), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux)
-- **Used by (workspace):** [`compliance-probe`](#compliance-probe)
-- **Links:** [README](../media-doctor/README.md) · [CHANGELOG](../media-doctor/CHANGELOG.md) · [crates.io](https://crates.io/crates/media-doctor) · [docs.rs](https://docs.rs/media-doctor)
-
 #### compliance-probe
 
 Runs beside a live stream and exports `dvb-conformance` indicators, a PCR drift/jitter estimate (distinct from TR 101 290 indicator 2.4, which is not emitted) and `splice_insert` sanity checks through the `metrics` facade for a host to render as Prometheus.
 
 - **Standards:** ETSI TR 101 290 (via dvb-conformance); SCTE 35
 - **Cargo description:** Live TR 101 290 conformance + PCR-drift + SCTE-35 cue-sanity probe over a media-plane Trunk/ByteTap, exported through the `metrics` facade for a host process to render as Prometheus.
-- **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 8
+- **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 6
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`dvb-conformance`](#dvb-conformance), [`media-doctor`](#media-doctor), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`scte35-splice`](#scte35-splice), [`timed-metadata`](#timed-metadata)
 - **Used by (workspace):** none
 - **Links:** [README](../compliance-probe/README.md) · [CHANGELOG](../compliance-probe/CHANGELOG.md) · [crates.io](https://crates.io/crates/compliance-probe) · [docs.rs](https://docs.rs/compliance-probe)
@@ -723,7 +723,7 @@ Ingest RTSP, RTP/UDP, TS over UDP or HTTP, SRT, HLS/DASH/Smooth pull, RTMP push 
 - **Standards:** Composes the live and container crates (RTSP, RTP, SRT, RTMP, HLS, DASH, Smooth, WHIP/WHEP)
 - **Cargo description:** Multi-input (RTSP/RTP/TS-UDP/TS-HTTP/SRT/HLS-pull/DASH-pull/Smooth-pull/RTMP/file), multi-output (LL-HLS/DASH/LL-DASH/Smooth/TS-HLS/catch-up + SRT/RTMP/RTSP push) just-in-time repackaging HTTP origin (library: tokio + axum), with shared output auth and an external scheme plugin registry.
 - **Version (in-tree):** 0.18.0 · **Status:** on crates.io · **`no_std` proven in CI:** no · **Layer:** 8
-- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`caption-convert`](#caption-convert), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`smooth-runtime`](#smooth-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
+- **Depends on (workspace):** [`broadcast-auth`](#broadcast-auth), [`broadcast-client`](#broadcast-client), [`broadcast-common`](#broadcast-common), [`broadcast-dash`](#broadcast-dash), [`broadcast-hls`](#broadcast-hls), [`broadcast-smooth`](#broadcast-smooth), [`container-probe`](#container-probe), [`dash-runtime`](#dash-runtime), [`dvb-si`](#dvb-si), [`dvb-stream`](#dvb-stream), [`hls-runtime`](#hls-runtime), [`media-plane`](#media-plane), [`mpeg-ts`](#mpeg-ts), [`rtmp-runtime`](#rtmp-runtime), [`rtp-packet`](#rtp-packet), [`rtsp-runtime`](#rtsp-runtime), [`smooth-runtime`](#smooth-runtime), [`srt-runtime`](#srt-runtime), [`timed-metadata`](#timed-metadata), [`transmux`](#transmux), [`webrtc-runtime`](#webrtc-runtime)
 - **Used by (workspace):** [`multimux-cli`](#multimux-cli)
 - **Links:** [README](../multimux/README.md) · [CHANGELOG](../multimux/CHANGELOG.md) · [docs + spec pointer](../multimux/docs/) · [crates.io](https://crates.io/crates/multimux) · [docs.rs](https://docs.rs/multimux)
 
@@ -913,11 +913,11 @@ layer 0: broadcast-common, test-alloc, test-fixtures, workspace-guards
 layer 1: atsc3, broadcast-auth, broadcast-dash, broadcast-hls, broadcast-loudness, broadcast-smooth, buffering-runtime, cc-data, container-probe, dvb-bbframe, dvb-mabr, dvb-simulcrypt, dvb-subtitle, dvb-vbi, mp4-emsg, mpeg-pes, mpeg-ts, rdd29, rmt-flute, rtmp-runtime, rtp-packet, scte104, srt-runtime, st12-1, st2022, st337, st377-1, ttml-subtitle, ule
 layer 2: atsc3-route, dvb-csa, dvb-si, dvb-t2mi, mpeg-ps, rist-runtime, rtsp-runtime, scte35-splice, ssai-runtime, st291, webrtc-runtime
 layer 3: dvb-ci, dvb-conformance, dvb-stream, dvb-tools, playout-runtime, timed-metadata, transmux
-layer 4: caption-convert, dvb-ci-runtime, ts-fix
+layer 4: caption-convert, dvb-ci-runtime, media-doctor, ts-fix
 layer 5: media-plane
-layer 6: dash-runtime, hls-runtime, smooth-runtime
-layer 7: broadcast-client, media-doctor, test-harness
-layer 8: compliance-probe, multimux
+layer 6: compliance-probe, dash-runtime, hls-runtime, smooth-runtime
+layer 7: broadcast-client, test-harness
+layer 8: multimux
 layer 9: multimux-cli
 ```
 
@@ -984,22 +984,22 @@ flowchart BT
   subgraph L4["layer 4"]
     caption_convert["caption-convert"]
     dvb_ci_runtime["dvb-ci-runtime"]
+    media_doctor["media-doctor"]
     ts_fix["ts-fix"]
   end
   subgraph L5["layer 5"]
     media_plane["media-plane"]
   end
   subgraph L6["layer 6"]
+    compliance_probe["compliance-probe"]
     dash_runtime["dash-runtime"]
     hls_runtime["hls-runtime"]
     smooth_runtime["smooth-runtime"]
   end
   subgraph L7["layer 7"]
     broadcast_client["broadcast-client"]
-    media_doctor["media-doctor"]
   end
   subgraph L8["layer 8"]
-    compliance_probe["compliance-probe"]
     multimux["multimux"]
   end
   subgraph L9["layer 9"]
@@ -1022,6 +1022,7 @@ flowchart BT
   caption_convert --> timed_metadata
   cc_data --> broadcast_common
   compliance_probe --> media_doctor
+  compliance_probe --> media_plane
   container_probe --> broadcast_common
   dash_runtime --> media_plane
   dvb_bbframe --> broadcast_common
@@ -1042,9 +1043,10 @@ flowchart BT
   dvb_tools --> dvb_t2mi
   dvb_vbi --> broadcast_common
   hls_runtime --> media_plane
-  media_doctor --> dash_runtime
   media_doctor --> dvb_conformance
   media_doctor --> dvb_stream
+  media_doctor --> timed_metadata
+  media_doctor --> transmux
   media_plane --> caption_convert
   media_plane --> transmux
   mp4_emsg --> broadcast_common
