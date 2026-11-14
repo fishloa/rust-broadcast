@@ -268,7 +268,8 @@ mod tests {
     fn byte_tap_drain_reaches_conformance_monitor() {
         let path = test_fixtures::path("ts/m6-single.ts");
         let data = std::fs::read(path).expect("committed fixture must be readable");
-        let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 32);
+        let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 32)
+            .expect("a non-zero tap capacity is built");
         tap.record(
             bytes::Bytes::copy_from_slice(&data[..TS_PACKET_SIZE * 20]),
             Timestamp::from_nanos(0),
@@ -285,7 +286,8 @@ mod tests {
     /// silently dropped.
     #[test]
     fn lagged_tap_is_counted() {
-        let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 2);
+        let mut tap =
+            ByteTap::new(media_plane::TapPoint::Wire, 2).expect("a non-zero tap capacity is built");
         for i in 0..5u64 {
             tap.record(bytes::Bytes::from_static(b"x"), Timestamp::from_nanos(i));
         }

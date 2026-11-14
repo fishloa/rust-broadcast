@@ -32,7 +32,8 @@ fn main() {
     // "datagram" (seven 188-byte TS packets, `media-doctor watch`'s own
     // convention) at a time, so the tap's bounded ring never needs to hold
     // more than a handful of datagrams at once.
-    let mut tap = ByteTap::new(TapPoint::Wire, 16);
+    let mut tap = ByteTap::new(TapPoint::Wire, 16)
+        .unwrap_or_else(|e| panic!("a non-zero tap capacity is built: {e}"));
     let mut probe = Probe::new();
     let mut bridge = TrunkBridge::default();
     let chunk_size = 7 * TS_PACKET_SIZE;
