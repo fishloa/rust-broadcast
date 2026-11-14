@@ -4,6 +4,12 @@
 use std::collections::VecDeque;
 
 use broadcast_client::{Action, Config, Event, Session, Status};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const TS_PACKET: usize = 188;
 const SEGMENTS: usize = 3;
@@ -54,11 +60,11 @@ fn aligned(mut b: Vec<u8>) -> Vec<u8> {
 }
 
 fn ts_http_live(bytes: &[u8]) -> Seen {
-    let mut s = Session::open("http://h/live.ts", Config::default(), 0).unwrap();
+    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
     let mut seen = Seen::default();
     let mut now = 0u64;
     let mut conn = None;
-    while let Some(a) = s.poll(now) {
+    while let Some(a) = s.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -68,12 +74,12 @@ fn ts_http_live(bytes: &[u8]) -> Seen {
         c,
         200,
         &[("Content-Type".to_string(), "video/MP2T".to_string())],
-        now,
+        ts(now),
     );
     for chunk in bytes.chunks(TS_HTTP_CHUNK) {
         now += CHUNK_GAP_US;
-        s.on_data(c, chunk, now);
-        while s.poll(now).is_some() {}
+        s.on_data(c, chunk, ts(now));
+        while s.poll(ts(now)).is_some() {}
         seen.drain(&mut s);
     }
     seen
@@ -90,13 +96,13 @@ fn hls_live(bytes: &[u8]) -> Seen {
     for i in 0..SEGMENTS {
         pl.push_str(&format!("#EXTINF:3.5,\nseg{i}.ts\n"));
     }
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), 0).unwrap();
+    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
     let mut seen = Seen::default();
     let mut now = 0u64;
     while now <= HLS_RUN_US {
         let mut pending: VecDeque<(u32, String)> = VecDeque::new();
         loop {
-            while let Some(a) = s.poll(now) {
+            while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
                     pending.push_back((conn, url));
                 }
@@ -120,12 +126,12 @@ fn hls_live(bytes: &[u8]) -> Seen {
                 c,
                 200,
                 &[("Content-Length".into(), body.len().to_string())],
-                now,
+                ts(now),
             );
             for chunk in body.chunks(TS_HTTP_CHUNK) {
-                s.on_data(c, chunk, now);
+                s.on_data(c, chunk, ts(now));
             }
-            s.on_closed(c, None, now);
+            s.on_closed(c, None, ts(now));
             seen.drain(&mut s);
         }
         seen.drain(&mut s);

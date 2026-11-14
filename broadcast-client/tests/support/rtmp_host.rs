@@ -1,8 +1,14 @@
 use std::collections::BTreeSet;
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind};
+use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError};
 use broadcast_common::Unpackage;
+use broadcast_common::stage::Timestamp;
 use transmux::{FlvDemux, Media};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 pub use test_harness::rtmp_play_peer as play_peer;
 
@@ -77,7 +83,7 @@ pub struct RtmpHost {
 
 impl RtmpHost {
     pub fn new(url: &str, config: Config, peer_config: PeerConfig) -> Self {
-        let session = Session::open(url, config, 0).expect("open");
+        let session = Session::open(url, config, ts(0)).expect("open");
         Self {
             session,
             now: 0,
@@ -98,7 +104,7 @@ impl RtmpHost {
     pub fn collect(&mut self) {
         loop {
             let mut progressed = false;
-            while let Some(action) = self.session.poll(self.now) {
+            while let Some(action) = self.session.poll(ts(self.now)) {
                 progressed = true;
                 self.apply(action);
             }
@@ -124,8 +130,13 @@ impl RtmpHost {
                 self.connects.push(Connect { host, port, tls });
                 if self.fail_next_connect {
                     self.fail_next_connect = false;
-                    self.session
-                        .on_closed(conn, Some("connection refused".to_string()), self.now);
+                    self.session.on_closed(
+                        conn,
+                        Some(TransportError::Other {
+                            reason: "connection refused".to_string(),
+                        }),
+                        ts(self.now),
+                    );
                 } else if self.accept_connects {
                     self.conn = Some(conn);
                     self.peer = Some(PlayPeer::new(self.peer_config.clone()));
@@ -142,7 +153,7 @@ impl RtmpHost {
                     None => return,
                 };
                 if !reply.is_empty() {
-                    self.session.on_data(conn, &reply, self.now);
+                    self.session.on_data(conn, &reply, ts(self.now));
                 }
             }
             Action::Close { conn } => {
@@ -152,8 +163,8 @@ impl RtmpHost {
                     self.peer = None;
                 }
             }
-            Action::WakeAt(t) if t > self.now => {
-                self.wakes.insert(t);
+            Action::WakeAt(t) if t.as_micros() > self.now => {
+                self.wakes.insert(t.as_micros());
             }
             _ => {}
         }
@@ -166,7 +177,7 @@ impl RtmpHost {
 
     pub fn send_to_session(&mut self, bytes: &[u8]) {
         let conn = self.conn.expect("a live connection");
-        self.session.on_data(conn, bytes, self.now);
+        self.session.on_data(conn, bytes, ts(self.now));
         self.collect();
     }
 
@@ -186,7 +197,7 @@ impl RtmpHost {
         let conn = self.conn.take().expect("a live connection");
         self.peer = None;
         self.session
-            .on_closed(conn, error.map(str::to_string), self.now);
+            .on_closed(conn, error.map(TransportError::from), ts(self.now));
         self.collect();
     }
 

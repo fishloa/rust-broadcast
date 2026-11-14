@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `DecimalSeconds::from_duration(Duration)` and `DecimalSeconds::from_duration_scaled(Duration, f64)`: infallible constructors for a value a `Duration` already guarantees valid (finite, non-negative), saturating at a finite maximum instead of overflowing to an infinity the renderer may never emit. An origin computing `PART-TARGET`/`PART-HOLD-BACK` from its part target no longer needs a fallible construction it cannot fail (#2654).
 
 ## [0.7.0] - 2026-11-14
 ### Changed

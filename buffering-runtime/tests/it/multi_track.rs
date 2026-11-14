@@ -10,8 +10,8 @@
 use broadcast_common::clock33::PCR_HZ;
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use buffering_runtime::{
-    BufferController, ControllerConfig, DEFAULT_TRACK, Event, EventRecord, MAX_TRACKS, State,
-    Ticks27,
+    BufferController, ControllerConfig, DEFAULT_TRACK, Event, EventRecord, MAX_TRACKS, Micros,
+    State, Ticks27,
 };
 
 const AUDIO: u32 = 1;
@@ -20,39 +20,43 @@ const STEP_US: u64 = 35_000;
 const VIDEO_AHEAD_US: u64 = 900_000;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
 /// 10 s before the 27 MHz wrap.
-const BASE: Ticks27 = PCR_WRAP_27MHZ - 10 * PCR_HZ;
+const BASE: Ticks27 = Ticks27(PCR_WRAP_27MHZ - 10 * PCR_HZ);
 
 fn at(base: Ticks27, offset_us: u64) -> Ticks27 {
-    (base + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
+    Ticks27((base.0 + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+}
+
+const fn us(v: u64) -> Micros {
+    Micros(v)
 }
 
 /// Renderer + controller driven in lock step.
 struct Sim {
     c: BufferController,
-    now: u64,
+    now: Micros,
     /// Media time of the data delivered so far, in microseconds.
     t_us: u64,
     clock: Ticks27,
     running: bool,
-    t_set: u64,
-    log: Vec<(u64, Event)>,
+    t_set: Micros,
+    log: Vec<(Micros, Event)>,
 }
 
 impl Sim {
     fn new(cfg: ControllerConfig) -> Self {
         Self {
             c: BufferController::new(cfg, None).unwrap(),
-            now: 1_000_000,
+            now: us(1_000_000),
             t_us: 0,
             clock: BASE,
             running: false,
-            t_set: 0,
+            t_set: us(0),
             log: vec![],
         }
     }
     fn pos(&self) -> Ticks27 {
         if self.running {
-            at(self.clock, self.now - self.t_set)
+            at(self.clock, self.now.0 - self.t_set.0)
         } else {
             self.clock
         }
@@ -82,7 +86,7 @@ impl Sim {
     fn first(&self) -> Vec<(u32, Ticks27)> {
         vec![(AUDIO, BASE), (VIDEO, BASE)]
     }
-    fn starts(&self) -> Vec<(u64, u64)> {
+    fn starts(&self) -> Vec<(Micros, Micros)> {
         self.log
             .iter()
             .filter_map(|(t, e)| match e {
@@ -91,13 +95,13 @@ impl Sim {
             })
             .collect()
     }
-    fn resumes(&self) -> Vec<u64> {
+    fn resumes(&self) -> Vec<Micros> {
         self.log
             .iter()
             .filter_map(|(t, e)| matches!(e, Event::Resume { .. }).then_some(*t))
             .collect()
     }
-    fn pauses(&self) -> Vec<(u64, Option<u32>)> {
+    fn pauses(&self) -> Vec<(Micros, Option<u32>)> {
         self.log
             .iter()
             .filter_map(|(t, e)| match e {
@@ -108,7 +112,7 @@ impl Sim {
     }
     /// One 35 ms step delivering the listed tracks.
     fn step(&mut self, audio: bool, video: bool) {
-        self.now += STEP_US;
+        self.now = Micros(self.now.0 + STEP_US);
         self.t_us += STEP_US;
         if audio {
             self.c.on_track_media(self.now, AUDIO, at(BASE, self.t_us));
@@ -152,7 +156,7 @@ fn video_only_lead_starts_early_min_over_tracks_waits_for_audio() {
         both.c.on_track_media(both.now, t, e);
     }
     while video_only.starts().is_empty() {
-        video_only.now += STEP_US;
+        video_only.now = Micros(video_only.now.0 + STEP_US);
         video_only.t_us += STEP_US;
         video_only
             .c
@@ -167,9 +171,9 @@ fn video_only_lead_starts_early_min_over_tracks_waits_for_audio() {
     // The video-only controller started with only `start - ahead` of audio.
     let (_, vo_lead) = video_only.starts()[0];
     let audio_lead_at_vo_start = video_only.t_us;
-    assert!(audio_lead_at_vo_start + VIDEO_AHEAD_US >= start_us);
+    assert!(audio_lead_at_vo_start + VIDEO_AHEAD_US >= start_us.0);
     assert!(
-        audio_lead_at_vo_start < start_us,
+        audio_lead_at_vo_start < start_us.0,
         "audio had only {audio_lead_at_vo_start} us when video-only said ready"
     );
     assert!(vo_lead >= start_us);
@@ -177,13 +181,13 @@ fn video_only_lead_starts_early_min_over_tracks_waits_for_audio() {
     let (t_both, both_lead) = both.starts()[0];
     assert!(both_lead >= start_us);
     assert!(
-        both.t_us >= start_us,
+        both.t_us >= start_us.0,
         "StartPlaying with audio at {} us",
         both.t_us
     );
     assert!(t_both > video_only.starts()[0].0);
     // And its reported lead is the audio lead, not the video lead.
-    assert!(both_lead < start_us + 2 * STEP_US);
+    assert!(both_lead < Micros(start_us.0 + 2 * STEP_US));
 }
 
 /// A starved audio track (video still arriving) pauses playback, is named,
@@ -197,7 +201,7 @@ fn starved_track_is_named_and_resume_waits_for_it() {
     let stopped = s.now;
     while s.pauses().is_empty() {
         s.step(false, true);
-        assert!(s.now - stopped < 2_900_000, "never starved");
+        assert!(Micros(s.now.0 - stopped.0) < us(2_900_000), "never starved");
     }
     let (_, track) = s.pauses()[0];
     assert_eq!(track, Some(AUDIO));
@@ -211,14 +215,14 @@ fn starved_track_is_named_and_resume_waits_for_it() {
     assert_eq!((rec.track, rec.track_valid), (AUDIO, 1));
     // Video alone keeps arriving: still no Resume.
     let before = s.now;
-    while s.now - before < 600_000 {
+    while Micros(s.now.0 - before.0) < us(600_000) {
         s.step(false, true);
     }
     assert!(s.resumes().is_empty(), "resumed on video alone");
     // Audio returns: Resume only once ITS lead reaches the resume target.
     while s.resumes().is_empty() {
         s.step(true, true);
-        assert!(s.now - before < 6_000_000, "never resumed");
+        assert!(Micros(s.now.0 - before.0) < us(6_000_000), "never resumed");
     }
     assert_eq!(s.c.state(), State::Playing);
 }
@@ -230,23 +234,26 @@ fn silent_track_is_excluded_after_the_timeout() {
     let last_audio = s.now;
     while s.pauses().is_empty() {
         s.step(false, true);
-        assert!(s.now - last_audio < 2_900_000, "never starved");
+        assert!(
+            Micros(s.now.0 - last_audio.0) < us(2_900_000),
+            "never starved"
+        );
     }
     assert!(s.resumes().is_empty());
     let timeout = cfg().track_silence_timeout_us;
     while s.resumes().is_empty() {
         s.step(false, true);
         assert!(
-            s.now - last_audio < 2 * timeout + 1_000_000,
+            Micros(s.now.0 - last_audio.0) < us(2 * timeout.0 + 1_000_000),
             "never excluded"
         );
     }
-    let resumed_after = s.resumes()[0] - last_audio;
+    let resumed_after = Micros(s.resumes()[0].0 - last_audio.0);
     assert!(
         resumed_after >= timeout,
         "resumed after only {resumed_after} us of audio silence"
     );
-    assert!(resumed_after < timeout + 2 * STEP_US);
+    assert!(resumed_after < Micros(timeout.0 + 2 * STEP_US));
     // Audio coming back is part of the minimum again.
     assert_eq!(s.c.stats().limiting_track, Some(VIDEO));
     s.c.on_track_media(s.now, AUDIO, at(BASE, s.t_us));
@@ -263,19 +270,22 @@ fn registered_but_silent_track_blocks_then_times_out() {
     s.c.register_track(AUDIO);
     s.c.on_track_media(s.now, VIDEO, BASE);
     while s.starts().is_empty() {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.t_us += STEP_US;
         s.c.on_track_media(s.now, VIDEO, at(BASE, s.t_us + 2_500_000));
         s.tick();
-        assert!(s.now - registered_at < 10_000_000, "never started");
+        assert!(
+            Micros(s.now.0 - registered_at.0) < us(10_000_000),
+            "never started"
+        );
     }
-    let waited = s.starts()[0].0 - registered_at;
+    let waited = Micros(s.starts()[0].0.0 - registered_at.0);
     let timeout = cfg().track_silence_timeout_us;
     assert!(
         waited >= timeout,
         "started after {waited} us, before the timeout"
     );
-    assert!(waited < timeout + 2 * STEP_US);
+    assert!(waited < Micros(timeout.0 + 2 * STEP_US));
 }
 
 /// A global delivery gap (nothing delivered anywhere) excludes nobody: the
@@ -285,16 +295,16 @@ fn global_gap_keeps_the_minimum_of_the_last_ends() {
     let mut s = Sim::new(cfg());
     s.c.on_track_media(s.now, AUDIO, BASE);
     s.c.on_track_media(s.now, VIDEO, BASE);
-    s.now += STEP_US;
+    s.now = Micros(s.now.0 + STEP_US);
     s.c.on_track_media(s.now, AUDIO, at(BASE, 1_000_000));
     s.c.on_track_media(s.now, VIDEO, at(BASE, 4_000_000));
     s.tick();
     // min = audio at 1.0 s: below the 1.8 s start threshold.
     assert!(s.starts().is_empty());
     assert_eq!(s.c.stats().limiting_track, Some(AUDIO));
-    let gap_end = s.now + 2 * cfg().track_silence_timeout_us;
+    let gap_end = us(s.now.0 + 2 * cfg().track_silence_timeout_us.0);
     while s.now < gap_end {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.tick();
     }
     assert!(s.starts().is_empty(), "started on stale video end in a gap");
@@ -304,7 +314,7 @@ fn global_gap_keeps_the_minimum_of_the_last_ends() {
     s.tick();
     let starts = s.starts();
     assert_eq!(starts.len(), 1);
-    assert_eq!(starts[0].1, 3_000_000);
+    assert_eq!(starts[0].1, us(3_000_000));
 }
 
 /// The integrator's repro: Pause with audio starving, then a global gap longer
@@ -316,13 +326,13 @@ fn global_gap_after_pause_does_not_resume_on_stale_data() {
     let stopped = s.now;
     while s.pauses().is_empty() {
         s.step(false, true);
-        assert!(s.now - stopped < 2_900_000, "never starved");
+        assert!(Micros(s.now.0 - stopped.0) < us(2_900_000), "never starved");
     }
     assert_eq!(s.c.state(), State::Starved);
     // Global gap: nothing delivered for well over the timeout.
-    let gap_end = s.now + cfg().track_silence_timeout_us + 2_000_000;
+    let gap_end = us(s.now.0 + cfg().track_silence_timeout_us.0 + 2_000_000);
     while s.now < gap_end {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.tick();
         assert!(s.resumes().is_empty(), "Resume during a global gap");
     }
@@ -332,7 +342,7 @@ fn global_gap_after_pause_does_not_resume_on_stale_data() {
     let back = s.now;
     while s.resumes().is_empty() {
         s.step(true, true);
-        assert!(s.now - back < 6_000_000, "never resumed");
+        assert!(Micros(s.now.0 - back.0) < us(6_000_000), "never resumed");
     }
     assert!(s.resumes()[0] > back);
     assert_eq!(s.pauses().len(), 1, "second stall after the gap");
@@ -349,11 +359,11 @@ fn never_delivered_track_is_excluded_only_while_others_deliver() {
     s.c.register_track(AUDIO);
     // One big video delivery (enough lead to start), then nothing at all.
     s.c.on_track_media(s.now, VIDEO, BASE);
-    s.now += STEP_US;
+    s.now = Micros(s.now.0 + STEP_US);
     s.c.on_track_media(s.now, VIDEO, at(BASE, 2_500_000));
-    let end = s.now + 3 * cfg().track_silence_timeout_us;
+    let end = us(s.now.0 + 3 * cfg().track_silence_timeout_us.0);
     while s.now < end {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.tick();
         assert!(s.starts().is_empty(), "started in a global gap");
     }
@@ -374,7 +384,7 @@ fn on_media_is_track_zero_shorthand_and_mixes_with_tracks() {
     b.c.on_track_media(b.now, VIDEO, BASE);
     for _ in 0..200 {
         for s in [&mut a, &mut b] {
-            s.now += STEP_US;
+            s.now = Micros(s.now.0 + STEP_US);
             s.t_us += STEP_US;
         }
         a.c.on_media(a.now, at(BASE, a.t_us));
@@ -395,7 +405,7 @@ fn single_track_never_names_a_track() {
     let mut s = Sim::new(cfg());
     s.c.on_media(s.now, BASE);
     while s.starts().is_empty() {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.t_us += STEP_US;
         s.c.on_media(s.now, at(BASE, s.t_us));
         s.tick();
@@ -403,9 +413,9 @@ fn single_track_never_names_a_track() {
     assert_eq!(s.c.stats().limiting_track, None);
     // Run the renderer past the data: a starvation pause names no track.
     while s.pauses().is_empty() {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.tick();
-        assert!(s.now < 60_000_000);
+        assert!(s.now < us(60_000_000));
     }
     assert_eq!(s.pauses()[0].1, None);
     let rec = s
@@ -429,9 +439,9 @@ fn rebaseline_forgets_ends_but_keeps_registrations() {
     // Plenty of audio and video, but registered track 7 never delivers: the
     // refill is blocked (a forgotten registration would resume at once).
     let t0 = s.now;
-    while s.now - t0 < 2_500_000 {
+    while Micros(s.now.0 - t0.0) < us(2_500_000) {
         s.t_us += STEP_US;
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.c.on_track_media(s.now, AUDIO, at(BASE, s.t_us + 5_000_000));
         s.c.on_track_media(s.now, VIDEO, at(BASE, s.t_us + 5_000_000));
         s.tick();
@@ -448,12 +458,12 @@ fn rebaseline_forgets_ends_but_keeps_registrations() {
 fn track_cap_is_enforced_without_panicking() {
     let mut c = BufferController::new(cfg(), None).unwrap();
     for t in 0..MAX_TRACKS as u32 {
-        c.on_track_media(1_000_000, t, at(BASE, 10_000_000));
+        c.on_track_media(us(1_000_000), t, at(BASE, 10_000_000));
     }
     const OVERFLOW: u32 = 1_000;
     c.register_track(OVERFLOW);
-    c.on_track_media(1_000_000, OVERFLOW, at(BASE, 0));
-    c.on_tick(1_100_000, None);
+    c.on_track_media(us(1_000_000), OVERFLOW, at(BASE, 0));
+    c.on_tick(us(1_100_000), None);
     let limiting = c.stats().limiting_track;
     assert!(
         matches!(limiting, Some(t) if (t as usize) < MAX_TRACKS),
@@ -463,8 +473,8 @@ fn track_cap_is_enforced_without_panicking() {
 
 #[test]
 fn silence_timeout_is_validated() {
-    assert_eq!(cfg().track_silence_timeout_us, 3_000_000);
-    let bad = cfg().with_track_silence_timeout_us(0);
+    assert_eq!(cfg().track_silence_timeout_us, us(3_000_000));
+    let bad = cfg().with_track_silence_timeout_us(us(0));
     assert_eq!(
         bad,
         Err(buffering_runtime::Error::InvalidConfig(
@@ -473,10 +483,10 @@ fn silence_timeout_is_validated() {
     );
     assert_eq!(
         cfg()
-            .with_track_silence_timeout_us(500_000)
+            .with_track_silence_timeout_us(us(500_000))
             .unwrap()
             .track_silence_timeout_us,
-        500_000
+        us(500_000)
     );
 }
 
@@ -507,7 +517,7 @@ fn unregister_replaced_track_ungates_start() {
     s.c.register_track(AUDIO);
     s.c.on_track_media(s.now, VIDEO, BASE);
     for _ in 0..30 {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.t_us += STEP_US;
         s.c.on_track_media(s.now, VIDEO, at(BASE, s.t_us + 2_500_000));
         s.tick();
@@ -551,7 +561,7 @@ fn unregister_last_track_is_inert() {
     assert_eq!(s.c.stats().limiting_track, None);
     s.c.on_track_media(s.now, VIDEO, BASE);
     while s.starts().is_empty() {
-        s.now += STEP_US;
+        s.now = Micros(s.now.0 + STEP_US);
         s.t_us += STEP_US;
         s.c.on_track_media(s.now, VIDEO, at(BASE, s.t_us + 2_500_000));
         s.tick();
@@ -595,10 +605,10 @@ fn audio_before_the_join_point_anchors_start_early() {
         }
         s.t_us // audio cushion past the join point at start
     };
-    let early = run(BASE - EARLY_US * TICKS_PER_US);
+    let early = run(Ticks27(BASE.0 - EARLY_US * TICKS_PER_US));
     let from_join = run(BASE);
     assert!(
-        from_join >= cfg().policy.initial_us,
+        from_join >= cfg().policy.initial_us.0,
         "join-point-first start with only {from_join} us of audio"
     );
     assert!(
@@ -611,7 +621,11 @@ fn audio_before_the_join_point_anchors_start_early() {
 /// track registered mid-play and the PCR-less estimator feed.
 mod chunked {
     use broadcast_common::clock33::PCR_HZ;
-    use buffering_runtime::{BufferController, ControllerConfig, Event, Ticks27};
+    use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, Ticks27};
+
+    const fn us(v: u64) -> Micros {
+        Micros(v)
+    }
 
     const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
     const STEP_US: u64 = 40_000;
@@ -619,33 +633,33 @@ mod chunked {
     const AUDIO: u32 = 2;
 
     fn t27(us: u64) -> Ticks27 {
-        us * TICKS_PER_US
+        Ticks27(us * TICKS_PER_US)
     }
 
     struct Sim {
         c: BufferController,
-        now: u64,
+        now: Micros,
         clock: Ticks27,
         running: bool,
-        t_set: u64,
-        log: Vec<(u64, Event)>,
+        t_set: Micros,
+        log: Vec<(Micros, Event)>,
     }
 
     impl Sim {
         fn new() -> Self {
             Self {
                 c: BufferController::new(ControllerConfig::default(), None).unwrap(),
-                now: 0,
-                clock: 0,
+                now: us(0),
+                clock: Ticks27::ZERO,
                 running: false,
-                t_set: 0,
+                t_set: us(0),
                 log: vec![],
             }
         }
 
         fn pos(&self) -> Ticks27 {
             if self.running {
-                self.clock + (self.now - self.t_set) * TICKS_PER_US
+                Ticks27(self.clock.0 + (self.now.0 - self.t_set.0) * TICKS_PER_US)
             } else {
                 self.clock
             }
@@ -701,26 +715,26 @@ mod chunked {
     fn track_registered_while_playing_keeps_starvation_detection() {
         let mut s = Sim::new();
         let media_ahead = 500_000;
-        while s.now < 4_000_000 {
-            s.c.on_chunk(s.now, 1316, Some(t27(s.now + media_ahead)));
-            s.c.on_track_media(s.now, VIDEO, t27(s.now));
+        while s.now < us(4_000_000) {
+            s.c.on_chunk(s.now, 1316, Some(t27(s.now.0 + media_ahead)));
+            s.c.on_track_media(s.now, VIDEO, t27(s.now.0));
             s.tick();
-            s.now += STEP_US;
+            s.now = Micros(s.now.0 + STEP_US);
         }
         assert_eq!(s.starts(), 1, "precondition: playing on video");
-        let last_end_us = s.now - STEP_US;
+        let last_end_us = Micros(s.now.0 - STEP_US);
         s.c.register_track(AUDIO);
         // global delivery stall: nothing arrives anywhere for 2.5 s, the renderer keeps ticking
-        let stall_end = s.now + 2_500_000;
+        let stall_end = us(s.now.0 + 2_500_000);
         while s.now < stall_end {
             s.tick();
-            s.now += STEP_US;
+            s.now = Micros(s.now.0 + STEP_US);
         }
-        let pos_us = s.pos() / TICKS_PER_US;
+        let pos_us = Micros(s.pos().0 / TICKS_PER_US);
         assert!(
             s.pauses() >= 1,
             "no Pause although the renderer clock ({pos_us} us) ran {} ms past the last media end ({last_end_us} us); events: {:?}",
-            (pos_us.saturating_sub(last_end_us)) / 1000,
+            pos_us.saturating_sub(last_end_us).0 / 1000,
             s.log
         );
     }
@@ -734,14 +748,14 @@ mod chunked {
         let mut s = Sim::new();
         let video_ahead = 1_200_000;
         let audio_from = 400_000;
-        while s.now < 6_000_000 {
+        while s.now < us(6_000_000) {
             s.c.on_chunk(s.now, 1316, None);
-            s.c.on_track_media(s.now, VIDEO, t27(s.now + video_ahead));
-            if s.now >= audio_from {
-                s.c.on_track_media(s.now, AUDIO, t27(s.now));
+            s.c.on_track_media(s.now, VIDEO, t27(s.now.0 + video_ahead));
+            if s.now.0 >= audio_from {
+                s.c.on_track_media(s.now, AUDIO, t27(s.now.0));
             }
             s.tick();
-            s.now += STEP_US;
+            s.now = Micros(s.now.0 + STEP_US);
         }
         let st = s.c.stats();
         assert!(
@@ -760,20 +774,20 @@ mod chunked {
     fn pcr_less_estimator_track_removed_hands_over_without_a_discontinuity() {
         let mut s = Sim::new();
         let video_ahead = 1_200_000;
-        while s.now < 4_000_000 {
+        while s.now < us(4_000_000) {
             s.c.on_chunk(s.now, 1316, None);
-            s.c.on_track_media(s.now, VIDEO, t27(s.now + video_ahead));
-            s.c.on_track_media(s.now, AUDIO, t27(s.now));
+            s.c.on_track_media(s.now, VIDEO, t27(s.now.0 + video_ahead));
+            s.c.on_track_media(s.now, AUDIO, t27(s.now.0));
             s.tick();
-            s.now += STEP_US;
+            s.now = Micros(s.now.0 + STEP_US);
         }
         assert_eq!(s.starts(), 1, "precondition: playing");
         s.c.unregister_track(VIDEO);
-        while s.now < 8_000_000 {
+        while s.now < us(8_000_000) {
             s.c.on_chunk(s.now, 1316, None);
-            s.c.on_track_media(s.now, AUDIO, t27(s.now));
+            s.c.on_track_media(s.now, AUDIO, t27(s.now.0));
             s.tick();
-            s.now += STEP_US;
+            s.now = Micros(s.now.0 + STEP_US);
         }
         assert_eq!(s.rebaselines(), 0, "events: {:?}", s.log);
         assert_eq!(s.c.stats().discontinuities, 0);

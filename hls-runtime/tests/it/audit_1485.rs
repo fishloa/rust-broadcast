@@ -1,6 +1,7 @@
 //! Pre-release audit #1485, `HlsClient` findings 1, 2, 4, 5, 12, 14, 15, 16,
 //! driven purely through the public API.
 
+use core::time::Duration;
 use hls_runtime::client::{Action, Error, HlsClient, KeyId, Output, ResourceId};
 use transmux::sample_aes::aes128_encrypt_segment;
 
@@ -341,11 +342,11 @@ fn a_hostile_target_duration_cannot_park_the_reload_for_days() {
     let wait = drain(&mut client)
         .into_iter()
         .find_map(|a| match a {
-            Action::WaitMs(ms) => Some(ms),
+            Action::Wait(wait) => Some(wait),
             _ => None,
         })
         .expect("a non-blocking live playlist queues a wait");
-    assert!(wait <= MAX_WAIT_MS, "wait {wait} ms");
+    assert!(wait <= Duration::from_millis(MAX_WAIT_MS), "wait {wait:?}");
 }
 
 #[test]

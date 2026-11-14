@@ -114,7 +114,7 @@ pub struct SegmenterConfig {
     pub ts_cut_policy: transmux::SegmentCutPolicy,
     pub ts_idr_fallback: TsHlsIdrFallback,
     pub target_duration_secs: f64,
-    pub part_target_ms: u32,
+    pub part_target: Duration,
     pub window_segments_cap: std::num::NonZeroUsize,
     pub route_name: String,
     pub audio_rendition_sources: Vec<transmux::audio_profile::AudioTrackSelector>,
@@ -130,7 +130,7 @@ impl Default for SegmenterConfig {
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
             ts_idr_fallback: TsHlsIdrFallback::default(),
             target_duration_secs: 1.0,
-            part_target_ms: 250,
+            part_target: Duration::from_millis(250),
             window_segments_cap: std::num::NonZeroUsize::MIN.saturating_add(7),
             route_name: "unknown".to_string(),
             audio_rendition_sources: Vec::new(),
@@ -158,8 +158,8 @@ impl SegmenterConfig {
         self.target_duration_secs = v;
         self
     }
-    pub fn with_part_target_ms(mut self, v: u32) -> Self {
-        self.part_target_ms = v;
+    pub fn with_part_target(mut self, v: Duration) -> Self {
+        self.part_target = v;
         self
     }
     pub fn with_window_segments_cap(mut self, v: std::num::NonZeroUsize) -> Self {
@@ -233,7 +233,7 @@ pub enum SegmenterEvent {
         init: Vec<u8>,
         first_segment: SegmentSeq,
     },
-    PartTargetMs(u32),
+    PartTarget(Duration),
     ClosedCaptions {
         detected: Vec<InstreamId>,
         languages: Vec<(InstreamId, String)>,
@@ -305,7 +305,7 @@ pub trait SiblingTrunks {
         trunk: &crate::trunk::Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
         target_duration_secs: f64,
-        part_target_ms: u32,
+        part_target: Duration,
     ) -> Vec<crate::segmenter::audio::AudioFollower>;
     fn build_subtitle_followers(
         &self,
@@ -320,7 +320,7 @@ impl SiblingTrunks for () {
         _trunk: &crate::trunk::Trunk,
         _mapped: &[(usize, transmux::pipeline::TrackSpec)],
         _target_duration_secs: f64,
-        _part_target_ms: u32,
+        _part_target: Duration,
     ) -> Vec<crate::segmenter::audio::AudioFollower> {
         Vec::new()
     }
@@ -413,9 +413,9 @@ impl AnySegmenter {
     /// for fMP4, `StreamingTsHlsSegmenter::finish` for classic TS (same job,
     /// different name: see that method's own doc for why it is not named
     /// `flush` there).
-    fn part_target_ms(&self) -> Option<u32> {
+    fn part_target(&self) -> Option<Duration> {
         match self {
-            AnySegmenter::Fmp4(seg) => Some(seg.part_target_ms()),
+            AnySegmenter::Fmp4(seg) => Some(Duration::from_millis(u64::from(seg.part_target_ms()))),
             AnySegmenter::Ts(_) => None,
         }
     }
@@ -709,7 +709,7 @@ pub struct ProgramSegmenter {
     /// empty `captions_seen` then means the route declares no captions.
     pub(crate) captions_scan_complete: bool,
     /// The leader's `PART-TARGET` last handed to the route's origin.
-    pub(crate) part_target_published: Option<u32>,
+    pub(crate) part_target_published: Option<Duration>,
 }
 
 /// Most sample payload bytes the IDR-fallback hold keeps (32 MiB). Past it the
@@ -818,14 +818,20 @@ fn gate_opens_on(
     }
 }
 
+/// A part target as whole milliseconds (the LL-HLS segmenter's own unit).
+fn part_target_millis(part_target: Duration) -> u32 {
+    u32::try_from(part_target.as_millis()).unwrap_or(u32::MAX)
+}
+
 impl ProgramSegmenter {
     /// Start this run's media timeline where `route_handle` says `program`'s
     /// serving begins it (a no-op for the first run on a route): call once,
     /// right after [`Self::try_new`] and the program's publication, before
     /// the first [`Self::pump`].
-    pub fn continue_after_reconnect(&mut self, media_start_ns: u64) {
-        if media_start_ns != 0 {
-            self.continue_media_timeline(media_start_ns);
+    pub fn continue_after_reconnect(&mut self, media_start: Duration) {
+        if !media_start.is_zero() {
+            let start_ns = u64::try_from(media_start.as_nanos()).unwrap_or(u64::MAX);
+            self.continue_media_timeline(start_ns);
         }
     }
 
@@ -870,7 +876,7 @@ impl ProgramSegmenter {
         siblings: &dyn SiblingTrunks,
     ) -> (Option<Self>, Vec<SegmenterEvent>) {
         let target_duration_secs = config.target_duration_secs;
-        let part_target_ms = config.part_target_ms;
+        let part_target = config.part_target;
         let (cursor, track_generation, published_tracks) =
             trunk.subscribe_from_backlog_with_tracks();
         let tracks = config.apply_declared_audio_profiles(published_tracks.to_vec());
@@ -907,7 +913,7 @@ impl ProgramSegmenter {
                     muxable,
                     transmux::VIDEO_CLOCK_RATE,
                     target_duration_secs,
-                    part_target_ms,
+                    part_target_millis(part_target),
                     next_seq.value(),
                     next_seq.value(),
                 ) {
@@ -967,7 +973,7 @@ impl ProgramSegmenter {
             }
         };
         let followers =
-            siblings.build_audio_followers(trunk, &mapped, target_duration_secs, part_target_ms);
+            siblings.build_audio_followers(trunk, &mapped, target_duration_secs, part_target);
         let subtitle_followers = if matches!(config.container, Container::Fmp4) {
             siblings.build_subtitle_followers(trunk, &tracks)
         } else {
@@ -1326,12 +1332,12 @@ impl ProgramSegmenter {
     }
 
     fn publish_part_target(&mut self, _program: ProgramId, events: &mut Vec<SegmenterEvent>) {
-        let Some(ms) = self.seg.part_target_ms() else {
+        let Some(part_target) = self.seg.part_target() else {
             return;
         };
-        if self.part_target_published != Some(ms) {
-            events.push(SegmenterEvent::PartTargetMs(ms));
-            self.part_target_published = Some(ms);
+        if self.part_target_published != Some(part_target) {
+            events.push(SegmenterEvent::PartTarget(part_target));
+            self.part_target_published = Some(part_target);
         }
     }
 
@@ -1612,7 +1618,7 @@ impl ProgramSegmenter {
                         muxable,
                         transmux::VIDEO_CLOCK_RATE,
                         self.config.target_duration_secs,
-                        self.config.part_target_ms,
+                        part_target_millis(self.config.part_target),
                         next_seq,
                         current_seg,
                     ) {
@@ -1630,7 +1636,7 @@ impl ProgramSegmenter {
                                 trunk,
                                 &mapped,
                                 self.config.target_duration_secs,
-                                self.config.part_target_ms,
+                                self.config.part_target,
                             );
                             self.subtitle_followers.clear();
                             self.subtitle_followers =
@@ -2218,14 +2224,14 @@ mod segmenter_tests {
         SegmenterConfig::default()
             .with_container(Container::Fmp4)
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(250)
+            .with_part_target(Duration::from_millis(250))
     }
 
     pub(super) fn ts_config() -> SegmenterConfig {
         SegmenterConfig::default()
             .with_container(Container::MpegTs)
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(250)
+            .with_part_target(Duration::from_millis(250))
     }
 
     #[test]

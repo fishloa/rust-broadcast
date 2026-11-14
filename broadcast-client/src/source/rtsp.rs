@@ -9,6 +9,7 @@
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::tshttp::{Config as TsConfig, StarveKind};
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, PlayPlan, StatusCode};
@@ -20,11 +21,11 @@ use url::{Host, Url};
 
 use crate::events::{Action, ErrorKind, Event, Status};
 use crate::redirect;
-use crate::source::fetch::retry::ReconnectTimer;
+use crate::source::fetch::retry::{ReconnectTimer, backoff_ms};
 use crate::source::rtsp_sdp::{ParsedSdp, SdpError, SkippedMedia, TrackInit, parse_tracks};
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::backoff::mix_seed;
-use broadcast_common::units::MICROS_PER_MILLI;
+use broadcast_common::stage::Timestamp;
 
 const SCHEME_RTSPS: &str = "rtsps";
 const RTSP_DEFAULT_PORT: u16 = 554;
@@ -32,19 +33,13 @@ const RTSPS_DEFAULT_PORT: u16 = 322;
 const FIRST_CONN_ID: u32 = 1;
 const MAX_AUTH_REPLAYS: u32 = 2;
 const MAX_STALL_NOTICES_PER_POLL: u32 = 64;
-const US_PER_SEC: u64 = 1_000_000;
+
 const STATUS_UNAUTHORIZED: u16 = 401;
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
 const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
 const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 const CHALLENGE_HEADER: &str = "WWW-Authenticate";
-
-/// A wait as whole microseconds: rounded up, so a jittered sub-microsecond
-/// delay still schedules a wake rather than collapsing to "now".
-fn us_of(wait: core::time::Duration) -> u64 {
-    u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Req {
@@ -76,7 +71,7 @@ enum Phase {
     Connecting,
     Awaiting(Req),
     Playing,
-    Backoff(u64),
+    Backoff(Timestamp),
     WaitingAuth(Req),
     Closed,
 }
@@ -115,18 +110,19 @@ pub(crate) struct RtspSource {
     /// that only a connection that stayed up for its healthy span restarts it
     /// (issue #2471). Reported through `attempt`, this source's own label.
     retry: ReconnectTimer,
-    connected_at: u64,
-    last_byte_at: u64,
-    last_sample_at: u64,
-    next_notice_at: Option<u64>,
-    /// The session engine's keepalive deadline, on this source's own
-    /// caller-supplied `now_us` clock (`None` before SETUP, after TEARDOWN,
-    /// or before a request was written). The interval is never computed
-    /// here: `rtsp-runtime` owns the schedule.
-    keepalive_wake: Option<u64>,
+    connected_at: Timestamp,
+    last_byte_at: Timestamp,
+    last_sample_at: Timestamp,
+    next_notice_at: Option<Timestamp>,
+    /// The session engine's keepalive deadline (`None` before SETUP, after
+    /// TEARDOWN, or before a request was written). The interval is never
+    /// computed here: `rtsp-runtime` owns the schedule, and its deadline is
+    /// carried as the [`Timestamp`] it returns so a wake computed from it can
+    /// never fire before it.
+    keepalive_wake: Option<Timestamp>,
     starved_data_fired: bool,
     starved_nodata_fired: bool,
-    wake_pending: Option<u64>,
+    wake_pending: Option<Timestamp>,
     loss_events: u64,
     malformed_frames: u64,
     rtcp_frames: u64,
@@ -147,7 +143,8 @@ fn effective_port(url: &Url) -> u16 {
 }
 
 impl RtspSource {
-    pub(crate) fn new(url: &Url, cfg: &TsConfig, max_redirects: u32, now_us: u64) -> Self {
+    pub(crate) fn new(url: &Url, cfg: &TsConfig, max_redirects: u32, now: Timestamp) -> Self {
+        let now_us = now.as_micros();
         let tls = url.scheme() == SCHEME_RTSPS;
         let default_port = if tls {
             RTSPS_DEFAULT_PORT
@@ -163,6 +160,7 @@ impl RtspSource {
         let mut request_url = url.clone();
         let _ = request_url.set_username("");
         let _ = request_url.set_password(None);
+        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&cfg.backoff);
         let mut me = Self {
             original_url: request_url.clone(),
             max_redirects,
@@ -175,7 +173,7 @@ impl RtspSource {
             port: url.port().unwrap_or(default_port),
             tls,
             cfg: cfg.clone(),
-            phase: Phase::Backoff(now_us),
+            phase: Phase::Backoff(now),
             conn: None,
             next_conn: FIRST_CONN_ID,
             connections: 0,
@@ -193,10 +191,10 @@ impl RtspSource {
             seen_first_sample: false,
             stalled: false,
             attempt: 0,
-            retry: ReconnectTimer::new(&cfg.backoff_ms, cfg.backoff_cap_ms, mix_seed(now_us)),
-            connected_at: now_us,
-            last_byte_at: now_us,
-            last_sample_at: now_us,
+            retry: ReconnectTimer::new(&backoff_steps_ms, backoff_cap_ms, mix_seed(now_us)),
+            connected_at: now,
+            last_byte_at: now,
+            last_sample_at: now,
             next_notice_at: None,
             keepalive_wake: None,
             starved_data_fired: false,
@@ -208,7 +206,7 @@ impl RtspSource {
             actions: VecDeque::new(),
             events: VecDeque::new(),
         };
-        me.start_connect(now_us, None);
+        me.start_connect(now, None);
         me
     }
 
@@ -239,7 +237,7 @@ impl RtspSource {
             .saturating_add(self.aligner.skew_rejections())
     }
 
-    pub(crate) fn poll(&mut self, now: u64, auth: &AuthState) {
+    pub(crate) fn poll(&mut self, now: Timestamp, auth: &AuthState) {
         if self.phase == Phase::Closed {
             return;
         }
@@ -248,7 +246,7 @@ impl RtspSource {
         self.reconnect_if_due(now, auth);
     }
 
-    pub(crate) fn on_connected(&mut self, conn: u32, now: u64) {
+    pub(crate) fn on_connected(&mut self, conn: u32, now: Timestamp) {
         if self.conn != Some(conn) || self.phase != Phase::Connecting {
             return;
         }
@@ -268,7 +266,7 @@ impl RtspSource {
         &mut self,
         conn: u32,
         bytes: &[u8],
-        now: u64,
+        now: Timestamp,
         auth: &mut AuthState,
     ) -> bool {
         if self.conn != Some(conn) {
@@ -290,7 +288,7 @@ impl RtspSource {
 
     /// Whether the live connection ended and the next connection's media will be preceded by
     /// [`Event::Discontinuity`].
-    pub(crate) fn on_closed(&mut self, conn: u32, now: u64) -> bool {
+    pub(crate) fn on_closed(&mut self, conn: u32, now: Timestamp) -> bool {
         if self.conn != Some(conn) {
             return false;
         }
@@ -310,7 +308,7 @@ impl RtspSource {
         }
     }
 
-    pub(crate) fn on_credentials(&mut self, now: u64, auth: &AuthState) {
+    pub(crate) fn on_credentials(&mut self, now: Timestamp, auth: &AuthState) {
         self.stale_replayed = false;
         self.auth_replays = 0;
         if let Some(creds) = auth
@@ -329,7 +327,7 @@ impl RtspSource {
             return;
         }
         self.connected_at = now;
-        self.retry.on_connected(now);
+        self.retry.on_connected(now.as_micros());
         self.last_byte_at = now;
         self.last_sample_at = now;
         if !self.send(req) {
@@ -337,7 +335,7 @@ impl RtspSource {
         }
     }
 
-    pub(crate) fn reconnect(&mut self, now: u64) {
+    pub(crate) fn reconnect(&mut self, now: Timestamp) {
         match self.phase {
             Phase::Backoff(_) | Phase::Closed | Phase::WaitingAuth(_) => {}
             Phase::Connecting | Phase::Awaiting(_) | Phase::Playing => {
@@ -357,58 +355,61 @@ impl RtspSource {
         self.phase = Phase::Closed;
     }
 
-    pub(crate) fn sync_wake(&mut self, now: u64) {
+    pub(crate) fn sync_wake(&mut self, now: Timestamp) {
         let Some(deadline) = self.next_deadline() else {
             return;
         };
+        // The wake names the deadline itself, so it can never fire before it. A deadline the
+        // clock has already reached is due now, not pending, and the send that reads it arms
+        // the next one; arming it again would only queue a wake the session drops on the same
+        // poll. A wake still in the future that lands at or before this deadline is kept: the
+        // deadline that matters is the earlier.
         let outstanding = self
             .wake_pending
-            .is_some_and(|w| w == deadline || (w > now && w < deadline));
+            .is_some_and(|w| w == deadline || (now < w && w <= deadline));
         if !outstanding {
             self.actions.push_back(Action::WakeAt(deadline));
             self.wake_pending = Some(deadline);
         }
     }
 
-    fn next_deadline(&self) -> Option<u64> {
+    /// The next instant this source has to act on: the retry backoff's due time,
+    /// or the start/notice/reconnect deadline of an open connection, whichever
+    /// the keepalive deadline comes first.
+    ///
+    /// Deadlines are `checked_add`: a deadline that ran past the last
+    /// representable instant has none, so it never fires and has no wake here.
+    fn next_deadline(&self) -> Option<Timestamp> {
         match self.phase {
             Phase::Backoff(due) => Some(due),
             Phase::Awaiting(_) | Phase::Playing => {
-                let mut deadline = if self.seen_first_sample {
-                    let notice = self.last_byte_at.saturating_add(self.notice_us());
-                    let reconnect = self.last_byte_at.saturating_add(self.reconnect_us());
-                    self.next_notice_at.unwrap_or(notice).min(reconnect)
+                // A deadline that does not fit the clock can never be reached: it is no
+                // deadline, so whoever sends this phase on (the start timeout, the stall
+                // reconnect) still owns the session; the keepalive is only ever a conjunction.
+                let deadline = if self.seen_first_sample {
+                    let notice = self.last_byte_at.checked_add(self.cfg.stall_notice);
+                    let reconnect = self.last_byte_at.checked_add(self.cfg.stall_reconnect);
+                    match (self.next_notice_at.or(notice), reconnect) {
+                        (Some(notice), Some(reconnect)) => Some(notice.min(reconnect)),
+                        (Some(one), None) | (None, Some(one)) => Some(one),
+                        (None, None) => None,
+                    }
                 } else {
-                    self.connected_at.saturating_add(self.start_us())
+                    self.connected_at.checked_add(self.cfg.start_timeout)
                 };
-                if let Some(wake) = self.keepalive_wake {
-                    deadline = deadline.min(wake);
+                match (deadline, self.keepalive_wake) {
+                    (Some(due), Some(wake)) => Some(due.min(wake)),
+                    (Some(due), None) => Some(due),
+                    (None, wake) => wake,
                 }
-                Some(deadline)
             }
             Phase::Connecting | Phase::WaitingAuth(_) | Phase::Closed => None,
         }
     }
 
-    fn start_us(&self) -> u64 {
-        self.cfg.start_timeout_ms.saturating_mul(MICROS_PER_MILLI)
-    }
-
-    fn notice_us(&self) -> u64 {
-        self.cfg.stall_notice_ms.saturating_mul(MICROS_PER_MILLI)
-    }
-
-    fn reconnect_us(&self) -> u64 {
-        self.cfg.stall_reconnect_ms.saturating_mul(MICROS_PER_MILLI)
-    }
-
-    fn backoff_after_played(&mut self, now: u64) {
+    fn backoff_after_played(&mut self, now: Timestamp) {
         let lasted = now.saturating_sub(self.connected_at);
-        let floor = self
-            .cfg
-            .min_reconnect_interval_ms
-            .saturating_mul(MICROS_PER_MILLI)
-            .saturating_sub(lasted);
+        let floor = self.cfg.min_reconnect_interval.saturating_sub(lasted);
         self.attempt = 0;
         // The connection played, so the retry series restarts from its floor
         // (the shared timer's healthy-connection rule).
@@ -416,10 +417,10 @@ impl RtspSource {
         self.discontinuity_pending = true;
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt: 0 }));
-        self.phase = Phase::Backoff(now.saturating_add(floor));
+        self.phase = Phase::Backoff(now.checked_add(floor).unwrap_or(Timestamp(u64::MAX)));
     }
 
-    fn reconnect_if_due(&mut self, now: u64, auth: &AuthState) {
+    fn reconnect_if_due(&mut self, now: Timestamp, auth: &AuthState) {
         if let Phase::Backoff(due) = self.phase
             && now >= due
         {
@@ -440,7 +441,7 @@ impl RtspSource {
         client
     }
 
-    fn start_connect(&mut self, now: u64, auth: Option<&AuthState>) {
+    fn start_connect(&mut self, now: Timestamp, auth: Option<&AuthState>) {
         let mut client = ClientSession::new();
         if let Some(creds) = auth
             .and_then(AuthState::credentials)
@@ -534,7 +535,7 @@ impl RtspSource {
         }
     }
 
-    fn on_client_event(&mut self, event: ClientEvent, now: u64, auth: &mut AuthState) {
+    fn on_client_event(&mut self, event: ClientEvent, now: Timestamp, auth: &mut AuthState) {
         match event {
             ClientEvent::AuthRetry { request, .. } => {
                 self.auth_replays = self.auth_replays.saturating_add(1);
@@ -565,7 +566,7 @@ impl RtspSource {
         method: &Method,
         status: StatusCode,
         body: &[u8],
-        now: u64,
+        now: Timestamp,
         auth: &mut AuthState,
     ) {
         if self.phase == Phase::Playing {
@@ -651,7 +652,7 @@ impl RtspSource {
         self.request_url = url;
     }
 
-    fn follow_redirect(&mut self, now: u64, auth: &AuthState) {
+    fn follow_redirect(&mut self, now: Timestamp, auth: &AuthState) {
         let target = self.client.redirect_location().and_then(|location| {
             redirect::resolve_rtsp(
                 &self.request_url,
@@ -670,7 +671,7 @@ impl RtspSource {
         self.start_connect(now, Some(auth));
     }
 
-    fn on_unauthorized(&mut self, code: u16, req: Req, now: u64, auth: &mut AuthState) {
+    fn on_unauthorized(&mut self, code: u16, req: Req, now: Timestamp, auth: &mut AuthState) {
         let had_credentials = auth.credentials().is_some();
         if let Some(line) = self.client.last_challenge() {
             self.challenge = Some(line.to_string());
@@ -834,7 +835,7 @@ impl RtspSource {
         self.aligner.note_rtp_info(&times);
     }
 
-    fn on_play_ok(&mut self, now: u64) {
+    fn on_play_ok(&mut self, now: Timestamp) {
         self.note_rtp_info();
         self.phase = Phase::Playing;
         self.redirects = 0;
@@ -857,7 +858,7 @@ impl RtspSource {
         })
     }
 
-    fn on_media(&mut self, channel: u8, data: &[u8], now: u64) {
+    fn on_media(&mut self, channel: u8, data: &[u8], now: Timestamp) {
         if self.phase != Phase::Playing {
             return;
         }
@@ -907,7 +908,7 @@ impl RtspSource {
         }
         if !produced
             && !self.starved_data_fired
-            && now.saturating_sub(self.last_sample_at) >= self.notice_us()
+            && now.saturating_sub(self.last_sample_at) >= self.cfg.stall_notice
         {
             self.events.push_back(Event::Starved(StarveKind::Data));
             self.starved_data_fired = true;
@@ -1011,7 +1012,7 @@ impl RtspSource {
         }
     }
 
-    fn align_and_emit(&mut self, track: TrackId, sample: Sample, now: u64) {
+    fn align_and_emit(&mut self, track: TrackId, sample: Sample, now: Timestamp) {
         self.announce_discontinuity();
         self.announce_tracks();
         let Some(depa) = self.depa.as_ref() else {
@@ -1022,7 +1023,7 @@ impl RtspSource {
         self.emit_aligned(placed, now);
     }
 
-    fn emit_aligned(&mut self, placed: Vec<AlignOut>, now: u64) {
+    fn emit_aligned(&mut self, placed: Vec<AlignOut>, now: Timestamp) {
         for out in placed {
             match out {
                 AlignOut::Sample(track, sample) => self.emit_sample(track, sample, now),
@@ -1033,7 +1034,7 @@ impl RtspSource {
         }
     }
 
-    fn emit_sample(&mut self, track: TrackId, sample: Sample, now: u64) {
+    fn emit_sample(&mut self, track: TrackId, sample: Sample, now: Timestamp) {
         self.announce_discontinuity();
         self.announce_tracks();
         if !self.seen_first_sample {
@@ -1053,7 +1054,7 @@ impl RtspSource {
         });
     }
 
-    fn flush_depacketiser(&mut self, now: u64) {
+    fn flush_depacketiser(&mut self, now: Timestamp) {
         if self.phase != Phase::Playing {
             return;
         }
@@ -1077,7 +1078,7 @@ impl RtspSource {
         self.emit_aligned(placed, now);
     }
 
-    fn run_timers(&mut self, now: u64) {
+    fn run_timers(&mut self, now: Timestamp) {
         match self.phase {
             Phase::Awaiting(_) | Phase::Playing => {}
             _ => return,
@@ -1086,16 +1087,16 @@ impl RtspSource {
             if self.check_stall(now) {
                 return;
             }
-        } else if now.saturating_sub(self.connected_at) >= self.start_us() {
+        } else if now.saturating_sub(self.connected_at) >= self.cfg.start_timeout {
             self.fail_connection(now);
             return;
         }
         self.send_keepalive_if_due(now);
     }
 
-    fn check_stall(&mut self, now: u64) -> bool {
+    fn check_stall(&mut self, now: Timestamp) -> bool {
         let idle = now.saturating_sub(self.last_byte_at);
-        if idle < self.notice_us() {
+        if idle < self.cfg.stall_notice {
             return false;
         }
         if !self.starved_nodata_fired {
@@ -1104,24 +1105,29 @@ impl RtspSource {
         }
         match self.next_notice_at {
             None => {
-                self.next_notice_at = Some(now.saturating_add(US_PER_SEC));
-                self.push_stalled(idle / US_PER_SEC);
+                self.next_notice_at = now.checked_add(Duration::from_secs(1));
+                self.push_stalled(idle.as_secs());
             }
             Some(mut next) => {
                 let mut emitted = 0u32;
                 while now >= next && emitted < MAX_STALL_NOTICES_PER_POLL {
                     let elapsed = next.saturating_sub(self.last_byte_at);
-                    self.push_stalled(elapsed / US_PER_SEC);
-                    next = next.saturating_add(US_PER_SEC);
+                    self.push_stalled(elapsed.as_secs());
+                    // At the end of the clock there is no later notice: stop here.
+                    let Some(later) = next.checked_add(Duration::from_secs(1)) else {
+                        break;
+                    };
+                    next = later;
                     emitted = emitted.saturating_add(1);
                 }
                 if now >= next {
-                    next = now.saturating_add(US_PER_SEC);
+                    self.next_notice_at = now.checked_add(Duration::from_secs(1));
+                } else {
+                    self.next_notice_at = Some(next);
                 }
-                self.next_notice_at = Some(next);
             }
         }
-        if idle >= self.reconnect_us() {
+        if idle >= self.cfg.stall_reconnect {
             self.flush_depacketiser(now);
             self.drop_connection(true);
             self.backoff_after_played(now);
@@ -1136,19 +1142,22 @@ impl RtspSource {
         self.stalled = true;
     }
 
-    fn send_keepalive_if_due(&mut self, now: u64) {
+    fn send_keepalive_if_due(&mut self, now: Timestamp) {
         if self.phase != Phase::Playing {
             return;
         }
         if self.keepalive_wake.is_some_and(|wake| now < wake) {
             return;
         }
-        let Some(conn) = self.conn else {
-            return;
-        };
-        match self.client.handle_timeout(now) {
-            Ok(Some(bytes)) => self.actions.push_back(Action::Send { conn, bytes }),
-            Ok(None) => {}
+        // The engine holds the activity instant as a `Timestamp`; answer it at the end of that
+        // same reading so it cannot see the request as older than the clock it was due on.
+        match self.client.handle_timeout(Timestamp(u64::MAX)) {
+            Ok(Some(bytes)) => {
+                if let Some(conn) = self.conn {
+                    self.actions.push_back(Action::Send { conn, bytes });
+                }
+            }
+            Ok(None) => return,
             Err(_) => {
                 self.drop_connection(true);
                 self.backoff_after_played(now);
@@ -1162,30 +1171,30 @@ impl RtspSource {
     /// engine re-arms on the request it builds, so the new deadline is always
     /// ahead of `now`; `max(now + 1)` keeps a coarse clock from waking in a
     /// loop.
-    fn arm_keepalive_wake(&mut self, now: u64) {
+    fn arm_keepalive_wake(&mut self, now: Timestamp) {
         self.keepalive_wake = self
             .client
             .poll_timeout()
-            .map(|due| due.max(now.saturating_add(1)));
+            .map(|due| due.max(now.saturating_add_nanos(1)));
     }
 
-    fn note_written(&mut self, now: u64) {
+    fn note_written(&mut self, now: Timestamp) {
         self.client.mark_activity(now);
         self.arm_keepalive_wake(now);
     }
 
-    fn fail_connection(&mut self, now: u64) {
+    fn fail_connection(&mut self, now: Timestamp) {
         self.drop_connection(true);
         self.fail_before_playing(now);
     }
 
-    fn connection_lost(&mut self, now: u64) {
+    fn connection_lost(&mut self, now: Timestamp) {
         self.flush_depacketiser(now);
         self.drop_connection(false);
         self.after_connection_end(now);
     }
 
-    fn after_connection_end(&mut self, now: u64) {
+    fn after_connection_end(&mut self, now: Timestamp) {
         if self.seen_first_sample {
             self.backoff_after_played(now);
         } else {
@@ -1193,13 +1202,13 @@ impl RtspSource {
         }
     }
 
-    fn fail_before_playing(&mut self, now: u64) {
+    fn fail_before_playing(&mut self, now: Timestamp) {
         self.attempt = self.attempt.saturating_add(1);
-        let wait = self.retry.on_disconnected(now);
+        let wait = self.retry.on_disconnected(now.as_micros());
         self.events.push_back(Event::Status(Status::Reconnecting {
             attempt: u64::from(self.retry.attempts()),
         }));
-        self.phase = Phase::Backoff(now.saturating_add(us_of(wait)));
+        self.phase = Phase::Backoff(now.checked_add(wait).unwrap_or(Timestamp(u64::MAX)));
     }
 }
 
@@ -1210,11 +1219,11 @@ mod tests {
     #[test]
     fn reconnect_never_reuses_the_live_connection_id() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, 0);
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
         source.take_actions();
         source.next_conn = u32::MAX;
         source.conn = Some(u32::MAX);
-        source.start_connect(1, None);
+        source.start_connect(Timestamp::ZERO, None);
         assert_ne!(source.conn, Some(u32::MAX));
         assert!(source.conn.is_some());
     }
@@ -1222,13 +1231,13 @@ mod tests {
     #[test]
     fn connection_ids_wrap_to_one_and_skip_zero() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, 0);
+        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
         source.conn = None;
         source.next_conn = u32::MAX;
-        source.start_connect(1, None);
+        source.start_connect(Timestamp::ZERO, None);
         assert_eq!(source.conn, Some(u32::MAX));
         source.conn = None;
-        source.start_connect(2, None);
+        source.start_connect(Timestamp::ZERO, None);
         assert_eq!(source.conn, Some(1));
     }
 }

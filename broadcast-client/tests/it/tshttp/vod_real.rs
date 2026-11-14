@@ -1,4 +1,10 @@
 use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use broadcast_common::stage::Timestamp;
+
+/// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
+fn ts(ms: u64) -> Timestamp {
+    Timestamp::from_millis(ms)
+}
 
 fn cfg() -> Config {
     Config::default()
@@ -17,19 +23,19 @@ fn real_finite_capture() {
         }
     }
 
-    let mut c = TsHttpClient::new("u", cfg(), 0);
+    let mut c = TsHttpClient::new("u", cfg(), ts(0));
     let _ = c.poll();
     c.on_response(
         200,
         &[("Content-Length".to_string(), bytes.len().to_string())],
-        0,
+        ts(0),
     );
     let _ = c.poll_event();
     let _ = c.poll_event();
     for chunk in bytes.chunks(1316) {
-        c.feed(chunk, 0);
+        c.feed(chunk, ts(0));
     }
-    c.on_eof(1);
+    c.on_eof(ts(1));
 
     let mut samples = 0usize;
     let mut ended = false;
@@ -57,14 +63,14 @@ fn real_finite_capture() {
 #[test]
 fn real_live_capture() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let mut c = TsHttpClient::new("u", cfg(), 0);
+    let mut c = TsHttpClient::new("u", cfg(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
     for chunk in bytes.chunks(1316) {
-        c.feed(chunk, 0);
+        c.feed(chunk, ts(0));
     }
-    c.on_eof(60_000);
+    c.on_eof(ts(60_000));
     let mut reconnect0 = false;
     while let Some(a) = c.poll() {
         if matches!(a, Action::Reconnect { after_ms: 0 }) {

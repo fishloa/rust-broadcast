@@ -11,10 +11,16 @@ use broadcast_client::events::{
 };
 use broadcast_client::{Action, BufferEvent, Config, ErrorKind, Event, Session};
 use broadcast_common::cenc::CencScheme;
+use broadcast_common::stage::Timestamp;
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended};
 use support::ts_host::Host as TsHost;
 use support::ts_pmt::{Es, find, rewrite};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const BASE: &str = "http://origin.test/v";
 const PL: &str = "http://origin.test/v/index.m3u8";
@@ -358,7 +364,7 @@ impl HeldRun {
 
 fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun {
     let n = segs.len();
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), 0).unwrap();
+    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
     let mut out = HeldRun::default();
     let mut now = 0u64;
     let mut position: Option<(u64, u64)> = None;
@@ -383,7 +389,7 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
         }
         let mut pending: VecDeque<(u32, String)> = VecDeque::new();
         loop {
-            while let Some(a) = s.poll(now) {
+            while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
                     pending.push_back((conn, url));
                 }
@@ -407,15 +413,15 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
                 c,
                 200,
                 &[("Content-Length".into(), body.len().to_string())],
-                now,
+                ts(now),
             );
             for chunk in body.chunks(CHUNK) {
-                s.on_data(c, chunk, now);
+                s.on_data(c, chunk, ts(now));
             }
-            s.on_closed(c, None, now);
+            s.on_closed(c, None, ts(now));
         }
         let pos = position.map(|(base, since)| base + (now - since) * TICKS_PER_US);
-        s.on_playback_position(now, pos);
+        s.on_playback_position(ts(now), pos);
         while let Some(e) = s.next_event() {
             match &e {
                 Event::Buffer(

@@ -3,8 +3,15 @@ use std::sync::Arc;
 use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::tls_pki::{Ca, TlsServer, https_get};
 use crate::support::udp_host::TS_PACKET;
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use broadcast_client::{
     Action, ClientIdentity, ClientIdentityScope, Config, Error, Event, Session, Status,
+    TransportError,
 };
 
 const SMALL: &str = "ts/h264-aac.ts";
@@ -29,7 +36,7 @@ fn with_handle(f: impl FnOnce(&mut Config)) -> Config {
 }
 
 fn first_http(session: &mut Session, now: u64) -> (u32, String, Option<Arc<ClientIdentity>>) {
-    while let Some(action) = session.poll(now) {
+    while let Some(action) = session.poll(ts(now)) {
         if let Action::HttpRequest {
             conn,
             url,
@@ -54,7 +61,7 @@ fn every_https_source_offers_the_identity_on_its_first_request() {
         "https://h.example/live.m3u8",
         "https://h.example/live.mpd",
     ] {
-        let mut s = Session::open(url, with_handle(|_| {}), 0).unwrap();
+        let mut s = Session::open(url, with_handle(|_| {}), ts(0)).unwrap();
         let (_, request_url, identity) = first_http(&mut s, 0);
         assert_eq!(request_url, url);
         assert_eq!(identity_handle(&identity), Some(HANDLE), "{url}");
@@ -68,9 +75,9 @@ fn rtsps_offers_the_identity_and_plain_rtsp_does_not() {
         ("rtsp://cam.example/live", false),
         ("rtsp://cam.example:322/live", false),
     ] {
-        let mut s = Session::open(url, with_handle(|_| {}), 0).unwrap();
+        let mut s = Session::open(url, with_handle(|_| {}), ts(0)).unwrap();
         let mut seen = None;
-        while let Some(a) = s.poll(0) {
+        while let Some(a) = s.poll(ts(0)) {
             if let Action::TcpConnect {
                 tls: t, identity, ..
             } = a
@@ -85,14 +92,14 @@ fn rtsps_offers_the_identity_and_plain_rtsp_does_not() {
 
 #[test]
 fn a_plain_http_request_never_carries_the_identity() {
-    let mut s = Session::open("http://h.example/live.ts", with_handle(|_| {}), 0).unwrap();
+    let mut s = Session::open("http://h.example/live.ts", with_handle(|_| {}), ts(0)).unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     assert!(identity.is_none());
 }
 
 #[test]
 fn without_an_identity_no_action_carries_one() {
-    let mut s = Session::open("https://h.example/live.ts", Config::default(), 0).unwrap();
+    let mut s = Session::open("https://h.example/live.ts", Config::default(), ts(0)).unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     assert!(identity.is_none());
 }
@@ -101,12 +108,17 @@ fn redirect_target_identity(scope: ClientIdentityScope, to: &str) -> Option<u64>
     let mut s = Session::open(
         "https://a.example/live.ts",
         with_handle(|c| c.client_identity_scope = scope),
-        0,
+        ts(0),
     )
     .unwrap();
     let (conn, _, first) = first_http(&mut s, 0);
     assert_eq!(identity_handle(&first), Some(HANDLE));
-    s.on_response(conn, 302, &[("Location".to_string(), to.to_string())], 1);
+    s.on_response(
+        conn,
+        302,
+        &[("Location".to_string(), to.to_string())],
+        ts(1),
+    );
     let (_, url, identity) = first_http(&mut s, 1);
     assert_eq!(url, to);
     identity_handle(&identity)
@@ -142,7 +154,7 @@ fn an_hls_segment_on_a_cdn_origin_gets_the_identity_only_under_any_https() {
         let mut s = Session::open(
             "https://a.example/live.m3u8",
             with_handle(|c| c.client_identity_scope = scope),
-            0,
+            ts(0),
         )
         .unwrap();
         let (conn, _, manifest) = first_http(&mut s, 0);
@@ -154,10 +166,10 @@ fn an_hls_segment_on_a_cdn_origin_gets_the_identity_only_under_any_https() {
                 "Content-Type".to_string(),
                 "application/vnd.apple.mpegurl".to_string(),
             )],
-            1,
+            ts(1),
         );
-        s.on_data(conn, PLAYLIST.as_bytes(), 2);
-        s.on_closed(conn, None, 3);
+        s.on_data(conn, PLAYLIST.as_bytes(), ts(2));
+        s.on_closed(conn, None, ts(3));
         let (_, url, segment) = first_http(&mut s, 3);
         assert_eq!(url, "https://cdn.example/s0.ts");
         assert_eq!(identity_handle(&segment), want, "{scope}");
@@ -185,7 +197,7 @@ fn malformed_identities_fail_open_with_a_typed_error() {
     for identity in mixed {
         let config = cfg(|c| c.client_identity = Some(identity));
         assert!(matches!(
-            Session::open("https://h.example/live.ts", config, 0).unwrap_err(),
+            Session::open("https://h.example/live.ts", config, ts(0)).unwrap_err(),
             Error::InvalidConfig {
                 field: "client_identity"
             }
@@ -193,11 +205,11 @@ fn malformed_identities_fail_open_with_a_typed_error() {
     }
     for identity in [leaf.pem_identity(), leaf.der_identity()] {
         let config = cfg(|c| c.client_identity = Some(identity));
-        Session::open("https://h.example/live.ts", config, 0).unwrap();
+        Session::open("https://h.example/live.ts", config, ts(0)).unwrap();
     }
     for identity in bad {
         let config = cfg(|c| c.client_identity = Some(identity));
-        match Session::open("https://h.example/live.ts", config, 0).unwrap_err() {
+        match Session::open("https://h.example/live.ts", config, ts(0)).unwrap_err() {
             Error::InvalidConfig { field } => assert_eq!(field, "client_identity"),
             other => panic!("{other:?}"),
         }
@@ -215,7 +227,7 @@ fn key_material_never_appears_in_debug_output() {
         .collect();
     assert!(key_body.len() > 40);
     let config = cfg(|c| c.client_identity = Some(leaf.pem_identity()));
-    let mut s = Session::open("https://h.example/live.ts", config.clone(), 0).unwrap();
+    let mut s = Session::open("https://h.example/live.ts", config.clone(), ts(0)).unwrap();
     let (_, _, identity) = first_http(&mut s, 0);
     let action = Action::HttpRequest {
         conn: 1,
@@ -250,7 +262,7 @@ fn drive(
     horizon_us: u64,
 ) -> Outcome {
     let url = format!("https://localhost:{}/live.ts", server.addr.port());
-    let mut session = Session::open(&url, config, 0).unwrap();
+    let mut session = Session::open(&url, config, ts(0)).unwrap();
     let mut now = 0u64;
     let mut out = Outcome {
         events: Vec::new(),
@@ -258,7 +270,7 @@ fn drive(
         offered: 0,
     };
     while now <= horizon_us && out.requests < attempts {
-        while let Some(a) = session.poll(now) {
+        while let Some(a) = session.poll(ts(now)) {
             if let Action::HttpRequest {
                 conn,
                 url,
@@ -271,14 +283,14 @@ fn drive(
                 let path = url::Url::parse(&url).unwrap().path().to_string();
                 match https_get(server.addr, &path, server_ca, identity.as_deref()) {
                     Ok(resp) => {
-                        session.on_response(conn, resp.status, &resp.headers, now);
+                        session.on_response(conn, resp.status, &resp.headers, ts(now));
                         for part in resp.body.chunks(CHUNK) {
                             now += STEP_US;
-                            session.on_data(conn, part, now);
+                            session.on_data(conn, part, ts(now));
                         }
-                        session.on_closed(conn, None, now);
+                        session.on_closed(conn, None, ts(now));
                     }
-                    Err(e) => session.on_closed(conn, Some(e), now),
+                    Err(e) => session.on_closed(conn, Some(TransportError::from(e)), ts(now)),
                 }
             }
         }
@@ -370,22 +382,22 @@ fn rtsps_redirect_identity(scope: ClientIdentityScope, to: &str) -> Option<u64> 
     let mut s = Session::open(
         "rtsps://a.example/live/",
         with_handle(|c| c.client_identity_scope = scope),
-        0,
+        ts(0),
     )
     .unwrap();
     let mut conn = None;
-    while let Some(a) = s.poll(0) {
+    while let Some(a) = s.poll(ts(0)) {
         if let Action::TcpConnect { conn: c, .. } = a {
             conn = Some(c);
         }
     }
     let conn = conn.expect("a TcpConnect");
     s.on_connected(conn);
-    while s.poll(0).is_some() {}
+    while s.poll(ts(0)).is_some() {}
     let reply = format!("RTSP/1.0 301 Moved Permanently\r\nCSeq: 1\r\nLocation: {to}\r\n\r\n");
-    s.on_data(conn, reply.as_bytes(), 1);
+    s.on_data(conn, reply.as_bytes(), ts(1));
     let mut next = None;
-    while let Some(a) = s.poll(1) {
+    while let Some(a) = s.poll(ts(1)) {
         if let Action::TcpConnect { identity, tls, .. } = a {
             assert!(tls);
             next = Some(identity_handle(&identity));

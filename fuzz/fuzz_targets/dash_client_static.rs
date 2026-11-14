@@ -2,6 +2,7 @@
 
 use std::collections::VecDeque;
 
+use broadcast_common::stage::Timestamp;
 use dash_runtime::client::{Action, DashClient, DashConfig, Error, Failure, FailureClass, Output};
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
@@ -136,10 +137,10 @@ fuzz_target!(|data: &[u8]| {
         .collect::<Vec<_>>();
     chunks.reverse();
     let mut tail_data: &[u8] = rest;
-    let mut now = 0u64;
+    let mut now_us = 0u64;
 
     for _ in 0..STEP_BUDGET {
-        while let Some(a) = client.poll(now) {
+        while let Some(a) = client.poll(Timestamp::from_micros(now_us)) {
             assert!(!terminal, "an action after a terminal output");
             pending.push_back(a);
             assert!(pending.len() < PENDING_CAP, "unbounded requests");
@@ -170,7 +171,7 @@ fuzz_target!(|data: &[u8]| {
         let Some(action) = pending.remove(idx) else {
             break;
         };
-        now += 1_000;
+        now_us += 1_000;
         let real = match action.id() {
             None => Some(mpd.clone()),
             Some(_) => real_body(action.url(), action.byte_range()),
@@ -178,21 +179,21 @@ fuzz_target!(|data: &[u8]| {
         let reply = answer(real, mode, aux, &mut tail_data);
         match (action.id(), reply) {
             (None, Answer::Body(b)) => {
-                if let Err(Error::Mpd(_)) = client.on_mpd(now, &b) {
-                    client.retry_mpd(now);
+                if let Err(Error::Mpd(_)) = client.on_mpd(Timestamp::from_micros(now_us), &b) {
+                    client.retry_mpd(Timestamp::from_micros(now_us));
                 }
             }
             (None, Answer::Fail(f)) => {
-                client.on_mpd_failure(now, f);
-                client.retry_mpd(now);
+                client.on_mpd_failure(Timestamp::from_micros(now_us), f);
+                client.retry_mpd(Timestamp::from_micros(now_us));
             }
             (Some(id), Answer::Fail(f)) => {
-                if let Ok(FailureClass::Retry { .. }) = client.on_failure(now, id, f) {
-                    client.retry(now, id);
+                if let Ok(FailureClass::Retry { .. }) = client.on_failure(Timestamp::from_micros(now_us), id, f) {
+                    client.retry(Timestamp::from_micros(now_us), id);
                 }
             }
             (Some(id), Answer::Body(b)) => {
-                deliver_resource(&mut client, now, id, &b);
+                deliver_resource(&mut client, now_us, id, &b);
             }
         }
         if terminal {

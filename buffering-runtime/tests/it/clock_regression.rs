@@ -5,13 +5,13 @@ use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, Polic
 
 const A: u32 = 1;
 const B: u32 = 2;
-const T0: Micros = 50_000_000;
-const REGRESSION_US: Micros = 5_000_000;
-const STEP_US: Micros = 40_000;
+const T0: Micros = Micros(50_000_000);
+const REGRESSION_US: Micros = Micros(5_000_000);
+const STEP_US: Micros = Micros(40_000);
 const STEPS: u64 = 15;
-const FILL_US: Micros = 300_000;
+const FILL_US: Micros = Micros(300_000);
 const CHUNK_BYTES: u32 = 1316;
-const TICKS_PER_US: Ticks27 = 27;
+const TICKS_PER_US: Ticks27 = Ticks27(27);
 
 fn run(with_b: bool, regress_b_us: Micros) -> bool {
     let d = ControllerConfig::default();
@@ -19,14 +19,14 @@ fn run(with_b: bool, regress_b_us: Micros) -> bool {
     p.initial_us = FILL_US;
     let cfg = ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap();
     let mut c = BufferController::new(cfg, None).unwrap();
-    c.on_track_media(T0, A, 0);
+    c.on_track_media(T0, A, Ticks27::ZERO);
     if with_b {
-        c.on_track_media(T0 + STEP_US - regress_b_us, B, 0);
+        c.on_track_media(Micros(T0.0 + STEP_US.0 - regress_b_us.0), B, Ticks27::ZERO);
     }
     for k in 1..=STEPS {
-        let now = T0 + k * STEP_US;
+        let now = Micros(T0.0 + k * STEP_US.0);
         c.on_chunk(now, CHUNK_BYTES, None);
-        c.on_track_media(now, A, k * STEP_US * TICKS_PER_US);
+        c.on_track_media(now, A, Ticks27(k * STEP_US.0 * TICKS_PER_US.0));
         c.on_tick(now, None);
     }
     std::iter::from_fn(|| c.poll_event()).any(|e| matches!(e, Event::StartPlaying { .. }))
@@ -34,9 +34,12 @@ fn run(with_b: bool, regress_b_us: Micros) -> bool {
 
 #[test]
 fn control_without_b_starts_and_with_b_in_order_waits() {
-    assert!(run(false, 0), "track A alone must start in this scenario");
     assert!(
-        !run(true, 0),
+        run(false, Micros::ZERO),
+        "track A alone must start in this scenario"
+    );
+    assert!(
+        !run(true, Micros::ZERO),
         "B has only its zero-length first report: the start waits for it"
     );
 }

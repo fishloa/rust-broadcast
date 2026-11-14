@@ -1,10 +1,17 @@
 use broadcast_client::{Action, Config, Session};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 #[test]
 fn resolve_all_3xx_codes_session() {
     for code in [301u16, 302, 303, 307, 308] {
-        let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-        let conn = match session.poll(0).unwrap() {
+        let mut session =
+            Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+        let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             _ => panic!(),
         };
@@ -12,10 +19,10 @@ fn resolve_all_3xx_codes_session() {
             conn,
             code,
             &[("Location".to_string(), "/moved.ts".to_string())],
-            0,
+            ts(0),
         );
         let mut saw_new = false;
-        while let Some(a) = session.poll(0) {
+        while let Some(a) = session.poll(ts(0)) {
             if let Action::HttpRequest { url, .. } = a {
                 assert!(url.ends_with("/moved.ts"));
                 saw_new = true;
@@ -27,8 +34,8 @@ fn resolve_all_3xx_codes_session() {
 
 #[test]
 fn redirect_limit_in_session() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    let mut conn = match session.poll(0).unwrap() {
+    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
@@ -37,10 +44,10 @@ fn redirect_limit_in_session() {
             conn,
             301,
             &[("Location".to_string(), format!("/r{i}.ts"))],
-            0,
+            ts(0),
         );
         let mut next = None;
-        while let Some(a) = session.poll(0) {
+        while let Some(a) = session.poll(ts(0)) {
             if let Action::HttpRequest { conn: c, .. } = a {
                 next = Some(c);
             }
@@ -52,10 +59,10 @@ fn redirect_limit_in_session() {
         conn,
         301,
         &[("Location".to_string(), "/too-many.ts".to_string())],
-        0,
+        ts(0),
     );
     let mut saw_http = false;
-    while let Some(a) = session.poll(0) {
+    while let Some(a) = session.poll(ts(0)) {
         if matches!(a, Action::HttpRequest { .. }) {
             saw_http = true;
         }
@@ -65,15 +72,15 @@ fn redirect_limit_in_session() {
 
 #[test]
 fn redirect_without_location_is_connect_error() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
-    let conn = match session.poll(0).unwrap() {
+    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, 302, &[], 0);
+    session.on_response(conn, 302, &[], ts(0));
     let mut saw_http = false;
     let mut closes = Vec::new();
-    while let Some(a) = session.poll(0) {
+    while let Some(a) = session.poll(ts(0)) {
         match a {
             Action::HttpRequest { .. } => saw_http = true,
             Action::Close { conn } => closes.push(conn),
@@ -87,11 +94,11 @@ fn redirect_without_location_is_connect_error() {
 #[test]
 fn cross_origin_redirect_drops_authorization() {
     use broadcast_client::Credentials;
-    let mut session = Session::open("http://example/live.ts", Config::default(), 0).unwrap();
+    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
     session
         .set_credentials(Credentials::bearer("secret-token"))
         .unwrap();
-    let conn = match session.poll(0).unwrap() {
+    let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, headers, .. } => {
             assert!(headers.iter().any(
                 |(k, v)| k.eq_ignore_ascii_case("authorization") && v == "Bearer secret-token"
@@ -107,10 +114,10 @@ fn cross_origin_redirect_drops_authorization() {
             "Location".to_string(),
             "http://other.example/live.ts".to_string(),
         )],
-        0,
+        ts(0),
     );
     let mut new_headers = None;
-    while let Some(a) = session.poll(0) {
+    while let Some(a) = session.poll(ts(0)) {
         if let Action::HttpRequest { headers, .. } = a {
             new_headers = Some(headers);
         }

@@ -5,8 +5,14 @@
 use broadcast_client::{
     Action, Config, Error, ErrorKind, Event, Session, SourceKind, StarveKind, Status,
 };
+use broadcast_common::stage::Timestamp;
 use rtmp_runtime::message::UserControl;
 use test_harness::rtmp_play_peer::Seen;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 use crate::support::rtmp_host::{
     MS, PeerConfig, RtmpHost, SEC, URL, assert_complete_samples_equal_direct,
@@ -29,8 +35,8 @@ fn host() -> RtmpHost {
 
 #[test]
 fn the_first_action_is_a_tcp_connect_to_the_default_port() {
-    let mut s = Session::open(URL, rtmp_config(), 0).unwrap();
-    match s.poll(0) {
+    let mut s = Session::open(URL, rtmp_config(), ts(0)).unwrap();
+    match s.poll(ts(0)) {
         Some(Action::TcpConnect {
             host, port, tls, ..
         }) => {
@@ -44,18 +50,23 @@ fn the_first_action_is_a_tcp_connect_to_the_default_port() {
 
 #[test]
 fn rtmps_connects_with_tls_on_443_and_a_port_in_the_url_wins() {
-    let mut s = Session::open("rtmps://origin.test/live/cam1", Config::default(), 0).unwrap();
+    let mut s = Session::open("rtmps://origin.test/live/cam1", Config::default(), ts(0)).unwrap();
     assert!(matches!(
-        s.poll(0),
+        s.poll(ts(0)),
         Some(Action::TcpConnect {
             port: 443,
             tls: true,
             ..
         })
     ));
-    let mut s = Session::open("rtmp://origin.test:1936/live/cam1", Config::default(), 0).unwrap();
+    let mut s = Session::open(
+        "rtmp://origin.test:1936/live/cam1",
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(
-        s.poll(0),
+        s.poll(ts(0)),
         Some(Action::TcpConnect {
             port: 1936,
             tls: false,
@@ -66,8 +77,8 @@ fn rtmps_connects_with_tls_on_443_and_a_port_in_the_url_wins() {
 
 #[test]
 fn auto_selects_rtmp_from_the_scheme() {
-    let mut s = Session::open(URL, Config::default(), 0).unwrap();
-    assert!(matches!(s.poll(0), Some(Action::TcpConnect { .. })));
+    let mut s = Session::open(URL, Config::default(), ts(0)).unwrap();
+    assert!(matches!(s.poll(ts(0)), Some(Action::TcpConnect { .. })));
 }
 
 #[test]
@@ -82,7 +93,7 @@ fn an_rtmp_url_needs_an_app_and_a_stream_and_a_matching_kind() {
     ] {
         assert!(
             matches!(
-                Session::open(bad, rtmp_config(), 0),
+                Session::open(bad, rtmp_config(), ts(0)),
                 Err(Error::InvalidUrl(_))
             ),
             "{bad}"
@@ -91,11 +102,11 @@ fn an_rtmp_url_needs_an_app_and_a_stream_and_a_matching_kind() {
     let mut cfg = rtmp_config();
     cfg.kind = SourceKind::Hls;
     assert!(matches!(
-        Session::open(URL, cfg, 0),
+        Session::open(URL, cfg, ts(0)),
         Err(Error::UnsupportedScheme(_))
     ));
     assert!(matches!(
-        Session::open("http://origin.test/live.ts", rtmp_config(), 0),
+        Session::open("http://origin.test/live.ts", rtmp_config(), ts(0)),
         Err(Error::UnsupportedScheme(_))
     ));
 }
@@ -131,9 +142,9 @@ fn app_stream_and_query_reach_the_server() {
 
 #[test]
 fn a_tc_url_keeps_a_non_default_port_and_brackets_an_ipv6_host() {
-    let mut s = Session::open("rtmp://[::1]:1936/live/cam1", Config::default(), 0).unwrap();
+    let mut s = Session::open("rtmp://[::1]:1936/live/cam1", Config::default(), ts(0)).unwrap();
     assert!(matches!(
-        s.poll(0),
+        s.poll( ts(0)),
         Some(Action::TcpConnect { host, port: 1936, .. }) if host == "::1"
     ));
 }
@@ -556,13 +567,13 @@ fn close_emits_one_close_for_the_live_connection_and_goes_silent() {
     connect_and_play(&mut h);
     h.session.close();
     let mut closes = Vec::new();
-    while let Some(a) = h.session.poll(h.now) {
+    while let Some(a) = h.session.poll(ts(h.now)) {
         if let Action::Close { conn } = a {
             closes.push(conn);
         }
     }
     assert_eq!(closes, vec![h.conn.unwrap()]);
-    assert!(h.session.poll(h.now).is_none());
+    assert!(h.session.poll(ts(h.now)).is_none());
     assert!(h.session.next_event().is_none());
 }
 
@@ -572,7 +583,7 @@ fn caller_reconnect_restarts_the_connection() {
     connect_and_play(&mut h);
     h.play_all();
     let before = h.connects.len();
-    h.session.reconnect(h.now);
+    h.session.reconnect(ts(h.now));
     h.collect();
     assert_eq!(h.closes.len(), 1);
     assert_eq!(h.connects.len(), before + 1);

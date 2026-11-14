@@ -506,7 +506,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
 
 /// An origin that carries LL-HLS tags (`PART-INF`/`PART`) but explicitly
 /// declines blocking reload (`CAN-BLOCK-RELOAD=NO`) must get a plain,
-/// non-blocking reload + a `WaitMs` backoff hint — not a blocking
+/// non-blocking reload + a `Wait` backoff hint — not a blocking
 /// `_HLS_msn`/`_HLS_part` request. A client that infers blocking support
 /// from `low_latency.is_some()` alone (the pre-fix behaviour) fails this.
 #[test]
@@ -572,8 +572,8 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
         _ => unreachable!(),
     }
     assert!(
-        actions.iter().any(|a| matches!(a, Action::WaitMs(_))),
-        "a non-blocking reload must be paced with a WaitMs backoff hint: {actions:#?}"
+        actions.iter().any(|a| matches!(a, Action::Wait(_))),
+        "a non-blocking reload must be paced with a Wait backoff hint: {actions:#?}"
     );
 }
 

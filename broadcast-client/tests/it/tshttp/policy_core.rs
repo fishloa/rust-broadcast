@@ -1,4 +1,10 @@
 use broadcast_client::tshttp::{Config, Event, TsHttpClient, TsHttpPolicy};
+use broadcast_common::stage::Timestamp;
+
+/// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
+fn ts(ms: u64) -> Timestamp {
+    Timestamp::from_millis(ms)
+}
 
 const URL: &str = "http://example/live.ts";
 const CHUNK: usize = 1316;
@@ -26,7 +32,7 @@ type Trace = Vec<String>;
 fn describe(
     events: &mut Vec<Event>,
     actions: &mut Vec<broadcast_client::tshttp::Action>,
-    deadline: Option<u64>,
+    deadline: Option<Timestamp>,
 ) -> String {
     let ev: Vec<String> = events
         .drain(..)
@@ -52,7 +58,7 @@ fn drain_client(c: &mut TsHttpClient) -> (Vec<Event>, Vec<broadcast_client::tsht
 }
 
 fn run_client(script: &[Timed], payload: &[u8]) -> (Trace, Vec<bool>) {
-    let mut c = TsHttpClient::new(URL, Config::default(), 0);
+    let mut c = TsHttpClient::new(URL, Config::default(), ts(0));
     let mut trace = Vec::new();
     let mut sampled_per_step = Vec::new();
     let (mut ev, mut ac, _) = drain_client(&mut c);
@@ -61,17 +67,17 @@ fn run_client(script: &[Timed], payload: &[u8]) -> (Trace, Vec<bool>) {
     let mut offset = 0usize;
     for t in script {
         match &t.step {
-            Step::Response(status, headers) => c.on_response(*status, headers, t.at),
+            Step::Response(status, headers) => c.on_response(*status, headers, ts(t.at)),
             Step::Chunk(len) => {
                 let end = (offset + len).min(payload.len());
                 let chunk = &payload[offset..end];
                 offset = end;
-                c.feed(chunk, t.at);
+                c.feed(chunk, ts(t.at));
             }
-            Step::Eof => c.on_eof(t.at),
-            Step::Error => c.on_error(t.at),
-            Step::Reconnect => c.reconnect(t.at),
-            Step::Timeout => c.poll_timeout(t.at),
+            Step::Eof => c.on_eof(ts(t.at)),
+            Step::Error => c.on_error(ts(t.at)),
+            Step::Reconnect => c.reconnect(ts(t.at)),
+            Step::Timeout => c.poll_timeout(ts(t.at)),
         }
         let (mut ev, mut ac, sampled) = drain_client(&mut c);
         trace.push(describe(&mut ev, &mut ac, c.next_deadline()));
@@ -81,7 +87,7 @@ fn run_client(script: &[Timed], payload: &[u8]) -> (Trace, Vec<bool>) {
 }
 
 fn run_policy(script: &[Timed], sampled_per_step: &[bool]) -> Trace {
-    let mut p = TsHttpPolicy::new(URL, Config::default(), 0);
+    let mut p = TsHttpPolicy::new(URL, Config::default(), ts(0));
     let mut trace = Vec::new();
     let drain = |p: &mut TsHttpPolicy| {
         let mut events = Vec::new();
@@ -98,12 +104,12 @@ fn run_policy(script: &[Timed], sampled_per_step: &[bool]) -> Trace {
     trace.push(describe(&mut ev, &mut ac, p.next_deadline()));
     for (i, t) in script.iter().enumerate() {
         match &t.step {
-            Step::Response(status, headers) => p.on_response(*status, headers, t.at),
-            Step::Chunk(len) => p.on_bytes(*len, t.at, sampled_per_step[i + 1]),
-            Step::Eof => p.on_eof(t.at),
-            Step::Error => p.on_error(t.at),
-            Step::Reconnect => p.reconnect(t.at),
-            Step::Timeout => p.poll_timeout(t.at),
+            Step::Response(status, headers) => p.on_response(*status, headers, ts(t.at)),
+            Step::Chunk(len) => p.on_bytes(*len, ts(t.at), sampled_per_step[i + 1]),
+            Step::Eof => p.on_eof(ts(t.at)),
+            Step::Error => p.on_error(ts(t.at)),
+            Step::Reconnect => p.reconnect(ts(t.at)),
+            Step::Timeout => p.poll_timeout(ts(t.at)),
         }
         let (mut ev, mut ac) = drain(&mut p);
         trace.push(describe(&mut ev, &mut ac, p.next_deadline()));

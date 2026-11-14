@@ -47,6 +47,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// Everything an [`InputFactory`] needs to build and spawn one route's
 /// supervised ingest task for a [`crate::config::InputSpec::Custom`] route.
@@ -65,8 +66,8 @@ pub struct InputCtx {
     /// `crate::config::Config::target_duration_secs`, forwarded unchanged —
     /// pass straight through to the factory's own segmenter/segmenting loop.
     pub target_duration_secs: f64,
-    /// `crate::config::Config::part_target_ms`, forwarded unchanged.
-    pub part_target_ms: u32,
+    /// `crate::config::Config::part_target`, forwarded unchanged.
+    pub part_target: Duration,
     /// The shared shutdown token every other route's supervisor task watches
     /// — the factory's spawned task must watch it too, so
     /// [`crate::origin::serve_with_registry`]'s graceful shutdown actually

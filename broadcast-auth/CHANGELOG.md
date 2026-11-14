@@ -7,6 +7,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `AuthState::{request_headers, receive_cookies, cookies}` and `CookieWatch::cookies` take the caller's clock as a `broadcast_common::stage::Timestamp` (the type every sans-IO engine takes) instead of `now_us: u64`.
 - BREAKING: `Error::ChallengeParse` and `Error::ResponseCompute` now wrap `HttpAuthError` (which implements `std::error::Error` as `#[source]`) instead of a bare `String`; construct via `HttpAuthError(...)` (#2659).
 
 ## [0.7.0] - 2026-11-14

@@ -1,15 +1,21 @@
 use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use broadcast_common::stage::Timestamp;
+
+/// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
+fn ts(ms: u64) -> Timestamp {
+    Timestamp::from_millis(ms)
+}
 
 fn samples_for(chunk_size: usize) -> Option<(usize, usize, usize)> {
     let bytes = test_fixtures::require_bytes("http/live-channels/tf1-live.ts", "real_stream")?;
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
     let mut total_samples = 0;
     let mut tracks = std::collections::BTreeSet::new();
     for chunk in bytes.chunks(chunk_size) {
-        c.feed(chunk, 0);
+        c.feed(chunk, ts(0));
         while let Some(e) = c.poll_event() {
             if let Event::Demux(ref ev) = e
                 && matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. })
@@ -68,13 +74,13 @@ fn first_sample_moves_to_playing() {
     else {
         return;
     };
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
     let mut sampled = false;
     for chunk in bytes.chunks(1316) {
-        c.feed(chunk, 0);
+        c.feed(chunk, ts(0));
         while let Some(e) = c.poll_event() {
             sampled |= matches!(&e, Event::Demux(ev) if matches!(ev.as_ref(), transmux::DemuxEvent::Sample { .. }));
         }
@@ -83,18 +89,18 @@ fn first_sample_moves_to_playing() {
         }
     }
     assert!(sampled, "no Sample in the whole fixture");
-    c.on_eof(5_000);
+    c.on_eof(ts(5_000));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 0 }));
     assert_eq!(c.poll(), None);
 }
 
 #[test]
 fn eof_before_any_sample_backs_off() {
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(200, &[], 0);
+    c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
-    c.on_eof(5_000);
+    c.on_eof(ts(5_000));
     assert_eq!(c.poll(), Some(Action::Reconnect { after_ms: 2_000 }));
 }
 
@@ -116,9 +122,9 @@ fn missing_headers_404() {
         .parse()
         .unwrap();
     assert_eq!(status, 404);
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(status, &[], 0);
+    c.on_response(status, &[], ts(0));
     assert!(matches!(
         c.poll_event(),
         Some(Event::NotFound { status: 404 })
@@ -142,8 +148,8 @@ fn tf1_headers_200_connected() {
         .parse()
         .unwrap();
     assert_eq!(status, 200);
-    let mut c = TsHttpClient::new("u", Config::default(), 0);
+    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
     let _ = c.poll();
-    c.on_response(status, &[], 0);
+    c.on_response(status, &[], ts(0));
     assert!(matches!(c.poll_event(), Some(Event::Connected)));
 }

@@ -21,6 +21,7 @@ use crate::timing::clock::{AdoptReason, Anchor, ClockSource, OfferOutcome, Offer
 use crate::timing::live_edge::{join_index, oldest_in_window, presentation_delay_us};
 use crate::timing::period::duration_us;
 use crate::timing::utc_timing::{Exchange, UtcSample, sample_from_date_header};
+use broadcast_common::stage::Timestamp;
 use broadcast_dash::descriptors::SCHEME_RESET;
 
 /// A forced second look at the UTC clock after a segment error is taken at
@@ -127,7 +128,8 @@ impl DashClient {
     /// a dynamic presentation uses it when no `UTCTiming` answer is available
     /// (or first, with [`DashClockPolicy::PreferHost`]); a static one ignores
     /// it.
-    pub fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+    pub fn set_wall_clock(&mut self, now: Timestamp, unix_us: u64) {
+        let now_us = now.as_micros();
         if self.stopped() {
             return;
         }
@@ -169,8 +171,8 @@ impl DashClient {
     /// UTC in Unix microseconds at the monotonic instant `now_us`, once an
     /// anchor exists.
     #[must_use]
-    pub fn utc_at(&self, now_us: u64) -> Option<i64> {
-        self.clock.utc_at(now_us)
+    pub fn utc_at(&self, now: Timestamp) -> Option<i64> {
+        self.clock.utc_at(now.as_micros())
     }
 
     /// The earliest monotonic instant at which [`DashClient::poll`] may have
@@ -220,10 +222,11 @@ impl DashClient {
     /// [`Error::Stopped`].
     pub fn on_utc_response(
         &mut self,
-        now_us: u64,
+        now: Timestamp,
         id: UtcId,
         response: &UtcResponse<'_>,
     ) -> Result<()> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         let dash = self.dash;
         let sample = {
@@ -248,7 +251,7 @@ impl DashClient {
     /// # Errors
     /// [`Error::UnrequestedUtc`] when `id` is not the request awaited;
     /// [`Error::Stopped`].
-    pub fn on_utc_failure(&mut self, _now_us: u64, id: UtcId, failure: Failure) -> Result<()> {
+    pub fn on_utc_failure(&mut self, _now: Timestamp, id: UtcId, failure: Failure) -> Result<()> {
         self.ensure_live()?;
         let sampler = self
             .live
@@ -265,7 +268,8 @@ impl DashClient {
     ///
     /// # Errors
     /// [`Error::MpdNotAwaited`]; [`Error::Stopped`].
-    pub fn on_mpd_unchanged(&mut self, now_us: u64, meta: &ResponseMeta<'_>) -> Result<()> {
+    pub fn on_mpd_unchanged(&mut self, now: Timestamp, meta: &ResponseMeta<'_>) -> Result<()> {
+        let now_us = now.as_micros();
         self.ensure_live()?;
         if !self.mpd_inflight || self.live.is_none() {
             return Err(Error::MpdNotAwaited);

@@ -57,7 +57,7 @@ fn origin(trunk: &Arc<Trunk>, window: usize, low_latency: bool) -> HlsOrigin {
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(window));
     if low_latency {
-        b = b.with_low_latency(500);
+        b = b.with_low_latency(Duration::from_millis(500));
     }
     b.with_instance(7).build().expect("origin builds")
 }
@@ -462,7 +462,7 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
     let o = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_media_sequence_offset(1000)
         .with_instance(7)
         .build()
@@ -543,7 +543,10 @@ fn builder_rejects_hostile_configuration() {
             .with_window_segments(nz(4))
     };
     assert_eq!(
-        base().with_low_latency(0).build().err(),
+        base()
+            .with_low_latency(Duration::from_millis(0))
+            .build()
+            .err(),
         Some(HlsOriginBuildError::ZeroPartTarget)
     );
     assert_eq!(
@@ -1085,7 +1088,7 @@ fn fresh_origin(offset: u64) -> (Arc<Trunk>, SegmentWriter, HlsOrigin) {
     let o = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(6))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_media_sequence_offset(offset)
         .build()
         .expect("origin builds");
@@ -1205,7 +1208,7 @@ fn a_segmenter_numbering_from_above_one_renders_the_open_segments_parts() {
     let o = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(6))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_hold_cold_playlist(false)
         .build()
         .expect("origin builds");

@@ -5,19 +5,24 @@ use alloc::vec::Vec;
 use url::Url;
 
 use crate::auth::AuthState;
+use broadcast_common::stage::Timestamp;
 
 const ORIGIN: &str = "https://a.example.com/live/x.m3u8";
 
 fn state_with(origin: &str, line: &str) -> AuthState {
     let url = Url::parse(origin).unwrap();
     let mut auth = AuthState::new(url.clone(), Vec::new());
-    auth.receive_cookies(&url, &[("Set-Cookie".to_string(), line.to_string())], 0);
+    auth.receive_cookies(
+        &url,
+        &[("Set-Cookie".to_string(), line.to_string())],
+        Timestamp::from_micros(0),
+    );
     auth
 }
 
 fn cookie_to(auth: &mut AuthState, url: &str) -> Option<alloc::string::String> {
     let url = Url::parse(url).unwrap();
-    auth.request_headers(&url, 0)
+    auth.request_headers(&url, Timestamp::from_micros(0))
         .into_iter()
         .find(|(k, _)| k.eq_ignore_ascii_case("cookie"))
         .map(|(_, v)| v)
@@ -84,9 +89,13 @@ fn foreign_domain_cookie_is_refused() {
         "a=1; Domain=b.example.com",
         "a=1; Domain=x.a.example.com",
     ] {
-        auth.receive_cookies(&url, &[("Set-Cookie".to_string(), line.to_string())], 0);
+        auth.receive_cookies(
+            &url,
+            &[("Set-Cookie".to_string(), line.to_string())],
+            Timestamp::from_micros(0),
+        );
     }
-    assert_eq!(auth.cookies(0), Vec::new());
+    assert_eq!(auth.cookies(Timestamp::from_micros(0)), Vec::new());
 }
 
 #[test]

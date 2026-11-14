@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use broadcast_common::stage::Timestamp;
+
 use broadcast_client::{Config, Session, SourceKind};
 use broadcast_common::timeouts::Timeouts;
 
@@ -18,9 +20,9 @@ fn timeouts(connect_ms: u64, read_ms: u64) -> Timeouts {
 #[test]
 fn hls_bounds_every_request_by_read_idle() {
     let c = with(SourceKind::Hls, timeouts(7_000, 5_000));
-    assert_eq!(c.request_timeout_us, 5_000_000);
-    assert_eq!(c.segment_timeout_us, 5_000_000);
-    assert_eq!(c.hls_key_timeout_us, 5_000_000);
+    assert_eq!(c.request_timeout, Duration::from_micros(5_000_000));
+    assert_eq!(c.segment_timeout, Duration::from_micros(5_000_000));
+    assert_eq!(c.hls_key_timeout, Duration::from_micros(5_000_000));
 }
 
 #[test]
@@ -28,9 +30,17 @@ fn dash_and_smooth_bound_manifest_and_segment_requests_only() {
     let base = Config::relay();
     for kind in [SourceKind::Dash, SourceKind::Smooth] {
         let c = with(kind, timeouts(7_000, 5_000));
-        assert_eq!(c.request_timeout_us, 5_000_000, "{kind:?}");
-        assert_eq!(c.segment_timeout_us, 5_000_000, "{kind:?}");
-        assert_eq!(c.hls_key_timeout_us, base.hls_key_timeout_us, "{kind:?}");
+        assert_eq!(
+            c.request_timeout,
+            Duration::from_micros(5_000_000),
+            "{kind:?}"
+        );
+        assert_eq!(
+            c.segment_timeout,
+            Duration::from_micros(5_000_000),
+            "{kind:?}"
+        );
+        assert_eq!(c.hls_key_timeout, base.hls_key_timeout, "{kind:?}");
     }
 }
 
@@ -48,7 +58,7 @@ fn srt_takes_handshake_and_peer_idle_from_the_same_fields_as_srt_config() {
     assert_eq!(c.srt.timeouts, direct.timeouts);
     assert_eq!(c.srt.timeouts.handshake, direct.timeouts.handshake);
     assert_eq!(c.srt.timeouts.read_idle, direct.timeouts.read_idle);
-    assert_eq!(c.request_timeout_us, base.request_timeout_us);
+    assert_eq!(c.request_timeout, base.request_timeout);
 }
 
 #[test]
@@ -61,15 +71,15 @@ fn auto_applies_the_mapping_of_every_protocol_the_url_can_resolve_to() {
     let auto = with(SourceKind::Auto, t);
     for kind in [SourceKind::Hls, SourceKind::Dash, SourceKind::Smooth] {
         let want = with(kind, t);
-        assert_eq!(auto.request_timeout_us, want.request_timeout_us, "{kind:?}");
-        assert_eq!(auto.segment_timeout_us, want.segment_timeout_us, "{kind:?}");
+        assert_eq!(auto.request_timeout, want.request_timeout, "{kind:?}");
+        assert_eq!(auto.segment_timeout, want.segment_timeout, "{kind:?}");
     }
-    assert_eq!(auto.hls_key_timeout_us, 5_000_000);
-    assert_eq!(auto.request_timeout_us, 5_000_000);
+    assert_eq!(auto.hls_key_timeout, Duration::from_secs(5));
+    assert_eq!(auto.request_timeout, Duration::from_secs(5));
     assert_eq!(auto.srt.timeouts.handshake, Duration::from_secs(3));
     assert_eq!(auto.srt.timeouts.read_idle, Duration::from_secs(5));
-    assert_eq!(auto.ts_http.start_timeout_ms, 7_000);
-    assert_ne!(auto.request_timeout_us, base.request_timeout_us);
+    assert_eq!(auto.ts_http.start_timeout, Duration::from_millis(7_000));
+    assert_ne!(auto.request_timeout, base.request_timeout);
 }
 
 #[test]
@@ -82,9 +92,21 @@ fn the_stall_policy_kinds_take_start_from_connect_and_reconnect_from_read_idle()
         SourceKind::Rtp,
     ] {
         let c = with(kind, timeouts(7_000, 30_000));
-        assert_eq!(c.ts_http.start_timeout_ms, 7_000, "{kind:?}");
-        assert_eq!(c.ts_http.stall_reconnect_ms, 30_000, "{kind:?}");
-        assert_eq!(c.ts_http.stall_notice_ms, 15_000, "{kind:?}");
+        assert_eq!(
+            c.ts_http.start_timeout,
+            Duration::from_millis(7_000),
+            "{kind:?}"
+        );
+        assert_eq!(
+            c.ts_http.stall_reconnect,
+            Duration::from_millis(30_000),
+            "{kind:?}"
+        );
+        assert_eq!(
+            c.ts_http.stall_notice,
+            Duration::from_millis(15_000),
+            "{kind:?}"
+        );
     }
 }
 
@@ -96,22 +118,26 @@ fn the_stall_policy_kinds_take_start_from_connect_and_reconnect_from_read_idle()
 fn a_zero_bound_is_floored_for_every_protocol() {
     let zero = timeouts(0, 0).with_handshake(Duration::ZERO);
     let hls = with(SourceKind::Hls, zero);
-    assert_eq!(hls.request_timeout_us, 1_000);
+    assert_eq!(hls.request_timeout, Duration::from_millis(1));
     let srt = with(SourceKind::Srt, zero);
     assert_eq!(srt.srt.timeouts.handshake, Duration::ZERO);
     assert_eq!(srt.srt.timeouts.read_idle, Duration::ZERO);
     assert!(
-        Session::open("srt://127.0.0.1:9000", srt, 0).is_err(),
+        Session::open("srt://127.0.0.1:9000", srt, Timestamp::from_micros(0)).is_err(),
         "a zero SRT bound is rejected when the session opens"
     );
     let ts = with(SourceKind::TsHttp, zero);
     assert_eq!(
         (
-            ts.ts_http.start_timeout_ms,
-            ts.ts_http.stall_notice_ms,
-            ts.ts_http.stall_reconnect_ms
+            ts.ts_http.start_timeout,
+            ts.ts_http.stall_notice,
+            ts.ts_http.stall_reconnect
         ),
-        (1, 1, 2)
+        (
+            Duration::from_millis(1),
+            Duration::from_millis(1),
+            Duration::from_millis(2)
+        )
     );
     assert!(ts.ts_http.validate().is_ok());
 }

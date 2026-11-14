@@ -3,7 +3,13 @@
 
 use crate::support;
 use broadcast_client::{BufferEvent, Config, Event, Session};
+use broadcast_common::stage::Timestamp;
 use support::replay::{TS_PACKET, open_live};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const RAI: &str = "ts/live-channels/rai-gulp-8-mb.ts";
 const AUDIO_PID: u16 = 0x130;
@@ -30,7 +36,7 @@ fn rai() -> Option<Vec<u8>> {
 }
 
 fn drain(s: &mut Session, now: u64, starts: &mut Vec<u64>) {
-    while s.poll(now).is_some() {}
+    while s.poll(ts(now)).is_some() {}
     while let Some(e) = s.next_event() {
         if matches!(e, Event::Buffer(BufferEvent::Start { .. })) {
             starts.push(now);
@@ -51,16 +57,16 @@ fn start_times(bytes: &[u8], cfg: Config, ticks: Ticks) -> Vec<u64> {
     let mut now = 0u64;
     for part in bytes.chunks(CHUNK) {
         now += CHUNK_STEP_US;
-        s.on_data(c, part, now);
+        s.on_data(c, part, ts(now));
         if ticks == Ticks::EveryChunk {
-            s.on_playback_position(now, None);
+            s.on_playback_position(ts(now), None);
         }
         drain(&mut s, now, &mut starts);
     }
     for _ in 0..IDLE_TICKS {
         now += IDLE_STEP_US;
         if ticks != Ticks::Never {
-            s.on_playback_position(now, None);
+            s.on_playback_position(ts(now), None);
         }
         drain(&mut s, now, &mut starts);
     }

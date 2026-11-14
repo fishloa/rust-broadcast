@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use broadcast_client::{
     Action, BufferEvent, BufferInput, Config, Event, Hint, Session, TimelineJumpConfig, TrackId,
 };
+use broadcast_common::stage::Timestamp;
 use support::hls_host::{self as hls, Reply};
 use support::rtsp_host::{
     self, BASE_URL, MediaFixture, Server, channel_of, interleaved, quiet_config,
@@ -15,6 +16,11 @@ use support::ts_shift::{
 };
 use transmux::JoinDecision;
 use transmux::rtp::RtpMediaKind;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 1316;
 const STEP_US: u64 = 3_200;
@@ -95,12 +101,12 @@ impl Host {
 
     fn open_with(mut config: Config, (status, headers): (u16, Vec<(String, String)>)) -> Self {
         config.record_buffer_inputs = true;
-        let mut session = Session::open(URL, config, 0).unwrap();
-        let conn = match session.poll(0).unwrap() {
+        let mut session = Session::open(URL, config, ts(0)).unwrap();
+        let conn = match session.poll(ts(0)).unwrap() {
             Action::HttpRequest { conn, .. } => conn,
             other => panic!("{other:?}"),
         };
-        session.on_response(conn, status, &headers, 0);
+        session.on_response(conn, status, &headers, ts(0));
         Self {
             session,
             conn,
@@ -122,7 +128,7 @@ impl Host {
     }
 
     fn data(&mut self, bytes: &[u8], now: u64) {
-        self.session.on_data(self.conn, bytes, now);
+        self.session.on_data(self.conn, bytes, ts(now));
         self.drain(now);
     }
 
@@ -130,7 +136,7 @@ impl Host {
         while self.next_tick <= now {
             let t = self.next_tick;
             let p = self.clock.position(t);
-            self.session.on_playback_position(t, p);
+            self.session.on_playback_position(ts(t), p);
             self.drain(t);
             self.next_tick += TICK_US;
         }
@@ -480,7 +486,7 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let first_report_after = log[hints[0]..]
         .iter()
         .find_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(*end),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
             _ => None,
         })
         .expect("a video media report on the new timeline");
@@ -496,7 +502,7 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let reports_after: Vec<u64> = log[hints[0]..]
         .iter()
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(*end),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
             _ => None,
         })
         .collect();
@@ -948,15 +954,15 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
     let mut h = Host::open_plain(Config::default());
     h.feed(&bytes, &realtime(n)[..half]);
     let first = h.events.len();
-    h.session.on_closed(h.conn, None, 1_000_000);
+    h.session.on_closed(h.conn, None, ts(1_000_000));
     let mut conn = None;
-    while let Some(a) = h.session.poll(1_000_000) {
+    while let Some(a) = h.session.poll(ts(1_000_000)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
     }
     h.conn = conn.expect("reconnect request");
-    h.session.on_response(h.conn, 200, &[], 1_000_000);
+    h.session.on_response(h.conn, 200, &[], ts(1_000_000));
     h.drain(1_000_000);
     for (i, c) in bytes.chunks(CHUNK).enumerate() {
         h.data(c, 2_000_000 + i as u64 * STEP_US);
@@ -1222,7 +1228,7 @@ fn play_rtsp_rendering(
     let mut host = rtsp_host::Host::new(BASE_URL, config, Server::new(&fix.sdp));
     host.connect();
     if let Some(r) = rendered {
-        host.session.set_rendered_tracks(host.now, r);
+        host.session.set_rendered_tracks(ts(host.now), r);
     }
     let mut trace = Trace {
         events: Vec::new(),

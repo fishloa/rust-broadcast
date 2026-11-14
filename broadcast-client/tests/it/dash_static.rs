@@ -6,8 +6,14 @@ use crate::support::dash_common;
 use crate::support::dash_sim;
 
 use broadcast_client::{Config, Event, Status};
+use broadcast_common::stage::Timestamp;
 use dash_common::loopback::{Sig, oracle};
 use dash_sim::{DashSim, SEC, assert_samples_equal_oracle};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const HOST: &str = "http://dash.test";
 
@@ -366,7 +372,7 @@ fn reconnect_restarts_a_static_presentation_from_a_fresh_mpd_after_a_discontinui
         sim.run_for(10_000);
     }
     let before = sim.events.len();
-    sim.session.reconnect(sim.world.mono());
+    sim.session.reconnect(ts(sim.world.mono()));
     sim.run_to_terminal(120 * SEC);
     assert_clean(&sim);
     let tail = &sim.events[before..];
@@ -407,7 +413,7 @@ fn close_is_terminal_and_closes_every_connection_in_flight_exactly_once() {
     }
     sim.session.close();
     let mut closed = Vec::new();
-    while let Some(a) = sim.session.poll(sim.world.mono()) {
+    while let Some(a) = sim.session.poll(ts(sim.world.mono())) {
         if let broadcast_client::Action::Close { conn } = a {
             closed.push(conn);
         }
@@ -421,10 +427,10 @@ fn close_is_terminal_and_closes_every_connection_in_flight_exactly_once() {
         closed.iter().all(|c| sim.log.iter().any(|l| l.conn == *c)),
         "only connections the session opened"
     );
-    assert!(sim.session.poll(sim.world.mono()).is_none());
+    assert!(sim.session.poll(ts(sim.world.mono())).is_none());
     assert!(sim.session.next_event().is_none());
-    sim.session.on_response(1, 200, &[], 0);
-    sim.session.on_data(1, b"x", 0);
+    sim.session.on_response(1, 200, &[], ts(0));
+    sim.session.on_data(1, b"x", ts(0));
     assert!(sim.session.next_event().is_none());
 }
 

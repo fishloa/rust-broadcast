@@ -34,7 +34,7 @@ async fn iframe_master_variant_gating() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -71,7 +71,7 @@ async fn iframe_master_variant_gating() {
     let store2 = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     feed_via_segmenter(&store2, vec![video_track_spec()], video_batches());
@@ -119,7 +119,7 @@ async fn iframe_master_variant_gating() {
     let audio_store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     feed_via_segmenter(&audio_store, vec![audio_spec], audio_batches);
@@ -147,7 +147,7 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -232,7 +232,7 @@ async fn iframe_range_requests() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -308,7 +308,7 @@ async fn iframe_part_query_rejected() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -340,7 +340,7 @@ async fn iframe_msn_with_part_query_served() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -374,7 +374,7 @@ async fn blocking_reload_timeout_is_503() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -423,7 +423,7 @@ async fn ts_hls_no_iframe() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -470,7 +470,7 @@ async fn iframe_validator_clean() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -622,7 +622,7 @@ async fn iframe_scte35_emsg_shift() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),
@@ -785,7 +785,7 @@ async fn iframe_rendition_report_uses_configured_playlist_name() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_declared_bandwidth_bps(5_000_000),

@@ -3,11 +3,17 @@
 
 use crate::common;
 
+use broadcast_common::stage::Timestamp;
 use common::checks::*;
 use common::scenario::*;
 use common::synth::{Addressing, Synth};
 use common::world::{Kind, MICROS, Sim};
 use dash_runtime::client::{DashConfig, Notice, Output};
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const START: i64 = 41 * MICROS + 120_000;
 
@@ -359,7 +365,7 @@ fn a_304_nobody_asked_for_is_an_error() {
     );
     let meta = dash_runtime::client::ResponseMeta::at(0);
     assert!(matches!(
-        c.on_mpd_unchanged(0, &meta),
+        c.on_mpd_unchanged(now(0), &meta),
         Err(dash_runtime::client::Error::MpdNotAwaited)
     ));
 }

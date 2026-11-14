@@ -20,11 +20,15 @@ use buffering_runtime::{
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = PCR_WRAP_27MHZ - 5 * PCR_HZ;
+const BASE: Ticks27 = Ticks27(PCR_WRAP_27MHZ - 5 * PCR_HZ);
 const STEP_US: u64 = 10_000;
 
 fn at(offset_us: u64) -> Ticks27 {
-    (BASE + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
+    Ticks27((BASE.0 + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+}
+
+const fn us(v: u64) -> Micros {
+    Micros(v)
 }
 
 /// The rai-3 config: start at the 300 ms floor so the cadence starves it.
@@ -59,9 +63,9 @@ impl Sim {
     fn new(cfg: ControllerConfig, burst_us: u64) -> Self {
         let mut c = BufferController::new(cfg, None).unwrap();
         let t = 1_000_000;
-        c.on_chunk(t, 1000, Some(at(0)));
-        c.on_track_media(t, AUDIO, at(0));
-        c.on_track_media(t, VIDEO, at(0));
+        c.on_chunk(us(t), 1000, Some(at(0)));
+        c.on_track_media(us(t), AUDIO, at(0));
+        c.on_track_media(us(t), VIDEO, at(0));
         Self {
             c,
             t,
@@ -77,7 +81,7 @@ impl Sim {
     }
     fn pos(&self) -> Ticks27 {
         if self.running {
-            (self.clock + (self.t - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
+            Ticks27((self.clock.0 + (self.t - self.t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ)
         } else {
             self.clock
         }
@@ -103,22 +107,22 @@ impl Sim {
         self.t += STEP_US;
         let rel = self.t - 1_000_000;
         if rel.is_multiple_of(20_000) {
-            self.c.on_chunk(self.t, 1000, Some(at(rel)));
+            self.c.on_chunk(us(self.t), 1000, Some(at(rel)));
         }
         if rel.is_multiple_of(40_000) {
-            self.c.on_track_media(self.t, VIDEO, at(rel + 900_000));
+            self.c.on_track_media(us(self.t), VIDEO, at(rel + 900_000));
         }
         if self.burst_us == 0 {
             if rel.is_multiple_of(20_000) {
-                self.c.on_track_media(self.t, AUDIO, at(rel));
+                self.c.on_track_media(us(self.t), AUDIO, at(rel));
             }
         } else if self.t >= self.next_burst {
             self.next_burst += self.period_us;
             self.audio_us += self.burst_us;
-            self.c.on_track_media(self.t, AUDIO, at(self.audio_us));
+            self.c.on_track_media(us(self.t), AUDIO, at(self.audio_us));
         }
         let p = Some(self.pos());
-        self.c.on_tick(self.t, p);
+        self.c.on_tick(us(self.t), p);
         self.drain();
     }
     fn run(&mut self, dur_us: u64) {
@@ -147,7 +151,7 @@ fn rai3_burst_audio_floor_prevents_every_stall() {
     s.run(60_000_000);
     assert!(s.pauses().len() <= 1, "pauses {:?}", s.pauses());
     let margin = cfg().policy.margin_us;
-    assert!(s.target() >= 310_000 + margin, "target {}", s.target());
+    assert!(s.target().0 >= 310_000 + margin.0, "target {}", s.target());
     let late: Vec<_> = s.pauses().into_iter().filter(|t| *t > 6_000_000).collect();
     assert!(late.is_empty(), "recurrence {late:?}");
     assert_eq!(s.c.state(), State::Playing);
@@ -164,7 +168,7 @@ fn escalation_alone_ratchets_after_one_data_arriving_stall() {
     s.run(60_000_000);
     let p = s.pauses();
     assert_eq!(p.len(), 1, "exactly one stall then none: {p:?}");
-    assert!(s.target() > 300_000, "target {}", s.target());
+    assert!(s.target() > us(300_000), "target {}", s.target());
     // the Pause carried the post-charge resume bar (1.25 x the failed target)
     let resume = s.log.iter().find_map(|(_, e)| match e {
         Event::Pause {
@@ -172,8 +176,8 @@ fn escalation_alone_ratchets_after_one_data_arriving_stall() {
         } => Some(*resume_target_us),
         _ => None,
     });
-    assert_eq!(resume, Some(375_000));
-    assert!(s.c.stats().est.stall_peak_us >= 300_000);
+    assert_eq!(resume, Some(us(375_000)));
+    assert!(s.c.stats().est.stall_peak_us >= us(300_000));
 }
 
 /// Repeated stalls keep ratcheting (a cadence one step cannot cover), each
@@ -181,7 +185,7 @@ fn escalation_alone_ratchets_after_one_data_arriving_stall() {
 #[test]
 fn escalation_ratchets_repeatedly_and_stays_under_the_cap() {
     let mut s = Sim::new(
-        cfg_with(|p| p.max_us = 1_000_000).with_track_granularity(false),
+        cfg_with(|p| p.max_us = us(1_000_000)).with_track_granularity(false),
         900_000,
     );
     // 900 ms of media every 920 ms: starves on every cycle until the
@@ -189,8 +193,8 @@ fn escalation_ratchets_repeatedly_and_stays_under_the_cap() {
     s.period_us = 920_000;
     s.run(120_000_000);
     assert!(s.pauses().len() >= 2, "{:?}", s.pauses());
-    assert!(s.target() <= 1_000_000);
-    let targets: Vec<u64> = s
+    assert!(s.target() <= us(1_000_000));
+    let targets: Vec<Micros> = s
         .log
         .iter()
         .filter_map(|(_, e)| match e {
@@ -208,10 +212,10 @@ fn escalation_ratchets_repeatedly_and_stays_under_the_cap() {
 fn granularity_decays_back_after_the_bursts_stop() {
     let mut s = Sim::new(cfg(), 310_000);
     s.run(20_000_000);
-    assert!(s.target() >= 410_000);
+    assert!(s.target() >= us(410_000));
     s.burst_us = 0; // audio now steady 20 ms
     s.run(10_000_000);
-    assert!(s.target() >= 410_000, "held during the hold");
+    assert!(s.target() >= us(410_000), "held during the hold");
     s.run(80_000_000); // hold 30 s + decay 30 s + slew
     assert_eq!(s.target(), cfg().policy.min_us);
 }
@@ -219,12 +223,12 @@ fn granularity_decays_back_after_the_bursts_stop() {
 /// `max_us` is a hard cap whatever the cadence.
 #[test]
 fn max_us_cap_still_wins() {
-    let mut s = Sim::new(cfg_with(|p| p.max_us = 700_000), 800_000);
+    let mut s = Sim::new(cfg_with(|p| p.max_us = us(700_000)), 800_000);
     let mut at_cap = false;
     for _ in 0..3_000 {
         s.step();
-        assert!(s.c.target_us() <= 700_000);
-        at_cap |= s.c.target_us() == 700_000;
+        assert!(s.c.target_us() <= us(700_000));
+        at_cap |= s.c.target_us() == us(700_000);
     }
     assert!(at_cap, "the floor should have driven the target to the cap");
     assert!(
@@ -243,8 +247,8 @@ fn steady_tracks_are_unchanged_by_the_floor() {
     off.run(40_000_000);
     assert_eq!(on.log, off.log);
     assert!(on.pauses().is_empty());
-    assert_eq!(on.c.target_us(), 300_000);
-    assert_eq!(off.c.target_us(), 300_000);
+    assert_eq!(on.c.target_us(), us(300_000));
+    assert_eq!(off.c.target_us(), us(300_000));
 }
 
 /// A global data gap is PDV, not granularity: the catch-up step after a
@@ -256,33 +260,33 @@ fn a_global_data_gap_is_not_delivery_granularity() {
     let mut c = BufferController::new(ControllerConfig::default(), None).unwrap();
     let mut t = 1_000_000u64;
     let mut rel = 0u64;
-    c.on_chunk(t, 1, Some(at(0)));
-    c.on_track_media(t, AUDIO, at(0));
+    c.on_chunk(us(t), 1, Some(at(0)));
+    c.on_track_media(us(t), AUDIO, at(0));
     for _ in 0..200 {
         t += 20_000;
         rel += 20_000;
-        c.on_chunk(t, 1, Some(at(rel)));
-        c.on_track_media(t, AUDIO, at(rel));
+        c.on_chunk(us(t), 1, Some(at(rel)));
+        c.on_track_media(us(t), AUDIO, at(rel));
     }
-    assert_eq!(c.target_us(), 300_000);
+    assert_eq!(c.target_us(), us(300_000));
     t += 1_200_000;
     rel += 1_200_000;
-    c.on_chunk(t, 1, Some(at(rel)));
-    c.on_track_media(t, AUDIO, at(rel));
-    assert!(c.target_us() < 1_000_000, "target {}", c.target_us());
+    c.on_chunk(us(t), 1, Some(at(rel)));
+    c.on_track_media(us(t), AUDIO, at(rel));
+    assert!(c.target_us() < us(1_000_000), "target {}", c.target_us());
 
     let mut c2 = BufferController::new(ControllerConfig::default(), None).unwrap();
     let mut t2 = 1_000_000u64;
-    c2.on_chunk(t2, 1, Some(at(0)));
-    c2.on_track_media(t2, AUDIO, at(0));
+    c2.on_chunk(us(t2), 1, Some(at(0)));
+    c2.on_track_media(us(t2), AUDIO, at(0));
     for i in 1..=12u64 {
         t2 += 100_000;
-        c2.on_chunk(t2, 1, Some(at(i * 100_000)));
+        c2.on_chunk(us(t2), 1, Some(at(i * 100_000)));
     }
-    c2.on_track_media(t2, AUDIO, at(1_200_000));
+    c2.on_track_media(us(t2), AUDIO, at(1_200_000));
     // the delivery is folded in at the chunk boundary that ends it
-    c2.on_chunk(t2, 1, Some(at(1_200_000)));
-    assert!(c2.target_us() >= 1_300_000, "target {}", c2.target_us());
+    c2.on_chunk(us(t2), 1, Some(at(1_200_000)));
+    assert!(c2.target_us() >= us(1_300_000), "target {}", c2.target_us());
 }
 
 /// A forward jump far beyond the arrival interval is not granularity.
@@ -291,17 +295,17 @@ fn a_global_data_gap_is_not_delivery_granularity() {
 fn a_forward_jump_is_not_delivery_granularity() {
     let mut c = BufferController::new(ControllerConfig::default(), None).unwrap();
     let mut t = 1_000_000u64;
-    c.on_chunk(t, 1, Some(at(0)));
-    c.on_track_media(t, AUDIO, at(0));
+    c.on_chunk(us(t), 1, Some(at(0)));
+    c.on_track_media(us(t), AUDIO, at(0));
     for i in 1..=10u64 {
         t += 20_000;
-        c.on_chunk(t, 1, Some(at(i * 20_000)));
-        c.on_track_media(t, AUDIO, at(i * 20_000));
+        c.on_chunk(us(t), 1, Some(at(i * 20_000)));
+        c.on_track_media(us(t), AUDIO, at(i * 20_000));
     }
     t += 20_000;
-    c.on_chunk(t, 1, Some(at(220_000)));
-    c.on_track_media(t, AUDIO, at(220_000 + 2_500_000));
-    assert_eq!(c.target_us(), 300_000);
+    c.on_chunk(us(t), 1, Some(at(220_000)));
+    c.on_track_media(us(t), AUDIO, at(220_000 + 2_500_000));
+    assert_eq!(c.target_us(), us(300_000));
 }
 
 /// The config knobs validate.
@@ -309,11 +313,11 @@ fn a_forward_jump_is_not_delivery_granularity() {
 fn granularity_config_validates() {
     let base = ControllerConfig::default();
     assert!(base.track_granularity);
-    assert_eq!(base.granularity_hold_us, 30_000_000);
-    assert_eq!(base.granularity_decay_us, 30_000_000);
+    assert_eq!(base.granularity_hold_us, us(30_000_000));
+    assert_eq!(base.granularity_decay_us, us(30_000_000));
     assert_eq!(
-        base.with_granularity_memory_us(1, 0),
+        base.with_granularity_memory_us(us(1), us(0)),
         Err(Error::InvalidConfig(ConfigField::GranularityDecay))
     );
-    assert!(base.with_granularity_memory_us(0, 1).is_ok());
+    assert!(base.with_granularity_memory_us(us(0), us(1)).is_ok());
 }

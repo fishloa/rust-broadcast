@@ -2995,7 +2995,7 @@ mod tests {
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(64),
         )
         .with_name("ingest-test")
@@ -3147,7 +3147,7 @@ mod tests {
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(2.0)
-                .with_part_target_ms(250)
+                .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(64),
         )
         .with_name("france-tnt")

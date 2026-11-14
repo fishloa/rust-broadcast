@@ -41,7 +41,7 @@ fn cold_route() -> (Arc<RouteHandle>, transmux::ll_hls::LlHlsSegmenter) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let seg = feed_open_segment(
@@ -178,7 +178,7 @@ fn unannounced_route() -> Arc<RouteHandle> {
     Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ))
 }
@@ -263,7 +263,7 @@ async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
         .with_hold_cold_playlist(false),
@@ -289,7 +289,7 @@ fn fixture_config(bind: std::net::SocketAddr, loop_file: bool) -> Config {
     Config {
         bind: bind.to_string(),
         target_duration_secs: FIXTURE_TARGET_SECS,
-        part_target_ms: FIXTURE_PART_TARGET_MS,
+        part_target: Duration::from_millis(u64::from(FIXTURE_PART_TARGET_MS)),
         window_segments: FIXTURE_WINDOW_SEGMENTS,
         routes: vec![Route {
             name: "cam".to_string(),

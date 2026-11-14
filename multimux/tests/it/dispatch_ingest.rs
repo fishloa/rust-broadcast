@@ -113,7 +113,7 @@ fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
     Config {
         bind: bind.to_string(),
         target_duration_secs: 0.5,
-        part_target_ms: 100,
+        part_target: Duration::from_millis(100),
         window_segments: 8,
         routes: vec![Route {
             name: "cam".to_string(),

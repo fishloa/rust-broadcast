@@ -4,7 +4,7 @@
 //! The real traces (`tests/it/real_traces.rs`) are the old no-burst server and
 //! stay as they are; a real post-fix trace is to be added by zenith-tv.
 use crate::support::*;
-use buffering_runtime::{Event, State};
+use buffering_runtime::{Event, Micros, State};
 
 const MAX: u64 = 3_000_000;
 
@@ -61,24 +61,24 @@ fn burst_with_the_default_initial_has_no_freeze_and_restores_the_lead() {
     // (b) the stall memory records the gap depth; the burst's near-zero PDV is not baseline
     let st = r.ctl.stats();
     assert!(
-        st.est.stall_peak_us >= 1_300_000,
+        st.est.stall_peak_us >= Micros(1_300_000),
         "peak {}",
         st.est.stall_peak_us
     );
     assert!(
-        st.est.baseline_us <= 50_000,
+        st.est.baseline_us <= Micros(50_000),
         "baseline {}",
         st.est.baseline_us
     );
     // (c) the target rose once (k2 x depth), held, and did not ratchet on the repeat
     let max_t = *r.targets.iter().max().unwrap();
     assert!(
-        (1_600_000..=1_800_000).contains(&max_t),
+        (Micros(1_600_000)..=Micros(1_800_000)).contains(&max_t),
         "max target {max_t}"
     );
     let n = r.targets.len();
     assert!(
-        r.targets[n * 45 / 60] >= 1_600_000,
+        r.targets[n * 45 / 60] >= Micros(1_600_000),
         "still held 17 s after the second gap"
     );
     assert_eq!(r.ctl.stats().stalls, 0);
@@ -96,17 +96,17 @@ fn burst_with_a_short_initial_freezes_once_for_a_bounded_time() {
             "initial {initial}: only the first gap stalls: {p:?}"
         );
         let (a, b) = (p[0].0, p[0].1.expect("resumed"));
-        let freeze = b - a;
+        let freeze = Micros(b - a);
         let gap = 1_400_000u64;
         // starved from `initial` into the gap until the burst: gap - initial. After the burst the
         // lead is `gap` (the backlog) and the resume bar is 1.25 x depth: 0.25 x gap more real time.
-        let bound = (gap - initial) + gap / 4 + 250_000;
+        let bound = Micros((gap - initial) + gap / 4 + 250_000);
         assert!(
             freeze <= bound,
             "initial {initial}: freeze {freeze} > bound {bound}"
         );
         assert!(
-            freeze >= gap - initial,
+            freeze >= Micros(gap - initial),
             "cannot resume before the data is back"
         );
         // the repeat 20 s later is survived by the post-resume lead: no second pause, ever
@@ -115,17 +115,17 @@ fn burst_with_a_short_initial_freezes_once_for_a_bounded_time() {
         assert_eq!(r.ctl.state(), State::Playing);
         for (_, e) in &r.events {
             if let Event::Resume { lead_us, .. } = e {
-                assert!(*lead_us <= MAX + 40_000);
+                assert!(*lead_us <= Micros(MAX + 40_000));
             }
         }
         let st = r.ctl.stats();
-        assert!(st.est.baseline_us <= 50_000 && st.est.stall_peak_us >= 1_300_000);
+        assert!(st.est.baseline_us <= Micros(50_000) && st.est.stall_peak_us >= Micros(1_300_000));
     }
 }
 
 /// Freeze (pause -> resume), second-gap minimum lead and resume lead of the burst
 /// scenario for a given `after_rebuffer_q8`.
-fn burst_freeze(initial: u64, after_q8: u16) -> (u64, i64, i64) {
+fn burst_freeze(initial: u64, after_q8: u16) -> (Micros, i64, i64) {
     let mut o = opts(initial);
     o.cfg.policy.after_rebuffer_q8 = after_q8;
     let (r, w) = windows_min_lead(&burst_stream(), &o);
@@ -136,12 +136,12 @@ fn burst_freeze(initial: u64, after_q8: u16) -> (u64, i64, i64) {
         .events
         .iter()
         .find_map(|(_, e)| match e {
-            Event::Resume { lead_us, .. } => Some(i64::try_from(*lead_us).unwrap()),
+            Event::Resume { lead_us, .. } => Some(i64::try_from(lead_us.0).unwrap()),
             _ => None,
         })
         .unwrap();
     (
-        p[0].1.expect("resumed") - p[0].0,
+        Micros(p[0].1.expect("resumed") - p[0].0),
         w[1].unwrap(),
         resume_lead,
     )
@@ -170,7 +170,7 @@ fn after_rebuffer_default_is_1_25_and_trims_the_burst_freeze() {
         );
         assert_eq!(default, new, "the default is the 1.25 run");
         assert!(
-            new.0 + 250_000 <= old.0,
+            Micros(new.0.0 + 250_000) <= old.0,
             "initial {initial}: 1.25 freeze {} not >= 250 ms under 1.5 freeze {}",
             new.0,
             old.0

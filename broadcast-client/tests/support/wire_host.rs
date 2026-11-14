@@ -5,6 +5,12 @@ use std::time::{Duration, Instant};
 use broadcast_client::{Action, Config, Event, Session, UdpMode};
 
 use super::replay::{Replay, TimedEvent};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const READ_TIMEOUT: Duration = Duration::from_millis(2);
 const MAX_DATAGRAM: usize = 2048;
@@ -23,7 +29,7 @@ pub struct WireHost {
 impl WireHost {
     pub fn open(url: &str, config: Config) -> Self {
         Self {
-            session: Session::open(url, config, 0).unwrap(),
+            session: Session::open(url, config, ts(0)).unwrap(),
             socket: None,
             conn: 0,
             start: Instant::now(),
@@ -40,7 +46,7 @@ impl WireHost {
 
     pub fn pump(&mut self) {
         let now = self.now_us();
-        while let Some(a) = self.session.poll(now) {
+        while let Some(a) = self.session.poll(ts(now)) {
             match a {
                 Action::UdpBind {
                     conn,
@@ -88,7 +94,7 @@ impl WireHost {
         match socket.recv(&mut buf) {
             Ok(n) => {
                 let now = self.now_us();
-                self.session.on_data(self.conn, &buf[..n], now);
+                self.session.on_data(self.conn, &buf[..n], ts(now));
             }
             Err(e) if matches!(e.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
             Err(_) => {}

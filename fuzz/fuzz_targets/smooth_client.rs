@@ -1,6 +1,7 @@
 #![no_main]
 
 use std::sync::OnceLock;
+use broadcast_common::stage::Timestamp;
 
 use libfuzzer_sys::fuzz_target;
 use smooth_runtime::{Action, FetchFailure, SmoothClient, SmoothClientConfig};
@@ -58,9 +59,9 @@ fuzz_target!(|data: &[u8]| {
     let mut client = SmoothClient::new(SmoothClientConfig::default().with_manifest_url(url));
     let mut now = 0u64;
     for _ in 0..STEP_BUDGET {
-        while let Some(action) = client.poll(now) {
+        while let Some(action) = client.poll(Timestamp::from_micros(now)) {
             match action {
-                Action::FetchManifest { id, .. } => client.on_manifest(now, id, &manifest),
+                Action::FetchManifest { id, .. } => client.on_manifest(Timestamp::from_micros(now), id, &manifest),
                 Action::FetchFragment { id, stream, .. } => {
                     let base = if stream.0 == 0 {
                         &corpus.video
@@ -68,10 +69,10 @@ fuzz_target!(|data: &[u8]| {
                         &corpus.audio
                     };
                     match (mode >> BODY_SHIFT) % BODY_MODES {
-                        0 => client.on_fragment(now, id, base),
-                        1 => client.on_fragment(now, id, noise),
+                        0 => client.on_fragment(Timestamp::from_micros(now), id, base),
+                        1 => client.on_fragment(Timestamp::from_micros(now), id, noise),
                         2 => client.on_failure(
-                            now,
+                            Timestamp::from_micros(now),
                             id,
                             FetchFailure {
                                 status: Some(NOT_FOUND),
@@ -80,7 +81,7 @@ fuzz_target!(|data: &[u8]| {
                         ),
                         _ => {
                             let keep = noise.first().map_or(0, |&b| usize::from(b)).min(base.len());
-                            client.on_fragment(now, id, &base[..keep]);
+                            client.on_fragment(Timestamp::from_micros(now), id, &base[..keep]);
                         }
                     }
                 }

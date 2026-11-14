@@ -5,12 +5,18 @@ use std::sync::OnceLock;
 
 use broadcast_auth::{Credentials as AuthCredentials, Verifier};
 use broadcast_client::{Config, Credentials, Event, Status};
+use broadcast_common::stage::Timestamp;
 use sdp_types::{Media, MediaType, TransportProto};
 use support::rtsp_host::{
     BASE_URL, Host, MediaFixture, PLAY, SEC, SETUP, Server, SetupReply, connects, interleaved,
     quiet_config, samples_of,
 };
 use transmux::rtp::RtpMediaKind;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const MS: u64 = 1_000;
 const NO_SLASH_URL: &str = "rtsp://cam.test/axis-media/media.amp";
@@ -200,7 +206,7 @@ fn only_unsupported_codecs_are_fatal_not_a_retry_loop() {
     assert!(events.iter().any(|e| matches!(
         e,
         Event::Error {
-            kind: broadcast_client::ErrorKind::UnsupportedCodec { fourcc },
+            kind: broadcast_client::ErrorKind::UnsupportedCodec {fourcc },
             fatal: true,
         } if fourcc == "PCMU"
     )));
@@ -310,7 +316,10 @@ fn keepalive_challenges_with_rotating_nonces_never_exhaust_the_replay_budget() {
 #[test]
 fn a_zero_backoff_entry_never_opens_two_connections_at_once() {
     let mut config = Config::default();
-    config.ts_http.backoff_ms = vec![0, 0, 0];
+    config.ts_http.backoff = broadcast_common::backoff::BackoffSteps {
+        steps: vec![std::time::Duration::ZERO; 3],
+        cap: std::time::Duration::from_secs(10),
+    };
     let mut server = Server::new(&fixture().sdp);
     server.describe_status = Some(500);
     let host = connected(BASE_URL, config, server);
@@ -335,7 +344,7 @@ fn a_connection_that_played_briefly_waits_out_the_minimum_reconnect_interval() {
     let played_for = 100 * MS;
     host.now = played_for;
     let conn = host.conn.expect("live connection");
-    host.session.on_closed(conn, None, host.now);
+    host.session.on_closed(conn, None, ts(host.now));
     host.drain();
     assert_eq!(connects(&host.actions).len(), 1, "reconnect is not instant");
     host.advance_to(999 * MS);

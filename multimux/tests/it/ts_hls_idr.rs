@@ -102,7 +102,7 @@ fn config(bind: SocketAddr, route: Route) -> Config {
     Config {
         bind: bind.to_string(),
         target_duration_secs: 1.0,
-        part_target_ms: 200,
+        part_target: Duration::from_millis(200),
         window_segments: 32,
         routes: vec![route],
         ..Config::default()

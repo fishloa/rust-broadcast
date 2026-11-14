@@ -312,7 +312,7 @@ fn full_flow_master_to_samples() {
                 let bytes = read_ts_fixture(name);
                 client.on_resource(id, &bytes).expect("resource");
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             None => break,
             Some(other) => panic!("unexpected action {other:?}"),
         }

@@ -2,8 +2,13 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use broadcast_common::stage::Timestamp;
 use mpeg_ts::ts::{AdaptationField, TsPacket};
 
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 pub const TS_PACKET: usize = 188;
 const PCR_BASE_MODULUS_27MHZ: u64 = (1 << 33) * 300;
 const PCR_HZ: u64 = 27_000_000;
@@ -106,9 +111,9 @@ impl Replay {
 }
 
 pub fn open_live(config: Config) -> (Session, u32) {
-    let mut s = Session::open("http://h/live.ts", config, 0).unwrap();
+    let mut s = Session::open("http://h/live.ts", config, ts(0)).unwrap();
     let mut conn = None;
-    while let Some(a) = s.poll(0) {
+    while let Some(a) = s.poll(ts(0)) {
         if let Action::HttpRequest { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -118,7 +123,7 @@ pub fn open_live(config: Config) -> (Session, u32) {
         c,
         200,
         &[("Content-Type".to_string(), "video/MP2T".to_string())],
-        0,
+        ts(0),
     );
     (s, c)
 }
@@ -178,9 +183,9 @@ pub fn replay_with_host(
                     playout: &mut Option<Playout>,
                     events: &mut Vec<TimedEvent>,
                     stats: &mut HostStats| {
-        while let Some(a) = s.poll(now) {
+        while let Some(a) = s.poll(ts(now)) {
             if let Action::WakeAt(t) = a {
-                *wake = Some(t);
+                *wake = Some(t.as_micros());
             }
         }
         while let Some(event) = s.next_event() {
@@ -218,14 +223,14 @@ pub fn replay_with_host(
                 }
                 Event::Sample { track, sample, .. } => {
                     seen += 1;
-                    if let (Some(p), Some(pts), Some((ts, video))) = (
+                    if let (Some(p), Some(pts), Some((timescale, video))) = (
                         playout.as_ref(),
                         sample.pts,
                         timescales.get(&format!("{track:?}")),
                     ) {
                         stats.delivered_after_start += 1;
                         stats.first_sample_after_start_us.get_or_insert(now);
-                        let pts27 = i128::from(pts) * PTS_HZ_27MHZ / i128::from(*ts);
+                        let pts27 = i128::from(pts) * PTS_HZ_27MHZ / i128::from(*timescale);
                         let late =
                             (i128::from(p.position(now)) - pts27) * MICROS_PER_SEC / PTS_HZ_27MHZ;
                         if late > 0 {
@@ -265,9 +270,9 @@ pub fn replay_with_host(
             );
         } else if t == next_tick && next_tick <= next_chunk_at {
             if let Some(p) = playout.as_ref() {
-                s.on_playback_position(now, Some(p.position(now)));
+                s.on_playback_position(ts(now), Some(p.position(now)));
             } else {
-                s.on_playback_position(now, None);
+                s.on_playback_position(ts(now), None);
             }
             step(
                 &mut s,
@@ -280,7 +285,7 @@ pub fn replay_with_host(
             next_tick = next_tick.saturating_add(tick_us.unwrap_or(u64::MAX));
         } else {
             let part = chunks.next().unwrap();
-            s.on_data(c, part, now);
+            s.on_data(c, part, ts(now));
             step(
                 &mut s,
                 now,
@@ -294,7 +299,7 @@ pub fn replay_with_host(
             }
         }
     }
-    s.on_closed(c, None, now);
+    s.on_closed(c, None, ts(now));
     step(
         &mut s,
         now,

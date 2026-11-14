@@ -512,7 +512,7 @@ mod driver_progress_tests {
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let mut published = HashSet::new();
@@ -545,7 +545,7 @@ mod driver_progress_tests {
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let mut published = HashSet::new();
@@ -585,7 +585,7 @@ mod driver_progress_tests {
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let mut published = HashSet::new();
@@ -677,7 +677,7 @@ mod driver_progress_tests {
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(4.0)
-                .with_part_target_ms(500)
+                .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let mut published = HashSet::new();
@@ -748,7 +748,7 @@ mod advance_route_tests {
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         );
         let mut driver = IngestDriver::new(

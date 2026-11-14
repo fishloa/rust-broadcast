@@ -43,7 +43,7 @@ fn origin_fmp4() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(7)
         .build()
         .expect("origin");
@@ -634,7 +634,7 @@ fn iframe_audio_only_not_found() {
     let origin = HlsOrigin::builder(trunk)
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(4))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(7)
         .build()
         .expect("origin");

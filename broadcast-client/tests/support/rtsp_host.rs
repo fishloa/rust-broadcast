@@ -2,12 +2,18 @@ use std::cell::{Cell, RefCell};
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_client::{Action, Config, Event, Session};
+use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Serialize, Unpackage};
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_types::{Message, StatusCode, Version, headers};
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::{RtpPacketiser, Sample, SenderReport, TsDemux};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 pub const SEC: u64 = 1_000_000;
 pub const BASE_URL: &str = "rtsp://cam.test/live/";
@@ -443,7 +449,7 @@ pub struct Host {
 
 impl Host {
     pub fn new(url: &str, config: Config, server: Server) -> Self {
-        let session = Session::open(url, config, 0).expect("open rtsp session");
+        let session = Session::open(url, config, ts(0)).expect("open rtsp session");
         Self {
             session,
             server,
@@ -460,7 +466,7 @@ impl Host {
 
     pub fn drain(&mut self) {
         let mut steps = 0usize;
-        while let Some(action) = self.session.poll(self.now) {
+        while let Some(action) = self.session.poll(ts(self.now)) {
             steps += 1;
             assert!(
                 steps < RUNAWAY_LIMIT,
@@ -501,14 +507,14 @@ impl Host {
         self.recorded.extend_from_slice(bytes);
         let conn = self.conn.expect("a live connection");
         match self.chunking.clone() {
-            Chunking::Whole => self.session.on_data(conn, bytes, self.now),
+            Chunking::Whole => self.session.on_data(conn, bytes, ts(self.now)),
             Chunking::Cycle(sizes) => {
                 let mut rest = bytes;
                 while !rest.is_empty() {
                     let size = sizes[self.cycle_pos % sizes.len()].max(1).min(rest.len());
                     self.cycle_pos += 1;
                     let (head, tail) = rest.split_at(size);
-                    self.session.on_data(conn, head, self.now);
+                    self.session.on_data(conn, head, ts(self.now));
                     rest = tail;
                 }
             }
@@ -564,7 +570,7 @@ pub fn wakes(actions: &[Action]) -> Vec<u64> {
     actions
         .iter()
         .filter_map(|a| match a {
-            Action::WakeAt(t) => Some(*t),
+            Action::WakeAt(t) => Some(t.as_micros()),
             _ => None,
         })
         .collect()
@@ -582,8 +588,8 @@ pub fn samples_of(events: &[Event]) -> Vec<(u32, Sample)> {
 
 pub fn quiet_config() -> Config {
     let mut config = Config::default();
-    config.ts_http.start_timeout_ms = 24 * 3_600_000;
-    config.ts_http.stall_notice_ms = 24 * 3_600_000;
-    config.ts_http.stall_reconnect_ms = 48 * 3_600_000;
+    config.ts_http.start_timeout = std::time::Duration::from_secs(24 * 3_600);
+    config.ts_http.stall_notice = std::time::Duration::from_secs(24 * 3_600);
+    config.ts_http.stall_reconnect = std::time::Duration::from_secs(48 * 3_600);
     config
 }

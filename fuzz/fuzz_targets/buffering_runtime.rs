@@ -1,6 +1,8 @@
 #![no_main]
 
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, StallMemorySnapshot};
+use buffering_runtime::{
+    BufferController, ControllerConfig, Event, Hint, Micros, StallMemorySnapshot, Ticks27,
+};
 use libfuzzer_sys::fuzz_target;
 
 // Arbitrary operation stream against the controller: must never panic, the
@@ -10,7 +12,7 @@ fuzz_target!(|data: &[u8]| {
     let cfg = ControllerConfig::default();
     let (min, max) = (cfg.policy.min_us, cfg.policy.max_us);
     let seed = (data.first().copied().unwrap_or(0) & 1 == 1)
-        .then(|| StallMemorySnapshot::new(1_000_000, 0));
+        .then(|| StallMemorySnapshot::new(Micros(1_000_000), Micros(0)));
     let Ok(mut c) = BufferController::new(cfg, seed) else {
         return;
     };
@@ -27,16 +29,16 @@ fuzz_target!(|data: &[u8]| {
             wide
         };
         match op[0] % 10 {
-            7 => c.on_track_media(now, u32::from(op[1] >> 1) % 20, wide),
+            7 => c.on_track_media(Micros(now), u32::from(op[1] >> 1) % 20, Ticks27(wide)),
             8 => c.register_track(u32::from(op[1] >> 1) % 20),
             9 => c.unregister_track(u32::from(op[1] >> 1) % 20),
-            0 => c.on_chunk(now, b as u32, Some(wide)),
-            1 => c.on_chunk(now, b as u32, None),
-            2 => c.on_media(now, wide),
-            3 => c.on_tick(now, Some(wide)),
-            4 => c.on_tick(now, None),
+            0 => c.on_chunk(Micros(now), b as u32, Some(Ticks27(wide))),
+            1 => c.on_chunk(Micros(now), b as u32, None),
+            2 => c.on_media(Micros(now), Ticks27(wide)),
+            3 => c.on_tick(Micros(now), Some(Ticks27(wide))),
+            4 => c.on_tick(Micros(now), None),
             5 => c.on_hint(
-                now,
+                Micros(now),
                 Hint::from_code(u32::from(op[1] >> 1) % 8).unwrap_or(Hint::SourceEnded),
             ),
             _ => {

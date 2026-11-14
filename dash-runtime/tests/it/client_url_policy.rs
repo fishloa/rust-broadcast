@@ -3,11 +3,17 @@
 
 use crate::common;
 
+use broadcast_common::stage::Timestamp;
 use common::loopback::{Drive, Fault, FaultKind, Origin, drive, mpd_text};
 use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
 };
 use dash_runtime::error::Unsupported;
+
+/// The test's microsecond clock as the client's `now`.
+fn now(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const DOC: &str = "http://dash.test/live/manifest.mpd";
 const AST_UNIX_S: u64 = 1_767_225_600;
@@ -59,20 +65,25 @@ impl Live {
                 .with_dash(dash)
                 .with_limits(PullLimits::default()),
         );
-        let now = 0;
-        client.set_wall_clock(now, (AST_UNIX_S + 60) * SECOND);
-        let Some(Action::FetchMpd { url, .. }) = client.poll(now) else {
+        let now_us = 0;
+        client.set_wall_clock(now(now_us), (AST_UNIX_S + 60) * SECOND);
+        let Some(Action::FetchMpd { url, .. }) = client.poll(now(now_us)) else {
             panic!("first action is the MPD")
         };
         assert_eq!(url, DOC);
-        client.on_mpd_with(now, mpd.as_bytes(), meta).unwrap();
-        Self { client, now }
+        client
+            .on_mpd_with(now(now_us), mpd.as_bytes(), meta)
+            .unwrap();
+        Self {
+            client,
+            now: now_us,
+        }
     }
 
     fn actions_until_next_mpd(&mut self) -> (Vec<Action>, Option<String>) {
         let mut seen = Vec::new();
         for _ in 0..20 {
-            while let Some(a) = self.client.poll(self.now) {
+            while let Some(a) = self.client.poll(now(self.now)) {
                 if let Action::FetchMpd { url, .. } = &a {
                     let url = url.clone();
                     seen.push(a);
@@ -87,7 +98,7 @@ impl Live {
 
     fn refresh_with(&mut self, mpd: &str, meta: &ResponseMeta<'_>) {
         self.client
-            .on_mpd_with(self.now, mpd.as_bytes(), meta)
+            .on_mpd_with(now(self.now), mpd.as_bytes(), meta)
             .unwrap();
     }
 }
@@ -241,12 +252,12 @@ fn a_foreign_final_url_of_a_static_mpd_is_not_adopted_when_pinned() {
             .with_dash(pinned())
             .with_limits(PullLimits::default()),
     );
-    let Some(Action::FetchMpd { .. }) = client.poll(0) else {
+    let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };
     let meta = ResponseMeta::at(0).with_final_url("http://evil.test/live/manifest.mpd");
-    client.on_mpd_with(0, mpd.as_bytes(), &meta).unwrap();
-    let urls: Vec<String> = std::iter::from_fn(|| client.poll(0))
+    client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
+    let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
         .map(|a| a.url().to_owned())
         .collect();
     assert!(!urls.is_empty());
@@ -263,11 +274,11 @@ fn static_urls_and_outcome(base: &str, media: &str) -> (Vec<String>, Vec<DropCau
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    let Some(Action::FetchMpd { .. }) = client.poll(0) else {
+    let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };
-    client.on_mpd(0, mpd.as_bytes()).unwrap();
-    let urls: Vec<String> = std::iter::from_fn(|| client.poll(0))
+    client.on_mpd(now(0), mpd.as_bytes()).unwrap();
+    let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
         .map(|a| a.url().to_owned())
         .collect();
     let mut drops = Vec::new();
@@ -314,11 +325,11 @@ fn a_data_url_init_is_never_requested() {
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    let Some(Action::FetchMpd { .. }) = client.poll(0) else {
+    let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };
-    client.on_mpd(0, mpd.as_bytes()).unwrap();
-    let urls: Vec<String> = std::iter::from_fn(|| client.poll(0))
+    client.on_mpd(now(0), mpd.as_bytes()).unwrap();
+    let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
         .map(|a| a.url().to_owned())
         .collect();
     assert!(urls.iter().all(|u| !u.starts_with("data:")), "{urls:?}");

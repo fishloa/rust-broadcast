@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `PART-TARGET`, `PART-HOLD-BACK`, every `EXTINF`/part `DURATION` and the closed-segment duration come from `DecimalSeconds::from_duration`/`from_duration_scaled` instead of a fallible construction whose invariant the caller had to prove with an `expect`; an origin no longer has a panicking path in its playlist rendering. The window keeps each segment's `Duration` and halves it once, for rendering, rather than storing rounded seconds.
+- BREAKING: `HlsOriginBuilder::with_low_latency` takes the part target as a `Duration` instead of milliseconds (`with_low_latency(Duration::from_millis(500))`), and `HlsOrigin::set_part_target_ms(u32)` is `HlsOrigin::set_part_target(Duration)`: the origin keeps the target as a `Duration` and renders `PART-TARGET`/`PART-HOLD-BACK` from it. A zero target is still `HlsOriginBuildError::ZeroPartTarget`.
+- BREAKING: the non-blocking-reload hint is `Action::Wait(Duration)` instead of `Action::WaitMs(u64)`, so every span in the API is one type.
+- BREAKING: `HlsClient::poll_timeout` takes and returns `broadcast_common::stage::Timestamp` instead of `std::time::Instant`, so the client is driven from the same caller-supplied clock as `broadcast-client`'s sources (and from a recorded clock in a test); it is no longer `std`-only.
+
 ### Removed
 - Removed the unused `axum` dev-dependency.
 

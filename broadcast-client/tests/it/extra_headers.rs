@@ -1,8 +1,14 @@
 use crate::support;
 
 use broadcast_client::{Config, Credentials, Error, Session};
+use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::ts_probe::{self, *};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CDN_SEG_URL: &str = "http://cdn.test/seg/index1.ts";
 const RESERVED_SPELLINGS: [&str; 14] = [
@@ -35,7 +41,7 @@ fn with_headers(headers: Vec<(String, String)>) -> Config {
 }
 
 fn open_err(headers: Vec<(String, String)>) -> Error {
-    Session::open(TS_URL, with_headers(headers), 0).expect_err("open must fail")
+    Session::open(TS_URL, with_headers(headers), ts(0)).expect_err("open must fail")
 }
 
 fn hls_with_headers() -> Config {

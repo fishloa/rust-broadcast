@@ -76,7 +76,7 @@ fn drive_to_end(client: &mut HlsClient) -> Vec<Output> {
                     .on_resource(id, &bytes)
                     .unwrap_or_else(|e| panic!("demux fixture resource {name}: {e}"));
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             Some(other) => panic!("unexpected action for this VOD fixture: {other:?}"),
             None => break,
         }
@@ -336,7 +336,7 @@ fn drive_in_memory(playlist: &str, segments: &[(&str, Vec<u8>)]) -> Vec<Output> 
                     .1;
                 client.on_resource(id, bytes).expect("segment demuxes");
             }
-            Some(Action::WaitMs(_)) => {}
+            Some(Action::Wait(_)) => {}
             Some(other) => panic!("unexpected action {other:?}"),
             None => break,
         }

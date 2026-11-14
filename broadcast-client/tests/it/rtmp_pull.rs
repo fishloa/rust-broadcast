@@ -41,7 +41,13 @@ fn rtmp_pull_matches_direct_flv_demux() {
     assert!(st.contains(&Status::Ended));
 }
 
+use broadcast_common::stage::Timestamp;
 use rtmp_runtime::amf0::Amf0Value;
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 #[test]
 fn rtmp_url_splits_app_stream_and_query() {
@@ -87,7 +93,7 @@ fn rtmp_url_without_stream_is_invalid() {
     ] {
         assert!(
             matches!(
-                Session::open(bad, rtmp_config(), 0),
+                Session::open(bad, rtmp_config(), ts(0)),
                 Err(Error::InvalidUrl(_))
             ),
             "{bad}"
@@ -134,12 +140,12 @@ fn rtmps_requests_tls_and_carries_identity() {
     let mut cfg = Config::default();
     cfg.client_identity = Some(ClientIdentity::handle(handle));
     cfg.client_identity_scope = ClientIdentityScope::SessionOrigin;
-    let mut s = Session::open("rtmps://origin.test/live/cam1", cfg, 0).unwrap();
+    let mut s = Session::open("rtmps://origin.test/live/cam1", cfg, ts(0)).unwrap();
     let mut tls = false;
     let mut port = 0u16;
     let mut host = String::new();
     let mut ident = None;
-    while let Some(a) = s.poll(0) {
+    while let Some(a) = s.poll(ts(0)) {
         if let broadcast_client::Action::TcpConnect {
             tls: t,
             port: p,
@@ -159,9 +165,9 @@ fn rtmps_requests_tls_and_carries_identity() {
     assert_eq!(host, "origin.test");
     assert_eq!(ident, Some(handle));
     // plain rtmp never carries the identity
-    let mut s2 = Session::open("rtmp://origin.test/live/cam1", Config::default(), 0).unwrap();
+    let mut s2 = Session::open("rtmp://origin.test/live/cam1", Config::default(), ts(0)).unwrap();
     let mut ident2 = None;
-    while let Some(a) = s2.poll(0) {
+    while let Some(a) = s2.poll(ts(0)) {
         if let broadcast_client::Action::TcpConnect { identity, .. } = a {
             ident2 = identity.as_ref().and_then(|i| i.handle_id());
         }

@@ -23,9 +23,9 @@ const MEDIA_RANGE_MIN_LEN: u64 = 1_000;
 
 fn config() -> Config {
     let mut config = Config::default();
-    config.segment_inactivity_timeout_us = INACTIVITY_US;
-    config.request_timeout_us = 30 * SEC;
-    config.segment_timeout_us = 60 * SEC;
+    config.segment_inactivity_timeout = std::time::Duration::from_micros(INACTIVITY_US);
+    config.request_timeout = std::time::Duration::from_secs(30);
+    config.segment_timeout = std::time::Duration::from_secs(60);
     config
 }
 
@@ -387,7 +387,7 @@ fn a_manifest_request_is_exempt_and_only_the_request_timeout_bounds_it() {
         }
     }
     let mut sim = sim(MPD, Box::new(HangMpd));
-    sim.run_for(config().request_timeout_us - SEC);
+    sim.run_for(u64::try_from(config().request_timeout.as_micros()).expect("fits") - SEC);
     assert!(
         sim.closes.is_empty(),
         "silent for longer than the inactivity timeout"

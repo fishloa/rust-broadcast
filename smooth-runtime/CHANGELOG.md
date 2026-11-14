@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- BREAKING: every `now` the client engine takes is a `broadcast_common::stage::Timestamp` (`poll`, `on_manifest`, `on_fragment`, `on_failure`), the clock type the server engine already takes.
+- BREAKING: `SmoothConfig`'s `backoff_ms: Vec<u64>` and `backoff_cap_ms: u64` are one `backoff: broadcast_common::backoff::BackoffSteps` (`with_backoff`), and `refresh_min_us`/`refresh_max_us` are `refresh_min`/`refresh_max: Duration` (`with_refresh_min`/`with_refresh_max`); `DEFAULT_BACKOFF_MS`/`DEFAULT_BACKOFF_CAP_MS` become `DEFAULT_BACKOFF_STEPS`/`DEFAULT_BACKOFF_CAP` and `DEFAULT_REFRESH_MIN_US`/`DEFAULT_REFRESH_MAX_US` become `DEFAULT_REFRESH_MIN`/`DEFAULT_REFRESH_MAX`.
 - BREAKING: `SmoothConfig` is `SmoothClientConfig`, matching `RtspClientConfig`/`RtmpClientConfig`/`HlsClientConfig`. Migration: every `SmoothConfig` becomes `SmoothClientConfig` with the same fields and `with_*` setters.
 - BREAKING: `SmoothClient::new(manifest_url, config)` is `SmoothClient::new(config)`: the manifest URL is `SmoothClientConfig::manifest_url`, set with the new `SmoothClientConfig::new(manifest_url: impl Into<String>)` (the same shape as `HlsClientConfig::new`/`DashClientConfig::new`) or `with_manifest_url(Url)`. Migration: `SmoothClient::new(url, SmoothClientConfig::default().with_x(..))` -> `SmoothClient::new(SmoothClientConfig::new(url.as_str()).with_x(..))`, or `.with_manifest_url(url)` for a `Url` already parsed.
 

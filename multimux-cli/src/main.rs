@@ -67,7 +67,7 @@ struct Cli {
     target_duration: f64,
 
     /// LL-HLS part target, in milliseconds.
-    #[arg(long, value_name = "MS", default_value_t = Config::default().part_target_ms)]
+    #[arg(long, value_name = "MS", default_value_t = u32::try_from(Config::default().part_target.as_millis()).unwrap_or(u32::MAX))]
     part_ms: u32,
 
     /// Rolling window depth: full segments retained in RAM.
@@ -173,7 +173,7 @@ fn build_config(cli: Cli) -> Result<Config> {
     let config = Config {
         bind: cli.bind,
         target_duration_secs: cli.target_duration,
-        part_target_ms: cli.part_ms,
+        part_target: std::time::Duration::from_millis(u64::from(cli.part_ms)),
         window_segments: cli.window,
         routes: vec![Route {
             name,

@@ -63,7 +63,7 @@ impl SlideRoute {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(W13_TARGET_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(2),
         ));
         let specs = vec![video_track_spec()];
@@ -128,7 +128,7 @@ async fn manifest_is_served_and_well_formed() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let specs = vec![video_track_spec()];
@@ -197,7 +197,7 @@ async fn advertised_equals_servable() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let specs = vec![video_track_spec()];
@@ -273,7 +273,7 @@ async fn auth_is_enforced() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let specs = vec![video_track_spec()];
@@ -369,7 +369,7 @@ async fn llhls_and_smooth_serve_from_same_trunk() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let specs = vec![video_track_spec()];
@@ -471,7 +471,7 @@ fn w13_route() -> Arc<RouteHandle> {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(W13_TARGET_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(16),
     ));
     let specs = vec![video_track_spec()];
@@ -594,7 +594,7 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(W13_TARGET_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(16),
     ));
     let program = media_plane::ProgramId(0);
@@ -1060,7 +1060,7 @@ fn publish_route(specs: Vec<TrackSpec>) -> Arc<RouteHandle> {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let mut batches = Vec::new();
@@ -1250,7 +1250,7 @@ async fn smooth_responses_carry_no_cache() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(W13_TARGET_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(2),
     ));
     let specs = vec![video_track_spec()];
@@ -1393,7 +1393,7 @@ async fn concurrent_requests_all_succeed_and_agree() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(TARGET_DURATION_SECS)
-            .with_part_target_ms(PART_TARGET_MS)
+            .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
     let mut batches = Vec::new();

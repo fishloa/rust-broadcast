@@ -64,7 +64,7 @@ fn route(audio: Option<Vec<AudioRenditionDecl>>) -> Arc<RouteHandle> {
     let mut r = RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(4.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     )
     .with_declared_bandwidth_bps(7_000_000u64);

@@ -321,7 +321,7 @@ async fn main() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
             .with_target_duration_secs(1.0)
-            .with_part_target_ms(500)
+            .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -331,7 +331,7 @@ async fn main() {
         params: serde_json::Value::Null,
         store: store.clone(),
         target_duration_secs: 1.0,
-        part_target_ms: 500,
+        part_target: std::time::Duration::from_millis(500),
         cancel,
     })
     .expect("factory must succeed");

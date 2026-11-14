@@ -26,7 +26,7 @@
 //! reconnect: `SourceEnded` at the last chunk, `Reconnected` before the new one.
 
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint};
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Micros, Ticks27};
 use std::process::ExitCode;
 
 const TICKS_PER_US: u64 = 27;
@@ -82,11 +82,11 @@ fn main() -> ExitCode {
     let gap_us = arg(&args, "--reconnect-gap-ms", 2000) * 1000;
     let mut cfg = ControllerConfig::default();
     let default_initial_ms = if path.is_some() {
-        cfg.policy.initial_us / 1000
+        cfg.policy.initial_us.get() / 1000
     } else {
         500
     };
-    cfg.policy.initial_us = arg(&args, "--initial-ms", default_initial_ms) * 1000;
+    cfg.policy.initial_us = Micros(arg(&args, "--initial-ms", default_initial_ms) * 1000);
     let mut c = match BufferController::new(cfg, None) {
         Ok(c) => c,
         Err(e) => {
@@ -124,18 +124,19 @@ fn main() -> ExitCode {
 
     // Renderer model: (running, clock position at last set, time of last set).
     let mut running = false;
-    let (mut clock, mut t_set) = (0u64, 0u64);
-    let pos =
-        |clock: u64, t_set: u64, now: u64| (clock + (now - t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ;
-    let mut next_tick = 0u64;
-    let mut last_arrival = 0u64;
+    let (mut clock, mut t_set) = (Ticks27::ZERO, Micros::ZERO);
+    let pos = |clock: Ticks27, t_set: Micros, now: Micros| {
+        Ticks27((clock.0 + now.saturating_sub(t_set).0 * TICKS_PER_US) % PCR_WRAP_27MHZ)
+    };
+    let mut next_tick = Micros::ZERO;
+    let mut last_arrival = Micros::ZERO;
     let out = |c: &mut BufferController,
-               now: u64,
+               now: Micros,
                running: &mut bool,
-               clock: &mut u64,
-               t_set: &mut u64| {
+               clock: &mut Ticks27,
+               t_set: &mut Micros| {
         while let Some(ev) = c.poll_event() {
-            let t = now as f64 / 1e6;
+            let t = now.get() as f64 / 1e6;
             match ev {
                 Event::StartPlaying {
                     media_27mhz,
@@ -166,24 +167,24 @@ fn main() -> ExitCode {
     };
 
     for (i, (arrival, bytes, pcr)) in chunks.iter().enumerate() {
-        let arrival = arrival - t0;
-        if i > 0 && arrival - last_arrival >= gap_us {
+        let arrival = Micros(arrival - t0);
+        if i > 0 && arrival.saturating_sub(last_arrival).0 >= gap_us {
             c.on_hint(last_arrival, Hint::SourceEnded);
             c.on_hint(arrival, Hint::Reconnected);
             out(&mut c, arrival, &mut running, &mut clock, &mut t_set);
         }
-        while next_tick <= arrival {
+        while next_tick.0 <= arrival.0 {
             let p = running.then(|| pos(clock, t_set, next_tick));
             c.on_tick(
                 next_tick,
-                (running || clock != 0).then_some(p.unwrap_or(clock)),
+                (running || clock != Ticks27::ZERO).then_some(p.unwrap_or(clock)),
             );
             out(&mut c, next_tick, &mut running, &mut clock, &mut t_set);
-            next_tick += tick_us;
+            next_tick = Micros(next_tick.0 + tick_us);
         }
-        c.on_chunk(arrival, *bytes, *pcr);
+        c.on_chunk(arrival, *bytes, pcr.map(Ticks27));
         if let Some(pcr) = pcr {
-            let end = (*pcr + PCR_WRAP_27MHZ - offset % PCR_WRAP_27MHZ) % PCR_WRAP_27MHZ;
+            let end = Ticks27((*pcr + PCR_WRAP_27MHZ - offset % PCR_WRAP_27MHZ) % PCR_WRAP_27MHZ);
             c.on_media(arrival, end);
         }
         last_arrival = arrival;

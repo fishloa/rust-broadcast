@@ -160,7 +160,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let error = run_rtsp(
@@ -264,7 +264,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
 
@@ -422,7 +422,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let err = tokio::time::timeout(
@@ -471,7 +471,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let started = std::time::Instant::now();
@@ -530,7 +530,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let err = tokio::time::timeout(
@@ -621,7 +621,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         // The route only ends when the server closes; run it concurrently and
@@ -695,7 +695,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let cancel = tokio_util::sync::CancellationToken::new();
@@ -865,7 +865,7 @@ mod tests {
             let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(1.0)
-                    .with_part_target_ms(250)
+                    .with_part_target(Duration::from_millis(250))
                     .with_window_segments(8),
             ));
             let cancel = tokio_util::sync::CancellationToken::new();
@@ -956,7 +956,7 @@ mod tests {
             let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
                 RouteConfig::default()
                     .with_target_duration_secs(1.0)
-                    .with_part_target_ms(250)
+                    .with_part_target(Duration::from_millis(250))
                     .with_window_segments(8),
             ));
             let run = tokio::spawn(async move {
@@ -1032,7 +1032,7 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(1.0)
-                .with_part_target_ms(250)
+                .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let err = tokio::time::timeout(

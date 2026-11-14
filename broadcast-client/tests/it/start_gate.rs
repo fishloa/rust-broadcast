@@ -5,7 +5,14 @@ use std::collections::BTreeMap;
 use broadcast_client::{
     Action, BufferEvent, Config, ErrorKind, Event, Session, Status, StreamKind, TrackId,
 };
+use broadcast_common::stage::Timestamp;
+use buffering_runtime::Micros;
 use support::replay::{TS_PACKET, bitrate_bps, open_live};
+
+/// The harness's microsecond clock as the session's `now`.
+fn ts(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 
 const CHUNK: usize = 4096;
 const TICK_US: u64 = 50_000;
@@ -136,7 +143,7 @@ fn config_with_lead(hold: Hold, len: usize, start_lead_us: u64) -> Config {
             new_config
         }
     };
-    cfg.buffer.policy.initial_us = start_lead_us;
+    cfg.buffer.policy.initial_us = Micros(start_lead_us);
     cfg.start_pending_track_hard_cap_us = 0;
     cfg.record_buffer_inputs = true;
     cfg
@@ -213,7 +220,7 @@ pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Out
     if declare == Declare::Explicit {
         let set = [TrackId::new(1), TrackId::new(2)];
         out.rendered = set.iter().map(|t| t.value()).collect();
-        s.set_rendered_tracks(0, &set);
+        s.set_rendered_tracks(ts(0), &set);
     }
     let mut timescale: BTreeMap<u32, u32> = BTreeMap::new();
     let mut video: BTreeMap<u32, bool> = BTreeMap::new();
@@ -227,9 +234,9 @@ pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Out
                     wake: &mut Option<u64>,
                     host: &mut Option<Host>,
                     out: &mut Outcome| {
-        while let Some(a) = s.poll(now) {
+        while let Some(a) = s.poll(ts(now)) {
             if let Action::WakeAt(t) = a {
-                *wake = Some(t);
+                *wake = Some(t.as_micros());
             }
         }
         while let Some(e) = s.next_event() {
@@ -328,12 +335,12 @@ pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Out
             wake = None;
             step(&mut s, now, &mut wake, &mut host, &mut out);
         } else if t == next_tick && next_tick <= next_chunk_at {
-            s.on_playback_position(now, host.as_ref().map(|h| h.position(now)));
+            s.on_playback_position(ts(now), host.as_ref().map(|h| h.position(now)));
             step(&mut s, now, &mut wake, &mut host, &mut out);
             next_tick += TICK_US;
         } else {
             let part = chunks.next().unwrap();
-            s.on_data(c, part, now);
+            s.on_data(c, part, ts(now));
             step(&mut s, now, &mut wake, &mut host, &mut out);
             if let Some(n) = chunks.peek() {
                 next_chunk_at = now + n.len() as u64 * 8 * MICROS / bps;
@@ -820,7 +827,7 @@ fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
         return;
     };
     let silence = Config::default().buffer.track_silence_timeout_us;
-    assert!(silence < LONG_WAIT_US, "{silence}");
+    assert!(silence.0 < LONG_WAIT_US, "{silence}");
     let o = run(
         &b,
         cfg_wait(b.len(), FLAP_LEAD_US, LONG_WAIT_US),

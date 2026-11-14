@@ -2,6 +2,12 @@ use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::srt_peer::{Cipher, PEER_ISN, SrtPeer};
 use crate::support::srt_sim::{Fate, SEED, SrtSim, config_with_seed};
 use crate::support::udp_host::{TS_PACKET, ts_datagrams};
+use broadcast_common::stage::Timestamp;
+
+/// The harness's microsecond clock as the session's `now`.
+fn stamp(us: u64) -> Timestamp {
+    Timestamp::from_micros(us)
+}
 use broadcast_client::{
     Config, Error, ErrorKind, Event, Session, SourceKind, SrtEncryption, SrtEntropySeed,
     SrtKeyLength, Status,
@@ -392,7 +398,7 @@ fn close_says_goodbye_to_a_connected_peer_once_and_then_closes_the_socket() {
     sim.session.close();
     let mut sends = Vec::new();
     let mut closes = Vec::new();
-    while let Some(a) = sim.session.poll(sim.now) {
+    while let Some(a) = sim.session.poll(stamp(sim.now)) {
         match a {
             broadcast_client::Action::Send { bytes, .. } => sends.push(bytes),
             broadcast_client::Action::Close { conn } => closes.push(conn),
@@ -413,7 +419,7 @@ fn close_says_goodbye_to_a_connected_peer_once_and_then_closes_the_socket() {
     let dest = u32::from_be_bytes([shutdown[12], shutdown[13], shutdown[14], shutdown[15]]);
     assert_eq!(dest, sim.peers[0].connected_peer_socket_id());
     assert_eq!(closes.len(), 1);
-    assert!(sim.session.poll(sim.now + 1).is_none());
+    assert!(sim.session.poll(stamp(sim.now + 1)).is_none());
 }
 
 #[test]
@@ -424,7 +430,7 @@ fn closing_before_the_handshake_completes_sends_nothing_but_the_close() {
     sim.session.close();
     let mut sends = 0;
     let mut closes = 0;
-    while let Some(a) = sim.session.poll(sim.now) {
+    while let Some(a) = sim.session.poll(stamp(sim.now)) {
         match a {
             broadcast_client::Action::Send { .. } => sends += 1,
             broadcast_client::Action::Close { .. } => closes += 1,
@@ -437,7 +443,7 @@ fn closing_before_the_handshake_completes_sends_nothing_but_the_close() {
 #[test]
 fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
     assert!(matches!(
-        Session::open(URL, Config::default(), 0).unwrap_err(),
+        Session::open(URL, Config::default(), stamp(0)).unwrap_err(),
         Error::InvalidConfig {
             field: "srt.entropy_seed"
         }
@@ -453,7 +459,7 @@ fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
         );
         sim.advance_by(SECOND_US / 2);
         let first = sim.peers[0].caller_socket_id;
-        sim.session.reconnect(sim.now);
+        sim.session.reconnect(stamp(sim.now));
         sim.advance_by(SECOND_US / 2);
         (first, sim.peers[1].caller_socket_id)
     };
@@ -487,7 +493,7 @@ fn a_latency_below_the_default_is_accepted_and_the_stream_plays() {
 
 #[test]
 fn bad_srt_settings_are_typed_errors() {
-    let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), 0).unwrap_err();
+    let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), stamp(0)).unwrap_err();
     for (err, field) in [
         (
             open(|c| c.srt.timeouts = Timeouts::default().with_handshake(Duration::ZERO)),
@@ -508,11 +514,11 @@ fn bad_srt_settings_are_typed_errors() {
         }
     }
     assert!(matches!(
-        Session::open("srt://127.0.0.1", cfg(|_| {}), 0).unwrap_err(),
+        Session::open("srt://127.0.0.1", cfg(|_| {}), stamp(0)).unwrap_err(),
         Error::InvalidUrl(_)
     ));
     assert!(matches!(
-        Session::open(URL, cfg(|c| c.kind = SourceKind::Udp), 0).unwrap_err(),
+        Session::open(URL, cfg(|c| c.kind = SourceKind::Udp), stamp(0)).unwrap_err(),
         Error::UnsupportedScheme(_)
     ));
 }
@@ -725,11 +731,11 @@ fn a_rejection_is_reported_from_the_callback_without_a_poll() {
             c.srt.encryption = Some(SrtEncryption::new("wrong passphrase", SrtKeyLength::Aes128));
             c
         },
-        0,
+        stamp(0),
     )
     .unwrap();
     let mut conn = None;
-    while let Some(a) = session.poll(0) {
+    while let Some(a) = session.poll(stamp(0)) {
         if let Action::UdpBind { conn: c, .. } = a {
             conn = Some(c);
         }
@@ -739,7 +745,7 @@ fn a_rejection_is_reported_from_the_callback_without_a_poll() {
     let mut now = 0;
     let mut inflight: Vec<Vec<u8>> = Vec::new();
     for _ in 0..10 {
-        while let Some(a) = session.poll(now) {
+        while let Some(a) = session.poll(stamp(now)) {
             if let Action::Send { bytes, .. } = a {
                 inflight.push(bytes);
             }
@@ -747,7 +753,7 @@ fn a_rejection_is_reported_from_the_callback_without_a_poll() {
         for b in inflight.drain(..) {
             for reply in peer.on_datagram(&b, now) {
                 now += 1_000;
-                session.on_data(conn, &reply, now);
+                session.on_data(conn, &reply, stamp(now));
                 if let Some(Event::Error { kind, .. }) = session.next_event() {
                     assert!(matches!(kind, ErrorKind::SrtRejected { .. }));
                     return;

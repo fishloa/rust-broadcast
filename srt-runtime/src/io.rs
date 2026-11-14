@@ -492,7 +492,8 @@ struct ConnParams {
     /// `T_NOW` measured from `epoch` — so `-(the peer's handshake timestamp)`
     /// when `epoch` is the instant that handshake packet arrived.
     tsbpd_time_base: i64,
-    tsbpd_delay_ms: u64,
+    /// The negotiated TSBPD delay ([`NegotiatedParams::latency_ms`] as a span).
+    tsbpd_delay: Duration,
     epoch: Instant,
     /// The negotiated Maximum Flow Window Size (§3.2.1): the smaller of the
     /// two sides' values.
@@ -786,7 +787,7 @@ impl SrtSocket {
             peer_initial_seq: peer_hs.initial_seq_number,
             peer_socket_id: params.peer_socket_id,
             tsbpd_time_base: tsbpd_time_base_at(epoch, Instant::now(), peer_hs.timestamp_us),
-            tsbpd_delay_ms: u64::from(params.latency_ms),
+            tsbpd_delay: Duration::from_millis(u64::from(params.latency_ms)),
             epoch,
             max_flow_window: params.max_flow_window_size,
             mtu: params.mtu,
@@ -1343,7 +1344,7 @@ impl Driver {
             tsbpd: TsbpdScheduler::new(
                 p.peer_initial_seq,
                 p.tsbpd_time_base,
-                p.tsbpd_delay_ms,
+                p.tsbpd_delay,
                 DEFAULT_DRIFT_US,
                 p.tlpkt_drop,
                 None,
@@ -2836,7 +2837,7 @@ impl ListenerCore {
         // which is the listener-wide template and no longer carries the
         // per-connection value once randomized.
         let our_initial_seq = entry.our_initial_seq;
-        let tsbpd_delay_ms = u64::from(negotiated.latency_ms);
+        let tsbpd_delay = Duration::from_millis(u64::from(negotiated.latency_ms));
         let concluded_at = entry.concluded_at.unwrap_or_else(Instant::now);
         let epoch = entry.created_at;
         let tsbpd_time_base = tsbpd_time_base_at(epoch, concluded_at, entry.peer_timestamp_us);
@@ -2882,7 +2883,7 @@ impl ListenerCore {
             peer_initial_seq,
             peer_socket_id,
             tsbpd_time_base,
-            tsbpd_delay_ms,
+            tsbpd_delay,
             epoch,
             max_flow_window: negotiated.max_flow_window_size,
             mtu: negotiated.mtu,
@@ -3386,7 +3387,7 @@ mod adapter_tests {
                 peer_initial_seq: 0,
                 peer_socket_id: 1,
                 tsbpd_time_base: 0,
-                tsbpd_delay_ms: LATENCY_MS,
+                tsbpd_delay: Duration::from_millis(LATENCY_MS),
                 epoch: Instant::now(),
                 max_flow_window,
                 mtu: 1500,
@@ -4917,7 +4918,7 @@ mod adapter_tests {
                 peer_initial_seq: 0,
                 peer_socket_id: 1,
                 tsbpd_time_base: tsbpd_time_base_from(PEER_CLOCK_US),
-                tsbpd_delay_ms: LATENCY_MS,
+                tsbpd_delay: Duration::from_millis(LATENCY_MS),
                 epoch: Instant::now(),
                 max_flow_window: 8192,
                 mtu: 1500,
@@ -5154,7 +5155,14 @@ mod adapter_tests {
     #[tokio::test(start_paused = true)]
     async fn without_negotiated_tlpktdrop_a_gap_is_waited_out_not_skipped() {
         let (mut driver, mut rx) = test_driver(8192).await;
-        driver.tsbpd = TsbpdScheduler::new(0, 0, LATENCY_MS, DEFAULT_DRIFT_US, false, None);
+        driver.tsbpd = TsbpdScheduler::new(
+            0,
+            0,
+            Duration::from_millis(LATENCY_MS),
+            DEFAULT_DRIFT_US,
+            false,
+            None,
+        );
         for seq in [0u32, 2, 3] {
             driver
                 .ingress(Bytes::from(data_bytes(
@@ -5215,7 +5223,7 @@ mod adapter_tests {
                     peer_initial_seq: 0,
                     peer_socket_id: 1,
                     tsbpd_time_base: 0,
-                    tsbpd_delay_ms: LATENCY_MS,
+                    tsbpd_delay: Duration::from_millis(LATENCY_MS),
                     epoch: Instant::now(),
                     max_flow_window: 8192,
                     mtu: 1500,

@@ -52,7 +52,7 @@ impl Replay {
         self.events
             .iter()
             .filter(|(t, e)| *t >= h && matches!(e, Event::Resume { .. }))
-            .map(|(t, _)| *t - h)
+            .map(|(t, _)| Micros(t.0 - h.0))
             .collect()
     }
 }
@@ -60,7 +60,7 @@ impl Replay {
 fn config(f: impl FnOnce(ControllerConfig) -> ControllerConfig) -> ControllerConfig {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::DEFAULT;
-    p.initial_us = 500_000;
+    p.initial_us = Micros(500_000);
     f(ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap())
 }
 
@@ -74,7 +74,7 @@ fn replay(name: &str, cfg: ControllerConfig, unregister_audio_at_hint: bool) -> 
     let mut r = Replay {
         events: Vec::new(),
         hint_at: None,
-        final_target: 0,
+        final_target: Micros::ZERO,
         stalls: 0,
     };
     let mut t0 = None::<u64>;
@@ -87,18 +87,21 @@ fn replay(name: &str, cfg: ControllerConfig, unregister_audio_at_hint: bool) -> 
         let now = raw - *t0.get_or_insert(raw);
         match kind {
             "chunk" => c.on_chunk(
-                now,
+                Micros(now),
                 a.parse().unwrap(),
                 (!b.is_empty()).then(|| b.parse::<Ticks27>().unwrap()),
             ),
-            "media" => c.on_track_media(now, a.parse().unwrap(), b.parse().unwrap()),
-            "tick" => c.on_tick(now, (a == "1").then(|| b.parse::<Ticks27>().unwrap())),
+            "media" => c.on_track_media(Micros(now), a.parse().unwrap(), b.parse().unwrap()),
+            "tick" => c.on_tick(
+                Micros(now),
+                (a == "1").then(|| b.parse::<Ticks27>().unwrap()),
+            ),
             "register" => c.register_track(a.parse().unwrap()),
             "unregister" => c.unregister_track(a.parse().unwrap()),
             "hint" => {
                 assert_eq!(a, "4", "only PcrDiscontinuity occurs in these logs");
-                r.hint_at = Some(now);
-                c.on_hint(now, Hint::PcrDiscontinuity);
+                r.hint_at = Some(Micros(now));
+                c.on_hint(Micros(now), Hint::PcrDiscontinuity);
                 if unregister_audio_at_hint {
                     c.unregister_track(AUDIO);
                 }
@@ -106,7 +109,7 @@ fn replay(name: &str, cfg: ControllerConfig, unregister_audio_at_hint: bool) -> 
             other => panic!("unknown row kind {other}"),
         }
         while let Some(e) = c.poll_event() {
-            r.events.push((now, e));
+            r.events.push((Micros(now), e));
         }
     }
     let s = c.stats();
@@ -125,7 +128,7 @@ fn slate_resume_golden() {
         return;
     };
     assert_eq!(r.starts().len(), 1);
-    assert_eq!(r.resumes_after_hint(), [5_303_186]);
+    assert_eq!(r.resumes_after_hint(), [Micros(5_303_186)]);
 }
 
 /// rai-gulp (clean 600 s Apple TV baseline): one StartPlaying, 0 pauses.
@@ -134,10 +137,10 @@ fn rai_gulp_baseline_golden() {
     let Some(r) = replay(GULP, config(|c| c), false) else {
         return;
     };
-    assert_eq!(r.starts(), [596_990]);
+    assert_eq!(r.starts(), [Micros(596_990)]);
     assert_eq!(r.pauses(), 0);
     assert_eq!(r.stalls, 0);
-    assert_eq!(r.final_target, 412_000);
+    assert_eq!(r.final_target, Micros(412_000));
 }
 
 /// The caller-side recipe: unregistering the audio track at the discontinuity
@@ -147,7 +150,7 @@ fn slate_unregistered_audio_resumes_at_first_delivery() {
     let Some(r) = replay(SLATE, config(|c| c), true) else {
         return;
     };
-    assert_eq!(r.resumes_after_hint(), [2_288_364]);
+    assert_eq!(r.resumes_after_hint(), [Micros(2_288_364)]);
 }
 
 /// The slate shape without a fixture. Programme: video every 100 ms (0.9 s
@@ -159,32 +162,32 @@ fn slate_unregistered_audio_resumes_at_first_delivery() {
 /// the delivery-driven silence clock first reaches it (the third, 4.58 s).
 #[test]
 fn sparse_slate_with_registered_silent_audio_resumes_at_the_silence_timeout() {
-    const STEP: Micros = 2_290_000;
-    const TICK: Micros = 10_000;
+    const STEP: Micros = Micros(2_290_000);
+    const TICK: Micros = Micros(10_000);
     const MS: u64 = 27_000;
     let mut c = BufferController::new(config(|c| c), None).unwrap();
     c.register_track(1);
     c.register_track(AUDIO);
     let mut played = false;
     // programme: 6 s, video + audio, a closed-loop 1x renderer after the start
-    let mut now = 0;
-    let mut pos: Ticks27 = 0;
-    let mut clock = (0, 0);
-    while now < 6_000_000 {
-        if now % 100_000 == 0 {
-            c.on_chunk(now, 2_000, Some(now * 27));
-            let v = (now + 900_000) * 27;
-            if now == 0 {
-                c.on_track_media(now, 1, 0);
-                c.on_track_media(now, AUDIO, 0);
+    let mut now = Micros::ZERO;
+    let mut pos: Ticks27 = Ticks27(0);
+    let mut clock = (Ticks27(0), Micros::ZERO);
+    while now < Micros(6_000_000) {
+        if now.0.is_multiple_of(100_000) {
+            c.on_chunk(now, 2_000, Some(Ticks27(now.0 * 27)));
+            let v = Ticks27((now.0 + 900_000) * 27);
+            if now.0 == 0 {
+                c.on_track_media(now, 1, Ticks27(0));
+                c.on_track_media(now, AUDIO, Ticks27(0));
             }
             c.on_track_media(now, 1, v);
-            if now % 300_000 == 0 {
-                c.on_track_media(now, AUDIO, now * 27 + 300 * MS);
+            if now.0.is_multiple_of(300_000) {
+                c.on_track_media(now, AUDIO, Ticks27(now.0 * 27 + 300 * MS));
             }
         }
         if played {
-            pos = clock.0 + (now - clock.1) * 27;
+            pos = Ticks27(clock.0.0 + (now.0 - clock.1.0) * 27);
         }
         c.on_tick(now, played.then_some(pos));
         while let Some(e) = c.poll_event() {
@@ -193,42 +196,46 @@ fn sparse_slate_with_registered_silent_audio_resumes_at_the_silence_timeout() {
                 clock = (media_27mhz, now);
             }
         }
-        now += TICK;
+        now = Micros(now.0 + TICK.0);
     }
     assert!(played, "the programme starts");
     let hint = now;
     c.on_hint(hint, Hint::PcrDiscontinuity);
     while c.poll_event().is_some() {}
-    let first = hint + 1_000_000;
-    let mut end: Ticks27 = 90_000_000_000;
+    let first = Micros(hint.0 + 1_000_000);
+    let mut end: Ticks27 = Ticks27(90_000_000_000);
     let mut resume = None;
     let mut next = first;
     let mut now = hint;
-    while now < first + 10_000_000 && resume.is_none() {
-        if now >= first && (now - first) % 100_000 == 0 {
+    while now < Micros(first.0 + 10_000_000) && resume.is_none() {
+        if now >= first && (now.0 - first.0).is_multiple_of(100_000) {
             // the slate picture arrives as ~50 KB of chunks every 100 ms of
             // its 2.29 s cadence slot, the PCR clock running in real time
-            c.on_chunk(now, 2_300, Some(90_000_000_000 + (now - first) * 27));
+            c.on_chunk(
+                now,
+                2_300,
+                Some(Ticks27(90_000_000_000 + (now.0 - first.0) * 27)),
+            );
         }
         if now >= next {
             if next == first {
                 c.on_track_media(now, 1, end);
             }
-            end += STEP * 27;
+            end = Ticks27(end.0 + STEP.0 * 27);
             c.on_track_media(now, 1, end);
-            next += STEP;
+            next = Micros(next.0 + STEP.0);
         }
         c.on_tick(now, None);
         while let Some(e) = c.poll_event() {
             if matches!(e, Event::Resume { .. }) {
-                resume = Some(now - first);
+                resume = Some(Micros(now.0 - first.0));
             }
         }
-        now += TICK;
+        now = Micros(now.0 + TICK.0);
     }
     let s = resume.expect("the slate resumes");
     assert!(
-        (3_000_000..3_100_000).contains(&s),
+        (Micros(3_000_000)..Micros(3_100_000)).contains(&s),
         "resume {s} us after the first slate delivery"
     );
 }

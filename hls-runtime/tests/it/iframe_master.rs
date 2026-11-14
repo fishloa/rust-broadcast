@@ -40,7 +40,7 @@ fn origin_fmp4(cap: usize) -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let origin = HlsOrigin::builder(Arc::clone(&trunk))
         .with_target_duration_secs(4.0)
         .with_window_segments(nz(3))
-        .with_low_latency(500)
+        .with_low_latency(Duration::from_millis(500))
         .with_instance(7)
         .with_declared_bandwidth_bps(5_000_000)
         .build()

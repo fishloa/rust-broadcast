@@ -3,10 +3,12 @@
 
 use std::fmt;
 use std::sync::{Arc, LazyLock};
+use std::time::Duration;
 
 use url::Url;
 
 use super::output::QualityInfo;
+use broadcast_common::backoff::BackoffSteps;
 
 /// Fragments before the live edge a live join starts at.
 pub const DEFAULT_LIVE_JOIN_FRAGMENTS: usize = 2;
@@ -17,16 +19,21 @@ pub const DEFAULT_MAX_FRAGMENT_FAILURES: u32 = 5;
 pub const DEFAULT_MAX_MANIFEST_FAILURES: u32 = 5;
 /// Consecutive refreshes lacking a stream before that stream is abandoned.
 pub const DEFAULT_MAX_REFRESH_MISSES: u32 = 5;
-/// Backoff after the first failures, in milliseconds.
-pub const DEFAULT_BACKOFF_MS: [u64; 4] = [250, 500, 1_000, 2_000];
-/// Backoff once the list is exhausted, in milliseconds.
-pub const DEFAULT_BACKOFF_CAP_MS: u64 = 4_000;
+/// Backoff after the first failures.
+pub const DEFAULT_BACKOFF_STEPS: [Duration; 4] = [
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_millis(1_000),
+    Duration::from_millis(2_000),
+];
+/// Backoff once the list is exhausted.
+pub const DEFAULT_BACKOFF_CAP: Duration = Duration::from_millis(4_000);
 /// Default [`SmoothClientConfig::jitter_seed`]; a host that runs more than one client sets its own.
 pub const DEFAULT_JITTER_SEED: u64 = 0;
-/// Shortest live manifest refresh wait, in microseconds.
-pub const DEFAULT_REFRESH_MIN_US: u64 = 500_000;
-/// Longest live manifest refresh wait, in microseconds.
-pub const DEFAULT_REFRESH_MAX_US: u64 = 5_000_000;
+/// Shortest live manifest refresh wait.
+pub const DEFAULT_REFRESH_MIN: Duration = Duration::from_millis(500);
+/// Longest live manifest refresh wait.
+pub const DEFAULT_REFRESH_MAX: Duration = Duration::from_secs(5);
 /// `mvhd` timescale of each synthesized init segment (ISO/IEC 14496-12:2026 §8.2.2).
 pub const SYNTHETIC_MOVIE_TIMESCALE: u32 = 90_000;
 /// [`SmoothClientConfig::default`]'s placeholder manifest URL: a default has no
@@ -84,20 +91,18 @@ pub struct SmoothClientConfig {
     pub max_manifest_failures: u32,
     /// Consecutive refreshes lacking a stream before that stream is abandoned; default 5.
     pub max_refresh_misses: u32,
-    /// Retry delays by attempt, in milliseconds.
-    pub backoff_ms: Vec<u64>,
-    /// Retry delay past the end of [`Self::backoff_ms`], in milliseconds.
-    pub backoff_cap_ms: u64,
+    /// Retry delays by attempt, then the cap.
+    pub backoff: BackoffSteps,
     /// Seed of the retry jitter ([`broadcast_common::backoff::RetrySchedule`]): the first retry of
     /// a fragment or manifest waits exactly its step, every later one a term of `[5/6, 1.0)` of its
     /// step drawn from this seed, so a fleet of clients that fail together does not retry in
     /// lockstep. The engine reads no clock and no RNG, so a host gives each client its own entropy;
     /// two clients with the same seed retry identically (which is what makes a replay reproducible).
     pub jitter_seed: u64,
-    /// Lower clamp of the live refresh wait, in microseconds.
-    pub refresh_min_us: u64,
-    /// Upper clamp of the live refresh wait, in microseconds.
-    pub refresh_max_us: u64,
+    /// Lower clamp of the live refresh wait.
+    pub refresh_min: Duration,
+    /// Upper clamp of the live refresh wait.
+    pub refresh_max: Duration,
     /// Video quality choice.
     pub video_quality: QualitySelector,
 }
@@ -134,11 +139,13 @@ impl Default for SmoothClientConfig {
             max_fragment_failures: DEFAULT_MAX_FRAGMENT_FAILURES,
             max_manifest_failures: DEFAULT_MAX_MANIFEST_FAILURES,
             max_refresh_misses: DEFAULT_MAX_REFRESH_MISSES,
-            backoff_ms: DEFAULT_BACKOFF_MS.to_vec(),
-            backoff_cap_ms: DEFAULT_BACKOFF_CAP_MS,
+            backoff: BackoffSteps {
+                steps: DEFAULT_BACKOFF_STEPS.to_vec(),
+                cap: DEFAULT_BACKOFF_CAP,
+            },
             jitter_seed: DEFAULT_JITTER_SEED,
-            refresh_min_us: DEFAULT_REFRESH_MIN_US,
-            refresh_max_us: DEFAULT_REFRESH_MAX_US,
+            refresh_min: DEFAULT_REFRESH_MIN,
+            refresh_max: DEFAULT_REFRESH_MAX,
             video_quality: QualitySelector::first(),
         }
     }
@@ -173,17 +180,10 @@ impl SmoothClientConfig {
         self
     }
 
-    /// Set [`Self::backoff_ms`].
+    /// Set [`Self::backoff`].
     #[must_use]
-    pub fn with_backoff_ms(mut self, backoff_ms: Vec<u64>) -> Self {
-        self.backoff_ms = backoff_ms;
-        self
-    }
-
-    /// Set [`Self::backoff_cap_ms`].
-    #[must_use]
-    pub fn with_backoff_cap_ms(mut self, backoff_cap_ms: u64) -> Self {
-        self.backoff_cap_ms = backoff_cap_ms;
+    pub fn with_backoff(mut self, backoff: BackoffSteps) -> Self {
+        self.backoff = backoff;
         self
     }
 
@@ -194,17 +194,17 @@ impl SmoothClientConfig {
         self
     }
 
-    /// Set [`Self::refresh_min_us`].
+    /// Set [`Self::refresh_min`].
     #[must_use]
-    pub fn with_refresh_min_us(mut self, refresh_min_us: u64) -> Self {
-        self.refresh_min_us = refresh_min_us;
+    pub fn with_refresh_min(mut self, refresh_min: Duration) -> Self {
+        self.refresh_min = refresh_min;
         self
     }
 
-    /// Set [`Self::refresh_max_us`].
+    /// Set [`Self::refresh_max`].
     #[must_use]
-    pub fn with_refresh_max_us(mut self, refresh_max_us: u64) -> Self {
-        self.refresh_max_us = refresh_max_us;
+    pub fn with_refresh_max(mut self, refresh_max: Duration) -> Self {
+        self.refresh_max = refresh_max;
         self
     }
 

@@ -167,7 +167,7 @@ fn build_with(
         RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration_secs(TARGET_DURATION_SECS)
-                .with_part_target_ms(PART_TARGET_MS)
+                .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
         .with_declared_bandwidth_bps(DECLARED_BPS)
