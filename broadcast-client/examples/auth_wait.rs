@@ -14,11 +14,14 @@ fn main() {
     )
     .unwrap();
     if let Some(broadcast_client::Action::HttpRequest { conn, .. }) = session.poll(now(0)) {
-        let headers = vec![(
-            "WWW-Authenticate".to_string(),
-            "Bearer realm=\"example\", resource_metadata=\"https://resource.example.com/.well-known/oauth-protected-resource\"".to_string(),
-        )];
-        session.on_response(conn, 401, &headers, now(0));
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::WWW_AUTHENTICATE,
+            "Bearer realm=\"example\", resource_metadata=\"https://resource.example.com/.well-known/oauth-protected-resource\""
+                .parse()
+                .expect("a valid header value"),
+        );
+        session.on_response(conn, http::StatusCode::UNAUTHORIZED, &headers, now(0));
     }
     while let Some(e) = session.next_event() {
         println!("event: {e:?}");

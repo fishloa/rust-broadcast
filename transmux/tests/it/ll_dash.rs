@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
+use std::time::Duration;
 use transmux::ll_dash::{Chunk, LlSegmenter};
 use transmux::media::{Fmp4Demux, Media};
 use transmux::pipeline::{FragmentTrackData, TrackSpec};
@@ -323,7 +324,8 @@ fn full_stream_video_nal_sequence_preserved() {
 #[test]
 fn ll_mpd_carries_availability_and_service_description() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000).with_playback_rate(0.9, 1.1);
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
+        .with_playback_rate(0.9, 1.1);
     let xml = pkg.package(&media).expect("LL MPD");
 
     let root = xml::parse(&xml);
@@ -387,7 +389,7 @@ fn ll_mpd_carries_availability_for_timeline_addressing() {
         })
         .collect();
 
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     pkg.base.addressing = transmux::Addressing::Timeline;
     pkg.base.segments = segments;
     let xml = pkg.package(&media).expect("LL MPD (Timeline addressing)");
@@ -620,10 +622,11 @@ mod xml {
 #[test]
 fn ll_mpd_carries_utc_timing() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000).with_utc_timing(
-        transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
-        "https://time.example/x?a=1&b=2",
-    );
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
+        .with_utc_timing(
+            transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
+            "https://time.example/x?a=1&b=2",
+        );
     let xml = pkg.package(&media).expect("LL MPD");
 
     let root = xml::parse(&xml);
@@ -652,7 +655,7 @@ fn ll_mpd_carries_utc_timing() {
 #[test]
 fn ll_mpd_omits_utc_timing_by_default() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     let xml = pkg.package(&media).expect("LL MPD");
     assert!(
         !xml.contains("<UTCTiming"),
@@ -709,7 +712,7 @@ fn ll_mpd_emits_each_registered_utc_timing_scheme() {
     ];
     for (constant, uri) in schemes {
         assert_eq!(constant, uri);
-        let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
+        let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
             .with_utc_timing(constant, "time.example");
         let xml = pkg.package(&media).expect("LL MPD");
         let root = xml::parse(&xml);

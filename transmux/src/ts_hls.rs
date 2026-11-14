@@ -79,6 +79,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Demand, Package, Stage, Timestamp};
@@ -684,7 +685,7 @@ struct StreamTrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -834,18 +835,28 @@ fn audio_discontinuity_trigger(old: &CodecConfig, new: &CodecConfig) -> bool {
 }
 
 impl StreamingTsHlsSegmenter {
-    /// Start every track's decode clock at `start_ns` nanoseconds instead of
-    /// zero, so a run that continues an earlier one (a source reconnect)
-    /// carries on from where it ended. Call before the first
-    /// [`push`](Self::push); a no-op once any track holds samples.
-    pub fn set_start_time_ns(&mut self, start_ns: u64) {
+    /// Start every track's decode clock at `start` instead of zero, so a run
+    /// that continues an earlier one (a source reconnect) carries on from
+    /// where it ended. Call before the first [`push`](Self::push); a no-op
+    /// once any track holds samples.
+    pub fn set_start_time(&mut self, start: Duration) {
         if self.tracks.iter().any(|t| !t.pending.is_empty()) {
             return;
         }
         for t in &mut self.tracks {
-            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale.get()) / 1_000_000_000;
+            let ticks = start
+                .as_nanos()
+                .saturating_mul(u128::from(t.spec.timescale.get()))
+                / 1_000_000_000;
             t.base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
         }
+    }
+
+    /// Start every track's decode clock at `start` nanoseconds into a run that
+    /// continues an earlier one; [`Self::set_start_time`] in the sub-second
+    /// unit a wire field may carry.
+    pub fn set_start_time_ns(&mut self, start_ns: u64) {
+        self.set_start_time(Duration::from_nanos(start_ns));
     }
 
     /// Create a streaming segmenter for `tracks`, cutting segments roughly
@@ -1639,6 +1650,11 @@ mod tests {
         DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
     };
     use broadcast_common::Unpackage;
+    use broadcast_common::timescale::Timescale;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
 
     fn dummy_esds() -> EsdsBox {
         EsdsBox::new(ESDescriptor::new(
@@ -1663,7 +1679,7 @@ mod tests {
     fn scte35_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Data {
                 stream_type: 0x86,
                 descriptors: Vec::new(),
@@ -1916,7 +1932,7 @@ mod tests {
         };
         let video_spec = TrackSpec::new(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Avc {
                 config: crate::avc_config::AVCConfigurationBox::new(record),
                 width: 320,
@@ -1930,7 +1946,7 @@ mod tests {
         let audio: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();
         Media::new(
             vec![Track::new(video_spec, video), Track::new(audio_spec, audio)],
-            Timescale::from_nonzero(1000),
+            timescale(1000),
         )
     }
 

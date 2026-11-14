@@ -8,6 +8,7 @@ use broadcast_client::{
     Action, BufferHint, ClientIdentity, Config, ConnId, Credentials, DashClockPolicy, Event,
     Session, SourceKind, SrtEntropySeed, TrackId, TransportError,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
 use libfuzzer_sys::fuzz_target;
@@ -73,6 +74,26 @@ const DATAGRAM_URLS: [&str; 5] = [
 const SRT_ENTROPY_SEED: [u8; 32] = [7; 32];
 const CLIENT_IDENTITY_HANDLE: u64 = 1;
 const SRT_HEADER_BYTES: usize = 16;
+
+/// A fuzz-table status code as the typed value the session's callback takes.
+fn code(status: u16) -> http::StatusCode {
+    http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::OK)
+}
+
+/// Reply headers from fuzz-derived pairs; a name or value the header type refuses is dropped,
+/// as a host's own header map would.
+fn header_map(pairs: &[(String, String)]) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    for (name, value) in pairs {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            map.append(name, value);
+        }
+    }
+    map
+}
 const SRT_CONTROL_TYPES: u8 = 8;
 const SRT_CONTROL_BIT: u8 = 0x80;
 const RTP_VERSION_BYTE: u8 = 0x80;
@@ -103,6 +124,10 @@ const START_WAIT_US: [u64; 4] = [0, 500_000, 1_500_000, u64::MAX];
 const DASH_US: [u64; 4] = [1, 1_000, 20_000_000, u64::MAX];
 const DASH_ZERO_OK_US: [u64; 4] = [0, 1_000, 20_000_000, u64::MAX];
 const DASH_LIVE_DELAY_US: [Option<u64>; 4] = [None, Some(0), Some(6_000_000), Some(u64::MAX)];
+
+fn span_us(knob_us: u64) -> std::time::Duration {
+    std::time::Duration::from_micros(knob_us)
+}
 const DASH_POLICIES: [DashClockPolicy; 4] = [
     DashClockPolicy::Auto,
     DashClockPolicy::PreferHost,
@@ -344,11 +369,13 @@ fn player(session: &mut Session, now: u64, chunk: &[u8]) {
     let byte = |i: usize| chunk.get(i).copied().unwrap_or(0);
     match byte(2) % 5 {
         0 => {
-            let position = match byte(3) % 8 {
+            let ticks = match byte(3) % 8 {
                 0 => u64::MAX,
                 _ => u64::from(byte(4)) * POSITION_UNIT,
             };
-            session.on_playback_position(at, Some(position));
+            if let Ok(position) = Clock27::from_27mhz(ticks) {
+                session.on_playback_position(at, Some(position));
+            }
         }
         1 => session.on_playback_position(at, None),
         2 => {
@@ -400,7 +427,12 @@ fn storm(session: &mut Session, watch: &mut Watch, now: u64, chunk: &[u8]) {
                 headers.push(("Set-Cookie".to_string(), "storm=1".to_string()));
             }
             answered.push((conn, status));
-            session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+            session.on_response(
+                conn,
+                code(status),
+                &header_map(&headers),
+                Timestamp::from_micros(now),
+            );
         }
     }
     if now != u64::MAX {
@@ -560,7 +592,7 @@ fn body_for(url: &str, encrypted: bool, chunk: &[u8]) -> Vec<u8> {
 fn serve(session: &mut Session, watch: &mut Watch, now: u64, encrypted: bool, chunk: &[u8]) {
     let at = Timestamp::from_micros(now);
     for (conn, url) in watch.actions(session, now) {
-        session.on_response(conn, 200, &[], at);
+        session.on_response(conn, http::StatusCode::OK, &http::HeaderMap::new(), at);
         let body = body_for(&url, encrypted, chunk);
         session.on_data(conn, &body, at);
         session.on_data(conn, chunk, at);
@@ -603,8 +635,8 @@ fn config_from(header: &[u8]) -> Config {
         0 => None,
         _ => Some(
             broadcast_client::TimelineJumpConfig::default()
-                .with_backward_us(knob(header, 13, &JUMP_US))
-                .with_forward_slack_us(knob(header, 14, &JUMP_US)),
+                .with_backward(span_us(knob(header, 13, &JUMP_US)))
+                .with_forward_slack(span_us(knob(header, 14, &JUMP_US))),
         ),
     };
     config.playout.vod_start_lead_us = knob(header, 15, &LEAD_US);
@@ -614,16 +646,16 @@ fn config_from(header: &[u8]) -> Config {
     config.max_segment_failures = knob(header, 19, &SEGMENT_FAILURES);
     config.dash.clock_policy = knob(header, 20, &DASH_POLICIES);
     let utc_timeout = knob(header, 21, &DASH_US);
-    config.dash.utc_timeout_us = utc_timeout;
-    config.dash.utc_wait_us = knob(header, 22, &DASH_US).max(utc_timeout);
-    config.dash.utc_max_rtt_us = knob(header, 23, &DASH_US);
-    config.dash.utc_resync_us = knob(header, 24, &DASH_US);
-    config.dash.host_clock_uncertainty_us = knob(header, 25, &DASH_ZERO_OK_US);
-    config.dash.live_delay_us = knob(header, 26, &DASH_LIVE_DELAY_US);
-    config.dash.availability_margin_us = knob(header, 27, &DASH_ZERO_OK_US);
-    config.dash.early_retry_us = knob(header, 28, &DASH_US);
-    config.dash.early_grace_us = knob(header, 29, &DASH_ZERO_OK_US);
-    config.dash.min_mpd_refresh_us = knob(header, 30, &DASH_US);
+    config.dash.utc_timeout = span_us(utc_timeout);
+    config.dash.utc_wait = span_us(knob(header, 22, &DASH_US).max(utc_timeout));
+    config.dash.utc_max_rtt = span_us(knob(header, 23, &DASH_US));
+    config.dash.utc_resync = Some(span_us(knob(header, 24, &DASH_US)));
+    config.dash.host_clock_uncertainty = span_us(knob(header, 25, &DASH_ZERO_OK_US));
+    config.dash.live_delay = knob(header, 26, &DASH_LIVE_DELAY_US).map(span_us);
+    config.dash.availability_margin = span_us(knob(header, 27, &DASH_ZERO_OK_US));
+    config.dash.early_retry = span_us(knob(header, 28, &DASH_US));
+    config.dash.early_grace = span_us(knob(header, 29, &DASH_ZERO_OK_US));
+    config.dash.min_mpd_refresh = span_us(knob(header, 30, &DASH_US));
     let (offset, cross_origin) = knob(header, 31, &DASH_FLAGS);
     config.dash.use_availability_time_offset = offset;
     config.dash.cross_origin_urls = cross_origin;
@@ -640,7 +672,12 @@ fn wall_clock(session: &mut Session, now: u64, chunk: &[u8]) {
         1 => u64::MAX,
         _ => now,
     };
-    session.set_wall_clock(Timestamp::from_micros(mono), WALL_UNIX_US[byte(4) % WALL_UNIX_US.len()]);
+    let unix = WALL_UNIX_US[byte(4) % WALL_UNIX_US.len()];
+    let read = i64::try_from(unix).unwrap_or(i64::MAX);
+    session.set_wall_clock(
+        Timestamp::from_micros(mono),
+        jiff::Timestamp::from_microsecond(read).unwrap_or(jiff::Timestamp::UNIX_EPOCH),
+    );
 }
 
 fn split_header(data: &[u8]) -> (&[u8], &[u8]) {
@@ -717,7 +754,12 @@ fn drive(url: &str, data: &[u8]) {
                             RESPONSE_DATES[second % RESPONSE_DATES.len()].to_string(),
                         ));
                     }
-                    session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+                    session.on_response(
+                conn,
+                code(status),
+                &header_map(&headers),
+                Timestamp::from_micros(now),
+            );
                 }
             }
             6 => {
@@ -1059,7 +1101,12 @@ fn drive_ts_http(data: &[u8]) {
                         )],
                         _ => Vec::new(),
                     };
-                    session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+                    session.on_response(
+                conn,
+                code(status),
+                &header_map(&headers),
+                Timestamp::from_micros(now),
+            );
                 }
             }
             1 => {

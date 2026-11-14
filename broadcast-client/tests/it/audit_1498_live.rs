@@ -4,6 +4,7 @@ use url::Url;
 use broadcast_client::{
     Action, BufferEvent, BufferHint, BufferInput, Config, ConnId, Event, Session, Status, TrackId,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::ts_shift::{PACKET, Shift, VIDEO_TIMESCALE, pes_starts, pts27, shift_pes};
 use transmux::JoinDecision;
@@ -24,7 +25,7 @@ const PCR_PER_US: u64 = 27;
 enum ClockState {
     Idle,
     Playing { base: u64, since: u64 },
-    Held(u64),
+    Held(Clock27),
 }
 
 struct LiveHost {
@@ -60,12 +61,12 @@ impl LiveHost {
         })
     }
 
-    fn position(&self, now: u64) -> Option<u64> {
+    fn position(&self, now: u64) -> Option<Clock27> {
         match self.clock {
             ClockState::Idle => None,
             ClockState::Held(p) => Some(p),
             ClockState::Playing { base, since } => {
-                Some(base + now.saturating_sub(since) * PCR_PER_US)
+                Clock27::from_27mhz(base + now.saturating_sub(since) * PCR_PER_US).ok()
             }
         }
     }
@@ -80,7 +81,12 @@ impl LiveHost {
                             since: self.now,
                         }
                     }
-                    BufferEvent::Pause { hold_at_27mhz, .. } => ClockState::Held(*hold_at_27mhz),
+                    BufferEvent::Pause { hold_at_27mhz, .. } => {
+                        match Clock27::from_27mhz(*hold_at_27mhz) {
+                            Ok(hold) => ClockState::Held(hold),
+                            Err(_) => ClockState::Idle,
+                        }
+                    }
                     _ => self.clock,
                 };
             }
@@ -286,7 +292,7 @@ fn a_reconnect_onto_a_lower_pts_base_starts_playing_on_the_new_timeline() {
             )
         })
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { end, .. } => Some(end.0),
+            BufferInput::TrackMedia { end, .. } => Some(end.ticks()),
             _ => None,
         })
         .collect();
@@ -432,16 +438,19 @@ fn finite_pass(
     host_position: Option<u64>,
 ) -> Option<Vec<Event>> {
     let mut headers = support::read_tf1_headers()?.1;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    session.on_response(conn, 200, &headers, ts(now));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
+    session.on_response(conn, http::StatusCode::OK, &headers, ts(now));
     let mut out = Vec::new();
     let mut at = now;
     let mut position = host_position;
     let mut playing_since: Option<(u64, u64)> = None;
     for chunk in bytes.chunks(CHUNK) {
         let reported = match playing_since {
-            Some((base, since)) => Some(base + (at - since) * PCR_PER_US),
-            None => position,
+            Some((base, since)) => Clock27::from_27mhz(base + (at - since) * PCR_PER_US).ok(),
+            None => position.and_then(|ticks| Clock27::from_27mhz(ticks).ok()),
         };
         session.on_playback_position(ts(at), reported);
         session.on_data(conn, chunk, ts(at));
@@ -513,10 +522,10 @@ fn finite_loop(file: &[u8]) {
     for t in 1..=40u64 {
         session.on_playback_position(
             ts(t * TICK_US),
-            Some(first_starts[0] + t * TICK_US * PCR_PER_US),
+            Clock27::from_27mhz(first_starts[0] + t * TICK_US * PCR_PER_US).ok(),
         );
     }
-    session.on_playback_position(ts(3_000_000), Some(end_pos));
+    session.on_playback_position(ts(3_000_000), Clock27::from_27mhz(end_pos).ok());
     while session.next_event().is_some() {}
 
     session.reconnect(ts(3_100_000));
@@ -623,7 +632,7 @@ fn a_jump_to_a_negative_unrolled_timeline_keeps_the_controller_fed() {
         })
         .filter_map(|l| match l {
             BufferInput::TrackMedia { track, end, .. } if *track == h.video().value() => {
-                Some(end.0)
+                Some(end.ticks())
             }
             _ => None,
         })

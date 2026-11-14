@@ -3,15 +3,26 @@
 //! (`private/specs-verified/ietf/specs/rfc3550_rtp.txt`, hand-ported below), the RFC 5481 PDV definition
 //! computed directly, and a brute-force replay of the stall max-hold.
 //! No test compares a component to itself.
+use broadcast_common::clock33::PCR_WRAP_27MHZ;
+
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
+}
+
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
 use crate::support::*;
 use buffering_runtime::histogram::ForgettingHistogram;
 use buffering_runtime::window::MinWindow;
 use buffering_runtime::{
-    DeliveryJitter, JitterConfig, Micros, SampleOutcome, StallMemorySnapshot, Ticks27,
+    Clock27, DeliveryJitter, JitterConfig, SampleOutcome, StallMemorySnapshot,
 };
+use core::time::Duration;
 
-const fn t(v: u64) -> Ticks27 {
-    Ticks27(v)
+fn t(v: u64) -> Clock27 {
+    clock27(v)
 }
 
 // ------------------------------------------------------------------ window
@@ -24,12 +35,12 @@ fn min_window_matches_a_brute_force_scan() {
         3_000
     };
     for (window, seed) in [(1_000u64, 1u64), (2_000_000, 2), (17, 3), (500, 4)] {
-        let mut w = MinWindow::new(Micros(window), 4096).unwrap();
+        let mut w = MinWindow::new(dur(window), 4096).unwrap();
         let mut rng = Rng(seed);
         let mut all: Vec<(u64, i64)> = Vec::new();
         let mut t = 0u64;
         for _ in 0..samples {
-            let prev_t = all.last().map(|a| a.0);
+            let prev_t = all.last().map(|&(t, _)| t);
             t += rng.below(window / 4 + 2); // equal timestamps happen
             if rng.below(200) == 0 {
                 t += window + rng.below(window); // a stall at least as long as the window
@@ -56,7 +67,7 @@ fn min_window_matches_a_brute_force_scan() {
 
 #[test]
 fn min_window_cap_drops_the_oldest_and_counts() {
-    let mut w = MinWindow::new(Micros(u64::MAX / 2), 8).unwrap();
+    let mut w = MinWindow::new(dur(u64::MAX / 2), 8).unwrap();
     for i in 0..20 {
         w.push(i, 100 + i64::try_from(i).unwrap()); // ascending: nothing popped by dominance
     }
@@ -64,7 +75,7 @@ fn min_window_cap_drops_the_oldest_and_counts() {
     assert_eq!(w.overflows(), 12);
     assert_eq!(w.min(), Some(112));
     assert!(matches!(
-        MinWindow::new(Micros::ZERO, 8),
+        MinWindow::new(Duration::ZERO, 8),
         Err(buffering_runtime::Error::ZeroLengthWindow)
     ));
     w.clear();
@@ -74,7 +85,7 @@ fn min_window_cap_drops_the_oldest_and_counts() {
 
 #[test]
 fn min_window_survives_extreme_times() {
-    let mut w = MinWindow::new(Micros(1_000), 16).unwrap();
+    let mut w = MinWindow::new(dur(1_000), 16).unwrap();
     w.push(u64::MAX - 1, 5);
     w.push(u64::MAX, 7);
     assert!(w.min().is_some());
@@ -85,7 +96,7 @@ fn min_window_survives_extreme_times() {
 #[test]
 fn q15_forgetting_is_within_one_lsb_per_step_of_the_exact_rational() {
     let (buckets, bucket_us, forget) = (400u16, 10_000u32, 32113u64);
-    let mut h = ForgettingHistogram::new(buckets, bucket_us, forget as u16, 990);
+    let mut h = ForgettingHistogram::new(buckets, dur(bucket_us as u64), forget as u16, 990);
     let mut rng = Rng(99);
     for step in 0..3000u64 {
         let before: Vec<u32> = (0..400).map(|i| h.weight(i)).collect();
@@ -115,7 +126,7 @@ fn q15_forgetting_is_within_one_lsb_per_step_of_the_exact_rational() {
 #[test]
 fn quantile_agrees_with_a_float_reference_within_one_bucket() {
     for q_permille in [500u16, 900, 990] {
-        let mut h = ForgettingHistogram::new(400, 10_000, 32113, q_permille);
+        let mut h = ForgettingHistogram::new(400, dur(10_000), 32113, q_permille);
         let mut rng = Rng(5 + u64::from(q_permille));
         let mut vals = Vec::new();
         for _ in 0..4000 {
@@ -164,14 +175,14 @@ fn quantile_agrees_with_a_float_reference_within_one_bucket() {
 
 #[test]
 fn histogram_edges() {
-    let mut h = ForgettingHistogram::new(4, 10, 100, 500);
+    let mut h = ForgettingHistogram::new(4, dur(10), 100, 500);
     assert_eq!(h.quantile_us(), 0, "empty histogram reads 0");
     h.add(u64::MAX); // clamps to the last bucket
     assert_eq!(h.quantile_us(), 40);
     h.clear();
     assert_eq!(h.total_weight(), 0);
     // degenerate construction never panics
-    let mut z = ForgettingHistogram::new(0, 0, 0, 0);
+    let mut z = ForgettingHistogram::new(0, Duration::ZERO, 0, 0);
     z.add(5);
     let _ = z.quantile_us();
 }
@@ -231,22 +242,22 @@ fn run_j(transits_us: &[i64]) -> (u64, f64) {
         // the estimator sees the clamped arrival; reference uses the same
         let media_27 = t(shift27(0, media_us * 27));
         assert!(!matches!(
-            dj.on_chunk(Micros(arrival as u64), media_27, 0),
+            dj.on_chunk(dur(arrival as u64), media_27, 0),
             SampleOutcome::NonMonotonicArrival | SampleOutcome::Duplicate
         ));
         rf.feed(arrival, media_us);
         ri.feed(arrival, media_us);
-        let got = dj.estimate().rfc3550_jitter_us;
+        let got = dj.estimate().rfc3550_jitter;
         assert_eq!(
-            got.get() as i64,
+            got.as_micros() as i64,
             ri.jitter >> 4,
             "bit-exact vs the A.8 integer form at {k}"
         );
         assert!(
-            (got.get() as f64 - rf.jitter).abs() <= 2.0,
+            (got.as_micros() as f64 - rf.jitter).abs() <= 2.0,
             "within 2 us of the float form at {k}"
         );
-        last = got.get();
+        last = got.as_micros() as u64;
     }
     (last, rf.jitter)
 }
@@ -306,15 +317,15 @@ fn pdv_equals_d_minus_the_windowed_minimum_on_a_long_random_trace() {
         let arrival = (media_us + delay).max(hist.last().map_or(0, |h| h.0));
         let pcr = (pcr0 + media_us * 27) % broadcast_common::clock33::PCR_WRAP_27MHZ;
         assert_eq!(
-            dj.on_chunk(Micros(arrival), t(pcr), 1316),
+            dj.on_chunk(dur(arrival), t(pcr), 1316),
             SampleOutcome::Accepted
         );
         let d = arrival as i64 - media_us as i64;
         hist.push((arrival, d));
-        let from = hist.partition_point(|h| h.0 + cfg.min_window_us.get() <= arrival);
+        let from = hist.partition_point(|h| h.0 + cfg.min_window.as_micros() as u64 <= arrival);
         let dmin = hist[from..].iter().map(|h| h.1).min().unwrap();
         let pdv = (d - dmin) as u64;
-        assert_eq!(dj.estimate().pdv_last_us, Micros(pdv), "sample {k}");
+        assert_eq!(dj.estimate().pdv_last, dur(pdv), "sample {k}");
         // brute-force max-hold replay (RFC-independent reference of the memory rule)
         let cur = max_hold
             .last()
@@ -324,8 +335,8 @@ fn pdv_equals_d_minus_the_windowed_minimum_on_a_long_random_trace() {
         }
         let (at, p) = *max_hold.last().unwrap();
         assert_eq!(
-            dj.stall_peak_at(Micros(arrival)),
-            Micros(decayed(p, arrival - at, &cfg)),
+            dj.stall_peak_at(dur(arrival)),
+            dur(decayed(p, arrival - at, &cfg)),
             "peak at {k}"
         );
     }
@@ -334,31 +345,34 @@ fn pdv_equals_d_minus_the_windowed_minimum_on_a_long_random_trace() {
     let end = hist.last().unwrap().0;
     for later in [
         0,
-        cfg.hold_us.get(),
-        cfg.hold_us.get() + cfg.decay_us.get() / 2,
-        cfg.hold_us.get() + cfg.decay_us.get(),
-        cfg.hold_us.get() + cfg.decay_us.get() * 3,
+        cfg.hold.as_micros() as u64,
+        cfg.hold.as_micros() as u64 + cfg.decay.as_micros() as u64 / 2,
+        cfg.hold.as_micros() as u64 + cfg.decay.as_micros() as u64,
+        cfg.hold.as_micros() as u64 + cfg.decay.as_micros() as u64 * 3,
     ] {
         assert_eq!(
-            dj.stall_peak_at(Micros(end + later)),
-            Micros(decayed(p, end + later - at, &cfg))
+            dj.stall_peak_at(dur(end + later)),
+            dur(decayed(p, end + later - at, &cfg))
         );
     }
     assert_eq!(
-        dj.stall_peak_at(Micros(at + cfg.hold_us.get() + cfg.decay_us.get())),
-        Micros::ZERO
+        dj.stall_peak_at(dur(at
+            + cfg.hold.as_micros() as u64
+            + cfg.decay.as_micros() as u64)),
+        Duration::ZERO
     );
 }
 
 /// Hand-written decay: `peak` for `hold`, then linear to 0 over `decay`.
 fn decayed(peak: u64, age: u64, cfg: &JitterConfig) -> u64 {
-    if age <= cfg.hold_us.get() {
+    let hold = cfg.hold.as_micros() as u64;
+    let decay = cfg.decay.as_micros() as u64;
+    if age <= hold {
         peak
-    } else if age >= cfg.hold_us.get() + cfg.decay_us.get() {
+    } else if age >= hold + decay {
         0
     } else {
-        (u128::from(peak) * u128::from(cfg.hold_us.get() + cfg.decay_us.get() - age)
-            / u128::from(cfg.decay_us.get())) as u64
+        (u128::from(peak) * u128::from(hold + decay - age) / u128::from(decay)) as u64
     }
 }
 
@@ -370,52 +384,42 @@ fn stall_memory_snapshot_ages_across_a_restore() {
     let mut t = 0u64;
     for k in 0..400u64 {
         t = k * 35_000;
-        a.on_chunk(
-            Micros(t),
-            Ticks27(shift27(1000, (k * 35_000 * 27) as i64)),
-            0,
-        );
+        a.on_chunk(dur(t), clock27(shift27(1000, (k * 35_000 * 27) as i64)), 0);
     }
     let late = t + 1_400_000;
     a.on_chunk(
-        Micros(late),
-        Ticks27(shift27(1000, (400 * 35_000 * 27) as i64)),
+        dur(late),
+        clock27(shift27(1000, (400 * 35_000 * 27) as i64)),
         0,
     );
     let snap = a.snapshot();
-    assert!(snap.peak_us >= Micros(1_300_000) && snap.age_us == Micros::ZERO);
+    assert!(snap.peak >= dur(1_300_000) && snap.age == Duration::ZERO);
     // restore 30 s later: still within the hold; 90 s later: half decayed
     let mut b = DeliveryJitter::new(cfg).unwrap();
-    b.restore(snap.aged(Micros(30_000_000)));
-    assert_eq!(b.stall_peak_at(Micros::ZERO), snap.peak_us);
+    b.restore(snap.aged(dur(30_000_000)));
+    assert_eq!(b.stall_peak_at(Duration::ZERO), snap.peak);
     let mut c = DeliveryJitter::new(cfg).unwrap();
-    c.restore(snap.aged(Micros(90_000_000)));
+    c.restore(snap.aged(dur(90_000_000)));
     assert_eq!(
-        c.stall_peak_at(Micros::ZERO),
-        Micros(snap.peak_us.get() / 2)
+        c.stall_peak_at(Duration::ZERO),
+        dur(snap.peak.as_micros() as u64 / 2)
     );
     let mut d = DeliveryJitter::new(cfg).unwrap();
-    d.restore(snap.aged(Micros(200_000_000)));
-    assert_eq!(d.stall_peak_at(Micros::ZERO), Micros::ZERO);
+    d.restore(snap.aged(dur(200_000_000)));
+    assert_eq!(d.stall_peak_at(Duration::ZERO), Duration::ZERO);
     // anchored at the first clock reading: no extra age from the restore itself
-    d.restore(StallMemorySnapshot::new(Micros(1_000_000), Micros::ZERO));
-    d.on_chunk(Micros(77_000_000), Ticks27(5), 0);
-    assert!(d.stall_peak_at(Micros(77_000_000 + cfg.hold_us.get())) >= Micros(1_000_000));
+    d.restore(StallMemorySnapshot::new(dur(1_000_000), Duration::ZERO));
+    d.on_chunk(dur(77_000_000), clock27(5), 0);
+    assert!(d.stall_peak_at(dur(77_000_000 + cfg.hold.as_micros() as u64)) >= dur(1_000_000));
 }
 
 #[test]
 fn duplicate_and_non_monotonic_samples_are_ignored_not_fed() {
     let mut dj = DeliveryJitter::new(JitterConfig::DEFAULT).unwrap();
+    assert_eq!(dj.on_chunk(dur(1000), t(100), 0), SampleOutcome::Accepted);
+    assert_eq!(dj.on_chunk(dur(1010), t(100), 0), SampleOutcome::Duplicate);
     assert_eq!(
-        dj.on_chunk(Micros(1000), t(100), 0),
-        SampleOutcome::Accepted
-    );
-    assert_eq!(
-        dj.on_chunk(Micros(1010), t(100), 0),
-        SampleOutcome::Duplicate
-    );
-    assert_eq!(
-        dj.on_chunk(Micros(900), t(200), 0),
+        dj.on_chunk(dur(900), t(200), 0),
         SampleOutcome::NonMonotonicArrival
     );
     assert_eq!(dj.estimate().samples, 1);
@@ -426,26 +430,23 @@ fn media_forward_jump_beyond_the_threshold_is_a_discontinuity_but_late_data_is_n
     let cfg = JitterConfig::DEFAULT;
     let mut dj = DeliveryJitter::new(cfg).unwrap();
     for k in 0..100u64 {
-        dj.on_chunk(Micros(k * 35_000), t(27_000 + k * 35_000 * 27), 0);
+        dj.on_chunk(dur(k * 35_000), t(27_000 + k * 35_000 * 27), 0);
     }
     // the tf-1 shape: arrival advances 1.43 s, media 35 ms -> a gap, NOT a jump
     let base = 99 * 35_000;
     assert_eq!(
-        dj.on_chunk(Micros(base + 1_433_000), t(27_000 + 100 * 35_000 * 27), 0),
+        dj.on_chunk(dur(base + 1_433_000), t(27_000 + 100 * 35_000 * 27), 0),
         SampleOutcome::Accepted
     );
     // the servustv shape: media +1.3 s ahead of arrival -> discontinuity
     let a = base + 1_433_000 + 35_000;
     let m = 27_000 + (101 * 35_000 + 1_300_000) * 27;
-    assert_eq!(
-        dj.on_chunk(Micros(a), t(m), 0),
-        SampleOutcome::Discontinuity
-    );
+    assert_eq!(dj.on_chunk(dur(a), t(m), 0), SampleOutcome::Discontinuity);
     // media running backwards by more than the threshold -> discontinuity
     assert_eq!(
-        dj.on_chunk(Micros(a + 35_000), t(shift27(m, -(5_000_000 * 27))), 0),
+        dj.on_chunk(dur(a + 35_000), t(shift27(m, -(5_000_000 * 27))), 0),
         SampleOutcome::Discontinuity
     );
     // the stall memory survived the resets
-    assert!(dj.stall_peak_at(Micros(a + 35_000)) >= Micros(1_300_000));
+    assert!(dj.stall_peak_at(dur(a + 35_000)) >= dur(1_300_000));
 }

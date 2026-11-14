@@ -1,6 +1,8 @@
 //! A server that refuses with `429`/`503`: the `Retry-After` it names paces the next attempt of
 //! every HTTP source, and `Event::ServerRefused` tells the host why.
 
+use core::time::Duration;
+
 use crate::support;
 use crate::support::dash_sim;
 use url::Url;
@@ -24,16 +26,8 @@ const REASON: &str = "descrambler busy: all 4 CAM slots in use";
 const MAX_RETRY_AFTER_SECS: u64 = 60;
 const DASH_MANIFEST: &str = "http://dash.test/manifest.mpd";
 
-fn header(name: &str, value: &str) -> (String, String) {
-    (name.to_string(), value.to_string())
-}
-
 fn refusal(status: u16, headers: &[(&str, &str)], body: &[u8]) -> Reply {
-    Reply::Full(
-        status,
-        body.to_vec(),
-        headers.iter().map(|(k, v)| header(k, v)).collect(),
-    )
+    crate::support::hls_host::full(status, body.to_vec(), crate::support::headers(headers))
 }
 
 fn busy(retry_after: &str) -> Reply {
@@ -74,15 +68,15 @@ fn walks_the_default_schedule(gaps: &[u64]) -> bool {
     gaps.len() == 3 && gaps[0] == 2 && (3..=4).contains(&gaps[1]) && (6..=8).contains(&gaps[2])
 }
 
-fn refused(events: &[Event]) -> Vec<(u16, Option<u64>, Option<String>)> {
+fn refused(events: &[Event]) -> Vec<(http::StatusCode, Option<Duration>, Option<String>)> {
     events
         .iter()
         .filter_map(|e| match e {
             Event::ServerRefused {
                 status,
-                retry_after_us,
+                retry_after,
                 reason,
-            } => Some((*status, *retry_after_us, reason.clone())),
+            } => Some((*status, *retry_after, reason.clone())),
             _ => None,
         })
         .collect()
@@ -184,9 +178,9 @@ fn ts_http_reports_server_refused_once_per_refused_attempt() {
     assert_eq!(at.len(), 3);
     let notices = refused(&h.events);
     assert_eq!(notices.len(), 2, "two refused attempts completed");
-    for (status, retry_after_us, reason) in notices {
+    for (status, retry_after, reason) in notices {
         assert_eq!(status, 503);
-        assert_eq!(retry_after_us, Some(30 * SEC));
+        assert_eq!(retry_after, Some(Duration::from_secs(30)));
         assert_eq!(reason.as_deref(), Some(REASON));
     }
     let reconnecting = h
@@ -201,7 +195,10 @@ fn ts_http_reports_server_refused_once_per_refused_attempt() {
 fn ts_http_server_refused_without_retry_after_carries_none() {
     let mut h = ts_host(vec![refusal(429, &[], b"")]);
     request_times(&mut h, 2);
-    assert_eq!(refused(&h.events), vec![(429, None, None)]);
+    assert_eq!(
+        refused(&h.events),
+        vec![(http::StatusCode::TOO_MANY_REQUESTS, None, None)]
+    );
 }
 
 #[test]
@@ -281,7 +278,11 @@ fn hls_reports_server_refused_and_waits_the_retry_after() {
     let notices = refused(&h.events);
     assert_eq!(
         notices,
-        vec![(503, Some(30 * SEC), Some(REASON.to_string()))]
+        vec![(
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            Some(Duration::from_secs(30)),
+            Some(REASON.to_string()),
+        )]
     );
     let at: Vec<u64> = h.requests_to(TS_SEG0_URL).iter().map(|s| s.at_us).collect();
     assert_eq!((at[1] - at[0]) / SEC, 30);
@@ -292,11 +293,11 @@ fn dash_reports_server_refused_and_waits_the_retry_after() {
     let mut sim = DashSim::static_origin(DASH_MANIFEST, Config::default());
     sim.fault = Some(Box::new(|req: &Logged, _| {
         req.url.ends_with("init-stream0.m4s").then(|| Answer::Full {
-            status: 503,
-            headers: vec![
-                header("Retry-After", "30"),
-                header("Content-Type", "text/plain"),
-            ],
+            status: http::StatusCode::SERVICE_UNAVAILABLE,
+            headers: crate::support::headers(&[
+                ("Retry-After", "30"),
+                ("Content-Type", "text/plain"),
+            ]),
             body: REASON.as_bytes().to_vec(),
         })
     }));
@@ -304,7 +305,14 @@ fn dash_reports_server_refused_and_waits_the_retry_after() {
     let notices = refused(&sim.events);
     assert!(!notices.is_empty());
     for n in &notices {
-        assert_eq!(n, &(503, Some(30 * SEC), Some(REASON.to_string())));
+        assert_eq!(
+            n,
+            &(
+                http::StatusCode::SERVICE_UNAVAILABLE,
+                Some(Duration::from_secs(30)),
+                Some(REASON.to_string())
+            )
+        );
     }
     let at: Vec<u64> = sim
         .requests_to("init-stream0")
@@ -322,11 +330,8 @@ fn ts_http_keeps_the_refused_connection_until_the_retry_when_the_host_never_clos
         Some(Action::HttpRequest { conn, .. }) => conn,
         other => panic!("expected the first request, got {other:?}"),
     };
-    let headers = vec![
-        header("Retry-After", "30"),
-        header("Content-Type", "text/plain"),
-    ];
-    s.on_response(conn, 503, &headers, ts(0));
+    let headers = crate::support::headers(&[("Retry-After", "30"), ("Content-Type", "text/plain")]);
+    s.on_response(conn, http::StatusCode::SERVICE_UNAVAILABLE, &headers, ts(0));
     let mut actions = Vec::new();
     while let Some(a) = s.poll(ts(0)) {
         actions.push(a);
@@ -349,11 +354,15 @@ fn ts_http_keeps_the_refused_connection_until_the_retry_when_the_host_never_clos
     assert!(closed && requested);
     assert_eq!(
         refused_events(&mut s),
-        vec![(503, Some(30 * SEC), Some(REASON.to_string()))]
+        vec![(
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            Some(Duration::from_secs(30)),
+            Some(REASON.to_string()),
+        )]
     );
 }
 
-fn refused_events(s: &mut Session) -> Vec<(u16, Option<u64>, Option<String>)> {
+fn refused_events(s: &mut Session) -> Vec<(http::StatusCode, Option<Duration>, Option<String>)> {
     let mut events = Vec::new();
     while let Some(e) = s.next_event() {
         events.push(e);

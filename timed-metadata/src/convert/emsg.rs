@@ -81,6 +81,10 @@ pub fn emsg_to_scte35(emsg_bytes: &[u8]) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use alloc::string::ToString;
 
@@ -92,7 +96,7 @@ mod tests {
     fn scte35_to_emsg_embeds_splice_verbatim_then_round_trips() {
         let splice = splice_2002();
         let cfg = EmsgConfig {
-            timescale: Timescale::from_nonzero(90_000),
+            timescale: timescale(90_000),
             presentation: PresentationTime::Delta(0),
             event_duration: 2_160_000,
             value: "1".to_string(),

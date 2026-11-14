@@ -500,11 +500,18 @@ mod tests {
             let track = |id, rate| RtpStreamTrack::new(id, RtpMediaKind::H264, dummy_avc(), rate);
             Self {
                 depa: RtpStreamDepacketiser::new(alloc::vec![
-                    track(VIDEO, Timescale::from_nonzero(VIDEO_RATE)),
+                    track(
+                        VIDEO,
+                        Timescale::try_new(VIDEO_RATE).expect("non-zero timescale")
+                    ),
                     track(OTHER, Timescale::try_new(other_rate).expect("rate"))
                 ]),
                 aligner: TrackAligner::new(&[
-                    (VIDEO, true, Timescale::from_nonzero(VIDEO_RATE)),
+                    (
+                        VIDEO,
+                        true,
+                        Timescale::try_new(VIDEO_RATE).expect("non-zero timescale"),
+                    ),
                     (OTHER, false, Timescale::try_new(other_rate).expect("rate")),
                 ]),
                 other_rate,

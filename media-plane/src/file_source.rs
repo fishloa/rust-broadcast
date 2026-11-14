@@ -919,6 +919,10 @@ pub const FILE_TIMED_RING: usize = MAX_SAMPLES_PER_DRAIN * 4;
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 
@@ -1084,7 +1088,7 @@ mod tests {
             .collect();
         ParsedFile {
             tracks: vec![Track::new(
-                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,
             )],
         }
@@ -1118,7 +1122,7 @@ mod tests {
         let samples = vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true)];
         let parsed = ParsedFile {
             tracks: vec![Track::new(
-                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,
             )],
         };
@@ -1156,7 +1160,7 @@ mod tests {
         let samples = vec![Sample::new(vec![0], None, None, None, false)];
         let parsed = ParsedFile {
             tracks: vec![Track::new(
-                avc_spec(TrackId::new(1), Timescale::from_nonzero(90_000)),
+                avc_spec(TrackId::new(1), timescale(90_000)),
                 samples,
             )],
         };

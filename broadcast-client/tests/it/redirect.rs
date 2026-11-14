@@ -22,8 +22,8 @@ fn resolve_all_3xx_codes_session() {
         };
         session.on_response(
             conn,
-            code,
-            &[("Location".to_string(), "/moved.ts".to_string())],
+            http::StatusCode::from_u16(code).expect("a test names a real status"),
+            &crate::support::headers(&[("Location", "/moved.ts")]),
             ts(0),
         );
         let mut saw_new = false;
@@ -52,8 +52,8 @@ fn redirect_limit_in_session() {
     for i in 0..5 {
         session.on_response(
             conn,
-            301,
-            &[("Location".to_string(), format!("/r{i}.ts"))],
+            http::StatusCode::MOVED_PERMANENTLY,
+            &crate::support::headers(&[("Location", &format!("/r{i}.ts"))]),
             ts(0),
         );
         let mut next = None;
@@ -67,8 +67,8 @@ fn redirect_limit_in_session() {
     // one more redirect exceeds max_redirects
     session.on_response(
         conn,
-        301,
-        &[("Location".to_string(), "/too-many.ts".to_string())],
+        http::StatusCode::MOVED_PERMANENTLY,
+        &crate::support::headers(&[("Location", "/too-many.ts")]),
         ts(0),
     );
     let mut saw_http = false;
@@ -92,7 +92,12 @@ fn redirect_without_location_is_connect_error() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!(),
     };
-    session.on_response(conn, 302, &[], ts(0));
+    session.on_response(
+        conn,
+        http::StatusCode::from_u16(302).expect("a test names a real status"),
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     let mut saw_http = false;
     let mut closes = Vec::new();
     while let Some(a) = session.poll(ts(0)) {
@@ -132,11 +137,8 @@ fn cross_origin_redirect_drops_authorization() {
     };
     session.on_response(
         conn,
-        302,
-        &[(
-            "Location".to_string(),
-            "http://other.example/live.ts".to_string(),
-        )],
+        http::StatusCode::FOUND,
+        &crate::support::headers(&[("Location", "http://other.example/live.ts")]),
         ts(0),
     );
     let mut new_headers = None;

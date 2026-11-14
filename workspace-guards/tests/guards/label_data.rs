@@ -153,6 +153,8 @@ pub const TABLE: &[Crate] = &[
         // own traversal stack, not a label. `MulticastInterface` and
         // `JoinMismatch`: how a UDP socket's multicast join is chosen and why
         // one is refused (a config selector and an error), not spec labels.
+        // `InvalidBackoff`: why a retry schedule's bounds are refused (an
+        // error), not a spec label.
         skip: &[
             "BitError",
             "KlvError",
@@ -163,6 +165,7 @@ pub const TABLE: &[Crate] = &[
             "HttpDateError",
             "MulticastInterface",
             "JoinMismatch",
+            "InvalidBackoff",
         ],
         expected: None,
         min_enums: None,
@@ -1107,6 +1110,9 @@ pub const TABLE: &[Crate] = &[
     // - `SendMediaError` (`push`) — thiserror error for
     // `PushTransport::send_media` (issue #934): mux failure vs. transport
     // send failure; not a spec/field label.
+    // - `MuxError` (`push`) — the typed muxer failure `SendMediaError::Mux`
+    // now carries (issue #2695): the muxer's own error or an uncarriable
+    // batch, not a spec/field label.
     // - `InputSpec`, `AuthSpec`, `OutputAuthSpec` (`config`) — data-carrying
     // config ADTs (`Rtsp { url, .. }`, `Password { .. }`, `Basic { .. }`, …);
     // callers match the typed variant, a static label would be lossy.
@@ -1140,6 +1146,7 @@ pub const TABLE: &[Crate] = &[
             "RtmpPushError",
             "RtspPushError",
             "SendMediaError",
+            "MuxError",
             "DvrError",
             "ProtocolFailure",
             "InputSpec",
@@ -1380,6 +1387,8 @@ pub const TABLE: &[Crate] = &[
             "SessionParseError",
             "FrameError",
             "SdpParseError",
+            // The typed RTSP message-parse failure `Error::MessageParse` carries (#2695).
+            "MessageParseError",
         ],
         expected: None,
         min_enums: None,

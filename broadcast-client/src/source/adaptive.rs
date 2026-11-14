@@ -2,8 +2,9 @@
 //! either through the same callbacks.
 
 use alloc::collections::VecDeque;
-use alloc::string::String;
 use alloc::vec::Vec;
+
+use http::{HeaderMap, StatusCode};
 
 use crate::ConnId;
 use crate::error::{Error, TransportError};
@@ -14,6 +15,7 @@ use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::smooth::SmoothSource;
 use broadcast_auth::AuthState;
+use broadcast_common::stage::Timestamp;
 
 pub(crate) enum Adaptive {
     Hls(Box<HlsSession>),
@@ -65,8 +67,8 @@ impl Adaptive {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,
@@ -154,10 +156,13 @@ impl Adaptive {
         matches!(self, Self::Hls(_))
     }
 
-    pub(crate) fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
+    pub(crate) fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
         match self {
-            Self::Dash(s) => s.set_wall_clock(now_us, unix_us),
-            Self::Smooth(s) => s.set_wall_clock(now_us, unix_us),
+            Self::Dash(s) => s.set_wall_clock(now, unix),
+            Self::Smooth(s) => s.set_wall_clock(
+                now.as_micros(),
+                u64::try_from(unix.as_microsecond()).unwrap_or(u64::MAX),
+            ),
             _ => {}
         }
     }

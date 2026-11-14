@@ -196,7 +196,7 @@ fuzz_target!(|data: &[u8]| {
                 }
             }
             (Some(id), Answer::Body(b)) => {
-                deliver_resource(&mut client, now_us, id, &b);
+                deliver_resource(&mut client, Timestamp::from_micros(now_us), id, &b);
             }
         }
         if terminal {

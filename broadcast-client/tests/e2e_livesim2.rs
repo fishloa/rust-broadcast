@@ -42,7 +42,7 @@ const MIN_SEGMENTS_PER_TRACK: usize = 10;
 const SEGMENT_SECONDS: i64 = 2;
 const MICROS: i64 = 1_000_000;
 const STRICT_EARLY_TOLERANCE_US: i64 = 50_000;
-const HOST_CLOCK_UNCERTAINTY_US: u64 = 5_000;
+const HOST_CLOCK_UNCERTAINTY: Duration = Duration::from_millis(5);
 const MAX_ATTEMPTS_PER_SECOND: usize = 4;
 const STATUS_TOO_EARLY: u16 = 425;
 const STATUS_NOT_FOUND: u16 = 404;
@@ -227,7 +227,7 @@ struct Sent {
     url: String,
     method: String,
     sent_unix_us: i64,
-    status: Option<u16>,
+    status: Option<reqwest::StatusCode>,
 }
 
 #[derive(Default)]
@@ -249,11 +249,15 @@ fn unix_us() -> i64 {
     .expect("unix time fits")
 }
 
+fn wall() -> jiff::Timestamp {
+    jiff::Timestamp::from_microsecond(unix_us()).unwrap_or(jiff::Timestamp::UNIX_EPOCH)
+}
+
 fn config_for(shape: &Shape) -> Config {
     let mut config = Config::default();
     if shape.prefer_host {
         config.dash.clock_policy = DashClockPolicy::PreferHost;
-        config.dash.host_clock_uncertainty_us = HOST_CLOCK_UNCERTAINTY_US;
+        config.dash.host_clock_uncertainty = HOST_CLOCK_UNCERTAINTY;
     }
     config
 }
@@ -293,13 +297,8 @@ fn perform(
     };
     match response {
         Ok(mut resp) => {
-            record.status = Some(resp.status().as_u16());
-            let headers: Vec<(String, String)> = resp
-                .headers()
-                .iter()
-                .filter_map(|(k, v)| Some((k.as_str().to_owned(), v.to_str().ok()?.to_owned())))
-                .collect();
-            session.on_response(conn, resp.status().as_u16(), &headers, ts(mono()));
+            record.status = Some(resp.status());
+            session.on_response(conn, resp.status(), resp.headers(), ts(mono()));
             let mut buf = vec![0u8; 16 * 1024];
             loop {
                 match resp.read(&mut buf) {
@@ -351,7 +350,7 @@ fn play(port: u16, shape: &Shape) -> Observed {
     let mono = || u64::try_from(start.elapsed().as_micros()).expect("mono fits");
     let mut session =
         Session::open(Url::parse(&url).unwrap(), config_for(shape), ts(mono())).expect("open");
-    session.set_wall_clock(ts(mono()), u64::try_from(unix_us()).expect("unix"));
+    session.set_wall_clock(ts(mono()), wall());
     let client = http();
     let mut observed = Observed::default();
     while start.elapsed() < RUN {
@@ -441,7 +440,7 @@ fn verify(shape: &Shape, observed: &Observed) {
     for r in &observed.requests {
         let Some(status) = r.status else { continue };
         if let Some((rep, n)) = segment_key(&r.url) {
-            match status {
+            match status.as_u16() {
                 200 | 206 => delivered.entry(rep).or_default().push(n),
                 STATUS_TOO_EARLY | STATUS_NOT_FOUND if !shape.strict_availability => early += 1,
                 STATUS_TOO_EARLY | STATUS_NOT_FOUND | STATUS_GONE => {

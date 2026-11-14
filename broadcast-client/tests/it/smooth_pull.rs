@@ -120,7 +120,7 @@ fn smooth_first_manifest_404_reports_not_found_and_retries() {
     h.route(
         manifest_url(),
         vec![
-            hls_host::Reply::Status(404),
+            hls_host::status_only(404),
             hls_host::Reply::Ok(body("smooth/av/Manifest")),
         ],
     );
@@ -182,8 +182,16 @@ fn smooth_variants_follow_the_shared_policy() {
         |evs| evs.iter().any(|e| matches!(e, Event::Variants(_))),
         10_000,
     );
-    let has_v = h.events.iter().any(|e| matches!(e, Event::Variants(_)));
-    assert!(has_v);
+    let selection = h.events.iter().find_map(|e| match e {
+        Event::Variants(selection) => Some(selection),
+        _ => None,
+    });
+    let selection = selection.expect("a Variants event");
+    assert!(
+        selection.variants.iter().all(|v| v.uri.is_none()),
+        "a Smooth variant has no URI of its own: {:?}",
+        selection.variants
+    );
 }
 
 #[test]
@@ -300,7 +308,7 @@ fn smooth_fragment_404_retries_then_gives_up_with_discontinuity_when_live() {
     // fragment video=0 returns 404 repeatedly
     h.route(
         "http://origin.test/QualityLevels(64528)/Fragments(video=0)",
-        vec![hls_host::Reply::Status(404)],
+        vec![hls_host::status_only(404)],
     );
     // other fragments ok
     h.ok(
@@ -492,13 +500,10 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
     h.route(
         "http://origin.test/moved/Manifest",
         vec![
-            hls_host::Reply::Full(
+            hls_host::full(
                 401,
                 Vec::new(),
-                vec![(
-                    "WWW-Authenticate".to_string(),
-                    "Basic realm=\"t\"".to_string(),
-                )],
+                crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"t\"")]),
             ),
             hls_host::Reply::Ok(body("smooth/av/Manifest")),
         ],
@@ -526,13 +531,10 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
     h2.route(
         "http://origin.test/moved/Manifest",
         vec![
-            hls_host::Reply::Full(
+            hls_host::full(
                 401,
                 Vec::new(),
-                vec![(
-                    "WWW-Authenticate".to_string(),
-                    "Basic realm=\"t\"".to_string(),
-                )],
+                crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"t\"")]),
             ),
             hls_host::Reply::Ok(body("smooth/av/Manifest")),
         ],
@@ -638,7 +640,7 @@ fn smooth_emits_nothing_after_a_fatal_error() {
 #[test]
 fn smooth_closes_connection_on_non_2xx_response() {
     let mut h = Host::new(manifest_url(), smooth_config());
-    h.route(manifest_url(), vec![hls_host::Reply::Status(404)]);
+    h.route(manifest_url(), vec![hls_host::status_only(404)]);
     h.run_until(|_| false, 10);
     // drive one step cycle
     let _ = h.step();

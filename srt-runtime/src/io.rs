@@ -378,10 +378,6 @@ const DEFAULT_MAX_BW: MaxBwConfig = MaxBwConfig::Set(125_000_000);
 /// (three five-second receive timeouts) made one lost INDUCTION cost the
 /// whole connect budget.
 const HANDSHAKE_RETRANSMIT_PERIOD: Duration = Duration::from_millis(250);
-/// Floor on the handshake tick period, so an absurd
-/// [`HandshakeConfig::retransmit_after_ticks`] cannot make it zero (a zero
-/// `tokio::time::interval` period panics).
-const MIN_HANDSHAKE_TICK: Duration = Duration::from_millis(1);
 /// Keep-Alive period (`draft-sharabayko-srt-01` §3.2.3: "The default timeout
 /// for a keep-alive packet to be sent is 1 second", measured from the last
 /// time any packet — control or data — was sent).
@@ -492,7 +488,7 @@ struct ConnParams {
     /// `T_NOW` measured from `epoch` — so `-(the peer's handshake timestamp)`
     /// when `epoch` is the instant that handshake packet arrived.
     tsbpd_time_base: i64,
-    /// The negotiated TSBPD delay ([`NegotiatedParams::latency_ms`] as a span).
+    /// The negotiated TSBPD delay ([`NegotiatedParams::latency`]).
     tsbpd_delay: Duration,
     epoch: Instant,
     /// The negotiated Maximum Flow Window Size (§3.2.1): the smaller of the
@@ -630,10 +626,9 @@ impl SrtSocket {
         .await?;
 
         // Re-send an unanswered request every `HANDSHAKE_RETRANSMIT_PERIOD`
-        // (the engine counts `retransmit_after_ticks` ticks per retransmit),
-        // and give up at `IoConfig::handshake` whatever the retry budget says.
-        let tick_period = (HANDSHAKE_RETRANSMIT_PERIOD / config.retransmit_after_ticks.max(1))
-            .max(MIN_HANDSHAKE_TICK);
+        // (each tick hands the engine its own elapsed time), and give up at
+        // `IoConfig::handshake` whatever the retry budget says.
+        let tick_period = HANDSHAKE_RETRANSMIT_PERIOD;
         let mut ticker = tokio::time::interval_at(Instant::now() + tick_period, tick_period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let deadline = Instant::now() + io.timeouts.handshake;
@@ -669,7 +664,7 @@ impl SrtSocket {
                 Event::Oversize => continue,
                 Event::Tick => {
                     hs.set_elapsed(epoch.elapsed());
-                    (hs.tick(), None)
+                    (hs.tick(tick_period), None)
                 }
                 Event::Datagram(bytes, src) => {
                     // A packet from anyone but the peer we're connecting to
@@ -787,7 +782,7 @@ impl SrtSocket {
             peer_initial_seq: peer_hs.initial_seq_number,
             peer_socket_id: params.peer_socket_id,
             tsbpd_time_base: tsbpd_time_base_at(epoch, Instant::now(), peer_hs.timestamp_us),
-            tsbpd_delay: Duration::from_millis(u64::from(params.latency_ms)),
+            tsbpd_delay: params.latency,
             epoch,
             max_flow_window: params.max_flow_window_size,
             mtu: params.mtu,
@@ -866,8 +861,7 @@ impl SrtSocket {
             .map_err(|e| handshake_err("rendezvous start", e))?;
         send_bounded(&socket, &first, peer, io.timeouts.write, "send waveahand").await?;
 
-        let tick_period = (HANDSHAKE_RETRANSMIT_PERIOD / config.retransmit_after_ticks.max(1))
-            .max(MIN_HANDSHAKE_TICK);
+        let tick_period = HANDSHAKE_RETRANSMIT_PERIOD;
         let mut ticker = tokio::time::interval_at(Instant::now() + tick_period, tick_period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let deadline = Instant::now() + io.timeouts.handshake;
@@ -906,7 +900,7 @@ impl SrtSocket {
                 Event::Oversize => continue,
                 Event::Tick => {
                     hs.set_elapsed(epoch.elapsed());
-                    hs.tick()
+                    hs.tick(tick_period)
                 }
                 Event::Datagram(bytes, src) => {
                     if src != peer {
@@ -2759,7 +2753,7 @@ impl ListenerCore {
         let mut to_remove = Vec::new();
         for (addr, entry) in self.pending.iter_mut() {
             entry.handshake.set_elapsed(entry.created_at.elapsed());
-            for outcome in entry.handshake.tick() {
+            for outcome in entry.handshake.tick(HANDSHAKE_RETRANSMIT_PERIOD) {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
                         self.outbound_queue
@@ -2837,7 +2831,7 @@ impl ListenerCore {
         // which is the listener-wide template and no longer carries the
         // per-connection value once randomized.
         let our_initial_seq = entry.our_initial_seq;
-        let tsbpd_delay = Duration::from_millis(u64::from(negotiated.latency_ms));
+        let tsbpd_delay = negotiated.latency;
         let concluded_at = entry.concluded_at.unwrap_or_else(Instant::now);
         let epoch = entry.created_at;
         let tsbpd_time_base = tsbpd_time_base_at(epoch, concluded_at, entry.peer_timestamp_us);
@@ -3804,7 +3798,7 @@ mod adapter_tests {
     #[tokio::test]
     async fn a_pending_handshake_is_retransmitted_by_the_listener_tick_alone() {
         let config = HandshakeConfig {
-            retransmit_after_ticks: 1,
+            retransmit_after: Duration::from_millis(1),
             max_retries: 5,
             ..HandshakeConfig::default()
         };
@@ -4504,7 +4498,7 @@ mod adapter_tests {
     #[tokio::test]
     async fn pending_entries_expire_while_other_sources_keep_sending() {
         let config = HandshakeConfig {
-            retransmit_after_ticks: 1,
+            retransmit_after: Duration::from_millis(1),
             max_retries: 2,
             ..HandshakeConfig::default()
         };
@@ -5074,14 +5068,14 @@ mod adapter_tests {
         );
     }
 
-    /// A hostile `retransmit_after_ticks` must not make the handshake timer's
+    /// A hostile `retransmit_after` must not make the handshake timer's
     /// period zero (which would panic the connect).
     #[tokio::test]
-    async fn an_absurd_retransmit_tick_count_does_not_panic_the_connect() {
+    async fn an_absurd_retransmit_period_does_not_panic_the_connect() {
         let silent = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        for ticks in [0, 1, u32::MAX] {
+        for step in [Duration::ZERO, Duration::from_micros(1), Duration::MAX] {
             let config = HandshakeConfig {
-                retransmit_after_ticks: ticks,
+                retransmit_after: step,
                 ..HandshakeConfig::default()
             };
             // Nobody answers; the point is only that it neither panics nor
@@ -5093,7 +5087,7 @@ mod adapter_tests {
             .await;
             assert!(
                 outcome.is_err(),
-                "ticks={ticks}: still waiting for the peer"
+                "step={step:?}: still waiting for the peer"
             );
         }
     }

@@ -83,7 +83,7 @@ use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
 use media_plane::trunk::SampleCursorItem;
 use transmux::ir::{Media, Track, TrackSpec};
 
-use crate::push::{PushTransport, SendMediaError};
+use crate::push::{MuxError, PushTransport, SendMediaError};
 
 /// [`PushEgress`] over an owned `T: PushTransport` — see the module doc.
 pub struct PushTransportEgress<T: PushTransport> {
@@ -99,11 +99,6 @@ pub struct PushTransportEgress<T: PushTransport> {
     /// `renegotiate` may still freely adopt a changed proposal (see the
     /// module doc's `Refused` bullet).
     committed: bool,
-    /// This transport's static "why nothing here is carriable" message —
-    /// e.g. `"no AVC video or AAC audio track to publish over RTMP"`. Reused
-    /// verbatim for [`NegotiationOutcome::Error`] from both `negotiate` and
-    /// `renegotiate`, so the two call sites can never drift.
-    unsatisfiable_reason: &'static str,
     /// Encoded wire messages [`PushEgress::send`] has queued but
     /// [`PushEgress::poll_transmit`] has not yet handed to
     /// [`Self::flush_transmit`].
@@ -130,21 +125,18 @@ pub(crate) enum FlushOutcome {
     /// The write did not finish within the limit (a stalled peer).
     TimedOut,
     /// The transport reported a write failure.
-    Failed(Box<dyn std::error::Error + Send + Sync>),
+    Failed(MuxError),
 }
 
 impl<T: PushTransport> PushTransportEgress<T> {
-    /// Wrap an already-connected `transport`. `unsatisfiable_reason` is the
-    /// message [`NegotiationOutcome::Error`] carries when a proposed track
-    /// set has no carriable track at all (e.g. `"no AVC video or AAC audio
-    /// track to publish over RTMP"`).
-    pub fn new(transport: T, unsatisfiable_reason: &'static str) -> Self {
+    /// Wrap an already-connected `transport`. A proposed track set with no carriable track at all
+    /// is [`MuxError::NoCarriableTrack`] from both `negotiate` and `renegotiate`.
+    pub fn new(transport: T) -> Self {
         PushTransportEgress {
             transport,
             selection: TrackSelection::new(Vec::new()),
             specs: Vec::new(),
             committed: false,
-            unsatisfiable_reason,
             outbound: VecDeque::new(),
             awaiting_sync: false,
             unselected_samples: 0,
@@ -208,7 +200,9 @@ impl<T: PushTransport> PushTransportEgress<T> {
             r = tokio::time::timeout(limit, self.flush_transmit()) => match r {
                 Err(_) => FlushOutcome::TimedOut,
                 Ok(Ok(())) => FlushOutcome::Flushed,
-                Ok(Err(SendMediaError::Transport(err))) => FlushOutcome::Failed(err),
+                Ok(Err(SendMediaError::Transport(err))) => {
+                    FlushOutcome::Failed(MuxError::Transport(err))
+                }
                 // Only transport failures end a connection (as before).
                 Ok(Err(_)) => FlushOutcome::Flushed,
             },
@@ -233,9 +227,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
     fn negotiate(&mut self, tracks: &[TrackSpec]) -> NegotiationOutcome<Self::Error> {
         let carriable = self.carriable(tracks);
         if carriable.is_empty() {
-            return NegotiationOutcome::Error(SendMediaError::Mux(
-                self.unsatisfiable_reason.to_string(),
-            ));
+            return NegotiationOutcome::Error(SendMediaError::Mux(MuxError::NoCarriableTrack));
         }
         self.selection = TrackSelection::new(carriable.iter().map(|t| t.track_id).collect());
         self.awaiting_sync = carriable.iter().any(|t| t.config.is_video());
@@ -255,9 +247,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
     fn renegotiate(&mut self, tracks: &[TrackSpec]) -> NegotiationOutcome<Self::Error> {
         let carriable = self.carriable(tracks);
         if carriable.is_empty() {
-            return NegotiationOutcome::Error(SendMediaError::Mux(
-                self.unsatisfiable_reason.to_string(),
-            ));
+            return NegotiationOutcome::Error(SendMediaError::Mux(MuxError::NoCarriableTrack));
         }
         let proposed_ids: Vec<TrackId> = carriable.iter().map(|t| t.track_id).collect();
         if self.committed && proposed_ids != self.selection.track_ids {
@@ -351,6 +341,10 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use async_trait::async_trait;
     use broadcast_common::timescale::Timescale;
@@ -402,7 +396,7 @@ mod tests {
     fn avc_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Avc {
                 config: transmux::AVCConfigurationBox::new(
                     transmux::AVCDecoderConfigurationRecord {
@@ -428,7 +422,7 @@ mod tests {
     fn opaque_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),
@@ -457,7 +451,7 @@ mod tests {
     /// after it, everything flows.
     #[test]
     fn send_waits_for_the_first_video_sync_sample() {
-        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
         egress.negotiate(&[avc_spec(TrackId::new(1)), opaque_spec(TrackId::new(2))]);
         let non_sync = transmux::ir::Sample::new(
             bytes::Bytes::copy_from_slice(&[0, 0, 0, 1, 0x41]),
@@ -489,7 +483,7 @@ mod tests {
     /// accepts every proposed track.
     #[test]
     fn unrestricted_transport_accepts_every_track() {
-        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
         match egress.negotiate(&[avc_spec(TrackId::new(1)), opaque_spec(TrackId::new(2))]) {
             NegotiationOutcome::Accepted(sel) => {
                 assert_eq!(sel.track_ids, vec![TrackId::new(1), TrackId::new(2)]);
@@ -511,11 +505,9 @@ mod tests {
             restrict_to_avc_aac: true,
             ..Default::default()
         };
-        let mut egress = PushTransportEgress::new(transport, "no AVC video or AAC audio track");
+        let mut egress = PushTransportEgress::new(transport);
         match egress.negotiate(&[opaque_spec(TrackId::new(9))]) {
-            NegotiationOutcome::Error(SendMediaError::Mux(reason)) => {
-                assert_eq!(reason, "no AVC video or AAC audio track");
-            }
+            NegotiationOutcome::Error(SendMediaError::Mux(MuxError::NoCarriableTrack)) => {}
             other => panic!("expected Error(Mux(..)), got {other:?}"),
         }
     }
@@ -532,7 +524,7 @@ mod tests {
             restrict_to_avc_aac: true,
             ..Default::default()
         };
-        let mut egress = PushTransportEgress::new(transport, "no AVC video or AAC audio track");
+        let mut egress = PushTransportEgress::new(transport);
         match egress.negotiate(&[avc_spec(TrackId::new(1)), opaque_spec(TrackId::new(2))]) {
             NegotiationOutcome::Accepted(sel) => assert_eq!(sel.track_ids, vec![TrackId::new(1)]),
             other => panic!("expected Accepted([1]), got {other:?}"),
@@ -552,7 +544,7 @@ mod tests {
     /// ingest side. Reverted after confirming the failure.
     #[test]
     fn renegotiate_refuses_a_track_set_change_once_committed() {
-        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
         egress.negotiate(&[avc_spec(TrackId::new(1))]);
         match egress.renegotiate(&[avc_spec(TrackId::new(1)), avc_spec(TrackId::new(2))]) {
             NegotiationOutcome::Refused { reason } => assert!(!reason.is_empty()),
@@ -571,7 +563,7 @@ mod tests {
             restrict_to_avc_aac: true,
             ..Default::default()
         };
-        let mut egress = PushTransportEgress::new(transport, "no AVC video or AAC audio track");
+        let mut egress = PushTransportEgress::new(transport);
         egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
@@ -593,7 +585,7 @@ mod tests {
     /// carries a byte through both halves.
     #[tokio::test]
     async fn send_then_flush_transmit_writes_a_real_encoded_message() {
-        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
         egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
@@ -640,7 +632,7 @@ mod tests {
     }
 
     fn egress_with_queued_message() -> PushTransportEgress<HangingTransport> {
-        let mut egress = PushTransportEgress::new(HangingTransport, "unreachable");
+        let mut egress = PushTransportEgress::new(HangingTransport);
         egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
@@ -681,7 +673,7 @@ mod tests {
     /// A healthy flush is unaffected.
     #[tokio::test]
     async fn a_healthy_flush_completes_within_the_bound() {
-        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        let mut egress = PushTransportEgress::new(FakeTransport::default());
         egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
@@ -846,13 +838,10 @@ mod tests {
     #[tokio::test]
     async fn a_failing_writer_stops_the_flush_before_a_later_frame() {
         use media_plane::egress::PushEgress as _;
-        let mut egress = PushTransportEgress::new(
-            FailingTransport {
-                fail_after: 1,
-                attempted: Vec::new(),
-            },
-            "unreachable",
-        );
+        let mut egress = PushTransportEgress::new(FailingTransport {
+            fail_after: 1,
+            attempted: Vec::new(),
+        });
         let tracks = [avc_spec(TrackId::new(1))];
         let _ = egress.negotiate(&tracks);
         // Queue two frames (encode_media yields f0, f1).

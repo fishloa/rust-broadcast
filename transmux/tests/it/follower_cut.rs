@@ -19,7 +19,7 @@ use transmux::{
 };
 
 const LEADER_TS: u32 = 90_000;
-const LEADER_SCALE: Timescale = Timescale::from_nonzero(LEADER_TS);
+const LEADER_SCALE: Timescale = broadcast_common::timescale!(LEADER_TS);
 const AAC_FRAME_TICKS: i64 = 1024;
 const AAC_RATE: u32 = 48_000;
 const LEADER_TICKS_PER_8_FOLLOWER_TICKS: i64 = 15;
@@ -355,7 +355,7 @@ fn audio_template() -> (Track, Timescale) {
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .unwrap();
-    track.spec.timescale = Timescale::from_nonzero(AAC_RATE);
+    track.spec.timescale = broadcast_common::timescale!(AAC_RATE);
     (track, movie_ts)
 }
 

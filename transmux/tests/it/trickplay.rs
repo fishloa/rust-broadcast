@@ -26,6 +26,10 @@ use transmux::media::{Fmp4Demux, Track};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::trickplay::derive_iframe_track;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 /// Duration used for each synthetic sample (arbitrary, but all equal makes the
 /// expected folded durations trivial to verify: count × per-sample duration).
 const SYNTHETIC_SAMPLE_DURATION: u32 = 100;
@@ -43,7 +47,7 @@ const SYNTHETIC_GOP_SIZE: usize = 4;
 fn synthetic_spec() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90000),
+        timescale(90000),
         CodecConfig::Avc {
             config: AVCConfigurationBox {
                 config: AVCDecoderConfigurationRecord {

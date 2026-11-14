@@ -33,8 +33,8 @@ fn live_run(bytes: &[u8]) -> Run {
     let c = conn.expect("request");
     s.on_response(
         c,
-        200,
-        &[("Content-Type".to_string(), "video/MP2T".to_string())],
+        http::StatusCode::OK,
+        &crate::support::ts_content_type(),
         ts(now),
     );
     let mut run = Run {
@@ -187,8 +187,8 @@ fn open_live(now: u64) -> (Session, ConnId) {
     let c = conn.expect("request");
     s.on_response(
         c,
-        200,
-        &[("Content-Type".to_string(), "video/MP2T".to_string())],
+        http::StatusCode::OK,
+        &crate::support::ts_content_type(),
         ts(now),
     );
     (s, c)

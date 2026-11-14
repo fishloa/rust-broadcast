@@ -497,7 +497,7 @@ mod tests {
     fn media(timescales: &[u32]) -> Media {
         Media::new(
             timescales.iter().map(|&t| track(t, 4)).collect(),
-            Timescale::from_nonzero(1000),
+            Timescale::try_new(1000).expect("non-zero timescale"),
         )
     }
 

@@ -11,6 +11,8 @@
 //! cargo run -p srt-runtime --example handshake_loopback
 //! ```
 
+use core::time::Duration;
+
 use srt_runtime::HandshakeConfig;
 use srt_runtime::caller::{CallerHandshake, CallerHandshakeState};
 use srt_runtime::handshake_sm::HandshakeOutput;
@@ -36,13 +38,13 @@ fn main() {
     let mut caller = CallerHandshake::new(
         CALLER_SOCKET_ID,
         HandshakeConfig::default()
-            .with_latency_ms(180)
+            .with_latency(Duration::from_millis(180))
             .with_stream_id(Some("live/camera-1".to_string())),
     );
     let mut listener = ListenerHandshake::new(
         LISTENER_SOCKET_ID,
         SYN_COOKIE,
-        HandshakeConfig::default().with_latency_ms(250),
+        HandshakeConfig::default().with_latency(Duration::from_millis(250)),
     );
 
     let mut to_listener = caller.start().expect("caller start");
@@ -74,14 +76,14 @@ fn main() {
     let c = caller.negotiated().expect("caller negotiated");
     let l = listener.negotiated().expect("listener negotiated");
     println!(
-        "connected: version {}, latency {} ms (caller asked 180, listener 250), stream id {:?}",
-        c.version, c.latency_ms, c.stream_id
+        "connected: version {}, latency {:?} (caller asked 180, listener 250), stream id {:?}",
+        c.version, c.latency, c.stream_id
     );
     println!(
         "socket ids: caller own=0x{:08X} peer=0x{:08X}; listener own=0x{:08X} peer=0x{:08X}",
         c.own_socket_id, c.peer_socket_id, l.own_socket_id, l.peer_socket_id
     );
-    assert_eq!(c.latency_ms, l.latency_ms);
+    assert_eq!(c.latency, l.latency);
     assert_eq!(c.peer_socket_id, l.own_socket_id);
     assert_eq!(l.peer_socket_id, c.own_socket_id);
 }

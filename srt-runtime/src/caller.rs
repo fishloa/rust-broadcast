@@ -24,6 +24,7 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::handshake_sm::{
@@ -195,13 +196,13 @@ impl CallerHandshake {
         self.feed(&packet)
     }
 
-    /// Advances retransmit timing by one caller-defined tick. If the
-    /// handshake is waiting on a peer response and
-    /// [`HandshakeConfig::retransmit_after_ticks`] have elapsed with none
-    /// arriving, re-emits the last sent packet; after
-    /// [`HandshakeConfig::max_retries`] such retransmissions, transitions to
+    /// Advances retransmit timing by `elapsed` of the caller's own clock. If
+    /// the handshake is waiting on a peer response and
+    /// [`HandshakeConfig::retransmit_after`] has passed with none arriving,
+    /// re-emits the last sent packet; after [`HandshakeConfig::max_retries`]
+    /// such retransmissions, transitions to
     /// [`CallerHandshakeState::TimedOut`].
-    pub fn tick(&mut self) -> Vec<HandshakeOutput> {
+    pub fn tick(&mut self, elapsed: Duration) -> Vec<HandshakeOutput> {
         if !matches!(
             self.state,
             CallerHandshakeState::AwaitingInductionResponse
@@ -209,7 +210,7 @@ impl CallerHandshake {
         ) {
             return Vec::new();
         }
-        let step = self.retransmit.tick(&self.config);
+        let step = self.retransmit.tick(elapsed, &self.config);
         if matches!(step, RetransmitStep::TimedOut) {
             self.state = CallerHandshakeState::TimedOut;
         }
@@ -243,8 +244,8 @@ impl CallerHandshake {
         let hs_msg = HsExtMessage {
             srt_version: self.config.srt_version,
             srt_flags: self.config.flags,
-            receiver_tsbpd_delay_ms: self.config.latency_ms,
-            sender_tsbpd_delay_ms: self.config.latency_ms,
+            receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
+            sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
         };
         let (ext_bytes, ext_flags) = handshake_sm::build_conclusion_extensions(
             ExtensionType::HsReq,
@@ -361,7 +362,7 @@ impl CallerHandshake {
             flags: crate::packet::HandshakeExtensionMessageFlags(
                 self.config.flags.0 & peer_msg.srt_flags.0,
             ),
-            latency_ms: handshake_sm::negotiate_latency_ms(self.config.latency_ms, &peer_msg),
+            latency: handshake_sm::negotiate_latency(self.config.latency, &peer_msg),
             own_socket_id: self.own_socket_id,
             peer_socket_id: self.peer_socket_id,
             mtu: self.config.mtu.min(hp.mtu),
@@ -592,21 +593,39 @@ mod tests {
     #[test]
     fn tick_retransmits_then_times_out() {
         let config = HandshakeConfig {
-            retransmit_after_ticks: 2,
+            retransmit_after: Duration::from_millis(500),
             max_retries: 1,
             ..HandshakeConfig::default()
         };
         let mut c = CallerHandshake::new(1, config);
         let first = c.start().unwrap();
 
-        assert_eq!(c.tick(), Vec::new()); // 1 tick, threshold 2: nothing yet
-        let out = c.tick(); // 2 ticks: retransmit #1
+        let step = Duration::from_millis(250);
+        assert_eq!(c.tick(step), Vec::new()); // 250 ms, under the 500 ms floor
+        let out = c.tick(step); // 500 ms: retransmit #1
         assert_eq!(out, vec![HandshakeOutput::Send(first.clone())]);
 
-        assert_eq!(c.tick(), Vec::new());
-        let out = c.tick(); // retransmit #2 exceeds max_retries=1
+        assert_eq!(c.tick(step), Vec::new());
+        let out = c.tick(step); // retransmit #2 exceeds max_retries=1
         assert_eq!(out, vec![HandshakeOutput::TimedOut]);
         assert_eq!(c.state(), CallerHandshakeState::TimedOut);
+    }
+
+    #[test]
+    fn a_tick_elapsed_past_the_period_is_measured_not_counted() {
+        let config = HandshakeConfig {
+            retransmit_after: Duration::from_millis(500),
+            max_retries: 2,
+            ..HandshakeConfig::default()
+        };
+        let mut c = CallerHandshake::new(1, config);
+        let first = c.start().unwrap();
+        let out = c.tick(Duration::from_millis(600));
+        assert_eq!(
+            out,
+            vec![HandshakeOutput::Send(first)],
+            "one 600 ms step is past the 500 ms period: one retransmit, not zero"
+        );
     }
 
     /// r08-SRT-W10: a duplicate INDUCTION response after the CONCLUSION has

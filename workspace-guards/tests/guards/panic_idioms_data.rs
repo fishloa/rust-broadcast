@@ -21,4 +21,5 @@ pub const TABLE: &[Crate] = &[
     plain("scte35-splice"),
     plain("ssai-runtime"),
     plain("timed-metadata"),
+    plain("broadcast-client"),
 ];

@@ -1,6 +1,7 @@
 use crate::support;
 
 use std::sync::OnceLock;
+use std::time::Duration;
 
 use broadcast_auth::{Credentials as AuthCredentials, Scheme as AuthScheme, Verifier};
 use broadcast_client::{
@@ -644,7 +645,11 @@ fn credentials_rejected_emits_auth_rejected() {
         .unwrap();
     host.drain();
     let events = host.events();
-    assert!(events.contains(&Event::AuthRejected { status: 401 }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::AuthRejected { status } if status.as_u16() == 401))
+    );
     assert!(statuses(&events).contains(&Status::WaitingForCredentials));
     host.clear_actions();
     let sent = host.server.log.len();
@@ -674,7 +679,11 @@ fn forbidden_403_event() {
     s.describe_status = Some(403);
     let mut host = connected(Config::default(), s);
     let events = host.events();
-    assert!(events.contains(&Event::Forbidden { status: 403 }));
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, Event::Forbidden { status } if status.as_u16() == 403))
+    );
     assert_eq!(reconnecting_attempts(&events), [1]);
     assert_eq!(closes(&host), 1);
     assert_eq!(wakes(&host.actions).last(), Some(&(2 * SEC)));
@@ -833,10 +842,14 @@ fn stall_5s_notice_and_30s_reconnect_with_teardown_abort() {
     );
     host.advance_to(last_byte + STALL_NOTICE);
     let events = host.events();
-    assert!(statuses(&events).contains(&Status::Stalled { secs: 5 }));
+    assert!(statuses(&events).contains(&Status::Stalled {
+        stalled: Duration::from_secs(5)
+    }));
     assert!(events.contains(&Event::Starved(broadcast_client::StarveKind::NoData)));
     host.advance_to(last_byte + 6 * SEC);
-    assert!(statuses(&host.events()).contains(&Status::Stalled { secs: 6 }));
+    assert!(statuses(&host.events()).contains(&Status::Stalled {
+        stalled: Duration::from_secs(6)
+    }));
     host.now = last_byte + 10 * SEC;
     host.deliver(&frames[SOME_FRAMES]);
     assert!(

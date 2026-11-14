@@ -5,6 +5,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use std::collections::{HashMap, HashSet};
 
+use http::{HeaderMap, StatusCode};
 use url::Url;
 
 use crate::BufferHint as Hint;
@@ -20,6 +21,9 @@ use crate::source::adaptive::Adaptive;
 use crate::source::dash::DashSource;
 use crate::source::datagram::Datagram;
 use crate::source::fetch::conn::ConnAlloc;
+use crate::source::fetch::inflight::{
+    REDIRECT_STATUSES, STATUS_PROXY_AUTH_REQUIRED, STATUS_UNAUTHORIZED,
+};
 use crate::source::fetch::wall::WallClock;
 use crate::source::hls_session::HlsSession;
 use crate::source::rtmp::{RtmpSource, SCHEME_RTMP, SCHEME_RTMPS};
@@ -34,6 +38,7 @@ use transmux::JumpDetector;
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::tshttp::Action as TsAction;
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 use core::time::Duration;
@@ -49,6 +54,8 @@ const RTSPS_DEFAULT_PORT: u16 = 322;
 const HTTPS_DEFAULT_PORT: u16 = 443;
 const TS_WAKE_TICK_US: u64 = 1_000_000;
 const FIRST_CONN_ID: u32 = 1;
+const STATUS_TOO_MANY_REQUESTS: StatusCode = StatusCode::TOO_MANY_REQUESTS;
+const STATUS_SERVICE_UNAVAILABLE: StatusCode = StatusCode::SERVICE_UNAVAILABLE;
 
 const MAX_UNAUTHENTICATED_REPLAYS: u32 = 2;
 
@@ -358,8 +365,8 @@ impl Session {
     pub fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: Timestamp,
     ) {
         let now_us = now.as_micros();
@@ -386,7 +393,7 @@ impl Session {
             .receive_cookies(&req_url, headers, Timestamp::from_micros(self.now_us));
         let lineage = self.conn_auth.get(&conn).copied().unwrap_or_default();
 
-        if status == 301 || status == 302 || status == 303 || status == 307 || status == 308 {
+        if REDIRECT_STATUSES.contains(&status) {
             if let Some(target) = redirect::resolve(
                 &req_url,
                 headers,
@@ -427,7 +434,7 @@ impl Session {
             return;
         }
 
-        if status == 401 || status == 407 {
+        if status == STATUS_UNAUTHORIZED || status == STATUS_PROXY_AUTH_REQUIRED {
             if req_url.origin() != self.auth.origin().origin() {
                 self.fail_connect(conn);
                 return;
@@ -486,13 +493,13 @@ impl Session {
             return;
         }
 
-        if status == 403 {
+        if status == StatusCode::FORBIDDEN {
             self.events.push_back(Event::Forbidden { status });
             self.fail_connect(conn);
             return;
         }
 
-        if (200..300).contains(&status) {
+        if status.is_success() {
             self.redirect_count = 0;
             self.live_conn = Some(conn);
         } else {
@@ -501,12 +508,12 @@ impl Session {
             if self.live_conn == Some(conn) {
                 self.live_conn = None;
             }
-            if status != 429 && status != 503 {
+            if status != STATUS_TOO_MANY_REQUESTS && status != STATUS_SERVICE_UNAVAILABLE {
                 self.actions.push_back(Action::Close { conn });
             }
         }
         self.source.on_response(status, headers, self.now_us);
-        if status == 429 || status == 503 {
+        if status == STATUS_TOO_MANY_REQUESTS || status == STATUS_SERVICE_UNAVAILABLE {
             if self.source.refused_wants_body() {
                 self.refused_conns.insert(conn);
             } else {
@@ -674,7 +681,8 @@ impl Session {
         }
         if self.datagram.is_some() && self.known_conns.contains_key(&conn) {
             self.live_conn = Some(conn);
-            self.source.on_response(200, &[], self.now_us);
+            self.source
+                .on_response(StatusCode::OK, &HeaderMap::new(), self.now_us);
             self.drain_source();
             if let Some(d) = self.datagram.as_mut() {
                 d.on_connected(self.now_us);
@@ -821,14 +829,14 @@ impl Session {
     }
 
     /// Tell the session the UTC time: at the monotonic instant `now` (the clock every other
-    /// call takes) the host's UTC clock read `unix_us` microseconds since 1970-01-01T00:00:00Z
-    /// (POSIX time, no leap seconds). The host reads both clocks back to back, so the pair is as
+    /// call takes) the host's UTC clock read `unix` (POSIX time, no leap seconds). The host
+    /// reads both clocks back to back, so the pair is as
     /// tight as the host can make it; the session never reads a clock itself.
     ///
     /// Callable at any time and repeatedly (at open, every ten minutes, on a system clock-change
     /// notification or after a device wakes): each call replaces the previous anchor, a call
     /// whose `now` is earlier than the last one is accepted as it stands, and no value is
-    /// rejected (`unix_us` is a `u64`, so dates past the year 584 000 are representable).
+    /// rejected.
     /// [`Session::open`] performs no I/O, so a host calls this between `open` and the first
     /// [`Session::poll`].
     ///
@@ -838,14 +846,13 @@ impl Session {
     /// for the DASH source, which needs a clock only for dynamic MPDs (availability and the live
     /// edge) and ranks this one below a measured `UTCTiming` unless
     /// [`crate::DashConfig::clock_policy`] says otherwise.
-    pub fn set_wall_clock(&mut self, now: Timestamp, unix_us: u64) {
-        let now_us = now.as_micros();
-        self.wall = Some(WallClock::new(now_us, unix_us));
+    pub fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
+        self.wall = Some(WallClock::new(now.as_micros(), unix.as_microsecond()));
         if self.closed {
             return;
         }
         if let Some(a) = self.adaptive.as_mut() {
-            a.set_wall_clock(now_us, unix_us);
+            a.set_wall_clock(now, unix);
             self.flush_adaptive();
         }
     }
@@ -937,19 +944,21 @@ impl Session {
         Ok(())
     }
 
-    /// Playback position update.
-    pub fn on_playback_position(&mut self, now: Timestamp, pts_27mhz: Option<u64>) {
+    /// Playback position update: the player's current presentation time on
+    /// the 27 MHz clock ([`Clock27`]; `None` while it has no position yet).
+    pub fn on_playback_position(&mut self, now: Timestamp, position: Option<Clock27>) {
         let now_us = now.as_micros();
         if self.closed {
             return;
         }
         self.now_us = now_us;
-        self.buffer.on_playback_position(now_us, pts_27mhz);
+        let pts = position.map(Clock27::ticks);
+        self.buffer.on_playback_position(now_us, pts);
         let evs = self.buffer.drain();
         for e in evs {
             self.events.push_back(e);
         }
-        self.playout.on_position(pts_27mhz);
+        self.playout.on_position(pts);
         self.drain_playout();
     }
 
@@ -1554,7 +1563,7 @@ impl Session {
 
     /// Samples dropped because they still carried the timeline that a detected jump left: after
     /// [`Event::Discontinuity`] from a jump, every other track delivers nothing until its first
-    /// sample lies within [`TimelineJumpConfig::forward_slack_us`](crate::TimelineJumpConfig) of
+    /// sample lies within [`TimelineJumpConfig::forward_slack`](crate::TimelineJumpConfig) of
     /// the new timeline's first sample.
     pub fn stale_samples_dropped(&self) -> u64 {
         self.stale_dropped
@@ -1569,7 +1578,7 @@ impl Session {
 }
 
 fn has_authorization(headers: &[(String, String)]) -> bool {
-    broadcast_auth::carries_credentials(headers)
+    broadcast_auth::carries_credentials(&crate::headers::to_header_map(headers))
 }
 
 fn has_mpd_extension(url: &Url) -> bool {

@@ -11,6 +11,8 @@
 //! Initiator, the other Responder — and land on cross-matching negotiated
 //! parameters, not just that each one runs without erroring in isolation.
 
+use core::time::Duration;
+
 use srt_runtime::handshake_sm::{HandshakeOutput, RejectionReason};
 use srt_runtime::packet::{
     ControlPacket, EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
@@ -79,8 +81,8 @@ fn run_rendezvous(a: &mut RendezvousHandshake, b: &mut RendezvousHandshake) {
 
 #[test]
 fn two_rendezvous_peers_converge_on_connected_with_matching_params() {
-    let config_a = HandshakeConfig::default().with_latency_ms(180);
-    let config_b = HandshakeConfig::default().with_latency_ms(250);
+    let config_a = HandshakeConfig::default().with_latency(Duration::from_millis(180));
+    let config_b = HandshakeConfig::default().with_latency(Duration::from_millis(250));
 
     let mut a = RendezvousHandshake::new(PEER_A_SOCKET_ID, PEER_A_COOKIE, config_a);
     let mut b = RendezvousHandshake::new(PEER_B_SOCKET_ID, PEER_B_COOKIE, config_b);
@@ -112,9 +114,9 @@ fn two_rendezvous_peers_converge_on_connected_with_matching_params() {
     // The greater-of-both-parties latency rule (reused from §4.3.1.2 — see
     // rendezvous.rs module docs "Resolved ambiguities") lands on the same
     // number regardless of which side computes it.
-    assert_eq!(a_params.latency_ms, 250);
-    assert_eq!(b_params.latency_ms, 250);
-    assert_eq!(a_params.latency_ms, b_params.latency_ms);
+    assert_eq!(a_params.latency, Duration::from_millis(250));
+    assert_eq!(b_params.latency, Duration::from_millis(250));
+    assert_eq!(a_params.latency, b_params.latency);
 }
 
 #[test]

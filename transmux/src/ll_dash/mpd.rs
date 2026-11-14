@@ -5,6 +5,7 @@
 //! clauses).
 
 use alloc::string::{String, ToString};
+use core::time::Duration;
 
 use broadcast_dash::utc_timing::UtcScheme;
 use broadcast_dash::{Latency, Mpd, PlaybackRate, ServiceDescription, UtcTiming};
@@ -41,8 +42,9 @@ pub struct LlDashPackager {
     pub segment_duration_secs: f64,
     /// Chunk duration in seconds. `availabilityTimeOffset = segment − chunk`.
     pub chunk_duration_secs: f64,
-    /// Target end-to-end latency in **milliseconds** (`Latency@target`).
-    pub latency_target_ms: u32,
+    /// Target end-to-end latency (`Latency@target`), written as whole
+    /// milliseconds.
+    pub latency_target: Duration,
     /// Optional catch-up playback rate bounds (`PlaybackRate@min`/`@max`).
     pub playback_rate: Option<(f64, f64)>,
     /// `MPD/UTCTiming` (§5.8.4.11) as `(schemeIdUri, value)`: the registered
@@ -84,7 +86,7 @@ impl LlDashPackager {
     pub fn new(
         segment_duration_secs: f64,
         chunk_duration_secs: f64,
-        latency_target_ms: u32,
+        latency_target: Duration,
         availability_start_time: impl Into<String>,
     ) -> Result<Self> {
         if !(segment_duration_secs.is_finite() && segment_duration_secs > 0.0) {
@@ -111,7 +113,7 @@ impl LlDashPackager {
             base,
             segment_duration_secs,
             chunk_duration_secs,
-            latency_target_ms,
+            latency_target,
             playback_rate: None,
             utc_timing: None,
         })
@@ -177,7 +179,7 @@ impl LlDashPackager {
         }
 
         let mut latency = Latency::default();
-        latency.target = Some(u64::from(self.latency_target_ms));
+        latency.target = Some(u64::try_from(self.latency_target.as_millis()).unwrap_or(u64::MAX));
         let mut sd = ServiceDescription::default();
         sd.id = Some(SERVICE_DESCRIPTION_ID);
         sd.latency = Some(latency);
@@ -240,7 +242,8 @@ mod tests {
 
     #[test]
     fn apply_ll_sets_the_availability_fields_on_every_template() {
-        let packager = LlDashPackager::new(4.0, 1.0, 3000, "2026-01-01T00:00:00Z").unwrap();
+        let packager =
+            LlDashPackager::new(4.0, 1.0, Duration::from_secs(3), "2026-01-01T00:00:00Z").unwrap();
         let mut mpd = mpd_with_one_template();
         packager.apply_ll(&mut mpd);
         let template = mpd.periods[0].adaptation_sets[0].representations[0]
@@ -260,10 +263,11 @@ mod tests {
 
     #[test]
     fn apply_ll_adds_utc_timing_and_playback_rate_when_configured() {
-        let packager = LlDashPackager::new(4.0, 1.0, 3000, "2026-01-01T00:00:00Z")
-            .unwrap()
-            .with_playback_rate(0.96, 1.04)
-            .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z");
+        let packager =
+            LlDashPackager::new(4.0, 1.0, Duration::from_secs(3), "2026-01-01T00:00:00Z")
+                .unwrap()
+                .with_playback_rate(0.96, 1.04)
+                .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z");
         let mut mpd = mpd_with_one_template();
         packager.apply_ll(&mut mpd);
         let rate = mpd.service_descriptions[0].playback_rate.as_ref().unwrap();

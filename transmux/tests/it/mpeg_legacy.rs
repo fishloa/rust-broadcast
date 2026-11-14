@@ -17,6 +17,10 @@ use transmux::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer
 use transmux::pipeline::CodecConfig;
 use transmux::ts_demux::TsDemux;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixture(rel: &[&str]) -> Vec<u8> {
     let mut path = test_fixtures::root();
     path.push("..");
@@ -266,7 +270,7 @@ fn ts_demux_broadcast_pair() {
     let audio_ts = audio.timescale();
     assert_eq!(
         audio_ts,
-        Timescale::from_nonzero(44100),
+        timescale(44100),
         "audio media timescale = sampling rate"
     );
     let audio_ts = audio_ts.get();

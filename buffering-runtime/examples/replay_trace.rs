@@ -25,9 +25,24 @@
 //! A silence longer than `--reconnect-gap-ms` before a chunk is treated as a
 //! reconnect: `SourceEnded` at the last chunk, `Reconnected` before the new one.
 
-use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Micros, Ticks27};
+use core::time::Duration;
+
+use broadcast_common::clock33::{PCR_WRAP_27MHZ, pcr_split};
+use buffering_runtime::{
+    BufferController, Clock27, ControllerConfig, Event, Hint, micros_as_duration,
+};
 use std::process::ExitCode;
+
+/// `a` moved by the signed `delta` on the 27 MHz clock.
+fn shift(a: u64, delta: i64) -> u64 {
+    (i128::from(a) + i128::from(delta)).rem_euclid(i128::from(PCR_WRAP_27MHZ)) as u64
+}
+
+/// A reduced 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    let (base, ext) = pcr_split(ticks);
+    Clock27::from_parts(base, ext).expect("a reduced 27 MHz value is on the clock")
+}
 
 const TICKS_PER_US: u64 = 27;
 
@@ -78,15 +93,16 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let path = args.first().filter(|a| !a.starts_with("--"));
     let tick_us = arg(&args, "--tick-ms", 50) * 1000;
-    let offset = arg(&args, "--offset-ms", 500) * 1000 * TICKS_PER_US;
+    let offset =
+        i64::try_from(arg(&args, "--offset-ms", 500) * 1000 * TICKS_PER_US).unwrap_or(i64::MAX);
     let gap_us = arg(&args, "--reconnect-gap-ms", 2000) * 1000;
     let mut cfg = ControllerConfig::default();
     let default_initial_ms = if path.is_some() {
-        cfg.policy.initial_us.get() / 1000
+        cfg.policy.initial.as_millis() as u64
     } else {
         500
     };
-    cfg.policy.initial_us = Micros(arg(&args, "--initial-ms", default_initial_ms) * 1000);
+    cfg.policy.initial = Duration::from_millis(arg(&args, "--initial-ms", default_initial_ms));
     let mut c = match BufferController::new(cfg, None) {
         Ok(c) => c,
         Err(e) => {
@@ -124,34 +140,30 @@ fn main() -> ExitCode {
 
     // Renderer model: (running, clock position at last set, time of last set).
     let mut running = false;
-    let (mut clock, mut t_set) = (Ticks27::ZERO, Micros::ZERO);
-    let pos = |clock: Ticks27, t_set: Micros, now: Micros| {
-        Ticks27((clock.0 + now.saturating_sub(t_set).0 * TICKS_PER_US) % PCR_WRAP_27MHZ)
+    let zero = clock27(0);
+    let (mut clock, mut t_set) = (zero, Duration::ZERO);
+    let pos = |clock: Clock27, t_set: Duration, now: Duration| {
+        let elapsed_us = now.saturating_sub(t_set).as_micros() as u64;
+        clock27((clock.ticks() + elapsed_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
     };
-    let mut next_tick = Micros::ZERO;
-    let mut last_arrival = Micros::ZERO;
+    let mut next_tick = Duration::ZERO;
+    let mut last_arrival = Duration::ZERO;
     let out = |c: &mut BufferController,
-               now: Micros,
+               now: Duration,
                running: &mut bool,
-               clock: &mut Ticks27,
-               t_set: &mut Micros| {
+               clock: &mut Clock27,
+               t_set: &mut Duration| {
         while let Some(ev) = c.poll_event() {
-            let t = now.get() as f64 / 1e6;
+            let t = now.as_secs_f64();
             match ev {
-                Event::StartPlaying {
-                    media_27mhz,
-                    lead_us,
-                }
-                | Event::Resume {
-                    media_27mhz,
-                    lead_us,
-                } => {
+                Event::StartPlaying { media_27mhz, lead } | Event::Resume { media_27mhz, lead } => {
                     *running = true;
                     *clock = media_27mhz;
                     *t_set = now;
                     println!(
-                        "{t:9.3}s {} media={media_27mhz} lead={lead_us}us",
-                        ev.name()
+                        "{t:9.3}s {} media={media_27mhz} lead={}us",
+                        ev.name(),
+                        lead.as_micros()
                     );
                 }
                 Event::Pause { hold_at_27mhz, .. } => {
@@ -167,25 +179,25 @@ fn main() -> ExitCode {
     };
 
     for (i, (arrival, bytes, pcr)) in chunks.iter().enumerate() {
-        let arrival = Micros(arrival - t0);
-        if i > 0 && arrival.saturating_sub(last_arrival).0 >= gap_us {
+        let arrival = micros_as_duration(arrival - t0);
+        if i > 0 && arrival.saturating_sub(last_arrival).as_micros() as u64 >= gap_us {
             c.on_hint(last_arrival, Hint::SourceEnded);
             c.on_hint(arrival, Hint::Reconnected);
             out(&mut c, arrival, &mut running, &mut clock, &mut t_set);
         }
-        while next_tick.0 <= arrival.0 {
+        while (next_tick.as_micros() as u64) <= (arrival.as_micros() as u64) {
             let p = running.then(|| pos(clock, t_set, next_tick));
             c.on_tick(
                 next_tick,
-                (running || clock != Ticks27::ZERO).then_some(p.unwrap_or(clock)),
+                (running || clock != zero).then_some(p.unwrap_or(clock)),
             );
             out(&mut c, next_tick, &mut running, &mut clock, &mut t_set);
-            next_tick = Micros(next_tick.0 + tick_us);
+            next_tick += Duration::from_micros(tick_us);
         }
-        c.on_chunk(arrival, *bytes, pcr.map(Ticks27));
+        c.on_chunk(arrival, *bytes, pcr.map(clock27));
         if let Some(pcr) = pcr {
-            let end = Ticks27((*pcr + PCR_WRAP_27MHZ - offset % PCR_WRAP_27MHZ) % PCR_WRAP_27MHZ);
-            c.on_media(arrival, end);
+            let end = shift(*pcr, -offset);
+            c.on_media(arrival, clock27(end));
         }
         last_arrival = arrival;
     }
@@ -193,12 +205,12 @@ fn main() -> ExitCode {
     println!(
         "state={} target={}us stalls={} longest_freeze={}us pdv_baseline={}us stall_peak={}us rfc3550_j={}us discontinuities={} hints={}",
         s.state,
-        s.target_us,
+        s.target.as_micros(),
         s.stalls,
-        s.longest_freeze_us,
-        s.est.baseline_us,
-        s.est.stall_peak_us,
-        s.est.rfc3550_jitter_us,
+        s.longest_freeze.as_micros(),
+        s.est.baseline.as_micros(),
+        s.est.stall_peak.as_micros(),
+        s.est.rfc3550_jitter.as_micros(),
         s.discontinuities,
         s.hints_seen
     );

@@ -11,6 +11,10 @@ use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::{CmafMux, Fmp4Demux, Media, Sample, Track, TrackId, TrackSpec, WvttSampleEntry};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixture() -> Vec<u8> {
     let path = test_fixtures::path("mp4/cmaf-av-subtitle/av-subtitle-frag.mp4");
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
@@ -88,7 +92,7 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
     let entry = WvttSampleEntry::new("WEBVTT\n\nNOTE spec vector\n");
     let spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(1000),
+        timescale(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::WebVtt,
             sample_entry: Some(SubtitleSampleEntry::WebVtt(entry.clone())),
@@ -107,10 +111,7 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
         vttc
     };
     let sample = Sample::new(cue.clone(), Some(0), Some(0), Some(1000), true);
-    let media = Media::new(
-        vec![Track::new(spec, vec![sample])],
-        Timescale::from_nonzero(1000),
-    );
+    let media = Media::new(vec![Track::new(spec, vec![sample])], timescale(1000));
     let out = CmafMux::default().package(&media).expect("wvtt muxes");
     assert!(find(&out, b"nmhd").is_some() && find(&out, b"text").is_some());
     let round = Fmp4Demux::new().unpackage(&out).unwrap();
@@ -126,16 +127,13 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
 fn entryless_subtitle_is_still_rejected_by_name() {
     let spec = TrackSpec::new(
         TrackId::new(7),
-        Timescale::from_nonzero(1000),
+        timescale(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::DvbBitmap,
             sample_entry: None,
         },
     );
-    let media = Media::new(
-        vec![Track::new(spec, vec![])],
-        Timescale::from_nonzero(1000),
-    );
+    let media = Media::new(vec![Track::new(spec, vec![])], timescale(1000));
     let err = CmafMux::default().package(&media).unwrap_err();
     assert!(
         matches!(err, transmux::Error::UnmuxableSubtitleTrack { .. }),

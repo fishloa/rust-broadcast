@@ -78,8 +78,8 @@ fn ts_http_live(bytes: &[u8]) -> Seen {
     let c = conn.expect("request");
     s.on_response(
         c,
-        200,
-        &[("Content-Type".to_string(), "video/MP2T".to_string())],
+        http::StatusCode::OK,
+        &crate::support::ts_content_type(),
         ts(now),
     );
     for chunk in bytes.chunks(TS_HTTP_CHUNK) {
@@ -135,8 +135,8 @@ fn hls_live(bytes: &[u8]) -> Seen {
             };
             s.on_response(
                 c,
-                200,
-                &[("Content-Length".into(), body.len().to_string())],
+                http::StatusCode::OK,
+                &crate::support::headers(&[("Content-Length", &body.len().to_string())]),
                 ts(now),
             );
             for chunk in body.chunks(TS_HTTP_CHUNK) {

@@ -121,8 +121,9 @@
 //! ]
 //! ```
 //!
-//! - `start_pts_ns`: segment's `timeline_position` in nanoseconds (absolute,
-//!   from the `Trunk`'s timeline — what #900 uses for time-based seek).
+//! - `start_pts_ns`: the segment's `timeline_position` in nanoseconds (absolute,
+//!   from the `Trunk`'s timeline — what #900 uses for time-based seek), read
+//!   into `IndexEntry::start`.
 //! - `byte_offset`: byte offset of this segment within the period file
 //!   (0-based, pointing to the first byte of the segment's data — for fMP4
 //!   this is the start of the `moof` box, not the init, because the init is
@@ -188,6 +189,7 @@ use std::time::{Duration, SystemTime};
 #[cfg(test)]
 use transmux::TrackId;
 
+use broadcast_common::Timestamp;
 use dvb_si::demux::{SectionEvent, SiDemux};
 use dvb_si::tables::eit::{EitKind, PID as EIT_PID};
 use dvb_si::tables::{AnyTableSection, RunningStatus};
@@ -504,8 +506,10 @@ impl EitProgramme {
 pub struct IndexEntry {
     /// Segment sequence number (1-based, matches `_HLS_msn`).
     pub seq: u32,
-    /// Segment start time on the `Trunk`'s absolute timeline (nanoseconds).
-    pub start_pts_ns: u64,
+    /// Segment start on the `Trunk`'s absolute timeline (`SegmentEntry::timeline_position`,
+    /// where `start_pts_ns` is its whole nanoseconds, the sidecar's own unit).
+    #[serde(rename = "start_pts_ns", with = "timestamp_ns")]
+    pub start: Timestamp,
     /// Byte offset of this segment's first byte within the period file
     /// (0-based from the start of the file). For fMP4, the init comes
     /// before all segments, so the first segment's offset is
@@ -513,15 +517,16 @@ pub struct IndexEntry {
     pub byte_offset: u64,
     /// Exact byte length of this segment within the period file.
     pub byte_len: u64,
-    /// Segment duration in nanoseconds (`SegmentEntry::duration`) — issue
+    /// Segment duration (`SegmentEntry::duration`) — issue
     /// #900's catch-up serving needs this to render an accurate `#EXTINF`
     /// for an archived segment; before this field existed, a reader had no
     /// way to recover a segment's duration without decoding its media
     /// bytes. `#[serde(default)]` so a `pN.idx` written before this field
     /// existed still parses (as `0` — a stale sidecar this old is not
-    /// expected to exist outside a pre-release archive).
-    #[serde(default)]
-    pub duration_ns: u64,
+    /// expected to exist outside a pre-release archive), and the sidecar
+    /// keeps its `duration_ns` key.
+    #[serde(default, with = "duration_ns")]
+    pub duration: Duration,
     /// Whether `#EXT-X-DISCONTINUITY` precedes this segment
     /// (`SegmentEntry::meta.discontinuous`) — needed by issue #900's
     /// catch-up playlist rendering to reproduce the same discontinuity
@@ -529,6 +534,36 @@ pub struct IndexEntry {
     /// for the same reason as `duration_ns`.
     #[serde(default)]
     pub discontinuous: bool,
+}
+
+/// [`IndexEntry::start`] on the sidecar's own whole-nanosecond unit.
+mod timestamp_ns {
+    use broadcast_common::Timestamp;
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(start: &Timestamp, s: S) -> Result<S::Ok, S::Error> {
+        start.as_nanos().serialize(s)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Timestamp, D::Error> {
+        Ok(Timestamp::from_nanos(u64::deserialize(d)?))
+    }
+}
+
+/// [`IndexEntry::duration`] on the sidecar's own whole-nanosecond unit.
+mod duration_ns {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::Duration;
+
+    pub(super) fn serialize<S: Serializer>(duration: &Duration, s: S) -> Result<S::Ok, S::Error> {
+        u64::try_from(duration.as_nanos())
+            .unwrap_or(u64::MAX)
+            .serialize(s)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        Ok(Duration::from_nanos(u64::deserialize(d)?))
+    }
 }
 
 /// An fMP4 init segment and the first `Trunk` segment number closed under it
@@ -1351,10 +1386,10 @@ impl DvrRecorder {
         self.next_segment_starts_run = false;
         self.index.push(IndexEntry {
             seq,
-            start_pts_ns: entry.timeline_position.as_nanos(),
+            start: entry.timeline_position,
             byte_offset,
             byte_len,
-            duration_ns: u64::try_from(entry.duration.as_nanos()).unwrap_or(u64::MAX),
+            duration: entry.duration,
             discontinuous,
         });
         self.last_appended_seq = Some(entry.sequence_number);
@@ -1569,14 +1604,14 @@ impl DvrRecorder {
                 };
                 entries.push(IndexEntry {
                     seq: 0,
-                    start_pts_ns: 0,
+                    start: Timestamp::ZERO,
                     byte_offset: start,
                     byte_len: total_len as u64,
                     // Neither is recoverable from the box layout alone (no
                     // sequence number or discontinuity bit is encoded in
                     // fMP4 itself) — see this method's own doc for `seq`'s
                     // identical limitation.
-                    duration_ns: 0,
+                    duration: Duration::ZERO,
                     discontinuous: false,
                 });
                 offset += total_len;

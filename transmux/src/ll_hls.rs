@@ -39,6 +39,7 @@ use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Demand, Stage, Timestamp};
@@ -284,7 +285,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90_000), CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::try_new(90_000).expect("non-zero timescale"), CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -297,7 +298,7 @@ struct TrackState {
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
 /// # }
 /// // 1 s target segments, ~334 ms parts.
-/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::from_nonzero(1000), 1.0, 334).unwrap();
+/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), 1.0, 334).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
@@ -350,7 +351,7 @@ pub struct LlHlsSegmenter {
     /// Follower mode: cut only at externally supplied boundaries.
     external_cuts: bool,
     timeline_origin: Option<(i64, Timescale)>,
-    /// Decode-clock start set by [`LlHlsSegmenter::set_start_time_ns`]; a
+    /// Decode-clock start set by [`LlHlsSegmenter::set_start_time`], in nanoseconds; a
     /// follower adds it to the origin-relative `tfdt` it anchors.
     start_time_ns: u64,
     /// Leader mode: record the boundaries of every cut into `ready_cuts`.
@@ -1182,24 +1183,34 @@ impl LlHlsSegmenter {
         self.record_cuts = true;
     }
 
-    /// Start every track's decode clock at `start_ns` nanoseconds instead of
-    /// zero: the first segment's `tfdt` (and its first part's) is
-    /// `start_ns` in the track's own timescale, so a run that continues an
-    /// earlier one (a source reconnect) carries on from where it ended. Call
-    /// before the first [`push`](Self::push); a no-op for a segmenter that
-    /// already holds samples.
-    pub fn set_start_time_ns(&mut self, start_ns: u64) {
+    /// Start every track's decode clock at `start` instead of zero: the first
+    /// segment's `tfdt` (and its first part's) is `start` in the track's own
+    /// timescale, so a run that continues an earlier one (a source reconnect)
+    /// carries on from where it ended. Call before the first
+    /// [`push`](Self::push); a no-op for a segmenter that already holds
+    /// samples.
+    pub fn set_start_time(&mut self, start: Duration) {
         for t in &mut self.tracks {
             if !t.pending.is_empty() {
                 return;
             }
         }
-        self.start_time_ns = start_ns;
+        self.start_time_ns = u64::try_from(start.as_nanos()).unwrap_or(u64::MAX);
         for t in &mut self.tracks {
-            let ticks = u128::from(start_ns) * u128::from(t.spec.timescale.get()) / 1_000_000_000;
+            let ticks = start
+                .as_nanos()
+                .saturating_mul(u128::from(t.spec.timescale.get()))
+                / 1_000_000_000;
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
             t.part_base_decode = t.seg_base_decode;
         }
+    }
+
+    /// Start every track's decode clock at `start` nanoseconds into a run that
+    /// continues an earlier one; [`Self::set_start_time`] in the sub-second
+    /// unit a wire field may carry.
+    pub fn set_start_time_ns(&mut self, start_ns: u64) {
+        self.set_start_time(Duration::from_nanos(start_ns));
     }
 
     /// Align a follower's timeline with its leader's (issue #1428 slice 2b).

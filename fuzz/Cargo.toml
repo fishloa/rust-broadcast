@@ -20,6 +20,8 @@ dvb-si     = { path = "../dvb-si" }
 
 [dependencies]
 broadcast-common   = { path = "../broadcast-common" }
+http               = "1"
+headers            = "0.4"
 dvb-si       = { path = "../dvb-si",       features = ["ts", "serde"] }
 dvb-t2mi     = { path = "../dvb-t2mi",     features = ["ts"] }
 dvb-bbframe  = { path = "../dvb-bbframe" }

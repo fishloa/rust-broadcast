@@ -3,6 +3,7 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::JoinDecision;
 use crate::Sample;
@@ -10,41 +11,44 @@ use crate::TrackId;
 use crate::TrackSpec;
 use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 
-/// Default backward step that marks a new timeline, microseconds.
-pub const DEFAULT_JUMP_BACKWARD_US: u64 = 1_000_000;
-/// Default slack added to the elapsed delivery time before a forward step marks a new timeline,
-/// microseconds.
-pub const DEFAULT_JUMP_FORWARD_SLACK_US: u64 = 5_000_000;
+/// A span as whole microseconds, saturating past the `i128` range.
+fn span_us(span: Duration) -> i128 {
+    i128::try_from(span.as_micros()).unwrap_or(i128::MAX)
+}
+
+/// Default backward step that marks a new timeline.
+pub const DEFAULT_JUMP_BACKWARD: Duration = Duration::from_secs(1);
+/// Default slack added to the elapsed delivery time before a forward step marks a new timeline.
+pub const DEFAULT_JUMP_FORWARD_SLACK: Duration = Duration::from_secs(5);
 
 /// Thresholds of the timeline-jump detector, see `broadcast-client::Config::timeline_jump`.
 ///
 /// Between two consecutive kept samples of a track, with `step = pts - previous pts` converted
-/// to microseconds, a new timeline starts when `step < -backward_us` or
-/// `step > elapsed_us + forward_slack_us`, where `elapsed_us` is the session clock time between
+/// to microseconds, a new timeline starts when `step < -backward` or
+/// `step > elapsed + forward_slack`, where `elapsed` is the session clock time between
 /// the deliveries of the two samples (zero inside one burst).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct TimelineJumpConfig {
-    /// A backward step larger than this is a new timeline, microseconds. B-frame reordering
-    /// stays far below the default.
-    pub backward_us: u64,
-    /// A forward step larger than the elapsed delivery time plus this is a new timeline,
-    /// microseconds.
-    pub forward_slack_us: u64,
+    /// A backward step larger than this is a new timeline. B-frame reordering stays far below
+    /// the default.
+    pub backward: Duration,
+    /// A forward step larger than the elapsed delivery time plus this is a new timeline.
+    pub forward_slack: Duration,
 }
 
 impl TimelineJumpConfig {
-    /// Set the backward-jump threshold (microseconds).
+    /// Set the backward-jump threshold.
     #[must_use]
-    pub fn with_backward_us(mut self, backward_us: u64) -> Self {
-        self.backward_us = backward_us;
+    pub fn with_backward(mut self, backward: Duration) -> Self {
+        self.backward = backward;
         self
     }
 
-    /// Set the forward-slack threshold (microseconds).
+    /// Set the forward-slack threshold.
     #[must_use]
-    pub fn with_forward_slack_us(mut self, forward_slack_us: u64) -> Self {
-        self.forward_slack_us = forward_slack_us;
+    pub fn with_forward_slack(mut self, forward_slack: Duration) -> Self {
+        self.forward_slack = forward_slack;
         self
     }
 }
@@ -52,8 +56,8 @@ impl TimelineJumpConfig {
 impl Default for TimelineJumpConfig {
     fn default() -> Self {
         Self {
-            backward_us: DEFAULT_JUMP_BACKWARD_US,
-            forward_slack_us: DEFAULT_JUMP_FORWARD_SLACK_US,
+            backward: DEFAULT_JUMP_BACKWARD,
+            forward_slack: DEFAULT_JUMP_FORWARD_SLACK,
         }
     }
 }
@@ -166,7 +170,7 @@ impl JumpDetector {
         self.delivered.clear();
         self.epoch = Some(Epoch {
             reference_us: Self::to_us(pts, info.timescale),
-            window_us: i128::from(cfg.forward_slack_us),
+            window_us: span_us(cfg.forward_slack),
             stale,
         });
     }
@@ -246,7 +250,7 @@ impl JumpDetector {
         };
         let step = Self::to_us(pts, info.timescale) - prev.pts_us;
         let elapsed = i128::from(now_us.saturating_sub(prev.now_us));
-        step < -i128::from(cfg.backward_us) || step > elapsed + i128::from(cfg.forward_slack_us)
+        step < -span_us(cfg.backward) || step > elapsed + span_us(cfg.forward_slack)
     }
 
     pub fn record(

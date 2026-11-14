@@ -12,6 +12,7 @@ use broadcast_client::events::{
 };
 use broadcast_client::{Action, BufferEvent, Config, ConnId, ErrorKind, Event, Session};
 use broadcast_common::cenc::CencScheme;
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended};
@@ -114,13 +115,13 @@ fn a_byte_range_map_answered_with_206_plays() {
     let (init, _) = parts();
     let file = padded_map_file(&init);
     let end = MAP_PAD + init.len() - 1;
-    let reply = Reply::Full(
+    let reply = crate::support::hls_host::full(
         206,
         init.clone(),
-        vec![(
-            "Content-Range".to_string(),
-            format!("bytes {MAP_PAD}-{end}/{}", file.len()),
-        )],
+        crate::support::headers(&[(
+            "Content-Range",
+            &format!("bytes {MAP_PAD}-{end}/{}", file.len()),
+        )]),
     );
     let attrs = format!("URI=\"m.mp4\",BYTERANGE=\"{}@{MAP_PAD}\"", init.len());
     let t = vod_with_map(&attrs, reply);
@@ -132,13 +133,13 @@ fn a_byte_range_map_answered_with_206_plays() {
 fn a_byte_range_map_answered_with_the_wrong_206_range_is_a_typed_fatal() {
     let (init, _) = parts();
     let file = padded_map_file(&init);
-    let wrong = Reply::Full(
+    let wrong = crate::support::hls_host::full(
         206,
         init.clone(),
-        vec![(
-            "Content-Range".to_string(),
-            format!("bytes 0-{}/{}", init.len() - 1, file.len()),
-        )],
+        crate::support::headers(&[(
+            "Content-Range",
+            &format!("bytes 0-{}/{}", init.len() - 1, file.len()),
+        )]),
     );
     let attrs = format!("URI=\"m.mp4\",BYTERANGE=\"{}@{MAP_PAD}\"", init.len());
     let t = vod_with_map(&attrs, wrong);
@@ -146,7 +147,9 @@ fn a_byte_range_map_answered_with_the_wrong_206_range_is_a_typed_fatal() {
     assert_eq!(t.samples, 0);
     assert_eq!(
         t.fatals,
-        vec![ErrorKind::InitFetchFailed { status: Some(206) }]
+        vec![ErrorKind::InitFetchFailed {
+            status: Some(http::StatusCode::PARTIAL_CONTENT),
+        }]
     );
 }
 
@@ -417,8 +420,8 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
             };
             s.on_response(
                 c,
-                200,
-                &[("Content-Length".into(), body.len().to_string())],
+                http::StatusCode::OK,
+                &crate::support::headers(&[("Content-Length", &body.len().to_string())]),
                 ts(now),
             );
             for chunk in body.chunks(CHUNK) {
@@ -426,7 +429,9 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
             }
             s.on_closed(c, None, ts(now));
         }
-        let pos = position.map(|(base, since)| base + (now - since) * TICKS_PER_US);
+        let pos = position.and_then(|(base, since)| {
+            Clock27::from_27mhz(base + (now - since) * TICKS_PER_US).ok()
+        });
         s.on_playback_position(ts(now), pos);
         while let Some(e) = s.next_event() {
             match &e {

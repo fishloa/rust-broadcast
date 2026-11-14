@@ -1,5 +1,6 @@
 use broadcast_client::{Config, Error, Session, TimelineJumpConfig};
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::micros_as_duration;
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -44,13 +45,15 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
             c.hls_key_timeout = std::time::Duration::ZERO;
         }),
         ("buffer", |c| {
-            c.buffer.track_silence_timeout_us = buffering_runtime::Micros(0);
+            c.buffer.track_silence_timeout = micros_as_duration(0);
         }),
-        ("timeline_jump.backward_us", |c| {
-            c.timeline_jump = Some(TimelineJumpConfig::default().with_backward_us(0));
+        ("timeline_jump.backward", |c| {
+            c.timeline_jump =
+                Some(TimelineJumpConfig::default().with_backward(std::time::Duration::ZERO));
         }),
-        ("timeline_jump.forward_slack_us", |c| {
-            c.timeline_jump = Some(TimelineJumpConfig::default().with_forward_slack_us(0));
+        ("timeline_jump.forward_slack", |c| {
+            c.timeline_jump =
+                Some(TimelineJumpConfig::default().with_forward_slack(std::time::Duration::ZERO));
         }),
     ];
     for (field, mutate) in cases {
@@ -75,8 +78,8 @@ fn the_smallest_valid_values_open() {
         new_config.hls_key_timeout = std::time::Duration::from_micros(1);
         new_config.timeline_jump = Some(
             TimelineJumpConfig::default()
-                .with_backward_us(1)
-                .with_forward_slack_us(1),
+                .with_backward(std::time::Duration::from_micros(1))
+                .with_forward_slack(std::time::Duration::from_micros(1)),
         );
         new_config
     };
@@ -95,8 +98,8 @@ fn a_disabled_detector_and_unbounded_thresholds_open() {
         let mut new_config = Config::default();
         new_config.timeline_jump = Some(
             TimelineJumpConfig::default()
-                .with_backward_us(u64::MAX)
-                .with_forward_slack_us(u64::MAX),
+                .with_backward(std::time::Duration::MAX)
+                .with_forward_slack(std::time::Duration::MAX),
         );
         new_config
     };

@@ -180,7 +180,7 @@ const H264_NAL_TYPE_MASK: u8 = 0x1F;
 // ── Timestamps / timescale ───────────────────────────────────────────────────
 
 /// Video media timescale (90 kHz — the PS/PES timestamp clock).
-const VIDEO_TIMESCALE: Timescale = Timescale::from_nonzero(crate::rtp::VIDEO_CLOCK_RATE);
+const VIDEO_TIMESCALE: Timescale = broadcast_common::timescale!(crate::rtp::VIDEO_CLOCK_RATE);
 /// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
 /// Fallback per-frame duration (90 kHz ticks) when only one stamped frame exists.

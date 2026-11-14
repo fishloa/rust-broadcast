@@ -2,11 +2,13 @@ use crate::support;
 use url::Url;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use broadcast_client::{
     Action, BufferEvent, BufferHint, BufferInput, Config, ConnId, Event, Session,
     TimelineJumpConfig, TrackId,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::hls_host::{self as hls, Reply};
 use support::rtsp_host::{
@@ -53,7 +55,7 @@ fn us_to_ticks(us: i64, timescale: u32) -> i64 {
 enum ClockState {
     Idle,
     Playing { base: u64, since: u64 },
-    Held(u64),
+    Held(Clock27),
 }
 
 struct PlayClock(ClockState);
@@ -67,17 +69,20 @@ impl PlayClock {
                     since: now,
                 }
             }
-            BufferEvent::Pause { hold_at_27mhz, .. } => ClockState::Held(*hold_at_27mhz),
+            BufferEvent::Pause { hold_at_27mhz, .. } => match Clock27::from_27mhz(*hold_at_27mhz) {
+                Ok(hold) => ClockState::Held(hold),
+                Err(_) => ClockState::Idle,
+            },
             _ => self.0,
         };
     }
 
-    fn position(&self, now: u64) -> Option<u64> {
+    fn position(&self, now: u64) -> Option<Clock27> {
         match self.0 {
             ClockState::Idle => None,
             ClockState::Held(p) => Some(p),
             ClockState::Playing { base, since } => {
-                Some(base + now.saturating_sub(since) * (PCR_HZ / 1_000_000))
+                Clock27::from_27mhz(base + now.saturating_sub(since) * (PCR_HZ / 1_000_000)).ok()
             }
         }
     }
@@ -98,10 +103,13 @@ impl Host {
     }
 
     fn open_plain(config: Config) -> Self {
-        Self::open_with(config, (200, Vec::new()))
+        Self::open_with(config, (http::StatusCode::OK, crate::support::headers(&[])))
     }
 
-    fn open_with(mut config: Config, (status, headers): (u16, Vec<(String, String)>)) -> Self {
+    fn open_with(
+        mut config: Config,
+        (status, headers): (http::StatusCode, http::HeaderMap),
+    ) -> Self {
         config.record_buffer_inputs = true;
         let mut session = Session::open(Url::parse(URL).unwrap(), config, ts(0)).unwrap();
         let conn = match session.poll(ts(0)).unwrap() {
@@ -488,7 +496,9 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let first_report_after = log[hints[0]..]
         .iter()
         .find_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => {
+                Some(end.ticks())
+            }
             _ => None,
         })
         .expect("a video media report on the new timeline");
@@ -504,7 +514,9 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
     let reports_after: Vec<u64> = log[hints[0]..]
         .iter()
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => Some(end.0),
+            BufferInput::TrackMedia { track, end, .. } if *track == vid.value() => {
+                Some(end.ticks())
+            }
             _ => None,
         })
         .collect();
@@ -536,8 +548,14 @@ fn config_none_disables_detector() {
         Config::default().timeline_jump,
         Some(TimelineJumpConfig::default())
     );
-    assert_eq!(TimelineJumpConfig::default().backward_us, 1_000_000);
-    assert_eq!(TimelineJumpConfig::default().forward_slack_us, 5_000_000);
+    assert_eq!(
+        TimelineJumpConfig::default().backward,
+        Duration::from_millis(1_000)
+    );
+    assert_eq!(
+        TimelineJumpConfig::default().forward_slack,
+        Duration::from_millis(5_000)
+    );
 }
 
 #[test]
@@ -547,8 +565,8 @@ fn config_custom_thresholds_applied() {
         let mut new_config = Config::default();
         new_config.timeline_jump = Some(
             TimelineJumpConfig::default()
-                .with_backward_us(500_000)
-                .with_forward_slack_us(1_000_000),
+                .with_backward(Duration::from_millis(500))
+                .with_forward_slack(Duration::from_millis(1_000)),
         );
         new_config
     };
@@ -556,8 +574,8 @@ fn config_custom_thresholds_applied() {
         let mut new_config = Config::default();
         new_config.timeline_jump = Some(
             TimelineJumpConfig::default()
-                .with_backward_us(2_000_000)
-                .with_forward_slack_us(20_000_000),
+                .with_backward(Duration::from_millis(2_000))
+                .with_forward_slack(Duration::from_millis(20_000)),
         );
         new_config
     };
@@ -969,7 +987,12 @@ fn detector_state_resets_on_reconnect_and_rejoin() {
         }
     }
     h.conn = conn.expect("reconnect request");
-    h.session.on_response(h.conn, 200, &[], ts(1_000_000));
+    h.session.on_response(
+        h.conn,
+        http::StatusCode::OK,
+        &crate::support::headers(&[]),
+        ts(1_000_000),
+    );
     h.drain(1_000_000);
     for (i, c) in bytes.chunks(CHUNK).enumerate() {
         h.data(c, 2_000_000 + i as u64 * STEP_US);

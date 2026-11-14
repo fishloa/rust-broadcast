@@ -52,13 +52,13 @@ impl World {
         self.true_utc_at(self.elapsed_us)
     }
 
+    pub fn mono(&self) -> u64 {
+        self.mono_at(self.elapsed_us)
+    }
+
     pub fn mono_at(&self, elapsed_us: u64) -> u64 {
         let scaled = i128::from(elapsed_us) * (1_000_000 + i128::from(self.host_drift_ppm));
         (scaled / 1_000_000).max(0) as u64
-    }
-
-    pub fn mono(&self) -> u64 {
-        self.mono_at(self.elapsed_us)
     }
 
     pub fn elapsed_for_mono(&self, mono_us: u64) -> u64 {
@@ -73,6 +73,11 @@ impl World {
             + i128::from(self.host_step_us)
             + i128::from(self.mono()))
         .max(0) as u64
+    }
+
+    pub fn host_wall(&self) -> jiff::Timestamp {
+        let us = i64::try_from(self.host_unix()).unwrap_or(i64::MAX);
+        jiff::Timestamp::from_microsecond(us).unwrap_or(jiff::Timestamp::UNIX_EPOCH)
     }
 }
 
@@ -93,9 +98,15 @@ pub struct HttpReq {
 pub struct HttpResp {
     pub status: u16,
     pub body: Vec<u8>,
-    pub date: Option<String>,
-    pub etag: Option<String>,
+    pub date: Option<headers::Date>,
+    pub etag: Option<headers::ETag>,
+    pub last_modified: Option<headers::LastModified>,
     pub final_url: Option<String>,
+}
+
+/// Parse an `ETag` field value (quotes included) as an origin would send it.
+pub fn etag(text: &str) -> headers::ETag {
+    text.parse().expect("a test writes a valid ETag")
 }
 
 impl HttpResp {
@@ -161,8 +172,8 @@ pub type PostFn = Box<dyn FnMut(&HttpReq, &Kind, i64, Outcome) -> Outcome>;
 enum Delivery {
     Response {
         action: Box<Action>,
-        sent_mono: u64,
-        received_mono: u64,
+        sent_mono: Timestamp,
+        received_mono: Timestamp,
         outcome: Outcome,
     },
     RetryResource(ResourceId),
@@ -259,9 +270,9 @@ impl Sim {
 
     pub fn give_host_clock(&mut self) {
         let now = self.world.mono();
-        let unix = self.world.host_unix();
+        let wall = self.world.host_wall();
         self.client
-            .set_wall_clock(Timestamp::from_micros(now), unix);
+            .set_wall_clock(Timestamp::from_micros(now), wall);
         self.host_clock_calls.push(now);
     }
 
@@ -276,7 +287,7 @@ impl Sim {
 
     fn dispatch(&mut self, action: Action) {
         let sent_elapsed = self.world.elapsed_us;
-        let sent_mono = self.world.mono();
+        let sent_mono = Timestamp::from_micros(self.world.mono());
         let is_utc = matches!(action, Action::FetchUtcTiming { .. });
         let rtt = if is_utc {
             self.rtt_utc_us.unwrap_or(self.rtt_us)
@@ -337,7 +348,7 @@ impl Sim {
             url,
             method,
             send_utc_us: self.world.true_utc_at(sent_elapsed),
-            send_mono_us: sent_mono,
+            send_mono_us: sent_mono.as_micros(),
             status,
         });
         let mut arrive = arrive;
@@ -348,7 +359,7 @@ impl Sim {
             arrive = sent_elapsed + self.request_timeout_us;
             outcome = Outcome::Fail(Failure::Timeout);
         }
-        let received_mono = self.world.mono_at(arrive);
+        let received_mono = Timestamp::from_micros(self.world.mono_at(arrive));
         if self.duplicate_responses
             && let Outcome::Resp(r) = &outcome
         {
@@ -458,8 +469,8 @@ impl Sim {
         &mut self,
         now: u64,
         action: Action,
-        sent_mono: u64,
-        received_mono: u64,
+        sent_mono: Timestamp,
+        received_mono: Timestamp,
         outcome: Outcome,
     ) {
         let at = Timestamp::from_micros(now);
@@ -478,11 +489,14 @@ impl Sim {
                 }
                 Ok(r) if (200..300).contains(&r.status) => {
                     let mut meta = ResponseMeta::new(sent_mono, received_mono);
-                    if let Some(d) = r.date.as_deref() {
+                    if let Some(d) = r.date {
                         meta = meta.with_date(d);
                     }
-                    if let Some(e) = r.etag.as_deref() {
+                    if let Some(e) = r.etag.clone() {
                         meta = meta.with_etag(e);
+                    }
+                    if let Some(m) = r.last_modified {
+                        meta = meta.with_last_modified(m);
                     }
                     if let Some(f) = r.final_url.as_deref() {
                         meta = meta.with_final_url(f);
@@ -513,7 +527,7 @@ impl Sim {
             Action::FetchUtcTiming { id, .. } => match resp {
                 Ok(r) if (200..300).contains(&r.status) => {
                     let mut ur = UtcResponse::new(sent_mono, received_mono, &r.body);
-                    if let Some(d) = r.date.as_deref() {
+                    if let Some(d) = r.date {
                         ur = ur.with_date(d);
                     }
                     if let Err(e) = self.client.on_utc_response(at, id, &ur) {
@@ -587,7 +601,7 @@ impl Sim {
                 next = next.min(p.at);
             }
             if let Some(w) = self.client.next_wake() {
-                next = next.min(self.world.elapsed_for_mono(w));
+                next = next.min(self.world.elapsed_for_mono(w.as_micros()));
             }
             if next <= self.world.elapsed_us {
                 if next >= end_elapsed_us {
@@ -674,6 +688,16 @@ impl Sim {
 pub fn http_date(us: i64) -> String {
     let ts = jiff::Timestamp::from_microsecond(us).expect("timestamp in range");
     ts.strftime("%a, %d %b %Y %H:%M:%S GMT").to_string()
+}
+
+/// The same instant as the `Date` header type a client is handed.
+pub fn date_header(us: i64) -> headers::Date {
+    let seconds = us.div_euclid(1_000_000);
+    let unix = std::time::UNIX_EPOCH
+        + std::time::Duration::from_secs(
+            u64::try_from(seconds).expect("a test date is after the epoch"),
+        );
+    headers::Date::from(unix)
 }
 
 pub fn xs_datetime_ms(us: i64) -> String {

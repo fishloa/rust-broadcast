@@ -22,6 +22,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use transmux::TrackId;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use broadcast_auth::Credentials;
@@ -996,8 +1000,7 @@ fn config_smooth_deserializes_and_validates() {
 /// An AAC-LC `AudioSpecificConfig` for 48 kHz stereo.
 const ASC_48K_STEREO: [u8; 2] = [0x11, 0x90];
 /// The AAC media timescale.
-const AAC_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::from_nonzero(48_000);
+const AAC_TIMESCALE: broadcast_common::timescale::Timescale = broadcast_common::timescale!(48_000);
 /// An AAC-LC frame duration, in [`AAC_TIMESCALE`] ticks.
 const AAC_FRAME_DUR: u32 = 1024;
 /// The channel count the AAC config reports.
@@ -1046,7 +1049,7 @@ fn audio_spec(track_id: u32, dsi: Option<Vec<u8>>) -> TrackSpec {
 fn subtitle_spec(track_id: u32) -> TrackSpec {
     TrackSpec::new(
         TrackId::new(track_id),
-        Timescale::from_nonzero(1000),
+        timescale(1000),
         CodecConfig::Subtitle {
             format: transmux::ir::SubtitleFormat::Ttml,
             sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(

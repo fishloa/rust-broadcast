@@ -1,8 +1,10 @@
+use crate::support::ts_content_type;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use url::Url;
 
 use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use mpeg_ts::ts::{AdaptationField, TsPacket};
 
@@ -120,12 +122,7 @@ pub fn open_live(config: Config) -> (Session, ConnId) {
         }
     }
     let c = conn.expect("request");
-    s.on_response(
-        c,
-        200,
-        &[("Content-Type".to_string(), "video/MP2T".to_string())],
-        ts(0),
-    );
+    s.on_response(c, http::StatusCode::OK, &ts_content_type(), ts(0));
     (s, c)
 }
 
@@ -270,11 +267,11 @@ pub fn replay_with_host(
                 &mut stats,
             );
         } else if t == next_tick && next_tick <= next_chunk_at {
-            if let Some(p) = playout.as_ref() {
-                s.on_playback_position(ts(now), Some(p.position(now)));
-            } else {
-                s.on_playback_position(ts(now), None);
-            }
+            let position = playout
+                .as_ref()
+                .map(|p| p.position(now))
+                .and_then(|ticks| Clock27::from_27mhz(ticks).ok());
+            s.on_playback_position(ts(now), position);
             step(
                 &mut s,
                 now,

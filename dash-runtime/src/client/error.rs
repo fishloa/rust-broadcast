@@ -3,6 +3,7 @@
 //! return ([`Error`]).
 
 use broadcast_common::impl_spec_display;
+use broadcast_common::stage::Timestamp;
 use thiserror::Error;
 
 use super::action::{ResourceId, UtcId};
@@ -73,11 +74,11 @@ pub enum FailureClass {
     GiveUp,
     /// A live segment requested before it exists (a `425`, or a `404`/`410`
     /// inside the early-grace window): not counted. The client asks for it
-    /// again from [`super::DashClient::poll`] at `retry_at_us`; the caller
+    /// again from [`super::DashClient::poll`] at `retry_at`; the caller
     /// does nothing.
     NotYetAvailable {
-        /// Monotonic microseconds at which the segment is requested again.
-        retry_at_us: u64,
+        /// Monotonic instant at which the segment is requested again.
+        retry_at: Timestamp,
     },
     /// A live segment that left the time-shift window before it was fetched:
     /// not counted and not retried. The client continues at the oldest
@@ -156,14 +157,14 @@ pub enum FatalKind {
         /// The segment.
         id: ResourceId,
         /// Status of the last failure, when it was an HTTP status.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// An init or index failed the configured number of times in a row.
     InitFetchFailed {
         /// The resource.
         id: ResourceId,
         /// Status of the last failure, when it was an HTTP status.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// A progressive MP4 was served as a media segment of a fragmented
     /// presentation.

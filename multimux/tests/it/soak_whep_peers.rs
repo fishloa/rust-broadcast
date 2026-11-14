@@ -29,6 +29,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
+/// The transport's clock reading: a driver's own `Instant` placed on the transport's epoch.
+fn transport_now(media: &MediaTransport) -> broadcast_common::stage::Timestamp {
+    media.stamp_of(Instant::now())
+}
+
 use media_plane::trunk::TrunkConfig;
 use media_plane::{RetentionClass, Trunk};
 use multimux::output::whep::{WhepProbes, run_whep_on_probed};
@@ -167,7 +172,7 @@ async fn viewer(
         )
         .with_is_controlling(true),
         cert,
-        Instant::now(),
+        broadcast_common::stage::Timestamp::ZERO,
     ) {
         Ok(media) => media,
         Err(e) => {
@@ -198,7 +203,7 @@ async fn viewer(
             .min(tokio::time::Instant::now() + Duration::from_millis(100));
         let events = tokio::select! {
             received = socket.recv_from(&mut buf) => match received {
-                Ok((n, peer)) => match media.handle_datagram(Instant::now(), peer, &buf[..n]) {
+                Ok((n, peer)) => match media.handle_datagram(transport_now(&media), peer, &buf[..n]) {
                     Ok(events) => events,
                     Err(e) => {
                         result.error = Some(format!("datagram: {e}"));
@@ -210,7 +215,7 @@ async fn viewer(
                     return result;
                 }
             },
-            () = tokio::time::sleep_until(wake) => media.handle_timeout(Instant::now()),
+            () = tokio::time::sleep_until(wake) => media.handle_timeout(transport_now(&media)),
         };
         for event in events {
             match event {

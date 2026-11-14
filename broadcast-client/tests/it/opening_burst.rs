@@ -7,8 +7,9 @@ use crate::support;
 use crate::support::replay::open_live;
 use crate::support::ts_shift::{PACKET, Shift, packet_has_pcr, packet_pid, shift_pes};
 use crate::support::video_run::VideoRun;
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::Micros;
+use buffering_runtime::{duration_micros, micros_as_duration};
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -428,16 +429,16 @@ struct Outcome {
 
 struct Renderer {
     anchor: Option<(u64, u64)>,
-    frozen: Option<u64>,
+    frozen: Option<Clock27>,
 }
 
 impl Renderer {
-    fn position(&self, now: u64) -> Option<u64> {
+    fn position(&self, now: u64) -> Option<Clock27> {
         if let Some(f) = self.frozen {
             return Some(f);
         }
         self.anchor
-            .map(|(pos, at)| pos + (now - at) * TICKS_27_PER_US)
+            .and_then(|(pos, at)| Clock27::from_27mhz(pos + (now - at) * TICKS_27_PER_US).ok())
     }
 
     fn playing(&self) -> bool {
@@ -447,7 +448,7 @@ impl Renderer {
 
 fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
     let mut cfg = Config::default();
-    cfg.buffer.policy.initial_us = Micros(FILL_US);
+    cfg.buffer.policy.initial = micros_as_duration(FILL_US);
     let (mut s, conn) = open_live(cfg);
     let mut out = Outcome::default();
     let mut kinds: BTreeMap<u32, (u32, bool, bool)> = BTreeMap::new();
@@ -567,7 +568,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
                     starving_track,
                 }) => {
                     out.pauses.push((now, reason, starving_track));
-                    r.frozen = Some(hold_at_27mhz);
+                    r.frozen = Clock27::from_27mhz(hold_at_27mhz).ok();
                 }
                 _ => {}
             }
@@ -575,7 +576,7 @@ fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
         if r.playing() && now < stop {
             let pos = r.position(now).unwrap();
             for t in &intended {
-                let lead = lead_us(ends.get(t), pos);
+                let lead = lead_us(ends.get(t), pos.ticks());
                 let m = out.min_lead.entry(*t).or_insert((i64::MAX, 0));
                 if lead < m.0 {
                     *m = (lead, now);
@@ -783,7 +784,7 @@ fn matrix(rows: &[Row]) -> Vec<(Row, Plan, Outcome)> {
         let at = schedule(&raw);
         at[at.len() - 1]
     };
-    let starve = Config::default().buffer.starve_threshold_us.0;
+    let starve = duration_micros(Config::default().buffer.starve_threshold);
     let mut cache: BTreeMap<(usize, String), Stream> = BTreeMap::new();
     let mut results = Vec::new();
     for row in rows {

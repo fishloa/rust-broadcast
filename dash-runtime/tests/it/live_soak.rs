@@ -2,6 +2,8 @@
 //! sources and errors, drift, faults, sleeps, host clock calls) each checked
 //! against the invariants that must hold whatever the network does.
 
+use core::time::Duration;
+
 use crate::common;
 
 use std::cell::RefCell;
@@ -62,10 +64,15 @@ fn session(seed: u64) {
     let geo = synth.geo();
     let start = rng.range(30, 90) as i64 * MICROS + rng.below(1_000_000) as i64;
     let mut dash = DashConfig::default();
-    dash.utc_resync_us = [MICROS as u64 * 20, 600 * MICROS as u64, u64::MAX][rng.below(3) as usize];
-    dash.early_grace_us = [0, MICROS as u64, 3 * MICROS as u64][rng.below(3) as usize];
+    dash.utc_resync = [
+        Some(Duration::from_micros(20 * MICROS as u64)),
+        Some(Duration::from_micros(600 * MICROS as u64)),
+        None,
+    ][rng.below(3) as usize];
+    dash.early_grace =
+        Duration::from_micros([0, MICROS as u64, 3 * MICROS as u64][rng.below(3) as usize]);
     dash.use_availability_time_offset = rng.below(5) == 0;
-    dash.availability_margin_us = [0, 0, 100_000][rng.below(3) as usize];
+    dash.availability_margin = Duration::from_micros([0, 0, 100_000][rng.below(3) as usize]);
     let mut limits = PullLimits::default();
     limits.max_inflight_segments = rng.range(1, 6) as usize;
     limits.max_segment_failures = [0, 1, 3, 8][rng.below(4) as usize];

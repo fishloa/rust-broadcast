@@ -93,7 +93,7 @@ pub struct SrtRoute {
     /// Caller dial-out address (`Some`) — mutually exclusive with `listen`.
     remote: Option<String>,
     stream_id: Option<String>,
-    latency_ms: Option<u16>,
+    latency: Option<Duration>,
     timeouts: Timeouts,
     /// Bind-once, reuse-forever (listener mode only) — see the module doc.
     /// [`SrtListener::accept`] takes `&mut self`, hence the `Mutex` (an
@@ -110,7 +110,7 @@ impl std::fmt::Debug for SrtRoute {
             .field("listen", &self.listen)
             .field("remote", &self.remote)
             .field("stream_id", &self.stream_id)
-            .field("latency_ms", &self.latency_ms)
+            .field("latency", &self.latency)
             .finish()
     }
 }
@@ -124,7 +124,7 @@ impl SrtRoute {
             listen: Some(listen.into()),
             remote: None,
             stream_id: None,
-            latency_ms: None,
+            latency: None,
             timeouts: Timeouts::default(),
             listener: OnceCell::new(),
         }
@@ -137,7 +137,7 @@ impl SrtRoute {
             listen: None,
             remote: Some(remote.into()),
             stream_id: None,
-            latency_ms: None,
+            latency: None,
             timeouts: Timeouts::default(),
             listener: OnceCell::new(),
         }
@@ -154,8 +154,8 @@ impl SrtRoute {
     /// Overrides the negotiated TSBPD latency (`draft-sharabayko-srt-01`
     /// §4.3.1.2); `None` keeps [`HandshakeConfig::default`]'s value.
     #[must_use]
-    pub fn with_latency_ms(mut self, ms: Option<u16>) -> Self {
-        self.latency_ms = ms;
+    pub fn with_latency(mut self, latency: Option<Duration>) -> Self {
+        self.latency = latency;
         self
     }
 
@@ -168,8 +168,8 @@ impl SrtRoute {
 
     fn handshake_config(&self) -> HandshakeConfig {
         let mut cfg = HandshakeConfig::default().with_stream_id(self.stream_id.clone());
-        if let Some(latency) = self.latency_ms {
-            cfg.latency_ms = latency;
+        if let Some(latency) = self.latency {
+            cfg.latency = latency;
         }
         cfg
     }
@@ -369,8 +369,8 @@ pub async fn run_srt_caller(
     config.kind = broadcast_client::SourceKind::Srt;
     config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
     config.srt.stream_id.clone_from(&route.stream_id);
-    if let Some(latency) = route.latency_ms {
-        config.srt.latency_ms = latency;
+    if let Some(latency) = route.latency {
+        config.srt.latency = latency;
     }
     let mut config = config.with_timeouts(route.timeouts);
     config.srt.entropy_seed = Some(broadcast_client::SrtEntropySeed::new(
@@ -605,7 +605,10 @@ mod tests {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let mut listener = SrtListener::bind(
             listener_addr,
-            SrtSocketConfig::new(HandshakeConfig::default().with_latency_ms(LOW_LATENCY_MS)),
+            SrtSocketConfig::new(
+                HandshakeConfig::default()
+                    .with_latency(Duration::from_millis(u64::from(LOW_LATENCY_MS))),
+            ),
         )
         .await
         .expect("listener bind");
@@ -622,7 +625,7 @@ mod tests {
         });
 
         let route = SrtRoute::new_caller("cam-srt-low-latency", bound_addr.to_string())
-            .with_latency_ms(Some(LOW_LATENCY_MS))
+            .with_latency(Some(Duration::from_millis(u64::from(LOW_LATENCY_MS))))
             .with_timeouts(
                 broadcast_common::timeouts::Timeouts::default()
                     .with_connect(Duration::from_secs(5))

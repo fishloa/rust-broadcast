@@ -1,11 +1,13 @@
 //! Stall memory: a max-hold of the PDV with a hold then a linear decay.
 
-use crate::config::Micros;
+use core::time::Duration;
+
+use crate::time::{duration_add, duration_micros, micros_as_duration};
 
 /// Plain-data snapshot of the stall memory, for session persistence.
 ///
-/// **Aging semantics.** `peak_us` is the raw held peak; `age_us` is how long
-/// ago (on the controller's arrival clock) that peak was observed. The
+/// **Aging semantics.** `peak` is the raw held peak; `age` is how long ago
+/// (on the controller's arrival clock) that peak was observed. The
 /// decayed value is `peak` while `age <= hold`, then falls linearly to 0 over
 /// `decay`. A snapshot restored after `N` seconds of wall time must be aged by
 /// `N` first: [`StallMemorySnapshot::aged`]. The restored memory is anchored
@@ -16,9 +18,9 @@ use crate::config::Micros;
 #[non_exhaustive]
 pub struct StallMemorySnapshot {
     /// Raw held peak PDV.
-    pub peak_us: Micros,
+    pub peak: Duration,
     /// Age of that peak.
-    pub age_us: Micros,
+    pub age: Duration,
 }
 
 impl StallMemorySnapshot {
@@ -27,16 +29,17 @@ impl StallMemorySnapshot {
     /// the constructor (usable in `const`/`static` context; `Default` is the
     /// empty memory and the fields stay public for reading).
     #[must_use]
-    pub const fn new(peak_us: Micros, age_us: Micros) -> Self {
-        Self { peak_us, age_us }
+    pub const fn new(peak: Duration, age: Duration) -> Self {
+        Self { peak, age }
     }
 
-    /// The same memory `elapsed_us` of wall time later (saturating).
+    /// The same memory `elapsed` of wall time later (saturating at the end of
+    /// the microsecond range).
     #[must_use]
-    pub const fn aged(self, elapsed_us: Micros) -> Self {
+    pub fn aged(self, elapsed: Duration) -> Self {
         Self {
-            peak_us: self.peak_us,
-            age_us: Micros(self.age_us.0.saturating_add(elapsed_us.0)),
+            peak: self.peak,
+            age: duration_add(self.age, elapsed),
         }
     }
 }
@@ -105,16 +108,21 @@ impl MaxHold {
 
     pub(crate) fn snapshot(&self, now: u64) -> StallMemorySnapshot {
         match (self.at, self.pending_age) {
-            (Some(at), _) => StallMemorySnapshot::new(Micros(self.peak), Micros(age_at(now, at))),
-            (None, Some(age)) => StallMemorySnapshot::new(Micros(self.peak), Micros(age)),
+            (Some(at), _) => StallMemorySnapshot::new(
+                micros_as_duration(self.peak),
+                micros_as_duration(age_at(now, at)),
+            ),
+            (None, Some(age)) => {
+                StallMemorySnapshot::new(micros_as_duration(self.peak), micros_as_duration(age))
+            }
             (None, None) => StallMemorySnapshot::default(),
         }
     }
 
     pub(crate) fn restore(&mut self, s: StallMemorySnapshot) {
-        self.peak = s.peak_us.0;
+        self.peak = duration_micros(s.peak);
         self.at = None;
-        self.pending_age = Some(s.age_us.0);
+        self.pending_age = Some(duration_micros(s.age));
     }
 
     pub(crate) fn clear(&mut self) {

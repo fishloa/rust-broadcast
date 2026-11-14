@@ -111,6 +111,10 @@ pub fn insert_discontinuity_gap(track: &mut Track, at_sample_index: usize, gap_t
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use crate::TrackId;
     use crate::ir::SampleFlags;
@@ -163,7 +167,7 @@ mod tests {
         };
         TrackSpec::new(
             TrackId::new(1),
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
             CodecConfig::Avc {
                 config: AVCConfigurationBox::new(record),
                 width: 16,
@@ -174,10 +178,7 @@ mod tests {
 
     #[test]
     fn rebase_to_zero_clears_anchor_and_samples() {
-        let mut m = Media::new(
-            vec![track_at(90_000, &[3000, 3000])],
-            Timescale::from_nonzero(1000),
-        );
+        let mut m = Media::new(vec![track_at(90_000, &[3000, 3000])], timescale(1000));
         rebase_to_zero(&mut m);
         assert_eq!(m.tracks[0].start_decode_time, 0);
         assert_eq!(m.tracks[0].samples[0].timing.and_then(|t| t.dts()), Some(0));
@@ -197,7 +198,7 @@ mod tests {
 
     #[test]
     fn rebase_to_zero_leaves_none_untouched() {
-        let mut m = Media::new(vec![track_at(1000, &[10])], Timescale::from_nonzero(1000));
+        let mut m = Media::new(vec![track_at(1000, &[10])], timescale(1000));
         m.tracks[0].samples[0].timing = None;
         rebase_to_zero(&mut m);
         assert_eq!(
@@ -214,7 +215,7 @@ mod tests {
 
     #[test]
     fn apply_offset_shifts_anchor_and_samples() {
-        let mut m = Media::new(vec![track_at(100, &[10])], Timescale::from_nonzero(1000));
+        let mut m = Media::new(vec![track_at(100, &[10])], timescale(1000));
         apply_offset(&mut m, 50);
         assert_eq!(m.tracks[0].start_decode_time, 150);
         assert_eq!(

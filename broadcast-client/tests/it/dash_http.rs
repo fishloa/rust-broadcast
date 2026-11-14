@@ -231,7 +231,7 @@ fn a_401_waits_for_credentials_and_replays_the_parked_request() {
             if req.header("authorization").is_none() {
                 return Answer::status_with(
                     401,
-                    vec![("WWW-Authenticate".into(), "Basic realm=\"r\"".into())],
+                    crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"r\"")]),
                 );
             }
             self.0.serve(at, req)
@@ -284,7 +284,7 @@ fn a_403_is_reported_and_the_request_is_retried() {
     sim.run_to_terminal(120 * SEC);
     assert!(sim.ended());
     assert_eq!(
-        sim.count(|e| matches!(e, Event::Forbidden { status: 403 })),
+        sim.count(|e| matches!(e, Event::Forbidden { status } if status.as_u16() == 403)),
         1
     );
     assert_eq!(sim.requests_to("chunk-stream0-00002").len(), 2);
@@ -452,8 +452,8 @@ fn a_whole_file_answer_to_a_ranged_request_is_sliced_and_a_wrong_range_is_a_fail
         if req.byte_range.is_some() && once {
             once = false;
             return Some(Answer::Full {
-                status: 206,
-                headers: vec![("Content-Range".into(), "bytes 0-1/*".into())],
+                status: http::StatusCode::PARTIAL_CONTENT,
+                headers: crate::support::headers(&[("Content-Range", "bytes 0-1/*")]),
                 body: vec![0, 1],
             });
         }
@@ -482,7 +482,7 @@ fn retry_after_sets_the_wait_for_a_429_and_cookies_from_the_mpd_are_kept() {
             return match hits {
                 1 => Some(Answer::status_with(
                     429,
-                    vec![("Retry-After".into(), "9".into())],
+                    crate::support::headers(&[("Retry-After", "9")]),
                 )),
                 2 => Some(Answer::ok(vec![0x5a; 3000])),
                 _ => None,
@@ -559,7 +559,12 @@ fn a_whole_file_answer_too_short_for_the_range_is_a_failure_and_data_before_the_
     };
     session.on_data(conn, b"<MPD junk before any response head", ts(0));
     let text = test_fixtures::read(&format!("dash/{MANIFEST}"));
-    session.on_response(conn, 200, &[], ts(0));
+    session.on_response(
+        conn,
+        http::StatusCode::OK,
+        &crate::support::headers(&[]),
+        ts(0),
+    );
     session.on_data(conn, &text, ts(0));
     session.on_closed(conn, None, ts(0));
     while let Some(e) = session.next_event() {
@@ -583,8 +588,8 @@ fn a_utc_request_is_abandoned_at_the_utc_timeout_and_an_init_at_the_request_time
     let mut config = Config::default();
     config.request_timeout = std::time::Duration::from_secs(4);
     config.segment_timeout = std::time::Duration::from_secs(30);
-    config.dash.utc_timeout_us = 2 * SEC;
-    config.dash.utc_wait_us = 5 * SEC;
+    config.dash.utc_timeout = std::time::Duration::from_micros(2 * SEC);
+    config.dash.utc_wait = std::time::Duration::from_micros(5 * SEC);
     let mut sim = DashSim::new(
         MPD_URL,
         config,
@@ -648,7 +653,7 @@ fn a_401_from_another_origin_is_a_failed_request_not_a_credential_prompt() {
             once = false;
             return Some(Answer::status_with(
                 401,
-                vec![("WWW-Authenticate".into(), "Basic realm=\"r\"".into())],
+                crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"r\"")]),
             ));
         }
         None
@@ -716,7 +721,7 @@ fn an_mpd_retry_waits_for_retry_after() {
             first = false;
             return Some(Answer::status_with(
                 503,
-                vec![("Retry-After".into(), "7".into())],
+                crate::support::headers(&[("Retry-After", "7")]),
             ));
         }
         None

@@ -465,12 +465,14 @@ impl SubtitleFollower {
         })
     }
 
-    pub fn set_start_time_ns(&mut self, start_ns: u64) {
-        self.next_timeline_ns = start_ns;
+    pub fn set_start_time(&mut self, start: Duration) {
+        self.next_timeline_ns = u64::try_from(start.as_nanos()).unwrap_or(u64::MAX);
         self.first_discontinuous = true;
-        self.core.mpegts_at_origin =
-            u64::try_from(i128::from(start_ns) * PTS_HZ_TICKS / i128::from(NANOS_PER_SEC))
-                .unwrap_or(0);
+        self.core.mpegts_at_origin = u64::try_from(
+            i128::try_from(start.as_nanos()).unwrap_or(i128::MAX) * PTS_HZ_TICKS
+                / i128::from(NANOS_PER_SEC),
+        )
+        .unwrap_or(u64::MAX);
     }
 
     pub fn push(&mut self, sample: &Sample) {
@@ -562,7 +564,7 @@ mod tests {
                 msn,
                 part_index,
                 start_dts,
-                timescale: Timescale::from_nonzero(90_000),
+                timescale: Timescale::try_new(90_000).expect("non-zero timescale"),
             },
             duration_secs: PART_SECS,
         }

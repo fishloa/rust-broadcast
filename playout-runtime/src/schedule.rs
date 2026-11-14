@@ -15,6 +15,31 @@ use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use broadcast_common::timescale::Timescale;
+
+/// A media position: ticks on the schedule's own timescale.
+///
+/// A tick count alone does not name an instant; the timescale it is counted
+/// in travels with it, so a playhead cannot be read as one clock's ticks
+/// while it was produced on another's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct Playhead {
+    /// Ticks since the schedule's start.
+    pub ticks: u64,
+    /// Ticks per second.
+    pub timescale: Timescale,
+}
+
+impl Playhead {
+    /// The position `ticks` into a schedule counted `timescale` ticks per second.
+    #[must_use]
+    pub fn new(ticks: u64, timescale: Timescale) -> Self {
+        Self { ticks, timescale }
+    }
+}
+
 /// What kind of content a [`ScheduleEntry`] carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

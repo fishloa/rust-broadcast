@@ -6,7 +6,7 @@ use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
 pub const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 pub const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
-    broadcast_common::timescale::Timescale::from_nonzero(90_000);
+    broadcast_common::timescale!(90_000);
 pub const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 pub const TARGET_DURATION_SECS: f64 = 1.0;
 pub const PART_TARGET_MS: u32 = 500;

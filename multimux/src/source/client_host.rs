@@ -145,8 +145,8 @@ impl IngestSession for EventIngest {
 enum Message {
     Response {
         conn: ConnId,
-        status: u16,
-        headers: Vec<(String, String)>,
+        status: http::StatusCode,
+        headers: http::HeaderMap,
     },
     Data {
         conn: ConnId,
@@ -201,7 +201,7 @@ pub(crate) struct SessionStep {
     labels: SessionLabels,
     start: Instant,
     clock: std::sync::Arc<dyn HostClock>,
-    resync_us: Option<u64>,
+    resync: Option<Duration>,
     next_anchor_us: u64,
     tx: mpsc::Sender<Message>,
     rx: mpsc::Receiver<Message>,
@@ -266,7 +266,7 @@ impl SessionStep {
             labels,
             start,
             clock: std::sync::Arc::new(SystemHostClock::new()),
-            resync_us: None,
+            resync: None,
             next_anchor_us: 0,
             tx,
             rx,
@@ -304,20 +304,33 @@ impl SessionStep {
         self
     }
 
-    /// Re-reads the UTC clock into the session every `resync_us` microseconds, so the session's
-    /// wall-clock anchor follows the host clock's own corrections.
-    pub(crate) fn with_clock_resync(mut self, resync_us: u64) -> Self {
-        self.resync_us = Some(resync_us);
-        self.next_anchor_us = self.now_us().saturating_add(resync_us);
+    /// Re-reads the UTC clock into the session every `resync`, so the session's wall-clock anchor
+    /// follows the host clock's own corrections.
+    pub(crate) fn with_clock_resync(mut self, resync: Option<Duration>) -> Self {
+        self.resync = resync;
+        self.next_anchor_us = match resync {
+            Some(span) => Timestamp::from_micros(self.now_us())
+                .checked_add(span)
+                .map_or(u64::MAX, Timestamp::as_micros),
+            None => u64::MAX,
+        };
         self
     }
 
     fn anchor_wall_clock(&mut self) {
         let now = self.now_us();
         let unix = self.clock.unix_us();
-        self.session
-            .set_wall_clock(Timestamp::from_micros(now), unix);
-        self.next_anchor_us = now.saturating_add(self.resync_us.unwrap_or(u64::MAX));
+        if let Ok(read) = jiff::Timestamp::from_microsecond(i64::try_from(unix).unwrap_or(i64::MAX))
+        {
+            self.session
+                .set_wall_clock(Timestamp::from_micros(now), read);
+        }
+        self.next_anchor_us = match self.resync {
+            Some(span) => Timestamp::from_micros(now)
+                .checked_add(span)
+                .map_or(u64::MAX, Timestamp::as_micros),
+            None => u64::MAX,
+        };
     }
 
     pub(crate) fn with_udp(mut self, udp: UdpHost) -> Self {
@@ -533,7 +546,7 @@ impl SessionStep {
                             },
                             kind: ProtocolFailure::Status(http::StatusCode::NOT_FOUND),
                         },
-                        None => self.http_error(404),
+                        None => self.http_error(http::StatusCode::NOT_FOUND),
                     }));
                 }
                 Event::Forbidden { status } if self.labels.session_retries => {
@@ -578,7 +591,10 @@ impl SessionStep {
                 }
                 Event::Error { kind, fatal: false }
                     if self.labels.session_retries
-                        && matches!(kind.refusal_status(), Some(401 | 403)) =>
+                        && matches!(
+                            kind.refusal_status(),
+                            Some(http::StatusCode::UNAUTHORIZED | http::StatusCode::FORBIDDEN)
+                        ) =>
                 {
                     verdict = verdict.max(Verdict::Failed(MultimuxError::Auth(
                         broadcast_auth::Error::ChallengeParse(broadcast_auth::HttpAuthError(
@@ -606,8 +622,8 @@ impl SessionStep {
         verdict
     }
 
-    fn http_error(&self, status: u16) -> MultimuxError {
-        if status == reqwest::StatusCode::UNAUTHORIZED.as_u16() {
+    fn http_error(&self, status: http::StatusCode) -> MultimuxError {
+        if status == http::StatusCode::UNAUTHORIZED {
             MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(
                 broadcast_auth::HttpAuthError(format!("{}: {status}", self.labels.what)),
             ))
@@ -683,7 +699,7 @@ impl IngestStep<EventIngest> for SessionStep {
         driver: &mut IngestDriver<EventIngest>,
         window: Duration,
     ) -> StepOutcome {
-        if self.resync_us.is_some() && self.now_us() >= self.next_anchor_us {
+        if self.resync.is_some() && self.now_us() >= self.next_anchor_us {
             self.anchor_wall_clock();
         }
         if let Err(e) = self.perform_actions().await {
@@ -761,20 +777,10 @@ async fn fetch(request: reqwest::RequestBuilder, conn: ConnId, tx: mpsc::Sender<
             return;
         }
     };
-    let headers = response
-        .headers()
-        .iter()
-        .filter_map(|(name, value)| {
-            value
-                .to_str()
-                .ok()
-                .map(|v| (name.as_str().to_owned(), v.to_owned()))
-        })
-        .collect();
     let head = Message::Response {
         conn,
-        status: response.status().as_u16(),
-        headers,
+        status: response.status(),
+        headers: response.headers().clone(),
     };
     if tx.send(head).await.is_err() {
         return;
@@ -1054,8 +1060,12 @@ mod tests {
             }
         };
         let frames = 4 * EVENT_DRAIN_YIELD_EVERY as u32;
-        step.session
-            .on_response(conn, 200, &[], Timestamp::from_micros(1));
+        step.session.on_response(
+            conn,
+            http::StatusCode::OK,
+            &http::HeaderMap::new(),
+            Timestamp::from_micros(1),
+        );
         step.session.on_data(
             conn,
             &build_ts_bytes(TrackId::new(1), 0xAB, frames),

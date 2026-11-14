@@ -223,6 +223,11 @@ async fn main() {
     );
 
     // ---- 2. Build the media transport (our own crate's public API) --------
+    // The caller's monotonic clock: a `Timestamp` counted in microseconds from this starting
+    // instant, exactly what `media-plane` drivers hand a stage.
+    let clock_start = std::time::Instant::now();
+    let now =
+        || broadcast_common::stage::Timestamp::from_instant(clock_start, std::time::Instant::now());
     let local_ice_ufrag = rand_token(8);
     let local_ice_pwd = rand_token(24);
     let mut media = MediaTransport::new(
@@ -235,7 +240,7 @@ async fn main() {
             SetupRole::Passive,
             remote_fingerprint,
         ),
-        std::time::Instant::now(),
+        now(),
     )
     .expect("build media transport");
     println!(
@@ -296,7 +301,7 @@ async fn main() {
         tokio::select! {
             r = udp.recv_from(&mut buf) => match r {
                 Ok((n, peer)) => {
-                    let events = match media.handle_datagram(std::time::Instant::now(), peer, &buf[..n]) {
+                    let events = match media.handle_datagram(now(), peer, &buf[..n]) {
                         Ok(events) => events,
                         Err(e) => {
                             println!("[smoke] handle_datagram error: {e}");
@@ -343,7 +348,7 @@ async fn main() {
                 Err(e) => println!("[smoke] udp recv error: {e}"),
             },
             _ = tokio::time::sleep_until(wake) => {
-                for event in media.handle_timeout(std::time::Instant::now()) {
+                for event in media.handle_timeout(now()) {
                     if let MediaEvent::TimerError(msg) = event {
                         println!("[smoke] timer error: {msg}");
                     }

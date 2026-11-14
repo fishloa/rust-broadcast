@@ -12,11 +12,13 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use http::{HeaderMap, StatusCode};
+
 use broadcast_hls::MediaType;
 use dash_runtime::client::{
-    Action as DashAction, DashClient, DropCause, Error as CoreError, Failure, FailureClass,
-    FatalKind, ManifestSelection, Notice, Output, PullLimits, Rejection, ResourceId, ResponseMeta,
-    UtcId, UtcMethod, UtcResponse,
+    Action as DashAction, DashClient, DropCause, Error as CoreError, Failure as CoreFailure,
+    FailureClass, FatalKind, ManifestSelection, Notice, Output, PullLimits, Rejection, ResourceId,
+    ResponseMeta, UtcId, UtcMethod, UtcResponse,
 };
 use dash_runtime::error::MpdError;
 use dash_runtime::limits::Limits;
@@ -44,19 +46,16 @@ use broadcast_auth::AuthState;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
-const STATUS_FORBIDDEN: u16 = 403;
-const STATUS_NOT_FOUND: u16 = 404;
-const STATUS_GONE: u16 = 410;
-const STATUS_NOT_MODIFIED: u16 = 304;
-const STATUS_RANGE_NOT_SATISFIABLE: u16 = 416;
+const STATUS_FORBIDDEN: StatusCode = StatusCode::FORBIDDEN;
+const STATUS_NOT_FOUND: StatusCode = StatusCode::NOT_FOUND;
+const STATUS_GONE: StatusCode = StatusCode::GONE;
+const STATUS_NOT_MODIFIED: StatusCode = StatusCode::NOT_MODIFIED;
+const STATUS_RANGE_NOT_SATISFIABLE: StatusCode = StatusCode::RANGE_NOT_SATISFIABLE;
 
 const METHOD_GET: &str = "GET";
 const METHOD_HEAD: &str = "HEAD";
 const HEADER_IF_NONE_MATCH: &str = "If-None-Match";
 const HEADER_IF_MODIFIED_SINCE: &str = "If-Modified-Since";
-const HEADER_DATE: &str = "date";
-const HEADER_ETAG: &str = "etag";
-const HEADER_LAST_MODIFIED: &str = "last-modified";
 
 const UTC_BODY_LIMIT: usize = 4 * 1024;
 const MIN_WAKE_STEP_US: u64 = MICROS_PER_MILLI;
@@ -123,23 +122,18 @@ struct BodyLimits {
 
 #[derive(Debug, Clone, Default)]
 struct Head {
-    date: Option<String>,
-    etag: Option<String>,
-    last_modified: Option<String>,
+    date: Option<headers::Date>,
+    etag: Option<headers::ETag>,
+    last_modified: Option<headers::LastModified>,
 }
 
 impl Head {
-    fn of(headers: &[(String, String)]) -> Self {
-        let find = |name: &str| {
-            headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.trim().to_string())
-        };
+    fn of(headers: &HeaderMap) -> Self {
+        use headers::HeaderMapExt;
         Self {
-            date: find(HEADER_DATE),
-            etag: find(HEADER_ETAG),
-            last_modified: find(HEADER_LAST_MODIFIED),
+            date: headers.typed_get::<headers::Date>(),
+            etag: headers.typed_get::<headers::ETag>(),
+            last_modified: headers.typed_get::<headers::LastModified>(),
         }
     }
 }
@@ -239,7 +233,7 @@ pub(crate) struct DashSource {
     manual_audio: Option<AudioKey>,
     pending_audio: Option<Option<usize>>,
     announced_audio: Option<usize>,
-    anchor: Option<(u64, u64)>,
+    anchor: Option<(Timestamp, jiff::Timestamp)>,
     established: bool,
     live: bool,
     ended: bool,
@@ -293,7 +287,7 @@ impl DashSource {
                 Timeouts {
                     manifest_us: duration_us(config.request_timeout),
                     segment_us: duration_us(config.segment_timeout),
-                    aux_us: config.dash.utc_timeout_us,
+                    aux_us: u64::try_from(config.dash.utc_timeout.as_micros()).unwrap_or(u64::MAX),
                 },
                 duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
@@ -371,13 +365,12 @@ impl DashSource {
         }
     }
 
-    pub(crate) fn set_wall_clock(&mut self, now_us: u64, unix_us: u64) {
-        self.anchor = Some((now_us, unix_us));
+    pub(crate) fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
+        self.anchor = Some((now, unix));
         if self.fatal {
             return;
         }
-        self.client
-            .set_wall_clock(Timestamp::from_micros(now_us), unix_us);
+        self.client.set_wall_clock(now, unix);
         self.drain_outputs();
     }
 
@@ -445,7 +438,7 @@ impl DashSource {
                 .with_limits(self.pull.clone()),
         );
         if let Some((mono, unix)) = self.anchor {
-            client.set_wall_clock(Timestamp::from_micros(mono), unix);
+            client.set_wall_clock(mono, unix);
         }
         self.client = client;
         self.mpd_accepted = false;
@@ -476,8 +469,8 @@ impl DashSource {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,
@@ -506,7 +499,7 @@ impl DashSource {
             &mut self.parked,
         ) {
             HeadRoute::Send(req) => self.send(req, auth, now),
-            HeadRoute::RedirectsExhausted(req) => self.fail(req, now, Failure::Transport),
+            HeadRoute::RedirectsExhausted(req) => self.fail(req, now, CoreFailure::Transport),
             HeadRoute::Parked => {}
             HeadRoute::Other(req) => self.on_head(req, head, now, wall, auth),
         }
@@ -528,7 +521,7 @@ impl DashSource {
             status,
             headers,
         } = head;
-        if (200..300).contains(&status) {
+        if status.is_success() {
             match accept_head(
                 &mut req.body,
                 &mut req.basis,
@@ -539,7 +532,7 @@ impl DashSource {
             ) {
                 HeadOutcome::Refused => {
                     self.actions.push_back(Action::Close { conn });
-                    self.fail(req, now, Failure::Status(status));
+                    self.fail(req, now, CoreFailure::Status(status.as_u16()));
                 }
                 HeadOutcome::Fallback => {
                     self.actions.push_back(Action::Close { conn });
@@ -575,7 +568,7 @@ impl DashSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            let ra = retry_after_us(status, headers, now, wall);
+            let ra = retry_after_us(status, headers, Timestamp::from_micros(now), wall);
             self.retry_after_us = ra;
             inflight::record_refusal(
                 head,
@@ -586,7 +579,7 @@ impl DashSource {
                     events: &mut self.events,
                 },
             );
-            self.fail(req, now, Failure::Status(status));
+            self.fail(req, now, CoreFailure::Status(status.as_u16()));
             self.retry_after_us = 0;
         }
     }
@@ -607,7 +600,7 @@ impl DashSource {
             },
         );
         if let Some(req) = failed {
-            self.fail(req, now, Failure::TooLarge);
+            self.fail(req, now, CoreFailure::TooLarge);
             if !auth.is_waiting() {
                 self.advance(now, auth);
             }
@@ -633,11 +626,11 @@ impl DashSource {
         let head_request = req.extra.method == METHOD_HEAD;
         let truncated = !head_request && req.body.is_truncated();
         if error.is_some() || !req.responded_ok || truncated {
-            self.fail(req, now, Failure::Transport);
+            self.fail(req, now, CoreFailure::Transport);
         } else if req.body.finish() {
             self.deliver(req, now);
         } else {
-            self.fail(req, now, Failure::Transport);
+            self.fail(req, now, CoreFailure::Transport);
         }
         if !auth.is_waiting() {
             self.advance(now, auth);
@@ -662,14 +655,17 @@ impl DashSource {
     }
 
     fn meta<'r>(req: &'r Req, final_url: Option<&'r str>) -> ResponseMeta<'r> {
-        let mut meta = ResponseMeta::new(req.started_us, req.extra.received_us);
-        if let Some(date) = req.extra.head.date.as_deref() {
+        let mut meta = ResponseMeta::new(
+            Timestamp::from_micros(req.started_us),
+            Timestamp::from_micros(req.extra.received_us),
+        );
+        if let Some(date) = req.extra.head.date {
             meta = meta.with_date(date);
         }
-        if let Some(etag) = req.extra.head.etag.as_deref() {
+        if let Some(etag) = req.extra.head.etag.clone() {
             meta = meta.with_etag(etag);
         }
-        if let Some(last_modified) = req.extra.head.last_modified.as_deref() {
+        if let Some(last_modified) = req.extra.head.last_modified {
             meta = meta.with_last_modified(last_modified);
         }
         if let Some(url) = final_url {
@@ -730,9 +726,12 @@ impl DashSource {
     }
 
     fn deliver_utc(&mut self, id: UtcId, req: &Req, now: u64) {
-        let mut response =
-            UtcResponse::new(req.started_us, req.extra.received_us, req.body.as_slice());
-        if let Some(date) = req.extra.head.date.as_deref() {
+        let mut response = UtcResponse::new(
+            Timestamp::from_micros(req.started_us),
+            Timestamp::from_micros(req.extra.received_us),
+            req.body.as_slice(),
+        );
+        if let Some(date) = req.extra.head.date {
             response = response.with_date(date);
         }
         let _ = self
@@ -787,11 +786,11 @@ impl DashSource {
         self.after_class(id, class, now);
     }
 
-    fn fail(&mut self, req: Req, now: u64, failure: Failure) {
+    fn fail(&mut self, req: Req, now: u64, failure: CoreFailure) {
         self.fail_purpose(req.purpose, now, failure);
     }
 
-    fn fail_purpose(&mut self, purpose: Purpose, now: u64, failure: Failure) {
+    fn fail_purpose(&mut self, purpose: Purpose, now: u64, failure: CoreFailure) {
         match purpose {
             Purpose::Mpd => {
                 let class = self
@@ -879,7 +878,7 @@ impl DashSource {
         for conn in self.flight.overdue(now) {
             if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
-                self.fail(req, now, Failure::Timeout);
+                self.fail(req, now, CoreFailure::Timeout);
             }
         }
         self.expire_inactive(now);
@@ -896,7 +895,7 @@ impl DashSource {
                 },
             );
             if let Some(req) = stalled {
-                self.fail(req, now, Failure::Timeout);
+                self.fail(req, now, CoreFailure::Timeout);
             }
         }
     }
@@ -930,8 +929,8 @@ impl DashSource {
         let Some(wake) = self.client.next_wake() else {
             return;
         };
-        let at = if wake > now {
-            Timestamp::from_micros(wake)
+        let at = if wake > Timestamp::from_micros(now) {
+            wake
         } else {
             match deadline(
                 Timestamp::from_micros(now),
@@ -1014,7 +1013,7 @@ impl DashSource {
         if !self.utc_credentials && matches!(req.purpose, Purpose::Utc(_)) {
             headers.retain(|(name, _)| !is_credential_header(name));
         }
-        req.authed = broadcast_auth::carries_credentials(&headers);
+        req.authed = broadcast_auth::carries_credentials(&crate::headers::to_header_map(&headers));
         headers.extend(req.extra.conditional.iter().cloned());
         let method = req.extra.method;
         self.flight
@@ -1195,10 +1194,10 @@ impl DashSource {
             Output::Notice(notice) => self.on_notice(notice),
             Output::ClockSynced {
                 source,
-                uncertainty_us,
+                uncertainty,
             } => self.events.push_back(Event::ClockSynced {
                 source,
-                uncertainty_us,
+                uncertainty_us: u64::try_from(uncertainty.as_micros()).unwrap_or(u64::MAX),
             }),
             Output::SegmentLost { status, .. } => self.events.push_back(Event::Error {
                 kind: ErrorKind::SegmentFetchFailed { status },
@@ -1363,11 +1362,14 @@ fn master_selection(selection: &ManifestSelection) -> MasterSelection {
     let variants = selection
         .variants
         .iter()
+        .filter(|v| {
+            v.init_url
+                .as_deref()
+                .is_some_and(|url| Url::parse(url).is_ok())
+        })
         .map(|v| {
-            let mut info = VariantInfo::new(
-                v.init_url.clone().unwrap_or_default(),
-                u32::try_from(v.bandwidth).unwrap_or(u32::MAX),
-            );
+            let uri = v.init_url.as_deref().and_then(|url| Url::parse(url).ok());
+            let mut info = VariantInfo::new(uri, v.bandwidth);
             info.resolution = v.resolution;
             info.codecs = v.codecs.clone();
             info.audio_group = v.audio_group.clone();
@@ -1423,7 +1425,9 @@ mod tests {
             FailureClass::Expired,
             FailureClass::SegmentSkipped,
             FailureClass::EndTail,
-            FailureClass::NotYetAvailable { retry_at_us: 5 },
+            FailureClass::NotYetAvailable {
+                retry_at: Timestamp::from_micros(5),
+            },
         ] {
             assert!(!keeps_parked_prefix(class), "{class:?}");
         }

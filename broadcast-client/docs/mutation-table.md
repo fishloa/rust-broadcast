@@ -32,11 +32,11 @@ Result: 40 of 41 mutants killed, 1 equivalent (W38). The first run left two surv
 | W24 | Default dash config replaced by a zeroed timeout | `events.rs` | killed | `a_ts_http_session_ignores_the_anchor_even_with_an_http_date_retry_after`, `an_anchor_taken_after_the_response_instant_still_maps_by_offset`, `an_http_date_far_in_the_future_is_clamped_to_sixty_seconds`, `an_http_date_in_the_past_falls_back_to_the_backoff_step` |
 | W25 | wait-shorter-than-timeout check: < -> <= | `dash-runtime: client/config.rs` | killed | `the_ladder_wait_may_not_be_shorter_than_one_request`, `the_largest_value_is_accepted_for_every_numeric_field` |
 | W26 | wait-shorter-than-timeout check removed | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name`, `the_ladder_wait_may_not_be_shorter_than_one_request` |
-| W27 | zero utc_timeout_us accepted | `dash-runtime: client/config.rs` | killed | `a_zero_timeout_is_reported_before_the_combination_rule`, `every_zero_timeout_and_period_is_rejected_by_name` |
-| W28 | zero utc_max_rtt_us accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name` |
-| W29 | zero utc_resync_us accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name`, `the_error_names_the_field_in_its_message` |
-| W30 | zero early_retry_us accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name` |
-| W31 | zero min_mpd_refresh_us accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name` |
+| W27 | zero utc_timeout accepted | `dash-runtime: client/config.rs` | killed | `a_zero_timeout_is_reported_before_the_combination_rule`, `every_zero_timeout_and_period_is_rejected_by_name` |
+| W28 | zero utc_max_rtt accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name` |
+| W29 | zero utc_resync accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name`, `the_error_names_the_field_in_its_message` |
+| W30 | zero early_retry accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name` |
+| W31 | zero min_mpd_refresh accepted | `dash-runtime: client/config.rs` | killed | `every_zero_timeout_and_period_is_rejected_by_name` |
 | W32 | default utc_wait 5 s -> 3 s | `dash-runtime: client/config.rs` | killed | `defaults_are_the_design_table` |
 | W33 | default utc_resync 600 s -> 60 s | `dash-runtime: client/config.rs` | killed | `defaults_are_the_design_table` |
 | W34 | default cross_origin_urls true -> false | `dash-runtime: client/config.rs` | killed | `defaults_are_the_design_table` |

@@ -293,10 +293,10 @@ const SIDX_SIZE_SKEW: u32 = 16;
 const AST_SHIFT_SECS: i64 = 3_600;
 const BOX_HEADER: usize = 8;
 
-fn full_ok(good: &Answer) -> Option<(u16, &Headers, &Vec<u8>)> {
+fn full_ok(good: &Answer) -> Option<(http::StatusCode, &Headers, &Vec<u8>)> {
     match good {
         Answer::Full {
-            status: status @ (200 | 206),
+            status: status @ (http::StatusCode::OK | http::StatusCode::PARTIAL_CONTENT),
             headers,
             body,
         } => Some((*status, headers, body)),
@@ -304,7 +304,7 @@ fn full_ok(good: &Answer) -> Option<(u16, &Headers, &Vec<u8>)> {
     }
 }
 
-type Headers = Vec<(String, String)>;
+type Headers = http::HeaderMap;
 
 fn edit_text(good: &Answer, edit: impl FnOnce(&str) -> Option<String>) -> Option<Answer> {
     let (status, headers, body) = full_ok(good)?;
@@ -409,12 +409,15 @@ fn apply(
     Some(match f {
         F::S500 => Answer::status(500),
         F::S503 => Answer::status(503),
-        F::S429 => Answer::status_with(429, vec![("Retry-After".into(), "3".into())]),
-        F::S429Huge => Answer::status_with(429, vec![("Retry-After".into(), u64::MAX.to_string())]),
+        F::S429 => Answer::status_with(429, super::headers(&[("Retry-After", "3")])),
+        F::S429Huge => Answer::status_with(
+            429,
+            super::headers(&[("Retry-After", &u64::MAX.to_string())]),
+        ),
         F::S404 => Answer::status(404),
         F::S401 => Answer::status_with(
             401,
-            vec![("WWW-Authenticate".into(), "Basic realm=\"r\"".into())],
+            super::headers(&[("WWW-Authenticate", "Basic realm=\"r\"")]),
         ),
         F::S403 => Answer::status(403),
         F::ConnFail => Answer::TransportError,
@@ -435,18 +438,18 @@ fn apply(
         F::ClosedTwice => Answer::ClosedTwice(Box::new(good)),
         F::RedirLoop => Answer::Redirect(req.url.clone()),
         F::S425 => Answer::Full {
-            status: 425,
-            headers: Vec::new(),
+            status: super::status(425),
+            headers: Headers::new(),
             body: b"earl".to_vec(),
         },
-        F::S425RetryAfter => Answer::status_with(425, vec![("Retry-After".into(), "2".into())]),
+        F::S425RetryAfter => Answer::status_with(425, super::headers(&[("Retry-After", "2")])),
         F::S410 => Answer::status(410),
         F::RetryAfterDate => Answer::status_with(
             503,
-            vec![(
-                "Retry-After".into(),
-                super::dash_common::world::http_date(req.send_utc_us + RETRY_AFTER_DATE_US),
-            )],
+            super::headers(&[(
+                "Retry-After",
+                &super::dash_common::world::http_date(req.send_utc_us + RETRY_AFTER_DATE_US),
+            )]),
         ),
         F::UtcSkew => {
             if let Some(a) = edit_text(&good, |t| shift_instant(t, UTC_SKEW_US / 1_000_000)) {
@@ -460,10 +463,14 @@ fn apply(
                 else {
                     return None;
                 };
-                let date = headers
-                    .iter_mut()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("date"))?;
-                date.1 = shift_http_date(&date.1, UTC_SKEW_US / 1_000_000)?;
+                let shifted = shift_http_date(
+                    headers.get(http::header::DATE)?.to_str().ok()?,
+                    UTC_SKEW_US / 1_000_000,
+                )?;
+                headers.insert(
+                    http::header::DATE,
+                    http::HeaderValue::from_str(&shifted).ok()?,
+                );
                 Answer::Full {
                     status,
                     headers,
@@ -481,9 +488,7 @@ fn apply(
             else {
                 return None;
             };
-            let before = headers.len();
-            headers.retain(|(k, _)| !k.eq_ignore_ascii_case("date"));
-            (headers.len() != before).then_some(())?;
+            headers.remove(http::header::DATE).is_some().then_some(())?;
             Answer::Full {
                 status,
                 headers,
@@ -768,7 +773,7 @@ pub fn served_segments(log: &[Logged], faulted: &[(String, u64, bool)]) -> Serve
         {
             continue;
         }
-        if !l.status.is_some_and(|s| (200..300).contains(&s)) {
+        if !l.status.is_some_and(|s| s.is_success()) {
             continue;
         }
         if let Some((rep, n)) = parse_segment_url(&l.url) {
@@ -806,7 +811,7 @@ pub fn peak_rate_per_url(log: &[Logged]) -> (usize, String) {
     let mut previous: BTreeMap<&str, &Logged> = BTreeMap::new();
     for l in log {
         let hop = previous.get(l.url.as_str()).is_some_and(|p| {
-            p.status == Some(302)
+            p.status == Some(http::StatusCode::FOUND)
                 && l.send_elapsed_us.saturating_sub(p.send_elapsed_us) < REDIRECT_HOP_US
         });
         previous.insert(l.url.as_str(), l);

@@ -65,7 +65,7 @@ pub(crate) struct Out {
 struct Handshake {
     hs: CallerHandshake,
     started_us: u64,
-    next_tick_us: Timestamp,
+    next_tick_us: Option<Timestamp>,
     tick_period_us: u64,
 }
 
@@ -140,7 +140,7 @@ impl SrtCaller {
         let own_socket_id = first_u32(&derive(&seed, LABEL_SOCKET_ID, attempt)) % MAX_SOCKET_ID + 1;
         let isn = first_u32(&derive(&seed, LABEL_ISN, attempt)) & SEQ_NUMBER_MASK;
         let mut hs_config = HandshakeConfig::default()
-            .with_latency_ms(self.config.latency_ms)
+            .with_latency(self.config.latency)
             .with_initial_seq_number(isn)
             .with_stream_id(self.config.stream_id.clone());
         if let Some(enc) = &self.config.encryption {
@@ -154,8 +154,7 @@ impl SrtCaller {
             let sek = derive(&seed, LABEL_SEK, attempt)[..enc.key_length.bytes()].to_vec();
             hs_config.crypto = Some(CryptoConfig::new(enc.passphrase().to_vec(), salt, sek));
         }
-        let ticks = hs_config.retransmit_after_ticks.max(1);
-        let tick_period_us = HANDSHAKE_RETRANSMIT_PERIOD_US / u64::from(ticks);
+        let tick_period_us = HANDSHAKE_RETRANSMIT_PERIOD_US;
         let mut hs = CallerHandshake::new(own_socket_id, hs_config);
         match hs.start() {
             Ok(induction) => {
@@ -164,8 +163,7 @@ impl SrtCaller {
                     hs,
                     started_us: now_us,
                     next_tick_us: Timestamp::from_micros(now_us)
-                        .checked_add(Duration::from_micros(tick_period_us))
-                        .unwrap_or(Timestamp(u64::MAX)),
+                        .checked_add(Duration::from_micros(tick_period_us)),
                     tick_period_us,
                 }));
             }
@@ -247,7 +245,7 @@ impl SrtCaller {
             tsbpd: TsbpdScheduler::new(
                 peer_isn,
                 -i64::from(peer_ts_us),
-                Duration::from_millis(u64::from(params.latency_ms)),
+                params.latency,
                 DRIFT_US,
                 params.flags.tlpktdrop(),
                 None,
@@ -306,17 +304,19 @@ impl SrtCaller {
                     self.fail_handshake();
                     return;
                 }
-                while Timestamp::from_micros(now_us) >= h.next_tick_us {
+                while h
+                    .next_tick_us
+                    .is_some_and(|next| Timestamp::from_micros(now_us) >= next)
+                {
                     // A tick period that does not fit the clock ends the schedule (past the end
                     // of the clock there is no later tick to make), so the loop stops here.
-                    let Some(next) = h
-                        .next_tick_us
-                        .checked_add(Duration::from_micros(h.tick_period_us.max(1)))
-                    else {
+                    let Some(next) = h.next_tick_us.and_then(|tick| {
+                        tick.checked_add(Duration::from_micros(h.tick_period_us.max(1)))
+                    }) else {
                         break;
                     };
-                    h.next_tick_us = next;
-                    for output in h.hs.tick() {
+                    h.next_tick_us = Some(next);
+                    for output in h.hs.tick(Duration::from_micros(h.tick_period_us.max(1))) {
                         match output {
                             HandshakeOutput::Send(b) => self.out.sends.push(b),
                             HandshakeOutput::TimedOut => {
@@ -352,7 +352,10 @@ impl SrtCaller {
                 // handshake tick is a deadline then.
                 let budget = Timestamp::from_micros(h.started_us)
                     .checked_add(self.config.timeouts.handshake);
-                Some(budget.map_or(h.next_tick_us, |budget| budget.min(h.next_tick_us)))
+                match (budget, h.next_tick_us) {
+                    (Some(budget), Some(tick)) => Some(budget.min(tick)),
+                    (budget, tick) => budget.or(tick),
+                }
             }
             State::Connected(link) => {
                 let idle = Timestamp::from_micros(link.last_rx_us)

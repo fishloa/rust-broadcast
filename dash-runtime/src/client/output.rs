@@ -2,6 +2,7 @@
 //! [`super::DashClient::next_output`].
 
 use broadcast_common::impl_spec_display;
+use core::time::Duration;
 use transmux::{Sample, TrackId, TrackSpec};
 
 use super::action::ResourceId;
@@ -231,8 +232,8 @@ pub enum Output {
     ClockSynced {
         /// Where the anchor came from.
         source: ClockSource,
-        /// Half-width of its error bar, microseconds.
-        uncertainty_us: u64,
+        /// Half-width of its error bar.
+        uncertainty: Duration,
     },
     /// A segment of a live presentation was given up on after the configured
     /// number of failures; a `Discontinuity` marks the gap. (A static
@@ -241,7 +242,7 @@ pub enum Output {
         /// The segment.
         id: ResourceId,
         /// Status of the last failure, when it was an HTTP status.
-        status: Option<u16>,
+        status: Option<http::StatusCode>,
     },
     /// The presentation cannot continue; nothing follows.
     Fatal(FatalKind),

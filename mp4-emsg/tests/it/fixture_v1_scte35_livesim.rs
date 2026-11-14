@@ -12,6 +12,10 @@
 //!
 //! Asserts the decoded fields, SCTE 35 recognition, and a byte-exact round-trip.
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use broadcast_common::timescale::Timescale;
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
@@ -27,7 +31,7 @@ fn parses_real_v1_scte35_fields() {
     assert_eq!(b.version(), EmsgVersion::RepresentationRelative);
     assert_eq!(b.scheme_id_uri, "urn:scte:scte35:2013:bin");
     assert_eq!(b.value, "");
-    assert_eq!(b.timescale, Timescale::from_nonzero(90_000));
+    assert_eq!(b.timescale, timescale(90_000));
     assert_eq!(
         b.presentation_time,
         PresentationTime::Absolute(160_391_675_700_000)

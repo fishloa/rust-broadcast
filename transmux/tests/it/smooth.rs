@@ -23,6 +23,10 @@ use transmux::smooth::{FOURCC_AACL, FOURCC_H264, SmoothOutput, SmoothPackager, T
 use transmux::track_spec_from_quality_level;
 use transmux::ts_demux::TsDemux;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 // ---------------------------------------------------------------------------
 // Fixtures + packaging
 // ---------------------------------------------------------------------------
@@ -376,7 +380,7 @@ fn lossless_round_trip_video() {
     // the manifest `TimeScale` (10 MHz), so the fragments' `trun` values are
     // read in that timescale (issue #1022).
     let mut spec = vid.spec.clone();
-    spec.timescale = Timescale::from_nonzero(10_000_000);
+    spec.timescale = broadcast_common::timescale!(10_000_000);
     let specs = vec![spec];
     let mut file = build_init_segment(&specs, media.movie_timescale).expect("init segment");
 
@@ -543,7 +547,7 @@ fn parsed_manifest_codec_glue_builds_working_init_segment() {
 
 #[test]
 fn empty_media_rejected() {
-    let media = Media::new(vec![], Timescale::from_nonzero(90_000));
+    let media = Media::new(vec![], timescale(90_000));
     let mut pkg = SmoothPackager::default();
     assert!(
         matches!(

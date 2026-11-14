@@ -11,6 +11,6 @@ pub mod scte35;
 pub mod transition;
 
 pub use error::{Error, Result};
-pub use schedule::{CodecConfigId, EntryKind, Schedule, ScheduleEntry};
+pub use schedule::{CodecConfigId, EntryKind, Playhead, Schedule, ScheduleEntry};
 pub use scte35::{BreakEdge, ConditionedSplicePoint, build_splice_insert, to_section};
 pub use transition::{PlannedTransition, TransitionPlan, next_transition};

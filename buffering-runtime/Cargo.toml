@@ -31,7 +31,7 @@ default = ["std"]
 std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 # `serde::Serialize` on every public data type; `Deserialize` on the configs and
 # the stall-memory snapshot (the two things a caller persists).
-serde = ["dep:serde"]
+serde = ["dep:serde", "broadcast-common/serde"]
 
 [[example]]
 name = "replay_trace"

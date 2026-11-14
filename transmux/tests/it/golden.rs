@@ -12,11 +12,13 @@ use std::path::{Path, PathBuf};
 
 use broadcast_common::{Package, Unpackage};
 use broadcast_smooth::SmoothManifest;
+use std::time::Duration;
 use transmux::dash::{
     Addressing, ContentProtectionSystem, DVB_DASH_PROFILE_PREFIX, DVB_HDR_DMI_SCHEME,
     DVB_HDR_DMI_ST2094_40, DashPackager, HDR_METADATA_SCHEME, HDR_METADATA_SMPTE2094_40,
     InbandEventStream, TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
 };
+
 use transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014;
 use transmux::pipeline::{CodecConfig, SubtitleFormat, SubtitleSampleEntry};
 use transmux::ts_demux::TsDemux;
@@ -24,6 +26,10 @@ use transmux::{
     AspectRatioIdc, Fmp4Demux, Media, MediaKind, Sample, SmoothPackager, Track, TrackId, TrackSpec,
     WvttSampleEntry, playready_wrmheader,
 };
+
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
@@ -86,7 +92,7 @@ fn wvtt_media() -> Media {
     let entry = WvttSampleEntry::new("WEBVTT\n\nNOTE spec vector\n");
     let spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(1000),
+        timescale(1000),
         CodecConfig::Subtitle {
             format: SubtitleFormat::WebVtt,
             sample_entry: Some(SubtitleSampleEntry::WebVtt(entry)),
@@ -101,10 +107,7 @@ fn wvtt_media() -> Media {
     vttc.extend_from_slice(b"vttc");
     vttc.extend_from_slice(&payl);
     let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
-    Media::new(
-        vec![Track::new(spec, vec![sample])],
-        Timescale::from_nonzero(1000),
-    )
+    Media::new(vec![Track::new(spec, vec![sample])], timescale(1000))
 }
 
 /// A two-language audio pair plus a video track — the only way to reach
@@ -266,7 +269,7 @@ fn dash_mpd_variants_match_golden() {
                         bandwidth: 150_000,
                         width: Some(320),
                         height: Some(180),
-                        timescale: Timescale::from_nonzero(90000),
+                        timescale: timescale(90000),
                         total_duration: 900000,
                     },
                 }),
@@ -295,7 +298,7 @@ fn dash_mpd_element_coverage_matches_golden() {
             bandwidth: 150_000,
             width: Some(320),
             height: Some(180),
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             total_duration: 900000,
         },
     };
@@ -381,11 +384,12 @@ fn dash_mpd_cbcs_coverage_matches_golden() {
 #[test]
 fn ll_dash_mpd_variants_match_golden() {
     let media = media();
-    let plain = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
-    let rate = crate::ll_packager::ll_packager(4.0, 1.0, 5000).with_playback_rate(0.96, 1.04);
-    let utc = crate::ll_packager::ll_packager(2.0, 0.5, 3000)
+    let plain = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
+    let rate = crate::ll_packager::ll_packager(4.0, 1.0, Duration::from_secs(5))
+        .with_playback_rate(0.96, 1.04);
+    let utc = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
         .with_utc_timing(UTCTIMING_HTTP_HEAD_2014, "https://time.example/x?a=1&b=2");
-    let mut timeline = crate::ll_packager::ll_packager(2.0, 0.5, 3000);
+    let mut timeline = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
     timeline.base.addressing = Addressing::Timeline;
     timeline.base.segments = timeline_segments(&media);
     for (name, mut pkg) in [

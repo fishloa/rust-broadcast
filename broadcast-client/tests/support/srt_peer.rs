@@ -51,7 +51,7 @@ impl SrtPeer {
 
     pub fn with_isn(cipher: Cipher, passphrase: Option<&str>, latency_ms: u16, isn: u32) -> Self {
         let mut config = HandshakeConfig::default()
-            .with_latency_ms(latency_ms)
+            .with_latency(std::time::Duration::from_millis(u64::from(latency_ms)))
             .with_initial_seq_number(isn)
             .with_encryption_field(match cipher {
                 Cipher::Clear => EncryptionField::NoEncryption,

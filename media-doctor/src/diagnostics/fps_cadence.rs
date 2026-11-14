@@ -159,6 +159,10 @@ fn check_media(media: &Media, report: &mut Report) {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use broadcast_common::timescale::Timescale;
 
@@ -200,7 +204,7 @@ mod tests {
     /// panic — regression guard for the `None`/empty-track paths.
     #[test]
     fn empty_media_no_findings() {
-        let media = Media::new(alloc::vec::Vec::new(), Timescale::from_nonzero(90_000));
+        let media = Media::new(alloc::vec::Vec::new(), timescale(90_000));
         let mut report = Report::new();
         check_media(&media, &mut report);
         assert!(report.is_empty());

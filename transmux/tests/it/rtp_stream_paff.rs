@@ -15,6 +15,10 @@ use transmux::{
     RtpStreamDepacketiser, RtpStreamTrack,
 };
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 const FRAME_PERIOD: u32 = 3600;
 const FIELD_OFFSET: u32 = FRAME_PERIOD / 2;
 const MAX_NUM_REORDER_FRAMES: u32 = 1;
@@ -135,7 +139,7 @@ fn field_pictures_use_a_depth_widened_for_fields() {
         id,
         RtpMediaKind::H264,
         config(),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     )]);
     let mut samples = Vec::new();
     let mut seq = 0u16;

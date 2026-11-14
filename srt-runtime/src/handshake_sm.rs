@@ -20,6 +20,7 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidField;
+use core::time::Duration;
 #[cfg(feature = "crypto")]
 use subtle::ConstantTimeEq;
 #[cfg(feature = "crypto")]
@@ -392,11 +393,11 @@ impl zeroize::ZeroizeOnDrop for SecretBytes {}
 #[derive(Debug, Clone, PartialEq)]
 #[non_exhaustive]
 pub struct HandshakeConfig {
-    /// TSBPD delay in milliseconds this side requests, sent as both the
-    /// Receiver and Sender TSBPD Delay of its Handshake Extension Message
-    /// (§3.2.1.1, Figure 6). The negotiated value is the greater of the two
-    /// parties' requests (§4.3.1.2).
-    pub latency_ms: u16,
+    /// TSBPD delay this side requests, sent as both the Receiver and Sender
+    /// TSBPD Delay of its Handshake Extension Message (§3.2.1.1, Figure 6),
+    /// in whole milliseconds on the wire. The negotiated value is the greater
+    /// of the two parties' requests (§4.3.1.2).
+    pub latency: Duration,
     /// Maximum Transmission Unit Size (§3.2.1).
     pub mtu: u32,
     /// Maximum Flow Window Size (§3.2.1).
@@ -425,11 +426,12 @@ pub struct HandshakeConfig {
     /// the packet's *sender*" — despite the field's name, each party reports
     /// its own address, not its peer's).
     pub local_ip: [u32; 4],
-    /// Number of [`crate::caller::CallerHandshake::tick`] /
-    /// [`crate::listener::ListenerHandshake::tick`] calls with no reply
-    /// before the last-sent handshake packet is retransmitted. Timeouts are
-    /// modeled as caller-driven ticks — no wall-clock lives in this crate.
-    pub retransmit_after_ticks: u32,
+    /// Longest silence from the peer before the last-sent handshake packet is
+    /// retransmitted: a [`crate::caller::CallerHandshake::tick`] /
+    /// [`crate::listener::ListenerHandshake::tick`] call is the caller's own
+    /// time step, and the engine resends once that much of it has passed with
+    /// no reply. No wall-clock lives in this crate.
+    pub retransmit_after: Duration,
     /// Maximum number of retransmissions before the handshake gives up
     /// ([`HandshakeOutput::TimedOut`]).
     pub max_retries: u32,
@@ -443,10 +445,10 @@ pub struct HandshakeConfig {
 }
 
 impl HandshakeConfig {
-    /// Sets [`latency_ms`](Self::latency_ms).
+    /// Sets [`latency`](Self::latency).
     #[must_use]
-    pub fn with_latency_ms(mut self, latency_ms: u16) -> Self {
-        self.latency_ms = latency_ms;
+    pub fn with_latency(mut self, latency: Duration) -> Self {
+        self.latency = latency;
         self
     }
 
@@ -513,10 +515,10 @@ impl HandshakeConfig {
         self
     }
 
-    /// Sets [`retransmit_after_ticks`](Self::retransmit_after_ticks).
+    /// Sets [`retransmit_after`](Self::retransmit_after).
     #[must_use]
-    pub fn with_retransmit_after_ticks(mut self, retransmit_after_ticks: u32) -> Self {
-        self.retransmit_after_ticks = retransmit_after_ticks;
+    pub fn with_retransmit_after(mut self, retransmit_after: Duration) -> Self {
+        self.retransmit_after = retransmit_after;
         self
     }
 
@@ -543,10 +545,14 @@ impl HandshakeConfig {
 /// retransmit period.
 pub const DEFAULT_MAX_RETRIES: u32 = 12;
 
+/// Default [`HandshakeConfig::retransmit_after`]: the adapter's 250 ms
+/// handshake retransmit period divided by the three ticks it used to count.
+pub const DEFAULT_RETRANSMIT_AFTER: Duration = Duration::from_micros(83_333);
+
 impl Default for HandshakeConfig {
     fn default() -> Self {
         HandshakeConfig {
-            latency_ms: 120,
+            latency: Duration::from_millis(120),
             mtu: 1500,
             max_flow_window_size: 8192,
             initial_seq_number: 0,
@@ -563,7 +569,7 @@ impl Default for HandshakeConfig {
             stream_id: None,
             group: None,
             local_ip: [0, 0, 0, 0],
-            retransmit_after_ticks: 3,
+            retransmit_after: DEFAULT_RETRANSMIT_AFTER,
             max_retries: DEFAULT_MAX_RETRIES,
             #[cfg(feature = "crypto")]
             crypto: None,
@@ -585,10 +591,11 @@ pub struct NegotiatedParams {
     /// The flags both sides advertised, ANDed together (only mutually
     /// supported capabilities are considered agreed).
     pub flags: HandshakeExtensionMessageFlags,
-    /// The agreed TSBPD latency in milliseconds: the greater of this side's
-    /// configured [`HandshakeConfig::latency_ms`] and the peer's reported
-    /// Receiver/Sender TSBPD Delay (§4.3.1.2).
-    pub latency_ms: u16,
+    /// The agreed TSBPD latency, rounded down to the whole milliseconds the
+    /// wire carries: the greater of this side's configured
+    /// [`HandshakeConfig::latency`] and the peer's reported Receiver/Sender
+    /// TSBPD Delay (§4.3.1.2).
+    pub latency: Duration,
     /// This side's own SRT Socket ID.
     pub own_socket_id: u32,
     /// The peer's SRT Socket ID.
@@ -682,12 +689,12 @@ impl WireClock {
 }
 
 /// The retransmit bookkeeping every handshake machine (caller, listener,
-/// rendezvous) shares: the last packet sent, ticks since it was sent, and the
-/// retransmissions spent on it.
+/// rendezvous) shares: the last packet sent, the caller's time advanced since
+/// it was sent, and the retransmissions spent on it.
 #[derive(Debug, Default)]
 pub(crate) struct Retransmit {
     last_sent: Option<Vec<u8>>,
-    ticks_since_send: u32,
+    silent: Duration,
     retries: u32,
 }
 
@@ -698,7 +705,7 @@ impl Retransmit {
 
     pub(crate) fn arm(&mut self, bytes: &[u8]) {
         self.remember(bytes);
-        self.ticks_since_send = 0;
+        self.silent = Duration::ZERO;
     }
 
     pub(crate) fn arm_fresh(&mut self, bytes: &[u8]) {
@@ -710,15 +717,16 @@ impl Retransmit {
         self.last_sent.as_deref()
     }
 
-    /// One caller-defined tick: after [`HandshakeConfig::retransmit_after_ticks`]
-    /// ticks the last packet is resent, and once
-    /// [`HandshakeConfig::max_retries`] resends are spent the handshake times out.
-    pub(crate) fn tick(&mut self, config: &HandshakeConfig) -> RetransmitStep {
-        self.ticks_since_send += 1;
-        if self.ticks_since_send < config.retransmit_after_ticks {
+    /// Advance the caller's own clock by `elapsed` with no reply: once
+    /// [`HandshakeConfig::retransmit_after`] has passed the last packet is
+    /// resent, and once [`HandshakeConfig::max_retries`] resends are spent the
+    /// handshake times out.
+    pub(crate) fn tick(&mut self, elapsed: Duration, config: &HandshakeConfig) -> RetransmitStep {
+        self.silent = self.silent.saturating_add(elapsed);
+        if self.silent < config.retransmit_after {
             return RetransmitStep::Idle;
         }
-        self.ticks_since_send = 0;
+        self.silent = Duration::ZERO;
         self.retries += 1;
         if self.retries > config.max_retries {
             return RetransmitStep::TimedOut;
@@ -986,11 +994,20 @@ pub(crate) fn verify_km_echo(crypto: &CryptoConfig, echoed: &KeyMaterial<'_>) ->
     bool::from(salt & icv & wrapped)
 }
 
-/// The greater-of-both-parties TSBPD latency rule (§4.3.1.2).
-pub(crate) fn negotiate_latency_ms(local_latency_ms: u16, peer_msg: &HsExtMessage) -> u16 {
-    local_latency_ms
-        .max(peer_msg.receiver_tsbpd_delay_ms)
-        .max(peer_msg.sender_tsbpd_delay_ms)
+/// The greater-of-both-parties TSBPD latency rule (§4.3.1.2), rounded down to
+/// the whole milliseconds the wire carries.
+pub(crate) fn negotiate_latency(local: Duration, peer_msg: &HsExtMessage) -> Duration {
+    let local_ms = u64::try_from(local.as_millis()).unwrap_or(u64::MAX);
+    let ms = local_ms
+        .max(u64::from(peer_msg.receiver_tsbpd_delay_ms))
+        .max(u64::from(peer_msg.sender_tsbpd_delay_ms));
+    Duration::from_millis(ms)
+}
+
+/// A latency as the whole milliseconds the wire carries (a sub-millisecond
+/// remainder is dropped, and a value past `u16::MAX` ms saturates).
+pub(crate) fn wire_latency_ms(latency: Duration) -> u16 {
+    u16::try_from(latency.as_millis()).unwrap_or(u16::MAX)
 }
 
 /// SipHash-2-4 (Aumasson & Bernstein, "SipHash: a fast short-input PRF",
@@ -1330,7 +1347,7 @@ mod tests {
         let params = NegotiatedParams {
             version: HANDSHAKE_VERSION_5,
             flags: HandshakeExtensionMessageFlags(0),
-            latency_ms: 120,
+            latency: Duration::from_millis(120),
             own_socket_id: 1,
             peer_socket_id: 2,
             mtu: 1500,

@@ -78,8 +78,8 @@ fn drain(s: &mut Session, conn: &mut Option<ConnId>, now: u64, out: &mut Vec<Rec
             *conn = Some(c);
             s.on_response(
                 c,
-                200,
-                &[("Content-Type".to_string(), "video/MP2T".to_string())],
+                http::StatusCode::OK,
+                &crate::support::ts_content_type(),
                 ts(now),
             );
         }

@@ -1,4 +1,6 @@
+use crate::support::ts_content_type;
 use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use url::Url;
 
@@ -16,7 +18,7 @@ pub struct Host {
     pub now: u64,
     pub log: Vec<Event>,
     playing: Option<(u64, u64)>,
-    held: Option<u64>,
+    held: Option<Clock27>,
 }
 
 impl Host {
@@ -41,8 +43,8 @@ impl Host {
                 self.conn = conn;
                 self.session.on_response(
                     conn,
-                    200,
-                    &[("Content-Type".to_string(), "video/MP2T".to_string())],
+                    http::StatusCode::OK,
+                    &ts_content_type(),
                     ts(self.now),
                 );
             }
@@ -57,7 +59,7 @@ impl Host {
                 }
                 Event::Buffer(BufferEvent::Pause { hold_at_27mhz, .. }) => {
                     self.playing = None;
-                    self.held = Some(*hold_at_27mhz);
+                    self.held = Clock27::from_27mhz(*hold_at_27mhz).ok();
                 }
                 _ => {}
             }
@@ -65,9 +67,11 @@ impl Host {
         }
     }
 
-    pub fn position(&self) -> Option<u64> {
+    pub fn position(&self) -> Option<Clock27> {
         match self.playing {
-            Some((base, since)) => Some(base + (self.now - since) * TICKS_PER_US),
+            Some((base, since)) => {
+                Clock27::from_27mhz(base + (self.now - since) * TICKS_PER_US).ok()
+            }
             None => self.held,
         }
     }
@@ -97,7 +101,7 @@ impl Host {
         self.settle();
     }
 
-    pub fn tick(&mut self, pts_27mhz: Option<u64>) {
+    pub fn tick(&mut self, pts_27mhz: Option<Clock27>) {
         self.session.on_playback_position(ts(self.now), pts_27mhz);
         self.settle();
     }

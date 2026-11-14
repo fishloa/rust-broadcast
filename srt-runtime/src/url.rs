@@ -30,6 +30,7 @@
 
 use alloc::string::{String, ToString};
 use core::net::{IpAddr, SocketAddr};
+use core::time::Duration;
 
 /// SRT's registered default port, so a URL that omits the port still names a
 /// dialable endpoint.
@@ -90,8 +91,8 @@ pub struct SrtUrl {
     pub port: u16,
     /// The opaque `streamid` value, percent-decoded.
     pub stream_id: Option<String>,
-    /// The `latency` value in milliseconds, at most [`MAX_LATENCY_MS`].
-    pub latency_ms: Option<u16>,
+    /// The `latency` value, at most [`MAX_LATENCY_MS`].
+    pub latency: Option<Duration>,
     /// The `mode` value; [`SrtMode::Caller`] when absent.
     pub mode: SrtMode,
     /// The `passphrase` value (payload encryption).
@@ -125,7 +126,7 @@ impl core::fmt::Debug for SrtUrl {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("stream_id", &self.stream_id)
-            .field("latency_ms", &self.latency_ms)
+            .field("latency", &self.latency)
             .field("mode", &self.mode)
             .field(
                 "passphrase",
@@ -165,7 +166,7 @@ impl SrtUrl {
             host,
             port,
             stream_id: None,
-            latency_ms: None,
+            latency: None,
             mode: SrtMode::Caller,
             passphrase: None,
         };
@@ -190,7 +191,7 @@ impl SrtUrl {
                 match key.as_str() {
                     "streamid" => parsed.stream_id = Some(percent_decode(value)?),
                     "latency" => {
-                        parsed.latency_ms = Some(parse_latency(value)?);
+                        parsed.latency = Some(parse_latency(value)?);
                     }
                     "mode" => parsed.mode = parse_mode(value).ok_or(UrlRejection::Mode)?,
                     "passphrase" => parsed.passphrase = Some(percent_decode(value)?),
@@ -227,14 +228,14 @@ fn parse_authority(authority: &str) -> Option<(String, u16)> {
 }
 
 /// Parse a `latency` value: whole milliseconds, at most [`MAX_LATENCY_MS`].
-fn parse_latency(value: &str) -> Result<u16, UrlRejection> {
+fn parse_latency(value: &str) -> Result<Duration, UrlRejection> {
     let ms = value
         .parse::<u16>()
         .map_err(|_| UrlRejection::LatencyNotANumber)?;
     if ms > MAX_LATENCY_MS {
         return Err(UrlRejection::LatencyTooLarge);
     }
-    Ok(ms)
+    Ok(Duration::from_millis(u64::from(ms)))
 }
 
 /// Parse a `mode` value.
@@ -328,7 +329,7 @@ mod tests {
     #[test]
     fn unknown_key_with_invalid_utf8_is_ignored() {
         let url = SrtUrl::parse("srt://h:9000?%ff=1&latency=120").expect("ignored key");
-        assert_eq!(url.latency_ms, Some(120));
+        assert_eq!(url.latency, Some(Duration::from_millis(120)));
     }
 
     #[test]

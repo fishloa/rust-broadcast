@@ -15,6 +15,10 @@ use transmux::TrackId;
 use transmux::cenc::SampleAuxInfoSizesBox;
 use transmux::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn fixture(name: &str) -> Vec<u8> {
     let path = test_fixtures::path(&format!("mp4/cenc-boxes/{name}"));
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
@@ -154,7 +158,7 @@ fn mvhd_v1_matches_mp4box_diso() {
 
     let mvhd = MovieHeaderBox::parse(mvhd_bytes).expect("parse v1 mvhd");
     assert_eq!(mvhd.version, 1);
-    assert_eq!(mvhd.timescale, Timescale::from_nonzero(2_000_000_000));
+    assert_eq!(mvhd.timescale, timescale(2_000_000_000));
     assert_eq!(mvhd.duration, 6_000_000_000);
     assert_eq!(
         mvhd.next_track_id,

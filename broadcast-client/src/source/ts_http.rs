@@ -3,6 +3,8 @@
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 
+use http::{HeaderMap, StatusCode};
+
 use url::Url;
 
 use crate::error::TransportError;
@@ -291,10 +293,11 @@ impl TsHttpSource {
     }
 
     /// Response callback.
-    pub fn on_response(&mut self, status: u16, headers: &[(String, String)], now_us: u64) {
+    pub fn on_response(&mut self, status: StatusCode, headers: &HeaderMap, now_us: u64) {
         self.now_us = now_us;
-        let retry_after = retry_after_us(status, headers, now_us, None);
-        self.refused = (status == 429 || status == 503)
+        let retry_after = retry_after_us(status, headers, Timestamp::from_micros(now_us), None);
+        self.refused = (status == StatusCode::TOO_MANY_REQUESTS
+            || status == StatusCode::SERVICE_UNAVAILABLE)
             .then(|| RefusedCapture::new(status, retry_after, headers));
         self.ts.set_retry_after(retry_after / 1000);
         self.ts
@@ -477,9 +480,9 @@ impl TsHttpSource {
                 }
                 _ => {}
             },
-            crate::tshttp::Event::StallNotice { secs } => {
+            crate::tshttp::Event::StallNotice { stalled } => {
                 self.release_hold();
-                self.push(Event::Status(Status::Stalled { secs }));
+                self.push(Event::Status(Status::Stalled { stalled }));
                 self.stalled = true;
             }
             crate::tshttp::Event::Reconnecting { attempt } => {

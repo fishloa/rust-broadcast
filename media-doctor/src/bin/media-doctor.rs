@@ -244,7 +244,9 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
             args.metrics_addr
         )
     })?;
-    let udp_config = args.udp_config()?;
+    let udp_config = args
+        .udp_config()
+        .map_err(|e| format!("invalid --udp-interface: {e}"))?;
 
     let socket = media_doctor::udp::bind_udp(udp_addr, &udp_config)?;
     if let (Some(want), Ok(got)) = (
@@ -268,10 +270,7 @@ fn run_watch(args: &WatchArgs) -> Result<(), Box<dyn std::error::Error>> {
     let mut state = WatchState::new();
     let (mut publisher, receiver) = metrics_server::channel(&state, PUBLISH_INTERVAL);
     let shutdown = CancellationToken::new();
-    let config = MetricsServerConfig::new(
-        args.metrics_max_conns,
-        Duration::from_millis(args.metrics_io_timeout_ms),
-    );
+    let config = MetricsServerConfig::new(args.metrics_max_conns, args.metrics_io_timeout);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()?;

@@ -17,7 +17,6 @@ const VIDEO_PATH: &str = "smooth/av/QualityLevels(64528)/Fragments(video=0)";
 const AUDIO_PATH: &str = "smooth/av/QualityLevels(98429)/Fragments(audio=0)";
 const LIVE_ATTRS: &str = "Duration=\"30415941\" IsLive=\"TRUE\" DVRWindowLength=\"20000000\"";
 const STATIC_ATTRS: &str = "Duration=\"30415941\"";
-const NOT_FOUND: u16 = 404;
 
 struct Corpus {
     manifest: String,
@@ -75,7 +74,7 @@ fuzz_target!(|data: &[u8]| {
                             Timestamp::from_micros(now),
                             id,
                             FetchFailure {
-                                status: Some(NOT_FOUND),
+                                status: Some(http::StatusCode::NOT_FOUND),
                                 ..FetchFailure::default()
                             },
                         ),

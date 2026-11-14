@@ -50,6 +50,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+
 #[cfg(test)]
 use transmux::TrackId;
 
@@ -1886,7 +1887,7 @@ fn spawn_ingest(
             listen,
             remote,
             stream_id,
-            latency_ms,
+            latency,
         } => {
             // `config.validate()` (called at the top of the serve path)
             // already enforced exactly one of `listen`/`remote` is `Some`.
@@ -1910,7 +1911,7 @@ fn spawn_ingest(
                 _ => unreachable!("config.validate() enforces exactly one of Srt listen/remote"),
             }
             .with_stream_id(stream_id.clone())
-            .with_latency_ms(*latency_ms)
+            .with_latency(*latency)
             .with_timeouts(timeouts);
             spawn_supervised(
                 srt_route,
@@ -2262,6 +2263,11 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use crate::dvr::DvrConfig;
     use crate::output::hls::HlsOutput;
     use crate::route::HealthState;
@@ -2697,7 +2703,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -2812,7 +2818,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -2863,7 +2869,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(9),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3009,7 +3015,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -3081,7 +3087,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             vec![transmux::TrackSpec::new(
                 TrackId::new(1),
-                Timescale::from_nonzero(90_000),
+                timescale(90_000),
                 transmux::CodecConfig::Vp8 {
                     width: 640,
                     height: 480,
@@ -4614,7 +4620,7 @@ mod tests {
                 listen: None,
                 remote: Some(quiet_srt_addr.to_string()),
                 stream_id: None,
-                latency_ms: None,
+                latency: None,
             },
             crate::config::InputSpec::HlsPull {
                 url: format!("http://{refused_addr}/x"),

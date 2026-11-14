@@ -25,6 +25,10 @@ use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::aac_config_from_asc_hex;
 use transmux::{RtpStreamDepacketiser, RtpStreamTrack};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 const VIDEO_TRACK: u32 = 1;
 const AUDIO_TRACK: u32 = 2;
 
@@ -184,13 +188,13 @@ fn tracks() -> Vec<RtpStreamTrack> {
             TrackId::new(VIDEO_TRACK),
             RtpMediaKind::H264,
             dummy_avc(),
-            Timescale::from_nonzero(VIDEO_CLOCK),
+            timescale(VIDEO_CLOCK),
         ),
         RtpStreamTrack::new(
             TrackId::new(AUDIO_TRACK),
             RtpMediaKind::Aac,
             dummy_aac(),
-            Timescale::from_nonzero(AUDIO_CLOCK),
+            timescale(AUDIO_CLOCK),
         ),
     ]
 }

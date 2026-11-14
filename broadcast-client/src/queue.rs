@@ -260,6 +260,7 @@ mod tests {
     use super::*;
     use crate::events::{BufferEvent, ErrorKind, Status};
     use broadcast_common::Unpackage;
+    use core::time::Duration as StdDuration;
     use transmux::{JoinDecision, RapKind, Sample, TrackId};
 
     const TRACK: TrackId = TrackId::new(1);
@@ -313,13 +314,17 @@ mod tests {
     fn status_events_alone_cannot_grow_the_queue_past_the_cap() {
         let mut q = EventQueue::new(TINY_CAP);
         for n in 0..10_000u64 {
-            q.push_back(Event::Status(Status::Stalled { secs: n }));
+            q.push_back(Event::Status(Status::Stalled {
+                stalled: StdDuration::from_secs(n),
+            }));
         }
         assert!(q.len() <= TINY_CAP, "len {}", q.len());
         let events = drain(&mut q);
         assert_eq!(
             events.last(),
-            Some(&Event::Status(Status::Stalled { secs: 9_999 })),
+            Some(&Event::Status(Status::Stalled {
+                stalled: StdDuration::from_secs(9_999),
+            })),
             "the latest status survives"
         );
     }

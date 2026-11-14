@@ -1096,7 +1096,10 @@ mod tests {
     //! zip both mis-decrypts and slips past the sample-count check).
 
     use super::*;
-    use crate::cenc_crypto;
+
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
 
     fn full_box(fourcc: &[u8; 4], entries: &[u8], count: u32) -> Vec<u8> {
         let mut b = Vec::new();
@@ -1287,14 +1290,10 @@ mod tests {
             .collect();
         Media::new(
             alloc::vec![Track::new(
-                TrackSpec::new(
-                    track_id,
-                    Timescale::from_nonzero(90_000),
-                    test_codec_config()
-                ),
+                TrackSpec::new(track_id, timescale(90_000), test_codec_config()),
                 samples,
             )],
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )
     }
 
@@ -1343,7 +1342,7 @@ mod tests {
         let audio = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         Media::new(
             alloc::vec![video.tracks[0].clone(), audio.tracks[0].clone()],
-            Timescale::from_nonzero(90_000),
+            timescale(90_000),
         )
     }
 

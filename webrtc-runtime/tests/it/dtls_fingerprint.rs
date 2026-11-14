@@ -24,7 +24,7 @@
 #![cfg(feature = "media")]
 
 use std::net::{SocketAddr, UdpSocket};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use webrtc_runtime::media::{
     MediaEvent, MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,
@@ -121,9 +121,9 @@ fn pump(
         dtls_b_to_a: 0,
         errors: Vec::new(),
     };
-    let t0 = Instant::now();
-    let mut now = t0;
-    while now - t0 <= budget {
+    let t0 = a.now_at(broadcast_common::stage::Timestamp::ZERO);
+    let mut now = broadcast_common::stage::Timestamp::ZERO;
+    while now.saturating_sub(broadcast_common::stage::Timestamp::ZERO) <= budget {
         assert!(
             t0.elapsed() < WALL_DEADLINE,
             "pump made no virtual-time progress for {WALL_DEADLINE:?} of wall time: \
@@ -159,14 +159,13 @@ fn pump(
         if !progressed {
             // Nothing in flight: jump the virtual clock to whichever transport
             // is due next (at least 1 ms ahead, so the loop always advances).
-            let Some(next) = [a.poll_timeout(), b.poll_timeout()]
-                .into_iter()
-                .flatten()
-                .min()
-            else {
+            let (Some(a_next), Some(b_next)) = (a.poll_timeout(), b.poll_timeout()) else {
                 return pumped;
             };
-            now = next.max(now + Duration::from_millis(1));
+            now = a
+                .stamp_of(a_next.min(b_next))
+                .checked_add(Duration::from_millis(1))
+                .map_or(now, |plus| plus.max(now));
             pumped.a_events.extend(a.handle_timeout(now));
             pumped.b_events.extend(b.handle_timeout(now));
         }
@@ -193,7 +192,7 @@ fn dtls_rejects_peer_with_wrong_fingerprint() {
             true,
             SetupRole::Active,
         ),
-        Instant::now(),
+        broadcast_common::stage::Timestamp::from_micros(1),
     )
     .expect("build A");
     let mut b = MediaTransport::new(
@@ -206,7 +205,7 @@ fn dtls_rejects_peer_with_wrong_fingerprint() {
             false,
             SetupRole::Passive,
         ),
-        Instant::now(),
+        broadcast_common::stage::Timestamp::from_micros(1),
     )
     .expect("build B");
     a.add_remote_candidate(&b.local_candidates()[0])
@@ -245,7 +244,7 @@ fn dtls_rejects_peer_with_wrong_fingerprint() {
     // datagram produces no event (and `encrypt_rtp` still errors).
     let events = a
         .handle_datagram(
-            Instant::now(),
+            broadcast_common::stage::Timestamp::from_micros(1),
             b_addr,
             &[0x80, 96, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3],
         )
@@ -269,7 +268,7 @@ fn new_rejects_malformed_fingerprint() {
             SetupRole::Passive,
         );
         cfg.remote_fingerprint = bad.to_string();
-        match MediaTransport::new(cfg, Instant::now()) {
+        match MediaTransport::new(cfg, broadcast_common::stage::Timestamp::from_micros(1)) {
             Err(webrtc_runtime::Error::Media(_)) => {}
             Err(other) => panic!("expected Error::Media for {bad:?}, got {other:?}"),
             Ok(_) => panic!("remote_fingerprint {bad:?} must be rejected by new()"),

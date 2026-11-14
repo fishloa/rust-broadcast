@@ -32,6 +32,10 @@ use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
 use transmux::{FlvDemux, Media, PsDemux, RtmpMux, RtpOutput, RtpPacketiser, TsDemux, WebmDemux};
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. 33-bit rollover, unwrapped once at the demux edge
 // ═══════════════════════════════════════════════════════════════════════════
@@ -887,7 +891,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
     };
     let spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
             width: 16,
@@ -913,7 +917,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
 
     let media = Media::new(
         vec![Track::new_at(spec, samples, ANCHOR)],
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
     );
 
     // fMP4 #1, written by this crate.

@@ -782,6 +782,10 @@ impl Serialize for SegmentIndexBox {
 
 #[cfg(test)]
 mod tests {
+    fn timescale(value: u32) -> Timescale {
+        Timescale::try_new(value).expect("a non-zero timescale")
+    }
+
     use super::*;
     use broadcast_common::Serialize;
 
@@ -1028,7 +1032,7 @@ mod tests {
         let sidx = SegmentIndexBox::parse(&data).expect("parse real sidx");
         assert_eq!(sidx.version, 0);
         assert_eq!(sidx.reference_id, 1);
-        assert_eq!(sidx.timescale, Timescale::from_nonzero(12800));
+        assert_eq!(sidx.timescale, timescale(12800));
         assert_eq!(sidx.earliest_presentation_time, 0);
         assert_eq!(sidx.first_offset, 0);
         assert_eq!(
@@ -1055,7 +1059,7 @@ mod tests {
             version: 0,
             flags: 0,
             reference_id: 1,
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 68,
             references: vec![
@@ -1091,7 +1095,7 @@ mod tests {
             version: 0,
             flags: 0,
             reference_id: 1,
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             earliest_presentation_time: u64::from(u32::MAX) + 1,
             first_offset: 0,
             references: vec![],
@@ -1116,7 +1120,7 @@ mod tests {
             version: 0,
             flags: 0,
             reference_id: 1,
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             earliest_presentation_time: u64::from(u32::MAX),
             first_offset: 0,
             references: vec![],
@@ -1135,7 +1139,7 @@ mod tests {
             version: 0,
             flags: 0,
             reference_id: 1,
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 0,
             references: vec![SidxReference {
@@ -1166,7 +1170,7 @@ mod tests {
             version: 1,
             flags: 0,
             reference_id: 3,
-            timescale: Timescale::from_nonzero(48000),
+            timescale: timescale(48000),
             earliest_presentation_time: 0x1_0000_0000,
             first_offset: 0x2_0000_0000,
             references: vec![SidxReference {
@@ -1190,7 +1194,7 @@ mod tests {
             version: 0,
             flags: 0,
             reference_id: 1,
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 0,
             references: vec![SidxReference {
@@ -1213,7 +1217,7 @@ mod tests {
             version: 0,
             flags: 0,
             reference_id: 1,
-            timescale: Timescale::from_nonzero(90000),
+            timescale: timescale(90000),
             earliest_presentation_time: 0,
             first_offset: 0,
             references: vec![],

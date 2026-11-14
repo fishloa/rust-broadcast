@@ -6,6 +6,10 @@ use transmux::ir::{AspectRatioIdc, CodecConfig};
 use transmux::pipeline;
 use transmux::ts_demux::TsDemux;
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 fn spec_from_fixture(fixture: &str) -> Option<TrackSpec> {
     let data = test_fixtures::require_bytes(fixture, "display_tkhd")?;
     let media = TsDemux::new().demux(&data).ok()?;
@@ -17,8 +21,7 @@ fn spec_from_fixture(fixture: &str) -> Option<TrackSpec> {
 }
 
 fn build(spec: TrackSpec) -> Vec<u8> {
-    pipeline::build_init_segment(&[spec], Timescale::from_nonzero(90000))
-        .expect("build_init_segment")
+    pipeline::build_init_segment(&[spec], timescale(90000)).expect("build_init_segment")
 }
 
 fn tkhd_dims(data: &[u8]) -> (u32, u32) {

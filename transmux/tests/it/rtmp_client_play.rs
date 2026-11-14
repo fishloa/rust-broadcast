@@ -185,7 +185,8 @@ fn the_command_sequence_is_connect_create_stream_play_without_the_publish_preamb
             .seen
             .contains(&Seen::UserControl(UserControl::SetBufferLength {
                 stream_id: PLAY_STREAM_ID,
-                buffer_ms: rtmp_runtime::client::DEFAULT_PLAY_BUFFER_MS,
+                buffer_ms: u32::try_from(rtmp_runtime::client::DEFAULT_PLAY_BUFFER.as_millis())
+                    .unwrap_or(u32::MAX),
             }))
     );
     let order: Vec<&str> = rig

@@ -5,9 +5,18 @@
 //! The renderer is ticked every `tick_us` plus once at every chunk arrival.
 //! Its clock lives in the playback (PTS) domain, which for the trace replays
 //! is the PCR minus a constant `offset_ticks` (the traces carry PCR only).
-
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Micros, State, Ticks27};
+
+/// A 27 MHz tick count as a validated clock position.
+fn clock27(ticks: u64) -> Clock27 {
+    Clock27::from_27mhz(ticks % PCR_WRAP_27MHZ).expect("a reduced count is on the clock")
+}
+
+const fn dur(us: u64) -> Duration {
+    Duration::from_micros(us)
+}
+use buffering_runtime::{BufferController, Clock27, ControllerConfig, Event, Hint, State};
+use core::time::Duration;
 use std::path::Path;
 
 pub const TICKS_PER_US: u64 = 27;
@@ -15,12 +24,12 @@ pub const SEC: u64 = 1_000_000;
 
 /// A plain microsecond count as the controller's clock.
 pub trait HostUs {
-    fn us(self) -> Micros;
+    fn us(self) -> Duration;
 }
 
 impl HostUs for u64 {
-    fn us(self) -> Micros {
-        Micros(self)
+    fn us(self) -> Duration {
+        dur(self)
     }
 }
 
@@ -78,7 +87,7 @@ pub struct Opts {
 impl Opts {
     pub fn new(initial_us: u64) -> Self {
         let mut cfg = ControllerConfig::default();
-        cfg.policy.initial_us = initial_us.us();
+        cfg.policy.initial = initial_us.us();
         Self {
             cfg,
             tick_us: 5_000,
@@ -91,18 +100,18 @@ impl Opts {
 }
 
 pub struct Run {
-    pub events: Vec<(Micros, Event)>,
+    pub events: Vec<(Duration, Event)>,
     pub ctl: BufferController,
-    /// `target_us()` after every PCR chunk.
-    pub targets: Vec<Micros>,
-    /// Smallest `lead_us` reported by a tick while Playing.
+    /// `target()` after every PCR chunk.
+    pub targets: Vec<Duration>,
+    /// Smallest `lead` reported by a tick while Playing.
     pub min_lead_playing: Option<i64>,
 }
 
 impl Run {
     pub fn start(&self) -> Option<u64> {
         self.events.iter().find_map(|(t, e)| match e {
-            Event::StartPlaying { .. } => Some(t.0),
+            Event::StartPlaying { .. } => Some(t.as_micros() as u64),
             _ => None,
         })
     }
@@ -110,10 +119,10 @@ impl Run {
         let mut out: Vec<(u64, Option<u64>)> = Vec::new();
         for (t, e) in &self.events {
             match e {
-                Event::Pause { .. } => out.push((t.0, None)),
+                Event::Pause { .. } => out.push((t.as_micros() as u64, None)),
                 Event::Resume { .. } => {
                     if let Some(l) = out.last_mut() {
-                        l.1 = Some(t.0);
+                        l.1 = Some(t.as_micros() as u64);
                     }
                 }
                 _ => {}
@@ -144,13 +153,13 @@ impl Renderer {
     fn apply(&mut self, e: &Event, now: u64) {
         match *e {
             Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
-                self.clock = media_27mhz.0;
+                self.clock = media_27mhz.ticks();
                 self.t_set = now;
                 self.running = true;
                 self.set = true;
             }
             Event::Pause { hold_at_27mhz, .. } => {
-                self.clock = hold_at_27mhz.0;
+                self.clock = hold_at_27mhz.ticks();
                 self.t_set = now;
                 self.running = false;
                 self.set = true;
@@ -160,10 +169,10 @@ impl Renderer {
     }
 }
 
-fn drain(c: &mut BufferController, r: &mut Renderer, now: u64, log: &mut Vec<(Micros, Event)>) {
+fn drain(c: &mut BufferController, r: &mut Renderer, now: u64, log: &mut Vec<(Duration, Event)>) {
     while let Some(e) = c.poll_event() {
         r.apply(&e, now);
-        log.push((Micros(now), e));
+        log.push((dur(now), e));
     }
 }
 
@@ -173,8 +182,8 @@ pub struct Session {
     pub c: BufferController,
     r: Renderer,
     o: Opts,
-    pub log: Vec<(Micros, Event)>,
-    pub targets: Vec<Micros>,
+    pub log: Vec<(Duration, Event)>,
+    pub targets: Vec<Duration>,
     pub min_lead: Option<i64>,
     next_tick: u64,
     last_arrival: u64,
@@ -206,10 +215,10 @@ impl Session {
             .r
             .set
             .then(|| shift27(self.r.pos(now), self.o.clock_err_ticks));
-        self.c.on_tick(now.us(), reported.map(Ticks27));
+        self.c.on_tick(now.us(), reported.map(clock27));
         drain(&mut self.c, &mut self.r, now, &mut self.log);
         if self.c.state() == State::Playing {
-            let l = self.c.stats().lead_us;
+            let l = self.c.stats().lead.as_micros() as i64;
             self.min_lead = Some(self.min_lead.map_or(l, |m| m.min(l)));
         }
     }
@@ -227,12 +236,12 @@ impl Session {
             self.tick(self.next_tick);
             self.next_tick += self.o.tick_us;
         }
-        self.c.on_chunk(a.us(), ch.bytes, ch.pcr.map(Ticks27));
+        self.c.on_chunk(a.us(), ch.bytes, ch.pcr.map(clock27));
         drain(&mut self.c, &mut self.r, a, &mut self.log);
         if let Some(pcr) = ch.pcr {
-            self.targets.push(self.c.target_us());
+            self.targets.push(self.c.target());
             self.c
-                .on_media(a.us(), Ticks27(shift27(pcr, -self.o.offset_ticks)));
+                .on_media(a.us(), clock27(shift27(pcr, -self.o.offset_ticks)));
         }
         self.tick(a);
         self.last_arrival = a;

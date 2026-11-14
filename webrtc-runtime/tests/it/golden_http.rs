@@ -9,6 +9,11 @@ use http::StatusCode;
 use webrtc_runtime::whep::{player::WhepPlayer, server::WhepSession};
 use webrtc_runtime::whip::{client::WhipClient, server::WhipSession};
 
+/// The session URL as the parsed value the state machines take.
+fn session_url() -> url::Url {
+    url::Url::parse(SESSION).expect("session URL")
+}
+
 const URL: &str = "https://origin.example/whip/live";
 const SESSION: &str = "https://origin.example/whip/live/s1";
 
@@ -53,7 +58,7 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
     let mut out = String::new();
 
     // WHIP server
-    let mut s = WhipSession::new(SESSION.into());
+    let mut s = WhipSession::new(session_url());
     resp!(
         out,
         "whip accept",
@@ -68,15 +73,15 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
     resp!(out, "whip ack_delete", s.ack_delete());
 
     // WHEP server
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     resp!(out, "whep accept", s.accept(b"sdp".to_vec(), "e1".into()));
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     resp!(
         out,
         "whep counter_offer(None)",
         s.counter_offer(b"o".to_vec(), None)
     );
-    let mut s = WhepSession::new(SESSION.into());
+    let mut s = WhepSession::new(session_url());
     resp!(
         out,
         "whep counter_offer(valid-until)",
@@ -105,11 +110,15 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
     for token in [None, Some("tok3n".to_string())] {
         let tag = if token.is_some() { "bearer" } else { "anon" };
         let mut c = WhipClient::new(match token {
-            Some(t) => webrtc_runtime::session::client::WebRtcClientConfig::new(URL)
-                .with_credentials(broadcast_auth::Credentials::Bearer {
-                    token: t.to_string(),
-                }),
-            None => webrtc_runtime::session::client::WebRtcClientConfig::new(URL),
+            Some(t) => webrtc_runtime::session::client::WebRtcClientConfig::new(
+                url::Url::parse(URL).expect("endpoint"),
+            )
+            .with_credentials(broadcast_auth::Credentials::Bearer {
+                token: t.to_string(),
+            }),
+            None => webrtc_runtime::session::client::WebRtcClientConfig::new(
+                url::Url::parse(URL).expect("endpoint"),
+            ),
         });
         req!(
             out,
@@ -157,11 +166,12 @@ fn whip_whep_http_output_is_byte_identical_to_golden() {
 
     // WHEP player
     let mut p = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(URL).with_credentials(
-            broadcast_auth::Credentials::Bearer {
-                token: "tok3n".into(),
-            },
-        ),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(
+            url::Url::parse(URL).expect("endpoint"),
+        )
+        .with_credentials(broadcast_auth::Credentials::Bearer {
+            token: "tok3n".into(),
+        }),
     );
     req!(out, "whep player offer", p.offer(b"o".to_vec()).unwrap());
     p.on_response(

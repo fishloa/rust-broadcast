@@ -1,5 +1,4 @@
 extern crate alloc;
-use alloc::string::ToString;
 
 use url::Url;
 
@@ -11,10 +10,19 @@ const CLOCKS: [u64; 3] = [0, SECOND_US * 86_400 * 365 * 40, FAR_CLOCK_US];
 const PAST_EXPIRES: &str = "Expires=Thu, 01 Jan 1970 00:00:01 GMT";
 const FUTURE_EXPIRES: &str = "Expires=Fri, 01 Jan 2100 00:00:00 GMT";
 
+fn set_cookie(line: &str) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    map.insert(
+        http::header::SET_COOKIE,
+        http::HeaderValue::from_str(line).expect("a test writes a cookie line"),
+    );
+    map
+}
+
 fn jar_with(line: &str, base: u64) -> (CookieJar, Url) {
     let url = Url::parse("http://example.com/").unwrap();
     let mut jar = CookieJar::new(&url);
-    jar.receive(&url, &[("Set-Cookie".to_string(), line.to_string())], base);
+    jar.receive(&url, &set_cookie(line), base);
     (jar, url)
 }
 
@@ -61,11 +69,7 @@ fn max_age_wins_over_a_far_future_expires() {
 fn max_age_zero_deletes_at_any_base() {
     for base in CLOCKS {
         let (mut jar, url) = jar_with("a=1", base);
-        jar.receive(
-            &url,
-            &[("Set-Cookie".to_string(), "a=1; Max-Age=0".to_string())],
-            base,
-        );
+        jar.receive(&url, &set_cookie("a=1; Max-Age=0"), base);
         assert_eq!(jar.header_for(&url, base), None, "base {base}");
     }
 }

@@ -1,6 +1,10 @@
 #![cfg(feature = "std")]
 //! I-frame master playlist advertising (P2b).
 
+fn timescale(value: u32) -> Timescale {
+    Timescale::try_new(value).expect("a non-zero timescale")
+}
+
 use broadcast_common::timescale::Timescale;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -339,7 +343,7 @@ fn hdr_spec(transfer_code: u8) -> TrackSpec {
     });
     let spec = TrackSpec::new(
         TrackId::new(1),
-        Timescale::from_nonzero(90_000),
+        timescale(90_000),
         CodecConfig::Avc {
             config,
             width: 320,

@@ -353,7 +353,9 @@ fn a_vod_segment_that_keeps_failing_is_fatal_after_the_configured_count_with_bac
     let sim = finished(sim);
     assert_eq!(
         sim.fatal(),
-        Some(ErrorKind::SegmentFetchFailed { status: Some(404) })
+        Some(ErrorKind::SegmentFetchFailed {
+            status: Some(crate::support::status(404))
+        })
     );
     let at: Vec<u64> = sim
         .requests_to("chunk-stream0-00002")
@@ -405,7 +407,11 @@ fn a_live_segment_that_keeps_failing_is_skipped_with_one_error_and_a_discontinui
     assert!(sim.fatal().is_none(), "{:?}", kinds(&sim));
     let skipped = kinds(&sim)
         .into_iter()
-        .filter(|(k, _)| *k == ErrorKind::SegmentFetchFailed { status: Some(500) })
+        .filter(|(k, _)| {
+            *k == ErrorKind::SegmentFetchFailed {
+                status: Some(crate::support::status(500)),
+            }
+        })
         .count();
     assert_eq!(skipped, 1);
     let order: Vec<&str> = sim
@@ -429,12 +435,14 @@ fn an_init_that_keeps_failing_is_fatal_init_fetch_failed_and_retry_after_is_hono
     sim.fault = Some(Box::new(|req: &Logged, _| {
         req.url
             .ends_with("init-stream0.m4s")
-            .then(|| Answer::status_with(503, vec![("Retry-After".into(), "7".into())]))
+            .then(|| Answer::status_with(503, crate::support::headers(&[("Retry-After", "7")])))
     }));
     let sim = finished(sim);
     assert_eq!(
         sim.fatal(),
-        Some(ErrorKind::InitFetchFailed { status: Some(503) })
+        Some(ErrorKind::InitFetchFailed {
+            status: Some(crate::support::status(503))
+        })
     );
     let at: Vec<u64> = sim
         .requests_to("init-stream0")

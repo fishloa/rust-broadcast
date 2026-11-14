@@ -7,6 +7,7 @@ use broadcast_client::{
     AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
     Session, SourceKind, TrackId,
 };
+use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
 use support::renditions::{self, AUDIO_DIR, AUDIO_PLAYLIST_URL, MASTER_URL};
@@ -103,7 +104,12 @@ impl Drv {
     }
 
     fn respond(&mut self, conn: ConnId, body: &[u8]) {
-        self.session.on_response(conn, 200, &[], ts(self.now));
+        self.session.on_response(
+            conn,
+            http::StatusCode::OK,
+            &crate::support::headers(&[]),
+            ts(self.now),
+        );
         for c in body.chunks(self.chunk.max(1)) {
             self.session.on_data(conn, c, ts(self.now));
         }
@@ -185,7 +191,8 @@ impl Drv {
     }
 
     fn pos(&mut self, pts: Option<u64>) {
-        self.session.on_playback_position(ts(self.now), pts);
+        let position = pts.and_then(|ticks| Clock27::from_27mhz(ticks).ok());
+        self.session.on_playback_position(ts(self.now), position);
         self.pump();
     }
 }
@@ -644,12 +651,12 @@ fn finite_session(config: Config) -> Session {
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
-    let headers = vec![("Content-Length".to_string(), bytes.len().to_string())];
+    let headers = crate::support::headers(&[("Content-Length", &bytes.len().to_string())]);
     let conn = match session.poll(ts(0)).expect("request") {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
     };
-    session.on_response(conn, 200, &headers, ts(0));
+    session.on_response(conn, http::StatusCode::OK, &headers, ts(0));
     let mut out = Vec::new();
     for (i, c) in bytes.chunks(chunk).enumerate() {
         let now = i as u64 * 1_000;
