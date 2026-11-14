@@ -36,6 +36,7 @@ fn main() {
                 text: "alice@example.com".to_string(),
             }],
         }],
+        padding: None,
     };
 
     let compound = CompoundPacket::new(vec![

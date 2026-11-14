@@ -77,6 +77,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
                 },
             ],
         }],
+        padding: None,
     };
     let sdes_bytes = sdes.try_to_bytes().unwrap();
     assert_eq!(SourceDescription::parse(&sdes_bytes).unwrap(), sdes);
@@ -92,6 +93,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
     let bye = Bye {
         sources: vec![0x1111_2222, 0x3333_4444],
         reason: Some("session over".to_string()),
+        padding: None,
     };
     let bye_bytes = bye.try_to_bytes().unwrap();
     assert_eq!(Bye::parse(&bye_bytes).unwrap(), bye);
@@ -106,6 +108,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
         ssrc: 0xFEED_FACE,
         name: *b"TEST",
         data: vec![1, 2, 3, 4, 5, 6, 7, 8],
+        padding: None,
     };
     let app_bytes = app.try_to_bytes().unwrap();
     assert_eq!(App::parse(&app_bytes).unwrap(), app);
@@ -161,6 +164,7 @@ fn compound_sr_then_sdes() {
                 text: "x".to_string(),
             }],
         }],
+        padding: None,
     };
     let cp = CompoundPacket::new(vec![
         RtcpPacket::SenderReport(sr_two_blocks()),
@@ -191,6 +195,7 @@ fn compound_not_starting_with_report_rejected() {
             ssrc: 1,
             name: *b"NOPE",
             data: vec![],
+            padding: None,
         })]),
         Err(rtp_packet::rtcp::Error::InvalidValue { .. })
     ));
@@ -199,6 +204,7 @@ fn compound_not_starting_with_report_rejected() {
     let bye_bytes = Bye {
         sources: vec![0xDEAD_BEEF],
         reason: None,
+        padding: None,
     }
     .try_to_bytes()
     .unwrap();
