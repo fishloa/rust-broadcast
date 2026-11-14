@@ -738,7 +738,7 @@ fn http_request(
     method: &http::Method,
     url: &url::Url,
     headers: &http::HeaderMap,
-    byte_range: Option<(u64, u64)>,
+    byte_range: Option<broadcast_common::range::ByteSpan>,
 ) -> Result<reqwest::RequestBuilder, String> {
     let method =
         reqwest::Method::from_bytes(method.as_str().as_bytes()).map_err(|e| e.to_string())?;
@@ -746,9 +746,8 @@ fn http_request(
     for (name, value) in headers {
         request = request.header(name, value);
     }
-    if let Some((offset, length)) = byte_range {
-        let last = offset.saturating_add(length.saturating_sub(1));
-        request = request.header(reqwest::header::RANGE, format!("bytes={offset}-{last}"));
+    if let Some(span) = byte_range {
+        request = request.header(reqwest::header::RANGE, span.range_header());
     }
     Ok(request)
 }

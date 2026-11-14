@@ -335,8 +335,11 @@ fn whep_player_wrong_state_errors() {
 fn whep_player_bearer_auth() {
     let token = "viewer-token";
     let mut player = WhepPlayer::new(
-        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT)
-            .with_bearer_token(token.into()),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(ENDPOINT).with_credentials(
+            broadcast_auth::Credentials::Bearer {
+                token: token.into(),
+            },
+        ),
     );
 
     let req = player.offer(SDP_OFFER.to_vec()).unwrap();

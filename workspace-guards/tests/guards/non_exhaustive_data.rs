@@ -102,9 +102,18 @@ pub const TABLE: &[Crate] = &[
         struct_skip: &[],
         struct_extra: &[],
     },
-    // `RequestMeta` is the ingest request value struct (no suffix); the
-    // `*Config`/`Policy`/`VariantInfo` structs already carry the attribute.
-    runtime("dash-runtime", &[], &["RequestMeta"]),
+    Crate {
+        name: "dash-runtime",
+        // `ResolvedRef` is a closed two-variant sum (absolute or relative);
+        // callers match it exhaustively on purpose. `RequestMeta` is the ingest
+        // request value struct (no suffix); the `*Config`/`Policy`/`VariantInfo`
+        // structs already carry the attribute.
+        skip: &["ResolvedRef"],
+        variants: false,
+        structs: true,
+        struct_skip: &[],
+        struct_extra: &["RequestMeta"],
+    },
     plain("smooth-runtime"),
     plain("dvb-bbframe"),
     // `SlotInfo` matches the `Info` suffix rule and is a runtime state value

@@ -48,7 +48,7 @@ impl BodyAcc {
         &mut self,
         status: u16,
         headers: &[(String, String)],
-        byte_range: Option<(u64, u64)>,
+        byte_range: Option<broadcast_common::range::ByteSpan>,
     ) -> bool {
         if !self.range_honoured(status, headers, byte_range) {
             return false;
@@ -69,17 +69,17 @@ impl BodyAcc {
         &mut self,
         status: u16,
         headers: &[(String, String)],
-        byte_range: Option<(u64, u64)>,
+        byte_range: Option<broadcast_common::range::ByteSpan>,
     ) -> bool {
-        let Some((start, len)) = byte_range else {
+        let Some(span) = byte_range else {
             return true;
         };
         match status {
-            STATUS_PARTIAL_CONTENT => content_range_is(headers, start, len),
+            STATUS_PARTIAL_CONTENT => content_range_is(headers, span.offset, span.len.get()),
             STATUS_OK => {
-                let bounds = usize::try_from(start)
+                let bounds = usize::try_from(span.offset)
                     .ok()
-                    .zip(usize::try_from(len).ok())
+                    .zip(usize::try_from(span.len.get()).ok())
                     .filter(|(s, l)| s.checked_add(*l).is_some());
                 self.slice = bounds;
                 bounds.is_some()
@@ -174,6 +174,13 @@ mod tests {
             .collect()
     }
 
+    fn span(offset: u64, len: u64) -> broadcast_common::range::ByteSpan {
+        broadcast_common::range::ByteSpan::new(
+            offset,
+            core::num::NonZeroU64::new(len).expect("non-zero"),
+        )
+    }
+
     #[test]
     fn a_body_may_reach_its_cap_exactly_and_no_further() {
         let mut body = BodyAcc::new(4);
@@ -210,7 +217,7 @@ mod tests {
 
     #[test]
     fn a_206_must_name_exactly_the_requested_range() {
-        let range = Some((500, 1000));
+        let range = Some(span(500, 1000));
         let ok = h(&[("Content-Range", "bytes 500-1499/9000")]);
         assert!(BodyAcc::new(1).accept(206, &ok, range));
         for wrong in [
@@ -239,7 +246,7 @@ mod tests {
     /// length (`*`) is valid.
     #[test]
     fn a_206_range_past_its_known_length_is_refused_and_an_unknown_length_is_valid() {
-        let range = Some((5, 16));
+        let range = Some(span(5, 16));
         assert!(!BodyAcc::new(1).accept(206, &h(&[("Content-Range", "bytes 5-20/10")]), range));
         assert!(BodyAcc::new(1).accept(206, &h(&[("Content-Range", "bytes 5-20/*")]), range));
         assert!(BodyAcc::new(1).accept(206, &h(&[("Content-Range", "bytes 5-20/21")]), range));
@@ -251,7 +258,7 @@ mod tests {
         assert!(body.accept(
             206,
             &h(&[("Content-Range", "bytes 500-599/9000")]),
-            Some((500, 100))
+            Some(span(500, 100))
         ));
         body.push(&[0u8; 99]).unwrap();
         assert!(body.is_truncated());
@@ -261,7 +268,7 @@ mod tests {
 
     #[test]
     fn a_ranged_request_rejects_every_other_2xx() {
-        let range = Some((0, 10));
+        let range = Some(span(0, 10));
         for status in [201, 202, 204, 205] {
             assert!(!BodyAcc::new(1).accept(status, &[], range), "{status}");
         }
@@ -270,7 +277,7 @@ mod tests {
     #[test]
     fn a_200_to_a_ranged_request_is_sliced_once_the_whole_file_arrived() {
         let mut body = BodyAcc::new(64);
-        assert!(body.accept(200, &[], Some((3, 4))));
+        assert!(body.accept(200, &[], Some(span(3, 4))));
         body.push(b"0123").unwrap();
         body.push(b"456789").unwrap();
         assert!(body.finish());
@@ -280,7 +287,7 @@ mod tests {
     #[test]
     fn a_200_body_that_ends_inside_the_range_fails() {
         let mut body = BodyAcc::new(64);
-        assert!(body.accept(200, &[], Some((3, 4))));
+        assert!(body.accept(200, &[], Some(span(3, 4))));
         body.push(b"012345").unwrap();
         assert!(!body.finish(), "bytes 3..7 do not fit in 6");
     }
@@ -288,7 +295,7 @@ mod tests {
     #[test]
     fn a_200_body_that_ends_exactly_at_the_range_end_is_sliced() {
         let mut body = BodyAcc::new(64);
-        assert!(body.accept(200, &[], Some((3, 4))));
+        assert!(body.accept(200, &[], Some(span(3, 4))));
         body.push(b"0123456").unwrap();
         assert!(body.finish());
         assert_eq!(body.as_slice(), b"3456");
@@ -297,21 +304,18 @@ mod tests {
     #[test]
     fn the_cap_applies_to_the_whole_file_not_the_slice() {
         let mut body = BodyAcc::new(5);
-        assert!(body.accept(200, &[], Some((0, 2))));
+        assert!(body.accept(200, &[], Some(span(0, 2))));
         assert_eq!(body.push(b"0123456"), Err(Oversize));
     }
 
     #[test]
     fn a_range_that_cannot_be_addressed_is_refused() {
-        assert!(!BodyAcc::new(1).accept(200, &[], Some((u64::MAX, 1))));
-        assert!(!BodyAcc::new(1).accept(200, &[], Some((u64::MAX - 1, u64::MAX))));
+        assert!(!BodyAcc::new(1).accept(200, &[], Some(span(u64::MAX, 1))));
+        assert!(!BodyAcc::new(1).accept(200, &[], Some(span(u64::MAX - 1, u64::MAX))));
     }
 
-    #[test]
-    fn a_zero_length_range_is_never_honoured_by_a_206() {
-        let ok = h(&[("Content-Range", "bytes 5-4/9")]);
-        assert!(!BodyAcc::new(1).accept(206, &ok, Some((5, 0))));
-    }
+    // A zero-length range is not representable: `ByteSpan::len` is a
+    // `NonZeroU64`, so the former zero-length case cannot reach `accept`.
 
     #[test]
     fn a_body_shorter_than_its_content_length_is_truncated() {
@@ -344,7 +348,7 @@ mod tests {
     #[test]
     fn reset_forgets_bytes_length_and_range() {
         let mut body = BodyAcc::new(16);
-        assert!(body.accept(200, &h(&[("Content-Length", "9")]), Some((1, 2))));
+        assert!(body.accept(200, &h(&[("Content-Length", "9")]), Some(span(1, 2))));
         body.push(b"abc").unwrap();
         body.reset();
         assert!(body.as_slice().is_empty());

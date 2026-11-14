@@ -46,9 +46,15 @@ impl BaseCandidate {
     }
 
     /// Resolve `reference` through this candidate onto the MPD's own URL.
-    /// `None` when any entry or the reference is unusable.
-    #[must_use]
-    pub fn resolve(&self, document_url: Option<&Url>, reference: &str) -> Option<String> {
+    ///
+    /// # Errors
+    /// [`ResolveError`](super::base_url::ResolveError) when an entry or the
+    /// reference is unusable.
+    pub fn resolve(
+        &self,
+        document_url: Option<&Url>,
+        reference: &str,
+    ) -> Result<super::base_url::ResolvedRef, super::base_url::ResolveError> {
         super::base_url::resolve_chain(document_url, &self.chain, reference)
     }
 }

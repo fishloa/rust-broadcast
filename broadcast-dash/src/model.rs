@@ -127,6 +127,25 @@ impl ByteRange {
     }
 }
 
+impl From<broadcast_common::range::ByteSpan> for ByteRange {
+    fn from(span: broadcast_common::range::ByteSpan) -> Self {
+        ByteRange {
+            first: span.offset,
+            last: Some(span.last()),
+        }
+    }
+}
+
+impl TryFrom<ByteRange> for broadcast_common::range::ByteSpan {
+    type Error = Unsupported;
+
+    fn try_from(range: ByteRange) -> Result<broadcast_common::range::ByteSpan, Self::Error> {
+        let (offset, len) = range.offset_len()?;
+        let len = core::num::NonZeroU64::new(len).ok_or(Unsupported::OpenEndedRange)?;
+        Ok(broadcast_common::range::ByteSpan::new(offset, len))
+    }
+}
+
 /// `URLType` (Table 18): an `Initialization`/`RepresentationIndex` address.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -961,5 +980,28 @@ impl Mpd {
     #[must_use]
     pub fn has_patch_location(&self) -> bool {
         !self.patch_locations.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::range::ByteSpan;
+
+    /// A closed `first-last` range round-trips to a `ByteSpan` and back;
+    /// the open-ended `first-` form is refused rather than made a span.
+    #[test]
+    fn byte_range_and_byte_span_round_trip() {
+        let range = ByteRange::new(50, 149);
+        let span = ByteSpan::try_from(range).expect("closed range");
+        assert_eq!(span.offset, 50);
+        assert_eq!(span.len.get(), 100);
+        assert_eq!(ByteRange::from(span), range);
+
+        let open = ByteRange {
+            first: 50,
+            last: None,
+        };
+        assert!(ByteSpan::try_from(open).is_err());
     }
 }

@@ -458,7 +458,7 @@ impl DashSim {
                             (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
                         })
                         .collect(),
-                    byte_range,
+                    byte_range.map(|s| (s.offset, s.len.get())),
                 ),
                 Action::Close { conn } => {
                     self.pending.retain(|p| p.conn != conn);

@@ -572,9 +572,9 @@ pub enum Action {
         /// [`Config::segment_inactivity_timeout`]) carries its own `Range` and `If-Range`
         /// headers here and a `byte_range` of `None`; send them as given.
         headers: http::HeaderMap,
-        /// Optional byte range as `(offset, length)`, not `(start, end)`: the host builds the
-        /// `Range: bytes=offset-(offset+length-1)` header itself.
-        byte_range: Option<(u64, u64)>,
+        /// Byte range to request (`byte_range.range_header()` is the `Range` field
+        /// value): RFC 9110 §14.2, first and last inclusive.
+        byte_range: Option<broadcast_common::range::ByteSpan>,
         /// Client certificate to present if the server asks for one (mutual TLS); `Some` only
         /// for an `https` URL and only when [`Config::client_identity`] applies to this origin
         /// (see [`Config::client_identity_scope`]).

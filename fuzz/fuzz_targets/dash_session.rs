@@ -94,7 +94,7 @@ impl Watch {
                     let request = Request {
                         method: method.as_str().to_string(),
                         url: url.to_string(),
-                        byte_range,
+                        byte_range: byte_range.map(|s| (s.offset, s.len.get())),
                         sent: now,
                     };
                     assert!(

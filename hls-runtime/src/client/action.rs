@@ -1,8 +1,11 @@
 //! Actions the caller must perform IO for — [`Action`] out of
 //! [`crate::client::HlsClient::poll`].
 
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use core::time::Duration;
+
+use broadcast_common::range::ByteSpan;
+use url::Url;
 
 /// Identifies one fetchable resource: the initialisation segment, a Low-Latency
 /// HLS partial segment ("part", RFC 8216bis §4.4.4.9), or a whole media
@@ -66,39 +69,78 @@ pub struct BlockingReload {
     pub part: Option<u64>,
 }
 
+/// A Media Playlist fetch: the URL and how to shape the request.
+#[derive(Clone, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PlaylistRequest {
+    /// The playlist URL.
+    pub url: Url,
+    /// `Some` to add `_HLS_msn`/`_HLS_part` query parameters requesting a
+    /// Blocking Playlist Reload (RFC 8216bis §6.2.5.2); `None` for a plain
+    /// (non-blocking) GET — used when the last-seen playlist did not
+    /// advertise `CAN-BLOCK-RELOAD` support.
+    pub blocking: Option<BlockingReload>,
+    /// Add `_HLS_skip=YES` (RFC 8216bis §6.2.5.1) requesting a Playlist
+    /// Delta Update — only set once the client has already seen a full
+    /// playlist to reconstruct a delta response against, and the last
+    /// playlist advertised `CAN-SKIP-UNTIL`.
+    pub skip: bool,
+}
+
+impl core::fmt::Debug for PlaylistRequest {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PlaylistRequest")
+            .field("url", &self.url.as_str())
+            .field("blocking", &self.blocking)
+            .field("skip", &self.skip)
+            .finish()
+    }
+}
+
+impl PlaylistRequest {
+    /// The fully query-augmented URL to fetch: `_HLS_msn`/`_HLS_part`
+    /// (RFC 8216bis §6.2.5.2) appended per [`Self::blocking`], then
+    /// `_HLS_skip=YES` (RFC 8216bis §6.2.5.1) if [`Self::skip`] is set.
+    ///
+    /// This is a convenience for building the real HTTP request; the typed
+    /// `blocking`/`skip` fields remain the source of truth (e.g. for a
+    /// caller using a query-parameter API rather than string concatenation).
+    #[must_use]
+    pub fn request_url(&self) -> Url {
+        let mut url = self.url.clone();
+        if let Some(b) = self.blocking {
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("_HLS_msn", &b.msn.to_string());
+            if let Some(part) = b.part {
+                pairs.append_pair("_HLS_part", &part.to_string());
+            }
+        }
+        if self.skip {
+            url.query_pairs_mut().append_pair("_HLS_skip", "YES");
+        }
+        url
+    }
+}
+
 /// One unit of IO the caller must perform, in response to a
 /// [`crate::client::HlsClient::poll`] call. The client core never touches a socket
 /// or a clock itself — every `Action` names exactly what to fetch and, for a
 /// playlist reload, how to shape the request.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[non_exhaustive]
 pub enum Action {
     /// Fetch (or long-poll) the Media Playlist.
-    FetchPlaylist {
-        /// The playlist URL.
-        url: String,
-        /// `Some` to add `_HLS_msn`/`_HLS_part` query parameters requesting a
-        /// Blocking Playlist Reload (RFC 8216bis §6.2.5.2); `None` for a
-        /// plain (non-blocking) GET — used when the last-seen playlist did
-        /// not advertise `CAN-BLOCK-RELOAD` support.
-        blocking: Option<BlockingReload>,
-        /// Add `_HLS_skip=YES` (RFC 8216bis §6.2.5.1) requesting a Playlist
-        /// Delta Update — only set once the client has already seen a full
-        /// playlist to reconstruct a delta response against, and the last
-        /// playlist advertised `CAN-SKIP-UNTIL`.
-        skip: bool,
-    },
+    FetchPlaylist(PlaylistRequest),
     /// Fetch one resource (init/part/segment).
     FetchResource {
         /// Correlates the eventual [`crate::client::HlsClient::on_resource`] call.
         id: ResourceId,
         /// The resource URL (already resolved against the playlist URL).
-        url: String,
-        /// `Some((offset, length))` to fetch only that byte sub-range
-        /// (RFC 8216bis §4.4.4.2/§4.4.4.9's `EXT-X-BYTERANGE`/`BYTERANGE`);
-        /// `None` fetches the entire resource.
-        byte_range: Option<(u64, u64)>,
+        url: Url,
+        /// The byte sub-range to fetch (RFC 8216bis §4.4.4.2/§4.4.4.9's
+        /// `EXT-X-BYTERANGE`/`BYTERANGE`); `None` fetches the entire resource.
+        byte_range: Option<ByteSpan>,
     },
     /// Fetch one AES-128 key file (RFC 8216 §5.1: 16 raw octets). Issued once
     /// per distinct key URI for the life of the client; the response goes to
@@ -108,7 +150,7 @@ pub enum Action {
         /// Correlates the eventual [`crate::client::HlsClient::on_key`] call.
         id: KeyId,
         /// The key URL (already resolved against the playlist URL).
-        url: String,
+        url: Url,
     },
     /// A non-blocking-reload timing hint: wait about this long before issuing
     /// the next `FetchPlaylist`, derived from `#EXT-X-TARGETDURATION`
@@ -119,36 +161,45 @@ pub enum Action {
 }
 
 impl Action {
-    /// For [`Action::FetchPlaylist`], the fully query-augmented URL to fetch:
-    /// `_HLS_msn`/`_HLS_part` (RFC 8216bis §6.2.5.2) appended per
-    /// [`Self::FetchPlaylist`]'s `blocking` field, then `_HLS_skip=YES`
-    /// (RFC 8216bis §6.2.5.1) if `skip` is set. `None` for
-    /// [`Action::FetchResource`]/[`Action::Wait`] (nothing to augment —
-    /// use their `url`/byte-range fields directly).
-    ///
-    /// This is a convenience for building the real HTTP request; the typed
-    /// `blocking`/`skip` fields remain the source of truth (e.g. for a
-    /// caller using a query-parameter API rather than string concatenation).
-    pub fn playlist_request_url(&self) -> Option<String> {
+    /// For [`Action::FetchPlaylist`], the fully query-augmented URL to fetch
+    /// (see [`PlaylistRequest::request_url`]). `None` for
+    /// [`Action::FetchResource`]/[`Action::FetchKey`]/[`Action::Wait`]
+    /// (nothing to augment — use their `url`/byte-range fields directly).
+    #[must_use]
+    pub fn playlist_request_url(&self) -> Option<Url> {
         match self {
-            Action::FetchPlaylist {
-                url,
-                blocking,
-                skip,
-            } => {
-                let mut u = url.clone();
-                if let Some(b) = blocking {
-                    u = super::url::append_pair(&u, "_HLS_msn", &b.msn.to_string());
-                    if let Some(part) = b.part {
-                        u = super::url::append_pair(&u, "_HLS_part", &part.to_string());
-                    }
-                }
-                if *skip {
-                    u = super::url::append_pair(&u, "_HLS_skip", "YES");
-                }
-                Some(u)
-            }
+            Action::FetchPlaylist(request) => Some(request.request_url()),
             Action::FetchResource { .. } | Action::FetchKey { .. } | Action::Wait(_) => None,
+        }
+    }
+}
+
+impl core::fmt::Debug for Action {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Action::FetchPlaylist(r) => {
+                let mut d = f.debug_struct("FetchPlaylist");
+                d.field("url", &r.url.as_str())
+                    .field("blocking", &r.blocking)
+                    .field("skip", &r.skip);
+                d.finish()
+            }
+            Action::FetchResource {
+                id,
+                url,
+                byte_range,
+            } => f
+                .debug_struct("FetchResource")
+                .field("id", id)
+                .field("url", &url.as_str())
+                .field("byte_range", byte_range)
+                .finish(),
+            Action::FetchKey { id, url } => f
+                .debug_struct("FetchKey")
+                .field("id", id)
+                .field("url", &url.as_str())
+                .finish(),
+            Action::Wait(wait) => f.debug_tuple("Wait").field(wait).finish(),
         }
     }
 }

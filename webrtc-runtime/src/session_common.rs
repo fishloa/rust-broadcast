@@ -7,6 +7,7 @@ use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use broadcast_auth::Credentials;
 use headers::{HeaderMapExt, IfMatch};
 use http::{HeaderMap, Method, StatusCode};
 
@@ -27,24 +28,25 @@ pub(crate) enum PendingRequest {
 }
 
 /// The request-building state a WHIP client and a WHEP player share: the
-/// endpoint, the bound bearer token and the requests awaiting a response, oldest
+/// endpoint, the bound credentials and the requests awaiting a response, oldest
 /// first (responses arrive in request order).
 pub(crate) struct SessionCore {
     endpoint_url: String,
-    bearer_token: Option<String>,
+    credentials: Option<Credentials>,
     pending: VecDeque<PendingRequest>,
 }
 
 impl SessionCore {
-    pub(crate) fn new(endpoint_url: String, bearer_token: Option<String>) -> Self {
+    pub(crate) fn new(endpoint_url: String, credentials: Option<Credentials>) -> Self {
         Self {
             endpoint_url,
-            bearer_token,
+            credentials,
             pending: VecDeque::new(),
         }
     }
 
-    /// Manual `Debug` body: the bearer token never renders (issue #1142).
+    /// Manual `Debug` body: the credentials never render (`Credentials` has its
+    /// own redacted `Debug`) (issue #1142).
     pub(crate) fn debug(
         &self,
         f: &mut core::fmt::Formatter<'_>,
@@ -54,8 +56,8 @@ impl SessionCore {
         f.debug_struct(name)
             .field("endpoint_url", &self.endpoint_url)
             .field(
-                "bearer_token",
-                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+                "credentials",
+                &self.credentials.as_ref().map(|_| "<redacted>"),
             )
             .field("state", state)
             .field("pending", &self.pending)
@@ -65,7 +67,7 @@ impl SessionCore {
     pub(crate) fn origin(&self) -> Origin<'_> {
         Origin {
             endpoint_url: &self.endpoint_url,
-            bearer_token: self.bearer_token.as_deref(),
+            credentials: self.credentials.as_ref(),
         }
     }
 
@@ -125,10 +127,10 @@ pub(crate) enum Established {
     Acknowledged,
 }
 
-/// The endpoint a session was opened against and the bearer token bound to it.
+/// The endpoint a session was opened against and the credentials bound to it.
 pub(crate) struct Origin<'a> {
     pub(crate) endpoint_url: &'a str,
-    pub(crate) bearer_token: Option<&'a str>,
+    pub(crate) credentials: Option<&'a Credentials>,
 }
 
 impl Origin<'_> {
@@ -142,10 +144,17 @@ impl Origin<'_> {
         body: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
         let mut headers = HeaderMap::new();
-        if let Some(token) = self.bearer_token
+        if let Some(credentials) = self.credentials
             && http_util::same_origin(self.endpoint_url, &url)
         {
-            headers.typed_insert(http_util::bearer(token)?);
+            match credentials {
+                Credentials::Bearer { token } => headers.typed_insert(http_util::bearer(token)?),
+                Credentials::Basic { username, password }
+                | Credentials::Digest { username, password } => {
+                    headers.typed_insert(http_util::basic(username, password)?);
+                }
+                _ => {}
+            }
         }
         if let Some(ct) = content_type {
             headers.typed_insert(http_util::content_type(ct)?);

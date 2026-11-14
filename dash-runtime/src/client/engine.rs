@@ -24,6 +24,7 @@ use crate::mpd::urls::{BaseCandidate, append_query, representation_candidates, s
 use crate::selection::{RepRef, Selection, SetClass, select};
 use crate::timing::clock::UtcClock;
 use crate::timing::period::period_timings;
+use broadcast_common::range::ByteSpan;
 use broadcast_common::stage::Timestamp;
 use broadcast_dash::descriptors::SCHEME_PERIOD_CONTINUITY;
 use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};
@@ -63,8 +64,8 @@ enum Candidate {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct InitKey {
-    url: String,
-    range: Option<(u64, u64)>,
+    url: Url,
+    range: Option<ByteSpan>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +92,7 @@ enum ReqKind {
 struct ReqInfo {
     rep: RepId,
     reference: String,
-    range: Option<(u64, u64)>,
+    range: Option<ByteSpan>,
     kind: ReqKind,
     avail_from_us: Option<i128>,
     avail_until_us: Option<i128>,
@@ -238,7 +239,7 @@ pub struct StateSize {
 pub struct DashClient {
     cfg: PullLimits,
     dash: DashConfig,
-    mpd_url: String,
+    mpd_url: Url,
     doc_url: Option<Url>,
     mpd_query: Option<String>,
     phase: Phase,
@@ -274,17 +275,6 @@ pub struct DashClient {
     remembered_done: VecDeque<ResourceId>,
 }
 
-fn without_query(url: &str) -> String {
-    match Url::parse(url) {
-        Ok(mut u) => {
-            u.set_query(None);
-            u.set_fragment(None);
-            u.to_string()
-        }
-        Err(_) => url.to_owned(),
-    }
-}
-
 fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
         && a.host_str() == b.host_str()
@@ -306,7 +296,11 @@ pub(crate) fn filter_candidates(
         .into_iter()
         .filter(|c| {
             c.resolve(Some(doc), "")
-                .and_then(|u| Url::parse(&u).ok())
+                .ok()
+                .and_then(|r| match r {
+                    crate::mpd::base_url::ResolvedRef::Absolute(u) => Some(u),
+                    crate::mpd::base_url::ResolvedRef::Relative(_) => None,
+                })
                 .map(|p| same_origin(doc, &p))
                 .unwrap_or(false)
         })
@@ -343,8 +337,8 @@ fn plan_error_name(e: &PlanError) -> &'static str {
     }
 }
 
-fn range_pair(r: Option<ByteRange>) -> std::result::Result<Option<(u64, u64)>, DropCause> {
-    r.map(|r| r.offset_len().map_err(|u| DropCause::Addressing(u.name())))
+fn range_pair(r: Option<ByteRange>) -> std::result::Result<Option<ByteSpan>, DropCause> {
+    r.map(|r| ByteSpan::try_from(r).map_err(|u| DropCause::Addressing(u.name())))
         .transpose()
 }
 
@@ -361,7 +355,7 @@ fn continuity_signals(set: &broadcast_dash::AdaptationSet, previous: &str) -> bo
 #[non_exhaustive]
 pub struct DashClientConfig {
     /// The MPD URL to follow.
-    pub mpd_url: String,
+    pub mpd_url: Url,
     /// Playback configuration.
     pub dash: DashConfig,
     /// Bounds on what the client pulls.
@@ -371,9 +365,9 @@ pub struct DashClientConfig {
 impl DashClientConfig {
     /// A config following `mpd_url` with default [`DashConfig`] and
     /// [`PullLimits`].
-    pub fn new(mpd_url: impl Into<String>) -> Self {
+    pub fn new(mpd_url: Url) -> Self {
         DashClientConfig {
-            mpd_url: mpd_url.into(),
+            mpd_url,
             dash: DashConfig::default(),
             limits: PullLimits::default(),
         }
@@ -403,8 +397,8 @@ impl DashClient {
             dash,
             limits,
         } = config;
-        let doc_url = Url::parse(&mpd_url).ok();
-        let mpd_query = doc_url.as_ref().and_then(|u| u.query()).map(str::to_owned);
+        let doc_url = Some(mpd_url.clone());
+        let mpd_query = mpd_url.query().map(str::to_owned);
         Self {
             cfg: limits,
             dash,
@@ -447,15 +441,15 @@ impl DashClient {
 
     /// The MPD URL given to [`DashClient::new`].
     #[must_use]
-    pub fn mpd_url(&self) -> &str {
+    pub fn mpd_url(&self) -> &Url {
         &self.mpd_url
     }
 
     /// Use `base` (the URL the MPD was finally served from, after redirects)
     /// as the document URL every relative reference resolves against
     /// (23009-1 A.11).
-    pub fn set_mpd_base(&mut self, base: impl Into<String>) {
-        self.doc_url = Url::parse(&base.into()).ok();
+    pub fn set_mpd_base(&mut self, base: Url) {
+        self.doc_url = Some(base);
     }
 
     /// `Some(true)` for a static MPD, `Some(false)` for a dynamic one, `None`
@@ -927,27 +921,50 @@ impl DashClient {
         rep: &RepState,
         reference: &str,
         media: bool,
-    ) -> std::result::Result<String, DropCause> {
-        let cand = rep
-            .candidates
-            .get(rep.cand % rep.candidates.len().max(1))
+    ) -> std::result::Result<Url, DropCause> {
+        self.resolve_with(
+            &rep.candidates,
+            rep.cand,
+            rep.query.as_ref(),
+            reference,
+            media,
+        )
+    }
+
+    /// [`Self::resolve`] over the parts of a Representation it reads, so a
+    /// reference can be resolved before its [`RepState`] is built (the init key
+    /// is resolved first, then the state carries it).
+    fn resolve_with(
+        &self,
+        candidates: &[BaseCandidate],
+        cand: usize,
+        query: Option<&String>,
+        reference: &str,
+        media: bool,
+    ) -> std::result::Result<Url, DropCause> {
+        let cand = candidates
+            .get(cand % candidates.len().max(1))
             .ok_or(DropCause::UnusableUrl)?;
-        let mut url = cand
-            .resolve(self.doc_url.as_ref(), reference)
-            .ok_or(DropCause::UnusableUrl)?;
-        if media && let Some(q) = &rep.query {
-            url = append_query(&url, q);
+        let mut url = match cand.resolve(self.doc_url.as_ref(), reference) {
+            Err(_) => return Err(DropCause::UnusableUrl),
+            Ok(crate::mpd::base_url::ResolvedRef::Absolute(url)) => url,
+            Ok(crate::mpd::base_url::ResolvedRef::Relative(_)) => {
+                return Err(DropCause::UnusableUrl);
+            }
+        };
+        if media && let Some(q) = query {
+            let text = append_query(url.as_str(), q);
+            url = Url::parse(&text).map_err(|_| DropCause::UnusableUrl)?;
         }
-        let parsed = Url::parse(&url).map_err(|_| DropCause::UnusableUrl)?;
-        if parsed.scheme() == "data" {
+        if url.scheme() == "data" {
             return Err(DropCause::Unsupported(Unsupported::DataUrl));
         }
-        if !matches!(parsed.scheme(), "http" | "https") {
+        if !matches!(url.scheme(), "http" | "https") {
             return Err(DropCause::UnusableUrl);
         }
         if !self.dash.cross_origin_urls
             && let Some(doc) = &self.doc_url
-            && !same_origin(doc, &parsed)
+            && !same_origin(doc, &url)
         {
             return Err(DropCause::CrossOrigin);
         }
@@ -1174,9 +1191,15 @@ impl DashClient {
             Err(e) => return Err(DropCause::Addressing(plan_error_name(&e))),
         };
         let init_range = range_pair(init.1)?;
+        // Resolve the init reference first: the state carries the resolved key
+        // from construction, so there is no placeholder value and no panic path.
+        let init_url = self.resolve_with(&candidates, 0, query.as_ref(), &init.0, false)?;
+        let mut init_key_url = init_url;
+        init_key_url.set_query(None);
+        init_key_url.set_fragment(None);
         let id = RepId(self.next_rep);
         self.next_rep = self.next_rep.saturating_add(1);
-        let mut state = RepState {
+        let state = RepState {
             id,
             at,
             candidates,
@@ -1186,7 +1209,7 @@ impl DashClient {
             plan,
             index,
             init_key: InitKey {
-                url: String::new(),
+                url: init_key_url,
                 range: init_range,
             },
             next_issue: 0,
@@ -1198,8 +1221,6 @@ impl DashClient {
             joined: mpd.kind != PresentationType::Dynamic,
             last_time: None,
         };
-        let init_url = self.resolve(&state, &init.0, false)?;
-        state.init_key.url = without_query(&init_url);
         if let Some(ix) = &state.index {
             range_pair(Some(ix.range))?;
             self.resolve(&state, "", false)?;
@@ -1253,7 +1274,7 @@ impl DashClient {
                 ReqInfo {
                     rep: rep_id,
                     reference,
-                    range: range.and_then(|r| r.offset_len().ok()),
+                    range: range.and_then(|r| ByteSpan::try_from(r).ok()),
                     kind: ReqKind::Init,
                     avail_from_us: None,
                     avail_until_us: None,
@@ -1268,7 +1289,7 @@ impl DashClient {
                 ReqInfo {
                     rep: rep_id,
                     reference: String::new(),
-                    range: r.offset_len().ok(),
+                    range: ByteSpan::try_from(r).ok(),
                     kind: ReqKind::Index,
                     avail_from_us: None,
                     avail_until_us: None,
@@ -1295,7 +1316,7 @@ impl DashClient {
             return Some(Rejection::TooLarge);
         }
         let range = self.reqs.get(&id).and_then(|r| r.range)?;
-        (u64::try_from(bytes.len()).ok() != Some(range.1)).then_some(Rejection::WrongLength)
+        (u64::try_from(bytes.len()).ok() != Some(range.len.get())).then_some(Rejection::WrongLength)
     }
 
     fn max_failures(&self, id: ResourceId) -> u32 {
@@ -1345,7 +1366,11 @@ impl DashClient {
                         || doc.as_ref().is_none_or(|d| {
                             rep.candidates[next]
                                 .resolve(Some(d), "")
-                                .and_then(|u| Url::parse(&u).ok())
+                                .ok()
+                                .and_then(|r| match r {
+                                    crate::mpd::base_url::ResolvedRef::Absolute(u) => Some(u),
+                                    crate::mpd::base_url::ResolvedRef::Relative(_) => None,
+                                })
                                 .map(|p| same_origin(d, &p))
                                 .unwrap_or(false)
                         });
@@ -2024,9 +2049,14 @@ impl DashClient {
             self.doc_url.as_ref(),
             self.dash.cross_origin_urls,
         );
-        Ok(cands
-            .first()
-            .and_then(|c| c.resolve(self.doc_url.as_ref(), &reference)))
+        Ok(cands.first().and_then(|c| {
+            c.resolve(self.doc_url.as_ref(), &reference)
+                .ok()
+                .map(|r| match r {
+                    crate::mpd::base_url::ResolvedRef::Absolute(u) => u.to_string(),
+                    crate::mpd::base_url::ResolvedRef::Relative(s) => s,
+                })
+        }))
     }
 
     fn manifest(&self, pi: usize) -> ManifestSelection {

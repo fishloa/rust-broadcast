@@ -103,7 +103,7 @@ impl Drive {
                                 (n.as_str().to_string(), v.to_str().unwrap_or("").to_string())
                             })
                             .collect(),
-                        byte_range,
+                        byte_range: byte_range.map(|s| (s.offset, s.len.get())),
                         at_us: self.now,
                     };
                     self.log.push(req.clone());

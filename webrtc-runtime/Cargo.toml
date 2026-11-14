@@ -21,10 +21,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 # take their default (std) features in every configuration; the `std` feature
 # below is kept as a name so `default-features = false` consumers still resolve.
 broadcast-common = { path = "../broadcast-common", version = "12.0.0", features = ["url"] }
+# The client's credentials are `broadcast_auth::Credentials` (one auth
+# vocabulary across the runtimes, issue #2661 2.2); the core is `std`.
+broadcast-auth = { path = "../broadcast-auth", version = "0.7.0" }
 thiserror = { version = "2" }
-# `broadcast-auth` and `log` were declared here and referenced by not one line
-# of this crate. Both are std-only, so they alone made the bare-metal build
-# impossible — dead weight that cost the crate its headline property.
+# `log` was once declared here and referenced by not one line of this crate; it
+# is gone. (`broadcast-auth` is now a real dependency for the client's
+# credentials type, issue #2661 2.2; this crate is not a bare-metal build.)
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # WHIP/WHEP state machines speak `http`/`headers` types (SP2.2): the core is `std`.
 http        = "1"

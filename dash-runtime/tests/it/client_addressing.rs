@@ -10,6 +10,7 @@ fn now(us: u64) -> Timestamp {
 use dash_runtime::client::{
     Action, DashClient, DashConfig, DropCause, FatalKind, Output, PullLimits, ResponseMeta,
 };
+use url::Url;
 
 const DOC: &str = "http://dash.test/live/manifest.mpd";
 
@@ -32,7 +33,7 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
 </MPD>"#;
 
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(DOC)
+        dash_runtime::client::DashClientConfig::new(Url::parse(DOC).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -41,7 +42,7 @@ fn a_segment_address_error_after_the_initial_plan_drops_the_track() {
     let Some(Action::FetchMpd { url, .. }) = client.poll(now(0)) else {
         panic!("first action is the MPD")
     };
-    assert_eq!(url, DOC);
+    assert_eq!(url.as_str(), DOC);
     let meta = ResponseMeta::at(0);
     client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
 
@@ -93,7 +94,7 @@ fn an_init_lookup_plan_error_drops_the_track() {
 </MPD>"#;
 
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(DOC)
+        dash_runtime::client::DashClientConfig::new(Url::parse(DOC).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -102,7 +103,7 @@ fn an_init_lookup_plan_error_drops_the_track() {
     let Some(Action::FetchMpd { url, .. }) = client.poll(now(0)) else {
         panic!("first action is the MPD")
     };
-    assert_eq!(url, DOC);
+    assert_eq!(url.as_str(), DOC);
     let meta = ResponseMeta::at(0);
     client.on_mpd_with(now(0), mpd.as_bytes(), &meta).unwrap();
 

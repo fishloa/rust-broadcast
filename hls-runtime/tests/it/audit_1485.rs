@@ -4,8 +4,10 @@
 use core::time::Duration;
 use hls_runtime::client::{Action, Error, HlsClient, KeyId, Output, ResourceId};
 use transmux::sample_aes::aes128_encrypt_segment;
+use url::Url;
 
 const URL: &str = "http://origin/live/media.m3u8";
+
 const TS_PACKET_LEN: usize = 188;
 const LEADING_PACKETS_DROPPED: usize = 3;
 static FIXTURE0: std::sync::LazyLock<Vec<u8>> =
@@ -31,7 +33,7 @@ fn resource_ids(actions: &[Action]) -> Vec<ResourceId> {
         .collect()
 }
 
-fn key_fetches(actions: &[Action]) -> Vec<(KeyId, String)> {
+fn key_fetches(actions: &[Action]) -> Vec<(KeyId, Url)> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -79,7 +81,7 @@ fn delta_playlist(first_msn: u64, skipped: Option<u64>, last_msn: u64, key: bool
 fn skip_requested(actions: &[Action]) -> bool {
     actions
         .iter()
-        .any(|a| matches!(a, Action::FetchPlaylist { skip: true, .. }))
+        .any(|a| matches!(a, Action::FetchPlaylist(p) if p.skip))
 }
 
 /// The smallest init the client accepts: an empty `moov` box.
@@ -87,7 +89,9 @@ const EMPTY_MOOV: &[u8] = b"\x00\x00\x00\x08moov";
 
 #[test]
 fn consecutive_delta_reloads_keep_numbering_and_the_aes_iv_after_the_window_slides() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
 
     client
@@ -137,7 +141,9 @@ fn consecutive_delta_reloads_keep_numbering_and_the_aes_iv_after_the_window_slid
         .unwrap();
     let outputs = drain_outputs(&mut client);
 
-    let mut baseline = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut baseline = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut baseline);
     baseline
         .on_playlist(
@@ -166,7 +172,9 @@ fn consecutive_delta_reloads_keep_numbering_and_the_aes_iv_after_the_window_slid
 
 #[test]
 fn an_unmergeable_delta_requests_a_full_playlist_instead_of_misnumbering() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client
         .on_playlist(delta_playlist(0, None, 9, false).as_bytes())
@@ -190,7 +198,7 @@ fn an_unmergeable_delta_requests_a_full_playlist_instead_of_misnumbering() {
     assert!(
         actions
             .iter()
-            .any(|a| matches!(a, Action::FetchPlaylist { skip: false, .. })),
+            .any(|a| matches!(a, Action::FetchPlaylist(p) if !p.skip)),
         "a full playlist must be requested: {actions:?}"
     );
     assert!(!skip_requested(&actions), "{actions:?}");
@@ -207,7 +215,9 @@ fn ll_hint_playlist() -> &'static str {
 
 #[test]
 fn a_repeated_playlist_does_not_request_the_preload_hinted_part_twice() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client.on_playlist(ll_hint_playlist().as_bytes()).unwrap();
     client.on_playlist(ll_hint_playlist().as_bytes()).unwrap();
@@ -225,7 +235,9 @@ fn keyed_live(extra_header: &str, tag: &str) -> String {
 
 #[test]
 fn a_wrong_length_key_response_lets_the_next_reload_request_the_key_again() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let text = keyed_live("", "#EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"");
     client.on_playlist(text.as_bytes()).unwrap();
@@ -237,7 +249,7 @@ fn a_wrong_length_key_response_lets_the_next_reload_request_the_key_again() {
     client.on_playlist(text.as_bytes()).unwrap();
     assert_eq!(
         key_fetches(&drain(&mut client)),
-        vec![(id, "http://origin/live/key.bin".to_string())]
+        vec![(id, Url::parse("http://origin/live/key.bin").expect("URL"))]
     );
 }
 
@@ -252,7 +264,9 @@ const EMPTY_FRAGMENT: &[u8] = &[
 
 #[test]
 fn a_failed_init_never_ends_the_stream_cleanly_and_can_be_retried() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client.on_playlist(vod_with_init().as_bytes()).unwrap();
     let ids = resource_ids(&drain(&mut client));
@@ -278,7 +292,9 @@ fn a_failed_init_never_ends_the_stream_cleanly_and_can_be_retried() {
 
 #[test]
 fn a_re_signed_segment_url_is_not_an_origin_restart() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let pl = |first: u64, token: u32, names: &[&str]| {
         let mut text = format!(
@@ -304,7 +320,9 @@ fn a_re_signed_segment_url_is_not_an_origin_restart() {
 #[test]
 fn a_different_path_or_duration_at_a_shared_msn_is_still_an_origin_restart() {
     let reload = |second: &str| {
-        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+        let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+            Url::parse(URL).expect("URL"),
+        ));
         drain(&mut client);
         client
             .on_playlist(
@@ -331,7 +349,9 @@ fn a_different_path_or_duration_at_a_shared_msn_is_still_an_origin_restart() {
 
 #[test]
 fn a_hostile_target_duration_cannot_park_the_reload_for_days() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     client
         .on_playlist(
@@ -351,7 +371,9 @@ fn a_hostile_target_duration_cannot_park_the_reload_for_days() {
 
 #[test]
 fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let head = "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n";
     let first_run = "#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"100@0\"\n#EXTINF:2.0,\nseg0.m4s\n";
@@ -365,9 +387,9 @@ fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
             a,
             Action::FetchResource {
                 id: ResourceId::Init,
-                byte_range: Some((0, 100)),
+                byte_range: Some(br),
                 ..
-            }
+            } if br.offset == 0 && br.len.get() == 100
         )),
         "{first:?}"
     );
@@ -381,9 +403,9 @@ fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
             a,
             Action::FetchResource {
                 id: ResourceId::Init,
-                byte_range: Some((100, 100)),
+                byte_range: Some(br),
                 ..
-            }
+            } if br.offset == 100 && br.len.get() == 100
         )),
         "{second:?}"
     );
@@ -391,7 +413,9 @@ fn a_changed_map_byte_range_on_the_same_uri_requests_the_new_init() {
 
 #[test]
 fn one_unsupported_encrypted_segment_fails_only_that_segment() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let text = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
                 #EXTINF:2.0,\nseg0.ts\n\
@@ -418,7 +442,9 @@ fn iv_hex(iv: &[u8; 16]) -> String {
 
 #[test]
 fn aes_128_segments_with_a_map_declared_before_the_key_are_accepted() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let text = keyed_live(
         "#EXT-X-MAP:URI=\"init.mp4\"\n",
@@ -436,7 +462,9 @@ fn aes_128_segments_with_a_map_declared_before_the_key_are_accepted() {
 #[test]
 fn an_aes_128_encrypted_map_is_decrypted_with_the_key_that_precedes_it() {
     let iv = [0x24u8; 16];
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let text = format!(
         "#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
@@ -471,7 +499,9 @@ fn an_aes_128_encrypted_map_is_decrypted_with_the_key_that_precedes_it() {
 
 #[test]
 fn a_map_encrypted_with_an_unsupported_method_fails_with_a_typed_error() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let text = keyed_live(
         "#EXT-X-KEY:METHOD=SAMPLE-AES,URI=\"key.bin\"\n#EXT-X-MAP:URI=\"init.mp4\"\n",
@@ -486,7 +516,9 @@ fn a_map_encrypted_with_an_unsupported_method_fails_with_a_typed_error() {
 
 #[test]
 fn a_key_unreferenced_by_the_window_is_fetched_again_when_its_uri_returns() {
-    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(URL));
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
     drain(&mut client);
     let pl = |first: u64| {
         format!(
