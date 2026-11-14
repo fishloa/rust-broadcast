@@ -27,7 +27,7 @@ use broadcast_common::units::MICROS_PER_SEC;
 /// The shortest retry delay: a zero step must never become a burst of retries at one instant.
 const MIN_BACKOFF: Duration = Duration::from_millis(1);
 const REFRESH_DIVISOR: u64 = 2;
-const FIRST_TRACK_ID: u32 = 1;
+const FIRST_TRACK_ID: TrackId = TrackId::new(1);
 const FOURCC_AVC: [&str; 2] = ["H264", "AVC1"];
 const FOURCC_HEVC: [&str; 3] = ["H265", "HEVC", "HVC1"];
 const FOURCC_HEVC_ALT: &str = "HEV1";
@@ -182,7 +182,7 @@ impl SmoothClient {
         let stream = &self.streams[si];
         codec_family(&stream.applied.four_cc) == codec_family(&candidate.four_cc)
             && track_spec_from_quality_level(
-                TrackId::new(FIRST_TRACK_ID),
+                FIRST_TRACK_ID,
                 stream.timescale,
                 stream.index.stream_type,
                 candidate,
@@ -493,14 +493,10 @@ impl SmoothClient {
             .qualities
             .iter()
             .map(|q| {
-                let codecs = track_spec_from_quality_level(
-                    TrackId::new(FIRST_TRACK_ID),
-                    timescale,
-                    index.stream_type,
-                    q,
-                )
-                .ok()
-                .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
+                let codecs =
+                    track_spec_from_quality_level(FIRST_TRACK_ID, timescale, index.stream_type, q)
+                        .ok()
+                        .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
                 QualityInfo {
                     bitrate: q.bitrate,
                     resolution: q.width.zip(q.height),
@@ -579,7 +575,9 @@ impl SmoothClient {
         let mut specs = Vec::new();
         for (position, &si) in live.iter().enumerate() {
             let global = TrackId::new(
-                FIRST_TRACK_ID.saturating_add(u32::try_from(position).unwrap_or(u32::MAX)),
+                FIRST_TRACK_ID
+                    .value()
+                    .saturating_add(u32::try_from(position).unwrap_or(u32::MAX)),
             );
             let local = self.streams[si].local_track_id.unwrap_or(FIRST_TRACK_ID);
             let quality = self.streams[si]
@@ -607,13 +605,13 @@ impl SmoothClient {
     fn setup_track(
         &mut self,
         si: usize,
-        local: u32,
+        local: TrackId,
         global: TrackId,
         quality: &broadcast_smooth::QualityLevel,
     ) -> Result<TrackSpec, String> {
         let stream = &self.streams[si];
         let mut spec = track_spec_from_quality_level(
-            TrackId::new(local),
+            local,
             stream.timescale,
             stream.index.stream_type,
             quality,

@@ -300,7 +300,7 @@ const GO_DEADLINE_US: u64 = 5_000_000;
 #[test]
 fn a_played_reconnect_reports_attempt_zero_then_live_without_a_climbing_counter() {
     let r = skip_none!(lower_base_reconnect(0));
-    let attempts: Vec<u64> = r
+    let attempts: Vec<u32> = r
         .host
         .statuses_since(r.mark)
         .into_iter()

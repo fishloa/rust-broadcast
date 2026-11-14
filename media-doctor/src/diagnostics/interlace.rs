@@ -179,7 +179,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "avc-interlaced-content"
-                    && f.location.pid == u32::from(VIDEO_PID.value())),
+                    && f.location.stream == crate::StreamLocator::Ts(VIDEO_PID)),
             "expected avc-interlaced-content, got {:?}",
             report.findings()
         );

@@ -239,7 +239,7 @@ use broadcast_common::{Demand, Parse, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{
-    ContinuityCounter, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
+    ContinuityCounter, Pcr, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsPacket,
 };
 
 use crate::aac_asc::{
@@ -4756,6 +4756,11 @@ pub struct StreamingTsDemux {
     skipped: BTreeSet<Pid>,
     next_track_id: TrackId,
     events: VecDeque<DemuxEvent>,
+    /// The wire `Pcr` behind each queued [`DemuxEvent::ClockReference`], in
+    /// the same FIFO order — so a batch fold can keep the parsed 33-bit
+    /// base / 9-bit extension the event's 27 MHz `ticks` cannot round-trip
+    /// (an extension in `300..=511` is off the clock).
+    wire_pcr: VecDeque<(u64, Pcr)>,
     /// Monotonic track-set generation (issue #774): bumped exactly once per
     /// *applied* PMT diff (add/update/remove), never per PID count. This is
     /// the [`DemuxEvent::TracksResolved`] de-dup key — a PID count is not
@@ -4830,6 +4835,7 @@ impl StreamingTsDemux {
             skipped: BTreeSet::new(),
             next_track_id: TrackId::new(1),
             events: VecDeque::new(),
+            wire_pcr: VecDeque::new(),
             generation: 0,
             tracks_resolved_signalled_at: None,
             cc_states: BTreeMap::new(),
@@ -5076,8 +5082,10 @@ impl StreamingTsDemux {
                 let pmts_pending = self.pmt_reasm.is_empty()
                     || self.pmt_reasm.values().any(|pmt| pmt.pcr_pid.is_none());
                 let mut emit = |program_number: Option<u16>| {
+                    let ticks = pcr.as_27mhz();
+                    self.wire_pcr.push_back((ticks, pcr));
                     self.events.push_back(DemuxEvent::ClockReference {
-                        ticks: pcr.as_27mhz(),
+                        ticks,
                         clock_hz: PCR_CLOCK_HZ,
                         discontinuous: af.discontinuity_indicator,
                         provenance: EventProvenance {
@@ -6677,16 +6685,32 @@ impl<'a> TsDemux<'a> {
                     discontinuous,
                     provenance,
                     ..
-                } => pcr.push(PcrSample {
-                    pcr_27mhz: ticks,
-                    // This batch wrapper only ever demuxes TS, whose
-                    // ClockReference always carries a PID/packet_index — the
-                    // fallbacks are unreachable in practice, not a silent
-                    // downgrade.
-                    pid: provenance.pid.unwrap_or(Pid::from_const(0)),
-                    packet_index: provenance.packet_index.unwrap_or(0),
-                    discontinuity: discontinuous,
-                }),
+                } => {
+                    // This batch wrapper only ever demuxes TS, where a
+                    // `ClockReference` is emitted straight from a parsed
+                    // adaptation-field `Pcr`: `wire_pcr` still holds it, so
+                    // keep the wire parts instead of rebuilding a `Pcr` from
+                    // the 27 MHz view (a parsed extension in `300..=511` is
+                    // off the clock and survives only as the wire value).
+                    // A mismatch falls back to the lossy rebuild.
+                    let source = match demux.wire_pcr.front() {
+                        Some(&(t, pcr)) if t == ticks => Some(pcr),
+                        _ => None,
+                    }
+                    .or_else(|| Pcr::from_27mhz(ticks).ok());
+                    if let Some(wire) = source {
+                        pcr.push(PcrSample {
+                            pcr: wire,
+                            // This batch wrapper only ever demuxes TS, whose
+                            // ClockReference always carries a PID/packet_index
+                            // — the fallbacks are unreachable in practice, not
+                            // a silent downgrade.
+                            pid: provenance.pid.unwrap_or(Pid::from_const(0)),
+                            packet_index: provenance.packet_index.unwrap_or(0),
+                            discontinuity: discontinuous,
+                        });
+                    }
+                }
                 DemuxEvent::Discontinuity { .. } => {}
                 DemuxEvent::InputDegraded {
                     track,

@@ -107,7 +107,7 @@ pub(crate) struct RtspSource {
     tracks_dirty: bool,
     seen_first_sample: bool,
     stalled: bool,
-    attempt: u64,
+    attempt: u32,
     /// The workspace's one reconnect timer: the backoff series and the rule
     /// that only a connection that stayed up for its healthy span restarts it
     /// (issue #2471). Reported through `attempt`, this source's own label.
@@ -1208,7 +1208,7 @@ impl RtspSource {
         self.attempt = self.attempt.saturating_add(1);
         let wait = self.retry.on_disconnected(now.as_micros());
         self.events.push_back(Event::Status(Status::Reconnecting {
-            attempt: u64::from(self.retry.attempts()),
+            attempt: self.retry.attempts(),
         }));
         self.phase = Phase::Backoff(now.checked_add(wait));
     }

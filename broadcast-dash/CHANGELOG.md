@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- `MpdError` gains `From<broadcast_common::xml_chars::XmlCharError>`, the typed character-data and namespace failure the shared XML helper now reports (#2646).
 - BREAKING: `BaseInfo::timescale` and `EventStream::timescale` are `Option<Timescale>` (was `Option<u64>` / `Option<u32>`), and `inherit::ResolvedMulti::timescale` and `inherit::DEFAULT_TIMESCALE` are `Timescale`. A present `@timescale="0"` (or one above `u32::MAX`) is `MpdError::Invalid { what: "timescale" }` on every element that carries it, never a silent 1 Hz; an absent one stays `None` in the model, serialises as absent, and resolves to the spec default 1 through the new `BaseInfo::effective_timescale()`. Migration: `Some(90_000)` -> `Some(Timescale::from_nonzero(90_000))`, `multi.timescale` is read with `.get()` (#2657).
 
 ### Added

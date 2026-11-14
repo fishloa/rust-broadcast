@@ -832,7 +832,7 @@ fn findings_json(report: &media_doctor::Report) -> Value {
             f.severity.name(),
             f.rule_id,
             f.location.packet,
-            f.location.pid,
+            f.location.stream,
             f.message
         ));
     }

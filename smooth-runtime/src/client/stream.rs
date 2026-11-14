@@ -35,7 +35,7 @@ pub(crate) struct Stream {
     pub(crate) plan: VecDeque<Chunk>,
     pub(crate) known_end: u64,
     pub(crate) cursor: Cursor,
-    pub(crate) local_track_id: Option<u32>,
+    pub(crate) local_track_id: Option<TrackId>,
     pub(crate) track: Option<TrackId>,
     pub(crate) init: Option<Vec<u8>>,
     pub(crate) held: Vec<HeldFragment>,
@@ -119,7 +119,7 @@ pub(crate) enum FragmentFault {
 
 pub(crate) fn demux_fragment(
     init: &[u8],
-    local_track_id: u32,
+    local_track_id: TrackId,
     body: &[u8],
     start: u64,
 ) -> Result<Vec<Sample>, FragmentFault> {
@@ -135,7 +135,7 @@ pub(crate) fn demux_fragment(
     for track in media
         .tracks
         .into_iter()
-        .filter(|t| t.spec.track_id == TrackId::new(local_track_id))
+        .filter(|t| t.spec.track_id == local_track_id)
     {
         let Some(first_dts) = track.samples.first().and_then(|s| s.timing.map(|t| t.dts)) else {
             continue;

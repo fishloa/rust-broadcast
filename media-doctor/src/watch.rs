@@ -895,7 +895,7 @@ pub(crate) mod tests {
                 pusi: false,
                 pid: mpeg_ts::pid::well_known::NULL,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut null).unwrap();
@@ -933,7 +933,7 @@ pub(crate) mod tests {
             pusi: true,
             pid,
             scrambling: ScramblingControl::NotScrambled,
-            adaptation: AdaptationFieldControl::PayloadOnly,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
             continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
         };
         header.serialize_into(&mut pkt).unwrap();
@@ -1026,7 +1026,7 @@ pub(crate) mod tests {
             pusi: true,
             pid,
             scrambling: ScramblingControl::NotScrambled,
-            adaptation: AdaptationFieldControl::PayloadOnly,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
             continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
         };
         header.serialize_into(&mut pkt).unwrap();
@@ -1212,7 +1212,7 @@ pub(crate) mod tests {
                 pusi: true,
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut pkt).unwrap();
@@ -1316,7 +1316,7 @@ pub(crate) mod tests {
                 pusi: true,
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
@@ -1456,7 +1456,7 @@ pub(crate) mod tests {
                 pusi: true,
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::AdaptationAndPayload,
+                adaptation_field_control: AdaptationFieldControl::AdaptationAndPayload,
                 continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
@@ -1491,7 +1491,7 @@ pub(crate) mod tests {
                 pusi: true,
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
@@ -1510,7 +1510,7 @@ pub(crate) mod tests {
                 pusi: false,
                 pid: wk::NULL,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut null).unwrap();
@@ -1570,7 +1570,7 @@ pub(crate) mod tests {
                 pusi: true,
                 pid,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
@@ -1620,7 +1620,7 @@ pub(crate) mod tests {
                 pusi: true,
                 pid: MIXED_PID,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::from_wire_masked(cc & 0x0F),
             };
             header.serialize_into(&mut pkt).unwrap();
@@ -1643,7 +1643,7 @@ pub(crate) mod tests {
                 pusi: false,
                 pid: wk::NULL,
                 scrambling: ScramblingControl::NotScrambled,
-                adaptation: AdaptationFieldControl::PayloadOnly,
+                adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: ContinuityCounter::try_new(0).expect("4-bit counter"),
             };
             header.serialize_into(&mut null).unwrap();

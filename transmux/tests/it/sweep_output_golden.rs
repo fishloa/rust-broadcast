@@ -90,8 +90,8 @@ fn sample_timing_debug(s: &str) -> String {
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    let s = legacy_pid_debug(&no_display_debug(&sample_timing_debug(&format!(
-        "{media:?}"
+    let s = legacy_pcr_debug(&legacy_pid_debug(&no_display_debug(&sample_timing_debug(
+        &format!("{media:?}"),
     ))));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
@@ -158,6 +158,34 @@ fn legacy_pid_debug(s: &str) -> String {
             Some(end) if u16::from_str_radix(&after[..end], 16).is_ok() => {
                 out.push_str(&u16::from_str_radix(&after[..end], 16).unwrap().to_string());
                 rest = &after[end + 1..];
+            }
+            _ => {
+                out.push_str(OPEN);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `PcrSample::pcr` was a flat `pcr_27mhz: u64` (#2652) and now carries the
+/// wire `mpeg_ts::Pcr`, which `Debug` renders as `pcr: Pcr(Clock27(<ticks>))`.
+/// Rewrite that back to `pcr_27mhz: <ticks>` so the goldens keep proving the
+/// recovered PCR timeline itself is unchanged: a different base/extension
+/// still changes the ticks and fails.
+fn legacy_pcr_debug(s: &str) -> String {
+    const OPEN: &str = "pcr: Pcr(Clock27(";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(OPEN) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + OPEN.len()..];
+        match after.find("))") {
+            Some(end) if after[..end].parse::<u64>().is_ok() => {
+                out.push_str("pcr_27mhz: ");
+                out.push_str(&after[..end]);
+                rest = &after[end + 2..];
             }
             _ => {
                 out.push_str(OPEN);

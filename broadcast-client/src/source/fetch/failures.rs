@@ -53,8 +53,8 @@ impl<K: Copy + Eq + Hash> FailureCounter<K> {
 }
 
 /// `count` is how many failures in a row have been recorded. `max == 0` makes the first failure final; `u32::MAX` never gives up in practice.
-pub(crate) fn verdict(count: u64, max: u32) -> Verdict {
-    if count >= u64::from(max) {
+pub(crate) fn verdict(count: u32, max: u32) -> Verdict {
+    if count >= max {
         Verdict::GiveUp
     } else {
         Verdict::Retry
@@ -63,10 +63,10 @@ pub(crate) fn verdict(count: u64, max: u32) -> Verdict {
 
 /// A saturating attempt counter for one retry loop.
 #[derive(Debug, Default)]
-pub(crate) struct Attempts(u64);
+pub(crate) struct Attempts(u32);
 
 impl Attempts {
-    pub(crate) fn bump(&mut self) -> u64 {
+    pub(crate) fn bump(&mut self) -> u32 {
         self.0 = self.0.saturating_add(1);
         self.0
     }
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn attempts_saturate() {
-        let mut attempts = Attempts(u64::MAX);
-        assert_eq!(attempts.bump(), u64::MAX);
+        let mut attempts = Attempts(u32::MAX);
+        assert_eq!(attempts.bump(), u32::MAX);
     }
 }
