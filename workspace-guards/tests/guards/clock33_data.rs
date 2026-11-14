@@ -49,13 +49,7 @@ pub const TABLE: &[Crate] = &[
     Crate {
         name: "ssai-runtime",
         banned: BANNED_FULL,
-        allow: &[(
-            "src/splice.rs",
-            98,
-            "abs_diff",
-            "condition_splice_point is the documented LINEAR (non-wrapping) variant for a clock that does not wrap; \
-         the wrapping clock uses condition_splice_point_wrapping (circular distance, issue #1125)",
-        )],
+        allow: &[],
     },
     Crate {
         name: "timed-metadata",
