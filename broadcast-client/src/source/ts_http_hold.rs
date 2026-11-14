@@ -3,6 +3,7 @@
 //! round 5 F1).
 
 use alloc::collections::{BTreeMap, BTreeSet};
+use core::time::Duration;
 
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::{aac, ac3, dts, enhanced_ac3};
@@ -36,8 +37,8 @@ pub(crate) const SETTLE_US: u64 = 500_000;
 pub(crate) struct HoldLimits {
     pub(crate) max_input_bytes: usize,
     pub(crate) quiet_input_bytes: usize,
-    pub(crate) max_media_us: u64,
-    pub(crate) max_wall_us: u64,
+    pub(crate) max_media: Option<Duration>,
+    pub(crate) max_wall: Option<Duration>,
 }
 
 impl HoldLimits {
@@ -45,13 +46,13 @@ impl HoldLimits {
         Self {
             max_input_bytes: config.tracks_hold_max_input_bytes,
             quiet_input_bytes: config.tracks_hold_quiet_input_bytes,
-            max_media_us: config.tracks_hold_max_media_us,
-            max_wall_us: config.tracks_hold_max_wall_us,
+            max_media: config.tracks_hold_max_media,
+            max_wall: config.tracks_hold_max_wall,
         }
     }
 
     pub(crate) fn disabled(&self) -> bool {
-        self.max_media_us == 0 || self.max_wall_us == 0
+        self.max_media.is_none() || self.max_wall.is_none()
     }
 
     pub(crate) fn reached(
@@ -59,12 +60,14 @@ impl HoldLimits {
         input_bytes: usize,
         quiet_bytes: usize,
         media_us: u64,
-        wall_us: u64,
+        wall: Duration,
     ) -> bool {
         input_bytes >= self.max_input_bytes
             || quiet_bytes >= self.quiet_input_bytes
-            || media_us >= self.max_media_us
-            || wall_us >= self.max_wall_us
+            || self
+                .max_media
+                .is_some_and(|limit| Duration::from_micros(media_us) >= limit)
+            || self.max_wall.is_some_and(|limit| wall >= limit)
     }
 }
 
@@ -194,37 +197,49 @@ mod tests {
     const LIMITS: HoldLimits = HoldLimits {
         max_input_bytes: 4096,
         quiet_input_bytes: 512,
-        max_media_us: 3_000,
-        max_wall_us: 2_000,
+        max_media: Some(Duration::from_micros(3_000)),
+        max_wall: Some(Duration::from_micros(2_000)),
     };
+    const NO_TIME: Duration = Duration::ZERO;
+
+    fn below(limit: Option<Duration>) -> Duration {
+        Duration::from_micros(Duration::as_micros(&limit.unwrap_or_default()) as u64)
+            .saturating_sub(Duration::from_micros(1))
+    }
 
     #[test]
     fn each_limit_fires_alone_at_its_boundary() {
         let l = LIMITS;
-        assert!(!l.reached(0, 0, 0, 0));
-        assert!(!l.reached(l.max_input_bytes - 1, 0, 0, 0));
-        assert!(l.reached(l.max_input_bytes, 0, 0, 0));
-        assert!(!l.reached(0, l.quiet_input_bytes - 1, 0, 0));
-        assert!(l.reached(0, l.quiet_input_bytes, 0, 0));
-        assert!(!l.reached(0, 0, l.max_media_us - 1, 0));
-        assert!(l.reached(0, 0, l.max_media_us, 0));
-        assert!(!l.reached(0, 0, 0, l.max_wall_us - 1));
-        assert!(l.reached(0, 0, 0, l.max_wall_us));
+        assert!(!l.reached(0, 0, 0, NO_TIME));
+        assert!(!l.reached(l.max_input_bytes - 1, 0, 0, NO_TIME));
+        assert!(l.reached(l.max_input_bytes, 0, 0, NO_TIME));
+        assert!(!l.reached(0, l.quiet_input_bytes - 1, 0, NO_TIME));
+        assert!(l.reached(0, l.quiet_input_bytes, 0, NO_TIME));
+        let media = l.max_media.expect("a media limit");
+        assert!(!l.reached(
+            0,
+            0,
+            u64::try_from(media.as_micros() - 1).expect("below"),
+            NO_TIME
+        ));
+        assert!(l.reached(0, 0, u64::try_from(media.as_micros()).expect("at"), NO_TIME));
+        assert!(!l.reached(0, 0, 0, below(l.max_wall)));
+        assert!(l.reached(0, 0, 0, l.max_wall.expect("a wall limit")));
     }
 
     #[test]
-    fn a_zero_wall_or_media_limit_disables_the_hold() {
+    fn a_missing_wall_or_media_limit_disables_the_hold() {
         assert!(!LIMITS.disabled());
         assert!(
             HoldLimits {
-                max_wall_us: 0,
+                max_wall: None,
                 ..LIMITS
             }
             .disabled()
         );
         assert!(
             HoldLimits {
-                max_media_us: 0,
+                max_media: None,
                 ..LIMITS
             }
             .disabled()
