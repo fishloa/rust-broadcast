@@ -188,13 +188,13 @@ fn assert_media_round_trips(original: &Media, remuxed: &Media) {
         assert_eq!(ta.samples.len(), tb.samples.len(), "track {i} sample count");
         for (j, (sa, sb)) in ta.samples.iter().zip(&tb.samples).enumerate() {
             assert_eq!(
-                sa.timing.map(|t| t.pts),
-                sb.timing.map(|t| t.pts),
+                sa.timing.and_then(|t| t.pts()),
+                sb.timing.and_then(|t| t.pts()),
                 "track {i} sample {j} pts"
             );
             assert_eq!(
-                sa.timing.map(|t| t.dts),
-                sb.timing.map(|t| t.dts),
+                sa.timing.and_then(|t| t.dts()),
+                sb.timing.and_then(|t| t.dts()),
                 "track {i} sample {j} dts"
             );
             assert_eq!(

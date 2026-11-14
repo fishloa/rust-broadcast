@@ -267,7 +267,7 @@ fn clean_track_has_no_errors() {
     let init = clean_init();
     let total: u64 = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum();
     let seg1 = clean_media(1, 0, &samples);
     let seg2 = clean_media(2, total, &samples);
@@ -443,7 +443,7 @@ fn tfdt_continuity_bites() {
     let samples = video_samples(&data);
     let total: u64 = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum();
     let init = clean_init();
 
@@ -473,7 +473,7 @@ fn mfhd_sequence_bites() {
     let samples = video_samples(&data);
     let total: u64 = samples
         .iter()
-        .map(|s| s.timing.map(|t| t.duration).unwrap_or(0) as u64)
+        .map(|s| s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64)
         .sum();
     let init = clean_init();
 
@@ -495,7 +495,7 @@ fn zero_duration_sample_bites() {
     let mut samples = video_samples(&data);
     // positive path already covered by clean_media_has_no_errors.
     // negative: force a zero-duration sample.
-    samples[0].timing = Some(transmux::ir::SampleTiming::new(0, 0, 0));
+    samples[0].timing = Some(transmux::ir::SampleTiming::timed(0, 0));
     let media = clean_media(1, 0, &samples);
     let issues = validate_media_segment(&media);
     assert!(
@@ -681,7 +681,7 @@ fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
     let seg1 = clean_media(1, 0, a);
     let dur_a: u64 = a
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum();
     let seg2 = clean_media(2, dur_a, b);
 
@@ -693,7 +693,7 @@ fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
 
     let dur_b: u64 = b
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum();
     let seg3 = clean_media(3, dur_a + dur_b, a);
 
@@ -739,9 +739,9 @@ fn zero_duration_reported_once_per_traf() {
     let mut samples = video_samples(&data);
     for s in &mut samples {
         if let Some(t) = s.timing.as_mut() {
-            t.duration = 0;
+            *t = t.with_duration(0);
         } else {
-            s.timing = Some(transmux::ir::SampleTiming::new(0, 0, 0));
+            s.timing = Some(transmux::ir::SampleTiming::timed(0, 0));
         }
     }
     let media = clean_media(1, 0, &samples);

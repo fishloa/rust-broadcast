@@ -1811,10 +1811,9 @@ mod tests {
         let at = |i: usize, pts: i64| {
             let mut s = video.samples[i].clone();
             if let Some(t) = s.timing.as_mut() {
-                t.pts = pts;
-                t.dts = pts;
+                t.shift(pts - t.dts().unwrap_or(pts));
             } else {
-                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+                s.timing = Some(transmux::ir::SampleTiming::timed(pts, pts));
             }
             Event::Sample {
                 track: id,

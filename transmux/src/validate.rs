@@ -66,7 +66,7 @@ use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
     TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
 };
-use crate::segments::SegmentTypeBox;
+use crate::segments::{MOOF, SegmentTypeBox};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -89,7 +89,6 @@ const STSD: [u8; 4] = *b"stsd";
 const MVEX: [u8; 4] = *b"mvex";
 const TREX: [u8; 4] = *b"trex";
 const STYP: [u8; 4] = *b"styp";
-const MOOF: [u8; 4] = *b"moof";
 const MFHD: [u8; 4] = *b"mfhd";
 const TRAF: [u8; 4] = *b"traf";
 const TFHD: [u8; 4] = *b"tfhd";

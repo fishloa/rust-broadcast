@@ -156,7 +156,7 @@ impl JumpDetector {
     pub fn begin_epoch(&mut self, jumped: TrackId, sample: &Sample) {
         let (Some(cfg), Some(pts), Some(info)) = (
             self.config,
-            sample.timing.map(|t| t.pts),
+            sample.timing.and_then(|t| t.pts()),
             self.tracks.get(&jumped).copied(),
         ) else {
             return;
@@ -182,7 +182,8 @@ impl JumpDetector {
         if !epoch.stale.contains(&track) {
             return true;
         }
-        let (Some(pts), Some(info)) = (sample.timing.map(|t| t.pts), self.tracks.get(&track))
+        let (Some(pts), Some(info)) =
+            (sample.timing.and_then(|t| t.pts()), self.tracks.get(&track))
         else {
             return true;
         };
@@ -238,7 +239,7 @@ impl JumpDetector {
         join: Option<JoinDecision>,
         now_us: u64,
     ) -> bool {
-        let (Some(cfg), Some(pts)) = (self.config, sample.timing.map(|t| t.pts)) else {
+        let (Some(cfg), Some(pts)) = (self.config, sample.timing.and_then(|t| t.pts())) else {
             return false;
         };
         let Some(info) = self.watched(track, join) else {
@@ -260,7 +261,7 @@ impl JumpDetector {
         now_us: u64,
     ) {
         self.delivered.insert(track);
-        let Some(pts) = sample.timing.map(|t| t.pts) else {
+        let Some(pts) = sample.timing.and_then(|t| t.pts()) else {
             return;
         };
         let Some(info) = self.watched(track, join) else {
@@ -321,7 +322,7 @@ mod tests {
     fn at(f: &Fixture, pts: i64) -> Sample {
         let mut s = f.sample.clone();
         if let Some(t) = s.timing.as_mut() {
-            t.pts = pts;
+            t.shift(pts - t.pts().unwrap_or(pts));
         }
         s
     }

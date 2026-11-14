@@ -280,9 +280,10 @@ mod tests {
     fn sample_event(n: i64, join: Option<JoinDecision>) -> Event {
         let mut sample = base_sample();
         if let Some(t) = sample.timing.as_mut() {
-            t.pts = n;
+            let dts = t.dts().unwrap_or(n);
+            *t = t.with_composition(dts, n);
         } else {
-            sample.timing = Some(transmux::ir::SampleTiming::new(n, n, 0));
+            sample.timing = Some(transmux::ir::SampleTiming::timed(n, n));
         }
         Event::Sample {
             track: TRACK,
@@ -293,7 +294,7 @@ mod tests {
 
     fn pts_of(e: &Event) -> Option<i64> {
         match e {
-            Event::Sample { sample, .. } => sample.timing.map(|t| t.pts),
+            Event::Sample { sample, .. } => sample.timing.and_then(|t| t.pts()),
             _ => None,
         }
     }
@@ -426,9 +427,10 @@ mod tests {
     fn sized_sample_event(n: i64, len: usize) -> Event {
         let mut sample = base_sample();
         if let Some(t) = sample.timing.as_mut() {
-            t.pts = n;
+            let dts = t.dts().unwrap_or(n);
+            *t = t.with_composition(dts, n);
         } else {
-            sample.timing = Some(transmux::ir::SampleTiming::new(n, n, 0));
+            sample.timing = Some(transmux::ir::SampleTiming::timed(n, n));
         }
         sample.data = vec![0u8; len].into();
         Event::Sample {

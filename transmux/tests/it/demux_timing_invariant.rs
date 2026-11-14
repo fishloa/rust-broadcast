@@ -71,7 +71,7 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
         if t.samples.is_empty() {
             continue;
         }
-        let Some(dts_first) = t.samples[0].timing.map(|t| t.dts) else {
+        let Some(dts_first) = t.samples[0].timing.and_then(|t| t.dts()) else {
             // Untimed / section-carried track (e.g. SCTE-35/DSM-CC/private
             // sections) — explicitly out of scope, never fabricated.
             continue;
@@ -81,35 +81,26 @@ fn assert_timing_invariant(media: &Media, what: &str) -> usize {
         assert_eq!(
             t.start_decode_time as i64, dts_first,
             "{what}: track {ti} Track::start_decode_time ({}) must equal \
-             samples[0].timing.map(|t| t.dts) ({dts_first})",
+             samples[0].timing.and_then(|t| t.dts()) ({dts_first})",
             t.start_decode_time
         );
 
-        let last = t.samples.last().expect("just checked non-empty");
-        let dts_last = last
-            .timing
-            .map(|t| t.dts)
-            .unwrap_or_else(|| panic!("{what}: track {ti} first sample is timed but last isn't"));
-        let duration_last = last.timing.map(|t| t.duration).unwrap_or(0) as i64;
-
-        let sum_duration: i64 =
+        // Every sample of a timed track is timed (no `None` hole), and a
+        // declared span (`DurationOnly`) is always a real, positive one:
+        // never the `0` a reader would otherwise put on a sample it could not
+        // measure.
+        assert!(
             t.samples
                 .iter()
-                .map(|s| {
-                    s.timing.map(|t| t.duration).unwrap_or_else(|| {
-                        panic!("{what}: track {ti} a timed sample has no duration")
-                    }) as i64
-                })
-                .sum();
-
-        assert_eq!(
-            sum_duration,
-            dts_last - dts_first + duration_last,
-            "{what}: track {ti} duration timeline disagrees with the dts timeline \
-             (sum(duration)={sum_duration}, dts_last-dts_first+duration_last={}); \
-             dts_first={dts_first} dts_last={dts_last} duration_last={duration_last}",
-            dts_last - dts_first + duration_last
+                .all(|s| s.timing.and_then(|t| t.dts()).is_some()),
+            "{what}: track {ti} mixes timed and untimed samples"
         );
+        for (i, s) in t.samples.iter().enumerate() {
+            assert!(
+                s.timing.and_then(|t| t.duration()).is_none_or(|d| d > 0),
+                "{what}: track {ti} sample {i} declares a zero-tick span"
+            );
+        }
     }
     checked
 }
@@ -166,7 +157,7 @@ fn fmp4_demux_timing_invariant_holds() {
     for (i, (s, o)) in video.samples.iter().zip(oracle.iter()).enumerate() {
         let dts = s
             .timing
-            .map(|t| t.dts)
+            .and_then(|t| t.dts())
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no dts"));
         assert_eq!(
             dts,
@@ -176,7 +167,7 @@ fn fmp4_demux_timing_invariant_holds() {
         );
         let duration = s
             .timing
-            .map(|t| t.duration)
+            .and_then(|t| t.duration())
             .unwrap_or_else(|| panic!("Fmp4Demux: sample {i} has no duration"));
         assert_eq!(
             i64::from(duration),

@@ -156,9 +156,12 @@ fn eac3_held_access_unit_is_retimed_onto_the_next_pes_timeline_after_a_pts_jump(
         .find(|t| matches!(t.spec.config, CodecConfig::Eac3 { .. }))
         .expect("E-AC-3 track");
     assert_eq!(track.samples.len(), 157);
-    let dts0 = track.samples[0].timing.map(|t| t.dts).unwrap();
+    let dts0 = track.samples[0].timing.and_then(|t| t.dts()).unwrap();
     // 48 kHz track: AU k (k < SPLICE) belongs to the old timeline.
-    let got = track.samples[SPLICE - 1].timing.map(|t| t.dts).unwrap();
+    let got = track.samples[SPLICE - 1]
+        .timing
+        .and_then(|t| t.dts())
+        .unwrap();
     assert_eq!(
         got,
         dts0 + (SPLICE as i64 - 1) * 1536,

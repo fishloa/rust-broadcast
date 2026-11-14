@@ -161,8 +161,8 @@ async fn whip_publish_event_sequence_matches_the_golden() {
         let timestamp = u32::try_from(
             sample
                 .timing
-                .map(|t| t.pts)
-                .unwrap_or(sample.timing.map(|t| t.dts).unwrap_or(0)),
+                .and_then(|t| t.pts())
+                .unwrap_or(sample.timing.and_then(|t| t.dts()).unwrap_or(0)),
         )
         .expect("a 90 kHz timestamp fits 32 bits");
         let base = *first_timestamp.get_or_insert(timestamp);

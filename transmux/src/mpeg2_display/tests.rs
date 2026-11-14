@@ -411,7 +411,7 @@ fn mid_gop_afd_change_through_the_demuxer() {
                 ..
             } if id == track_id => events.push((
                 "sample",
-                sample.timing.map(|t| t.dts),
+                sample.timing.and_then(|t| t.dts()),
                 sample
                     .display
                     .as_deref()

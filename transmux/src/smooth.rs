@@ -54,7 +54,7 @@ use crate::movie_fragment::{
     MediaRunSample, MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox, media_fragment_run,
 };
 use crate::pipeline::{CodecConfig, Sample};
-use crate::segments::{MediaDataBox, SegmentTypeBox};
+use crate::segments::{MediaDataBox, SegmentTypeBox, starts_with_moof};
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
@@ -749,7 +749,7 @@ fn segment_samples(
             start = i;
             acc_dur = 0;
         }
-        acc_dur += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
+        acc_dur += s.timing.and_then(|t| t.duration()).unwrap_or(0) as u64;
     }
     groups.push(start..samples.len());
     groups
@@ -788,7 +788,7 @@ fn smooth_timeline(
             let start = starts[i];
             let own_end = SmoothPackager::to_smooth_ticks(
                 (times[i].max(0) as u64)
-                    .saturating_add(u64::from(s.timing.map(|t| t.duration).unwrap_or(0))),
+                    .saturating_add(u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0))),
                 media_timescale,
             );
             let end = match starts.get(i + 1) {
@@ -803,7 +803,7 @@ fn smooth_timeline(
                 })
             })?;
             let cto = rescale_i64(
-                i64::from(s.composition_offset()),
+                i64::from(s.composition_offset()?.unwrap_or(0)),
                 media_timescale,
                 SMOOTH_DEFAULT_TIMESCALE,
                 Rounding::Nearest,
@@ -907,7 +907,7 @@ fn build_smooth_fragment(
 /// `traf` is the last child of the `moof`, so appending the `tfxd` at the very
 /// end of the buffer places it as the last child of that `traf`.
 fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
-    if moof.len() < 8 || &moof[4..8] != b"moof" {
+    if moof.len() < 8 || !starts_with_moof(&moof[4..]) {
         return Err(Error::UnexpectedBox { expected: "moof" });
     }
     // Locate the traf: walk moof children, it is the box after mfhd.
@@ -975,7 +975,9 @@ mod tests {
         let mk = |sync: bool| Sample {
             data: alloc::vec![0u8; 4].into(),
             // Grouping is duration-driven; absolute time is irrelevant here.
-            timing: crate::ir::SampleTiming::from_options(None, None, Some(1)),
+            timing: Some(crate::ir::SampleTiming::DurationOnly {
+                duration: core::num::NonZeroU32::new(1).unwrap(),
+            }),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,

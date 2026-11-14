@@ -458,19 +458,12 @@ async fn publish_one_pass(
             }
         }
         let mut sample = item.sample.clone();
-        if let Some(pts) = sample.timing.map(|t| t.pts)
-            && let Some(t) = sample.timing.as_mut()
-        {
-            t.pts = pts
+        if let Some(t) = sample.timing.as_mut() {
+            let current = t.dts().unwrap_or(0);
+            let shifted = current
                 .checked_add(offset)
                 .ok_or(FileReaderError::OffsetOverflow)?;
-        }
-        if let Some(dts) = sample.timing.map(|t| t.dts)
-            && let Some(t) = sample.timing.as_mut()
-        {
-            t.dts = dts
-                .checked_add(offset)
-                .ok_or(FileReaderError::OffsetOverflow)?;
+            t.shift(shifted - current);
         }
         writer.publish(
             track_refs[item.track_ref].track_id,

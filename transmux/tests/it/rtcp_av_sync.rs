@@ -177,7 +177,7 @@ fn marker_wall_seconds(
 ) -> f64 {
     let cumulative: u64 = samples[..marker_index]
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum();
     (start_decode_time + cumulative) as f64 / f64::from(clock_rate)
 }

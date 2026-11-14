@@ -478,8 +478,8 @@ impl SubtitleFollower {
     pub fn push(&mut self, sample: &Sample) {
         let Some(pts) = sample
             .timing
-            .map(|t| t.pts)
-            .or(sample.timing.map(|t| t.dts))
+            .and_then(|t| t.pts())
+            .or(sample.timing.and_then(|t| t.dts()))
         else {
             return;
         };

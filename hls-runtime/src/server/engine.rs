@@ -859,7 +859,7 @@ fn ts_video_rate(segment: &[u8]) -> Option<u32> {
     let ticks: u64 = track
         .samples
         .iter()
-        .filter_map(|sample| sample.timing.map(|t| t.duration))
+        .filter_map(|sample| sample.timing.and_then(|t| t.duration()))
         .map(u64::from)
         .sum();
     segment_frame_rate_millihertz(

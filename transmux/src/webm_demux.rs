@@ -969,11 +969,9 @@ fn build_media(
             };
             samples.push(Sample {
                 data: data.into(),
-                timing: crate::ir::SampleTiming::from_options(
-                    Some(pts[i]),
-                    Some(pts[i]),
-                    Some(duration),
-                ),
+                timing: Some(crate::ir::SampleTiming::timed_with_duration(
+                    pts[i], pts[i], duration,
+                )),
                 flags: crate::ir::SampleFlags::new(sync[i]),
                 provenance: None,
                 display: None,
@@ -1836,7 +1834,7 @@ mod tests {
         // Two NALs, each with a 2-byte length prefix, in *one* access unit.
         let sample = Sample {
             data: alloc::vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(0, 0, 1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,
@@ -1943,7 +1941,7 @@ mod tests {
         };
         let sample = Sample {
             data: alloc::vec![0x00, 0x04, 0x26, 0x01, 0xAF, 0x09].into(),
-            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(0, 0, 1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

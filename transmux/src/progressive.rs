@@ -90,7 +90,7 @@ fn decode_deltas(samples: &[Sample], times: &[i64]) -> Vec<u32> {
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let own = s.timing.map(|t| t.duration).unwrap_or(0);
+            let own = s.timing.and_then(|t| t.duration()).unwrap_or(0);
             match (times.get(i), times.get(i + 1)) {
                 (Some(&now), Some(&next)) if next >= now => {
                     u32::try_from(next - now).unwrap_or(own)
@@ -126,25 +126,26 @@ fn build_stts(deltas: &[u32]) -> TimeToSampleBox {
 /// `None` when every sample has a zero composition offset (in which case the box
 /// is omitted per §8.6.1.3). Uses version 1 (signed offsets) to support
 /// negative offsets from B-frame reordering.
-fn build_ctts(samples: &[Sample]) -> Option<CompositionOffsetBox> {
-    if samples.iter().all(|s| s.composition_offset() == 0) {
-        return None;
-    }
+fn build_ctts(samples: &[Sample]) -> Result<Option<CompositionOffsetBox>> {
     let mut entries: Vec<CttsEntry> = Vec::new();
     for s in samples {
+        let offset = s.composition_offset()?.unwrap_or(0);
         match entries.last_mut() {
-            Some(last) if last.sample_offset == s.composition_offset() => last.sample_count += 1,
+            Some(last) if last.sample_offset == offset => last.sample_count += 1,
             _ => entries.push(CttsEntry {
                 sample_count: 1,
-                sample_offset: s.composition_offset(),
+                sample_offset: offset,
             }),
         }
     }
-    Some(CompositionOffsetBox {
+    if entries.iter().all(|entry| entry.sample_offset == 0) {
+        return Ok(None);
+    }
+    Ok(Some(CompositionOffsetBox {
         version: 1,
         flags: 0,
         entries,
-    })
+    }))
 }
 
 /// Build the `stss` sync-sample list (§8.6.2) of 1-based sample indices, or
@@ -225,7 +226,7 @@ fn build_stbl_children(
         StblChild::Stsc(stsc),
         StblChild::Stsz(stsz),
     ];
-    if let Some(ctts) = build_ctts(samples) {
+    if let Some(ctts) = build_ctts(samples)? {
         // ctts follows stts in the recommended stbl order (§8.5.1).
         children.insert(2, StblChild::Ctts(ctts));
     }
@@ -491,7 +492,7 @@ impl Package for ProgressiveMux {
             find_top_box(&init, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
         let mut moov = MovieBox::parse(moov_bytes)?;
         moov.mvex = None; // not a fragmented movie
-        let timings = track_timings(media, movie_timescale);
+        let timings = track_timings(media, movie_timescale)?;
         apply_track_timings(&mut moov, &timings);
 
         // The mdat payload layout: each track is cut into ~0.5 s chunks and
@@ -700,7 +701,7 @@ struct TrackTiming {
 /// an `elst` (ISO/IEC 14496-12:2026 §8.6.6) delays a track that starts after
 /// the earliest one by an empty edit and skips its composition lead-in, so the
 /// inter-track offsets of the IR survive into the file.
-fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> {
+fn track_timings(media: &Media, movie_timescale: Timescale) -> Result<Vec<TrackTiming>> {
     let origin = TimelineOrigin::of(&media.tracks);
     let to_movie = |ticks: i64, ts: Timescale| {
         rescale(i128::from(ticks), ts, movie_timescale, Rounding::Floor)
@@ -714,19 +715,22 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
     let spans: Vec<Span> = media
         .tracks
         .iter()
-        .map(|t| {
+        .map(|t| -> Result<Span> {
             let times = relative_decode_times(t, &origin);
             let pres = t.samples.iter().zip(&times).fold(None, |acc, (s, &d)| {
-                let p = d.saturating_add(i64::from(s.composition_offset()));
-                let e = p.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
+                let p = d.saturating_add(i64::from(
+                    s.composition_offset().ok().flatten().unwrap_or(0),
+                ));
+                let e =
+                    p.saturating_add(i64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)));
                 Some(match acc {
                     None => (p, e),
                     Some((lo, hi)) => (p.min(lo), e.max(hi)),
                 })
             });
-            Span { times, pres }
+            Ok(Span { times, pres })
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
     let movie_start = media
         .tracks
         .iter()
@@ -735,7 +739,7 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
         .min()
         .unwrap_or(0);
 
-    media
+    let result = media
         .tracks
         .iter()
         .zip(spans)
@@ -799,7 +803,8 @@ fn track_timings(media: &Media, movie_timescale: Timescale) -> Vec<TrackTiming> 
                 )),
             }
         })
-        .collect()
+        .collect::<Vec<_>>();
+    Ok(result)
 }
 
 /// Set the `mvhd` and per-track `tkhd`/`mdhd` durations and `edts` from the

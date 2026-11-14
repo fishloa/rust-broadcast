@@ -274,6 +274,20 @@ fn box_body<'a>(bytes: &'a [u8], four_cc: &[u8; 4]) -> Result<&'a [u8]> {
 /// Four-CC of the Movie Fragment Box.
 pub const MOOF: [u8; 4] = *b"moof";
 
+/// Whether `bytes` begin with a top-level box of type `box_type` — the one
+/// place a caller asks "does this stream begin with a `moof`/`styp` box?"
+/// instead of comparing four raw bytes itself.
+#[must_use]
+pub fn starts_with_box_type(bytes: &[u8], box_type: [u8; 4]) -> bool {
+    bytes.starts_with(&box_type)
+}
+
+/// Whether `bytes` begin with a top-level [`MOOF`] box.
+#[must_use]
+pub fn starts_with_moof(bytes: &[u8]) -> bool {
+    starts_with_box_type(bytes, MOOF)
+}
+
 /// Splice serialized event message (`emsg`) boxes immediately after the first
 /// top-level `styp` box of `segment` (the CMAF segment layout
 /// `[styp][emsg*][moof][mdat]`, ISO/IEC 23000-19 §7.3.3). Box boundaries are

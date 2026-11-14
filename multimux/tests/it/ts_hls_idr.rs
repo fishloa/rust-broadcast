@@ -47,19 +47,19 @@ fn france2_video() -> (TrackSpec, Vec<Sample>) {
 
 fn looped_from(samples: &[Sample], start: usize, reps: usize) -> Vec<Sample> {
     let body = &samples[start..];
-    let first = body[0].timing.map(|t| t.dts).expect("dts");
+    let first = body[0].timing.and_then(|t| t.dts()).expect("dts");
     let last = body.last().expect("sample");
-    let span = last.timing.map(|t| t.dts).expect("dts")
-        + i64::from(last.timing.map(|t| t.duration).expect("duration"))
+    let span = last.timing.and_then(|t| t.dts()).expect("dts")
+        + i64::from(last.timing.and_then(|t| t.duration()).expect("duration"))
         - first;
     let mut out = Vec::new();
     for k in 0..reps as i64 {
         for s in body {
             out.push(Sample::new(
                 s.data.to_vec(),
-                s.timing.map(|t| t.dts).map(|d| d + span * k),
-                s.timing.map(|t| t.pts).map(|p| p + span * k),
-                s.timing.map(|t| t.duration),
+                s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
+                s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
+                s.timing.and_then(|t| t.duration()),
                 s.flags.is_sync,
             ));
         }

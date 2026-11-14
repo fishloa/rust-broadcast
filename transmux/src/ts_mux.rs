@@ -684,10 +684,11 @@ impl Package for StreamingTsMux {
         if media.tracks.is_empty() {
             return Err(Error::InvalidInput("cannot package a Media with no tracks"));
         }
-        let has_dts = media
-            .tracks
-            .iter()
-            .any(|t| t.samples.iter().any(|s| s.timing.map(|t| t.dts).is_some()));
+        let has_dts = media.tracks.iter().any(|t| {
+            t.samples
+                .iter()
+                .any(|s| s.timing.and_then(|t| t.dts()).is_some())
+        });
         if !has_dts && self.origin.is_none() {
             // Nothing to anchor the timeline on yet; emit nothing rather than
             // fixing a bogus origin of 0.
@@ -1004,7 +1005,9 @@ pub(crate) fn mux_tracks_at_continuing(
             ss.iter()
                 .map(|s| {
                     let now = t;
-                    t = t.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
+                    t = t.saturating_add(i64::from(
+                        s.timing.and_then(|t| t.duration()).unwrap_or(0),
+                    ));
                     now
                 })
                 .collect()
@@ -1225,7 +1228,8 @@ fn mux_tracks_timed_with_cc(
                 // known (§0 invariant), falling back to `0` — identical to
                 // the old stored field's value for every real (non-`None`)
                 // sample this muxer ever sees.
-                let pts_local = dts_local.max(0) + sample.composition_offset() as i64;
+                let pts_local =
+                    dts_local.max(0) + i64::from(sample.composition_offset()?.unwrap_or(0));
                 let pts90 = rescale_signed(pts_local, ts_scale) + PCR_LEAD_TICKS;
                 let es_payload = build_es_payload(plan, sample)?;
                 let carry_pcr = plan.pid == pcr_pid;

@@ -1922,7 +1922,7 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
             .expect("the first new segment demuxes with the new init");
     let decode_time = media.tracks[0].samples[0]
         .timing
-        .map(|t| t.dts)
+        .and_then(|t| t.dts())
         .expect("dts");
     assert_eq!(
         u64::try_from(decode_time).expect("non-negative"),
@@ -2221,7 +2221,7 @@ async fn an_identical_init_reload_lists_only_served_dash_segments() {
         u64::try_from(
             media.tracks[0].samples[0]
                 .timing
-                .map(|t| t.dts)
+                .and_then(|t| t.dts())
                 .expect("dts")
         )
         .expect("non-negative"),

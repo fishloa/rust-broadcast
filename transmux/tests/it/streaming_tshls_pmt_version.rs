@@ -95,17 +95,17 @@ fn run() -> Run {
 
     let mut acc: u64 = video[..=split]
         .iter()
-        .map(|s| u64::from(s.timing.map(|t| t.duration).unwrap_or(0)))
+        .map(|s| u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0)))
         .sum();
     let mut items: Vec<(f64, bool, usize)> = Vec::new();
     for (i, s) in video.iter().enumerate().skip(split + 1) {
         items.push((acc as f64 / vscale as f64, true, i));
-        acc += u64::from(s.timing.map(|t| t.duration).unwrap_or(0));
+        acc += u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0));
     }
     let mut aacc = 0u64;
     for (i, s) in audio.iter().enumerate() {
         items.push((aacc as f64 / ascale as f64, false, i));
-        aacc += u64::from(s.timing.map(|t| t.duration).unwrap_or(0));
+        aacc += u64::from(s.timing.and_then(|t| t.duration()).unwrap_or(0));
     }
     items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then(a.1.cmp(&b.1)));
     for (_, is_video, idx) in items {

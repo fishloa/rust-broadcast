@@ -78,8 +78,8 @@ async fn master_without_captions_is_unchanged() {
         for (si, s) in track.samples.iter().enumerate() {
             let dts = s
                 .timing
-                .map(|t| t.dts)
-                .or(s.timing.map(|t| t.pts))
+                .and_then(|t| t.dts())
+                .or(s.timing.and_then(|t| t.pts()))
                 .unwrap_or(0);
             order.push((dts as f64 / f64::from(track.spec.timescale.get()), ti, si));
         }
@@ -89,9 +89,9 @@ async fn master_without_captions_is_unchanged() {
         let track = &media.tracks[ti];
         let mut sample = track.samples[si].clone();
         if let Some(t) = sample.timing.as_mut()
-            && t.dts == 0
+            && t.dts() == Some(0)
         {
-            t.dts = t.pts;
+            t.shift(t.pts().unwrap_or(0));
         }
         writer.publish(track.spec.track_id, RetentionClass::Timed, sample);
         if n % PUMP_EVERY == 0 {

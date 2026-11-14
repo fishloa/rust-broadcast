@@ -256,7 +256,7 @@ impl ParsedFile {
             let mut pres_pts: Vec<i64> = track
                 .samples
                 .iter()
-                .filter_map(|s| s.timing.map(|t| t.pts))
+                .filter_map(|s| s.timing.and_then(|t| t.pts()))
                 .collect();
             // A track with no timed samples cannot be paced/looped; give it a
             // zero span/frame so `advance_offsets`' zip stays aligned with the
@@ -295,7 +295,7 @@ impl ParsedFile {
                     .iter()
                     .filter_map(|s| {
                         s.timing
-                            .map(|t| t.duration)
+                            .and_then(|t| t.duration())
                             .map(i64::from)
                             .filter(|&d| d > 0)
                     })
@@ -318,8 +318,11 @@ impl ParsedFile {
                 .samples
                 .iter()
                 .filter_map(|s| {
-                    let pts = s.timing.map(|t| t.pts)?;
-                    let dts = s.timing.map(|t| t.dts).or(s.timing.map(|t| t.pts))?;
+                    let pts = s.timing.and_then(|t| t.pts())?;
+                    let dts = s
+                        .timing
+                        .and_then(|t| t.dts())
+                        .or(s.timing.and_then(|t| t.pts()))?;
                     Some((dts as f64 / timescale, pts as f64 / timescale, s.clone()))
                 })
                 .collect();
@@ -804,16 +807,11 @@ impl FileIngestSession {
             let mut sample = item.sample.clone();
             let off = self.offsets[item.track_ref];
             if let Some(t) = sample.timing.as_mut() {
-                if let Some(p) = t.pts.checked_add(off) {
-                    t.pts = p;
-                } else {
-                    return Err(FileReaderError::OffsetOverflow);
-                }
-                if let Some(d) = t.dts.checked_add(off) {
-                    t.dts = d;
-                } else {
-                    return Err(FileReaderError::OffsetOverflow);
-                }
+                let current = t.pts().unwrap_or(0);
+                let shifted = current
+                    .checked_add(off)
+                    .ok_or(FileReaderError::OffsetOverflow)?;
+                t.shift(shifted - current);
             }
             let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue
@@ -944,8 +942,7 @@ mod tests {
             if let SessionEvent::Sample {
                 track_id, sample, ..
             } = ev
-                && let Some(t) = sample.timing
-                && let d = t.dts
+                && let Some(d) = sample.timing.and_then(|t| t.dts())
             {
                 dts.push((track_id, d));
             }
@@ -1217,10 +1214,9 @@ mod tests {
                 let mut sample = template.1.clone();
                 let dts = i64::try_from(i).unwrap();
                 if let Some(t) = sample.timing.as_mut() {
-                    t.dts = dts;
-                    t.pts = dts;
+                    t.shift(dts - t.dts().unwrap_or(dts));
                 } else {
-                    sample.timing = Some(transmux::ir::SampleTiming::new(dts, dts, 0));
+                    sample.timing = Some(transmux::ir::SampleTiming::timed(dts, dts));
                 }
                 session.queue.push_back((template.0, sample, 0.0));
             }

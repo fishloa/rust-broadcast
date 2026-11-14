@@ -175,7 +175,7 @@ fn track_updated_lands_after_the_last_old_config_sample() {
                         sequence.push(Obs::Sample {
                             track_id,
                             width,
-                            dts: sample.timing.map(|t| t.dts),
+                            dts: sample.timing.and_then(|t| t.dts()),
                         });
                     }
                 }

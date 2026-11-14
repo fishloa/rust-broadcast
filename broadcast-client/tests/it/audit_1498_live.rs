@@ -194,7 +194,9 @@ impl LiveHost {
                     track,
                     sample,
                     join,
-                } if *track == vid => Some((i, sample.timing.map(|t| t.pts).unwrap(), *join)),
+                } if *track == vid => {
+                    Some((i, sample.timing.and_then(|t| t.pts()).unwrap(), *join))
+                }
                 _ => None,
             })
             .collect()
@@ -688,7 +690,9 @@ fn no_old_timeline_audio_follows_a_detected_jump() {
     let after: Vec<i64> = h.events[d..]
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if *track == audio => sample.timing.map(|t| t.pts),
+            Event::Sample { track, sample, .. } if *track == audio => {
+                sample.timing.and_then(|t| t.pts())
+            }
             _ => None,
         })
         .collect();
