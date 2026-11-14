@@ -1,5 +1,6 @@
 use broadcast_client::{Config, Error, Session, TimelineJumpConfig};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -9,7 +10,7 @@ fn ts(us: u64) -> Timestamp {
 const URL: &str = "http://h/live.ts";
 
 fn field_of(config: Config) -> Option<&'static str> {
-    match Session::open(URL, config, ts(0)) {
+    match Session::open(Url::parse(URL).unwrap(), config, ts(0)) {
         Err(Error::InvalidConfig { field }) => Some(field),
         Err(other) => panic!("unexpected error {other}"),
         Ok(_) => None,

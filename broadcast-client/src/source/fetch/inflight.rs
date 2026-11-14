@@ -7,6 +7,7 @@ use alloc::vec::Vec;
 use std::collections::HashMap;
 use url::Url;
 
+use crate::ConnId;
 use crate::events::{Action, ErrorKind, Event, ResumeMode, Status};
 use crate::redirect;
 use crate::source::fetch::body::BodyAcc;
@@ -100,8 +101,8 @@ impl<P: PurposeKind, X> Req<P, X> {
 }
 
 pub(crate) struct InFlight<P, X> {
-    pub(crate) reqs: HashMap<u32, Req<P, X>>,
-    pub(crate) deadlines: Deadlines<u32>,
+    pub(crate) reqs: HashMap<ConnId, Req<P, X>>,
+    pub(crate) deadlines: Deadlines<ConnId>,
     inactivity: Inactivity,
     conn_alloc: ConnAlloc,
     pub(crate) timeouts: Timeouts,
@@ -147,9 +148,9 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         let timeout = self.timeouts.of(req.purpose.timeout_class());
         actions.push_back(Action::HttpRequest {
             conn,
-            method: method.to_string(),
-            url: req.url.to_string(),
-            headers,
+            method: http::Method::from_bytes(method.as_bytes()).unwrap_or(http::Method::GET),
+            url: req.url.clone(),
+            headers: crate::headers::to_header_map(&headers),
             byte_range: req.byte_range.filter(|_| resume.is_none()),
             identity: None,
         });
@@ -181,7 +182,7 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         });
     }
 
-    pub(crate) fn overdue(&mut self, now: u64) -> Vec<u32> {
+    pub(crate) fn overdue(&mut self, now: u64) -> Vec<ConnId> {
         let reqs = &self.reqs;
         let timeouts = &self.timeouts;
         self.deadlines.expire(now, |conn, deadline| {
@@ -204,10 +205,10 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
 
     pub(crate) fn on_data(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         bytes: &[u8],
         now: u64,
-        refused_captures: &mut BTreeMap<u32, RefusedCapture>,
+        refused_captures: &mut BTreeMap<ConnId, RefusedCapture>,
         oversize_reported: &mut BTreeSet<&'static str>,
         out: Outbox<'_>,
     ) -> Option<Req<P, X>> {
@@ -243,7 +244,11 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
         Some(req)
     }
 
-    pub(crate) fn stalled_conns(&mut self, now: u64, actions: &mut VecDeque<Action>) -> Vec<u32> {
+    pub(crate) fn stalled_conns(
+        &mut self,
+        now: u64,
+        actions: &mut VecDeque<Action>,
+    ) -> Vec<ConnId> {
         let expired = self.inactive(now);
         for at in expired.wakes {
             actions.push_back(Action::WakeAt(Timestamp::from_micros(at)));
@@ -253,7 +258,7 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
 
     pub(crate) fn stall(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         stash: &mut Stash<P>,
         out: Outbox<'_>,
     ) -> Option<Req<P, X>> {
@@ -306,7 +311,7 @@ pub(crate) struct Outbox<'a> {
 
 #[derive(Clone, Copy)]
 pub(crate) struct ResponseHead<'a> {
-    pub(crate) conn: u32,
+    pub(crate) conn: ConnId,
     pub(crate) status: u16,
     pub(crate) headers: &'a [(String, String)],
 }
@@ -360,7 +365,7 @@ pub(crate) fn route_head<P: PurposeKind, X>(
 pub(crate) fn record_refusal(
     head: ResponseHead<'_>,
     retry_after_us: u64,
-    refused_captures: &mut BTreeMap<u32, RefusedCapture>,
+    refused_captures: &mut BTreeMap<ConnId, RefusedCapture>,
     out: Outbox<'_>,
 ) {
     let ResponseHead {

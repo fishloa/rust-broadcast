@@ -3,11 +3,13 @@ use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
 use broadcast_client::{
-    Action, Config, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig, UdpMode,
+    Action, Config, ConnId, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig,
+    UdpMode,
 };
 use broadcast_common::net::{MulticastInterface, MulticastJoin, UdpOptions};
 use broadcast_common::stage::Timestamp;
 use std::net::{IpAddr, Ipv4Addr};
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -79,7 +81,7 @@ fn a_multicast_url_asks_the_host_to_bind_and_join_the_group() {
                 .with_source(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 7))),
         );
     });
-    let mut s = Session::open(GROUP, config, ts(0)).unwrap();
+    let mut s = Session::open(Url::parse(GROUP).unwrap(), config, ts(0)).unwrap();
     let Action::UdpBind {
         host,
         port,
@@ -109,7 +111,7 @@ fn an_ipv6_group_carries_the_interface_index_to_the_host() {
     let config = config_with(|cfg| {
         cfg.udp.options = UdpOptions::new().with_join(join_on(MulticastInterface::V6Index(7)));
     });
-    let mut s = Session::open("udp://[ff02::1]:5000", config, ts(0)).unwrap();
+    let mut s = Session::open(Url::parse("udp://[ff02::1]:5000").unwrap(), config, ts(0)).unwrap();
     let Action::UdpBind { options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
@@ -124,14 +126,19 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
         "udp://@127.0.0.1:5000",
         "rtp://[::1]:5000",
     ] {
-        let mut s = Session::open(url, Config::default(), ts(0)).unwrap();
+        let mut s = Session::open(Url::parse(url).unwrap(), Config::default(), ts(0)).unwrap();
         let Action::UdpBind { options, mode, .. } = bind_of(&mut s) else {
             unreachable!()
         };
         assert_eq!(options.join, None, "{url}");
         assert_eq!(mode, UdpMode::Receive, "{url}");
     }
-    let mut s = Session::open("rtp://[ff02::1]:5000", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("rtp://[ff02::1]:5000").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let Action::UdpBind { host, options, .. } = bind_of(&mut s) else {
         unreachable!()
     };
@@ -141,7 +148,9 @@ fn a_unicast_or_at_prefixed_url_binds_without_a_join() {
 
 #[test]
 fn bad_udp_urls_and_configs_are_typed_errors() {
-    let open = |url: &str, config: Config| Session::open(url, config, ts(0)).unwrap_err();
+    let open = |url: &str, config: Config| {
+        Session::open(Url::parse(url).unwrap(), config, ts(0)).unwrap_err()
+    };
     assert!(matches!(
         open("udp://example.com:5000", Config::default()),
         Error::InvalidUrl(_)
@@ -211,23 +220,33 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
 #[test]
 fn the_udp_kinds_and_schemes_must_agree() {
     let kind = |kind| config_with(|c| c.kind = kind);
-    assert!(Session::open(GROUP, kind(SourceKind::Udp), ts(0)).is_ok());
-    assert!(Session::open(GROUP, kind(SourceKind::Auto), ts(0)).is_ok());
+    assert!(Session::open(Url::parse(GROUP).unwrap(), kind(SourceKind::Udp), ts(0)).is_ok());
+    assert!(Session::open(Url::parse(GROUP).unwrap(), kind(SourceKind::Auto), ts(0)).is_ok());
     assert!(matches!(
-        Session::open(GROUP, kind(SourceKind::Rtp), ts(0)).unwrap_err(),
-        Error::UnsupportedScheme(_)
+        Session::open(Url::parse(GROUP).unwrap(), kind(SourceKind::Rtp), ts(0)).unwrap_err(),
+        Error::UnsupportedScheme { .. }
     ));
     assert!(matches!(
-        Session::open("rtp://239.1.1.1:5000", kind(SourceKind::Udp), ts(0)).unwrap_err(),
-        Error::UnsupportedScheme(_)
+        Session::open(
+            Url::parse("rtp://239.1.1.1:5000").unwrap(),
+            kind(SourceKind::Udp),
+            ts(0)
+        )
+        .unwrap_err(),
+        Error::UnsupportedScheme { .. }
     ));
     assert!(matches!(
-        Session::open("http://h/live.ts", kind(SourceKind::Udp), ts(0)).unwrap_err(),
-        Error::UnsupportedScheme(_)
+        Session::open(
+            Url::parse("http://h/live.ts").unwrap(),
+            kind(SourceKind::Udp),
+            ts(0)
+        )
+        .unwrap_err(),
+        Error::UnsupportedScheme { .. }
     ));
     assert!(matches!(
-        Session::open(GROUP, kind(SourceKind::TsHttp), ts(0)).unwrap_err(),
-        Error::UnsupportedScheme(_)
+        Session::open(Url::parse(GROUP).unwrap(), kind(SourceKind::TsHttp), ts(0)).unwrap_err(),
+        Error::UnsupportedScheme { .. }
     ));
 }
 
@@ -681,13 +700,18 @@ fn datagrams_for_an_unknown_socket_are_ignored() {
     let mut host = UdpHost::open(GROUP, Config::default());
     let conn = host.conn.unwrap();
     host.session
-        .on_data(conn + 99, &ts_datagrams(&media, 7)[0], ts(1));
+        .on_data(ConnId::new(conn.0 + 99), &ts_datagrams(&media, 7)[0], ts(1));
     assert_eq!(host.session.datagram_stats().datagrams, 0);
 }
 
 #[test]
 fn stats_are_zero_for_a_source_with_no_datagrams() {
-    let s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
+    let s = Session::open(
+        Url::parse("http://h/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     assert_eq!(
         s.datagram_stats(),
         broadcast_client::DatagramStats::default()

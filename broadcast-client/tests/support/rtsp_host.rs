@@ -1,7 +1,8 @@
 use std::cell::{Cell, RefCell};
+use url::Url;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Serialize, Unpackage};
 use rtsp_runtime::transport::{Transport, TransportSpec};
@@ -438,7 +439,7 @@ pub struct Host {
     pub session: Session,
     pub server: Server,
     pub now: u64,
-    pub conn: Option<u32>,
+    pub conn: Option<ConnId>,
     pub actions: Vec<Action>,
     pub history: Vec<Event>,
     pub chunking: Chunking,
@@ -449,7 +450,8 @@ pub struct Host {
 
 impl Host {
     pub fn new(url: &str, config: Config, server: Server) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open rtsp session");
+        let session =
+            Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open rtsp session");
         Self {
             session,
             server,

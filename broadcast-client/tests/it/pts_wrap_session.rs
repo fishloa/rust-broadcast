@@ -5,6 +5,7 @@ use broadcast_common::clock33::PCR_WRAP_27MHZ;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
 use transmux::{Media, TsDemux, TsMux};
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -84,7 +85,12 @@ fn pts_33bit_wrap_through_session_playout() {
     let bytes = mux.package(&media).expect("mux");
     assert!(!bytes.is_empty());
 
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         _ => panic!("no request"),

@@ -1,5 +1,6 @@
-use broadcast_client::{Action, BufferEvent, Config, Event, Session};
+use broadcast_client::{Action, BufferEvent, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -11,7 +12,7 @@ const TICKS_PER_US: u64 = 27;
 
 pub struct Host {
     pub session: Session,
-    pub conn: u32,
+    pub conn: ConnId,
     pub now: u64,
     pub log: Vec<Event>,
     playing: Option<(u64, u64)>,
@@ -20,10 +21,11 @@ pub struct Host {
 
 impl Host {
     pub fn open(config: Config) -> Self {
-        let session = Session::open("http://h/live.ts", config, ts(0)).unwrap();
+        let session =
+            Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)).unwrap();
         let mut host = Self {
             session,
-            conn: 0,
+            conn: ConnId::new(0),
             now: 0,
             log: Vec::new(),
             playing: None,

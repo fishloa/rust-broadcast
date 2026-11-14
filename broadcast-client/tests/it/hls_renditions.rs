@@ -1,9 +1,10 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Config, Credentials, Error, Event, Session, SourceKind, Status,
+    AUDIO_TRACK_ID_OFFSET, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -579,7 +580,7 @@ fn select_audio_out_of_range_and_before_master_error() {
     assert!(h.session.select_audio_rendition(None).is_ok());
 
     let mut ts_host = Session::open(
-        "http://origin.test/live.ts",
+        Url::parse("http://origin.test/live.ts").unwrap(),
         {
             let mut new_config = Config::default();
             new_config.kind = SourceKind::TsHttp;
@@ -802,7 +803,7 @@ fn cookies_and_extra_headers_apply_to_rendition_requests() {
         let hdr = s
             .headers
             .iter()
-            .find(|(k, _)| k == "X-Rend")
+            .find(|(k, _)| k.as_str() == "x-rend")
             .map(|(_, v)| v.as_str());
         assert_eq!(hdr, Some("r-1"), "{}", s.url);
         let cookie = s
@@ -1003,8 +1004,8 @@ fn conn_ids_never_collide_between_adapters() {
     h.run_until(|evs| count_audio(evs) > 0, SPLIT_STEPS);
     h.session.select_audio_rendition(Some(1)).expect("switch");
     h.run_to_end();
-    let ids: Vec<u32> = h.seen.iter().map(|s| s.conn).collect();
-    let unique: HashSet<u32> = ids.iter().copied().collect();
+    let ids: Vec<ConnId> = h.seen.iter().map(|s| s.conn).collect();
+    let unique: HashSet<ConnId> = ids.iter().copied().collect();
     assert_eq!(unique.len(), ids.len(), "every request has its own conn id");
     assert!(h.seen.iter().any(|s| s.url.starts_with(AUDIO_DIR)));
     assert!(h.seen.iter().any(|s| s.url.starts_with(AUDIO2_DIR)));

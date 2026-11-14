@@ -3,6 +3,7 @@
 
 use crate::support;
 use crate::support::dash_sim;
+use url::Url;
 
 use broadcast_client::{Action, Config, Event, MAX_SERVER_REFUSED_REASON_BYTES, Session, Status};
 use broadcast_common::stage::Timestamp;
@@ -316,7 +317,7 @@ fn dash_reports_server_refused_and_waits_the_retry_after() {
 
 #[test]
 fn ts_http_keeps_the_refused_connection_until_the_retry_when_the_host_never_closes_it() {
-    let mut s = Session::open(TS_URL, Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(Url::parse(TS_URL).unwrap(), Config::default(), ts(0)).unwrap();
     let conn = match s.poll(ts(0)) {
         Some(Action::HttpRequest { conn, .. }) => conn,
         other => panic!("expected the first request, got {other:?}"),

@@ -1,6 +1,7 @@
 //! RTMP pull criteria against the av.flv baseline.
 
 use std::time::Duration;
+use url::Url;
 
 use broadcast_client::{Config, Error, ErrorKind, Event, Session, Status};
 
@@ -93,7 +94,7 @@ fn rtmp_url_without_stream_is_invalid() {
     ] {
         assert!(
             matches!(
-                Session::open(bad, rtmp_config(), ts(0)),
+                Session::open(Url::parse(bad).unwrap(), rtmp_config(), ts(0)),
                 Err(Error::InvalidUrl(_))
             ),
             "{bad}"
@@ -140,7 +141,12 @@ fn rtmps_requests_tls_and_carries_identity() {
     let mut cfg = Config::default();
     cfg.client_identity = Some(ClientIdentity::handle(handle));
     cfg.client_identity_scope = ClientIdentityScope::SessionOrigin;
-    let mut s = Session::open("rtmps://origin.test/live/cam1", cfg, ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("rtmps://origin.test/live/cam1").unwrap(),
+        cfg,
+        ts(0),
+    )
+    .unwrap();
     let mut tls = false;
     let mut port = 0u16;
     let mut host = String::new();
@@ -165,7 +171,12 @@ fn rtmps_requests_tls_and_carries_identity() {
     assert_eq!(host, "origin.test");
     assert_eq!(ident, Some(handle));
     // plain rtmp never carries the identity
-    let mut s2 = Session::open("rtmp://origin.test/live/cam1", Config::default(), ts(0)).unwrap();
+    let mut s2 = Session::open(
+        Url::parse("rtmp://origin.test/live/cam1").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut ident2 = None;
     while let Some(a) = s2.poll(ts(0)) {
         if let broadcast_client::Action::TcpConnect { identity, .. } = a {

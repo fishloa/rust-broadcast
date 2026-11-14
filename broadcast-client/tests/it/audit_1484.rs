@@ -1,8 +1,9 @@
 use crate::support;
+use url::Url;
 
 use std::collections::BTreeSet;
 
-use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 use support::ts_probe::{TS_URL, location, one, open, requests, respond, set_cookies};
 
@@ -36,7 +37,7 @@ fn events(session: &mut Session) -> Vec<Event> {
     out
 }
 
-fn closes(actions: &[Action]) -> Vec<u32> {
+fn closes(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -65,10 +66,10 @@ fn action_debug_prints_header_names_never_values() {
     let dbg = format!("{action:?}");
     assert!(!dbg.contains(BEARER_SECRET), "{dbg}");
     assert!(!dbg.contains(COOKIE_SECRET), "{dbg}");
-    assert!(dbg.contains("Authorization"), "{dbg}");
-    assert!(dbg.contains("Cookie"), "{dbg}");
+    assert!(dbg.contains("authorization"), "{dbg}");
+    assert!(dbg.contains("cookie"), "{dbg}");
     assert!(dbg.contains("GET"), "{dbg}");
-    assert!(dbg.contains("example/live.ts"), "{dbg}");
+    assert!(dbg.contains("live.ts"), "{dbg}");
     assert!(dbg.contains("conn"), "{dbg}");
 }
 
@@ -103,7 +104,13 @@ fn send_action_debug_does_not_dump_bytes() {
     )
     .into_bytes();
     let len = bytes.len();
-    let dbg = format!("{:?}", Action::Send { conn: 3, bytes });
+    let dbg = format!(
+        "{:?}",
+        Action::Send {
+            conn: ConnId::new(3),
+            bytes
+        }
+    );
     assert!(!dbg.contains(DIGEST_SECRET), "{dbg}");
     assert!(dbg.contains(&len.to_string()), "{dbg}");
     assert!(dbg.contains("Send"), "{dbg}");
@@ -411,6 +418,7 @@ fn invalid_bearer_token_never_reaches_a_header() {
     for a in &actions {
         if let Action::HttpRequest { headers, .. } = a {
             for (_, v) in headers {
+                let v = v.to_str().unwrap_or("");
                 assert!(!v.contains('\n') && !v.contains('\r'), "{v:?}");
             }
         }
@@ -441,7 +449,7 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
             new_config.initial_cookies = vec![(name.to_string(), "v".to_string())];
             new_config
         };
-        let result = Session::open(TS_URL, config, ts(0));
+        let result = Session::open(Url::parse(TS_URL).unwrap(), config, ts(0));
         assert!(
             matches!(result, Err(broadcast_client::Error::InvalidHeader { .. })),
             "{name:?} accepted"
@@ -452,7 +460,7 @@ fn cookie_name_with_control_character_is_rejected_at_open() {
         new_config.initial_cookies = vec![("good-name_1".to_string(), "v".to_string())];
         new_config
     };
-    assert!(Session::open(TS_URL, ok, ts(0)).is_ok());
+    assert!(Session::open(Url::parse(TS_URL).unwrap(), ok, ts(0)).is_ok());
 }
 
 fn jar_after(url: &str, lines: &[&str]) -> Vec<(String, String)> {

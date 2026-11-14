@@ -1,4 +1,5 @@
 use broadcast_client::{Config, Credentials, Session};
+use url::Url;
 
 /// The examples' single clock instant as a [`Timestamp`] for the session boundary.
 fn now(us: u64) -> broadcast_common::stage::Timestamp {
@@ -6,7 +7,12 @@ fn now(us: u64) -> broadcast_common::stage::Timestamp {
 }
 
 fn main() {
-    let mut session = Session::open("http://example/live.ts", Config::default(), now(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        now(0),
+    )
+    .unwrap();
     if let Some(broadcast_client::Action::HttpRequest { conn, .. }) = session.poll(now(0)) {
         let headers = vec![(
             "WWW-Authenticate".to_string(),

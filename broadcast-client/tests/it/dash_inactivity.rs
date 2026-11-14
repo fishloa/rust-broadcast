@@ -6,7 +6,7 @@
 use crate::support::dash_common;
 use crate::support::dash_sim;
 
-use broadcast_client::{Config, ErrorKind, Event, ResumeMode, Status};
+use broadcast_client::{Config, ConnId, ErrorKind, Event, ResumeMode, Status};
 use dash_common::loopback::Origin;
 use dash_common::world::World;
 use dash_sim::{Answer, Backend, DashSim, Logged, SEC, SIM_ETAG, StaticBackend, stall_after};
@@ -302,7 +302,7 @@ fn a_stalled_request_never_resumes_a_neighbour() {
         MPD,
         Stall::boxed(SEGMENT, None, Resumed::Honoured, false, static_origin()),
     ));
-    let other_conns: Vec<u32> = got
+    let other_conns: Vec<ConnId> = got
         .log
         .iter()
         .filter(|l| l.url != SEGMENT && !l.url.ends_with(".mpd"))

@@ -1,10 +1,11 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use broadcast_client::{
-    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, Event, PauseReason, PlayoutConfig, Session,
-    SourceKind, TrackId,
+    AUDIO_TRACK_ID_OFFSET, Action, BufferEvent, Config, ConnId, Event, PauseReason, PlayoutConfig,
+    Session, SourceKind, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -63,7 +64,7 @@ struct Drv {
     session: Session,
     now: u64,
     chunk: usize,
-    pending: Vec<(u32, String)>,
+    pending: Vec<(ConnId, String)>,
     wakes: BTreeSet<u64>,
     events: Vec<Event>,
     bodies: HashMap<String, Vec<u8>>,
@@ -71,7 +72,7 @@ struct Drv {
 
 impl Drv {
     fn new(url: &str, config: Config, bodies: HashMap<String, Vec<u8>>) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         let mut d = Self {
             session,
             now: 0,
@@ -88,7 +89,7 @@ impl Drv {
     fn pump(&mut self) {
         while let Some(a) = self.session.poll(ts(self.now)) {
             match a {
-                Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url)),
+                Action::HttpRequest { conn, url, .. } => self.pending.push((conn, url.to_string())),
                 Action::Close { conn } => self.pending.retain(|p| p.0 != conn),
                 Action::WakeAt(t) if t.as_micros() > self.now => {
                     self.wakes.insert(t.as_micros());
@@ -101,7 +102,7 @@ impl Drv {
         }
     }
 
-    fn respond(&mut self, conn: u32, body: &[u8]) {
+    fn respond(&mut self, conn: ConnId, body: &[u8]) {
         self.session.on_response(conn, 200, &[], ts(self.now));
         for c in body.chunks(self.chunk.max(1)) {
             self.session.on_data(conn, c, ts(self.now));
@@ -642,7 +643,7 @@ fn hls_live_pause_and_resume_cycle_with_delivery_gap() {
 }
 
 fn finite_session(config: Config) -> Session {
-    Session::open(FINITE_URL, config, ts(0)).unwrap()
+    Session::open(Url::parse(FINITE_URL).unwrap(), config, ts(0)).unwrap()
 }
 
 fn feed_finite(session: &mut Session, chunk: usize, positions: bool) -> Vec<Event> {
@@ -701,7 +702,8 @@ fn live_ts_http_still_uses_buffering_runtime() {
     let (status, headers) = tf1_headers!();
     let mut config = Config::default();
     config.record_buffer_inputs = true;
-    let mut s = Session::open("http://example/live.ts", config, ts(0)).unwrap();
+    let mut s =
+        Session::open(Url::parse("http://example/live.ts").unwrap(), config, ts(0)).unwrap();
     let conn = match s.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),

@@ -11,6 +11,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use crate::ConnId;
 use crate::tshttp::{Config as TsConfig, StarveKind};
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, PlayPlan, StatusCode};
 use transmux::{
@@ -89,7 +90,7 @@ pub(crate) struct RtspSource {
     tls: bool,
     cfg: TsConfig,
     phase: Phase,
-    conn: Option<u32>,
+    conn: Option<ConnId>,
     next_conn: u32,
     connections: u32,
     client: ClientSession,
@@ -246,7 +247,7 @@ impl RtspSource {
         self.reconnect_if_due(now, auth);
     }
 
-    pub(crate) fn on_connected(&mut self, conn: u32, now: Timestamp) {
+    pub(crate) fn on_connected(&mut self, conn: ConnId, now: Timestamp) {
         if self.conn != Some(conn) || self.phase != Phase::Connecting {
             return;
         }
@@ -264,7 +265,7 @@ impl RtspSource {
     /// be preceded by [`Event::Discontinuity`].
     pub(crate) fn on_data(
         &mut self,
-        conn: u32,
+        conn: ConnId,
         bytes: &[u8],
         now: Timestamp,
         auth: &mut AuthState,
@@ -288,7 +289,7 @@ impl RtspSource {
 
     /// Whether the live connection ended and the next connection's media will be preceded by
     /// [`Event::Discontinuity`].
-    pub(crate) fn on_closed(&mut self, conn: u32, now: Timestamp) -> bool {
+    pub(crate) fn on_closed(&mut self, conn: ConnId, now: Timestamp) -> bool {
         if self.conn != Some(conn) {
             return false;
         }
@@ -470,12 +471,12 @@ impl RtspSource {
         });
     }
 
-    fn alloc_conn(&mut self) -> u32 {
+    fn alloc_conn(&mut self) -> ConnId {
         loop {
             let candidate = self.next_conn;
             self.next_conn = candidate.checked_add(1).unwrap_or(FIRST_CONN_ID);
-            if Some(candidate) != self.conn {
-                return candidate;
+            if Some(ConnId::new(candidate)) != self.conn {
+                return ConnId::new(candidate);
             }
         }
     }
@@ -1222,9 +1223,9 @@ mod tests {
         let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
         source.take_actions();
         source.next_conn = u32::MAX;
-        source.conn = Some(u32::MAX);
+        source.conn = Some(ConnId::new(u32::MAX));
         source.start_connect(Timestamp::ZERO, None);
-        assert_ne!(source.conn, Some(u32::MAX));
+        assert_ne!(source.conn, Some(ConnId::new(u32::MAX)));
         assert!(source.conn.is_some());
     }
 
@@ -1235,9 +1236,9 @@ mod tests {
         source.conn = None;
         source.next_conn = u32::MAX;
         source.start_connect(Timestamp::ZERO, None);
-        assert_eq!(source.conn, Some(u32::MAX));
+        assert_eq!(source.conn, Some(ConnId::new(u32::MAX)));
         source.conn = None;
         source.start_connect(Timestamp::ZERO, None);
-        assert_eq!(source.conn, Some(1));
+        assert_eq!(source.conn, Some(ConnId::new(1)));
     }
 }

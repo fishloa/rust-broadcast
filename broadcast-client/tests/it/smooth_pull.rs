@@ -1,6 +1,7 @@
 use crate::support::hls_host::{self, Host};
 use broadcast_client::{Config, ErrorKind, Event, Session, SourceKind, Status};
 use broadcast_common::stage::Timestamp;
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -84,13 +85,13 @@ fn smooth_manifest_url_is_selected_case_insensitively() {
     ] {
         let mut c = Config::default();
         c.kind = SourceKind::Auto;
-        let s = Session::open(url, c, ts(0)).unwrap();
+        let s = Session::open(Url::parse(url).unwrap(), c, ts(0)).unwrap();
         let _ = s;
     }
     // ensure smooth source selected: first request path equals url
     let mut c = Config::default();
     c.kind = SourceKind::Auto;
-    let mut s = Session::open("http://h/x/Manifest", c, ts(0)).unwrap();
+    let mut s = Session::open(Url::parse("http://h/x/Manifest").unwrap(), c, ts(0)).unwrap();
     assert!(matches!(
         s.select_variant(0),
         Err(broadcast_client::Error::NoSuchVariant(_))
@@ -101,7 +102,12 @@ fn smooth_manifest_url_is_selected_case_insensitively() {
 fn smooth_manifest_format_query_is_not_smooth() {
     let mut c = Config::default();
     c.kind = SourceKind::Auto;
-    let mut s = Session::open("http://h/x/Manifest?format=mpd-time-csf", c, ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/x/Manifest?format=mpd-time-csf").unwrap(),
+        c,
+        ts(0),
+    )
+    .unwrap();
     assert!(matches!(
         s.select_variant(0),
         Err(broadcast_client::Error::NotHls)
@@ -502,7 +508,12 @@ fn smooth_manifest_redirect_and_basic_auth_are_followed() {
         "http://origin.test/moved/QualityLevels(64528)/Fragments(video=0)",
         body("smooth/av/QualityLevels(64528)/Fragments(video=0)"),
     );
-    let mut session = Session::open("http://origin.test/Manifest", cfg, ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://origin.test/Manifest").unwrap(),
+        cfg,
+        ts(0),
+    )
+    .unwrap();
     session.set_credentials(Credentials::new("u", "p")).unwrap();
     // drive manually using host? Host owns session, but we created session separately. Use host instead.
     let mut h2 = Host::new("http://origin.test/Manifest", smooth_config());

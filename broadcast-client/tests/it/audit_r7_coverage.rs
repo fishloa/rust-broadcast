@@ -3,13 +3,14 @@
 //! holds, (e) a 40-stream PMT with a declared audio stream that never sends.
 
 use crate::support;
+use url::Url;
 
 use std::collections::VecDeque;
 
 use broadcast_client::events::{
     DEFAULT_START_PENDING_TRACK_HARD_CAP_US, DEFAULT_START_PENDING_TRACK_WAIT_US,
 };
-use broadcast_client::{Action, BufferEvent, Config, ErrorKind, Event, Session};
+use broadcast_client::{Action, BufferEvent, Config, ConnId, ErrorKind, Event, Session};
 use broadcast_common::cenc::CencScheme;
 use broadcast_common::stage::Timestamp;
 use support::fmp4_split::{group, split};
@@ -364,7 +365,12 @@ impl HeldRun {
 
 fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun {
     let n = segs.len();
-    let mut s = Session::open("http://h/p/index.m3u8", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/p/index.m3u8").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut out = HeldRun::default();
     let mut now = 0u64;
     let mut position: Option<(u64, u64)> = None;
@@ -387,11 +393,11 @@ fn run_ts_hls(segs: &[Vec<u8>], disc_at: Option<usize>, starve: bool) -> HeldRun
         if visible == n {
             pl.push_str("#EXT-X-ENDLIST\n");
         }
-        let mut pending: VecDeque<(u32, String)> = VecDeque::new();
+        let mut pending: VecDeque<(ConnId, String)> = VecDeque::new();
         loop {
             while let Some(a) = s.poll(ts(now)) {
                 if let Action::HttpRequest { conn, url, .. } = a {
-                    pending.push_back((conn, url));
+                    pending.push_back((conn, url.to_string()));
                 }
             }
             let Some((c, u)) = pending.pop_front() else {

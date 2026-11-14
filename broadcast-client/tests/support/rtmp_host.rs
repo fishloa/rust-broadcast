@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
+use url::Url;
 
-use broadcast_client::{Action, Config, Event, Session, SourceKind, TransportError};
+use broadcast_client::{Action, Config, ConnId, Event, Session, SourceKind, TransportError};
 use broadcast_common::Unpackage;
 use broadcast_common::stage::Timestamp;
 use transmux::{FlvDemux, Media};
@@ -70,10 +71,10 @@ pub struct RtmpHost {
     pub now: u64,
     pub events: Vec<Event>,
     pub connects: Vec<Connect>,
-    pub closes: Vec<u32>,
+    pub closes: Vec<ConnId>,
     pub wakes: BTreeSet<u64>,
     pub peer: Option<PlayPeer>,
-    pub conn: Option<u32>,
+    pub conn: Option<ConnId>,
     pub peer_config: PeerConfig,
     pub sends: usize,
     pub fail_next_connect: bool,
@@ -83,7 +84,7 @@ pub struct RtmpHost {
 
 impl RtmpHost {
     pub fn new(url: &str, config: Config, peer_config: PeerConfig) -> Self {
-        let session = Session::open(url, config, ts(0)).expect("open");
+        let session = Session::open(Url::parse(url).unwrap(), config, ts(0)).expect("open");
         Self {
             session,
             now: 0,

@@ -3,6 +3,7 @@
 //!
 //! Everything here is a pure function of the datagrams and the caller's `now_us`.
 
+use crate::ConnId;
 use alloc::collections::BTreeMap;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -336,7 +337,7 @@ impl Datagram {
         })
     }
 
-    pub(crate) fn bind_action(&mut self, conn: u32) -> Action {
+    pub(crate) fn bind_action(&mut self, conn: ConnId) -> Action {
         match &mut self.kind {
             Kind::Udp(i) => i.reset(),
             Kind::Sdp(s) => s.reset(),

@@ -1,10 +1,11 @@
 #![no_main]
 
+use url::Url;
 use std::collections::BTreeMap;
 
 use broadcast_common::stage::Timestamp;
 use broadcast_client::{
-    Action, Config, Credentials, DashClockPolicy, Event, Session, Status, TransportError,
+    Action, Config, ConnId, Credentials, DashClockPolicy, Event, Session, Status, TransportError,
 };
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
@@ -58,7 +59,7 @@ struct Request {
 
 #[derive(Default)]
 struct Watch {
-    live: BTreeMap<u32, Request>,
+    live: BTreeMap<ConnId, Request>,
     fatal: bool,
     ended: bool,
     closed: bool,
@@ -82,17 +83,17 @@ impl Watch {
                 } => {
                     assert!(!self.closed, "HttpRequest after close");
                     assert!(!self.fatal, "HttpRequest after a fatal error");
-                    if !url.starts_with(ORIGIN_PREFIX) {
+                    if !url.as_str().starts_with(ORIGIN_PREFIX) {
                         for (name, _) in &headers {
                             assert!(
-                                !AUDIT_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)),
+                                !AUDIT_HEADERS.iter().any(|h| name.as_str().eq_ignore_ascii_case(h)),
                                 "{name} sent to {url}"
                             );
                         }
                     }
                     let request = Request {
-                        method,
-                        url,
+                        method: method.as_str().to_string(),
+                        url: url.to_string(),
                         byte_range,
                         sent: now,
                     };
@@ -158,7 +159,7 @@ impl Watch {
 
 fn deliver(
     session: &mut Session,
-    conn: u32,
+    conn: ConnId,
     now: u64,
     status: u16,
     headers: &[(String, String)],
@@ -183,7 +184,7 @@ fn header(name: &str, value: &str) -> (String, String) {
 
 fn answer(
     session: &mut Session,
-    conn: u32,
+    conn: ConnId,
     req: &Request,
     now: u64,
     mode: u8,
@@ -328,7 +329,7 @@ fuzz_target!(|data: &[u8]| {
         .and_then(|m| m.publish_time_us)
         .unwrap_or(DEFAULT_PUBLISH_US);
 
-    let Ok(mut session) = Session::open(MPD_URL, config, Timestamp::from_micros(0)) else {
+    let Ok(mut session) = Session::open(Url::parse(MPD_URL).unwrap(), config, Timestamp::from_micros(0)) else {
         return;
     };
     if head[7] & 1 != 0 {
@@ -395,7 +396,7 @@ fuzz_target!(|data: &[u8]| {
         if watch.live.is_empty() {
             continue;
         }
-        let conns: Vec<u32> = watch.live.keys().copied().collect();
+        let conns: Vec<ConnId> = watch.live.keys().copied().collect();
         let conn = conns[usize::from(aux) % conns.len()];
         let Some(req) = watch.live.remove(&conn) else {
             continue;

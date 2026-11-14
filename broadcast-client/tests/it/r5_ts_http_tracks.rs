@@ -1,6 +1,7 @@
-use broadcast_client::{Action, Config, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Event, Session};
 use broadcast_common::stage::Timestamp;
 use transmux::{DemuxEvent, StreamingTsDemux, TrackId};
+use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -16,7 +17,12 @@ struct Run {
 }
 
 fn live_run(bytes: &[u8]) -> Run {
-    let mut s = Session::open("http://h/live.ts", Config::default(), ts(0)).unwrap();
+    let mut s = Session::open(
+        Url::parse("http://h/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let mut now = 0u64;
     let mut conn = None;
     while let Some(a) = s.poll(ts(now)) {
@@ -158,8 +164,13 @@ fn without_pid(bytes: &[u8], pid: u16) -> Vec<u8> {
         .collect()
 }
 
-fn open_live(now: u64) -> (Session, u32) {
-    let mut s = Session::open("http://h/live.ts", Config::default(), ts(now)).unwrap();
+fn open_live(now: u64) -> (Session, ConnId) {
+    let mut s = Session::open(
+        Url::parse("http://h/live.ts").unwrap(),
+        Config::default(),
+        ts(now),
+    )
+    .unwrap();
     let mut conn = None;
     while let Some(a) = s.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {

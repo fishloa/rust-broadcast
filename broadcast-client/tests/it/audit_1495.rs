@@ -1,8 +1,9 @@
 use crate::support;
+use url::Url;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -68,7 +69,7 @@ fn run_vod(
 ) -> Stats {
     let mut stats = Stats::default();
     let mut now = 0u64;
-    let mut outstanding: VecDeque<(u32, String)> = VecDeque::new();
+    let mut outstanding: VecDeque<(ConnId, String)> = VecDeque::new();
     let mut wakes: BTreeSet<u64> = BTreeSet::new();
     let mut hits: HashMap<String, usize> = HashMap::new();
     let body = null_packet();
@@ -76,8 +77,8 @@ fn run_vod(
         while let Some(action) = session.poll(ts(now)) {
             match action {
                 Action::HttpRequest { conn, url, .. } => {
-                    stats.requested.push(url.clone());
-                    outstanding.push_back((conn, url));
+                    stats.requested.push(url.to_string());
+                    outstanding.push_back((conn, url.to_string()));
                 }
                 Action::Close { conn } => outstanding.retain(|(c, _)| *c != conn),
                 Action::WakeAt(t) if t.as_micros() > now => {
@@ -132,7 +133,7 @@ fn run_vod(
 }
 
 fn vod_session(config: Config) -> Session {
-    Session::open(VOD_PLAYLIST_URL, config, ts(0)).expect("open")
+    Session::open(Url::parse(VOD_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open")
 }
 
 #[test]
@@ -402,7 +403,12 @@ fn finite_ts_reconnect_after_ended_still_restarts() {
     let (status, base_headers) = tf1_headers!();
     let mut headers = base_headers;
     headers.push(("Content-Length".to_string(), bytes.len().to_string()));
-    let mut session = Session::open("http://example/live.ts", Config::default(), ts(0)).unwrap();
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
     let conn = match session.poll(ts(0)).unwrap() {
         Action::HttpRequest { conn, .. } => conn,
         other => panic!("{other:?}"),
