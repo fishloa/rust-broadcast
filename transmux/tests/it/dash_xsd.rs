@@ -1,5 +1,6 @@
 #![cfg(feature = "std")]
 
+use broadcast_common::timescale::Timescale;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,7 +39,7 @@ fn four_audio_media() -> Media {
     for (i, t) in tracks.iter_mut().enumerate() {
         t.spec.track_id = TrackId::new((i + 1) as u32);
     }
-    Media::new(tracks, 90_000)
+    Media::new(tracks, Timescale::from_nonzero(90_000))
 }
 
 fn timeline_segments(media: &Media) -> Vec<TrackSegments> {
@@ -114,7 +115,7 @@ fn dash_mpds_validate_against_iso_schema() {
                         bandwidth: 150_000,
                         width: Some(320),
                         height: Some(180),
-                        timescale: 90000,
+                        timescale: Timescale::from_nonzero(90000),
                         total_duration: 900000,
                     },
                 }),
@@ -202,7 +203,7 @@ fn trick_mode_supplemental_property_references_existing_set() {
                 bandwidth: 150_000,
                 width: Some(320),
                 height: Some(180),
-                timescale: 90000,
+                timescale: Timescale::from_nonzero(90000),
                 total_duration: 900000,
             },
         }),
@@ -265,7 +266,7 @@ fn trick_mode_distinct_values() {
                 bandwidth: 150_000,
                 width: Some(320),
                 height: Some(180),
-                timescale: 90000,
+                timescale: Timescale::from_nonzero(90000),
                 total_duration: 900000,
             },
         }),
@@ -326,7 +327,7 @@ fn trick_mode_dangling_reference_errors() {
                 bandwidth: 150_000,
                 width: Some(320),
                 height: Some(180),
-                timescale: 90000,
+                timescale: Timescale::from_nonzero(90000),
                 total_duration: 900000,
             },
         }),

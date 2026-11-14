@@ -76,6 +76,7 @@
 
 use crate::TrackId;
 use broadcast_common::len::need_in;
+use broadcast_common::timescale::Timescale;
 use core::fmt;
 
 use alloc::collections::BTreeMap;
@@ -758,7 +759,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
     let moov = find_top_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
-    let movie_timescale = mvhd_timescale(moov).unwrap_or(1000);
+    let movie_timescale = mvhd_timescale(moov)?;
     let fragmented = find_top_box(file, b"moof").is_some();
 
     let mut tracks = Vec::new();
@@ -767,10 +768,10 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
         let Some(stbl) = descend_boxes(trak, &[b"mdia", b"minf", b"stbl"]) else {
             continue;
         };
-        let timescale = descend_boxes(trak, &[b"mdia"])
+        let mdhd = descend_boxes(trak, &[b"mdia"])
             .and_then(|mdia| find_child_box(mdia, b"mdhd"))
-            .and_then(mdhd_timescale)
-            .unwrap_or(movie_timescale);
+            .ok_or(Error::UnexpectedBox { expected: "mdhd" })?;
+        let timescale = mdhd_timescale(mdhd)?;
 
         // Only protected video (encv → original avc1) is reconstructed here.
         let Some(stsd) = find_child_box(stbl, b"stsd") else {
@@ -833,9 +834,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
                     // behaviour); `None` is the honest representation now
                     // that a fabricated placeholder timestamp is no longer
                     // required to populate the struct.
-                    dts: None,
-                    pts: None,
-                    duration: None,
+                    timing: crate::ir::SampleTiming::from_options(None, None, None),
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
@@ -978,9 +977,7 @@ fn absorb_protected_fragment(
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
         out.push(Sample {
             data: file.slice(r.start..r.end),
-            dts: Some(dts),
-            pts: Some(pts),
-            duration: Some(r.duration),
+            timing: crate::ir::SampleTiming::from_options(Some(dts), Some(pts), Some(r.duration)),
             flags: crate::ir::SampleFlags::new(is_sync),
             provenance: None,
             display: None,
@@ -1034,9 +1031,20 @@ fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
 }
 
 /// Read `mvhd.timescale` (handles version 0 and 1 layouts).
-fn mvhd_timescale(moov: &[u8]) -> Option<u32> {
-    let mvhd = find_child_box(moov, b"mvhd")?;
-    let version = mvhd.get(BOX_HEADER_MIN_SIZE)?;
+fn mvhd_timescale(moov: &[u8]) -> Result<Timescale> {
+    let mvhd = find_child_box(moov, b"mvhd").ok_or(Error::UnexpectedBox { expected: "mvhd" })?;
+    header_timescale(mvhd, "mvhd")
+}
+
+/// Read `mdhd.timescale` (handles version 0 and 1 layouts).
+fn mdhd_timescale(mdhd: &[u8]) -> Result<Timescale> {
+    header_timescale(mdhd, "mdhd")
+}
+
+/// A zero timescale is an `InvalidValue` error, never a fallback.
+fn header_timescale(header: &[u8], expected: &'static str) -> Result<Timescale> {
+    let truncated = || Error::UnexpectedBox { expected };
+    let version = header.get(BOX_HEADER_MIN_SIZE).ok_or_else(truncated)?;
     // version 0: after FullBox(4): creation(4) modification(4) timescale(4)
     // version 1: after FullBox(4): creation(8) modification(8) timescale(4)
     let ts_off = if *version == 1 {
@@ -1044,28 +1052,10 @@ fn mvhd_timescale(moov: &[u8]) -> Option<u32> {
     } else {
         BOX_HEADER_MIN_SIZE + FULL_HDR + 8
     };
-    Some(u32::from_be_bytes([
-        *mvhd.get(ts_off)?,
-        *mvhd.get(ts_off + 1)?,
-        *mvhd.get(ts_off + 2)?,
-        *mvhd.get(ts_off + 3)?,
-    ]))
-}
-
-/// Read `mdhd.timescale` (handles version 0 and 1 layouts).
-fn mdhd_timescale(mdhd: &[u8]) -> Option<u32> {
-    let version = mdhd.get(BOX_HEADER_MIN_SIZE)?;
-    let ts_off = if *version == 1 {
-        BOX_HEADER_MIN_SIZE + FULL_HDR + 16
-    } else {
-        BOX_HEADER_MIN_SIZE + FULL_HDR + 8
-    };
-    Some(u32::from_be_bytes([
-        *mdhd.get(ts_off)?,
-        *mdhd.get(ts_off + 1)?,
-        *mdhd.get(ts_off + 2)?,
-        *mdhd.get(ts_off + 3)?,
-    ]))
+    let bytes = header.get(ts_off..ts_off + 4).ok_or_else(truncated)?;
+    Ok(Timescale::try_new(u32::from_be_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3],
+    ]))?)
 }
 
 /// Each sample's `(absolute_file_offset, size)` from a progressive `stbl`.
@@ -1286,9 +1276,7 @@ mod tests {
                 cenc_crypto::apply_ctr(iv, &KEY, &[], &mut buf).expect("encrypt");
                 Sample {
                     data: buf.into(),
-                    dts: None,
-                    pts: None,
-                    duration: None,
+                    timing: crate::ir::SampleTiming::from_options(None, None, None),
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
@@ -1297,10 +1285,14 @@ mod tests {
             .collect();
         Media::new(
             alloc::vec![Track::new(
-                TrackSpec::new(track_id, 90_000, test_codec_config()),
+                TrackSpec::new(
+                    track_id,
+                    Timescale::from_nonzero(90_000),
+                    test_codec_config()
+                ),
                 samples,
             )],
-            90_000,
+            Timescale::from_nonzero(90_000),
         )
     }
 
@@ -1349,7 +1341,7 @@ mod tests {
         let audio = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         Media::new(
             alloc::vec![video.tracks[0].clone(), audio.tracks[0].clone()],
-            90_000,
+            Timescale::from_nonzero(90_000),
         )
     }
 

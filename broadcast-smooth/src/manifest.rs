@@ -54,6 +54,7 @@ use alloc::vec::Vec;
 use core::fmt;
 use core::str::FromStr;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::xml::{Elem, Namespace, XmlError, read_tree};
 use broadcast_common::xml_chars::{
     LimitExceeded, NO_ATTRS, XmlLimit, XmlLimits, XmlWriter, close_element as close,
@@ -304,7 +305,11 @@ pub const MAX_CODEC_PRIVATE_DATA_HEX_LEN: usize = 65_536;
 
 /// The Smooth default manifest time scale — 10 MHz (100 ns ticks),
 /// `SmoothStreamingMedia@TimeScale` (§2.2.2.1).
-pub const SMOOTH_TIMESCALE: u64 = 10_000_000;
+pub const SMOOTH_TIMESCALE: u64 = SMOOTH_DEFAULT_TIMESCALE.as_u64();
+
+/// The Smooth default manifest time scale as a [`Timescale`]: the value an
+/// absent `SmoothStreamingMedia@TimeScale` resolves to.
+pub const SMOOTH_DEFAULT_TIMESCALE: Timescale = Timescale::from_nonzero(10_000_000);
 
 /// `SmoothStreamingMedia@MajorVersion` a constructed manifest carries (2).
 pub const DEFAULT_MAJOR_VERSION: u32 = 2;
@@ -398,7 +403,7 @@ pub struct SmoothManifest {
     /// `SmoothStreamingMedia@MinorVersion` (default 0).
     pub minor_version: u32,
     /// `SmoothStreamingMedia@TimeScale` (default [`SMOOTH_TIMESCALE`]).
-    pub timescale: u64,
+    pub timescale: Timescale,
     /// `SmoothStreamingMedia@Duration`, in `timescale` ticks.
     pub duration: Option<u64>,
     /// `SmoothStreamingMedia@IsLive` (default `false`).
@@ -439,7 +444,7 @@ pub struct StreamIndex {
     pub chunks: Option<u32>,
     /// `StreamIndex@TimeScale`, overriding the manifest-level `TimeScale` for
     /// this stream, when present.
-    pub timescale: Option<u64>,
+    pub timescale: Option<Timescale>,
     /// `StreamIndex@QualityLevels` — the advertised quality-level count.
     pub quality_levels: Option<u32>,
     /// `StreamIndex@Url` — the fragment-URL template (e.g.
@@ -661,7 +666,7 @@ impl Default for SmoothManifest {
         Self {
             major_version: DEFAULT_MAJOR_VERSION,
             minor_version: DEFAULT_MINOR_VERSION,
-            timescale: SMOOTH_TIMESCALE,
+            timescale: SMOOTH_DEFAULT_TIMESCALE,
             duration: None,
             is_live: false,
             look_ahead_fragment_count: None,
@@ -721,7 +726,7 @@ impl StreamIndex {
 
     /// Set `StreamIndex@TimeScale`, overriding the manifest-level one.
     #[must_use]
-    pub fn with_timescale(mut self, timescale: u64) -> Self {
+    pub fn with_timescale(mut self, timescale: Timescale) -> Self {
         self.timescale = Some(timescale);
         self
     }
@@ -865,7 +870,7 @@ impl SmoothManifest {
 
         let major_version: u32 = parse_attr(&root, "MajorVersion", EL)?.unwrap_or(2);
         let minor_version: u32 = parse_attr(&root, "MinorVersion", EL)?.unwrap_or(0);
-        let timescale: u64 = parse_attr(&root, "TimeScale", EL)?.unwrap_or(SMOOTH_TIMESCALE);
+        let timescale = parse_timescale(&root, EL)?.unwrap_or(SMOOTH_DEFAULT_TIMESCALE);
         let duration: Option<u64> = parse_attr(&root, "Duration", EL)?;
         let is_live = root
             .attr(ATTR_IS_LIVE)
@@ -935,6 +940,24 @@ fn parse_attr<T: FromStr>(
     }
 }
 
+/// `TimeScale`: absent is `Ok(None)`; a present value that is zero, wider than
+/// 32 bits or not a number is [`SmoothParseError::InvalidAttributeValue`].
+fn parse_timescale(element: &Elem<Ns>, name: &'static str) -> Result<Option<Timescale>> {
+    let Some(raw) = attr(element, ATTR_TIMESCALE) else {
+        return Ok(None);
+    };
+    raw.trim()
+        .parse::<u32>()
+        .ok()
+        .and_then(Timescale::new)
+        .map(Some)
+        .ok_or_else(|| SmoothParseError::InvalidAttributeValue {
+            element: name,
+            attr: ATTR_TIMESCALE,
+            value: raw.to_string(),
+        })
+}
+
 fn required_attr_parse<T: FromStr>(
     element: &Elem<Ns>,
     key: &'static str,
@@ -988,7 +1011,7 @@ fn parse_stream_index(element: &Elem<Ns>) -> Result<StreamIndex> {
     let subtype = attr(element, "Subtype").map(String::from);
     let chunks: Option<u32> = parse_attr(element, "Chunks", EL)?;
     let quality_levels: Option<u32> = parse_attr(element, "QualityLevels", EL)?;
-    let timescale: Option<u64> = parse_attr(element, "TimeScale", EL)?;
+    let timescale = parse_timescale(element, EL)?;
     let url = required_attr_owned(element, "Url", EL)?;
 
     let mut qualities = Vec::new();
@@ -1095,7 +1118,7 @@ impl SmoothManifest {
         if let Some(duration) = self.duration {
             attrs.push((ATTR_DURATION, duration.to_string()));
         }
-        attrs.push((ATTR_TIMESCALE, self.timescale.to_string()));
+        attrs.push((ATTR_TIMESCALE, self.timescale.get().to_string()));
         if self.is_live {
             attrs.push((ATTR_IS_LIVE, IS_LIVE_TRUE.to_string()));
         }
@@ -1125,7 +1148,7 @@ impl StreamIndex {
             attrs.push((ATTR_QUALITY_LEVELS, count.to_string()));
         }
         if let Some(timescale) = self.timescale {
-            attrs.push((ATTR_TIMESCALE, timescale.to_string()));
+            attrs.push((ATTR_TIMESCALE, timescale.get().to_string()));
         }
         attrs.push((ATTR_URL, self.url.clone()));
         attrs
@@ -1262,7 +1285,7 @@ mod tests {
         let m = SmoothManifest::parse(SMALL_MANIFEST).expect("parse");
         assert_eq!(m.major_version, 2);
         assert_eq!(m.minor_version, 0);
-        assert_eq!(m.timescale, 10_000_000);
+        assert_eq!(m.timescale, Timescale::from_nonzero(10_000_000));
         assert_eq!(m.duration, Some(30_000_000));
         assert!(!m.is_live);
         assert_eq!(m.look_ahead_fragment_count, None);
@@ -1624,6 +1647,39 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn absent_time_scale_resolves_to_the_smooth_default() {
+        let m = SmoothManifest::parse(
+            "<SmoothStreamingMedia><StreamIndex Type=\"video\" Url=\"u\"/></SmoothStreamingMedia>",
+        )
+        .expect("parse");
+        assert_eq!(m.timescale, SMOOTH_DEFAULT_TIMESCALE);
+        assert_eq!(m.timescale.get(), 10_000_000);
+        assert_eq!(m.streams[0].timescale, None);
+    }
+
+    #[test]
+    fn present_zero_time_scale_is_a_typed_error() {
+        let root = "<SmoothStreamingMedia TimeScale=\"0\"/>";
+        assert_eq!(
+            SmoothManifest::parse(root),
+            Err(SmoothParseError::InvalidAttributeValue {
+                element: "SmoothStreamingMedia",
+                attr: "TimeScale",
+                value: "0".to_string(),
+            })
+        );
+        let stream = "<SmoothStreamingMedia><StreamIndex Type=\"video\" Url=\"u\" TimeScale=\"0\"/></SmoothStreamingMedia>";
+        assert_eq!(
+            SmoothManifest::parse(stream),
+            Err(SmoothParseError::InvalidAttributeValue {
+                element: "StreamIndex",
+                attr: "TimeScale",
+                value: "0".to_string(),
+            })
+        );
     }
 
     #[test]

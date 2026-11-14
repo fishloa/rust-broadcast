@@ -61,9 +61,9 @@ impl Recorded {
                 track_id,
                 retention,
                 sample.data.len(),
-                sample.dts,
-                sample.pts,
-                sample.duration,
+                sample.timing.map(|t| t.dts),
+                sample.timing.map(|t| t.pts),
+                sample.timing.map(|t| t.duration),
                 sample.flags.is_sync,
             ),
             other => format!("{other:?}"),
@@ -81,7 +81,7 @@ pub fn render_track(t: &TrackSpec) -> String {
             format!(
                 "{{track={} timescale={} codec={} {}x{}}}",
                 t.track_id,
-                t.timescale,
+                t.timescale.get(),
                 t.config.name(),
                 width,
                 height
@@ -94,7 +94,7 @@ pub fn render_track(t: &TrackSpec) -> String {
         } => format!(
             "{{track={} timescale={} codec={} {}ch {}Hz}}",
             t.track_id,
-            t.timescale,
+            t.timescale.get(),
             t.config.name(),
             channel_count,
             sample_rate
@@ -102,7 +102,7 @@ pub fn render_track(t: &TrackSpec) -> String {
         other => format!(
             "{{track={} timescale={} codec={}}}",
             t.track_id,
-            t.timescale,
+            t.timescale.get(),
             other.name()
         ),
     }

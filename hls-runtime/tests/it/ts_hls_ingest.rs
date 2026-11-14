@@ -293,7 +293,11 @@ fn avc_track_dts(media: &transmux::Media) -> (u32, Vec<i64>) {
         track
             .samples
             .iter()
-            .map(|s| s.dts.expect("TS video sample carries a DTS"))
+            .map(|s| {
+                s.timing
+                    .map(|t| t.dts)
+                    .expect("TS video sample carries a DTS")
+            })
             .collect(),
     )
 }
@@ -313,7 +317,13 @@ fn timing_of(media: &transmux::Media, pick: impl Fn(&CodecConfig) -> bool) -> (u
         track
             .samples
             .iter()
-            .map(|s| (s.dts, s.pts, s.duration))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.dts),
+                    s.timing.map(|t| t.pts),
+                    s.timing.map(|t| t.duration),
+                )
+            })
             .collect(),
     )
 }
@@ -413,7 +423,13 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
                 _ => None,
             })
             .flatten()
-            .map(|s| (s.dts, s.pts, s.duration))
+            .map(|s| {
+                (
+                    s.timing.map(|t| t.dts),
+                    s.timing.map(|t| t.pts),
+                    s.timing.map(|t| t.duration),
+                )
+            })
             .collect()
     };
 

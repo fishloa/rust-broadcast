@@ -6,6 +6,7 @@
 //! crate's own [`Fmp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
+use broadcast_common::timescale::Timescale;
 use std::path::PathBuf;
 use transmux::TrackId;
 
@@ -163,7 +164,8 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     let ir = oracle_ir();
     let (total, ts) = anchor_total(&ir);
     assert_eq!(
-        ts, ir.movie_timescale,
+        ts,
+        ir.movie_timescale.get(),
         "video anchor drives movie timescale"
     );
 
@@ -180,7 +182,7 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     let mut dts: i64 = 0;
     for s in &vid.samples {
         pts.push(dts + s.composition_offset() as i64);
-        dts += s.duration.unwrap_or(0) as i64;
+        dts += s.timing.map(|t| t.duration).unwrap_or(0) as i64;
     }
     let first_in = pts
         .iter()
@@ -349,7 +351,7 @@ fn minimal_hevc_config() -> HEVCConfigurationBox {
 fn hevc_video_track(track_id: u32) -> TrackSpec {
     TrackSpec::new(
         TrackId::new(track_id),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Hevc {
             config: minimal_hevc_config(),
             width: 320,
@@ -380,7 +382,7 @@ fn aac_audio_track(track_id: u32) -> TrackSpec {
     ));
     TrackSpec::new(
         TrackId::new(track_id),
-        48_000,
+        Timescale::from_nonzero(48_000),
         CodecConfig::Aac {
             esds,
             channel_count: 2,
@@ -403,8 +405,8 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
     let audio = Track::new(
         aac_audio_track(1),
         vec![
-            Sample::new(vec![0xAAu8; 8], None, None, Some(1024), true),
-            Sample::new(vec![0xABu8; 8], None, None, Some(1024), true),
+            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true),
+            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true),
         ],
     );
     // Deliberately different sample count / duration per sample from audio,
@@ -412,12 +414,12 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
     let video = Track::new(
         hevc_video_track(2),
         vec![
-            Sample::new(vec![0x01u8; 8], None, None, Some(3000), true),
-            Sample::new(vec![0x02u8; 8], None, None, Some(3000), false),
-            Sample::new(vec![0x03u8; 8], None, None, Some(3000), false),
+            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true),
+            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false),
+            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
         ],
     );
-    let media = Media::new(vec![audio, video], 90_000);
+    let media = Media::new(vec![audio, video], Timescale::from_nonzero(90_000));
 
     let (anchor_ticks, anchor_ts) = media
         .anchor_duration()
@@ -441,9 +443,9 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let audio = Track::new(
         aac_audio_track(1),
         vec![
-            Sample::new(vec![0xAAu8; 8], None, None, Some(1024), true),
-            Sample::new(vec![0xABu8; 8], None, None, Some(1024), true),
-            Sample::new(vec![0xACu8; 8], None, None, Some(1024), true),
+            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true),
+            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true),
+            Sample::new(vec![0xACu8; 8], Some(2048), Some(2048), Some(1024), true),
         ],
     );
     // IDR, then two non-sync samples: a window starting mid-GOP must snap
@@ -451,12 +453,12 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let video = Track::new(
         hevc_video_track(2),
         vec![
-            Sample::new(vec![0x01u8; 8], None, None, Some(3000), true),
-            Sample::new(vec![0x02u8; 8], None, None, Some(3000), false),
-            Sample::new(vec![0x03u8; 8], None, None, Some(3000), false),
+            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true),
+            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false),
+            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
         ],
     );
-    let media = Media::new(vec![audio, video], 90_000);
+    let media = Media::new(vec![audio, video], Timescale::from_nonzero(90_000));
 
     // Window starting at video's 2nd sample (pts 3000..6000) — mid-GOP.
     let trimmed = media.trim(3000, 9000).expect("window selects samples");
@@ -532,7 +534,7 @@ fn trim_window_follows_real_dts_not_duration_sum() {
             ),
         ],
     );
-    let media = Media::new(vec![video], 90_000);
+    let media = Media::new(vec![video], Timescale::from_nonzero(90_000));
 
     let trimmed = media.trim(9000, 12000).expect("window selects samples");
     let video_out = &trimmed.tracks[0];
@@ -560,7 +562,11 @@ fn trim_window_follows_real_dts_not_duration_sum() {
 /// timescales come from untrusted `mdhd` boxes. The old interleave folded every
 /// track onto that LCM (`a / gcd * b`), which panics in debug and wraps in
 /// release; comparing cross-multiplied in `u128` is exact for any pair.
-const BIG_TIMESCALES: [u32; 3] = [4_294_967_291, 4_294_967_279, 4_294_967_231];
+const BIG_TIMESCALES: [Timescale; 3] = [
+    Timescale::from_nonzero(4_294_967_291),
+    Timescale::from_nonzero(4_294_967_279),
+    Timescale::from_nonzero(4_294_967_231),
+];
 
 /// Every `track_id` a `trun` sample belongs to, in output order — the interleave
 /// read back from the muxed bytes.
@@ -592,15 +598,21 @@ fn sample_track_order(segments: &[Vec<u8>]) -> Vec<TrackId> {
 /// Build one track of `count` 1-second samples at `timescale`.
 fn one_second_track(
     track_id: u32,
-    timescale: u32,
+    timescale: Timescale,
     config: CodecConfig,
     tag: u8,
     count: u32,
 ) -> Track {
     let samples = (0..count)
         .map(|i| {
-            let dts = i as i64 * timescale as i64;
-            Sample::new(vec![tag; 8], Some(dts), Some(dts), Some(timescale), true)
+            let dts = i as i64 * timescale.get() as i64;
+            Sample::new(
+                vec![tag; 8],
+                Some(dts),
+                Some(dts),
+                Some(timescale.get()),
+                true,
+            )
         })
         .collect();
     Track::new(
@@ -625,7 +637,7 @@ fn resegment_interleaves_huge_coprime_timescales() {
             one_second_track(2, BIG_TIMESCALES[1], audio_cfg.clone(), 0xA0, 2),
             one_second_track(3, BIG_TIMESCALES[2], audio_cfg, 0xB0, 2),
         ],
-        1000,
+        Timescale::from_nonzero(1000),
     );
 
     let out = Repackage::new(2.0)

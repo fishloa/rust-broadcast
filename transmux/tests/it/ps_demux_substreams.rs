@@ -114,7 +114,8 @@ fn private_stream_1_substreams_are_demultiplexed() {
             "substream #{n} must yield the ffprobe oracle's 58 AC-3 syncframes",
         );
         assert_eq!(
-            track.spec.timescale, 44100,
+            track.spec.timescale.get(),
+            44100,
             "AC-3 fscod=1 is 44100 Hz (ETSI TS 102 366 Table 4.5); \
              a merged track reported the wrong rate"
         );
@@ -203,7 +204,7 @@ fn ac3_frames_are_split_by_declared_length() {
                 "sample {n} must begin at an AC-3 syncword"
             );
             assert_eq!(
-                sample.duration,
+                sample.timing.map(|t| t.duration),
                 Some(1536),
                 "each syncframe is 1536 samples (ETSI TS 102 366 §4.1)"
             );

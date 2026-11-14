@@ -73,7 +73,7 @@ fn read_mpd(xml: &str) -> Edge {
     };
     Edge {
         start_number: info.multi.start_number,
-        seg_secs: t.multi.duration.expect("@duration") as f64 / info.multi.timescale as f64,
+        seg_secs: t.multi.duration.expect("@duration") as f64 / info.multi.timescale.get() as f64,
         tsbd_secs: mpd
             .time_shift_buffer_depth
             .expect("timeShiftBufferDepth")
@@ -115,7 +115,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_SECS,
         PART_MS,
     )

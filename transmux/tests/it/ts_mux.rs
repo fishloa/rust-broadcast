@@ -13,6 +13,7 @@
 use crate::ts_psi::{
     first_section, parse_pat, parse_pmt, payload_offset, pid_of, pusi_of, split_lp,
 };
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Serialize, Unpackage};
 use mpeg_ts::ts::TsPacket;
 use test_fixtures::process::tool_available;
@@ -169,7 +170,8 @@ fn timing_preserved_for_video() {
     // Per-sample DTS delta (== duration) and composition offset (PTS − DTS).
     for (i, (a, b)) in v0.samples.iter().zip(&v2.samples).enumerate() {
         assert_eq!(
-            b.duration, a.duration,
+            b.timing.map(|t| t.duration),
+            a.timing.map(|t| t.duration),
             "video sample {i}: DTS delta (duration) must be preserved"
         );
         assert_eq!(
@@ -419,7 +421,7 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
     // PES, so the sample length is exactly the PES payload length.
     let spec = TrackSpec::new(
         TrackId::new(1),
-        48_000,
+        Timescale::from_nonzero(48_000),
         CodecConfig::Data {
             stream_type: 0x06,
             descriptors: Vec::new(),
@@ -428,7 +430,7 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
     );
     let sample = Sample::new(vec![0u8; 70_000], Some(0), Some(0), Some(1536), true);
     let track = transmux::media::Track::new(spec, vec![sample]);
-    let media = Media::new(vec![track], 48_000);
+    let media = Media::new(vec![track], Timescale::from_nonzero(48_000));
 
     let err = TsMux::new().package(&media).unwrap_err();
     match err {
@@ -462,14 +464,22 @@ fn ac3_media(spacing_ticks: i64) -> Media {
     let ts = std::fs::read(test_fixtures::path("ts/dolby/ac3.ts")).expect("ac3 fixture must exist");
     let mut ir = TsDemux::new().unpackage(&ts).expect("demux AC-3 fixture");
     let t = ir.tracks.get_mut(0).expect("one AC-3 track");
-    let scale = t.spec.timescale.max(1) as i64;
+    let scale = t.spec.timescale.get() as i64;
     // 4 samples, `spacing_ticks` apart (the first at 0).
     t.samples.truncate(4);
     for (i, s) in t.samples.iter_mut().enumerate() {
         let dts = (i as i64) * spacing_ticks;
-        s.dts = Some(dts);
-        s.pts = Some(dts);
-        s.duration = Some(u32::try_from(scale).unwrap_or(u32::MAX));
+        if let Some(t) = s.timing.as_mut() {
+            t.dts = dts;
+            t.pts = dts;
+            t.duration = u32::try_from(scale).unwrap_or(u32::MAX);
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(
+                dts,
+                dts,
+                u32::try_from(scale).unwrap_or(u32::MAX),
+            ));
+        }
     }
     let _ = scale;
     ir
@@ -490,7 +500,7 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
         transmux::media::Track::new(
             TrackSpec::new(
                 TrackId::new(99),
-                90_000,
+                Timescale::from_nonzero(90_000),
                 CodecConfig::Data {
                     stream_type: 0x06,
                     descriptors: Vec::new(),
@@ -618,13 +628,16 @@ fn too_many_elementary_streams_is_refused() {
     };
 
     // 16 video is legal; 17 is not.
-    let ok = Media::new(clone_n(video, 16), 90_000);
+    let ok = Media::new(clone_n(video, 16), Timescale::from_nonzero(90_000));
     let ts = TsMux::new()
         .package(&ok)
         .expect("16 video streams must fit");
     assert_eq!(ts.len() % TS, 0);
     let err = TsMux::new()
-        .package(&Media::new(clone_n(video, 17), 90_000))
+        .package(&Media::new(
+            clone_n(video, 17),
+            Timescale::from_nonzero(90_000),
+        ))
         .unwrap_err();
     match err {
         transmux::Error::TooManyElementaryStreams { family, max } => {
@@ -635,12 +648,15 @@ fn too_many_elementary_streams_is_refused() {
     }
 
     // 32 audio is legal; 33 is not.
-    let ok = Media::new(clone_n(audio, 32), 48_000);
+    let ok = Media::new(clone_n(audio, 32), Timescale::from_nonzero(48_000));
     TsMux::new()
         .package(&ok)
         .expect("32 audio streams must fit");
     let err = TsMux::new()
-        .package(&Media::new(clone_n(audio, 33), 48_000))
+        .package(&Media::new(
+            clone_n(audio, 33),
+            Timescale::from_nonzero(48_000),
+        ))
         .unwrap_err();
     match err {
         transmux::Error::TooManyElementaryStreams { family, max } => {

@@ -14,6 +14,7 @@ use url::Url;
 
 use broadcast_common::backoff::{RetrySchedule, mix_seed};
 use broadcast_common::stage::Timestamp;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
 
 use super::action::{Action, FetchFailure, RequestId, StreamId};
@@ -52,18 +53,15 @@ fn codec_family(four_cc: &str) -> String {
     }
 }
 
-fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Option<u32> {
-    u32::try_from(index.timescale.unwrap_or(manifest.timescale))
-        .ok()
-        .filter(|&t| t != 0)
+fn timescale_of(manifest: &SmoothManifest, index: &StreamIndex) -> Timescale {
+    index.timescale.unwrap_or(manifest.timescale)
 }
 
 fn primary_video(manifest: &SmoothManifest) -> Option<&StreamIndex> {
-    manifest.streams.iter().find(|s| {
-        s.stream_type == StreamType::Video
-            && !s.qualities.is_empty()
-            && timescale_of(manifest, s).is_some()
-    })
+    manifest
+        .streams
+        .iter()
+        .find(|s| s.stream_type == StreamType::Video && !s.qualities.is_empty())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -467,9 +465,7 @@ impl SmoothClient {
             let Some(quality) = index.qualities.get(pick).cloned() else {
                 continue;
             };
-            let Some(timescale) = timescale_of(manifest, index) else {
-                continue;
-            };
+            let timescale = timescale_of(manifest, index);
             let chunks = match index.enumerate_chunks() {
                 Ok(chunks) => chunks,
                 Err(e) => {
@@ -497,17 +493,14 @@ impl SmoothClient {
             .qualities
             .iter()
             .map(|q| {
-                let codecs = timescale
-                    .and_then(|ts| {
-                        track_spec_from_quality_level(
-                            TrackId::new(FIRST_TRACK_ID),
-                            ts,
-                            index.stream_type,
-                            q,
-                        )
-                        .ok()
-                    })
-                    .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
+                let codecs = track_spec_from_quality_level(
+                    TrackId::new(FIRST_TRACK_ID),
+                    timescale,
+                    index.stream_type,
+                    q,
+                )
+                .ok()
+                .and_then(|spec| rfc6381_track_codec_string(&spec).ok());
                 QualityInfo {
                     bitrate: q.bitrate,
                     resolution: q.width.zip(q.height),
@@ -710,7 +703,7 @@ impl SmoothClient {
                 .map(|c| (c.1, s.timescale))
         });
         let half = last.map_or(micros(self.config.refresh_max), |(d, ts)| {
-            d.saturating_mul(MICROS_PER_SEC) / u64::from(ts).max(1) / REFRESH_DIVISOR
+            d.saturating_mul(MICROS_PER_SEC) / ts.as_u64() / REFRESH_DIVISOR
         });
         half.clamp(
             micros(self.config.refresh_min),

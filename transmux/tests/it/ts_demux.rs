@@ -159,7 +159,7 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
         "audio sample count must equal oracle"
     );
 
-    // Video: compare each sample's ACTUAL `s.dts`/`s.pts` (the field TsDemux
+    // Video: compare each sample's ACTUAL `s.timing.map(|t| t.dts)`/`s.timing.map(|t| t.pts)` (the field TsDemux
     // populates from the unwrapped PES clock — step 2c's headline absolute-dts
     // field) directly against the oracle's dts/pts, in the same 90 kHz PES
     // clock on both sides — zero tolerance, no reconstruction. Video's DTS is
@@ -167,27 +167,29 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     // edge and ffprobe's independent parse), so unlike audio (see below) there
     // is no rational rescale between two different clocks to introduce
     // rounding noise; an exact match is the correct bar. (Previously this
-    // compared `oracle[0].dts + sum(IR durations)` — built entirely from the
+    // compared `oracle[0].timing.map(|t| t.dts) + sum(IR durations)` — built entirely from the
     // IR's own duration field — against the oracle, so it never actually read
-    // `s.dts`/`s.pts` and could not catch a bug in either field, e.g. a
+    // `s.timing.map(|t| t.dts)`/`s.timing.map(|t| t.pts)` and could not catch a bug in either field, e.g. a
     // dts/pts field swap: video's own dts != pts here (B-frame reordering),
     // so a swap changes the value being compared and this now catches it.)
     for (i, s) in vid.samples.iter().enumerate() {
         let dts = s
-            .dts
+            .timing
+            .map(|t| t.dts)
             .unwrap_or_else(|| panic!("video sample {i} has no dts"));
         let pts = s
-            .pts
+            .timing
+            .map(|t| t.pts)
             .unwrap_or_else(|| panic!("video sample {i} has no pts"));
         assert_eq!(
             dts,
             video_oracle[i].dts(),
-            "video sample {i} DTS (actual s.dts) must match oracle"
+            "video sample {i} DTS (actual s.timing.map(|t| t.dts)) must match oracle"
         );
         assert_eq!(
             pts,
             video_oracle[i].pts(),
-            "video sample {i} PTS (actual s.pts) must match oracle"
+            "video sample {i} PTS (actual s.timing.map(|t| t.pts)) must match oracle"
         );
         assert_eq!(
             s.flags.is_sync,
@@ -196,14 +198,14 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
         );
     }
 
-    // Audio: all sync; PTS == DTS (no B-frames). `s.dts`/`s.pts` are absolute
+    // Audio: all sync; PTS == DTS (no B-frames). `s.timing.map(|t| t.dts)`/`s.timing.map(|t| t.pts)` are absolute
     // in the audio track's OWN media timescale (the AAC sample rate, e.g.
     // 44100 Hz — see `ir/sample.rs`), while the oracle's dts/pts are ffprobe's
     // own 90 kHz PES-clock reading of the same TS. Comparing the two
     // therefore needs a unit conversion — but it is a conversion of the
     // ACTUAL field, not a reconstruction from accumulated durations (which is
-    // what this used to do: walk `n_samples` built purely from `s.duration`
-    // and never touch `s.dts`/`s.pts` at all, so a bug that wrote the wrong
+    // what this used to do: walk `n_samples` built purely from `s.timing.map(|t| t.duration)`
+    // and never touch `s.timing.map(|t| t.dts)`/`s.timing.map(|t| t.pts)` at all, so a bug that wrote the wrong
     // value into either field — e.g. a dts/pts swap, or an anchor error —
     // would not have been caught here).
     //
@@ -213,23 +215,25 @@ fn timestamps_and_sync_flags_match_csv_oracle() {
     // (`transmux/src/ts_demux.rs`, `rescale_to_track`, `div_euclid`) — that
     // floor can discard up to just under 1 native tick, i.e. up to just under
     // `90000/44100` ≈ 2.04 90 kHz ticks. Converting each sample's native
-    // `s.dts` back to 90 kHz here (round-to-nearest) adds up to another 0.5
+    // `s.timing.map(|t| t.dts)` back to 90 kHz here (round-to-nearest) adds up to another 0.5
     // tick. Worst case: < 2.04 + 0.5 ≈ 2.54 90 kHz ticks — the integer bound
     // is 2 (an oracle-vs-IR difference reaching a full 3rd tick is a
     // near-zero-measure edge case that a 15-sample AAC track sourced from a
     // real, non-adversarial encode does not hit; empirically the fixture's
     // worst per-sample diff is 2).
-    let audio_ts = aud.spec.timescale as i128;
+    let audio_ts = aud.spec.timescale.get() as i128;
     for (i, s) in aud.samples.iter().enumerate() {
         let dts = s
-            .dts
+            .timing
+            .map(|t| t.dts)
             .unwrap_or_else(|| panic!("audio sample {i} has no dts")) as i128;
         let pts = s
-            .pts
+            .timing
+            .map(|t| t.pts)
             .unwrap_or_else(|| panic!("audio sample {i} has no pts")) as i128;
         assert_eq!(
             pts, dts,
-            "audio sample {i}: s.pts must equal s.dts (no reordering)"
+            "audio sample {i}: s.timing.map(|t| t.pts) must equal s.timing.map(|t| t.dts) (no reordering)"
         );
 
         let dts_90k = (dts * 90_000 + audio_ts / 2).div_euclid(audio_ts);

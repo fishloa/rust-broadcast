@@ -60,7 +60,7 @@ use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex};
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`); the single definition
 /// lives in `broadcast-smooth`, which owns the manifest syntax.
-pub use broadcast_smooth::SMOOTH_TIMESCALE;
+pub use broadcast_smooth::{SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE};
 
 /// The `tfxd` `uuid` extended-type — [MS-SSTR] §2.2.4.4
 /// (`6d1d9b05-42d5-44e6-80e2-141daff757b2`).
@@ -294,7 +294,7 @@ struct FragmentTiming {
 impl SmoothPackager {
     /// Convert a tick count in the track's media timescale to
     /// [`SMOOTH_TIMESCALE`] ticks with integer round-to-nearest (`no_std`-safe).
-    fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
+    fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale::Timescale) -> u64 {
         to_smooth_ticks(ticks, media_timescale)
     }
 
@@ -315,7 +315,7 @@ impl SmoothPackager {
         next_seq: &mut u32,
         fragments_out: &mut Vec<SmoothFragment>,
     ) -> Result<StreamInfo> {
-        let media_timescale = track.spec.timescale.max(1);
+        let media_timescale = track.spec.timescale;
         let codec = resolve_codec(&track.spec.config)?;
 
         let timeline = smooth_timeline(track, origin, media_timescale)?;
@@ -414,7 +414,7 @@ impl SmoothPackager {
                 "cannot package a Smooth fragment from a track with no samples",
             ));
         }
-        let media_timescale = track.spec.timescale.max(1);
+        let media_timescale = track.spec.timescale;
         // Times relative to the track's own first sample: only the *durations*
         // and composition offsets are used from here (the fragment's absolute
         // start is the caller's `start_smooth`, not the derived one).
@@ -629,8 +629,13 @@ fn aac_codec_private_data(esds: &crate::mp4esds::EsdsBox) -> Result<Vec<u8>> {
 
 /// Convert a tick count in `media_timescale` to [`SMOOTH_TIMESCALE`] ticks with
 /// integer round-to-nearest.
-pub fn to_smooth_ticks(ticks: u64, media_timescale: u32) -> u64 {
-    rescale_u64(ticks, media_timescale, SMOOTH_TIMESCALE, Rounding::Nearest)
+pub fn to_smooth_ticks(ticks: u64, media_timescale: broadcast_common::timescale::Timescale) -> u64 {
+    rescale_u64(
+        ticks,
+        media_timescale,
+        SMOOTH_DEFAULT_TIMESCALE,
+        Rounding::Nearest,
+    )
 }
 
 /// Resolve the Smooth stream type, FourCC, `CodecPrivateData` and per-kind
@@ -725,14 +730,15 @@ pub fn resolve_codec(config: &CodecConfig) -> Result<SmoothCodec> {
 /// random-access point, no sample is dropped or reordered.
 fn segment_samples(
     samples: &[Sample],
-    media_timescale: u32,
+    media_timescale: broadcast_common::timescale::Timescale,
     target_secs: u32,
 ) -> Vec<core::ops::Range<usize>> {
     let mut groups = Vec::new();
     if samples.is_empty() {
         return groups;
     }
-    let target_ticks = (target_secs.max(1) as u64).saturating_mul(media_timescale.max(1) as u64);
+    let target_ticks =
+        (u64::from(target_secs.max(1))).saturating_mul(u64::from(media_timescale.get()));
 
     let mut start = 0usize;
     let mut acc_dur = 0u64;
@@ -743,7 +749,7 @@ fn segment_samples(
             start = i;
             acc_dur = 0;
         }
-        acc_dur += s.duration.unwrap_or(0) as u64;
+        acc_dur += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
     }
     groups.push(start..samples.len());
     groups
@@ -767,7 +773,7 @@ struct SmoothSampleTime {
 fn smooth_timeline(
     track: &Track,
     origin: &TimelineOrigin,
-    media_timescale: u32,
+    media_timescale: broadcast_common::timescale::Timescale,
 ) -> Result<Vec<SmoothSampleTime>> {
     let times = relative_decode_times(track, origin);
     let starts: Vec<u64> = times
@@ -781,7 +787,8 @@ fn smooth_timeline(
         .map(|(i, s)| {
             let start = starts[i];
             let own_end = SmoothPackager::to_smooth_ticks(
-                (times[i].max(0) as u64).saturating_add(u64::from(s.duration.unwrap_or(0))),
+                (times[i].max(0) as u64)
+                    .saturating_add(u64::from(s.timing.map(|t| t.duration).unwrap_or(0))),
                 media_timescale,
             );
             let end = match starts.get(i + 1) {
@@ -798,7 +805,7 @@ fn smooth_timeline(
             let cto = rescale_i64(
                 i64::from(s.composition_offset()),
                 media_timescale,
-                SMOOTH_TIMESCALE,
+                SMOOTH_DEFAULT_TIMESCALE,
                 Rounding::Nearest,
             );
             let composition_offset = i32::try_from(cto).map_err(|_| {
@@ -942,6 +949,7 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
 
     #[test]
     fn tfxd_round_trip() {
@@ -963,15 +971,13 @@ mod tests {
         let mk = |sync: bool| Sample {
             data: alloc::vec![0u8; 4].into(),
             // Grouping is duration-driven; absolute time is irrelevant here.
-            dts: None,
-            pts: None,
-            duration: Some(1),
+            timing: crate::ir::SampleTiming::from_options(None, None, Some(1)),
             flags: crate::ir::SampleFlags::new(sync),
             provenance: None,
             display: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
-        let groups = segment_samples(&samples, 1, 2);
+        let groups = segment_samples(&samples, Timescale::from_nonzero(1), 2);
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].len(), 2);
         assert_eq!(groups[1].len(), 2);
@@ -980,6 +986,9 @@ mod tests {
     #[test]
     fn to_smooth_ticks_scales() {
         // 1 second at media timescale 90000 → 10_000_000 smooth ticks.
-        assert_eq!(SmoothPackager::to_smooth_ticks(90_000, 90_000), 10_000_000);
+        assert_eq!(
+            SmoothPackager::to_smooth_ticks(90_000, Timescale::from_nonzero(90_000)),
+            10_000_000
+        );
     }
 }

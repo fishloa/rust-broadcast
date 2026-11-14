@@ -70,7 +70,11 @@ pub use crate::ir::{
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the
 /// given tracks. The `moov` carries empty sample tables (`stts`/`stsc`/`stsz`/
 /// `stco`) plus an `mvex`/`trex` per track, marking the movie as fragmented.
-pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<Vec<u8>> {
+pub fn build_init_segment(
+    tracks: &[TrackSpec],
+    movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
+) -> Result<Vec<u8>> {
+    let movie_timescale = movie_timescale.into();
     let ftyp = FileTypeBox {
         major_brand: *b"iso5",
         minor_version: 512,
@@ -683,7 +687,7 @@ fn track_media_information(
 
 /// The `mdhd` of a fragmented init: zero timeline, per-track timescale, and
 /// the `und` language.
-fn track_media_header(timescale: u32) -> MediaHeaderBox {
+fn track_media_header(timescale: broadcast_common::timescale::Timescale) -> MediaHeaderBox {
     MediaHeaderBox {
         version: 0,
         flags: 0,
@@ -824,7 +828,7 @@ pub(crate) fn build_chunk(
         let (tfhd, trun) = media_fragment_run(
             ft.track_id,
             ft.samples.iter().map(|s| MediaRunSample {
-                duration: s.duration.unwrap_or(0),
+                duration: s.timing.map(|t| t.duration).unwrap_or(0),
                 size: s.data.len(),
                 is_sync: s.flags.is_sync,
                 composition_offset: s.composition_offset(),

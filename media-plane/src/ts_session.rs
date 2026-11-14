@@ -524,7 +524,7 @@ pub mod test_support {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            90_000,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             CodecConfig::Avc {
                 config: avc,
                 width: 0,
@@ -568,7 +568,7 @@ pub mod test_support {
             })
             .collect();
         let track = Track::new(spec, samples);
-        let media = transmux::media::Media::new(vec![track], 90_000);
+        let media = transmux::media::Media::new(vec![track], transmux::VIDEO_CLOCK_TIMESCALE);
         TsMux::default().package(&media).expect("mux to TS")
     }
 }
@@ -577,6 +577,7 @@ pub mod test_support {
 mod tests {
     use super::test_support::track_spec;
     use super::*;
+    use broadcast_common::timescale::Timescale;
     use transmux::pipeline::Sample;
 
     fn sample_at(nal: u8) -> Sample {
@@ -866,7 +867,7 @@ mod tests {
         let mut cursor = trunk.subscribe();
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![track_spec(TrackId::new(1))],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             1.0,
             250,
         )
@@ -964,20 +965,20 @@ mod tests {
         };
         let tracks = vec![
             Track::new(
-                TrackSpec::new(TrackId::new(1), 90_000, data(0x04)),
+                TrackSpec::new(TrackId::new(1), Timescale::from_nonzero(90_000), data(0x04)),
                 samples(head_aus, 3, true),
             ),
             Track::new(
-                TrackSpec::new(TrackId::new(2), 90_000, data(0x7F)),
+                TrackSpec::new(TrackId::new(2), Timescale::from_nonzero(90_000), data(0x7F)),
                 samples(600, 32, true),
             ),
             Track::new(
-                TrackSpec::new(TrackId::new(3), 90_000, data(0x7E)),
+                TrackSpec::new(TrackId::new(3), Timescale::from_nonzero(90_000), data(0x7E)),
                 samples(600, 32, true),
             ),
         ];
         transmux::TsMux::default()
-            .package(&Media::new(tracks, 90_000))
+            .package(&Media::new(tracks, Timescale::from_nonzero(90_000)))
             .expect("mux to TS")
     }
 
@@ -1058,8 +1059,8 @@ mod tests {
                     }
                     by_track.entry(track_id).or_default().push((
                         sample.data.to_vec(),
-                        sample.dts,
-                        sample.pts,
+                        sample.timing.map(|t| t.dts),
+                        sample.timing.map(|t| t.pts),
                     ));
                 }
                 _ => {}
@@ -1098,8 +1099,8 @@ mod tests {
                     );
                     by_track.entry(track_id).or_default().push((
                         sample.data.to_vec(),
-                        sample.dts,
-                        sample.pts,
+                        sample.timing.map(|t| t.dts),
+                        sample.timing.map(|t| t.pts),
                     ));
                 }
                 _ => {}
@@ -1268,7 +1269,7 @@ mod tests {
         let mut out = Vec::new();
         while let Some(ev) = tracker.poll() {
             if let SessionEvent::Sample { sample, .. } = ev {
-                out.push(sample.dts.expect("dts"));
+                out.push(sample.timing.map(|t| t.dts).expect("dts"));
             }
         }
         out
@@ -1324,7 +1325,7 @@ mod tests {
             .expect("valid sprop");
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             transmux::pipeline::CodecConfig::Avc {
                 config: avc,
                 width,

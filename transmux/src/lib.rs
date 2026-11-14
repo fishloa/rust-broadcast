@@ -255,6 +255,17 @@ pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
 
+/// Serialize a [`Timescale`](broadcast_common::timescale::Timescale) as the
+/// plain ticks-per-second integer it wraps, so a serde-JSON consumer sees the
+/// same number the wire box carries (not a `NonZeroU32` newtype object).
+#[cfg(feature = "serde")]
+fn ser_timescale<S: serde::Serializer>(
+    timescale: &broadcast_common::timescale::Timescale,
+    serializer: S,
+) -> core::result::Result<S::Ok, S::Error> {
+    serializer.serialize_u32(timescale.get())
+}
+
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacProfile,
     HeAacSignaling, SamplingFrequencyIndex, build_adts_header, parse_adts_header,
@@ -395,7 +406,7 @@ pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
     KLV_ENCODING_NAME, MAX_TIMING_WARNINGS, NAL_TYPE_IDR, RtpDepacketiser, RtpInput,
     RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser, RtpStream, RtpTimingWarning,
-    VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
+    VIDEO_CLOCK_RATE, VIDEO_CLOCK_TIMESCALE, depacketise_klv, packetise_klv,
 };
 pub use rtp_align::{AlignOut, AvSync, SR_SWITCH_TOLERANCE_US, TrackAligner};
 #[cfg(feature = "std")]
@@ -432,8 +443,9 @@ pub use segments::{
 };
 #[cfg(feature = "std")]
 pub use smooth::{
-    FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothCodec, SmoothFragment, SmoothOutput,
-    SmoothPackager, SmoothStreamType, TFXD_UUID, TfxdBox, resolve_codec, to_smooth_ticks,
+    FOURCC_AACL, FOURCC_H264, SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE, SmoothCodec,
+    SmoothFragment, SmoothOutput, SmoothPackager, SmoothStreamType, TFXD_UUID, TfxdBox,
+    resolve_codec, to_smooth_ticks,
 };
 pub use timeline::{
     DEFAULT_JUMP_BACKWARD_US, DEFAULT_JUMP_FORWARD_SLACK_US, JumpDetector, TimelineJumpConfig,

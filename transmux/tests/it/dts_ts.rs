@@ -219,26 +219,28 @@ fn timing_is_monotonic_and_matches_first_pes_pts() {
     assert!(!track.samples.is_empty());
     let first = &track.samples[0];
     let first_pts = first
-        .pts
+        .timing
+        .map(|t| t.pts)
         .expect("DTS samples must carry an absolute pts (media plane step 2c)");
     // media plane step 2c: the sample's absolute pts is in the TRACK timescale
     // (a DTS audio track's is its sample rate), while the PES clock is 90 kHz
     // (ISO/IEC 13818-1 §2.4.3.7) — rescale with the same floor the demuxer
     // uses so this stays an exact equality, not a tolerance.
     let expected_first_pts =
-        ((first_pes_pts as u128 * track.timescale() as u128) / 90_000u128) as u64;
+        ((first_pes_pts as u128 * u128::from(track.timescale().get())) / 90_000u128) as u64;
     assert_eq!(
         first_pts as u64, expected_first_pts,
         "first sample PTS must equal the first PES packet's PTS"
     );
 
-    let expected_duration = first.duration;
+    let expected_duration = first.timing.map(|t| t.duration);
     assert_eq!(expected_duration, Some(512), "512 samples/frame (NBLKS=15)");
 
     let mut prev_pts: Option<u64> = None;
     for (i, s) in track.samples.iter().enumerate() {
         let t_pts = s
-            .pts
+            .timing
+            .map(|t| t.pts)
             .unwrap_or_else(|| panic!("sample {i} must carry an absolute pts"))
             as u64;
         if let Some(p) = prev_pts {
@@ -249,7 +251,8 @@ fn timing_is_monotonic_and_matches_first_pes_pts() {
         }
         prev_pts = Some(t_pts);
         assert_eq!(
-            s.duration, expected_duration,
+            s.timing.map(|t| t.duration),
+            expected_duration,
             "sample {i}: duration must be consistent (constant NBLKS across the stream)"
         );
     }

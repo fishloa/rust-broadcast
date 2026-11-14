@@ -6,6 +6,7 @@ use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
 };
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -41,7 +42,7 @@ async fn iframe_master_variant_gating() {
     );
     let seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -101,7 +102,7 @@ async fn iframe_master_variant_gating() {
     use transmux::rtp_sdp::aac_config_from_asc_hex;
     let audio_spec = TrackSpec::new(
         TrackId::new(1),
-        48000,
+        Timescale::from_nonzero(48000),
         aac_config_from_asc_hex("1210").expect("aac"),
     );
     let mut audio_batches = Vec::new();
@@ -479,7 +480,7 @@ async fn iframe_validator_clean() {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )
@@ -643,7 +644,7 @@ async fn iframe_scte35_emsg_shift() {
     // build segmenter init
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         TARGET_DURATION_SECS,
         PART_TARGET_MS,
     )

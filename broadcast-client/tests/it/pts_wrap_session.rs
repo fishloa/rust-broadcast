@@ -38,20 +38,44 @@ fn pts_33bit_wrap_through_session_playout() {
     video_track.samples.truncate(n);
     for (i, s) in video_track.samples.iter_mut().enumerate() {
         let pts = (WRAP - 10000) + i as i64 * frame_dur;
-        s.pts = Some(pts);
-        s.dts = Some(pts);
-        s.duration = Some(frame_dur as u32);
+        if let Some(t) = s.timing.as_mut() {
+            t.pts = pts;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+        }
+        if let Some(t) = s.timing.as_mut() {
+            t.dts = pts;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+        }
+        if let Some(t) = s.timing.as_mut() {
+            t.duration = frame_dur as u32;
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::new(0, 0, frame_dur as u32));
+        }
     }
-    video_track.start_decode_time = video_track.samples[0].dts.unwrap() as u64;
+    video_track.start_decode_time = video_track.samples[0].timing.map(|t| t.dts).unwrap() as u64;
 
     let video_track_id = video_track.spec.track_id;
     let mut tracks = vec![video_track];
     if let Some(mut a) = audio_track {
         a.samples.truncate(1);
         if let Some(s) = a.samples.first_mut() {
-            s.pts = Some(0);
-            s.dts = Some(0);
-            s.duration = Some(1024);
+            if let Some(t) = s.timing.as_mut() {
+                t.pts = 0;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(0, 0, 0));
+            }
+            if let Some(t) = s.timing.as_mut() {
+                t.dts = 0;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(0, 0, 0));
+            }
+            if let Some(t) = s.timing.as_mut() {
+                t.duration = 1024;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(0, 0, 1024));
+            }
         }
         tracks.push(a);
     }
@@ -89,7 +113,7 @@ fn pts_33bit_wrap_through_session_playout() {
             if *track != video_track_id {
                 continue;
             }
-            if let Some(p) = sample.pts {
+            if let Some(p) = sample.timing.map(|t| t.pts) {
                 if let Some(l) = last {
                     assert!(p >= l, "non-monotone sample pts: {l} -> {p}");
                 }
@@ -131,8 +155,14 @@ fn first_pts(bytes: &[u8]) -> (i64, i64) {
     let mut video = None;
     let mut audio = None;
     for t in &media.tracks {
-        let pts = t.samples.iter().filter_map(|s| s.pts).min().unwrap();
-        let pts90 = i64::try_from(i128::from(pts) * 90_000 / i128::from(t.spec.timescale)).unwrap();
+        let pts = t
+            .samples
+            .iter()
+            .filter_map(|s| s.timing.map(|t| t.pts))
+            .min()
+            .unwrap();
+        let pts90 =
+            i64::try_from(i128::from(pts) * 90_000 / i128::from(t.spec.timescale.get())).unwrap();
         if t.spec.config.is_video() {
             video = Some(pts90);
         } else if t.spec.config.audio_sample_rate().is_some() {
@@ -158,7 +188,7 @@ fn start_vs_join(bytes: &[u8]) -> (u64, u64) {
             Event::Sample {
                 sample, join: j, ..
             } if join.is_none() && format!("{j:?}").contains("JoinPoint") => {
-                join = sample.pts;
+                join = sample.timing.map(|t| t.pts);
             }
             Event::Buffer(BufferEvent::Start { at_27mhz }) if start.is_none() => {
                 start = Some(*at_27mhz);

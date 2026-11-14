@@ -317,7 +317,7 @@ mod tests {
     fn video_track_spec() -> TrackSpec {
         TrackSpec::new(
             TRACK_ID,
-            VIDEO_TIMESCALE,
+            broadcast_common::timescale::Timescale::from_nonzero(VIDEO_TIMESCALE),
             CodecConfig::Avc {
                 config: dummy_avc_config(),
                 width: 320,
@@ -338,7 +338,7 @@ mod tests {
     fn build_cmaf_fixture() -> (String, Vec<u8>, Vec<Vec<u8>>) {
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![video_track_spec()],
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             TARGET_DURATION_SECS,
             250,
         )
@@ -370,7 +370,7 @@ mod tests {
         for (i, segment) in seg.take_ready_segments().into_iter().enumerate() {
             media_segments.push(MediaSegment {
                 uri: format!("seg{i}.m4s"),
-                // Test fixture: `segment.duration` is the segmenter's own
+                // Test fixture: `segment.timing.map(|t| t.duration)` is the segmenter's own
                 // computed duration over synthetic sample timestamps —
                 // always finite and non-negative (issue #1140).
                 duration: broadcast_hls::DecimalSeconds::new(segment.duration)
@@ -544,7 +544,7 @@ mod tests {
         assert!(result.is_ok(), "{result:?}");
         assert_eq!(specs.len(), 1, "one video track recovered: {specs:?}");
         assert_eq!(specs[0].track_id, TRACK_ID);
-        assert_eq!(specs[0].timescale, VIDEO_TIMESCALE);
+        assert_eq!(specs[0].timescale.get(), VIDEO_TIMESCALE);
         assert!(
             matches!(specs[0].config, CodecConfig::Avc { .. }),
             "codec config must round-trip as AVC: {:?}",

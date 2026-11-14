@@ -34,7 +34,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
-use broadcast_common::timescale::{Rounding, cmp_ticks, rescale_i64};
+use broadcast_common::timescale::{Rounding, Timescale, cmp_ticks, rescale_i64};
 use broadcast_common::{Package, Parse, Unpackage};
 
 use crate::ac3::{Ac3SpecificBox, Ec3SpecificBox};
@@ -68,9 +68,6 @@ use alloc::sync::Arc;
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
 pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
-
-/// Default movie timescale used when a source does not specify one.
-const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;
 
 /// `esds` `objectTypeIndication` for MPEG-2 Audio (ISO/IEC 13818-3) —
 /// ISO/IEC 14496-1 §7.2.6.6 Table 5.
@@ -398,9 +395,11 @@ fn absorb_traf(
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
             samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
-                dts: Some(dts),
-                pts: Some(pts),
-                duration: Some(r.duration),
+                timing: crate::ir::SampleTiming::from_options(
+                    Some(dts),
+                    Some(pts),
+                    Some(r.duration),
+                ),
                 flags: crate::ir::SampleFlags::new(is_sync),
                 // fMP4 sources carry no per-sample source-container
                 // timestamps distinct from the fragment's own tfdt/trun
@@ -466,12 +465,7 @@ impl Package for CmafMux {
         // before calling `package`. This is the single shared check every
         // fMP4/CMAF mux entry point uses, not a `CmafMux`-only one.
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-        let movie_timescale = if media.movie_timescale == 0 {
-            DEFAULT_MOVIE_TIMESCALE
-        } else {
-            media.movie_timescale
-        };
-        let mut out = build_init_segment(&specs, movie_timescale)?;
+        let mut out = build_init_segment(&specs, media.movie_timescale)?;
 
         // Each track's single-segment fragment is anchored at the track's
         // absolute decode time (its `tfdt` baseMediaDecodeTime, ISO/IEC
@@ -497,26 +491,26 @@ impl Package for CmafMux {
 // ---------------------------------------------------------------------------
 
 /// The common decode-time origin of a set of tracks: the earliest first-sample
-/// [`Sample::dts`] across them, compared across timescales exactly.
+/// `Sample::timing` (`.dts`) across them, compared across timescales exactly.
 ///
-/// Every [`Sample::dts`] is absolute in its own track's timescale, so one
+/// Every `Sample::timing` (`.dts`) is absolute in its own track's timescale, so one
 /// shift applied to every track keeps inter-track offsets and gaps intact —
 /// which a per-track rebase (or a per-track `Σ duration` from zero) loses.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TimelineOrigin {
     ticks: i64,
-    timescale: u32,
+    timescale: Timescale,
 }
 
 impl TimelineOrigin {
     /// The origin of `tracks`; `0` when no sample carries a `dts`.
     pub(crate) fn of<'t>(tracks: impl IntoIterator<Item = &'t Track>) -> Self {
-        let mut best: Option<(i64, u32)> = None;
+        let mut best: Option<(i64, Timescale)> = None;
         for t in tracks {
-            let Some(d) = t.samples.iter().find_map(|s| s.dts) else {
+            let Some(d) = t.samples.iter().find_map(|s| s.timing.map(|t| t.dts)) else {
                 continue;
             };
-            let ts = t.spec.timescale.max(1);
+            let ts = t.spec.timescale;
             let earlier = match best {
                 None => true,
                 Some((bd, bts)) => cmp_ticks(d, ts, bd, bts).is_lt(),
@@ -525,12 +519,17 @@ impl TimelineOrigin {
                 best = Some((d, ts));
             }
         }
-        let (ticks, timescale) = best.unwrap_or((0, 1));
-        Self { ticks, timescale }
+        match best {
+            Some((ticks, timescale)) => Self { ticks, timescale },
+            None => Self {
+                ticks: 0,
+                timescale: Timescale::from_nonzero(1),
+            },
+        }
     }
 
     /// The origin expressed in `timescale` ticks, rounded down.
-    pub(crate) fn in_timescale(&self, timescale: u32) -> i64 {
+    pub(crate) fn in_timescale(&self, timescale: Timescale) -> i64 {
         rescale_i64(self.ticks, self.timescale, timescale, Rounding::Floor)
     }
 }
@@ -544,12 +543,12 @@ pub(crate) fn relative_decode_times(track: &Track, origin: &TimelineOrigin) -> V
     let mut out = Vec::with_capacity(track.samples.len());
     let mut next: i64 = 0;
     for s in &track.samples {
-        let t = match s.dts {
+        let t = match s.timing.map(|t| t.dts) {
             Some(d) => d.saturating_sub(base),
             None => next,
         };
         out.push(t);
-        next = t.saturating_add(i64::from(s.duration.unwrap_or(0)));
+        next = t.saturating_add(i64::from(s.timing.map(|t| t.duration).unwrap_or(0)));
     }
     out
 }
@@ -560,10 +559,10 @@ pub(crate) fn presentation_span_secs(tracks: &[&Track]) -> f64 {
     let origin = TimelineOrigin::of(tracks.iter().copied());
     let mut span: Option<(f64, f64)> = None;
     for t in tracks {
-        let ts = f64::from(t.spec.timescale.max(1));
+        let ts = f64::from(t.spec.timescale.get());
         for (s, dts) in t.samples.iter().zip(relative_decode_times(t, &origin)) {
             let pts = (dts + i64::from(s.composition_offset())) as f64 / ts;
-            let end = pts + f64::from(s.duration.unwrap_or(0)) / ts;
+            let end = pts + f64::from(s.timing.map(|t| t.duration).unwrap_or(0)) / ts;
             span = Some(match span {
                 None => (pts, end),
                 Some((lo, hi)) => (lo.min(pts), hi.max(end)),
@@ -634,7 +633,11 @@ impl Package for HlsPackager {
         let kept: Vec<&Track> = media
             .tracks
             .iter()
-            .filter(|t| t.samples.iter().any(|s| s.duration.is_some()))
+            .filter(|t| {
+                t.samples
+                    .iter()
+                    .any(|s| s.timing.map(|t| t.duration).unwrap_or(0) != 0)
+            })
             .collect();
 
         // Every segment this packager names (`{prefix}{track_id}.m4s`) is
@@ -656,11 +659,7 @@ impl Package for HlsPackager {
         // movie_timescale), the same inputs `CmafMux` uses, so this computes
         // the true offset without needing the actual segment bytes in hand.
         let specs: Vec<TrackSpec> = kept.iter().map(|t| t.spec.clone()).collect();
-        let movie_timescale = if media.movie_timescale == 0 {
-            DEFAULT_MOVIE_TIMESCALE
-        } else {
-            media.movie_timescale
-        };
+        let movie_timescale = media.movie_timescale;
         let init_len = if specs.is_empty() {
             0
         } else {
@@ -1483,7 +1482,7 @@ mod tests {
     /// desyncs A/V. `tfdt` is per-fragment and authoritative (§8.8.12).
     #[test]
     fn gapped_fmp4_reseeds_absolute_dts_from_each_fragments_own_tfdt() {
-        const TIMESCALE: u32 = 90_000;
+        const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
         const FRAME_DUR: u32 = 3_000;
         const FRAMES_PER_FRAGMENT: u32 = 4;
         /// Decode time the second fragment declares — one whole extra frame
@@ -1559,7 +1558,7 @@ mod tests {
         // fragment's own declared tfdt, NOT on the running duration sum.
         let first_post_gap = &track.samples[FRAMES_PER_FRAGMENT as usize];
         assert_eq!(
-            first_post_gap.dts,
+            first_post_gap.timing.map(|t| t.dts),
             Some(gapped_second_base as i64),
             "post-gap dts must come from the second fragment's tfdt \
              ({gapped_second_base}), not the pure duration sum \
@@ -1572,7 +1571,11 @@ mod tests {
             .enumerate()
         {
             let expected = gapped_second_base as i64 + (i as i64) * i64::from(FRAME_DUR);
-            assert_eq!(s.dts, Some(expected), "sample {i} after the gap");
+            assert_eq!(
+                s.timing.map(|t| t.dts),
+                Some(expected),
+                "sample {i} after the gap"
+            );
         }
     }
 
@@ -1582,7 +1585,7 @@ mod tests {
     /// re-seeding per fragment must be a no-op when there is no gap.
     #[test]
     fn contiguous_fmp4_dts_is_unchanged_by_the_per_fragment_tfdt_reseed() {
-        const TIMESCALE: u32 = 90_000;
+        const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
         const FRAME_DUR: u32 = 3_000;
         const FRAMES: u32 = 3;
 
@@ -1626,7 +1629,7 @@ mod tests {
         let got: Vec<i64> = media.tracks[0]
             .samples
             .iter()
-            .filter_map(|s| s.dts)
+            .filter_map(|s| s.timing.map(|t| t.dts))
             .collect();
         let want: Vec<i64> = (0..FRAMES * 2)
             .map(|i| i64::from(i) * i64::from(FRAME_DUR))
@@ -1642,7 +1645,7 @@ mod tests {
     /// §4.3.2.1 defines as a real playback duration a player would honour.
     #[test]
     fn hls_packager_omits_a_timestampless_track_instead_of_emitting_extinf_zero() {
-        const TIMESCALE: u32 = 90_000;
+        const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
         const FRAME_DUR: u32 = 3_000;
 
         let timed = Track::new(
@@ -1734,7 +1737,7 @@ mod tests {
     #[test]
     fn fmp4_demux_normalises_two_byte_nal_lengths() {
         use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
-        const TIMESCALE: u32 = 90_000;
+        const TIMESCALE: Timescale = Timescale::from_nonzero(90_000);
         use crate::ir::{FragmentTrackData, Sample, SampleFlags};
         use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
 
@@ -1753,9 +1756,7 @@ mod tests {
         // One access unit, two NALs, each with a 2-byte length prefix.
         let sample = Sample {
             data: vec![0x00, 0x05, 0x65, 0x88, 0x84, 0x00, 0x21, 0x00, 0x01, 0x41].into(),
-            dts: Some(0),
-            pts: Some(0),
-            duration: Some(1000),
+            timing: crate::ir::SampleTiming::from_options(Some(0), Some(0), Some(1000)),
             flags: SampleFlags::new(true),
             provenance: None,
             display: None,

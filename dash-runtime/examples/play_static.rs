@@ -149,7 +149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 ),
                 Output::Tracks(tracks) => {
                     for t in &tracks {
-                        println!("  track {} timescale {}", t.track_id, t.timescale);
+                        println!("  track {} timescale {}", t.track_id, t.timescale.get());
                     }
                 }
                 Output::Samples {
@@ -160,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     e.0 += s.len();
                     e.1 += s
                         .iter()
-                        .map(|x| f64::from(x.duration.unwrap_or(0)))
+                        .map(|x| f64::from(x.timing.map(|t| t.duration).unwrap_or(0)))
                         .sum::<f64>();
                 }
                 Output::Discontinuity => discontinuities += 1,

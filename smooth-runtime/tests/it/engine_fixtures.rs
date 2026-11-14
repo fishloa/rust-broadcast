@@ -19,9 +19,9 @@ fn trace_without_track(host: &Host) -> Vec<String> {
         .map(|(_, s)| {
             format!(
                 "dts={:?} pts={:?} dur={:?} sync={} len={} fnv={:016x}",
-                s.dts,
-                s.pts,
-                s.duration,
+                s.timing.map(|t| t.dts),
+                s.timing.map(|t| t.pts),
+                s.timing.map(|t| t.duration),
                 s.flags.is_sync,
                 s.data.len(),
                 fnv1a(&s.data)
@@ -82,7 +82,7 @@ fn timestamps_are_rebased_onto_the_fragment_start_not_restarted_per_fragment() {
     let video: Vec<i64> = host
         .samples()
         .iter()
-        .map(|(_, s)| s.dts.expect("dts"))
+        .map(|(_, s)| s.timing.map(|t| t.dts).expect("dts"))
         .collect();
     assert!(
         video.windows(2).all(|w| w[0] < w[1]),

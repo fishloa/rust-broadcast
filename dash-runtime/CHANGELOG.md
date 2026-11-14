@@ -5,6 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `address::MediaSegment::timescale` and `SegmentPlan::timescale()` are `Timescale` (was `u64`), and `timing::availability::{ticks_to_us, segment_available_from_ticks, segment_available_until_ticks, complete_count_constant}` take a `Timescale`. The zero-timescale branches (a plan with no index offsets, a conversion yielding 0) are gone: a zero `@timescale` is refused by `broadcast-dash` at parse and cannot be constructed here (#2657).
 - BREAKING: every `now` `DashClient` takes is a `broadcast_common::stage::Timestamp` (the host's monotonic clock, microseconds) instead of a `now_us: u64`: `poll`, `on_mpd`, `on_mpd_with`, `on_mpd_unchanged`, `on_mpd_failure`, `retry_mpd`, `on_init`, `on_index`, `on_segment`, `on_failure`, `retry`, `skip`, `on_utc_response`, `on_utc_failure`, `set_wall_clock` and `utc_at`. Migration: wrap the host's microsecond reading in `Timestamp::from_micros(now_us)`; the engine's own microsecond arithmetic is unchanged.
 - `quick-xml` is a dev-dependency only (its parser is reached through `broadcast-common::xml`), so it no longer appears in the built dependency graph.
 

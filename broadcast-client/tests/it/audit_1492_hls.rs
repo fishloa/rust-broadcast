@@ -1,6 +1,7 @@
 use crate::support;
 
 use broadcast_client::{AUDIO_TRACK_ID_OFFSET, Event};
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use support::hls_host::{Host, Reply, SEC, hls_config, ts_segment};
 use transmux::{CmafMux, TrackId, TsDemux, build_init_segment};
@@ -179,7 +180,7 @@ fn a_206_without_content_range_is_a_failure() {
 
 const RESERVED_PLAYLIST_URL: &str = "http://origin.test/hls/reserved.m3u8";
 const FIRST_RESERVED_ID: u32 = AUDIO_TRACK_ID_OFFSET + 1;
-const MOVIE_TIMESCALE: u32 = 1_000;
+const MOVIE_TIMESCALE: Timescale = Timescale::from_nonzero(1_000);
 
 fn cmaf_with_track_ids(first_id: u32) -> (Vec<u8>, Vec<u8>) {
     let data = test_fixtures::read("ts/h264-aac.ts");

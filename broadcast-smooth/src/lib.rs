@@ -17,6 +17,7 @@ mod manifest;
 
 pub use manifest::{
     C, DEFAULT_MAJOR_VERSION, DEFAULT_MINOR_VERSION, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN,
-    Protection, QualityLevel, SMOOTH_TIMESCALE, SmoothManifest, SmoothParseError, StreamIndex,
-    StreamType, TOKEN_BITRATE, TOKEN_START_TIME, default_limits, hex_decode,
+    Protection, QualityLevel, SMOOTH_DEFAULT_TIMESCALE, SMOOTH_TIMESCALE, SmoothManifest,
+    SmoothParseError, StreamIndex, StreamType, TOKEN_BITRATE, TOKEN_START_TIME, default_limits,
+    hex_decode,
 };

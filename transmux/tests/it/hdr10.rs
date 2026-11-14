@@ -8,6 +8,7 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::Unpackage;
+use broadcast_common::timescale::Timescale;
 use transmux::ir::{CodecConfig, TrackSpec};
 use transmux::ts_demux::TsDemux;
 use transmux::{ChromaticityXy, HdrStaticMetadata, build_init_segment};
@@ -127,7 +128,7 @@ fn init_segment_boxes_equal_the_gpac_written_boxes() {
     let Some(gpac) = test_fixtures::require_bytes(GPAC_MP4, "hdr10") else {
         return;
     };
-    let init = build_init_segment(&[spec], 1000).expect("init");
+    let init = build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("init");
     let ours = sample_entry_children(&init);
     let theirs = sample_entry_children(&gpac);
     for fourcc in [COLR, MDCV, CLLI] {
@@ -154,7 +155,7 @@ fn init_segment_round_trips_through_the_fmp4_demuxer() {
         .arrays
         .retain(|a| a.nal_unit_type != transmux::hdr::HEVC_PREFIX_SEI_NUT);
     assert!(HdrStaticMetadata::from_hevc_record(&config.config).is_none());
-    let init = build_init_segment(&[boxes_only], 1000).expect("init");
+    let init = build_init_segment(&[boxes_only], Timescale::from_nonzero(1000)).expect("init");
     let media = transmux::Fmp4Demux::new()
         .unpackage(&init)
         .expect("fmp4 demux");
@@ -169,7 +170,7 @@ fn non_hdr_stream_gets_no_static_metadata_boxes() {
     };
     let spec = video_track(&bytes);
     assert_eq!(spec.hdr, None);
-    let init = build_init_segment(&[spec], 1000).expect("init");
+    let init = build_init_segment(&[spec], Timescale::from_nonzero(1000)).expect("init");
     let boxes = sample_entry_children(&init);
     assert!(
         boxes.iter().all(|(t, _)| *t != MDCV && *t != CLLI),

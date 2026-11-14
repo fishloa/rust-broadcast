@@ -26,21 +26,40 @@ pub const USER_IDENTIFIER_LEN: usize = 4;
 /// `marker_bits` `'11'` then `u(14)`).
 const BAR_VALUE_MASK: u16 = 0x3FFF;
 
+/// AFD signal carried by an `afd_data()` message: either no active format
+/// (`active_format_flag == 0`) or a concrete format code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum AfdSignal {
+    NoFormat,
+    Format(ActiveFormatDescription),
+}
+
+impl AfdSignal {
+    /// Label of the signal kind.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NoFormat => "no_format",
+            Self::Format(_) => "format",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(AfdSignal);
+
 /// Parsed picture-level user data from one access unit.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PictureUserData {
-    pub afd_present: bool,
-    pub afd: Option<ActiveFormatDescription>,
-    pub bar_present: bool,
+    pub afd: Option<AfdSignal>,
     pub bar_data: Option<BarData>,
 }
 
 /// Parse an `afd_data()` structure from a T.35 payload (starting at the
-/// country code). Returns `Some(Some(afd))` when an AFD message is present
-/// with `active_format_flag == 1`, `Some(None)` when present with the flag
-/// cleared, and `None` when the payload is not a DTG1 AFD message or is too
-/// short.
-pub fn afd_from_t35_payload(payload: &[u8]) -> Option<Option<ActiveFormatDescription>> {
+/// country code). Returns `Some(AfdSignal::NoFormat)` when an AFD message is
+/// present with `active_format_flag == 0`, `Some(AfdSignal::Format(afd))`
+/// when present with the flag set, and `None` when the payload is not a DTG1
+/// AFD message or is too short.
+pub fn afd_from_t35_payload(payload: &[u8]) -> Option<AfdSignal> {
     if payload.len() < 7 {
         return None;
     }
@@ -61,12 +80,14 @@ pub fn afd_from_t35_payload(payload: &[u8]) -> Option<Option<ActiveFormatDescrip
     }
     let active_format_flag = rest[0] & 0x40 != 0;
     if !active_format_flag {
-        return Some(None);
+        return Some(AfdSignal::NoFormat);
     }
     if rest.len() < 2 {
         return None;
     }
-    Some(Some(ActiveFormatDescription::from_code(rest[1] & 0x0F)))
+    Some(AfdSignal::Format(ActiveFormatDescription::from_code(
+        rest[1] & 0x0F,
+    )))
 }
 
 /// Parse a `bar_data()` structure from a T.35 payload. Returns `Some` when a

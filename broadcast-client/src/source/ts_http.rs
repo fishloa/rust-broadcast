@@ -7,8 +7,8 @@ use url::Url;
 
 use crate::error::TransportError;
 use crate::tshttp::{Config as TsConfig, TsHttpClient};
-use broadcast_common::clock33::PCR_HZ;
-use broadcast_common::timescale::{Rounding, rescale_u64};
+use broadcast_common::clock33::PCR_TIMESCALE;
+use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use transmux::{DemuxEvent, TrackId, TrackSpec};
 
 use mpeg_ts::pid::Pid;
@@ -32,8 +32,8 @@ struct HoldState {
     settle_base_span_us: u64,
 }
 
-fn to_27mhz(ticks: u64, clock_hz: u32) -> u64 {
-    rescale_u64(ticks, clock_hz, PCR_HZ, Rounding::TowardZero)
+fn to_27mhz(ticks: u64, clock_hz: Timescale) -> u64 {
+    rescale_u64(ticks, clock_hz, PCR_TIMESCALE, Rounding::TowardZero)
 }
 
 /// Adapter around the TS-over-HTTP client.
@@ -294,7 +294,7 @@ impl TsHttpSource {
         let (Some(pts), Some(spec)) = (pts, self.tracks.get(&track)) else {
             return;
         };
-        let timescale = i128::from(spec.timescale.max(1));
+        let timescale = i128::from(spec.timescale.get());
         let Some(h) = self.hold.as_mut() else {
             return;
         };
@@ -445,7 +445,7 @@ impl TsHttpSource {
                 DemuxEvent::Sample {
                     track_id, sample, ..
                 } => {
-                    let pts = sample.pts;
+                    let pts = sample.timing.map(|t| t.pts);
                     if !self.conn_seen_first_sample {
                         self.start_hold_if_unresolved();
                         self.conn_seen_first_sample = true;

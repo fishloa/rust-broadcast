@@ -100,7 +100,7 @@ fn hdr10plus_seis_by_pts(media: &transmux::Media) -> Vec<Vec<u8>> {
         .find(|t| matches!(t.spec.config, transmux::CodecConfig::Hevc { .. }))
         .expect("HEVC track");
     let mut samples: Vec<_> = track.samples.iter().collect();
-    samples.sort_by_key(|s| s.pts);
+    samples.sort_by_key(|s| s.timing.map(|t| t.pts));
     samples
         .iter()
         .flat_map(|s| {
@@ -182,7 +182,7 @@ fn has_b_frame_reordering(fixture: &str) -> bool {
     load(fixture)
         .iter()
         .flat_map(|s| s.samples.iter())
-        .any(|s| s.pts != s.dts)
+        .any(|s| s.timing.map(|t| t.pts) != s.timing.map(|t| t.dts))
 }
 
 #[tokio::test]

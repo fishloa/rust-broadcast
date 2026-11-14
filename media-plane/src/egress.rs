@@ -528,6 +528,7 @@ pub trait SegmentEgress: Send {
 mod tests {
     use super::*;
     use crate::trunk::{ArchiveOverrun, SegmentEntry, Trunk, TrunkConfig};
+    use broadcast_common::timescale::Timescale;
     use std::num::NonZeroUsize;
     use std::sync::Mutex;
     use std::time::Duration;
@@ -552,7 +553,7 @@ mod tests {
     fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Vp8 {
                 width: 320,
                 height: 240,

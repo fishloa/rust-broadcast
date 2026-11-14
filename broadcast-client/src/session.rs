@@ -1755,8 +1755,12 @@ mod tests {
         let id = video.spec.track_id;
         let at = |i: usize, pts: i64| {
             let mut s = video.samples[i].clone();
-            s.pts = Some(pts);
-            s.dts = Some(pts);
+            if let Some(t) = s.timing.as_mut() {
+                t.pts = pts;
+                t.dts = pts;
+            } else {
+                s.timing = Some(transmux::ir::SampleTiming::new(pts, pts, 0));
+            }
             Event::Sample {
                 track: id,
                 sample: s,

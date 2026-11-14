@@ -17,6 +17,7 @@
 
 use crate::report::{Finding, Location, Report, Severity};
 use alloc::collections::BTreeMap;
+use broadcast_common::timescale::Timescale;
 use broadcast_dash::PresentationType;
 use broadcast_dash::inherit::{SegmentInfo, resolve_segment_info};
 
@@ -140,7 +141,7 @@ fn effective_timeline<'a>(
     period: &'a broadcast_dash::Period,
     aset: &'a broadcast_dash::AdaptationSet,
     repr: &'a broadcast_dash::Representation,
-) -> Option<(&'a broadcast_dash::SegmentTimeline, u64)> {
+) -> Option<(&'a broadcast_dash::SegmentTimeline, Timescale)> {
     let declared = repr
         .segment
         .template
@@ -152,16 +153,9 @@ fn effective_timeline<'a>(
         };
         return Some((timeline, info.multi.timescale));
     }
-    let inherited = aset.segment.template.as_ref()?.multi.timeline.as_ref()?;
-    let timescale = aset
-        .segment
-        .template
-        .as_ref()?
-        .multi
-        .base
-        .timescale
-        .unwrap_or(1);
-    Some((inherited, timescale))
+    let template = aset.segment.template.as_ref()?;
+    let inherited = template.multi.timeline.as_ref()?;
+    Some((inherited, template.multi.base.effective_timescale()))
 }
 
 /// Check for duplicate `@id` values across **every** Representation in one
@@ -242,7 +236,7 @@ fn segment_template(
 /// time (a gap is a legal discontinuity; backward time is not).
 fn validate_segment_timeline(
     timeline: &broadcast_dash::SegmentTimeline,
-    timescale: u64,
+    timescale: Timescale,
     r_key: &str,
     report: &mut Report,
 ) {
@@ -305,11 +299,11 @@ fn validate_segment_timeline(
 }
 
 /// Format a timescale value with the timescale for readability.
-fn timescale_str(value: u64, timescale: u64) -> alloc::string::String {
-    if timescale == 0 || timescale == 1 {
+fn timescale_str(value: u64, timescale: Timescale) -> alloc::string::String {
+    if timescale.get() == 1 {
         alloc::format!("{value}")
     } else {
-        let secs = value as f64 / timescale as f64;
+        let secs = value as f64 / f64::from(timescale.get());
         alloc::format!("{value} ({secs:.3}s)")
     }
 }

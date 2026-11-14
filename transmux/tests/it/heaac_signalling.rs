@@ -9,6 +9,7 @@
 //! (ISO/IEC 14496-3 §1.6.2). The DVB descriptor path builds its PMT only
 //! through `dvb-si`'s serializer and the TS muxer.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
 use transmux::{
@@ -16,7 +17,7 @@ use transmux::{
     SamplingFrequencyIndex, TrackSpec, TsDemux, TsMux, build_init_segment, rfc6381_codec_string,
 };
 
-const MOVIE_TIMESCALE: u32 = 1000;
+const MOVIE_TIMESCALE: Timescale = Timescale::from_nonzero(1000);
 const CORE_HZ: u32 = 22_050;
 const OUTPUT_HZ: u32 = 44_100;
 const AAC_FRAME_SAMPLES: u32 = 1024;
@@ -110,7 +111,7 @@ fn heaac_v1_override_writes_explicit_sbr_asc() {
     assert_eq!(dsi_bytes(&spec), V1_ASC);
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.5");
     assert_eq!(spec.config.audio_sample_rate(), Some(OUTPUT_HZ));
-    assert_eq!(spec.timescale, OUTPUT_HZ);
+    assert_eq!(spec.timescale.get(), OUTPUT_HZ);
 }
 
 #[test]
@@ -121,40 +122,43 @@ fn heaac_override_keeps_presentation_time_unchanged() {
         .into_iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("AAC track");
-    assert_eq!(track.spec.timescale, CORE_HZ);
+    assert_eq!(track.spec.timescale.get(), CORE_HZ);
     let seconds = |t: &transmux::Track| -> Vec<f64> {
         t.samples
             .iter()
-            .map(|s| s.dts.expect("audio dts") as f64 / f64::from(t.spec.timescale))
+            .map(|s| {
+                s.timing.map(|t| t.dts).expect("audio dts") as f64
+                    / f64::from(t.spec.timescale.get())
+            })
             .collect()
     };
     let total = |t: &transmux::Track| -> f64 {
         t.samples
             .iter()
-            .map(|s| f64::from(s.duration.expect("audio duration")))
+            .map(|s| f64::from(s.timing.map(|t| t.duration).expect("audio duration")))
             .sum::<f64>()
-            / f64::from(t.spec.timescale)
+            / f64::from(t.spec.timescale.get())
     };
     let before = seconds(&track);
     let before_total = total(&track);
-    let start_before = track.start_decode_time as f64 / f64::from(track.spec.timescale);
+    let start_before = track.start_decode_time as f64 / f64::from(track.spec.timescale.get());
     assert!(before.len() > 10);
 
     let track = track
         .with_explicit_he_aac(HeAacProfile::V1)
         .expect("override applies");
-    assert_eq!(track.spec.timescale, OUTPUT_HZ);
+    assert_eq!(track.spec.timescale.get(), OUTPUT_HZ);
     assert_eq!(seconds(&track), before);
     assert_eq!(total(&track), before_total);
     assert_eq!(
-        track.start_decode_time as f64 / f64::from(track.spec.timescale),
+        track.start_decode_time as f64 / f64::from(track.spec.timescale.get()),
         start_before
     );
     assert!(
         track
             .samples
             .iter()
-            .all(|s| s.duration == Some(AAC_FRAME_SAMPLES * 2))
+            .all(|s| s.timing.map(|t| t.duration) == Some(AAC_FRAME_SAMPLES * 2))
     );
 }
 
@@ -170,8 +174,8 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
                 .iter()
                 .map(|s| {
                     (
-                        s.dts.unwrap() as f64 / f64::from(t.spec.timescale),
-                        s.duration.unwrap(),
+                        s.timing.map(|t| t.dts).unwrap() as f64 / f64::from(t.spec.timescale.get()),
+                        s.timing.map(|t| t.duration).unwrap(),
                     )
                 })
                 .collect()
@@ -195,18 +199,18 @@ fn heaac_descriptor_demux_emits_output_rate_timescale() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .unwrap();
-    assert_eq!(track.spec.timescale, OUTPUT_HZ);
+    assert_eq!(track.spec.timescale.get(), OUTPUT_HZ);
     assert!(
         track
             .samples
             .iter()
-            .all(|s| s.duration == Some(AAC_FRAME_SAMPLES * 2))
+            .all(|s| s.timing.map(|t| t.duration) == Some(AAC_FRAME_SAMPLES * 2))
     );
     let span = |from: f64, to: f64| to - from;
     let last = track.samples.len() - 1;
     let remuxed_span = span(
-        track.samples[0].dts.unwrap() as f64 / f64::from(OUTPUT_HZ),
-        track.samples[last].dts.unwrap() as f64 / f64::from(OUTPUT_HZ),
+        track.samples[0].timing.map(|t| t.dts).unwrap() as f64 / f64::from(OUTPUT_HZ),
+        track.samples[last].timing.map(|t| t.dts).unwrap() as f64 / f64::from(OUTPUT_HZ),
     );
     let plain_span = span(plain[0].0, plain[plain.len() - 1].0);
     assert_eq!(plain.len(), track.samples.len());
@@ -234,7 +238,7 @@ fn heaac_v2_override_writes_explicit_ps_asc() {
     assert_eq!(dsi_bytes(&spec), V2_ASC);
     assert_eq!(rfc6381_codec_string(&spec.config).unwrap(), "mp4a.40.29");
     assert_eq!(spec.config.audio_sample_rate(), Some(OUTPUT_HZ));
-    assert_eq!(spec.timescale, OUTPUT_HZ);
+    assert_eq!(spec.timescale.get(), OUTPUT_HZ);
     let CodecConfig::Aac { channel_count, .. } = spec.config else {
         panic!("AAC");
     };

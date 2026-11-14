@@ -4,7 +4,7 @@
 //! `bar_data_from_ga94_payload`.
 
 use transmux::user_data::{
-    afd_from_t35_payload, bar_data_from_ga94_payload, bar_data_from_t35_payload,
+    AfdSignal, afd_from_t35_payload, bar_data_from_ga94_payload, bar_data_from_t35_payload,
 };
 use transmux::{ActiveFormatDescription, BarData};
 
@@ -25,19 +25,27 @@ fn afd_with_the_active_format_flag_decodes_the_code() {
     let got = afd_from_t35_payload(&afd_payload(&[0x40, 0xF4]));
     assert_eq!(
         got,
-        Some(Some(ActiveFormatDescription::BoxWiderThan16x9Centre))
+        Some(AfdSignal::Format(
+            ActiveFormatDescription::BoxWiderThan16x9Centre
+        ))
     );
     let got = afd_from_t35_payload(&afd_payload(&[0x40, 0xA8]));
-    assert_eq!(got, Some(Some(ActiveFormatDescription::SameAsCodedFrame)));
+    assert_eq!(
+        got,
+        Some(AfdSignal::Format(ActiveFormatDescription::SameAsCodedFrame))
+    );
 }
 
 #[test]
 fn afd_with_the_flag_cleared_is_present_but_empty() {
     assert_eq!(
         afd_from_t35_payload(&afd_payload(&[0x00, 0xFF])),
-        Some(None)
+        Some(AfdSignal::NoFormat)
     );
-    assert_eq!(afd_from_t35_payload(&afd_payload(&[0x00])), Some(None));
+    assert_eq!(
+        afd_from_t35_payload(&afd_payload(&[0x00])),
+        Some(AfdSignal::NoFormat)
+    );
 }
 
 #[test]

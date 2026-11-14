@@ -81,8 +81,8 @@ impl Replay {
                     sample.data.hash(&mut h);
                     Some(SampleRec {
                         track: format!("{track:?}"),
-                        pts: sample.pts,
-                        dts: sample.dts,
+                        pts: sample.timing.map(|t| t.pts),
+                        dts: sample.timing.map(|t| t.dts),
                         is_sync: sample.flags.is_sync,
                         join: format!("{join:?}"),
                         len: sample.data.len(),
@@ -194,7 +194,7 @@ pub fn replay_with_host(
                     for t in v {
                         timescales.insert(
                             format!("{:?}", t.track_id),
-                            (t.timescale, t.config.audio_sample_rate().is_none()),
+                            (t.timescale.get(), t.config.audio_sample_rate().is_none()),
                         );
                     }
                 }
@@ -225,7 +225,7 @@ pub fn replay_with_host(
                     seen += 1;
                     if let (Some(p), Some(pts), Some((timescale, video))) = (
                         playout.as_ref(),
-                        sample.pts,
+                        sample.timing.map(|t| t.pts),
                         timescales.get(&format!("{track:?}")),
                     ) {
                         stats.delivered_after_start += 1;

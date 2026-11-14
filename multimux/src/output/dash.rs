@@ -234,10 +234,7 @@ pub(crate) fn select_representable_track(specs: &[TrackSpec]) -> Option<TrackSpe
 /// DSM-CC, SCTE-35) fails this — the exact case issue #776 exists to skip
 /// over rather than reject the whole route for.
 fn track_is_representable(spec: &TrackSpec) -> bool {
-    let media = Media::new(
-        vec![Track::new(spec.clone(), Vec::new())],
-        spec.timescale.max(1),
-    );
+    let media = Media::new(vec![Track::new(spec.clone(), Vec::new())], spec.timescale);
     DashPackager::default().package(&media).is_ok()
 }
 
@@ -553,9 +550,10 @@ fn set_presentation_time_offset(
                 .map(|r| &mut r.segment),
         );
         for template in templates.filter_map(|layer| layer.template.as_mut()) {
-            let timescale = template.multi.base.timescale.unwrap_or(1);
+            let timescale = template.multi.base.effective_timescale();
             let nanos_per_sec = u128::from(broadcast_common::units::NANOS_PER_SEC);
-            let ticks = (u128::from(media_start_ns) * u128::from(timescale) + nanos_per_sec / 2)
+            let ticks = (u128::from(media_start_ns) * u128::from(timescale.get())
+                + nanos_per_sec / 2)
                 / nanos_per_sec;
             let ticks = u64::try_from(ticks).ok()?;
             template.multi.base.presentation_time_offset = (ticks > 0).then_some(ticks);
@@ -584,7 +582,7 @@ fn render_period_document(
     // model") regardless of which track this route's own PMT numbered it.
     let mut spec = select_representable_track(specs)?;
     spec.track_id = DEFAULT_TRACK_ID;
-    let timescale = spec.timescale.max(1);
+    let timescale = spec.timescale;
 
     // `@startNumber` is the number of the first segment this program EVER
     // published ([`FIRST_SEGMENT_NUMBER`]), fixed for its life -- never the
@@ -599,7 +597,7 @@ fn render_period_document(
     // window's own first-segment duration changes as it slides, which would
     // change the client's whole number<->time mapping).
     let nominal_ticks =
-        ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
+        ((route.target_duration_secs() * f64::from(timescale.get())).round() as u64).max(1);
     let segments = if has_segments || flavour == DashFlavour::LowLatency {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,
@@ -816,6 +814,7 @@ mod tests {
     use super::*;
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
+    use broadcast_common::timescale::Timescale;
     use transmux::CodecConfig;
 
     const CONCURRENT_MANIFESTS: usize = 64;
@@ -975,7 +974,7 @@ mod tests {
     fn teletext_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Data {
                 stream_type: 0x06,
                 descriptors: Vec::new(),
@@ -1826,7 +1825,7 @@ mod tests {
                     duration: period.duration,
                     start_number: template.multi.start_number.expect("startNumber"),
                     presentation_time_offset: template.multi.base.presentation_time_offset,
-                    timescale: template.multi.base.timescale.expect("timescale"),
+                    timescale: template.multi.base.timescale.expect("timescale").as_u64(),
                     template_duration: template.multi.duration.unwrap_or_default(),
                 }
             })

@@ -1,5 +1,6 @@
 //! Router-level coverage for `_HLS_skip` delivery directives (#blskip).
 
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,7 +31,7 @@ fn make_app() -> (axum::Router, Arc<RouteHandle>) {
         ProgramId(0),
         vec![TrackSpec::new(
             transmux::TrackId::new(1),
-            90_000,
+            Timescale::from_nonzero(90_000),
             CodecConfig::Vp8 {
                 width: 640,
                 height: 480,

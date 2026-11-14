@@ -180,7 +180,7 @@ impl Host {
             if let Event::Tracks(specs) = e {
                 for s in specs {
                     out.retain(|(t, _)| *t != s.track_id);
-                    out.push((s.track_id, s.timescale));
+                    out.push((s.track_id, s.timescale.get()));
                 }
             }
         }
@@ -207,7 +207,7 @@ impl Host {
                 } if *t == track => Some(Rec {
                     idx: i,
                     now: self.times[i],
-                    pts: sample.pts.unwrap(),
+                    pts: sample.timing.map(|t| t.pts).unwrap(),
                     join: *join,
                 }),
                 _ => None,
@@ -432,7 +432,7 @@ fn detection_happens_before_the_sample_is_emitted() {
             join,
         } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.pts, Some(first_new.pts));
+            assert_eq!(sample.timing.map(|t| t.pts), Some(first_new.pts));
             assert!(
                 matches!(join, Some(JoinDecision::Drop(_))),
                 "judged by the fresh join state: {join:?}"
@@ -618,7 +618,7 @@ fn same_capture_fed_twice_after_3s_pause_emits_discontinuity_before_first_new_sa
         } => {
             assert_eq!(*track, vid);
             assert_eq!(
-                sample.pts,
+                sample.timing.map(|t| t.pts),
                 Some(first_pts),
                 "first sample of the second pass"
             );
@@ -798,7 +798,7 @@ fn audio_only_stream_jump_detected() {
     match &h.events[d + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, a);
-            assert!(sample.pts.unwrap() - samples[0].pts > 29 * AUDIO_ONLY_RATE);
+            assert!(sample.timing.map(|t| t.pts).unwrap() - samples[0].pts > 29 * AUDIO_ONLY_RATE);
         }
         other => panic!("{other:?}"),
     }
@@ -863,7 +863,7 @@ fn unflagged_jumps(h: &Host) -> Vec<(TrackId, i64, i64)> {
                 let rec = Rec {
                     idx: i,
                     now: h.times[i],
-                    pts: sample.pts.unwrap(),
+                    pts: sample.timing.map(|t| t.pts).unwrap(),
                     join: *join,
                 };
                 let is_video = join.is_some();
@@ -1178,7 +1178,7 @@ impl Trace {
                 } if *t == track => Some(Rec {
                     idx: i,
                     now: self.times[i],
-                    pts: sample.pts.unwrap(),
+                    pts: sample.timing.map(|t| t.pts).unwrap(),
                     join: *join,
                 }),
                 _ => None,
@@ -1192,7 +1192,7 @@ impl Trace {
             if let Event::Tracks(specs) = e {
                 for s in specs {
                     out.retain(|(t, _)| *t != s.track_id);
-                    out.push((s.track_id, s.timescale));
+                    out.push((s.track_id, s.timescale.get()));
                 }
             }
         }
@@ -1315,7 +1315,7 @@ fn rtsp_jump_detected() {
     match &jumped.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, vid);
-            assert_eq!(sample.pts, Some(got[RTSP_VIDEO_AU].pts));
+            assert_eq!(sample.timing.map(|t| t.pts), Some(got[RTSP_VIDEO_AU].pts));
         }
         other => panic!("{other:?}"),
     }
@@ -1328,13 +1328,13 @@ fn media_with(extra_video: usize, extra_audio: usize) -> MediaFixture {
     let video = media
         .tracks
         .iter()
-        .find(|t| t.spec.timescale == RTSP_VIDEO_TIMESCALE)
+        .find(|t| t.spec.timescale.get() == RTSP_VIDEO_TIMESCALE)
         .unwrap()
         .clone();
     let audio = media
         .tracks
         .iter()
-        .find(|t| t.spec.timescale != RTSP_VIDEO_TIMESCALE)
+        .find(|t| t.spec.timescale.get() != RTSP_VIDEO_TIMESCALE)
         .unwrap()
         .clone();
     let mut next_id = 10;
@@ -1431,7 +1431,7 @@ fn multiple_video_tracks_tracked_independently() {
     match &t.events[d[0] + 1] {
         Event::Sample { track, sample, .. } => {
             assert_eq!(*track, ids[1]);
-            assert_eq!(sample.pts, Some(b[RTSP_VIDEO_AU].pts));
+            assert_eq!(sample.timing.map(|t| t.pts), Some(b[RTSP_VIDEO_AU].pts));
         }
         other => panic!("{other:?}"),
     }
@@ -1466,7 +1466,7 @@ fn video_ids(events: &[Event]) -> Vec<TrackId> {
     for e in events {
         if let Event::Tracks(specs) = e {
             for sp in specs {
-                if sp.timescale == VIDEO_TIMESCALE && !out.contains(&sp.track_id) {
+                if sp.timescale.get() == VIDEO_TIMESCALE && !out.contains(&sp.track_id) {
                     out.push(sp.track_id);
                 }
             }
@@ -1483,7 +1483,9 @@ fn video_pts_of(ids: &[TrackId], events: &[Event]) -> Vec<i64> {
     events
         .iter()
         .filter_map(|e| match e {
-            Event::Sample { track, sample, .. } if ids.contains(track) => sample.pts,
+            Event::Sample { track, sample, .. } if ids.contains(track) => {
+                sample.timing.map(|t| t.pts)
+            }
             _ => None,
         })
         .collect()
@@ -1650,7 +1652,7 @@ fn audio_only_media(audio_tracks: usize) -> MediaFixture {
     let audio = media
         .tracks
         .iter()
-        .find(|t| t.spec.timescale != RTSP_VIDEO_TIMESCALE)
+        .find(|t| t.spec.timescale.get() != RTSP_VIDEO_TIMESCALE)
         .unwrap()
         .clone();
     media.tracks.clear();

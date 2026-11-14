@@ -25,6 +25,7 @@
 //! reused here to get a real `avcC` config for the single-track skip test
 //! without hand-fabricating one).
 
+use broadcast_common::timescale::Timescale;
 use std::fs;
 use test_fixtures::vectors::DAC4_ORACLE;
 use transmux::TrackId;
@@ -187,7 +188,7 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
 
     let spec = TrackSpec::new(
         TrackId::new(1),
-        48_000,
+        Timescale::from_nonzero(48_000),
         CodecConfig::Ac4 {
             config: config.clone(),
             channel_count: 2,
@@ -199,7 +200,10 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
         Sample::from_raw(vec![0xAA, 0xBB, 0xCC, 0xDD], Some(0), Some(0), Some(1536)),
         Sample::from_raw(vec![0x11, 0x22, 0x33], Some(1536), Some(1536), Some(1536)),
     ];
-    let media = Media::new(vec![Track::new(spec, samples.clone())], 48_000);
+    let media = Media::new(
+        vec![Track::new(spec, samples.clone())],
+        Timescale::from_nonzero(48_000),
+    );
 
     // Mux: build_trak already had an Ac4 arm (only the demux arm was
     // missing), so this direction worked before this change too.

@@ -8,6 +8,7 @@
 //! Fixtures are resolved through `test_fixtures` at run time — a missing
 //! fixture is a hard failure, never a silent skip.
 
+use broadcast_common::timescale::Timescale;
 use broadcast_smooth::SmoothManifest;
 
 fn walk(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
@@ -85,7 +86,7 @@ fn mutating_a_parsed_manifest_changes_the_output() {
             continue;
         };
         let before = model.to_xml();
-        model.timescale = model.timescale.saturating_add(1);
+        model.timescale = Timescale::from_nonzero(model.timescale.get().saturating_add(1));
         let after = model.to_xml();
         assert_ne!(before, after, "{name}: a mutated TimeScale changed nothing");
     }

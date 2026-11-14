@@ -33,7 +33,7 @@
 //! use transmux::media::Track;
 //!
 //! // Build a minimal AVC TrackSpec for the example.
-//! let spec = TrackSpec::new(transmux::TrackId::new(1), 90000, CodecConfig::Avc {
+//! let spec = TrackSpec::new(transmux::TrackId::new(1), broadcast_common::timescale::Timescale::from_nonzero(90000), CodecConfig::Avc {
 //!     config: AVCConfigurationBox {
 //!         config: AVCDecoderConfigurationRecord {
 //!             configuration_version: 1,
@@ -66,8 +66,8 @@
 //!
 //! // Two keyframes kept; durations folded to span the gaps.
 //! assert_eq!(trick.samples.len(), 2);
-//! assert_eq!(trick.samples[0].duration, Some(400));
-//! assert_eq!(trick.samples[1].duration, Some(400));
+//! assert_eq!(trick.samples[0].timing.map(|t| t.duration), Some(400));
+//! assert_eq!(trick.samples[1].timing.map(|t| t.duration), Some(400));
 //! ```
 
 use alloc::vec::Vec;
@@ -135,7 +135,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
 
         let folded_duration: u32 = src.samples[idx..span_end]
             .iter()
-            .map(|s| s.duration.unwrap_or(0))
+            .map(|s| s.timing.map(|t| t.duration).unwrap_or(0))
             .fold(0u32, |acc, d| acc.saturating_add(d));
 
         let src_sample = &src.samples[idx];
@@ -147,9 +147,11 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
         // bump: no allocation per trick-play sample).
         derived.push(Sample {
             data: src_sample.data.clone(),
-            dts: src_sample.dts,
-            pts: src_sample.pts,
-            duration: Some(folded_duration),
+            timing: crate::ir::SampleTiming::from_options(
+                src_sample.timing.map(|t| t.dts),
+                src_sample.timing.map(|t| t.pts),
+                Some(folded_duration),
+            ),
             flags: crate::ir::SampleFlags::SYNC,
             provenance: src_sample.provenance,
             display: src_sample.display.clone(),
@@ -160,7 +162,7 @@ pub fn derive_iframe_track(src: &Track) -> Result<Track> {
     // is the source's first sync sample, whose dts is unchanged.
     let anchor = derived
         .first()
-        .and_then(|s| s.dts)
+        .and_then(|s| s.timing.map(|t| t.dts))
         .map(|d| d.max(0) as u64)
         .unwrap_or(src.start_decode_time);
     Ok(Track::new_at(src.spec.clone(), derived, anchor))

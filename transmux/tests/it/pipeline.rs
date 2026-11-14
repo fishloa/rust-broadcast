@@ -8,6 +8,7 @@
 //! cannot pass this.
 
 use broadcast_common::Parse;
+use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::{
     CodecConfig, EsdsBox, FragmentTrackData, MediaDataBox, MovieBox, MovieFragmentBox, Sample,
@@ -58,7 +59,7 @@ fn track_stsd_entry(moov: &MovieBox, track_idx: usize) -> SampleEntryVariant {
     stsd.entries[0].clone()
 }
 
-fn track_timescale(moov: &MovieBox, track_idx: usize) -> u32 {
+fn track_timescale(moov: &MovieBox, track_idx: usize) -> Timescale {
     moov.tracks[track_idx]
         .mdia
         .as_ref()
@@ -161,7 +162,7 @@ fn init_segment_from_real_config_reparses() {
     let moov = MovieBox::parse(&moov_bytes).unwrap();
     let (specs, _) = track_specs(&moov);
 
-    let init = build_init_segment(&specs, 1000).expect("build init");
+    let init = build_init_segment(&specs, Timescale::from_nonzero(1000)).expect("build init");
 
     // ftyp first, then moov.
     let (_, ftyp) = find_top_box(&init, b"ftyp");

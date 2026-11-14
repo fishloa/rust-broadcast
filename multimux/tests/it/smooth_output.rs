@@ -16,6 +16,7 @@ use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, VIDEO_TIMESCALE,
     feed_via_segmenter as feed_segments, video_track_spec_sized,
 };
+use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -71,7 +72,7 @@ impl SlideRoute {
         store.publish_new_program(program);
         let seg = LlHlsSegmenter::with_part_target(
             specs.clone(),
-            transmux::VIDEO_CLOCK_RATE,
+            transmux::VIDEO_CLOCK_TIMESCALE,
             W13_TARGET_SECS,
             PART_TARGET_MS,
         )
@@ -452,7 +453,7 @@ async fn llhls_and_smooth_serve_from_same_trunk() {
 /// 4-second target so the segmenter produces the >= 4 s segments W13a is
 /// about; 12 s of video at 30 fps (sync every 120 frames = 4 s) → 3 segments.
 const W13_TARGET_SECS: f64 = 4.0;
-const W13_FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+const W13_FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 const W13_SYNC_EVERY: u32 = 120;
 const W13_FRAMES: u32 = W13_SYNC_EVERY * 3 + 10;
 
@@ -601,7 +602,7 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         W13_TARGET_SECS,
         PART_TARGET_MS,
     )
@@ -616,7 +617,7 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
         if specs.iter().any(|s| s.track_id == track.spec.track_id) {
             for sample in &track.samples {
                 events.push((
-                    sample.dts.unwrap_or(0),
+                    sample.timing.map(|t| t.dts).unwrap_or(0),
                     track.spec.track_id.value(),
                     sample.clone(),
                 ));
@@ -995,7 +996,8 @@ fn config_smooth_deserializes_and_validates() {
 /// An AAC-LC `AudioSpecificConfig` for 48 kHz stereo.
 const ASC_48K_STEREO: [u8; 2] = [0x11, 0x90];
 /// The AAC media timescale.
-const AAC_TIMESCALE: u32 = 48_000;
+const AAC_TIMESCALE: broadcast_common::timescale::Timescale =
+    broadcast_common::timescale::Timescale::from_nonzero(48_000);
 /// An AAC-LC frame duration, in [`AAC_TIMESCALE`] ticks.
 const AAC_FRAME_DUR: u32 = 1024;
 /// The channel count the AAC config reports.
@@ -1033,7 +1035,7 @@ fn audio_spec(track_id: u32, dsi: Option<Vec<u8>>) -> TrackSpec {
         AAC_TIMESCALE,
         CodecConfig::Aac {
             esds: esds(dsi),
-            sample_rate: AAC_TIMESCALE,
+            sample_rate: AAC_TIMESCALE.get(),
             channel_count: AAC_CHANNELS,
             sample_size: 16,
         },
@@ -1044,7 +1046,7 @@ fn audio_spec(track_id: u32, dsi: Option<Vec<u8>>) -> TrackSpec {
 fn subtitle_spec(track_id: u32) -> TrackSpec {
     TrackSpec::new(
         TrackId::new(track_id),
-        1000,
+        Timescale::from_nonzero(1000),
         CodecConfig::Subtitle {
             format: transmux::ir::SubtitleFormat::Ttml,
             sample_entry: Some(transmux::pipeline::SubtitleSampleEntry::Ttml(
@@ -1258,7 +1260,7 @@ async fn smooth_responses_carry_no_cache() {
     store.publish_new_program(program);
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
-        transmux::VIDEO_CLOCK_RATE,
+        transmux::VIDEO_CLOCK_TIMESCALE,
         W13_TARGET_SECS,
         PART_TARGET_MS,
     )

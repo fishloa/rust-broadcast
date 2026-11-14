@@ -77,7 +77,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             match output {
                 Output::Tracks(tracks) => {
                     for t in &tracks {
-                        println!("track {} timescale {}", t.track_id.value(), t.timescale);
+                        println!(
+                            "track {} timescale {}",
+                            t.track_id.value(),
+                            t.timescale.get()
+                        );
                     }
                 }
                 Output::Sample { track, .. } => *samples.entry(track.value()).or_default() += 1,

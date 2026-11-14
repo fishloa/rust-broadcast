@@ -571,11 +571,12 @@ struct BlockEvent {
 /// (the inverse of `webm_demux::parse_block`'s `raw_ticks * scale_ns /
 /// ns_per_ir_tick`): `ticks / track_timescale` seconds, expressed in
 /// [`TIMESTAMP_SCALE_NS`]-sized ticks.
-fn to_matroska_ticks(ticks: i64, track_timescale: u32, timestamp_scale_ns: u64) -> i64 {
-    if track_timescale == 0 {
-        return 0;
-    }
-    let ns = (ticks as i128) * (NS_PER_SECOND as i128) / (track_timescale as i128);
+fn to_matroska_ticks(
+    ticks: i64,
+    track_timescale: broadcast_common::timescale::Timescale,
+    timestamp_scale_ns: u64,
+) -> i64 {
+    let ns = (ticks as i128) * (NS_PER_SECOND as i128) / i128::from(track_timescale.get());
     (ns / timestamp_scale_ns as i128) as i64
 }
 
@@ -814,7 +815,10 @@ impl Package for MkvMux {
                     .iter()
                     .map(|s| {
                         to_matroska_ticks(
-                            s.pts.or(s.dts).unwrap_or(0),
+                            s.timing
+                                .map(|t| t.pts)
+                                .or(s.timing.map(|t| t.dts))
+                                .unwrap_or(0),
                             timescale,
                             TIMESTAMP_SCALE_NS,
                         )
@@ -827,9 +831,13 @@ impl Package for MkvMux {
         for track in &media.tracks {
             let timescale = track.timescale();
             for sample in &track.samples {
-                let pts = sample.pts.or(sample.dts).unwrap_or(0);
+                let pts = sample
+                    .timing
+                    .map(|t| t.pts)
+                    .or(sample.timing.map(|t| t.dts))
+                    .unwrap_or(0);
                 let end_ticks = to_matroska_ticks(
-                    pts + sample.duration.unwrap_or(0) as i64,
+                    pts + sample.timing.map(|t| t.duration).unwrap_or(0) as i64,
                     timescale,
                     TIMESTAMP_SCALE_NS,
                 );
@@ -919,6 +927,7 @@ impl Package for MkvMux {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::timescale::Timescale;
 
     /// T15: an `avcC` with more than 31 SPS cannot be encoded (5-bit count);
     /// the Matroska CodecPrivate build must return `Err`, not panic.
@@ -1039,8 +1048,10 @@ mod tests {
         let shift: i64 = -30_000;
         for track in &mut media.tracks {
             for s in &mut track.samples {
-                s.dts = s.dts.map(|v| v.saturating_add(shift));
-                s.pts = s.pts.map(|v| v.saturating_add(shift));
+                if let Some(t) = s.timing.as_mut() {
+                    t.dts = t.dts.saturating_add(shift);
+                    t.pts = t.pts.saturating_add(shift);
+                }
             }
             // `start_decode_time` is unsigned; clamping to 0 is fine here
             // because the blocks' own `pts` carry the real negative base.
@@ -1188,8 +1199,10 @@ mod tests {
                 &(|m: &mut crate::media::Media| {
                     for track in &mut m.tracks {
                         for s in &mut track.samples {
-                            s.dts = s.dts.map(|v| v.saturating_sub(500));
-                            s.pts = s.pts.map(|v| v.saturating_sub(500));
+                            if let Some(t) = s.timing.as_mut() {
+                                t.dts = t.dts.saturating_sub(500);
+                                t.pts = t.pts.saturating_sub(500);
+                            }
                         }
                     }
                 }) as &dyn Fn(&mut crate::media::Media),
@@ -1203,8 +1216,10 @@ mod tests {
                     // forward-only span rule kept in one Cluster.
                     let half = m.tracks[0].samples.len() / 2;
                     for s in &mut m.tracks[0].samples[half..] {
-                        s.dts = s.dts.map(|v| v.saturating_sub(10_000));
-                        s.pts = s.pts.map(|v| v.saturating_sub(10_000));
+                        if let Some(t) = s.timing.as_mut() {
+                            t.dts = t.dts.saturating_sub(10_000);
+                            t.pts = t.pts.saturating_sub(10_000);
+                        }
                     }
                 }) as &dyn Fn(&mut crate::media::Media),
             ),
@@ -1438,8 +1453,10 @@ mod tests {
         for cut in [n / 4, n / 2, 3 * n / 4] {
             if cut < n {
                 for s in &mut media.tracks[0].samples[cut..] {
-                    s.dts = s.dts.map(|v| v.saturating_sub(5_000));
-                    s.pts = s.pts.map(|v| v.saturating_sub(5_000));
+                    if let Some(t) = s.timing.as_mut() {
+                        t.dts = t.dts.saturating_sub(5_000);
+                        t.pts = t.pts.saturating_sub(5_000);
+                    }
                 }
             }
         }
@@ -1527,7 +1544,7 @@ mod tests {
 
     #[test]
     fn empty_media_rejected() {
-        let media = Media::new(Vec::new(), 1000);
+        let media = Media::new(Vec::new(), Timescale::from_nonzero(1000));
         let mut mux = MkvMux::new();
         assert!(matches!(
             mux.package(&media),

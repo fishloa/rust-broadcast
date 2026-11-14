@@ -244,14 +244,17 @@ pub fn run_until(bytes: &[u8], cfg: Config, declare: Declare, stop: Stop) -> Out
                 Event::Tracks(v) => {
                     out.tracks_at_us.get_or_insert(now);
                     for t in &v {
-                        timescale.insert(t.track_id.value(), t.timescale);
+                        timescale.insert(t.track_id.value(), t.timescale.get());
                         video.insert(t.track_id.value(), t.config.audio_sample_rate().is_none());
                     }
                 }
                 Event::Sample { track, sample, .. } => {
                     out.first_sample_us.get_or_insert(now);
-                    if let (Some(pts), Some(&ts)) = (sample.pts, timescale.get(&track.value())) {
-                        let end = (i128::from(pts) + i128::from(sample.duration.unwrap_or(0)))
+                    if let (Some(pts), Some(&ts)) =
+                        (sample.timing.map(|t| t.pts), timescale.get(&track.value()))
+                    {
+                        let end = (i128::from(pts)
+                            + i128::from(sample.timing.map(|t| t.duration).unwrap_or(0)))
                             * 27_000_000
                             / i128::from(ts);
                         let end = u64::try_from(end.max(0)).unwrap_or(0);

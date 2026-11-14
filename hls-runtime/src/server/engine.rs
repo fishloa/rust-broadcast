@@ -92,6 +92,7 @@ use std::time::Duration;
 use transmux::{Container, TrackId};
 
 use broadcast_common::bcp47_language;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
@@ -814,13 +815,13 @@ fn first_moof(segment: &[u8]) -> Option<(usize, transmux::movie_fragment::MovieF
 
 /// Mean video frame rate of one segment in millihertz, rounded to three
 /// decimal places (RFC 8216bis section 4.4.6.2): `samples * timescale / ticks`.
-fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Option<u32> {
-    if samples < MIN_SAMPLES_FOR_RATE || ticks == 0 || timescale == 0 {
+fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: Timescale) -> Option<u32> {
+    if samples < MIN_SAMPLES_FOR_RATE || ticks == 0 {
         return None;
     }
     let ticks = u128::from(ticks);
     let millihertz =
-        (u128::from(samples) * u128::from(timescale) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
+        (u128::from(samples) * u128::from(timescale.get()) * MILLIHERTZ_PER_HZ + ticks / 2) / ticks;
     u32::try_from(millihertz)
         .ok()
         .filter(|mh| *mh <= MAX_PLAUSIBLE_FRAME_RATE_MILLIHERTZ)
@@ -828,7 +829,7 @@ fn segment_frame_rate_millihertz(samples: u64, ticks: u64, timescale: u32) -> Op
 
 /// Mean video frame rate of an fMP4 `segment` from its `trun` durations, or
 /// `None` when the segment cannot be parsed or holds no video samples.
-fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: u32) -> Option<u32> {
+fn fmp4_video_rate(segment: &[u8], video_track_id: TrackId, timescale: Timescale) -> Option<u32> {
     let (moof_off, moof) = first_moof(segment)?;
     let mdats = transmux::frag_offsets::mdat_ranges(segment);
     let samples =
@@ -850,7 +851,7 @@ fn ts_video_rate(segment: &[u8]) -> Option<u32> {
     let ticks: u64 = track
         .samples
         .iter()
-        .filter_map(|sample| sample.duration)
+        .filter_map(|sample| sample.timing.map(|t| t.duration))
         .map(u64::from)
         .sum();
     segment_frame_rate_millihertz(
@@ -4172,25 +4173,29 @@ pub fn playlist_reload_timeout(origin: &HlsOrigin) -> Duration {
 
 #[cfg(test)]
 mod tests {
+    use broadcast_common::timescale::Timescale;
+
+    const T90K: Timescale = Timescale::from_nonzero(90_000);
+
     #[test]
     fn a_segment_with_fewer_than_two_samples_has_no_measurable_frame_rate() {
-        assert_eq!(super::segment_frame_rate_millihertz(1, 6000, 90_000), None);
+        assert_eq!(super::segment_frame_rate_millihertz(1, 6000, T90K), None);
         assert_eq!(
-            super::segment_frame_rate_millihertz(2, 6000, 90_000),
+            super::segment_frame_rate_millihertz(2, 6000, T90K),
             Some(30_000)
         );
-        assert_eq!(super::segment_frame_rate_millihertz(2, 0, 90_000), None);
+        assert_eq!(super::segment_frame_rate_millihertz(2, 0, T90K), None);
     }
 
     #[test]
     fn a_segment_with_broken_timing_does_not_yield_an_implausible_frame_rate() {
-        assert_eq!(super::segment_frame_rate_millihertz(2, 1, 90_000), None);
+        assert_eq!(super::segment_frame_rate_millihertz(2, 1, T90K), None);
         assert_eq!(
-            super::segment_frame_rate_millihertz(300, 90_000, 90_000),
+            super::segment_frame_rate_millihertz(300, 90_000, T90K),
             Some(300_000)
         );
         assert_eq!(
-            super::segment_frame_rate_millihertz(301, 90_000, 90_000),
+            super::segment_frame_rate_millihertz(301, 90_000, T90K),
             None
         );
     }

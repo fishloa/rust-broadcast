@@ -11,6 +11,7 @@
 //! cutting *and* correct non-anchor (audio) time-partitioning at each cut.
 
 use crate::hub_fixtures::dummy_avc_config;
+use broadcast_common::timescale::Timescale;
 use broadcast_common::{Package, Unpackage};
 use transmux::TrackId;
 use transmux::media::Media;
@@ -41,12 +42,12 @@ fn track_specs(ir: &Media) -> Vec<TrackSpec> {
 fn merged_decode_order(ir: &Media) -> Vec<(usize, usize)> {
     let mut items: Vec<(f64, usize, usize)> = Vec::new();
     for (tpos, t) in ir.tracks.iter().enumerate() {
-        let scale = t.spec.timescale.max(1) as u64;
+        let scale = t.spec.timescale.get() as u64;
         let mut acc: u64 = 0;
         for (i, s) in t.samples.iter().enumerate() {
             let start_secs = acc as f64 / scale as f64;
             items.push((start_secs, tpos, i));
-            acc += s.duration.unwrap_or(0) as u64;
+            acc += s.timing.map(|t| t.duration).unwrap_or(0) as u64;
         }
     }
     // Stable sort by decode-start time; ties keep original (track, sample)
@@ -234,7 +235,7 @@ fn rolling_playlist_windows_and_advances_media_sequence() {
 fn single_video_track() -> TrackSpec {
     TrackSpec::new(
         TrackId::new(1),
-        90_000,
+        Timescale::from_nonzero(90_000),
         CodecConfig::Avc {
             config: dummy_avc_config(),
             width: 320,
