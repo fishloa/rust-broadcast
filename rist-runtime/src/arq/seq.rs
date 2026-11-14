@@ -18,7 +18,7 @@ use broadcast_common::seq::SeqSpace;
 
 /// The RTP sequence-number space: 16 bits (RFC 3550 §5.1). The arithmetic
 /// itself is `broadcast_common::seq` (shared with `srt-runtime`, #1141).
-const SPACE: SeqSpace = SeqSpace::new(16);
+const SPACE: SeqSpace = broadcast_common::seq_space!(16);
 
 /// Add `n` to a sequence number, wrapping at the 16-bit boundary.
 pub fn seq_add(seq: u16, n: u16) -> u16 {

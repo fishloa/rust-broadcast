@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Counts and lengths are range-checked before they are written, instead of being narrowed with `as u32` (#2758): the Random Index Pack's trailing overall Length and the Primer Pack's entry count now go through `broadcast_common::len::fit_u32` and report `Error::FieldOverflow` when over range, rather than silently wrapping to a different value (and a different on-wire length).
+- A Primer Pack's duplicate-tag/duplicate-UL check sorts each dimension instead of running a nested loop over the untrusted entry count (#2758): a crafted ~1.2 MB Primer (65 536 distinct tags, duplicate last) cost ~2e9 comparisons before the duplicate was reported.
+- A typed Set parsed from a real file reproduces that encoder's own 8-byte Batch/Array header on serialize instead of this crate's canonical one (#2759). Measured on the real OP1a fixture: its empty `EssenceContainers` Batch carries `item_len = 0` (inside both the Partition Pack value and the typed `Preface`), which the old serializer rewrote as `item_len = 16`, so parse -> serialize was not byte-identical.
+
+### Added
+- `UidBatch` (re-exported at the crate root): a Batch/Array of 16-byte ULs with the header it was parsed with, `items()`, `header()`, `with_header()`, `parse()` and `serialize()`.
+
+### Breaking
+- `serialize_uid_batch` returns `Result<Vec<u8>>` instead of `Vec<u8>`: a Batch/Array of 16-byte ULs whose count exceeds `u32::MAX` is reported as `Error::FieldOverflow` rather than written with a wrapped count.
+- `Error` gains `FieldOverflow(broadcast_common::len::FieldOverflow)`.
+- `PartitionPack`, `Preface`, `ContentStorage`, `MaterialPackage`, `SourcePackage` and `Sequence` gain an `*_batch: Option<UidBatch>` field per UL Batch property (`essence_containers_batch`, `identifications_batch`, `dm_schemes_batch`, `packages_batch`, `essence_container_data_batch`, `tracks_batch`, `structural_components_batch`). Fill it with `None` for a freshly built value. `PartialEq` compares a Batch header only when both sides retain one, so a freshly built Set still equals the same Set parsed from a file.
+- `parse_uid_batch` is replaced by `UidBatch::parse`, which returns the parsed Batch (header included) rather than only its elements. `serialize_uid_batch` is unchanged.
 
 ## [0.7.0] - 2026-11-14
 ### Breaking

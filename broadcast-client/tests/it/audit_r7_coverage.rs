@@ -6,14 +6,16 @@ use crate::support;
 use url::Url;
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use broadcast_client::events::{
-    DEFAULT_START_PENDING_TRACK_HARD_CAP_US, DEFAULT_START_PENDING_TRACK_WAIT_US,
+    DEFAULT_START_PENDING_TRACK_HARD_CAP, DEFAULT_START_PENDING_TRACK_WAIT,
 };
 use broadcast_client::{Action, BufferEvent, Config, ConnId, ErrorKind, Event, Session};
 use broadcast_common::cenc::CencScheme;
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::duration_micros;
 use support::fmp4_split::{group, split};
 use support::hls_host::{Host, Reply, hls_config, is_ended};
 use support::ts_host::Host as TsHost;
@@ -593,7 +595,10 @@ fn a_40_stream_pmt_with_a_never_sent_private_audio_still_starts_within_the_wait(
     let first = first.expect("media flowed");
     let start = start.expect("Start must fire, never wait forever");
     assert!(
-        start <= first + DEFAULT_START_PENDING_TRACK_HARD_CAP_US + START_BOUND_AFTER_WAIT_US,
+        start
+            <= first
+                + duration_micros(DEFAULT_START_PENDING_TRACK_HARD_CAP)
+                + START_BOUND_AFTER_WAIT_US,
         "start {start} us, first sample {first} us"
     );
 }
@@ -605,7 +610,7 @@ fn the_never_sent_private_audio_is_what_delays_the_start() {
     let (without, with) = (without.expect("started"), with.expect("started"));
     assert!(with > without, "with {with} us, without {without} us");
     assert!(
-        with >= DEFAULT_START_PENDING_TRACK_WAIT_US,
+        Duration::from_micros(with) >= DEFAULT_START_PENDING_TRACK_WAIT,
         "the declared audio is waited for: {with} us"
     );
 }
@@ -615,13 +620,13 @@ fn a_zero_wait_removes_the_delay_from_the_never_sent_private_audio() {
     let bytes = forty_stream_pmt(true);
     let (_, default_start) = start_of_with(&bytes, {
         let mut new_config = Config::default();
-        new_config.start_pending_track_hard_cap_us = 0;
+        new_config.start_pending_track_hard_cap = Duration::ZERO;
         new_config
     });
     let (_, zero_start) = start_of_with(&bytes, {
         let mut new_config = Config::default();
-        new_config.start_pending_track_wait_us = 0;
-        new_config.start_pending_track_hard_cap_us = 0;
+        new_config.start_pending_track_wait = Duration::ZERO;
+        new_config.start_pending_track_hard_cap = Duration::ZERO;
         new_config
     });
     let (default_start, zero_start) = (
@@ -630,7 +635,7 @@ fn a_zero_wait_removes_the_delay_from_the_never_sent_private_audio() {
     );
 
     assert!(
-        zero_start < DEFAULT_START_PENDING_TRACK_WAIT_US,
+        Duration::from_micros(zero_start) < DEFAULT_START_PENDING_TRACK_WAIT,
         "{zero_start} us"
     );
     assert!(zero_start < default_start);

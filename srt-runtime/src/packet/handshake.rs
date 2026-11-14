@@ -719,10 +719,11 @@ impl<'a> Iterator for HandshakeExtensionIter<'a> {
             return None;
         }
         if self.rest.len() < 4 {
+            let have = self.rest.len();
             self.rest = &[];
             return Some(Err(Error::BufferTooShort(BufferTooShort {
                 need: 4,
-                have: self.rest.len(),
+                have,
                 what: "handshake extension block header",
             })));
         }
@@ -952,6 +953,21 @@ mod tests {
             it.next(),
             Some(Err(Error::ExtensionOverrun { .. }))
         ));
+        assert!(it.next().is_none());
+    }
+
+    #[test]
+    fn truncated_extension_header_reports_available_bytes() {
+        let bytes = [0x00, 0x05, 0x00];
+        let exts = HandshakeExtensions(&bytes);
+        let mut it = exts.iter();
+        match it.next() {
+            Some(Err(Error::BufferTooShort(b))) => {
+                assert_eq!(b.need, 4);
+                assert_eq!(b.have, 3);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
         assert!(it.next().is_none());
     }
 
