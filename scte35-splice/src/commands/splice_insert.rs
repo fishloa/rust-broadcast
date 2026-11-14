@@ -35,6 +35,20 @@ pub enum ProgramSplice {
     At(SpliceTime),
 }
 
+impl ProgramSplice {
+    /// Stable label: the `splice_immediate_flag` reading this mode carries.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Immediate => "immediate",
+            Self::At(_) => "at_splice_time",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ProgramSplice);
+broadcast_common::impl_spec_display!(SpliceMode);
+
 /// How a [`SpliceInsert`] splices: the `program_splice_flag` /
 /// `splice_immediate_flag` / `component_count` block of §9.7.3, Table 10.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +76,21 @@ impl Default for SpliceMode {
 }
 
 impl SpliceMode {
+    /// Stable label for the wire flags this mode derives.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Program(ProgramSplice::Immediate) => "program_immediate",
+            Self::Program(ProgramSplice::At(_)) => "program_at",
+            Self::Components {
+                immediate: false, ..
+            } => "components_at",
+            Self::Components {
+                immediate: true, ..
+            } => "components_immediate",
+        }
+    }
+
     /// `program_splice_flag` as carried on the wire.
     #[must_use]
     pub const fn program_splice_flag(&self) -> bool {

@@ -90,9 +90,10 @@ pub fn build_splice_insert(
         cancel: None,
         out_of_network_indicator: matches!(edge, BreakEdge::Enter),
         event_id_compliance_flag: true,
+        // `Clock33::ticks` is always below 2^33, so re-validating the reduced
+        // instant cannot fail.
         mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
-            broadcast_common::clock33::Clock33::try_new(conditioned.snapped_pts.ticks())
-                .expect("in range"),
+            Clock33::try_new(conditioned.snapped_pts.ticks()).unwrap_or(conditioned.snapped_pts),
         ))),
         break_duration: break_duration_ticks.map(|duration| BreakDuration {
             auto_return: true,

@@ -83,6 +83,19 @@ pub enum NoCue {
     },
 }
 
+impl NoCue {
+    /// Stable label for the kind of non-cue this is.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotACue => "not_a_cue",
+            Self::Malformed { .. } => "malformed",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(NoCue);
+
 /// Why a [`SpliceTracker::feed`] call produced no observation. `Ok(())` means
 /// it produced one or more; nothing is reported when a call completes no
 /// section at all.
@@ -97,7 +110,8 @@ pub struct SpliceTracker {
 }
 
 /// The currently open ids in arrival order, capped at [`MAX_OPEN_EVENTS`]:
-/// the newest insert is evicted first, never the numerically smallest.
+/// past the cap the oldest event is evicted, never the numerically smallest
+/// id (a recent low id survives).
 #[derive(Default)]
 struct OpenEvents {
     order: VecDeque<u32>,
