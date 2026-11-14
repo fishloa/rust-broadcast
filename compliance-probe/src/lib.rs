@@ -88,7 +88,7 @@ impl Probe {
         let Ok(ts_packet) = TsPacket::parse(packet) else {
             return;
         };
-        if !ts_packet.header.has_adaptation {
+        if !ts_packet.header.has_adaptation() {
             return;
         }
         let Some(Ok(af)) = ts_packet.adaptation_field() else {

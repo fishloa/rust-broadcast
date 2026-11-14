@@ -17,7 +17,7 @@ use crate::util::{PacketReader, READ_CHUNK, open_file, read_chunk};
 
 /// Default T2-MI PID when none is specified (EN 302 755 V1.4.1 §5.1 — the usual
 /// data-piping PID for T2-MI in TS).
-const DEFAULT_T2MI_PID: Pid = Pid::new(0x0006);
+const DEFAULT_T2MI_PID: Pid = Pid::from_const(0x0006);
 
 /// `--pid` value: a TS-encapsulated target PID, or raw bytes.
 enum PidArg {

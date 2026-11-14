@@ -19,8 +19,14 @@
 //! four already depends on, rather than promoting one sibling to depend on
 //! another.
 //!
-//! Two independent operations live here, because they answer different
-//! questions and must not be collapsed into one:
+//! The values themselves are [`Clock33`] (a validated 33-bit 90 kHz sample) and
+//! [`Clock27`] (a validated 27 MHz `base * 300 + ext`), so `mpeg-ts`'s `Pcr`,
+//! `mpeg-ps`'s `Scr` and `mpeg-pes`'s `Pts`/`Dts` are all this one pair rather
+//! than separate unchecked copies.
+//!
+//! Beyond the two validated types, two independent operations live here,
+//! because they answer different questions and must not be collapsed into
+//! one:
 //!
 //! - [`unwrap_delta`] — extend a running **unwrapped** (ever-growing, signed)
 //!   accumulator by the next raw sample, correcting for exactly one wrap in
@@ -261,6 +267,237 @@ pub fn pack_marked(timestamp: u64, prefix: u8) -> [u8; 5] {
     pack_marked_with(timestamp, prefix, MARKERS_ALL_SET)
 }
 
+// ── Validated clock values ──────────────────────────────────────────────────
+
+/// A clock reading that does not fit the field it is carried in: a 33-bit
+/// PTS/DTS/`pts_time` sample, or a 27 MHz PCR/ESCR/SCR base (beyond the
+/// `2^33 * 300` wrap) or extension (`>= 300`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ClockOutOfRange {
+    /// Which field was rejected: `"33-bit ticks"`, `"27 MHz base"`,
+    /// `"27 MHz extension"` or `"27 MHz ticks"`.
+    pub field: &'static str,
+    /// The rejected value, widened to `u64` for reporting.
+    pub value: u64,
+}
+
+impl core::fmt::Display for ClockOutOfRange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} value {} is out of range", self.field, self.value)
+    }
+}
+
+impl core::error::Error for ClockOutOfRange {}
+
+/// A validated 33-bit 90 kHz clock sample (PTS, DTS, SCTE-35 `pts_time`).
+///
+/// ISO/IEC 13818-1 §2.4.3.7 samples the 90 kHz system clock into a 33-bit
+/// field. This type is that value *after* the wire: always in `[0, 2^33)`, so
+/// the modular helpers here never have to reduce their input and a caller
+/// cannot hand them a value that silently wraps somewhere else. `mpeg-pes`'s
+/// `Pts`/`Dts`, SCTE-35's `pts_time`/`pts_adjustment` and `timed-metadata`'s
+/// timeline all carry this type.
+///
+/// `Default` is the origin (`0`). [`From<Clock33> for u64`], [`TryFrom<u64>`]
+/// and [`TryFrom<i64>`] convert.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct Clock33(u64);
+
+impl Clock33 {
+    /// The origin of the clock (`0`).
+    pub const ZERO: Self = Self(0);
+
+    /// Construct from a raw tick count, rejecting any value at or above
+    /// [`WRAP_33BIT`].
+    ///
+    /// # Errors
+    /// [`ClockOutOfRange`] (`field: "33-bit ticks"`) when `ticks >= 2^33`.
+    pub const fn try_new(ticks: u64) -> Result<Self, ClockOutOfRange> {
+        if ticks >= WRAP_33BIT {
+            Err(ClockOutOfRange {
+                field: "33-bit ticks",
+                value: ticks,
+            })
+        } else {
+            Ok(Self(ticks))
+        }
+    }
+
+    /// The raw tick count, always in `[0, 2^33)`.
+    #[must_use]
+    pub const fn ticks(self) -> u64 {
+        self.0
+    }
+
+    /// `(self + b) mod 2^33` — see [`add`].
+    #[must_use]
+    pub const fn wrapping_add(self, b: Self) -> Self {
+        // Both operands are < 2^33, so the sum cannot overflow a u64.
+        Self((self.0 + b.0) % WRAP_33BIT)
+    }
+
+    /// `(self + delta) mod 2^33` for a possibly negative step — see
+    /// [`add_signed`].
+    #[must_use]
+    pub fn wrapping_add_signed(self, delta: i64) -> Self {
+        Self(add_signed(self.0, delta))
+    }
+
+    /// The shortest signed distance from `self` to `to` — see
+    /// [`signed_distance`].
+    #[must_use]
+    pub fn signed_distance_to(self, to: Self) -> i64 {
+        signed_distance(self.0, to.0)
+    }
+}
+
+impl From<Clock33> for u64 {
+    fn from(c: Clock33) -> Self {
+        c.0
+    }
+}
+
+impl TryFrom<u64> for Clock33 {
+    type Error = ClockOutOfRange;
+    fn try_from(ticks: u64) -> Result<Self, Self::Error> {
+        Self::try_new(ticks)
+    }
+}
+
+impl TryFrom<i64> for Clock33 {
+    type Error = ClockOutOfRange;
+    fn try_from(ticks: i64) -> Result<Self, Self::Error> {
+        // A negative sample cannot name a position on the clock: report the
+        // magnitude, which is the width that matters.
+        Self::try_new(ticks.unsigned_abs())
+    }
+}
+
+impl core::fmt::Debug for Clock33 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Clock33({})", self.0)
+    }
+}
+
+impl core::fmt::Display for Clock33 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A validated 27 MHz clock value: `base * 300 + ext` (ISO/IEC 13818-1
+/// §2.4.3.5 PCR, §2.4.3.7 ESCR, §2.5.3.4 program-stream SCR).
+///
+/// The base is a [`Clock33`] and `ext` is `< 300`, so the value is always in
+/// `[0, PCR_WRAP_27MHZ)`. This is the one representation of a PCR/ESCR/SCR:
+/// `mpeg-ts::ts::Pcr` and `mpeg-ps::Scr` are thin wrappers that add only their
+/// own wire codec.
+#[derive(Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Clock27 {
+    /// The 33-bit base (27 MHz ticks / 300).
+    #[cfg_attr(feature = "serde", serde(with = "clock33_serde"))]
+    pub base: Clock33,
+    /// The 9-bit extension (27 MHz ticks within the current base tick).
+    pub ext: u16,
+}
+
+/// Serializes a [`Clock33`] as its raw tick count (the value it is a newtype
+/// over).
+#[cfg(feature = "serde")]
+mod clock33_serde {
+    use super::Clock33;
+    use serde::Serializer;
+
+    pub fn serialize<S: Serializer>(c: &Clock33, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_u64(c.ticks())
+    }
+}
+
+impl Clock27 {
+    /// Construct from the two wire parts, checking both widths.
+    ///
+    /// # Errors
+    /// [`ClockOutOfRange`] when `base >= 2^33` (`field: "27 MHz base"`) or
+    /// `ext >= 300` (`field: "27 MHz extension"`).
+    pub const fn from_parts(base: u64, ext: u16) -> Result<Self, ClockOutOfRange> {
+        let base = match Clock33::try_new(base) {
+            Ok(base) => base,
+            Err(_) => {
+                return Err(ClockOutOfRange {
+                    field: "27 MHz base",
+                    value: base,
+                });
+            }
+        };
+        if ext >= PCR_EXT_MODULUS as u16 {
+            return Err(ClockOutOfRange {
+                field: "27 MHz extension",
+                value: ext as u64,
+            });
+        }
+        Ok(Self { base, ext })
+    }
+
+    /// Split an absolute 27 MHz value into its two wire parts, the inverse of
+    /// [`from_parts`](Self::from_parts) for any `ticks < PCR_WRAP_27MHZ`.
+    ///
+    /// # Errors
+    /// [`ClockOutOfRange`] (`field: "27 MHz ticks"`) when
+    /// `ticks >= PCR_WRAP_27MHZ`.
+    pub fn from_27mhz(ticks: u64) -> Result<Self, ClockOutOfRange> {
+        if ticks >= PCR_WRAP_27MHZ {
+            return Err(ClockOutOfRange {
+                field: "27 MHz ticks",
+                value: ticks,
+            });
+        }
+        let (base, ext) = pcr_split(ticks);
+        // `ticks < PCR_WRAP_27MHZ` puts both parts in range by construction.
+        Self::from_parts(base, ext)
+    }
+
+    /// The full value on the 27 MHz clock: `base * 300 + ext`.
+    #[must_use]
+    pub const fn ticks(self) -> u64 {
+        pcr_from_parts(self.base.ticks(), self.ext)
+    }
+
+    /// The value in seconds.
+    #[must_use]
+    pub fn seconds(self) -> f64 {
+        self.ticks() as f64 / PCR_HZ as f64
+    }
+
+    /// The shortest signed distance from `self` to `to` — see
+    /// [`pcr_signed_distance`].
+    #[must_use]
+    pub fn signed_distance_to(self, to: Self) -> i64 {
+        pcr_signed_distance(self.ticks(), to.ticks())
+    }
+}
+
+impl From<Clock27> for u64 {
+    fn from(c: Clock27) -> Self {
+        c.ticks()
+    }
+}
+
+impl core::fmt::Debug for Clock27 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "Clock27({})", self.ticks())
+    }
+}
+
+impl core::fmt::Display for Clock27 {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.ticks())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -378,6 +615,71 @@ mod tests {
     fn signed_distance_reduces_inputs_at_or_above_the_modulus() {
         assert_eq!(signed_distance(WRAP_33BIT + 5, WRAP_33BIT + 8), 3);
     }
+    #[test]
+    fn clock33_rejects_every_out_of_width_value() {
+        assert_eq!(
+            Clock33::try_new(WRAP_33BIT - 1),
+            Ok(Clock33(WRAP_33BIT - 1))
+        );
+        for bad in [WRAP_33BIT, WRAP_33BIT + 1, u64::MAX] {
+            let err = Clock33::try_new(bad).unwrap_err();
+            assert_eq!((err.field, err.value), ("33-bit ticks", bad));
+            assert_eq!(Clock33::try_from(bad).unwrap_err(), err);
+        }
+        assert_eq!(Clock33::try_from(7u64), Ok(Clock33(7)));
+        assert_eq!(Clock33::try_from(0u64), Ok(Clock33::ZERO));
+    }
+
+    #[test]
+    fn clock33_arithmetic_wraps_and_agrees_with_the_free_functions() {
+        let top = Clock33::try_new(WRAP_33BIT - 1).expect("in range");
+        let one = Clock33::try_new(1).expect("in range");
+        assert_eq!(top.wrapping_add(one), Clock33::ZERO);
+        assert_eq!(top.wrapping_add_signed(1), Clock33::ZERO);
+        assert_eq!(top.wrapping_add_signed(2), one);
+        let five = Clock33::try_new(5).expect("in range");
+        assert_eq!(five.signed_distance_to(top), -6);
+        assert_eq!(top.signed_distance_to(five), 6);
+        assert_eq!(u64::from(top), WRAP_33BIT - 1);
+    }
+
+    #[test]
+    fn clock27_validates_both_wire_widths() {
+        assert_eq!(
+            Clock27::from_parts(WRAP_33BIT, 0).unwrap_err().field,
+            "27 MHz base"
+        );
+        assert_eq!(
+            Clock27::from_27mhz(PCR_WRAP_27MHZ).unwrap_err(),
+            ClockOutOfRange {
+                field: "27 MHz ticks",
+                value: PCR_WRAP_27MHZ
+            }
+        );
+        // 300..=511 fits the 9-bit wire field but not the clock.
+        assert_eq!(
+            Clock27::from_parts(0, 300).unwrap_err(),
+            ClockOutOfRange {
+                field: "27 MHz extension",
+                value: 300
+            }
+        );
+        assert!(Clock27::from_parts(WRAP_33BIT - 1, 299).is_ok());
+    }
+
+    #[test]
+    fn clock27_round_trips_a_full_revolution() {
+        for ticks in [0, 1, 299, 300, 27_000_000, PCR_WRAP_27MHZ - 1] {
+            let c = Clock27::from_27mhz(ticks).expect("in range");
+            assert_eq!(c.ticks(), ticks);
+            assert_eq!(u64::from(c), ticks);
+            assert_eq!(Clock27::from_parts(c.base.ticks(), c.ext), Ok(c));
+        }
+        let a = Clock27::from_27mhz(PCR_WRAP_27MHZ - 5).expect("in range");
+        let b = Clock27::from_27mhz(10).expect("in range");
+        assert_eq!(a.signed_distance_to(b), 15);
+    }
+
     #[test]
     fn pcr_constants_are_the_spec_values() {
         assert_eq!(PCR_EXT_MODULUS, 300);

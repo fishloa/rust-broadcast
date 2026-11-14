@@ -239,8 +239,9 @@ impl<'a> Parse<'a> for CommsInfoReply {
         source_ip_address.copy_from_slice(&body[2..2 + IP_ADDR_LEN]);
         let p = 2 + IP_ADDR_LEN;
         let source_port = u16::from_be_bytes([body[p], body[p + 1]]);
-        let input_delivery_pid =
-            Pid::new(u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK);
+        let input_delivery_pid = Pid::from_wire_masked(
+            u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK,
+        );
         Ok(Self {
             length_form,
             lts_id,
@@ -801,7 +802,7 @@ mod tests {
             status: true,
             source_ip_address: IP_A,
             source_port: 0x1234,
-            input_delivery_pid: Pid::new(0x0100),
+            input_delivery_pid: Pid::from_const(0x0100),
         };
         let bytes = r.try_to_bytes().unwrap();
         // body=22=0x16. LTS(07) status(01) IP(16) port(12 34) pid(01 00).
@@ -826,7 +827,7 @@ mod tests {
             0x00, 0x00, 0xFF, 0xFE,
         ];
         let r = CommsInfoReply::parse(&bytes).unwrap();
-        assert_eq!(r.input_delivery_pid, Pid::new(0x1FFE));
+        assert_eq!(r.input_delivery_pid, Pid::from_const(0x1FFE));
     }
 
     #[test]
@@ -998,7 +999,7 @@ mod tests {
             status: false,
             source_ip_address: [0; IP_ADDR_LEN],
             source_port: 0,
-            input_delivery_pid: Pid::new(0),
+            input_delivery_pid: Pid::from_const(0),
         };
         assert!(matches!(
             LscV4Apdu::parse(&reply.try_to_bytes().unwrap()).unwrap(),
@@ -1042,7 +1043,7 @@ mod tests {
             status: false,
             source_ip_address: [0; IP_ADDR_LEN],
             source_port: 0,
-            input_delivery_pid: Pid::new(0x1FFF),
+            input_delivery_pid: Pid::from_const(0x1FFF),
         };
         let bytes = reply.try_to_bytes().unwrap();
         assert_eq!(CommsInfoReply::parse(&bytes).unwrap(), reply);

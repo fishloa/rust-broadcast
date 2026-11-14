@@ -67,7 +67,7 @@ async fn section_stream_clean_resync_stats() {
     let pid = 0x0000u16;
     let mut data = Vec::new();
     for i in 0..3 {
-        let pkt = make_si_ts_packet(Pid::new(pid), i);
+        let pkt = make_si_ts_packet(Pid::from_wire_masked(pid), i);
         data.extend_from_slice(&pkt);
     }
 
@@ -90,7 +90,7 @@ async fn section_stream_leading_junk_increments_resync_counters() {
     data.extend_from_slice(&[0x00u8; 42]); // 42 bytes leading junk
 
     for i in 0..3 {
-        let pkt = make_si_ts_packet(Pid::new(pid), i);
+        let pkt = make_si_ts_packet(Pid::from_wire_masked(pid), i);
         data.extend_from_slice(&pkt);
     }
 
@@ -131,13 +131,13 @@ async fn section_stream_mid_stream_corruption_detected() {
 
     let mut data = Vec::new();
     for i in 0..2 {
-        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::from_wire_masked(pid), i));
     }
-    let mut corrupt = make_si_ts_packet(Pid::new(pid), 2);
+    let mut corrupt = make_si_ts_packet(Pid::from_wire_masked(pid), 2);
     corrupt[0] = 0x00;
     data.extend_from_slice(&corrupt);
     for i in 3..5 {
-        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::from_wire_masked(pid), i));
     }
 
     // data = 5 * 188 = 940 bytes
@@ -198,13 +198,13 @@ async fn section_stream_slow_reader_corruption_recovers() {
     // 5 clean packets + 1 corrupted in the middle, then 2 trailing clean.
     let mut data = Vec::new();
     for i in 0..2 {
-        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::from_wire_masked(pid), i));
     }
-    let mut corrupt = make_si_ts_packet(Pid::new(pid), 2);
+    let mut corrupt = make_si_ts_packet(Pid::from_wire_masked(pid), 2);
     corrupt[0] = 0x00; // corrupt sync byte
     data.extend_from_slice(&corrupt);
     for i in 3..7 {
-        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::from_wire_masked(pid), i));
     }
     // data = 7 * 188 = 1316 bytes
 

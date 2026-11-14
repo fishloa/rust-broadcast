@@ -22,7 +22,7 @@ const FIXTURE: &str = "ts/france-tnt-pcr.ts";
 const DISC_FIXTURE: &str = "ts/france-pcr-discontinuity.ts";
 
 fn pid(p: &[u8]) -> Pid {
-    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
+    Pid::from_wire_masked((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 fn set_pcr_27mhz(p: &mut [u8], v: u64) {
@@ -185,7 +185,7 @@ fn discontinuity_reanchors_on_system_time_base_change() {
         let pcr_span = last_pcr - first_pcr;
         (pkt_span * 188 * 8 * 27_000_000) / pcr_span
     }
-    let bps = bitrate_from(&input, Pid::new(0x026c));
+    let bps = bitrate_from(&input, Pid::from_const(0x026c));
     assert!(
         (10_000_000..50_000_000).contains(&bps),
         "sane bitrate from PID 0x026c: {bps}"
@@ -198,7 +198,7 @@ fn discontinuity_reanchors_on_system_time_base_change() {
     let outp: Vec<u64> = out
         .chunks_exact(PKT)
         .filter_map(|p| {
-            if pid(p) == Pid::new(0x208) {
+            if pid(p) == Pid::from_const(0x208) {
                 pcr_27mhz(p)
             } else {
                 None
@@ -209,7 +209,10 @@ fn discontinuity_reanchors_on_system_time_base_change() {
 
     // Check discontinuity packet still has indicator set.
     let disc_pkt: &[u8] = out.chunks_exact(PKT).nth(1251).expect("pkt 1251 exists");
-    assert!(pid(disc_pkt) == Pid::new(0x208), "pkt 1251 is PID 0x208");
+    assert!(
+        pid(disc_pkt) == Pid::from_const(0x208),
+        "pkt 1251 is PID 0x208"
+    );
     let (_, disc_flag) = pcr_and_disc(disc_pkt).expect("pkt 1251 has PCR");
     assert!(disc_flag, "discontinuity packet still has indicator");
 
@@ -256,7 +259,7 @@ fn discontinuity_reanchors_on_system_time_base_change() {
         .filter_map(|p| pcr_27mhz(p).map(|_| pid(p)))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .filter(|&p| p != Pid::new(0x208))
+        .filter(|&p| p != Pid::from_const(0x208))
         .collect();
     for &opid in &other_pids {
         let before: Vec<u64> = input
@@ -305,7 +308,7 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
     let outp: Vec<u64> = out
         .chunks_exact(PKT)
         .filter_map(|p| {
-            if pid(p) == Pid::new(0x208) {
+            if pid(p) == Pid::from_const(0x208) {
                 pcr_27mhz(p)
             } else {
                 None
@@ -325,7 +328,7 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
     let raw_pcrs: Vec<u64> = input
         .chunks_exact(PKT)
         .filter_map(|p| {
-            if pid(p) == Pid::new(0x208) {
+            if pid(p) == Pid::from_const(0x208) {
                 pcr_27mhz(p)
             } else {
                 None

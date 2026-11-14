@@ -313,7 +313,14 @@ mod tests {
         use crate::tables::pat::{PatEntry, PatSection};
         use broadcast_common::Serialize;
         use mpeg_ts::pid::Pid;
-        let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, Pid::new(0x0100))]);
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            vec![PatEntry::new(1, Pid::from_const(0x0100))],
+        );
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).unwrap();
 

@@ -167,7 +167,7 @@ mod tests {
     /// literal "PMT says AVC but the ES isn't NAL" case from the issue.
     #[test]
     fn declared_h264_with_non_nal_payload_is_flagged() {
-        const VIDEO_PID: Pid = Pid::new(0x101);
+        const VIDEO_PID: Pid = Pid::from_const(0x101);
         let garbage: &[u8] = &[0xAA; 32]; // no 00 00 01 start codes anywhere
         let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, garbage)));
@@ -189,7 +189,7 @@ mod tests {
     /// (SPS+PPS+slice) — must not be flagged.
     #[test]
     fn declared_h264_with_real_nal_payload_not_flagged() {
-        const VIDEO_PID: Pid = Pid::new(0x101);
+        const VIDEO_PID: Pid = Pid::from_const(0x101);
         let sps: &[u8] = &[
             0x67, 0x64, 0x00, 0x0D, 0xAD, 0xC8, 0xBF, 0xFE, 0x03, 0xC1, 0x41, 0xF9,
         ];
@@ -220,7 +220,7 @@ mod tests {
     /// ADTS sync — flagged.
     #[test]
     fn declared_aac_with_non_adts_payload_is_flagged() {
-        const AUDIO_PID: Pid = Pid::new(0x102);
+        const AUDIO_PID: Pid = Pid::from_const(0x102);
         let garbage: &[u8] = &[0x00; 32];
         let mut ts = build_pat_pmt_ts(&[(AUDIO_PID.value(), StreamType::AacAdts)]);
         ts.extend_from_slice(&make_pes_packet(AUDIO_PID, 0, &build_pes(0xC0, garbage)));
@@ -243,7 +243,7 @@ mod tests {
     /// ADTS — flagged.
     #[test]
     fn declared_aac_with_mp3_payload_is_flagged() {
-        const AUDIO_PID: Pid = Pid::new(0x102);
+        const AUDIO_PID: Pid = Pid::from_const(0x102);
         let mut mp3 = alloc::vec![0xFF, 0xFB, 0x90, 0x00];
         mp3.resize(32, 0x00);
         let mut ts = build_pat_pmt_ts(&[(AUDIO_PID.value(), StreamType::AacAdts)]);
@@ -266,7 +266,7 @@ mod tests {
     /// must not be flagged.
     #[test]
     fn declared_aac_with_real_adts_payload_not_flagged() {
-        const AUDIO_PID: Pid = Pid::new(0x102);
+        const AUDIO_PID: Pid = Pid::from_const(0x102);
         // A minimal valid ADTS header (AAC-LC, 44.1kHz, stereo), built via
         // transmux's own builder rather than hand-encoded.
         let header = transmux::build_adts_header(1, 4, 2, 7); // frame_len=7 (header only)

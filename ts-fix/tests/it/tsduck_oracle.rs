@@ -164,7 +164,7 @@ fn regen_psi_pat_continuity_is_clean_per_tsanalyze() {
     skip_unless_tsduck_available!();
 
     let out_path = run_regen_psi_to_temp_file();
-    let pat_line = normalized_pid_line(&out_path, Pid::new(0));
+    let pat_line = normalized_pid_line(&out_path, Pid::from_const(0));
 
     assert_eq!(
         field(&pat_line, "discontinuities"),
@@ -187,7 +187,7 @@ fn regen_psi_pat_continuity_is_clean_per_tsanalyze() {
 fn regen_psi_pmt_continuity_is_clean_per_tsanalyze() {
     skip_unless_tsduck_available!();
 
-    const PMT_PID: Pid = Pid::new(4096); // fixtures/ts/h264-aac.ts's program_map_PID.
+    const PMT_PID: Pid = Pid::from_const(4096); // fixtures/ts/h264-aac.ts's program_map_PID.
     let out_path = run_regen_psi_to_temp_file();
     let pmt_line = normalized_pid_line(&out_path, PMT_PID);
 

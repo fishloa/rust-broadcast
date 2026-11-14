@@ -63,11 +63,11 @@ fn make_null_packet() -> [u8; 188] {
 /// Extract the PID from bytes 1-2 of a TS packet header.
 pub fn extract_pid(pkt: &[u8]) -> Pid {
     if pkt.len() < 3 {
-        return Pid::new(0);
+        return Pid::from_const(0);
     }
     let b1 = pkt[1];
     let b2 = pkt[2];
-    Pid::new((((b1 & 0x1F) as u16) << 8) | (b2 as u16))
+    Pid::from_wire_masked((((b1 & 0x1F) as u16) << 8) | (b2 as u16))
 }
 
 /// The adaptation field's PCR on the 27 MHz clock and its `discontinuity_indicator`, if the
@@ -84,19 +84,19 @@ pub fn pcr_27mhz(p: &[u8]) -> Option<u64> {
 
 // ── PID constants ────────────────────────────────────────────────────────────
 
-pub const PAT_PID: Pid = Pid::new(0x0000);
-pub const PMT1_PID: Pid = Pid::new(0x0100);
-pub const PMT2_PID: Pid = Pid::new(0x0200);
+pub const PAT_PID: Pid = Pid::from_const(0x0000);
+pub const PMT1_PID: Pid = Pid::from_const(0x0100);
+pub const PMT2_PID: Pid = Pid::from_const(0x0200);
 
-pub const P1_PCR_PID: Pid = Pid::new(0x0101);
-pub const P1_VIDEO_PID: Pid = Pid::new(0x0101);
-pub const P1_AUDIO_PID: Pid = Pid::new(0x0102);
+pub const P1_PCR_PID: Pid = Pid::from_const(0x0101);
+pub const P1_VIDEO_PID: Pid = Pid::from_const(0x0101);
+pub const P1_AUDIO_PID: Pid = Pid::from_const(0x0102);
 
-pub const P2_PCR_PID: Pid = Pid::new(0x0201);
-pub const P2_VIDEO_PID: Pid = Pid::new(0x0201);
-pub const P2_AUDIO_PID: Pid = Pid::new(0x0202);
+pub const P2_PCR_PID: Pid = Pid::from_const(0x0201);
+pub const P2_VIDEO_PID: Pid = Pid::from_const(0x0201);
+pub const P2_AUDIO_PID: Pid = Pid::from_const(0x0202);
 
-pub const NULL_PID: Pid = Pid::new(0x1FFF);
+pub const NULL_PID: Pid = Pid::from_const(0x1FFF);
 
 // ── Synthetic 2-program mux builder ─────────────────────────────────────────
 

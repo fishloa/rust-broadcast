@@ -99,7 +99,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::codec_common::tests::{build_pat_pmt_ts, build_pes, make_pes_packet};
 
-    const VIDEO_PID: Pid = Pid::new(0x101);
+    const VIDEO_PID: Pid = Pid::from_const(0x101);
 
     /// A progressive SPS (`frame_mbs_only_flag=1`) must not be flagged.
     /// Real SPS extracted for `decode_high_sps_with_scaling_lists` in

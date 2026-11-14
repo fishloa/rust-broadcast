@@ -2036,8 +2036,8 @@ pub(crate) mod tests {
     /// CRC, just not sourced from an off-air capture.
     pub(crate) fn build_ca_pmt_fixture(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0064));
-        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0065));
+        let prog_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0064));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0065));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2082,8 +2082,8 @@ pub(crate) mod tests {
     /// fixture for `required_pids`/`feed_ts` PCR routing.
     pub(crate) fn build_ca_pmt_fixture_dedicated_pcr(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0064));
-        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0065));
+        let prog_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0064));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0065));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2178,8 +2178,14 @@ pub(crate) mod tests {
             .services()
             .get(&1546)
             .expect("program_number 1546 must be tracked after add_service");
-        assert_eq!(svc.es_pids, vec![Pid::new(0x0100), Pid::new(0x0101)]);
-        assert_eq!(svc.ca_pids, vec![Pid::new(0x0064), Pid::new(0x0065)]);
+        assert_eq!(
+            svc.es_pids,
+            vec![Pid::from_const(0x0100), Pid::from_const(0x0101)]
+        );
+        assert_eq!(
+            svc.ca_pids,
+            vec![Pid::from_const(0x0064), Pid::from_const(0x0065)]
+        );
         assert_eq!(svc.cmd, CaPmtCmdId::OkDescrambling);
         assert_eq!(svc.last_ca_enable, None);
     }
@@ -2311,7 +2317,7 @@ pub(crate) mod tests {
         PmtSection::new(
             1,
             dvb_si::tables::SectionVersion::new(1, true, 0, 0),
-            Pid::new(0x0200),
+            Pid::from_const(0x0200),
             dvb_si::descriptors::DescriptorLoop::new(Box::leak(prog_info.into_boxed_slice())),
             Vec::new(),
         )
@@ -2379,8 +2385,8 @@ pub(crate) mod tests {
     fn build_ca_pmt_fixture_two_caids(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
         const NAGRA: u16 = 0x1800;
-        let prog_ca_a = ca_descriptor(VIACCESS, Pid::new(0x0064));
-        let prog_ca_b = ca_descriptor(NAGRA, Pid::new(0x0066));
+        let prog_ca_a = ca_descriptor(VIACCESS, Pid::from_const(0x0064));
+        let prog_ca_b = ca_descriptor(NAGRA, Pid::from_const(0x0066));
         let mut prog_ca = Vec::new();
         prog_ca.extend_from_slice(&prog_ca_a);
         prog_ca.extend_from_slice(&prog_ca_b);
@@ -2625,8 +2631,8 @@ pub(crate) mod tests {
         // CAT maps 0x0648 -> 0x1FF0 (advertised) and 0x0500 -> 0x1FF1 (not
         // advertised by this CAM).
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
-        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::new(0x1FF1)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::from_const(0x1FF1)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2634,7 +2640,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "0x0500 -> 0x1FF1 must be excluded: the CAM never advertised CAID 0x0500"
         );
     }
@@ -2649,8 +2655,8 @@ pub(crate) mod tests {
         d.take_notifications();
 
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
-        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::new(0x1FF1)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::from_const(0x1FF1)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2679,7 +2685,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "emm_pids must recompute once ca_info arrives, using the CAT stored by the earlier set_cat"
         );
     }
@@ -2713,8 +2719,8 @@ pub(crate) mod tests {
 
         // CAT maps BOTH CAIDs to the SAME EMM PID.
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
-        descriptors.extend_from_slice(&ca_descriptor(0x0100, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0100, Pid::from_const(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2722,7 +2728,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[Pid::new(0x1FF0)],
+            &[Pid::from_const(0x1FF0)],
             "0x1FF0 must appear exactly once even though two CAM-advertised CAIDs map to it, got {:?}",
             d.emm_pids()
         );
@@ -2733,8 +2739,8 @@ pub(crate) mod tests {
     /// union rather than one programme's PIDs happening to repeat.
     fn build_ca_pmt_fixture_distinct_pids(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0074));
-        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0075));
+        let prog_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0074));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::from_const(0x0075));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2789,7 +2795,10 @@ pub(crate) mod tests {
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
 
-        assert_eq!(d.descramble_pids(), &[Pid::new(0x0100), Pid::new(0x0101)]);
+        assert_eq!(
+            d.descramble_pids(),
+            &[Pid::from_const(0x0100), Pid::from_const(0x0101)]
+        );
 
         let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
         let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
@@ -2801,10 +2810,10 @@ pub(crate) mod tests {
         assert_eq!(
             d.descramble_pids(),
             &[
-                Pid::new(0x0100),
-                Pid::new(0x0101),
-                Pid::new(0x0200),
-                Pid::new(0x0201)
+                Pid::from_const(0x0100),
+                Pid::from_const(0x0101),
+                Pid::from_const(0x0200),
+                Pid::from_const(0x0201)
             ],
             "descramble_pids must be the union across both added services"
         );
@@ -3335,7 +3344,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.descramble_pids(),
-            &[Pid::new(0x0200), Pid::new(0x0201)],
+            &[Pid::from_const(0x0200), Pid::from_const(0x0201)],
             "1546's ES PIDs must be gone; 1547's must remain"
         );
         assert!(
@@ -3395,7 +3404,7 @@ pub(crate) mod tests {
         );
         d.take_notifications();
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::from_const(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
         d.set_cat(&cat).unwrap();
@@ -3520,7 +3529,7 @@ pub(crate) mod tests {
         let b_record_before = d.managed_ca().services().get(&1547).unwrap().clone();
         assert_eq!(
             a_old_record.ca_pids,
-            vec![Pid::new(0x0064), Pid::new(0x0065)],
+            vec![Pid::from_const(0x0064), Pid::from_const(0x0065)],
             "fixture sanity: A starts on the 0x0064/0x0065 ECM PIDs"
         );
 
@@ -3544,8 +3553,8 @@ pub(crate) mod tests {
         assert_eq!(new_ca_pmt_writes, 1, "exactly one ca_pmt APDU may be sent");
 
         // The update carries the new ECM PIDs and none of the old ones.
-        let new_prog_ca = ca_descriptor(0x0500, Pid::new(0x0074));
-        let old_prog_ca = ca_descriptor(0x0500, Pid::new(0x0064));
+        let new_prog_ca = ca_descriptor(0x0500, Pid::from_const(0x0074));
+        let old_prog_ca = ca_descriptor(0x0500, Pid::from_const(0x0064));
         assert!(update.windows(new_prog_ca.len()).any(|x| x == new_prog_ca));
         assert!(!update.windows(old_prog_ca.len()).any(|x| x == old_prog_ca));
 
@@ -3553,7 +3562,7 @@ pub(crate) mod tests {
         let a_new_record = d.managed_ca().services().get(&1546).unwrap();
         assert_eq!(
             a_new_record.ca_pids,
-            vec![Pid::new(0x0074), Pid::new(0x0075)]
+            vec![Pid::from_const(0x0074), Pid::from_const(0x0075)]
         );
         assert_eq!(a_new_record.built_ca_pmt, update);
         assert_ne!(a_new_record.built_ca_pmt, a_old_record.built_ca_pmt);

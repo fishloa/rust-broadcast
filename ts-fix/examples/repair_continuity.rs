@@ -70,13 +70,13 @@ fn count_cc_anomalies(data: &[u8]) -> usize {
         let has_payload = (chunk[3] & 0x10) != 0;
 
         if has_payload {
-            if let Some(&last_cc) = per_pid_cc.get(&Pid::new(pid)) {
+            if let Some(&last_cc) = per_pid_cc.get(&Pid::from_wire_masked(pid)) {
                 let expected = (last_cc + 1) & 0x0F;
                 if cc != expected {
                     anomalies += 1;
                 }
             }
-            per_pid_cc.insert(Pid::new(pid), cc);
+            per_pid_cc.insert(Pid::from_wire_masked(pid), cc);
         }
     }
 

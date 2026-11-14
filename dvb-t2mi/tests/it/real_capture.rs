@@ -14,7 +14,7 @@ use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::T2miPump;
 use mpeg_ts::pid::Pid;
 
-const T2MI_PID: Pid = Pid::new(0x0040);
+const T2MI_PID: Pid = Pid::from_const(0x0040);
 const TS_PACKET: usize = 188;
 
 fn fixture() -> Vec<u8> {

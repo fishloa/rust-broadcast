@@ -35,7 +35,7 @@ const CLEAN_FIXTURE: &str = "ts/h264-aac.ts";
 /// Independently-determined offset of the fixture's only PCR discontinuity
 /// (documented in the module doc above).
 const DISC_PACKET_INDEX: u64 = 1251;
-const DISC_PID: Pid = Pid::new(0x0208);
+const DISC_PID: Pid = Pid::from_const(0x0208);
 /// Byte offset of the adaptation-field flags byte within a 188-byte packet.
 const AF_FLAGS_OFFSET: usize = 5;
 /// `discontinuity_indicator` bit (ISO/IEC 13818-1 §2.4.3.5).
@@ -46,7 +46,7 @@ fn load(path: &str) -> Vec<u8> {
 }
 
 fn pid(p: &[u8]) -> Pid {
-    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
+    Pid::from_wire_masked((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 /// Clear `discontinuity_indicator` at the given packet index — real-fixture

@@ -476,7 +476,7 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
     for (label, repeats) in [("gated", false), ("all", true)] {
         let mut b = SiDemux::builder().emit_repeats(repeats);
         for pid in &extra {
-            b = b.pid(mpeg_ts::pid::Pid::new(*pid));
+            b = b.pid(mpeg_ts::pid::Pid::from_wire_masked(*pid));
         }
         let mut demux = b.build();
         let mut secs: BTreeMap<String, SecStat> = BTreeMap::new();
@@ -577,7 +577,7 @@ pub fn dvb_si_section_bin(fx: &Fixture, _: &Cfg) -> Option<Value> {
 
 #[cfg(feature = "head")]
 fn mkpid(v: u16) -> mpeg_ts::pid::Pid {
-    mpeg_ts::pid::Pid::new(v)
+    mpeg_ts::pid::Pid::try_new(v).expect("pid fits the 13-bit field")
 }
 #[cfg(feature = "baseline")]
 fn mkpid(v: u16) -> u16 {
@@ -674,7 +674,7 @@ pub fn mpeg_ts(fx: &Fixture, _: &Cfg) -> Option<Value> {
     let (mut first_pcr, mut last_pcr) = (None, None);
     let mut pids: BTreeMap<String, u64> = BTreeMap::new();
     let mut cc_gaps = 0u64;
-    let mut last_cc: BTreeMap<String, u8> = BTreeMap::new();
+    let mut last_cc: BTreeMap<String, mpeg_ts::ts::ContinuityCounter> = BTreeMap::new();
     for raw in &packets {
         let pkt = match mpeg_ts::ts::TsPacket::parse(raw) {
             Ok(p) => p,
@@ -687,9 +687,9 @@ pub fn mpeg_ts(fx: &Fixture, _: &Cfg) -> Option<Value> {
         bump(&mut pids, key.clone());
         tei += u64::from(pkt.header.tei);
         pusi += u64::from(pkt.header.pusi);
-        if pkt.header.has_payload {
+        if pkt.header.has_payload() {
             if let Some(&prev) = last_cc.get(&key) {
-                if (prev + 1) & 0x0F != pkt.header.continuity_counter {
+                if pkt.header.continuity_counter.forward_distance_from(prev) != 1 {
                     cc_gaps += 1;
                 }
             }
@@ -769,7 +769,7 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
         }
         let mut b = SiDemux::builder().emit_repeats(true);
         for p in &pids {
-            b = b.pid(mpeg_ts::pid::Pid::new(*p));
+            b = b.pid(mpeg_ts::pid::Pid::try_new(*p).expect("pid fits the 13-bit field"));
         }
         let mut d = b.build();
         for pkt in &packets {

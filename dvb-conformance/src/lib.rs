@@ -29,26 +29,26 @@ use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::section::Section;
-use mpeg_ts::ts::{SectionReassembler, TsHeader, TsPacket};
+use mpeg_ts::ts::{ContinuityCounter, ScramblingControl, SectionReassembler, TsHeader, TsPacket};
 
 // ── Named PID constants ─────────────────────────────────────────────────────
 
 /// PID 0x0000 — Program Association Table (ISO/IEC 13818-1 §2.4.4.4).
-const PID_PAT: Pid = Pid::new(0x0000);
+const PID_PAT: Pid = Pid::from_const(0x0000);
 /// PID 0x0001 — Conditional Access Table (ISO/IEC 13818-1 §2.4.4.7).
-const PID_CAT: Pid = Pid::new(0x0001);
+const PID_CAT: Pid = Pid::from_const(0x0001);
 /// PID 0x0010 — Network Information Table (EN 300 468 §5.2.1).
-const PID_NIT: Pid = Pid::new(0x0010);
+const PID_NIT: Pid = Pid::from_const(0x0010);
 /// PID 0x0011 — SDT/BAT (EN 300 468 §5.2.2 / §5.2.3).
-const PID_SDT_BAT: Pid = Pid::new(0x0011);
+const PID_SDT_BAT: Pid = Pid::from_const(0x0011);
 /// PID 0x0012 — Event Information Table (EN 300 468 §5.2.4).
-const PID_EIT: Pid = Pid::new(0x0012);
+const PID_EIT: Pid = Pid::from_const(0x0012);
 /// PID 0x0013 — Running Status Table (EN 300 468 §5.2.8).
-const PID_RST: Pid = Pid::new(0x0013);
+const PID_RST: Pid = Pid::from_const(0x0013);
 /// PID 0x0014 — TDT/TOT (EN 300 468 §5.2.5 / §5.2.6).
-const PID_TDT_TOT: Pid = Pid::new(0x0014);
+const PID_TDT_TOT: Pid = Pid::from_const(0x0014);
 /// PID 0x1FFF — Null/padding packets (ISO/IEC 13818-1 §2.4.3.3).
-const PID_NULL: Pid = Pid::new(0x1FFF);
+const PID_NULL: Pid = Pid::from_const(0x1FFF);
 
 use mpeg_ts::ts::TS_SYNC_BYTE as SYNC_BYTE;
 
@@ -137,7 +137,7 @@ const DEFAULT_SI_OTHER_INTERVAL_SECS: u64 = 10;
 
 /// PCR modulus on the 27 MHz clock (`2^33 × 300`, ISO/IEC 13818-1 §2.4.3.5)
 /// and the 27 MHz clock rate: both owned by `broadcast_common::clock33`.
-use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
+use broadcast_common::clock33::{Clock27, PCR_HZ as CLOCK_27MHZ};
 
 /// Upper bound on tracked EIT P/F sub-tables, so a noisy or hostile EIT PID
 /// cannot grow the pairing map without limit; further sub-tables go unpaired.
@@ -600,7 +600,7 @@ impl Default for Config {
 
 /// Per-PID continuity-counter tracking state.
 struct CcState {
-    last_cc: u8,
+    last_cc: ContinuityCounter,
     had_payload: bool,
     dup_used: bool,
     initialised: bool,
@@ -685,7 +685,7 @@ struct EsTracking {
 
 /// Per-PID PCR tracking state (indicators 2.3a, 2.3b).
 struct PcrState {
-    last_pcr_27mhz: u64,
+    last_pcr_27mhz: Clock27,
     last_pcr_time: Duration,
     initialised: bool,
     /// 2.3a already raised for the current silent stretch; the next PCR
@@ -965,7 +965,7 @@ impl ConformanceMonitor {
             duplicate = self.check_cc(
                 pid,
                 header.continuity_counter,
-                header.has_payload,
+                header.has_payload(),
                 t,
                 ts_packet,
                 discontinuity,
@@ -1007,16 +1007,16 @@ impl ConformanceMonitor {
         if let Some(Ok(af)) = packet.adaptation_field()
             && let Some(pcr) = af.pcr
         {
-            self.check_pcr(pid, pcr.as_27mhz(), af.discontinuity_indicator, t);
+            self.check_pcr(pid, pcr.clock(), af.discontinuity_indicator, t);
         } else {
             self.check_pcr_silence(pid, t);
         }
 
         // ── 2.5: PTS check (Table 5.0b indicator 2.5) ───────────────────
         if header.pusi
-            && header.scrambling == 0
+            && header.scrambling == ScramblingControl::NotScrambled
             && self.es_trackings.contains_key(&pid)
-            && header.has_payload
+            && header.has_payload()
             && let Some(payload) = packet.payload
         {
             self.check_pts(pid, payload, t);
@@ -1065,7 +1065,7 @@ impl ConformanceMonitor {
 
     fn check_scrambling(&mut self, pid: Pid, header: &TsHeader, t: Duration) {
         // ── Step 7: PAT_error_2 — scrambling check (1.3.a) ──────────────
-        if pid == PID_PAT && header.scrambling != 0 {
+        if pid == PID_PAT && header.scrambling != ScramblingControl::NotScrambled {
             self.emit(
                 Indicator::PatError2,
                 Some(PID_PAT),
@@ -1078,7 +1078,9 @@ impl ConformanceMonitor {
         }
 
         // ── Step 8: PMT_error_2 — scrambling check (1.5.a) ──────────────
-        if self.pmt_trackings.contains_key(&pid) && header.scrambling != 0 {
+        if self.pmt_trackings.contains_key(&pid)
+            && header.scrambling != ScramblingControl::NotScrambled
+        {
             self.emit(
                 Indicator::PmtError2,
                 Some(pid),
@@ -1093,7 +1095,10 @@ impl ConformanceMonitor {
         // has been acquired; this check fires once in that case. It re-arms
         // (see `check_cat_table_id`) when a CAT later appears, so the error is
         // re-detectable after a CAT section is seen.
-        if header.scrambling != 0 && !self.cat_seen && !self.scrambled_without_cat_reported {
+        if header.scrambling != ScramblingControl::NotScrambled
+            && !self.cat_seen
+            && !self.scrambled_without_cat_reported
+        {
             self.scrambled_without_cat_reported = true;
             self.emit(
                 Indicator::CatError,
@@ -1112,7 +1117,7 @@ impl ConformanceMonitor {
         duplicate: bool,
         t: Duration,
     ) {
-        if pid == PID_PAT && header.has_payload {
+        if pid == PID_PAT && header.has_payload() {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
@@ -1139,7 +1144,7 @@ impl ConformanceMonitor {
         duplicate: bool,
         t: Duration,
     ) {
-        if self.pmt_trackings.contains_key(&pid) && header.has_payload {
+        if self.pmt_trackings.contains_key(&pid) && header.has_payload() {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
@@ -1171,7 +1176,7 @@ impl ConformanceMonitor {
         if pid != PID_PAT
             && !self.pmt_trackings.contains_key(&pid)
             && self.si_reassemblies.contains_key(&pid)
-            && header.has_payload
+            && header.has_payload()
         {
             if let Some(payload) = payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
@@ -1265,7 +1270,7 @@ impl ConformanceMonitor {
     fn check_cc(
         &mut self,
         pid: Pid,
-        cc: u8,
+        cc: ContinuityCounter,
         has_payload: bool,
         t: Duration,
         raw: &[u8],
@@ -1298,7 +1303,7 @@ impl ConformanceMonitor {
 
             if discontinuity {
                 // Will update state below — just signal no emit.
-                (0u8, false, false, false)
+                (ContinuityCounter::ZERO, false, false, false)
             } else {
                 // ISO/IEC 13818-1:2023 §2.4.3.3: a legal duplicate requires
                 // the same continuity_counter on a payload-bearing packet
@@ -1322,7 +1327,7 @@ impl ConformanceMonitor {
                     DuplicateVerdict::NotDuplicate => {
                         state.dup_used = false;
                         let expected = if has_payload {
-                            (state.last_cc.wrapping_add(1)) & 0x0F
+                            state.last_cc.next()
                         } else {
                             state.last_cc
                         };
@@ -1338,7 +1343,7 @@ impl ConformanceMonitor {
 
                 (
                     if has_payload {
-                        (state.last_cc.wrapping_add(1)) & 0x0F
+                        state.last_cc.next()
                     } else {
                         state.last_cc
                     },
@@ -1913,9 +1918,9 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicators 2.3a / 2.3b — PCR checks.
-    fn check_pcr(&mut self, pid: Pid, pcr_27mhz: u64, discontinuity: bool, t: Duration) {
+    fn check_pcr(&mut self, pid: Pid, pcr_27mhz: Clock27, discontinuity: bool, t: Duration) {
         let state = self.pcr_states.entry(pid).or_insert_with(|| PcrState {
-            last_pcr_27mhz: 0,
+            last_pcr_27mhz: Clock27::default(),
             last_pcr_time: Duration::ZERO,
             initialised: false,
             silence_reported: false,
@@ -1940,7 +1945,7 @@ impl ConformanceMonitor {
 
         // 2.3b: PCR_discontinuity_indicator_error — PCR delta exceeds 100 ms
         // without a signalled discontinuity.
-        let delta = pcr_forward_distance(last_pcr_27mhz, pcr_27mhz);
+        let delta = last_pcr_27mhz.signed_distance_to(pcr_27mhz).unsigned_abs();
         let delta_ms = delta * 1000 / CLOCK_27MHZ;
         let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
         let limit_ticks = (self.config.pcr_discontinuity_limit.as_micros() as u64)
@@ -2397,7 +2402,7 @@ impl ConformanceMonitor {
         // is the packet's contribution to buffer occupancy).
         let packet_bytes = ts_packet.len() as u64;
 
-        if is_si_pid && header.has_payload {
+        if is_si_pid && header.has_payload() {
             // TBsys is fed per TS packet, at reassembly time in `feed`'s
             // sections 6/6b/6c (see `feed_tbsys_bytes`, issue #1035) — as
             // each packet's payload physically arrives, not once with a

@@ -22,7 +22,7 @@ use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use mpeg_ts::owned::OwnedTsPacket;
-use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
+use mpeg_ts::ts::{ContinuityCounter, TS_PACKET_SIZE, TsHeader};
 
 use crate::ops::{Op, StreamModel};
 
@@ -34,15 +34,15 @@ const AF_DISCONTINUITY: u8 = 0x80;
 /// Per-PID continuity-tracking state.
 struct PidState {
     /// The CC we expect on the next payload-bearing packet (mod 16).
-    expected: u8,
+    expected: ContinuityCounter,
     /// The input CC of the most recent payload-bearing packet (for
     /// duplicate detection).  This tracks the ORIGINAL wire CC, not the
     /// corrected value, so that a same-CC pair straddling a gap repair is
     /// still recognised.
-    last_wire_cc: u8,
+    last_wire_cc: ContinuityCounter,
     /// The CC written to the output for that packet, which a legal
     /// duplicate of it must carry too.
-    last_out_cc: u8,
+    last_out_cc: ContinuityCounter,
     /// Input bytes of the most recent payload-bearing packet, used with
     /// [`mpeg_ts::ts_dup::is_legal_duplicate_pair`] to identify
     /// legal §2.4.3.3 duplicates (identical bytes except a re-encoded
@@ -111,7 +111,7 @@ impl Op for ContinuityOp {
 
         let pid = header.pid;
         let current_cc = header.continuity_counter;
-        let has_payload = header.has_payload;
+        let has_payload = header.has_payload();
 
         // §2.4.3.3: CC shall NOT increment on adaptation-only (10) or
         // reserved (00) packets.  Pass through unchanged; do NOT update
@@ -128,12 +128,12 @@ impl Op for ContinuityOp {
         // When discontinuity_indicator == 1, any CC value is legal.
         // We reset our per-PID expected state so subsequent packets are
         // not falsely flagged as errors.
-        let is_discontinuity = header.has_adaptation && Self::has_discontinuity(packet);
+        let is_discontinuity = header.has_adaptation() && Self::has_discontinuity(packet);
         if is_discontinuity {
             self.per_pid.insert(
                 pid,
                 PidState {
-                    expected: (current_cc + 1) & 0x0F,
+                    expected: current_cc.next(),
                     last_wire_cc: current_cc,
                     last_out_cc: current_cc,
                     last_packet: packet.to_vec(),
@@ -159,8 +159,7 @@ impl Op for ContinuityOp {
         });
 
         if state_initialised {
-            let next = (current_cc + 1) & 0x0F;
-            state.expected = next;
+            state.expected = current_cc.next();
             out(packet);
             return;
         }
@@ -191,8 +190,7 @@ impl Op for ContinuityOp {
         // Normal case: check CC against expected value.
         if current_cc == state.expected {
             // Correct CC.  Advance expected for next packet.
-            let next = (current_cc + 1) & 0x0F;
-            state.expected = next;
+            state.expected = current_cc.next();
             state.last_wire_cc = current_cc;
             state.last_out_cc = current_cc;
             state.last_packet = packet.to_vec();
@@ -206,7 +204,7 @@ impl Op for ContinuityOp {
         OwnedTsPacket::set_continuity_counter(&mut buf, correct_cc);
         out(&buf[..]);
 
-        state.expected = (correct_cc + 1) & 0x0F;
+        state.expected = correct_cc.next();
         state.last_wire_cc = current_cc;
         state.last_out_cc = correct_cc;
         state.last_packet = packet.to_vec();
@@ -284,12 +282,12 @@ mod tests {
     #[test]
     fn non_payload_does_not_advance_cc() {
         // §2.4.3.3: CC only increments on payload-bearing packets.
-        let pkt1 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xAA]);
-        let mut pkt2 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xBB]);
+        let pkt1 = make_payload_packet(Pid::from_const(0x0100), 0, false, &[0xAA]);
+        let mut pkt2 = make_payload_packet(Pid::from_const(0x0100), 0, false, &[0xBB]);
         pkt2[3] &= 0xCF; // clear AFC bits
         pkt2[3] |= 0x20; // afc = 10 (adaptation-only)
 
-        let mut pkt3 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xCC]);
+        let mut pkt3 = make_payload_packet(Pid::from_const(0x0100), 0, false, &[0xCC]);
         pkt3[3] &= 0xCF;
         pkt3[3] |= 0x00; // afc = 00 (reserved, no payload)
 
@@ -307,8 +305,8 @@ mod tests {
     fn duplicate_packet_is_preserved() {
         // §2.4.3.3 L554 (`private/docs/h222-0-transport-stream.md`): same PID, same CC, same payload bytes.
         let payload = &[0xAB, 0xCD, 0xEF];
-        let pkt1 = make_payload_packet(Pid::new(0x0200), 0, false, payload);
-        let pkt2 = make_payload_packet(Pid::new(0x0200), 0, false, payload); // duplicate
+        let pkt1 = make_payload_packet(Pid::from_const(0x0200), 0, false, payload);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0200), 0, false, payload); // duplicate
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -322,8 +320,8 @@ mod tests {
         // Same CC but different payload — per §2.4.3.3 L554 this is NOT a
         // legal duplicate (payload must be identical).  The repair renumbers
         // it to the expected CC.
-        let pkt1 = make_payload_packet(Pid::new(0x0200), 0, false, &[0xAB]);
-        let pkt2 = make_payload_packet(Pid::new(0x0200), 0, false, &[0xCD]); // same CC, different payload
+        let pkt1 = make_payload_packet(Pid::from_const(0x0200), 0, false, &[0xAB]);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0200), 0, false, &[0xCD]); // same CC, different payload
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -335,8 +333,8 @@ mod tests {
     #[test]
     fn discontinuity_packet_is_preserved() {
         // §2.4.3.5: discontinuity_indicator = 1 → any CC is valid.
-        let pkt1 = make_payload_packet(Pid::new(0x0300), 0, false, &[0xAA]);
-        let pkt2 = make_discontinuity_packet(Pid::new(0x0300), 0x0F, &[0xBB]);
+        let pkt1 = make_payload_packet(Pid::from_const(0x0300), 0, false, &[0xAA]);
+        let pkt2 = make_discontinuity_packet(Pid::from_const(0x0300), 0x0F, &[0xBB]);
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -349,9 +347,9 @@ mod tests {
     fn cc_after_discontinuity_continues_from_the_flagged_packet() {
         // §2.4.3.5: only the flagged packet may break the sequence; the next
         // packet must follow the flagged packet's CC, not the one before it.
-        let pkt1 = make_payload_packet(Pid::new(0x0300), 0, false, &[0xAA]);
-        let pkt2 = make_discontinuity_packet(Pid::new(0x0300), 0x0F, &[0xBB]);
-        let pkt3 = make_payload_packet(Pid::new(0x0300), 3, false, &[0xCC]); // after discontinuity
+        let pkt1 = make_payload_packet(Pid::from_const(0x0300), 0, false, &[0xAA]);
+        let pkt2 = make_discontinuity_packet(Pid::from_const(0x0300), 0x0F, &[0xBB]);
+        let pkt3 = make_payload_packet(Pid::from_const(0x0300), 3, false, &[0xCC]); // after discontinuity
 
         let output = run_op(&[pkt1, pkt2, pkt3]);
         assert_eq!(output.len(), 3);
@@ -363,7 +361,7 @@ mod tests {
 
     #[test]
     fn packet_after_discontinuity_with_the_right_cc_is_untouched() {
-        let pid = Pid::new(0x0300);
+        let pid = Pid::from_const(0x0300);
         let pkt1 = make_payload_packet(pid, 0, false, &[0xAA]);
         let pkt2 = make_discontinuity_packet(pid, 9, &[0xBB]);
         let pkt3 = make_payload_packet(pid, 10, false, &[0xCC]);
@@ -376,7 +374,7 @@ mod tests {
 
     #[test]
     fn legal_duplicate_after_a_repaired_packet_stays_a_duplicate() {
-        let pid = Pid::new(0x0300);
+        let pid = Pid::from_const(0x0300);
         let pkts = [
             make_payload_packet(pid, 0, false, &[0xA0]),
             make_payload_packet(pid, 1, false, &[0xA1]),
@@ -393,8 +391,8 @@ mod tests {
     #[test]
     fn genuine_cc_gap_is_repaired() {
         // Uns signalled, non-duplicate gap: 0 → should be 1.
-        let pkt1 = make_payload_packet(Pid::new(0x0400), 0, false, &[0xAA]);
-        let pkt2 = make_payload_packet(Pid::new(0x0400), 3, false, &[0xBB]); // gap: expected 1, got 3
+        let pkt1 = make_payload_packet(Pid::from_const(0x0400), 0, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0400), 3, false, &[0xBB]); // gap: expected 1, got 3
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -404,9 +402,9 @@ mod tests {
 
     #[test]
     fn normal_cc_sequence_passes_unmodified() {
-        let pkt1 = make_payload_packet(Pid::new(0x0500), 0, false, &[0xAA]);
-        let pkt2 = make_payload_packet(Pid::new(0x0500), 1, false, &[0xBB]);
-        let pkt3 = make_payload_packet(Pid::new(0x0500), 2, false, &[0xCC]);
+        let pkt1 = make_payload_packet(Pid::from_const(0x0500), 0, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0500), 1, false, &[0xBB]);
+        let pkt3 = make_payload_packet(Pid::from_const(0x0500), 2, false, &[0xCC]);
 
         let output = run_op(&[pkt1, pkt2, pkt3]);
         assert_eq!(output.len(), 3);
@@ -417,8 +415,8 @@ mod tests {
 
     #[test]
     fn cc_wrap_around() {
-        let pkt1 = make_payload_packet(Pid::new(0x0600), 0x0F, false, &[0xAA]);
-        let pkt2 = make_payload_packet(Pid::new(0x0600), 0x00, false, &[0xBB]); // 15→0, correct wrap
+        let pkt1 = make_payload_packet(Pid::from_const(0x0600), 0x0F, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0600), 0x00, false, &[0xBB]); // 15→0, correct wrap
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -428,11 +426,11 @@ mod tests {
 
     #[test]
     fn multiple_pids_independent() {
-        let pkt1 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xAA]);
-        let pkt2 = make_payload_packet(Pid::new(0x0200), 0, false, &[0xBB]);
-        let pkt3 = make_payload_packet(Pid::new(0x0100), 1, false, &[0xCC]); // correct next CC for PID 0x0100
-        let pkt4 = make_payload_packet(Pid::new(0x0200), 1, false, &[0xDD]); // correct next CC for PID 0x0200
-        let pkt5 = make_payload_packet(Pid::new(0x0100), 2, false, &[0xEE]); // correct
+        let pkt1 = make_payload_packet(Pid::from_const(0x0100), 0, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0200), 0, false, &[0xBB]);
+        let pkt3 = make_payload_packet(Pid::from_const(0x0100), 1, false, &[0xCC]); // correct next CC for PID 0x0100
+        let pkt4 = make_payload_packet(Pid::from_const(0x0200), 1, false, &[0xDD]); // correct next CC for PID 0x0200
+        let pkt5 = make_payload_packet(Pid::from_const(0x0100), 2, false, &[0xEE]); // correct
 
         let output = run_op(&[pkt1, pkt2, pkt3, pkt4, pkt5]);
         assert_eq!(output.len(), 5);
@@ -446,8 +444,8 @@ mod tests {
     #[test]
     fn afc_11_packet_with_adaptation_advances_cc() {
         // afc = 11 (both adaptation and payload) — CC SHOULD increment.
-        let pkt1 = make_payload_packet(Pid::new(0x0700), 0, true, &[0xAA]);
-        let pkt2 = make_payload_packet(Pid::new(0x0700), 1, true, &[0xBB]);
+        let pkt1 = make_payload_packet(Pid::from_const(0x0700), 0, true, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::from_const(0x0700), 1, true, &[0xBB]);
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);

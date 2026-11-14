@@ -158,7 +158,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::codec_common::tests::{build_pat_pmt_ts, build_pes, make_pes_packet};
 
-    const VIDEO_PID: Pid = Pid::new(0x101);
+    const VIDEO_PID: Pid = Pid::from_const(0x101);
 
     /// A real-shaped SPS/PPS/IDR ordering (params before the IDR) must not be
     /// flagged.

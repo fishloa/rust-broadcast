@@ -32,9 +32,9 @@ fn france_tnt_ait_descriptors_parse() {
     // The demux follows PAT → PMT well-known PIDs, but AIT PIDs are
     // signalled via application_signalling_descriptor, so add them explicitly.
     let mut demux = SiDemux::builder()
-        .pid(Pid::new(0x010E))
-        .pid(Pid::new(0x0302))
-        .pid(Pid::new(0x00AA))
+        .pid(Pid::from_const(0x010E))
+        .pid(Pid::from_const(0x0302))
+        .pid(Pid::from_const(0x00AA))
         .build();
     let mut ait_sections = 0usize;
     let mut applications = 0usize;

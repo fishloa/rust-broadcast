@@ -19,7 +19,7 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 [features]
 default = ["std"]
 std    = ["broadcast-common/std", "thiserror/std", "serde?/std"]
-serde  = ["dep:serde"]
+serde  = ["dep:serde", "broadcast-common/serde"]
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }

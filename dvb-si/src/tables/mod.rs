@@ -563,7 +563,7 @@ pub(crate) fn current_next_of(flags_byte: u8) -> bool {
 /// Decode a 13-bit PID from its two wire bytes.
 #[must_use]
 pub(crate) fn pid_of(hi: u8, lo: u8) -> mpeg_ts::pid::Pid {
-    mpeg_ts::pid::Pid::new(((u16::from(hi & PID_LO_MASK)) << 8) | u16::from(lo))
+    mpeg_ts::pid::Pid::from_wire_masked(((u16::from(hi & PID_LO_MASK)) << 8) | u16::from(lo))
 }
 
 /// Write a 13-bit PID carrying the three `reserved='111'` bits.

@@ -73,7 +73,9 @@ use broadcast_common::timescale::{Rounding, rescale_u64};
 use broadcast_common::{Package, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
 use mpeg_ts::mux::SectionPacketiser;
-use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsHeader};
+use mpeg_ts::ts::{
+    AdaptationFieldControl, ContinuityCounter, Pcr, ScramblingControl, TS_PACKET_SIZE, TsHeader,
+};
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{iter_length_prefixed_nals, length_prefixed_to_annexb};
@@ -86,11 +88,11 @@ use crate::pipeline::{CodecConfig, DataCarriage, Sample};
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
 
 /// PID carrying the Program Association Table (§2.4.4.4).
-const PAT_PID: Pid = Pid::new(0x0000);
+const PAT_PID: Pid = Pid::from_const(0x0000);
 /// PID chosen for the single Program Map Table this muxer emits.
-const PMT_PID: Pid = Pid::new(0x1000);
+const PMT_PID: Pid = Pid::from_const(0x1000);
 /// First elementary-stream PID; each subsequent ES gets the next value.
-const ES_PID_BASE: Pid = Pid::new(0x0100);
+const ES_PID_BASE: Pid = Pid::from_const(0x0100);
 /// `program_number` assigned to the single program.
 const PROGRAM_NUMBER: u16 = 1;
 /// `table_id` of a PAT section (§2.4.4.4, Table 2-31).
@@ -1193,7 +1195,8 @@ fn mux_tracks_timed_with_cc(
         // sections (issue #576) — packetised directly, never PES-wrapped.
         // The packetiser's own continuity_counter (independent of `cc`
         // above, which only tracks the PES path) persists across samples.
-        let mut section_packetiser = SectionPacketiser::with_continuity(plan.pid, cc);
+        let mut section_packetiser =
+            SectionPacketiser::with_continuity(plan.pid, ContinuityCounter::from_wire_masked(cc));
         for (sample, &dts_local) in samples[track_idx].iter().zip(dts_ticks[track_idx]) {
             let dts_ticks_local = dts_local.max(0) as u64;
             let dts90 = rescale(dts_ticks_local, ts_scale) + PCR_LEAD_TICKS;
@@ -1239,7 +1242,7 @@ fn mux_tracks_timed_with_cc(
         // section-carried PID's packets come from the packetiser's own counter;
         // a PES PID's from `cc`, which `packetise_pes` advanced.
         let next_cc = if plan.kind.is_section_carried() {
-            section_packetiser.continuity_counter()
+            section_packetiser.continuity_counter().value()
         } else {
             cc
         };
@@ -1384,7 +1387,12 @@ fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<
         let mut pkt = [STUFFING_BYTE; TS_PACKET_SIZE];
         // A real packet stamps the PCR `PCR_LEAD_TICKS` behind its DTS, so pass
         // `t + PCR_LEAD_TICKS` to `pcr_for` to land the PCR exactly on `t`.
-        write_pcr_only_packet(&mut pkt, pcr_pid, cc, pcr_for(t + PCR_LEAD_TICKS));
+        write_pcr_only_packet(
+            &mut pkt,
+            pcr_pid,
+            ContinuityCounter::from_wire_masked(cc),
+            pcr_for(t + PCR_LEAD_TICKS),
+        );
         tagged.push(TaggedPacket {
             sort_key: t,
             packet: pkt,
@@ -1399,14 +1407,18 @@ fn pid_of_packet(pkt: &[u8; TS_PACKET_SIZE]) -> u16 {
 
 /// Write a PCR-only TS packet: an adaptation field with the PCR and no payload
 /// (`adaptation_field_control` `10`). §2.4.3.4 / §2.4.3.5.
-fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: Pid, cc: u8, pcr: Pcr) {
+fn write_pcr_only_packet(
+    pkt: &mut [u8; TS_PACKET_SIZE],
+    pid: Pid,
+    cc: ContinuityCounter,
+    pcr: Pcr,
+) {
     let hdr = TsHeader {
         tei: false,
         pusi: false,
         pid,
-        scrambling: 0,
-        has_adaptation: true,
-        has_payload: false,
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation: AdaptationFieldControl::AdaptationOnly,
         continuity_counter: cc,
     };
     hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
@@ -1727,10 +1739,9 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
             tei: false,
             pusi: first,
             pid,
-            scrambling: 0,
-            has_adaptation: false,
-            has_payload: true,
-            continuity_counter: cc,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: ContinuityCounter::from_wire_masked(cc),
         };
         hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
         cc = (cc + 1) & 0x0F;
@@ -1832,10 +1843,9 @@ fn packetise_pes(
                 tei: false,
                 pusi: first,
                 pid: plan.pid,
-                scrambling: 0,
-                has_adaptation: false,
-                has_payload: true,
-                continuity_counter: *cc,
+                scrambling: ScramblingControl::NotScrambled,
+                adaptation: AdaptationFieldControl::PayloadOnly,
+                continuity_counter: ContinuityCounter::from_wire_masked(*cc),
             };
             hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");
             pkt[4..4 + to_copy].copy_from_slice(&pes[pos..pos + to_copy]);
@@ -1855,8 +1865,10 @@ fn packetise_pes(
 /// The PCR value to stamp for a packet whose access-unit DTS is `dts90` (90 kHz):
 /// place the PCR `PCR_LEAD_TICKS` behind the DTS on the 27 MHz clock.
 fn pcr_for(dts90: u64) -> Pcr {
-    let base = dts90.saturating_sub(PCR_LEAD_TICKS);
-    Pcr::from_27mhz(broadcast_common::clock33::pcr_from_parts(base, 0))
+    // `PCR_base` is the 33-bit 90 kHz field (ISO/IEC 13818-1 §2.4.3.5); the
+    // lead is already subtracted, so only the wire width is applied.
+    let base = dts90.saturating_sub(PCR_LEAD_TICKS) & (broadcast_common::clock33::WRAP_33BIT - 1);
+    Pcr::from_parts(base, 0).expect("base masked to 33 bits, extension 0")
 }
 
 /// Write a TS packet with an adaptation field into `pkt` (initialised to
@@ -1879,10 +1891,9 @@ fn write_af_packet(
         tei: false,
         pusi,
         pid,
-        scrambling: 0,
-        has_adaptation: true,
-        has_payload: true,
-        continuity_counter: cc,
+        scrambling: ScramblingControl::NotScrambled,
+        adaptation: AdaptationFieldControl::AdaptationAndPayload,
+        continuity_counter: ContinuityCounter::from_wire_masked(cc),
     };
     // serialize_into sets both AF + payload control bits from the booleans above.
     hdr.serialize_into(&mut pkt[..4]).expect("4-byte TS header");

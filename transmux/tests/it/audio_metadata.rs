@@ -50,7 +50,7 @@ fn france2_real_pmt_roles() {
         media
             .tracks
             .iter()
-            .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
+            .find(|t| t.spec.source_pid == Some(Pid::from_wire_masked(pid)))
             .unwrap()
             .spec
             .audio_metadata()

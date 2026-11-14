@@ -452,7 +452,7 @@ fn pmt_pcr_pid(sec: &[u8]) -> u16 {
 /// A PCR reading (90 kHz base) from a packet whose adaptation field carries one.
 fn packet_pcr_90k(pkt: &[u8]) -> Option<u64> {
     let af = TsPacket::parse(pkt).ok()?.adaptation_field()?.ok()?;
-    Some(af.pcr?.base)
+    Some(af.pcr?.base())
 }
 
 /// Demux the real AC-3 fixture into a single-track `Media`, with each sample's
