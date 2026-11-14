@@ -87,22 +87,11 @@ mod tests {
     use transmux::ll_hls::PartInfo;
 
     fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo {
-            bytes: vec![0x40 + idx as u8; 4],
-            duration: 0.5,
-            independent: idx == 0,
-            segment_seq: seq,
-            part_index: idx,
-        }
+        PartInfo::new(vec![0x40 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
     }
 
     fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
-        transmux::ll_hls::SegmentInfo {
-            bytes: vec![seq as u8; 8],
-            duration,
-            segment_seq: seq,
-            part_count: 2,
-        }
+        transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], duration, seq).with_part_count(2)
     }
 
     /// Every `initialization="..."` template in `mpd`, in document order.
@@ -165,9 +154,10 @@ mod tests {
     /// A gap placeholder: the source had no muxable track while this segment
     /// was cut, so it carries no bytes.
     fn gap_seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
-        transmux::ll_hls::SegmentInfo {
-            bytes: Vec::new(),
-            ..seg(seq, duration)
+        {
+            let mut s = seg(seq, duration);
+            s.bytes = Vec::new();
+            s
         }
     }
 

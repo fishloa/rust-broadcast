@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `EventRecord` is now `#[non_exhaustive]`; it is built by `Event::to_record` and field-assigned, never by an external struct literal (#2664).
+
 ## [0.3.0] - 2026-11-14
 ### Changed
 - `Error` derives its `Display` from `thiserror` like the workspace's other error enums; the messages are unchanged, and the crate gains a `thiserror` dependency (c6 C6-14).

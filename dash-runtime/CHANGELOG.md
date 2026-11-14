@@ -5,6 +5,7 @@ All notable changes to dash-runtime will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `ingest::RequestMeta` is now `#[non_exhaustive]`; build it with `RequestMeta::new(method, path)` + `with_content_length`/`with_chunked`/`with_body_empty` instead of a struct literal (#2664).
 - `quick-xml` is a dev-dependency only (its parser is reached through `broadcast-common::xml`), so it no longer appears in the built dependency graph.
 
 ## [0.4.0] - 2026-11-14

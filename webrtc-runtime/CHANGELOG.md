@@ -5,6 +5,7 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `media::MediaTransportConfig`, `HttpRequest` and `HttpResponse` are now `#[non_exhaustive]`; build them with `MediaTransportConfig::new(..)`/`HttpRequest::new(..)`/`HttpResponse::new(..)` + `with_*` instead of struct literals (#2664).
 - BREAKING: `session::client::ClientConfig` is `session::client::WebRtcClientConfig` (the crate no longer names a type `ClientConfig`), and `WebRtcClientConfig::new(endpoint_url: impl Into<String>)` takes any string-like endpoint. Migration: `ClientConfig::new(URL.into())` -> `WebRtcClientConfig::new(URL)` (#2660).
 - BREAKING: `MediaEvent::IceStateChanged` now carries `IceConnectionState` instead of a `String`; `LocalCandidateGathered` carries `IceCandidate`; `AuthFailure`/`TimerError` carry `MediaError`; `Error::Media(String)` becomes `Media(#[from] MediaError)`; `DecryptedRtp.payload`/extension data use `bytes::Bytes` (#2658).
 

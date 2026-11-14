@@ -56,15 +56,13 @@ pub(crate) struct SmoothSource {
 }
 
 fn variant_info(q: &QualityInfo) -> VariantInfo {
-    VariantInfo {
-        url: String::new(),
-        bandwidth: u32::try_from(q.bitrate).unwrap_or(u32::MAX),
-        average_bandwidth: None,
-        resolution: q.resolution,
-        codecs: q.codecs.clone(),
-        audio_group: None,
-        subtitles_group: None,
-    }
+    let mut info = VariantInfo::new(
+        String::new(),
+        u32::try_from(q.bitrate).unwrap_or(u32::MAX),
+    );
+    info.resolution = q.resolution;
+    info.codecs = q.codecs.clone();
+    info
 }
 
 fn engine_config(url: &Url, config: &Config, jitter_seed: u64) -> SmoothClientConfig {

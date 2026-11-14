@@ -701,22 +701,11 @@ mod tests {
     use transmux::ll_hls::{PartInfo, SegmentInfo};
 
     fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo {
-            bytes: vec![0x10 + idx as u8; 4],
-            duration: 0.5,
-            independent: idx == 0,
-            segment_seq: seq,
-            part_index: idx,
-        }
+        PartInfo::new(vec![0x10 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
     }
 
     fn seg(seq: u32) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![0x20 + seq as u8; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 2,
-        }
+        SegmentInfo::new(vec![0x20 + seq as u8; 8], 4.0, seq).with_part_count(2)
     }
 
     /// A populated route: a closed segment 1, plus two live parts of
@@ -831,12 +820,7 @@ mod tests {
     /// sync byte is `0x47` — the same byte ffprobe/mediastreamvalidator key
     /// their container detection on.
     fn ts_seg(seq: u32) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![0x47; 188],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 0,
-        }
+        SegmentInfo::new(vec![0x47; 188], 4.0, seq)
     }
 
     #[tokio::test]
@@ -1053,13 +1037,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             route_for_start.add_part(
                 crate::route::SPTS_PROGRAM_ID,
-                PartInfo {
-                    bytes: vec![0x77; 4],
-                    duration: 0.5,
-                    independent: true,
-                    segment_seq: 3,
-                    part_index: 0,
-                },
+                PartInfo::new(vec![0x77; 4], 0.5, 3, 0).with_independent(true),
             );
         });
 
@@ -1383,12 +1361,7 @@ mod tests {
         route
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                SegmentInfo {
-                    bytes: (0..100u8).collect(),
-                    duration: 4.0,
-                    segment_seq: 1,
-                    part_count: 0,
-                },
+                SegmentInfo::new((0..100u8).collect(), 4.0, 1),
             )
             .expect("add_segment");
         route

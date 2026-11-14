@@ -30,23 +30,12 @@ fn fmp4_route() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x21; 8],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 2,
-            },
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], 4.0, 1).with_part_count(2),
         )
         .expect("add_segment");
     route.add_part(
         media_plane::ProgramId(0),
-        PartInfo {
-            bytes: vec![0x10; 4],
-            duration: 0.5,
-            independent: true,
-            segment_seq: 2,
-            part_index: 0,
-        },
+        PartInfo::new(vec![0x10; 4], 0.5, 2, 0).with_independent(true),
     );
     route
 }
@@ -66,12 +55,7 @@ fn ts_route() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo {
-                bytes: vec![0x47; 188],
-                duration: 4.0,
-                segment_seq: 1,
-                part_count: 0,
-            },
+            transmux::ll_hls::SegmentInfo::new(vec![0x47; 188], 4.0, 1),
         )
         .expect("add_segment");
     route

@@ -143,7 +143,7 @@ impl PlaylistBuilder<'_> {
             open_segment,
             endlist: self.endlist,
             extra_tags: vec![],
-            low_latency: Some(|| {
+            low_latency: Some({
                 let mut cfg = LowLatencyConfig::default()
                     // Test fixture data: `part_target_secs` is a small positive
                     // constant in every case this file builds (issue #1140).
@@ -157,7 +157,7 @@ impl PlaylistBuilder<'_> {
                     );
                 cfg.preload_hint_part = preload_hint_part;
                 cfg
-            }()),
+            }),
             iframes_only: false,
             rendition_reports: vec![],
             skip: None,
@@ -458,12 +458,12 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // (0 and 1, both already delivered) — must produce ZERO new fetch
     // actions for segment 2 (no re-fetch of the whole segment, no re-fetch
     // of its already-delivered parts), only the next reload. ===
-    let seg2_closed = SegmentInfo {
-        bytes: Vec::new(), // never fetched whole in the LL (parts-coalesce) path
-        duration: seg2_all_parts.iter().map(|p| p.duration).sum(),
-        segment_seq: 2,
-        part_count: 2,
-    };
+    let seg2_closed = SegmentInfo::new(
+        Vec::new(), // never fetched whole in the LL (parts-coalesce) path
+        seg2_all_parts.iter().map(|p| p.duration).sum(),
+        2,
+    )
+    .with_part_count(2);
     let closed2 = vec![
         (ready_segments[0].clone(), seg1_parts.clone()),
         (seg2_closed, seg2_all_parts.clone()),

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `EncryptConfig`, `TimelineJumpConfig`, `ll_hls::PartInfo` and `ll_hls::SegmentInfo` are now `#[non_exhaustive]`; build them with `EncryptConfig::new(scheme, kid, subsample)` + `with_*`, `TimelineJumpConfig::default()` + `with_*`, and `PartInfo::new(bytes, duration, segment_seq, part_index)`/`SegmentInfo::new(bytes, duration, segment_seq)` + `with_*` instead of struct literals (#2664).
 - The RTMP spokes match `rtmp_runtime::message::MessageTypeId` instead of the `msg_type` byte constants for the message types they dispatch on (`SetChunkSize`, `Audio`, `Video`, `DataAmf0`); no public transmux type changes (#2666).
 
 #### Changed

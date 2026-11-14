@@ -4,6 +4,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `convert::EmsgConfig` and `TimedEvent` are now `#[non_exhaustive]`; build them with `EmsgConfig::new(..)` and `TimedEvent::new(kind, source)` + `with_id`/`with_at`/`with_duration` instead of struct literals (#2664).
+
 ## [0.10.0] - 2026-11-14
 ### Changed
 - `PTS_HZ` is a re-export of `broadcast_common::clock33::PTS_HZ` instead of a second definition; its path and value are unchanged (#2343).

@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `CryptoConfig` and `NegotiatedParams` are now `#[non_exhaustive]`; build `CryptoConfig` with `CryptoConfig::new(passphrase, salt, sek)` instead of a struct literal (#2664).
+
 ### Removed
 - BREAKING: the `packet::control::CONTROL_TYPE_*` (`u16`) and `packet::handshake::ENCRYPTION_FIELD_*` (`u16`) / `HANDSHAKE_TYPE_*` (`u32`) constants; they duplicated the wire values of `ControlType`, `EncryptionField` and `HandshakeType`, which carry them through `from_bits`/`to_bits` (and `name()`/`Display`). Migration: `HANDSHAKE_TYPE_INDUCTION` -> `HandshakeType::Induction` (compare `handshake_type.to_bits()` with it), `CONTROL_TYPE_SHUTDOWN` -> `ControlType::Shutdown`, `ENCRYPTION_FIELD_NONE` -> `EncryptionField::NoEncryption` (#2666).
 

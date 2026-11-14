@@ -617,22 +617,11 @@ mod tests {
     }
 
     fn part(seq: u32, idx: u32) -> PartInfo {
-        PartInfo {
-            bytes: vec![0x10 + idx as u8; 4],
-            duration: 0.5,
-            independent: idx == 0,
-            segment_seq: seq,
-            part_index: idx,
-        }
+        PartInfo::new(vec![0x10 + idx as u8; 4], 0.5, seq, idx).with_independent(idx == 0)
     }
 
     fn seg(seq: u32) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![0x20 + seq as u8; 8],
-            duration: 4.0,
-            segment_seq: seq,
-            part_count: 2,
-        }
+        SegmentInfo::new(vec![0x20 + seq as u8; 8], 4.0, seq).with_part_count(2)
     }
 
     /// A populated route: a closed segment 1, plus two live parts of
@@ -965,12 +954,7 @@ mod ts_tests {
     /// `media_playlist_version_is_broadcast_hls_derived_not_hardcoded` below
     /// has a real, non-trivial version to compare against.
     fn seg(seq: u32, byte: u8) -> SegmentInfo {
-        SegmentInfo {
-            bytes: vec![byte; 8],
-            duration: 4.2,
-            segment_seq: seq,
-            part_count: 0,
-        }
+        SegmentInfo::new(vec![byte; 8], 4.2, seq)
     }
 
     /// A populated classic-TS route: two closed segments. Publishes

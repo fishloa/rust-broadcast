@@ -569,12 +569,7 @@ mod tests {
     }
 
     fn seg_bytes(seq: u32, byte: u8) -> transmux::ll_hls::SegmentInfo {
-        transmux::ll_hls::SegmentInfo {
-            bytes: vec![byte; 24],
-            duration: 3.0,
-            segment_seq: seq,
-            part_count: 1,
-        }
+        transmux::ll_hls::SegmentInfo::new(vec![byte; 24], 3.0, seq).with_part_count(1)
     }
 
     async fn body_bytes(resp: Response) -> Vec<u8> {
@@ -632,12 +627,8 @@ mod tests {
             route
                 .add_segment(
                     SPTS_PROGRAM_ID,
-                    transmux::ll_hls::SegmentInfo {
-                        bytes: vec![0x5A; SEG_LEN],
-                        duration: 3.0,
-                        segment_seq: 1,
-                        part_count: 1,
-                    },
+                    transmux::ll_hls::SegmentInfo::new(vec![0x5A; SEG_LEN], 3.0, 1)
+                        .with_part_count(1),
                 )
                 .expect("add_segment");
 
@@ -1414,11 +1405,8 @@ mod tests {
             .with_name("valid")
             .with_dvr(dvr_config(&tmp)),
         );
-        let info = |seq: u32, name: &str| transmux::ll_hls::SegmentInfo {
-            bytes: read(name),
-            duration: 1.0,
-            segment_seq: seq,
-            part_count: 1,
+        let info = |seq: u32, name: &str| {
+            transmux::ll_hls::SegmentInfo::new(read(name), 1.0, seq).with_part_count(1)
         };
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, init_a.clone());

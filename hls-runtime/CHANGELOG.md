@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `client::VariantPolicy`, `client::VariantInfo` and `client::RenditionInfo` are now `#[non_exhaustive]`; build them with `Default::default()`/`VariantInfo::new`/`RenditionInfo::new` + `with_*` instead of struct literals (#2664).
+
 ### Removed
 - Removed the unused `axum` dev-dependency.
 
