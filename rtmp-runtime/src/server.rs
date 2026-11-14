@@ -117,12 +117,12 @@ const CAPABILITIES: f64 = 31.0;
 /// Configuration for a [`ServerSession`].
 ///
 /// `#[non_exhaustive]`: fields may grow (e.g. a future `app` gate alongside
-/// `expected_stream_key`). Construct via [`ServerConfig::default`] plus the
+/// `expected_stream_key`). Construct via [`RtmpServerConfig::default`] plus the
 /// `with_*` builder methods rather than a struct literal.
 #[non_exhaustive]
 #[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct ServerConfig {
+pub struct RtmpServerConfig {
     /// Outbound chunk size advertised (and adopted) on `connect` (§5.4.1).
     pub chunk_size: u32,
     /// Window Acknowledgement Size advertised on `connect` (§5.4.4); also
@@ -150,9 +150,9 @@ pub struct ServerConfig {
 
 /// Manual `Debug`: the expected stream key is the ingest secret and never
 /// renders (issue #1142).
-impl core::fmt::Debug for ServerConfig {
+impl core::fmt::Debug for RtmpServerConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ServerConfig")
+        f.debug_struct("RtmpServerConfig")
             .field("chunk_size", &self.chunk_size)
             .field("window_ack_size", &self.window_ack_size)
             .field("peer_bandwidth", &self.peer_bandwidth)
@@ -165,7 +165,7 @@ impl core::fmt::Debug for ServerConfig {
     }
 }
 
-impl Default for ServerConfig {
+impl Default for RtmpServerConfig {
     fn default() -> Self {
         Self {
             chunk_size: DEFAULT_CHUNK_SIZE,
@@ -177,25 +177,25 @@ impl Default for ServerConfig {
     }
 }
 
-impl ServerConfig {
-    /// Set [`ServerConfig::expected_stream_key`]. `#[non_exhaustive]` forbids
+impl RtmpServerConfig {
+    /// Set [`RtmpServerConfig::expected_stream_key`]. `#[non_exhaustive]` forbids
     /// struct-literal construction of this type from outside the crate, so
     /// this (plus the other `with_*` builders below) is how a caller
-    /// customises a field starting from [`ServerConfig::default`].
+    /// customises a field starting from [`RtmpServerConfig::default`].
     #[must_use]
     pub fn with_expected_stream_key(mut self, expected_stream_key: Option<String>) -> Self {
         self.expected_stream_key = expected_stream_key;
         self
     }
 
-    /// Set [`ServerConfig::chunk_size`].
+    /// Set [`RtmpServerConfig::chunk_size`].
     #[must_use]
     pub fn with_chunk_size(mut self, chunk_size: u32) -> Self {
         self.chunk_size = chunk_size;
         self
     }
 
-    /// Set [`ServerConfig::max_in_progress_bytes`].
+    /// Set [`RtmpServerConfig::max_in_progress_bytes`].
     #[must_use]
     pub fn with_max_in_progress_bytes(mut self, max_in_progress_bytes: usize) -> Self {
         self.max_in_progress_bytes = max_in_progress_bytes;
@@ -299,7 +299,7 @@ enum State {
 /// bytes to [`handle_data`](Self::handle_data).
 #[derive(Debug)]
 pub struct ServerSession {
-    config: ServerConfig,
+    config: RtmpServerConfig,
     handshake: Handshake,
     /// Raw bytes accumulated across calls while the handshake is still in
     /// progress (the handshake sub-FSM does not buffer partial input
@@ -355,7 +355,7 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 impl ServerSession {
     /// A new session with the given configuration.
     #[must_use]
-    pub fn new(config: ServerConfig) -> Self {
+    pub fn new(config: RtmpServerConfig) -> Self {
         let ack_threshold = config.window_ack_size;
         let max_in_progress_bytes = config.max_in_progress_bytes;
         Self {
@@ -377,10 +377,10 @@ impl ServerSession {
         }
     }
 
-    /// A new session using [`ServerConfig::default`].
+    /// A new session using [`RtmpServerConfig::default`].
     #[must_use]
     pub fn with_defaults() -> Self {
-        Self::new(ServerConfig::default())
+        Self::new(RtmpServerConfig::default())
     }
 
     /// Feed inbound bytes to the session. Returns `(bytes to write back,
@@ -1036,7 +1036,7 @@ mod tests {
     /// Drive a session through handshake → connect → createStream →
     /// publish, returning `(session, all reply bytes, all events)`.
     fn publish_flow(
-        config: ServerConfig,
+        config: RtmpServerConfig,
         stream_key: &str,
     ) -> (ServerSession, Vec<u8>, Vec<ServerEvent>) {
         let mut session = ServerSession::new(config);
@@ -1147,7 +1147,7 @@ mod tests {
     /// value (§5.4.1); the connect reply must return `Err`, not panic.
     #[test]
     fn connect_with_invalid_configured_chunk_size_errors_not_panics() {
-        let mut session = ServerSession::new(ServerConfig::default().with_chunk_size(0));
+        let mut session = ServerSession::new(RtmpServerConfig::default().with_chunk_size(0));
         session.handle_data(&build_c0_c1()).unwrap();
         session.handle_data(&build_c2()).unwrap();
         let err = session.handle_data(&connect_bytes("live")).unwrap_err();
@@ -1269,7 +1269,7 @@ mod tests {
     /// Publishes through the full handshake/connect/createStream/publish
     /// sequence so subsequent media is actually emitted.
     fn publishing_session() -> ServerSession {
-        let mut session = ServerSession::new(ServerConfig::default());
+        let mut session = ServerSession::new(RtmpServerConfig::default());
         session.handle_data(&build_c0_c1()).unwrap();
         session.handle_data(&build_c2()).unwrap();
         session.handle_data(&connect_bytes("live")).unwrap();
@@ -1497,7 +1497,7 @@ mod tests {
     #[test]
     fn oversized_publish_name_errors_instead_of_panicking() {
         for len in [65_518usize, 65_530, 65_535] {
-            let mut session = ServerSession::new(ServerConfig::default());
+            let mut session = ServerSession::new(RtmpServerConfig::default());
             session.handle_data(&build_c0_c1()).unwrap();
             session.handle_data(&build_c2()).unwrap();
             session.handle_data(&connect_bytes("live")).unwrap();
@@ -1515,7 +1515,7 @@ mod tests {
 
     #[test]
     fn publish_reaches_publishing_emits_event_and_stream_begin_plus_onstatus() {
-        let (_session, out, events) = publish_flow(ServerConfig::default(), "testkey");
+        let (_session, out, events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
         assert!(events.contains(&ServerEvent::Publish {
             app: "live".to_string(),
@@ -1605,7 +1605,7 @@ mod tests {
 
     #[test]
     fn audio_and_video_emit_media_first_carries_flv_file_header() {
-        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
         let (_out1, events1) = session
             .handle_data(&av_bytes(
@@ -1646,7 +1646,7 @@ mod tests {
 
     #[test]
     fn second_connect_while_publishing_is_rejected_and_media_keeps_flowing() {
-        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
         let err = session.handle_data(&connect_bytes("live")).unwrap_err();
         assert!(matches!(err, RtmpError::UnexpectedState { .. }));
@@ -1670,7 +1670,7 @@ mod tests {
 
     #[test]
     fn concatenated_media_forms_structurally_valid_flv() {
-        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
         let mut flv_stream = Vec::new();
         let (_out1, events1) = session
@@ -1740,7 +1740,7 @@ mod tests {
 
     #[test]
     fn data_amf0_onmetadata_emits_media_with_script_tag_type() {
-        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
         // A representative onMetadata Data-AMF0 payload: handler-name
         // string followed by a properties object (§7.1's Data Message
@@ -1780,7 +1780,7 @@ mod tests {
 
     #[test]
     fn set_data_frame_prefix_is_stripped_from_the_script_tag() {
-        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
         let mut payload = Amf0Value::String("@setDataFrame".to_string())
             .try_to_bytes()
             .unwrap();
@@ -1827,9 +1827,9 @@ mod tests {
 
     #[test]
     fn stream_key_mismatch_suppresses_publish_and_media_events() {
-        let config = ServerConfig {
+        let config = RtmpServerConfig {
             expected_stream_key: Some("rightkey".to_string()),
-            ..ServerConfig::default()
+            ..RtmpServerConfig::default()
         };
         let (mut session, out, events) = publish_flow(config, "wrongkey");
 
@@ -1862,9 +1862,9 @@ mod tests {
 
     #[test]
     fn stream_key_match_still_publishes_with_key_configured() {
-        let config = ServerConfig {
+        let config = RtmpServerConfig {
             expected_stream_key: Some("rightkey".to_string()),
-            ..ServerConfig::default()
+            ..RtmpServerConfig::default()
         };
         let (_session, _out, events) = publish_flow(config, "rightkey");
         assert!(
@@ -1879,9 +1879,9 @@ mod tests {
 
     #[test]
     fn too_many_failed_publish_attempts_closes_the_session() {
-        let config = ServerConfig {
+        let config = RtmpServerConfig {
             expected_stream_key: Some("rightkey".to_string()),
-            ..ServerConfig::default()
+            ..RtmpServerConfig::default()
         };
         let mut session = ServerSession::new(config);
         session.handle_data(&build_c0_c1()).unwrap();
@@ -1929,9 +1929,9 @@ mod tests {
 
     #[test]
     fn ack_written_once_window_ack_size_is_crossed() {
-        let config = ServerConfig {
+        let config = RtmpServerConfig {
             window_ack_size: 32,
-            ..ServerConfig::default()
+            ..RtmpServerConfig::default()
         };
         let mut session = ServerSession::new(config);
         session.handle_data(&build_c0_c1()).unwrap();
@@ -1954,9 +1954,9 @@ mod tests {
 
     #[test]
     fn no_ack_below_window_ack_size() {
-        let config = ServerConfig {
+        let config = RtmpServerConfig {
             window_ack_size: 10_000_000,
-            ..ServerConfig::default()
+            ..RtmpServerConfig::default()
         };
         let mut session = ServerSession::new(config);
         session.handle_data(&build_c0_c1()).unwrap();
@@ -2015,7 +2015,8 @@ mod tests {
 
     #[test]
     fn mutation_check_publish_event_must_echo_actual_stream_key() {
-        let (_session, _out, events) = publish_flow(ServerConfig::default(), "specific-key-xyz");
+        let (_session, _out, events) =
+            publish_flow(RtmpServerConfig::default(), "specific-key-xyz");
         let publish_event = events
             .iter()
             .find_map(|e| match e {
@@ -2064,7 +2065,7 @@ mod tests {
         // `ChunkAssembler::push` before dispatching any of them (applying
         // SetChunkSize's effect only afterwards), that next message would
         // be misparsed under the *old* chunk size.
-        let (mut session, _out, _events) = publish_flow(ServerConfig::default(), "testkey");
+        let (mut session, _out, _events) = publish_flow(RtmpServerConfig::default(), "testkey");
 
         const NEW_CHUNK_SIZE: u32 = 4096;
         let set_chunk_size_bytes = ChunkWriter::new()
@@ -2161,11 +2162,12 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn server_config_and_server_event_serde_round_trip() {
-        let config = ServerConfig::default()
+        let config = RtmpServerConfig::default()
             .with_chunk_size(8192)
             .with_expected_stream_key(Some("k".to_string()));
-        let json = serde_json::to_string(&config).expect("serialize ServerConfig");
-        let back: ServerConfig = serde_json::from_str(&json).expect("deserialize ServerConfig");
+        let json = serde_json::to_string(&config).expect("serialize RtmpServerConfig");
+        let back: RtmpServerConfig =
+            serde_json::from_str(&json).expect("deserialize RtmpServerConfig");
         assert_eq!(back.chunk_size, config.chunk_size);
         assert_eq!(back.expected_stream_key, config.expected_stream_key);
 

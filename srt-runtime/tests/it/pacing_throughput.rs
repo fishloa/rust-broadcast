@@ -41,7 +41,7 @@
 use core::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
@@ -89,13 +89,13 @@ async fn sustained_volume_clears_twice_the_pre_fix_pacing_ceiling() {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let config =
             HandshakeConfig::default().with_latency_ms(u16::try_from(LATENCY.as_millis()).unwrap());
-        let mut listener = SrtListener::bind(listener_addr, config.clone())
+        let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::new(config.clone()))
             .await
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
 
         let accept_jh = tokio::spawn(async move { listener.accept().await.expect("accept") });
-        let mut caller = SrtSocket::connect(bound_addr, config)
+        let mut caller = SrtSocket::connect(bound_addr, SrtSocketConfig::new(config))
             .await
             .expect("caller connect");
         let mut receiver = accept_jh.await.expect("join accept");

@@ -1,4 +1,4 @@
-use smooth_runtime::{Output, SmoothConfig, SmoothError};
+use smooth_runtime::{Output, SmoothClientConfig, SmoothError};
 use transmux::smooth_fragment::{FragmentState, fragment_state};
 
 use crate::common::{Host, Reply, fixture, is_ended, is_fatal};
@@ -41,7 +41,7 @@ fn golden_without_track(name: &str) -> Vec<String> {
 
 #[test]
 fn av_plays_every_sample_of_both_tracks_in_the_recorded_order() {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.run_until(|o| o.iter().any(is_ended));
     assert_eq!(
@@ -52,7 +52,7 @@ fn av_plays_every_sample_of_both_tracks_in_the_recorded_order() {
 
 #[test]
 fn av_announces_one_track_per_stream_numbered_from_one() {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.run_until(|o| o.iter().any(is_ended));
     let tracks = host
@@ -76,7 +76,7 @@ fn av_announces_one_track_per_stream_numbered_from_one() {
 
 #[test]
 fn timestamps_are_rebased_onto_the_fragment_start_not_restarted_per_fragment() {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av-low");
     host.run_until(|o| o.iter().any(is_fatal));
     let video: Vec<i64> = host
@@ -96,7 +96,7 @@ fn timestamps_are_rebased_onto_the_fragment_start_not_restarted_per_fragment() {
 
 #[test]
 fn av_low_ends_fatally_when_the_fourth_chunk_has_no_fragment() {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av-low");
     host.run_until(|o| o.iter().any(is_fatal));
     assert!(host.has(|o| matches!(
@@ -114,7 +114,7 @@ fn av_low_ends_fatally_when_the_fourth_chunk_has_no_fragment() {
 fn a_manifest_with_a_protection_element_is_fatal_and_fetches_no_fragment() {
     let text = String::from_utf8(fixture("av/Manifest")).expect("utf8");
     let text = text.replace("<StreamIndex", "<Protection/>\n<StreamIndex");
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.route("Manifest", vec![Reply::Body(text.into_bytes())]);
     host.run();
     assert!(host.has(|o| matches!(o, Output::Fatal(SmoothError::ManifestProtected))));
@@ -127,7 +127,7 @@ fn a_piff_encrypted_fragment_is_fatal() {
     assert_eq!(fragment_state(&probe), FragmentState::Clear);
     let encrypted = test_fixtures::read("mp4/piff-sample-encrypted.mp4");
     assert_eq!(fragment_state(&encrypted), FragmentState::Encrypted);
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.route(
         "QualityLevels(64528)/Fragments(video=0)",
@@ -140,7 +140,7 @@ fn a_piff_encrypted_fragment_is_fatal() {
 
 #[test]
 fn only_the_first_video_quality_is_offered_and_chosen_by_default() {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.run_until(|o| o.iter().any(is_ended));
     let (qualities, chosen) = host

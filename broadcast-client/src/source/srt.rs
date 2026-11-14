@@ -22,9 +22,8 @@ use srt_runtime::packet::{
 use srt_runtime::tsbpd::{TickOutcome, TsbpdScheduler};
 
 use crate::source::datagram::is_aligned_ts;
-use crate::srt::{SrtConfig, SrtKeyLength};
+use crate::srt::{SrtCallerConfig, SrtKeyLength};
 use crate::udp::DatagramStats;
-use broadcast_common::units::MICROS_PER_MILLI;
 
 const HANDSHAKE_RETRANSMIT_PERIOD_US: u64 = 250_000;
 const MAX_SOCKET_ID: u32 = 0x3FFF_FFFF;
@@ -87,7 +86,7 @@ enum State {
 }
 
 pub(crate) struct SrtCaller {
-    config: SrtConfig,
+    config: SrtCallerConfig,
     attempt: u64,
     state: State,
     stats: DatagramStats,
@@ -95,7 +94,7 @@ pub(crate) struct SrtCaller {
 }
 
 impl SrtCaller {
-    pub(crate) fn new(config: &SrtConfig) -> Result<Self, crate::Error> {
+    pub(crate) fn new(config: &SrtCallerConfig) -> Result<Self, crate::Error> {
         if config.entropy_seed.is_none() {
             return Err(crate::Error::InvalidConfig {
                 field: "srt.entropy_seed",
@@ -302,10 +301,7 @@ impl SrtCaller {
     pub(crate) fn poll(&mut self, now_us: u64) {
         match &mut self.state {
             State::Handshaking(h) => {
-                let budget_us = self
-                    .config
-                    .handshake_timeout_ms
-                    .saturating_mul(MICROS_PER_MILLI);
+                let budget_us = micros(self.config.timeouts.handshake);
                 if now_us.saturating_sub(h.started_us) >= budget_us {
                     self.fail_handshake();
                     return;
@@ -325,10 +321,7 @@ impl SrtCaller {
                 }
             }
             State::Connected(link) => {
-                let idle_us = self
-                    .config
-                    .peer_idle_timeout_ms
-                    .saturating_mul(MICROS_PER_MILLI);
+                let idle_us = micros(self.config.timeouts.read_idle);
                 if now_us.saturating_sub(link.last_rx_us) >= idle_us {
                     self.state = State::Dead;
                     self.out.notices.push(Notice::PeerIdle);
@@ -347,19 +340,15 @@ impl SrtCaller {
     pub(crate) fn next_deadline_us(&self, now_us: u64) -> Option<u64> {
         match &self.state {
             State::Handshaking(h) => {
-                let budget = h.started_us.saturating_add(
-                    self.config
-                        .handshake_timeout_ms
-                        .saturating_mul(MICROS_PER_MILLI),
-                );
+                let budget = h
+                    .started_us
+                    .saturating_add(micros(self.config.timeouts.handshake));
                 Some(budget.min(h.next_tick_us))
             }
             State::Connected(link) => {
-                let idle = link.last_rx_us.saturating_add(
-                    self.config
-                        .peer_idle_timeout_ms
-                        .saturating_mul(MICROS_PER_MILLI),
-                );
+                let idle = link
+                    .last_rx_us
+                    .saturating_add(micros(self.config.timeouts.read_idle));
                 let ack = link
                     .epoch_us
                     .saturating_add(micros(link.receiver.next_timeout()));

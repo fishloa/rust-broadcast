@@ -5,7 +5,7 @@
 use broadcast_common::Unpackage;
 use rtmp_runtime::amf0::{Amf0Value, Command};
 use rtmp_runtime::chunk::Message;
-use rtmp_runtime::client::{ClientConfig, ClientEvent, ClientMode, ClientSession};
+use rtmp_runtime::client::{ClientEvent, ClientMode, ClientSession, RtmpClientConfig};
 use rtmp_runtime::message::{UserControl, msg_type};
 use transmux::{FlvDemux, Media, StreamingFlvDemux};
 
@@ -19,8 +19,8 @@ const APP: &str = "live";
 const STREAM: &str = "cam1";
 const SMALL_WINDOW: u32 = 4_000;
 
-fn play_config(stream: &str) -> ClientConfig {
-    let mut c = ClientConfig::default();
+fn play_config(stream: &str) -> RtmpClientConfig {
+    let mut c = RtmpClientConfig::default();
     c.mode = ClientMode::Play;
     c.app = APP.to_string();
     c.stream_key = stream.to_string();
@@ -42,7 +42,7 @@ pub struct Rig {
 }
 
 impl Rig {
-    fn new(client: ClientConfig, peer: PeerConfig) -> Self {
+    fn new(client: RtmpClientConfig, peer: PeerConfig) -> Self {
         Self {
             client: ClientSession::new(client),
             peer: PlayPeer::new(peer),

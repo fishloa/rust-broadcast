@@ -12,7 +12,7 @@
 //! character. That is still a request to a URL the manifest never named, so the
 //! resolver refuses it, which is what these tests pin.
 
-use smooth_runtime::{Dropped, Output, SmoothConfig};
+use smooth_runtime::{Dropped, Output, SmoothClientConfig};
 
 use crate::common::{Host, Reply, fixture};
 
@@ -30,7 +30,7 @@ fn manifest_with_video_url(url: &str) -> Vec<u8> {
 }
 
 fn av_host(manifest: Vec<u8>) -> Host {
-    let mut host = Host::new(SmoothConfig::default());
+    let mut host = Host::new(SmoothClientConfig::default());
     host.serve_dir("av");
     host.route("Manifest", vec![Reply::Body(manifest)]);
     host

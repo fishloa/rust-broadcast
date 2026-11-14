@@ -15,7 +15,7 @@
 use core::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 
 const CALLER_ISN: u32 = 500;
 const LISTENER_ISN: u32 = 1000;
@@ -30,7 +30,7 @@ async fn loopback_call_to_recv() {
         // --- Listener ---
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
         let listener_config = HandshakeConfig::default().with_initial_seq_number(LISTENER_ISN);
-        let mut listener = SrtListener::bind(listener_addr, listener_config)
+        let mut listener = SrtListener::bind(listener_addr, SrtSocketConfig::new(listener_config))
             .await
             .expect("listener bind");
 
@@ -42,7 +42,7 @@ async fn loopback_call_to_recv() {
         // Spawn the listener accept in a background task.
         let jh = tokio::spawn(async move { listener.accept().await.expect("listener accept") });
 
-        let mut caller = SrtSocket::connect(bound_addr, caller_config)
+        let mut caller = SrtSocket::connect(bound_addr, SrtSocketConfig::new(caller_config))
             .await
             .expect("caller connect");
 

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use smooth_runtime::{Action, FetchFailure, Output, RequestId, SmoothClient, SmoothConfig};
+use smooth_runtime::{Action, FetchFailure, Output, RequestId, SmoothClient, SmoothClientConfig};
 use transmux::{Sample, TrackId};
 use url::Url;
 
@@ -34,9 +34,9 @@ pub fn fixture(rel: &str) -> Vec<u8> {
 }
 
 impl Host {
-    pub fn new(config: SmoothConfig) -> Self {
+    pub fn new(config: SmoothClientConfig) -> Self {
         Self {
-            client: SmoothClient::new(manifest_url(), config),
+            client: SmoothClient::new(config.with_manifest_url(manifest_url())),
             now: 0,
             outputs: Vec::new(),
             requested: Vec::new(),

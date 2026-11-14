@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use srt_runtime::Error;
 use srt_runtime::caller::{CallerHandshake, CallerHandshakeState};
 use srt_runtime::handshake_sm::{HandshakeConfig, HandshakeOutput, RejectionReason};
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use srt_runtime::listener::ListenerHandshake;
 use srt_runtime::packet::{
     ControlPacket, DataPacket, EncryptionField, EncryptionKeyField, HandshakeExtensionFlags,
@@ -82,7 +82,10 @@ fn handshake_of(datagram: &[u8]) -> (HandshakeType, u32) {
 async fn a_lost_induction_is_retransmitted_within_a_second() {
     let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = raw.local_addr().unwrap();
-    let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+    let connect = tokio::spawn(SrtSocket::connect(
+        addr,
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    ));
 
     // The first INDUCTION is "lost": read it, answer nothing.
     let (first, src) = recv_from(&raw).await;
@@ -120,7 +123,10 @@ async fn a_lost_induction_is_retransmitted_within_a_second() {
 async fn a_duplicate_induction_response_does_not_abort_the_connect() {
     let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = raw.local_addr().unwrap();
-    let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+    let connect = tokio::spawn(SrtSocket::connect(
+        addr,
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    ));
 
     let (induction, src) = recv_from(&raw).await;
     let mut engine = listener_engine();
@@ -150,7 +156,10 @@ async fn stray_datagrams_do_not_abort_or_hijack_the_connect() {
     let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let impostor = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = raw.local_addr().unwrap();
-    let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+    let connect = tokio::spawn(SrtSocket::connect(
+        addr,
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    ));
 
     let (induction, src) = recv_from(&raw).await;
 
@@ -211,7 +220,10 @@ async fn a_peer_rejection_surfaces_its_reason() {
     ] {
         let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let addr = raw.local_addr().unwrap();
-        let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+        let connect = tokio::spawn(SrtSocket::connect(
+            addr,
+            SrtSocketConfig::new(HandshakeConfig::default()),
+        ));
         let (induction, src) = recv_from(&raw).await;
         let (_, caller_id) = handshake_of(&induction);
         raw.send_to(&rejection(caller_id, reason), src)
@@ -236,7 +248,7 @@ async fn a_silent_peer_times_out_with_a_typed_error() {
         .with_max_retries(2);
     let err = tokio::time::timeout(
         WAIT,
-        SrtSocket::connect(silent.local_addr().unwrap(), config),
+        SrtSocket::connect(silent.local_addr().unwrap(), SrtSocketConfig::new(config)),
     )
     .await
     .expect("the retry budget must end the connect")
@@ -281,9 +293,12 @@ async fn raw_caller_up_to_conclusion(
 /// timing out against a connection the Listener considered established.)
 #[tokio::test]
 async fn a_repeated_conclusion_is_answered_after_the_connection_was_accepted() {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let listener_addr = listener.local_addr().unwrap();
     // A server loop, as any real one is: keep accepting.
     let (accepted_tx, mut accepted_rx) = mpsc::unbounded_channel();
@@ -337,9 +352,12 @@ async fn a_repeated_conclusion_is_answered_after_the_connection_was_accepted() {
 /// remembered response is not an oracle for strangers.
 #[tokio::test]
 async fn a_conclusion_with_another_socket_id_is_not_answered_from_memory() {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let listener_addr = listener.local_addr().unwrap();
     let (accepted_tx, mut accepted_rx) = mpsc::unbounded_channel();
     let accept_loop = tokio::spawn(async move {
@@ -393,7 +411,10 @@ async fn a_conclusion_with_another_socket_id_is_not_answered_from_memory() {
 async fn dropping_a_socket_sends_the_peer_a_shutdown() {
     let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = raw.local_addr().unwrap();
-    let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+    let connect = tokio::spawn(SrtSocket::connect(
+        addr,
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    ));
     let (induction, src) = recv_from(&raw).await;
     let mut engine = listener_engine();
     raw.send_to(&answer(&mut engine, &induction).unwrap(), src)
@@ -428,12 +449,15 @@ async fn dropping_a_socket_sends_the_peer_a_shutdown() {
 }
 
 async fn connected_pair() -> (SrtSocket, SrtSocket) {
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let addr = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.map(|s| (listener, s)) });
-    let caller = SrtSocket::connect(addr, HandshakeConfig::default())
+    let caller = SrtSocket::connect(addr, SrtSocketConfig::new(HandshakeConfig::default()))
         .await
         .expect("connect");
     let (_listener, accepted) = tokio::time::timeout(WAIT, accept)
@@ -467,9 +491,12 @@ async fn the_peer_of_a_dropped_socket_sees_the_close_immediately() {
 async fn a_caller_far_into_its_own_clock_is_delivered_promptly() {
     const CALLER_CLOCK_US: u32 = 30_000_000;
     const CALLER_ISN: u32 = 4_242;
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let listener_addr = listener.local_addr().unwrap();
     let (accepted_tx, mut accepted_rx) = mpsc::unbounded_channel();
     let accept_loop = tokio::spawn(async move {
@@ -534,12 +561,12 @@ async fn the_negotiated_latency_is_the_greater_of_both_sides() {
 
     // Role 1: the Caller asks for a long latency; the accepted (Listener-role)
     // socket receives.
-    let mut listener = SrtListener::bind("127.0.0.1:0", short.clone())
+    let mut listener = SrtListener::bind("127.0.0.1:0", SrtSocketConfig::new(short.clone()))
         .await
         .unwrap();
     let addr = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.map(|s| (listener, s)) });
-    let mut caller = SrtSocket::connect(addr, long.clone())
+    let mut caller = SrtSocket::connect(addr, SrtSocketConfig::new(long.clone()))
         .await
         .expect("connect");
     let (_listener, mut accepted) = tokio::time::timeout(WAIT, accept)
@@ -561,10 +588,14 @@ async fn the_negotiated_latency_is_the_greater_of_both_sides() {
     );
 
     // Role 2: the Listener asks for the long latency; the Caller receives.
-    let mut listener = SrtListener::bind("127.0.0.1:0", long).await.unwrap();
+    let mut listener = SrtListener::bind("127.0.0.1:0", SrtSocketConfig::new(long))
+        .await
+        .unwrap();
     let addr = listener.local_addr().unwrap();
     let accept = tokio::spawn(async move { listener.accept().await.map(|s| (listener, s)) });
-    let mut caller = SrtSocket::connect(addr, short).await.expect("connect");
+    let mut caller = SrtSocket::connect(addr, SrtSocketConfig::new(short))
+        .await
+        .expect("connect");
     let (_listener, mut accepted) = tokio::time::timeout(WAIT, accept)
         .await
         .expect("accept never finished")
@@ -599,9 +630,12 @@ async fn raw_caller_connected(config: HandshakeConfig) -> (UdpSocket, SocketAddr
             self.0.abort();
         }
     }
-    let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-        .await
-        .unwrap();
+    let mut listener = SrtListener::bind(
+        "127.0.0.1:0",
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    )
+    .await
+    .unwrap();
     let listener_addr = listener.local_addr().unwrap();
     let (tx, rx) = mpsc::unbounded_channel();
     let accept_loop = tokio::spawn(async move {
@@ -740,7 +774,10 @@ async fn the_caller_stamps_the_time_since_it_started_on_its_conclusion() {
     const DELAY: Duration = Duration::from_millis(300);
     let raw = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = raw.local_addr().unwrap();
-    let connect = tokio::spawn(SrtSocket::connect(addr, HandshakeConfig::default()));
+    let connect = tokio::spawn(SrtSocket::connect(
+        addr,
+        SrtSocketConfig::new(HandshakeConfig::default()),
+    ));
 
     let (induction, src) = recv_from(&raw).await;
     let timestamp_of = |d: &[u8]| match SrtPacket::parse(d).expect("parse") {

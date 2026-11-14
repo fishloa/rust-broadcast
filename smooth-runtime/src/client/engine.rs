@@ -16,7 +16,7 @@ use broadcast_common::backoff::{RetrySchedule, mix_seed};
 use broadcast_common::url_ref;
 
 use super::action::{Action, FetchFailure, RequestId, StreamId};
-use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothConfig};
+use super::config::{SYNTHETIC_MOVIE_TIMESCALE, SmoothClientConfig};
 use super::output::{Dropped, ManifestFault, Output, QualityInfo};
 use super::stream::{Chunk, Cursor, HeldFragment, Stream, demux_fragment, live_join};
 use crate::error::SmoothError;
@@ -63,8 +63,7 @@ enum ManifestCursor {
 
 /// The Smooth Streaming client engine. See the [crate docs](crate).
 pub struct SmoothClient {
-    config: SmoothConfig,
-    manifest_url: Url,
+    config: SmoothClientConfig,
     streams: Vec<Stream>,
     started: bool,
     announced: bool,
@@ -82,8 +81,9 @@ pub struct SmoothClient {
 }
 
 impl SmoothClient {
-    /// A client for the manifest at `manifest_url`; the first [`Action`] is its fetch.
-    pub fn new(manifest_url: Url, config: SmoothConfig) -> Self {
+    /// A client for the manifest [`SmoothClientConfig::manifest_url`] names
+    /// ([`SmoothClientConfig::new`]); the first [`Action`] is its fetch.
+    pub fn new(config: SmoothClientConfig) -> Self {
         let retry = RetrySchedule::from_steps(
             &config
                 .backoff_ms
@@ -95,7 +95,6 @@ impl SmoothClient {
         );
         Self {
             config,
-            manifest_url,
             streams: Vec::new(),
             started: false,
             announced: false,
@@ -115,7 +114,7 @@ impl SmoothClient {
 
     /// Re-base relative fragment URLs on `url`, after a redirect of the manifest.
     pub fn set_manifest_url(&mut self, url: Url) {
-        self.manifest_url = url;
+        self.config.manifest_url = url;
     }
 
     /// True once a manifest has been accepted and the streams are resolved.
@@ -333,7 +332,7 @@ impl SmoothClient {
             self.manifest = ManifestCursor::InFlight(id);
             self.actions.push_back(Action::FetchManifest {
                 id,
-                url: self.manifest_url.clone(),
+                url: self.config.manifest_url.clone(),
             });
         }
     }
@@ -358,7 +357,7 @@ impl SmoothClient {
         let relative = stream
             .index
             .resolve_fragment_url(stream.quality.bitrate, chunk.0);
-        let Ok(url) = url_ref::resolve(&self.manifest_url, &relative) else {
+        let Ok(url) = url_ref::resolve(&self.config.manifest_url, &relative) else {
             self.streams[si].cursor = Cursor::Idle;
             self.outputs
                 .push_back(Output::Dropped(Dropped::FragmentUrl {

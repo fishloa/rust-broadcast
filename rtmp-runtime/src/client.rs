@@ -76,7 +76,7 @@ broadcast_common::impl_spec_display!(ClientMode);
 /// Configuration for a [`ClientSession`].
 #[non_exhaustive]
 #[derive(Clone)]
-pub struct ClientConfig {
+pub struct RtmpClientConfig {
     /// Publish (default) or play.
     pub mode: ClientMode,
     /// Playback buffer length announced to the server before `play` (§6.7 SetBufferLength),
@@ -102,9 +102,9 @@ pub struct ClientConfig {
 
 /// Manual `Debug`: the stream key is a publish secret and never renders
 /// (issue #1142).
-impl core::fmt::Debug for ClientConfig {
+impl core::fmt::Debug for RtmpClientConfig {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("ClientConfig")
+        f.debug_struct("RtmpClientConfig")
             .field("mode", &self.mode)
             .field("play_buffer_ms", &self.play_buffer_ms)
             .field("chunk_size", &self.chunk_size)
@@ -117,7 +117,7 @@ impl core::fmt::Debug for ClientConfig {
     }
 }
 
-impl Default for ClientConfig {
+impl Default for RtmpClientConfig {
     fn default() -> Self {
         Self {
             mode: ClientMode::Publish,
@@ -266,7 +266,7 @@ impl ClientHandshake {
 /// Sans-IO RTMP client publish session.
 #[derive(Debug)]
 pub struct ClientSession {
-    config: ClientConfig,
+    config: RtmpClientConfig,
     handshake: ClientHandshake,
     handshake_buf: Vec<u8>,
     assembler: ChunkAssembler,
@@ -297,7 +297,7 @@ pub struct ClientSession {
 impl ClientSession {
     /// Create a new client session.
     #[must_use]
-    pub fn new(config: ClientConfig) -> Self {
+    pub fn new(config: RtmpClientConfig) -> Self {
         let ack_threshold = config.window_ack_size;
         let advertised_window_ack_size = config.window_ack_size;
         let max_in_progress_bytes = config.max_in_progress_bytes;
@@ -869,7 +869,7 @@ fn extract_status(args: &[Amf0Value]) -> (String, String) {
 mod tests {
     use super::*;
     use crate::handshake;
-    use crate::server::{ServerConfig, ServerSession};
+    use crate::server::{RtmpServerConfig, ServerSession};
 
     #[test]
     fn client_handshake_round_trip() {
@@ -911,14 +911,14 @@ mod tests {
     /// (the client sent a bare `createStream`).
     #[test]
     fn client_publish_sequence_mirrors_ffmpeg() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test_key".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         let mut server = ServerSession::new(
-            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+            RtmpServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
         );
         let c0_c1 = client.start();
         let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
@@ -965,15 +965,15 @@ mod tests {
     /// probes with it got no PingResponse and may drop the publisher.
     #[test]
     fn client_replies_to_ping_request_with_ping_response() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test_key".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         let c0_c1 = client.start();
         let mut server = ServerSession::new(
-            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+            RtmpServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
         );
         let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
         let (_client_out, _) = client.handle_data(&s0_s1_s2).unwrap();
@@ -998,10 +998,10 @@ mod tests {
     /// `peer_bandwidth`, and `ack_threshold` is untouched.
     #[test]
     fn set_peer_bandwidth_does_not_corrupt_ack_threshold() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test_key".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let original_ack_threshold_config = config.window_ack_size;
         let mut client = ClientSession::new(config.clone());
@@ -1011,7 +1011,7 @@ mod tests {
         // (rather than still buffering handshake bytes).
         let c0_c1 = client.start();
         let mut server = ServerSession::new(
-            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+            RtmpServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
         );
         let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
         client.handle_data(&s0_s1_s2).unwrap();
@@ -1037,14 +1037,14 @@ mod tests {
     /// unreachable now that `ChunkSize` validates at construction.
     #[test]
     fn client_connect_with_invalid_chunk_size_errors_before_any_message() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test_key".to_string(),
             chunk_size: 0x8000_0000,
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
-        let mut server = ServerSession::new(ServerConfig::default());
+        let mut server = ServerSession::new(RtmpServerConfig::default());
         let c0_c1 = client.start();
         let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
         let err = client.handle_data(&s0_s1_s2).unwrap_err();
@@ -1054,16 +1054,16 @@ mod tests {
 
     #[test]
     fn client_connect_flow() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test_key".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         let c0_c1 = client.start();
 
         let mut server = ServerSession::new(
-            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+            RtmpServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
         );
 
         let (s0_s1_s2, server_events) = server.handle_data(&c0_c1).unwrap();
@@ -1113,16 +1113,16 @@ mod tests {
     /// fail).
     #[test]
     fn client_full_publish_flow() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test_key".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         let c0_c1 = client.start();
 
         let mut server = ServerSession::new(
-            ServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
+            RtmpServerConfig::default().with_expected_stream_key(Some("test_key".to_string())),
         );
 
         // Handshake.
@@ -1212,10 +1212,10 @@ mod tests {
 
     #[test]
     fn send_audio_video_while_publishing() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         client.state = ClientState::Publishing;
@@ -1240,10 +1240,10 @@ mod tests {
     /// object must surface as `Err`, not a `to_bytes` panic.
     #[test]
     fn send_metadata_over_range_string_errors_not_panics() {
-        let mut client = ClientSession::new(ClientConfig {
+        let mut client = ClientSession::new(RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         });
         client.state = ClientState::Publishing;
         client.stream_id = Some(1);
@@ -1254,10 +1254,10 @@ mod tests {
 
     #[test]
     fn send_audio_before_publishing_fails() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         assert!(matches!(
@@ -1268,10 +1268,10 @@ mod tests {
 
     #[test]
     fn connect_error_produces_event() {
-        let config = ClientConfig {
+        let config = RtmpClientConfig {
             app: "live".to_string(),
             stream_key: "test".to_string(),
-            ..ClientConfig::default()
+            ..RtmpClientConfig::default()
         };
         let mut client = ClientSession::new(config);
         client.handshake.state = ClientHandshakeState::Done;

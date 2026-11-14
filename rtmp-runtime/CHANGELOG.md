@@ -6,7 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+#### Added
+- `io::RtmpClientConfig { target, timeouts }` (`new(target)`, `with_timeouts`) and `io::RtmpServerConfig { session, timeouts }` (`Default`, `with_session`, `with_timeouts`): the same config shape as the RTSP and SRT adapters, so a host maps its timeout config once per role (#2660).
+
+#### Removed
+- BREAKING: `AsyncRtmpClient::connect(target, timeouts)` and `AsyncRtmpClient::from_stream(stream, target, timeouts)`; both take an `io::RtmpClientConfig`. Migration: `connect(&target, t)` -> `connect(RtmpClientConfig::new(target).with_timeouts(t))`, `from_stream(stream, &target, t)` -> `from_stream(stream, RtmpClientConfig::new(target).with_timeouts(t))`.
+- BREAKING: `AsyncRtmpServer::bind(addr, ServerConfig).with_timeouts(t)`; `bind` takes an `io::RtmpServerConfig`. Migration: `bind(addr, RtmpServerConfig::default().with_session(cfg).with_timeouts(t))`. `with_timeouts` on the bound server is gone.
+- BREAKING: `RtmpConnection::from_stream(stream, session, timeouts)` (the generic form) and `RtmpConnection::from_stream_erased`: one `RtmpConnection::from_stream(stream, RtmpServerConfig)` erases the stream type, as the server and multimux already used. Migration: `from_stream_erased(s, ServerSession::new(cfg), t)` -> `from_stream(s, RtmpServerConfig::default().with_session(cfg).with_timeouts(t))`. A connection is now always `RtmpConnection` (the erased form), not `RtmpConnection<S>` for a named `S`.
+
 #### Changed
+- BREAKING: `client::ClientConfig` is `client::RtmpClientConfig` and `server::ServerConfig` is `server::RtmpServerConfig`, matching `RtspClientConfig`/`RtspServerConfig`/`HlsClientConfig`. Two modules can now hold a `RtmpClientConfig` (the sans-IO session's and the tokio adapter's) without a name clash; they configure different layers.
 - BREAKING: `ProtocolControl::SetChunkSize` now wraps a validated `ChunkSize` newtype (1..=0x7FFF_FFFF); `to_message` is total and `try_to_message` is removed (#2659).
 
 ## Changed

@@ -30,7 +30,7 @@ use std::time::Duration;
 use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::{SrtListener, SrtSocket};
+use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
@@ -167,7 +167,7 @@ async fn our_caller_to_libsrt_listener() {
             format!("127.0.0.1:{listen_port}")
                 .parse::<SocketAddr>()
                 .unwrap(),
-            HandshakeConfig::default(),
+            SrtSocketConfig::new(HandshakeConfig::default()),
         )
         .await
         .expect("connect to libsrt");
@@ -205,7 +205,7 @@ async fn libsrt_caller_to_our_listener() {
 
         let mut listener = SrtListener::bind(
             "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
-            HandshakeConfig::default().with_latency_ms(LATENCY_MS),
+            SrtSocketConfig::new(HandshakeConfig::default().with_latency_ms(LATENCY_MS)),
         )
         .await
         .expect("bind");

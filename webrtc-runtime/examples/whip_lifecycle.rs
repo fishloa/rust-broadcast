@@ -7,8 +7,8 @@ use webrtc_runtime::whip::client::{HttpResponse, WhipClient};
 
 fn main() {
     let mut client = WhipClient::new(
-        webrtc_runtime::session::client::ClientConfig::new(
-            "https://origin.example/whip/live".into(),
+        webrtc_runtime::session::client::WebRtcClientConfig::new(
+            "https://origin.example/whip/live",
         )
         .with_bearer_token("my-token".into()),
     );

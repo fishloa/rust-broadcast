@@ -6,6 +6,9 @@ use broadcast_client::{
     Config, Error, ErrorKind, Event, Session, SourceKind, SrtEncryption, SrtEntropySeed,
     SrtKeyLength, Status,
 };
+use broadcast_common::timeouts::Timeouts;
+
+use std::time::Duration;
 
 const URL: &str = "srt://127.0.0.1:9000";
 const SMALL: &str = "ts/h264-aac.ts";
@@ -485,12 +488,12 @@ fn bad_srt_settings_are_typed_errors() {
     let open = |f: fn(&mut Config)| Session::open(URL, cfg(f), 0).unwrap_err();
     for (err, field) in [
         (
-            open(|c| c.srt.handshake_timeout_ms = 0),
-            "srt.handshake_timeout_ms",
+            open(|c| c.srt.timeouts = Timeouts::default().with_handshake(Duration::ZERO)),
+            "srt.timeouts.handshake",
         ),
         (
-            open(|c| c.srt.peer_idle_timeout_ms = 0),
-            "srt.peer_idle_timeout_ms",
+            open(|c| c.srt.timeouts = Timeouts::default().with_read_idle(Duration::ZERO)),
+            "srt.timeouts.read_idle",
         ),
         (
             open(|c| c.srt.encryption = Some(SrtEncryption::new("", SrtKeyLength::Aes128))),
@@ -624,7 +627,11 @@ fn the_session_announces_a_wake_for_the_next_ack_so_a_wake_driven_host_keeps_the
 fn the_handshake_budget_is_the_configured_timeout_not_the_retransmit_count() {
     let mut sim = SrtSim::open(
         URL,
-        cfg(|c| c.srt.handshake_timeout_ms = 1_000),
+        cfg(|c| {
+            c.srt.timeouts = Timeouts::default()
+                .with_handshake(Duration::from_secs(1))
+                .with_read_idle(Duration::from_secs(5))
+        }),
         SrtPeer::new(Cipher::Clear, None, LATENCY_MS),
     );
     sim.peer_listening = false;

@@ -11,8 +11,7 @@
 
 use std::path::PathBuf;
 
-use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothConfig};
-use url::Url;
+use smooth_runtime::{Action, FetchFailure, Output, SmoothClient, SmoothClientConfig};
 
 const FIXTURE_DIR: &str = "../fixtures/smooth/av";
 const ORIGIN: &str = "http://origin.test/";
@@ -33,8 +32,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(FIXTURE_DIR);
     let manifest = std::fs::read_to_string(dir.join("Manifest"))?.replace(STATIC_ATTRS, LIVE_ATTRS);
-    let config = SmoothConfig::default().with_live_join_fragments(look_ahead);
-    let mut client = SmoothClient::new(Url::parse(&format!("{ORIGIN}Manifest"))?, config);
+    let config =
+        SmoothClientConfig::new(format!("{ORIGIN}Manifest")).with_live_join_fragments(look_ahead);
+    let mut client = SmoothClient::new(config);
     let mut requested = Vec::new();
     let mut now = 0u64;
     while now < RUN_US {

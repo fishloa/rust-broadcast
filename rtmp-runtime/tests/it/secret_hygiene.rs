@@ -1,8 +1,8 @@
 //! Secret handling (audit umbrella #1142): the publish stream key is the
 //! ingest secret and must never reach a `{:?}` / `dbg!` / log line.
 
-use rtmp_runtime::client::ClientConfig;
-use rtmp_runtime::server::{ServerConfig, ServerEvent, ServerSession};
+use rtmp_runtime::client::RtmpClientConfig;
+use rtmp_runtime::server::{RtmpServerConfig, ServerEvent, ServerSession};
 #[cfg(feature = "tokio")]
 use rtmp_runtime::target::RtmpTarget;
 
@@ -10,7 +10,7 @@ const KEY: &str = "sk-live-4f9a1c77-top-secret";
 
 #[test]
 fn server_config_and_session_debug_hide_the_expected_stream_key() {
-    let cfg = ServerConfig::default().with_expected_stream_key(Some(KEY.to_string()));
+    let cfg = RtmpServerConfig::default().with_expected_stream_key(Some(KEY.to_string()));
     let text = format!("{cfg:?}");
     assert!(!text.contains(KEY), "{text}");
     assert!(text.contains("redacted"), "{text}");
@@ -18,7 +18,7 @@ fn server_config_and_session_debug_hide_the_expected_stream_key() {
     let text = format!("{session:?}");
     assert!(!text.contains(KEY), "{text}");
     // No key configured: nothing to redact, and it says so.
-    let text = format!("{:?}", ServerConfig::default());
+    let text = format!("{:?}", RtmpServerConfig::default());
     assert!(text.contains("expected_stream_key: None"), "{text}");
 }
 
@@ -38,7 +38,7 @@ fn publish_event_debug_hides_the_stream_key() {
 
 #[test]
 fn client_config_debug_hides_the_stream_key() {
-    let mut cfg = ClientConfig::default();
+    let mut cfg = RtmpClientConfig::default();
     cfg.stream_key = KEY.to_string();
     let text = format!("{cfg:?}");
     assert!(!text.contains(KEY), "{text}");

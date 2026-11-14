@@ -6,7 +6,7 @@ use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::Error;
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig};
-use srt_runtime::io::{IoConfig, SRT_TIMEOUTS, SrtListener, SrtSocket};
+use srt_runtime::io::{IoConfig, SRT_TIMEOUTS, SrtListener, SrtSocket, SrtSocketConfig};
 use srt_runtime::packet::EncryptionField;
 use tokio::net::UdpSocket as TokioUdpSocket;
 
@@ -89,7 +89,7 @@ async fn tokio_caller_to_libsrt_listener_aes128() {
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                crypto_config(PASSPHRASE, 16),
+                SrtSocketConfig::new(crypto_config(PASSPHRASE, 16)),
             ),
         )
         .await
@@ -118,7 +118,7 @@ async fn tokio_caller_to_libsrt_listener_aes192() {
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                crypto_config(PASSPHRASE, 24),
+                SrtSocketConfig::new(crypto_config(PASSPHRASE, 24)),
             ),
         )
         .await
@@ -147,7 +147,7 @@ async fn tokio_caller_to_libsrt_listener_aes256() {
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                crypto_config(PASSPHRASE, 32),
+                SrtSocketConfig::new(crypto_config(PASSPHRASE, 32)),
             ),
         )
         .await
@@ -166,9 +166,12 @@ async fn tokio_caller_to_libsrt_listener_aes256() {
 async fn libsrt_caller_to_tokio_listener(key_len: usize) {
     tokio::time::timeout(TEST_TIMEOUT, async {
         skip_unless_tools!("srt-live-transmit" => "-version");
-        let mut listener = SrtListener::bind("127.0.0.1:0", crypto_config(PASSPHRASE, key_len))
-            .await
-            .unwrap();
+        let mut listener = SrtListener::bind(
+            "127.0.0.1:0",
+            SrtSocketConfig::new(crypto_config(PASSPHRASE, key_len)),
+        )
+        .await
+        .unwrap();
         let bound = listener.local_addr().unwrap();
         let accept_jh = tokio::spawn(async move { listener.accept().await.unwrap() });
         let (caller, src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
@@ -239,7 +242,7 @@ async fn tokio_wrong_passphrase_is_refused() {
                 format!("127.0.0.1:{listen_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                crypto_config("wrong-passphrase-xxxxxxxx", 16),
+                SrtSocketConfig::new(crypto_config("wrong-passphrase-xxxxxxxx", 16)),
             ),
         )
         .await
@@ -250,9 +253,12 @@ async fn tokio_wrong_passphrase_is_refused() {
             "expected rejection, got {err:?}"
         );
         // direction 2: libsrt caller wrong passphrase to our listener
-        let mut listener = SrtListener::bind("127.0.0.1:0", crypto_config(PASSPHRASE, 16))
-            .await
-            .unwrap();
+        let mut listener = SrtListener::bind(
+            "127.0.0.1:0",
+            SrtSocketConfig::new(crypto_config(PASSPHRASE, 16)),
+        )
+        .await
+        .unwrap();
         let bound = listener.local_addr().unwrap();
         let accept_jh = tokio::spawn(async move { listener.accept().await });
         let (caller, _src_port) = spawn_libsrt_ready(&[LIBSRT_UDP_SOURCE_BOUND_LINE], |src_port| {
@@ -290,7 +296,7 @@ async fn tokio_key_refresh_keeps_delivering() {
         let io = IoConfig::default().with_km_refresh_thresholds(thresholds);
         let mut listener = SrtListener::bind(
             "127.0.0.1:0",
-            srt_runtime::io::SrtConfig::new(loaded_host_config()).with_io(io),
+            SrtSocketConfig::new(loaded_host_config()).with_io(io),
         )
         .await
         .unwrap();
@@ -300,7 +306,7 @@ async fn tokio_key_refresh_keeps_delivering() {
             format!("127.0.0.1:{}", bound.port())
                 .parse::<SocketAddr>()
                 .unwrap(),
-            srt_runtime::io::SrtConfig::new(loaded_host_config()).with_io(io),
+            SrtSocketConfig::new(loaded_host_config()).with_io(io),
         )
         .await
         .unwrap();
@@ -394,7 +400,7 @@ async fn rendezvous_with_libsrt(key_len: usize, seed: u8) {
                 format!("127.0.0.1:{lib_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                srt_runtime::io::SrtConfig::new(crypto_patient_config(PASSPHRASE, key_len))
+                srt_runtime::io::SrtSocketConfig::new(crypto_patient_config(PASSPHRASE, key_len))
                     .with_io(
                         IoConfig::default()
                             .with_timeouts(SRT_TIMEOUTS.with_handshake(Duration::from_secs(20))),
@@ -450,7 +456,7 @@ async fn rendezvous_wrong_passphrase_is_refused() {
                 format!("127.0.0.1:{lib_port}")
                     .parse::<SocketAddr>()
                     .unwrap(),
-                srt_runtime::io::SrtConfig::new(crypto_patient_config(
+                srt_runtime::io::SrtSocketConfig::new(crypto_patient_config(
                     "wrong-passphrase-xxxxxxxx",
                     16,
                 ))
@@ -491,7 +497,7 @@ async fn tokio_rendezvous_pair_encrypted_round_trip() {
             SrtSocket::rendezvous_from_socket(
                 sock_a,
                 format!("127.0.0.1:{port_b}").parse::<SocketAddr>().unwrap(),
-                srt_runtime::io::SrtConfig::new(cfg_a).with_io(io_a),
+                srt_runtime::io::SrtSocketConfig::new(cfg_a).with_io(io_a),
             )
             .await
         });
@@ -499,7 +505,7 @@ async fn tokio_rendezvous_pair_encrypted_round_trip() {
             SrtSocket::rendezvous_from_socket(
                 sock_b,
                 format!("127.0.0.1:{port_a}").parse::<SocketAddr>().unwrap(),
-                srt_runtime::io::SrtConfig::new(cfg_b).with_io(io_b),
+                srt_runtime::io::SrtSocketConfig::new(cfg_b).with_io(io_b),
             )
             .await
         });
