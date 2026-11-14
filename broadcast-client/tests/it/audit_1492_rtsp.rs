@@ -78,7 +78,7 @@ fn setup_uris(host: &Host) -> Vec<String> {
         .collect()
 }
 
-fn reconnecting_attempts(events: &[Event]) -> Vec<u64> {
+fn reconnecting_attempts(events: &[Event]) -> Vec<u32> {
     events
         .iter()
         .filter_map(|e| match e {
