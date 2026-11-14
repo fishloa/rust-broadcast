@@ -7,9 +7,9 @@ use std::collections::{HashMap, HashSet};
 
 use url::Url;
 
+use crate::BufferHint as Hint;
 use crate::ClientIdentityScope;
 use crate::ConnId;
-use crate::Hint;
 use crate::error::{Error, TransportError};
 use crate::events::{Action, Config, ErrorKind, Event, SourceKind, Status};
 use crate::headers;

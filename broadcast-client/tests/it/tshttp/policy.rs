@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, StarveKind, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, TsHttpClient, TsHttpPolicy};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -8,7 +9,7 @@ fn ts(ms: u64) -> Timestamp {
 
 #[test]
 fn backoff_2_4_8_then_10_forever() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     let mut got = Vec::new();
     for _ in 0..6 {
@@ -41,7 +42,7 @@ fn backoff_2_4_8_then_10_forever() {
 
 #[test]
 fn played_then_ended_resets_attempt_counter() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     // fail twice
     c.on_error(ts(0));
@@ -86,7 +87,7 @@ fn played_then_ended_resets_attempt_counter() {
 
 #[test]
 fn server_closes_every_60s_no_stall_notice() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     for i in 0..10 {
         c.on_response(200, &[], ts(i * 60000));
@@ -105,12 +106,12 @@ fn server_closes_every_60s_no_stall_notice() {
 
 #[test]
 fn not_found_then_ok() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(404, &[], ts(0));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::NotFound { status: 404 })
+        Some(Event::NotFound)
     ));
     let _ = c.poll_event(); // reconnecting
     let _ = c.poll(); // reconnect
@@ -125,12 +126,12 @@ fn not_found_then_ok() {
 
 #[test]
 fn gone_410_is_not_found_event() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(410, &[], ts(0));
     assert!(matches!(
         c.poll_event(),
-        Some(Event::NotFound { status: 410 })
+        Some(Event::NotFound)
     ));
 }
 
@@ -138,7 +139,7 @@ fn gone_410_is_not_found_event() {
 fn stall_notice_repeats_once_per_second_after_first() {
     static D: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -165,7 +166,7 @@ fn stall_notice_repeats_once_per_second_after_first() {
 
 #[test]
 fn callbacks_after_abort_are_ignored() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -182,7 +183,7 @@ fn callbacks_after_abort_are_ignored() {
 #[test]
 fn caller_reconnect_in_every_connected_state() {
     for phase in 0..3 {
-        let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+        let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
         let _ = c.poll();
         if phase >= 1 {
             c.on_response(200, &[], ts(0));
@@ -199,7 +200,7 @@ fn caller_reconnect_in_every_connected_state() {
 
 #[test]
 fn starved_data_vs_nodata_classified_separately() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
@@ -215,7 +216,7 @@ fn starved_data_vs_nodata_classified_separately() {
 
     static D: std::sync::LazyLock<Vec<u8>> =
         std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
-    let mut c2 = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c2 = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c2.poll();
     c2.on_response(200, &[], ts(0));
     let _ = c2.poll_event();
@@ -241,7 +242,7 @@ fn config_overrides_change_every_timeout() {
             cap: std::time::Duration::from_millis(11),
         })
         .with_min_reconnect_interval(std::time::Duration::ZERO);
-    let mut c = TsHttpClient::new("u", cfg, ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg, ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();

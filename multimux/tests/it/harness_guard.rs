@@ -3,10 +3,10 @@
 //!
 //! - **Reserve-then-rebind ports** (`reserve_tcp_addr`/`reserve_udp_addr`/
 //!   `free_tcp_addr`/`free_port`). The HTTP media/admin listeners now bind
-//!   `127.0.0.1:0` and hand the live listener in (`serve_*_on`); WHEP/WHIP/
+//!   `127.0.0.1:0` and hand the live listener in (`ServeRequest::with_prebound_*`); WHEP/WHIP/
 //!   TS-UDP config-driven routes consume a caller-bound listener/socket via
 //!   `Config::prebound` (including file-defined routes, via
-//!   `serve_config_file_with_registry_on_admin_prebound`). The remaining
+//!   `ServeRequest::with_prebound_binds`). The remaining
 //!   helper is LINE-PINNED below (the exact `fn …` line must match): the
 //!   RTMP input (its `rtmp-runtime` server exposes only `bind(addr)`). An
 //!   external `mediamtx` whose config takes a numeric port uses

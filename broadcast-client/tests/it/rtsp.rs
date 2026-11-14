@@ -1208,15 +1208,15 @@ fn garbage_after_play_reconnects_at_once() {
 /// arriving: the close is hinted as `SourceEnded` / `SourceError`.
 #[test]
 fn a_closed_connection_is_hinted_to_the_buffer() {
-    use broadcast_client::{BufferInput, Hint};
+    use broadcast_client::{BufferHint, BufferInput};
 
     for (error, want) in [
-        (None, Hint::SourceEnded),
+        (None, BufferHint::SourceEnded),
         (
             Some(TransportError::Other {
                 reason: "reset".to_string(),
             }),
-            Hint::SourceError,
+            BufferHint::SourceError,
         ),
     ] {
         let mut config = Config::default();
@@ -1240,7 +1240,7 @@ fn a_closed_connection_is_hinted_to_the_buffer() {
 /// controller must still learn it was a source outage.
 #[test]
 fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
-    use broadcast_client::{BufferInput, Hint};
+    use broadcast_client::{BufferHint, BufferInput};
 
     let mut config = Config::default();
     config.record_buffer_inputs = true;
@@ -1252,9 +1252,9 @@ fn a_protocol_error_inside_on_data_is_hinted_to_the_buffer() {
         .on_data(conn, b"\xff\xff\xff\xff\r\n\r\n", ts(host.now));
     let inputs: Vec<BufferInput> = host.session.drain_buffer_inputs().collect();
     assert!(
-        inputs
-            .iter()
-            .any(|i| matches!(i, BufferInput::Hint {hint, .. } if *hint == Hint::SourceError)),
+        inputs.iter().any(
+            |i| matches!(i, BufferInput::Hint {hint, .. } if *hint == BufferHint::SourceError)
+        ),
         "protocol error sent no SourceError hint: {inputs:?}"
     );
 }

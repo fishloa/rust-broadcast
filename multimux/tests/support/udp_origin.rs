@@ -6,9 +6,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+use multimux::MultimuxError;
 use multimux::config::{Config, InputSpec};
 use multimux::registry::SchemeRegistry;
-use multimux::{MultimuxError, serve_with_registry_on};
 
 use super::listener::bind_tcp;
 
@@ -51,11 +51,14 @@ pub async fn spawn_udp_ts_origin(
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let ts_bytes = std::fs::read(fixture).expect("TS fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));

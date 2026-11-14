@@ -16,7 +16,7 @@
 //!
 //! The ingest path is the real one: the committed `fixtures/ts/h264-aac.ts`
 //! capture (real H.264+AAC) is pushed through `InputSpec::TsUdp` into
-//! `serve_with_registry`, and everything is fetched back over a real loopback
+//! `Server`, and everything is fetched back over a real loopback
 //! HTTP `GET`. Both oracles skip **loudly** (with a `--nocapture`-visible
 //! line) when their binary is absent, so this file stays green on Linux/CI;
 //! run it on macOS for the genuine check.
@@ -114,7 +114,7 @@ impl Drop for Served {
 
 /// Start a TS-HLS route and feed it the fixture. Both the media listener AND
 /// the UDP input socket are bound `:0` and handed over live (SP7.1) — the
-/// media listener into `serve_with_registry_on`, the UDP socket into the route
+/// media listener into `ServeRequest::with_prebound_media`, the UDP socket into the route
 /// via `Config::prebound` — so neither address can lose a bind race and no
 /// whole-attempt retry loop is needed.
 async fn serve_ts_hls_until_extinf() -> Served {

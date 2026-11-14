@@ -1,15 +1,15 @@
 //! Issue #805 task 3: end-to-end coverage of the *route-dispatch* path
-//! itself -- `multimux::serve_with_registry` / `spawn_ingest` -- rather than
+//! itself -- `multimux::Server` / `spawn_ingest` -- rather than
 //! any one source driven directly.
 //!
 //! # The blind spot this file closes
 //!
 //! Before task 3, no test in this workspace entered through
-//! `serve_with_registry`/`spawn_ingest` with real bytes flowing all the way
+//! `Server`/`spawn_ingest` with real bytes flowing all the way
 //! to a served HTTP response: `multimux/tests/it/rtsp_ingest.rs` drives
 //! `RtspDialer`/`RtspIngestSession` directly, and `origin_llhls.rs`/
 //! `lldash_dashjs.rs` build a `RouteHandle` and feed it by hand, never
-//! referencing `InputSpec` or `serve_with_registry` at all. That is exactly
+//! referencing `InputSpec` or `Server` at all. That is exactly
 //! the shape of gap that let eight of nine `InputSpec` variants dispatch to
 //! a stubbed no-op arm for a long time while every other gate (build/
 //! clippy/doc, thousands of passing tests) stayed green -- see
@@ -17,7 +17,7 @@
 //! `every_input_spec_variant_dispatches_to_real_ingest_not_a_stub` (the
 //! cheap, exhaustive, in-crate regression net for *that*) for the full
 //! story. This file is the deeper, representative half: real bytes in
-//! through `serve_with_registry`, real media out over a real HTTP `GET`.
+//! through `Server`, real media out over a real HTTP `GET`.
 //!
 //! # Real fixture, not synthetic bytes
 //!
@@ -75,7 +75,6 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on;
 
 use crate::support::listener;
 use crate::support::shared_it::{fixture_path, poll_until_extinf};
@@ -175,7 +174,7 @@ async fn get_non_empty(client: &reqwest::Client, url: &str) -> bytes::Bytes {
 }
 
 /// Real fixture bytes in through `InputSpec::TsUdp` (a real UDP socket
-/// `serve_with_registry` binds), real media out over a real HTTP `GET` of
+/// `Server` binds), real media out over a real HTTP `GET` of
 /// the resulting LL-HLS media playlist/init/segment.
 ///
 /// MUTATION VERIFIED: reverting `spawn_ingest`'s `InputSpec::TsUdp` arm (in
@@ -202,17 +201,20 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);
 
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let ts_bytes =
         std::fs::read(fixture_path("ts/h264-aac.ts")).expect("h264-aac.ts fixture must exist");
     // Resend the whole fixture on a loop (rather than once) so the (async,
     // therefore not synchronized with this test) socket bind inside
-    // `serve_with_registry`'s spawned ingest task has ample opportunity to
+    // `Server`'s spawned ingest task has ample opportunity to
     // land before a datagram that matters arrives -- exactly the pattern
     // `multimux/src/origin/mod.rs`'s own
     // `ts_udp_input_ingests_and_becomes_resolvable_through_the_registry` test
@@ -304,11 +306,14 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
             auth: None,
         },
     );
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
@@ -329,7 +334,7 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
 
 /// Real fixture bytes in through `InputSpec::Rtmp` (issue #805 task 4 -- a
 /// real TCP client playing back the captured ffmpeg publish against the
-/// listen socket `serve_with_registry` binds), real media out over a real
+/// listen socket `Server` binds), real media out over a real
 /// HTTP `GET` of the resulting LL-HLS media playlist/init/segment -- the
 /// same property as `ts_udp_dispatch_serves_real_media_end_to_end`, for the
 /// one push-based (`Listener`-backed) input kind.
@@ -368,11 +373,14 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
             stream_key: None,
         },
     );
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     let fixture = std::fs::read(rtmp_fixture_path()).expect("rtmp fixture must exist");
     let publisher = tokio::spawn(async move {
@@ -591,7 +599,7 @@ mod custom_dispatch_driver_backed {
 
     /// Drives a driver-backed `Custom` factory through the **exact**
     /// dispatch path a real `InputSpec::Custom` route uses:
-    /// `serve_with_registry` resolves `Custom`'s `type_tag` through a
+    /// `Server` resolves `Custom`'s `type_tag` through a
     /// `SchemeRegistry`, builds an `InputCtx`, and calls the registered
     /// factory -- this factory spawns `multimux::supervise_driver` over its
     /// own small `Dialer`/`IngestSession` fed the real `h264-aac.ts`
@@ -651,7 +659,14 @@ mod custom_dispatch_driver_backed {
                 params: serde_json::Value::Null,
             },
         );
-        let server = tokio::spawn(serve_with_registry_on(bind_listener, config, registry));
+        let server = tokio::spawn(
+            multimux::Server::new(
+                multimux::ServeRequest::new(config)
+                    .with_registry(registry)
+                    .with_prebound_media(bind_listener),
+            )
+            .serve(),
+        );
 
         let client = reqwest::Client::new();
         let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
@@ -839,7 +854,14 @@ mod custom_dispatch_driver_backed {
         );
         // DASH output so we can also GET manifest.mpd for the SPTS-program check.
         config.routes[0].outputs = vec![OutputKind::Dash];
-        let server = tokio::spawn(serve_with_registry_on(bind_listener, config, registry));
+        let server = tokio::spawn(
+            multimux::Server::new(
+                multimux::ServeRequest::new(config)
+                    .with_registry(registry)
+                    .with_prebound_media(bind_listener),
+            )
+            .serve(),
+        );
 
         // Wait for the route handle to appear (the factory fires once the
         // origin is building the route). Then wait a little more for
@@ -933,7 +955,7 @@ mod custom_dispatch_driver_backed {
 // `manifest-ll.mpd` returned 503 forever on every real driver-backed
 // route.
 //
-// These tests drive a real ingest route through `serve_with_registry`,
+// These tests drive a real ingest route through `Server`,
 // assert over HTTP that the DASH/LL-DASH manifests return 200 with
 // valid content, and do NOT call `set_track_specs` by hand — if they
 // did they would reproduce the blind spot that hid the bug, and the
@@ -1114,11 +1136,14 @@ async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);
     config.routes[0].outputs = vec![OutputKind::Dash];
 
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
 
     // Deliberately send nothing — the route binds its UDP socket but
     // never receives a single datagram, so no IngestSession ever

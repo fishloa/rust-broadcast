@@ -12,7 +12,8 @@ use alloc::vec::Vec;
 use core::time::Duration;
 
 use crate::ConnId;
-use crate::tshttp::{Config as TsConfig, StarveKind};
+use crate::tshttp::StarveKind;
+use crate::tshttp::TsHttpConfig as TsConfig;
 use rtsp_runtime::{ClientEvent, ClientSession, Credentials, Method, PlayPlan, StatusCode};
 use transmux::{
     AlignOut, CodecConfig, RtpLossEvent, RtpStreamDepacketiser, RtpStreamTrack, Sample,

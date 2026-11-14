@@ -23,12 +23,10 @@ mod rendered;
 pub mod session;
 pub mod source;
 pub mod srt;
-pub mod tshttp;
+pub(crate) mod tshttp;
 pub mod udp;
 
-pub use crate::tshttp::StarveKind;
 pub use broadcast_auth::Credentials;
-pub use buffering_runtime::Hint;
 pub use buffering_runtime::Hint as BufferHint;
 pub use buffering_runtime::input_log::{Input as BufferInput, InputLog};
 pub use dash_runtime::client::config::{DashClockPolicy, DashConfig};
@@ -41,10 +39,11 @@ pub use events::{
 pub use identity::{ClientIdentity, ClientIdentityScope};
 pub use playout::PlayoutConfig;
 pub use session::Session;
-pub use source::ts_http::TsHttpSource;
 pub use srt::{SrtCallerConfig, SrtEncryption, SrtEntropySeed, SrtKeyLength};
 pub use transmux::TimelineJumpConfig;
 pub use transmux::{DisplayInfo, Sample, TrackId, TrackSpec};
+pub use tshttp::StarveKind;
+pub use tshttp::TsHttpConfig;
 pub use udp::{DatagramStats, UdpConfig, UdpMode};
 
 /// Connection identifier, naming one host-side socket the session's actions

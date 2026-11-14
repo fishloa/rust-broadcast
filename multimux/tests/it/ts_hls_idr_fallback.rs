@@ -17,7 +17,6 @@ use multimux::config::{
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry_on_admin;
 use transmux::media::{Media, Track};
 use transmux::pipeline::{CodecConfig, Sample};
 use transmux::{NalCodec, TsDemux, TsMux, access_unit_is_idr};
@@ -133,12 +132,12 @@ fn start(route: Route) -> Server {
             },
         ));
     let handle = tokio::spawn(async move {
-        let _ = serve_with_registry_on_admin(
-            media_listener,
-            admin_listener,
-            cfg,
-            SchemeRegistry::new(),
+        let _ = multimux::Server::new(
+            multimux::ServeRequest::new(cfg)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_listeners(media_listener, admin_listener),
         )
+        .serve()
         .await;
     });
     Server {

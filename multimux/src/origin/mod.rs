@@ -47,7 +47,7 @@ pub mod supervisor;
 
 use crate::route::RouteConfig;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 #[cfg(test)]
@@ -106,7 +106,7 @@ const OUTPUT_AUTH_REALM: &str = "multimux";
 /// Config-surfaced via [`crate::config::Config`] (sane defaults below);
 /// [`AppState::new`] applies [`HttpLimits::default`] so existing call sites
 /// (tests, examples) are unaffected, and [`AppState::with_limits`] overrides
-/// it with `Config`'s configured values (wired by [`serve`]).
+/// it with `Config`'s configured values (wired by [`crate::Server`]).
 #[derive(Debug, Clone, Copy)]
 pub struct HttpLimits {
     /// Per-request timeout — see the struct docs.
@@ -235,7 +235,7 @@ impl AppState {
         }
     }
 
-    /// Overrides the default [`HttpLimits`] — [`serve`] uses this to apply
+    /// Overrides the default [`HttpLimits`] — [`crate::Server`] uses this to apply
     /// `Config`'s configured request-timeout/concurrency/body-size limits;
     /// callers that only want the defaults (most tests/examples) keep using
     /// [`Self::new`] unchanged.
@@ -246,7 +246,7 @@ impl AppState {
     }
 
     /// Gates every media output route behind `verifier` (issue #663 "shared
-    /// output auth") — [`serve`] uses this when
+    /// output auth") — [`crate::Server`] uses this when
     /// [`crate::config::Config::output_auth`] is configured; callers that
     /// only want the default open behaviour (most tests/examples) keep using
     /// [`Self::new`] unchanged.
@@ -443,11 +443,21 @@ pub(crate) async fn serve_hyper_util(
     app: axum::Router,
     token: tokio_util::sync::CancellationToken,
 ) -> std::io::Result<()> {
-    serve_hyper_util_with_timeout(listener, app, token, HEADER_READ_TIMEOUT, DRAIN_DEADLINE).await
+    serve_impl(
+        listener,
+        app,
+        token,
+        HEADER_READ_TIMEOUT,
+        DRAIN_DEADLINE,
+        MAX_CONNECTIONS,
+        |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
+    )
+    .await
 }
 
 /// [`serve_hyper_util`] with explicit header-read + drain timeouts (test-only).
 #[doc(hidden)]
+#[cfg(feature = "test-seams")]
 pub async fn serve_hyper_util_with_timeout(
     listener: tokio::net::TcpListener,
     app: axum::Router,
@@ -462,6 +472,7 @@ pub async fn serve_hyper_util_with_timeout(
 /// connection cap (test-only): the cap is what the connection-cap test dials
 /// low so it can observe over-cap sockets being closed at `accept`.
 #[doc(hidden)]
+#[cfg(feature = "test-seams")]
 pub async fn serve_hyper_util_with_limits(
     listener: tokio::net::TcpListener,
     app: axum::Router,
@@ -487,6 +498,7 @@ pub async fn serve_hyper_util_with_limits(
 /// `(stream, remote_addr)`, allowing a test to inject a transient `accept()`
 /// error (EMFILE) and prove the listener survives it.
 #[doc(hidden)]
+#[cfg(feature = "test-seams")]
 pub async fn serve_hyper_util_with_accept_source<A, Fut>(
     listener: tokio::net::TcpListener,
     app: axum::Router,
@@ -518,6 +530,7 @@ where
 /// reaped, so a test can assert the finished-task set stays bounded across
 /// many sequential connections (finding N1).
 #[doc(hidden)]
+#[cfg(feature = "test-seams")]
 pub async fn serve_hyper_util_with_task_gauge(
     listener: tokio::net::TcpListener,
     app: axum::Router,
@@ -816,7 +829,7 @@ where
 ///
 /// Builds a [`broadcast_auth::RequestContext`] carrying every request header
 /// (not just `Authorization`) plus the transport peer address (from
-/// [`ConnectInfo`], present when [`serve`] wires the router through
+/// [`ConnectInfo`], present when [`crate::Server`] wires the router through
 /// `into_make_service_with_connect_info` — `None` in a test harness that
 /// `oneshot`s the router directly), so a `Forwarded`-scheme verifier
 /// (`crate::config::OutputAuthSpec::Forwarded`) can read `X-Forwarded-User`/
@@ -1280,7 +1293,7 @@ impl Drop for BytesServedGuard {
 /// exclusive with `llhls`/`dash`/`ll_dash` on the same route
 /// (`crate::config::Route::validate_standalone`, enforced before this ever
 /// runs), so this check is always unambiguous. Shared by
-/// [`serve_with_registry`]'s own per-route loop and
+/// [`crate::Server`]'s own per-route loop and
 /// [`admin::RouteRegistry::spawn_route`] — the runtime `POST /admin/routes`/
 /// reload path — so a `ts_hls` route added or reloaded at runtime gets
 /// exactly the same container a route configured at startup does.
@@ -1300,7 +1313,7 @@ pub(crate) fn route_container(route: &crate::config::Route) -> transmux::Contain
 /// resolving any [`crate::output::OutputKind::Custom`] entry via `registry`
 /// (issue #663 external scheme plugin registry) and every built-in kind via
 /// [`crate::output::OutputKind::build_with_playlist_name`] — the fallible
-/// counterpart [`serve_with_registry`] uses in place of a bare
+/// counterpart [`crate::Server`] uses in place of a bare
 /// `build_with_playlist_name` call (which would panic on `Custom`; see that
 /// method's docs).
 fn build_output(
@@ -1329,7 +1342,7 @@ fn build_output(
 /// Resolves `spec` into a real [`Verifier`] — `Custom` via `registry`'s
 /// `auth` factory ([`crate::registry::SchemeRegistry::auth`]), every
 /// built-in scheme via [`crate::config::OutputAuthSpec::build_verifier`].
-/// Shared by the shared-output-auth verifier ([`serve_with_registry`]) and
+/// Shared by the shared-output-auth verifier ([`crate::Server`]) and
 /// the mandatory admin-auth verifier ([`admin::serve_with_admin`], issue
 /// #749) — one resolution path, so the two can never drift.
 fn resolve_verifier(
@@ -1355,142 +1368,12 @@ fn resolve_verifier(
     }
 }
 
-/// Run the multimux origin with an empty [`SchemeRegistry`] — equivalent to
-/// `serve_with_registry(config, SchemeRegistry::new())`. A config whose
-/// route/output-auth uses a `Custom` scheme always fails with
-/// [`crate::MultimuxError::UnknownScheme`] under plain `serve`; use
-/// [`serve_with_registry`] with a populated registry to resolve one.
-///
-/// No [`crate::config::Config::admin`] reload support: `POST /admin/reload`
-/// needs a config file path to re-read, which a bare in-memory [`crate::config::Config`]
-/// doesn't have — use [`serve_config_file`] (or [`serve_config_file_with_registry`])
-/// when the config is (or may be) loaded from a file and the admin API is
-/// configured. A `serve`/`serve_with_registry` origin with the admin API
-/// enabled still serves `/admin/routes` add/remove/list normally; only
-/// `/admin/reload` fails (with a clear error, not a panic) — see
-/// `admin::RouteRegistry::reload`.
-pub async fn serve(config: crate::config::Config) -> crate::Result<()> {
-    serve_with_registry(config, SchemeRegistry::new()).await
-}
+pub mod serve_request;
 
-/// [`serve_config_file`] with a caller-supplied [`SchemeRegistry`] — see that
-/// function's docs.
-pub async fn serve_config_file_with_registry(
-    path: impl AsRef<Path>,
-    registry: SchemeRegistry,
-) -> crate::Result<()> {
-    let path = path.as_ref().to_path_buf();
-    let config = crate::config::Config::from_json_file(&path)?;
-    serve_with_registry_impl(config, registry, Some(path), None).await
-}
+pub use serve_request::ServeRequest;
+pub use serve_request::Server;
 
-/// [`serve_config_file_with_registry`] over caller-supplied, already-bound
-/// media AND admin listeners (SP7.1) — the admin-enabled shape a test uses to
-/// keep `/admin/reload` working while binding port 0.
-pub async fn serve_config_file_with_registry_on_admin(
-    media: tokio::net::TcpListener,
-    admin: tokio::net::TcpListener,
-    path: impl AsRef<Path>,
-    registry: SchemeRegistry,
-) -> crate::Result<()> {
-    let path = path.as_ref().to_path_buf();
-    let config = crate::config::Config::from_json_file(&path)?;
-    serve_with_registry_impl(
-        config,
-        registry,
-        Some(path),
-        Some(PreboundListeners {
-            media,
-            admin: Some(admin),
-        }),
-    )
-    .await
-}
-
-/// [`serve_config_file_with_registry_on_admin`] plus caller-bound route
-/// sockets (SP7.1, `test-seams` only). A config file cannot carry
-/// [`crate::config::Config::prebound`] (it is `serde(skip)`), so a test that
-/// serves a *file-defined* route and still wants to hand a pre-bound
-/// listener/socket in uses this entry point: the binds are spliced into the
-/// config loaded from `path` before it is served.
-#[cfg(feature = "test-seams")]
-#[doc(hidden)]
-pub async fn serve_config_file_with_registry_on_admin_prebound(
-    media: tokio::net::TcpListener,
-    admin: tokio::net::TcpListener,
-    path: impl AsRef<Path>,
-    registry: SchemeRegistry,
-    prebound: crate::config::PreboundBinds,
-) -> crate::Result<()> {
-    let path = path.as_ref().to_path_buf();
-    let mut config = crate::config::Config::from_json_file(&path)?;
-    config.prebound = prebound;
-    serve_with_registry_impl(
-        config,
-        registry,
-        Some(path),
-        Some(PreboundListeners {
-            media,
-            admin: Some(admin),
-        }),
-    )
-    .await
-}
-
-/// Load a JSON config from `path` and run the multimux origin exactly like
-/// [`serve`], but also remembering `path` so, if
-/// [`crate::config::Config::admin`] is configured, `POST /admin/reload`
-/// (issue #749) can re-read it later — see `admin::RouteRegistry::reload`.
-/// Equivalent to `serve_config_file_with_registry(path, SchemeRegistry::new())`.
-pub async fn serve_config_file(path: impl AsRef<Path>) -> crate::Result<()> {
-    serve_config_file_with_registry(path, SchemeRegistry::new()).await
-}
-
-/// Run the multimux origin: one [`RouteHandle`] + one ingest task per
-/// `config.routes` entry, then bind `config.bind` and serve them all under
-/// [`router`]. Each route is served by the [`Output`]s named in its
-/// [`crate::config::Route::outputs`] (LL-HLS by default — see
-/// [`crate::output::OutputKind`]).
-///
-/// Every configured [`crate::config::InputSpec`] variant now drives a route
-/// (issue #805 tasks 2/4/5 — see `spawn_ingest`, which this function's
-/// per-route loop calls) through [`supervisor::supervise_driver`] (a
-/// `media_plane::ingress::IngestDriver`- (or, for a push/`Listener`-shaped
-/// source like RTMP, `ListenDriver`-) driven `crate::source::*::run_*` entry
-/// point — or, for [`crate::config::InputSpec::Custom`], the equivalent
-/// driver loop a registered [`crate::registry::InputFactory`] builds itself),
-/// publishing each announced program's driver-minted `Trunk` into the route's
-/// registry via [`crate::source::advance_route`]. A connect
-/// failure, protocol error, or clean end-of-stream reconnects with capped
-/// backoff instead of dying — a bad/flaky source degrades that route's
-/// [`crate::route::RouteHandle::health`] rather than freezing it forever,
-/// and never brings the server (or any other route) down.
-///
-/// [`crate::config::InputSpec::Custom`]/[`crate::output::OutputKind::Custom`]/
-/// [`crate::config::OutputAuthSpec::Custom`] (issue #663 external scheme
-/// plugin registry) are instead resolved through `registry`: an unregistered
-/// `type_tag` fails route setup with [`crate::MultimuxError::UnknownScheme`]
-/// rather than panicking or silently no-opping.
-///
-/// Installs a graceful-shutdown signal (Ctrl-C, plus SIGTERM on unix): on
-/// receipt, the server stops accepting new connections and drains in-flight
-/// requests (including blocked LL-HLS long-poll reloads) up to
-/// [`DRAIN_DEADLINE`] via the origin's `serve_hyper_util` `GracefulShutdown`, the same
-/// signal breaks every route's supervise loop, and `serve` joins each
-/// supervisor task (forcibly aborting one that doesn't return within a short
-/// grace period) before returning `Ok(())`.
-///
-/// Otherwise returns only on a bind failure or if the HTTP server itself
-/// stops (e.g. a fatal accept-loop I/O error).
-///
-/// If [`crate::config::Config::admin`] is configured, this delegates whole to
-/// `admin::serve_with_admin` (issue #749) instead of the static
-/// single-`Router` path below — see that function's docs for the runtime
-/// admin API (separate listener, mandatory auth, add/remove/list routes +
-/// reload). `POST /admin/reload` has no config file path to re-read under
-/// this entry point (`config` may not have come from a file at all); use
-/// [`serve_config_file_with_registry`] if reload support is needed.
-/// Pre-bound listeners for the `_on` entry points (SP7.1): a caller binds
+/// Pre-bound listeners for the pre-bound serve path (SP7.1): a caller binds
 /// `127.0.0.1:0`, reads the live address, and passes the listener in, so no
 /// test reserves a port and then races to re-bind it.
 #[doc(hidden)]
@@ -1499,49 +1382,6 @@ pub struct PreboundListeners {
     pub media: tokio::net::TcpListener,
     /// The admin-API listener, when `config.admin` is set.
     pub admin: Option<tokio::net::TcpListener>,
-}
-
-pub async fn serve_with_registry(
-    config: crate::config::Config,
-    registry: SchemeRegistry,
-) -> crate::Result<()> {
-    serve_with_registry_impl(config, registry, None, None).await
-}
-
-/// [`serve_with_registry`] over a caller-supplied, already-bound media
-/// listener (SP7.1). The admin path requires [`serve_with_registry_on_admin`].
-pub async fn serve_with_registry_on(
-    media: tokio::net::TcpListener,
-    config: crate::config::Config,
-    registry: SchemeRegistry,
-) -> crate::Result<()> {
-    serve_with_registry_impl(
-        config,
-        registry,
-        None,
-        Some(PreboundListeners { media, admin: None }),
-    )
-    .await
-}
-
-/// [`serve_with_registry`] over caller-supplied, already-bound media AND
-/// admin listeners (SP7.1) — the admin-enabled shape.
-pub async fn serve_with_registry_on_admin(
-    media: tokio::net::TcpListener,
-    admin: tokio::net::TcpListener,
-    config: crate::config::Config,
-    registry: SchemeRegistry,
-) -> crate::Result<()> {
-    serve_with_registry_impl(
-        config,
-        registry,
-        None,
-        Some(PreboundListeners {
-            media,
-            admin: Some(admin),
-        }),
-    )
-    .await
 }
 
 async fn serve_with_registry_impl(
@@ -1696,7 +1536,7 @@ async fn serve_with_registry_impl(
 }
 
 /// Builds and spawns the ingest task for one configured route — pulled out of
-/// [`serve_with_registry`]'s per-route loop (issue #805 task 2) so the
+/// [`crate::Server`]'s per-route loop (issue #805 task 2) so the
 /// per-`InputSpec` wiring is callable, and individually testable, without
 /// spinning up the whole HTTP server (see this module's own tests for the
 /// `media_plane`-ported input kinds).
@@ -1946,7 +1786,7 @@ fn rtmp_app_and_stream_key(url: &str) -> (String, String) {
 /// [`crate::config::InputSpec::Custom`] resolves its `type_tag` through
 /// `registry` and calls the registered [`crate::registry::InputFactory`] instead,
 /// which builds and spawns the equivalent `supervise_driver`-wrapped loop
-/// itself — see [`serve_with_registry`]'s own doc for the full picture.
+/// itself — see [`crate::Server`]'s own doc for the full picture.
 fn spawn_ingest(
     route: &crate::config::Route,
     store: Arc<RouteHandle>,
@@ -2048,7 +1888,7 @@ fn spawn_ingest(
             stream_id,
             latency_ms,
         } => {
-            // `config.validate()` (called at the top of `serve_with_registry`)
+            // `config.validate()` (called at the top of the serve path)
             // already enforced exactly one of `listen`/`remote` is `Some`.
             let is_listener = listen.is_some();
             if is_listener {
@@ -4337,7 +4177,7 @@ mod tests {
     /// A route naming a `Custom` input's `type_tag` (`"nope"`) with nothing
     /// registered for it must fail route setup with
     /// `MultimuxError::UnknownScheme` — not panic, and not block. This
-    /// resolves (or errors) before `serve_with_registry` ever binds the
+    /// resolves (or errors) before `Server` ever binds the
     /// listener or enters axum's blocking accept loop, since the route-build
     /// loop runs first and returns via `?` on the first error, so this test
     /// can simply `.await` the whole call without a timeout wrapper.
@@ -4364,7 +4204,8 @@ mod tests {
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
         };
-        let err = serve_with_registry(cfg, SchemeRegistry::new())
+        let err = Server::new(ServeRequest::new(cfg).with_registry(SchemeRegistry::new()))
+            .serve()
             .await
             .expect_err("an unregistered custom input tag must error, not silently succeed");
         match err {
@@ -4403,7 +4244,8 @@ mod tests {
             bind: "127.0.0.1:0".into(),
             ..crate::config::Config::default()
         };
-        let err = serve_with_registry(cfg, SchemeRegistry::new())
+        let err = Server::new(ServeRequest::new(cfg).with_registry(SchemeRegistry::new()))
+            .serve()
             .await
             .expect_err("an unregistered custom output tag must error, not silently succeed");
         match err {
@@ -4443,7 +4285,8 @@ mod tests {
             }),
             ..crate::config::Config::default()
         };
-        let err = serve_with_registry(cfg, SchemeRegistry::new())
+        let err = Server::new(ServeRequest::new(cfg).with_registry(SchemeRegistry::new()))
+            .serve()
             .await
             .expect_err("an unregistered custom auth tag must error, not silently succeed");
         match err {
@@ -4457,7 +4300,7 @@ mod tests {
 
     /// A registered custom input factory, once looked up out of a
     /// `SchemeRegistry` and invoked with an `InputCtx` — exactly the shape
-    /// `serve_with_registry`'s own `InputSpec::Custom` arm builds and passes
+    /// `Server`'s own `InputSpec::Custom` arm builds and passes
     /// — actually drives real state: the spawned task reads `ctx.params` and
     /// writes into `ctx.store`, proving the context multimux hands the
     /// factory is wired correctly end-to-end, not just that the factory is

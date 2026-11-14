@@ -1400,7 +1400,7 @@ fn program_segmenter_notes_each_segments_start_media_time() {
 
     // A real SCTE-35 splice_insert (event_id 2002) at pts 0.
     let splice_bytes = test_fixtures::read("scte35/splice-insert-2002.bin");
-    let mut timeline = timed_metadata::Timeline::new();
+    let mut timeline = timed_metadata::Timeline::default();
     let ev = timeline.push_scte35(&splice_bytes).unwrap();
     writer.publish_event(ev, EventAnchor::Media(MediaTime(0)));
 

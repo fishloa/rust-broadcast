@@ -39,12 +39,12 @@
 //!
 //! This example actually drives the registered factory end to end (not just
 //! registry lookup + config parsing): it builds a bare [`multimux::RouteHandle`]
-//! (standing in for the one `multimux::origin::serve_with_registry` would
+//! (standing in for the one `multimux::Server` would
 //! build per configured route), invokes the factory with an [`InputCtx`]
 //! exactly like that function does, and waits for real fMP4 init bytes to
 //! land — proving the whole chain actually produces servable media, not just
 //! that the pieces compile. It never calls
-//! [`multimux::serve`]/[`multimux::serve_with_registry`] (which block forever
+//! [`multimux::Server`] (which blocks forever
 //! serving HTTP over a real socket) — a real embedding application wires the
 //! same registry into one of those instead.
 //!
@@ -266,7 +266,7 @@ async fn run_demo(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
 /// registered — exactly what an external crate would do in its own code to
 /// add a new ingest transport without editing multimux. The factory spawns
 /// [`multimux::supervise_driver`] over [`run_demo`], mirroring exactly how
-/// `multimux::origin::serve_with_registry`'s own dispatch wires up every
+/// `multimux::Server`'s own dispatch wires up every
 /// built-in `InputSpec` variant.
 fn build_registry() -> SchemeRegistry {
     let mut registry = SchemeRegistry::new();
@@ -290,14 +290,14 @@ async fn main() {
     let registry = build_registry();
 
     // The registered tag resolves; anything else doesn't — the same lookup
-    // `serve_with_registry` performs for an `InputSpec::Custom` route.
+    // `Server` performs for an `InputSpec::Custom` route.
     assert!(registry.input("demo").is_some());
     assert!(registry.input("nope").is_none());
 
     // A config naming the registered scheme parses like any real config
     // would; `Config::validate` always accepts a `Custom` input structurally
     // (the registry — not `validate` — is what would reject a bad `params`,
-    // at route-build time inside `serve_with_registry`).
+    // at route-build time inside `Server`).
     let json = r#"{
         "routes": [
             {
@@ -315,7 +315,7 @@ async fn main() {
         other => panic!("expected InputSpec::Custom, got {other:?}"),
     }
 
-    // Actually invoke the registered factory the way `serve_with_registry`
+    // Actually invoke the registered factory the way `Server`
     // would for this route, and wait for real, servable media to land — this
     // is the proof the wiring above is not just type-checked but genuinely
     // moves samples end to end.

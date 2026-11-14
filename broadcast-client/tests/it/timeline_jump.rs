@@ -4,8 +4,8 @@ use url::Url;
 use std::path::{Path, PathBuf};
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, Session, TimelineJumpConfig,
-    TrackId,
+    Action, BufferEvent, BufferHint, BufferInput, Config, ConnId, Event, Session,
+    TimelineJumpConfig, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::{self as hls, Reply};
@@ -451,7 +451,7 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
         !clean.log().iter().any(|l| matches!(
             l,
             BufferInput::Hint {
-                hint: Hint::PcrDiscontinuity,
+                hint: BufferHint::PcrDiscontinuity,
                 ..
             }
         )),
@@ -467,7 +467,7 @@ fn controller_inputs_after_jump_include_pcr_discontinuity_hint_and_fresh_join_or
             matches!(
                 l,
                 BufferInput::Hint {
-                    hint: Hint::PcrDiscontinuity,
+                    hint: BufferHint::PcrDiscontinuity,
                     ..
                 }
             )
@@ -528,7 +528,7 @@ fn config_none_disables_detector() {
     assert!(!off.host.log().iter().any(|l| matches!(
         l,
         BufferInput::Hint {
-            hint: Hint::PcrDiscontinuity,
+            hint: BufferHint::PcrDiscontinuity,
             ..
         }
     )));
@@ -738,7 +738,7 @@ fn demux_discontinuity_and_jump_on_same_sample_emit_one_discontinuity() {
                 matches!(
                     l,
                     BufferInput::Hint {
-                        hint: Hint::PcrDiscontinuity,
+                        hint: BufferHint::PcrDiscontinuity,
                         ..
                     }
                 )
@@ -1019,13 +1019,13 @@ fn hint_pcr_discontinuity_from_player_still_works() {
             matches!(
                 l,
                 BufferInput::Hint {
-                    hint: Hint::PcrDiscontinuity,
+                    hint: BufferHint::PcrDiscontinuity,
                     ..
                 }
             )
         })
         .count();
-    h.session.hint(Hint::PcrDiscontinuity);
+    h.session.hint(BufferHint::PcrDiscontinuity);
     h.drain(0);
     let after = h
         .log()
@@ -1034,7 +1034,7 @@ fn hint_pcr_discontinuity_from_player_still_works() {
             matches!(
                 l,
                 BufferInput::Hint {
-                    hint: Hint::PcrDiscontinuity,
+                    hint: BufferHint::PcrDiscontinuity,
                     ..
                 }
             )
@@ -1084,7 +1084,7 @@ fn rejoin_from_player_still_works() {
     assert!(!h.log().iter().any(|l| matches!(
         l,
         BufferInput::Hint {
-            hint: Hint::PcrDiscontinuity,
+            hint: BufferHint::PcrDiscontinuity,
             ..
         }
     )));

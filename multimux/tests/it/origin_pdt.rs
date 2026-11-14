@@ -29,7 +29,6 @@ use multimux::output::OutputKind;
 use multimux::output::hls::HlsOutput;
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
-use multimux::serve_with_registry_on;
 use transmux::Container;
 use transmux::TrackId;
 
@@ -371,11 +370,14 @@ async fn config_default_arrival_emits_pdt() {
     let (bind_addr, bind_listener) = bind_tcp();
     // program_date_time omitted => Config default = arrival.
     let config = file_config(bind_addr, None);
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let clock_before_ms = jiff::Timestamp::now().as_millisecond();
@@ -406,11 +408,14 @@ async fn config_off_emits_no_pdt() {
         bind_addr,
         Some(multimux::config::ProgramDateTimeSource::Off),
     );
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    let server = tokio::spawn(
+        multimux::Server::new(
+            multimux::ServeRequest::new(config)
+                .with_registry(SchemeRegistry::new())
+                .with_prebound_media(bind_listener),
+        )
+        .serve(),
+    );
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf_yield(&client, &playlist_url).await;

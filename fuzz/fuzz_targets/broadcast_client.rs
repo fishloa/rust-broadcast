@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 use broadcast_client::{
-    Action, ClientIdentity, Config, ConnId, Credentials, DashClockPolicy, Event, Hint, Session,
-    SrtEntropySeed, TrackId, TransportError,
+    Action, BufferHint, ClientIdentity, Config, ConnId, Credentials, DashClockPolicy, Event,
+    Session, SourceKind, SrtEntropySeed, TrackId, TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use broadcast_common::{Package, Unpackage};
@@ -20,6 +20,9 @@ const URLS: [&str; 5] = [
     "http://example/Manifest",
 ];
 const ORIGIN_PREFIX: &str = "http://example/";
+const TS_HTTP_URL: &str = "http://example/live.ts";
+const TS_CHUNK_BYTES: usize = 64;
+const TS_STATUSES: [u16; 3] = [200, 200, 404];
 const CHUNK_BYTES: usize = 32;
 const HLS_MASTER_SEED: &[u8] = b"#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"En\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio/en.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"De\",LANGUAGE=\"de\",AUTOSELECT=YES,URI=\"http://cdn/audio/de.m3u8\"\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"Mux\",DEFAULT=NO\n#EXT-X-STREAM-INF:BANDWIDTH=800000,AUDIO=\"a\"\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO=\"a\"\nhigh.m3u8\n";
 const HLS_SEED: &[u8] = b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n";
@@ -89,7 +92,11 @@ const STORM_ROUNDS: usize = 24;
 const STORM_FIRST_STATUSES: [u16; 5] = [302, 401, 404, 307, 301];
 const STORM_THEN_STATUSES: [u16; 8] = [401, 401, 404, 500, 407, 403, 410, 302];
 const BASIC_CHALLENGE: &str = "Basic realm=\"f\"";
-const PLAYER_HINTS: [Hint; 3] = [Hint::SourceEnded, Hint::SourceError, Hint::PcrDiscontinuity];
+const PLAYER_HINTS: [BufferHint; 3] = [
+    BufferHint::SourceEnded,
+    BufferHint::SourceError,
+    BufferHint::PcrDiscontinuity,
+];
 const RENDERED_IDS: [u32; 7] = [1, 2, 3, 1_001, 1_002, 999, u32::MAX];
 const HOLD_WALL_US: [u64; 4] = [0, 1_000, 1_000_000, u64::MAX];
 const START_WAIT_US: [u64; 4] = [0, 500_000, 1_500_000, u64::MAX];
@@ -1019,10 +1026,85 @@ fn drive_datagram(url: &str, data: &[u8]) {
     finish(&mut session, &mut watch, now);
 }
 
+/// The TS-over-HTTP engine's own fuzz loop, through the public `Session`
+/// (the engine's `tshttp` types are crate-private): a fresh short-lived
+/// session that is fed an arbitrary response/body/error sequence and drained
+/// after every step, which is what the former `tshttp_runtime` target did
+/// against the engine directly.
+fn drive_ts_http(data: &[u8]) {
+    let mut config = config_from(&[]);
+    config.kind = SourceKind::TsHttp;
+    let mut session = match Session::open(
+        Url::parse(TS_HTTP_URL).unwrap(),
+        config,
+        Timestamp::ZERO,
+    ) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let mut watch = Watch::default();
+    let mut conn_ids: Vec<ConnId> = Vec::new();
+    let mut now = 0u64;
+    for chunk in data.chunks(TS_CHUNK_BYTES) {
+        now = next_time(now, chunk);
+        let conn = conn_ids.get(usize::from(chunk.get(1).copied().unwrap_or(0)) % conn_ids.len().max(1)).copied();
+        match chunk.first().copied().unwrap_or(0) % 7 {
+            0 => {
+                if let Some(conn) = conn {
+                    let status = TS_STATUSES[usize::from(chunk.get(1).copied().unwrap_or(0)) % TS_STATUSES.len()];
+                    let headers = match chunk.get(2).copied().unwrap_or(0) % 3 {
+                        1 => vec![(
+                            "Content-Length".to_string(),
+                            (u64::from(chunk.get(3).copied().unwrap_or(0)) * 188).to_string(),
+                        )],
+                        _ => Vec::new(),
+                    };
+                    session.on_response(conn, status, &headers, Timestamp::from_micros(now));
+                }
+            }
+            1 => {
+                if let Some(conn) = conn {
+                    session.on_data(conn, chunk, Timestamp::from_micros(now));
+                }
+            }
+            2 => {
+                if let Some(conn) = conn {
+                    session.on_closed(conn, None, Timestamp::from_micros(now));
+                    watch.host_closed(conn);
+                }
+            }
+            3 => {
+                if let Some(conn) = conn {
+                    session.on_closed(
+                        conn,
+                        Some(TransportError::Other {
+                            reason: "reset".to_string(),
+                        }),
+                        Timestamp::from_micros(now),
+                    );
+                    watch.host_closed(conn);
+                }
+            }
+            4 => session.reconnect(Timestamp::from_micros(now)),
+            _ => {
+                if let Some(conn) = conn {
+                    session.on_connected(conn);
+                }
+            }
+        }
+        for (conn, _) in watch.actions(&mut session, now) {
+            conn_ids.push(conn);
+        }
+        watch.events(&mut session);
+    }
+    finish(&mut session, &mut watch, now);
+}
+
 fuzz_target!(|data: &[u8]| {
     for url in URLS {
         drive(url, data);
     }
+    drive_ts_http(data);
     for url in DATAGRAM_URLS {
         drive_datagram(url, data);
     }

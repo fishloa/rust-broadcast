@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -15,7 +16,7 @@ fn cfg() -> Config {
 
 #[test]
 fn finite_content_length_eof_is_ended_not_reconnect() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -49,7 +50,7 @@ fn finite_content_length_eof_is_ended_not_reconnect() {
 
 #[test]
 fn chunked_without_length_stays_live() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -78,7 +79,7 @@ fn chunked_without_length_stays_live() {
 
 #[test]
 fn no_content_length_http2_style_stays_live() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(200, &[], ts(0));
     for chunk in D.as_slice().chunks(1316) {
@@ -96,7 +97,7 @@ fn no_content_length_http2_style_stays_live() {
 
 #[test]
 fn status_206_with_content_range_is_finite() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         206,
@@ -113,7 +114,7 @@ fn status_206_with_content_range_is_finite() {
 #[test]
 fn bad_or_negative_content_length_is_live() {
     for val in ["-1", "abc", "1.5"] {
-        let mut c = TsHttpClient::new("u", cfg(), ts(0));
+        let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
         let _ = c.poll();
         c.on_response(
             200,
@@ -132,7 +133,7 @@ fn bad_or_negative_content_length_is_live() {
 
 #[test]
 fn content_length_header_case_insensitive() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -150,7 +151,7 @@ fn content_length_header_case_insensitive() {
 
 #[test]
 fn finite_eof_before_all_bytes_is_failure_backoff() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -173,7 +174,7 @@ fn finite_eof_before_all_bytes_is_failure_backoff() {
 
 #[test]
 fn timers_stop_after_all_bytes_received() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -207,7 +208,7 @@ fn timers_stop_after_all_bytes_received() {
 
 #[test]
 fn ended_is_terminal_no_actions_forever() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -233,7 +234,7 @@ fn ended_is_terminal_no_actions_forever() {
 
 #[test]
 fn caller_reconnect_from_ended_reopens_and_resets_attempts() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -262,7 +263,7 @@ fn caller_reconnect_from_ended_reopens_and_resets_attempts() {
 
 #[test]
 fn finite_flushes_demux_before_ended() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,
@@ -286,7 +287,7 @@ fn finite_flushes_demux_before_ended() {
 
 #[test]
 fn finite_event_follows_connected() {
-    let mut c = TsHttpClient::new("u", cfg(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(
         200,

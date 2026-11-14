@@ -1,4 +1,5 @@
-use broadcast_client::tshttp::{Action, Config, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event, TsHttpClient};
 use broadcast_common::backoff::BackoffSteps;
 use broadcast_common::stage::Timestamp;
 use std::time::Duration;
@@ -40,7 +41,7 @@ fn stall_notices(evs: &[Event]) -> Vec<u64> {
 }
 
 fn playing(config: Config) -> TsHttpClient {
-    let mut c = TsHttpClient::new("u", config, ts(0));
+    let mut c = TsHttpClient::with_seed("u", config, ts(0), ts(0).as_millis());
     let _ = actions(&mut c);
     c.on_response(200, &[], ts(0));
     c.feed(D.as_slice(), ts(0));
@@ -49,7 +50,7 @@ fn playing(config: Config) -> TsHttpClient {
 }
 
 fn run_host_loop(config: Config, silent_server: bool) -> u32 {
-    let mut c = TsHttpClient::new("u", config, ts(0));
+    let mut c = TsHttpClient::with_seed("u", config, ts(0), ts(0).as_millis());
     let mut now = 0u64;
     let mut iterations = 0u32;
     while now < TEN_MINUTES_MS {
@@ -103,7 +104,7 @@ fn host_loop_with_reconnect_below_notice_is_bounded() {
 
 #[test]
 fn opening_has_a_deadline_and_it_fires_the_failure_path() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = actions(&mut c);
     assert_eq!(c.next_deadline(), Some(Timestamp::from_millis(15_000)));
     c.poll_timeout(ts(14_999));
@@ -125,7 +126,7 @@ fn opening_has_a_deadline_and_it_fires_the_failure_path() {
 
 #[test]
 fn opening_response_in_time_cancels_the_opening_deadline() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = actions(&mut c);
     c.on_response(200, &[], ts(10_000));
     c.poll_timeout(ts(15_000));
@@ -179,7 +180,7 @@ fn connection_just_at_the_floor_reconnects_with_zero_delay() {
 
 #[test]
 fn one_sample_then_close_server_spaces_opens_by_the_floor() {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let mut now = 0u64;
     let mut opens = 0u32;
     let mut iterations = 0u32;
@@ -240,7 +241,7 @@ fn hdr(k: &str, v: &str) -> Vec<(String, String)> {
 }
 
 fn finite_after(status: u16, headers: &[(String, String)]) -> Option<u64> {
-    let mut c = TsHttpClient::new("u", Config::default(), ts(0));
+    let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = actions(&mut c);
     c.on_response(status, headers, ts(0));
     events(&mut c).into_iter().find_map(|e| match e {
@@ -314,7 +315,7 @@ fn bytes_after_a_stall_notice_restart_the_notice_schedule() {
 
 #[test]
 fn validate_rejects_each_inconsistent_field() {
-    use broadcast_client::tshttp::config::ConfigError;
+    use crate::tshttp::config::ConfigError;
     assert_eq!(Config::default().validate(), Ok(()));
     let bad = |f: fn(&mut Config)| {
         let mut c = Config::default();
@@ -383,7 +384,7 @@ fn empty_backoff_and_zero_timeouts_do_not_spin_the_client() {
             cap: Duration::from_millis(500),
         })
         .with_min_reconnect_interval(Duration::ZERO);
-    let mut c = TsHttpClient::new("u", config, ts(0));
+    let mut c = TsHttpClient::with_seed("u", config, ts(0), ts(0).as_millis());
     let _ = actions(&mut c);
     c.poll_timeout(ts(1));
     assert_eq!(

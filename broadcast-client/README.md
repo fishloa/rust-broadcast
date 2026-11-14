@@ -295,7 +295,7 @@ goes silent. 401/403 on a key request stay `AuthRequired`/`AuthRejected`/`Forbid
   `segment_inactivity_timeout_us`, `hls_key_timeout_us`, `timeline_jump.backward_us` and `timeline_jump.forward_slack_us` of `0`, an invalid
   `dash` field (see the clock section), and a
   `buffer` that `buffering_runtime::ControllerConfig::validate` rejects. `ts_http` values are clamped to the
-  nearest valid ones (`tshttp::Config::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a
+  nearest valid ones (`TsHttpConfig::clamped`), `max_key_failures: 0` behaves as `1`, `max_segment_failures: 0` makes the first segment failure final, and a
   playout lead that the stream cannot reach (`u64::MAX`) keeps the gate closed.
   The hold never changes the sample sequence (track, pts, dts, sync flag, join decision, bytes): it is
   identical to the disabled hold. Host contract: the held samples are delivered as one burst behind the
@@ -485,7 +485,7 @@ while let Some(action) = session.poll(now) {
 
 | Feature | Default | Effect |
 |---|---|---|
-| `serde` | no | `Serialize` on events and configuration, forwarded to `broadcast-common`, `transmux` and `buffering-runtime` and enabling it on the `tshttp` types. |
+| `serde` | no | `Serialize` on events and configuration, forwarded to `broadcast-common`, `transmux` and `buffering-runtime` and enabling it on `TsHttpConfig`. |
 | `test-seams` | no | Hidden hooks for this crate's own test suites (renamed from `__test-seams`). Not public API. |
 
 The crate is `std`-only and has no `std` feature.

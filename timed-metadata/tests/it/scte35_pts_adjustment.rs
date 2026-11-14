@@ -102,7 +102,7 @@ fn a_cue_just_after_the_33_bit_wrap_starts_just_after_an_anchor_just_before_it()
         pts_90k: WRAP - 90_000,
         utc_epoch_ms: 1_700_000_000_000,
     };
-    let mut tl = Timeline::with_anchor(anchor);
+    let mut tl = Timeline::new(anchor);
     let ev = tl.push_scte35(&splice_at_pts(90_000)).unwrap();
     let dr = tl.to_daterange(&ev).unwrap();
     assert_eq!(

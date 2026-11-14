@@ -39,26 +39,13 @@ pub use error::{MultimuxError, Result};
 /// return type) without an external crate needing its own direct dependency
 /// on `broadcast-auth`.
 pub use broadcast_auth;
-pub use origin::serve;
-/// See [`origin::serve_config_file`] (issue #749: needed so
-/// `POST /admin/reload` has a config file path to re-read).
-pub use origin::serve_config_file;
-/// See [`origin::serve_config_file_with_registry`].
-pub use origin::serve_config_file_with_registry;
-/// See [`origin::serve_config_file_with_registry_on_admin`] — the port-0
-/// (SP7.1) variant: a caller binds the listeners and passes them in.
-pub use origin::serve_config_file_with_registry_on_admin;
-/// See [`origin::serve_config_file_with_registry_on_admin_prebound`] — the
-/// same, plus caller-bound route sockets for a *file-defined* route
-/// (`test-seams` only).
-#[cfg(feature = "test-seams")]
-pub use origin::serve_config_file_with_registry_on_admin_prebound;
-pub use origin::serve_with_registry;
-/// See [`origin::serve_with_registry_on`] — the port-0 (SP7.1) variant.
-pub use origin::serve_with_registry_on;
-/// See [`origin::serve_with_registry_on_admin`] — the port-0 (SP7.1) variant
-/// for a media + admin listener pair.
-pub use origin::serve_with_registry_on_admin;
+/// What [`Server::new`] takes: the config, the registry, and (test-only)
+/// pre-bound listeners.
+pub use origin::ServeRequest;
+/// The one way to run the origin: [`Server::new`] takes a
+/// [`origin::ServeRequest`] (an in-memory config, or `from_json_file` so
+/// `POST /admin/reload` keeps working, plus its [`SchemeRegistry`]).
+pub use origin::Server;
 /// [`supervisor::supervise_driver`](origin::supervisor::supervise_driver) is
 /// the one supported way to drive a [`registry::InputFactory`]'s ingest task
 /// (issue #805 task 5 deleted the old `SourceConnector`/`supervise` pair, the

@@ -27,17 +27,11 @@ fn drain_demux(demux: &mut StreamingTsDemux, mut sink: impl FnMut(Event)) -> boo
 }
 
 impl TsHttpClient {
-    /// Create a new client (T1).
+    /// Create a client (T1), its retry jitter drawn from `seed` (see
+    /// [`TsHttpPolicy::with_seed`]).
     ///
     /// An inconsistent `config` is replaced by [`Config::clamped`] rather
     /// than rejected; call [`Config::validate`] first to detect it.
-    pub fn new(url: impl Into<String>, config: Config, now: Timestamp) -> Self {
-        let seed = now.as_millis();
-        Self::with_seed(url, config, now, seed)
-    }
-
-    /// Create a client whose retry jitter is drawn from `seed` (see
-    /// [`TsHttpPolicy::with_seed`]).
     pub(crate) fn with_seed(
         url: impl Into<String>,
         config: Config,

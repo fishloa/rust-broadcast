@@ -3559,7 +3559,7 @@ impl HlsOrigin {
             vec![Vec::new(); window.segments.len()];
         let mut recently_removed_daterange_ids: Vec<String> = Vec::new();
         if let Some(anchor) = self.trunk.time_anchor() {
-            let timeline = timed_metadata::Timeline::with_anchor(anchor);
+            let timeline = timed_metadata::Timeline::new(anchor);
             for (idx, seg) in window.segments.iter().enumerate() {
                 for entry in self.trunk.events_in_segment(seg.sequence_number) {
                     if let Ok(dr) = timeline.to_daterange(&entry.event)
@@ -4586,7 +4586,7 @@ mod tests {
 
         // Parse the splice into a TimedEvent and publish it to the event ring,
         // Media-anchored at its own PTS (2_160_000, unwrapped on first call).
-        let mut timeline = timed_metadata::Timeline::new();
+        let mut timeline = timed_metadata::Timeline::default();
         let ev = timeline.push_scte35(&splice_bytes).unwrap();
         let trunk_writer = trunk.writer().expect("first trunk writer");
         trunk_writer.publish_event(

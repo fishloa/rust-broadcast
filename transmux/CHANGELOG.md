@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - BREAKING: uses `rtsp_runtime`'s typed `InterleavedFrame` payload (`Bytes`) and `ChunkSize` newtype (#2659).
 
 ## Removed
+- BREAKING: `LiveJoin::with_policy(policy)`: one type had a builder form and a setter for the same field. `LiveJoin::set_policy(&mut self, policy)` is the one way to choose the policy, at construction (`let mut j = LiveJoin::new(..); j.set_policy(..)`) or later. Migration: `LiveJoin::new(..).with_policy(p)` becomes `let mut j = LiveJoin::new(..); j.set_policy(p);` (#2665).
 - Removed the unused optional `url` dependency (and the `dep:url` entry in the `std` feature): base-URL resolution goes through `broadcast-dash`/`hls-runtime`, so a `std` build of `transmux` compiles 40 fewer crates and no longer pulls the `idna`/`icu_*` stack.
 
 ## [0.31.0] - 2026-11-14

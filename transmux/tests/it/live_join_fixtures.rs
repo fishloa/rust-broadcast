@@ -51,9 +51,8 @@ struct Run {
 }
 
 fn run(spec: &transmux::TrackSpec, samples: &[Sample], cut: usize, policy: JoinPolicy) -> Run {
-    let mut j = LiveJoin::for_config(&spec.config)
-        .expect("AVC/HEVC track")
-        .with_policy(policy);
+    let mut j = LiveJoin::for_config(&spec.config).expect("AVC/HEVC track");
+    j.set_policy(policy);
     let mut r = Run {
         join_index: None,
         kind: None,
