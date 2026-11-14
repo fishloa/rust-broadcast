@@ -2,7 +2,7 @@ use crate::support;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -68,7 +68,7 @@ fn run_vod(
 ) -> Stats {
     let mut stats = Stats::default();
     let mut now = 0u64;
-    let mut outstanding: VecDeque<(u32, String)> = VecDeque::new();
+    let mut outstanding: VecDeque<(ConnId, String)> = VecDeque::new();
     let mut wakes: BTreeSet<u64> = BTreeSet::new();
     let mut hits: HashMap<String, usize> = HashMap::new();
     let body = null_packet();

@@ -3,8 +3,8 @@ use crate::support;
 use std::collections::HashMap;
 
 use broadcast_client::{
-    Action, BufferEvent, Config, Credentials, ErrorKind, Event, Session, SourceKind, Status,
-    TrackId,
+    Action, BufferEvent, Config, ConnId, Credentials, ErrorKind, Event, Session, SourceKind,
+    Status, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -41,7 +41,7 @@ fn actions(session: &mut Session, now: u64) -> Vec<Action> {
     out
 }
 
-fn close_conns(actions: &[Action]) -> Vec<u32> {
+fn close_conns(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -282,7 +282,7 @@ fn cross_origin_key_401_reports_key_fetch_failed_once_then_fatal() {
     assert_eq!(errors.last(), Some(&(&expected, true)), "{errors:?}");
 }
 
-fn live_events(session: &mut Session, conn: u32, bytes: &[u8], base_us: u64) -> Vec<Event> {
+fn live_events(session: &mut Session, conn: ConnId, bytes: &[u8], base_us: u64) -> Vec<Event> {
     let mut out = Vec::new();
     let mut now = base_us;
     for (i, chunk) in bytes.chunks(CHUNK).enumerate() {
@@ -304,7 +304,7 @@ fn live_events(session: &mut Session, conn: u32, bytes: &[u8], base_us: u64) -> 
     out
 }
 
-fn first_request(session: &mut Session, now: u64) -> u32 {
+fn first_request(session: &mut Session, now: u64) -> ConnId {
     actions(session, now)
         .into_iter()
         .find_map(|a| match a {

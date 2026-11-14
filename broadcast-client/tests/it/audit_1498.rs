@@ -1,5 +1,5 @@
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
-use broadcast_client::{Action, Config, Credentials, Session};
+use broadcast_client::{Action, Config, ConnId, Credentials, Session};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -11,7 +11,7 @@ const TS_URL: &str = "http://cam.local:8080/stream/live.ts?ch=1&q=hd";
 const ORIGIN_FORM: &str = "/stream/live.ts?ch=1&q=hd";
 const REALM: &str = "cam";
 
-fn first_request(session: &mut Session, now: u64) -> (u32, Vec<(String, String)>) {
+fn first_request(session: &mut Session, now: u64) -> (ConnId, Vec<(String, String)>) {
     let mut found = None;
     while let Some(action) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn, headers, .. } = action {

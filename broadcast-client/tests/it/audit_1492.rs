@@ -1,6 +1,6 @@
 use crate::support;
 
-use broadcast_client::{Action, Config, Credentials, Event, Session};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session};
 use broadcast_common::stage::Timestamp;
 use support::ts_probe::{Req, TS_URL, location, one, open, respond, set_cookies};
 
@@ -36,7 +36,7 @@ fn events(session: &mut Session) -> Vec<Event> {
     out
 }
 
-fn closes(actions: &[Action]) -> Vec<u32> {
+fn closes(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {

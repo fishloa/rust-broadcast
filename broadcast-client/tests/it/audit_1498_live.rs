@@ -1,7 +1,7 @@
 use crate::support;
 
 use broadcast_client::{
-    Action, BufferEvent, BufferInput, Config, Event, Hint, Session, Status, TrackId,
+    Action, BufferEvent, BufferInput, Config, ConnId, Event, Hint, Session, Status, TrackId,
 };
 use broadcast_common::stage::Timestamp;
 use support::ts_shift::{PACKET, Shift, VIDEO_TIMESCALE, pes_starts, pts27, shift_pes};
@@ -28,7 +28,7 @@ enum ClockState {
 
 struct LiveHost {
     session: Session,
-    conn: u32,
+    conn: ConnId,
     clock: ClockState,
     events: Vec<Event>,
     times: Vec<u64>,
@@ -423,7 +423,7 @@ const FINITE_PLAY_TICKS: u64 = 30 * PCR_HZ_U;
 
 fn finite_pass(
     session: &mut Session,
-    conn: u32,
+    conn: ConnId,
     bytes: &[u8],
     now: u64,
     host_position: Option<u64>,
@@ -461,7 +461,7 @@ fn finite_pass(
     Some(out)
 }
 
-fn request_conn(session: &mut Session, now: u64) -> u32 {
+fn request_conn(session: &mut Session, now: u64) -> ConnId {
     let mut conn = None;
     while let Some(a) = session.poll(ts(now)) {
         if let Action::HttpRequest { conn: c, .. } = a {

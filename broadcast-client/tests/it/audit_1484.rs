@@ -2,7 +2,7 @@ use crate::support;
 
 use std::collections::BTreeSet;
 
-use broadcast_client::{Action, Config, Credentials, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 use support::ts_probe::{TS_URL, location, one, open, requests, respond, set_cookies};
 
@@ -36,7 +36,7 @@ fn events(session: &mut Session) -> Vec<Event> {
     out
 }
 
-fn closes(actions: &[Action]) -> Vec<u32> {
+fn closes(actions: &[Action]) -> Vec<ConnId> {
     actions
         .iter()
         .filter_map(|a| match a {
@@ -103,7 +103,7 @@ fn send_action_debug_does_not_dump_bytes() {
     )
     .into_bytes();
     let len = bytes.len();
-    let dbg = format!("{:?}", Action::Send { conn: 3, bytes });
+    let dbg = format!("{:?}", Action::Send { conn: ConnId::new(3), bytes });
     assert!(!dbg.contains(DIGEST_SECRET), "{dbg}");
     assert!(dbg.contains(&len.to_string()), "{dbg}");
     assert!(dbg.contains("Send"), "{dbg}");
