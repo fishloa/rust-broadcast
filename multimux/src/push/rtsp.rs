@@ -397,13 +397,14 @@ impl RtspTransport {
 }
 
 /// `#[doc(hidden)]` test seam: parse `url` and return [`control_url`], so the
-/// URL-construction test exercises the real path. Errors (an invalid URL, or a
-/// cannot-be-a-base `rtsp:cam`) surface as a `String`, matching the seam's
-/// test-only role.
+/// URL-construction test exercises the real path. The failure is the typed one
+/// each step already returns (an invalid URL, or a cannot-be-a-base `rtsp:cam`).
 #[doc(hidden)]
-pub fn control_url_for_test(url: &str) -> Result<String, String> {
-    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
-    rtsp_runtime::sdp::control_url(&parsed).map_err(|e| e.to_string())
+pub fn control_url_for_test(url: &str) -> Result<String, rtsp_runtime::Error> {
+    let parsed = url::Url::parse(url).map_err(|_| rtsp_runtime::Error::InvalidUrl {
+        what: "rtsp URL did not parse",
+    })?;
+    rtsp_runtime::sdp::control_url(&parsed)
 }
 
 /// Builds the SDP for the push session: one `m=` line for the whole
@@ -682,7 +683,7 @@ mod tests {
         // A different rtsp error stays a plain protocol error.
         let other = map_rtsp_error(rtsp_runtime::Error::MessageParse {
             what: rtsp_runtime::MessageKind::Response,
-            source: "x".into(),
+            source: rtsp_runtime::error::MessageParseError::NotARequest,
         });
         assert!(matches!(other, RtspPushError::Protocol(_)), "{other:?}");
     }

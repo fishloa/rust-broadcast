@@ -6,6 +6,8 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use http::{HeaderMap, StatusCode};
+
 use hls_runtime::client::{
     Action as HlsAction, Error as CoreError, HlsClient, HlsClientConfig, KeyId, Output, ResourceId,
 };
@@ -30,10 +32,10 @@ use crate::source::fetch::window::{Lane, Lanes, Window};
 use broadcast_auth::AuthState;
 use broadcast_common::stage::Timestamp;
 
-const STATUS_FORBIDDEN: u16 = 403;
-const STATUS_NOT_FOUND: u16 = 404;
-const STATUS_GONE: u16 = 410;
-const STATUS_RANGE_NOT_SATISFIABLE: u16 = 416;
+const STATUS_FORBIDDEN: StatusCode = StatusCode::FORBIDDEN;
+const STATUS_NOT_FOUND: StatusCode = StatusCode::NOT_FOUND;
+const STATUS_GONE: StatusCode = StatusCode::GONE;
+const STATUS_RANGE_NOT_SATISFIABLE: StatusCode = StatusCode::RANGE_NOT_SATISFIABLE;
 
 const METHOD_GET: &str = "GET";
 
@@ -293,8 +295,8 @@ impl HlsSource {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,
@@ -345,7 +347,7 @@ impl HlsSource {
             status,
             headers,
         } = head;
-        if (200..300).contains(&status) {
+        if status.is_success() {
             match accept_head(
                 &mut req.body,
                 &mut req.basis,
@@ -631,7 +633,7 @@ impl HlsSource {
         self.fail_status(req, now, None);
     }
 
-    fn fail_status(&mut self, req: Req, now: u64, status: Option<u16>) {
+    fn fail_status(&mut self, req: Req, now: u64, status: Option<StatusCode>) {
         if let Purpose::Key(_) = req.purpose
             && status != Some(STATUS_FORBIDDEN)
             && self.report(ErrorKind::KeyFetchFailed { status })
@@ -669,7 +671,7 @@ impl HlsSource {
         purpose: Purpose,
         retry_url: Option<String>,
         now: u64,
-        status: Option<u16>,
+        status: Option<StatusCode>,
     ) {
         self.client_failed(purpose);
         self.pump_core();
@@ -688,7 +690,7 @@ impl HlsSource {
         self.schedule_retry(now, refetch, None);
     }
 
-    fn fail_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
+    fn fail_segment(&mut self, id: ResourceId, status: Option<StatusCode>, now: u64) {
         let Failure { count, status } = self.seg_failures.record(id, status);
         if verdict(count, self.max_segment_failures) == Verdict::GiveUp {
             self.give_up_segment(id, status, now);
@@ -706,7 +708,7 @@ impl HlsSource {
         self.schedule_retry(now, refetch, Some(count));
     }
 
-    fn give_up_segment(&mut self, id: ResourceId, status: Option<u16>, now: u64) {
+    fn give_up_segment(&mut self, id: ResourceId, status: Option<StatusCode>, now: u64) {
         self.seg_failures.clear(&id);
         let kind = ErrorKind::SegmentFetchFailed { status };
         if self.client.endlist_seen() {
@@ -879,7 +881,7 @@ impl HlsSource {
     fn send(&mut self, mut req: Req, auth: &mut AuthState, now: u64) {
         self.flush_refused();
         let headers = auth.request_headers(&req.url, Timestamp::from_micros(now));
-        req.authed = broadcast_auth::carries_credentials(&headers);
+        req.authed = broadcast_auth::carries_credentials(&crate::headers::to_header_map(&headers));
         self.flight
             .start(req, headers, METHOD_GET, now, &mut self.actions);
     }
@@ -1106,18 +1108,23 @@ mod tests {
     }
 
     fn parked_prefix(url: &Url) -> Parked {
-        let headers = [
-            ("ETag".to_string(), "\"v1\"".to_string()),
-            ("Accept-Ranges".to_string(), "bytes".to_string()),
-            ("Content-Length".to_string(), "100".to_string()),
-        ];
+        let mut headers = HeaderMap::new();
+        headers.insert(http::header::ETAG, http::HeaderValue::from_static("\"v1\""));
+        headers.insert(
+            http::header::ACCEPT_RANGES,
+            http::HeaderValue::from_static("bytes"),
+        );
+        headers.insert(
+            http::header::CONTENT_LENGTH,
+            http::HeaderValue::from_static("100"),
+        );
         let mut body = BodyAcc::new(MAX_TEST_BODY);
         body.push(&[0u8; 10]).unwrap();
         Parked {
             url: url.to_string(),
             byte_range: None,
             body,
-            basis: Basis::of(200, &headers).unwrap(),
+            basis: Basis::of(StatusCode::OK, &headers).unwrap(),
         }
     }
 

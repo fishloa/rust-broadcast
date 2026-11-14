@@ -209,7 +209,7 @@ async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> Vec<u8> {
     .await
     .expect("connect must not hang")
     .expect("connect");
-    let mut egress = multimux::push::PushTransportEgress::new(transport, "no carriable track");
+    let mut egress = multimux::push::PushTransportEgress::new(transport);
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
     let ids = specs.iter().map(|s| s.track_id).collect::<Vec<_>>();
     assert!(matches!(

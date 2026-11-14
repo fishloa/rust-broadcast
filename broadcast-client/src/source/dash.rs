@@ -12,11 +12,13 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use http::{HeaderMap, StatusCode};
+
 use broadcast_hls::MediaType;
 use dash_runtime::client::{
-    Action as DashAction, DashClient, DropCause, Error as CoreError, Failure, FailureClass,
-    FatalKind, ManifestSelection, Notice, Output, PullLimits, Rejection, ResourceId, ResponseMeta,
-    UtcId, UtcMethod, UtcResponse,
+    Action as DashAction, DashClient, DropCause, Error as CoreError, Failure as CoreFailure,
+    FailureClass, FatalKind, ManifestSelection, Notice, Output, PullLimits, Rejection, ResourceId,
+    ResponseMeta, UtcId, UtcMethod, UtcResponse,
 };
 use dash_runtime::error::MpdError;
 use dash_runtime::limits::Limits;
@@ -44,19 +46,16 @@ use broadcast_auth::AuthState;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 
-const STATUS_FORBIDDEN: u16 = 403;
-const STATUS_NOT_FOUND: u16 = 404;
-const STATUS_GONE: u16 = 410;
-const STATUS_NOT_MODIFIED: u16 = 304;
-const STATUS_RANGE_NOT_SATISFIABLE: u16 = 416;
+const STATUS_FORBIDDEN: StatusCode = StatusCode::FORBIDDEN;
+const STATUS_NOT_FOUND: StatusCode = StatusCode::NOT_FOUND;
+const STATUS_GONE: StatusCode = StatusCode::GONE;
+const STATUS_NOT_MODIFIED: StatusCode = StatusCode::NOT_MODIFIED;
+const STATUS_RANGE_NOT_SATISFIABLE: StatusCode = StatusCode::RANGE_NOT_SATISFIABLE;
 
 const METHOD_GET: &str = "GET";
 const METHOD_HEAD: &str = "HEAD";
 const HEADER_IF_NONE_MATCH: &str = "If-None-Match";
 const HEADER_IF_MODIFIED_SINCE: &str = "If-Modified-Since";
-const HEADER_DATE: &str = "date";
-const HEADER_ETAG: &str = "etag";
-const HEADER_LAST_MODIFIED: &str = "last-modified";
 
 const UTC_BODY_LIMIT: usize = 4 * 1024;
 const MIN_WAKE_STEP_US: u64 = MICROS_PER_MILLI;
@@ -123,23 +122,18 @@ struct BodyLimits {
 
 #[derive(Debug, Clone, Default)]
 struct Head {
-    date: Option<String>,
-    etag: Option<String>,
-    last_modified: Option<String>,
+    date: Option<headers::Date>,
+    etag: Option<headers::ETag>,
+    last_modified: Option<headers::LastModified>,
 }
 
 impl Head {
-    fn of(headers: &[(String, String)]) -> Self {
-        let find = |name: &str| {
-            headers
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(name))
-                .map(|(_, v)| v.trim().to_string())
-        };
+    fn of(headers: &HeaderMap) -> Self {
+        use headers::HeaderMapExt;
         Self {
-            date: find(HEADER_DATE),
-            etag: find(HEADER_ETAG),
-            last_modified: find(HEADER_LAST_MODIFIED),
+            date: headers.typed_get::<headers::Date>(),
+            etag: headers.typed_get::<headers::ETag>(),
+            last_modified: headers.typed_get::<headers::LastModified>(),
         }
     }
 }
@@ -476,8 +470,8 @@ impl DashSource {
     pub(crate) fn on_response(
         &mut self,
         conn: ConnId,
-        status: u16,
-        headers: &[(String, String)],
+        status: StatusCode,
+        headers: &HeaderMap,
         now: u64,
         wall: Option<&WallClock>,
         auth: &mut AuthState,
@@ -506,7 +500,7 @@ impl DashSource {
             &mut self.parked,
         ) {
             HeadRoute::Send(req) => self.send(req, auth, now),
-            HeadRoute::RedirectsExhausted(req) => self.fail(req, now, Failure::Transport),
+            HeadRoute::RedirectsExhausted(req) => self.fail(req, now, CoreFailure::Transport),
             HeadRoute::Parked => {}
             HeadRoute::Other(req) => self.on_head(req, head, now, wall, auth),
         }
@@ -528,7 +522,7 @@ impl DashSource {
             status,
             headers,
         } = head;
-        if (200..300).contains(&status) {
+        if status.is_success() {
             match accept_head(
                 &mut req.body,
                 &mut req.basis,
@@ -539,7 +533,7 @@ impl DashSource {
             ) {
                 HeadOutcome::Refused => {
                     self.actions.push_back(Action::Close { conn });
-                    self.fail(req, now, Failure::Status(status));
+                    self.fail(req, now, CoreFailure::Status(status.as_u16()));
                 }
                 HeadOutcome::Fallback => {
                     self.actions.push_back(Action::Close { conn });
@@ -586,7 +580,7 @@ impl DashSource {
                     events: &mut self.events,
                 },
             );
-            self.fail(req, now, Failure::Status(status));
+            self.fail(req, now, CoreFailure::Status(status.as_u16()));
             self.retry_after_us = 0;
         }
     }
@@ -607,7 +601,7 @@ impl DashSource {
             },
         );
         if let Some(req) = failed {
-            self.fail(req, now, Failure::TooLarge);
+            self.fail(req, now, CoreFailure::TooLarge);
             if !auth.is_waiting() {
                 self.advance(now, auth);
             }
@@ -633,11 +627,11 @@ impl DashSource {
         let head_request = req.extra.method == METHOD_HEAD;
         let truncated = !head_request && req.body.is_truncated();
         if error.is_some() || !req.responded_ok || truncated {
-            self.fail(req, now, Failure::Transport);
+            self.fail(req, now, CoreFailure::Transport);
         } else if req.body.finish() {
             self.deliver(req, now);
         } else {
-            self.fail(req, now, Failure::Transport);
+            self.fail(req, now, CoreFailure::Transport);
         }
         if !auth.is_waiting() {
             self.advance(now, auth);
@@ -663,13 +657,13 @@ impl DashSource {
 
     fn meta<'r>(req: &'r Req, final_url: Option<&'r str>) -> ResponseMeta<'r> {
         let mut meta = ResponseMeta::new(req.started_us, req.extra.received_us);
-        if let Some(date) = req.extra.head.date.as_deref() {
+        if let Some(date) = req.extra.head.date {
             meta = meta.with_date(date);
         }
-        if let Some(etag) = req.extra.head.etag.as_deref() {
+        if let Some(etag) = req.extra.head.etag.clone() {
             meta = meta.with_etag(etag);
         }
-        if let Some(last_modified) = req.extra.head.last_modified.as_deref() {
+        if let Some(last_modified) = req.extra.head.last_modified {
             meta = meta.with_last_modified(last_modified);
         }
         if let Some(url) = final_url {
@@ -732,7 +726,7 @@ impl DashSource {
     fn deliver_utc(&mut self, id: UtcId, req: &Req, now: u64) {
         let mut response =
             UtcResponse::new(req.started_us, req.extra.received_us, req.body.as_slice());
-        if let Some(date) = req.extra.head.date.as_deref() {
+        if let Some(date) = req.extra.head.date {
             response = response.with_date(date);
         }
         let _ = self
@@ -787,11 +781,11 @@ impl DashSource {
         self.after_class(id, class, now);
     }
 
-    fn fail(&mut self, req: Req, now: u64, failure: Failure) {
+    fn fail(&mut self, req: Req, now: u64, failure: CoreFailure) {
         self.fail_purpose(req.purpose, now, failure);
     }
 
-    fn fail_purpose(&mut self, purpose: Purpose, now: u64, failure: Failure) {
+    fn fail_purpose(&mut self, purpose: Purpose, now: u64, failure: CoreFailure) {
         match purpose {
             Purpose::Mpd => {
                 let class = self
@@ -879,7 +873,7 @@ impl DashSource {
         for conn in self.flight.overdue(now) {
             if let Some(req) = self.flight.reqs.remove(&conn) {
                 self.actions.push_back(Action::Close { conn });
-                self.fail(req, now, Failure::Timeout);
+                self.fail(req, now, CoreFailure::Timeout);
             }
         }
         self.expire_inactive(now);
@@ -896,7 +890,7 @@ impl DashSource {
                 },
             );
             if let Some(req) = stalled {
-                self.fail(req, now, Failure::Timeout);
+                self.fail(req, now, CoreFailure::Timeout);
             }
         }
     }
@@ -1014,7 +1008,7 @@ impl DashSource {
         if !self.utc_credentials && matches!(req.purpose, Purpose::Utc(_)) {
             headers.retain(|(name, _)| !is_credential_header(name));
         }
-        req.authed = broadcast_auth::carries_credentials(&headers);
+        req.authed = broadcast_auth::carries_credentials(&crate::headers::to_header_map(&headers));
         headers.extend(req.extra.conditional.iter().cloned());
         let method = req.extra.method;
         self.flight

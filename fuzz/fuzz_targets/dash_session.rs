@@ -9,9 +9,9 @@ use broadcast_client::{
 };
 use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::{
-    CAPS, DEFAULT_PUBLISH_US, DashWorld, GRACE_US, HTTP_DATES, MAX_INPUT, MICROS, PIN_ORIGIN,
-    PREFER_HOST, RESYNC_US, STEPS_US, USE_ATO, flip_byte, pick_mpd, take_arbitrary, truncate_tail,
-    utc_body,
+    CAPS, DEFAULT_PUBLISH_US, DashWorld, GRACE_US, MAX_INPUT, MICROS, PIN_ORIGIN,
+    PREFER_HOST, RESYNC_US, STEPS_US, USE_ATO, flip_byte, http_date, pick_mpd, take_arbitrary,
+    truncate_tail, utc_body,
 };
 
 const HEADER: usize = 8;
@@ -161,8 +161,8 @@ fn deliver(
     session: &mut Session,
     conn: ConnId,
     now: u64,
-    status: u16,
-    headers: &[(String, String)],
+    status: http::StatusCode,
+    headers: &http::HeaderMap,
     body: &[u8],
     chunk: usize,
 ) {
@@ -180,6 +180,20 @@ fn deliver(
 
 fn header(name: &str, value: &str) -> (String, String) {
     (name.to_owned(), value.to_owned())
+}
+
+/// Fuzz-derived pairs as a reply map; a pair the header type refuses is dropped.
+fn header_map(pairs: &[(String, String)]) -> http::HeaderMap {
+    let mut map = http::HeaderMap::new();
+    for (name, value) in pairs {
+        if let (Ok(name), Ok(value)) = (
+            http::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            map.append(name, value);
+        }
+    }
+    map
 }
 
 fn answer(
@@ -210,71 +224,76 @@ fn answer(
             .unwrap_or_default()
     };
     let chunk = CHUNK_BYTES[usize::from(aux >> 2) % CHUNK_BYTES.len()];
-    let mut headers = vec![header("Content-Length", &real.len().to_string())];
-    if req.method == "HEAD" || aux.is_multiple_of(3) {
-        headers.push(header(
-            "Date",
-            HTTP_DATES[usize::from(aux) % HTTP_DATES.len()],
-        ));
+    let mut headers = http::HeaderMap::new();
+    if let Ok(len) = http::HeaderValue::from_str(&real.len().to_string()) {
+        headers.insert(http::header::CONTENT_LENGTH, len);
+    }
+    if (req.method == "HEAD" || aux.is_multiple_of(3))
+        && let Some(date) = http_date(usize::from(aux))
+    {
+        use headers::HeaderMapExt;
+        headers.typed_insert(date);
     }
     match mode % MODES {
         0..=7 => {
             if req.method == "HEAD" {
-                session.on_response(conn, 200, &headers, at);
+                session.on_response(conn, http::StatusCode::OK, &headers, at);
             } else {
-                deliver(session, conn, now, 200, &headers, &real, chunk);
+                deliver(session, conn, now, http::StatusCode::OK, &headers, &real, chunk);
             }
             session.on_closed(conn, None, at);
         }
         8 => {
             let mut body = real.clone();
             truncate_tail(&mut body, aux);
-            deliver(session, conn, now, 200, &headers, &body, chunk);
+            deliver(session, conn, now, http::StatusCode::OK, &headers, &body, chunk);
             session.on_closed(conn, None, at);
         }
         9 => {
             let mut body = real.clone();
             flip_byte(&mut body, aux);
-            deliver(session, conn, now, 200, &headers, &body, chunk);
+            deliver(session, conn, now, http::StatusCode::OK, &headers, &body, chunk);
             session.on_closed(conn, None, at);
         }
         10 => {
             let body = take_arbitrary(rest, aux);
-            deliver(session, conn, now, 200, &[], &body, chunk);
+            deliver(session, conn, now, http::StatusCode::OK, &http::HeaderMap::new(), &body, chunk);
             session.on_closed(conn, None, at);
         }
         11..=14 => {
-            let status = [404, 410, 425, 503][usize::from(mode % MODES - 11)];
-            let mut h = Vec::new();
-            if aux.is_multiple_of(2) {
-                h.push(header(
-                    "Retry-After",
-                    RETRY_AFTER[usize::from(aux / 2) % RETRY_AFTER.len()],
-                ));
-            }
+            let status = [
+                http::StatusCode::NOT_FOUND,
+                http::StatusCode::GONE,
+                http::StatusCode::TOO_EARLY,
+                http::StatusCode::SERVICE_UNAVAILABLE,
+            ][usize::from(mode % MODES - 11)];
+            let h = header_map(&[header(
+                "Retry-After",
+                RETRY_AFTER[usize::from(aux / 2) % RETRY_AFTER.len()],
+            )]);
             deliver(session, conn, now, status, &h, b"nope", chunk);
             session.on_closed(conn, None, at);
         }
         15 => session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), at),
         16 => {
             let half = real.len() / 2;
-            deliver(session, conn, now, 200, &headers, &real[..half], chunk);
+            deliver(session, conn, now, http::StatusCode::OK, &headers, &real[..half], chunk);
             session.on_closed(conn, Some(TransportError::Other { reason: "reset".to_string() }), at);
         }
         17 => {
             let status = if is_mpd { 304 } else { 200 };
             let h = [header("ETag", "\"x\"")];
             if status == 304 {
-                session.on_response(conn, 304, &h, at);
+                session.on_response(conn, http::StatusCode::NOT_MODIFIED, &header_map(&h), at);
             } else {
-                deliver(session, conn, now, 200, &headers, &real, chunk);
+                deliver(session, conn, now, http::StatusCode::OK, &headers, &real, chunk);
             }
             session.on_closed(conn, None, at);
         }
         18 => {
             let mpds = &DashWorld::loaded().mpds;
             let alt = &mpds[usize::from(aux) % mpds.len()];
-            deliver(session, conn, now, 200, &[], alt, chunk);
+            deliver(session, conn, now, http::StatusCode::OK, &http::HeaderMap::new(), alt, chunk);
             session.on_closed(conn, None, at);
         }
         19 => {
@@ -282,10 +301,15 @@ fn answer(
                 "Location",
                 LOCATIONS[usize::from(aux) % LOCATIONS.len()],
             )];
-            session.on_response(conn, [301, 302, 307][usize::from(aux / 4) % 3], &h, at);
+            let status = [
+                http::StatusCode::MOVED_PERMANENTLY,
+                http::StatusCode::FOUND,
+                http::StatusCode::TEMPORARY_REDIRECT,
+            ][usize::from(aux / 4) % 3];
+            session.on_response(conn, status, &header_map(&h), at);
         }
         _ => {
-            session.on_response(conn, 405, &[], at);
+            session.on_response(conn, http::StatusCode::METHOD_NOT_ALLOWED, &http::HeaderMap::new(), at);
             session.on_closed(conn, None, at);
         }
     }

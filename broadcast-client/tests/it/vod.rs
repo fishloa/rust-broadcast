@@ -15,7 +15,10 @@ fn session_finite_file_ends_without_reconnect() {
     let bytes = tf1_bytes!();
     let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
     let status = status0;
 
     let mut session = Session::open(
@@ -89,7 +92,10 @@ fn session_finite_event_emitted_once() {
     let bytes = tf1_bytes!();
     let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
     let status = status0;
 
     let mut session = Session::open(
@@ -111,7 +117,10 @@ fn session_reconnect_after_ended_restarts() {
     let bytes = tf1_bytes!();
     let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
     let status = status0;
 
     let mut session = Session::open(
@@ -146,11 +155,11 @@ fn session_reconnect_after_ended_restarts() {
 #[test]
 fn session_206_is_finite() {
     let bytes = tf1_bytes!();
-    let headers = vec![(
-        "Content-Range".to_string(),
-        format!("bytes 0-{}/{}", bytes.len() - 1, bytes.len()),
-    )];
-    let status = 206u16;
+    let headers = crate::support::headers(&[(
+        "Content-Range",
+        &format!("bytes 0-{}/{}", bytes.len() - 1, bytes.len()),
+    )]);
+    let status = http::StatusCode::PARTIAL_CONTENT;
 
     let mut session = Session::open(
         Url::parse("http://example/live.ts").unwrap(),
@@ -171,7 +180,10 @@ fn truncated_finite_transfer_reconnects() {
     let bytes = tf1_bytes!();
     let (status0, base_headers) = tf1_headers!();
     let mut headers = base_headers;
-    headers.push(("Content-Length".to_string(), bytes.len().to_string()));
+    headers.insert(
+        http::header::CONTENT_LENGTH,
+        http::HeaderValue::from_str(&bytes.len().to_string()).expect("a test writes a length"),
+    );
     let status = status0;
 
     let mut session = Session::open(

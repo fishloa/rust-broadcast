@@ -31,13 +31,13 @@ pub(crate) enum PendingRequest {
 /// endpoint, the bound credentials and the requests awaiting a response, oldest
 /// first (responses arrive in request order).
 pub(crate) struct SessionCore {
-    endpoint_url: String,
+    endpoint_url: url::Url,
     credentials: Option<Credentials>,
     pending: VecDeque<PendingRequest>,
 }
 
 impl SessionCore {
-    pub(crate) fn new(endpoint_url: String, credentials: Option<Credentials>) -> Self {
+    pub(crate) fn new(endpoint_url: url::Url, credentials: Option<Credentials>) -> Self {
         Self {
             endpoint_url,
             credentials,
@@ -64,6 +64,11 @@ impl SessionCore {
             .finish()
     }
 
+    /// The endpoint this session was opened against.
+    pub(crate) fn endpoint_url(&self) -> &url::Url {
+        &self.endpoint_url
+    }
+
     pub(crate) fn origin(&self) -> Origin<'_> {
         Origin {
             endpoint_url: &self.endpoint_url,
@@ -82,7 +87,7 @@ impl SessionCore {
 
     pub(crate) fn trickle(
         &mut self,
-        session_url: String,
+        session_url: url::Url,
         etag: Option<String>,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
@@ -93,7 +98,7 @@ impl SessionCore {
 
     pub(crate) fn ice_restart(
         &mut self,
-        session_url: String,
+        session_url: url::Url,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
         let req = self.origin().ice_restart(session_url, fragment)?;
@@ -101,7 +106,7 @@ impl SessionCore {
         Ok(req)
     }
 
-    pub(crate) fn delete(&mut self, session_url: String) -> Result<HttpRequest, Error> {
+    pub(crate) fn delete(&mut self, session_url: url::Url) -> Result<HttpRequest, Error> {
         let req = self.origin().delete(session_url)?;
         self.pending.push_back(PendingRequest::Delete);
         Ok(req)
@@ -129,7 +134,7 @@ pub(crate) enum Established {
 
 /// The endpoint a session was opened against and the credentials bound to it.
 pub(crate) struct Origin<'a> {
-    pub(crate) endpoint_url: &'a str,
+    pub(crate) endpoint_url: &'a url::Url,
     pub(crate) credentials: Option<&'a Credentials>,
 }
 
@@ -139,7 +144,7 @@ impl Origin<'_> {
     pub(crate) fn request(
         &self,
         method: Method,
-        url: String,
+        url: url::Url,
         content_type: Option<&'static str>,
         body: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
@@ -171,7 +176,7 @@ impl Origin<'_> {
     /// it has one.
     pub(crate) fn trickle(
         &self,
-        session_url: String,
+        session_url: url::Url,
         etag: Option<String>,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
@@ -191,7 +196,7 @@ impl Origin<'_> {
     /// ICE-restart `PATCH` (`If-Match: *`).
     pub(crate) fn ice_restart(
         &self,
-        session_url: String,
+        session_url: url::Url,
         fragment: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
         let mut req = self.request(
@@ -204,7 +209,7 @@ impl Origin<'_> {
         Ok(req)
     }
 
-    pub(crate) fn delete(&self, session_url: String) -> Result<HttpRequest, Error> {
+    pub(crate) fn delete(&self, session_url: url::Url) -> Result<HttpRequest, Error> {
         self.request(Method::DELETE, session_url, None, Vec::new())
     }
 }

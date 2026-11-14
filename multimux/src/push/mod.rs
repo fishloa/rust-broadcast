@@ -86,10 +86,29 @@ pub enum SendMediaError {
     /// Muxing/framing the batch failed — no connection to blame, so the
     /// batch is dropped without forcing a reconnect.
     #[error("push mux failed: {0}")]
-    Mux(String),
+    Mux(#[from] MuxError),
     /// The transport's own send/protocol call failed.
     #[error("push send failed: {0}")]
     Transport(Box<dyn std::error::Error + Send + Sync>),
+}
+
+/// Why muxing a batch failed: the muxer's own error, or the batch that cannot go on this
+/// transport at all (every track in it is a codec the transport does not carry).
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum MuxError {
+    /// The TS muxer refused the batch.
+    #[error(transparent)]
+    Package(#[from] transmux::Error),
+    /// The transport's own write failed.
+    #[error(transparent)]
+    Transport(Box<dyn std::error::Error + Send + Sync>),
+    /// The FLV framing an RTMP push needs refused the batch.
+    #[error(transparent)]
+    Flv(#[from] transmux::FlvError),
+    /// The transport carries none of the batch's codecs.
+    #[error("no track of this batch is carriable on this transport")]
+    NoCarriableTrack,
 }
 
 /// A concrete push transport: the wire protocol half of a push output.
@@ -195,7 +214,7 @@ pub trait PushTransport: Send + 'static {
             Some(mux) => mux.package(media),
             None => TsMux::new().package(media),
         }
-        .map_err(|e| SendMediaError::Mux(e.to_string()))?;
+        .map_err(MuxError::Package)?;
         if bytes.is_empty() {
             return Ok(Vec::new());
         }
@@ -473,13 +492,6 @@ pub async fn drive_push<T: PushTransport>(
     let scrub = |err: &dyn std::fmt::Display| {
         crate::redact::scrub_destination_secrets(&err.to_string(), &url)
     };
-    /// The generic [`NegotiationOutcome::Error`] reason when a proposed
-    /// track set has no track this push output's wire format can carry at
-    /// all — deliberately transport-agnostic (this function is generic over
-    /// `T`); the *specific* reason (e.g. RTMP's "no AVC video or AAC audio
-    /// track…") still reaches the log line below via `Display`.
-    const UNSATISFIABLE: &str = "no track this output's container format can carry";
-
     /// The longest one flush of queued messages may take before the push is
     /// treated as failed and reconnected. A transport write can block on a
     /// live peer that stopped consuming (SRT's `send` waits for flow-window
@@ -648,7 +660,7 @@ pub async fn drive_push<T: PushTransport>(
             };
             match connect_result {
                 Ok(conn) => {
-                    let mut e = PushTransportEgress::new(conn, UNSATISFIABLE);
+                    let mut e = PushTransportEgress::new(conn);
                     let (generation, tracks_now) = trunk.tracks_with_generation();
                     match e.negotiate(&tracks_now) {
                         NegotiationOutcome::Accepted(sel) => {

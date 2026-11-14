@@ -33,6 +33,26 @@ fn pair(n: &str, v: &str) -> (String, String) {
     (n.to_string(), v.to_string())
 }
 
+/// A response header map keeps every `Set-Cookie` line a server sent, in order, so the jar sees the
+/// same lines the wire carried. The old `Vec<(String, String)>` shape did too, but dropped a line
+/// whose bytes were not valid header text and kept no name/value structure to compare against.
+#[test]
+fn every_set_cookie_line_of_one_response_reaches_the_jar_in_wire_order() {
+    let mut s = open(TS_URL, Config::default());
+    let first = one(&mut s, 0);
+    let headers = crate::support::headers(&[
+        ("Set-Cookie", "a=1; Path=/"),
+        ("Set-Cookie", "b=2; Path=/"),
+        ("Set-Cookie", "c=3; Path=/"),
+    ]);
+    assert_eq!(headers.get_all("set-cookie").iter().count(), 3);
+    respond(&mut s, &first, http::StatusCode::OK, &headers);
+    assert_eq!(
+        s.cookies(),
+        vec![pair("a", "1"), pair("b", "2"), pair("c", "3")]
+    );
+}
+
 #[test]
 fn set_cookie_sent_on_next_request() {
     let mut s = open(TS_URL, Config::default());
@@ -292,11 +312,11 @@ fn set_cookie_on_401_response_is_stored() {
     let mut s = open(TS_URL, Config::default());
     let first = one(&mut s, 0);
     let mut headers = set_cookies(&["sid=from401; Path=/"]);
-    headers.push((
-        "WWW-Authenticate".to_string(),
-        "Basic realm=\"tv\"".to_string(),
-    ));
-    respond(&mut s, &first, 401, &headers);
+    headers.insert(
+        http::header::WWW_AUTHENTICATE,
+        http::HeaderValue::from_static("Basic realm=\"tv\""),
+    );
+    respond(&mut s, &first, http::StatusCode::UNAUTHORIZED, &headers);
     assert!(requests(&mut s, 0).is_empty());
     let mut saw_required = false;
     while let Some(e) = s.next_event() {
@@ -316,14 +336,14 @@ fn set_cookie_from_other_origin_response_ignored() {
     respond(
         &mut s,
         &first,
-        302,
-        &[location("http://other.test/live.ts")],
+        http::StatusCode::FOUND,
+        &location("http://other.test/live.ts"),
     );
     let other = one(&mut s, 0);
     assert_eq!(other.url, "http://other.test/live.ts");
     let mut headers = set_cookies(&["evil=1; Path=/"]);
-    headers.push(location("http://example/live.ts"));
-    respond(&mut s, &other, 302, &headers);
+    headers.extend(location("http://example/live.ts"));
+    respond(&mut s, &other, http::StatusCode::FOUND, &headers);
     let back = one(&mut s, 0);
     assert_eq!(back.url, TS_URL);
     assert_eq!(back.cookie(), None);
@@ -358,8 +378,8 @@ fn initial_cookies_not_sent_cross_origin() {
     respond(
         &mut s,
         &first,
-        302,
-        &[location("http://other.test/live.ts")],
+        http::StatusCode::FOUND,
+        &location("http://other.test/live.ts"),
     );
     assert_eq!(one(&mut s, 0).cookie(), None);
 }
@@ -493,7 +513,7 @@ fn debug_never_prints_cookie_value() {
     assert!(session_dbg.contains("Session"));
 }
 
-fn cookie_playlist_headers() -> Vec<(String, String)> {
+fn cookie_playlist_headers() -> http::HeaderMap {
     set_cookies(&["sid=hls; Path=/"])
 }
 
@@ -663,11 +683,8 @@ fn cookie_header_does_not_leak_into_auth_decision() {
     respond(
         &mut s,
         &first,
-        401,
-        &[(
-            "WWW-Authenticate".to_string(),
-            "Basic realm=\"tv\"".to_string(),
-        )],
+        http::StatusCode::UNAUTHORIZED,
+        &crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"tv\"")]),
     );
     let replay = one(&mut s, 0);
     assert_eq!(replay.header("authorization"), Some("Basic dXNlcjpwYXNz"));
@@ -689,11 +706,8 @@ fn cookie_header_does_not_leak_into_auth_decision() {
     respond(
         &mut plain,
         &p1,
-        401,
-        &[(
-            "WWW-Authenticate".to_string(),
-            "Basic realm=\"tv\"".to_string(),
-        )],
+        http::StatusCode::UNAUTHORIZED,
+        &crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"tv\"")]),
     );
     assert_eq!(
         one(&mut plain, 0).header("authorization"),
@@ -702,24 +716,23 @@ fn cookie_header_does_not_leak_into_auth_decision() {
 }
 
 #[test]
-fn a_set_cookie_value_http_cannot_carry_drops_the_whole_cookie_header() {
-    // DEL is legal to the `cookie` crate's parser but not in an HTTP field value, so the
-    // next request's `Cookie` cannot be represented: the header goes out without it.
-    let mut s = session_with_cookies(TS_URL, &["good=1; Path=/", "bad=a\u{7f}b; Path=/"]);
+fn a_set_cookie_value_http_cannot_carry_never_reaches_the_session() {
+    assert!(http::HeaderValue::from_bytes(b"bad=a\x7fb; Path=/").is_err());
+    let mut s = session_with_cookies(TS_URL, &["good=1; Path=/"]);
     let next = reconnect(&mut s, SEC);
-    assert_eq!(next.cookie(), None);
+    assert_eq!(next.cookie(), Some("good=1"));
 }
 
 #[test]
 fn set_cookie_header_name_is_case_insensitive_and_garbage_lines_ignored() {
     let mut s = open(TS_URL, Config::default());
     let first = one(&mut s, 0);
-    let headers = vec![
-        ("SET-COOKIE".to_string(), "up=1; Path=/".to_string()),
-        ("set-cookie".to_string(), "no-equals-sign".to_string()),
-        ("Set-Cookie".to_string(), "=emptyname".to_string()),
-        ("X-Other".to_string(), "x=1".to_string()),
-    ];
-    respond(&mut s, &first, 200, &headers);
+    let headers = crate::support::headers(&[
+        ("Set-Cookie", "up=1; Path=/"),
+        ("Set-Cookie", "no-equals-sign"),
+        ("Set-Cookie", "=emptyname"),
+        ("X-Other", "x=1"),
+    ]);
+    respond(&mut s, &first, http::StatusCode::OK, &headers);
     assert_eq!(s.cookies(), vec![pair("up", "1")]);
 }

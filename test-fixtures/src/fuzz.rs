@@ -26,6 +26,21 @@ pub const STEPS_US: [u64; 6] = [
 ];
 pub const RESYNC_US: [u64; 4] = [MICROS, 30 * MICROS, 600 * MICROS, u64::MAX];
 pub const GRACE_US: [u64; 3] = [0, MICROS, 5 * MICROS];
+/// The `Date` header type a driver reports for one of [`HTTP_DATES`]: a typed reader rejects the
+/// one entry that is not a date, as a real client's header map does.
+pub fn http_date(i: usize) -> Option<headers::Date> {
+    use headers::HeaderMapExt;
+    let mut map = http::HeaderMap::new();
+    let text = HTTP_DATES[i % HTTP_DATES.len()];
+    map.insert(http::header::DATE, http::HeaderValue::from_str(text).ok()?);
+    map.typed_get::<headers::Date>()
+}
+
+/// A quoted strong `ETag` for a driver's conditional request.
+pub fn http_etag(tag: &str) -> Option<headers::ETag> {
+    tag.parse().ok()
+}
+
 pub const HTTP_DATES: [&str; 3] = [
     "Mon, 26 Oct 2026 09:18:20 GMT",
     "Thu, 01 Jan 1970 00:00:00 GMT",

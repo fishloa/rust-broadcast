@@ -1,5 +1,6 @@
 //! [`MediaTransport`] — see the `media` module doc for the full picture.
 
+use broadcast_common::stage::Timestamp;
 use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -665,6 +666,12 @@ pub struct MediaTransport {
     /// keeps its own remote-candidate list privately (no public getter), so
     /// this is the only place that count is observable from here.
     remote_candidate_count: usize,
+    /// This transport's own monotonic epoch: the `Instant` a caller's
+    /// [`Timestamp`] counts from. Every public entry point converts the
+    /// caller's `now` with [`Self::instant_at`] and converts a deadline back
+    /// with [`Self::stamp_at`]; the `rtc-ice`/`rtc-dtls`/`rtc-stun` core keeps
+    /// its own `Instant` arithmetic behind this boundary.
+    epoch: Instant,
     /// This transport's copy of [`MediaTransportConfig::max_remote_candidates`]
     /// (RFC 8445 §6.1.2.5's configurable cap).
     max_remote_candidates: usize,
@@ -701,6 +708,21 @@ pub struct MediaTransport {
     stuck_timer: bool,
 }
 
+/// The `Instant` a caller's [`Timestamp`] names, counted from this transport's `epoch`. A caller
+/// whose `now` precedes the epoch has no representable instant; it clamps to the epoch, which only
+/// makes an overdue timer fire at once.
+fn instant_at(epoch: Instant, now: Timestamp) -> Instant {
+    epoch
+        .checked_add(Duration::from_micros(now.as_micros()))
+        .unwrap_or(epoch)
+}
+
+/// The [`Timestamp`] an `Instant` names, counted from this transport's `epoch`. An instant before
+/// the epoch reads as zero.
+fn stamp_at(epoch: Instant, at: Instant) -> Timestamp {
+    Timestamp::from_instant(epoch, at)
+}
+
 impl MediaTransport {
     /// Build a transport for one peer connection.
     ///
@@ -726,7 +748,7 @@ impl MediaTransport {
     /// concrete transport can be built with — see
     /// [`MediaTransportConfig::local_setup`]), or if certificate generation
     /// or ICE/DTLS setup fails.
-    pub fn new(config: MediaTransportConfig, now: Instant) -> Result<Self, Error> {
+    pub fn new(config: MediaTransportConfig, now: Timestamp) -> Result<Self, Error> {
         let remote_fingerprint_digest = parse_fingerprint_value(&config.remote_fingerprint)
             .map_err(|e| Error::Media(e.into()))?;
         if config.local_setup == SetupRole::ActPass {
@@ -781,7 +803,7 @@ impl MediaTransport {
     pub fn with_certificate_for_test(
         config: MediaTransportConfig,
         certificate: Certificate,
-        now: Instant,
+        now: Timestamp,
     ) -> Result<Self, Error> {
         let crypto_provider = default_provider().map_err(|e| {
             Error::Media(MediaError::Other(format!(
@@ -809,8 +831,13 @@ impl MediaTransport {
         remote_fingerprint_digest: [u8; FINGERPRINT_LEN],
         certificate: Certificate,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
-        now: Instant,
+        now: Timestamp,
     ) -> Result<Self, Error> {
+        // The transport's epoch is the real clock at construction and the caller's `now` is read
+        // against it, so a caller's reading (however far ahead it is) is exactly the instant
+        // every internal timer is scheduled from.
+        let epoch = Instant::now();
+        let now = instant_at(epoch, now);
         let is_client = config.local_setup == SetupRole::Active;
 
         let local_fingerprint = sha256_fingerprint(certificate.certificate[0].as_ref());
@@ -930,6 +957,7 @@ impl MediaTransport {
             gather,
             crypto_provider,
             remote_candidate_count: 0,
+            epoch,
             max_remote_candidates: config.max_remote_candidates,
             known_remote_addrs: HashSet::new(),
             #[cfg(feature = "test-seams")]
@@ -1018,12 +1046,13 @@ impl MediaTransport {
     /// The transport is left unchanged on error.
     pub fn restart_ice(
         &mut self,
-        now: Instant,
+        now: Timestamp,
         local_ufrag: &str,
         local_pwd: &str,
         remote_ufrag: &str,
         remote_pwd: &str,
     ) -> Result<(), Error> {
+        let now = instant_at(self.epoch, now);
         if remote_ufrag.is_empty() || remote_pwd.is_empty() {
             return Err(Error::Media(MediaError::Other(
                 "ice restart: remote ufrag/pwd must not be empty".to_string(),
@@ -1085,7 +1114,8 @@ impl MediaTransport {
     /// failure, a fatal alert) was silently discarded (`let _ =`), so the
     /// caller never learned anything had gone wrong — it just saw silence
     /// (audit run-09 W20).
-    pub fn handle_timeout(&mut self, now: Instant) -> Vec<MediaEvent> {
+    pub fn handle_timeout(&mut self, now: Timestamp) -> Vec<MediaEvent> {
+        let now = instant_at(self.epoch, now);
         let mut events = Vec::new();
         // Test-only injection: a staged timer error takes the place of a real
         // (hard-to-stage) ICE/DTLS failure, and is single-fire.
@@ -1162,6 +1192,21 @@ impl MediaTransport {
         }
     }
 
+    /// The monotonic instant this transport's `epoch` names, as the caller's [`Timestamp`]: the
+    /// conversion every entry point applies to its `now`.
+    #[must_use]
+    pub fn now_at(&self, now: Timestamp) -> Instant {
+        instant_at(self.epoch, now)
+    }
+
+    /// The caller's [`Timestamp`] for an `Instant` read on this transport's own clock (a deadline
+    /// [`Self::poll_timeout`] reported, or a caller's own starting instant), on the same epoch
+    /// [`Self::now_at`] uses.
+    #[must_use]
+    pub fn stamp_of(&self, at: Instant) -> Timestamp {
+        stamp_at(self.epoch, at)
+    }
+
     /// Stage a [`MediaEvent::TimerError`] to be emitted by the next
     /// [`Self::handle_timeout`] (single-fire), in place of a real ICE/DTLS
     /// timer failure. While a staged error is pending, [`Self::poll_timeout`]
@@ -1190,10 +1235,11 @@ impl MediaTransport {
     /// events it produced.
     pub fn handle_datagram(
         &mut self,
-        now: Instant,
+        now: Timestamp,
         peer: SocketAddr,
         data: &[u8],
     ) -> Result<Vec<MediaEvent>, Error> {
+        let now = instant_at(self.epoch, now);
         let mut events = Vec::new();
         let Some(&first) = data.first() else {
             return Ok(events);
@@ -1308,7 +1354,8 @@ impl MediaTransport {
 
     /// Close the DTLS association with the selected peer: queues a
     /// `close_notify` for [`Self::poll_transmit`] and drops the SRTP contexts.
-    pub fn close(&mut self, now: Instant) {
+    pub fn close(&mut self, now: Timestamp) {
+        let now = instant_at(self.epoch, now);
         if let Some(peer) = self.selected_pair_addr {
             self.dtls.stop(now, peer);
         }
@@ -1654,7 +1701,8 @@ impl MediaTransport {
     /// fresh `ClientHello` a browser or OBS peer never sends without a new
     /// SDP offer — silently ending media for good. The caller must instead
     /// drive an ICE restart or SDP renegotiation to get a new DTLS handshake.
-    pub fn rekey(&mut self, now: Instant) -> Result<(), Error> {
+    pub fn rekey(&mut self, now: Timestamp) -> Result<(), Error> {
+        let now = instant_at(self.epoch, now);
         let Some(peer) = self.dtls_peer else {
             return Err(Error::Media(MediaError::Other(
                 "rekey: no dtls handshake has completed yet; nothing to rekey".to_string(),
@@ -1859,6 +1907,13 @@ mod tests {
 
     use super::*;
 
+    /// The test's own monotonic reading, a second past the transport's epoch.
+    fn test_now() -> Timestamp {
+        Timestamp::from_micros(TEST_EPOCH_ELAPSED_US)
+    }
+
+    const TEST_EPOCH_ELAPSED_US: u64 = 1_000_000;
+
     #[test]
     fn setup_role_display_matches_sdp_token() {
         assert_eq!(SetupRole::Active.to_string(), "active");
@@ -1913,31 +1968,37 @@ mod tests {
     /// put the ICE agent's first timer about an hour earlier.
     #[test]
     fn a_transport_schedules_from_the_supplied_now_not_the_wall_clock() {
-        let t0 = Instant::now() + Duration::from_secs(3600);
+        let t0 = Timestamp::from_micros(
+            test_now().as_micros() + 3_600 * broadcast_common::units::MICROS_PER_SEC,
+        );
         let mut cfg = test_config(SetupRole::Active);
         cfg.stun_server = Some("127.0.0.1:3478".parse().unwrap());
         let mut mt = MediaTransport::new(cfg, t0).unwrap();
         let d = mt
             .poll_timeout()
             .expect("ICE connectivity checks and the STUN gatherer have timers");
-        assert!(d >= t0, "deadline is {:?} BEFORE the supplied now", t0 - d);
         assert!(
-            d <= t0 + Duration::from_secs(30),
+            d >= mt.now_at(t0),
+            "deadline is {:?} BEFORE the supplied now",
+            mt.now_at(t0) - d
+        );
+        assert!(
+            d <= mt.now_at(t0) + Duration::from_secs(30),
             "and within a sane retransmission horizon"
         );
     }
 
     #[test]
     fn poll_timeout_always_moves_forward_so_a_driver_cannot_spin() {
-        let t0 = Instant::now();
+        let t0 = test_now();
         let mut cfg = test_config(SetupRole::Active);
         cfg.stun_server = Some("127.0.0.1:3478".parse().unwrap());
         let mut mt = MediaTransport::new(cfg, t0).unwrap();
-        let mut last = t0;
+        let mut last = mt.now_at(t0);
         for _ in 0..6 {
             let Some(d) = mt.poll_timeout() else { return };
             assert!(d >= last, "deadline went backwards");
-            let _ = mt.handle_timeout(d);
+            let _ = mt.handle_timeout(mt.stamp_of(d));
             while mt.poll_transmit().is_some() {}
             let next = mt.poll_timeout();
             assert!(
@@ -1952,7 +2013,7 @@ mod tests {
     fn local_candidates_lists_the_host_candidate_as_an_attribute_body() {
         let cfg = test_config(SetupRole::Passive);
         let addr = cfg.local_addr;
-        let mt = MediaTransport::new(cfg, Instant::now()).unwrap();
+        let mt = MediaTransport::new(cfg, test_now()).unwrap();
         let c = mt.local_candidates();
         assert_eq!(c.len(), 1);
         assert!(
@@ -1968,7 +2029,7 @@ mod tests {
         for bad in ["md5 00:11", "sha-256 00:11", "", "sha-256"] {
             let mut cfg = test_config(SetupRole::Passive);
             cfg.remote_fingerprint = bad.to_string();
-            match MediaTransport::new(cfg, Instant::now()) {
+            match MediaTransport::new(cfg, test_now()) {
                 Err(Error::Media(MediaError::Other(_))) => {}
                 Err(other) => panic!("expected Error::Media for {bad:?}, got {other:?}"),
                 Ok(_) => panic!("remote_fingerprint {bad:?} must be rejected by new()"),
@@ -2105,7 +2166,7 @@ mod tests {
 
     #[test]
     fn rejects_actpass_setup_role() {
-        match MediaTransport::new(test_config(SetupRole::ActPass), Instant::now()) {
+        match MediaTransport::new(test_config(SetupRole::ActPass), test_now()) {
             Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(_) => panic!("expected an error for local_setup: ActPass"),
@@ -2117,7 +2178,7 @@ mod tests {
         // Issue #948 item 2: SetupRole::Active used to be rejected
         // unconditionally. `Endpoint::connect` (rtc-dtls) genuinely
         // supports the DTLS-client role sans-IO, so this must now build.
-        let mt = MediaTransport::new(test_config(SetupRole::Active), Instant::now())
+        let mt = MediaTransport::new(test_config(SetupRole::Active), test_now())
             .expect("Active (DTLS client) role must now be buildable");
         assert!(
             mt.dtls_client_config.is_some(),
@@ -2127,7 +2188,7 @@ mod tests {
 
     #[test]
     fn accepts_passive_setup_role_with_no_client_config() {
-        let mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now())
+        let mt = MediaTransport::new(test_config(SetupRole::Passive), test_now())
             .expect("Passive (DTLS server) role must still build");
         assert!(
             mt.dtls_client_config.is_none(),
@@ -2141,7 +2202,7 @@ mod tests {
         // more than MAX_REMOTE_CANDIDATES distinct, well-formed host
         // candidate lines and check every one past the cap is rejected, and
         // that the transport's admitted count never exceeds the cap.
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now())
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), test_now())
             .expect("Passive role must build");
 
         let extra = 5;
@@ -2182,7 +2243,7 @@ mod tests {
         let mut config = test_config(SetupRole::Passive);
         let small_cap = 3;
         config.max_remote_candidates = small_cap;
-        let mut mt = MediaTransport::new(config, Instant::now()).expect("Passive role must build");
+        let mut mt = MediaTransport::new(config, test_now()).expect("Passive role must build");
 
         let mut accepted = 0usize;
         let mut rejected = 0usize;
@@ -2316,7 +2377,7 @@ mod tests {
     /// handshake, which `select_read_write_material`'s own test above
     /// already covers independently.
     fn transport_with_appendix_b3_write_context() -> MediaTransport {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
         mt.srtp_write = Some(
             SrtpContext::new(
                 &APPENDIX_B3_MASTER_KEY,
@@ -2448,7 +2509,7 @@ mod tests {
 
     #[test]
     fn encrypt_rtp_before_handshake_errors() {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
         let packet = rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
@@ -2511,7 +2572,7 @@ mod tests {
     /// `transport_with_appendix_b3_write_context` already does for the
     /// write-only tests above.
     fn transport_with_completed_handshake(setup: SetupRole) -> (MediaTransport, SocketAddr) {
-        let mut mt = MediaTransport::new(test_config(setup), Instant::now()).unwrap();
+        let mut mt = MediaTransport::new(test_config(setup), test_now()).unwrap();
         let peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         mt.dtls_peer = Some(peer);
         mt.srtp_read = Some(b3_srtp_context());
@@ -2544,7 +2605,7 @@ mod tests {
 
     #[test]
     fn needs_rekey_reports_threshold_crossing_on_every_counter() {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
         assert!(!mt.needs_rekey());
 
         mt.write_rtp_count = MAXIMUM_LIFETIME_PACKETS - 1;
@@ -2619,7 +2680,7 @@ mod tests {
             .to_vec();
 
         assert_eq!(mt.read_rtp_count, 0);
-        let now = Instant::now();
+        let now = test_now();
         let events = mt
             .handle_datagram(now, peer, &ciphertext)
             .expect("handle_datagram");
@@ -2649,7 +2710,7 @@ mod tests {
             .to_vec();
 
         let events = mt
-            .handle_datagram(Instant::now(), peer, &ciphertext)
+            .handle_datagram(test_now(), peer, &ciphertext)
             .expect("handle_datagram");
         match &events[..] {
             [MediaEvent::Rtp(rtp)] => {
@@ -2686,7 +2747,7 @@ mod tests {
         let mut forger = other_srtp_context();
         let forged = forger.encrypt_rtcp(&PLI).unwrap().to_vec();
         let events = mt
-            .handle_datagram(Instant::now(), peer, &forged)
+            .handle_datagram(test_now(), peer, &forged)
             .expect("an authentication failure is an event, not Err");
         assert!(
             matches!(&events[..], [MediaEvent::AuthFailure { is_rtcp: true, .. }]),
@@ -2696,7 +2757,7 @@ mod tests {
         let mut oracle = b3_srtp_context();
         let genuine = oracle.encrypt_rtcp(&PLI).unwrap().to_vec();
         let events = mt
-            .handle_datagram(Instant::now(), peer, &genuine)
+            .handle_datagram(test_now(), peer, &genuine)
             .expect("an authenticated feedback packet is not an error");
         match &events[..] {
             [MediaEvent::Rtcp(compound)] => {
@@ -2744,7 +2805,7 @@ mod tests {
         let genuine = oracle.encrypt_rtcp(&SR_THEN_PLI).unwrap().to_vec();
 
         let events = mt
-            .handle_datagram(Instant::now(), peer, &genuine)
+            .handle_datagram(test_now(), peer, &genuine)
             .expect("SR + unrecognized feedback must decrypt");
         let compound = match &events[..] {
             [MediaEvent::Rtcp(cp)] => cp,
@@ -2786,7 +2847,7 @@ mod tests {
         let genuine = oracle.encrypt_rtcp(&LONE_SDES).unwrap().to_vec();
 
         let events = mt
-            .handle_datagram(Instant::now(), peer, &genuine)
+            .handle_datagram(test_now(), peer, &genuine)
             .expect("an authenticated-but-malformed packet is not an error");
         assert!(
             matches!(&events[..], [MediaEvent::RtcpUnsupported(_)]),
@@ -2797,8 +2858,8 @@ mod tests {
 
     #[test]
     fn rekey_before_any_handshake_errors() {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
-        match mt.rekey(Instant::now()) {
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
+        match mt.rekey(test_now()) {
             Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(()) => panic!("expected an error: no dtls handshake has ever completed"),
@@ -2817,7 +2878,7 @@ mod tests {
         mt.write_rtp_count = 5;
         mt.read_rtp_count = 7;
 
-        match mt.rekey(Instant::now()) {
+        match mt.rekey(test_now()) {
             Err(Error::Media(MediaError::Other(_))) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(()) => panic!("expected Passive rekey to be refused"),
@@ -2840,7 +2901,7 @@ mod tests {
             .unwrap()
             .to_vec();
         let events = mt
-            .handle_datagram(Instant::now(), peer, &packet)
+            .handle_datagram(test_now(), peer, &packet)
             .expect("the untouched association keeps decrypting after a refused rekey");
         assert_eq!(events.len(), 1, "expected the RTP packet to still decrypt");
     }
@@ -2855,7 +2916,7 @@ mod tests {
         mt.write_rtp_count = 5;
         mt.read_rtp_count = 7;
 
-        mt.rekey(Instant::now()).expect("rekey");
+        mt.rekey(test_now()).expect("rekey");
 
         assert!(
             mt.srtp_write.is_none(),
@@ -2896,7 +2957,7 @@ mod tests {
             .unwrap()
             .to_vec();
 
-        let t0 = Instant::now();
+        let t0 = test_now();
         mt.rekey(t0).expect("rekey");
         // `rekey` only starts the new handshake (redials); it never
         // completes synchronously, so `srtp_read` stays `None` until a
@@ -2921,7 +2982,9 @@ mod tests {
         // fresh sequence number, so this isn't a replay-window rejection
         // masquerading as "no key") is now dropped silently, same as the
         // pre-handshake case.
-        let t1 = t0 + RETIRED_KEY_RETENTION + Duration::from_secs(1);
+        let t1 = t0
+            .checked_add(RETIRED_KEY_RETENTION + Duration::from_secs(1))
+            .expect("a representable test deadline");
         mt.handle_timeout(t1);
         assert!(
             mt.retired_srtp_read.is_none(),
@@ -2957,7 +3020,10 @@ mod tests {
         // the *old* one, both present at once — the exact window RFC 5764
         // §5.2 describes.
         mt.srtp_read = Some(other_srtp_context());
-        mt.retired_srtp_read = Some((b3_srtp_context(), Instant::now() + RETIRED_KEY_RETENTION));
+        mt.retired_srtp_read = Some((
+            b3_srtp_context(),
+            mt.now_at(test_now()) + RETIRED_KEY_RETENTION,
+        ));
 
         let mut oracle = b3_srtp_context();
         let old_keyed_packet = oracle
@@ -2966,7 +3032,7 @@ mod tests {
             .to_vec();
 
         let events = mt
-            .handle_datagram(Instant::now(), peer, &old_keyed_packet)
+            .handle_datagram(test_now(), peer, &old_keyed_packet)
             .expect("must recover via the retired context, not error out");
         assert_eq!(events.len(), 1);
         match &events[0] {
@@ -3047,7 +3113,7 @@ mod tests {
             parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
             test_crypto(),
-            Instant::now(),
+            test_now(),
         )
         .unwrap();
         let mut b = MediaTransport::with_certificate(
@@ -3066,7 +3132,7 @@ mod tests {
             parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,
             test_crypto(),
-            Instant::now(),
+            test_now(),
         )
         .unwrap();
         a.add_remote_candidate(&b.local_candidates()[0]).unwrap();
@@ -3088,11 +3154,11 @@ mod tests {
     /// the earlier of the two transports' `poll_timeout` deadlines and runs
     /// `handle_timeout` there.
     fn pump_until_both_complete(pair: &mut LoopbackPair, budget: Duration) -> Vec<Vec<u8>> {
-        let t0 = Instant::now();
+        let t0 = test_now();
         let mut now = t0;
         let mut a_dtls_datagrams = Vec::new();
         let (mut a_done, mut b_done) = (false, false);
-        while now - t0 <= budget && !(a_done && b_done) {
+        while now.saturating_sub(t0) <= budget && !(a_done && b_done) {
             let mut progressed = false;
             while let Some(dgram) = pair.a.poll_transmit() {
                 if dgram.bytes.first().is_some_and(|&b| (20..=63).contains(&b)) {
@@ -3126,14 +3192,16 @@ mod tests {
                 // Nothing in flight: jump the virtual clock to whichever
                 // transport is due next (at least 1 ms ahead, so the loop
                 // always advances).
-                let Some(next) = [pair.a.poll_timeout(), pair.b.poll_timeout()]
-                    .into_iter()
-                    .flatten()
-                    .min()
+                let (Some(a_next), Some(b_next)) = (pair.a.poll_timeout(), pair.b.poll_timeout())
                 else {
                     break;
                 };
-                now = next.max(now + Duration::from_millis(1));
+                let next = a_next.min(b_next);
+                now = pair
+                    .a
+                    .stamp_of(next)
+                    .checked_add(Duration::from_millis(1))
+                    .map_or_else(|| pair.a.stamp_of(next), |plus| plus.max(now));
                 pair.a.handle_timeout(now);
                 pair.b.handle_timeout(now);
             }
@@ -3150,7 +3218,7 @@ mod tests {
         let mut pair = loopback_pair();
         pump_until_both_complete(&mut pair, Duration::from_secs(8));
 
-        let now = Instant::now();
+        let now = test_now();
         pair.a.close(now);
         let mut b_events = Vec::new();
         let mut a_events = Vec::new();
@@ -3198,7 +3266,7 @@ mod tests {
         let protected = pair.a.encrypt_rtp(&rtp_test_packet(7)).unwrap();
         let events = pair
             .b
-            .handle_datagram(Instant::now(), pair.a_addr, &protected)
+            .handle_datagram(test_now(), pair.a_addr, &protected)
             .unwrap();
         assert!(
             matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 7),
@@ -3208,7 +3276,7 @@ mod tests {
         let protected = pair.b.encrypt_rtp(&rtp_test_packet(8)).unwrap();
         let events = pair
             .a
-            .handle_datagram(Instant::now(), pair.b_addr, &protected)
+            .handle_datagram(test_now(), pair.b_addr, &protected)
             .unwrap();
         assert!(
             matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 8),
@@ -3226,7 +3294,7 @@ mod tests {
         pump_until_both_complete(&mut pair, Duration::from_secs(8));
         let before = pair.a.encrypt_rtp(&rtp_test_packet(1)).unwrap();
 
-        let t0 = Instant::now();
+        let t0 = test_now();
         let (a_u, a_p) = ("newa0ufrag", "newa-ice-password-0000000");
         let (b_u, b_p) = ("newb0ufrag", "newb-ice-password-0000000");
         pair.a.restart_ice(t0, a_u, a_p, b_u, b_p).unwrap();
@@ -3245,7 +3313,7 @@ mod tests {
         // Pump on virtual time until each side reports ICE connected again.
         let mut now = t0;
         let (mut a_ice, mut b_ice) = (false, false);
-        while now - t0 <= Duration::from_secs(8) && !(a_ice && b_ice) {
+        while now.saturating_sub(t0) <= Duration::from_secs(8) && !(a_ice && b_ice) {
             let mut progressed = false;
             while let Some(d) = pair.a.poll_transmit() {
                 for e in pair.b.handle_datagram(now, pair.a_addr, &d.bytes).unwrap() {
@@ -3268,12 +3336,16 @@ mod tests {
                 progressed = true;
             }
             if !(progressed || a_ice && b_ice) {
-                let next = [pair.a.poll_timeout(), pair.b.poll_timeout()]
-                    .into_iter()
-                    .flatten()
-                    .min()
-                    .expect("a pending timer while checking");
-                now = next.max(now + Duration::from_millis(1));
+                let (Some(a_next), Some(b_next)) = (pair.a.poll_timeout(), pair.b.poll_timeout())
+                else {
+                    panic!("a pending timer while checking");
+                };
+                let next = pair
+                    .a
+                    .stamp_of(a_next.min(b_next))
+                    .checked_add(Duration::from_millis(1))
+                    .map_or(now, |plus| plus.max(now));
+                now = next;
                 a_ice |= pair
                     .a
                     .handle_timeout(now)
@@ -3333,7 +3405,7 @@ mod tests {
         // pair's produces no event, and nothing is ever sent back to it.
         let events = pair
             .a
-            .handle_datagram(Instant::now(), intruder_addr, &a_dtls_datagrams[0])
+            .handle_datagram(test_now(), intruder_addr, &a_dtls_datagrams[0])
             .unwrap();
         assert!(
             events.is_empty(),
@@ -3350,7 +3422,7 @@ mod tests {
         let protected = pair.b.encrypt_rtp(&rtp_test_packet(9)).unwrap();
         let events = pair
             .a
-            .handle_datagram(Instant::now(), pair.b_addr, &protected)
+            .handle_datagram(test_now(), pair.b_addr, &protected)
             .unwrap();
         assert!(
             matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 9),
@@ -3359,10 +3431,9 @@ mod tests {
 
         // And before any pair is selected at all, DTLS datagrams are dropped
         // too — a fresh transport never even starts an association.
-        let mut fresh =
-            MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
+        let mut fresh = MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
         let events = fresh
-            .handle_datagram(Instant::now(), pair.b_addr, &a_dtls_datagrams[0])
+            .handle_datagram(test_now(), pair.b_addr, &a_dtls_datagrams[0])
             .unwrap();
         assert!(events.is_empty());
         while let Some(dgram) = fresh.poll_transmit() {
@@ -3425,7 +3496,7 @@ mod tests {
     fn stun_from_new_addresses_is_capped_and_original_peer_still_flows() {
         // Bite test: run this against the unfixed code (no
         // `known_remote_addrs` gate in `handle_stun_datagram`) and it fails.
-        // `pair.b.ice.get_remote_candidates_stats(Instant::now())` is `rtc-ice`'s own
+        // `pair.b.ice.get_remote_candidates_stats(test_now())` is `rtc-ice`'s own
         // public stats accessor — it walks the agent's private
         // `remote_candidates` list directly, so it observes the *real*
         // peer-reflexive-candidate growth this fix is supposed to stop, not
@@ -3439,7 +3510,10 @@ mod tests {
         // B already knows exactly one remote candidate (A's host address,
         // added by `loopback_pair_with_max_remote`).
         assert_eq!(
-            pair.b.ice.get_remote_candidates_stats(Instant::now()).len(),
+            pair.b
+                .ice
+                .get_remote_candidates_stats(pair.b.now_at(test_now()))
+                .len(),
             1
         );
         assert_eq!(pair.b.known_remote_addrs.len(), 1);
@@ -3456,11 +3530,15 @@ mod tests {
         for _ in 0..10 {
             let new_source_addr = reserve_loopback_addr();
             pair.b
-                .handle_datagram(Instant::now(), new_source_addr, &new_source_request)
+                .handle_datagram(test_now(), new_source_addr, &new_source_request)
                 .expect("a capped-and-dropped datagram must not error");
         }
 
-        let remote_candidates = pair.b.ice.get_remote_candidates_stats(Instant::now()).len();
+        let remote_candidates = pair
+            .b
+            .ice
+            .get_remote_candidates_stats(pair.b.now_at(test_now()))
+            .len();
         assert!(
             remote_candidates <= small_cap,
             "at most {small_cap} remote candidates may ever be tracked by the agent, got {remote_candidates}"
@@ -3477,7 +3555,7 @@ mod tests {
         let protected = pair.a.encrypt_rtp(&rtp_test_packet(42)).unwrap();
         let events = pair
             .b
-            .handle_datagram(Instant::now(), pair.a_addr, &protected)
+            .handle_datagram(test_now(), pair.a_addr, &protected)
             .unwrap();
         assert!(
             matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 42),

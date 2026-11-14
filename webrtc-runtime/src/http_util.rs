@@ -23,8 +23,9 @@ use crate::Error;
 pub struct HttpRequest {
     /// HTTP method to use.
     pub method: Method,
-    /// Absolute or resource-relative URL to send the request to.
-    pub url: String,
+    /// Absolute URL to send the request to (parsed, so a request never carries an unvalidated
+    /// string).
+    pub url: url::Url,
     /// Headers to send (`Content-Type`, `Authorization`, `If-Match`, ...).
     pub headers: HeaderMap,
     /// Request body bytes.
@@ -34,7 +35,7 @@ pub struct HttpRequest {
 impl HttpRequest {
     /// Build a request from its method and URL, with no headers or body.
     #[must_use]
-    pub fn new(method: Method, url: String) -> Self {
+    pub fn new(method: Method, url: url::Url) -> Self {
         Self {
             method,
             url,
@@ -166,11 +167,12 @@ pub(crate) fn location(url: &str) -> Result<Location, Error> {
 }
 
 /// The `Location` header of `h`, as text.
-pub(crate) fn location_of(h: &HeaderMap) -> Option<String> {
+pub(crate) fn location_of(base: &url::Url, h: &HeaderMap) -> Option<url::Url> {
     let l = h.typed_get::<Location>()?;
     let mut v: Vec<HeaderValue> = Vec::new();
     l.encode(&mut v);
-    v.first().and_then(|h| h.to_str().ok()).map(str::to_string)
+    let text = v.first().and_then(|h| h.to_str().ok())?;
+    broadcast_common::url_ref::resolve(base, text).ok()
 }
 
 /// The opaque tag of the `ETag` header of `h`.
@@ -188,12 +190,8 @@ pub(crate) fn etag_of(h: &HeaderMap) -> Option<String> {
 /// §4) as `endpoint`. A bearer token configured for `endpoint` must never be
 /// sent anywhere else (issue #1142), so anything that does not parse is
 /// treated as a different origin.
-pub(crate) fn same_origin(endpoint: &str, target: &str) -> bool {
-    let Ok(base) = url::Url::parse(endpoint) else {
-        return false;
-    };
-    broadcast_common::url_ref::resolve(&base, target)
-        .is_ok_and(|resolved| resolved.origin() == base.origin())
+pub(crate) fn same_origin(base: &url::Url, target: &url::Url) -> bool {
+    base.origin() == target.origin()
 }
 
 /// An `Authorization: Bearer <token>` typed header.
@@ -290,16 +288,24 @@ mod tests {
         assert_eq!(etag_of(&h).as_deref(), Some("v1"));
     }
 
-    /// RFC 3986 §2: a target with a control character names no URL, so it is
-    /// never the same origin (the WHATWG join would delete the TAB and call
-    /// `https://a.exam\tple/` the endpoint's own origin).
+    /// A session URL (the server's `Location`) is parsed once, against the endpoint, so a
+    /// reference with a control character names no URL at all and can never share the endpoint's
+    /// origin (the WHATWG join would delete the TAB and call `https://a.exam\tple/` the endpoint's
+    /// own origin).
     #[test]
-    fn a_target_with_a_control_character_is_a_different_origin() {
-        assert!(same_origin("https://a.example/whip", "/resource"));
-        assert!(!same_origin(
-            "https://a.example/whip",
-            "https://a.exam\tple/x"
-        ));
-        assert!(!same_origin("https://a.example/whip", "/re\nsource"));
+    fn a_location_with_a_control_character_resolves_to_nothing() {
+        let endpoint = url::Url::parse("https://a.example/whip").expect("endpoint");
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            http::header::LOCATION,
+            HeaderValue::from_static("/resource"),
+        );
+        let resolved = location_of(&endpoint, &headers).expect("a relative Location resolves");
+        assert!(same_origin(&endpoint, &resolved));
+        let mut bad = HeaderMap::new();
+        if let Ok(value) = HeaderValue::from_str("/re\nsource") {
+            bad.insert(http::header::LOCATION, value);
+        }
+        assert!(location_of(&endpoint, &bad).is_none());
     }
 }

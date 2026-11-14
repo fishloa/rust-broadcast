@@ -2,7 +2,7 @@
 //! timeouts, deadline and inactivity bookkeeping, and the connection-lease dance of sending one.
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
-use alloc::string::{String, ToString};
+use alloc::string::ToString;
 use alloc::vec::Vec;
 use std::collections::HashMap;
 use url::Url;
@@ -18,6 +18,7 @@ use crate::source::fetch::resume::{Basis, Parked, Stash};
 use crate::source::fetch::retry::RefusedCapture;
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::stage::Timestamp;
+use http::{HeaderMap, StatusCode};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum TimeoutClass {
@@ -291,11 +292,15 @@ impl<P: PurposeKind + PartialEq, X> InFlight<P, X> {
     }
 }
 
-pub(crate) const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
-pub(crate) const STATUS_UNAUTHORIZED: u16 = 401;
-pub(crate) const STATUS_PROXY_AUTH_REQUIRED: u16 = 407;
-const STATUS_TOO_MANY_REQUESTS: u16 = 429;
-const STATUS_SERVICE_UNAVAILABLE: u16 = 503;
+pub(crate) const REDIRECT_STATUSES: [StatusCode; 5] = [
+    StatusCode::MOVED_PERMANENTLY,
+    StatusCode::FOUND,
+    StatusCode::SEE_OTHER,
+    StatusCode::TEMPORARY_REDIRECT,
+    StatusCode::PERMANENT_REDIRECT,
+];
+pub(crate) const STATUS_UNAUTHORIZED: StatusCode = StatusCode::UNAUTHORIZED;
+pub(crate) const STATUS_PROXY_AUTH_REQUIRED: StatusCode = StatusCode::PROXY_AUTHENTICATION_REQUIRED;
 
 pub(crate) enum HeadRoute<P, X> {
     Send(Req<P, X>),
@@ -312,8 +317,8 @@ pub(crate) struct Outbox<'a> {
 #[derive(Clone, Copy)]
 pub(crate) struct ResponseHead<'a> {
     pub(crate) conn: ConnId,
-    pub(crate) status: u16,
-    pub(crate) headers: &'a [(String, String)],
+    pub(crate) status: StatusCode,
+    pub(crate) headers: &'a HeaderMap,
 }
 
 pub(crate) fn route_head<P: PurposeKind, X>(
@@ -374,7 +379,8 @@ pub(crate) fn record_refusal(
         headers,
     } = head;
     let Outbox { actions, events } = out;
-    let refused = status == STATUS_TOO_MANY_REQUESTS || status == STATUS_SERVICE_UNAVAILABLE;
+    let refused =
+        status == StatusCode::TOO_MANY_REQUESTS || status == StatusCode::SERVICE_UNAVAILABLE;
     if refused {
         let cap = RefusedCapture::new(status, retry_after_us, headers);
         if cap.wants_body() {
