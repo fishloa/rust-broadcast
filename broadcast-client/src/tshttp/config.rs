@@ -1,7 +1,7 @@
 use alloc::vec;
 use core::time::Duration;
 
-use broadcast_common::backoff::BackoffSteps;
+use broadcast_common::backoff::{BackoffSteps, MAX_FLOOR};
 use broadcast_common::timeouts::Timeouts;
 
 /// Session configuration (defaults per DESIGN.md).
@@ -175,14 +175,16 @@ impl Config {
         Ok(())
     }
 
-    /// The nearest configuration that passes [`Config::validate`]: zero
-    /// timeouts become 1 ms, a `stall_reconnect` not after the notice is
+    /// The nearest configuration that passes [`Config::validate`]: a
+    /// `backoff.cap` above [`MAX_FLOOR`] (the largest retry delay) becomes it,
+    /// zero timeouts become 1 ms, a `stall_reconnect` not after the notice is
     /// moved to one millisecond after it, an empty `backoff.steps` becomes the
     /// single entry `backoff.cap` (at least 1 ms), a zero `backoff.steps`
     /// entry becomes 1 ms. A valid configuration is returned unchanged.
     #[must_use]
     pub fn clamped(&self) -> Self {
         let mut c = self.clone();
+        c.backoff.cap = c.backoff.cap.min(MAX_FLOOR);
         c.start_timeout = c.start_timeout.max(MIN_START_TIMEOUT);
         c.stall_notice = c.stall_notice.max(MIN_START_TIMEOUT);
         c.stall_reconnect = c

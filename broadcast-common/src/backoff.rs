@@ -217,6 +217,20 @@ enum Kind {
 }
 
 impl RetrySchedule {
+    /// The schedule no bound can refuse: a zero cap with no step table, whose
+    /// every attempt waits nothing. It is reached by its own constructor too
+    /// (`from_steps(&[], Duration::ZERO, ..)`), so this is the value that
+    /// constructor always yields.
+    #[must_use]
+    pub fn no_delay(seed: u64) -> Self {
+        Self {
+            kind: Kind::Steps(alloc::vec::Vec::new()),
+            max: Duration::ZERO,
+            terms: jitter_terms(seed),
+            cursor: Cell::new(FIRST_TERM + 1),
+        }
+    }
+
     /// A schedule from `min` (the first raw delay), `max` (the cap), a growth
     /// factor and a jitter seed.
     ///

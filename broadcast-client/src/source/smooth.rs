@@ -22,8 +22,8 @@ use crate::playout::Source;
 use crate::redirect;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::deadline;
+use crate::source::fetch::duration_us;
 use crate::source::fetch::inflight::REDIRECT_STATUSES;
-use crate::source::fetch::retry::duration_us;
 use broadcast_auth::{AuthDecision, AuthState};
 use broadcast_common::stage::Timestamp;
 
