@@ -2,6 +2,8 @@
 //! ([`ResourceId`]).
 
 use broadcast_common::impl_spec_display;
+use broadcast_common::range::ByteSpan;
+use url::Url;
 
 use crate::timing::utc_timing::UtcScheme;
 
@@ -110,7 +112,7 @@ pub enum Action {
     FetchMpd {
         /// The MPD URL: the first `Location`, else the redirect target, else
         /// the original (23009-1 A.11).
-        url: String,
+        url: Url,
         /// Validators of the MPD held now.
         validators: MpdValidators,
     },
@@ -124,7 +126,7 @@ pub enum Action {
         /// The scheme the MPD announced.
         scheme: UtcScheme,
         /// Absolute URL.
-        url: String,
+        url: Url,
         /// `GET` or `HEAD`.
         method: UtcMethod,
     },
@@ -133,27 +135,27 @@ pub enum Action {
         /// Correlates [`super::DashClient::on_init`].
         id: ResourceId,
         /// Absolute URL.
-        url: String,
-        /// `(offset, length)` of a byte-range request.
-        byte_range: Option<(u64, u64)>,
+        url: Url,
+        /// Byte-range request, if any.
+        byte_range: Option<ByteSpan>,
     },
     /// GET a `sidx` (SegmentBase index).
     FetchIndex {
         /// Correlates [`super::DashClient::on_index`].
         id: ResourceId,
         /// Absolute URL.
-        url: String,
-        /// `(offset, length)` of a byte-range request.
-        byte_range: Option<(u64, u64)>,
+        url: Url,
+        /// Byte-range request, if any.
+        byte_range: Option<ByteSpan>,
     },
     /// GET a Media Segment.
     FetchSegment {
         /// Correlates [`super::DashClient::on_segment`].
         id: ResourceId,
         /// Absolute URL.
-        url: String,
-        /// `(offset, length)` of a byte-range request.
-        byte_range: Option<(u64, u64)>,
+        url: Url,
+        /// Byte-range request, if any.
+        byte_range: Option<ByteSpan>,
     },
 }
 
@@ -171,7 +173,7 @@ impl Action {
 
     /// The URL to fetch.
     #[must_use]
-    pub fn url(&self) -> &str {
+    pub fn url(&self) -> &Url {
         match self {
             Self::FetchMpd { url, .. }
             | Self::FetchUtcTiming { url, .. }
@@ -183,7 +185,7 @@ impl Action {
 
     /// The byte range, if the request is ranged.
     #[must_use]
-    pub fn byte_range(&self) -> Option<(u64, u64)> {
+    pub fn byte_range(&self) -> Option<ByteSpan> {
         match self {
             Self::FetchMpd { .. } | Self::FetchUtcTiming { .. } => None,
             Self::FetchInit { byte_range, .. }

@@ -52,10 +52,14 @@ pub fn first_forbidden_char(s: &str) -> Option<char> {
 /// Resolve `reference` against `base` (RFC 3986 §5.2 as the `url` crate
 /// implements it). `base` is the MPD's own URL (a source URL, or
 /// `Url::from_file_path`); `None` for an in-memory MPD, in which case a result
-/// that stays relative is returned relative. `None` is returned when the
-/// reference contains a control character or whitespace
-/// ([`first_forbidden_char`]) or does not parse.
-pub fn resolve(base: Option<&Url>, reference: &str) -> Option<String> {
+/// that stays relative is returned relative.
+///
+/// # Errors
+/// [`ResolveError::ForbiddenChar`] for a control character or whitespace in
+/// the reference ([`first_forbidden_char`]), [`ResolveError::SyntheticScheme`]
+/// for an input naming the synthetic scheme, or [`ResolveError::Join`] for a
+/// join/parse failure.
+pub fn resolve(base: Option<&Url>, reference: &str) -> Result<ResolvedRef, ResolveError> {
     resolve_chain(base, &[], reference)
 }
 
@@ -64,11 +68,18 @@ pub fn resolve(base: Option<&Url>, reference: &str) -> Option<String> {
 /// entry composes with the ones above it and an absolute one resets the chain.
 /// Empty and whitespace-only entries are skipped — ISO/IEC 23009-1 §5.6.5 makes
 /// several `BaseURL`s alternates for the same level, so an empty one
-/// contributes nothing. `None` for a control character or whitespace in any
-/// entry or the reference ([`first_forbidden_char`]), for an input that names
-/// the synthetic scheme, or for a join error. With `base == None` a relative
-/// outcome stays relative and contained (see the module docs).
-pub fn resolve_chain(base: Option<&Url>, chain: &[String], reference: &str) -> Option<String> {
+/// contributes nothing. With `base == None` a relative outcome stays relative
+/// and contained (see the module docs).
+///
+/// # Errors
+/// [`ResolveError::ForbiddenChar`] for a control character or whitespace in
+/// any entry or the reference, [`ResolveError::SyntheticScheme`] for an input
+/// that names the synthetic scheme, or [`ResolveError::Join`] for a join error.
+pub fn resolve_chain(
+    base: Option<&Url>,
+    chain: &[String],
+    reference: &str,
+) -> Result<ResolvedRef, ResolveError> {
     // `BaseURL` element text routinely carries surrounding whitespace/newlines
     // from the XML layout, so entries are trimmed (and blank ones dropped)
     // BEFORE the forbidden-character guard; an interior control character or
@@ -78,18 +89,23 @@ pub fn resolve_chain(base: Option<&Url>, chain: &[String], reference: &str) -> O
         .map(|b| b.trim())
         .filter(|b| !b.is_empty())
         .collect();
-    if first_forbidden_char(reference).is_some()
-        || entries.iter().any(|b| first_forbidden_char(b).is_some())
-        || entries
-            .iter()
-            .chain(core::iter::once(&reference))
-            .any(|r| names_synthetic_scheme(r))
+    if let Some(c) = first_forbidden_char(reference)
+        .or_else(|| entries.iter().find_map(|b| first_forbidden_char(b)))
     {
-        return None;
+        return Err(ResolveError::ForbiddenChar(c));
+    }
+    if entries
+        .iter()
+        .chain(core::iter::once(&reference))
+        .any(|r| names_synthetic_scheme(r))
+    {
+        return Err(ResolveError::SyntheticScheme);
     }
     let mut current = match base {
         Some(b) => b.clone(),
-        None => Url::parse(SYNTHETIC_BASE).ok()?,
+        None => {
+            Url::parse(SYNTHETIC_BASE).map_err(|_| ResolveError::Join(url_ref::Error::Parse))?
+        }
     };
     // Set once the MPD itself wrote an absolute-path reference (`/x`).
     let mut absolute_path = false;
@@ -97,9 +113,9 @@ pub fn resolve_chain(base: Option<&Url>, chain: &[String], reference: &str) -> O
         if is_absolute_path_reference(entry) {
             absolute_path = true;
         }
-        current = url_ref::resolve(&current, entry).ok()?;
+        current = url_ref::resolve(&current, entry).map_err(ResolveError::Join)?;
     }
-    Some(render(&current, absolute_path))
+    Ok(ResolvedRef::render(current, absolute_path))
 }
 
 /// `true` for `/x` (but not `//host/x`): an absolute-path reference.
@@ -113,6 +129,45 @@ fn names_synthetic_scheme(r: &str) -> bool {
     r.len() > SYNTHETIC_SCHEME.len()
         && r.as_bytes()[..SYNTHETIC_SCHEME.len()].eq_ignore_ascii_case(SYNTHETIC_SCHEME.as_bytes())
         && r.as_bytes()[SYNTHETIC_SCHEME.len()] == b':'
+}
+
+/// A resolved reference: either an absolute URL, or a reference that stayed
+/// relative (an in-memory MPD, or a scheme-relative/absolute-path reference).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResolvedRef {
+    /// A fully-resolved URL (real scheme, or `file://`).
+    Absolute(Url),
+    /// A reference that did not resolve against a base: relative, a
+    /// scheme-relative `//host/...`, or an absolute-path `/...`.
+    Relative(String),
+}
+
+impl ResolvedRef {
+    /// Render a joined URL as a [`ResolvedRef`]: a URL that stays under the
+    /// synthetic root is a relative reference, anything else is absolute.
+    fn render(url: Url, absolute_path: bool) -> Self {
+        if url.as_str().starts_with(SYNTHETIC_SCHEME) {
+            ResolvedRef::Relative(render(&url, absolute_path))
+        } else {
+            ResolvedRef::Absolute(url)
+        }
+    }
+}
+
+/// Why a reference could not be resolved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum ResolveError {
+    /// The reference (or a `BaseURL` entry) contained a control character or
+    /// whitespace, which RFC 3986 §2 does not allow in a URI.
+    #[error("forbidden character in reference: {0:?}")]
+    ForbiddenChar(char),
+    /// The input named the synthetic root scheme (`transmux-relative:`).
+    #[error("input names the synthetic scheme")]
+    SyntheticScheme,
+    /// The base and reference did not join into a URL.
+    #[error("reference does not resolve: {0}")]
+    Join(broadcast_common::url_ref::Error),
 }
 
 /// The single place the synthetic root is stripped. A URL that is not under it

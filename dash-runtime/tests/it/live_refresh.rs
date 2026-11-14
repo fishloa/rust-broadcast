@@ -9,6 +9,7 @@ use common::scenario::*;
 use common::synth::{Addressing, Synth};
 use common::world::{Kind, MICROS, Sim};
 use dash_runtime::client::{DashConfig, Notice, Output};
+use url::Url;
 
 /// The test's microsecond clock as the client's `now`.
 fn now(us: u64) -> Timestamp {
@@ -359,7 +360,7 @@ fn a_trailing_negative_repeat_runs_to_the_fetch_time_plus_the_update_period() {
 #[test]
 fn a_304_nobody_asked_for_is_an_error() {
     let mut c = dash_runtime::client::DashClient::new(
-        dash_runtime::client::DashClientConfig::new(common::synth::MPD_URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(common::synth::MPD_URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(dash_runtime::client::PullLimits::default()),
     );

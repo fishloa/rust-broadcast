@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use common::loopback::{Drive, Origin, Run, drive, mpd_text, oracle, sigs};
 use dash_runtime::client::{DashClient, Error, Output, PullLimits};
+use url::Url;
 
 const URL: &str = "http://dash.test/manifest.mpd";
 const SECOND_AUDIO: &str = r#"<AdaptationSet id="2" contentType="audio" startWithSAP="1" segmentAlignment="true" lang="fr">
@@ -119,7 +120,7 @@ fn an_index_outside_the_audio_list_is_refused_and_changes_nothing() {
 #[test]
 fn nothing_can_be_selected_before_the_period_plays() {
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(dash_runtime::client::DashConfig::default())
             .with_limits(PullLimits::default()),
     );

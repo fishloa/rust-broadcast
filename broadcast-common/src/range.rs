@@ -18,7 +18,8 @@ use alloc::string::String;
 /// A byte sub-range of a resource: `offset` for `len` bytes
 /// (`[offset, offset + len)`), what a `Range: bytes=first-last` request names.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ByteSpan {
     /// First byte of the range, from the start of the resource (inclusive).
     pub offset: u64,

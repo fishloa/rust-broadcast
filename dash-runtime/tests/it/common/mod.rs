@@ -43,11 +43,15 @@ impl Loaded {
     pub fn file_of(&self, planned: &PlannedRepresentation, reference: &str) -> PathBuf {
         let resolved = planned.candidates[0]
             .resolve(Some(&self.url), reference)
-            .unwrap_or_else(|| panic!("cannot resolve {reference:?}"));
-        Url::parse(&resolved)
+            .unwrap_or_else(|_| panic!("cannot resolve {reference:?}"));
+        let text = match resolved {
+            dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => u.to_string(),
+            dash_runtime::mpd::base_url::ResolvedRef::Relative(s) => s,
+        };
+        Url::parse(&text)
             .unwrap()
             .to_file_path()
-            .unwrap_or_else(|()| panic!("not a file URL: {resolved}"))
+            .unwrap_or_else(|()| panic!("not a file URL: {text}"))
     }
 }
 
@@ -57,7 +61,13 @@ impl Loaded {
         let (period, set, rep) = at.resolve(&self.mpd).unwrap();
         let cands = dash_runtime::mpd::urls::representation_candidates(&self.mpd, period, set, rep);
         let resolved = cands[0].resolve(Some(&self.url), "").unwrap();
-        let path = Url::parse(&resolved).unwrap().to_file_path().unwrap();
+        let resolved = match resolved {
+            dash_runtime::mpd::base_url::ResolvedRef::Absolute(u) => u,
+            dash_runtime::mpd::base_url::ResolvedRef::Relative(_) => {
+                panic!("not a file URL");
+            }
+        };
+        let path = resolved.to_file_path().unwrap();
         std::fs::read(path).unwrap()
     }
 }

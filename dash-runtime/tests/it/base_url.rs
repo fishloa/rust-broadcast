@@ -4,8 +4,15 @@
 //! crate implements the WHATWG URL algorithm, which differs from strict RFC
 //! 3986 in exactly the rows listed in `WHATWG_DIFFERENCES`.
 
-use dash_runtime::mpd::base_url::{first_forbidden_char, resolve, resolve_chain};
+use dash_runtime::mpd::base_url::{first_forbidden_char, resolve, resolve_chain, ResolveError, ResolvedRef};
 use url::Url;
+
+fn flat(r: Result<ResolvedRef, ResolveError>) -> Option<String> {
+    r.ok().map(|r| match r {
+        ResolvedRef::Absolute(u) => u.to_string(),
+        ResolvedRef::Relative(s) => s,
+    })
+}
 
 const BASE: &str = "http://a/b/c/d;p?q";
 
@@ -69,7 +76,7 @@ fn run(rows: &[(&str, &str)]) {
             .find(|(r, _)| r == reference)
             .map_or(*rfc, |(_, w)| *w);
         assert_eq!(
-            resolve(Some(&base), reference).as_deref(),
+            flat(resolve(Some(&base), reference)).as_deref(),
             Some(expected),
             "{reference:?}"
         );
@@ -88,7 +95,7 @@ fn rfc3986_5_4_2_abnormal_examples() {
     run(RFC3986_ABNORMAL_EXAMPLES);
     let base = Url::parse(BASE).unwrap();
     assert_eq!(
-        resolve(Some(&base), "http:g").as_deref(),
+        flat(resolve(Some(&base), "http:g")).as_deref(),
         Some("http://a/b/c/g")
     );
 }
@@ -101,11 +108,11 @@ fn base_chain_each_level_resolves_against_the_one_before() {
         "video/".to_string(),
     ];
     assert_eq!(
-        resolve_chain(None, &chain, "seg-1.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "seg-1.m4s")).as_deref(),
         Some("https://cdn.example.com/vod/period-1/video/seg-1.m4s")
     );
     assert_eq!(
-        resolve_chain(None, &chain, "../audio/seg-1.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "../audio/seg-1.m4s")).as_deref(),
         Some("https://cdn.example.com/vod/period-1/audio/seg-1.m4s")
     );
     let reset = vec![
@@ -113,17 +120,17 @@ fn base_chain_each_level_resolves_against_the_one_before() {
         "https://other.example.net/".to_string(),
     ];
     assert_eq!(
-        resolve_chain(None, &reset, "seg.m4s").as_deref(),
+        flat(resolve_chain(None, &reset, "seg.m4s")).as_deref(),
         Some("https://other.example.net/seg.m4s")
     );
     assert_eq!(
-        resolve_chain(None, &[], "https://x/y.m4s").as_deref(),
+        flat(resolve_chain(None, &[], "https://x/y.m4s")).as_deref(),
         Some("https://x/y.m4s")
     );
     // Empty / whitespace-only BaseURLs contribute nothing.
     let blanks = vec![String::new(), "  ".to_string(), "https://h/d/".to_string()];
     assert_eq!(
-        resolve_chain(None, &blanks, "s.m4s").as_deref(),
+        flat(resolve_chain(None, &blanks, "s.m4s")).as_deref(),
         Some("https://h/d/s.m4s")
     );
 }
@@ -132,17 +139,17 @@ fn base_chain_each_level_resolves_against_the_one_before() {
 fn trailing_slash_is_significant() {
     let mpd = Url::parse("https://cdn.example.com/vod/index.mpd").unwrap();
     assert_eq!(
-        resolve(Some(&mpd), "seg.m4s").as_deref(),
+        flat(resolve(Some(&mpd), "seg.m4s")).as_deref(),
         Some("https://cdn.example.com/vod/seg.m4s")
     );
     let dir = Url::parse("https://cdn.example.com/vod/").unwrap();
     assert_eq!(
-        resolve(Some(&dir), "seg.m4s").as_deref(),
+        flat(resolve(Some(&dir), "seg.m4s")).as_deref(),
         Some("https://cdn.example.com/vod/seg.m4s")
     );
     let file = Url::parse("https://cdn.example.com/vod").unwrap();
     assert_eq!(
-        resolve(Some(&file), "seg.m4s").as_deref(),
+        flat(resolve(Some(&file), "seg.m4s")).as_deref(),
         Some("https://cdn.example.com/seg.m4s")
     );
 }
@@ -152,12 +159,12 @@ fn the_mpd_url_or_a_file_url_is_the_base() {
     let mpd = Url::parse("https://cdn.example.com/vod/index.mpd").unwrap();
     let chain = vec!["period-1/".to_string()];
     assert_eq!(
-        resolve_chain(Some(&mpd), &chain, "seg.m4s").as_deref(),
+        flat(resolve_chain(Some(&mpd), &chain, "seg.m4s")).as_deref(),
         Some("https://cdn.example.com/vod/period-1/seg.m4s")
     );
     let file = Url::from_file_path("/media/a/index.mpd").unwrap();
     assert_eq!(
-        resolve(Some(&file), "seg.m4s").as_deref(),
+        flat(resolve(Some(&file), "seg.m4s")).as_deref(),
         Some("file:///media/a/seg.m4s")
     );
 }
@@ -166,29 +173,29 @@ fn the_mpd_url_or_a_file_url_is_the_base() {
 
 #[test]
 fn relative_results_stay_relative_when_there_is_no_base() {
-    assert_eq!(resolve(None, "seg/1.m4s").as_deref(), Some("seg/1.m4s"));
+    assert_eq!(flat(resolve(None, "seg/1.m4s")).as_deref(), Some("seg/1.m4s"));
     assert_eq!(
-        resolve(None, "seg.m4s?x=1#f").as_deref(),
+        flat(resolve(None, "seg.m4s?x=1#f")).as_deref(),
         Some("seg.m4s?x=1#f")
     );
     assert_eq!(
-        resolve_chain(None, &["video/".to_string()], "seg-1.m4s").as_deref(),
+        flat(resolve_chain(None, &["video/".to_string()], "seg-1.m4s")).as_deref(),
         Some("video/seg-1.m4s")
     );
     assert_eq!(
-        resolve_chain(None, &["a/".to_string(), "../b/".to_string()], "s.m4s").as_deref(),
+        flat(resolve_chain(None, &["a/".to_string(), "../b/".to_string()], "s.m4s")).as_deref(),
         Some("b/s.m4s")
     );
 }
 
 #[test]
 fn an_absolute_path_reference_is_not_mistaken_for_a_relative_one() {
-    assert_eq!(resolve(None, "/abs/x.m4s").as_deref(), Some("/abs/x.m4s"));
+    assert_eq!(flat(resolve(None, "/abs/x.m4s")).as_deref(), Some("/abs/x.m4s"));
     assert_eq!(
-        resolve(None, "//cdn.example/x.m4s").as_deref(),
+        flat(resolve(None, "//cdn.example/x.m4s")).as_deref(),
         Some("//cdn.example/x.m4s")
     );
-    assert_eq!(resolve(None, "http://x/y").as_deref(), Some("http://x/y"));
+    assert_eq!(flat(resolve(None, "http://x/y")).as_deref(), Some("http://x/y"));
 }
 
 /// Containment: with no base, a relative input never resolves to an absolute
@@ -196,19 +203,19 @@ fn an_absolute_path_reference_is_not_mistaken_for_a_relative_one() {
 /// consumer doing `local_dir.join(resolved)` must not see `/etc/passwd`.
 #[test]
 fn climbing_above_the_root_stays_relative_and_contained() {
-    assert_eq!(resolve(None, "../x").as_deref(), Some("x"));
+    assert_eq!(flat(resolve(None, "../x")).as_deref(), Some("x"));
     assert_eq!(
-        resolve(None, "../../../etc/passwd").as_deref(),
+        flat(resolve(None, "../../../etc/passwd")).as_deref(),
         Some("etc/passwd")
     );
     assert_eq!(
-        resolve(None, "a/../../../etc/passwd").as_deref(),
+        flat(resolve(None, "a/../../../etc/passwd")).as_deref(),
         Some("etc/passwd")
     );
-    assert_eq!(resolve(None, "..").as_deref(), Some(""));
+    assert_eq!(flat(resolve(None, "..")).as_deref(), Some(""));
     let chain = vec!["a/".to_string(), "../../../b/".to_string()];
     assert_eq!(
-        resolve_chain(None, &chain, "../../s.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "../../s.m4s")).as_deref(),
         Some("s.m4s")
     );
 }
@@ -217,10 +224,10 @@ fn climbing_above_the_root_stays_relative_and_contained() {
 /// exactly like `..` / `.` and cannot be used to escape either.
 #[test]
 fn encoded_dot_segments_behave_like_plain_ones() {
-    assert_eq!(resolve(None, "%2e%2e/x").as_deref(), Some("x"));
-    assert_eq!(resolve(None, "%2E%2E/%2e%2e/x").as_deref(), Some("x"));
-    assert_eq!(resolve(None, ".%2e/x").as_deref(), Some("x"));
-    assert_eq!(resolve(None, "a/%2e/b").as_deref(), Some("a/b"));
+    assert_eq!(flat(resolve(None, "%2e%2e/x")).as_deref(), Some("x"));
+    assert_eq!(flat(resolve(None, "%2E%2E/%2e%2e/x")).as_deref(), Some("x"));
+    assert_eq!(flat(resolve(None, ".%2e/x")).as_deref(), Some("x"));
+    assert_eq!(flat(resolve(None, "a/%2e/b")).as_deref(), Some("a/b"));
     assert_eq!(resolve(None, "%2e%2e/x"), resolve(None, "../x"));
 }
 
@@ -228,21 +235,21 @@ fn encoded_dot_segments_behave_like_plain_ones() {
 /// still clamped at the root); a relative one never becomes absolute after it.
 #[test]
 fn absolute_path_references_are_absolute_only_when_written_so() {
-    assert_eq!(resolve(None, "/abs/x.m4s").as_deref(), Some("/abs/x.m4s"));
-    assert_eq!(resolve(None, "/../../x").as_deref(), Some("/x"));
+    assert_eq!(flat(resolve(None, "/abs/x.m4s")).as_deref(), Some("/abs/x.m4s"));
+    assert_eq!(flat(resolve(None, "/../../x")).as_deref(), Some("/x"));
     let chain = vec!["/a/".to_string()];
     assert_eq!(
-        resolve_chain(None, &chain, "../../s.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "../../s.m4s")).as_deref(),
         Some("/s.m4s")
     );
     assert_eq!(
-        resolve_chain(None, &chain, "b/s.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "b/s.m4s")).as_deref(),
         Some("/a/b/s.m4s")
     );
     // A later relative entry does not undo an earlier absolute-path one.
     let chain = vec!["/a/".to_string(), "b/".to_string()];
     assert_eq!(
-        resolve_chain(None, &chain, "s.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "s.m4s")).as_deref(),
         Some("/a/b/s.m4s")
     );
 }
@@ -257,20 +264,20 @@ fn inputs_naming_the_synthetic_scheme_are_rejected() {
         "TRANSMUX-RELATIVE:///x",
         "transmux-relative://host/x",
     ] {
-        assert_eq!(resolve(None, evil), None, "{evil}");
+        assert!(flat(resolve(None, evil)).is_none(), "{evil}");
         assert_eq!(
-            resolve_chain(None, &[evil.to_string()], "a.m4s"),
+            flat(resolve_chain(None, &[evil.to_string()], "a.m4s")).as_deref(),
             None,
             "{evil}"
         );
     }
     // A name that merely starts with the same letters is an ordinary relative path.
     assert_eq!(
-        resolve(None, "transmux-relative-root/a.m4s").as_deref(),
+        flat(resolve(None, "transmux-relative-root/a.m4s")).as_deref(),
         Some("transmux-relative-root/a.m4s")
     );
     assert_eq!(
-        resolve(None, "transmux-relative/a").as_deref(),
+        flat(resolve(None, "transmux-relative/a")).as_deref(),
         Some("transmux-relative/a")
     );
 }
@@ -279,20 +286,20 @@ fn inputs_naming_the_synthetic_scheme_are_rejected() {
 #[test]
 fn scheme_relative_references_keep_their_host() {
     assert_eq!(
-        resolve(None, "//cdn.example/x.m4s").as_deref(),
+        flat(resolve(None, "//cdn.example/x.m4s")).as_deref(),
         Some("//cdn.example/x.m4s")
     );
     assert_eq!(
-        resolve(None, "//cdn.example/../../x").as_deref(),
+        flat(resolve(None, "//cdn.example/../../x")).as_deref(),
         Some("//cdn.example/x")
     );
     let chain = vec!["//cdn.example/dir/".to_string()];
     assert_eq!(
-        resolve_chain(None, &chain, "s.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "s.m4s")).as_deref(),
         Some("//cdn.example/dir/s.m4s")
     );
     assert_eq!(
-        resolve_chain(None, &chain, "../../../s.m4s").as_deref(),
+        flat(resolve_chain(None, &chain, "../../../s.m4s")).as_deref(),
         Some("//cdn.example/s.m4s")
     );
 }
@@ -300,30 +307,30 @@ fn scheme_relative_references_keep_their_host() {
 /// Query and fragment survive, alone or after a path, with and without `..`.
 #[test]
 fn query_and_fragment_are_preserved_on_relative_results() {
-    assert_eq!(resolve(None, "?y").as_deref(), Some("?y"));
-    assert_eq!(resolve(None, "#f").as_deref(), Some("#f"));
-    assert_eq!(resolve(None, "").as_deref(), Some(""));
+    assert_eq!(flat(resolve(None, "?y")).as_deref(), Some("?y"));
+    assert_eq!(flat(resolve(None, "#f")).as_deref(), Some("#f"));
+    assert_eq!(flat(resolve(None, "")).as_deref(), Some(""));
     assert_eq!(
-        resolve(None, "../x.m4s?a=1&b=../2#frag").as_deref(),
+        flat(resolve(None, "../x.m4s?a=1&b=../2#frag")).as_deref(),
         Some("x.m4s?a=1&b=../2#frag")
     );
     assert_eq!(
-        resolve(None, "/x.m4s?a=1#f").as_deref(),
+        flat(resolve(None, "/x.m4s?a=1#f")).as_deref(),
         Some("/x.m4s?a=1#f")
     );
     let chain = vec!["dir/index.mpd?token=abc".to_string()];
     assert_eq!(
-        resolve_chain(None, &chain, "s.m4s?n=1").as_deref(),
+        flat(resolve_chain(None, &chain, "s.m4s?n=1")).as_deref(),
         Some("dir/s.m4s?n=1")
     );
 }
 
 #[test]
 fn non_ascii_references_are_percent_encoded_by_the_url_crate() {
-    assert_eq!(resolve(None, "é.m4s").as_deref(), Some("%C3%A9.m4s"));
+    assert_eq!(flat(resolve(None, "é.m4s")).as_deref(), Some("%C3%A9.m4s"));
     let base = Url::parse("http://a/b/").unwrap();
     assert_eq!(
-        resolve(Some(&base), "é.m4s").as_deref(),
+        flat(resolve(Some(&base), "é.m4s")).as_deref(),
         Some("http://a/b/%C3%A9.m4s")
     );
 }
@@ -354,24 +361,24 @@ fn control_characters_and_whitespace_are_rejected_before_parsing() {
         "seg\u{1b}[31m",
     ] {
         assert!(first_forbidden_char(evil).is_some(), "{evil:?}");
-        assert_eq!(resolve(Some(&base), evil), None, "{evil:?}");
-        assert_eq!(resolve(None, evil), None, "{evil:?}");
+        assert!(flat(resolve(Some(&base), evil)).as_deref().is_none(), "{evil:?}");
+        assert!(flat(resolve(None, evil)).as_deref().is_none(), "{evil:?}");
     }
     assert_eq!(
-        resolve_chain(None, &["http://a/\nb/".to_string()], "s"),
+        flat(resolve_chain(None, &["http://a/\nb/".to_string()], "s")).as_deref(),
         None
     );
     assert_eq!(
-        resolve_chain(None, &["x/".to_string()], "s\r\nHost: e"),
+        flat(resolve_chain(None, &["x/".to_string()], "s\r\nHost: e")).as_deref(),
         None
     );
     assert_eq!(
-        resolve(Some(&base), "seg.m4s").as_deref(),
+        flat(resolve(Some(&base), "seg.m4s")).as_deref(),
         Some("http://a/b/seg.m4s")
     );
     // A percent-encoded control character is not raw text and passes through.
     assert_eq!(
-        resolve(Some(&base), "seg%0D%0AHost:evil").as_deref(),
+        flat(resolve(Some(&base), "seg%0D%0AHost:evil")).as_deref(),
         Some("http://a/b/seg%0D%0AHost:evil")
     );
 }
@@ -385,11 +392,11 @@ fn unparseable_references_are_none_not_a_panic() {
         "http://a:99999999/",
         "http://exa mple/",
     ] {
-        assert_eq!(resolve(Some(&base), bad), None, "{bad:?}");
+        assert!(flat(resolve(Some(&base), bad)).is_none(), "{bad:?}");
     }
     // Backslash is a path separator for special schemes (WHATWG): pinned.
     assert_eq!(
-        resolve(Some(&base), "x\\y.m4s").as_deref(),
+        flat(resolve(Some(&base), "x\\y.m4s")).as_deref(),
         Some("http://a/b/x/y.m4s")
     );
 }
@@ -397,11 +404,11 @@ fn unparseable_references_are_none_not_a_panic() {
 #[test]
 fn the_public_entry_points_resolve_the_same_reference() {
     assert_eq!(
-        resolve(Some(&Url::parse("http://a/b/c/d;p?q").unwrap()), "g").as_deref(),
+        flat(resolve(Some(&Url::parse("http://a/b/c/d;p?q").unwrap()), "g")).as_deref(),
         Some("http://a/b/c/g")
     );
     assert_eq!(
-        resolve_chain(None, &["http://a/".to_string()], "s.m4s").as_deref(),
+        flat(resolve_chain(None, &["http://a/".to_string()], "s.m4s")).as_deref(),
         Some("http://a/s.m4s")
     );
 }

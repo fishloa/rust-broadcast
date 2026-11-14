@@ -117,9 +117,10 @@ fn availability(mpd: &Mpd, base: &Url) -> BTreeMap<String, i64> {
                     continue;
                 };
                 for seg in planned.plan.iter().take(10_000) {
-                    let Some(url) = planned.candidates[0].resolve(Some(base), &seg.reference)
-                    else {
-                        continue;
+                    let url = match planned.candidates[0].resolve(Some(base), &seg.reference) {
+                        Ok(dash_runtime::mpd::base_url::ResolvedRef::Absolute(u)) => u.to_string(),
+                        Ok(dash_runtime::mpd::base_url::ResolvedRef::Relative(s)) => s,
+                        Err(_) => continue,
                     };
                     if let Some(from) = seg.available_from_us {
                         out.insert(url, i64::try_from(from).unwrap_or(i64::MAX));
@@ -152,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let true_start = publish + START_AFTER_PUBLISH_US;
 
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(url.as_str())
+        dash_runtime::client::DashClientConfig::new(url.clone())
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -209,11 +210,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         requests += 1;
         let true_utc = true_start + i64::try_from(elapsed).unwrap_or(0);
-        let too_early = avail.get(action.url()).is_some_and(|a| true_utc < *a);
+        let too_early = avail.get(action.url().as_str()).is_some_and(|a| true_utc < *a);
         let body = if too_early {
             Err(Failure::Status(404))
         } else {
-            read(&root, action.url())
+            read(&root, action.url().as_str())
         };
         match (action.id(), body) {
             (None, Ok(b)) => {

@@ -19,6 +19,7 @@ use dash_runtime::client::{
     Action, DashClient, DashConfig, Error, Failure, FailureClass, Output, PullLimits, ResourceId,
     ResponseMeta, UtcMethod, UtcResponse,
 };
+use url::Url;
 
 pub const MICROS: i64 = 1_000_000;
 
@@ -159,7 +160,7 @@ pub type PostFn = Box<dyn FnMut(&HttpReq, &Kind, i64, Outcome) -> Outcome>;
 
 enum Delivery {
     Response {
-        action: Action,
+        action: Box<Action>,
         sent_mono: u64,
         received_mono: u64,
         outcome: Outcome,
@@ -221,7 +222,7 @@ impl Sim {
     ) -> Self {
         Self {
             client: DashClient::new(
-                dash_runtime::client::DashClientConfig::new(url)
+                dash_runtime::client::DashClientConfig::new(Url::parse(url).expect("URL"))
                     .with_dash(dash)
                     .with_limits(limits),
             ),
@@ -283,18 +284,18 @@ impl Sim {
             self.rtt_us
         };
         let (kind, method, url) = match &action {
-            Action::FetchMpd { url, .. } => (Kind::Mpd, Method::Get, url.clone()),
+            Action::FetchMpd { url, .. } => (Kind::Mpd, Method::Get, url.to_string()),
             Action::FetchUtcTiming { url, method, .. } => (
                 Kind::Utc,
                 match method {
                     UtcMethod::Head => Method::Head,
                     _ => Method::Get,
                 },
-                url.clone(),
+                url.to_string(),
             ),
-            Action::FetchInit { url, .. } => (Kind::Init, Method::Get, url.clone()),
-            Action::FetchIndex { url, .. } => (Kind::Index, Method::Get, url.clone()),
-            Action::FetchSegment { url, .. } => (Kind::Segment, Method::Get, url.clone()),
+            Action::FetchInit { url, .. } => (Kind::Init, Method::Get, url.to_string()),
+            Action::FetchIndex { url, .. } => (Kind::Index, Method::Get, url.to_string()),
+            Action::FetchSegment { url, .. } => (Kind::Segment, Method::Get, url.to_string()),
             _ => return,
         };
         let rtt = self
@@ -354,7 +355,7 @@ impl Sim {
             self.push(
                 arrive,
                 Delivery::Response {
-                    action: action.clone(),
+                    action: Box::new(action.clone()),
                     sent_mono,
                     received_mono,
                     outcome: Outcome::Resp(r.clone()),
@@ -367,7 +368,7 @@ impl Sim {
             self.push(
                 arrive,
                 Delivery::Response {
-                    action: action.clone(),
+                    action: Box::new(action.clone()),
                     sent_mono,
                     received_mono,
                     outcome: Outcome::Fail(*f),
@@ -377,7 +378,7 @@ impl Sim {
         self.push(
             arrive,
             Delivery::Response {
-                action,
+                action: Box::new(action),
                 sent_mono,
                 received_mono,
                 outcome,
@@ -532,7 +533,7 @@ impl Sim {
             Action::FetchInit { id, .. }
             | Action::FetchIndex { id, .. }
             | Action::FetchSegment { id, .. } => {
-                let url = action.url().to_owned();
+                let url = action.url().to_string();
                 let result = match resp {
                     Ok(r) if (200..300).contains(&r.status) => Ok(r.body),
                     Ok(r) => Err(Failure::Status(r.status)),

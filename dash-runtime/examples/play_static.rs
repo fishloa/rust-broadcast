@@ -115,7 +115,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     config.max_inflight_segments = args.window;
     config.validate()?;
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(&url)
+        dash_runtime::client::DashClientConfig::new(Url::parse(&url).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(config),
     );
@@ -183,11 +183,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         now_us += 1_000;
         let outcome: Result<(), Error> = match action.id() {
-            None => match read(&root, action.url(), None) {
+            None => match read(&root, action.url().as_str(), None) {
                 Ok(body) => client.on_mpd(now(now_us), &body),
                 Err(_) => return Err("the MPD could not be read".into()),
             },
-            Some(id) => match read(&root, action.url(), action.byte_range()) {
+            Some(id) => match read(&root, action.url().as_str(), action.byte_range().map(|s| (s.offset, s.len.get()))) {
                 Ok(body) => match id {
                     ResourceId::Init { .. } => client.on_init(now(now_us), id, &body),
                     ResourceId::Index { .. } => client.on_index(now(now_us), id, &body),

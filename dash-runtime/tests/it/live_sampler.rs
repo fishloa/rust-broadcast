@@ -2,6 +2,7 @@
 //! client's own actions (DESIGN 3.3).
 
 use crate::common;
+use url::Url;
 
 use broadcast_common::stage::Timestamp;
 use common::scenario::*;
@@ -28,7 +29,7 @@ fn client_with(elements: &[String], direct: Option<i64>) -> (DashClient, Vec<Act
     }
     let text = synth.mpd_at(AST_US + 41 * MICROS);
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(MPD_URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(MPD_URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -53,7 +54,7 @@ fn utc_urls(actions: &[Action]) -> Vec<(UtcScheme, String, UtcMethod)> {
                 url,
                 method,
                 ..
-            } => Some((*scheme, url.clone(), *method)),
+            } => Some((*scheme, url.to_string(), *method)),
             _ => None,
         })
         .collect()

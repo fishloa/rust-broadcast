@@ -5,6 +5,7 @@
 use crate::common;
 
 use broadcast_common::stage::Timestamp;
+use url::Url;
 use common::loopback::{
     Drive, Fault, FaultKind, Origin, Sig, assert_matches_oracle, drive, mpd_text, oracle,
 };
@@ -322,17 +323,17 @@ fn an_absolute_segment_template_cannot_escape_the_pin() {
 fn the_pin_follows_the_base_set_after_a_redirect() {
     let dash = pinned();
     let mut client = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(dash)
             .with_limits(PullLimits::default()),
     );
-    client.set_mpd_base("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd");
+    client.set_mpd_base(Url::parse("http://cdn.test/timeline-ffmpeg-quirk/manifest.mpd").expect("URL"));
     let Some(Action::FetchMpd { .. }) = client.poll(now(0)) else {
         panic!("mpd")
     };
     client.on_mpd(now(0), base_text().as_bytes()).unwrap();
     let urls: Vec<String> = std::iter::from_fn(|| client.poll(now(0)))
-        .map(|a| a.url().to_owned())
+        .map(|a| a.url().to_string())
         .collect();
     assert!(!urls.is_empty());
     assert!(
@@ -552,7 +553,7 @@ fn a_representation_switch_continues_on_the_new_representation_and_reannounces()
 #[test]
 fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -567,7 +568,7 @@ fn switching_to_an_unknown_variant_or_before_the_start_is_an_error() {
 #[test]
 fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
@@ -576,7 +577,7 @@ fn protocol_misuse_is_a_typed_error_and_changes_nothing() {
     let Some(Action::FetchMpd { url, .. }) = c.poll(now(0)) else {
         panic!()
     };
-    assert_eq!(url, URL);
+    assert_eq!(url.as_str(), URL);
     assert!(
         c.poll(now(0)).is_none(),
         "the MPD is requested once until retried"
@@ -613,7 +614,7 @@ fn after_a_fatal_everything_is_ignored() {
     let mut cfg = PullLimits::default();
     cfg.max_init_failures = 0;
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(cfg),
     );
@@ -638,11 +639,11 @@ fn after_a_fatal_everything_is_ignored() {
 #[test]
 fn accessors_report_the_presentation() {
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
-    assert_eq!(c.mpd_url(), URL);
+    assert_eq!(c.mpd_url().as_str(), URL);
     assert_eq!(c.is_static(), None);
     assert_eq!(c.max_segment_duration_secs(), None);
     let _ = c.poll(now(0));
@@ -760,7 +761,7 @@ fn a_switch_that_is_not_segment_aligned_is_marked_with_a_discontinuity() {
 fn a_retried_resource_is_requested_before_anything_queued_behind_it() {
     use dash_runtime::client::Failure;
     let mut c = DashClient::new(
-        dash_runtime::client::DashClientConfig::new(URL)
+        dash_runtime::client::DashClientConfig::new(Url::parse(URL).expect("URL"))
             .with_dash(DashConfig::default())
             .with_limits(PullLimits::default()),
     );
