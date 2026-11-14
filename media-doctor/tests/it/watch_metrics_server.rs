@@ -141,16 +141,16 @@ fn udp_interface_flag_is_validated() {
             "--udp",
             "127.0.0.1:0",
             "--udp-interface",
-            "not-an-interface",
+            "300.1.1.1",
         ])
         .output()
         .unwrap();
     assert!(!out.status.success());
     // The message is ours (not clap's "unexpected argument"): it names the
-    // flag AND says what was expected.
+    // flag AND says what was wrong with the value.
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("invalid --udp-interface") && stderr.contains("interface index"),
+        stderr.contains("invalid --udp-interface") && stderr.contains("not an IPv4 address"),
         "{stderr}"
     );
 }
