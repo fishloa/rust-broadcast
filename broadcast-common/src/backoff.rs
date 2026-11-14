@@ -123,39 +123,50 @@ pub enum InvalidBackoff {
     },
     /// The growth factor is below one or NaN, so the series would shrink or
     /// re-roll into a shorter one.
-    GrowthBelowOne {
-        /// The requested factor.
-        factor: f64,
+    GrowthFactor {
+        /// The requested factor; NaN or under one.
+        factor: GrowthFactor,
     },
-}
-
-impl InvalidBackoff {
-    /// The failure's message.
-    #[must_use]
-    pub fn reason(&self) -> alloc::string::String {
-        match self {
-            Self::CapBelowFloor { floor, cap } => {
-                alloc::format!("retry cap {cap:?} is below the first retry's {floor:?}")
-            }
-            Self::FloorAboveCeiling { floor, ceiling } => {
-                alloc::format!("retry floor {floor:?} is above the largest accepted {ceiling:?}")
-            }
-            Self::GrowthBelowOne { factor } => {
-                alloc::format!("retry growth factor {factor} is under 1")
-            }
-        }
-    }
 }
 
 impl fmt::Display for InvalidBackoff {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.reason())
+        match self {
+            Self::CapBelowFloor { floor, cap } => {
+                write!(f, "retry cap {cap:?} is below the first retry's {floor:?}")
+            }
+            Self::FloorAboveCeiling { floor, ceiling } => {
+                write!(
+                    f,
+                    "retry floor {floor:?} is above the largest accepted {ceiling:?}"
+                )
+            }
+            Self::GrowthFactor { factor } => write!(f, "retry growth factor {factor}"),
+        }
     }
 }
 
 impl core::error::Error for InvalidBackoff {}
 
-impl Eq for InvalidBackoff {}
+/// A growth factor [`RetrySchedule::new`] refused, kept so that the error
+/// compares equal to its own copy: `f64`'s NaN is not equal to itself.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[non_exhaustive]
+pub enum GrowthFactor {
+    /// The requested factor was NaN.
+    Nan,
+    /// The requested factor was a number under one.
+    Below(f64),
+}
+
+impl fmt::Display for GrowthFactor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Nan => f.write_str("is NaN"),
+            Self::Below(factor) => write!(f, "{factor} is under 1"),
+        }
+    }
+}
 
 /// xorshift64 shift triple (Marsaglia 2003).
 const XORSHIFT_LEFT_A: u32 = 13;
@@ -213,7 +224,7 @@ impl RetrySchedule {
     ///
     /// [`InvalidBackoff::CapBelowFloor`] for a `max` under `min`,
     /// [`InvalidBackoff::FloorAboveCeiling`] for a `min` above
-    /// [`MAX_FLOOR`], and [`InvalidBackoff::GrowthBelowOne`] for a `factor`
+    /// [`MAX_FLOOR`], and [`InvalidBackoff::GrowthFactor`] for a `factor`
     /// under one or NaN (the series could shrink, or re-roll into a shorter
     /// one). None is repaired into a different schedule.
     pub fn new(
@@ -234,8 +245,15 @@ impl RetrySchedule {
                 cap: max,
             });
         }
-        if factor.is_nan() || factor < NO_GROWTH {
-            return Err(InvalidBackoff::GrowthBelowOne { factor });
+        let refused = if factor.is_nan() {
+            Some(GrowthFactor::Nan)
+        } else if factor < NO_GROWTH {
+            Some(GrowthFactor::Below(factor))
+        } else {
+            None
+        };
+        if let Some(factor) = refused {
+            return Err(InvalidBackoff::GrowthFactor { factor });
         }
         Ok(Self {
             kind: Kind::Exponential { min, factor },
@@ -825,14 +843,29 @@ mod tests {
         ] {
             assert_eq!(
                 RetrySchedule::new(floor, cap, factor, 1).err(),
-                Some(InvalidBackoff::GrowthBelowOne { factor }),
+                Some(InvalidBackoff::GrowthFactor {
+                    factor: GrowthFactor::Below(factor)
+                }),
                 "{floor:?} {cap:?} {factor}"
             );
         }
-        assert!(matches!(
-            RetrySchedule::new(ms(500), secs(30), f64::NAN, 1),
-            Err(InvalidBackoff::GrowthBelowOne { factor }) if factor.is_nan()
-        ));
+        assert_eq!(
+            RetrySchedule::new(ms(500), secs(30), f64::NAN, 1).err(),
+            Some(InvalidBackoff::GrowthFactor {
+                factor: GrowthFactor::Nan
+            })
+        );
+    }
+
+    #[test]
+    fn a_nan_growth_factor_is_equal_to_its_own_copy() {
+        let nan = RetrySchedule::new(ms(500), secs(30), f64::NAN, 1).err();
+        let same = RetrySchedule::new(ms(500), secs(30), f64::NAN, 1).err();
+        assert_eq!(nan, same, "an error value must equal its own copy");
+        assert_eq!(
+            RetrySchedule::new(ms(500), secs(30), 0.5, 1).err(),
+            RetrySchedule::new(ms(500), secs(30), 0.5, 1).err()
+        );
     }
 
     #[test]
