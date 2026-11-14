@@ -803,7 +803,7 @@ fn cookies_and_extra_headers_apply_to_rendition_requests() {
         let hdr = s
             .headers
             .iter()
-            .find(|(k, _)| k == "X-Rend")
+            .find(|(k, _)| k.as_str() == "x-rend")
             .map(|(_, v)| v.as_str());
         assert_eq!(hdr, Some("r-1"), "{}", s.url);
         let cookie = s

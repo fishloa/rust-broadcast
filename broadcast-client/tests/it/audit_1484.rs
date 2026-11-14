@@ -67,7 +67,7 @@ fn action_debug_prints_header_names_never_values() {
     assert!(!dbg.contains(BEARER_SECRET), "{dbg}");
     assert!(!dbg.contains(COOKIE_SECRET), "{dbg}");
     assert!(dbg.contains("Authorization"), "{dbg}");
-    assert!(dbg.contains("Cookie"), "{dbg}");
+    assert!(dbg.contains("cookie"), "{dbg}");
     assert!(dbg.contains("GET"), "{dbg}");
     assert!(dbg.contains("example/live.ts"), "{dbg}");
     assert!(dbg.contains("conn"), "{dbg}");

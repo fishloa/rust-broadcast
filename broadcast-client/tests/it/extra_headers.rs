@@ -83,7 +83,7 @@ fn extra_headers_sent_on_every_origin_request() {
         let values: Vec<&str> = seen
             .headers
             .iter()
-            .filter(|(k, _)| k == "X-Trace")
+            .filter(|(k, _)| k.as_str() == "x-trace")
             .map(|(_, v)| v.as_str())
             .collect();
         assert_eq!(values, vec!["t-1"], "{}", seen.url);
@@ -124,7 +124,7 @@ fn extra_headers_not_sent_cross_origin() {
         h.requests_to(TS_SEG0_URL)[0]
             .headers
             .iter()
-            .any(|(k, _)| k == "X-Trace")
+            .any(|(k, _)| k.as_str() == "x-trace")
     );
 }
 
@@ -206,7 +206,7 @@ fn extra_headers_order_preserved() {
     let mut s = ts_probe::open(TS_URL, config);
     let req = one(&mut s, 0);
     let names: Vec<&str> = req.headers.iter().map(|(k, _)| k.as_str()).collect();
-    assert_eq!(names, vec!["X-B", "X-A", "X-C", "Cookie"]);
+    assert_eq!(names, vec!["x-b", "x-a", "x-c", "cookie"]);
 }
 
 #[test]
