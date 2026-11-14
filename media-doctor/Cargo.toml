@@ -16,10 +16,10 @@ path = "src/bin/media-doctor.rs"
 required-features = ["cli"]
 
 # These tests spawn the `media-doctor` binary (`CARGO_BIN_EXE_media-doctor`),
-# which only exists with the `cli` feature. Without this they ran (and failed)
-# in a bare `--no-default-features` lane whenever nothing else had built the
-# binary (it used to be masked by an earlier all-features build in the same CI
-# job sharing one target dir).
+# which requires the opt-in `cli` feature (`required-features` above). Without
+# this they ran (and failed) in a bare `--no-default-features` lane whenever
+# nothing else had built the binary (it used to be masked by an earlier
+# all-features build in the same CI job sharing one target dir).
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.8.0", default-features = false }
@@ -39,9 +39,6 @@ broadcast-hls    = { path = "../broadcast-hls", version = "0.7.0", default-featu
 # or uses the 192-byte M2TS / 204-byte RS framing, must still be routed to the
 # TS diagnostics. Only the binary needs it, so it is behind `cli`.
 container-probe  = { path = "../container-probe", version = "0.4.0", optional = true, default-features = false }
-# The DASH validator's MPD reader (issue #2340): dash-runtime owns the only
-# MPD reader outside transmux, which keeps MPD writing.
-dash-runtime     = { path = "../dash-runtime", version = "0.4.0", optional = true }
 clap             = { workspace = true, optional = true, features = ["derive"] }
 serde            = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 serde_json       = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
@@ -63,10 +60,10 @@ http-body-util              = { version = "0.1", optional = true }
 socket2                     = { workspace = true, optional = true, features = ["all"] }
 
 [features]
-default = ["std", "cli"]
+default = ["std"]
 std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std", "serde?/std", "serde_json?/std", "dash"]
-# The DASH MPD validator: it reads the MPD with dash-runtime (issue #2340),
-# which is `std`-only, so this feature implies `std`.
+# The DASH MPD validator: it reads the MPD with `broadcast-dash` (issue
+# #2340), which is `std`-only, so this feature implies `std`.
 dash    = ["dep:broadcast-dash", "std"]
 serde   = ["dep:serde", "dep:serde_json"]
 # STD-ONLY features (not no_std, not built by the CI thumbv7em step): `metrics`
@@ -74,6 +71,8 @@ serde   = ["dep:serde", "dep:serde_json"]
 # endpoint) and `cli` (clap binary) all imply `std`.
 metrics = ["std", "dep:metrics", "dep:metrics-exporter-prometheus"]
 net     = ["metrics", "dep:tokio", "dep:tokio-util", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:socket2", "dep:dvb-stream"]
+# The binary: `[[bin]] required-features = ["cli"]`. Opt-in (issue #2634) so a
+# library consumer does not pay for clap/hyper/tokio.
 cli     = ["dep:clap", "dep:container-probe", "std", "net", "serde"]
 
 [dev-dependencies]

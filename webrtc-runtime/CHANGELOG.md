@@ -4,6 +4,9 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Narrowed the `tokio` dev-dependency from `features = ["full"]` to the features the tests use (`net`, `io-util`, `rt`, `rt-multi-thread`, `macros`, `time`, `sync`).
+
 ## [0.7.0] - 2026-11-14
 ### Changed
 - BREAKING: `Client::new(endpoint_url, bearer_token)` (`WhipClient`, `WhepPlayer`) takes a `session::client::ClientConfig` (`ClientConfig::new(endpoint_url).with_bearer_token(token)`), the same `Config` + `with_*` shape as the other engines (#2514).

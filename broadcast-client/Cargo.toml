@@ -37,11 +37,8 @@ sha2               = { version = "0.11", default-features = false }
 rustls-pki-types  = { version = "1", default-features = false, features = ["alloc"] }
 zeroize            = { version = "1", default-features = false, features = ["alloc"] }
 url                = "2"
-percent-encoding   = "2"
 http               = "1"
 headers            = { workspace = true }
-cookie             = { version = "0.18", default-features = false }
-cookie_store       = { version = "~0.22.1", default-features = false }
 thiserror          = "2"
 serde              = { version = "1", default-features = false, optional = true, features = ["derive", "alloc", "std"] }
 

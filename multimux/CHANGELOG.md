@@ -7,6 +7,9 @@
 - Removed a leftover question comment from the end-of-ingest flush path (#2639).
 
 
+### Removed
+- Removed the unused `backon`, `percent-encoding` and `caption-convert` dependencies (reconnect backoff is the crate's own `supervisor::Backoff`) and the unused `sha2` dev-dependency.
+
 ## [0.18.0] - 2026-11-14
 ### Removed
 - BREAKING: `push::ReconnectEngine` is no longer `RefUnwindSafe` (its timer is broadcast-client's `ReconnectTimer` over `broadcast_common::backoff::RetrySchedule`, whose jitter cursor is a `Cell`); wrap it in `AssertUnwindSafe` to use it across `std::panic::catch_unwind`.

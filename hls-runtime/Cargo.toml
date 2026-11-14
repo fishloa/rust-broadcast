@@ -64,7 +64,6 @@ serde = ["dep:serde"]
 tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
 test-fixtures     = { path = "../test-fixtures" }
 test-harness     = { path = "../test-harness" }
-axum              = { workspace = true }
 # `hls-runtime/tests/it/subtitle_renditions.rs` runs the independent `check_hls_playlist`
 # conformance checker over rendered playlists. Path-only: never published.
 media-doctor      = { path = "../media-doctor", default-features = false, features = ["std"] }

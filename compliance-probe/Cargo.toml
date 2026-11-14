@@ -54,7 +54,6 @@ test-fixtures = { path = "../test-fixtures" }
 # text so tests can assert on it, exactly the pattern `multimux::prometheus`
 # uses for its own `install()` — see that module for why `build_recorder`
 # (no upkeep thread) rather than `install_recorder()`.
-metrics-exporter-prometheus = { workspace = true }
 # Test-only: `media_plane::ByteTap::record`/`TapItem::Data` are typed on
 # `bytes::Bytes`; tests build these directly rather than going through a real
 # ingest session.

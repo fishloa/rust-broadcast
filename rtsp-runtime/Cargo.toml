@@ -58,7 +58,7 @@ tokio = ["dep:tokio", "dep:getrandom", "dep:tokio-util", "dep:futures-util", "de
 tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 
 [dev-dependencies]
-tokio     = { version = "1", features = ["full", "test-util"] }
+tokio     = { version = "1", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "time", "sync", "test-util"] }
 test-fixtures = { path = "../test-fixtures" }
 workspace-guards = { path = "../workspace-guards" }
 

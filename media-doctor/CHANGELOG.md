@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **BREAKING**: `cli` is no longer a default feature. `default = ["std"]`; the
+  binary declares `required-features = ["cli"]`, so a plain dependency on the
+  library no longer compiles `clap`, `hyper`, `tokio` or the Prometheus
+  exporter. Install the binary with `cargo install media-doctor --features cli`
+  (previously the bare `cargo install media-doctor`).
+- Removed the dead optional `dash-runtime` dependency (never enabled by any
+  feature; the DASH validator reads MPDs through `broadcast-dash`).
+
 
 ## [0.15.0] - 2026-11-14
 ### Changed

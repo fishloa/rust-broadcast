@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- Removed the unused `thiserror` dependency and the `thiserror/std` entry in the `std` feature.
+
 ## [0.1.0] - 2026-11-14
 Initial release: Microsoft Smooth Streaming (MS-SSTR) client Manifest syntax, parse and write,
 moved out of `transmux` so the manifest has one model shared by the packager, the client and the

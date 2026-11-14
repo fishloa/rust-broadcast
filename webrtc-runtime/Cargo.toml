@@ -89,7 +89,7 @@ media = [
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "time", "sync"] }
 # The WHIP-lite example's signalling endpoint (Task 10).
 axum  = { workspace = true }
 # Fixture-verification only (tests/it/srtp_rfc3711_vectors.rs): an independent,

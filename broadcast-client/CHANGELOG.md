@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Config::with_timeouts` maps SRT exactly as `SrtConfig::with_timeouts` does (`handshake` to the handshake bound, `read_idle` to the peer-idle bound; it used `connect` for the handshake), and under the default `SourceKind::Auto` applies every protocol's mapping so the one the URL resolves to takes effect, instead of only the TS-over-HTTP stall policy (#2639).
 
 
+### Removed
+- Removed the unused `cookie`, `cookie_store` and `percent-encoding` dependencies; the cookie jar lives in `broadcast-auth`.
+
 ## [0.5.0] - 2026-11-14
 ### Removed
 - BREAKING: `Session` is no longer `UnwindSafe` or `RefUnwindSafe`, and `tshttp::{TsHttpClient, TsHttpPolicy, TsHttpSource}` are no longer `RefUnwindSafe` (they now hold state that is not unwind-safe, such as the shared `RetrySchedule`'s jitter `Cell`); code that moves them across `std::panic::catch_unwind` must wrap them in `AssertUnwindSafe`.

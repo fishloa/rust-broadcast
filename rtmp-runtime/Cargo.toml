@@ -48,7 +48,7 @@ required-features = ["tokio"]
 serde_json = { workspace = true }
 test-alloc = { path = "../test-alloc" }
 test-fixtures = { path = "../test-fixtures" }
-tokio      = { version = "1", features = ["full", "test-util"] }
+tokio      = { version = "1", features = ["net", "io-util", "rt", "rt-multi-thread", "macros", "time", "sync", "test-util"] }
 
 [lints]
 workspace = true
