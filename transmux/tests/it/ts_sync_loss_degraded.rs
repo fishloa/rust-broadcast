@@ -218,13 +218,22 @@ fn never_resynchronised_tail_is_reported_at_finish() {
     );
 }
 
+/// A capture that starts mid-packet lost those bytes too: they used to be
+/// counted as dropped but reported nowhere, so a stream's drop count and its
+/// degradation list disagreed (#2765).
 #[test]
-fn leading_junk_before_the_first_lock_is_not_degradation() {
+fn leading_junk_before_the_first_lock_is_degradation() {
     let clean = small();
     let mut bytes = vec![0x33; 77];
     bytes.extend_from_slice(&clean);
     let media = demux(&bytes);
-    assert!(media.degraded.is_empty(), "{:?}", media.degraded);
+    assert_eq!(
+        media.degraded,
+        vec![InputDegradation::SyncLoss {
+            offset: 0,
+            dropped_bytes: 77
+        }]
+    );
 }
 
 #[test]
@@ -278,6 +287,24 @@ fn all_ts() -> Vec<std::path::PathBuf> {
 #[test]
 fn committed_fixtures_have_no_unexpected_sync_loss() {
     for p in all_ts() {
+        if p.ends_with("ts-midpacket-phase.ts") {
+            // A real capture with its first 77 bytes cut off on purpose
+            // (`fixtures/candidates/probe/PROVENANCE.md`): those 77 bytes and
+            // whatever the phase search needed to confirm the lock are one
+            // genuine loss at offset 0.
+            let m = demux(&std::fs::read(&p).unwrap());
+            let [
+                InputDegradation::SyncLoss {
+                    offset: 0,
+                    dropped_bytes,
+                },
+            ] = m.degraded[..]
+            else {
+                panic!("{}: {:?}", p.display(), m.degraded);
+            };
+            assert_eq!(dropped_bytes, 111);
+            continue;
+        }
         if !soak() && std::fs::metadata(&p).unwrap().len() > PR_SWEEP_MAX_BYTES {
             continue;
         }
@@ -298,7 +325,13 @@ fn committed_fixtures_have_no_unexpected_sync_loss() {
             p.display(),
             m.degraded.len()
         );
-        assert_eq!(s, 0, "{}: {:?}", p.display(), m.degraded);
+        assert_eq!(
+            s,
+            0,
+            "{name}: {degraded:?}",
+            name = p.display(),
+            degraded = m.degraded
+        );
     }
 }
 

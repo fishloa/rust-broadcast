@@ -393,6 +393,22 @@ pub enum SectionRejection {
     },
 }
 
+impl SectionRejection {
+    /// A label for the rejection.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            SectionRejection::NotASection => "not_a_section",
+            SectionRejection::MoreThanOneSection => "more_than_one_section",
+            SectionRejection::DuplicateSection => "duplicate_section",
+            SectionRejection::Malformed => "malformed",
+            SectionRejection::WrongTableId { .. } => "wrong_table_id",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(SectionRejection);
+
 /// Section-repetition scheduler that builds TS packets on a caller-supplied clock.
 ///
 /// Each entry is one complete [section](crate::section::Section) — its

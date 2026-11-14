@@ -626,14 +626,7 @@ mod tests {
     // ------------------------------------------------------------------
     /// The losses are one per discarded span, in stream order: the leading
     /// garbage (if any) and the mid-stream sync loss or truncated tail.
-    #[allow(clippy::too_many_arguments)]
-    fn assert_one_loss_plus_leading(
-        losses: &[ResyncLoss],
-        leading: u64,
-        offset: u64,
-        dropped_bytes: u64,
-        truncated_tail: bool,
-    ) {
+    fn assert_one_loss_plus_leading(losses: &[ResyncLoss], leading: u64, expected: ResyncLoss) {
         let expected_leading = usize::from(leading > 0);
         assert_eq!(losses.len(), expected_leading + 1, "{losses:?}");
         if leading > 0 {
@@ -641,10 +634,7 @@ mod tests {
             assert_eq!(losses[0].dropped_bytes, leading);
             assert!(!losses[0].truncated_tail);
         }
-        let loss = losses[expected_leading];
-        assert_eq!(loss.offset, offset);
-        assert_eq!(loss.dropped_bytes, dropped_bytes);
-        assert_eq!(loss.truncated_tail, truncated_tail);
+        assert_eq!(losses[expected_leading], expected);
     }
 
     #[test]
@@ -662,11 +652,13 @@ mod tests {
         assert_one_loss_plus_leading(
             &losses,
             0,
-            5 * TS_PACKET_SIZE as u64,
-            TS_PACKET_SIZE as u64,
-            false,
+            ResyncLoss {
+                offset: 5 * TS_PACKET_SIZE as u64,
+                dropped_bytes: TS_PACKET_SIZE as u64,
+                packet_index: 5,
+                truncated_tail: false,
+            },
         );
-        assert_eq!(losses[0].packet_index, 5);
     }
 
     #[test]
@@ -712,7 +704,16 @@ mod tests {
         let _ = r.feed(&bytes);
         r.finish();
         let losses = r.take_losses();
-        assert_one_loss_plus_leading(&losses, 30, 30 + 8 * TS_PACKET_SIZE as u64, 50, true);
+        assert_one_loss_plus_leading(
+            &losses,
+            30,
+            ResyncLoss {
+                offset: 30 + 8 * TS_PACKET_SIZE as u64,
+                dropped_bytes: 50,
+                packet_index: 8,
+                truncated_tail: true,
+            },
+        );
     }
 
     #[test]
@@ -825,9 +826,12 @@ mod tests {
         assert_one_loss_plus_leading(
             &losses,
             0,
-            10 * TS_PACKET_SIZE as u64,
-            TS_PACKET_SIZE as u64,
-            false,
+            ResyncLoss {
+                offset: 10 * TS_PACKET_SIZE as u64,
+                dropped_bytes: TS_PACKET_SIZE as u64,
+                packet_index: 10,
+                truncated_tail: false,
+            },
         );
     }
 
@@ -885,6 +889,15 @@ mod tests {
         assert_eq!(tags, (1u8..=10).collect::<Vec<_>>());
         assert!(r.take_tail_packets().is_empty());
         let losses = r.take_losses();
-        assert_one_loss_plus_leading(&losses, 0, 10 * TS_PACKET_SIZE as u64, 5, true);
+        assert_one_loss_plus_leading(
+            &losses,
+            0,
+            ResyncLoss {
+                offset: 10 * TS_PACKET_SIZE as u64,
+                dropped_bytes: 5,
+                packet_index: 10,
+                truncated_tail: true,
+            },
+        );
     }
 }
