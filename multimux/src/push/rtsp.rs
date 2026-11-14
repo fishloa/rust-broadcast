@@ -196,7 +196,8 @@ impl PushTransport for RtspTransport {
         let _ = parsed.set_password(None);
         let clean_url = parsed.to_string();
 
-        let mut session = ClientSession::new();
+        let mut session = ClientSession::new(rtsp_runtime::RtspClientConfig::default())
+            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
         let creds = config
             .credentials
             .as_ref()
@@ -216,7 +217,7 @@ impl PushTransport for RtspTransport {
         // ANNOUNCE/SETUP/RECORD and interleaved write.
         let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            rtsp_runtime::RtspClientConfig::default()
+            rtsp_runtime::RtspClientIoConfig::default()
                 .with_session(session)
                 .with_timeouts(config.timeouts),
         )
@@ -779,8 +780,8 @@ mod tests {
 
         let mut client = rtsp_runtime::AsyncRtspClient::connect(
             &addr,
-            rtsp_runtime::RtspClientConfig::default()
-                .with_session(ClientSession::new())
+            rtsp_runtime::RtspClientIoConfig::default()
+                .with_session(ClientSession::default())
                 .with_timeouts(broadcast_common::timeouts::Timeouts::default()),
         )
         .await

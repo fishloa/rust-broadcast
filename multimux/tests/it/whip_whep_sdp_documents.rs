@@ -12,8 +12,8 @@
 use std::fs;
 
 use multimux::output::whep::WhepAnswerParams;
-use multimux::test_seam::whep::render_whep_answer_for_test;
 use multimux::test_seam::render_answer_for_test;
+use multimux::test_seam::whep::render_whep_answer_for_test;
 use webrtc_runtime::media::SetupRole;
 
 const OFFER: &str = "v=0\r\n\

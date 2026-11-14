@@ -36,7 +36,8 @@ async fn announce_then_record_round_trips_over_loopback() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         // ANNOUNCE, SETUP, RECORD = 3 requests.
         let mut methods = Vec::new();
         for _ in 0..3 {
@@ -50,7 +51,7 @@ async fn announce_then_record_round_trips_over_loopback() {
         methods
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let ev = client.announce(URI, SDP).await.unwrap();
@@ -83,7 +84,8 @@ async fn a_client_interleaved_send_arrives_as_a_frame_at_the_server() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         loop {
             let events = srv.next_request().await.unwrap()?;
             for e in events {
@@ -94,7 +96,7 @@ async fn a_client_interleaved_send_arrives_as_a_frame_at_the_server() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     client.send_interleaved(0, b"media-payload").await.unwrap();
@@ -116,8 +118,8 @@ async fn a_stalled_interleaved_send_times_out_at_the_write_bound() {
     let timeouts = Timeouts::default().with_write(Duration::from_secs(1));
     let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(timeouts),
     );
     assert_eq!(
@@ -182,7 +184,7 @@ async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
         buf
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let ev = client.announce(URI, SDP).await.unwrap();
@@ -218,8 +220,8 @@ async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
     let (client_io, mut peer) = duplex(64 * 1024);
     let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(Timeouts::default()),
     );
 
@@ -305,8 +307,8 @@ async fn a_454_keepalive_response_is_surfaced_not_discarded() {
     let (client_io, mut peer) = duplex(64 * 1024);
     let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(Timeouts::default()),
     );
 
@@ -448,7 +450,7 @@ async fn a_flooding_peer_does_not_starve_the_send() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     // `send_interleaved` drains inbound first; against a peer that never stops
@@ -477,8 +479,8 @@ async fn send_interleaved_never_parks_on_the_inbound_probe() {
     let (client_io, _server_io) = duplex(8 << 20);
     let mut client = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(Timeouts::default()),
     );
     let start = std::time::Instant::now();
@@ -543,7 +545,7 @@ async fn start_record_announces_sets_up_the_control_url_and_records() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -622,7 +624,7 @@ async fn start_record_fails_a_rejected_request_naming_its_method() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -727,7 +729,7 @@ async fn start_play_describes_sets_up_and_plays() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -840,7 +842,7 @@ async fn start_play_assigns_consecutive_interleaved_pairs_per_media() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -875,7 +877,7 @@ async fn start_play_skips_foreign_authority_media() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -903,7 +905,7 @@ async fn start_play_rejects_a_server_reusing_an_interleaved_channel() {
         setup_transport: Some("RTP/AVP/TCP;unicast;interleaved=0-1"),
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -922,7 +924,7 @@ async fn start_play_resolves_controls_against_content_base() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -947,7 +949,7 @@ async fn start_play_fails_when_channels_run_out() {
         setup_transport: None,
     })
     .await;
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -1004,7 +1006,7 @@ async fn start_play_unexpected_response_yields_typed_error() {
             }
         }
     });
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -1046,7 +1048,7 @@ async fn start_record_announce_rejected_sends_only_one_request() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();
@@ -1080,7 +1082,7 @@ async fn start_record_channel_255_is_exhausted() {
     let server = tokio::spawn(async move {
         let _ = listener.accept().await;
     });
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://{addr}/live/key")).unwrap();
@@ -1146,7 +1148,7 @@ async fn start_record_does_not_leak_password_in_request_line() {
         }
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     let url = url::Url::parse(&format!("rtsp://user:secret@{addr}/live/key")).unwrap();

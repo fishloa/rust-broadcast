@@ -24,6 +24,14 @@ pub enum Error {
     #[error("the OS random source is unavailable")]
     RandomSource,
 
+    /// A `Session` header's id token is not the 16 hex digits a
+    /// [`SessionId`](crate::SessionId) renders (RFC 2326 §3.4).
+    #[error("malformed session id {text:?}: 16 hex digits expected")]
+    SessionIdParse {
+        /// The rejected id token.
+        text: String,
+    },
+
     /// An RTSP message could not be parsed or framed; `source` carries the
     /// codec's or the framing check's own error.
     #[error("failed to parse RTSP {what}")]

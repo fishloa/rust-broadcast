@@ -147,7 +147,10 @@ fn push_logs_and_errors_never_contain_the_destination_secrets() {
     );
     assert!(logs.contains("rtmp://127.0.0.1:1/<redacted>"), "{logs}");
     assert!(logs.contains("rtsp://127.0.0.1:1/<redacted>"), "{logs}");
-    assert!(logs.contains("rtmp://echo.example:1935/<redacted>"), "{logs}");
+    assert!(
+        logs.contains("rtmp://echo.example:1935/<redacted>"),
+        "{logs}"
+    );
     assert!(logs.contains(srt_error), "{logs}");
     for secret in SECRETS {
         assert!(!logs.contains(secret), "{secret} leaked into: {logs}");

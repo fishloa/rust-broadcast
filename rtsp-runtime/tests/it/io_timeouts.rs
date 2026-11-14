@@ -5,7 +5,9 @@
 use std::time::Duration;
 
 use broadcast_common::timeouts::Timeouts;
-use rtsp_runtime::{AsyncRtspClient, ClientSession, Error};
+use rtsp_runtime::{
+    AsyncRtspClient, ClientSession, Error, RtspServerConfig, ServerSession, SessionIdSource,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
 const URI: &str = "rtsp://h/s";
@@ -21,8 +23,8 @@ async fn a_server_that_never_answers_times_out_the_request() {
     let (client_io, _server_io) = duplex(4096); // peer kept alive, never replies
     let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(short()),
     );
     let err = c.options(URI).await.expect_err("must time out");
@@ -37,8 +39,8 @@ async fn a_peer_that_stops_reading_times_out_the_write() {
     let (client_io, _server_io) = duplex(8); // 8-byte pipe, never drained
     let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(short()),
     );
     let err = c.options(URI).await.expect_err("must time out");
@@ -64,8 +66,8 @@ async fn a_response_dripped_one_byte_at_a_time_still_times_out_as_a_whole() {
     });
     let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(short()),
     );
     let err = c
@@ -78,18 +80,14 @@ async fn a_response_dripped_one_byte_at_a_time_still_times_out_as_a_whole() {
     );
 }
 
-use rtsp_runtime::{AsyncRtspServer, ServerSession};
+use rtsp_runtime::AsyncRtspServer;
 
 fn server_over(
     io: tokio::io::DuplexStream,
     t: Timeouts,
 ) -> AsyncRtspServer<tokio::io::DuplexStream> {
-    AsyncRtspServer::from_stream(
-        io,
-        rtsp_runtime::RtspServerConfig::default()
-            .with_session(ServerSession::new(|| 7).with_session_seed(1))
-            .with_timeouts(t),
-    )
+    AsyncRtspServer::from_stream(io, RtspServerConfig::default().with_timeouts(t))
+        .expect("a server over the duplex pipe")
 }
 
 #[tokio::test(start_paused = true)]
@@ -174,14 +172,12 @@ async fn recv_interleaved_sends_a_keepalive_before_the_session_expires() {
     let server = tokio::spawn(async move {
         let mut s = AsyncRtspServer::from_stream(
             server_io,
-            rtsp_runtime::RtspServerConfig::default()
-                .with_session(
-                    ServerSession::new(|| 9)
-                        .with_session_seed(9)
-                        .with_session_timeout(20),
-                )
+            RtspServerConfig::default()
+                .with_session_ids(SessionIdSource::counter(9))
+                .with_session_timeout(Duration::from_secs(20))
                 .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
-        );
+        )
+        .expect("a server over the duplex pipe");
         let mut n = 0;
         while let Ok(Some(events)) = s.next_request().await {
             n += 1;
@@ -196,8 +192,8 @@ async fn recv_interleaved_sends_a_keepalive_before_the_session_expires() {
     let t0 = tokio::time::Instant::now();
     let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
     );
     c.setup(
@@ -233,14 +229,12 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
     let server = tokio::spawn(async move {
         let mut s = AsyncRtspServer::from_stream(
             server_io,
-            rtsp_runtime::RtspServerConfig::default()
-                .with_session(
-                    ServerSession::new(|| 9)
-                        .with_session_seed(9)
-                        .with_session_timeout(20),
-                )
+            RtspServerConfig::default()
+                .with_session_ids(SessionIdSource::counter(9))
+                .with_session_timeout(Duration::from_secs(20))
                 .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
-        );
+        )
+        .expect("a server over the duplex pipe");
         let (mut n, mut tick) = (0, tokio::time::interval(Duration::from_secs(1)));
         loop {
             tokio::select! {
@@ -261,8 +255,8 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
     let t0 = tokio::time::Instant::now();
     let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(Timeouts::default().with_read_idle(Duration::from_secs(120))),
     );
     c.setup(
@@ -297,11 +291,13 @@ async fn keepalive_is_sent_while_interleaved_media_flows() {
 async fn a_cancelled_server_next_request_neither_loses_events_nor_duplicates_the_response() {
     use rtsp_runtime::ServerEvent;
     let req: &[u8] = b"OPTIONS rtsp://h/s RTSP/1.0\r\nCSeq: 1\r\n\r\n";
-    let expected = ServerSession::new(|| 7)
-        .with_session_seed(1)
-        .handle_request(req)
-        .unwrap()
-        .0;
+    let expected = ServerSession::new(
+        RtspServerConfig::default().with_session_ids(SessionIdSource::counter(1)),
+    )
+    .expect("a server session")
+    .handle_request(req)
+    .unwrap()
+    .0;
     assert!(expected.len() > 48, "response must not fit the pipe");
     let (mut client, server_io) = duplex(48);
     client.write_all(req).await.unwrap();
@@ -347,8 +343,8 @@ async fn eof_mid_frame_is_an_error_not_a_clean_end() {
     drop(server_io);
     let mut c = AsyncRtspClient::from_stream(
         client_io,
-        rtsp_runtime::RtspClientConfig::default()
-            .with_session(ClientSession::new())
+        rtsp_runtime::RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
             .with_timeouts(short()),
     );
     let err = c.recv_interleaved().await.expect_err("truncated frame");

@@ -5,8 +5,8 @@
 //! URL the `url` parser rejects — redact.rs's documented contract.
 #![cfg(feature = "test-seams")]
 
-use multimux::test_seam::parse_srt_url_for_test;
 use multimux::redact::{redact_destination, redact_url};
+use multimux::test_seam::parse_srt_url_for_test;
 
 /// CHARACTERISATION (passes on old code too — main already brackets IPv6;
 /// pins the bracketing across the `url`/`RtmpTarget` migration).
@@ -50,9 +50,8 @@ fn redaction_masks_both_authority_and_tail_of_a_url_the_parser_rejects() {
 
 #[test]
 fn an_srt_query_keeps_the_address_and_streamid_separate() {
-    let (addr, parsed) =
-        parse_srt_url_for_test("srt://[::1]:9000?streamid=live%2Fcam&latency=120")
-            .expect("a caller URL with a percent-encoded streamid");
+    let (addr, parsed) = parse_srt_url_for_test("srt://[::1]:9000?streamid=live%2Fcam&latency=120")
+        .expect("a caller URL with a percent-encoded streamid");
     assert_eq!(addr, "[::1]:9000");
     assert_eq!(parsed.stream_id.as_deref(), Some("live/cam"));
     assert_eq!(parsed.latency_ms, Some(120));

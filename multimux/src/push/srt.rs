@@ -94,10 +94,7 @@ fn parse_srt_url(url: &str) -> Result<(String, SrtUrl), srt_runtime::Error> {
 
 #[cfg(any(test, feature = "test-seams"))]
 #[doc(hidden)]
-#[must_use]
-pub fn parse_srt_url_for_test(
-    url: &str,
-) -> Result<(String, SrtUrl), srt_runtime::Error> {
+pub fn parse_srt_url_for_test(url: &str) -> Result<(String, SrtUrl), srt_runtime::Error> {
     parse_srt_url(url)
 }
 

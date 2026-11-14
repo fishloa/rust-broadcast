@@ -7,7 +7,12 @@
 //! text (byte pin; Task 4 may change parameter ORDER only, and says so in the
 //! CHANGELOG). Regenerate only with `GOLDEN_UPDATE=1`.
 
-use rtsp_runtime::{ClientSession, ServerSession, Transport, TransportSpec};
+use std::time::Duration;
+
+use rtsp_runtime::{
+    ClientSession, RtspClientConfig, RtspServerConfig, ServerSession, SessionIdSource, Transport,
+    TransportSpec,
+};
 
 const URI: &str = "rtsp://example.test/stream";
 
@@ -44,10 +49,14 @@ fn exchange(
 
 #[test]
 fn session_transcript_is_byte_identical() {
-    let mut c = ClientSession::new().with_user_agent("golden-ua");
-    let mut s = ServerSession::new(|| 0)
-        .with_session_seed(0xABCD)
-        .with_session_timeout(60);
+    let mut c = ClientSession::new(RtspClientConfig::default().with_user_agent("golden-ua"))
+        .expect("a client session");
+    let mut s = ServerSession::new(
+        RtspServerConfig::default()
+            .with_session_ids(SessionIdSource::counter(0xABCD))
+            .with_session_timeout(Duration::from_secs(60)),
+    )
+    .expect("a server session");
     let mut out = String::new();
     let r = c.options(URI).unwrap();
     exchange("OPTIONS", r, &mut c, &mut s, &mut out);

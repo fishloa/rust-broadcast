@@ -62,7 +62,10 @@ fn the_hub_re_exports_every_seam_the_tests_use() {
     }
     for seam in ["whep_router_for_test", "render_whep_answer_for_test"] {
         let whep = read("output/whep.rs");
-        assert!(whep.contains(seam), "`{seam}` is missing from `output/whep.rs`");
+        assert!(
+            whep.contains(seam),
+            "`{seam}` is missing from `output/whep.rs`"
+        );
     }
 }
 

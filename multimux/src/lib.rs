@@ -34,8 +34,7 @@ pub mod test_seam {
     pub use crate::source::whip::{
         parse_offer_for_test, render_answer_for_test, serve_for_test as serve_whip_for_test,
         serve_for_test_with_read_load as serve_whip_for_test_with_read_load,
-        serve_for_test_with_read_load_and_max_sessions,
-        serve_for_test_with_read_load_and_timeout,
+        serve_for_test_with_read_load_and_max_sessions, serve_for_test_with_read_load_and_timeout,
         serve_for_test_with_read_load_timeout_and_policy, serve_for_test_with_read_timeout,
         whip_router_for_test,
     };
@@ -43,18 +42,18 @@ pub mod test_seam {
     #[doc(hidden)]
     pub use crate::webrtc_session::restart_fragment_for_test;
 
-    #[cfg(feature = "test-seams")]
+    #[cfg(feature = "whep")]
     #[doc(hidden)]
-    pub use crate::push::srt::parse_srt_url_for_test;
+    pub use crate::output::whep;
     #[cfg(feature = "test-seams")]
     #[doc(hidden)]
     pub use crate::push::rtmp::tc_url_for_test;
     #[cfg(feature = "test-seams")]
     #[doc(hidden)]
     pub use crate::push::rtsp::{control_url_for_test, push_media_for_test, push_sdp_for_test};
-    #[cfg(feature = "whep")]
+    #[cfg(feature = "test-seams")]
     #[doc(hidden)]
-    pub use crate::output::whep;
+    pub use crate::push::srt::parse_srt_url_for_test;
 }
 
 pub use error::{MultimuxError, Result};

@@ -29,8 +29,10 @@ use broadcast_common::stage::Timestamp;
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
 use crate::auth::{Authenticator, Credentials, RequestContext};
+use crate::config::{DEFAULT_USER_AGENT, FIRST_CSEQ};
 use crate::error::{Error, MessageKind, Result};
 use crate::interleaved::{self, MAGIC};
+use crate::session_id::SessionId;
 use crate::state::{SessionState, client_next_state};
 use crate::transport::Transport;
 
@@ -192,17 +194,9 @@ pub struct ClientSession {
 
 impl Default for ClientSession {
     fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ClientSession {
-    /// Creates a fresh client session in the `Init` state with `CSeq` starting
-    /// at 1.
-    pub fn new() -> Self {
         ClientSession {
             state: SessionState::Init,
-            next_cseq: 1,
+            next_cseq: FIRST_CSEQ,
             session_id: None,
             session_timeout: None,
             public_methods: Vec::new(),
@@ -211,7 +205,7 @@ impl ClientSession {
             negotiated_transport: None,
             pending: HashMap::new(),
             inbound: Vec::new(),
-            user_agent: "rtsp-runtime".to_string(),
+            user_agent: DEFAULT_USER_AGENT.to_string(),
             last_activity: None,
             last_uri: None,
             session_warnings: Vec::new(),
@@ -223,6 +217,23 @@ impl ClientSession {
             redirect_location: None,
             rtp_info: Vec::new(),
         }
+    }
+}
+
+impl ClientSession {
+    /// Creates a fresh client session in the `Init` state, configured by
+    /// `config`.
+    ///
+    /// # Errors
+    ///
+    /// No config field can fail today, so this is infallible; the [`Result`]
+    /// is the shape every role's constructor shares.
+    pub fn new(config: crate::config::RtspClientConfig) -> Result<Self> {
+        Ok(ClientSession {
+            user_agent: config.user_agent,
+            next_cseq: config.initial_cseq,
+            ..ClientSession::default()
+        })
     }
 
     /// Attaches credentials so the engine can answer `401` challenges (§14).
@@ -383,8 +394,10 @@ impl ClientSession {
     }
 
     /// The negotiated session id, once a SETUP response has been processed.
-    pub fn session_id(&self) -> Option<&str> {
-        self.session_id.as_deref()
+    pub fn session_id(&self) -> Option<SessionId> {
+        self.session_id
+            .as_ref()
+            .and_then(|id| SessionId::parse(id).ok())
     }
 
     /// The session timeout in seconds, if the SETUP response declared one.
@@ -953,7 +966,7 @@ mod tests {
 
     #[test]
     fn play_in_init_bites() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         assert!(matches!(
             c.play("rtsp://h/s"),
             Err(crate::error::Error::MethodNotValidInState { .. })
@@ -962,7 +975,7 @@ mod tests {
 
     #[test]
     fn setup_allowed_in_init() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let t = Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
             0, 1,
         ));
@@ -971,7 +984,7 @@ mod tests {
 
     #[test]
     fn cseq_increments() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let a = c.options("rtsp://h/s").unwrap();
         let b = c.describe("rtsp://h/s").unwrap();
         assert!(String::from_utf8_lossy(&a).contains("CSeq: 1"));
@@ -980,7 +993,7 @@ mod tests {
 
     #[test]
     fn announce_emits_request_with_sdp_content_type() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let sdp = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=Test\r\n";
         let bytes = c.announce("rtsp://h/s", sdp).unwrap();
         let s = String::from_utf8_lossy(&bytes);
@@ -991,7 +1004,7 @@ mod tests {
 
     #[test]
     fn redirect_location_is_taken_from_a_3xx_and_cleared_by_the_next_response() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.describe("rtsp://h/s").unwrap();
         assert_eq!(c.redirect_location(), None);
         let _ = c.handle_data(b"RTSP/1.0 302 Found\r\nCSeq: 1\r\nLocation: rtsp://other/s\r\n\r\n");
@@ -1008,7 +1021,7 @@ mod tests {
 
     #[test]
     fn challenge_is_recorded_without_credentials() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.describe("rtsp://h/s").unwrap();
         assert_eq!(c.last_challenge(), None);
         let events = c
@@ -1026,7 +1039,7 @@ mod tests {
 
     #[test]
     fn authenticate_with_makes_next_request_authorized() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.describe("rtsp://h/s").unwrap();
         c.handle_data_strict(&wire_401("Basic realm=\"cam\""))
             .unwrap();
@@ -1040,7 +1053,7 @@ mod tests {
 
     #[test]
     fn authenticate_with_explicit_challenge_overrides_recorded_one() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.authenticate_with(Credentials::new("u", "p"), Some("Basic realm=\"x\""))
             .unwrap();
         let req = String::from_utf8_lossy(&c.options("rtsp://h/s").unwrap()).into_owned();
@@ -1049,7 +1062,7 @@ mod tests {
 
     #[test]
     fn a_401_without_a_challenge_cannot_be_answered() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.authenticate_with(Credentials::new("u", "p"), Some("Basic realm=\"x\""))
             .unwrap();
         c.describe("rtsp://h/s").unwrap();
@@ -1082,7 +1095,7 @@ mod tests {
 
     #[test]
     fn content_base_is_taken_from_the_describe_response() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         assert_eq!(c.content_base(), None);
         c.describe("rtsp://h/s").unwrap();
         feed(
@@ -1103,7 +1116,7 @@ mod tests {
 
     #[test]
     fn take_negotiated_transport_only_returns_the_latest_setup_reply() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         setup_request(&mut c);
         feed(
             &mut c,
@@ -1124,7 +1137,7 @@ mod tests {
 
     #[test]
     fn a_setup_reply_without_transport_does_not_inherit_the_previous_one() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         setup_request(&mut c);
         feed(
             &mut c,
@@ -1137,7 +1150,7 @@ mod tests {
 
     #[test]
     fn take_rtp_info_returns_the_play_response_entries_once() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         setup_request(&mut c);
         feed(
             &mut c,
@@ -1167,7 +1180,7 @@ mod tests {
         fn wire(s: &str) -> Vec<u8> {
             s.replace('\n', "\r\n").into_bytes()
         }
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.options("rtsp://h/s").unwrap(); // CSeq 1
         c.describe("rtsp://h/s").unwrap(); // CSeq 2
 
@@ -1210,7 +1223,7 @@ mod tests {
             );
         }
         let split = wire.len() - 100; // last frame arrives in two pieces
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let first = c.handle_data(&wire[..split]);
         assert!(first.error.is_none());
         assert_eq!(first.events.len(), FRAMES - 1);
@@ -1235,7 +1248,7 @@ mod tests {
     // `inbound` without bound.
     #[test]
     fn inbound_buffer_is_capped_against_an_unterminated_header() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.options("rtsp://h/s").unwrap();
         let chunk = vec![b'A'; 64 * 1024];
         let mut last = Ok(Vec::new());
@@ -1253,7 +1266,7 @@ mod tests {
 
     #[test]
     fn record_fails_from_init_state() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         assert!(matches!(
             c.record("rtsp://h/s"),
             Err(crate::error::Error::MethodNotValidInState { .. })
@@ -1266,7 +1279,7 @@ mod tests {
         fn wire(s: &str) -> Vec<u8> {
             s.replace('\n', "\r\n").into_bytes()
         }
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         // Drive Init -> Ready via a successful SETUP round-trip.
         let t = Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
             0, 1,
@@ -1296,7 +1309,7 @@ mod tests {
         fn wire(s: &str) -> Vec<u8> {
             s.replace('\n', "\r\n").into_bytes()
         }
-        let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+        let mut c = ClientSession::default().with_credentials(Credentials::new("admin", "12345"));
         let sdp = "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=Test\r\n";
         let first = c.announce("rtsp://h/s", sdp).unwrap();
         assert!(String::from_utf8_lossy(&first).contains("CSeq: 1"));
@@ -1345,7 +1358,7 @@ mod tests {
         fn wire(s: &str) -> Vec<u8> {
             s.replace('\n', "\r\n").into_bytes()
         }
-        let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+        let mut c = ClientSession::default().with_credentials(Credentials::new("admin", "12345"));
 
         // Establish the authenticator via an ordinary first challenge.
         c.options("rtsp://h/s").unwrap(); // CSeq 1
@@ -1406,7 +1419,7 @@ mod tests {
     }
 
     fn established(timeout: Option<u64>) -> ClientSession {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let _ = c
             .setup(
                 "rtsp://h/s",
@@ -1470,7 +1483,7 @@ mod tests {
 
     #[test]
     fn a_zero_timeout_is_a_warning_and_the_default_not_a_busy_loop() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let _ = c
             .setup(
                 "rtsp://h/s",
@@ -1572,7 +1585,7 @@ mod tests {
 
     #[test]
     fn no_keepalive_before_setup_or_after_teardown() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         c.mark_activity(Timestamp::ZERO);
         assert_eq!(c.poll_timeout(), None);
         assert!(
@@ -1637,7 +1650,7 @@ mod tests {
 
     #[test]
     fn session_warnings_are_capped_but_counted() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         for i in 1..=(MAX_SESSION_WARNINGS as u32 + 10) {
             let _ = c.options("rtsp://h/s").unwrap();
             c.handle_data_strict(
@@ -1652,12 +1665,12 @@ mod tests {
 
     #[test]
     fn head_cap_holds_for_a_70_kib_run_of_a_and_for_9000_header_lines() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         assert!(matches!(
             c.handle_data_strict(&vec![b'A'; 70 * 1024]),
             Err(Error::MessageParse { .. })
         ));
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let mut junk = b"RTSP/1.0 200 OK\r\n".to_vec();
         junk.extend(b"X-A: b\r\n".repeat(9000));
         assert!(matches!(
@@ -1668,7 +1681,7 @@ mod tests {
 
     #[test]
     fn a_response_fed_one_byte_at_a_time_is_still_decoded() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let _ = c.options("rtsp://h/s").unwrap();
         let resp = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: OPTIONS\r\n\r\n";
         let mut got = 0;
@@ -1680,7 +1693,7 @@ mod tests {
 
     #[test]
     fn an_unterminated_header_over_the_head_cap_is_rejected() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let mut junk = b"RTSP/1.0 200 OK\r\nX-Pad: ".to_vec();
         junk.extend(std::iter::repeat_n(b'a', 70 * 1024)); // no terminator, ever
         let err = c
@@ -1694,7 +1707,7 @@ mod tests {
         fn wire(s: &str) -> Vec<u8> {
             s.replace('\n', "\r\n").into_bytes()
         }
-        let mut c = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
+        let mut c = ClientSession::default().with_credentials(Credentials::new("admin", "12345"));
         c.options("rtsp://h/s").unwrap(); // CSeq 1
 
         // First 401 (no stale) -> normal retry at CSeq 2, marked retried.
@@ -1730,7 +1743,7 @@ mod tests {
     // inherit `Credentials`'s redacting `Debug`, never the raw secret.
     #[test]
     fn client_session_debug_does_not_leak_embedded_credentials_secret() {
-        let c = ClientSession::new()
+        let c = ClientSession::default()
             .with_credentials(Credentials::new("admin", "extremely-secret-password"));
         let debug = format!("{c:?}");
         assert!(

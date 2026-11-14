@@ -32,7 +32,8 @@ async fn plain_tcp_full_session() {
     // Server task: drive Init -> Ready -> Playing -> Init and record the states.
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         let mut states = Vec::new();
         // OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN = 5 requests.
         for _ in 0..5 {
@@ -47,7 +48,7 @@ async fn plain_tcp_full_session() {
         states
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
 
@@ -102,7 +103,8 @@ async fn interleaved_media_over_tcp() {
     let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         // SETUP then PLAY.
         srv.next_request().await.unwrap().expect("SETUP");
         srv.next_request().await.unwrap().expect("PLAY");
@@ -117,7 +119,7 @@ async fn interleaved_media_over_tcp() {
         let _ = done_rx.await;
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     client.setup(URI, &tcp_interleaved()).await.unwrap();
@@ -180,8 +182,8 @@ async fn digest_auth_over_loopback() {
         cseq2
     });
 
-    let session = ClientSession::new().with_credentials(Credentials::new("admin", "12345"));
-    let config = rtsp_runtime::RtspClientConfig::default()
+    let session = ClientSession::default().with_credentials(Credentials::new("admin", "12345"));
+    let config = rtsp_runtime::RtspClientIoConfig::default()
         .with_session(session)
         .with_timeouts(Timeouts::default());
     assert_eq!(config.timeouts, Timeouts::default());
@@ -261,7 +263,7 @@ async fn tls_full_session_over_loopback() {
         addr,
         "localhost",
         client_config,
-        rtsp_runtime::RtspClientConfig::default(),
+        rtsp_runtime::RtspClientIoConfig::default(),
     )
     .await
     .expect("TLS handshake (client)");
@@ -329,7 +331,7 @@ async fn stray_response_for_an_abandoned_request_does_not_win() {
         sock.write_all(&out).await.unwrap();
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
 
@@ -369,7 +371,8 @@ async fn server_receives_interleaved_frame_during_play() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         let setup_events = srv.next_request().await.unwrap().expect("SETUP");
         assert!(
             setup_events
@@ -450,7 +453,8 @@ async fn server_read_buffer_is_capped_against_an_unterminated_header() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         srv.next_request().await
     });
 
@@ -491,7 +495,8 @@ async fn pending_media_queue_is_capped_while_exchange_waits() {
 
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
-        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default());
+        let mut srv = AsyncRtspServer::from_stream(sock, rtsp_runtime::RtspServerConfig::default())
+            .expect("a server over the stream");
         srv.next_request().await.unwrap().expect("SETUP");
         srv.next_request().await.unwrap().expect("PLAY");
         // Flush every media frame before ever reading/answering the
@@ -504,7 +509,7 @@ async fn pending_media_queue_is_capped_while_exchange_waits() {
         srv.next_request().await.unwrap().expect("GET_PARAMETER");
     });
 
-    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientConfig::default())
+    let mut client = AsyncRtspClient::connect(addr, rtsp_runtime::RtspClientIoConfig::default())
         .await
         .unwrap();
     client.setup(URI, &tcp_interleaved()).await.unwrap();

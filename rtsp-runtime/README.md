@@ -55,16 +55,21 @@ A client talking to a server entirely in memory (no socket):
 
 ```rust
 use rtsp_runtime::{
-    ClientEvent, ClientSession, InterleavedFrame, ServerSession, SessionState, Transport,
-    TransportSpec,
+    ClientEvent, ClientSession, InterleavedFrame, RtspClientConfig, RtspServerConfig, ServerSession,
+    SessionIdSource, SessionState, Transport, TransportSpec,
 };
 
 let url = "rtsp://127.0.0.1/stream";
 let track = "rtsp://127.0.0.1/stream/trackID=0";
 
-// A fixed id is fine here; a real server must draw ids from a CSPRNG.
-let mut server = ServerSession::new(|| 0x0123_4567_89ab_cdef);
-let mut client = ClientSession::new();
+// A fixed id is fine here; a real server draws ids from the CSPRNG
+// (`SessionIdSource::default()`).
+let mut server = ServerSession::new(
+    RtspServerConfig::default()
+        .with_session_ids(SessionIdSource::counter(0x0123_4567_89ab_cdef)),
+)
+.unwrap();
+let mut client = ClientSession::new(RtspClientConfig::default()).unwrap();
 
 let req = client.options(url).unwrap();
 let (resp, _) = server.handle_request(&req).unwrap();

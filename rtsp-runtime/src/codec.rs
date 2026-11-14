@@ -197,7 +197,7 @@ mod tests {
     /// out first; the error follows on the next `decode`.
     #[test]
     fn client_codec_delivers_events_before_a_deferred_terminal_error() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let _ = c.options("rtsp://h/s").unwrap();
         let mut codec = ClientCodec::new(c);
         let mut buf = BytesMut::new();
@@ -216,7 +216,7 @@ mod tests {
     #[test]
     fn client_codec_reassembles_a_response_split_at_every_byte_boundary() {
         for split in 1..RESPONSE.len() {
-            let mut c = ClientSession::new();
+            let mut c = ClientSession::default();
             let _ = c.options("rtsp://h/s").unwrap();
             let mut codec = ClientCodec::new(c);
             let mut buf = BytesMut::new();
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn client_codec_one_byte_at_a_time() {
-        let mut c = ClientSession::new();
+        let mut c = ClientSession::default();
         let _ = c.options("rtsp://h/s").unwrap();
         let mut codec = ClientCodec::new(c);
         let mut buf = BytesMut::new();

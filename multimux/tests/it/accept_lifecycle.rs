@@ -41,7 +41,8 @@ async fn an_rtmp_accept_is_admitted_while_a_read_is_continuously_ready() {
     // steady read load starves. Publisher A connects and we keep its
     // connection continuously readable (byte-at-a-time); publisher B must
     // still be admitted well inside the 20 ms × N window the old code needs.
-    let (server_addr, handle, token) = multimux::test_seam::serve_rtmp_for_test_with_read_load().await;
+    let (server_addr, handle, token) =
+        multimux::test_seam::serve_rtmp_for_test_with_read_load().await;
 
     // Publisher A: hold a connection whose read side is always ready.
     use tokio::io::AsyncWriteExt as _;
@@ -64,7 +65,9 @@ async fn an_rtmp_accept_is_admitted_while_a_read_is_continuously_ready() {
     // the test binary instead of reporting the assertion.
     let mut b = tokio::net::TcpStream::connect(server_addr).await.unwrap();
     b.write_all(&[0x03]).await.unwrap();
-    let admitted = handle.wait_for_sessions(2, Duration::from_millis(500)).await;
+    let admitted = handle
+        .wait_for_sessions(2, Duration::from_millis(500))
+        .await;
     drivel.abort();
     token.cancel();
     std::mem::drop(b);

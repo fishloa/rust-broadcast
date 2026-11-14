@@ -306,10 +306,9 @@ async fn patch_rejections_follow_rfc_9725() {
 /// A resource whose session ended on its own (idle reap) is not a stale 200.
 #[tokio::test]
 async fn a_session_reaped_by_idle_timeout_unregisters_its_resource() {
-    let (addr, route, token) = multimux::test_seam::serve_for_test_with_read_load_and_timeout(
-        Duration::from_millis(150),
-    )
-    .await;
+    let (addr, route, token) =
+        multimux::test_seam::serve_for_test_with_read_load_and_timeout(Duration::from_millis(150))
+            .await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     wait_until("idle reap", || {

@@ -38,8 +38,10 @@ use tokio_util::codec::Framed;
 use crate::Method;
 use crate::client::{ClientEvent, ClientSession};
 use crate::codec::{ClientCodec, ServerCodec, ServerFrame, bounded};
+use crate::config::RtspClientIoConfig;
 use crate::error::{Error, IoContext, Result};
 use crate::server::{ServerEvent, ServerSession};
+use crate::server_config::RtspServerConfig;
 use crate::transport::{Transport, TransportSpec};
 
 /// The epoch [`now_us`] measures from: this process's first use of the clock.
@@ -89,88 +91,6 @@ fn io_err(context: IoContext, source: std::io::Error) -> Error {
 // Client
 // ===========================================================================
 
-/// What an [`AsyncRtspClient`] is configured by: the session (credentials,
-/// user agent) and the [`Timeouts`] on every awaited I/O. Every client
-/// constructor takes the config; [`RtspClientConfig::default`] plus
-/// `with_session`/`with_timeouts` build it.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct RtspClientConfig {
-    /// The protocol session, e.g. one carrying
-    /// [`Credentials`](crate::Credentials).
-    pub session: ClientSession,
-    /// Bounds on every awaited I/O; `connect` bounds the TCP connect and
-    /// `handshake` the TLS handshake.
-    pub timeouts: Timeouts,
-}
-
-impl RtspClientConfig {
-    /// Replace [`RtspClientConfig::session`] (a fresh [`ClientSession`] by
-    /// default).
-    #[must_use]
-    pub fn with_session(mut self, session: ClientSession) -> Self {
-        self.session = session;
-        self
-    }
-
-    /// Replace [`RtspClientConfig::timeouts`].
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
-        self.timeouts = timeouts;
-        self
-    }
-}
-
-impl Default for RtspClientConfig {
-    /// A fresh [`ClientSession`] and the default [`Timeouts`].
-    fn default() -> Self {
-        RtspClientConfig {
-            session: ClientSession::new(),
-            timeouts: Timeouts::default(),
-        }
-    }
-}
-
-/// What an [`AsyncRtspServer`] is configured by: the session and the
-/// [`Timeouts`] on every awaited I/O (`handshake` bounds the TLS handshake and
-/// the first complete request). Every server constructor takes the config;
-/// [`RtspServerConfig::default`] plus `with_session`/`with_timeouts` build it.
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct RtspServerConfig {
-    /// The protocol session.
-    pub session: ServerSession,
-    /// Bounds on every awaited I/O.
-    pub timeouts: Timeouts,
-}
-
-impl RtspServerConfig {
-    /// Replace [`RtspServerConfig::session`].
-    #[must_use]
-    pub fn with_session(mut self, session: ServerSession) -> Self {
-        self.session = session;
-        self
-    }
-
-    /// Replace [`RtspServerConfig::timeouts`].
-    #[must_use]
-    pub fn with_timeouts(mut self, timeouts: Timeouts) -> Self {
-        self.timeouts = timeouts;
-        self
-    }
-}
-
-impl Default for RtspServerConfig {
-    /// A session whose ids come from the OS random source, and the default
-    /// [`Timeouts`].
-    fn default() -> Self {
-        RtspServerConfig {
-            session: ServerSession::try_new(os_session_id),
-            timeouts: Timeouts::default(),
-        }
-    }
-}
-
 /// An async RTSP client that owns a socket and drives a [`ClientSession`].
 ///
 /// Each request method (`options`/`describe`/`setup`/`play`/`pause`/`teardown`)
@@ -199,11 +119,11 @@ impl AsyncRtspClient<TcpStream> {
     /// `addr` is any [`tokio::net::ToSocketAddrs`]; for the RTSP default port use
     /// `(host, RTSP_DEFAULT_PORT)`.
     ///
-    /// `config` is an [`RtspClientConfig`], e.g. one carrying
+    /// `config` is an [`RtspClientIoConfig`], e.g. one carrying
     /// [`Credentials`](crate::Credentials).
     pub async fn connect<A: tokio::net::ToSocketAddrs>(
         addr: A,
-        config: RtspClientConfig,
+        config: RtspClientIoConfig,
     ) -> Result<Self> {
         let stream = bounded(config.timeouts.connect, "connect", async {
             TcpStream::connect(addr)
@@ -220,7 +140,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Wraps an already-connected stream (plain or TLS) with `config`.
-    pub fn from_stream(stream: S, config: RtspClientConfig) -> Self {
+    pub fn from_stream(stream: S, config: RtspClientIoConfig) -> Self {
         AsyncRtspClient {
             framed: Framed::new(stream, ClientCodec::new(config.session)),
             pending_media: VecDeque::new(),
@@ -240,7 +160,7 @@ where
     }
 
     /// The negotiated session id, once a SETUP response has been processed.
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn session_id(&self) -> Option<crate::SessionId> {
         self.framed.codec().session.session_id()
     }
 
@@ -710,7 +630,7 @@ impl AsyncRtspClient<tokio_rustls::client::TlsStream<TcpStream>> {
         addr: A,
         server_name: &str,
         tls: rustls::ClientConfig,
-        config: RtspClientConfig,
+        config: RtspClientIoConfig,
     ) -> Result<Self> {
         let addr = addr;
         connect_tls_via(
@@ -734,7 +654,7 @@ async fn connect_tls_via<T>(
     dial: impl std::future::Future<Output = Result<T>>,
     server_name: &str,
     tls: rustls::ClientConfig,
-    config: RtspClientConfig,
+    config: RtspClientIoConfig,
 ) -> Result<AsyncRtspClient<tokio_rustls::client::TlsStream<T>>>
 where
     T: AsyncRead + AsyncWrite + Unpin,
@@ -852,14 +772,7 @@ where
             .map_err(|e| io_err(IoContext::TlsHandshake, e))
     })
     .await?;
-    Ok(AsyncRtspServer::from_stream(tls, config))
-}
-
-/// A `Session` id value from the OS random source (RFC 2326 §3.4).
-fn os_session_id() -> crate::Result<u64> {
-    let mut bytes = [0u8; 8];
-    getrandom::fill(&mut bytes).map_err(|_| Error::RandomSource)?;
-    Ok(u64::from_ne_bytes(bytes))
+    AsyncRtspServer::from_stream(tls, config)
 }
 
 impl<S> AsyncRtspServer<S>
@@ -867,14 +780,14 @@ where
     S: AsyncRead + AsyncWrite + Unpin,
 {
     /// Wraps an already-connected stream (plain or TLS) with `config`.
-    pub fn from_stream(stream: S, config: RtspServerConfig) -> Self {
-        AsyncRtspServer {
+    pub fn from_stream(stream: S, config: RtspServerConfig) -> Result<Self> {
+        Ok(AsyncRtspServer {
             framed: Framed::new(stream, ServerCodec::default()),
-            session: config.session,
+            session: ServerSession::new(config.clone())?,
             timeouts: config.timeouts,
             first_request_seen: false,
             ready: None,
-        }
+        })
     }
 
     /// The timeouts this adapter applies.
@@ -888,7 +801,7 @@ where
     }
 
     /// The allocated session id, once a SETUP has been handled.
-    pub fn session_id(&self) -> Option<&str> {
+    pub fn session_id(&self) -> Option<crate::SessionId> {
         self.session.session_id()
     }
 
@@ -1004,7 +917,7 @@ mod tls_timeout_tests {
             std::future::pending(),
             "localhost",
             default_tls_client_config().expect("TLS client config"),
-            RtspClientConfig::default().with_timeouts(timeouts()),
+            RtspClientIoConfig::default().with_timeouts(timeouts()),
         ))
         .await;
         assert!(
@@ -1021,7 +934,7 @@ mod tls_timeout_tests {
             async { Ok(client_io) },
             "localhost",
             default_tls_client_config().expect("TLS client config"),
-            RtspClientConfig::default().with_timeouts(timeouts()),
+            RtspClientIoConfig::default().with_timeouts(timeouts()),
         ))
         .await;
         assert!(
@@ -1058,17 +971,22 @@ fn expect_success(method: Method, event: ClientEvent) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::os_session_id;
+    use crate::SessionIdSource;
 
     #[test]
-    fn os_session_id_varies() {
+    fn the_os_random_id_source_varies() {
         let mut seen = std::collections::HashSet::new();
         for _ in 0..100 {
-            seen.insert(os_session_id().expect("OS random source"));
+            seen.insert(
+                SessionIdSource::default()
+                    .next_id(0)
+                    .expect("OS random source")
+                    .value(),
+            );
         }
         assert!(
             seen.len() > 90,
-            "os_session_id did not vary: {}",
+            "the OS id source did not vary: {}",
             seen.len()
         );
     }

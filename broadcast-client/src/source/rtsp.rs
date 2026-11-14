@@ -179,7 +179,7 @@ impl RtspSource {
             conn: None,
             next_conn: FIRST_CONN_ID,
             connections: 0,
-            client: ClientSession::new(),
+            client: ClientSession::default(),
             challenge: None,
             stale_replayed: false,
             auth_replays: 0,
@@ -444,7 +444,7 @@ impl RtspSource {
     }
 
     fn start_connect(&mut self, now: Timestamp, auth: Option<&AuthState>) {
-        let mut client = ClientSession::new();
+        let mut client = ClientSession::default();
         if let Some(creds) = auth
             .and_then(AuthState::credentials)
             .filter(|_| self.credentials_in_scope)

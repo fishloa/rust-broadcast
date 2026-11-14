@@ -41,6 +41,7 @@ mod origin_hls_skip;
 mod origin_iframe;
 mod origin_llhls;
 mod origin_pdt;
+mod public_surface;
 mod push_log_redaction;
 mod push_negotiate;
 mod push_rtmp;
@@ -51,7 +52,6 @@ mod push_rtsp_bounds;
 mod push_rtsp_wire;
 mod push_ts_stream;
 mod push_wire_goldens;
-mod public_surface;
 mod reconnect_policy;
 #[cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 mod rtmp_read_failure;
