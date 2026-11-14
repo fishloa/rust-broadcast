@@ -189,6 +189,7 @@ impl SeqSpace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     const S16: SeqSpace = crate::seq_space!(16);
     const S31: SeqSpace = crate::seq_space!(31);

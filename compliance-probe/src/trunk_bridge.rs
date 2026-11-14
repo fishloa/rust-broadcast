@@ -286,8 +286,8 @@ mod tests {
     /// silently dropped.
     #[test]
     fn lagged_tap_is_counted() {
-        let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 2)
-            .expect("a non-zero tap capacity is built");
+        let mut tap =
+            ByteTap::new(media_plane::TapPoint::Wire, 2).expect("a non-zero tap capacity is built");
         for i in 0..5u64 {
             tap.record(bytes::Bytes::from_static(b"x"), Timestamp::from_nanos(i));
         }
