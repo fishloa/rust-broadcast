@@ -7,6 +7,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- BREAKING: `SourceBlockPartition`'s fields are private; read them with the `transfer_length()`/`encoding_symbol_length()`/`source_symbols()`/`num_blocks()`/`larger_block_len()`/`smaller_block_len()`/`larger_blocks()` accessors (#2766, #2771).
+- `SourceBlockPartition::new` returns `Error::FieldOverflow` when the partition exceeds what a `FecPayloadId128` can address (more than `u32::MAX` source blocks, or more than `u16::MAX` symbols in a block) (#2766).
+
+### Fixed
+- `LctHeader` rejects a version other than `LCT_VERSION` (1) on parse and serialize with `Error::UnsupportedVersion` (RFC 5651 §5.1) (#2766).
 
 ## [0.9.0] - 2026-11-14
 ### Changed

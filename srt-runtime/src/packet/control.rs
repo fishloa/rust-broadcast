@@ -17,7 +17,7 @@
 //! stored in the typed per-type structs — see the crate root's reserved-bit
 //! policy.
 
-use super::ack::AckPacket;
+use super::ack::{ACK_NUMBER_BITS, AckPacket};
 use super::handshake::HandshakePacket;
 use super::misc::{
     AckAckPacket, CongestionWarningPacket, DropReqPacket, KeepAlivePacket, PeerErrorPacket,
@@ -395,19 +395,26 @@ impl<'a> ControlPacket<'a> {
         }
     }
 
-    fn word1(&self) -> u32 {
-        match self {
+    fn word1(&self) -> Result<u32> {
+        Ok(match self {
             ControlPacket::Handshake(_)
             | ControlPacket::KeepAlive(_)
             | ControlPacket::Nak(_)
             | ControlPacket::CongestionWarning(_)
             | ControlPacket::Shutdown(_) => 0,
-            ControlPacket::Ack(a) => a.ack_number,
+            ControlPacket::Ack(a) => {
+                broadcast_common::len::fit_bits(
+                    u64::from(a.ack_number),
+                    ACK_NUMBER_BITS,
+                    "Acknowledgement Number",
+                )?;
+                a.ack_number
+            }
             ControlPacket::AckAck(a) => a.ack_number,
             ControlPacket::DropReq(d) => d.message_number,
             ControlPacket::PeerError(p) => p.error_code,
             ControlPacket::UserDefined(u) => u.type_specific_info,
-        }
+        })
     }
 
     fn timestamp(&self) -> u32 {
@@ -501,7 +508,7 @@ impl<'a> ControlPacket<'a> {
         broadcast_common::len::fit_bits(u64::from(control_type_bits), 15, "Control Type")?;
         let word0 = super::F_BIT | (u32::from(control_type_bits) << 16) | u32::from(self.subtype());
         put_be32(buf, 0, word0);
-        put_be32(buf, 4, self.word1());
+        put_be32(buf, 4, self.word1()?);
         put_be32(buf, 8, self.timestamp());
         put_be32(buf, 12, self.dest_socket_id());
         let cif = &mut buf[SRT_HEADER_LEN..len];
@@ -523,7 +530,7 @@ impl<'a> ControlPacket<'a> {
                 n.write_cif(cif);
             }
             ControlPacket::DropReq(d) => {
-                d.write_cif(cif);
+                d.write_cif(cif)?;
             }
             ControlPacket::UserDefined(u) => {
                 cif.copy_from_slice(u.cif);
