@@ -310,6 +310,7 @@ pub enum AvcPicture {
 
 /// The identity of a coded field picture (the facts §3.36/§3.37 pair on).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AvcFieldInfo {
     /// `bottom_field_flag`.
     pub bottom: bool,
@@ -322,6 +323,17 @@ pub struct AvcFieldInfo {
 }
 
 impl AvcFieldInfo {
+    /// The facts of one coded field picture.
+    #[must_use]
+    pub fn new(bottom: bool, frame_num: u32, is_reference: bool, idr: bool) -> Self {
+        Self {
+            bottom,
+            frame_num,
+            is_reference,
+            idr,
+        }
+    }
+
     /// Whether `second` (the next access unit in decoding order) completes
     /// `self` as a complementary field pair (§3.35-3.37): opposite parity, the
     /// same `frame_num`, both reference or both non-reference, and the second
@@ -422,12 +434,12 @@ impl AvcParamSets {
             return AvcPicture::Unknown;
         };
         match parse_avc_slice_header(nal, sps, pps) {
-            Ok(h) if h.field_pic_flag => AvcPicture::Field(AvcFieldInfo {
-                bottom: h.bottom_field_flag,
-                frame_num: h.frame_num,
-                is_reference: h.nal_ref_idc != 0,
-                idr: h.idr,
-            }),
+            Ok(h) if h.field_pic_flag => AvcPicture::Field(AvcFieldInfo::new(
+                h.bottom_field_flag,
+                h.frame_num,
+                h.nal_ref_idc != 0,
+                h.idr,
+            )),
             Ok(_) => AvcPicture::Frame,
             Err(_) => AvcPicture::Unknown,
         }
@@ -656,12 +668,7 @@ mod tests {
         let au = annexb(&[s, p, f.clone()]);
         assert_eq!(
             ps.classify_au(&au),
-            AvcPicture::Field(AvcFieldInfo {
-                bottom: false,
-                frame_num: 2,
-                is_reference: true,
-                idr: false
-            })
+            AvcPicture::Field(AvcFieldInfo::new(false, 2, true, false))
         );
         // ...and a frame picture (field_pic_flag = 0, MBAFF-like) is not a field.
         let fr = slice(1, false, 2, None, 4, &|_| {});
@@ -673,25 +680,12 @@ mod tests {
 
     #[test]
     fn pairing_rules() {
-        let a = AvcFieldInfo {
-            bottom: false,
-            frame_num: 3,
-            is_reference: true,
-            idr: true,
-        };
-        let b = AvcFieldInfo {
-            bottom: true,
-            frame_num: 3,
-            is_reference: true,
-            idr: false,
-        };
+        let a = AvcFieldInfo::new(false, 3, true, true);
+        let b = AvcFieldInfo::new(true, 3, true, false);
         assert!(a.pairs_with(&b)); // IDR first field + non-IDR second
-        assert!(!a.pairs_with(&AvcFieldInfo { bottom: false, ..b })); // same parity
-        assert!(!a.pairs_with(&AvcFieldInfo { frame_num: 4, ..b })); // frame_num
-        assert!(!a.pairs_with(&AvcFieldInfo {
-            is_reference: false,
-            ..b
-        })); // ref/non-ref mix
-        assert!(!a.pairs_with(&AvcFieldInfo { idr: true, ..b })); // second field IDR
+        assert!(!a.pairs_with(&AvcFieldInfo::new(false, b.frame_num, b.is_reference, b.idr))); // same parity
+        assert!(!a.pairs_with(&AvcFieldInfo::new(b.bottom, 4, b.is_reference, b.idr))); // frame_num
+        assert!(!a.pairs_with(&AvcFieldInfo::new(b.bottom, b.frame_num, false, b.idr))); // ref/non-ref mix
+        assert!(!a.pairs_with(&AvcFieldInfo::new(b.bottom, b.frame_num, b.is_reference, true))); // second field IDR
     }
 }

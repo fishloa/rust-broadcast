@@ -117,7 +117,11 @@ pub struct AvcVuiTiming {
 }
 
 /// Decoded fields from an H.264/AVC sequence parameter set.
+///
+/// The decoder is the only producer, so a newly decoded field is an additive
+/// change for a consumer.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct AvcSpsInfo {
     /// `profile_idc` — SPS byte index 1.
     pub profile_idc: u8,
@@ -165,6 +169,42 @@ pub struct AvcSpsInfo {
 /// The NAL header byte is skipped; decoding starts at the next byte.
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     decode_avc_sps_inner(sps_bytes).map(|(info, _, _, _, _)| info)
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per `AvcSpsInfo` field, at the one place that decodes them"
+)]
+fn build_avc_sps_info(
+    profile_idc: u8,
+    constraint_flags: u8,
+    level_idc: u8,
+    chroma_format_idc: u8,
+    separate_colour_plane: bool,
+    bit_depth_luma: u8,
+    bit_depth_chroma: u8,
+    frame_mbs_only: bool,
+    width: u32,
+    height: u32,
+    num_units_in_tick: Option<u32>,
+    time_scale: Option<u32>,
+    fps: Option<f32>,
+) -> AvcSpsInfo {
+    AvcSpsInfo {
+        profile_idc,
+        constraint_flags,
+        level_idc,
+        chroma_format_idc,
+        separate_colour_plane,
+        bit_depth_luma,
+        bit_depth_chroma,
+        frame_mbs_only,
+        width,
+        height,
+        num_units_in_tick,
+        time_scale,
+        fps,
+    }
 }
 
 /// The SPS fields a slice-header parser needs (ITU-T H.264 §7.3.3 reads
@@ -515,7 +555,7 @@ fn decode_avc_sps_inner(
     };
 
     Ok((
-        AvcSpsInfo {
+        build_avc_sps_info(
             profile_idc,
             constraint_flags,
             level_idc,
@@ -524,12 +564,12 @@ fn decode_avc_sps_inner(
             bit_depth_luma,
             bit_depth_chroma,
             frame_mbs_only,
-            width: width as u32,
-            height: height as u32,
+            width as u32,
+            height as u32,
             num_units_in_tick,
             time_scale,
             fps,
-        },
+        ),
         AvcSliceSps {
             sps_id,
             separate_colour_plane,
@@ -769,7 +809,11 @@ fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::err
 /// Decoded fields from an H.265/HEVC sequence parameter set.
 ///
 /// The `Eq` bound is intentionally absent because `fps` is an `Option<f32>`.
+///
+/// The decoder is the only producer, so a newly decoded field is an additive
+/// change for a consumer.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct HevcSpsInfo {
     /// `general_profile_space` (2 bits).
     pub general_profile_space: u8,
@@ -841,6 +885,43 @@ pub struct HevcSpsInfo {
 /// ```
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
     decode_hevc_sps_inner(sps_bytes).map(|(info, _, _, _)| info)
+}
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per `HevcSpsInfo` field, at the one place that decodes them"
+)]
+fn build_hevc_sps_info(
+    general_profile_space: u8,
+    general_tier_flag: bool,
+    general_profile_idc: u8,
+    general_profile_compatibility_flags: u32,
+    general_constraint_indicator_flags: u64,
+    general_level_idc: u8,
+    chroma_format_idc: u8,
+    bit_depth_luma: u8,
+    bit_depth_chroma: u8,
+    width: u32,
+    height: u32,
+    num_units_in_tick: Option<u32>,
+    time_scale: Option<u32>,
+    fps: Option<f32>,
+) -> HevcSpsInfo {
+    HevcSpsInfo {
+        general_profile_space,
+        general_tier_flag,
+        general_profile_idc,
+        general_profile_compatibility_flags,
+        general_constraint_indicator_flags,
+        general_level_idc,
+        chroma_format_idc,
+        bit_depth_luma,
+        bit_depth_chroma,
+        width,
+        height,
+        num_units_in_tick,
+        time_scale,
+        fps,
+    }
 }
 
 /// VUI timing facts for an H.265 SPS (ITU-T H.265 §E.2.1 + hrd_parameters),
@@ -1148,7 +1229,7 @@ fn decode_hevc_sps_inner(
     };
 
     Ok((
-        HevcSpsInfo {
+        build_hevc_sps_info(
             general_profile_space,
             general_tier_flag,
             general_profile_idc,
@@ -1158,12 +1239,12 @@ fn decode_hevc_sps_inner(
             chroma_format_idc,
             bit_depth_luma,
             bit_depth_chroma,
-            width: width as u32,
-            height: height as u32,
+            width as u32,
+            height as u32,
             num_units_in_tick,
             time_scale,
             fps,
-        },
+        ),
         interlace,
         display,
         hrd_fixed_pic_rate,
@@ -1630,6 +1711,7 @@ fn parse_hevc_sps_to_vui_timing_inner(
 /// Decoded fields from an H.266/VVC sequence parameter set (subset needed by
 /// the transmux pipeline) — ITU-T H.266 §7.3.2.4 + §7.3.3.1.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct VvcSpsInfo {
     /// `sps_chroma_format_idc` (2 bits).
     pub chroma_format_idc: u8,
@@ -1690,14 +1772,32 @@ pub fn decode_vvc_sps(sps_bytes: &[u8]) -> Result<VvcSpsInfo> {
     // sps_pic_height_max_in_luma_samples ue(v)
     let height = r.read_ue("sps_pic_height_max_in_luma_samples")?;
 
-    Ok(VvcSpsInfo {
+    Ok(build_vvc_sps_info(
         chroma_format_idc,
         general_profile_idc,
         general_tier_flag,
         general_level_idc,
-        width: width as u32,
-        height: height as u32,
-    })
+        width as u32,
+        height as u32,
+    ))
+}
+
+fn build_vvc_sps_info(
+    chroma_format_idc: u8,
+    general_profile_idc: u8,
+    general_tier_flag: bool,
+    general_level_idc: u8,
+    width: u32,
+    height: u32,
+) -> VvcSpsInfo {
+    VvcSpsInfo {
+        chroma_format_idc,
+        general_profile_idc,
+        general_tier_flag,
+        general_level_idc,
+        width,
+        height,
+    }
 }
 
 /// Decode `profile_tier_level(profileTierPresentFlag=1, MaxNumSubLayersMinus1)`

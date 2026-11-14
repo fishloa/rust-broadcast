@@ -362,8 +362,13 @@ impl From<u8> for ChannelConfiguration {
 broadcast_common::impl_spec_display!(ChannelConfiguration, Reserved);
 
 // --- AudioSpecificConfig §1.6.2.1 ---
+///
+/// Build it by parsing a decoder-specific config
+/// ([`Parse::parse`](broadcast_common::Parse::parse)): the parser is the only
+/// producer, so a newly decoded field is an additive change for a consumer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct AudioSpecificConfig {
     pub audio_object_type: AudioObjectType,
     pub sampling_frequency_index: SamplingFrequencyIndex,
@@ -640,6 +645,27 @@ impl Parse<'_> for AudioSpecificConfig {
             trailing,
             trailing_top,
         })
+    }
+}
+
+impl AudioSpecificConfig {
+    #[cfg(test)]
+    fn with_fields(
+        audio_object_type: AudioObjectType,
+        sampling_frequency_index: SamplingFrequencyIndex,
+        sampling_frequency: Option<u32>,
+        channel_configuration: ChannelConfiguration,
+        trailing: Vec<u8>,
+        trailing_top: Option<u8>,
+    ) -> Self {
+        Self {
+            audio_object_type,
+            sampling_frequency_index,
+            sampling_frequency,
+            channel_configuration,
+            trailing,
+            trailing_top,
+        }
     }
 }
 
@@ -1082,12 +1108,15 @@ mod tests {
     /// trailing region starts at a different offset.
     #[test]
     fn serialize_escape_form_keeps_the_tail_intact() {
-        let asc = AudioSpecificConfig {
-            sampling_frequency_index: SamplingFrequencyIndex::Escape,
-            sampling_frequency: Some(44100),
-            trailing: alloc::vec![0x01, 0x02],
-            ..AudioSpecificConfig::parse(&KNOWN).unwrap()
-        };
+        let known = AudioSpecificConfig::parse(&KNOWN).unwrap();
+        let asc = AudioSpecificConfig::with_fields(
+            known.audio_object_type,
+            SamplingFrequencyIndex::Escape,
+            Some(44100),
+            known.channel_configuration,
+            alloc::vec![0x01, 0x02],
+            known.trailing_top,
+        );
         let need = asc.serialized_len();
         assert_eq!(need, 7);
         let mut buf = alloc::vec![0x55u8; need + 16];

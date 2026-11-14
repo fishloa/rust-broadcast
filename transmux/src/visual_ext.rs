@@ -258,6 +258,7 @@ const NCLX_PARAMS_LEN: usize = 7;
 /// On-screen colour parameters for colour_type 'nclx' — ISO/IEC 14496-12:2026 §12.1.5.2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct NclxColourInfo {
     pub colour_primaries: u16,
     pub transfer_characteristics: u16,
@@ -267,6 +268,42 @@ pub struct NclxColourInfo {
     /// they are zero, but preserving them keeps a `colr` byte-identical on a
     /// round trip instead of silently rewriting a sloppy writer's padding.
     pub reserved: u8,
+}
+
+impl NclxColourInfo {
+    /// The signalled on-screen colour description, with the `reserved` padding
+    /// at its DVB/MPEG-2 default of zero.
+    #[must_use]
+    pub fn new(
+        colour_primaries: u16,
+        transfer_characteristics: u16,
+        matrix_coefficients: u16,
+        full_range_flag: bool,
+    ) -> Self {
+        Self {
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coefficients,
+            full_range_flag,
+            reserved: 0,
+        }
+    }
+
+    fn with_reserved(
+        colour_primaries: u16,
+        transfer_characteristics: u16,
+        matrix_coefficients: u16,
+        full_range_flag: bool,
+        reserved: u8,
+    ) -> Self {
+        Self {
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coefficients,
+            full_range_flag,
+            reserved,
+        }
+    }
 }
 
 /// Colour Information Box (`colr`) — ISO/IEC 14496-12:2026 §12.1.5.2.
@@ -303,13 +340,13 @@ impl<'a> Parse<'a> for ColourInformationBox {
                 let reserved = rest[6] & 0x7F;
                 Ok(Self {
                     colour_type,
-                    nclx: Some(NclxColourInfo {
+                    nclx: Some(NclxColourInfo::with_reserved(
                         colour_primaries,
                         transfer_characteristics,
                         matrix_coefficients,
                         full_range_flag,
                         reserved,
-                    }),
+                    )),
                     // Some writers pad an `nclx` body past the 7 spec'd bytes.
                     // Keep them verbatim so the box re-serializes byte-identically
                     // (r04-W39); the spec defines no other field here.

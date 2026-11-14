@@ -857,12 +857,12 @@ impl RouteRegistry {
             super::supervisor::record_route_removed(name);
         }
 
-        Ok(ReloadSummary {
-            added: added_routes.into_iter().map(|r| r.name).collect(),
-            removed: removed_names,
-            changed: changed_routes.into_iter().map(|r| r.name).collect(),
-            unchanged: unchanged_names,
-        })
+        Ok(ReloadSummary::new(
+            added_routes.into_iter().map(|r| r.name).collect(),
+            removed_names,
+            changed_routes.into_iter().map(|r| r.name).collect(),
+            unchanged_names,
+        ))
     }
 
     /// What reloading `new_config` would add, restart, remove and leave alone,
@@ -1128,8 +1128,9 @@ fn input_kind_name(input: &crate::config::InputSpec) -> &'static str {
 
 /// `POST /admin/reload`'s response body — which route names were added,
 /// removed, changed (same name, different config — restarted), or left
-/// completely alone.
+/// completely alone. Build it with [`ReloadSummary::new`].
 #[derive(Debug, serde::Serialize)]
+#[non_exhaustive]
 pub struct ReloadSummary {
     /// Route names present in the reloaded file but not the running set.
     pub added: Vec<String>,
@@ -1141,6 +1142,23 @@ pub struct ReloadSummary {
     /// Route names present in both with byte-for-byte identical [`Route`]
     /// config — **left running, never restarted**.
     pub unchanged: Vec<String>,
+}
+
+impl ReloadSummary {
+    /// The four name lists a reload reports, as it computed them.
+    fn new(
+        added: Vec<String>,
+        removed: Vec<String>,
+        changed: Vec<String>,
+        unchanged: Vec<String>,
+    ) -> Self {
+        Self {
+            added,
+            removed,
+            changed,
+            unchanged,
+        }
+    }
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1860,5 +1878,23 @@ mod tests {
             drained_when_floor_is_read,
             "the archive floor of the changed route z was read while the old runtime was live"
         );
+    }
+
+    /// `ReloadSummary` is `#[non_exhaustive]`, so a name set this crate has not
+    /// a field for can be added later without breaking a consumer, and the four
+    /// lists an admin client reads are the ones the reload computed.
+    #[test]
+    fn reload_summary_reports_every_name_set() {
+        let summary = ReloadSummary::new(
+            vec!["a".to_string()],
+            vec!["b".to_string()],
+            vec!["c".to_string()],
+            vec!["d".to_string()],
+        );
+        let json = serde_json::to_value(&summary).expect("summary serializes");
+        assert_eq!(json["added"], serde_json::json!(["a"]));
+        assert_eq!(json["removed"], serde_json::json!(["b"]));
+        assert_eq!(json["changed"], serde_json::json!(["c"]));
+        assert_eq!(json["unchanged"], serde_json::json!(["d"]));
     }
 }
