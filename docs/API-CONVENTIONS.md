@@ -1,26 +1,26 @@
 # API conventions
 
-Binding for every public API in the workspace. New code follows them; a lane that settles a new convention adds it here in the same PR. Items marked *(migrating #N)* are decided but not yet applied everywhere: new code follows them now.
+Binding for every public API in the workspace. New code follows them; a lane that settles a new convention adds it here in the same PR.
 
 ## Time
 
-- Wall-clock instant: `jiff::Timestamp`. No chrono. (#2635)
-- Monotonic "now" in sans-IO engines: `broadcast_common::stage::Timestamp`, passed by the caller; engines never read a clock. *(migrating #2653)*
-- Spans and timeouts: `std::time::Duration`; all timeouts through `broadcast_common::timeouts::Timeouts`. No `*_ms`/`*_us` integers in public signatures or config. *(migrating #2653, #2662)*
-- Media time: a timestamp travels with its timescale; zero timescale is an error. 33-bit PTS/DTS and 27 MHz PCR arithmetic only via `broadcast_common::clock33`. *(migrating #2656, #2657)*
+- Wall-clock instant: `jiff::Timestamp`. No chrono.
+- Monotonic "now" in sans-IO engines: `broadcast_common::stage::Timestamp`, passed by the caller; engines never read a clock.
+- Spans and timeouts: `std::time::Duration`; all timeouts through `broadcast_common::timeouts::Timeouts`. No `*_ms`/`*_us` integers in public signatures or config.
+- Media time: a timestamp travels with its timescale; zero timescale is an error. 33-bit PTS/DTS and 27 MHz PCR arithmetic only via `broadcast_common::clock33`.
 
 ## Types
 
-- No raw bytes or bare integers for structured data: `Pid`, track/stream ids, sequence numbers use their types; constructors check ranges and never silently mask. *(migrating #2656)*
-- Byte ranges: one `ByteSpan`, never `(u64, u64)`. *(migrating #2655)*
-- URLs as `url::Url`; HTTP method/headers as `http` types. *(migrating #2654)*
+- No raw bytes or bare integers for structured data: `Pid`, track/stream ids, sequence numbers use their types; constructors check ranges and never silently mask.
+- Byte ranges: one `ByteSpan`, never `(u64, u64)`.
+- URLs as `url::Url`; HTTP method/headers as `http` types.
 - Units of one quantity are the same across crates.
 
 ## Construction
 
-- Config: `Config::default()` + `with_*` setters (or `new(required..)` when fields are mandatory); struct `#[non_exhaustive]`. *(migrating #2664)*
-- One constructor per role (client/server/listener) taking that config. *(migrating #2660, #2661)*
-- One shared type per concept across crates (timeouts, backoff, UDP options). *(migrating #2662, #2663)*
+- Config: `Config::default()` + `with_*` setters (or `new(required..)` when fields are mandatory); struct `#[non_exhaustive]`.
+- One constructor per role (client/server/listener) taking that config.
+- One shared type per concept across crates (timeouts, backoff, UDP options).
 
 ## Errors
 
