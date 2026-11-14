@@ -9,12 +9,12 @@
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_common::Parse;
 
 use crate::Result;
 use crate::error::Error;
 use crate::pack_header::{PACK_START_CODE, PackHeader};
-use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap};
+use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap, program_stream_map_wire_len};
 use crate::system_header::{
     PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN, SYSTEM_HEADER_START_CODE, SystemHeader,
 };
@@ -143,7 +143,11 @@ fn parse_pes_loop(
         // an opaque, un-mapped PES packet.
         if data[pos + 3] == MAP_STREAM_ID {
             let map = ProgramStreamMap::parse(&data[pos..])?;
-            pos += map.serialized_len();
+            // Advance by the *wire* length (`6 + program_stream_map_length`,
+            // Table 2-41), never by the re-serialized length of the parsed
+            // struct: the next packet starts where the length field says
+            // (#2743).
+            pos += program_stream_map_wire_len(&data[pos..])?;
             psm = Some(map);
             continue;
         }

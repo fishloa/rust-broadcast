@@ -79,6 +79,18 @@ pub enum Error {
         /// Bytes available after the length field.
         available: usize,
     },
+    /// The `elementary_stream_map` loop's entries do not consume exactly the
+    /// declared `elementary_stream_map_length` (ISO/IEC 13818-1 Table 2-41):
+    /// the leftover bytes belong to no entry and cannot be re-serialized.
+    #[error(
+        "elementary_stream_map_length {declared} is not covered by its entries ({parsed} bytes)"
+    )]
+    ElementaryStreamMapTrailingBytes {
+        /// The declared `elementary_stream_map_length` value.
+        declared: usize,
+        /// Bytes the parsed entries occupy.
+        parsed: usize,
+    },
     /// PES packet parse error from `mpeg-pes`.
     #[error("PES parse error: {0}")]
     Pes(#[from] mpeg_pes::Error),

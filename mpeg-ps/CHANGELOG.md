@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- The pack walker advances past a Program Stream Map by its wire length (`6 + program_stream_map_length`, ISO/IEC 13818-1 Table 2-41) instead of the re-serialized length of the parsed struct, which is shorter whenever the ES loop carries bytes no entry claims; every later pack of such a stream used to be lost (#2743).
+- BREAKING: `ProgramStreamMap::parse` rejects a PSM whose elementary-stream entries do not cover the declared `elementary_stream_map_length` with the new `Error::ElementaryStreamMapTrailingBytes { declared, parsed }`, instead of silently dropping the remainder (#2743).
 ### Changed
 - The `serde` feature enables `broadcast-common/serde`, so the clock value the SCR is built on serializes.
 ### Added

@@ -173,6 +173,18 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         let es_data = &b[es_start..es_end];
         let elementary_stream_map = parse_es_loop(es_data, single_extension_stream_flag)?;
+        // Entry boundaries that do not land on the declared
+        // `elementary_stream_map_length` leave bytes no entry claims. The
+        // parsed struct cannot carry them, so accepting them would make the
+        // re-serialized PSM shorter than the wire one and desynchronise every
+        // caller that advances by `serialized_len()` (#2743).
+        let parsed_es_len: usize = elementary_stream_map.iter().map(es_entry_len).sum();
+        if parsed_es_len != es_data.len() {
+            return Err(Error::ElementaryStreamMapTrailingBytes {
+                declared: es_data.len(),
+                parsed: parsed_es_len,
+            });
+        }
 
         Ok(ProgramStreamMap {
             current_next_indicator,
@@ -242,6 +254,15 @@ fn es_entry_len(e: &EsMapEntry<'_>) -> usize {
             0
         }
         + e.descriptors.len()
+}
+
+/// Wire length of a PSM packet at the start of `data`: the 6-byte prefix
+/// (`packet_start_code_prefix`, `map_stream_id`, `program_stream_map_length`)
+/// plus `program_stream_map_length` (ISO/IEC 13818-1 Table 2-41).
+pub(crate) fn program_stream_map_wire_len(data: &[u8]) -> Result<usize> {
+    need_in(data, PREFIX_LEN, "program_stream_map prefix")?;
+    let map_length = u16::from_be_bytes([data[4], data[5]]) as usize;
+    Ok(PREFIX_LEN + map_length)
 }
 
 /// Write the elementary-stream loop straight into `out` (exactly the sum of
