@@ -236,7 +236,7 @@ impl ReconnectTimer {
 
 /// Holds the request queue until an instant: the latest hold wins, and the gate lifts itself the
 /// first time it is asked at or after that instant. A session's wake-up *pacing* floor (an HLS
-/// `WaitMs`, a retry's own wait) is a different rule from the retry series and stays separate.
+/// `Wait`, a retry's own wait) is a different rule from the retry series and stays separate.
 #[derive(Debug, Default)]
 pub(crate) struct RetryGate {
     until: Option<u64>,

@@ -152,7 +152,7 @@ fn main() {
             } => {
                 println!("action: FetchPlaylist {{ url: {url:?}, blocking: None }}");
             }
-            Action::WaitMs(ms) => println!("action: WaitMs({ms})"),
+            Action::Wait(wait) => println!("action: Wait({wait:?})"),
             // `Action` is `#[non_exhaustive]` — a future variant is simply
             // not printed by this demo, not a compile break.
             _ => {}

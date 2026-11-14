@@ -26,7 +26,6 @@ use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 use broadcast_auth::AuthState;
 use broadcast_common::stage::Timestamp;
-use broadcast_common::units::MICROS_PER_MILLI;
 
 const STATUS_FORBIDDEN: u16 = 403;
 const STATUS_NOT_FOUND: u16 = 404;
@@ -821,8 +820,9 @@ impl HlsSource {
                 HlsAction::FetchKey { id, url } => {
                     self.issue(Purpose::Key(id), &url, None, now, auth);
                 }
-                HlsAction::WaitMs(ms) => {
-                    let at = now.saturating_add(ms.saturating_mul(MICROS_PER_MILLI));
+                HlsAction::Wait(wait) => {
+                    let at =
+                        now.saturating_add(u64::try_from(wait.as_micros()).unwrap_or(u64::MAX));
                     self.gate.hold_until(at);
                     self.actions
                         .push_back(Action::WakeAt(Timestamp::from_micros(at)));

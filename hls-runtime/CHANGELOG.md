@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: the non-blocking-reload hint is `Action::Wait(Duration)` instead of `Action::WaitMs(u64)`, so every span in the API is one type.
+- BREAKING: `HlsClient::poll_timeout` takes and returns `broadcast_common::stage::Timestamp` instead of `std::time::Instant`, so the client is driven from the same caller-supplied clock as `broadcast-client`'s sources (and from a recorded clock in a test); it is no longer `std`-only.
+
 ### Removed
 - Removed the unused `axum` dev-dependency.
 
