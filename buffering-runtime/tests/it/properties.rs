@@ -1,10 +1,14 @@
 //! Property tests over random operation streams (seeded xorshift; no extra
 //! dependency): no panic on any input, and a fixed invariant set.
 use crate::support::Rng;
-use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, State};
+use buffering_runtime::{BufferController, ControllerConfig, Event, Hint, Micros, State, Ticks27};
 
-const MIN: u64 = 300_000;
-const MAX: u64 = 3_000_000;
+const fn us(v: u64) -> Micros {
+    Micros(v)
+}
+
+const MIN: Micros = Micros(300_000);
+const MAX: Micros = Micros(3_000_000);
 
 fn pick_u64(r: &mut Rng) -> u64 {
     match r.below(10) {
@@ -51,14 +55,17 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
                     media
                 };
                 c.on_chunk(
-                    t_in,
+                    us(t_in),
                     u32::try_from(rng.below(1 << 20)).unwrap(),
-                    (rng.below(8) != 0).then_some(pcr),
+                    (rng.below(8) != 0).then_some(Ticks27(pcr)),
                 );
                 media = media.wrapping_add(35_000 * 27);
-                c.on_media(t_in, media);
+                c.on_media(us(t_in), Ticks27(media));
             }
-            3 | 4 => c.on_tick(t_in, (rng.below(5) != 0).then(|| pick_u64(&mut rng))),
+            3 | 4 => c.on_tick(
+                us(t_in),
+                (rng.below(5) != 0).then(|| Ticks27(pick_u64(&mut rng))),
+            ),
             _ => {
                 let h = [
                     Hint::InputDegraded,
@@ -69,7 +76,7 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
                     Hint::SourceError,
                     Hint::Reconnected,
                 ][rng.below(7) as usize];
-                c.on_hint(t_in, h);
+                c.on_hint(us(t_in), h);
             }
         }
         if t_in >= now && t_in != u64::MAX {
@@ -81,10 +88,10 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
         // never falls faster than max_step_down (100 ms/s); rises are free
         // (only meaningful on a sane clock: a hostile clock jump is a legitimate long dt)
         if !hostile && now > prev_target.1 && t < prev_target.0 {
-            let fall = prev_target.0 - t;
+            let fall = Micros(prev_target.0.0 - t.0);
             let allowed = u128::from(100_000u64) * u128::from(now - prev_target.1) / 1_000_000 + 1;
             assert!(
-                u128::from(fall) <= allowed || !hostile,
+                u128::from(fall.0) <= allowed || !hostile,
                 "target fell {fall} in {} us",
                 now - prev_target.1
             );
@@ -127,8 +134,8 @@ fn run(seed: u64, steps: u32, hostile: bool) -> u64 {
         let s = c.stats();
         assert_eq!(s.state == State::Playing, playing);
         mix(u64::from(s.state.code()));
-        mix(s.target_us);
-        mix(s.est.baseline_us);
+        mix(s.target_us.0);
+        mix(s.est.baseline_us.0);
     }
     fp
 }

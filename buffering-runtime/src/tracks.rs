@@ -76,7 +76,7 @@ pub const DEFAULT_TRACK: u32 = 0;
 
 /// Fallback coalescing window (microseconds) for a caller that never calls
 /// `on_chunk`: calls this close are one delivery.
-pub const COALESCE_US: Micros = 1_000;
+pub const COALESCE_US: Micros = Micros(1_000);
 
 /// Delivery steps a track must have shown before a start/resume is granted on
 /// its granularity (see `TrackSet::granularity_known`): the third delivery's
@@ -85,7 +85,7 @@ pub const LEARN_STEPS: u32 = 2;
 
 /// Wrap-safe: is `a` strictly before `b`?
 fn before(a: Ticks27, b: Ticks27) -> bool {
-    pcr_signed_distance(a, b) > 0
+    pcr_signed_distance(a.0, b.0) > 0
 }
 
 /// Delivery-instant bookkeeping for the granularity measurement.
@@ -156,19 +156,19 @@ impl Track {
         let (prev_end, prev_at, cur_end, cur_at) = (s.prev_end, s.prev_at, s.cur_end, s.cur_at);
         s.prev_end = cur_end;
         s.prev_at = cur_at;
-        let advance = pcr_signed_distance(prev_end, cur_end);
+        let advance = pcr_signed_distance(prev_end.0, cur_end.0);
         let interval = cur_at.saturating_sub(prev_at);
-        if advance <= 0 || interval == 0 || interval >= rules.max_interval_us {
+        if advance <= 0 || interval == Micros::ZERO || interval >= rules.max_interval_us {
             return;
         }
         if rules.gap_end_at.is_some_and(|g| g > prev_at) {
             return;
         }
         let step_us = u64::try_from(advance).unwrap_or(0) / TICKS_PER_US;
-        if step_us > interval.saturating_add(rules.max_excess_us) {
+        if step_us > interval.0.saturating_add(rules.max_excess_us.0) {
             return;
         }
-        self.gran.observe(cur_at, step_us);
+        self.gran.observe(cur_at.0, step_us);
     }
 
     /// Fold one delivery into its delivery window; a call that does not belong
@@ -254,7 +254,7 @@ impl TrackSet {
                     step: None,
                     first_at: now,
                     windows: 0,
-                    gran: MaxHold::new(self.gran_hold_us, self.gran_decay_us),
+                    gran: MaxHold::new(self.gran_hold_us.0, self.gran_decay_us.0),
                 });
                 self.v.len() - 1
             }
@@ -314,8 +314,13 @@ impl TrackSet {
     /// clock by no more than one expected step, so it excludes nobody.
     fn silence_clock(&self, now: Micros) -> Option<Micros> {
         let last = self.last_delivery?;
-        let step = self.v.iter().map(|t| t.gran.value(now)).max().unwrap_or(0);
-        Some(last.max(now.min(last.saturating_add(step))))
+        let step = self
+            .v
+            .iter()
+            .map(|t| t.gran.value(now.0))
+            .max()
+            .unwrap_or(0);
+        Some(last.max(now.min(last.saturating_add(Micros(step)))))
     }
 
     /// Silent relative to the (expected) most recent delivery on any track.
@@ -326,7 +331,7 @@ impl TrackSet {
             (None, Some(f)) => t.seen_at.max(f),
             _ => t.seen_at,
         };
-        clock.is_some_and(|l| l.saturating_sub(since) >= silence_us)
+        clock.is_some_and(|l| l.saturating_sub(since).0 >= silence_us.0)
     }
 
     /// Is `id` known and not excluded by the relative-silence rule at `now`?
@@ -343,9 +348,9 @@ impl TrackSet {
         self.v
             .iter()
             .filter(|t| !self.is_silent(t, silence_us, clock))
-            .map(|t| t.gran.value(now))
+            .map(|t| Micros(t.gran.value(now.0)))
             .max()
-            .unwrap_or(0)
+            .unwrap_or(Micros::ZERO)
     }
 
     /// Has every non-excluded, delivering track shown enough deliveries for its
@@ -362,7 +367,7 @@ impl TrackSet {
         self.v
             .iter()
             .filter(|t| t.end.is_some() && !self.is_silent(t, silence_us, clock))
-            .all(|t| t.windows > LEARN_STEPS || now.saturating_sub(t.first_at) >= max_wait_us)
+            .all(|t| t.windows > LEARN_STEPS || now.saturating_sub(t.first_at).0 >= max_wait_us.0)
     }
 
     /// Forget every end (a discontinuity); registrations survive and wait

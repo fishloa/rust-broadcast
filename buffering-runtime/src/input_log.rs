@@ -41,7 +41,7 @@ const KIND_SEED: &str = "seed";
 const HAS_POSITION: &str = "1";
 const NO_POSITION: &str = "0";
 const HINT_CODE_FIRST: u32 = 1;
-const CONFIG_NOW_US: Micros = 0;
+const CONFIG_NOW_US: Micros = Micros::ZERO;
 
 /// One call a host made into a [`BufferController`].
 ///
@@ -164,7 +164,7 @@ impl Input {
         match self {
             Self::Chunk { now_us, bytes, pcr } => {
                 write!(out, "{KIND_CHUNK},{now_us},{bytes},")?;
-                write_opt(out, *pcr)
+                write_opt(out, pcr.map(Ticks27::get))
             }
             Self::TrackMedia { now_us, track, end } => {
                 write!(out, "{KIND_MEDIA},{now_us},{track},{end}")
@@ -176,7 +176,7 @@ impl Input {
                     NO_POSITION
                 };
                 write!(out, "{KIND_TICK},{now_us},{has},")?;
-                write_opt(out, *pts)
+                write_opt(out, pts.map(Ticks27::get))
             }
             Self::Register { now_us, track } => write!(out, "{KIND_REGISTER},{now_us},{track},"),
             Self::Unregister { now_us, track } => {
@@ -425,33 +425,33 @@ macro_rules! config_keys {
 }
 
 config_keys! {
-    JitterMinWindow => "jitter.min_window_us", jitter.min_window_us: u64;
-    JitterInterval => "jitter.interval_us", jitter.interval_us: u64;
-    JitterOutlier => "jitter.outlier_us", jitter.outlier_us: u64;
+    JitterMinWindow => "jitter.min_window_us", jitter.min_window_us: Micros;
+    JitterInterval => "jitter.interval_us", jitter.interval_us: Micros;
+    JitterOutlier => "jitter.outlier_us", jitter.outlier_us: Micros;
     JitterBucket => "jitter.bucket_us", jitter.bucket_us: u32;
     JitterBuckets => "jitter.buckets", jitter.buckets: u16;
     JitterForget => "jitter.forget_q15", jitter.forget_q15: u16;
     JitterQuantile => "jitter.quantile_permille", jitter.quantile_permille: u16;
-    JitterHold => "jitter.hold_us", jitter.hold_us: u64;
-    JitterDecay => "jitter.decay_us", jitter.decay_us: u64;
+    JitterHold => "jitter.hold_us", jitter.hold_us: Micros;
+    JitterDecay => "jitter.decay_us", jitter.decay_us: Micros;
     JitterMaxSamples => "jitter.max_samples", jitter.max_samples: u16;
-    JitterDiscontinuity => "jitter.discontinuity_us", jitter.discontinuity_us: u64;
-    PolicyMin => "policy.min_us", policy.min_us: u64;
-    PolicyInitial => "policy.initial_us", policy.initial_us: u64;
-    PolicyMax => "policy.max_us", policy.max_us: u64;
+    JitterDiscontinuity => "jitter.discontinuity_us", jitter.discontinuity_us: Micros;
+    PolicyMin => "policy.min_us", policy.min_us: Micros;
+    PolicyInitial => "policy.initial_us", policy.initial_us: Micros;
+    PolicyMax => "policy.max_us", policy.max_us: Micros;
     PolicyK1 => "policy.k1_q8", policy.k1_q8: u16;
-    PolicyMargin => "policy.margin_us", policy.margin_us: u64;
+    PolicyMargin => "policy.margin_us", policy.margin_us: Micros;
     PolicyK2 => "policy.k2_q8", policy.k2_q8: u16;
     PolicyAfterRebuffer => "policy.after_rebuffer_q8", policy.after_rebuffer_q8: u16;
     PolicyMaxStepDown => "policy.max_step_down_us_per_s", policy.max_step_down_us_per_s: u32;
-    PolicyReprimeFloor => "policy.reprime_floor_us", policy.reprime_floor_us: u64;
-    PolicyReprimeHold => "policy.reprime_hold_us", policy.reprime_hold_us: u64;
-    StarveThreshold => "starve_threshold_us", starve_threshold_us: u64;
-    NodataAfter => "nodata_after_us", nodata_after_us: u64;
-    TrackSilenceTimeout => "track_silence_timeout_us", track_silence_timeout_us: u64;
+    PolicyReprimeFloor => "policy.reprime_floor_us", policy.reprime_floor_us: Micros;
+    PolicyReprimeHold => "policy.reprime_hold_us", policy.reprime_hold_us: Micros;
+    StarveThreshold => "starve_threshold_us", starve_threshold_us: Micros;
+    NodataAfter => "nodata_after_us", nodata_after_us: Micros;
+    TrackSilenceTimeout => "track_silence_timeout_us", track_silence_timeout_us: Micros;
     TrackGranularity => "track_granularity", track_granularity: bool;
-    GranularityHold => "granularity_hold_us", granularity_hold_us: u64;
-    GranularityDecay => "granularity_decay_us", granularity_decay_us: u64;
+    GranularityHold => "granularity_hold_us", granularity_hold_us: Micros;
+    GranularityDecay => "granularity_decay_us", granularity_decay_us: Micros;
 }
 broadcast_common::impl_spec_display!(ConfigKey);
 

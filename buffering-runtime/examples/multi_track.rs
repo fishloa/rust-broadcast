@@ -7,7 +7,7 @@
 //! (`on_track_media`). Run: `cargo run -p buffering-runtime --example multi_track`.
 
 use broadcast_common::clock33::PCR_WRAP_27MHZ;
-use buffering_runtime::{BufferController, ControllerConfig, Event};
+use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, Ticks27};
 
 const STEP_US: u64 = 35_000;
 const VIDEO_AHEAD_US: u64 = 900_000;
@@ -15,8 +15,8 @@ const TICKS_PER_US: u64 = 27;
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 
-fn pos(us: u64) -> u64 {
-    (us * TICKS_PER_US) % PCR_WRAP_27MHZ
+fn pos(us: u64) -> Ticks27 {
+    Ticks27((us * TICKS_PER_US) % PCR_WRAP_27MHZ)
 }
 
 fn started(c: &mut BufferController) -> bool {
@@ -32,19 +32,20 @@ fn main() {
     let mut video_only = BufferController::new(cfg, None).expect("default config is valid");
     let mut per_track = BufferController::new(cfg, None).expect("default config is valid");
     let (mut vo, mut pt) = (None, None);
-    video_only.on_media(0, pos(0));
+    video_only.on_media(Micros::ZERO, pos(0));
     per_track.register_track(AUDIO);
     per_track.register_track(VIDEO);
-    per_track.on_track_media(0, AUDIO, pos(0));
-    per_track.on_track_media(0, VIDEO, pos(0));
+    per_track.on_track_media(Micros::ZERO, AUDIO, pos(0));
+    per_track.on_track_media(Micros::ZERO, VIDEO, pos(0));
     let mut now = 0;
     while now < 5_000_000 && (vo.is_none() || pt.is_none()) {
         now += STEP_US;
-        video_only.on_media(now, pos(now + VIDEO_AHEAD_US));
-        per_track.on_track_media(now, AUDIO, pos(now));
-        per_track.on_track_media(now, VIDEO, pos(now + VIDEO_AHEAD_US));
-        video_only.on_tick(now, None);
-        per_track.on_tick(now, None);
+        let at = Micros(now);
+        video_only.on_media(at, pos(now + VIDEO_AHEAD_US));
+        per_track.on_track_media(at, AUDIO, pos(now));
+        per_track.on_track_media(at, VIDEO, pos(now + VIDEO_AHEAD_US));
+        video_only.on_tick(at, None);
+        per_track.on_tick(at, None);
         if vo.is_none() && started(&mut video_only) {
             vo = Some(now);
         }
@@ -54,7 +55,7 @@ fn main() {
     }
     println!(
         "start target {} ms; audio buffered when each controller said ready:",
-        cfg.policy.initial_us / 1000
+        cfg.policy.initial_us.get() / 1000
     );
     println!("  video only: {:?} ms", vo.map(|t| t / 1000));
     println!(

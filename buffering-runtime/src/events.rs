@@ -298,8 +298,8 @@ impl Event {
                 lead_us,
             } => {
                 r.kind = kind::START_PLAYING;
-                r.media_27mhz = media_27mhz;
-                r.a_us = lead_us;
+                r.media_27mhz = media_27mhz.0;
+                r.a_us = lead_us.0;
             }
             Self::Pause {
                 hold_at_27mhz,
@@ -314,27 +314,27 @@ impl Event {
                     r.track_valid = 1;
                 }
                 r.reason = reason.code();
-                r.media_27mhz = hold_at_27mhz;
-                r.a_us = depth_us;
-                r.b_us = resume_target_us;
+                r.media_27mhz = hold_at_27mhz.0;
+                r.a_us = depth_us.0;
+                r.b_us = resume_target_us.0;
             }
             Self::Resume {
                 media_27mhz,
                 lead_us,
             } => {
                 r.kind = kind::RESUME;
-                r.media_27mhz = media_27mhz;
-                r.a_us = lead_us;
+                r.media_27mhz = media_27mhz.0;
+                r.a_us = lead_us.0;
             }
             Self::TargetChanged { old_us, new_us } => {
                 r.kind = kind::TARGET_CHANGED;
-                r.a_us = old_us;
-                r.b_us = new_us;
+                r.a_us = old_us.0;
+                r.b_us = new_us.0;
             }
             Self::OverMax { need_us, max_us } => {
                 r.kind = kind::OVER_MAX;
-                r.a_us = need_us;
-                r.b_us = max_us;
+                r.a_us = need_us.0;
+                r.b_us = max_us.0;
             }
             Self::Rebaselined => r.kind = kind::REBASELINED,
             Self::EventsDropped { count } => {

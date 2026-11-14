@@ -19,21 +19,25 @@ use buffering_runtime::{BufferController, ControllerConfig, Event, Micros, Polic
 const AUDIO: u32 = 1;
 const VIDEO: u32 = 2;
 const TICKS_PER_US: u64 = PCR_HZ / 1_000_000;
-const BASE: Ticks27 = PCR_WRAP_27MHZ - 5 * PCR_HZ;
-const T0: Micros = 50_000_000;
-const TICK_US: Micros = 10_000;
+const BASE: Ticks27 = Ticks27(PCR_WRAP_27MHZ - 5 * PCR_HZ);
+const T0: Micros = Micros(50_000_000);
+const TICK_US: Micros = Micros(10_000);
 /// Audio is muxed this long behind video: first audio report at `T0 + AUDIO_LAG`.
-const AUDIO_LAG_US: Micros = 1_000_000;
-const AUDIO_STEP_US: Micros = 300_000;
+const AUDIO_LAG_US: Micros = Micros(1_000_000);
+const AUDIO_STEP_US: Micros = Micros(300_000);
 
 fn at(offset_us: u64) -> Ticks27 {
-    (BASE + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ
+    Ticks27((BASE.0 + offset_us * TICKS_PER_US) % PCR_WRAP_27MHZ)
+}
+
+const fn us(v: u64) -> Micros {
+    Micros(v)
 }
 
 fn cfg() -> ControllerConfig {
     let d = ControllerConfig::default();
     let mut p = PolicyConfig::default();
-    p.initial_us = 300_000;
+    p.initial_us = us(300_000);
     ControllerConfig::new(d.jitter, p, d.starve_threshold_us, d.nodata_after_us).unwrap()
 }
 
@@ -41,7 +45,7 @@ fn cfg() -> ControllerConfig {
 struct Out {
     start_after: Option<Micros>,
     /// (instant after T0, lead_us) of every Pause.
-    pauses: Vec<(Micros, u64)>,
+    pauses: Vec<(Micros, Micros)>,
     events: Vec<(Micros, String)>,
 }
 
@@ -61,35 +65,35 @@ fn run(registration: &[u32], audio_delivers: bool, secs: u64) -> Out {
     c.on_chunk(T0, 1000, Some(at(0)));
     c.on_track_media(T0, VIDEO, at(0));
     let (mut clock, mut t_set, mut running) = (at(0), T0, false);
-    let mut next_audio = T0 + AUDIO_LAG_US;
-    let mut next_chunk = T0 + 100_000;
+    let mut next_audio = Micros(T0.0 + AUDIO_LAG_US.0);
+    let mut next_chunk = Micros(T0.0 + 100_000);
     let mut t = T0;
-    while t < T0 + secs * 1_000_000 {
-        t += TICK_US;
+    while t < Micros(T0.0 + secs * 1_000_000) {
+        t = Micros(t.0 + TICK_US.0);
         if t >= next_chunk {
-            let i = (next_chunk - T0) / 100_000;
+            let i = (next_chunk.0 - T0.0) / 100_000;
             c.on_chunk(next_chunk, 1000, Some(at(i * 100_000)));
             c.on_track_media(next_chunk, VIDEO, at(i * 100_000 + 900_000));
             if audio_delivers && next_chunk >= next_audio {
                 // audio ends trail video by ~0.7 s, one report per 0.3 s chunk
-                let end = (next_chunk - T0).saturating_sub(AUDIO_LAG_US - AUDIO_STEP_US);
+                let end = (next_chunk.0 - T0.0).saturating_sub(AUDIO_LAG_US.0 - AUDIO_STEP_US.0);
                 c.on_track_media(next_chunk, AUDIO, at(end));
-                next_audio = next_chunk + AUDIO_STEP_US;
+                next_audio = Micros(next_chunk.0 + AUDIO_STEP_US.0);
             }
-            next_chunk += 100_000;
+            next_chunk = Micros(next_chunk.0 + 100_000);
         }
         let pos = if running {
-            (clock + (t - t_set) * TICKS_PER_US) % PCR_WRAP_27MHZ
+            Ticks27((clock.0 + (t.0 - t_set.0) * TICKS_PER_US) % PCR_WRAP_27MHZ)
         } else {
             clock
         };
         c.on_tick(t, Some(pos));
         while let Some(e) = c.poll_event() {
-            out.events.push((t - T0, format!("{e:?}")));
+            out.events.push((Micros(t.0 - T0.0), format!("{e:?}")));
             match e {
                 Event::StartPlaying { media_27mhz, .. } | Event::Resume { media_27mhz, .. } => {
                     if out.start_after.is_none() {
-                        out.start_after = Some(t - T0);
+                        out.start_after = Some(Micros(t.0 - T0.0));
                     }
                     clock = media_27mhz;
                     t_set = t;
@@ -100,7 +104,7 @@ fn run(registration: &[u32], audio_delivers: bool, secs: u64) -> Out {
                     depth_us,
                     ..
                 } => {
-                    out.pauses.push((t - T0, depth_us));
+                    out.pauses.push((Micros(t.0 - T0.0), depth_us));
                     clock = hold_at_27mhz;
                     running = false;
                 }
@@ -118,7 +122,7 @@ fn registered_up_front_waits_for_late_audio() {
         let o = run(reg, true, 30);
         let s = o.start_after.expect("started");
         assert!(
-            s >= AUDIO_LAG_US,
+            s.0 >= AUDIO_LAG_US.0,
             "{reg:?}: started at {s} before audio delivered at {AUDIO_LAG_US}"
         );
         assert!(o.pauses.is_empty(), "{reg:?}: paused {:?}", o.pauses);
@@ -152,5 +156,5 @@ fn never_reporting_registered_track_blocks_until_timeout() {
     let o = run(&[AUDIO, VIDEO], false, 30);
     let s = o.start_after.expect("starts once the dead track times out");
     assert!(s >= timeout, "started at {s}, before the {timeout} timeout");
-    assert!(s <= timeout + 1_000_000, "started late at {s}");
+    assert!(s <= Micros(timeout.0 + 1_000_000), "started late at {s}");
 }

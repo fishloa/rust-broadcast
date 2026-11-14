@@ -90,7 +90,7 @@ Time units, fixed and documented once, **caller obligations**:
 | media time `media_27mhz` | `u64` | 27 MHz ticks in the PCR domain, `0..PCR_WRAP_27MHZ` | raw (wrapped) PCR; the crate unrolls it with `broadcast_common::clock33::pcr_signed_distance`. A 90 kHz PTS caller passes `pts * 300` (33-bit PTS wrap x 300 equals `PCR_WRAP_27MHZ` exactly). Never use ad-hoc `abs_diff`/`1<<33` (the `clock33_guard` tripwire applies) |
 | playback position `playback_27mhz` | `u64` | same domain and offset as `media_27mhz` | the caller maps its renderer clock into the PCR domain once (offset between first PTS and first PCR is a constant it already knows) |
 
-`type Micros = u64; type Ticks27 = u64;` are public aliases; they are `u64` on the C ABI.
+`Micros` (a "now", interval or target) and `Ticks27` (a media position) are `#[repr(transparent)]` newtypes over `u64`, not aliases: the two clocks cannot be swapped at a call site. Each is a `u64` on the C ABI.
 
 ### 2.1 Configuration (all `#[non_exhaustive]`, validated constructors, no panics)
 

@@ -38,7 +38,7 @@ const TICKS_PER_US_I: i64 = TICKS_PER_US as i64;
 
 /// Signed lead in microseconds of `media_end` over `from` (PTS domain).
 fn lead_between(from: Ticks27, media_end: Ticks27) -> i64 {
-    pcr_signed_distance(from, media_end) / TICKS_PER_US_I
+    pcr_signed_distance(from.0, media_end.0) / TICKS_PER_US_I
 }
 
 fn to_u64(v: i64) -> u64 {
@@ -56,22 +56,22 @@ pub struct BufferController {
     reason: Reason,
     started: bool,
     neutral_pause: bool,
-    last_tick: u64,
-    latest: u64,
-    last_chunk_at: Option<u64>,
-    gap_end_at: Option<u64>,
+    last_tick: Micros,
+    latest: Micros,
+    last_chunk_at: Option<Micros>,
+    gap_end_at: Option<Micros>,
     chunks: u64,
     tracks: TrackSet,
     queue_start: Option<Ticks27>,
     last_playback: Option<Ticks27>,
     fill_from: Option<Ticks27>,
-    pause_at: u64,
+    pause_at: Micros,
     source_down: bool,
     degraded: bool,
     pcr_seen: bool,
     fed_media: bool,
     media_ref: Option<u32>,
-    below_since: Option<u64>,
+    below_since: Option<Micros>,
     over_armed: bool,
     reported_target: Micros,
     lead_us: i64,
@@ -100,8 +100,8 @@ impl BufferController {
             reason: Reason::Startup,
             started: false,
             neutral_pause: false,
-            last_tick: 0,
-            latest: 0,
+            last_tick: Micros::ZERO,
+            latest: Micros::ZERO,
             last_chunk_at: None,
             gap_end_at: None,
             chunks: 0,
@@ -109,7 +109,7 @@ impl BufferController {
             queue_start: None,
             last_playback: None,
             fill_from: None,
-            pause_at: 0,
+            pause_at: Micros::ZERO,
             source_down: false,
             degraded: false,
             pcr_seen: false,
@@ -121,8 +121,8 @@ impl BufferController {
             lead_us: 0,
             stalls: 0,
             reprimes: 0,
-            last_stall_depth: 0,
-            longest_freeze: 0,
+            last_stall_depth: Micros::ZERO,
+            longest_freeze: Micros::ZERO,
             regressions: 0,
             discontinuities: 0,
             hints: 0,
@@ -271,7 +271,7 @@ impl BufferController {
         }
         match self.queue_start {
             None => self.queue_start = Some(media_end_27mhz),
-            Some(q) if first && pcr_signed_distance(q, media_end_27mhz) < 0 => {
+            Some(q) if first && pcr_signed_distance(q.0, media_end_27mhz.0) < 0 => {
                 self.queue_start = Some(media_end_27mhz);
             }
             Some(_) => {}
@@ -325,9 +325,9 @@ impl BufferController {
     }
 
     /// Delivery-granularity floor (`step + margin`), 0 when disabled or unknown.
-    fn granularity_need(&self, now: u64) -> Micros {
+    fn granularity_need(&self, now: Micros) -> Micros {
         if !self.cfg.track_granularity {
-            return 0;
+            return Micros::ZERO;
         }
         let g = self
             .tracks
@@ -349,14 +349,14 @@ impl BufferController {
         }
     }
 
-    fn after_sample(&mut self, now: u64) {
+    fn after_sample(&mut self, now: Micros) {
         let base = self.jitter.baseline_us();
         let peak = self.jitter.stall_peak_at(now);
         let gran = if self.cfg.track_granularity {
             self.tracks
                 .granularity_us(now, self.cfg.track_silence_timeout_us)
         } else {
-            0
+            Micros::ZERO
         };
         let need = self.policy.need_with_granularity_us(base, peak, gran);
         let max = self.cfg.policy.max_us;
@@ -368,17 +368,17 @@ impl BufferController {
                     max_us: max,
                 });
             }
-        } else if u128::from(need) * u128::from(REARM_DEN)
-            <= u128::from(max) * u128::from(REARM_NUM)
+        } else if u128::from(need.0) * u128::from(REARM_DEN)
+            <= u128::from(max.0) * u128::from(REARM_NUM)
         {
             self.over_armed = true;
         }
-        let new = self.policy.follow(need, now);
+        let new = self.policy.follow(need, now.0);
         let old = self.reported_target;
         if new != old {
             let bound = new == self.cfg.policy.min_us || new == max;
-            let moved = new.max(old) - new.min(old);
-            if moved >= u64::from(self.cfg.jitter.bucket_us) || bound {
+            let moved = Micros(new.max(old).0 - new.min(old).0);
+            if moved.0 >= u64::from(self.cfg.jitter.bucket_us) || bound {
                 self.reported_target = new;
                 self.events.push(Event::TargetChanged {
                     old_us: old,
@@ -412,7 +412,7 @@ impl BufferController {
             let Some(p) = playback_27mhz else { return };
             let lead = lead_between(p, media_end);
             self.lead_us = lead;
-            if lead <= i64::try_from(self.cfg.starve_threshold_us).unwrap_or(i64::MAX) {
+            if lead <= i64::try_from(self.cfg.starve_threshold_us.0).unwrap_or(i64::MAX) {
                 self.pause_starved(now, p, media_end, lead);
             } else {
                 self.maybe_reprime(now, p, media_end, lead);
@@ -425,7 +425,7 @@ impl BufferController {
         let lead = lead_between(origin, media_end);
         self.lead_us = lead;
         let need = self.exit_target(now);
-        if lead >= i64::try_from(need).unwrap_or(i64::MAX) && self.granularity_ready(now) {
+        if lead >= i64::try_from(need.0).unwrap_or(i64::MAX) && self.granularity_ready(now) {
             self.begin_playing(now, origin, lead);
         }
     }
@@ -434,7 +434,7 @@ impl BufferController {
     /// [`crate::tracks`]): every delivering track must have shown enough
     /// deliveries to know its cadence, bounded by the start fill so a slow
     /// track cannot block forever.
-    fn granularity_ready(&self, now: u64) -> bool {
+    fn granularity_ready(&self, now: Micros) -> bool {
         !self.cfg.track_granularity
             || self.tracks.granularity_known(
                 now,
@@ -443,7 +443,7 @@ impl BufferController {
             )
     }
 
-    fn exit_target(&self, now: u64) -> Micros {
+    fn exit_target(&self, now: Micros) -> Micros {
         if !self.started {
             self.policy.start_us()
         } else if self.neutral_pause {
@@ -453,8 +453,8 @@ impl BufferController {
         }
     }
 
-    fn begin_playing(&mut self, now: u64, origin: Ticks27, lead: i64) {
-        let lead_us = to_u64(lead);
+    fn begin_playing(&mut self, now: Micros, origin: Ticks27, lead: i64) {
+        let lead_us = Micros(to_u64(lead));
         if self.started {
             let freeze = now.saturating_sub(self.pause_at);
             self.longest_freeze = self.longest_freeze.max(freeze);
@@ -480,7 +480,7 @@ impl BufferController {
 
     fn enter_pause(
         &mut self,
-        now: u64,
+        now: Micros,
         hold_at: Ticks27,
         reason: Reason,
         neutral: bool,
@@ -499,13 +499,13 @@ impl BufferController {
         self.events.push(Event::Pause {
             hold_at_27mhz: hold_at,
             reason,
-            depth_us: to_u64(lead),
+            depth_us: Micros(to_u64(lead)),
             resume_target_us,
             track,
         });
     }
 
-    fn pause_starved(&mut self, now: u64, playback: Ticks27, media_end: Ticks27, lead: i64) {
+    fn pause_starved(&mut self, now: Micros, playback: Ticks27, media_end: Ticks27, lead: i64) {
         let hold_at = if lead < 0 { media_end } else { playback };
         let silent = self
             .last_chunk_at
@@ -532,12 +532,12 @@ impl BufferController {
         self.fill_from = Some(hold_at);
     }
 
-    fn maybe_reprime(&mut self, now: u64, playback: Ticks27, media_end: Ticks27, lead: i64) {
+    fn maybe_reprime(&mut self, now: Micros, playback: Ticks27, media_end: Ticks27, lead: i64) {
         let floor = self.cfg.policy.reprime_floor_us;
-        if floor == 0 {
+        if floor == Micros::ZERO {
             return;
         }
-        if lead < i64::try_from(floor).unwrap_or(i64::MAX) {
+        if lead < i64::try_from(floor.0).unwrap_or(i64::MAX) {
             let since = *self.below_since.get_or_insert(now);
             if now.saturating_sub(since) >= self.cfg.policy.reprime_hold_us {
                 let hold_at = if lead < 0 { media_end } else { playback };
@@ -571,7 +571,7 @@ impl BufferController {
         }
     }
 
-    fn rebaseline(&mut self, now: u64, reset_jitter: bool) {
+    fn rebaseline(&mut self, now: Micros, reset_jitter: bool) {
         if reset_jitter {
             self.jitter.reset_baseline();
         }
@@ -591,7 +591,7 @@ impl BufferController {
                     }
                     (None, Some(e)) => e,
                     (Some(p), None) => p,
-                    (None, None) => 0,
+                    (None, None) => Ticks27::ZERO,
                 };
                 let lead = self.lead_us;
                 self.enter_pause(now, hold_at, Reason::Discontinuity, true, lead, None);
@@ -665,7 +665,7 @@ impl BufferController {
 
     fn reseed(&mut self) {
         let peak = self.jitter.stall_peak_at(self.latest);
-        self.policy.raise(self.policy.need_us(0, peak));
+        self.policy.raise(self.policy.need_us(Micros::ZERO, peak));
         self.reported_target = self.policy.target_us();
     }
 

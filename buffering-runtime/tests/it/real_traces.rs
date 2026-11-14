@@ -25,7 +25,7 @@
 //! the private repo is not checked out and fail when `REQUIRE_PRIVATE_FIXTURES=1`
 //! (CI) and it is missing.
 use crate::support::*;
-use buffering_runtime::Event;
+use buffering_runtime::{Event, Micros, Ticks27};
 
 fn trace(name: &str) -> Option<Vec<Chunk>> {
     test_fixtures::require(
@@ -156,22 +156,22 @@ fn check(g: &Golden, r: &Run) {
     );
     assert_eq!(r.min_lead_playing, Some(g.min_lead_us), "{n}: min lead");
     assert_eq!(
-        *r.targets.iter().min().unwrap(),
+        r.targets.iter().min().unwrap().0,
         g.target_min,
         "{n}: target min"
     );
     assert_eq!(
-        *r.targets.iter().max().unwrap(),
+        r.targets.iter().max().unwrap().0,
         g.target_max,
         "{n}: target max"
     );
     assert_eq!(
-        *r.targets.last().unwrap(),
+        r.targets.last().unwrap().0,
         g.target_final,
         "{n}: target final"
     );
     assert_eq!(
-        r.targets.iter().sum::<u64>(),
+        r.targets.iter().map(|t| t.0).sum::<u64>(),
         g.target_sum,
         "{n}: target sum"
     );
@@ -193,7 +193,7 @@ fn gap_free_traces_never_pause_and_target_stays_at_the_floor() {
             let r = replay(&chunks, &Opts::new(initial));
             assert!(r.pauses().is_empty(), "{name}@{initial}: false pause");
             assert!(
-                r.targets.iter().all(|&t| t == 300_000),
+                r.targets.iter().all(|&t| t == Micros(300_000)),
                 "{name}: target left the floor"
             );
             assert_eq!(r.ctl.stats().stalls, 0);
@@ -227,7 +227,7 @@ fn golden_initial_500_stalls_once_at_the_gap() {
         let r = replay(&chunks, &Opts::new(500_000));
         assert_eq!(r.start(), Some(start), "{name}");
         assert_eq!(r.pauses(), vec![(pause, Some(resume))], "{name}");
-        assert_eq!(r.targets.iter().sum::<u64>(), sum, "{name}");
+        assert_eq!(r.targets.iter().map(|t| t.0).sum::<u64>(), sum, "{name}");
         // reason NoData: nothing arrived for the whole gap
         let reason = r.events.iter().find_map(|(_, e)| match e {
             Event::Pause { reason, .. } => Some(*reason),
@@ -237,7 +237,7 @@ fn golden_initial_500_stalls_once_at_the_gap() {
     }
 }
 
-fn positions(r: &Run) -> Vec<(u64, &'static str, u64)> {
+fn positions(r: &Run) -> Vec<(Micros, &'static str, Ticks27)> {
     r.events
         .iter()
         .filter_map(|(t, e)| match *e {
@@ -274,7 +274,7 @@ fn decisions_are_invariant_under_a_constant_pcr_pts_offset() {
                 );
                 assert_eq!(
                     b.2,
-                    shift27(a.2, delta),
+                    Ticks27(shift27(a.2.0, delta)),
                     "{name} off {off_ms}: position not shifted by exactly the offset"
                 );
             }
