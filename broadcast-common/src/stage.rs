@@ -90,10 +90,12 @@ impl Timestamp {
     /// The zero timestamp — whatever epoch the driver has chosen.
     pub const ZERO: Timestamp = Timestamp(0);
 
-    /// Construct from a raw nanosecond count, truncating to whole
-    /// microseconds (a driver with only a nanosecond reading).
+    /// Construct from a raw nanosecond count: the whole microsecond the
+    /// reading falls in, rounded **up**, so the result never precedes the
+    /// instant it names (the same rounding [`saturating_add_nanos`](Self::saturating_add_nanos)
+    /// and [`from_instant`](Self::from_instant) use).
     pub const fn from_nanos(nanos: u64) -> Self {
-        Timestamp(nanos / NANOS_PER_MICRO)
+        Timestamp(nanos.div_ceil(NANOS_PER_MICRO))
     }
 
     /// Construct from a whole-microsecond count.
@@ -106,7 +108,11 @@ impl Timestamp {
     /// Saturates at `u64::MAX` for a reading past 584 942 years; no host
     /// clock gets there.
     pub const fn as_nanos(self) -> u64 {
-        self.0.saturating_mul(NANOS_PER_MICRO)
+        if self.0 > u64::MAX / NANOS_PER_MICRO {
+            u64::MAX
+        } else {
+            self.0 * NANOS_PER_MICRO
+        }
     }
 
     /// Construct from a whole-millisecond count, saturating at `u64::MAX`
@@ -137,10 +143,28 @@ impl Timestamp {
         Timestamp(self.0.saturating_add(micros))
     }
 
+    /// `self + span`, rounded up to the whole microsecond the span ends in (a
+    /// 100 ms timeout added to microsecond `t` is the deadline at which
+    /// `now - t >= 100 ms` first holds), or `None` when that instant does not
+    /// fit in the clock.
+    ///
+    /// This is how a deadline is computed: an instant that does not fit can
+    /// never be reached, which is a timer that never fires, not one that fires
+    /// at the largest value the type can hold (see the time rule in
+    /// `docs/API-CONVENTIONS.md`). Use [`saturating_add`](Self::saturating_add)
+    /// only to clamp an instant to the end of the clock, never to make a
+    /// deadline.
+    pub fn checked_add(self, span: Duration) -> Option<Self> {
+        let micros = u64::try_from(span.as_nanos().div_ceil(u128::from(NANOS_PER_MICRO))).ok()?;
+        self.0.checked_add(micros).map(Timestamp)
+    }
+
     /// `self + duration`, rounded up to the whole microsecond the span ends
-    /// in (a 100 ms timeout added to microsecond `t` is the deadline at which
-    /// `now - t >= 100 ms` first holds), saturating at `u64::MAX` instead of
-    /// overflowing.
+    /// in, saturating at `u64::MAX`.
+    ///
+    /// Not for deadlines: a saturated deadline reads as "due now" forever. Use
+    /// [`checked_add`](Self::checked_add) for those. This stays for clamping a
+    /// clock reading to the end of the value range.
     pub fn saturating_add(self, duration: Duration) -> Self {
         let micros = u64::try_from(duration.as_nanos().div_ceil(u128::from(NANOS_PER_MICRO)))
             .unwrap_or(u64::MAX);
@@ -360,13 +384,17 @@ pub trait Stage {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn the_clock_conversions_truncate_or_round_up_at_the_microsecond() {
-        // `from_nanos` truncates: a driver with only a nanosecond reading lands on the
-        // microsecond it is in.
-        assert_eq!(Timestamp::from_nanos(1_999), Timestamp::from_micros(1));
+    fn the_clock_conversions_round_up_at_the_microsecond() {
+        // `from_nanos` rounds up: the reading lands on the first microsecond at or after it, so a
+        // converted instant is never earlier than the one it names (the property a wake depends
+        // on: a wake computed from a deadline can never fire before it).
+        assert_eq!(Timestamp::from_nanos(1_999), Timestamp::from_micros(2));
+        assert_eq!(Timestamp::from_nanos(1_999_999), Timestamp::from_micros(2_000));
+        assert_eq!(Timestamp::from_nanos(1), Timestamp::from_micros(1));
+        assert_eq!(Timestamp::from_nanos(1_000), Timestamp::from_micros(1));
         assert_eq!(
-            Timestamp::from_nanos(1_999_999),
-            Timestamp::from_micros(1_999)
+            Timestamp::from_nanos(u64::MAX),
+            Timestamp::from_micros(u64::MAX / NANOS_PER_MICRO + 1)
         );
         // `saturating_add` rounds the span up: the deadline is the first microsecond at which
         // the whole span has passed, so `now - start >= span` holds there.
@@ -386,6 +414,23 @@ mod tests {
             Timestamp::from_micros(10).saturating_sub(Timestamp::from_micros(4)),
             Duration::from_micros(6)
         );
+        // A deadline that fits; and one that does not, which is "never", not "the last instant".
+        assert_eq!(
+            Timestamp::from_micros(10).checked_add(Duration::from_micros(5)),
+            Some(Timestamp::from_micros(15))
+        );
+        assert_eq!(
+            Timestamp::from_micros(10).checked_add(Duration::from_nanos(1)),
+            Some(Timestamp::from_micros(11))
+        );
+        assert_eq!(
+            Timestamp::from_micros(u64::MAX).checked_add(Duration::from_micros(1)),
+            None
+        );
+        assert_eq!(
+            Timestamp::from_micros(u64::MAX - 1).checked_add(Duration::from_secs(30)),
+            None
+        );
     }
 
     #[test]
@@ -396,9 +441,10 @@ mod tests {
             Timestamp::from_millis(1_500).as_nanos(),
             1_500 * NANOS_PER_MICRO * 1_000
         );
-        // A finer reading rounds down to the coarser unit, never up past the instant.
-        assert_eq!(Timestamp::from_nanos(1_999).as_micros(), 1);
-        assert_eq!(Timestamp::from_nanos(1_999_999).as_millis(), 1);
+        // A reading rounds up to the whole microsecond it falls in (never before its
+        // instant), and then down to the coarser milliseconds.
+        assert_eq!(Timestamp::from_nanos(1_999).as_micros(), 2);
+        assert_eq!(Timestamp::from_nanos(1_999_999).as_millis(), 2);
         // A count that would leave `u64` nanoseconds saturates instead of wrapping.
         assert_eq!(Timestamp::from_millis(u64::MAX).as_nanos(), u64::MAX);
         assert_eq!(Timestamp::from_micros(u64::MAX).as_nanos(), u64::MAX);

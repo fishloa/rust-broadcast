@@ -330,13 +330,13 @@ impl ClientSession {
 
     /// Next keepalive deadline — `last_activity + keepalive_interval()`, on the
     /// caller's own clock — once a Session id exists. `None` before SETUP,
-    /// after TEARDOWN, or if no activity was ever recorded.
+    /// after TEARDOWN, if no activity was ever recorded, or if the deadline
+    /// does not fit in the clock (then it can never be reached: the timer never
+    /// fires).
     pub fn poll_timeout(&self) -> Option<Timestamp> {
         self.session_id.as_ref()?;
-        Some(
-            self.last_activity?
-                .saturating_add(self.keepalive_interval()),
-        )
+        self.last_activity?
+            .checked_add(self.keepalive_interval())
     }
 
     /// If `now >= poll_timeout()`, the bytes of the keepalive on the last
@@ -1425,6 +1425,23 @@ mod tests {
         );
         c.handle_data_strict(resp.as_bytes()).unwrap();
         c
+    }
+
+    #[test]
+    fn a_deadline_that_does_not_fit_the_clock_never_fires() {
+        let mut c = established(Some(20));
+        c.mark_activity(Timestamp::from_micros(u64::MAX));
+        assert_eq!(
+            c.poll_timeout(),
+            None,
+            "a deadline past the end of the clock can never be reached"
+        );
+        assert!(
+            c.handle_timeout(Timestamp::from_micros(u64::MAX))
+                .unwrap()
+                .is_none(),
+            "no keepalive is emitted for a deadline that cannot exist"
+        );
     }
 
     #[test]

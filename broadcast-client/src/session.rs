@@ -247,11 +247,11 @@ impl Session {
                 &parsed,
                 &config.ts_http.clamped(),
                 config.max_redirects,
-                now_us,
+                now,
             ))
         });
         if let Some(r) = rtsp.as_mut() {
-            r.on_credentials(now_us, &auth);
+            r.on_credentials(now, &auth);
         }
         if use_hls || use_dash || use_smooth {
             playout.engage(Source::Live {
@@ -307,7 +307,7 @@ impl Session {
         if !self.closed {
             self.now_us = now_us;
             if let Some(r) = self.rtsp.as_mut() {
-                r.poll(now_us, &self.auth);
+                r.poll(now, &self.auth);
                 self.flush_rtsp();
             } else if let Some(r) = self.rtmp.as_mut() {
                 r.poll(now_us);
@@ -522,7 +522,7 @@ impl Session {
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
             self.payload_bytes = self.payload_bytes.saturating_add(bytes.len() as u64);
-            let lost = r.on_data(conn, bytes, now_us, &mut self.auth);
+            let lost = r.on_data(conn, bytes, now, &mut self.auth);
             self.flush_rtsp();
             if !bytes.is_empty() {
                 self.buffer.on_chunk(now_us, bytes.len(), None);
@@ -606,7 +606,7 @@ impl Session {
         };
         if let Some(r) = self.rtsp.as_mut() {
             self.now_us = now_us;
-            let ended = r.on_closed(conn, now_us);
+            let ended = r.on_closed(conn, now);
             self.flush_rtsp();
             self.settle_buffer();
             if ended {
@@ -659,7 +659,7 @@ impl Session {
             return;
         }
         if let Some(r) = self.rtsp.as_mut() {
-            r.on_connected(conn, self.now_us);
+            r.on_connected(conn, Timestamp::from_micros(self.now_us));
             self.flush_rtsp();
             return;
         }
@@ -798,7 +798,7 @@ impl Session {
             self.auth.preauthorize_basic();
         }
         if let Some(r) = self.rtsp.as_mut() {
-            r.on_credentials(self.now_us, &self.auth);
+            r.on_credentials(Timestamp::from_micros(self.now_us), &self.auth);
             self.flush_rtsp();
             return Ok(());
         }
@@ -861,7 +861,7 @@ impl Session {
         }
         self.now_us = now_us;
         if let Some(r) = self.rtsp.as_mut() {
-            r.reconnect(now_us);
+            r.reconnect(now);
             self.flush_rtsp();
             self.settle_buffer();
             return;
@@ -1151,7 +1151,7 @@ impl Session {
 
     fn flush_rtsp(&mut self) {
         if let Some(r) = self.rtsp.as_mut() {
-            r.sync_wake(self.now_us);
+            r.sync_wake(Timestamp::from_micros(self.now_us));
             self.actions.extend(r.take_actions());
             let events = r.take_events();
             for e in events {
