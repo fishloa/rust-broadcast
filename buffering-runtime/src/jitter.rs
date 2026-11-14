@@ -20,7 +20,7 @@ use crate::config::{JitterConfig, TICKS_PER_US};
 use crate::error::Error;
 use crate::histogram::ForgettingHistogram;
 use crate::stall_memory::{MaxHold, StallMemorySnapshot};
-use crate::time::{duration_micros, micros_as_duration};
+use crate::time::{instant_micros, micros_as_duration, window_micros};
 use crate::window::MinWindow;
 use broadcast_common::clock33::pcr_signed_distance;
 
@@ -117,7 +117,7 @@ impl DeliveryJitter {
     /// Any [`JitterConfig::validate`] failure.
     pub fn new(cfg: JitterConfig) -> Result<Self, Error> {
         cfg.validate()?;
-        let interval_us = duration_micros(cfg.interval);
+        let interval_us = window_micros(cfg.interval);
         Ok(Self {
             window: MinWindow::new(cfg.min_window, cfg.max_samples)?,
             hist: ForgettingHistogram::new(
@@ -126,10 +126,10 @@ impl DeliveryJitter {
                 cfg.forget_q15,
                 cfg.quantile_permille,
             ),
-            hold: MaxHold::new(duration_micros(cfg.hold), duration_micros(cfg.decay)),
+            hold: MaxHold::new(window_micros(cfg.hold), window_micros(cfg.decay)),
             interval_us,
-            outlier_us: duration_micros(cfg.outlier),
-            discontinuity_us: duration_micros(cfg.discontinuity),
+            outlier_us: window_micros(cfg.outlier),
+            discontinuity_us: window_micros(cfg.discontinuity),
             origin: None,
             prev_raw: None,
             unrolled_ticks: 0,
@@ -150,7 +150,7 @@ impl DeliveryJitter {
     /// here with `clock33::pcr_signed_distance`. `_bytes` is reserved (the
     /// estimator is time-based; the C-ABI mirror carries it).
     pub fn on_chunk(&mut self, arrival: Duration, media: Clock27, _bytes: u32) -> SampleOutcome {
-        let arrival_us = duration_micros(arrival);
+        let arrival_us = instant_micros(arrival);
         if self.last_arrival.is_some_and(|l| arrival_us < l) {
             return SampleOutcome::NonMonotonicArrival;
         }
@@ -255,7 +255,7 @@ impl DeliveryJitter {
     /// Decayed stall-memory value at `now`.
     #[must_use]
     pub fn stall_peak_at(&self, now: Duration) -> Duration {
-        micros_as_duration(self.hold.value(duration_micros(now)))
+        micros_as_duration(self.hold.value(instant_micros(now)))
     }
 
     /// A starvation with data still arriving proves the buffer was too small
@@ -264,12 +264,12 @@ impl DeliveryJitter {
     /// low.
     pub(crate) fn note_starvation(&mut self, now: Duration, depth: Duration) {
         self.hold
-            .observe(duration_micros(now), duration_micros(depth));
+            .observe(instant_micros(now), instant_micros(depth));
     }
 
     /// Anchor a restored snapshot at the clock reading `now`.
     pub(crate) fn anchor(&mut self, now: Duration) {
-        self.hold.anchor(duration_micros(now));
+        self.hold.anchor(instant_micros(now));
     }
 
     /// Entries dropped by the minimum-window cap.
@@ -310,7 +310,7 @@ impl DeliveryJitter {
     /// Snapshot aged to an explicit clock reading.
     #[must_use]
     pub(crate) fn snapshot_at(&self, now: Duration) -> StallMemorySnapshot {
-        self.hold.snapshot(duration_micros(now))
+        self.hold.snapshot(instant_micros(now))
     }
 
     /// Install a stall memory (see [`StallMemorySnapshot`] for aging).

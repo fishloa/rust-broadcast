@@ -7,7 +7,7 @@ use broadcast_client::{
 };
 use broadcast_common::clock33::Clock27;
 use broadcast_common::stage::Timestamp;
-use buffering_runtime::{duration_micros, micros_as_duration};
+use buffering_runtime::{instant_micros, micros_as_duration};
 use support::replay::{TS_PACKET, bitrate_bps, open_live};
 
 /// The harness's microsecond clock as the session's `now`.
@@ -833,7 +833,7 @@ fn a_long_wait_is_not_cut_short_by_the_controller_silence_timeout() {
     };
     let silence = Config::default().buffer.track_silence_timeout;
     assert!(
-        duration_micros(silence) < LONG_WAIT_US,
+        instant_micros(silence) < LONG_WAIT_US,
         "{}",
         silence.as_micros()
     );

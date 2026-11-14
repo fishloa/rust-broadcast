@@ -25,7 +25,8 @@ pub use events::{Event, EventRecord, Hint, Reason, State, Stats, kind};
 pub use jitter::{DeliveryJitter, JitterEstimate, SampleOutcome};
 pub use stall_memory::StallMemorySnapshot;
 pub use time::{
-    Clock27, duration_add, duration_between, duration_micros, duration_sub, micros_as_duration,
+    Clock27, MAX_DIFFERENCE_ERROR, duration_add, duration_between, instant_micros,
+    micros_as_duration, window_micros,
 };
 pub use tracks::{COALESCE, DEFAULT_TRACK, MAX_TRACKS};
 

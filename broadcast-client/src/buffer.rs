@@ -9,7 +9,7 @@ use broadcast_common::timescale::{Rounding, Timescale, rescale};
 use buffering_runtime::input_log::Input;
 use buffering_runtime::{
     BufferController, Clock27, ControllerConfig, Event as RtEvent, Hint, StallMemorySnapshot,
-    duration_between, duration_micros, micros_as_duration,
+    duration_between, instant_micros, micros_as_duration,
 };
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
@@ -288,7 +288,7 @@ impl Feeder {
         self.finite = true;
         if let Some(c) = self.controller.take() {
             self.seed = Some(c.snapshot_memory());
-            self.seed_at_us = Some(duration_micros(self.log.last_now()));
+            self.seed_at_us = Some(instant_micros(self.log.last_now()));
         }
         self.pending_registered = false;
         self.started = false;
@@ -489,7 +489,7 @@ impl Feeder {
         if self.holds_start() {
             let at = self.log.last_now();
             for t in removed {
-                self.held.entry(t).or_insert(duration_micros(at));
+                self.held.entry(t).or_insert(instant_micros(at));
             }
         } else {
             for t in removed {
@@ -729,7 +729,7 @@ impl Feeder {
         let now = self.log.last_now();
         let seed = self.seed.map(|s| {
             s.aged(micros_as_duration(self.seed_at_us.map_or(0, |at| {
-                duration_micros(duration_between(micros_as_duration(at), now))
+                instant_micros(duration_between(micros_as_duration(at), now))
             })))
         });
         if let Ok(mut c) = BufferController::new(self.controller_config(), seed) {
@@ -921,7 +921,7 @@ impl Feeder {
                     stalls: s.stalls,
                     reprimes: s.reprimes,
                     discontinuities: s.discontinuities,
-                    longest_freeze_us: duration_micros(s.longest_freeze),
+                    longest_freeze_us: instant_micros(s.longest_freeze),
                 }
             })
     }
