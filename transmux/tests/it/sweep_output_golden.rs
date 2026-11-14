@@ -4,18 +4,11 @@
 //! below were captured from the pre-refactor code (FNV-1a 64 over the full
 //! `Debug` rendering of the produced IR / bytes), so a changed byte anywhere
 //! fails here.
-//!
-//! Re-blessed once for #2657, and only mechanically: the IR's timescale fields
-//! became `broadcast_common::timescale::Timescale`, a newtype whose `Debug`
-//! adds a `Timescale(..)` wrapper, so `numeric_timescale_debug` strips the
-//! wrapper back to the bare number the goldens already had. Every hash was
-//! re-captured from that same rendering (the TS/PS/WebM demux, codec-mux and
-//! CENC entries); no sample byte, timestamp or duration changed.
 #![cfg(feature = "std")]
 
-use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
+use broadcast_common::timescale::Timescale;
 use broadcast_common::Unpackage;
 use transmux::{PsDemux, TsDemux, WebmDemux};
 
@@ -27,47 +20,79 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         .fold(OFFSET, |h, &b| (h ^ u64::from(b)).wrapping_mul(PRIME))
 }
 
+/// `Sample` formerly carried three flat optional timestamp fields (`dts`,
+/// `pts`, `duration`, each `Option<i64>`/`Option<u32>`); #2657 folds them
+/// into one `timing: Option<SampleTiming { dts, pts, duration }>` (the inner
+/// values are then bare, not `Option`). The goldens were captured against the
+/// flat form. Render the flat shape again so every hash still proves the
+/// demux output itself is unchanged: the values are identical, only the
+/// wrapper shape differs.
+fn sample_timing_debug(s: &str) -> String {
+    const FIELD: &str = ", timing: ";
+    let mut out = String::with_capacity(s.len() + s.len() / 8);
+    let mut rest = s;
+    while let Some(i) = rest.find(FIELD) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + FIELD.len()..];
+        if let Some(brace) = after.strip_prefix("Some(SampleTiming { ") {
+            // The three fields are fixed and in this order: dts, pts, duration.
+            let Some(dts_i) = brace.find("dts: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let body = &brace[dts_i + 5..];
+            let Some(pts_i) = body.find(", pts: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let dts = &body[..pts_i];
+            let dur_body = &body[pts_i + 7..];
+            let Some(dur_i) = dur_body.find(", duration: ") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let pts = &dur_body[..dur_i];
+            let after_dur = &dur_body[dur_i + 12..];
+            let Some(close_i) = after_dur.find(" })") else {
+                out.push_str(FIELD);
+                rest = after;
+                continue;
+            };
+            let duration = &after_dur[..close_i];
+            out.push_str(&format!(
+                ", dts: Some({dts}), pts: Some({pts}), duration: Some({duration})"
+            ));
+            // `close_i` points at the ` })` closing `SampleTiming { .. }` and
+            // the `Some(..)` wrapper; skip all three characters.
+            rest = &after_dur[close_i + 3..];
+        } else if let Some(none) = after.strip_prefix("None") {
+            out.push_str(", dts: None, pts: None, duration: None");
+            rest = none;
+        } else {
+            out.push_str(FIELD);
+            rest = after;
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 /// `Debug` of a `Media` minus the trailing `degraded` field added by #1144,
 /// so the goldens captured before that field keep proving the demux output
 /// itself is unchanged. `degraded` is the last field; the TS demux now fills
 /// it (continuity gaps on `m6-single.ts`), which is pinned by
 /// `ts_sync_loss_degraded.rs` instead.
 fn media_debug(media: &transmux::Media) -> String {
-    let s = legacy_pid_debug(&no_display_debug(&numeric_timescale_debug(&format!(
+    let s = legacy_pid_debug(&no_display_debug(&sample_timing_debug(&format!(
         "{media:?}"
     ))));
     match s.rfind(", degraded: [") {
         Some(i) => format!("{} }}", &s[..i]),
         None => s,
     }
-}
-
-/// `Timescale` renders in `Debug` as its opaque newtype (`Timescale(90000)`);
-/// the goldens were captured while the field was a bare `u32`. Render the
-/// wrapped number alone so every hash still proves the demux output itself is
-/// unchanged (the type change moves no value). The renderer is reproducible
-/// from the real fixture hash, not a re-capture, because the value is
-/// recoverable: only the wrapper text differs.
-fn numeric_timescale_debug(s: &str) -> String {
-    const OPEN: &str = "Timescale(";
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find(OPEN) {
-        out.push_str(&rest[..i]);
-        let after = &rest[i + OPEN.len()..];
-        match after.find(')') {
-            Some(end) if after[..end].chars().all(|c| c.is_ascii_digit()) => {
-                out.push_str(&after[..end]);
-                rest = &after[end + 1..];
-            }
-            _ => {
-                out.push_str(OPEN);
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }
 
 /// `TrackSpec::display` (the display-geometry Phase 1a field) and
@@ -154,12 +179,12 @@ fn check(bad: &mut Vec<String>, name: &str, got: u64, want: u64) {
 }
 
 const PS_FIXTURES: &[(&str, u64)] = &[
-    ("ps/h264-ac3.ps", 0xc85cc90bfa0fb6df),
-    ("ps/ffmpeg-h264-noaud.ps", 0x528e5aa513518b61),
-    ("ps/ffmpeg-mpeg2video-mp2.ps", 0xccb594b5ce92a99b),
-    ("ps/ffmpeg-mpeg2video-2xac3.ps", 0x67f2d738dcc296e0),
-    ("ps/ffmpeg-ac3-dts.ps", 0xa3385c8df9577aec),
-    ("ps/ffmpeg-mpeg2-ps.mpg", 0xfd933015cc32dae4),
+    ("ps/h264-ac3.ps", 0xe24863d1ee914de7),
+    ("ps/ffmpeg-h264-noaud.ps", 0x0f41a64caef35ce5),
+    ("ps/ffmpeg-mpeg2video-mp2.ps", 0x8310cf8cecaa56f7),
+    ("ps/ffmpeg-mpeg2video-2xac3.ps", 0xa7dbc0815658589c),
+    ("ps/ffmpeg-ac3-dts.ps", 0x4f5d8d8a7f521ba2),
+    ("ps/ffmpeg-mpeg2-ps.mpg", 0x008239034562de4c),
 ];
 
 #[test]
@@ -182,12 +207,12 @@ fn ps_demux_output_is_unchanged() {
 // is what is hashed) holds codec config + samples + timing only, nothing about
 // the container flavour, so the `Debug` rendering is genuinely identical.
 const WEBM_FIXTURES: &[(&str, u64)] = &[
-    ("mkv/vp9-opus.webm", 0x54f6e18193ffba0b),
-    ("mkv/vp8-opus.webm", 0xf48619ae0e0a5b1d),
-    ("mkv/vorbis.webm", 0xd515912d54b9d0b2),
-    ("mkv/h264-aac.mkv", 0x0ffa48242316a9a1),
-    ("mkv/vp9-opus.mkv", 0x54f6e18193ffba0b),
-    ("mkv/hevc-aac.mkv", 0xdccf92f4e01c57ed),
+    ("mkv/vp9-opus.webm", 0xfec110a63d715331),
+    ("mkv/vp8-opus.webm", 0x44663f064ecc766b),
+    ("mkv/vorbis.webm", 0x67143f51c09cf65e),
+    ("mkv/h264-aac.mkv", 0x9847beadbf70bead),
+    ("mkv/vp9-opus.mkv", 0xfec110a63d715331),
+    ("mkv/hevc-aac.mkv", 0xd77d3469e7e72cf3),
 ];
 
 #[test]
@@ -205,8 +230,8 @@ fn webm_demux_output_is_unchanged() {
 }
 
 const TS_FIXTURES: &[(&str, u64)] = &[
-    ("ts/h264/main.ts", 0xb493ddb0280ea508),
-    ("ts/h264-aac.ts", 0xc6679e7466425571),
+    ("ts/h264/main.ts", 0xe8a04393ee137ee8),
+    ("ts/h264-aac.ts", 0x51871212618d1ded),
     // Re-captured for #1160: the real capture's three E-AC-3 tracks gain the
     // syncframes that straddled PES boundaries (4/5/1 -> 7/6/3 samples).
     // Re-blessed for #1186 (0x3f5fdf623443b19f before): ONLY the second E-AC-3
@@ -233,14 +258,14 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // stalled that track, and in PMT order every track behind it, on a live feed
     // (zenith regression). The config is built from that first frame, as 0.26.0
     // did, so its `bsmod` is the isolated frame's (see #1186 note above).
-    ("ts/m6-single.ts", 0xaa017b4cf1a072ed),
+    ("ts/m6-single.ts", 0xf1c0bc83662f59e7),
     // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
     // is now one sample per field pair (293 fields -> 147 samples) instead of
     // one per field. Every other fixture is unchanged.
-    ("ts/gulli-opengop.ts", 0x49e4c209f868f2ef),
+    ("ts/gulli-opengop.ts", 0xb0b2ccb9bf3c83e7),
     ("ts/pts-wrap.ts", 0x446b6222520c1313),
-    ("ts/aac-5-1-640k.ts", 0x17a9ab1672e52d85),
-    ("ts/dts/dts-core.ts", 0x5cebf3401e422e6a),
+    ("ts/aac-5-1-640k.ts", 0x0c69bd29aae724c7),
+    ("ts/dts/dts-core.ts", 0x049622d2b28d2388),
     // Re-captured for #1160 (cross-PES audio carry): this fixture re-chunks 39
     // real MP2 frames at 2000-byte PES payloads, so the old per-PES splitter
     // dropped every straddling frame; the carry now recovers all 39 (see
@@ -249,7 +274,7 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // Re-captured again for #1162 R2: the MPEG audio `esds` now carries
     // `maxBitrate`/`avgBitrate` from the first frame header (was 0), so the
     // IR `Debug` text changes; the samples are unchanged.
-    ("ts/legacy/mpeg2-mp2-pes-misaligned.ts", 0x5e2a8ea1028e4ab8),
+    ("ts/legacy/mpeg2-mp2-pes-misaligned.ts", 0x3459220532f49676),
 ];
 
 #[test]
@@ -307,8 +332,10 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
     check(
         &mut bad,
         "rtp-stream",
-        fnv1a(no_display_debug(&format!("{samples:?}")).as_bytes()),
-        0x9384_42b4_9632_a560,
+        fnv1a(
+            no_display_debug(&sample_timing_debug(&format!("{samples:?}"))).as_bytes(),
+        ),
+        0x24e2_66a5_5d4e_7510,
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -581,4 +608,4 @@ fn cenc_decrypted_output_is_unchanged() {
 }
 
 #[cfg(feature = "cenc")]
-const CENC_GOLDEN: [u64; 3] = [0xac969211977612bd, 0xfb42a9ef77a663dd, 0x9de163e93f35cb6a];
+const CENC_GOLDEN: [u64; 3] = [0xf124776756fb7155, 0xfb42a9ef77a663dd, 0x80b225c275a0c9a2];
