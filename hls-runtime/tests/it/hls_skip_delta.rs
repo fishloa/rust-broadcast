@@ -8,7 +8,7 @@ use broadcast_common::Timestamp;
 use broadcast_hls::MediaPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::{
-    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest, SkipDirective,
+    BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginConfig, HlsRequest, SkipDirective,
 };
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ids::SegmentSeq;
@@ -31,13 +31,12 @@ fn make_origin() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
             .with_part_capacity(nz(64)),
     );
     let writer = trunk.segment_writer().expect("writer");
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(16))
-        .with_low_latency(Duration::from_millis(500))
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(16))
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
+    )
+    .expect("origin");
     origin.set_init(vec![0xAAu8; 8]);
     (trunk, origin, writer)
 }
@@ -149,12 +148,9 @@ fn no_can_skip_until_means_no_skip() {
             .with_part_capacity(nz(64)),
     );
     let writer = trunk.segment_writer().expect("writer");
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(8))
-        .with_instance(7)
-        .build()
-        .expect("origin");
+    let origin =
+        HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(8)).with_instance(7))
+            .expect("origin");
     origin.set_init(vec![0xAAu8; 8]);
     for s in 1..=8 {
         writer

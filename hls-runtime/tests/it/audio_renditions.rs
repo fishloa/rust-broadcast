@@ -6,7 +6,7 @@ use std::num::NonZeroUsize;
 
 use broadcast_hls::MasterPlaylist;
 use hls_runtime::server::{
-    AudioRenditionDecl, HlsMasterError, HlsOrigin, HlsOriginBuildError, HlsOriginBuilder,
+    AudioRenditionDecl, HlsMasterError, HlsOrigin, HlsOriginBuildError, HlsOriginConfig,
 };
 use media_plane::trunk::{Trunk, TrunkConfig};
 
@@ -14,7 +14,7 @@ fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
 }
 
-fn builder() -> HlsOriginBuilder {
+fn config() -> HlsOriginConfig {
     let trunk = Trunk::new(
         TrunkConfig::default()
             .with_timed_capacity(nz(64))
@@ -23,9 +23,7 @@ fn builder() -> HlsOriginBuilder {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
+    HlsOriginConfig::new(trunk, 4.0, nz(4))
         .with_instance(7)
         .with_declared_bandwidth_bps(5_000_000)
 }
@@ -53,13 +51,14 @@ fn two_groups() -> Vec<AudioRenditionDecl> {
 }
 
 fn master_with(decls: Vec<AudioRenditionDecl>, cc_none: bool) -> String {
-    builder()
-        .with_audio_renditions(decls)
-        .with_closed_captions_none(cc_none)
-        .build()
-        .expect("origin builds")
-        .master_playlist("media.m3u8")
-        .expect("master")
+    HlsOrigin::new(
+        config()
+            .with_audio_renditions(decls)
+            .with_closed_captions_none(cc_none),
+    )
+    .expect("origin builds")
+    .master_playlist("media.m3u8")
+    .expect("master")
 }
 
 #[test]
@@ -99,7 +98,7 @@ fn every_declared_group_is_referenced_by_a_variant() {
 
 #[test]
 fn no_declarations_and_flag_off_keeps_plain_master() {
-    let origin = builder().build().expect("builds");
+    let origin = HlsOrigin::new(config()).expect("builds");
     assert_eq!(
         origin.master_playlist("media.m3u8").expect("master"),
         "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000\nmedia.m3u8\n"
@@ -108,12 +107,7 @@ fn no_declarations_and_flag_off_keeps_plain_master() {
 
 #[test]
 fn same_name_in_two_groups_is_accepted() {
-    assert!(
-        builder()
-            .with_audio_renditions(two_groups())
-            .build()
-            .is_ok()
-    );
+    assert!(HlsOrigin::new(config().with_audio_renditions(two_groups())).is_ok());
 }
 
 #[test]
@@ -206,7 +200,7 @@ fn invalid_declarations_are_rejected() {
     let wrong: Vec<_> = cases
         .into_iter()
         .filter_map(|(label, decls, matches)| {
-            match builder().with_audio_renditions(decls).build() {
+            match HlsOrigin::new(config().with_audio_renditions(decls)) {
                 Ok(_) => Some(format!("{label}: built successfully")),
                 Err(e) if !matches(&e) => Some(format!("{label}: wrong error {e:?}")),
                 Err(_) => None,
@@ -218,10 +212,14 @@ fn invalid_declarations_are_rejected() {
 
 #[test]
 fn uri_equal_to_media_playlist_name_rejected_at_render() {
-    let origin = builder()
-        .with_audio_renditions(vec![decl("aac", "English", "en", true, "media.m3u8")])
-        .build()
-        .expect("builds");
+    let origin = HlsOrigin::new(config().with_audio_renditions(vec![decl(
+        "aac",
+        "English",
+        "en",
+        true,
+        "media.m3u8",
+    )]))
+    .expect("builds");
     assert!(matches!(
         origin.master_playlist("media.m3u8"),
         Err(HlsMasterError::AudioRenditionUriEqualsMediaPlaylist)

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use hls_runtime::server::{HlsMasterError, HlsOrigin, HlsOriginBuildError};
+use hls_runtime::server::{HlsMasterError, HlsOrigin, HlsOriginBuildError, HlsOriginConfig};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
@@ -30,21 +30,16 @@ fn trunk_with(segment_cap: usize, part_cap: usize) -> (Arc<Trunk>, SegmentWriter
 }
 
 fn origin_declared(trunk: &Arc<Trunk>, declared: u64) -> HlsOrigin {
-    HlsOrigin::builder(Arc::clone(trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(declared)
-        .build()
-        .expect("origin builds")
+    HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(declared),
+    )
+    .expect("origin builds")
 }
 
 fn origin_undeclared(trunk: &Arc<Trunk>) -> HlsOrigin {
-    HlsOrigin::builder(Arc::clone(trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .build()
+    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(4)).with_instance(7))
         .expect("origin builds")
 }
 
@@ -133,23 +128,19 @@ fn declared_zero_or_over_u32_rejected_at_build() {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    match HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(0)
-        .build()
-    {
+    match HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(0),
+    ) {
         Err(HlsOriginBuildError::InvalidDeclaredBandwidth) => {}
         _other => panic!("expected InvalidDeclaredBandwidth"),
     }
-    match HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(u64::from(u32::MAX) + 1)
-        .build()
-    {
+    match HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(u64::from(u32::MAX) + 1),
+    ) {
         Err(HlsOriginBuildError::InvalidDeclaredBandwidth) => {}
         _other => panic!("expected InvalidDeclaredBandwidth"),
     }

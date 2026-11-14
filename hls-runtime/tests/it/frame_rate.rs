@@ -8,7 +8,7 @@ use test_fixtures::process::tool_available;
 
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
-use hls_runtime::server::HlsOrigin;
+use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::SegmentEntry;
 use media_plane::trunk::{Trunk, TrunkConfig};
@@ -29,13 +29,12 @@ fn origin() -> HlsOrigin {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build")
+    HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build")
 }
 
 fn render(origin: &HlsOrigin) -> String {
@@ -114,14 +113,13 @@ fn set_init_reset_clears_frame_rate() {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    let origin = HlsOrigin::builder(trunk)
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_container(Container::Fmp4)
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(trunk, 4.0, nz(4))
+            .with_container(Container::Fmp4)
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build");
     let specs = specs_from_fixture("ts/h264-aac.ts").unwrap_or_default();
     if specs.is_empty() {
         return;
@@ -183,14 +181,17 @@ fn ts_origin_fed_with(
             .with_part_capacity(nz(64)),
     );
     let writer = trunk.segment_writer().expect("segment writer");
-    let origin = HlsOrigin::builder(Arc::clone(&trunk))
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            f64::from(SEGMENT_TARGET_SECS) + 1.0,
+            nz(64),
+        )
         .with_container(Container::MpegTs)
-        .with_target_duration_secs(f64::from(SEGMENT_TARGET_SECS) + 1.0)
-        .with_window_segments(nz(64))
         .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("build");
+        .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("build");
     origin.set_track_specs(&specs).expect("specs");
     let mut start = 0u64;
     let mut published = Vec::new();
@@ -410,14 +411,13 @@ impl Feed {
                 .with_part_capacity(nz(64)),
         );
         let writer = trunk.segment_writer().expect("segment writer");
-        let origin = HlsOrigin::builder(trunk)
-            .with_container(Container::MpegTs)
-            .with_target_duration_secs(2.0)
-            .with_window_segments(nz(3))
-            .with_instance(7)
-            .with_declared_bandwidth_bps(5_000_000)
-            .build()
-            .expect("build");
+        let origin = HlsOrigin::new(
+            HlsOriginConfig::new(trunk, 2.0, nz(3))
+                .with_container(Container::MpegTs)
+                .with_instance(7)
+                .with_declared_bandwidth_bps(5_000_000),
+        )
+        .expect("build");
         origin.set_track_specs(specs).expect("specs");
         Feed {
             origin,

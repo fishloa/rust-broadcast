@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
-use hls_runtime::server::HlsOrigin;
+use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
 use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
@@ -40,11 +40,7 @@ fn trunk_with(segment_cap: usize) -> (Arc<Trunk>, SegmentWriter) {
 }
 
 fn origin(trunk: &Arc<Trunk>, window: usize) -> HlsOrigin {
-    HlsOrigin::builder(Arc::clone(trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(window))
-        .with_instance(7)
-        .build()
+    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(window)).with_instance(7))
         .expect("origin builds")
 }
 
@@ -137,13 +133,12 @@ fn average_bandwidth_survives_window_eviction() {
 #[test]
 fn average_bandwidth_is_omitted_when_nothing_is_measurable() {
     let (trunk, w) = trunk_with(8);
-    let o = HlsOrigin::builder(Arc::clone(&trunk))
-        .with_target_duration_secs(4.0)
-        .with_window_segments(nz(4))
-        .with_instance(7)
-        .with_declared_bandwidth_bps(5_000_000)
-        .build()
-        .expect("origin builds");
+    let o = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+            .with_instance(7)
+            .with_declared_bandwidth_bps(5_000_000),
+    )
+    .expect("origin builds");
 
     let before = master(&o);
     assert_eq!(
