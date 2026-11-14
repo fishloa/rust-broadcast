@@ -230,18 +230,22 @@ impl SessionStep {
     ) -> Result<Self, MultimuxError> {
         config.preemptive_basic = true;
         let start = Instant::now();
-        let mut session =
-            Session::open(Url::parse(url).unwrap(), config, Timestamp::from_micros(0)).map_err(
-                |e| match e {
-                    Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
-                        field,
-                        reason: format!("{}: {e}", labels.what),
-                    },
-                    other => MultimuxError::Connect {
-                        reason: format!("{}: {other}", labels.what),
-                    },
-                },
-            )?;
+        let mut session = Session::open(
+            Url::parse(url).map_err(|e| MultimuxError::Connect {
+                reason: format!("{}: {e}", labels.what),
+            })?,
+            config,
+            Timestamp::from_micros(0),
+        )
+        .map_err(|e| match e {
+            Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
+                field,
+                reason: format!("{}: {e}", labels.what),
+            },
+            other => MultimuxError::Connect {
+                reason: format!("{}: {other}", labels.what),
+            },
+        })?;
         if let Some(credentials) = credentials {
             session.set_credentials(credentials).map_err(|e| {
                 MultimuxError::Auth(broadcast_auth::Error::ChallengeParse(

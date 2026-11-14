@@ -460,20 +460,20 @@ impl Watch {
                     ..
                 } => {
                     assert!(
-                        identity.is_none() || url.starts_with("https://"),
+                        identity.is_none() || url.as_str().starts_with("https://"),
                         "client identity offered over plain http: {url}"
                     );
                     assert!(!self.closed, "HttpRequest after close");
                     assert!(self.live.insert(conn), "live conn id {conn} issued twice");
-                    if !url.starts_with(ORIGIN_PREFIX) {
+                    if !url.as_str().starts_with(ORIGIN_PREFIX) {
                         for (name, _) in &headers {
                             assert!(
-                                !AUDIT_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)),
+                                !AUDIT_HEADERS.iter().any(|h| name.as_str().eq_ignore_ascii_case(h)),
                                 "{name} sent to {url}"
                             );
                         }
                     }
-                    requests.push((conn, url));
+                    requests.push((conn, url.to_string()));
                 }
                 Action::TcpConnect { conn, .. } => {
                     assert!(!self.closed, "TcpConnect after close");

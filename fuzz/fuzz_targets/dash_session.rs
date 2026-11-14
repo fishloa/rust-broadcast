@@ -83,17 +83,17 @@ impl Watch {
                 } => {
                     assert!(!self.closed, "HttpRequest after close");
                     assert!(!self.fatal, "HttpRequest after a fatal error");
-                    if !url.starts_with(ORIGIN_PREFIX) {
+                    if !url.as_str().starts_with(ORIGIN_PREFIX) {
                         for (name, _) in &headers {
                             assert!(
-                                !AUDIT_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h)),
+                                !AUDIT_HEADERS.iter().any(|h| name.as_str().eq_ignore_ascii_case(h)),
                                 "{name} sent to {url}"
                             );
                         }
                     }
                     let request = Request {
-                        method,
-                        url,
+                        method: method.as_str().to_string(),
+                        url: url.to_string(),
                         byte_range,
                         sent: now,
                     };
