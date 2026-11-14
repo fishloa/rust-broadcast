@@ -283,7 +283,7 @@ fn a_reconnect_onto_a_lower_pts_base_starts_playing_on_the_new_timeline() {
             )
         })
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { end, .. } => Some(*end),
+            BufferInput::TrackMedia { end, .. } => Some(end.0),
             _ => None,
         })
         .collect();
@@ -619,7 +619,9 @@ fn a_jump_to_a_negative_unrolled_timeline_keeps_the_controller_fed() {
             )
         })
         .filter_map(|l| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == h.video().value() => Some(*end),
+            BufferInput::TrackMedia { track, end, .. } if *track == h.video().value() => {
+                Some(end.0)
+            }
             _ => None,
         })
         .collect();

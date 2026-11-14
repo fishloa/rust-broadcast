@@ -238,7 +238,10 @@ fn a_dropped_track_that_never_delivers_holds_the_start_only_for_the_pending_wait
         (wait..wait + 2 * TICK_US).contains(&after_drop),
         "Start {after_drop} us after the drop, want the {wait} us pending wait"
     );
-    assert!(after_drop < silence, "not the {silence} us silence timeout");
+    assert!(
+        after_drop < silence.0,
+        "not the {silence} us silence timeout"
+    );
 }
 
 #[test]
@@ -270,11 +273,11 @@ fn rendered_set_rows_carry_the_session_time_of_the_call() {
         rows,
         vec![
             BufferInput::Unregister {
-                now_us: t,
+                now_us: buffering_runtime::Micros(t),
                 track: audio
             },
             BufferInput::Register {
-                now_us: t,
+                now_us: buffering_runtime::Micros(t),
                 track: audio
             },
         ]

@@ -8,7 +8,8 @@ use broadcast_client::{
 };
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
-    BufferController, ControllerConfig, Event as RtEvent, Reason as RtReason, StallMemorySnapshot,
+    BufferController, ControllerConfig, Event as RtEvent, Micros, Reason as RtReason,
+    StallMemorySnapshot, Ticks27,
 };
 use transmux::{DemuxEvent, JoinDecision, LiveJoin, StreamingTsDemux, TrackSpec};
 
@@ -270,7 +271,7 @@ fn media_reports(log: &[BufferInput]) -> Vec<(usize, u32, u64)> {
     for l in log {
         match l {
             BufferInput::Chunk { .. } => chunk += 1,
-            BufferInput::TrackMedia { track, end, .. } => out.push((chunk - 1, *track, *end)),
+            BufferInput::TrackMedia { track, end, .. } => out.push((chunk - 1, *track, end.0)),
             _ => {}
         }
     }
@@ -418,7 +419,7 @@ impl Oracle {
         while let Some(ev) = self.ctl.poll_event() {
             let mapped = match ev {
                 RtEvent::StartPlaying { media_27mhz, .. } => BufferEvent::Start {
-                    at_27mhz: media_27mhz,
+                    at_27mhz: media_27mhz.0,
                 },
                 RtEvent::Pause {
                     hold_at_27mhz,
@@ -426,7 +427,7 @@ impl Oracle {
                     track,
                     ..
                 } => BufferEvent::Pause {
-                    hold_at_27mhz,
+                    hold_at_27mhz: hold_at_27mhz.0,
                     reason: match rt_reason {
                         RtReason::NoData => broadcast_client::events::PauseReason::NoData,
                         RtReason::DataArriving => {
@@ -441,7 +442,7 @@ impl Oracle {
                     starving_track: track,
                 },
                 RtEvent::Resume { media_27mhz, .. } => BufferEvent::Resume {
-                    at_27mhz: media_27mhz,
+                    at_27mhz: media_27mhz.0,
                 },
                 _ => continue,
             };
@@ -521,26 +522,29 @@ impl Oracle {
                 self.on_sample(track_id, sample, &mut zero, &mut ends);
             }
         }
-        self.ctl.on_chunk(now, bytes.len() as u32, pcr);
+        self.ctl
+            .on_chunk(Micros(now), bytes.len() as u32, pcr.map(Ticks27));
         self.inputs.push(BufferInput::Chunk {
-            now_us: now,
+            now_us: Micros(now),
             bytes: bytes.len() as u32,
-            pcr,
+            pcr: pcr.map(Ticks27),
         });
         if let Some((t, end)) = zero {
-            self.ctl.on_track_media(now, t.value(), end);
+            self.ctl
+                .on_track_media(Micros(now), t.value(), Ticks27(end));
             self.inputs.push(BufferInput::TrackMedia {
-                now_us: now,
+                now_us: Micros(now),
                 track: t.value(),
-                end,
+                end: Ticks27(end),
             });
         }
         for (t, end) in ends {
-            self.ctl.on_track_media(now, t.value(), end);
+            self.ctl
+                .on_track_media(Micros(now), t.value(), Ticks27(end));
             self.inputs.push(BufferInput::TrackMedia {
-                now_us: now,
+                now_us: Micros(now),
                 track: t.value(),
-                end,
+                end: Ticks27(end),
             });
         }
         self.drain_events(now);
@@ -551,10 +555,10 @@ impl Oracle {
             return;
         }
         let p = self.clock.position(now);
-        self.ctl.on_tick(now, p);
+        self.ctl.on_tick(Micros(now), p.map(Ticks27));
         self.inputs.push(BufferInput::Tick {
-            now_us: now,
-            pts: p,
+            now_us: Micros(now),
+            pts: p.map(Ticks27),
         });
         self.drain_events(now);
     }
@@ -869,8 +873,8 @@ fn fed_pcrs(bytes: &[u8], chunk: usize) -> Vec<Option<u64>> {
     }
     h.log()
         .iter()
-        .filter_map(|l| match l {
-            BufferInput::Chunk { pcr, .. } => Some(*pcr),
+        .map(|l| match l {
+            BufferInput::Chunk { pcr, .. } => pcr.map(|p| p.0),
             _ => None,
         })
         .collect()
@@ -934,7 +938,7 @@ fn reconnect_sends_reconnected_hint_before_first_chunk_and_keeps_memory() {
             .any(|(_, hint)| *hint == Hint::Reconnected)
     );
     let before = h.session.stall_memory();
-    assert_ne!(before.peak_us, 0);
+    assert_ne!(before.peak_us, Micros(0));
     let now = arrivals[split - 1] + 1_000;
     reconnect(&mut h, now);
 
@@ -1051,7 +1055,7 @@ fn demux_discontinuity_sends_pcr_discontinuity_and_rejoins() {
         .iter()
         .enumerate()
         .filter_map(|(i, l)| match l {
-            BufferInput::TrackMedia { track, end, .. } if *track == VIDEO => Some((i, *end)),
+            BufferInput::TrackMedia { track, end, .. } if *track == VIDEO => Some((i, end.0)),
             _ => None,
         })
         .collect();
@@ -1120,7 +1124,7 @@ fn playback_position_none_until_started_then_some() {
         .log()
         .iter()
         .filter_map(|l| match l {
-            BufferInput::Tick { now_us, pts } => Some((*now_us, *pts)),
+            BufferInput::Tick { now_us, pts } => Some((now_us.0, pts.map(|p| p.0))),
             _ => None,
         })
         .collect();
@@ -1146,7 +1150,7 @@ fn stall_memory_roundtrip_seeds_next_session() {
     let bytes = tf1_bytes!();
     let first = run_gap(&bytes);
     let memory = first.session.stall_memory();
-    assert_ne!(memory.peak_us, 0);
+    assert_ne!(memory.peak_us, Micros(0));
 
     let mut seeded = skip_none!(Host::open(Some(memory)));
     assert_eq!(seeded.session.stall_memory().peak_us, memory.peak_us);
@@ -1155,7 +1159,7 @@ fn stall_memory_roundtrip_seeds_next_session() {
 
     let mut fresh = skip_none!(Host::open(None));
     fresh.data(&bytes[..CHUNK], 0);
-    assert_eq!(fresh.session.stall_memory().peak_us, 0);
+    assert_eq!(fresh.session.stall_memory().peak_us, Micros(0));
 }
 
 fn register_change(input: &BufferInput) -> Option<(bool, u32)> {
@@ -1395,7 +1399,7 @@ fn audio_end_forgotten_when_rendered_audio_changes() {
         expected.insert(h.chunk_of_event(i), max_end);
     }
     for (c, end) in reports {
-        assert_eq!(expected[&c], end, "chunk {c}");
+        assert_eq!(expected[&c], end.0, "chunk {c}");
     }
 }
 

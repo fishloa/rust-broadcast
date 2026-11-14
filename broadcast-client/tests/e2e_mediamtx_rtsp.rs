@@ -934,9 +934,10 @@ fn run_case(label: &str, reencode_video: Option<&[&str]>, expect_reorder: bool) 
 #[cfg(feature = "test-seams")]
 fn print_lead_series(label: &str, session: &Session) {
     use broadcast_client::BufferInput;
+    use buffering_runtime::Ticks27;
     use std::collections::BTreeMap;
-    let mut end: BTreeMap<u32, u64> = BTreeMap::new();
-    let mut origin: Option<u64> = None;
+    let mut end: BTreeMap<u32, Ticks27> = BTreeMap::new();
+    let mut origin: Option<Ticks27> = None;
     let mut next_print = 0u64;
     for input in session.buffer_input_log() {
         match input {
@@ -951,20 +952,20 @@ fn print_lead_series(label: &str, session: &Session) {
             } => {
                 origin = origin.or(Some(*e));
                 end.insert(*track, *e);
-                if *now_us >= next_print {
-                    next_print = now_us + 250_000;
-                    let o = origin.unwrap_or(0);
+                if now_us.0 >= next_print {
+                    next_print = now_us.0 + 250_000;
+                    let o = origin.map_or(0, |o| o.0);
                     let per: Vec<String> = end
                         .iter()
-                        .map(|(t, e)| format!("t{t}_end={}ms", (*e as i128 - o as i128) / 27_000))
+                        .map(|(t, e)| format!("t{t}_end={}ms", (e.0 as i128 - o as i128) / 27_000))
                         .collect();
                     let lead = end
                         .values()
                         .min()
-                        .map_or(0, |m| (*m as i128 - o as i128) / 27_000);
+                        .map_or(0, |m| (m.0 as i128 - o as i128) / 27_000);
                     eprintln!(
                         "LEAD[{label}] at={}ms {} min_lead={}ms",
-                        now_us / 1000,
+                        now_us.0 / 1000,
                         per.join(" "),
                         lead
                     );

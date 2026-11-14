@@ -42,7 +42,9 @@ fn every_numeric_field_that_would_silently_drop_output_is_rejected_by_name() {
         ("hls_key_timeout", |c| {
             c.hls_key_timeout = std::time::Duration::ZERO;
         }),
-        ("buffer", |c| c.buffer.track_silence_timeout_us = 0),
+        ("buffer", |c| {
+            c.buffer.track_silence_timeout_us = buffering_runtime::Micros(0);
+        }),
         ("timeline_jump.backward_us", |c| {
             c.timeline_jump = Some(TimelineJumpConfig {
                 backward_us: 0,

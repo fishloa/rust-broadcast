@@ -279,7 +279,7 @@ fn samples_released_by_a_wake_up_reach_the_controller_in_the_same_poll() {
         for i in s.drain_buffer_inputs() {
             if let BufferInput::TrackMedia { track, end, .. } = i {
                 let slot = reported.entry(track).or_insert(0);
-                *slot = (*slot).max(end);
+                *slot = (*slot).max(end.0);
             }
         }
         got_tracks

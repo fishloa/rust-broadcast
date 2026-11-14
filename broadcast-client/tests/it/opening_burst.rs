@@ -8,6 +8,7 @@ use crate::support::replay::open_live;
 use crate::support::ts_shift::{PACKET, Shift, packet_has_pcr, packet_pid, shift_pes};
 use crate::support::video_run::VideoRun;
 use broadcast_common::stage::Timestamp;
+use buffering_runtime::Micros;
 
 /// The harness's microsecond clock as the session's `now`.
 fn ts(us: u64) -> Timestamp {
@@ -446,7 +447,7 @@ impl Renderer {
 
 fn run(plan: &Plan, row: Row, starve_us: u64) -> Outcome {
     let mut cfg = Config::default();
-    cfg.buffer.policy.initial_us = FILL_US;
+    cfg.buffer.policy.initial_us = Micros(FILL_US);
     let (mut s, conn) = open_live(cfg);
     let mut out = Outcome::default();
     let mut kinds: BTreeMap<u32, (u32, bool, bool)> = BTreeMap::new();
@@ -777,7 +778,7 @@ fn matrix(rows: &[Row]) -> Vec<(Row, Plan, Outcome)> {
         let at = schedule(&raw);
         at[at.len() - 1]
     };
-    let starve = Config::default().buffer.starve_threshold_us;
+    let starve = Config::default().buffer.starve_threshold_us.0;
     let mut cache: BTreeMap<(usize, String), Stream> = BTreeMap::new();
     let mut results = Vec::new();
     for row in rows {
