@@ -32,6 +32,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Container table.
@@ -83,10 +84,10 @@ pub struct ContainerSection<'a> {
     pub container_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
 }
 
 impl<'a> ContainerSection<'a> {
@@ -110,8 +111,8 @@ impl<'a> ContainerSection<'a> {
             section_number,
             last_section_number,
             container_data,
-            reserved_b1: super::RESERVED_2,
-            reserved_b5: super::RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
         }
     }
 }
@@ -160,8 +161,8 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
             section_number,
             last_section_number,
             container_data,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
         })
     }
 }
@@ -184,7 +185,7 @@ impl Serialize for ContainerSection<'_> {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )?;
         // Byte 2: private_section_length[7:0].
         super::write_section_length(buf, len - HEADER_LEN)?;
@@ -192,7 +193,7 @@ impl Serialize for ContainerSection<'_> {
         // Extension header.
         buf[3..5].copy_from_slice(&self.container_id.to_be_bytes());
         buf[5] = super::b5_of(
-            self.reserved_b5,
+            self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
