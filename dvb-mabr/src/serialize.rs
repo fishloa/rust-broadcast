@@ -16,7 +16,9 @@ use std::io;
 
 use core::fmt::Display;
 
-use broadcast_common::xml_chars::{XmlWriter, finish_document, new_writer, write_declaration};
+use broadcast_common::xml_chars::{
+    XmlWriteError, XmlWriter, finish_document, new_writer, write_declaration,
+};
 use quick_xml::events::{BytesStart, BytesText, Event};
 
 /// The writer every `write_xml` appends to (an in-memory `Vec`, so no write can
@@ -25,16 +27,19 @@ pub(crate) type Out = XmlWriter;
 
 /// Render a document: the `<?xml version="1.0" encoding="UTF-8"?>` declaration,
 /// whatever `body` writes through the 2-space indenting writer, and a trailing
-/// newline. Writing to the in-memory `Vec` cannot fail, so an `io::Error` (which
-/// cannot occur) would only truncate the output.
-pub(crate) fn document<F>(body: F) -> String
+/// newline.
+///
+/// # Errors
+/// [`Error::XmlWrite`] if the writer refuses an event (it cannot in practice,
+/// and neither can `body`).
+pub(crate) fn document<F>(body: F) -> crate::Result<String>
 where
     F: FnOnce(&mut Out) -> io::Result<()>,
 {
     let mut w = new_writer();
-    write_declaration(&mut w, "UTF-8");
-    let _ = body(&mut w);
-    finish_document(w)
+    write_declaration(&mut w, "UTF-8")?;
+    body(&mut w).map_err(|e| crate::Error::XmlWrite(XmlWriteError::Write(e.to_string())))?;
+    Ok(finish_document(w))
 }
 
 /// A start tag for `name`.

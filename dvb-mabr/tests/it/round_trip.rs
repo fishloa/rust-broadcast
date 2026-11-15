@@ -50,7 +50,7 @@ fn server_config_round_trips() {
     );
     assert!(parsed.reporting.is_some());
 
-    let xml2 = parsed.to_xml();
+    let xml2 = parsed.to_xml().expect("render");
     let reparsed =
         MulticastServerConfiguration::parse_str(&xml2).expect("parse serialized fixture 1");
     assert_eq!(parsed, reparsed, "round-trip changed the parsed document");
@@ -59,7 +59,7 @@ fn server_config_round_trips() {
     // (kills a raw-passthrough/echo serializer).
     let mut mutated = parsed.clone();
     mutated.schema_version = 99;
-    assert_ne!(mutated.to_xml(), xml2);
+    assert_ne!(mutated.to_xml().expect("render"), xml2);
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn gateway_bootstrap_round_trips() {
     assert!(!ts.fec_params.is_empty());
     assert!(ts.object_carousel.is_some());
 
-    let xml2 = parsed.to_xml();
+    let xml2 = parsed.to_xml().expect("render");
     let reparsed =
         MulticastGatewayConfiguration::parse_str(&xml2).expect("parse serialized fixture 2");
     assert_eq!(parsed, reparsed, "round-trip changed the parsed document");
@@ -87,7 +87,7 @@ fn gateway_bootstrap_round_trips() {
     mutated.gateway_config_transport_sessions[0]
         .bit_rate
         .maximum += 1;
-    assert_ne!(mutated.to_xml(), xml2);
+    assert_ne!(mutated.to_xml().expect("render"), xml2);
 }
 
 #[test]
@@ -115,12 +115,12 @@ fn full_gateway_config_round_trips() {
     assert_eq!(alpha.transport_sessions.len(), 3);
     assert!(parsed.reporting.is_some());
 
-    let xml2 = parsed.to_xml();
+    let xml2 = parsed.to_xml().expect("render");
     let reparsed =
         MulticastGatewayConfiguration::parse_str(&xml2).expect("parse serialized fixture 3");
     assert_eq!(parsed, reparsed, "round-trip changed the parsed document");
 
     let mut mutated = parsed.clone();
     mutated.sessions[0].service_identifier = "urn:example:service:mutated".into();
-    assert_ne!(mutated.to_xml(), xml2);
+    assert_ne!(mutated.to_xml().expect("render"), xml2);
 }

@@ -93,6 +93,10 @@ pub enum Error {
     /// attribute at all.
     #[error("ServiceComponentIdentifier is missing its xsi:type attribute")]
     MissingComponentType,
+
+    /// The XML writer refused an event while rendering the document.
+    #[error("XML write failed: {0}")]
+    XmlWrite(#[from] broadcast_common::xml_chars::XmlWriteError),
 }
 
 /// Why well-formed XML is not a valid configuration document shape.

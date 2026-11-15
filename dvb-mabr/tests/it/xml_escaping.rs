@@ -33,7 +33,7 @@ fn specials_in_attributes_and_text_are_escaped_and_round_trip() {
     assert_eq!(session.service_identifier, SPECIALS);
     assert_eq!(session.manifest_locators[0].locator, SPECIALS);
 
-    let out = parsed.to_xml();
+    let out = parsed.to_xml().expect("render");
     assert!(
         out.contains(&format!("serviceIdentifier=\"{SPECIALS_ESCAPED}\"")),
         "attribute must be escaped on the wire:\n{out}"

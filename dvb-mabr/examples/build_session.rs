@@ -34,7 +34,7 @@ fn main() {
 
     config.sessions[0].service_identifier = "urn:example:service:modified".into();
 
-    let output = config.to_xml();
+    let output = config.to_xml().expect("render");
     println!("\nSerialized XML:\n{output}");
 
     let reparsed = MulticastGatewayConfiguration::parse_str(&output).expect("round-trip");
