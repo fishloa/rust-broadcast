@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for SVC_extension_descriptor.
@@ -14,10 +15,14 @@ const HEADER_LEN: usize = 2;
 /// Default of the 5-bit `reserved` after `dependency_id` (H.222.0 Table 2-99):
 /// clause 2.1 "reserved" = `1` (all editions 06/2012-08/2023, audit §5;
 /// confirmed by the TSDuck oracle PMT).
-pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+/// Width of the `reserved` field after `dependency_id` (5 bits).
+const RESERVED_5_BITS: u32 = 5;
 /// Default of the trailing 1-bit `reserved` after `no_sei_nal_unit_present`
 /// (same rule).
-pub const RESERVED_1_DEFAULT: u8 = 0b1;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
+/// Width of the trailing `reserved` field (1 bit).
+const RESERVED_1_BITS: u32 = 1;
 const RESERVED_5_MASK: u8 = 0x1F;
 const RESERVED_1_MASK: u8 = 0x01;
 const BODY_LEN: u8 = 13;
@@ -49,12 +54,14 @@ pub struct SvcExtensionDescriptor {
     pub temporal_id_end: u8,
     /// No SEI NAL unit present flag.
     pub no_sei_nal_unit_present: bool,
-    /// `reserved(5)` after `dependency_id` (5 bits, right-aligned). Captured
-    /// on parse, re-emitted verbatim; defaults to [`RESERVED_5_DEFAULT`].
-    pub reserved_5: u8,
-    /// Trailing `reserved(1)` (1 bit, right-aligned). Captured on parse,
-    /// re-emitted verbatim; defaults to [`RESERVED_1_DEFAULT`].
-    pub reserved_1: u8,
+    /// `reserved(5)` after `dependency_id` (5 bits). Captured on parse,
+    /// re-emitted verbatim; defaults to [`RESERVED_5_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
+    /// Trailing `reserved(1)` (1 bit). Captured on parse, re-emitted verbatim;
+    /// defaults to [`RESERVED_1_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_1: ReservedOnes<RESERVED_1_BITS>,
 }
 
 impl SvcExtensionDescriptor {
@@ -131,8 +138,8 @@ impl<'a> Parse<'a> for SvcExtensionDescriptor {
             temporal_id_start,
             temporal_id_end,
             no_sei_nal_unit_present,
-            reserved_5: b10 & RESERVED_5_MASK,
-            reserved_1: b12 & RESERVED_1_MASK,
+            reserved_5: ReservedOnes::from_bits(u64::from(b10 & RESERVED_5_MASK)),
+            reserved_1: ReservedOnes::from_bits(u64::from(b12 & RESERVED_1_MASK)),
         })
     }
 }
@@ -156,7 +163,7 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
         buf[HEADER_LEN + 10] =
             (broadcast_common::len::fit_mask(self.dependency_id, 0x07, "dependency_id")? << 5)
-                | broadcast_common::len::fit_mask(self.reserved_5, RESERVED_5_MASK, "reserved_5")?;
+                | (self.reserved_5.get() as u8);
         buf[HEADER_LEN + 11] =
             (broadcast_common::len::fit_mask(self.quality_id_start, 0x0F, "quality_id_start")?
                 << 4)
@@ -167,7 +174,7 @@ impl Serialize for SvcExtensionDescriptor {
                 | (broadcast_common::len::fit_mask(self.temporal_id_end, 0x07, "temporal_id_end")?
                     << 2)
                 | ((self.no_sei_nal_unit_present as u8) << 1)
-                | broadcast_common::len::fit_mask(self.reserved_1, RESERVED_1_MASK, "reserved_1")?;
+                | (self.reserved_1.get() as u8);
         Ok(len)
     }
 }
@@ -285,7 +292,13 @@ mod tests {
                     0x06 | r1,
                 ];
                 let d = SvcExtensionDescriptor::parse(&bytes).unwrap();
-                assert_eq!((d.reserved_5, d.reserved_1), (r5, r1));
+                assert_eq!(
+                    (d.reserved_5, d.reserved_1),
+                    (
+                        ReservedOnes::from_bits(u64::from(r5)),
+                        ReservedOnes::from_bits(u64::from(r1))
+                    )
+                );
                 let mut out = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut out).unwrap();
                 assert_eq!(out, bytes);
@@ -310,5 +323,18 @@ mod tests {
                 0x05
             ]
         );
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let d = SvcExtensionDescriptor {
+            reserved_5: ReservedOnes::from_bits(0xFF),
+            reserved_1: ReservedOnes::from_bits(0xFF),
+            ..SvcExtensionDescriptor::new(0, 0, 0)
+        };
+        assert_eq!(d.reserved_5.get(), 0x1F);
+        assert_eq!(d.reserved_1.get(), 0x01);
     }
 }
