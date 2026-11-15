@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - BREAKING: each typed RTCP packet (`SenderReport`, `ReceiverReport`, `SourceDescription`, `Bye`, `App`) now carries its trailing `P` (padding) octets as a public `padding: Option<RtcpPadding>` field, so a padded packet re-serializes byte-identically with its padding and `P` bit intact (audit19b #2742). The unpadded body region is validated separately from the padding octets.
 
+### Removed
+- BREAKING: `rtcp::CommonHeader` is crate-private (it was an exported type with all-`pub` fields but no public constructor or consumer). Migration: none — the typed `SenderReport`/`ReceiverReport`/`SourceDescription`/`Bye`/`App` accessors are the public read path (#2771).
+
 ### Fixed
 - AV3A `Av3aDepacketizer` no longer emits the tail of an over-size frame as a bogus short frame: once a fragment overflows the cap, the depacketizer discards every later fragment up to the over-size frame's marker, then resumes on the next frame (audit19b #2750). Its bit-read truncation errors now carry the real byte counts, not fabricated `need/have` of 0.
 - RTCP SDES refuses to serialize an item whose type is the type-0 terminator or an `Unknown` carrying a defined code (audit19b #2751), and its parser now errs on bytes after the declared chunk count instead of silently dropping them.

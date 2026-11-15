@@ -6,6 +6,7 @@
 //! needed for this smoke-level gate), seeded from a fixed constant, so the
 //! test is reproducible.
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use srt_runtime::arq::{Receiver, Sender};
@@ -179,12 +180,12 @@ fn no_panic_on_arbitrary_input() {
 fn no_panic_and_bounded_state_on_hostile_engine_input() {
     const WINDOW: u32 = 8192;
     let mut rng = XorShift(0xBAD5_EED5_0FF1_CE01);
-    let mut now = Duration::ZERO;
+    let mut now = Timestamp::ZERO;
 
     // --- ARQ receiver: any sequence number, any (non-monotonic) clock. ---
     let mut receiver = Receiver::new(0xAAAA, 77, WINDOW);
     for _ in 0..ITERATIONS {
-        now += Duration::from_micros(rng.next_u64() % 40_000);
+        now = now.saturating_add(Duration::from_micros(rng.next_u64() % 40_000));
         let seq = match rng.next_u64() % 4 {
             0 => (rng.next_u64() as u32) & 0x7FFF_FFFF, // anywhere in the space
             1 => rng.next_u64() as u32,                 // not even 31 bits
@@ -212,7 +213,7 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
     const SENT: u32 = 200;
     for seq in 0..SENT {
         sender
-            .on_data(seq, seq, b"payload", Duration::ZERO)
+            .on_data(seq, seq, b"payload", Timestamp::ZERO)
             .expect("in-range numbers");
     }
     let mut raw = [0u8; MAX_LEN];
@@ -225,7 +226,7 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
             raw_loss_list: &raw[..len],
         });
         if rng.next_u64().is_multiple_of(16) {
-            let _ = sender.tick(Duration::from_millis(1));
+            let _ = sender.tick(Timestamp::from_millis(1));
         }
         if rng.next_u64().is_multiple_of(64) {
             let cif = AckCif::Light {
@@ -238,7 +239,7 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
                     dest_socket_id: 0,
                     cif,
                 },
-                Duration::ZERO,
+                Timestamp::ZERO,
             );
         }
         assert!(sender.buffered_count() <= SENT as usize);
@@ -247,9 +248,9 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
 
     // --- TSBPD: arbitrary sequence numbers and timestamps (including wraps). ---
     let mut tsbpd = TsbpdScheduler::new(0, -1_000, Duration::from_millis(120), 0, true, None);
-    let mut clock = Duration::ZERO;
+    let mut clock = Timestamp::ZERO;
     for _ in 0..ITERATIONS {
-        clock += Duration::from_micros(rng.next_u64() % 5_000);
+        clock = clock.saturating_add(Duration::from_micros(rng.next_u64() % 5_000));
         let seq = (rng.next_u64() as u32) & 0x7FFF_FFFF;
         let _ = tsbpd.feed_data(seq, rng.next_u64() as u32, clock);
         let _ = tsbpd.tick(clock);

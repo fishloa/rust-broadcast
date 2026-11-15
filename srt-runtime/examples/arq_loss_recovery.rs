@@ -10,6 +10,7 @@
 //! cargo run -p srt-runtime --example arq_loss_recovery
 //! ```
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use srt_runtime::arq::{FULL_ACK_PERIOD, Receiver, Sender};
@@ -26,7 +27,7 @@ const DROPPED: [u32; 2] = [3, 7];
 fn main() {
     let mut sender = Sender::new(RECEIVER_ID);
     let mut receiver = Receiver::new(SENDER_ID, 0, MAX_FLOW_WINDOW);
-    let mut now = Duration::ZERO;
+    let mut now = Timestamp::ZERO;
 
     // Send everything; the network drops two packets.
     let mut in_flight = Vec::new();
@@ -40,7 +41,7 @@ fn main() {
         } else {
             in_flight.push(bytes);
         }
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
 
     // The receiver sees the survivors; each gap triggers one NAK.
@@ -53,7 +54,7 @@ fn main() {
         if let Some(nak) = outcome.nak {
             naks.push(nak);
         }
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
     println!(
         "after first pass: delivered in order {delivered:?}, {} NAK(s), loss list {}",
@@ -74,7 +75,7 @@ fn main() {
             dp.seq_number, dp.retransmitted
         );
         delivered.extend(receiver.feed_data(dp.seq_number, now).delivered);
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
     println!("final delivery order: {delivered:?}");
     assert_eq!(delivered, (0..TOTAL).collect::<Vec<u32>>());
@@ -84,12 +85,12 @@ fn main() {
         "sender buffer before ACK: {} packets",
         sender.buffered_count()
     );
-    now += FULL_ACK_PERIOD + Duration::from_millis(1);
+    now = now.saturating_add(FULL_ACK_PERIOD + Duration::from_millis(1));
     for bytes in receiver.tick(now) {
         if let ControlPacket::Ack(ack) = ControlPacket::parse(&bytes).expect("control packet") {
             let ackack = sender.on_ack(&ack, now).expect("Full ACK -> ACKACK");
             if let ControlPacket::AckAck(a) = ControlPacket::parse(&ackack).expect("ACKACK") {
-                receiver.on_ackack(&a, now + Duration::from_millis(5));
+                receiver.on_ackack(&a, now.saturating_add(Duration::from_millis(5)));
             }
         }
     }

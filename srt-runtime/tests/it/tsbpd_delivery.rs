@@ -8,6 +8,7 @@
 //! Spec grounding: `private/specs-verified/rules/srt-tsbpd.md` §4.5/§4.6 (curated from
 //! `draft-sharabayko-srt-01`).
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 use srt_runtime::tsbpd::{TickOutcome, TsbpdScheduler};
 
@@ -34,12 +35,12 @@ struct PacketInput {
 
 /// Advance the clock to `now_us` and collect all output.
 fn tick_to(sched: &mut TsbpdScheduler, now_us: u64) -> TickOutcome {
-    sched.tick(Duration::from_micros(now_us))
+    sched.tick(Timestamp::from_micros(now_us))
 }
 
 /// Feed a packet and collect all output.
 fn feed(sched: &mut TsbpdScheduler, seq: u32, ts: u32, now_us: u64) -> TickOutcome {
-    sched.feed_data(seq, ts, Duration::from_micros(now_us))
+    sched.feed_data(seq, ts, Timestamp::from_micros(now_us))
 }
 
 // ---------------------------------------------------------------------------
