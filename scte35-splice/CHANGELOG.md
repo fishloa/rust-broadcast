@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [7.0.0] - 2026-11-15
 ### Changed
 - BREAKING: `ClearPayload::descriptor_loop` is `SpliceDescriptorLoop` (new module `scte35_splice::descriptor_loop`) instead of `&[u8]`, and `SpliceInfoSection::new_clear` takes one. The loop wraps the wire bytes verbatim (`raw()`), walks the TLV structure with `entries()` (a truncated entry is one `Err` with the loop offset, then the walk fuses, instead of the bytes being hand-parsed), and `typed()` is the dispatch `SpliceInfoSection::descriptors` already performed. Wire bytes are unchanged. Migration: `ClearPayload { descriptor_loop: &bytes, .. }` -> `ClearPayload { descriptor_loop: SpliceDescriptorLoop::new(&bytes), .. }`, `new_clear(cmd, &[])` -> `new_clear(cmd, SpliceDescriptorLoop::new(&[]))`, `section.clear.unwrap().descriptor_loop` -> `...descriptor_loop.raw()` where the bytes are wanted (#2770).
 - BREAKING: `SpliceObservation` (returned by `SpliceTracker::feed`) is `#[non_exhaustive]`, so a field added later is not a breaking change (#2771).
