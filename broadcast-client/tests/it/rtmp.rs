@@ -369,7 +369,12 @@ fn a_chunk_size_change_in_the_middle_of_the_stream_leaves_the_samples_unchanged(
         let bytes = h.peer.as_mut().unwrap().media((*t).into(), *ts, b).unwrap();
         h.send_to_session(&bytes);
     }
-    let mut wire = h.peer.as_mut().unwrap().set_chunk_size(31).unwrap();
+    let mut wire = h
+        .peer
+        .as_mut()
+        .unwrap()
+        .set_chunk_size(rtmp_runtime::ChunkSize::new(31).expect("a valid chunk size"))
+        .unwrap();
     for (t, ts, b) in tail {
         wire.extend(h.peer.as_mut().unwrap().media((*t).into(), *ts, b).unwrap());
     }

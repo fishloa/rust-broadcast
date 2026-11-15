@@ -288,7 +288,7 @@ reqwest          = { version = "0.13", default-features = false, features = ["js
 # `tests/it/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
 # `emsg` back to the source section and prove the bytes are the source's own
 # (issue #1083, E).
-scte35-splice    = { path = "../scte35-splice", version = "6.0.0" }
+scte35-splice    = { path = "../scte35-splice", version = "7.0.0" }
 # `rtp-packet` (default-features off, matching the `whep` optional dep) so
 # `tests/it/whip_whep_timers.rs` can build the RTP packet a loopback WebRTC
 # peer encrypts and sends — the only honest way to drive a WHIP session to a

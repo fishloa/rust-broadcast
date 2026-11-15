@@ -19,18 +19,22 @@ use crate::error::{Error, TransportError};
 use crate::events::{AUDIO_TRACK_ID_OFFSET, Action, Config, ErrorKind, Event, Status};
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::deadline;
+use crate::source::fetch::duration_us;
 use crate::source::fetch::failures::{Attempts, Failure, FailureCounter, Verdict, verdict};
 use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
 };
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
-use crate::source::fetch::retry::{
-    Backoff, RefusedCapture, RetryGate, backoff_ms, duration_us, retry_after_us,
-};
+use crate::source::fetch::retry::{Backoff, RefusedCapture, RetryGate, retry_after};
 use crate::source::fetch::wall::WallClock;
 use crate::source::fetch::window::{Lane, Lanes, Window};
 use broadcast_auth::AuthState;
 use broadcast_common::stage::Timestamp;
+
+/// The most times one [`HlsSource::advance`] pass issues work: a zero retry
+/// delay releases its gate at the same instant, so the loop must come back to
+/// the caller between attempts rather than spend the instant on them.
+const MAX_PASSES_PER_INSTANT: u32 = 8;
 
 const STATUS_FORBIDDEN: StatusCode = StatusCode::FORBIDDEN;
 const STATUS_NOT_FOUND: StatusCode = StatusCode::NOT_FOUND;
@@ -100,7 +104,7 @@ pub(crate) struct HlsSource {
     seg_failures: FailureCounter<ResourceId>,
     seg_retry: BTreeSet<ResourceId>,
     skip_error: Option<ErrorKind>,
-    retry_after_us: u64,
+    retry_after: Option<Duration>,
     reported: BTreeSet<&'static str>,
     fatal: bool,
     reserved_id_reported: bool,
@@ -135,11 +139,12 @@ impl HlsSource {
         conn_alloc: ConnAlloc,
         role: Role,
         seed: u64,
-    ) -> Self {
+    ) -> Result<Self, Error> {
         let client = HlsClient::new(
             HlsClientConfig::new(url.clone()).with_variant_policy(config.variant_policy.clone()),
         );
-        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
+        let backoff = Backoff::new(&config.backoff, seed)
+            .map_err(|_| Error::InvalidConfig { field: "backoff" })?;
         let mut source = Self {
             client,
             body_limits: BodyLimits {
@@ -153,7 +158,7 @@ impl HlsSource {
             seg_failures: FailureCounter::new(),
             seg_retry: BTreeSet::new(),
             skip_error: None,
-            retry_after_us: 0,
+            retry_after: None,
             reported: BTreeSet::new(),
             fatal: false,
             reserved_id_reported: false,
@@ -162,7 +167,7 @@ impl HlsSource {
             skipped_kind: None,
             damaged_reported: false,
             oversize_reported: BTreeSet::new(),
-            backoff: Backoff::new(&backoff_steps_ms, backoff_cap_ms, seed),
+            backoff,
             max_redirects: config.max_redirects,
             flight: InFlight::new(
                 Timeouts {
@@ -189,7 +194,7 @@ impl HlsSource {
             events: VecDeque::new(),
         };
         source.pump_core();
-        source
+        Ok(source)
     }
 
     pub(crate) fn take_actions(&mut self) -> VecDeque<Action> {
@@ -388,8 +393,8 @@ impl HlsSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            let ra = retry_after_us(status, headers, Timestamp::from_micros(now), wall);
-            self.retry_after_us = ra;
+            let ra = retry_after(status, headers, Timestamp::from_micros(now), wall);
+            self.retry_after = ra;
             inflight::record_refusal(
                 head,
                 ra,
@@ -400,7 +405,7 @@ impl HlsSource {
                 },
             );
             self.fail_status(req, now, Some(status));
-            self.retry_after_us = 0;
+            self.retry_after = None;
         }
     }
 
@@ -741,7 +746,10 @@ impl HlsSource {
             Some(count) => count,
             None => self.attempt.bump(),
         };
-        let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+        let wait = self
+            .backoff
+            .delay(attempt)
+            .max(self.retry_after.unwrap_or_default());
         // A deadline past the end of the clock can never be reached: the retry never fires.
         let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
             return;
@@ -749,7 +757,9 @@ impl HlsSource {
         let at = at.as_micros();
         self.events
             .push_back(Event::Status(Status::Reconnecting { attempt }));
-        self.gate.hold_until(at);
+        // A zero delay is no hold: the retry lands on this pass, which the
+        // loop's pass bound lets happen once.
+        self.gate.hold_from(Timestamp::from_micros(at));
         if let Some(url) = refetch
             && self.retry_refetch.is_none()
             && let Ok(url) = Url::parse(&url)
@@ -800,10 +810,17 @@ impl HlsSource {
         {
             self.issue(Purpose::Playlist, &url, None, now, auth);
         }
+        // A zero retry delay is no hold, so the request it armed lands in this
+        // very pass; the loop must still come back to the caller before a
+        // second one does, which is what the pass count bounds.
+        self.gate.lift_at(Timestamp::from_micros(now));
+        let mut passes = 0u32;
         loop {
-            if !self.gate.lifted(now) {
+            if !self.gate.lifted(Timestamp::from_micros(now)) || passes >= MAX_PASSES_PER_INSTANT {
                 return;
             }
+            passes = passes.saturating_add(1);
+
             if core::mem::take(&mut self.init_retry) && self.client.retry_init() {
                 self.pump_core();
             }
@@ -835,7 +852,7 @@ impl HlsSource {
                     let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
                         return;
                     };
-                    self.gate.hold_until(at.as_micros());
+                    self.gate.hold_from(at);
                     self.actions.push_back(Action::WakeAt(at));
                 }
                 _ => {}
@@ -1103,7 +1120,8 @@ mod tests {
             ConnAlloc::new(),
             Role::Main,
             TEST_SEED,
-        );
+        )
+        .unwrap_or_else(|_| panic!("the default schedule is accepted"));
         (source, auth, url)
     }
 

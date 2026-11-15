@@ -20,6 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration as StdDuration;
 
+use broadcast_common::Timestamp;
 use mpeg_ts::mux::{SectionInterval, SiMux};
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
@@ -151,9 +152,9 @@ fn tdt_and_tot_both_present_with_continuous_cc_per_tsduck() {
     let tdt = build_short_section(0x70, &[0xAA; 5]); // TDT: UTC_time(40 bits)
     let tot = build_short_section(0x73, &[0xBB; 8]); // TOT: UTC_time(40 bits) + garbage tail
     let mut mux = SiMux::new();
-    mux.upsert_tdt(tdt);
-    mux.upsert_tot(tot);
-    let packets = mux.poll(StdDuration::ZERO);
+    mux.upsert_tdt(tdt).expect("TDT is schedulable");
+    mux.upsert_tot(tot).expect("TOT is schedulable");
+    let packets = mux.poll(Timestamp::ZERO);
     assert!(!packets.is_empty());
 
     let dir = scratch_dir("tdt_tot");
@@ -188,13 +189,15 @@ fn sdt_and_bat_both_present_per_tsduck() {
     // transport_stream_loop_length(12 bits, =0) — both loops empty.
     let bat = build_long_section(0x4A, 0x0001, &[0xF0, 0x00, 0xF0, 0x00]);
     let mut mux = SiMux::new();
-    mux.upsert_sdt_actual(sdt);
+    mux.upsert_sdt_actual(sdt)
+        .expect("SDT actual is schedulable");
     mux.upsert(
         Pid::from_const(0x0011),
         bat,
         SectionInterval::from_const(StdDuration::from_millis(1000)),
-    );
-    let packets = mux.poll(StdDuration::ZERO);
+    )
+    .expect("BAT on the SDT PID is schedulable");
+    let packets = mux.poll(Timestamp::ZERO);
     assert!(!packets.is_empty());
 
     let dir = scratch_dir("sdt_bat");

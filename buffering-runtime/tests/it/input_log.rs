@@ -114,6 +114,26 @@ fn rows_match_the_documented_shapes() {
 }
 
 #[test]
+fn a_logged_instant_truncates_to_the_microsecond_it_is_in() {
+    let at = Duration::from_nanos(1_500);
+    assert_eq!(
+        row(&Input::Chunk {
+            now_us: at,
+            bytes: 188,
+            pcr: None
+        }),
+        "chunk,1,188,",
+        "a logged reading is floored, never rounded up to the next microsecond"
+    );
+    let back = Input::parse_row("chunk,1,188,").expect("a written row parses");
+    assert!(
+        back.now_us() <= at,
+        "{:?} is not after {at:?}",
+        back.now_us()
+    );
+}
+
+#[test]
 fn malformed_rows_are_typed_errors_carrying_the_line() {
     let cases: [(&str, Reason); 6] = [
         ("bogus,1,2,3", Reason::UnknownKind),

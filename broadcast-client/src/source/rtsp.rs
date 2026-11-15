@@ -156,7 +156,16 @@ fn effective_port(url: &Url) -> u16 {
 }
 
 impl RtspSource {
-    pub(crate) fn new(url: &Url, cfg: &TsConfig, max_redirects: u32, now: Timestamp) -> Self {
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the configured retry schedule is not one a
+    /// [`crate::source::fetch::retry::RetrySchedule`] can run with; reported, never repaired.
+    pub(crate) fn new(
+        url: &Url,
+        cfg: &TsConfig,
+        max_redirects: u32,
+        now: Timestamp,
+    ) -> Result<Self, crate::Error> {
         let now_us = now.as_micros();
         let tls = url.scheme() == SCHEME_RTSPS;
         let default_port = if tls {
@@ -203,7 +212,8 @@ impl RtspSource {
             seen_first_sample: false,
             stalled: false,
             attempt: 0,
-            retry: ReconnectTimer::new(&cfg.backoff.steps, cfg.backoff.cap, mix_seed(now_us)),
+            retry: ReconnectTimer::new(&cfg.backoff, mix_seed(now_us))
+                .map_err(|_| crate::Error::InvalidConfig { field: "backoff" })?,
             connected_at: now,
             last_byte_at: now,
             last_sample_at: now,
@@ -219,7 +229,7 @@ impl RtspSource {
             events: VecDeque::new(),
         };
         me.start_connect(now, None);
-        me
+        Ok(me)
     }
 
     pub(crate) fn take_actions(&mut self) -> VecDeque<Action> {
@@ -1227,13 +1237,18 @@ impl RtspSource {
 mod tests {
     use super::*;
 
+    fn rtsp_source(url: &Url) -> RtspSource {
+        RtspSource::new(url, &TsConfig::default(), 0, Timestamp::ZERO)
+            .unwrap_or_else(|_| panic!("the default schedule is accepted"))
+    }
+
     /// A reconnect timer that would land past the end of the clock is no timer
     /// at all: the source reports no deadline and never reconnects early on a
     /// saturated instant, instead of reading the end of the clock as "due now".
     #[test]
     fn a_reconnect_that_does_not_fit_the_clock_never_fires() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
+        let mut source = rtsp_source(&url);
         source.take_actions();
         source.on_connected(ConnId::new(1), Timestamp::from_micros(u64::MAX));
         source.take_actions();
@@ -1252,7 +1267,7 @@ mod tests {
     #[test]
     fn reconnect_never_reuses_the_live_connection_id() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
+        let mut source = rtsp_source(&url);
         source.take_actions();
         source.next_conn = u32::MAX;
         source.conn = Some(ConnId::new(u32::MAX));
@@ -1264,7 +1279,7 @@ mod tests {
     #[test]
     fn connection_ids_wrap_to_one_and_skip_zero() {
         let url = Url::parse("rtsp://cam.test/live/").unwrap();
-        let mut source = RtspSource::new(&url, &TsConfig::default(), 0, Timestamp::ZERO);
+        let mut source = rtsp_source(&url);
         source.conn = None;
         source.next_conn = u32::MAX;
         source.start_connect(Timestamp::ZERO, None);

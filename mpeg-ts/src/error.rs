@@ -58,20 +58,26 @@ pub enum Error {
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
 
-    /// `Section::payload` did not match what `section_length` implies (see
-    /// `Section::serialize_into`, #1074 W5). Serializing a hand-built
-    /// `Section` whose fields disagree used to index past `serialized_len()`
-    /// and panic (or write the CRC over payload bytes) instead of erroring.
-    #[error(
-        "section payload is {actual} bytes but section_length ({section_length}) implies {expected}"
-    )]
-    SectionPayloadLengthMismatch {
-        /// `section_length` field the caller set.
-        section_length: u16,
-        /// Payload length `section_length` implies (accounting for the
-        /// extension header + CRC on long-form sections).
-        expected: usize,
-        /// Actual `payload.len()`.
-        actual: usize,
+    /// The packet has no adaptation field, so it has no PCR (and no OPCR)
+    /// slot to rewrite.
+    #[error("packet has no adaptation field")]
+    NoAdaptationField,
+
+    /// The adaptation field has no PCR (or OPCR) slot: either it is shorter
+    /// than the flags byte plus the 6-byte field, or the packet's own flag
+    /// byte does not set the corresponding flag.
+    #[error("packet has no {which} slot")]
+    NoClockReference {
+        /// The missing field: `"PCR"` or `"OPCR"`.
+        which: &'static str,
+    },
+
+    /// The adaptation field is shorter than the field being written into it.
+    #[error("adaptation field is {have} bytes, {need} needed")]
+    AdaptationFieldTooShort {
+        /// Bytes the write needs.
+        need: usize,
+        /// `adaptation_field_length` the packet declares.
+        have: usize,
     },
 }

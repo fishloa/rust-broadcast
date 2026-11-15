@@ -1301,6 +1301,10 @@ pub const TABLE: &[Crate] = &[
             "RtmpError",
             // Structured `thiserror` URL-rejection enum for `target::RtmpTarget` — no spec label.
             "RtmpUrlError",
+            // The URL's scheme: a data-carrying discriminant (`Rtmp`, `Rtmps`,
+            // `Other(String)` kept verbatim), not a fixed spec label set; the
+            // error that carries it (`RtmpUrlError`) is skipped above.
+            "Scheme",
             // Data-carrying ADT (§8.2 AMF0 value types): each variant holds its own
             // payload (Number(f64), Utf8String<'a>, Object(..), ...), so a static
             // label would be lossy — callers match the typed variant instead. See

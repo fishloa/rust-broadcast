@@ -1,7 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- BREAKING: `backoff::InvalidBackoff` no longer implements `Eq`, and its growth-factor failure is the new `backoff::InvalidBackoff::GrowthFactor { factor: backoff::GrowthFactor }` (`GrowthFactor::Nan` or `GrowthFactor::Below(f64)`) instead of `GrowthBelowOne { factor: f64 }`: a NaN factor made the error unequal to its own copy, so the `Eq` claim was false. `InvalidBackoff::reason()` (a `String`-producing error API) is gone; `Display` is the message and `core::error::Error` is still implemented (`GrowthFactor::name()` carries the description, the workspace's label convention for a public enum) (#2725). Migration: match `GrowthFactor` variants rather than the raw `f64`, and render the message with `to_string()` instead of `reason()`.
+
 ### Added
+- `backoff::RetrySchedule::no_delay(seed)`: the schedule no bound can refuse (a zero cap with no step table, every attempt waiting nothing), the value `from_steps(&[], Duration::ZERO, seed)` yields, named so a caller that must hold a schedule in a field it cannot build fallibly does not rebuild it by hand (#2727).
 - `reserved::{Reserved, ReservedOnes, ReservedZero}`: the workspace's one typed run of `reserved` / `reserved_future_use` bits in a fixed-width field, moved here from `dvb-ci` so a CAM object and a DVB descriptor use the same type. The width is a `const` (1..=64), so a value wider than the field is unrepresentable and a serializer never re-masks one (it now also carries the 12-bit `cable_delivery_system` run); `Default` is the spec fill and it serializes as the bare number. `dvb_ci::reserved` re-exports these names (#2738).
 - `backoff::ReconnectPolicy`: the workspace's one reconnect/backoff policy (a `BackoffSteps` schedule plus an `Option<NonZeroU32>` attempt bound), `ReconnectPolicy::doubling` (an exponential schedule from two bounds), and `ReconnectPolicy::exhausted` (#2690).
 - `clock33::Clock27::from_27mhz_wrapping`: the infallible position a raw 27 MHz count names, reduced modulo `PCR_WRAP_27MHZ` when it is past the wrap (a counter that has run over it), unchanged below it; `from_27mhz` stays the checked one (#2687).

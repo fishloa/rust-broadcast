@@ -402,7 +402,9 @@ mod tests {
 
     fn sample_section() -> Vec<u8> {
         let ts = TimeSignal {
-            splice_time: SpliceTime::with_pts(0x0012_3456),
+            splice_time: SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(0x0012_3456).expect("in range"),
+            ),
         };
         SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[])
             .try_to_bytes()

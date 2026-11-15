@@ -34,7 +34,7 @@ pub(crate) fn current_pat(raw: &[u8]) -> Option<PatSection> {
     let pat = PatSection::parse(raw).ok()?;
     // The typed parse does not cover the CRC — validate it explicitly
     // (ISO/IEC 13818-1 Annex B).
-    Section::parse(raw).ok()?.validate_crc(raw).ok()?;
+    Section::parse(raw).ok()?.validate_crc().ok()?;
     // A next-generation section is not the current one (ISO/IEC 13818-1
     // §2.4.4.11).
     pat.current_next_indicator.then_some(pat)
@@ -63,7 +63,7 @@ const NULL_PID: Pid = Pid::from_const(0x1FFF);
 /// set, §2.4.4.11).
 pub(crate) fn current_pmt(raw: &[u8]) -> Option<PmtSection<'_>> {
     let pmt = PmtSection::parse(raw).ok()?;
-    Section::parse(raw).ok()?.validate_crc(raw).ok()?;
+    Section::parse(raw).ok()?.validate_crc().ok()?;
     pmt.current_next_indicator.then_some(pmt)
 }
 
