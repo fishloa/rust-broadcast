@@ -75,17 +75,22 @@ fn restart_boundary_is_one_discontinuity_before_the_new_periods_samples() {
             Output::PeriodChanged {
                 index,
                 id,
-                start_us,
+                start,
                 continuous,
-            } => Some((*index, id.clone(), *start_us, *continuous)),
+            } => Some((*index, id.clone(), *start, *continuous)),
             _ => None,
         })
         .collect();
     assert_eq!(
         changes,
         vec![
-            (0, Some("1".to_owned()), 0, false),
-            (1, Some("2".to_owned()), 6_000_000, false)
+            (0, Some("1".to_owned()), std::time::Duration::ZERO, false),
+            (
+                1,
+                Some("2".to_owned()),
+                std::time::Duration::from_micros(6_000_000),
+                false
+            )
         ]
     );
     let manifests = run.count(|o| matches!(o, Output::Manifest(_)));

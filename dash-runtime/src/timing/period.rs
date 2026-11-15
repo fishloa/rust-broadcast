@@ -18,9 +18,9 @@ use broadcast_common::impl_spec_display;
 use broadcast_common::units::{MICROS_PER_SEC, NANOS_PER_MICRO};
 use broadcast_dash::{Mpd, PresentationType};
 
-/// Duration to microseconds.
+/// Duration to whole microseconds, as an `i128` for overflow-safe later sums.
 #[must_use]
-pub fn duration_us(d: Duration) -> i128 {
+pub(crate) fn duration_micros(d: Duration) -> i128 {
     i128::from(d.as_secs()) * (MICROS_PER_SEC as i128)
         + i128::from(d.subsec_nanos() / (NANOS_PER_MICRO as u32))
 }
@@ -54,11 +54,11 @@ impl_spec_display!(PeriodKind);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PeriodTiming {
-    /// PeriodStart in microseconds from the presentation start; `None` until
-    /// one can be derived.
-    pub start_us: Option<i128>,
+    /// PeriodStart from the presentation start; `None` until one can be
+    /// derived.
+    pub start: Option<Duration>,
     /// The Period end in the same domain, when known.
-    pub end_us: Option<i128>,
+    pub end: Option<Duration>,
     /// The kind.
     pub kind: PeriodKind,
 }
@@ -71,13 +71,13 @@ pub fn period_timings(mpd: &Mpd) -> Vec<PeriodTiming> {
         let mut starts: Vec<Option<i128>> = Vec::with_capacity(mpd.periods.len());
         for (i, p) in mpd.periods.iter().enumerate() {
             let start = if let Some(s) = p.start {
-                Some(duration_us(s))
+                Some(duration_micros(s))
             } else if i == 0 {
                 (mpd.kind == PresentationType::Static).then_some(0)
             } else {
                 let prev = &mpd.periods[i - 1];
                 match (prev.duration, starts[i - 1]) {
-                    (Some(d), Some(ps)) => Some(ps.saturating_add(duration_us(d))),
+                    (Some(d), Some(ps)) => Some(ps.saturating_add(duration_micros(d))),
                     _ => None,
                 }
             };
@@ -97,19 +97,24 @@ pub fn period_timings(mpd: &Mpd) -> Vec<PeriodTiming> {
         };
         let next_start = starts.get(i + 1).copied().flatten();
         let end = match (start, p.duration) {
-            (Some(s), Some(d)) => Some(s.saturating_add(duration_us(d))),
+            (Some(s), Some(d)) => Some(s.saturating_add(duration_micros(d))),
             (Some(_), None) => next_start.or_else(|| {
                 (i + 1 == mpd.periods.len())
-                    .then(|| mpd.media_presentation_duration.map(duration_us))
+                    .then(|| mpd.media_presentation_duration.map(duration_micros))
                     .flatten()
             }),
             (None, _) => None,
         };
         out.push(PeriodTiming {
-            start_us: start,
-            end_us: end,
+            start: start.and_then(micros_to_duration),
+            end: end.and_then(micros_to_duration),
             kind,
         });
     }
     out
+}
+
+fn micros_to_duration(us: i128) -> Option<Duration> {
+    let us = u64::try_from(us.max(0)).ok()?;
+    Some(Duration::from_micros(us))
 }

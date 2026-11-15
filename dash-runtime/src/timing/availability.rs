@@ -10,20 +10,33 @@
 
 use broadcast_common::timescale::{Rounding, Timescale, to_micros};
 use broadcast_common::units::MICROS_PER_SEC;
+use jiff::SignedDuration;
 
-const ATO_CLAMP_US: i128 = 1 << 80;
-
-/// Convert `@availabilityTimeOffset` seconds (possibly `INF` or negative) to
-/// microseconds, clamped so later sums stay in range. A NaN is zero.
+/// Convert `@availabilityTimeOffset` seconds (possibly `INF` or negative) to a
+/// signed duration, clamped so later sums stay in range. A NaN is zero.
 #[must_use]
-pub fn ato_seconds_to_us(seconds: f64) -> i128 {
-    let us = seconds * (MICROS_PER_SEC as f64);
-    (us as i128).clamp(-ATO_CLAMP_US, ATO_CLAMP_US)
+pub fn ato_seconds(seconds: f64) -> SignedDuration {
+    if seconds.is_nan() {
+        return SignedDuration::ZERO;
+    }
+    if seconds == f64::INFINITY {
+        return SignedDuration::MAX;
+    }
+    if seconds == f64::NEG_INFINITY {
+        return SignedDuration::MIN;
+    }
+    SignedDuration::try_from_secs_f64(seconds).unwrap_or_else(|_| {
+        if seconds.is_sign_positive() {
+            SignedDuration::MAX
+        } else {
+            SignedDuration::MIN
+        }
+    })
 }
 
-/// Ticks to microseconds, rounded toward negative infinity.
+/// Ticks to a signed media duration, rounded toward negative infinity.
 #[must_use]
-pub fn ticks_to_us(ticks: i128, timescale: Timescale) -> i128 {
+pub(crate) fn ticks_to_micros(ticks: i128, timescale: Timescale) -> i128 {
     to_micros(ticks, timescale, Rounding::Floor)
 }
 
@@ -31,7 +44,7 @@ pub fn ticks_to_us(ticks: i128, timescale: Timescale) -> i128 {
 /// segment (`MPDstart + MPDduration`) is converted once, so rounding never
 /// accumulates.
 #[must_use]
-pub fn segment_available_from_ticks(
+pub(crate) fn segment_available_from_ticks(
     ast_us: i128,
     period_start_us: i128,
     start_ticks: i128,
@@ -42,7 +55,7 @@ pub fn segment_available_from_ticks(
     segment_available_from(
         ast_us,
         period_start_us,
-        ticks_to_us(start_ticks.saturating_add(duration_ticks), timescale),
+        ticks_to_micros(start_ticks.saturating_add(duration_ticks), timescale),
         0,
         ato_us,
     )
@@ -50,7 +63,7 @@ pub fn segment_available_from_ticks(
 
 /// [`segment_available_until`] for a segment given in ticks.
 #[must_use]
-pub fn segment_available_until_ticks(
+pub(crate) fn segment_available_until_ticks(
     ast_us: i128,
     period_start_us: i128,
     start_ticks: i128,
@@ -62,7 +75,7 @@ pub fn segment_available_until_ticks(
     segment_available_until(
         ast_us,
         period_start_us,
-        ticks_to_us(end2, timescale),
+        ticks_to_micros(end2, timescale),
         0,
         tsb_us,
     )
@@ -70,7 +83,7 @@ pub fn segment_available_until_ticks(
 
 /// Availability start of a Media Segment.
 #[must_use]
-pub fn segment_available_from(
+pub(crate) fn segment_available_from(
     ast_us: i128,
     period_start_us: i128,
     mpd_start_us: i128,
@@ -87,7 +100,7 @@ pub fn segment_available_from(
 /// Availability end of a Media Segment; `None` without a time-shift buffer
 /// depth (the segment never leaves the window).
 #[must_use]
-pub fn segment_available_until(
+pub(crate) fn segment_available_until(
     ast_us: i128,
     period_start_us: i128,
     mpd_start_us: i128,
@@ -105,7 +118,7 @@ pub fn segment_available_until(
 
 /// Availability start of the Initialization Segment.
 #[must_use]
-pub fn init_available_from(ast_us: i128, period_start_us: i128) -> i128 {
+pub(crate) fn init_available_from(ast_us: i128, period_start_us: i128) -> i128 {
     ast_us.saturating_add(period_start_us)
 }
 
@@ -114,7 +127,7 @@ pub fn init_available_from(ast_us: i128, period_start_us: i128) -> i128 {
 /// exactly against per-segment microsecond rounding
 /// (`floor(n * d * 1e6 / timescale)`).
 #[must_use]
-pub fn complete_count_constant(
+pub(crate) fn complete_count_constant(
     utc_us: i128,
     ast_us: i128,
     period_start_us: i128,

@@ -156,8 +156,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!(
                                 "    #{:<6} t={:>10.3}s d={:>7.3}s {}{range}",
                                 seg.number,
-                                seg.start_us as f64 / 1e6,
-                                seg.duration_us as f64 / 1e6,
+                                seg.start.as_micros() as f64 / 1e6,
+                                seg.duration.as_secs_f64(),
                                 url
                             );
                         }

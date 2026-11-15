@@ -25,24 +25,28 @@ fn at(micros: u64) -> Timestamp {
     Timestamp::from_micros(micros)
 }
 
+fn utc(micros: i64) -> jiff::Timestamp {
+    jiff::Timestamp::from_microsecond(micros).unwrap()
+}
+
 fn micros(d: Duration) -> u64 {
     u64::try_from(d.as_micros()).unwrap()
 }
 
-fn sample(mono: u64, utc: i64, unc: u64) -> UtcSample {
+fn sample(mono: u64, utc_us: i64, unc: u64) -> UtcSample {
     sample_from_exchange(
         Exchange::new(at(mono), at(mono)),
-        utc,
+        utc(utc_us),
         Duration::from_micros(unc),
         MAX_RTT,
     )
     .unwrap()
 }
 
-fn clock_with(mono: u64, utc: i64, source: ClockSource, unc: u64) -> UtcClock {
+fn clock_with(mono: u64, utc_us: i64, source: ClockSource, unc: u64) -> UtcClock {
     let mut c = UtcClock::new();
     c.offer(
-        sample(mono, utc, unc),
+        sample(mono, utc_us, unc),
         source,
         at(mono),
         OfferPolicy::new(Duration::from_secs(600), false),
@@ -54,7 +58,7 @@ fn clock_with(mono: u64, utc: i64, source: ClockSource, unc: u64) -> UtcClock {
 fn no_anchor_no_time() {
     let c = UtcClock::new();
     assert_eq!(c.utc_at(at(5)), None);
-    assert_eq!(c.mono_for_utc(5), None);
+    assert_eq!(c.mono_for_utc(utc(5)), None);
     assert!(c.anchor().is_none());
 }
 
@@ -63,62 +67,86 @@ fn mapping_is_monotone_and_inverts() {
     let mut rng = Rng(7);
     for _ in 0..50_000 {
         let mono = rng.below(1 << 50);
-        let utc = i64::try_from(rng.below(1 << 52)).unwrap() - (1 << 51);
-        let a = Anchor::from_sample(sample(mono, utc, 0), ClockSource::Host);
+        let utc_us = i64::try_from(rng.below(1 << 52)).unwrap() - (1 << 51);
+        let a = Anchor::from_sample(sample(mono, utc_us, 0), ClockSource::Host);
         let t1 = rng.below(1 << 51);
         let t2 = t1 + rng.below(1 << 40);
         assert!(a.utc_at(at(t1)) <= a.utc_at(at(t2)), "monotone in now");
-        let target = utc + i64::try_from(rng.below(1 << 40)).unwrap();
-        let back = a.mono_for_utc(target).unwrap();
-        assert_eq!(a.utc_at(back), target);
-        assert_eq!(a.utc_at(at(mono)), utc);
+        let target = utc_us + i64::try_from(rng.below(1 << 40)).unwrap();
+        let back = a.mono_for_utc(utc(target)).unwrap();
+        assert_eq!(a.utc_at(back), utc(target));
+        assert_eq!(a.utc_at(at(mono)), utc(utc_us));
     }
 }
 
 #[test]
 fn extremes_saturate() {
-    let up = Anchor::from_sample(sample(0, i64::MAX, 0), ClockSource::Host);
-    assert_eq!(up.utc_at(at(u64::MAX)), i64::MAX);
-    let down = Anchor::from_sample(sample(u64::MAX, i64::MIN, 0), ClockSource::Host);
-    assert_eq!(down.utc_at(at(0)), i64::MIN);
-    let a = Anchor::from_sample(sample(1_000, 5, 0), ClockSource::Host);
-    assert_eq!(a.mono_for_utc(i64::MIN), Some(at(0)));
-    assert_eq!(
-        a.mono_for_utc(i64::MAX),
-        Some(at(1_000 + (i64::MAX as u64 - 5)))
+    let sample_at = |mono: u64, utc: jiff::Timestamp, unc: u64| {
+        sample_from_exchange(
+            Exchange::new(at(mono), at(mono)),
+            utc,
+            Duration::from_micros(unc),
+            MAX_RTT,
+        )
+        .unwrap()
+    };
+    let up = Anchor::from_sample(sample_at(0, jiff::Timestamp::MAX, 0), ClockSource::Host);
+    assert_eq!(up.utc_at(at(u64::MAX)), jiff::Timestamp::MAX);
+    let down = Anchor::from_sample(
+        sample_at(u64::MAX, jiff::Timestamp::MIN, 0),
+        ClockSource::Host,
     );
-    let late = Anchor::from_sample(sample(u64::MAX - 10, 0, 0), ClockSource::Host);
-    assert_eq!(late.mono_for_utc(i64::MAX), Some(at(u64::MAX)));
-    assert_eq!(a.utc_at(at(0)), 5 - 1_000);
+    assert_eq!(down.utc_at(at(0)), jiff::Timestamp::MIN);
+    let a = Anchor::from_sample(sample_at(1_000, utc(5), 0), ClockSource::Host);
+    assert_eq!(a.mono_for_utc(jiff::Timestamp::MIN), Some(at(0)));
+    assert_eq!(
+        a.mono_for_utc(jiff::Timestamp::MAX),
+        Some(at(
+            (jiff::Timestamp::MAX.as_microsecond() - 5) as u64 + 1_000
+        ))
+    );
+    let late = Anchor::from_sample(sample_at(u64::MAX - 10, utc(0), 0), ClockSource::Host);
+    assert_eq!(late.mono_for_utc(jiff::Timestamp::MAX), Some(at(u64::MAX)));
+    assert_eq!(a.utc_at(at(0)), utc(5 - 1_000));
 }
 
 #[test]
 fn midpoint_and_uncertainty_follow_the_exchange() {
     let s = sample_from_exchange(
         Exchange::new(at(1_000), at(1_400)),
-        777,
+        utc(777),
         Duration::from_micros(1_000),
         MAX_RTT,
     )
     .unwrap();
-    assert_eq!(s.mono_us, 1_200, "midpoint of sent and received");
+    assert_eq!(s.mono.as_micros(), 1_200, "midpoint of sent and received");
     assert_eq!(
-        s.uncertainty_us,
+        micros(s.uncertainty),
         200 + 1_000,
         "half the round trip plus the resolution"
     );
-    assert_eq!(s.utc_us, 777);
-    let odd =
-        sample_from_exchange(Exchange::new(at(10), at(15)), 0, Duration::ZERO, MAX_RTT).unwrap();
-    assert_eq!((odd.mono_us, odd.uncertainty_us), (12, 2));
+    assert_eq!(s.utc, utc(777));
+    let odd = sample_from_exchange(
+        Exchange::new(at(10), at(15)),
+        utc(0),
+        Duration::ZERO,
+        MAX_RTT,
+    )
+    .unwrap();
+    assert_eq!((odd.mono.as_micros(), micros(odd.uncertainty)), (12, 2));
     assert_eq!(
-        sample_from_exchange(Exchange::new(at(10), at(9)), 0, Duration::ZERO, MAX_RTT),
+        sample_from_exchange(
+            Exchange::new(at(10), at(9)),
+            utc(0),
+            Duration::ZERO,
+            MAX_RTT
+        ),
         Err(TimingError::ExchangeReversed)
     );
     assert_eq!(
         sample_from_exchange(
             Exchange::new(at(0), at(micros(MAX_RTT) + 1)),
-            0,
+            utc(0),
             Duration::ZERO,
             MAX_RTT
         ),
@@ -130,7 +158,7 @@ fn midpoint_and_uncertainty_follow_the_exchange() {
     assert!(
         sample_from_exchange(
             Exchange::new(at(0), at(micros(MAX_RTT))),
-            0,
+            utc(0),
             Duration::ZERO,
             MAX_RTT
         )
@@ -149,8 +177,8 @@ fn date_header_gets_the_half_second() {
         .typed_get::<headers::Date>()
         .expect("a captured Date header");
     let s = sample_from_date_header(date, Exchange::new(at(0), at(100)), MAX_RTT).unwrap();
-    assert_eq!(s.utc_us, 1_793_003_944 * 1_000_000 + 500_000);
-    assert_eq!(s.uncertainty_us, 50 + 500_000);
+    assert_eq!(s.utc, utc(1_793_003_944 * 1_000_000 + 500_000));
+    assert_eq!(micros(s.uncertainty), 50 + 500_000);
     let mut garbage = http::HeaderMap::new();
     garbage.insert(
         http::header::DATE,
@@ -169,28 +197,28 @@ fn bodies_by_scheme() {
         MAX_RTT,
     )
     .unwrap();
-    assert_eq!(s.utc_us, 1_793_003_944 * 1_000_000 + 952_000);
+    assert_eq!(s.utc, utc(1_793_003_944 * 1_000_000 + 952_000));
     assert_eq!(
-        s.uncertainty_us,
+        micros(s.uncertainty),
         100 + 1_000,
         "three fraction digits: 1 ms resolution"
     );
     let s = sample_from_body(UtcScheme::HttpIso, b"2026-10-26T08:39:04Z", ex, MAX_RTT).unwrap();
     assert_eq!(
-        s.utc_us,
-        1_793_003_944 * 1_000_000 + 500_000,
+        s.utc,
+        utc(1_793_003_944 * 1_000_000 + 500_000),
         "a whole-second body is centred like a whole-second Date header"
     );
     assert_eq!(
-        s.uncertainty_us,
+        micros(s.uncertainty),
         100 + 500_000,
         "no fraction: half a second"
     );
     let mut ntp = 2_208_988_800u32.to_be_bytes().to_vec();
     ntp.extend_from_slice(&[0; 4]);
     let s = sample_from_body(UtcScheme::HttpNtp, &ntp, ex, MAX_RTT).unwrap();
-    assert_eq!(s.utc_us, 0);
-    assert_eq!(s.uncertainty_us, 100 + 1_000);
+    assert_eq!(s.utc, utc(0));
+    assert_eq!(micros(s.uncertainty), 100 + 1_000);
     assert!(matches!(
         sample_from_body(UtcScheme::HttpXsdate, &[0xff, 0xfe], ex, MAX_RTT),
         Err(TimingError::NotUtf8)
@@ -213,8 +241,8 @@ fn bodies_by_scheme() {
         MAX_RTT,
     )
     .unwrap();
-    assert_eq!(d.mono_us, 200);
-    assert_eq!(d.utc_us, 1_793_003_944 * 1_000_000 + 500_000);
+    assert_eq!(d.mono.as_micros(), 200);
+    assert_eq!(d.utc, utc(1_793_003_944 * 1_000_000 + 500_000));
 }
 
 #[test]
@@ -311,7 +339,7 @@ fn same_source_refines_only_when_at_least_as_precise_unless_stale_or_stepped() {
         ),
         OfferOutcome::Adopted(AdoptReason::Step)
     );
-    assert_eq!(c.utc_at(at(5)), Some(9_000_000));
+    assert_eq!(c.utc_at(at(5)), Some(utc(9_000_000)));
     // An old anchor is replaced by any consistent same-source sample.
     let mut c = clock_with(0, 1_000_000, ClockSource::UtcTiming, 1);
     assert_eq!(

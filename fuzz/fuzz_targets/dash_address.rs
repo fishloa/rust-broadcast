@@ -111,25 +111,26 @@ fuzz_target!(|data: &[u8]| {
             if kind != 2 {
                 assert!(seg.time_ticks >= t, "time never decreases");
             }
-            if let (Some(a), Some(b)) = (from, seg.available_from_us) {
+            if let (Some(a), Some(b)) = (from, seg.available_from) {
                 assert!(b >= a, "availability never decreases");
             }
         }
-        previous = Some((seg.number, seg.time_ticks, seg.available_from_us));
+        previous = Some((seg.number, seg.time_ticks, seg.available_from));
     }
     if let Some(n) = plan.len() {
         assert!(!matches!(plan.get(n), Ok(Some(_))));
     }
 
     if plan.is_dynamic() {
-        let now = i128::from(now_s) * 1_000_000;
-        let delay = i128::from(delay_s) * 1_000_000;
+        let now = jiff::Timestamp::from_second(i64::try_from(now_s).unwrap_or(i64::MAX))
+            .unwrap_or(jiff::Timestamp::MAX);
+        let delay = std::time::Duration::from_secs(delay_s);
         let newest = newest_complete(plan, now);
         if let Some(k) = newest {
-            assert!(plan.get(k).unwrap().unwrap().available_from_us.unwrap() <= now);
+            assert!(plan.get(k).unwrap().unwrap().available_from.unwrap() <= now);
             if let Ok(Some(next)) = plan.get(k + 1) {
                 assert!(
-                    next.available_from_us.unwrap() > now,
+                    next.available_from.unwrap() > now,
                     "newest is the last complete one"
                 );
             }

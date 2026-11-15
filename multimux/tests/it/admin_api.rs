@@ -1629,11 +1629,11 @@ fn available_numbers(
     let count = period.duration.map_or(u64::MAX, |duration| {
         u64::try_from(duration.as_nanos() * timescale / (ticks * NANOS)).expect("count")
     });
-    let publish_ns = u128::try_from(
-        mpd.publish_time_us.expect("publishTime") - mpd.availability_start_time_us.expect("AST"),
-    )
-    .expect("publishTime after AST")
-        * 1_000;
+    let publish_ns = mpd
+        .publish_time
+        .expect("publishTime")
+        .duration_since(mpd.availability_start_time.expect("AST"))
+        .as_nanos() as u128;
     let tsbd_ns = mpd
         .time_shift_buffer_depth
         .expect("timeShiftBufferDepth")
@@ -1941,10 +1941,10 @@ async fn a_reload_whose_init_changed_starts_a_new_dash_period() {
     );
     assert_ne!(seen.old_init, seen.new_init);
     assert_eq!(
-        new_mpd.availability_start_time_us,
-        old_mpd.availability_start_time_us
+        new_mpd.availability_start_time,
+        old_mpd.availability_start_time
     );
-    assert!(new_mpd.publish_time_us > old_mpd.publish_time_us, "{text}");
+    assert!(new_mpd.publish_time > old_mpd.publish_time, "{text}");
     for listed in &new_mpd.periods {
         assert!(listed.asset_identifier.is_none(), "{text}");
         assert!(listed.supplemental_properties.is_empty(), "{text}");
@@ -2051,8 +2051,8 @@ async fn a_reload_whose_init_is_unchanged_keeps_its_dash_period() {
     );
     assert_eq!(seen.new_init, seen.old_init, "the same init bytes");
     assert_eq!(
-        new_mpd.availability_start_time_us,
-        old_mpd.availability_start_time_us
+        new_mpd.availability_start_time,
+        old_mpd.availability_start_time
     );
     validate_mpd(text, "reload-one-period");
     let checks = tokio::time::timeout(RELOAD_DEADLINE, async {
@@ -2094,11 +2094,11 @@ fn listed_available_numbers(mpd: &broadcast_dash::Mpd, index: usize) -> Vec<u64>
                 .get(index + 1)
                 .map(|next| next.start.expect("Period@start").as_nanos())
         });
-    let publish_ns = u128::try_from(
-        mpd.publish_time_us.expect("publishTime") - mpd.availability_start_time_us.expect("AST"),
-    )
-    .expect("publishTime after AST")
-        * 1_000;
+    let publish_ns = mpd
+        .publish_time
+        .expect("publishTime")
+        .duration_since(mpd.availability_start_time.expect("AST"))
+        .as_nanos() as u128;
     let candidates = (first..)
         .take_while(|number| {
             let segment_start = start_ns + u128::from(number - first) * ticks * NANOS / timescale;

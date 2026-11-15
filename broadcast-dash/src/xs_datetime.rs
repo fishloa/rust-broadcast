@@ -50,9 +50,8 @@ pub enum DateTimeError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct XsDateTime {
-    /// Microseconds since 1970-01-01T00:00:00Z; sub-microsecond digits are
-    /// truncated.
-    pub unix_us: i64,
+    /// The instant.
+    pub unix: jiff::Timestamp,
     /// Number of fraction digits the text carried (0 when none, capped at 9).
     pub fraction_digits: u8,
 }
@@ -201,7 +200,7 @@ pub fn parse_xs_datetime(text: &str) -> Result<XsDateTime, DateTimeError> {
         .to_timestamp(civil)
         .map_err(|_| DateTimeError::OutOfRange)?;
     Ok(XsDateTime {
-        unix_us: ts.as_microsecond(),
+        unix: ts,
         fraction_digits: u8::try_from(fraction_digits.min(NANOS_DIGITS)).unwrap_or(0),
     })
 }
@@ -231,11 +230,12 @@ fn parse_zone(c: &mut Cursor<'_>) -> Result<Offset, DateTimeError> {
 }
 
 /// Read a 64-bit NTP timestamp (RFC 5905 Figure 3: 32-bit seconds since
-/// 1900-01-01T00:00:00Z, 32-bit binary fraction; era 0) as Unix microseconds.
+/// 1900-01-01T00:00:00Z, 32-bit binary fraction; era 0) as a
+/// [`jiff::Timestamp`].
 ///
 /// # Errors
 /// [`DateTimeError::Ntp`] unless `bytes` is exactly eight bytes.
-pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
+pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<jiff::Timestamp, DateTimeError> {
     let arr: [u8; NTP_TIMESTAMP_LEN] = bytes.try_into().map_err(|_| DateTimeError::Ntp)?;
     let seconds = u32::from_be_bytes([arr[0], arr[1], arr[2], arr[3]]);
     let fraction = u32::from_be_bytes([arr[4], arr[5], arr[6], arr[7]]);
@@ -254,15 +254,15 @@ pub fn parse_ntp_timestamp(bytes: &[u8]) -> Result<i64, DateTimeError> {
         .checked_mul(MICROS_PER_SEC as i64)
         .and_then(|us| us.checked_add(micros))
         .ok_or(DateTimeError::Ntp)
+        .and_then(|us| jiff::Timestamp::from_microsecond(us).map_err(|_| DateTimeError::Ntp))
 }
 
-/// Format Unix microseconds as an accepted `xs:dateTime` string (UTC, `Z`).
+/// Format a [`jiff::Timestamp`] as an accepted `xs:dateTime` string (UTC, `Z`).
 ///
-/// The inverse of [`parse_xs_datetime`] for the model's `*_us` fields: the
+/// The inverse of [`parse_xs_datetime`] for the model's wall-clock fields: the
 /// parser recovers the same instant from the emitted text.
-pub fn format_xs_datetime(unix_us: i64) -> Result<String, DateTimeError> {
-    let ts = jiff::Timestamp::from_microsecond(unix_us).map_err(|_| DateTimeError::OutOfRange)?;
-    let s = ts.strftime("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
+pub fn format_xs_datetime(unix: jiff::Timestamp) -> Result<String, DateTimeError> {
+    let s = unix.strftime("%Y-%m-%dT%H:%M:%S%.6fZ").to_string();
     let core = s.trim_end_matches('Z');
     if let Some(dot) = core.rfind('.') {
         let head = &core[..dot];

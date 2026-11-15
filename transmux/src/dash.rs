@@ -856,12 +856,12 @@ impl DashPackager {
         };
         mpd.min_buffer_time = Some(MIN_BUFFER_TIME);
         if self.dynamic {
-            mpd.availability_start_time_us = self
+            mpd.availability_start_time = self
                 .availability_start_time
                 .as_deref()
                 .map(|v| parse_instant("MPD@availabilityStartTime", v))
                 .transpose()?;
-            mpd.publish_time_us = self
+            mpd.publish_time = self
                 .publish_time
                 .as_deref()
                 .map(|v| parse_instant("MPD@publishTime", v))
@@ -1351,10 +1351,10 @@ fn content_protection(cp: &ContentProtectionSystem) -> Descriptor {
     d
 }
 
-/// Parse a caller-supplied `xs:dateTime` into the model's Unix microseconds.
-fn parse_instant(field: &'static str, value: &str) -> Result<i64> {
+/// Parse a caller-supplied `xs:dateTime` into the model's instant.
+fn parse_instant(field: &'static str, value: &str) -> Result<jiff::Timestamp> {
     broadcast_dash::xs_datetime::parse_xs_datetime(value)
-        .map(|t| t.unix_us)
+        .map(|t| t.unix)
         .map_err(|_| {
             Error::InvalidField(InvalidField {
                 field,

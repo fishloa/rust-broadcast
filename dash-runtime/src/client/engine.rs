@@ -6,8 +6,10 @@ mod live;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use container_probe::segment;
+use jiff::{SignedDuration, Timestamp as WallTimestamp};
 use transmux::{TrackId, TrackSpec};
 use url::Url;
 
@@ -23,17 +25,16 @@ use crate::error::Unsupported;
 use crate::mpd::urls::{BaseCandidate, append_query, representation_candidates, segment_url_query};
 use crate::selection::{RepRef, Selection, SetClass, select};
 use crate::timing::clock::UtcClock;
-use crate::timing::period::period_timings;
+use crate::timing::period::{duration_micros, period_timings};
 use broadcast_common::range::ByteSpan;
 use broadcast_common::stage::Timestamp;
 use broadcast_dash::descriptors::SCHEME_PERIOD_CONTINUITY;
 use broadcast_dash::inherit::{SegmentInfo, effective_common, resolve_segment_info};
 use broadcast_dash::{ByteRange, Descriptor, Mpd, PresentationType};
 
-/// A missing last segment shorter than this, in microseconds, is the tail a
-/// muxer declared past the media (one frame of the slowest common video
-/// rate), not a lost segment.
-const MISSING_TAIL_MAX_US: i128 = 50_000;
+/// A missing last segment shorter than this is the tail a muxer declared past
+/// the media (one frame of the slowest common video rate), not a lost segment.
+const MISSING_TAIL_MAX: Duration = Duration::from_micros(50_000);
 /// Consecutive failures on one BaseURL alternate before the next is used
 /// (ETSI TS 103 285 10.8.2).
 const ROTATE_AFTER_FAILURES: u32 = 2;
@@ -91,8 +92,8 @@ struct ReqInfo {
     reference: String,
     range: Option<ByteSpan>,
     kind: ReqKind,
-    avail_from_us: Option<i128>,
-    avail_until_us: Option<i128>,
+    avail_from: Option<WallTimestamp>,
+    avail_until: Option<WallTimestamp>,
 }
 
 struct IndexReq {
@@ -110,7 +111,7 @@ struct RepState {
     index: Option<IndexReq>,
     init_key: InitKey,
     next_issue: u64,
-    start_time_us: Option<i128>,
+    start_time: Option<SignedDuration>,
     dead: bool,
     set_id: Option<u64>,
     set_pos: usize,
@@ -608,7 +609,7 @@ impl DashClient {
             return Ok(());
         }
         let dynamic = mpd.kind == PresentationType::Dynamic;
-        if dynamic && mpd.availability_start_time_us.is_none() {
+        if dynamic && mpd.availability_start_time.is_none() {
             self.go_fatal(FatalKind::MpdInvalid {
                 reason: "missing_availability_start_time",
             });
@@ -792,7 +793,7 @@ impl DashClient {
                     return Candidate::Idle;
                 };
                 match plan.get(rep.next_issue) {
-                    Ok(Some(s)) => Candidate::Ready(s.start_us),
+                    Ok(Some(s)) => Candidate::Ready(s.start.as_micros()),
                     Ok(None) => Candidate::Idle,
                     Err(e) => Candidate::Unaddressable(address_name(&e)),
                 }
@@ -846,8 +847,8 @@ impl DashClient {
                 reference: seg.reference,
                 range,
                 kind: ReqKind::Segment,
-                avail_from_us: seg.available_from_us,
-                avail_until_us: seg.available_until_us,
+                avail_from: seg.available_from,
+                avail_until: seg.available_until,
             },
         );
         self.queue.push_back(id);
@@ -1023,7 +1024,7 @@ impl DashClient {
     fn activate(&mut self, index: usize) {
         let Some(mpd) = self.mpd.as_ref() else { return };
         let timing = period_timings(mpd).get(index).copied();
-        let start_us = timing.and_then(|t| t.start_us).unwrap_or(0);
+        let start_us = timing.and_then(|t| t.start).map_or(0, duration_micros);
         let selection = select(mpd, index, &self.cfg.policy);
         let period_id = mpd.periods.get(index).and_then(|p| p.id.clone());
         let mut notices = Vec::new();
@@ -1200,7 +1201,7 @@ impl DashClient {
                 range: init_range,
             },
             next_issue: 0,
-            start_time_us: None,
+            start_time: None,
             dead: false,
             set_id: set.id,
             set_pos: at.set,
@@ -1263,8 +1264,8 @@ impl DashClient {
                     reference,
                     range: range.and_then(|r| ByteSpan::try_from(r).ok()),
                     kind: ReqKind::Init,
-                    avail_from_us: None,
-                    avail_until_us: None,
+                    avail_from: None,
+                    avail_until: None,
                 },
             );
             self.queue.push_back(init_id);
@@ -1278,8 +1279,8 @@ impl DashClient {
                     reference: String::new(),
                     range: ByteSpan::try_from(r).ok(),
                     kind: ReqKind::Index,
-                    avail_from_us: None,
-                    avail_until_us: None,
+                    avail_from: None,
+                    avail_until: None,
                 },
             );
             self.queue.push_back(index_id);
@@ -1530,7 +1531,7 @@ impl DashClient {
         self.reqs.remove(&id);
         match planned {
             Ok(p) => {
-                let start = self.rep_mut(rep).and_then(|r| r.start_time_us.take());
+                let start = self.rep_mut(rep).and_then(|r| r.start_time.take());
                 match start.map_or(Ok(None), |t| p.plan.index_at_or_before(t)) {
                     Ok(index) => {
                         if let Some(r) = self.rep_mut(rep) {
@@ -1669,7 +1670,7 @@ impl DashClient {
             && plan.len().is_some_and(|n| n > 1)
             && plan
                 .get(slot.plan_index)
-                .is_ok_and(|s| s.is_some_and(|s| s.duration_us < MISSING_TAIL_MAX_US))
+                .is_ok_and(|s| s.is_some_and(|s| s.duration < MISSING_TAIL_MAX))
     }
 
     /// Request again a resource that [`DashClient::on_failure`] or a
@@ -1835,7 +1836,7 @@ impl DashClient {
         self.outputs.push_back(Output::PeriodChanged {
             index: p.index,
             id: p.id.clone(),
-            start_us: p.start_us,
+            start: Duration::from_micros(u64::try_from(p.start_us.max(0)).unwrap_or(u64::MAX)),
             continuous,
         });
         if !first && !continuous {
@@ -2213,7 +2214,7 @@ impl DashClient {
         };
         let (current_at, was_dead, current, end) = read;
         let switch_us = match current {
-            Ok(Some(seg)) => seg.start_us,
+            Ok(Some(seg)) => seg.start,
             found => {
                 let end = end.map_err(|_| Error::NotSwitchable)?;
                 let end = end.ok_or(Error::NotSwitchable)?;
@@ -2221,7 +2222,9 @@ impl DashClient {
                     self.rep_segment_error(pi, li, address_name(&e));
                     return Err(Error::NotSwitchable);
                 }
-                end.start_us.saturating_add(end.duration_us)
+                end.start.saturating_add(
+                    SignedDuration::try_from(end.duration).unwrap_or(SignedDuration::MAX),
+                )
             }
         };
         if current_at == at && !was_dead {
@@ -2258,7 +2261,7 @@ impl DashClient {
                     .map_err(|_| Error::NotSwitchable)?;
                 rep.last_time = last.map(|s| s.time_ticks);
             }
-            None => rep.start_time_us = Some(switch_us),
+            None => rep.start_time = Some(switch_us),
         }
         if !aligned {
             self.periods[pi].lanes[li].queue.push_back(Slot {

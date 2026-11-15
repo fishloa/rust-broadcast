@@ -1,9 +1,9 @@
 //! The consume-only MPD model (ISO/IEC 23009-1 clause 5.3, Annex B schema).
 //!
 //! Every field is typed; nothing keeps source text for a later passthrough.
-//! Times are Unix microseconds (`*_us`, `i64`) or [`Duration`]. Elements the
-//! core does not act on (`EventStream`, `Preselection`, ...) are still modelled
-//! so [`Mpd::to_xml`] writes back what [`Mpd::parse`] read.
+//! Wall-clock instants are [`jiff::Timestamp`]; spans are [`Duration`]. Elements
+//! the core does not act on (`EventStream`, `Preselection`, ...) are still
+//! modelled so [`Mpd::to_xml`] writes back what [`Mpd::parse`] read.
 
 use std::time::Duration;
 
@@ -918,12 +918,12 @@ pub struct Mpd {
     pub profiles: Vec<String>,
     /// `@type`.
     pub kind: PresentationType,
-    /// `@availabilityStartTime`, Unix microseconds.
-    pub availability_start_time_us: Option<i64>,
-    /// `@availabilityEndTime`, Unix microseconds.
-    pub availability_end_time_us: Option<i64>,
-    /// `@publishTime`, Unix microseconds.
-    pub publish_time_us: Option<i64>,
+    /// `@availabilityStartTime`.
+    pub availability_start_time: Option<jiff::Timestamp>,
+    /// `@availabilityEndTime`.
+    pub availability_end_time: Option<jiff::Timestamp>,
+    /// `@publishTime`.
+    pub publish_time: Option<jiff::Timestamp>,
     /// `@mediaPresentationDuration`.
     pub media_presentation_duration: Option<Duration>,
     /// `@minimumUpdatePeriod`.
