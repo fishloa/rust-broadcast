@@ -10,6 +10,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for TVA_id_descriptor.
@@ -98,17 +99,20 @@ broadcast_common::impl_spec_display!(TvaRunningStatus, Unallocated);
 /// Default of the 5-bit `Reserved` ahead of `running_status` (TS 102 323
 /// Table 114): "All fields marked as being reserved shall have all bits set
 /// to '1'" (V1.1.1-V1.5.1). Parse keeps whatever a sender wrote.
-pub const RESERVED_DEFAULT: u8 = 0b1_1111;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `Reserved` field ahead of `running_status` (5 bits).
+const RESERVED_BITS: u32 = 5;
 
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct TvaIdEntry {
-    /// `Reserved(5)` ahead of `running_status` (5 bits, right-aligned);
-    /// captured on parse, re-emitted verbatim, [`RESERVED_DEFAULT`] when
-    /// built with [`TvaIdEntry::new`].
-    pub reserved: u8,
+    /// `Reserved(5)` ahead of `running_status` (5 bits); captured on parse,
+    /// re-emitted verbatim, [`RESERVED_DEFAULT`] when built with
+    /// [`TvaIdEntry::new`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// 16-bit TVA_id referencing the item of content.
     pub tva_id: u16,
     /// 3-bit running_status (Table 115).
@@ -164,7 +168,7 @@ impl<'a> Parse<'a> for TvaIdDescriptor {
             let tva_id = crate::wire::be_u16(chunk, 0, "tva_id")?;
             let running_status = TvaRunningStatus::from_u8(chunk[2] & RUNNING_STATUS_MAX);
             entries.push(TvaIdEntry {
-                reserved: chunk[2] >> 3,
+                reserved: ReservedOnes::from_bits(u64::from(chunk[2] >> 3)),
                 tva_id,
                 running_status,
             });
@@ -201,7 +205,7 @@ impl Serialize for TvaIdDescriptor {
         for e in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&e.tva_id.to_be_bytes());
             // Reserved(5): preserved from parse, default 11111.
-            buf[pos + 2] = (broadcast_common::len::fit_mask(e.reserved, 0x1F, "reserved")? << 3)
+            buf[pos + 2] = ((e.reserved.get() as u8) << 3)
                 | broadcast_common::len::fit_mask(
                     e.running_status.to_u8(),
                     RUNNING_STATUS_MAX,
@@ -251,7 +255,7 @@ mod tests {
             d.entries[0].running_status,
             TvaRunningStatus::Unallocated(0x07)
         );
-        assert_eq!(d.entries[0].reserved, 0x1F);
+        assert_eq!(d.entries[0].reserved, ReservedOnes::FILL);
     }
 
     /// All 32 reserved values re-serialize byte-identically (test-062 writes
@@ -261,7 +265,7 @@ mod tests {
         for r in 0u8..=0x1F {
             let bytes = [TAG, 3, 0x12, 0x34, (r << 3) | 0x04];
             let d = TvaIdDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.entries[0].reserved, r);
+            assert_eq!(d.entries[0].reserved, ReservedOnes::from_bits(u64::from(r)));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);
@@ -338,5 +342,16 @@ mod tests {
         assert_eq!(TvaRunningStatus::Running.name(), "running");
         assert_eq!(TvaRunningStatus::Completed.name(), "completed");
         assert_eq!(TvaRunningStatus::Unallocated(0x07).name(), "unallocated");
+    }
+
+    /// The field is 5 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into `running_status`.
+    #[test]
+    fn reserved_cannot_hold_more_than_five_bits() {
+        let e = TvaIdEntry {
+            reserved: ReservedOnes::from_bits(0xFF),
+            ..TvaIdEntry::new(0x1234, TvaRunningStatus::Running)
+        };
+        assert_eq!(e.reserved.get(), 0x1F);
     }
 }
