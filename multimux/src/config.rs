@@ -5,7 +5,7 @@
 //! HLS-pull, or RTMP push) to a served stream name.
 
 use crate::dvr::DvrConfig;
-use crate::error::{MultimuxError, Result};
+use crate::error::{ConfigField, MultimuxError, Result};
 use crate::output::OutputKind;
 use broadcast_auth::Credentials;
 use serde::Deserialize;
@@ -424,7 +424,7 @@ impl UdpSocketSpec {
                 .ok()
                 .and_then(NonZeroU32::new)
                 .ok_or_else(|| MultimuxError::ConfigInvalid {
-                    field: "routes.input.recv_buffer_bytes",
+                    field: ConfigField::RoutesInputRecvBufferBytes,
                     reason: "must be between 1 and 4294967295".into(),
                 })?;
             options = options.with_recv_buffer_bytes(bytes);
@@ -433,7 +433,7 @@ impl UdpSocketSpec {
             let interface =
                 broadcast_common::net::MulticastInterface::parse(text).map_err(|error| {
                     MultimuxError::ConfigInvalid {
-                        field: "routes.input.multicast_interface",
+                        field: ConfigField::RoutesInputMulticastInterface,
                         reason: error.to_string(),
                     }
                 })?;
@@ -453,7 +453,7 @@ impl UdpSocketSpec {
     fn validate(&self) -> Result<()> {
         if self.recv_buffer_bytes == Some(0) {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.input.recv_buffer_bytes",
+                field: ConfigField::RoutesInputRecvBufferBytes,
                 reason: "must be greater than zero".into(),
             });
         }
@@ -567,20 +567,20 @@ pub use broadcast_common::backoff::ReconnectPolicy;
 pub(crate) fn validate_push_reconnect(policy: &ReconnectPolicy) -> Result<()> {
     if policy.backoff.steps.iter().any(|d| d.is_zero()) {
         return Err(MultimuxError::ConfigInvalid {
-            field: "routes.outputs[].reconnect.backoff.steps",
+            field: ConfigField::RoutesOutputsReconnectBackoffSteps,
             reason: "must be greater than 0 (a zero backoff reconnects with no delay)".into(),
         });
     }
     if policy.backoff.cap.is_zero() {
         return Err(MultimuxError::ConfigInvalid {
-            field: "routes.outputs[].reconnect.backoff.cap",
+            field: ConfigField::RoutesOutputsReconnectBackoffCap,
             reason: "must be greater than 0 (a zero max backoff reconnects with no delay)".into(),
         });
     }
     const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(86_400); // 24 h
     if policy.backoff.cap > MAX_BACKOFF {
         return Err(MultimuxError::ConfigInvalid {
-            field: "routes.outputs[].reconnect.backoff.cap",
+            field: ConfigField::RoutesOutputsReconnectBackoffCap,
             reason: "backoff must not exceed 86_400 s (24 h)".into(),
         });
     }
@@ -894,19 +894,19 @@ impl OutputAuthSpec {
                 if username.is_empty() =>
             {
                 Err(MultimuxError::ConfigInvalid {
-                    field: "output_auth.username",
+                    field: ConfigField::OutputAuthUsername,
                     reason: "must not be empty".into(),
                 })
             }
             OutputAuthSpec::Bearer { token } if token.trim().is_empty() => {
                 Err(MultimuxError::ConfigInvalid {
-                    field: "output_auth.token",
+                    field: ConfigField::OutputAuthToken,
                     reason: "must not be empty or blank".into(),
                 })
             }
             OutputAuthSpec::Forwarded { user_header, .. } if user_header.is_empty() => {
                 Err(MultimuxError::ConfigInvalid {
-                    field: "output_auth.user_header",
+                    field: ConfigField::OutputAuthUserHeader,
                     reason: "must not be empty".into(),
                 })
             }
@@ -914,7 +914,7 @@ impl OutputAuthSpec {
                 forwarded_for_header: Some(header),
                 ..
             } if header.is_empty() => Err(MultimuxError::ConfigInvalid {
-                field: "output_auth.forwarded_for_header",
+                field: ConfigField::OutputAuthForwardedForHeader,
                 reason: "must not be empty (use null to disable)".into(),
             }),
             OutputAuthSpec::Forwarded {
@@ -923,14 +923,14 @@ impl OutputAuthSpec {
             } => {
                 if proxies.is_empty() {
                     return Err(MultimuxError::ConfigInvalid {
-                        field: "output_auth.trusted_proxies",
+                        field: ConfigField::OutputAuthTrustedProxies,
                         reason: "must not be empty (omit it for loopback only)".into(),
                     });
                 }
                 for entry in proxies {
                     if let Err(e) = entry.parse::<broadcast_auth::TrustedProxy>() {
                         return Err(MultimuxError::ConfigInvalid {
-                            field: "output_auth.trusted_proxies",
+                            field: ConfigField::OutputAuthTrustedProxies,
                             reason: e.to_string(),
                         });
                     }
@@ -939,7 +939,7 @@ impl OutputAuthSpec {
             }
             OutputAuthSpec::SignedUrl { keys } if keys.is_empty() => {
                 Err(MultimuxError::ConfigInvalid {
-                    field: "output_auth.keys",
+                    field: ConfigField::OutputAuthKeys,
                     reason: "must not be empty".into(),
                 })
             }
@@ -947,13 +947,13 @@ impl OutputAuthSpec {
                 for key in keys {
                     if key.kid.is_empty() {
                         return Err(MultimuxError::ConfigInvalid {
-                            field: "output_auth.keys[].kid",
+                            field: ConfigField::OutputAuthKeysKid,
                             reason: "must not be empty".into(),
                         });
                     }
                     if key.secret.len() < broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN {
                         return Err(MultimuxError::ConfigInvalid {
-                            field: "output_auth.keys[].secret",
+                            field: ConfigField::OutputAuthKeysSecret,
                             reason: format!(
                                 "must be at least {} bytes, got {}",
                                 broadcast_auth::SignedUrlKeySet::MIN_SECRET_LEN,
@@ -1191,19 +1191,19 @@ impl InputSpec {
                 validate_listen_addr(listen)?;
                 if !publishing_point.starts_with('/') {
                     return Err(MultimuxError::ConfigInvalid {
-                        field: "routes.input.publishing_point",
+                        field: ConfigField::RoutesInputPublishingPoint,
                         reason: "must start with '/'".into(),
                     });
                 }
                 if publishing_point.contains('?') {
                     return Err(MultimuxError::ConfigInvalid {
-                        field: "routes.input.publishing_point",
+                        field: ConfigField::RoutesInputPublishingPoint,
                         reason: "must not contain '?'".into(),
                     });
                 }
                 if publishing_point.contains("//") {
                     return Err(MultimuxError::ConfigInvalid {
-                        field: "routes.input.publishing_point",
+                        field: ConfigField::RoutesInputPublishingPoint,
                         reason: "must not contain '//''".into(),
                     });
                 }
@@ -1213,13 +1213,13 @@ impl InputSpec {
                 if let Some(n) = max_object_bytes {
                     if *n == 0 {
                         return Err(MultimuxError::ConfigInvalid {
-                            field: "routes.input.max_object_bytes",
+                            field: ConfigField::RoutesInputMaxObjectBytes,
                             reason: "must be greater than zero".into(),
                         });
                     }
                     if *n > 1024 * 1024 * 1024 {
                         return Err(MultimuxError::ConfigInvalid {
-                            field: "routes.input.max_object_bytes",
+                            field: ConfigField::RoutesInputMaxObjectBytes,
                             reason: "must not exceed 1 GiB".into(),
                         });
                     }
@@ -1228,7 +1228,7 @@ impl InputSpec {
                     && (!t.is_finite() || *t <= 0.0)
                 {
                     return Err(MultimuxError::ConfigInvalid {
-                        field: "routes.input.body_timeout_secs",
+                        field: ConfigField::RoutesInputBodyTimeoutSecs,
                         reason: "must be finite and greater than zero".into(),
                     });
                 }
@@ -1236,11 +1236,11 @@ impl InputSpec {
             }
             InputSpec::Srt { listen, remote, .. } => match (listen, remote) {
                 (Some(_), Some(_)) => Err(MultimuxError::ConfigInvalid {
-                    field: "routes.input.listen",
+                    field: ConfigField::RoutesInputListen,
                     reason: "exactly one of listen/remote must be set, got both".into(),
                 }),
                 (None, None) => Err(MultimuxError::ConfigInvalid {
-                    field: "routes.input.listen",
+                    field: ConfigField::RoutesInputListen,
                     reason: "exactly one of listen/remote must be set, got neither".into(),
                 }),
                 (Some(listen), None) => validate_listen_addr(listen),
@@ -1257,7 +1257,7 @@ impl InputSpec {
             InputSpec::File { path, .. } => {
                 if path.trim().is_empty() {
                     Err(MultimuxError::ConfigInvalid {
-                        field: "routes.input.path",
+                        field: ConfigField::RoutesInputPath,
                         reason: "file input path must not be empty".into(),
                     })
                 } else {
@@ -1310,13 +1310,13 @@ fn listen_is_loopback(listen: &str) -> bool {
 /// IANA).
 fn validate_rtsp_url(url: &str) -> Result<()> {
     let parsed = url::Url::parse(url).map_err(|e| MultimuxError::ConfigInvalid {
-        field: "routes.input.url",
+        field: ConfigField::RoutesInputUrl,
         reason: format!("bad rtsp(s) URL {url:?}: {e}"),
     })?;
     match parsed.scheme() {
         "rtsp" | "rtsps" => Ok(()),
         other => Err(MultimuxError::ConfigInvalid {
-            field: "routes.input.url",
+            field: ConfigField::RoutesInputUrl,
             reason: format!("scheme must be rtsp or rtsps, got {other:?}"),
         }),
     }
@@ -1325,13 +1325,13 @@ fn validate_rtsp_url(url: &str) -> Result<()> {
 /// A TS-over-HTTP/HLS-pull URL must parse and use the `http`/`https` scheme.
 fn validate_http_url(url: &str) -> Result<()> {
     let parsed = url::Url::parse(url).map_err(|e| MultimuxError::ConfigInvalid {
-        field: "routes.input.url",
+        field: ConfigField::RoutesInputUrl,
         reason: format!("bad http(s) URL {url:?}: {e}"),
     })?;
     match parsed.scheme() {
         "http" | "https" => Ok(()),
         other => Err(MultimuxError::ConfigInvalid {
-            field: "routes.input.url",
+            field: ConfigField::RoutesInputUrl,
             reason: format!("scheme must be http or https, got {other:?}"),
         }),
     }
@@ -1365,13 +1365,13 @@ fn validate_auth(auth: &Option<AuthSpec>) -> Result<()> {
         None => Ok(()),
         Some(AuthSpec::Password { username, .. }) if username.is_empty() => {
             Err(MultimuxError::ConfigInvalid {
-                field: "routes.input.auth.username",
+                field: ConfigField::RoutesInputAuthUsername,
                 reason: "must not be empty".into(),
             })
         }
         Some(AuthSpec::Bearer { bearer_token }) if bearer_token.trim().is_empty() => {
             Err(MultimuxError::ConfigInvalid {
-                field: "routes.input.auth.bearer_token",
+                field: ConfigField::RoutesInputAuthBearerToken,
                 reason: "must not be empty or blank".into(),
             })
         }
@@ -1385,19 +1385,19 @@ fn validate_auth(auth: &Option<AuthSpec>) -> Result<()> {
 fn validate_playlist_name(name: &str) -> Result<()> {
     if name.is_empty() {
         return Err(MultimuxError::ConfigInvalid {
-            field: "playlist_name",
+            field: ConfigField::PlaylistName,
             reason: "must not be empty".into(),
         });
     }
     if !name.ends_with(".m3u8") {
         return Err(MultimuxError::ConfigInvalid {
-            field: "playlist_name",
+            field: ConfigField::PlaylistName,
             reason: format!("must end in .m3u8, got {name:?}"),
         });
     }
     if name.contains('/') {
         return Err(MultimuxError::ConfigInvalid {
-            field: "playlist_name",
+            field: ConfigField::PlaylistName,
             reason: format!("must not contain a slash, got {name:?}"),
         });
     }
@@ -1408,13 +1408,13 @@ fn validate_playlist_name(name: &str) -> Result<()> {
     // here instead.
     if name == "master.m3u8" {
         return Err(MultimuxError::ConfigInvalid {
-            field: "playlist_name",
+            field: ConfigField::PlaylistName,
             reason: "must not be \"master.m3u8\" (that name is the master playlist route)".into(),
         });
     }
     if name == "iframe.m3u8" {
         return Err(MultimuxError::ConfigInvalid {
-            field: "playlist_name",
+            field: ConfigField::PlaylistName,
             reason: "must not be \"iframe.m3u8\" (that name is the I-frame playlist route)".into(),
         });
     }
@@ -1426,7 +1426,7 @@ fn validate_udp_addr(addr: &str) -> Result<()> {
     addr.parse::<SocketAddr>()
         .map(|_| ())
         .map_err(|e| MultimuxError::ConfigInvalid {
-            field: "routes.input.addr",
+            field: ConfigField::RoutesInputAddr,
             reason: format!("bad UDP address {addr:?}: {e}"),
         })
 }
@@ -1441,7 +1441,7 @@ fn validate_listen_addr(addr: &str) -> Result<()> {
     addr.parse::<SocketAddr>()
         .map(|_| ())
         .map_err(|e| MultimuxError::ConfigInvalid {
-            field: "routes.input.listen",
+            field: ConfigField::RoutesInputListen,
             reason: format!("bad listen address {addr:?}: {e}"),
         })
 }
@@ -1454,7 +1454,7 @@ fn validate_listen_addr(addr: &str) -> Result<()> {
 /// last `:`. See [`InputSpec::Srt`]'s `remote` doc (`"remote-host:9000"`) and
 /// `crate::source::srt`'s module doc.
 fn validate_host_port(addr: &str) -> Result<()> {
-    let field = "routes.input.remote";
+    let field = ConfigField::RoutesInputRemote;
     let invalid = |reason: String| MultimuxError::ConfigInvalid { field, reason };
     // Validate the `host:port` shape through the `url` crate (a throwaway
     // `srt://` prefix makes `addr` the authority), so a hostname, a bracketed
@@ -1505,12 +1505,12 @@ fn validate_host_port(addr: &str) -> Result<()> {
 /// config time instead.
 fn validate_multicast_group(group: &str) -> Result<()> {
     let ip: IpAddr = group.parse().map_err(|e| MultimuxError::ConfigInvalid {
-        field: "routes.input.multicast_group",
+        field: ConfigField::RoutesInputMulticastGroup,
         reason: format!("bad multicast group {group:?}: {e}"),
     })?;
     if !ip.is_multicast() {
         return Err(MultimuxError::ConfigInvalid {
-            field: "routes.input.multicast_group",
+            field: ConfigField::RoutesInputMulticastGroup,
             reason: format!("{group} is not a multicast address"),
         });
     }
@@ -1528,7 +1528,7 @@ fn validate_multicast_group(group: &str) -> Result<()> {
 fn validate_sdp(sdp: &str) -> Result<()> {
     if sdp.is_empty() {
         return Err(MultimuxError::ConfigInvalid {
-            field: "routes.input.sdp",
+            field: ConfigField::RoutesInputSdp,
             reason: "must not be empty".into(),
         });
     }
@@ -1536,13 +1536,13 @@ fn validate_sdp(sdp: &str) -> Result<()> {
         return sdp_types::Session::parse(sdp.as_bytes())
             .map(|_| ())
             .map_err(|e| MultimuxError::ConfigInvalid {
-                field: "routes.input.sdp",
+                field: ConfigField::RoutesInputSdp,
                 reason: format!("unparsable inline SDP: {e}"),
             });
     };
     if path.is_empty() {
         return Err(MultimuxError::ConfigInvalid {
-            field: "routes.input.sdp",
+            field: ConfigField::RoutesInputSdp,
             reason: "@ file reference must name a path".into(),
         });
     }
@@ -1762,7 +1762,7 @@ impl Route {
         for decl in &self.audio_profiles {
             if !seen.insert(decl.track) {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "audio_profiles",
+                    field: ConfigField::AudioProfiles,
                     reason: format!("duplicate track selector {:?}", decl.track),
                 });
             }
@@ -1775,7 +1775,7 @@ impl Route {
             return Ok(());
         }
         let invalid = |reason: String| MultimuxError::ConfigInvalid {
-            field: "audio_rendition_sources",
+            field: ConfigField::AudioRenditionSources,
             reason,
         };
         if self.audio_rendition_sources.len() != self.audio_renditions.len() {
@@ -1826,7 +1826,7 @@ impl Route {
         self.validate_audio_profiles()?;
         if self.name.is_empty() {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.name",
+                field: ConfigField::RoutesName,
                 reason: "must not be empty".into(),
             });
         }
@@ -1842,7 +1842,7 @@ impl Route {
         // rejected by the same charset check.
         if self.name.len() > MAX_ROUTE_NAME_LEN {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.name",
+                field: ConfigField::RoutesName,
                 reason: format!(
                     "must be at most {MAX_ROUTE_NAME_LEN} bytes, got {}",
                     self.name.len()
@@ -1855,7 +1855,7 @@ impl Route {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
         {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.name",
+                field: ConfigField::RoutesName,
                 reason: format!(
                     "must contain only ASCII letters, digits, '.', '_' or '-' (it is both a \
                      URL path segment and an on-disk directory name), got {:?}",
@@ -1865,7 +1865,7 @@ impl Route {
         }
         if self.name == "." || self.name == ".." {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.name",
+                field: ConfigField::RoutesName,
                 reason: format!(
                     "{:?} is a path-traversal component, not a route name (the DVR/catch-up \
                      archive dir would escape archive_root)",
@@ -1878,7 +1878,7 @@ impl Route {
         // (item 7).
         if self.name.ends_with('.') || self.name.ends_with(' ') {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.name",
+                field: ConfigField::RoutesName,
                 reason: format!("must not end with '.' or a space, got {:?}", self.name),
             });
         }
@@ -1887,7 +1887,7 @@ impl Route {
         // must not become an archive directory (item 7).
         if is_windows_reserved_name(&self.name) {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.name",
+                field: ConfigField::RoutesName,
                 reason: format!(
                     "{:?} is a reserved device name on Windows (CON, PRN, AUX, NUL, COM1-9, LPT1-9) and cannot be a route/archive directory name",
                     self.name
@@ -1896,7 +1896,7 @@ impl Route {
         }
         if self.outputs.is_empty() {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs",
+                field: ConfigField::RoutesOutputs,
                 reason: format!("route {:?} has no outputs configured", self.name),
             });
         }
@@ -1904,7 +1904,7 @@ impl Route {
             && (declared == 0 || declared > u64::from(u32::MAX))
         {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.declared_bandwidth_bps",
+                field: ConfigField::RoutesDeclaredBandwidthBps,
                 reason: "must be > 0 and <= u32::MAX".into(),
             });
         }
@@ -1929,7 +1929,7 @@ impl Route {
             })
         {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs",
+                field: ConfigField::RoutesOutputs,
                 reason: format!(
                     "route {:?} configures both \"ts_hls\" and an fMP4-based output \
                      (\"llhls\"/\"dash\"/\"ll_dash\"/\"smooth\") — a route's container (fMP4 vs. classic \
@@ -1951,7 +1951,7 @@ impl Route {
             && !self.dvr.enabled
         {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.outputs",
+                field: ConfigField::RoutesOutputs,
                 reason: format!(
                     "route {:?} configures the \"catchup\" output but has no DVR archive \
                      enabled (\"routes.dvr.enabled\": true) — there would be nothing to serve",
@@ -1976,7 +1976,7 @@ impl Route {
             };
             if let Some(bad @ (PushFormat::Mp4 | PushFormat::Mkv)) = format {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "routes.outputs[].format",
+                    field: ConfigField::RoutesOutputsFormat,
                     reason: format!(
                         "push output format {:?} is not implemented — only \"ts\" is \
                          currently supported for push outputs (srt_push/rtmp_push/rtsp_push)",
@@ -2006,7 +2006,7 @@ impl Route {
             if let OutputKind::SrtPush { url, .. } = kind {
                 crate::push::validate_srt_url(url).map_err(|reason| {
                     MultimuxError::ConfigInvalid {
-                        field: "routes.outputs[].url",
+                        field: ConfigField::RoutesOutputsUrl,
                         reason,
                     }
                 })?;
@@ -2019,7 +2019,7 @@ impl Route {
         for kind in &self.outputs {
             if let OutputKind::RtspPush { url, .. } = kind {
                 validate_rtsp_push_url(url).map_err(|reason| MultimuxError::ConfigInvalid {
-                    field: "routes.outputs[].url",
+                    field: ConfigField::RoutesOutputsUrl,
                     reason,
                 })?;
             }
@@ -2049,7 +2049,7 @@ impl Route {
         for path in self.manifest_paths(playlist_name) {
             if !seen_paths.insert(path.clone()) {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "routes.outputs",
+                    field: ConfigField::RoutesOutputs,
                     reason: format!(
                         "route {:?} mounts {path:?} from more than one output (or from \
                          playlist_name); each path may be served by exactly one output",
@@ -2103,7 +2103,7 @@ impl Route {
     pub(crate) fn validate_dvr(&self) -> Result<()> {
         if let Err(reason) = self.dvr.validate() {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes.dvr",
+                field: ConfigField::RoutesDvr,
                 reason: reason.to_string(),
             });
         }
@@ -2610,7 +2610,7 @@ const MAX_TARGET_DURATION_SECS: f64 = 86_400.0;
 /// Validate a seconds-valued timeout: finite, `> 0`, and `<= MAX_TIMEOUT_SECS`.
 /// Rejects NaN/infinity/negative and an overflowing-but-finite value such as
 /// `1e20` (which `Duration::from_secs_f64` would panic on) — audit W19.
-fn validate_timeout_secs(field: &'static str, secs: f64) -> Result<()> {
+fn validate_timeout_secs(field: ConfigField, secs: f64) -> Result<()> {
     if !secs.is_finite() || secs <= 0.0 || secs > MAX_TIMEOUT_SECS {
         return Err(MultimuxError::ConfigInvalid {
             field,
@@ -2670,13 +2670,13 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         if self.routes.is_empty() {
             return Err(MultimuxError::ConfigInvalid {
-                field: "routes",
+                field: ConfigField::Routes,
                 reason: "no routes configured".into(),
             });
         }
         if !self.target_duration_secs.is_finite() || self.target_duration_secs <= 0.0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "target_duration_secs",
+                field: ConfigField::TargetDurationSecs,
                 reason: "must be a finite positive number".into(),
             });
         }
@@ -2687,7 +2687,7 @@ impl Config {
         // front, with a clear error.
         if self.target_duration_secs > MAX_TARGET_DURATION_SECS {
             return Err(MultimuxError::ConfigInvalid {
-                field: "target_duration_secs",
+                field: ConfigField::TargetDurationSecs,
                 reason: format!(
                     "must not exceed {MAX_TARGET_DURATION_SECS} seconds (24 h), got {}",
                     self.target_duration_secs
@@ -2696,7 +2696,7 @@ impl Config {
         }
         if self.part_target.is_zero() {
             return Err(MultimuxError::ConfigInvalid {
-                field: "part_target",
+                field: ConfigField::PartTarget,
                 reason: "must be positive".into(),
             });
         }
@@ -2709,7 +2709,7 @@ impl Config {
         let part_target_secs = self.part_target.as_secs_f64();
         if part_target_secs > self.target_duration_secs {
             return Err(MultimuxError::ConfigInvalid {
-                field: "part_target",
+                field: ConfigField::PartTarget,
                 reason: format!(
                     "a part/chunk duration of {} s must not exceed target_duration_secs ({} s) \
                      — a part is a sub-division of a whole segment",
@@ -2719,13 +2719,13 @@ impl Config {
         }
         if self.window_segments == 0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "window_segments",
+                field: ConfigField::WindowSegments,
                 reason: "must be positive".into(),
             });
         }
         if self.request_timeout_secs <= MIN_REQUEST_TIMEOUT_SECS {
             return Err(MultimuxError::ConfigInvalid {
-                field: "request_timeout_secs",
+                field: ConfigField::RequestTimeoutSecs,
                 reason: format!(
                     "must exceed {MIN_REQUEST_TIMEOUT_SECS} (the LL-HLS blocking-reload cap), \
                      got {}",
@@ -2735,44 +2735,47 @@ impl Config {
         }
         if self.max_concurrent_requests == 0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "max_concurrent_requests",
+                field: ConfigField::MaxConcurrentRequests,
                 reason: "must be positive".into(),
             });
         }
         if self.whep_media_sockets_per_ip == 0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "whep_media_sockets_per_ip",
+                field: ConfigField::WhepMediaSocketsPerIp,
                 reason: "must be positive".into(),
             });
         }
         if self.max_concurrent_warms_per_route == 0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "max_concurrent_warms_per_route",
+                field: ConfigField::MaxConcurrentWarmsPerRoute,
                 reason: "must be positive".into(),
             });
         }
         if self.max_blocking_reloads_per_route == 0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "max_blocking_reloads_per_route",
+                field: ConfigField::MaxBlockingReloadsPerRoute,
                 reason: "must be positive".into(),
             });
         }
         if self.max_request_body_bytes == 0 {
             return Err(MultimuxError::ConfigInvalid {
-                field: "max_request_body_bytes",
+                field: ConfigField::MaxRequestBodyBytes,
                 reason: "must be positive".into(),
             });
         }
         validate_timeout_secs(
-            "ingest_connect_timeout_secs",
+            ConfigField::IngestConnectTimeoutSecs,
             self.ingest_connect_timeout_secs,
         )?;
-        validate_timeout_secs("ingest_read_timeout_secs", self.ingest_read_timeout_secs)?;
+        validate_timeout_secs(
+            ConfigField::IngestReadTimeoutSecs,
+            self.ingest_read_timeout_secs,
+        )?;
         if !self.concurrency_queue_timeout_secs.is_finite()
             || self.concurrency_queue_timeout_secs <= 0.0
         {
             return Err(MultimuxError::ConfigInvalid {
-                field: "concurrency_queue_timeout_secs",
+                field: ConfigField::ConcurrencyQueueTimeoutSecs,
                 reason: "must be a finite, positive number of seconds".into(),
             });
         }
@@ -2790,7 +2793,7 @@ impl Config {
             let key = r.name.to_lowercase();
             if !seen.insert(key) {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "routes",
+                    field: ConfigField::Routes,
                     reason: format!(
                         "duplicate stream name {:?} (names are compared case-insensitively \
                          — two names differing only in case would share one DVR archive \
@@ -2807,12 +2810,12 @@ impl Config {
                 hls_runtime::server::validate_audio_renditions_relaxed(&r.audio_renditions)
             };
             validate.map_err(|e| MultimuxError::ConfigInvalid {
-                field: "audio_renditions",
+                field: ConfigField::AudioRenditions,
                 reason: e.to_string(),
             })?;
             hls_runtime::server::validate_closed_caption_overrides(&r.closed_caption_overrides)
                 .map_err(|e| MultimuxError::ConfigInvalid {
-                    field: "closed_caption_overrides",
+                    field: ConfigField::ClosedCaptionOverrides,
                     reason: e.to_string(),
                 })?;
         }
@@ -2822,7 +2825,7 @@ impl Config {
                     && !listen_is_loopback(listen)
                 {
                     return Err(MultimuxError::ConfigInvalid {
-                        field: "routes.input",
+                        field: ConfigField::RoutesInput,
                         reason: format!(
                             "route {:?} accepts publishers with no authentication on the \
                              non-loopback address {listen:?}; bind a loopback address, set \
@@ -2837,13 +2840,13 @@ impl Config {
         if let Some(admin) = &self.admin {
             if admin.bind.is_empty() {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "admin.bind",
+                    field: ConfigField::AdminBind,
                     reason: "must not be empty".into(),
                 });
             }
             if admin.bind == self.bind {
                 return Err(MultimuxError::ConfigInvalid {
-                    field: "admin.bind",
+                    field: ConfigField::AdminBind,
                     reason: format!(
                         "must differ from bind (both {:?}) — the runtime admin API must never \
                          be reachable on the media listener",
@@ -2890,7 +2893,7 @@ mod tests {
         zero.whep_media_sockets_per_ip = 0;
         assert!(matches!(
             zero.validate(),
-            Err(MultimuxError::ConfigInvalid { field, .. }) if field == "whep_media_sockets_per_ip"
+            Err(MultimuxError::ConfigInvalid { field, .. }) if field == ConfigField::WhepMediaSocketsPerIp
         ));
     }
 
@@ -2912,7 +2915,7 @@ mod tests {
                 .validate()
                 .expect_err(&format!("{input} must be refused"));
             assert!(
-                matches!(&err, MultimuxError::ConfigInvalid { field: "routes.input", reason }
+                matches!(&err, MultimuxError::ConfigInvalid { field: ConfigField::RoutesInput, reason }
                     if reason.contains("allow_open_ingest")),
                 "{input}: {err:?}"
             );
@@ -3004,7 +3007,7 @@ mod tests {
                 .validate()
                 .expect_err(&format!("route name {bad:?} must be rejected"));
             assert!(
-                matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == "routes.name"),
+                matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == ConfigField::RoutesName),
                 "route name {bad:?} gave the wrong error: {err:?}"
             );
         }
@@ -3032,7 +3035,7 @@ mod tests {
             .validate()
             .expect_err("names differing only in case must collide");
         assert!(
-            matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == "routes"),
+            matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == ConfigField::Routes),
             "got {err:?}"
         );
     }
@@ -3163,7 +3166,7 @@ mod tests {
                 .expect_err("a duplicated mounting output must be rejected");
             match err {
                 MultimuxError::ConfigInvalid { field, reason } => {
-                    assert_eq!(field, "routes.outputs");
+                    assert_eq!(field.name(), "routes.outputs");
                     assert!(
                         reason.contains("more than one output"),
                         "reason must explain the collision, got {reason:?}"
@@ -3230,7 +3233,7 @@ mod tests {
             .expect_err("playlist_name colliding with a catchup output must be rejected");
         match err {
             MultimuxError::ConfigInvalid { field, reason } => {
-                assert_eq!(field, "routes.outputs");
+                assert_eq!(field.name(), "routes.outputs");
                 assert!(
                     reason.contains("catchup.m3u8"),
                     "reason must name the colliding path, got {reason:?}"
@@ -3289,7 +3292,7 @@ mod tests {
             cfg.target_duration_secs = bad;
             match cfg.validate() {
                 Err(MultimuxError::ConfigInvalid { field, .. }) => {
-                    assert_eq!(field, "target_duration_secs", "{bad}");
+                    assert_eq!(field.name(), "target_duration_secs", "{bad}");
                 }
                 other => panic!("{bad}: expected ConfigInvalid, got {other:?}"),
             }
@@ -3309,7 +3312,7 @@ mod tests {
             .validate()
             .expect_err("just past the 24 h bound must be rejected");
         assert!(
-            matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == "target_duration_secs"),
+            matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == ConfigField::TargetDurationSecs),
             "got {err:?}"
         );
     }
@@ -3340,7 +3343,7 @@ mod tests {
         bad.part_target = Duration::from_millis(1000);
         match bad.validate() {
             Err(MultimuxError::ConfigInvalid { field, reason }) => {
-                assert_eq!(field, "part_target");
+                assert_eq!(field.name(), "part_target");
                 assert!(
                     reason.contains("must not exceed target_duration_secs"),
                     "unclear reason: {reason}"
@@ -3381,7 +3384,7 @@ mod tests {
                     .expect_err("mp4/mkv push format must be rejected");
                 match err {
                     MultimuxError::ConfigInvalid { field, reason } => {
-                        assert_eq!(field, "routes.outputs[].format");
+                        assert_eq!(field.name(), "routes.outputs[].format");
                         assert!(
                             reason.to_lowercase().contains(bad),
                             "reason should name the rejected format {bad}, got: {reason}"
@@ -3644,7 +3647,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                MultimuxError::ConfigInvalid { field: "routes.outputs[].url", reason }
+                MultimuxError::ConfigInvalid { field: ConfigField::RoutesOutputsUrl, reason }
                     if reason.contains("no host")
             ),
             "a hostless rtsp push URL must be a config error: {err:?}"
@@ -3927,7 +3930,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                MultimuxError::ConfigInvalid { field: "routes.outputs", reason }
+                MultimuxError::ConfigInvalid { field: ConfigField::RoutesOutputs, reason }
                     if reason.contains("\"cam1\"")
                         && reason.contains("ts_hls")
                         && reason.contains("llhls")
@@ -3978,7 +3981,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                MultimuxError::ConfigInvalid { field: "routes.outputs", reason }
+                MultimuxError::ConfigInvalid { field: ConfigField::RoutesOutputs, reason }
                     if reason.contains("\"cam1\"")
                         && reason.contains("catchup")
                         && reason.contains("DVR")
@@ -5065,7 +5068,7 @@ mod tests {
         ] {
             match dashif_cfg(extra) {
                 Err(MultimuxError::ConfigInvalid { field: f, .. }) => {
-                    assert!(f.ends_with(field), "{extra}: field {f}");
+                    assert!(f.name().ends_with(field), "{extra}: field {f}");
                 }
                 other => panic!("{extra}: expected ConfigInvalid, got {other:?}"),
             }
@@ -5166,7 +5169,7 @@ mod tests {
         };
         match cfg.validate() {
             Err(MultimuxError::ConfigInvalid { field, reason }) => {
-                assert_eq!(field, "playlist_name");
+                assert_eq!(field.name(), "playlist_name");
                 assert!(reason.contains("iframe.m3u8"), "reason: {reason}");
             }
             other => panic!("expected the playlist_name collision error, got {other:?}"),
@@ -5344,7 +5347,7 @@ mod tests {
                 matches!(
                     cfg.validate(),
                     Err(crate::error::MultimuxError::ConfigInvalid {
-                        field: "output_auth.trusted_proxies",
+                        field: ConfigField::OutputAuthTrustedProxies,
                         ..
                     })
                 ),
@@ -5366,7 +5369,7 @@ mod tests {
                 matches!(
                     output.validate(),
                     Err(crate::error::MultimuxError::ConfigInvalid {
-                        field: "output_auth.token",
+                        field: ConfigField::OutputAuthToken,
                         ..
                     })
                 ),
@@ -5899,7 +5902,7 @@ mod tests {
         match err {
             MultimuxError::ConfigInvalid { field, .. } => {
                 assert_eq!(
-                    field, "routes.input.remote",
+                    field, ConfigField::RoutesInputRemote,
                     "field must name remote, got {err:?}"
                 );
             }
@@ -5917,7 +5920,7 @@ mod tests {
             .expect_err("remote with empty host must fail");
         match err {
             MultimuxError::ConfigInvalid { field, .. } => {
-                assert_eq!(field, "routes.input.remote");
+                assert_eq!(field.name(), "routes.input.remote");
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
@@ -5933,7 +5936,7 @@ mod tests {
             .expect_err("remote with a non-numeric port must fail");
         match err {
             MultimuxError::ConfigInvalid { field, .. } => {
-                assert_eq!(field, "routes.input.remote");
+                assert_eq!(field.name(), "routes.input.remote");
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
@@ -5950,7 +5953,7 @@ mod tests {
             .expect_err("hostname listen address must fail");
         match err {
             MultimuxError::ConfigInvalid { field, .. } => {
-                assert_eq!(field, "routes.input.listen");
+                assert_eq!(field.name(), "routes.input.listen");
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }
@@ -6019,7 +6022,7 @@ mod tests {
             .expect_err("empty file path must fail validation");
         match err {
             MultimuxError::ConfigInvalid { field, .. } => {
-                assert_eq!(field, "routes.input.path");
+                assert_eq!(field.name(), "routes.input.path");
             }
             other => panic!("expected ConfigInvalid, got {other:?}"),
         }

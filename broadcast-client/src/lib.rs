@@ -27,7 +27,7 @@ pub use buffering_runtime::Hint as BufferHint;
 pub use buffering_runtime::input_log::{Input as BufferInput, InputLog};
 pub use dash_runtime::client::config::{DashClockPolicy, DashConfig};
 pub use dash_runtime::timing::clock::ClockSource;
-pub use error::{Error, TransportError};
+pub use error::{ConfigField, Error, TransportError};
 pub use events::{
     AUDIO_TRACK_ID_OFFSET, Action, AvSync, BufferEvent, BufferStats, Config, ErrorKind, Event,
     MAX_SERVER_REFUSED_REASON_BYTES, PauseReason, ResumeMode, SourceKind, Status, StreamKind,

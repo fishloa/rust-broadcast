@@ -13,7 +13,7 @@ use std::convert::Infallible;
 use broadcast_client::{Config, SourceKind};
 use tokio::net::UdpSocket;
 
-use crate::error::MultimuxError;
+use crate::error::{ConfigField, MultimuxError};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep, UdpHost};
 use crate::source::sdp::load_sdp;
 use crate::source::{Source, Timeouts};
@@ -133,7 +133,7 @@ pub async fn run_rtp_udp(
         && let Some(join) = &route.socket.join
     {
         return MultimuxError::ConfigInvalid {
-            field: "routes.input.multicast_group",
+            field: ConfigField::RoutesInputMulticastGroup,
             reason: format!(
                 "a pre-bound socket cannot join multicast group {}; drop the group, \
                  or let the route bind its own addr",
@@ -360,7 +360,7 @@ mod tests {
         assert!(
             matches!(
                 error,
-                MultimuxError::ConfigInvalid { field, .. } if field == "udp.sdp"
+                MultimuxError::ConfigInvalid { field, .. } if field == ConfigField::RoutesInput
             ),
             "{error:?}"
         );
@@ -384,7 +384,7 @@ mod tests {
             matches!(
                 error,
                 MultimuxError::ConfigInvalid { field, .. }
-                    if field == "routes.input.multicast_group"
+                    if field == ConfigField::RoutesInputMulticastGroup
             ),
             "got {error:?}"
         );

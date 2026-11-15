@@ -137,14 +137,14 @@ fn an_sdp_needs_an_rtp_url_and_a_playable_media_section() {
     udp.kind = SourceKind::Udp;
     assert!(matches!(
         Session::open(Url::parse("udp://127.0.0.1:5004").unwrap(), udp, ts(0)),
-        Err(Error::InvalidConfig { field: "udp.sdp" })
+        Err(Error::InvalidConfig(broadcast_client::error::ConfigField::UdpSdp))
     ));
     assert!(matches!(
         open(URL, "v=0\r\ns=-\r\nt=0 0\r\n"),
-        Err(Error::InvalidConfig { field: "udp.sdp" })
+        Err(Error::InvalidConfig(broadcast_client::error::ConfigField::UdpSdp))
     ));
     assert!(matches!(
         open(URL, "not an sdp"),
-        Err(Error::InvalidConfig { field: "udp.sdp" })
+        Err(Error::InvalidConfig(broadcast_client::error::ConfigField::UdpSdp))
     ));
 }

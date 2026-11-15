@@ -467,9 +467,7 @@ fn closing_before_the_handshake_completes_sends_nothing_but_the_close() {
 fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
     assert!(matches!(
         Session::open(Url::parse(URL).unwrap(), Config::default(), stamp(0)).unwrap_err(),
-        Error::InvalidConfig {
-            field: "srt.entropy_seed"
-        }
+        Error::InvalidConfig(broadcast_client::error::ConfigField::SrtEntropySeed)
     ));
     let ids = |seed: [u8; 32]| {
         let mut sim = SrtSim::open_with_peers(
@@ -533,7 +531,7 @@ fn bad_srt_settings_are_typed_errors() {
         ),
     ] {
         match err {
-            Error::InvalidConfig { field: f } => assert_eq!(f, field),
+            Error::InvalidConfig(f) => assert_eq!(f.name(), field),
             other => panic!("{field}: {other:?}"),
         }
     }

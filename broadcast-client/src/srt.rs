@@ -172,19 +172,20 @@ impl SrtCallerConfig {
     }
 
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
-        let invalid = |field| Err(crate::Error::InvalidConfig { field });
+        use crate::error::ConfigField;
+        let invalid = |field| Err(crate::Error::InvalidConfig(field));
         if self.timeouts.handshake.is_zero() {
-            return invalid("srt.timeouts.handshake");
+            return invalid(ConfigField::SrtHandshakeTimeout);
         }
         if self.timeouts.read_idle.is_zero() {
-            return invalid("srt.timeouts.read_idle");
+            return invalid(ConfigField::SrtReadIdleTimeout);
         }
         if self
             .encryption
             .as_ref()
             .is_some_and(|e| e.passphrase.is_empty())
         {
-            return invalid("srt.encryption.passphrase");
+            return invalid(ConfigField::SrtPassphrase);
         }
         Ok(())
     }
@@ -221,17 +222,13 @@ mod timeouts_tests {
             .with_timeouts(Timeouts::default().with_handshake(Duration::ZERO));
         assert!(matches!(
             config.validate(),
-            Err(crate::Error::InvalidConfig {
-                field: "srt.timeouts.handshake"
-            })
+            Err(crate::Error::InvalidConfig(crate::error::ConfigField::SrtHandshakeTimeout))
         ));
         let config = SrtCallerConfig::default()
             .with_timeouts(Timeouts::default().with_read_idle(Duration::ZERO));
         assert!(matches!(
             config.validate(),
-            Err(crate::Error::InvalidConfig {
-                field: "srt.timeouts.read_idle"
-            })
+            Err(crate::Error::InvalidConfig(crate::error::ConfigField::SrtReadIdleTimeout))
         ));
     }
 }

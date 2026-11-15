@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use clap::Parser;
 use multimux::config::{Config, InputSpec, Route};
 use multimux::output::OutputKind;
-use multimux::{MultimuxError, Result};
+use multimux::{ConfigField, MultimuxError, Result};
 
 #[derive(Parser)]
 #[command(
@@ -120,7 +120,7 @@ fn parse_outputs(cli: &Cli) -> Result<Vec<OutputKind>> {
                 "llhls" => Ok(OutputKind::LlHls),
                 "dash" => Ok(OutputKind::Dash),
                 other => Err(MultimuxError::ConfigInvalid {
-                    field: "outputs",
+                    field: ConfigField::Outputs,
                     reason: format!("unknown output kind {other:?} (expected llhls or dash)"),
                 }),
             })
@@ -161,7 +161,7 @@ fn build_config(cli: Cli) -> Result<Config> {
     // reference to the whole struct is only valid pre-move).
     let outputs = parse_outputs(&cli)?;
     let rtsp_url = cli.rtsp.ok_or_else(|| MultimuxError::ConfigInvalid {
-        field: "rtsp",
+        field: ConfigField::Rtsp,
         reason: "either --config <FILE> or --rtsp <URL> --name <NAME> is required".into(),
     })?;
     // clap's `requires = "name"` on `--rtsp` guarantees `cli.name` is present
