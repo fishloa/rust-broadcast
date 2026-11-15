@@ -125,7 +125,7 @@ pub struct IntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `platform_descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_platform_descriptor_loop_length: u8,
+    pub reserved_platform_descriptor_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> IntSection<'a> {
@@ -152,7 +152,7 @@ impl<'a> IntSection<'a> {
             platform_descriptors,
             loops,
             bits: super::SectionBits::dvb(),
-            reserved_platform_descriptor_loop_length: super::RESERVED_4,
+            reserved_platform_descriptor_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -274,9 +274,9 @@ impl<'a> Parse<'a> for IntSection<'a> {
             platform_descriptors,
             loops,
             bits: super::SectionBits::parse(bytes[1], Some(bytes[OFF_VERSION_BYTE])),
-            reserved_platform_descriptor_loop_length: super::len_reserved_of(
-                bytes[OFF_PLATFORM_DESC_LEN],
-            ),
+            reserved_platform_descriptor_loop_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[OFF_PLATFORM_DESC_LEN]),
+            )),
         })
     }
 }
@@ -324,7 +324,7 @@ impl Serialize for IntSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[OFF_PLATFORM_DESC_LEN..OFF_PLATFORM_DESC_LEN + 2],
             pdl as usize,
-            self.reserved_platform_descriptor_loop_length,
+            self.reserved_platform_descriptor_loop_length.get() as u8,
         )?;
 
         let plat_start = OFF_PLATFORM_DESC_LEN + LOOP_LEN_FIELD;
@@ -627,5 +627,25 @@ mod tests {
                 "IntActionType round-trip failed for {byte:#04x}"
             );
         }
+    }
+
+    /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the 12-bit platform_descriptor_loop_length below it.
+    #[test]
+    fn reserved_platform_length_cannot_hold_more_than_four_bits() {
+        let d = IntSection::new(
+            IntActionType::from_u8(0),
+            0,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            0,
+            0,
+            IntDescriptorLoop::new(&[]),
+            vec![],
+        );
+        let d = IntSection {
+            reserved_platform_descriptor_loop_length: ReservedOnes::from_bits(0xFF),
+            ..d
+        };
+        assert_eq!(d.reserved_platform_descriptor_loop_length.get(), 0x0F);
     }
 }
