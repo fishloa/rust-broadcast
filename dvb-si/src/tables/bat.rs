@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use alloc::string::String;
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id value for BAT.
@@ -50,10 +51,10 @@ pub struct BatSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `bouquet_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_bouquet_descriptors_length: u8,
+    pub reserved_bouquet_descriptors_length: ReservedOnes<4>,
     /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transport_stream_loop_length: u8,
+    pub reserved_transport_stream_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> BatSection<'a> {
@@ -77,8 +78,8 @@ impl<'a> BatSection<'a> {
             bouquet_descriptors,
             transport_streams,
             bits: super::SectionBits::dvb(),
-            reserved_bouquet_descriptors_length: super::RESERVED_4,
-            reserved_transport_stream_loop_length: super::RESERVED_4,
+            reserved_bouquet_descriptors_length: ReservedOnes::FILL,
+            reserved_transport_stream_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -135,8 +136,12 @@ impl<'a> Parse<'a> for BatSection<'a> {
             bouquet_descriptors: p.descriptors,
             transport_streams: p.transport_streams,
             bits: p.bits,
-            reserved_bouquet_descriptors_length: p.reserved_descriptors_length,
-            reserved_transport_stream_loop_length: p.reserved_transport_stream_loop_length,
+            reserved_bouquet_descriptors_length: ReservedOnes::from_bits(u64::from(
+                p.reserved_descriptors_length,
+            )),
+            reserved_transport_stream_loop_length: ReservedOnes::from_bits(u64::from(
+                p.reserved_transport_stream_loop_length,
+            )),
         })
     }
 }
@@ -159,8 +164,10 @@ impl Serialize for BatSection<'_> {
                 descriptors: &self.bouquet_descriptors,
                 transport_streams: &self.transport_streams,
                 bits: &self.bits,
-                reserved_descriptors_length: self.reserved_bouquet_descriptors_length,
-                reserved_transport_stream_loop_length: self.reserved_transport_stream_loop_length,
+                reserved_descriptors_length: self.reserved_bouquet_descriptors_length.get() as u8,
+                reserved_transport_stream_loop_length: self
+                    .reserved_transport_stream_loop_length
+                    .get() as u8,
                 descriptors_length_what: "bouquet_descriptors_length",
             },
             buf,
@@ -398,5 +405,19 @@ mod tests {
             bat.bouquet_descriptors.raw(),
             reparsed.bouquet_descriptors.raw()
         );
+    }
+
+    /// Each reserved field is 4 bits wide, so a wider value is unrepresentable
+    /// and cannot spill into the 12-bit length below it.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_four_bits() {
+        let d = BatSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&[]), vec![]);
+        let d = BatSection {
+            reserved_bouquet_descriptors_length: ReservedOnes::from_bits(0xFF),
+            reserved_transport_stream_loop_length: ReservedOnes::from_bits(0xFF),
+            ..d
+        };
+        assert_eq!(d.reserved_bouquet_descriptors_length.get(), 0x0F);
+        assert_eq!(d.reserved_transport_stream_loop_length.get(), 0x0F);
     }
 }

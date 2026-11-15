@@ -17,6 +17,7 @@ use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for enhanced_message_descriptor (UNT namespace).
@@ -26,11 +27,13 @@ const FIXED_LEN: usize = 5;
 const NIBBLE_MASK: u8 = 0x0F;
 const NUMBER_SHIFT: u8 = 4;
 const RESERVED_SHIFT: u8 = 5;
-const RESERVED_MASK: u8 = 0x07;
 const MESSAGE_INDEX_MASK: u8 = 0x1F;
 /// Default of the 3-bit `reserved_for_future_use`: `0b111` (all-ones
 /// reserved convention; `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`).
-pub const RESERVED_FOR_FUTURE_USE_DEFAULT: u8 = 0b111;
+pub const RESERVED_FOR_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved_for_future_use` field (3 bits).
+const RESERVED_BITS: u32 = 3;
 
 /// enhanced_message_descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,7 +49,8 @@ pub struct EnhancedMessageDescriptor<'a> {
     /// `reserved_for_future_use` (3 bits, right-aligned). Captured on parse
     /// and re-emitted verbatim; [`Self::new`] defaults to
     /// [`RESERVED_FOR_FUTURE_USE_DEFAULT`].
-    pub reserved_for_future_use: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_for_future_use: ReservedOnes<RESERVED_BITS>,
     /// `message_index` (5 bits) — manufacturer-defined meaning.
     pub message_index: u8,
     /// `text_char`s — the message (EN 300 468 Annex A).
@@ -67,7 +71,7 @@ impl<'a> EnhancedMessageDescriptor<'a> {
             descriptor_number,
             last_descriptor_number,
             language_code,
-            reserved_for_future_use: RESERVED_FOR_FUTURE_USE_DEFAULT,
+            reserved_for_future_use: ReservedOnes::FILL,
             message_index,
             text,
         }
@@ -93,7 +97,7 @@ impl<'a> Parse<'a> for EnhancedMessageDescriptor<'a> {
             descriptor_number: f[0] >> NUMBER_SHIFT,
             last_descriptor_number: f[0] & NIBBLE_MASK,
             language_code: LangCode([f[1], f[2], f[3]]),
-            reserved_for_future_use: f[4] >> RESERVED_SHIFT,
+            reserved_for_future_use: ReservedOnes::from_bits(u64::from(f[4] >> RESERVED_SHIFT)),
             message_index: f[4] & MESSAGE_INDEX_MASK,
             text: DvbText::new(text),
         })
@@ -118,11 +122,7 @@ impl Serialize for EnhancedMessageDescriptor<'_> {
             NIBBLE_MASK,
             "last_descriptor_number",
         )?;
-        let reserved = broadcast_common::len::fit_mask(
-            self.reserved_for_future_use,
-            RESERVED_MASK,
-            "reserved_for_future_use",
-        )?;
+        let reserved = self.reserved_for_future_use.get() as u8;
         let index = broadcast_common::len::fit_mask(
             self.message_index,
             MESSAGE_INDEX_MASK,
@@ -152,7 +152,7 @@ mod tests {
         // number 0 of 0, "eng", reserved 111, index 31, text "Hi".
         let bytes = [TAG, 7, 0x00, b'e', b'n', b'g', 0xFF, b'H', b'i'];
         let d = EnhancedMessageDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.reserved_for_future_use, 0b111);
+        assert_eq!(d.reserved_for_future_use, ReservedOnes::FILL);
         assert_eq!(d.message_index, 31);
         assert_eq!(d.text.raw(), b"Hi");
         let mut out = vec![0u8; d.serialized_len()];
@@ -165,13 +165,13 @@ mod tests {
         // A sender writing reserved = 000 must re-serialize byte-identically.
         let bytes = [TAG, 6, 0x10, b'f', b'r', b'e', 0x01, b'x'];
         let d = EnhancedMessageDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.reserved_for_future_use, 0);
+        assert_eq!(d.reserved_for_future_use, ReservedOnes::from_bits(0));
         assert_eq!((d.descriptor_number, d.last_descriptor_number), (1, 0));
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
         let built = EnhancedMessageDescriptor::new(1, 0, LangCode(*b"fre"), 1, DvbText::new(b"x"));
-        assert_eq!(built.reserved_for_future_use, 0b111);
+        assert_eq!(built.reserved_for_future_use, ReservedOnes::FILL);
     }
 
     #[test]
@@ -192,5 +192,14 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    /// The field is 3 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the index bits below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_three_bits() {
+        let mut d = EnhancedMessageDescriptor::new(0, 0, LangCode(*b"eng"), 0, DvbText::new(b""));
+        d.reserved_for_future_use = ReservedOnes::from_bits(0xFF);
+        assert_eq!(d.reserved_for_future_use.get(), 0x07);
     }
 }

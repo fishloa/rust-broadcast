@@ -13,6 +13,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for time_slice_fec_identifier_descriptor.
@@ -26,7 +27,10 @@ const RESERVED_SHIFT: u8 = 3;
 const RESERVED_MASK: u8 = 0x03;
 /// Spec default of `reserved_for_future_use(2)`: `11` (EN 301 192 V1.4.1-V1.8.1
 /// Table 40, TS 102 772 Table 4; audit §6.3 class A).
-pub const RESERVED_FOR_FUTURE_USE_DEFAULT: u8 = 0b11;
+pub const RESERVED_FOR_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of `reserved_for_future_use` (2 bits).
+const RESERVED_BITS: u32 = 2;
 
 /// Largest representable 2-bit mpe_fec.
 const MPE_FEC_MAX: u8 = 0x03;
@@ -47,11 +51,11 @@ pub struct TimeSliceFecIdentifierDescriptor<'a> {
     pub time_slicing: bool,
     /// 2-bit mpe_fec algorithm selector (Table 41: 0=none, 1=RS(255,191,64)).
     pub mpe_fec: u8,
-    /// `reserved_for_future_use(2)` (byte 0 bits 4..3, right-aligned).
-    /// Captured on parse and re-emitted verbatim;
-    /// [`TimeSliceFecIdentifierDescriptor::new`] defaults to
-    /// [`RESERVED_FOR_FUTURE_USE_DEFAULT`] (`0b11`).
-    pub reserved_for_future_use: u8,
+    /// `reserved_for_future_use(2)` (byte 0 bits 4..3). Captured on parse and
+    /// re-emitted verbatim; [`TimeSliceFecIdentifierDescriptor::new`] defaults
+    /// to [`RESERVED_FOR_FUTURE_USE_DEFAULT`] (`0b11`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_for_future_use: ReservedOnes<RESERVED_BITS>,
     /// 3-bit frame_size code (Table 42).
     pub frame_size: u8,
     /// 8-bit max_burst_duration.
@@ -109,7 +113,8 @@ impl<'a> Parse<'a> for TimeSliceFecIdentifierDescriptor<'a> {
         let b0 = body[0];
         let time_slicing = (b0 & 0x80) != 0;
         let mpe_fec = (b0 >> 5) & MPE_FEC_MAX;
-        let reserved_for_future_use = (b0 >> RESERVED_SHIFT) & RESERVED_MASK;
+        let reserved_for_future_use =
+            ReservedOnes::from_bits(u64::from((b0 >> RESERVED_SHIFT) & RESERVED_MASK));
         let frame_size = b0 & FRAME_SIZE_MAX;
         let max_burst_duration = body[1];
         let max_average_rate = (body[2] >> 4) & MAX_AVERAGE_RATE_MAX;
@@ -170,11 +175,7 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
         buf[2] = (u8::from(self.time_slicing) << 7)
             | (broadcast_common::len::fit_mask(self.mpe_fec, MPE_FEC_MAX, "mpe_fec")? << 5)
-            | (broadcast_common::len::fit_mask(
-                self.reserved_for_future_use,
-                RESERVED_MASK,
-                "reserved_for_future_use",
-            )? << RESERVED_SHIFT)
+            | ((self.reserved_for_future_use.get() as u8) << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(self.frame_size, FRAME_SIZE_MAX, "frame_size")?;
         buf[3] = self.max_burst_duration;
         buf[4] = (broadcast_common::len::fit_mask(
@@ -276,7 +277,10 @@ mod tests {
             let b0 = 0x80 | (1 << 5) | (r << 3) | 0x03;
             let bytes = [TAG, 5, b0, 0x2A, (5 << 4) | 0x0A, 0xAA, 0xBB];
             let d = TimeSliceFecIdentifierDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_for_future_use, r);
+            assert_eq!(
+                d.reserved_for_future_use,
+                ReservedOnes::from_bits(u64::from(r))
+            );
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes, "r {r}");
@@ -290,5 +294,14 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf[2], 0x18);
+    }
+
+    /// The field is 2 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into `mpe_fec` or `frame_size`.
+    #[test]
+    fn reserved_cannot_hold_more_than_two_bits() {
+        let mut d = TimeSliceFecIdentifierDescriptor::new(true, 0, 0, 0, 0, 0, &[]);
+        d.reserved_for_future_use = ReservedOnes::from_bits(0xFF);
+        assert_eq!(d.reserved_for_future_use.get(), 0x03);
     }
 }

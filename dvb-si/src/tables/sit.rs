@@ -15,6 +15,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Selection Information Table.
@@ -57,7 +58,7 @@ pub struct SitService<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved_future_use(1)` before `running_status` (`1`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<1>,
 }
 
 impl<'a> SitService<'a> {
@@ -72,7 +73,7 @@ impl<'a> SitService<'a> {
             service_id,
             running_status,
             descriptors,
-            reserved_future_use: 1,
+            reserved_future_use: ReservedOnes::FILL,
         }
     }
 }
@@ -105,7 +106,7 @@ pub struct SitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `transmission_info_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transmission_info_loop_length: u8,
+    pub reserved_transmission_info_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> SitSection<'a> {
@@ -129,7 +130,7 @@ impl<'a> SitSection<'a> {
             transmission_info_descriptors,
             services,
             bits: super::SectionBits::dvb(),
-            reserved_transmission_info_loop_length: super::RESERVED_4,
+            reserved_transmission_info_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -213,7 +214,9 @@ impl<'a> Parse<'a> for SitSection<'a> {
                 service_id,
                 running_status,
                 descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
-                reserved_future_use: bytes[pos + 2] >> RESERVED_SHIFT,
+                reserved_future_use: ReservedOnes::from_bits(u64::from(
+                    bytes[pos + 2] >> RESERVED_SHIFT,
+                )),
             });
             pos = desc_end;
         }
@@ -227,7 +230,9 @@ impl<'a> Parse<'a> for SitSection<'a> {
             transmission_info_descriptors: DescriptorLoop::new(&bytes[ti_start..ti_end]),
             services,
             bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_transmission_info_loop_length: super::len_reserved_of(bytes[dl_pos]),
+            reserved_transmission_info_loop_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[dl_pos]),
+            )),
         })
     }
 }
@@ -271,7 +276,7 @@ impl Serialize for SitSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[dl_pos..dl_pos + 2],
             ti_len as usize,
-            self.reserved_transmission_info_loop_length,
+            self.reserved_transmission_info_loop_length.get() as u8,
         )?;
         let ti_start = dl_pos + DESC_LOOP_LEN_FIELD;
         let ti_end = ti_start + self.transmission_info_descriptors.len();
@@ -288,11 +293,7 @@ impl Serialize for SitSection<'_> {
                 "service_descriptors_length",
             )?;
             // reserved_future_use(1) | running_status(3) | len_hi(4)
-            buf[pos + 2] = (broadcast_common::len::fit_mask(
-                svc.reserved_future_use,
-                1,
-                "reserved_future_use",
-            )? << RESERVED_SHIFT)
+            buf[pos + 2] = ((svc.reserved_future_use.get() as u8) << RESERVED_SHIFT)
                 | (svc.running_status.to_u8() << 4)
                 | ((dll >> 8) as u8);
             buf[pos + 3] = dll as u8;
@@ -565,5 +566,20 @@ mod tests {
             v["services"][0]["descriptors"].is_array(),
             "service descriptors must serialize as a typed sequence, got {v}"
         );
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the neighbouring syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let mut svc = SitService::new(1, RunningStatus::Running, DescriptorLoop::new(&[]));
+        svc.reserved_future_use = ReservedOnes::from_bits(0xFF);
+        assert_eq!(svc.reserved_future_use.get(), 0x01);
+        let section = SitSection::new(0, 0, true, 0, 0, DescriptorLoop::new(&[]), vec![svc]);
+        let section = SitSection {
+            reserved_transmission_info_loop_length: ReservedOnes::from_bits(0xFF),
+            ..section
+        };
+        assert_eq!(section.reserved_transmission_info_loop_length.get(), 0x0F);
     }
 }

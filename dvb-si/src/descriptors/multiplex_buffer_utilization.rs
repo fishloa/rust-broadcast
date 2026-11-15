@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for multiplex_buffer_utilization_descriptor.
@@ -14,8 +15,9 @@ const HEADER_LEN: usize = 2;
 /// Default of the 1-bit `reserved` ahead of `LTW_offset_upper_bound` (H.222.0
 /// Table 2-65): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023,
 /// audit §5; no fixture carries the descriptor).
-pub const RESERVED_DEFAULT: u8 = 0b1;
-const RESERVED_MASK: u8 = 0x01;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved` field ahead of the upper bound (1 bit).
+const RESERVED_BITS: u32 = 1;
 const BODY_LEN: u8 = 4;
 
 /// Multiplex Buffer Utilization Descriptor.
@@ -30,10 +32,11 @@ pub struct MultiplexBufferUtilizationDescriptor {
     pub ltw_offset_lower_bound: u16,
     /// LTW offset upper bound (15 bits).
     pub ltw_offset_upper_bound: u16,
-    /// `reserved(1)` ahead of the upper bound (1 bit, right-aligned). Captured
-    /// on parse, re-emitted verbatim;
-    /// [`MultiplexBufferUtilizationDescriptor::new`] uses [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    /// `reserved(1)` ahead of the upper bound (1 bit). Captured on parse,
+    /// re-emitted verbatim; [`MultiplexBufferUtilizationDescriptor::new`] uses
+    /// [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl MultiplexBufferUtilizationDescriptor {
@@ -76,7 +79,7 @@ impl<'a> Parse<'a> for MultiplexBufferUtilizationDescriptor {
             bound_valid_flag,
             ltw_offset_lower_bound,
             ltw_offset_upper_bound,
-            reserved: body[2] >> 7,
+            reserved: ReservedOnes::from_bits(u64::from(body[2] >> 7)),
         })
     }
 }
@@ -109,8 +112,7 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
             | ((self.ltw_offset_lower_bound >> 8) as u8 & 0x7F);
         buf[HEADER_LEN + 1] = (self.ltw_offset_lower_bound & 0xFF) as u8;
         buf[HEADER_LEN + 2] =
-            (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 7)
-                | ((self.ltw_offset_upper_bound >> 8) as u8 & 0x7F);
+            ((self.reserved.get() as u8) << 7) | ((self.ltw_offset_upper_bound >> 8) as u8 & 0x7F);
         buf[HEADER_LEN + 3] = (self.ltw_offset_upper_bound & 0xFF) as u8;
         Ok(len)
     }
@@ -177,7 +179,7 @@ mod tests {
         for r in 0u8..=1 {
             let bytes = [TAG, 4, 0x12, 0x34, (r << 7) | 0x56, 0x78];
             let d = MultiplexBufferUtilizationDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved, ReservedOnes::from_bits(u64::from(r)));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
@@ -187,6 +189,22 @@ mod tests {
     #[test]
     fn multiplex_buffer_utilization_default_is_spec_value() {
         let d = MultiplexBufferUtilizationDescriptor::new(false, 0x1234, 0x5678);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 4, 0x12, 0x34, 0xD6, 0x78]);
+    }
+
+    /// The field is 1 bit wide, so a wider value is unrepresentable and cannot
+    /// spill into the 15-bit upper bound below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_one_bit() {
+        let d = MultiplexBufferUtilizationDescriptor {
+            bound_valid_flag: false,
+            ltw_offset_lower_bound: 0x1234,
+            ltw_offset_upper_bound: 0x5678,
+            reserved: ReservedOnes::from_bits(0xFF),
+        };
+        assert_eq!(d.reserved.get(), 0x01);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 4, 0x12, 0x34, 0xD6, 0x78]);

@@ -7,6 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for terrestrial\_delivery\_system\_descriptor.
@@ -24,7 +25,10 @@ const RESERVED_FU_MASK: u8 = 0b0000_0011;
 /// `11` (EN 300 468 Table 46, V1.6.1-V1.20.1; audit §4 row 6). V1.3.1-V1.5.1
 /// had `reserved_future_use(5)` there, now `priority`/`Time_Slicing`/`MPE-FEC`
 /// (typed) + these 2 bits.
-pub const RESERVED_FUTURE_USE_2_DEFAULT: u8 = 0b11;
+pub const RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_FU_2_BITS> =
+    ReservedOnes::<RESERVED_FU_2_BITS>::FILL;
+/// Width of the `reserved_future_use` after `MPE-FEC_indicator` (2 bits).
+const RESERVED_FU_2_BITS: u32 = 2;
 const BW_MASK: u8 = 0b1110_0000;
 
 const CONSTELLATION_SHIFT: u8 = 6;
@@ -43,7 +47,10 @@ const OTHER_FREQ_FLAG_MASK: u8 = 0b0000_0001;
 
 /// Spec default of the trailing `reserved_future_use(32)`: all ones
 /// (EN 300 468 Table 46, every edition V1.3.1-V1.20.1).
-pub const RESERVED_FUTURE_USE_32_DEFAULT: u32 = 0xFFFF_FFFF;
+pub const RESERVED_FUTURE_USE_32_DEFAULT: ReservedOnes<RESERVED_FU_32_BITS> =
+    ReservedOnes::<RESERVED_FU_32_BITS>::FILL;
+/// Width of the trailing `reserved_future_use` (32 bits).
+const RESERVED_FU_32_BITS: u32 = 32;
 
 /// Channel bandwidth (§6.2.13.4 Table 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -272,14 +279,16 @@ pub struct TerrestrialDeliverySystemDescriptor {
     pub transmission_mode: TransmissionMode,
     /// Set when alternative frequencies listed in a frequency_list_descriptor.
     pub other_frequency_flag: bool,
-    /// `reserved_future_use(2)` after `MPE-FEC_indicator` (2 bits,
-    /// right-aligned). Captured on parse, re-emitted verbatim; `Default`
-    /// is [`RESERVED_FUTURE_USE_2_DEFAULT`] (`0b11`).
-    pub reserved_future_use_2: u8,
-    /// Trailing `reserved_future_use(32)` (descriptor bytes 10-13). Captured
-    /// on parse, re-emitted verbatim; `Default` is
+    /// `reserved_future_use(2)` after `MPE-FEC_indicator` (2 bits). Captured on
+    /// parse, re-emitted verbatim; `Default` is
+    /// [`RESERVED_FUTURE_USE_2_DEFAULT`] (`0b11`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_2: ReservedOnes<RESERVED_FU_2_BITS>,
+    /// Trailing `reserved_future_use(32)` (descriptor bytes 10-13). Captured on
+    /// parse, re-emitted verbatim; `Default` is
     /// [`RESERVED_FUTURE_USE_32_DEFAULT`] (`0xFFFF_FFFF`).
-    pub reserved_future_use_32: u32,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_32: ReservedOnes<RESERVED_FU_32_BITS>,
 }
 
 impl Default for TerrestrialDeliverySystemDescriptor {
@@ -490,7 +499,7 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
         let priority = (byte4 & PRIORITY_MASK) != 0;
         let time_slicing_used = (byte4 & TIME_SLICING_MASK) == 0;
         let mpe_fec_used = (byte4 & MPE_FEC_MASK) == 0;
-        let reserved_future_use_2 = byte4 & RESERVED_FU_MASK;
+        let reserved_future_use_2 = ReservedOnes::from_bits(u64::from(byte4 & RESERVED_FU_MASK));
 
         let byte5 = body[5];
         let constellation_raw = (byte5 & CONSTELLATION_MASK) >> CONSTELLATION_SHIFT;
@@ -503,7 +512,11 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
         let transmission_mode_raw = (byte6 & TRANSMISSION_MODE_MASK) >> TRANSMISSION_MODE_SHIFT;
         let other_frequency_flag = (byte6 & OTHER_FREQ_FLAG_MASK) != 0;
 
-        let reserved_future_use_32 = crate::wire::be_u32(body, 7, "terrestrial_delivery_system")?;
+        let reserved_future_use_32 = ReservedOnes::from_bits(u64::from(crate::wire::be_u32(
+            body,
+            7,
+            "terrestrial_delivery_system",
+        )?));
 
         Ok(Self {
             centre_frequency_10hz,
@@ -546,11 +559,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
                 0
             }
             | if !self.mpe_fec_used { MPE_FEC_MASK } else { 0 }
-            | broadcast_common::len::fit_mask(
-                self.reserved_future_use_2,
-                RESERVED_FU_MASK,
-                "reserved_future_use_2",
-            )?;
+            | (self.reserved_future_use_2.get() as u8);
         buf[6] = byte6;
 
         let byte7 = (serialize_constellation(self.constellation)? << CONSTELLATION_SHIFT)
@@ -568,7 +577,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
             };
         buf[8] = byte8;
 
-        buf[9..13].copy_from_slice(&self.reserved_future_use_32.to_be_bytes());
+        buf[9..13].copy_from_slice(&(self.reserved_future_use_32.get() as u32).to_be_bytes());
 
         Ok(len)
     }
@@ -884,8 +893,14 @@ mod tests {
                     b[3],
                 ];
                 let d = TerrestrialDeliverySystemDescriptor::parse(&raw).unwrap();
-                assert_eq!(d.reserved_future_use_2, r2);
-                assert_eq!(d.reserved_future_use_32, r32);
+                assert_eq!(
+                    d.reserved_future_use_2,
+                    ReservedOnes::from_bits(u64::from(r2))
+                );
+                assert_eq!(
+                    d.reserved_future_use_32,
+                    ReservedOnes::from_bits(u64::from(r32))
+                );
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
                 assert_eq!(buf, raw, "r2 {r2} r32 {r32:#x}");
@@ -903,5 +918,18 @@ mod tests {
         // stored as 1 (used=false), mpe_fec likewise, rfu=11.
         assert_eq!(buf[6] & 0b11, 0b11);
         assert_eq!(&buf[9..13], &[0xFF; 4]);
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent flag bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let d = TerrestrialDeliverySystemDescriptor {
+            reserved_future_use_2: ReservedOnes::from_bits(0xFF),
+            reserved_future_use_32: ReservedOnes::from_bits(u64::MAX),
+            ..TerrestrialDeliverySystemDescriptor::default()
+        };
+        assert_eq!(d.reserved_future_use_2.get(), 0x03);
+        assert_eq!(d.reserved_future_use_32.get(), 0xFFFF_FFFF);
     }
 }

@@ -31,6 +31,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for an MPE `datagram_section` — the DSM-CC private-data value
@@ -170,11 +171,11 @@ pub struct MpeDatagramSection<'a> {
 
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
 
     /// `reserved(2)` in byte 5 bits `[7:6]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
 }
 
 impl<'a> MpeDatagramSection<'a> {
@@ -199,8 +200,8 @@ impl<'a> MpeDatagramSection<'a> {
             last_section_number,
             payload,
             checksum: Checksum([0; 4]),
-            reserved_b1: super::RESERVED_2,
-            reserved_b5: super::RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
         }
     }
 }
@@ -268,8 +269,8 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
             last_section_number,
             payload,
             checksum,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
         })
     }
 }
@@ -307,7 +308,7 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
@@ -316,21 +317,19 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[4] = self.mac_address.0[4];
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        buf[5] =
-            (broadcast_common::len::fit_mask(self.reserved_b5, super::RESERVED_2, "reserved(2)")?
-                << 6)
-                | (broadcast_common::len::fit_mask(
-                    self.payload_scrambling_control,
-                    0x03,
-                    "payload_scrambling_control",
-                )? << 4)
-                | (broadcast_common::len::fit_mask(
-                    self.address_scrambling_control,
-                    0x03,
-                    "address_scrambling_control",
-                )? << 2)
-                | (u8::from(self.llc_snap_flag) << 1)
-                | u8::from(self.current_next_indicator);
+        buf[5] = ((self.reserved_b5.get() as u8) << 6)
+            | (broadcast_common::len::fit_mask(
+                self.payload_scrambling_control,
+                0x03,
+                "payload_scrambling_control",
+            )? << 4)
+            | (broadcast_common::len::fit_mask(
+                self.address_scrambling_control,
+                0x03,
+                "address_scrambling_control",
+            )? << 2)
+            | (u8::from(self.llc_snap_flag) << 1)
+            | u8::from(self.current_next_indicator);
 
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;

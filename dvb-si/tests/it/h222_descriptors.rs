@@ -132,7 +132,10 @@ fn top_level_descriptors_match_tsduck_values() {
         d.stereoscopic_service_type,
         StereoscopicServiceType::FrameCompatible
     );
-    assert_eq!(d.reserved, 0x1F);
+    assert_eq!(
+        d.reserved,
+        broadcast_common::reserved::ReservedOnes::<5>::FILL
+    );
 
     let d: TransportProfileDescriptor = rt(&get(0x37, None));
     assert_eq!(d.transport_profile, TransportProfile::Adaptive);

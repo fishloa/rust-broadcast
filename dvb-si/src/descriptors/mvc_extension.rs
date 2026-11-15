@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for MVC_extension_descriptor.
@@ -16,7 +17,10 @@ const HEADER_LEN: usize = 2;
 /// 10/2014-08/2023, audit §4 row 9 / §5; the 2014 edition carved the two view
 /// flags out of the older `reserved(4)`, typed here; confirmed by the TSDuck
 /// oracle PMT).
-pub const RESERVED_DEFAULT: u8 = 0b11;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved` field ahead of `view_order_index_min` (2 bits).
+const RESERVED_BITS: u32 = 2;
+/// Mask and shift of `reserved(2)` within byte 4.
 const RESERVED_MASK: u8 = 0x03;
 const BODY_LEN: u8 = 8;
 
@@ -45,10 +49,10 @@ pub struct MvcExtensionDescriptor {
     pub no_sei_nal_unit_present: bool,
     /// No prefix NAL unit present flag.
     pub no_prefix_nal_unit_present: bool,
-    /// `reserved(2)` before `view_order_index_min` (2 bits, right-aligned).
-    /// Captured on parse, re-emitted verbatim; defaults to
-    /// [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    /// `reserved(2)` before `view_order_index_min` (2 bits). Captured on
+    /// parse, re-emitted verbatim; defaults to [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl MvcExtensionDescriptor {
@@ -120,7 +124,7 @@ impl<'a> Parse<'a> for MvcExtensionDescriptor {
             temporal_id_end,
             no_sei_nal_unit_present,
             no_prefix_nal_unit_present,
-            reserved: (b4 >> 4) & RESERVED_MASK,
+            reserved: ReservedOnes::from_bits(u64::from((b4 >> 4) & RESERVED_MASK)),
         })
     }
 }
@@ -155,7 +159,7 @@ impl Serialize for MvcExtensionDescriptor {
         broadcast_common::len::fit_bits(u64::from(self.temporal_id_end), 3, "temporal_id_end")?;
         buf[HEADER_LEN + 4] = ((self.view_association_not_present as u8) << 7)
             | ((self.base_view_is_left_eyeview as u8) << 6)
-            | (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 4)
+            | ((self.reserved.get() as u8) << 4)
             | ((vmin >> 6) as u8 & 0x0F);
         buf[HEADER_LEN + 5] = (((vmin & 0x3F) << 2) as u8) | ((vmax >> 8) as u8 & 0x03);
         buf[HEADER_LEN + 6] = (vmax & 0xFF) as u8;
@@ -279,7 +283,7 @@ mod tests {
                 0x4A,
             ];
             let d = MvcExtensionDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved, ReservedOnes::from_bits(u64::from(r)));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
@@ -300,5 +304,19 @@ mod tests {
             out,
             [TAG, 8, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0xFC, 0xE8, 0x4A]
         );
+    }
+
+    /// The field is 2 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the `view_order_index_min` bits below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_two_bits() {
+        let d = MvcExtensionDescriptor {
+            reserved: ReservedOnes::from_bits(0xFF),
+            ..MvcExtensionDescriptor::new(0x0064, 0x00C8)
+        };
+        assert_eq!(d.reserved.get(), 0x03);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[6] >> 4, 0x03);
     }
 }

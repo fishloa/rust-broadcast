@@ -32,6 +32,7 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -41,8 +42,10 @@ const HEADER_LEN: usize = 2;
 const FIXED_BODY_LEN: usize = 7;
 const REF_LEN: usize = 2;
 const MAX_REFS: usize = 127;
-const RESERVED3_ONES: u8 = 0b111;
-const RESERVED5_ONES: u8 = 0x1F;
+/// Width of a `reserved(3)` field.
+const RESERVED_3_BITS: u32 = 3;
+/// Width of a `reserved(5)` field.
+const RESERVED_5_BITS: u32 = 5;
 
 /// One library-stream reference (the form is selected by `id_type_flag`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,16 +57,16 @@ pub enum TuwaLibraryRef {
         /// PID of the TS packets carrying the library bitstream.
         pid: Pid,
         /// `reserved` (3 bits).
-        reserved: u8,
+        reserved: ReservedOnes<RESERVED_3_BITS>,
     },
     /// `id_type_flag == 0`: `ref_library_stream_id` (8) + `reserved` (5) + `reserved` (3).
     StreamId {
         /// `stream_id` of the PES carrying the library bitstream.
         stream_id: u8,
         /// `reserved` (5 bits).
-        reserved_5: u8,
+        reserved_5: ReservedOnes<RESERVED_5_BITS>,
         /// `reserved` (3 bits).
-        reserved_3: u8,
+        reserved_3: ReservedOnes<RESERVED_3_BITS>,
     },
 }
 
@@ -73,8 +76,8 @@ impl TuwaLibraryRef {
     pub const fn stream_id(stream_id: u8) -> Self {
         Self::StreamId {
             stream_id,
-            reserved_5: RESERVED5_ONES,
-            reserved_3: RESERVED3_ONES,
+            reserved_5: ReservedOnes::<RESERVED_5_BITS>::FILL,
+            reserved_3: ReservedOnes::<RESERVED_3_BITS>::FILL,
         }
     }
 }
@@ -127,7 +130,8 @@ pub struct TuwaAvs3VideoDescriptor {
     /// `library_stream_flag` (1 bit): this ES is a library stream (then no references follow).
     pub library_stream_flag: bool,
     /// `reserved` (3 bits) after `library_stream_flag`.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_3_BITS>,
     /// `colour_primaries` (8 bits).
     pub colour_primaries: u8,
     /// `transfer_characteristics` (8 bits).
@@ -185,13 +189,13 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
                     if id_type {
                         TuwaLibraryRef::Peid {
                             pid: Pid::from_wire_masked(u16::from_be_bytes([c[0], c[1]]) >> 3),
-                            reserved: c[1] & 0x07,
+                            reserved: ReservedOnes::from_bits(u64::from(c[1] & 0x07)),
                         }
                     } else {
                         TuwaLibraryRef::StreamId {
                             stream_id: c[0],
-                            reserved_5: c[1] >> 3,
-                            reserved_3: c[1] & 0x07,
+                            reserved_5: ReservedOnes::from_bits(u64::from(c[1] >> 3)),
+                            reserved_3: ReservedOnes::from_bits(u64::from(c[1] & 0x07)),
                         }
                     }
                 })
@@ -211,7 +215,7 @@ impl<'a> Parse<'a> for TuwaAvs3VideoDescriptor {
             temporal_id_flag: bit(b3, 5),
             td_mode_flag: bit(b3, 4),
             library_stream_flag,
-            reserved: b3 & 0x07,
+            reserved: ReservedOnes::from_bits(u64::from(b3 & 0x07)),
             colour_primaries: body[4],
             transfer_characteristics: body[5],
             matrix_coefficients: body[6],
@@ -251,7 +255,7 @@ impl Serialize for TuwaAvs3VideoDescriptor {
         )? as u8;
         let sp = fit_bits(u64::from(self.sample_precision), 3, "sample_precision")? as u8;
         let cf = fit_bits(u64::from(self.chroma_format), 2, "chroma_format")? as u8;
-        let rsv = fit_bits(u64::from(self.reserved), 3, "reserved")? as u8;
+        let rsv = self.reserved.get() as u8;
         write_descriptor_header(buf, TAG, self.body_len())?;
         buf[2] = self.profile_id;
         buf[3] = self.level_id;
@@ -283,7 +287,7 @@ impl Serialize for TuwaAvs3VideoDescriptor {
             for entry in &r.refs {
                 match (*entry, id_type) {
                     (TuwaLibraryRef::Peid { pid, reserved }, true) => {
-                        let rs = fit_bits(u64::from(reserved), 3, "reserved")? as u16;
+                        let rs = reserved.get() as u16;
                         let v = (pid.value() << 3) | rs;
                         buf[i..i + 2].copy_from_slice(&v.to_be_bytes());
                     }
@@ -295,8 +299,8 @@ impl Serialize for TuwaAvs3VideoDescriptor {
                         },
                         false,
                     ) => {
-                        let r5 = fit_bits(u64::from(reserved_5), 5, "reserved")? as u8;
-                        let r3 = fit_bits(u64::from(reserved_3), 3, "reserved")? as u8;
+                        let r5 = reserved_5.get() as u8;
+                        let r3 = reserved_3.get() as u8;
                         buf[i] = stream_id;
                         buf[i + 1] = (r5 << 3) | r3;
                     }
@@ -349,7 +353,7 @@ mod tests {
             ),
             (9, 14, 9)
         );
-        assert_eq!(d.reserved, 7);
+        assert_eq!(d.reserved, ReservedOnes::FILL);
     }
 
     /// Main stream, `id_type_flag` = 1: two PEID references (0x0101, 0x1FFF).
@@ -366,14 +370,14 @@ mod tests {
             refs.refs[0],
             TuwaLibraryRef::Peid {
                 pid: Pid::from_const(0x0101),
-                reserved: 7
+                reserved: ReservedOnes::from_bits(7)
             }
         );
         assert_eq!(
             refs.refs[1],
             TuwaLibraryRef::Peid {
                 pid: Pid::from_const(0x1FFF),
-                reserved: 7
+                reserved: ReservedOnes::from_bits(7)
             }
         );
     }
@@ -435,19 +439,24 @@ mod tests {
             d.serialize_into(&mut [0u8; 32]),
             Err(Error::ValueOutOfRange { .. })
         ));
-        // over-wide reserved
-        let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
-        d.reserved = 8;
-        assert!(matches!(
-            &(d.serialize_into(&mut [0u8; 32])),
-            Err(crate::error::Error::FieldOverflow(_))
-        ));
+        // the reserved field is now a 3-bit ReservedOnes, so an over-wide value
+        // is unrepresentable; from_bits keeps the low three bits.
+        let d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
+        assert_eq!(
+            TuwaAvs3VideoDescriptor {
+                reserved: ReservedOnes::from_bits(8),
+                ..d
+            }
+            .reserved
+            .get(),
+            0
+        );
         // too many references
         let mut d = TuwaAvs3VideoDescriptor::parse(&bytes).unwrap();
         d.library_refs.as_mut().unwrap().refs = vec![
             TuwaLibraryRef::Peid {
                 pid: Pid::from_const(1),
-                reserved: 7
+                reserved: ReservedOnes::from_bits(7)
             };
             128
         ];
@@ -455,5 +464,32 @@ mod tests {
             &(d.serialize_into(&mut [0u8; 300])),
             Err(crate::error::Error::FieldOverflow(_))
         ));
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let peid = TuwaLibraryRef::Peid {
+            pid: Pid::from_const(1),
+            reserved: ReservedOnes::from_bits(0xFF),
+        };
+        let id = TuwaLibraryRef::StreamId {
+            stream_id: 0,
+            reserved_5: ReservedOnes::from_bits(0xFF),
+            reserved_3: ReservedOnes::from_bits(0xFF),
+        };
+        if let TuwaLibraryRef::Peid { reserved, .. } = peid {
+            assert_eq!(reserved.get(), 0x07);
+        }
+        if let TuwaLibraryRef::StreamId {
+            reserved_5,
+            reserved_3,
+            ..
+        } = id
+        {
+            assert_eq!(reserved_5.get(), 0x1F);
+            assert_eq!(reserved_3.get(), 0x07);
+        }
     }
 }

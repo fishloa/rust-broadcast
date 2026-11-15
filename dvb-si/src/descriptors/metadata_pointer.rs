@@ -10,6 +10,7 @@ use crate::descriptors::metadata_format::MetadataFormat;
 use crate::descriptors::mpeg_carriage_flags::MpegCarriageFlags;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for metadata_pointer_descriptor.
@@ -19,8 +20,9 @@ const HEADER_LEN: usize = 2;
 /// 2-86): clause 2.1 "reserved" = `1` (all editions 2006-08/2023, audit §5; the
 /// MPEG_carriage_flags semantics widen in 2017 but the layout is unchanged; no
 /// fixture carries the descriptor).
-pub const RESERVED_DEFAULT: u8 = 0b1_1111;
-const RESERVED_MASK: u8 = 0x1F;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved` field in the flags byte (5 bits).
+const RESERVED_BITS: u32 = 5;
 
 /// Metadata Pointer Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,10 +56,11 @@ pub struct MetadataPointerDescriptor<'a> {
     /// Trailing private data bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
-    /// `reserved(5)` tail of the flags byte (5 bits, right-aligned). Captured
-    /// on parse, re-emitted verbatim; [`MetadataPointerDescriptor::new`] /
-    /// [`Default`] use [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    /// `reserved(5)` tail of the flags byte (5 bits). Captured on parse,
+    /// re-emitted verbatim; [`MetadataPointerDescriptor::new`] / [`Default`]
+    /// use [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl<'a> MetadataPointerDescriptor<'a> {
@@ -159,7 +162,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         let flags = body[pos];
         let metadata_locator_record_flag = (flags & 0x80) != 0;
         let mpeg_carriage_flags = MpegCarriageFlags::from_u8((flags >> 5) & 0x03);
-        let reserved = flags & RESERVED_MASK;
+        let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
 
         let (metadata_locator_record, mut pos) = if metadata_locator_record_flag {
@@ -292,7 +295,7 @@ impl Serialize for MetadataPointerDescriptor<'_> {
             0x03,
             "mpeg_carriage_flags",
         )? << 5)
-            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+            | self.reserved.get() as u8;
         if self.metadata_locator_record.is_some() {
             flags |= 0x80;
         }
@@ -507,7 +510,7 @@ mod tests {
         for r in 0u8..=31 {
             let bytes = [TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x60 | r, 0xEE];
             let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved, ReservedOnes::from_bits(u64::from(r)));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
@@ -521,5 +524,17 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x7F, 0xEE]);
+    }
+
+    /// The field is 5 bits wide, so a wider value is unrepresentable and can
+    /// never spill into `MPEG_carriage_flags` above it.
+    #[test]
+    fn reserved_cannot_hold_more_than_five_bits() {
+        let mut d = MetadataPointerDescriptor::new(0x0001, MetadataFormat::Reserved1(0x3F), 2);
+        d.reserved = ReservedOnes::from_bits(0xFF);
+        assert_eq!(d.reserved.get(), 0x1F);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[6], 0x7F);
     }
 }
