@@ -13,11 +13,14 @@
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
+use broadcast_common::reserved::ReservedOnes;
 
 /// Descriptor tag of `MPEG-4_audio_extension_descriptor` (Table 2-45: 46).
 pub const TAG: u8 = 0x2E;
+/// Width of the `reserved` field after `ASC_flag` (3 bits).
+const RESERVED_BITS: u32 = 3;
 /// Default of the 3-bit `reserved` (H.222.0 clause 2.1: all ones).
-pub const RESERVED_DEFAULT: u8 = 0x07;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// `MPEG-4_audio_extension_descriptor()` — Table 2-97.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +29,8 @@ pub const RESERVED_DEFAULT: u8 = 0x07;
 #[non_exhaustive]
 pub struct Mpeg4AudioExtensionDescriptor {
     /// `reserved(3)` after `ASC_flag`; re-emitted verbatim, default 7.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// `audioProfileLevelIndication` values (`num_of_loops` is 4 bits: at most
     /// 15); coded per ISO/IEC 14496-3 §1.5.2.1 (external code, not vendored).
     pub audio_profile_level_indications: Vec<u8>,
@@ -55,7 +59,7 @@ impl Mpeg4AudioExtensionDescriptor {
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "Mpeg4AudioExtensionDescriptor");
         let asc_flag = r.flag()?;
-        let reserved = r.u8(3)?;
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(3)?));
         let n = r.bits(4)?;
         let mut indications = Vec::new();
         for _ in 0..n {
@@ -78,7 +82,7 @@ impl Mpeg4AudioExtensionDescriptor {
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
         w.flag(self.audio_specific_config.is_some(), "ASC_flag")?;
-        w.put(u64::from(self.reserved), 3, "reserved")?;
+        w.put(self.reserved.get(), 3, "reserved")?;
         w.put(
             self.audio_profile_level_indications.len() as u64,
             4,
@@ -123,7 +127,7 @@ mod tests {
         assert_eq!(d.audio_specific_config.as_deref(), Some(&[0x12, 0x10][..]));
         // ASC_flag=0, zero loops, non-default reserved + trailing byte
         let d = rt(&[TAG, 2, 0b0000_0000, 0x55]);
-        assert_eq!(d.reserved, 0);
+        assert_eq!(d.reserved, ReservedOnes::from_bits(0));
         assert_eq!(d.trailing, [0x55]);
     }
 
@@ -143,5 +147,21 @@ mod tests {
             &(d.serialize_into(&mut [0u8; 300])),
             Err(crate::error::Error::FieldOverflow(_))
         ));
+    }
+
+    /// The field is 3 bits wide, so a wider value is unrepresentable and
+    /// cannot spill into the `num_of_loops` nibble below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_three_bits() {
+        let d = Mpeg4AudioExtensionDescriptor {
+            reserved: ReservedOnes::from_bits(0xFF),
+            audio_profile_level_indications: vec![],
+            audio_specific_config: None,
+            trailing: vec![],
+        };
+        assert_eq!(d.reserved.get(), 0x07);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 1, 0b0111_0000]);
     }
 }
