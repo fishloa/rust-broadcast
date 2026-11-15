@@ -526,10 +526,10 @@ pub struct RctSection<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
     /// `reserved_future_use(4)` before `descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
     pub reserved_descriptor_loop_length: ReservedOnes<4>,
@@ -557,8 +557,8 @@ impl<'a> RctSection<'a> {
             year_offset,
             links,
             descriptors,
-            reserved_b1: super::RESERVED_2,
-            reserved_b5: super::RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
             reserved_descriptor_loop_length: ReservedOnes::FILL,
         }
     }
@@ -1130,8 +1130,8 @@ impl<'a> Parse<'a> for RctSection<'a> {
             year_offset,
             links,
             descriptors,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
             reserved_descriptor_loop_length: ReservedOnes::from_bits(u64::from(
                 super::len_reserved_of(bytes[pos]),
             )),
@@ -1164,13 +1164,13 @@ impl Serialize for RctSection<'_> {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.table_id_extension_flag,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )?;
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
         buf[5] = super::b5_of(
-            self.reserved_b5,
+            self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
