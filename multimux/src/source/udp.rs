@@ -32,7 +32,7 @@ use std::num::NonZeroU32;
 use broadcast_common::net::{MulticastJoin, UdpOptions};
 use tokio::net::UdpSocket;
 
-use crate::error::{MultimuxError, Result};
+use crate::error::{ConfigField, MultimuxError, Result};
 
 /// The session URL (`scheme://group-or-bind:port`) of a UDP-family route: the multicast group the
 /// route's options join when they name one, else the bind address.
@@ -128,7 +128,7 @@ pub fn bind_options(
     }
     bind.validate()
         .map_err(|mismatch| MultimuxError::ConfigInvalid {
-            field: "routes.input.multicast_interface",
+            field: ConfigField::RoutesInputMulticastInterface,
             reason: mismatch.reason().to_string(),
         })?;
     Ok(bind)
@@ -300,7 +300,7 @@ mod tests {
         assert!(matches!(
             bind_options("0.0.0.0:5004", Some("239.255.42.1"), &indexed),
             Err(crate::error::MultimuxError::ConfigInvalid {
-                field: "routes.input.multicast_interface",
+                field: ConfigField::RoutesInputMulticastInterface,
                 ..
             })
         ));

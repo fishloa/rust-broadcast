@@ -198,7 +198,7 @@ impl<D: CaDevice> Driver<D> {
             Notification::Error { detail } => Some(detail.clone()),
             _ => None,
         });
-        refusal.map_or(Ok(()), |detail| Err(CaError::NotSent(detail)))
+        refusal.map_or(Ok(()), |detail| Err(CaError::NotSent { detail }))
     }
 
     /// Descramble the services in a PMT section: the stack filters the PMT's
@@ -3722,7 +3722,7 @@ pub(crate) mod tests {
             _ => false,
         });
         assert!(!wrote_ca_pmt, "precondition: nothing can have been sent");
-        assert!(matches!(result, Err(CaError::NotSent(_))), "{result:?}");
+        assert!(matches!(result, Err(CaError::NotSent { .. })), "{result:?}");
         assert!(d.managed_ca().services().is_empty());
     }
 

@@ -576,7 +576,7 @@ impl RouteRegistry {
                     "building the router for a new route panicked; the route was not added"
                 );
                 return Err(crate::MultimuxError::ConfigInvalid {
-                    field: "routes",
+                    field: crate::error::ConfigField::Routes,
                     reason: format!(
                         "route {:?} could not be mounted (its outputs produce a conflicting  \
                         router path)",
@@ -689,7 +689,7 @@ impl RouteRegistry {
     pub(crate) async fn reload(&self) -> crate::Result<ReloadSummary> {
         let Some(path) = self.config_path.clone() else {
             return Err(crate::MultimuxError::ConfigInvalid {
-                field: "admin.reload",
+                field: crate::error::ConfigField::AdminReload,
                 reason: "no config file path known for this process (config was not loaded via \
                          a `serve_config_file*` entry point)"
                     .into(),
@@ -816,7 +816,7 @@ impl RouteRegistry {
                 drop(prepared);
                 self.restore_retired(&retired_routes, &retired_stores).await;
                 return Err(crate::MultimuxError::ConfigInvalid {
-                    field: "routes",
+                    field: crate::error::ConfigField::Routes,
                     reason: "the reloaded routes could not be mounted (a conflicting router path)"
                         .into(),
                 });

@@ -77,6 +77,19 @@ pub enum Error {
     #[error("invalid input: {0}")]
     InvalidInput(&'static str),
 
+    /// A sample's `dts` and `pts` differ by more than `i64`, so the
+    /// composition offset cannot be represented.
+    #[error("sample timestamps span more than i64")]
+    TimestampSpanOverflow,
+
+    /// A sample's composition offset (PTS - DTS) does not fit the signed
+    /// 32-bit wire field `trun` declares.
+    #[error("sample composition offset {offset} does not fit the 32-bit field")]
+    CompositionOffsetRange {
+        /// The over-range offset.
+        offset: i64,
+    },
+
     /// The zero-width `trun`s (no per-sample fields, so the buffer length cannot
     /// bound their `sample_count`) of one `moof` — or of the run of `moof`s a
     /// demuxer holds before their `mdat` — declare more samples in total than

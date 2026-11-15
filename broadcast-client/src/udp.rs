@@ -52,12 +52,13 @@ impl Default for UdpConfig {
 
 impl UdpConfig {
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
-        let invalid = |field| Err(crate::Error::InvalidConfig { field });
+        use crate::error::ConfigField;
+        let invalid = |field| Err(crate::Error::InvalidConfig(field));
         if self.reorder_packets == 0 || self.reorder_packets > MAX_REORDER_PACKETS {
-            return invalid("udp.reorder_packets");
+            return invalid(ConfigField::UdpReorderPackets);
         }
         if self.reorder_wait.is_zero() {
-            return invalid("udp.reorder_wait");
+            return invalid(ConfigField::UdpReorderWait);
         }
         Ok(())
     }

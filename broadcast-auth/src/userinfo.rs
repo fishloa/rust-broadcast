@@ -46,7 +46,7 @@ fn decode(s: &str) -> Result<String> {
     percent_encoding::percent_decode_str(s)
         .decode_utf8()
         .map(|c| c.into_owned())
-        .map_err(|e| Error::InvalidUserinfo(e.to_string()))
+        .map_err(|_| Error::InvalidUserinfo)
 }
 
 #[cfg(test)]
@@ -93,7 +93,7 @@ mod tests {
     fn invalid_utf8_is_rejected_without_echoing_the_secret() {
         let url = Url::parse("http://user:%FFsecret@host/s").unwrap();
         let err = credentials_from_url(&url).unwrap_err();
-        assert!(matches!(err, Error::InvalidUserinfo(_)));
+        assert!(matches!(err, Error::InvalidUserinfo));
         assert!(!err.to_string().contains("secret"));
     }
 

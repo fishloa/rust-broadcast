@@ -274,7 +274,7 @@ impl DashSource {
                 .with_limits(pull.clone()),
         );
         let backoff = Backoff::new(&config.backoff, seed)
-            .map_err(|_| crate::Error::InvalidConfig { field: "backoff" })?;
+            .map_err(|_| crate::Error::InvalidConfig(crate::error::ConfigField::Backoff))?;
         let mut source = Self {
             client,
             mpd_url: url.clone(),

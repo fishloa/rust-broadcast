@@ -492,7 +492,7 @@ mod tests {
                 &err,
                 MultimuxError::Protocol { phase, kind }
                     if *phase == Phase::Describe
-                        && matches!(kind, ProtocolFailure::Other(_))
+                        && matches!(kind, ProtocolFailure::Other { .. })
             ),
             "got {err:?}"
         );

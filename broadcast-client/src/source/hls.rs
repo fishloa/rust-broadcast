@@ -144,7 +144,7 @@ impl HlsSource {
             HlsClientConfig::new(url.clone()).with_variant_policy(config.variant_policy.clone()),
         );
         let backoff = Backoff::new(&config.backoff, seed)
-            .map_err(|_| Error::InvalidConfig { field: "backoff" })?;
+            .map_err(|_| Error::InvalidConfig(crate::error::ConfigField::Backoff))?;
         let mut source = Self {
             client,
             body_limits: BodyLimits {

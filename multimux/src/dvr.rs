@@ -183,6 +183,8 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
+
+use crate::error::ConfigField;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -218,8 +220,8 @@ pub enum DvrError {
     /// A config value failed semantic validation.
     #[error("invalid config field {field:?}: {reason}")]
     Config {
-        /// The offending field's name.
-        field: &'static str,
+        /// The offending field.
+        field: crate::error::ConfigField,
         /// Why it's invalid.
         reason: String,
     },
@@ -370,13 +372,13 @@ impl DvrConfig {
         }
         if self.archive_root.is_empty() {
             return Err(DvrError::Config {
-                field: "archive_root",
+                field: ConfigField::ArchiveRoot,
                 reason: "archive_root must be set when DVR is enabled".to_string(),
             });
         }
         if self.retention_periods == 0 && self.retention_bytes == 0 {
             return Err(DvrError::Config {
-                field: "retention",
+                field: ConfigField::Retention,
                 reason: "at least one of retention_periods or retention_bytes must be > 0 \
                  when DVR is enabled (unbounded growth would fill the disk)"
                     .to_string(),
@@ -396,7 +398,7 @@ impl DvrConfig {
             && self.retention_bytes == 0
         {
             return Err(DvrError::Config {
-                field: "period_duration_secs",
+                field: ConfigField::PeriodDurationSecs,
                 reason: "period_duration_secs must be > 0 unless dvb_service_id is set or  \
                 retention_bytes > 0 — with no time-based cap, no EIT boundary to roll on,  \
                 and only count-based retention, the single period file would grow without  \
@@ -729,19 +731,19 @@ pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> S
 pub(crate) fn validate_route_dir_name(name: &str) -> Result<(), DvrError> {
     if name.is_empty() {
         return Err(DvrError::Config {
-            field: "route_name",
+            field: ConfigField::RouteName,
             reason: "route name must not be empty".to_string(),
         });
     }
     if name == "." || name == ".." {
         return Err(DvrError::Config {
-            field: "route_name",
+            field: ConfigField::RouteName,
             reason: format!("route name {name:?} is a path-traversal component"),
         });
     }
     if name.len() > crate::config::MAX_ROUTE_NAME_LEN {
         return Err(DvrError::Config {
-            field: "route_name",
+            field: ConfigField::RouteName,
             reason: format!(
                 "route name is {} bytes, over the {} limit",
                 name.len(),
@@ -757,13 +759,13 @@ pub(crate) fn validate_route_dir_name(name: &str) -> Result<(), DvrError> {
         .any(|c| FORBIDDEN.contains(&c) || c == std::path::MAIN_SEPARATOR)
     {
         return Err(DvrError::Config {
-            field: "route_name",
+            field: ConfigField::RouteName,
             reason: format!("route name {name:?} contains a path separator or NUL byte"),
         });
     }
     if name.contains("..") {
         return Err(DvrError::Config {
-            field: "route_name",
+            field: ConfigField::RouteName,
             reason: format!("route name {name:?} contains a `..` component"),
         });
     }
@@ -894,7 +896,7 @@ impl DvrRecorder {
             return Ok(());
         };
         self.period = highest.checked_add(1).ok_or_else(|| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: "archive period numbers are exhausted".to_string(),
         })?;
         self.periods = found
@@ -1041,7 +1043,7 @@ impl DvrRecorder {
             return Ok(());
         };
         let json = serde_json::to_vec(programme).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("serializing programme metadata: {e}"),
         })?;
         let tmp = self.archive_dir.join(".event.tmp");
@@ -1049,11 +1051,11 @@ impl DvrRecorder {
             .archive_dir
             .join(format!("p{}.event.json", self.period));
         fs::write(&tmp, &json).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("writing programme metadata: {e}"),
         })?;
         fs::rename(&tmp, &dst).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("renaming programme metadata: {e}"),
         })?;
         Ok(())
@@ -1191,7 +1193,7 @@ impl DvrRecorder {
         let next_period = if rolls { self.period + 1 } else { self.period };
         let path = self.period_path_for(next_period);
         fs::create_dir_all(&self.archive_dir).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("creating archive dir: {e}"),
         })?;
 
@@ -1200,7 +1202,7 @@ impl DvrRecorder {
             .append(true)
             .open(&path)
             .map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("opening period file {}: {e}", path.display()),
             })?;
 
@@ -1289,7 +1291,7 @@ impl DvrRecorder {
             .checked_add(u64::from(entry.sequence_number.value()))
             .and_then(|public| u32::try_from(public).ok())
             .ok_or_else(|| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!(
                     "segment {} + offset {} overflows the archive's u32 sequence range",
                     entry.sequence_number.value(),
@@ -1362,7 +1364,7 @@ impl DvrRecorder {
             }
             self.write_offset = byte_offset;
             return Err(DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!(
                     "writing segment {} to period file: {e}",
                     entry.sequence_number,
@@ -1435,7 +1437,7 @@ impl DvrRecorder {
             && let Some(file) = self.index_file.as_mut()
         {
             let json = serde_json::to_vec(entry).map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("serializing index entry: {e}"),
             })?;
             let mut tail = Vec::with_capacity(json.len() + 2);
@@ -1469,13 +1471,13 @@ impl DvrRecorder {
             .write(true)
             .open(self.index_path())
             .map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("reopening index for append: {e}"),
             })?;
         self.index_len = file
             .metadata()
             .map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("reading index length: {e}"),
             })?
             .len();
@@ -1494,7 +1496,7 @@ impl DvrRecorder {
     /// makes the entry genuinely durable.
     fn flush_index(&self) -> Result<(), DvrError> {
         let json = serde_json::to_vec(&self.index).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("serializing index: {e}"),
         })?;
         let dir = self.period_dir_path();
@@ -1502,26 +1504,26 @@ impl DvrRecorder {
         let dst = self.index_path();
         {
             let mut f = File::create(&tmp).map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("creating index temp: {e}"),
             })?;
             f.write_all(&json).map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("writing index: {e}"),
             })?;
             f.sync_all().map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("syncing index: {e}"),
             })?;
         }
         fs::rename(&tmp, &dst).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("renaming index: {e}"),
         })?;
         // A rename is only durable once the containing directory is synced.
         if let Ok(dir_handle) = File::open(&dir) {
             dir_handle.sync_all().map_err(|e| DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!("syncing index directory: {e}"),
             })?;
         }
@@ -1546,7 +1548,7 @@ impl DvrRecorder {
     /// matters.
     pub fn rebuild_index(&self) -> Result<Vec<IndexEntry>, DvrError> {
         let data = fs::read(self.period_path()).map_err(|e| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("reading period file for index rebuild: {e}"),
         })?;
         // A truncated period file (a power loss or full disk mid-write —
@@ -1554,12 +1556,12 @@ impl DvrRecorder {
         // the init prelude. Report that rather than panicking on the slice
         // (issue #1083, W10).
         let init_len = usize::try_from(self.init_len).map_err(|_| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: format!("init_len {} exceeds usize", self.init_len),
         })?;
         if data.len() < init_len {
             return Err(DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: format!(
                     "period file is {} bytes, shorter than the {init_len}-byte init prelude —  \
                 cannot rebuild the index",
@@ -1571,7 +1573,7 @@ impl DvrRecorder {
 
         if self.ext == ".ts" {
             return Err(DvrError::Config {
-                field: "dvr",
+                field: ConfigField::Dvr,
                 reason: "TS index rebuild not yet implemented".to_string(),
             });
         }
@@ -1580,7 +1582,7 @@ impl DvrRecorder {
         let mut entries = Vec::new();
         let mut offset: usize = 0;
         let init_len = usize::try_from(self.init_len).map_err(|_| DvrError::Config {
-            field: "dvr",
+            field: ConfigField::Dvr,
             reason: "init prelude length does not fit usize".to_string(),
         })?;
         while offset < data.len() {

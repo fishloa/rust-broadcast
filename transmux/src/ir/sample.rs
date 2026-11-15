@@ -492,12 +492,12 @@ impl Sample {
         let (Some(dts), Some(pts)) = (timing.dts(), timing.pts()) else {
             return Ok(None);
         };
-        let offset = pts.checked_sub(dts).ok_or(crate::Error::InvalidInput(
-            "sample timestamps span more than i64",
-        ))?;
-        i32::try_from(offset).map(Some).map_err(|_| {
-            crate::Error::InvalidInput("sample composition offset does not fit the 32-bit field")
-        })
+        let offset = pts
+            .checked_sub(dts)
+            .ok_or(crate::Error::TimestampSpanOverflow)?;
+        i32::try_from(offset)
+            .map(Some)
+            .map_err(|_| crate::Error::CompositionOffsetRange { offset })
     }
 }
 

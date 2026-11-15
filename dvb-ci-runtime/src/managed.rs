@@ -62,8 +62,11 @@ pub enum CaError {
     /// The stack could not hand the `ca_pmt` to the CAM (no open
     /// conditional-access session, connection not active, or a full outbound
     /// queue); the managed service set is left unchanged.
-    #[error("ca_pmt was not sent: {0}")]
-    NotSent(String),
+    #[error("ca_pmt was not sent: {detail}")]
+    NotSent {
+        /// The stack's diagnostic, forwarded verbatim from its `Notification::Error`.
+        detail: String,
+    },
     /// The `ca_pmt` projected from the caller's PMT has no valid wire
     /// encoding (a `program_info_length`/`ES_info_length` or `version_number`
     /// out of its spec range — e.g. a source PMT whose descriptor loop is
