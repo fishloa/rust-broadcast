@@ -202,7 +202,7 @@ fn rejection(to_socket_id: u32, reason: RejectionReason) -> Vec<u8> {
         srt_socket_id: LISTENER_ID,
         syn_cookie: 0,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     });
     let mut buf = vec![0u8; pkt.serialized_len()];
     pkt.serialize_into(&mut buf).unwrap();

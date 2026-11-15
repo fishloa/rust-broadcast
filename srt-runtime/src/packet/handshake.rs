@@ -36,6 +36,14 @@ use super::{Error, Result, be16, be32, put_be16, put_be32};
 /// Address, §3.2.1 Figure 5) — 12 header words.
 pub const HANDSHAKE_CIF_FIXED_LEN: usize = 48;
 
+/// `Extension Type (16) | Extension Length (16)` — the header of one
+/// Handshake Extension block (§3.2.1 Figure 5).
+pub const HANDSHAKE_EXT_BLOCK_HEADER_LEN: usize = 4;
+
+/// Bytes of `Extension Contents` per `Extension Length` unit (§3.2.1: the
+/// length is "in a number of 32-bit words").
+pub const HANDSHAKE_EXT_WORD_LEN: usize = 4;
+
 /// `Encryption Field` wire values (§3.2.1, Table 2). Crate-private: they back
 /// [`EncryptionField`]'s conversions, which the enum exposes.
 pub(crate) const ENCRYPTION_FIELD_NONE: u16 = 0;
@@ -595,7 +603,11 @@ impl broadcast_common::Serialize for GroupMembershipExtension {
 }
 
 /// One decoded Handshake Extension block (§3.2.1): `Extension Type` /
-/// `Extension Length` / `Extension Contents`. Data-carrying (borrows the raw
+/// `Extension Length` / `Extension Contents`. Serialization writes any length,
+/// so [`build_extension_block`] is the checked path for a block assembled from
+/// scratch. Serialization writes any length,
+/// so [`build_extension_block`] is the checked path for a block assembled from
+/// scratch. Data-carrying (borrows the raw
 /// contents) — decode the contents with [`Self::as_hs_ext_message`],
 /// [`Self::as_key_material`], [`Self::as_stream_id`], or
 /// [`Self::as_group_membership`] as appropriate for [`Self::ext_type`].
@@ -690,58 +702,55 @@ pub fn build_extension_block(ext_type: ExtensionType, contents: &[u8]) -> Result
     Ok(out)
 }
 
-/// A borrowed, lazily-walked list of Handshake Extension blocks — the same
-/// convention `dvb-si` uses for descriptor loops. Iterate with [`Self::iter`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// The decoded Handshake Extension blocks (§3.2.1). Each block's contents
+/// borrow the packet's cipher-independent extension section, so a parsed
+/// handshake costs one decode at the edge and a hand-built one is checked when
+/// it is built (see [`build_extension_block`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct HandshakeExtensions<'a>(pub &'a [u8]);
+pub struct HandshakeExtensions<'a>(pub Vec<HandshakeExtensionBlock<'a>>);
 
 impl<'a> HandshakeExtensions<'a> {
-    /// Walk the extension blocks.
-    pub fn iter(&self) -> HandshakeExtensionIter<'a> {
-        HandshakeExtensionIter { rest: self.0 }
+    /// The blocks.
+    pub fn iter(&self) -> core::slice::Iter<'_, HandshakeExtensionBlock<'a>> {
+        self.0.iter()
     }
-}
 
-/// Iterator over [`HandshakeExtensions`]. See [`HandshakeExtensions::iter`].
-#[derive(Debug, Clone)]
-pub struct HandshakeExtensionIter<'a> {
-    rest: &'a [u8],
-}
-
-impl<'a> Iterator for HandshakeExtensionIter<'a> {
-    type Item = Result<HandshakeExtensionBlock<'a>>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.rest.is_empty() {
-            return None;
+    /// Decode the extension section of a Handshake CIF, one block per
+    /// `Extension Type (16) | Extension Length (16) | Extension Contents`.
+    ///
+    /// # Errors
+    /// [`Error::BufferTooShort`] for a trailing partial block header, and
+    /// [`Error::ExtensionOverrun`] for a block whose declared length runs past
+    /// the bytes present.
+    pub fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut rest = bytes;
+        let mut blocks = Vec::with_capacity(rest.len() / HANDSHAKE_EXT_BLOCK_HEADER_LEN);
+        while !rest.is_empty() {
+            if rest.len() < HANDSHAKE_EXT_BLOCK_HEADER_LEN {
+                return Err(Error::BufferTooShort(BufferTooShort {
+                    need: HANDSHAKE_EXT_BLOCK_HEADER_LEN,
+                    have: rest.len(),
+                    what: "handshake extension block header",
+                }));
+            }
+            let ext_type_bits = be16(rest, 0);
+            let ext_len_words = be16(rest, 2);
+            let ext_len_bytes = usize::from(ext_len_words) * HANDSHAKE_EXT_WORD_LEN;
+            if rest.len() < HANDSHAKE_EXT_BLOCK_HEADER_LEN + ext_len_bytes {
+                return Err(Error::ExtensionOverrun {
+                    declared: ext_len_words,
+                    remaining: rest.len() - HANDSHAKE_EXT_BLOCK_HEADER_LEN,
+                });
+            }
+            blocks.push(HandshakeExtensionBlock {
+                ext_type: ExtensionType::from_bits(ext_type_bits),
+                contents: &rest[HANDSHAKE_EXT_BLOCK_HEADER_LEN
+                    ..HANDSHAKE_EXT_BLOCK_HEADER_LEN + ext_len_bytes],
+            });
+            rest = &rest[HANDSHAKE_EXT_BLOCK_HEADER_LEN + ext_len_bytes..];
         }
-        if self.rest.len() < 4 {
-            let have = self.rest.len();
-            self.rest = &[];
-            return Some(Err(Error::BufferTooShort(BufferTooShort {
-                need: 4,
-                have,
-                what: "handshake extension block header",
-            })));
-        }
-        let ext_type_bits = be16(self.rest, 0);
-        let ext_len_words = be16(self.rest, 2);
-        let ext_len_bytes = usize::from(ext_len_words) * 4;
-        if self.rest.len() < 4 + ext_len_bytes {
-            let remaining = self.rest.len() - 4;
-            self.rest = &[];
-            return Some(Err(Error::ExtensionOverrun {
-                declared: ext_len_words,
-                remaining,
-            }));
-        }
-        let contents = &self.rest[4..4 + ext_len_bytes];
-        self.rest = &self.rest[4 + ext_len_bytes..];
-        Some(Ok(HandshakeExtensionBlock {
-            ext_type: ExtensionType::from_bits(ext_type_bits),
-            contents,
-        }))
+        Ok(HandshakeExtensions(blocks))
     }
 }
 
@@ -793,7 +802,7 @@ impl<'a> HandshakePacket<'a> {
         let srt_socket_id = be32(cif, 24);
         let syn_cookie = be32(cif, 28);
         let peer_ip = [be32(cif, 32), be32(cif, 36), be32(cif, 40), be32(cif, 44)];
-        let extensions = HandshakeExtensions(&cif[HANDSHAKE_CIF_FIXED_LEN..]);
+        let extensions = HandshakeExtensions::parse(&cif[HANDSHAKE_CIF_FIXED_LEN..])?;
         Ok(HandshakePacket {
             timestamp,
             dest_socket_id,
@@ -812,7 +821,13 @@ impl<'a> HandshakePacket<'a> {
     }
 
     pub(crate) fn cif_len(&self) -> usize {
-        HANDSHAKE_CIF_FIXED_LEN + self.extensions.0.len()
+        HANDSHAKE_CIF_FIXED_LEN
+            + self
+                .extensions
+                .0
+                .iter()
+                .map(|b| HANDSHAKE_EXT_BLOCK_HEADER_LEN + b.contents.len())
+                .sum::<usize>()
     }
 
     pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
@@ -830,13 +845,25 @@ impl<'a> HandshakePacket<'a> {
         put_be32(buf, 36, self.peer_ip[1]);
         put_be32(buf, 40, self.peer_ip[2]);
         put_be32(buf, 44, self.peer_ip[3]);
-        buf[HANDSHAKE_CIF_FIXED_LEN..].copy_from_slice(self.extensions.0);
+        let mut off = HANDSHAKE_CIF_FIXED_LEN;
+        for block in &self.extensions.0 {
+            let words = broadcast_common::len::fit_u16(
+                block.contents.len() / HANDSHAKE_EXT_WORD_LEN,
+                "Extension Length",
+            )?;
+            put_be16(buf, off, block.ext_type.to_bits());
+            put_be16(buf, off + 2, words);
+            off += HANDSHAKE_EXT_BLOCK_HEADER_LEN;
+            buf[off..off + block.contents.len()].copy_from_slice(block.contents);
+            off += block.contents.len();
+        }
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::SRT_HEADER_LEN;
     use super::super::control::ControlPacket;
     use super::*;
 
@@ -854,7 +881,7 @@ mod tests {
             srt_socket_id: 0xABCD_EF01,
             syn_cookie: 0x1234_5678,
             peer_ip: [0x0A00_0001, 0, 0, 0],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         }
     }
 
@@ -892,19 +919,26 @@ mod tests {
         ext_bytes.extend_from_slice(&hsreq_block);
         ext_bytes.extend_from_slice(&sid_block);
 
+        // The typed blocks must encode to exactly the bytes
+        // `build_extension_block` produced above.
+        let wire_blocks = HandshakeExtensions::parse(&ext_bytes).unwrap();
         let mut hp = sample_no_ext();
         hp.handshake_type = HandshakeType::Conclusion;
         hp.extension_field = HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ);
-        hp.extensions = HandshakeExtensions(&ext_bytes);
+        hp.extensions = wire_blocks;
 
         let pkt = ControlPacket::Handshake(hp.clone());
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut buf).unwrap();
+        assert_eq!(
+            &buf[SRT_HEADER_LEN + HANDSHAKE_CIF_FIXED_LEN..],
+            &ext_bytes[..]
+        );
         let parsed = ControlPacket::parse(&buf).unwrap();
         assert_eq!(parsed, pkt);
 
         if let ControlPacket::Handshake(h) = parsed {
-            let blocks: Vec<_> = h.extensions.iter().map(|b| b.unwrap()).collect();
+            let blocks: Vec<_> = h.extensions.iter().collect();
             assert_eq!(blocks.len(), 2);
             assert_eq!(blocks[0].ext_type, ExtensionType::HsReq);
             assert_eq!(blocks[0].as_hs_ext_message().unwrap(), hs_msg);
@@ -945,28 +979,40 @@ mod tests {
     fn extension_overrun_does_not_panic() {
         // Declares 0xFFFF words (huge) but supplies none.
         let bytes = [0x00, 0x05, 0xFF, 0xFF];
-        let exts = HandshakeExtensions(&bytes);
-        let mut it = exts.iter();
         assert!(matches!(
-            it.next(),
-            Some(Err(Error::ExtensionOverrun { .. }))
+            HandshakeExtensions::parse(&bytes),
+            Err(Error::ExtensionOverrun { .. })
         ));
-        assert!(it.next().is_none());
+    }
+
+    /// The lossy-bytes shape is gone: a handshake whose extension section
+    /// declares a length it does not carry is rejected by the control-packet
+    /// parser, not handed out as a packet whose later walk fails.
+    #[test]
+    fn the_dispatcher_rejects_a_malformed_extension_section() {
+        let mut hp = sample_no_ext();
+        let mut buf = alloc::vec![0u8; SRT_HEADER_LEN + HANDSHAKE_CIF_FIXED_LEN];
+        ControlPacket::Handshake(hp.clone())
+            .serialize_into(&mut buf)
+            .unwrap();
+        hp.extension_field = HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ);
+        buf.extend_from_slice(&[0x00, 0x01, 0xFF, 0xFF]);
+        assert!(matches!(
+            ControlPacket::parse(&buf),
+            Err(Error::ExtensionOverrun { .. })
+        ));
     }
 
     #[test]
     fn truncated_extension_header_reports_available_bytes() {
         let bytes = [0x00, 0x05, 0x00];
-        let exts = HandshakeExtensions(&bytes);
-        let mut it = exts.iter();
-        match it.next() {
-            Some(Err(Error::BufferTooShort(b))) => {
+        match HandshakeExtensions::parse(&bytes) {
+            Err(Error::BufferTooShort(b)) => {
                 assert_eq!(b.need, 4);
                 assert_eq!(b.have, 3);
             }
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
-        assert!(it.next().is_none());
     }
 
     #[test]

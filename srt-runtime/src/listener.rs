@@ -227,7 +227,7 @@ impl ListenerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: self.syn_cookie,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
         self.retransmit.arm(&bytes);
@@ -275,29 +275,24 @@ impl ListenerHandshake {
         #[cfg(feature = "crypto")]
         let crypto_cfg = self.config.crypto.clone();
         #[cfg(feature = "crypto")]
-        type CryptoConclusionResult = (
+        type CryptoConclusionResult<'a> = (
             Option<handshake_sm::RecoveredSek>,
-            Option<alloc::vec::Vec<u8>>,
+            Option<&'a crate::packet::KeyMaterial<'a>>,
         );
         #[cfg(feature = "crypto")]
-        let (crypto_result, km_echo_ext): CryptoConclusionResult = match (&crypto_cfg, &parsed.km) {
-            (Some(crypto), Some(km_req)) => {
-                match handshake_sm::recover_sek(&crypto.passphrase, km_req) {
-                    Ok((sek, salt)) => {
-                        let echo = match handshake_sm::echo_key_material_as_response(km_req) {
-                            Ok(e) => e,
-                            Err(_) => return self.reject(RejectionReason::Rogue, hp),
-                        };
-                        (Some((sek, salt)), Some(echo))
+        let (crypto_result, km_echo_ext): CryptoConclusionResult<'_> =
+            match (&crypto_cfg, &parsed.km) {
+                (Some(crypto), Some(km_req)) => {
+                    match handshake_sm::recover_sek(&crypto.passphrase, km_req) {
+                        Ok((sek, salt)) => (Some((sek, salt)), Some(km_req)),
+                        Err(_) => return self.reject(RejectionReason::BadSecret, hp),
                     }
-                    Err(_) => return self.reject(RejectionReason::BadSecret, hp),
                 }
-            }
-            (Some(_), None) | (None, Some(_)) => {
-                return self.reject(RejectionReason::Unsecure, hp);
-            }
-            (None, None) => (None, None),
-        };
+                (Some(_), None) | (None, Some(_)) => {
+                    return self.reject(RejectionReason::Unsecure, hp);
+                }
+                (None, None) => (None, None),
+            };
 
         let negotiated = NegotiatedParams {
             version: HANDSHAKE_VERSION_5,
@@ -330,23 +325,20 @@ impl ListenerHandshake {
         // extensions "without the cookie" — no Stream ID is echoed back
         // (only the Caller advertises one; the Listener already knows it via
         // `negotiated.stream_id`).
-        let (ext_bytes, ext_flags) = handshake_sm::build_conclusion_extensions(
-            ExtensionType::HsRsp,
-            &hs_msg,
-            None,
-            self.config.group,
-        )?;
+        let ext_contents =
+            handshake_sm::ConclusionExtensionContents::new(hs_msg, None, self.config.group);
         // §6.1.5: echo the Caller's Key Material back as confirmation.
         #[cfg(feature = "crypto")]
-        let (ext_bytes, ext_flags) = {
-            let mut ext_bytes = ext_bytes;
-            let mut ext_flags = ext_flags;
-            if let Some(echo) = km_echo_ext {
-                ext_bytes.extend(echo);
-                ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
-            }
-            (ext_bytes, ext_flags)
-        };
+        let mut ext_contents = ext_contents;
+        #[cfg(feature = "crypto")]
+        if let Some(echo) = km_echo_ext {
+            ext_contents.set_key_material(
+                crate::packet::ExtensionType::KmRsp,
+                handshake_sm::echo_key_material_contents(hp, echo)?.into_owned(),
+            );
+        }
+        let (extensions, ext_flags) =
+            handshake_sm::build_conclusion_extensions(ExtensionType::HsRsp, &ext_contents);
 
         let hp_out = HandshakePacket {
             timestamp: self.clock.now(),
@@ -361,7 +353,7 @@ impl ListenerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: 0, // §4.3.1.2: "without the cookie (which is not needed here)".
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&ext_bytes),
+            extensions,
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
         self.retransmit.remember(&bytes);
@@ -394,7 +386,7 @@ impl ListenerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: 0,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
         self.retransmit.remember(&bytes);
@@ -424,7 +416,7 @@ mod tests {
             srt_socket_id: caller_id,
             syn_cookie: 0,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         })
     }
 
@@ -470,6 +462,7 @@ mod tests {
         )
         .unwrap();
         let ext: &'static [u8] = Vec::leak(ext);
+        let ext = HandshakeExtensions::parse(ext).expect("test extension bytes");
         ControlPacket::Handshake(HandshakePacket {
             timestamp: 0,
             dest_socket_id: listener_id,
@@ -483,7 +476,7 @@ mod tests {
             srt_socket_id: caller_id,
             syn_cookie: cookie,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(ext),
+            extensions: ext,
         })
     }
 
@@ -533,9 +526,9 @@ mod tests {
     fn conclusion_malformed_extension_is_rejected_not_panicking() {
         let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
         l.feed(&caller_induction(2)).unwrap();
-        // Declares an extension length far larger than the bytes actually
-        // present — must reject cleanly, not panic.
-        let bad_ext: &'static [u8] = &[0x00, 0x01, 0xFF, 0xFF];
+        // An extension block whose contents are not a Handshake Extension
+        // Message — must reject cleanly, not panic.
+        let ext: &'static [u8] = &[0x00, 0x01, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF];
         let bad = ControlPacket::Handshake(HandshakePacket {
             timestamp: 0,
             dest_socket_id: 1,
@@ -549,7 +542,7 @@ mod tests {
             srt_socket_id: 2,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(bad_ext),
+            extensions: HandshakeExtensions::parse(ext).expect("test extension bytes"),
         });
         let outputs = l.feed(&bad).unwrap();
         assert_eq!(

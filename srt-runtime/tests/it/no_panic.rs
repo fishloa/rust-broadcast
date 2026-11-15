@@ -74,13 +74,14 @@ fn no_panic_on_arbitrary_input() {
             );
         }
 
-        let exts = HandshakeExtensions(input);
-        for (i, block) in exts.iter().enumerate() {
-            let _ = block;
-            assert!(
-                i <= MAX_LOOP_ITEMS,
-                "handshake extension iterator did not terminate for {input:?}"
-            );
+        if let Ok(exts) = HandshakeExtensions::parse(input) {
+            for (i, block) in exts.iter().enumerate() {
+                let _ = block;
+                assert!(
+                    i <= MAX_LOOP_ITEMS,
+                    "handshake extension loop did not terminate for {input:?}"
+                );
+            }
         }
 
         // ...and when reached through the real dispatcher, which also
@@ -90,12 +91,10 @@ fn no_panic_on_arbitrary_input() {
             match &ctrl {
                 ControlPacket::Handshake(h) => {
                     for (i, block) in h.extensions.iter().enumerate() {
-                        if let Ok(b) = block {
-                            let _ = b.as_hs_ext_message();
-                            let _ = b.as_key_material();
-                            let _ = b.as_stream_id();
-                            let _ = b.as_group_membership();
-                        }
+                        let _ = block.as_hs_ext_message();
+                        let _ = block.as_key_material();
+                        let _ = block.as_stream_id();
+                        let _ = block.as_group_membership();
                         assert!(
                             i <= MAX_LOOP_ITEMS,
                             "handshake extension loop via dispatch did not terminate"
@@ -303,7 +302,7 @@ fn good_peer_wavehand(peer_socket_id: u32, peer_cookie: u32) -> ControlPacket<'s
         srt_socket_id: peer_socket_id,
         syn_cookie: peer_cookie,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }
 
@@ -327,7 +326,7 @@ fn good_peer_empty_conclusion(peer_socket_id: u32, peer_cookie: u32) -> ControlP
         srt_socket_id: peer_socket_id,
         syn_cookie: peer_cookie,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }
 
@@ -351,7 +350,7 @@ fn good_induction_request(caller_socket_id: u32) -> ControlPacket<'static> {
         srt_socket_id: caller_socket_id,
         syn_cookie: 0,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }
 
@@ -375,6 +374,6 @@ fn good_induction_response(listener_socket_id: u32) -> ControlPacket<'static> {
         srt_socket_id: listener_socket_id,
         syn_cookie: 0xC0FF_EE00,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }

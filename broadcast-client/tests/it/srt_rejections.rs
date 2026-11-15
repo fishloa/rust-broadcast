@@ -31,7 +31,7 @@ fn rejection_for(reason: RejectionReason, own_socket_id: u32) -> Vec<u8> {
         srt_socket_id: 0,
         syn_cookie: 0,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     });
     let mut bytes = vec![0u8; packet.serialized_len()];
     packet

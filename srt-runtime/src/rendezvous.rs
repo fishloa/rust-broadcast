@@ -274,12 +274,6 @@ enum PeerHsExt {
 fn parse_peer_hs_ext(hp: &HandshakePacket<'_>) -> Result<PeerHsExt> {
     let mut found = PeerHsExt::None;
     for block in hp.extensions.iter() {
-        let block = block.map_err(|_| {
-            Error::InvalidField(InvalidField {
-                field: "rendezvous handshake extensions",
-                reason: "malformed extension block",
-            })
-        })?;
         match block.ext_type {
             ExtensionType::HsReq => {
                 let msg = block.as_hs_ext_message().map_err(|_| {
@@ -327,7 +321,7 @@ pub struct RendezvousHandshake {
     #[cfg(feature = "crypto")]
     crypto_recovered: Option<handshake_sm::RecoveredSek>,
     #[cfg(feature = "crypto")]
-    km_echo_ext: Option<Vec<u8>>,
+    km_echo: Option<alloc::vec::Vec<u8>>,
     #[cfg(feature = "crypto")]
     crypto_verified: bool,
 }
@@ -356,7 +350,7 @@ impl RendezvousHandshake {
             #[cfg(feature = "crypto")]
             crypto_recovered: None,
             #[cfg(feature = "crypto")]
-            km_echo_ext: None,
+            km_echo: None,
             #[cfg(feature = "crypto")]
             crypto_verified: false,
         }
@@ -411,7 +405,7 @@ impl RendezvousHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: self.own_cookie,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
         self.retransmit.arm(&bytes);
@@ -775,8 +769,9 @@ impl RendezvousHandshake {
             (Some(crypto), Some(km)) => match handshake_sm::recover_sek(&crypto.passphrase, &km) {
                 Ok((sek, salt)) => {
                     self.crypto_recovered = Some((sek, salt));
-                    match handshake_sm::echo_key_material_as_response(&km) {
-                        Ok(e) => self.km_echo_ext = Some(e),
+                    let mut contents = alloc::vec![0u8; km.serialized_len()];
+                    match km.serialize_into(&mut contents) {
+                        Ok(_) => self.km_echo = Some(contents),
                         Err(_) => return Some(self.reject(RejectionReason::Rogue)),
                     }
                 }
@@ -806,40 +801,45 @@ impl RendezvousHandshake {
     /// for the extension-less greeting (§4.3.2.2, L2286-2288: no Stream ID /
     /// Group Membership is ever attached — see module docs).
     fn send_conclusion(&mut self, ext_type: Option<ExtensionType>) -> Result<Vec<HandshakeOutput>> {
-        let (ext_bytes, ext_flags): (Vec<u8>, u16) = match ext_type {
-            None => (Vec::new(), 0),
-            Some(t) => {
+        let ext_contents = match ext_type {
+            None => None,
+            Some(_) => {
                 let hs_msg = HsExtMessage {
                     srt_version: self.config.srt_version,
                     srt_flags: self.config.flags,
                     receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
                     sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
                 };
-                handshake_sm::build_conclusion_extensions(t, &hs_msg, None, None)?
+                Some(handshake_sm::ConclusionExtensionContents::new(
+                    hs_msg, None, None,
+                ))
             }
         };
-        #[cfg(feature = "crypto")]
-        let mut ext_bytes = ext_bytes;
-        #[cfg(feature = "crypto")]
-        let mut ext_flags = ext_flags;
         // §6.1.5: the Initiator (cookie-contest winner) sends the Key
         // Material request piggybacked on its CONCLUSION's HSREQ block;
         // the Responder echoes it back on its HSRSP CONCLUSION.
         #[cfg(feature = "crypto")]
-        if ext_type == Some(ExtensionType::HsReq)
-            && let Some(crypto) = &self.config.crypto
-        {
-            let km_ext = handshake_sm::build_key_material_extension(crypto)?;
-            ext_bytes.extend(km_ext);
-            ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
-        }
+        let mut ext_contents = ext_contents;
         #[cfg(feature = "crypto")]
-        if ext_type == Some(ExtensionType::HsRsp)
-            && let Some(echo) = &self.km_echo_ext
-        {
-            ext_bytes.extend(echo.clone());
-            ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+        if let Some(contents) = ext_contents.as_mut() {
+            if ext_type == Some(ExtensionType::HsReq)
+                && let Some(crypto) = &self.config.crypto
+            {
+                contents.set_key_material(
+                    ExtensionType::KmReq,
+                    handshake_sm::build_key_material_contents(crypto)?,
+                );
+            }
+            if ext_type == Some(ExtensionType::HsRsp)
+                && let Some(echo) = &self.km_echo
+            {
+                contents.set_key_material(ExtensionType::KmRsp, echo.clone());
+            }
         }
+        let (extensions, ext_flags) = match (&ext_type, &ext_contents) {
+            (Some(t), Some(contents)) => handshake_sm::build_conclusion_extensions(*t, contents),
+            _ => (HandshakeExtensions(Vec::new()), 0),
+        };
         let hp = HandshakePacket {
             timestamp: self.clock.now(),
             dest_socket_id: self.peer_socket_id,
@@ -853,7 +853,7 @@ impl RendezvousHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: self.own_cookie,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&ext_bytes),
+            extensions,
         };
         let bytes = handshake_sm::build_bytes(hp)?;
         self.retransmit.arm_fresh(&bytes);
@@ -875,7 +875,7 @@ impl RendezvousHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: self.own_cookie,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
         self.retransmit.arm_fresh(&bytes);
@@ -1000,7 +1000,7 @@ mod tests {
             srt_socket_id: socket_id,
             syn_cookie: cookie,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         })
     }
 
@@ -1134,7 +1134,7 @@ mod tests {
             ControlPacket::Handshake(hp) => {
                 assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
                 assert_eq!(hp.extension_field.0 & HS_EXT_FLAG_HSREQ, HS_EXT_FLAG_HSREQ);
-                let blocks: Vec<_> = hp.extensions.iter().map(|b| b.unwrap()).collect();
+                let blocks: Vec<_> = hp.extensions.iter().collect();
                 assert_eq!(blocks.len(), 1);
                 assert_eq!(blocks[0].ext_type, ExtensionType::HsReq);
             }
@@ -1170,9 +1170,8 @@ mod tests {
         a.feed(&wavehand(2, 100)).unwrap();
         assert_eq!(a.state(), RendezvousHandshakeState::Attention);
 
-        // A CONCLUSION whose extension block declares a length far larger
-        // than the bytes actually present.
-        let bad_ext: &'static [u8] = &[0x00, 0x01, 0xFF, 0xFF];
+        // A CONCLUSION whose extension section declares a block length far
+        // larger than the bytes present.
         let bad = ControlPacket::Handshake(HandshakePacket {
             timestamp: 0,
             dest_socket_id: 1,
@@ -1186,14 +1185,16 @@ mod tests {
             srt_socket_id: 2,
             syn_cookie: 100,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(bad_ext),
+            extensions: HandshakeExtensions(Vec::new()),
         });
-        let outputs = a.feed(&bad).unwrap();
-        assert_eq!(
-            outputs,
-            vec![HandshakeOutput::Rejected(RejectionReason::Rogue)]
-        );
-        assert_eq!(a.state(), RendezvousHandshakeState::Rejected);
+        let mut bad_bytes = alloc::vec![0u8; bad.serialized_len()];
+        bad.serialize_into(&mut bad_bytes).unwrap();
+        bad_bytes.extend_from_slice(&[0x00, 0x01, 0xFF, 0xFF]);
+        assert!(matches!(
+            a.feed_bytes(&bad_bytes),
+            Err(Error::ExtensionOverrun { .. })
+        ));
+        assert_eq!(a.state(), RendezvousHandshakeState::Attention);
     }
 
     #[test]
@@ -1240,7 +1241,7 @@ mod tests {
             srt_socket_id: 2,
             syn_cookie: 0,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let mut r = RendezvousHandshake::new(1, 5, HandshakeConfig::default());
         assert!(matches!(
@@ -1307,6 +1308,9 @@ mod crypto_echo_tests {
                 let mut next_to_a = Vec::new();
                 let mut next_to_b = Vec::new();
                 for msg in to_a.drain(..) {
+                    if a.state() == RendezvousHandshakeState::Rejected {
+                        continue;
+                    }
                     let pkt = ControlPacket::parse(&msg).expect("valid");
                     for out in a.feed(&pkt).expect("a.feed") {
                         if let HandshakeOutput::Send(bytes) = out {
@@ -1365,6 +1369,9 @@ mod crypto_echo_tests {
                         *last ^= 0xFF;
                     }
                     tampered = true;
+                }
+                if b.state() == RendezvousHandshakeState::Rejected {
+                    continue;
                 }
                 let pkt = ControlPacket::parse(&msg).expect("valid");
                 for out in b.feed(&pkt).expect("b.feed") {

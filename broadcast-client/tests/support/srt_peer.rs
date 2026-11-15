@@ -139,10 +139,10 @@ impl SrtPeer {
             }
             Ok(SrtPacket::Control(ControlPacket::Nak(nak))) => {
                 self.naks_received += 1;
-                for entry in nak.entries().flatten() {
-                    let (first, last) = match entry {
-                        LossListEntry::Single(s) => (s, s),
-                        LossListEntry::Range(a, b) => (a, b),
+                for entry in &nak.entries {
+                    let (first, last) = match *entry {
+                        LossListEntry::Single(s) => (s.value(), s.value()),
+                        LossListEntry::Range(a, b) => (a.value(), b.value()),
                         _ => continue,
                     };
                     let mut s = first;

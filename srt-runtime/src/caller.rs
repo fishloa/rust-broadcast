@@ -142,7 +142,7 @@ impl CallerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: 0,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
         self.retransmit.arm(&bytes);
@@ -247,25 +247,24 @@ impl CallerHandshake {
             receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
             sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
         };
-        let (ext_bytes, ext_flags) = handshake_sm::build_conclusion_extensions(
-            ExtensionType::HsReq,
-            &hs_msg,
+        let ext_contents = handshake_sm::ConclusionExtensionContents::new(
+            hs_msg,
             self.config.stream_id.as_deref(),
             self.config.group,
-        )?;
+        );
         // §6.1.5: the connection initiator (Caller) is the one that sends
         // the Key Material request, piggybacked on this same CONCLUSION.
         #[cfg(feature = "crypto")]
-        let (ext_bytes, ext_flags) = {
-            let mut ext_bytes = ext_bytes;
-            let mut ext_flags = ext_flags;
-            if let Some(crypto) = &self.config.crypto {
-                let km_ext = handshake_sm::build_key_material_extension(crypto)?;
-                ext_bytes.extend(km_ext);
-                ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
-            }
-            (ext_bytes, ext_flags)
-        };
+        let mut ext_contents = ext_contents;
+        #[cfg(feature = "crypto")]
+        if let Some(crypto) = &self.config.crypto {
+            ext_contents.set_key_material(
+                crate::packet::ExtensionType::KmReq,
+                handshake_sm::build_key_material_contents(crypto)?,
+            );
+        }
+        let (extensions, ext_flags) =
+            handshake_sm::build_conclusion_extensions(ExtensionType::HsReq, &ext_contents);
 
         let hp_out = HandshakePacket {
             timestamp: self.clock.now(),
@@ -281,7 +280,7 @@ impl CallerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: self.syn_cookie,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&ext_bytes),
+            extensions,
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
         self.retransmit.arm_fresh(&bytes);
@@ -431,7 +430,7 @@ mod tests {
             srt_socket_id: CONCLUSION_LISTENER_ID,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&ext),
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
         });
         let outputs = c.feed(&conclusion_response).unwrap();
         assert!(
@@ -482,7 +481,7 @@ mod tests {
             srt_socket_id: listener_id,
             syn_cookie: cookie,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         })
     }
 
@@ -507,7 +506,7 @@ mod tests {
                 // libsrt `CUDT::processAsyncConnectRequest`; see `on_induction_response`.
                 assert_eq!(hp.dest_socket_id, 0);
                 assert_eq!(hp.extension_field.0 & HS_EXT_FLAG_HSREQ, HS_EXT_FLAG_HSREQ);
-                let blocks: Vec<_> = hp.extensions.iter().map(|b| b.unwrap()).collect();
+                let blocks: Vec<_> = hp.extensions.iter().collect();
                 assert_eq!(blocks.len(), 1);
                 assert_eq!(blocks[0].ext_type, ExtensionType::HsReq);
             }
@@ -666,7 +665,7 @@ mod tests {
             srt_socket_id: 0x1111_2222,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&ext),
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
         });
         let out = c.feed(&response).unwrap();
         assert!(
@@ -698,7 +697,7 @@ mod tests {
             srt_socket_id: 0x3333_4444,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&ext),
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut buf).unwrap();

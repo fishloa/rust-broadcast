@@ -164,7 +164,7 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
         srt_socket_id: CALLER_SOCKET_ID,
         syn_cookie: 0,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     });
     listener.feed(&induction).unwrap();
     assert_eq!(listener.state(), ListenerHandshakeState::AwaitingConclusion);
@@ -189,7 +189,7 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
         srt_socket_id: CALLER_SOCKET_ID,
         syn_cookie: SYN_COOKIE.wrapping_add(1), // wrong cookie
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&ext),
+        extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
     });
 
     let outputs = listener.feed(&conclusion).unwrap();

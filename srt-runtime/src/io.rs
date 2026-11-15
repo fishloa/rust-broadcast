@@ -3042,7 +3042,7 @@ fn build_encryption_rejection(
         srt_socket_id: own_socket_id,
         syn_cookie: 0,
         peer_ip: config.local_ip,
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     };
     handshake_sm::build_bytes(hp_out)
 }
@@ -3290,7 +3290,7 @@ mod isn_tests {
             srt_socket_id: 42,
             syn_cookie: 0,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         crate::handshake_sm::build_bytes(hp).expect("build handshake bytes")
     }
@@ -3482,7 +3482,7 @@ mod adapter_tests {
             srt_socket_id: socket_id,
             syn_cookie: 0,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let pkt = ControlPacket::Handshake(hp);
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -4493,7 +4493,7 @@ mod adapter_tests {
                 srt_socket_id: 5,
                 syn_cookie: 0,
                 peer_ip: [0; 4],
-                extensions: HandshakeExtensions(&[]),
+                extensions: HandshakeExtensions(Vec::new()),
             };
             let pkt = ControlPacket::Handshake(hp);
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -4843,7 +4843,7 @@ mod adapter_tests {
                 srt_socket_id: 5,
                 syn_cookie: 0,
                 peer_ip: [0; 4],
-                extensions: HandshakeExtensions(&[]),
+                extensions: HandshakeExtensions(Vec::new()),
             };
             let pkt = ControlPacket::Handshake(hp);
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
