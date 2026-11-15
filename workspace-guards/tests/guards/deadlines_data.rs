@@ -14,4 +14,8 @@ pub const TABLE: &[Crate] = &[
         name: "media-plane",
         allow: &[],
     },
+    Crate {
+        name: "srt-runtime",
+        allow: &[],
+    },
 ];

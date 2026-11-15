@@ -1392,27 +1392,46 @@ impl Driver {
     /// pacing slot. Never in the past (floored at [`MIN_WAKE`]).
     fn poll_timeout(&self) -> Option<Instant> {
         let now = self.elapsed();
-        // Full ACK / NAK.
-        let mut at = self.epoch + Duration::from_micros(self.receiver.next_timeout().as_micros());
+        // Full ACK / NAK. A deadline past the end of the clock never fires, so
+        // it is simply not one of the wake-ups folded in below.
+        let mut at = self
+            .receiver
+            .next_timeout()
+            .map(|t| self.epoch + Duration::from_micros(t.as_micros()));
         // TSBPD release / TLPKTDROP skip.
         if let Some(t) = self.tsbpd.next_release_after(now) {
-            at = at.min(self.epoch + t);
+            at = Some(match at {
+                Some(a) => a.min(self.epoch + t),
+                None => self.epoch + t,
+            });
         }
         // Keep-Alive (only judged when nothing is queued).
         if self.outbound_control.is_empty() && self.outbound_data.is_empty() {
-            at = at.min(self.last_tx_at + KEEPALIVE_PERIOD);
+            at = Some(match at {
+                Some(a) => a.min(self.last_tx_at + KEEPALIVE_PERIOD),
+                None => self.last_tx_at + KEEPALIVE_PERIOD,
+            });
         }
         #[cfg(feature = "crypto")]
         if let Some(pending) = &self.km_pending {
-            at = at.min(pending.resend_at);
+            at = Some(match at {
+                Some(a) => a.min(pending.resend_at),
+                None => pending.resend_at,
+            });
         }
         // Peer idle.
-        at = at.min(self.last_rx_at + self.read_idle);
+        at = Some(match at {
+            Some(a) => a.min(self.last_rx_at + self.read_idle),
+            None => self.last_rx_at + self.read_idle,
+        });
         // Pacing slot.
         if let Some(wait) = self.next_paced_send_wait() {
-            at = at.min(Instant::now() + wait);
+            at = Some(match at {
+                Some(a) => a.min(Instant::now() + wait),
+                None => Instant::now() + wait,
+            });
         }
-        Some(at.max(Instant::now() + MIN_WAKE))
+        at.map(|at| at.max(Instant::now() + MIN_WAKE))
     }
 
     /// The select loop: socket RX, application-send, and a periodic engine

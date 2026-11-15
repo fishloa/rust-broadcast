@@ -386,19 +386,25 @@ impl Receiver {
         out
     }
 
-    /// Time until the next periodic Full ACK or, while the loss list is
-    /// non-empty, the next periodic NAK — whichever is earlier. Always
-    /// defined: the 10 ms Full ACK is unconditional (rule 11), so an idle
-    /// connection still has a deadline.
-    pub fn next_timeout(&self) -> Timestamp {
-        let ack = self.last_full_ack_at.saturating_add(FULL_ACK_PERIOD);
+    /// Absolute (since the connection epoch) time of the next periodic Full
+    /// ACK or, while the loss list is non-empty, the next periodic NAK —
+    /// whichever is earlier and still representable. The 10 ms Full ACK is
+    /// unconditional (rule 11), so an idle connection still has a deadline;
+    /// `None` means a deadline past the end of the clock, which never fires
+    /// (a deadline is [`Timestamp::checked_add`], never a saturated instant
+    /// that reads as "due now" forever).
+    pub fn next_timeout(&self) -> Option<Timestamp> {
+        let ack = self.last_full_ack_at.checked_add(FULL_ACK_PERIOD);
         if self.loss_list.is_empty() {
             return ack;
         }
         let nak = self
             .last_nak_at
-            .saturating_add(nak_interval(self.rtt.rtt(), self.rtt.rtt_var()));
-        ack.min(nak)
+            .checked_add(nak_interval(self.rtt.rtt(), self.rtt.rtt_var()));
+        match (ack, nak) {
+            (Some(a), Some(n)) => Some(a.min(n)),
+            (a, n) => a.or(n),
+        }
     }
 
     /// Forget Full ACKs whose ACKACK never came (W3): a lost ACKACK, or a
@@ -575,14 +581,33 @@ mod tests {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         assert_eq!(
             r.next_timeout(),
-            ts(FULL_ACK_PERIOD),
+            Some(ts(FULL_ACK_PERIOD)),
             "fresh receiver: first Full ACK at 10 ms"
         );
         let _ = r.tick(ts(FULL_ACK_PERIOD));
-        assert_eq!(r.next_timeout(), ts(FULL_ACK_PERIOD * 2));
+        assert_eq!(r.next_timeout(), Some(ts(FULL_ACK_PERIOD * 2)));
         // a gap puts a NAK deadline on the table; it can only make the deadline earlier or equal
         let _ = r.feed_data(5, Timestamp::from_millis(11)); // 1..=4 now lost
-        assert!(r.next_timeout() <= ts(FULL_ACK_PERIOD * 2));
+        assert!(
+            r.next_timeout()
+                .is_some_and(|t| t <= ts(FULL_ACK_PERIOD * 2))
+        );
+    }
+
+    /// A deadline past the end of the clock never fires: at the last
+    /// representable `Timestamp` the next Full ACK (and, with a loss, the next
+    /// NAK) cannot be scheduled, so `next_timeout` reports `None` — not a
+    /// saturated instant equal to "now" that would re-fire forever.
+    #[test]
+    fn next_timeout_at_the_end_of_the_clock_is_none() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        r.last_full_ack_at = Timestamp::from_micros(u64::MAX);
+        assert_eq!(r.next_timeout(), None, "Full ACK deadline past the clock");
+
+        // A loss adds a NAK deadline too; it is equally unrepresentable.
+        r.last_nak_at = Timestamp::from_micros(u64::MAX);
+        r.loss_list.insert(0);
+        assert_eq!(r.next_timeout(), None, "NAK deadline past the clock");
     }
 
     #[test]
