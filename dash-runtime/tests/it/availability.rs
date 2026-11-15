@@ -3,23 +3,20 @@
 //! inputs (no panic, no wrap).
 
 use crate::common;
-use broadcast_common::timescale::Timescale;
-
-fn timescale(value: u32) -> Timescale {
-    Timescale::try_new(value).expect("a non-zero timescale")
-}
 
 use common::Rng;
 use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::mpd::Mpd;
 use dash_runtime::selection::RepRef;
-use dash_runtime::timing::availability::{
-    ato_seconds_to_us, complete_count_constant, init_available_from, segment_available_from,
-    segment_available_until,
-};
+use dash_runtime::timing::availability::ato_seconds;
 use dash_runtime::timing::live_edge::{join_index, newest_complete, oldest_in_window, window};
+use jiff::SignedDuration;
 
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
+
+fn timestamp_from_micros(us: i64) -> jiff::Timestamp {
+    jiff::Timestamp::from_microsecond(us).unwrap()
+}
 
 fn dynamic_mpd(
     ast_s: i64,
@@ -68,9 +65,17 @@ fn closed_form_equals_brute_force_over_segment_formulas() {
         let seg_us = (i128::from(d) * 1_000_000 / i128::from(ts)).max(1);
         let origin = (i128::from(ast_s) + i128::from(ps_s)) * 1_000_000;
         let horizon = seg_us * 300;
-        let now = origin + i128::from(rng.below(u64::try_from(horizon).unwrap())) - seg_us / 2;
+        let now_us = origin + i128::from(rng.below(u64::try_from(horizon).unwrap())) - seg_us / 2;
+        let now = timestamp_from_micros(now_us.clamp(i64::MIN as i128, i64::MAX as i128) as i64);
         let brute_newest = (0..1_000u64)
-            .take_while(|i| p.plan.get(*i).unwrap().unwrap().available_from_us.unwrap() <= now)
+            .take_while(|i| {
+                p.plan
+                    .get(*i)
+                    .unwrap()
+                    .unwrap()
+                    .available_from
+                    .is_some_and(|a| a <= now)
+            })
             .last();
         assert_eq!(
             newest_complete(&p.plan, now),
@@ -83,13 +88,13 @@ fn closed_form_equals_brute_force_over_segment_formulas() {
                     .get(*i)
                     .unwrap()
                     .unwrap()
-                    .available_until_us
+                    .available_until
                     .is_none_or(|u| u >= now)
             });
             assert_eq!(oldest_in_window(&p.plan, now), brute_oldest);
             if let Some(w) = window(&p.plan, now) {
                 assert!(w.oldest <= w.newest);
-                let delay = i128::from(rng.below(120)) * 1_000_000;
+                let delay = std::time::Duration::from_secs(rng.below(120));
                 let j = join_index(&p.plan, now, delay).unwrap();
                 assert!(j >= w.oldest && j <= w.newest);
             }
@@ -104,15 +109,16 @@ fn newest_complete_is_monotone_in_the_clock() {
     let mut rng = Rng(5);
     let m = dynamic_mpd(1_700_000_000, 0, 90_000, 180_000, Some(60), None);
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
-    let base = 1_700_000_000i128 * 1_000_000;
+    let base = 1_700_000_000i64 * 1_000_000;
     let mut last: Option<u64> = None;
     let mut now = base;
     for _ in 0..5_000 {
-        now += i128::from(rng.below(3_000_000));
-        let n = newest_complete(&p.plan, now);
+        now += i64::try_from(rng.below(3_000_000)).unwrap();
+        let ts = timestamp_from_micros(now);
+        let n = newest_complete(&p.plan, ts);
         assert!(n >= last, "{n:?} < {last:?}");
         last = n;
-        if let Some(w) = window(&p.plan, now) {
+        if let Some(w) = window(&p.plan, ts) {
             assert!(w.oldest <= w.newest);
         }
     }
@@ -133,28 +139,23 @@ fn extreme_inputs_never_panic_or_wrap() {
             &PlanOptions::default().with_availability_time_offset(true),
         )
         .unwrap();
-        for now in [i128::MIN / 4, -1, 0, i128::from(i64::MAX), i128::MAX / 4] {
+        for now in [
+            jiff::Timestamp::MIN,
+            jiff::Timestamp::from_microsecond(-1).unwrap(),
+            jiff::Timestamp::from_microsecond(0).unwrap(),
+            jiff::Timestamp::MAX,
+        ] {
             let _ = newest_complete(&p.plan, now);
             let _ = oldest_in_window(&p.plan, now);
-            let _ = join_index(&p.plan, now, i128::MAX / 8);
+            let _ = join_index(&p.plan, now, std::time::Duration::MAX);
         }
         let _ = p.plan.get(u64::MAX);
         let _ = p.plan.get(0);
     }
-    assert_eq!(
-        complete_count_constant(i128::MAX, 0, 0, 0, 1, timescale(1)),
-        u64::MAX
-    );
-    assert_eq!(
-        complete_count_constant(i128::MIN, 0, 0, 0, 1, timescale(1)),
-        0
-    );
-    assert_eq!(complete_count_constant(0, 0, 0, 0, 0, timescale(1)), 0);
-    assert!(Timescale::try_new(0).is_err());
-    assert_eq!(ato_seconds_to_us(f64::INFINITY), ato_seconds_to_us(1.0e30));
-    assert_eq!(ato_seconds_to_us(f64::NAN), 0);
-    assert_eq!(ato_seconds_to_us(1.5), 1_500_000);
-    assert_eq!(ato_seconds_to_us(-0.25), -250_000);
+    assert_eq!(ato_seconds(f64::INFINITY), ato_seconds(1.0e30));
+    assert_eq!(ato_seconds(f64::NAN), SignedDuration::ZERO);
+    assert_eq!(ato_seconds(1.5), SignedDuration::from_micros(1_500_000));
+    assert_eq!(ato_seconds(-0.25), SignedDuration::from_micros(-250_000));
 }
 
 #[test]
@@ -167,37 +168,49 @@ fn availability_time_offset_makes_segments_available_earlier_only_when_applied()
     )
     .unwrap();
     let without = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
-    let a = with
-        .plan
-        .get(0)
-        .unwrap()
-        .unwrap()
-        .available_from_us
-        .unwrap();
+    let a = with.plan.get(0).unwrap().unwrap().available_from.unwrap();
     let b = without
         .plan
         .get(0)
         .unwrap()
         .unwrap()
-        .available_from_us
+        .available_from
         .unwrap();
-    assert_eq!(b - a, 1_500_000);
+    assert_eq!(b.duration_since(a), SignedDuration::from_micros(1_500_000));
     assert_eq!(
-        with.plan.get(0).unwrap().unwrap().available_until_us,
-        without.plan.get(0).unwrap().unwrap().available_until_us,
+        with.plan.get(0).unwrap().unwrap().available_until,
+        without.plan.get(0).unwrap().unwrap().available_until,
         "the end of the window is not shifted"
     );
 }
 
 #[test]
-fn public_formulas_on_hand_computed_numbers() {
-    // AST 1000 + PeriodStart 100 + MPDstart 10 + MPDduration 5 - ATO 3.
-    assert_eq!(segment_available_from(1000, 100, 10, 5, 3), 1112);
-    // AST 1000 + PeriodStart 100 + MPDstart 10 + 2 x MPDduration 5 + TSB 7.
+fn formulas_on_hand_computed_numbers() {
+    // SegAvailStart = AST + PeriodStart + MPDstart + MPDduration - ATO.
+    // AST 0, PeriodStart 100 s, a 5 s segment (timescale 1, duration 5 ticks)
+    // at MPDstart 10 s, ATO 3 s: available from 112 s after the epoch.
+    let m = dynamic_mpd(0, 100, 1, 5, Some(7), Some(3.0));
+    let p = plan_representation(
+        &m,
+        RepRef::at(0, 0, 0),
+        &PlanOptions::default().with_availability_time_offset(true),
+    )
+    .unwrap();
+    let seg = p.plan.get(2).unwrap().unwrap();
+    assert_eq!(seg.start, SignedDuration::from_secs(10));
+    assert_eq!(seg.duration, std::time::Duration::from_secs(5));
+    // available_from = 0 + 100 s + 10 s + 5 s - 3 s = 112 s.
     assert_eq!(
-        segment_available_until(1000, 100, 10, 5, Some(7)),
-        Some(1127)
+        seg.available_from.unwrap(),
+        jiff::Timestamp::from_second(112).unwrap()
     );
-    assert_eq!(segment_available_until(1000, 100, 10, 5, None), None);
-    assert_eq!(init_available_from(1000, 100), 1100);
+    // available_until = 0 + 100 s + 10 s + 2 x 5 s + 7 s = 127 s.
+    assert_eq!(
+        seg.available_until.unwrap(),
+        jiff::Timestamp::from_second(127).unwrap()
+    );
+    // No time-shift buffer: the segment never leaves the window.
+    let m = dynamic_mpd(0, 100, 1, 5, None, None);
+    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    assert_eq!(p.plan.get(2).unwrap().unwrap().available_until, None);
 }

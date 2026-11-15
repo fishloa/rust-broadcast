@@ -22,13 +22,25 @@ use dash_runtime::mpd::{Mpd, SegmentTimeline, TimelineEntry};
 use dash_runtime::selection::RepRef;
 use dash_runtime::timing::datetime::parse_xs_datetime;
 use dash_runtime::timing::live_edge::{
-    join_time_us, newest_complete, oldest_in_window, presentation_delay_us,
+    join_time, newest_complete, oldest_in_window, presentation_delay,
 };
 use dash_runtime::timing::period::{PeriodKind, period_timings};
+use std::time::Duration;
 use url::Url;
 
 const S: i128 = 1_000_000;
 const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
+
+fn us(v: i128) -> Duration {
+    Duration::from_micros(u64::try_from(v.max(0)).unwrap_or(u64::MAX))
+}
+
+fn utc(v: i128) -> jiff::Timestamp {
+    jiff::Timestamp::from_microsecond(
+        i64::try_from(v.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap(),
+    )
+    .unwrap()
+}
 
 fn flat(r: Result<ResolvedRef, ResolveError>) -> String {
     match r.expect("resolves") {
@@ -43,7 +55,7 @@ fn mpd(attrs: &str, body: &str) -> Mpd {
 }
 
 fn unix(text: &str) -> i128 {
-    i128::from(parse_xs_datetime(text).unwrap().unix_us)
+    i128::from(parse_xs_datetime(text).unwrap().unix.as_microsecond())
 }
 
 fn table10() -> Mpd {
@@ -68,29 +80,38 @@ fn iop_table_10_worked_example() {
         let seg = p.plan.get(u64::try_from(k - 1).unwrap()).unwrap().unwrap();
         assert_eq!(seg.number, u64::try_from(k).unwrap());
         assert_eq!(seg.reference, format!("v/{k}.m4s"));
-        assert_eq!(seg.available_from_us, Some(start + 5 * k * S), "SAST[{k}]");
         assert_eq!(
-            seg.available_until_us,
-            Some(start + 5 * k * S + 30 * S),
+            seg.available_from,
+            Some(utc(start + 5 * k * S)),
+            "SAST[{k}]"
+        );
+        assert_eq!(
+            seg.available_until,
+            Some(utc(start + 5 * k * S + 30 * S)),
             "SAET[{k}]"
         );
     }
     // The 9th segment is 3 s long (43 s - 40 s). 5.3.9.5.3 uses its own
     // duration; IOP Table 10 prints the nominal 5 s (START + 45 s, +30 s).
     let last = p.plan.get(8).unwrap().unwrap();
-    assert_eq!(last.duration_us, 3 * S);
-    assert_eq!(last.available_from_us, Some(start + 43 * S));
+    assert_eq!(last.duration.as_micros() as i128, 3 * S);
+    assert_eq!(last.available_from, Some(utc(start + 43 * S)));
     assert_eq!(
-        last.available_until_us,
-        Some(start + 40 * S + 6 * S + 25 * S)
+        last.available_until,
+        Some(utc(start + 40 * S + 6 * S + 25 * S))
     );
     let init = p.plan.init().unwrap();
     assert_eq!(init.reference, "v/init.mp4");
-    assert_eq!(init.available_from_us, Some(start));
-    assert_eq!(init.available_until_us, last.available_until_us);
+    assert_eq!(init.available_from, Some(utc(start)));
+    assert_eq!(init.available_until, last.available_until);
     // SPD = 15 s is inside TSB - 2 x 5 s = 15 s.
-    let d = presentation_delay_us(m.suggested_presentation_delay, 5 * S, Some(25 * S), None);
-    assert_eq!(d, 15 * S);
+    let d = presentation_delay(
+        m.suggested_presentation_delay,
+        us(5 * S),
+        Some(us(25 * S)),
+        None,
+    );
+    assert_eq!(d, us(15 * S));
 }
 
 #[test]
@@ -104,23 +125,28 @@ fn newest_and_oldest_follow_the_closed_form_on_an_open_ended_plan() {
     let start = unix("2026-10-26T00:00:00Z");
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert!(p.plan.len().is_none());
-    assert_eq!(newest_complete(&p.plan, start + 4 * S), None);
-    assert_eq!(newest_complete(&p.plan, start + 5 * S), Some(0));
-    assert_eq!(newest_complete(&p.plan, start + 43 * S), Some(7));
+    assert_eq!(newest_complete(&p.plan, utc(start + 4 * S)), None);
+    assert_eq!(newest_complete(&p.plan, utc(start + 5 * S)), Some(0));
+    assert_eq!(newest_complete(&p.plan, utc(start + 43 * S)), Some(7));
     // At START + 43 s: segment k ends at 5k+5+25 >= 43 for k >= 3 (index 2).
-    assert_eq!(oldest_in_window(&p.plan, start + 43 * S), Some(2));
-    assert_eq!(join_time_us(start + 43 * S, 15 * S, start, 0), 28 * S);
+    assert_eq!(oldest_in_window(&p.plan, utc(start + 43 * S)), Some(2));
+    assert_eq!(
+        join_time(utc(start + 43 * S), us(15 * S), utc(start), us(0)).as_micros(),
+        28 * S
+    );
 }
 
 #[test]
 fn derived_presentation_delay_and_clamp() {
     let d = |spd: Option<u64>, max: i128, tsb: Option<i128>, over: Option<i128>| {
-        presentation_delay_us(
+        presentation_delay(
             spd.map(std::time::Duration::from_secs),
-            max * S,
-            tsb.map(|t| t * S),
-            over.map(|o| o * S),
-        ) / S
+            us(max * S),
+            tsb.map(|t| us(t * S)),
+            over.map(|o| us(o * S)),
+        )
+        .as_micros() as i128
+            / S
     };
     assert_eq!(d(None, 1, None, None), 4, "never under four seconds");
     assert_eq!(d(None, 2, None, None), 6, "three segment durations");
@@ -161,9 +187,9 @@ fn start_number_zero_and_one() {
         let seg = p.plan.get(0).unwrap().unwrap();
         assert_eq!(seg.number, first);
         assert_eq!(seg.reference, format!("s{first:03}.m4s"));
-        assert_eq!(seg.start_us, 0);
+        assert_eq!(seg.start.as_micros(), 0);
         assert_eq!(p.plan.get(4).unwrap().unwrap().number, first + 4);
-        assert_eq!(p.plan.get(4).unwrap().unwrap().start_us, 8 * S);
+        assert_eq!(p.plan.get(4).unwrap().unwrap().start.as_micros(), 8 * S);
     }
 }
 
@@ -198,11 +224,14 @@ fn end_number_caps_and_a_short_last_segment_is_shortened() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.len(), Some(6));
     assert_eq!(
-        p.plan.get(5).unwrap().unwrap().duration_us,
+        p.plan.get(5).unwrap().unwrap().duration.as_micros() as i128,
         S,
         "A.3.3 case 1: PeriodEnd - start"
     );
-    assert_eq!(p.plan.get(4).unwrap().unwrap().duration_us, 2 * S);
+    assert_eq!(
+        p.plan.get(4).unwrap().unwrap().duration.as_micros() as i128,
+        2 * S
+    );
 }
 
 #[test]
@@ -216,7 +245,14 @@ fn single_segment_when_neither_duration_nor_timeline() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.len(), Some(1));
     let seg = p.plan.get(0).unwrap().unwrap();
-    assert_eq!((seg.number, seg.start_us, seg.duration_us), (3, 0, 9 * S));
+    assert_eq!(
+        (
+            seg.number,
+            seg.start.as_micros(),
+            seg.duration.as_micros() as i128
+        ),
+        (3, 0, 9 * S)
+    );
 }
 
 #[test]
@@ -227,27 +263,24 @@ fn period_start_rules_one_to_five() {
         r#"<Period id="a" start="PT10S" duration="PT5S"/><Period id="b" duration="PT7S"/><Period id="c"/>"#,
     );
     let t = period_timings(&m);
-    assert_eq!(t[0].start_us, Some(10 * S));
-    assert_eq!(t[1].start_us, Some(15 * S));
-    assert_eq!(t[1].end_us, Some(22 * S));
-    assert_eq!(t[2].start_us, Some(22 * S));
+    assert_eq!(t[0].start, Some(us(10 * S)));
+    assert_eq!(t[1].start, Some(us(15 * S)));
+    assert_eq!(t[1].end, Some(us(22 * S)));
+    assert_eq!(t[2].start, Some(us(22 * S)));
     // Rule 3: the first Period of a static MPD starts at 0.
     let m = mpd(
         r#"type="static" mediaPresentationDuration="PT30S""#,
         r#"<Period/>"#,
     );
     let t = period_timings(&m);
-    assert_eq!((t[0].start_us, t[0].end_us), (Some(0), Some(30 * S)));
+    assert_eq!((t[0].start, t[0].end), (Some(us(0)), Some(us(30 * S))));
     // Rule 4: dynamic, no start, first Period: early available.
     let m = mpd(
         r#"type="dynamic" availabilityStartTime="1970-01-01T00:00:00Z""#,
         r#"<Period id="x"/>"#,
     );
     let t = period_timings(&m);
-    assert_eq!(
-        (t[0].start_us, t[0].kind),
-        (None, PeriodKind::EarlyAvailable)
-    );
+    assert_eq!((t[0].start, t[0].kind), (None, PeriodKind::EarlyAvailable));
     // Rule 5: @duration and a next Period with @start (or an update period).
     let m = mpd(
         r#"type="static""#,
@@ -256,8 +289,8 @@ fn period_start_rules_one_to_five() {
     let t = period_timings(&m);
     assert_eq!(t[0].kind, PeriodKind::EarlyTerminated);
     assert_eq!(
-        t[0].end_us,
-        Some(4 * S),
+        t[0].end,
+        Some(us(4 * S)),
         "ends at its own duration, not at the next start"
     );
     assert_eq!(t[1].kind, PeriodKind::Regular);
@@ -272,7 +305,7 @@ fn period_start_rules_one_to_five() {
         r#"<Period start="PT0S"/><Period start="PT6S"/>"#,
     );
     let t = period_timings(&m);
-    assert_eq!((t[0].end_us, t[1].end_us), (Some(6 * S), Some(9 * S)));
+    assert_eq!((t[0].end, t[1].end), (Some(us(6 * S)), Some(us(9 * S))));
 }
 
 fn timeline(entries: &[(Option<u64>, Option<u64>, u64, i64)]) -> SegmentTimeline {
@@ -660,9 +693,9 @@ fn time_substitution_is_the_raw_s_at_even_with_a_presentation_time_offset() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     let first = p.plan.get(0).unwrap().unwrap();
     assert_eq!(first.reference, "5000.m4s");
-    assert_eq!(first.start_us, 0);
+    assert_eq!(first.start.as_micros(), 0);
     assert_eq!(p.plan.get(1).unwrap().unwrap().reference, "7000.m4s");
-    assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 2 * S);
+    assert_eq!(p.plan.get(1).unwrap().unwrap().start.as_micros(), 2 * S);
 }
 
 #[test]
@@ -735,8 +768,11 @@ fn timescale_defaults_to_one_when_no_level_declares_it() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.timescale(), timescale(1));
     assert_eq!(p.plan.len(), Some(3));
-    assert_eq!(p.plan.get(1).unwrap().unwrap().start_us, 2 * S);
-    assert_eq!(p.plan.get(1).unwrap().unwrap().duration_us, 2 * S);
+    assert_eq!(p.plan.get(1).unwrap().unwrap().start.as_micros(), 2 * S);
+    assert_eq!(
+        p.plan.get(1).unwrap().unwrap().duration.as_micros() as i128,
+        2 * S
+    );
     assert_eq!(p.plan.get(2).unwrap().unwrap().reference, "V300/2.m4s");
 }
 

@@ -50,7 +50,6 @@ fn origin_path(root: &Path, url: &str) -> Option<PathBuf> {
 }
 
 const MAX_STEPS: usize = 100_000;
-const MICROS: f64 = 1_000_000.0;
 
 struct Args {
     mpd: PathBuf,
@@ -140,12 +139,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Output::PeriodChanged {
                     index,
                     id,
-                    start_us,
+                    start,
                     continuous,
                 } => println!(
                     "  Period {index} ({}) starts at {:.3}s, continuous: {continuous}",
                     id.as_deref().unwrap_or("-"),
-                    start_us as f64 / MICROS
+                    start.as_secs_f64()
                 ),
                 Output::Tracks(tracks) => {
                     for t in &tracks {

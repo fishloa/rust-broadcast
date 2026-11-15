@@ -9,6 +9,7 @@ use core::time::Duration;
 use broadcast_common::impl_spec_display;
 use broadcast_common::stage::Timestamp;
 use broadcast_common::time::MonoUtc;
+use jiff::Timestamp as WallTimestamp;
 
 use super::utc_timing::UtcSample;
 
@@ -37,18 +38,18 @@ impl ClockSource {
 }
 impl_spec_display!(ClockSource);
 
-/// One anchor: at monotonic `mono` UTC was `utc_us`.
+/// One anchor: at monotonic `mono` UTC was `utc`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct Anchor {
     /// Monotonic instant.
     pub mono: Timestamp,
-    /// Unix microseconds.
-    pub utc_us: i64,
+    /// Wall-clock instant.
+    pub utc: WallTimestamp,
     /// Where it came from.
     pub source: ClockSource,
     /// Half-width of the error bar.
-    pub uncertainty_us: u64,
+    pub uncertainty: Duration,
 }
 
 impl Anchor {
@@ -56,34 +57,37 @@ impl Anchor {
     #[must_use]
     pub fn from_sample(sample: UtcSample, source: ClockSource) -> Self {
         Self {
-            mono: Timestamp::from_micros(sample.mono_us),
-            utc_us: sample.utc_us,
+            mono: sample.mono,
+            utc: sample.utc,
             source,
-            uncertainty_us: sample.uncertainty_us,
+            uncertainty: sample.uncertainty,
         }
     }
 
-    /// UTC at `now`, saturating at the `i64` range.
+    /// UTC at `now`, saturating at the wall-clock range.
     #[must_use]
-    pub fn utc_at(&self, now: Timestamp) -> i64 {
-        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc_us));
-        saturate(m.utc_at(now.as_micros()))
+    pub fn utc_at(&self, now: Timestamp) -> WallTimestamp {
+        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc.as_microsecond()));
+        let us = m.utc_at(now.as_micros());
+        let us = us.clamp(i128::from(i64::MIN), i128::from(i64::MAX));
+        let us = i64::try_from(us).unwrap_or(if us < 0 { i64::MIN } else { i64::MAX });
+        WallTimestamp::from_microsecond(us).unwrap_or(if us < 0 {
+            WallTimestamp::MIN
+        } else {
+            WallTimestamp::MAX
+        })
     }
 
-    /// The monotonic instant at which UTC reaches `utc_us`, saturating at
+    /// The monotonic instant at which UTC reaches `utc`, saturating at
     /// `0..=u64::MAX`.
     #[must_use]
-    pub fn mono_for_utc(&self, utc_us: i64) -> Option<Timestamp> {
-        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc_us));
-        let mono = m.mono_for_utc(i128::from(utc_us));
+    pub fn mono_for_utc(&self, utc: WallTimestamp) -> Option<Timestamp> {
+        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc.as_microsecond()));
+        let mono = m.mono_for_utc(i128::from(utc.as_microsecond()));
         u64::try_from(mono.clamp(0, i128::from(u64::MAX)))
             .ok()
             .map(Timestamp::from_micros)
     }
-}
-
-fn saturate(v: i128) -> i64 {
-    i64::try_from(v.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(i64::MAX)
 }
 
 /// Why an offered sample replaced the anchor.
@@ -206,14 +210,14 @@ impl UtcClock {
 
     /// UTC at `now`, or `None` before the first anchor.
     #[must_use]
-    pub fn utc_at(&self, now: Timestamp) -> Option<i64> {
+    pub fn utc_at(&self, now: Timestamp) -> Option<WallTimestamp> {
         self.anchor.map(|a| a.utc_at(now))
     }
 
-    /// The monotonic instant at which UTC reaches `utc_us`.
+    /// The monotonic instant at which UTC reaches `utc`.
     #[must_use]
-    pub fn mono_for_utc(&self, utc_us: i64) -> Option<Timestamp> {
-        self.anchor.and_then(|a| a.mono_for_utc(utc_us))
+    pub fn mono_for_utc(&self, utc: WallTimestamp) -> Option<Timestamp> {
+        self.anchor.and_then(|a| a.mono_for_utc(utc))
     }
 
     /// Offer a measurement; the anchor changes per the replacement rule.
@@ -245,14 +249,14 @@ impl UtcClock {
                 return OfferOutcome::Rejected(RejectReason::LowerTrust);
             }
         } else {
-            let predicted = i128::from(old.utc_at(new.mono));
-            let diff = (i128::from(new.utc_us) - predicted).unsigned_abs();
-            let bars = u128::from(old.uncertainty_us) + u128::from(new.uncertainty_us);
+            let predicted = i128::from(old.utc_at(new.mono).as_microsecond());
+            let diff = (i128::from(new.utc.as_microsecond()) - predicted).unsigned_abs();
+            let bars = old.uncertainty.as_micros() + new.uncertainty.as_micros();
             if diff > bars {
                 AdoptReason::Step
             } else if now.saturating_sub(old.mono) >= policy.resync {
                 AdoptReason::Stale
-            } else if new.uncertainty_us <= old.uncertainty_us {
+            } else if new.uncertainty <= old.uncertainty {
                 AdoptReason::Refined
             } else {
                 return OfferOutcome::Rejected(RejectReason::LessPrecise);

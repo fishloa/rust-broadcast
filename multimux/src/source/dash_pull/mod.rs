@@ -34,9 +34,6 @@ use crate::clock::HostClock;
 use crate::error::{MultimuxError, Result};
 use crate::source::client_host::{EventIngest, SessionLabels, SessionStep};
 use crate::source::pull_target::{PullKind, PullRoute};
-#[cfg(any(test, feature = "test-seams"))]
-use broadcast_common::units::MICROS_PER_SEC;
-
 #[cfg(test)]
 mod tests;
 
@@ -107,7 +104,7 @@ fn parse_iso8601_utc(s: &str) -> Option<u64> {
         return None;
     }
     let parsed = dash_runtime::timing::datetime::parse_xs_datetime(s).ok()?;
-    u64::try_from(parsed.unix_us.div_euclid(MICROS_PER_SEC as i64)).ok()
+    u64::try_from(parsed.unix.as_second()).ok()
 }
 
 /// `#[doc(hidden)]` test seam over [`parse_iso8601_utc`].

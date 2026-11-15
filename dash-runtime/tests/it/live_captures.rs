@@ -17,7 +17,7 @@ use dash_runtime::selection::RepRef;
 use dash_runtime::timing::datetime::parse_xs_datetime;
 
 fn ts(text: &str) -> i64 {
-    parse_xs_datetime(text).unwrap().unix_us
+    parse_xs_datetime(text).unwrap().unix.as_microsecond()
 }
 
 fn samples_by_track(sim: &Sim) -> BTreeMap<u32, Vec<Sig>> {
@@ -180,8 +180,16 @@ fn pair() -> (Livesim2Pair, i64, i64) {
             }
         }
     }
-    let publish_a = Mpd::parse(a.as_bytes()).unwrap().publish_time_us.unwrap();
-    let publish_b = Mpd::parse(b.as_bytes()).unwrap().publish_time_us.unwrap();
+    let publish_a = Mpd::parse(a.as_bytes())
+        .unwrap()
+        .publish_time
+        .unwrap()
+        .as_microsecond();
+    let publish_b = Mpd::parse(b.as_bytes())
+        .unwrap()
+        .publish_time
+        .unwrap()
+        .as_microsecond();
     (
         Livesim2Pair {
             a,

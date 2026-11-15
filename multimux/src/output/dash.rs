@@ -2107,11 +2107,11 @@ mod tests {
         let after = broadcast_dash::Mpd::parse(render_mpd_at(&new, now).expect("new").as_bytes())
             .expect("parses");
         assert_eq!(
-            after.availability_start_time_us,
-            before.availability_start_time_us
+            after.availability_start_time,
+            before.availability_start_time
         );
         assert_eq!(after.minimum_update_period, before.minimum_update_period);
-        assert!(after.publish_time_us > before.publish_time_us);
+        assert!(after.publish_time > before.publish_time);
     }
     #[test]
     fn a_second_continue_from_the_same_route_keeps_the_retained_programs() {

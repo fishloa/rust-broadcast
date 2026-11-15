@@ -17,5 +17,5 @@ fn negative_repeat_cut_by_next_t_ends_where_the_next_run_starts() {
     let first = plan.get(0).unwrap().unwrap();
     let second = plan.get(1).unwrap().unwrap();
     assert_eq!(first.time_ticks + first.duration_ticks, second.time_ticks);
-    assert!(second.available_from_us >= first.available_from_us);
+    assert!(second.available_from >= first.available_from);
 }

@@ -14,7 +14,6 @@ use std::collections::{HashMap, HashSet};
 use crate::address::template::match_url;
 use crate::mpd::{Mpd, SegmentTemplate};
 use broadcast_common::impl_spec_display;
-use broadcast_common::units::MICROS_PER_SEC;
 use http::StatusCode;
 
 /// HTTP method of an ingest request (§5.2.1).
@@ -336,11 +335,7 @@ impl ManifestGrouping {
             media_template,
             addressing,
             switching_sets,
-            availability_start_time: mpd
-                .availability_start_time_us
-                .and_then(|us| us.checked_div(MICROS_PER_SEC as i64))
-                .and_then(|s| jiff::Timestamp::from_second(s).ok())
-                .map(|t| t.to_string()),
+            availability_start_time: mpd.availability_start_time.map(|t| t.to_string()),
             period_start: period.start,
         })
     }
