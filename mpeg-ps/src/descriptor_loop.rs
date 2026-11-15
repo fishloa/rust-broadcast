@@ -5,11 +5,10 @@
 //! Zero-copy: the loop wraps the wire bytes and keeps every non-conformant
 //! byte verbatim, so a PSM whose descriptor bytes no known tag explains still
 //! round-trips. Walk the TLV structure with [`DescriptorLoop::entries`], or
-//! dispatch each entry through `dvb_si`'s typed registry with
-//! [`DescriptorLoop::typed`] (the `dvb-si` feature). mpeg-ps cannot depend on
-//! `dvb-si` unconditionally: `dvb-si` takes `mpeg-ts`, `mpeg-ts` takes
-//! `dvb-si`, so the typed half is a feature to keep the dependency graph
-//! acyclic.
+//! decode each entry through `dvb-si`'s descriptor registry with
+//! [`DescriptorLoop::parse_with`] — the caller passes the parser, so mpeg-ps
+//! keeps no dependency on `dvb-si` (`dvb-si` takes `mpeg-ts`, which takes
+//! `dvb-si`; a direct edge would close the workspace cycle).
 
 /// Bytes of a descriptor header: `descriptor_tag` (1) + `descriptor_length`
 /// (1), ISO/IEC 13818-1 §2.6.
@@ -69,14 +68,24 @@ impl<'a> DescriptorLoop<'a> {
         self.0.len()
     }
 
-    /// Walk the loop through `dvb-si`'s typed descriptor dispatcher, yielding
-    /// one [`AnyDescriptor`](dvb_si::descriptors::AnyDescriptor) per entry
-    /// (`Unknown` for a tag with no implementation), or the parse error for a
-    /// tag that has one but whose body does not decode.
-    #[cfg(feature = "dvb-si")]
-    #[must_use]
-    pub fn typed(&self) -> dvb_si::descriptors::DescriptorIter<'a> {
-        dvb_si::descriptors::parse_loop(self.0)
+    /// Walk the loop through `parse`'s decoder, handing every entry exactly
+    /// the bytes [`entries`](Self::entries) frames for it: `parse` receives
+    /// one entry's `(tag, body)` and returns whatever the caller's typed
+    /// representation of it is. Nothing is decoded here, so an unknown tag is
+    /// the caller's decision (e.g. keep the body verbatim).
+    ///
+    /// A truncated entry ends the walk after its `Err` (the same rule
+    /// [`entries`](Self::entries) uses), so the decoder never sees a partial
+    /// body.
+    pub fn parse_with<T>(
+        &self,
+        parse: impl FnMut(u8, &'a [u8]) -> T,
+    ) -> ParseWith<'a, impl FnMut(u8, &'a [u8]) -> T, T> {
+        ParseWith {
+            inner: self.entries(),
+            parse,
+            out: core::marker::PhantomData,
+        }
     }
 }
 
@@ -100,6 +109,26 @@ impl<'a> IntoIterator for &DescriptorLoop<'a> {
     type IntoIter = DescriptorEntryIter<'a>;
     fn into_iter(self) -> Self::IntoIter {
         self.entries()
+    }
+}
+
+/// Iterator over a raw descriptor loop with the caller's decoder; see
+/// [`DescriptorLoop::parse_with`].
+pub struct ParseWith<'a, F, T> {
+    inner: DescriptorEntryIter<'a>,
+    parse: F,
+    out: core::marker::PhantomData<fn(&'a [u8]) -> T>,
+}
+
+impl<'a, F, T> Iterator for ParseWith<'a, F, T>
+where
+    F: FnMut(u8, &'a [u8]) -> T,
+{
+    type Item = crate::Result<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let entry = self.inner.next()?;
+        Some(entry.map(|e| (self.parse)(e.tag, e.body)))
     }
 }
 
@@ -140,10 +169,8 @@ impl<'a> Iterator for DescriptorEntryIter<'a> {
             }));
         }
         self.pos += total;
-        Some(Ok(DescriptorEntry {
-            tag,
-            body: &rem[DESCRIPTOR_HEADER_LEN..total],
-        }))
+        let body = &rem[DESCRIPTOR_HEADER_LEN..total];
+        Some(Ok(DescriptorEntry { tag, body }))
     }
 }
 
@@ -213,17 +240,24 @@ mod tests {
         );
     }
 
-    #[cfg(feature = "dvb-si")]
     #[test]
-    fn the_typed_walk_dispatches_known_tags() {
-        use dvb_si::descriptors::AnyDescriptor;
-        // registration descriptor (tag 0x05, "HDMV").
-        let raw = [0x05, 0x04, b'H', b'D', b'M', b'V'];
-        let typed: Vec<_> = DescriptorLoop::new(&raw).typed().collect();
-        assert_eq!(typed.len(), 1);
-        assert!(matches!(
-            typed[0].as_ref().unwrap(),
-            AnyDescriptor::Registration(_)
-        ));
+    fn parse_with_hands_each_entry_its_own_classification() {
+        // registration descriptor (tag 0x05, "HDMV") then an unknown tag.
+        let raw = [0x05u8, 0x04, b'H', b'D', b'M', b'V', 0xC0, 0x01, 0x7F];
+        let kinds: Vec<_> = DescriptorLoop::new(&raw)
+            .parse_with(|tag, _| match tag {
+                0x05 => "registration",
+                0xC0 => "unknown",
+                _ => "other",
+            })
+            .map(|k| k.expect("framed loop"))
+            .collect();
+        assert_eq!(kinds, ["registration", "unknown"]);
+
+        let bodies: Vec<&[u8]> = DescriptorLoop::new(&raw)
+            .parse_with(|_, body| body)
+            .map(|b| b.expect("framed loop"))
+            .collect();
+        assert_eq!(bodies, [&b"HDMV"[..], &[0x7F][..]]);
     }
 }

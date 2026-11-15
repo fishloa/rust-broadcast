@@ -98,14 +98,15 @@ pub(crate) fn trailing_es_bytes() -> Vec<u8> {
     first
 }
 
-/// Both PSM descriptor loops are typed and dispatched: the program loop
-/// carries a registration descriptor (0x05) and the ES loop a subtitling
-/// descriptor (0x59), each reaching a typed `AnyDescriptor` while the wire
-/// bytes stay untouched.
+/// Both PSM descriptor loops are typed and walked: the program loop carries
+/// a registration descriptor (0x05) and the ES loop a subtitling descriptor
+/// (0x59), each reaching the caller's own decoder through `parse_with`, while
+/// the wire bytes stay untouched (mpeg-ps keeps no `dvb-si` dependency —
+/// `dvb-si` sits above `mpeg-ts`, which sits above this crate, so the caller
+/// names the decoder).
 #[test]
-fn psm_descriptor_loops_dispatch_typed_and_keep_bytes() {
+fn psm_descriptor_loops_walk_typed_and_keep_bytes() {
     use broadcast_common::{Parse, Serialize};
-    use dvb_si::descriptors::AnyDescriptor;
 
     let prog = [0x05u8, 0x04, b'H', b'D', b'M', b'V'];
     let es = [
@@ -132,20 +133,19 @@ fn psm_descriptor_loops_dispatch_typed_and_keep_bytes() {
     let parsed = ProgramStreamMap::parse(&wire).unwrap();
     assert_eq!(parsed.try_to_bytes().unwrap(), wire);
 
-    let prog_typed: Vec<_> = parsed.program_stream_info.typed().collect();
-    assert_eq!(prog_typed.len(), 1);
-    assert!(matches!(
-        prog_typed[0].as_ref().unwrap(),
-        AnyDescriptor::Registration(_)
-    ));
+    let prog_tags: Vec<u8> = parsed
+        .program_stream_info
+        .parse_with(|tag, _| tag)
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(prog_tags, [0x05]);
 
     let es_loop = &parsed.elementary_stream_map[0].descriptors;
-    let es_typed: Vec<_> = es_loop.typed().take(1).collect();
-    assert_eq!(es_typed.len(), 1);
-    assert!(matches!(
-        es_typed[0].as_ref().unwrap(),
-        AnyDescriptor::Subtitling(_)
-    ));
+    let es_tags: Vec<u8> = es_loop
+        .parse_with(|tag, _| tag)
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(es_tags, [0x59]);
 
     assert_eq!(parsed.program_stream_info.raw(), &prog[..]);
     assert_eq!(es_loop.raw(), &es[..]);
