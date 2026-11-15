@@ -110,7 +110,8 @@ fn wvtt_spec_vector_round_trips_with_nmhd() {
         vttc.extend_from_slice(&payl);
         vttc
     };
-    let sample = Sample::new(cue.clone(), Some(0), Some(0), Some(1000), true);
+    let sample =
+        Sample::new(cue.clone(), Some(0), Some(0), Some(1000), true).expect("valid timing");
     let media = Media::new(vec![Track::new(spec, vec![sample])], timescale(1000));
     let out = CmafMux::default().package(&media).expect("wvtt muxes");
     assert!(find(&out, b"nmhd").is_some() && find(&out, b"text").is_some());

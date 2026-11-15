@@ -34,7 +34,7 @@ use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
 use transmux::{
     FragmentTrackData, Media, RtpLossEvent, RtpOutput, RtpPacketiser, RtpStream,
     RtpStreamDepacketiser, RtpStreamTrack, Severity, TsDemux, build_init_segment,
-    build_media_segment, validate_init_segment, validate_media_segment,
+    build_media_segment, validate::SegmentOrigin, validate_init_segment, validate_media_segment,
 };
 
 const MTU: usize = 1400;
@@ -230,7 +230,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
 
     for (label, seg) in [("part 1", &seg1), ("part 2", &seg2)] {
         assert!(!seg.is_empty(), "{label} segment non-empty");
-        let issues = validate_media_segment(seg);
+        let issues = validate_media_segment(seg, SegmentOrigin::FromIr);
         assert!(
             errors(&issues).is_empty(),
             "{label} segment must validate clean: {:?}",

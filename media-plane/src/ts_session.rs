@@ -381,6 +381,9 @@ pub struct TsIngestSession {
     tracker: ProgramTracker,
     first_fed_at: Option<Timestamp>,
     silent_heads_released: bool,
+    /// Stream defects the demuxer reported, waiting for
+    /// [`take_reader_errors`](Self::take_reader_errors).
+    reader_errors: std::collections::VecDeque<std::sync::Arc<crate::file_source::FileReaderError>>,
 }
 
 /// Arrival time after the first byte of input past which a PID the PMT
@@ -411,6 +414,7 @@ impl TsIngestSession {
             tracker: ProgramTracker::new(),
             first_fed_at: None,
             silent_heads_released: false,
+            reader_errors: std::collections::VecDeque::new(),
         }
     }
 
@@ -418,6 +422,26 @@ impl TsIngestSession {
         while let Some(event) = self.demux.poll_event() {
             self.tracker.handle(event);
         }
+    }
+
+    /// Report a demux error this session's `Stage::Error = Infallible` cannot
+    /// carry out. Today that is only a sample whose timing cannot be
+    /// represented (a PTS with no DTS), a stream defect rather than a
+    /// transport one — the transport's own failures are `FileReaderError`
+    /// at the I/O layer.
+    fn push_demux_error(&mut self, err: transmux::Error) {
+        self.reader_errors.push_back(std::sync::Arc::new(
+            crate::file_source::FileReaderError::Demux(err),
+        ));
+    }
+
+    /// The stream defects the demuxer reported without a `Stage::Error` to
+    /// carry them, oldest first. A transport that reports failures as
+    /// `Stage::Error` has none; a host drains this to surface them.
+    pub fn take_reader_errors(
+        &mut self,
+    ) -> Vec<std::sync::Arc<crate::file_source::FileReaderError>> {
+        self.reader_errors.drain(..).collect()
     }
 }
 
@@ -438,13 +462,20 @@ impl Stage for TsIngestSession {
     type Error = Infallible;
 
     fn feed(&mut self, input: &[u8], now: Timestamp) -> Result<(), Infallible> {
-        self.demux.feed(input);
-        self.drain_demux();
-        let first = *self.first_fed_at.get_or_insert(now);
-        if !self.silent_heads_released && now.saturating_sub(first) >= SILENT_PID_SETTLE {
-            self.silent_heads_released = true;
-            self.demux.release_silent_heads();
+        let outcome = (|| {
+            self.demux.feed(input)?;
             self.drain_demux();
+            let first = *self.first_fed_at.get_or_insert(now);
+            if !self.silent_heads_released && now.saturating_sub(first) >= SILENT_PID_SETTLE {
+                self.silent_heads_released = true;
+                self.demux.release_silent_heads()?;
+                self.drain_demux();
+            }
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => {}
+            Err(err) => self.push_demux_error(err),
         }
         Ok(())
     }
@@ -459,7 +490,9 @@ impl Stage for TsIngestSession {
     /// translate what it emitted. Idempotent: the demux's second flush emits
     /// nothing, so a repeated call queues no duplicate event.
     fn finish(&mut self) -> Result<(), Infallible> {
-        self.demux.finish();
+        if let Err(err) = self.demux.finish() {
+            self.push_demux_error(err);
+        }
         while let Some(event) = self.demux.poll_event() {
             self.tracker.handle(event);
         }
@@ -573,7 +606,8 @@ pub mod test_support {
                     i % gop == 0,
                 )
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid timing");
         let track = Track::new(spec, samples);
         let media = transmux::media::Media::new(vec![track], transmux::VIDEO_CLOCK_TIMESCALE);
         TsMux::default().package(&media).expect("mux to TS")
@@ -588,7 +622,7 @@ mod tests {
     use transmux::pipeline::Sample;
 
     fn sample_at(nal: u8) -> Sample {
-        Sample::new(vec![0x65, nal], Some(0), Some(0), Some(3000), true)
+        Sample::new(vec![0x65, nal], Some(0), Some(0), Some(3000), true).expect("valid timing")
     }
 
     /// Determinism: an MPTS announces programs in ascending `program_number`
@@ -963,7 +997,8 @@ mod tests {
                     let t = i64::from(i) * i64::from(dur);
                     Sample::new(vec![0xBBu8; len], Some(t), Some(t), Some(dur), sync)
                 })
-                .collect()
+                .collect::<Result<Vec<_>, _>>()
+                .expect("valid timing")
         };
         let data = |stream_type: u8| CodecConfig::Data {
             stream_type,
@@ -1049,9 +1084,9 @@ mod tests {
     /// emitted *before* its first `TracksResolved`.
     fn raw_demux_samples(ts: &[u8], finish: bool) -> (TrackSamples, usize) {
         let mut demux = StreamingTsDemux::new();
-        demux.feed(ts);
+        demux.feed(ts).expect("valid timing");
         if finish {
-            demux.finish();
+            demux.finish().expect("valid timing");
         }
         let mut by_track: std::collections::BTreeMap<_, Vec<_>> = Default::default();
         let (mut resolved, mut before) = (false, 0usize);
@@ -1290,7 +1325,8 @@ mod tests {
         tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
         let total = MAX_HELD_SAMPLES + 5;
         for i in 0..total {
-            let s = Sample::new(vec![0x65], Some(i as i64), Some(i as i64), Some(1), true);
+            let s = Sample::new(vec![0x65], Some(i as i64), Some(i as i64), Some(1), true)
+                .expect("valid timing");
             tracker.handle(DemuxEvent::sample(TrackId::new(1), s));
         }
         tracker.handle(DemuxEvent::tracks_resolved(0));
@@ -1315,7 +1351,8 @@ mod tests {
                 Some(i as i64),
                 Some(1),
                 true,
-            );
+            )
+            .expect("valid timing");
             tracker.handle(DemuxEvent::sample(TrackId::new(1), s));
         }
         tracker.handle(DemuxEvent::tracks_resolved(0));

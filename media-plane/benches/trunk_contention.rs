@@ -53,7 +53,8 @@ fn publish_with_readers(readers: usize, iters: u64) -> Duration {
         Some(0),
         None,
         true,
-    );
+    )
+    .expect("valid timing");
     let start = Instant::now();
     for _ in 0..iters {
         writer.publish(TrackId::new(TRACK), RetentionClass::Timed, sample.clone());

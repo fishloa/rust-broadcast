@@ -394,6 +394,12 @@ pub enum DemuxEvent {
     ClockReference {
         /// The clock value, in the container's native clock rate (`clock_hz`).
         ticks: u64,
+        /// The parsed clock reference itself, when the container has a
+        /// structured one: an MPEG-2 TS PCR is a 33-bit base plus a 9-bit
+        /// extension (§2.4.3.5), and a wire extension in `300..=511` is off
+        /// the 27 MHz clock, so it survives only here — `ticks` cannot name
+        /// it. `None` for a caller-built event from a container without one.
+        pcr: Option<mpeg_ts::Pcr>,
         /// The rate, in Hz, `ticks` is expressed in (27 MHz for an MPEG-2 TS
         /// PCR).
         clock_hz: broadcast_common::timescale::Timescale,
@@ -537,12 +543,14 @@ impl DemuxEvent {
     /// wall-clock/UTC anchor) is not a breaking change.
     pub fn clock_reference(
         ticks: u64,
+        pcr: Option<mpeg_ts::Pcr>,
         clock_hz: broadcast_common::timescale::Timescale,
         discontinuous: bool,
         provenance: EventProvenance,
     ) -> Self {
         DemuxEvent::ClockReference {
             ticks,
+            pcr,
             clock_hz,
             discontinuous,
             provenance,

@@ -2841,7 +2841,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     fn test_sample(dts: i64, len: usize) -> Sample {
         let mut data = (len as u32).to_be_bytes().to_vec();
         data.extend(std::iter::repeat_n(0x65, len));
-        Sample::new(data, Some(dts), Some(dts), Some(3000), false)
+        Sample::new(data, Some(dts), Some(dts), Some(3000), false).expect("valid timing")
     }
 
     /// A sample is packetised once however many viewers send it, and each

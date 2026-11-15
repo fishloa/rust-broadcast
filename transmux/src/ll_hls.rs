@@ -306,6 +306,7 @@ struct TrackState {
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+/// #         .expect("valid timing")
 /// # }
 /// // 1 s target segments, ~334 ms parts.
 /// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), 1.0, 334).unwrap();

@@ -96,10 +96,10 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
         }
     };
     for p in &packets {
-        d.feed(p);
+        d.feed(p).expect("valid timing");
         drain(&mut d, "pre_finish");
     }
-    d.finish();
+    d.finish().expect("valid timing");
     drain(&mut d, "at_finish");
     let tracks: Map<String, Value> = agg
         .into_iter()

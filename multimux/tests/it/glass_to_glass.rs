@@ -144,7 +144,7 @@ fn timestamped_sample(is_sync: bool) -> Sample {
     // duration-driven `Segmenter`, so dts/pts stay `None` (media plane step 2c
     // — never fabricate a timestamp) and the segment timeline comes from
     // `duration` exactly as before.
-    Sample::new(data, None, None, Some(FRAME_DUR), is_sync)
+    Sample::new(data, None, None, Some(FRAME_DUR), is_sync).expect("valid timing")
 }
 
 /// The inverse of [`timestamped_sample`]: how long ago (from `now()`) this

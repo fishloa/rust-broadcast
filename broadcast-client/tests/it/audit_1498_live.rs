@@ -151,7 +151,7 @@ impl LiveHost {
             .iter()
             .skip(idx)
             .filter_map(|e| match e {
-                Event::Status(s) => Some(*s),
+                Event::Status(s) => Some(s.clone()),
                 _ => None,
             })
             .collect()
@@ -535,7 +535,7 @@ fn finite_loop(file: &[u8]) {
     let statuses: Vec<Status> = second
         .iter()
         .filter_map(|e| match e {
-            Event::Status(s) => Some(*s),
+            Event::Status(s) => Some(s.clone()),
             _ => None,
         })
         .collect();

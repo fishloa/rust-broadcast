@@ -57,7 +57,7 @@ fn run(ts: &[u8], mut sizes: impl FnMut() -> usize, drain_each: bool) -> Vec<Str
     let mut pos = 0;
     while pos < ts.len() {
         let n = sizes().max(1).min(ts.len() - pos);
-        d.feed(&ts[pos..pos + n]);
+        d.feed(&ts[pos..pos + n]).expect("valid timing");
         pos += n;
         if drain_each {
             while let Some(ev) = d.poll_event() {
@@ -65,7 +65,7 @@ fn run(ts: &[u8], mut sizes: impl FnMut() -> usize, drain_each: bool) -> Vec<Str
             }
         }
     }
-    d.finish();
+    d.finish().expect("valid timing");
     while let Some(ev) = d.poll_event() {
         out.push(summarize(&ev));
     }

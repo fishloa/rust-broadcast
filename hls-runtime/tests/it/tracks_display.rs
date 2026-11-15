@@ -100,8 +100,8 @@ fn ts_tracks_match_oracle() {
     };
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&bytes);
-    demux.finish();
+    demux.feed(&bytes).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut oracle: Vec<(TrackId, String, u32)> = Vec::new();
     while let Some(ev) = demux.poll_event() {
         match ev {

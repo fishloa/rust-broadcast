@@ -135,7 +135,7 @@ mod tests {
     }
 
     fn sample(dts: i64, duration: u32) -> Sample {
-        Sample::new(vec![0u8], Some(dts), Some(dts), Some(duration), true)
+        Sample::new(vec![0u8], Some(dts), Some(dts), Some(duration), true).expect("valid timing")
     }
 
     fn dts_of(samples: &[Sample]) -> Vec<i64> {

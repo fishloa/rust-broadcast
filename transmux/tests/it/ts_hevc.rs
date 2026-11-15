@@ -18,7 +18,7 @@ use transmux::TsDemux;
 use transmux::hevc_config::HEVCDecoderConfigurationRecord;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
-use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
+use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
 // ── Fixture loading ─────────────────────────────────────────────────────────
 
@@ -163,7 +163,7 @@ fn ts_to_cmaf_validates_with_hvc1_sample_entry() {
         "init segment must have zero errors, got {init_errors:?}"
     );
 
-    let media_issues = validate_media_segment(&cmaf);
+    let media_issues = validate_media_segment(&cmaf, SegmentOrigin::FromIr);
     let media_errors: Vec<_> = media_issues
         .iter()
         .filter(|i| i.severity == Severity::Error)

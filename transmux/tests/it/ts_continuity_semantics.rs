@@ -78,15 +78,15 @@ fn pay(pid: u16, cc: u8) -> [u8; TS] {
 fn gaps(packets: &[[u8; TS]]) -> Vec<(u16, u64, u8, u8)> {
     let mut d = StreamingTsDemux::new();
     for p in packets {
-        d.feed(p);
+        d.feed(p).expect("valid timing");
     }
     // The resynchroniser needs a run of sync bytes after a packet before it
     // trusts it; trailing null packets (exempt from the check) give short
     // hand-built sequences that run without changing any packet index.
     for _ in 0..PAD {
-        d.feed(&pay(0x1FFF, 0));
+        d.feed(&pay(0x1FFF, 0)).expect("valid timing");
     }
-    d.finish();
+    d.finish().expect("valid timing");
     let mut out = Vec::new();
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::InputDegraded {
@@ -399,8 +399,8 @@ struct DegradationRun {
 
 fn run_degradation(ts: &[u8]) -> DegradationRun {
     let mut d = StreamingTsDemux::new();
-    d.feed(ts);
-    d.finish();
+    d.feed(ts).expect("valid timing");
+    d.finish().expect("valid timing");
     let mut video = None;
     let mut samples = Vec::new();
     let mut degraded = 0;

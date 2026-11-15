@@ -40,7 +40,9 @@ fn pts_33bit_wrap_through_session_playout() {
     for (i, s) in video_track.samples.iter_mut().enumerate() {
         let pts = (WRAP - 10000) + i as i64 * frame_dur;
         if let Some(t) = s.timing.as_mut() {
-            *t = t.with_composition(pts, pts).with_duration(frame_dur as u32);
+            *t = t.with_composition(pts, pts).with_duration(
+                std::num::NonZeroU32::new(frame_dur as u32).unwrap_or(std::num::NonZeroU32::MIN),
+            )
         } else {
             s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 pts,
@@ -58,7 +60,9 @@ fn pts_33bit_wrap_through_session_playout() {
         a.samples.truncate(1);
         if let Some(s) = a.samples.first_mut() {
             if let Some(t) = s.timing.as_mut() {
-                *t = t.with_composition(0, 0).with_duration(1024);
+                *t = t
+                    .with_composition(0, 0)
+                    .with_duration(std::num::NonZeroU32::new(1024).expect("non-zero"))
             } else {
                 s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(0, 0, 1024));
             }

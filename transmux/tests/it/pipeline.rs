@@ -147,13 +147,16 @@ fn extract_samples(
         cursor += size;
         let dur = ts.sample_duration.unwrap_or(3000);
         let co = ts.sample_composition_time_offset.unwrap_or(0);
-        samples.push(Sample::new(
-            data_bytes,
-            Some(next_dts),
-            Some(next_dts + co),
-            Some(dur),
-            i == 0,
-        ));
+        samples.push(
+            Sample::new(
+                data_bytes,
+                Some(next_dts),
+                Some(next_dts + co),
+                Some(dur),
+                i == 0,
+            )
+            .expect("valid timing"),
+        );
         next_dts += i64::from(dur);
     }
     (track_id.value(), samples)

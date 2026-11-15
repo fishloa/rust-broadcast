@@ -42,7 +42,7 @@ fn run(data: &[u8]) -> Run {
     };
     let mut fed = 0usize;
     for ch in data.chunks(CHUNK) {
-        d.feed(ch);
+        d.feed(ch).expect("valid timing");
         fed += ch.len();
         while let Some(e) = d.poll_event() {
             match e {
@@ -60,7 +60,7 @@ fn run(data: &[u8]) -> Run {
             }
         }
     }
-    d.finish();
+    d.finish().expect("valid timing");
     while let Some(e) = d.poll_event() {
         match e {
             DemuxEvent::Sample { track_id, .. } => {
@@ -134,10 +134,10 @@ fn per_source_pid(data: &[u8], strict: bool, chunk: usize) -> PerPid {
         }
     };
     for ch in data.chunks(chunk) {
-        d.feed(ch);
+        d.feed(ch).expect("valid timing");
         drain(&mut d);
     }
-    d.finish();
+    d.finish().expect("valid timing");
     drain(&mut d);
     out
 }
@@ -174,7 +174,7 @@ fn strict_pmt_order_keeps_the_head_of_line_wait() {
     let mut d = StreamingTsDemux::new().with_strict_pmt_order();
     let mut before_finish = 0usize;
     for ch in data.chunks(CHUNK) {
-        d.feed(ch);
+        d.feed(ch).expect("valid timing");
         while let Some(e) = d.poll_event() {
             before_finish += usize::from(matches!(e, DemuxEvent::Sample { .. }));
         }
@@ -197,7 +197,7 @@ fn release_silent_heads_unblocks_a_unit_whose_declared_video_never_came() {
         let data = &data[..data.len() / 188 * 188];
 
         let mut waiting = StreamingTsDemux::new();
-        waiting.feed(data);
+        waiting.feed(data).expect("valid timing");
         assert_eq!(
             samples_after(&mut waiting),
             0,
@@ -205,8 +205,8 @@ fn release_silent_heads_unblocks_a_unit_whose_declared_video_never_came() {
         );
 
         let mut released = StreamingTsDemux::new();
-        released.feed(data);
-        released.release_silent_heads();
+        released.feed(data).expect("valid timing");
+        released.release_silent_heads().expect("valid timing");
         assert!(
             samples_after(&mut released) > 0,
             "{rel}: a silent declared PID still blocks its program after the unit ended"
@@ -235,14 +235,14 @@ fn restart_timeline_keeps_tracks_and_ids_across_the_seam() {
                 }
             }
         };
-        d.feed(&data[..half]);
+        d.feed(&data[..half]).expect("valid timing");
         drain(&mut d);
         if restart {
-            d.restart_timeline();
+            d.restart_timeline().expect("valid timing");
             drain(&mut d);
         }
-        d.feed(&data[half..]);
-        d.finish();
+        d.feed(&data[half..]).expect("valid timing");
+        d.finish().expect("valid timing");
         drain(&mut d);
         (added, samples)
     };

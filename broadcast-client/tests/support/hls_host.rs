@@ -452,7 +452,7 @@ pub fn statuses(events: &[Event]) -> Vec<broadcast_client::Status> {
     events
         .iter()
         .filter_map(|e| match e {
-            Event::Status(s) => Some(*s),
+            Event::Status(s) => Some(s.clone()),
             _ => None,
         })
         .collect()

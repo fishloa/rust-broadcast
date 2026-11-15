@@ -123,8 +123,8 @@ fn a_pid_without_a_track_stays_none() {
 #[test]
 fn streaming_event_carries_no_track_before_the_track_is_announced() {
     let mut d = StreamingTsDemux::new();
-    d.feed(&stream());
-    d.finish();
+    d.feed(&stream()).expect("valid timing");
+    d.finish().expect("valid timing");
     let mut seen = 0;
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::InputDegraded {

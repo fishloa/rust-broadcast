@@ -48,6 +48,7 @@ use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use core::fmt;
 use core::marker::PhantomData;
+use core::num::NonZeroU32;
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
@@ -269,6 +270,23 @@ pub enum FlvError {
     Tag(RtmpError),
     /// Underlying parse/serialize error from a reused codec-config builder.
     Codec(Error),
+    /// A tag's timestamp stepped backwards on its track, so the previous
+    /// sample's duration (a forward delta) is not a tick count. The FLV clock
+    /// only unrolls the 32-bit millisecond wrap (Annex E §E.4.1), so a
+    /// publisher that rewinds its own clock hits this instead of having a
+    /// zero-length span fabricated for the sample.
+    TimestampBackwards {
+        /// The previous sample's DTS, when it had one.
+        previous: Option<i64>,
+        /// This sample's DTS, when it had one.
+        next: Option<i64>,
+    },
+    /// A tag's forward delta was too large to be a sample span: a duration is
+    /// a `u32` tick count.
+    SampleDurationTooLarge {
+        /// The forward delta, in media-timescale ticks.
+        ticks: i64,
+    },
 }
 
 impl fmt::Display for FlvError {
@@ -298,6 +316,13 @@ impl fmt::Display for FlvError {
                 )
             }
             FlvError::Codec(e) => write!(f, "FLV codec config: {e}"),
+            FlvError::TimestampBackwards { previous, next } => write!(
+                f,
+                "FLV tag timestamp went backwards: {next:?} follows {previous:?}"
+            ),
+            FlvError::SampleDurationTooLarge { ticks } => {
+                write!(f, "FLV sample span {ticks} ticks exceeds a 32-bit duration")
+            }
             FlvError::Header(e) => write!(f, "FLV header: {e}"),
             FlvError::Tag(e) => write!(f, "FLV tag: {e}"),
         }
@@ -945,13 +970,17 @@ fn backfill_last_duration(samples: &mut [Sample]) {
     // forward delta dts[i+1]-dts[i] by shifting left by one.
     for i in 0..n.saturating_sub(1) {
         let dur = samples[i + 1].timing.and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur) {
+        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur)
+            && let Ok(d) = NonZeroU32::try_from(d)
+        {
             *a = a.with_duration(d);
         }
     }
     if n >= 2 {
         let dur = samples[n - 2].timing.and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur) {
+        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur)
+            && let Ok(d) = NonZeroU32::try_from(d)
+        {
             *a = a.with_duration(d);
         }
     }

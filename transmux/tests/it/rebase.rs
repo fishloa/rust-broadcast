@@ -81,7 +81,7 @@ fn sample_at(dts: i64, duration: u32) -> Sample {
     let nal = [0x65u8, 0x88, 0x84, 0x00];
     let mut data = (nal.len() as u32).to_be_bytes().to_vec();
     data.extend_from_slice(&nal);
-    Sample::new(data, Some(dts), Some(dts), Some(duration), true)
+    Sample::new(data, Some(dts), Some(dts), Some(duration), true).expect("valid timing")
 }
 
 /// Build a one-track `Media` anchored at `start`, whose samples carry

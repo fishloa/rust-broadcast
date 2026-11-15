@@ -348,7 +348,7 @@ fn a_played_connection_that_ends_reports_reconnecting_attempt_zero_then_live() {
     let statuses: Vec<Status> = events
         .iter()
         .filter_map(|e| match e {
-            Event::Status(s) => Some(*s),
+            Event::Status(s) => Some(s.clone()),
             _ => None,
         })
         .collect();

@@ -499,7 +499,8 @@ fn package_rescales_non_ms_timescales() {
                 true,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
@@ -575,7 +576,8 @@ fn package_rejects_oversized_composition_time() {
     let config = config.clone();
 
     // 9 000 000 ms (2.5 h) at timescale 1000 is far past SI24's 8 388 607 ms.
-    let sample = transmux::Sample::new(alloc_body(4), Some(0), Some(9_000_000), Some(1_000), true);
+    let sample = transmux::Sample::new(alloc_body(4), Some(0), Some(9_000_000), Some(1_000), true)
+        .expect("valid timing");
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
             TrackId::new(1),
@@ -620,7 +622,8 @@ fn frame_payloads_reject_out_of_range_timestamps() {
     };
     let config = config.clone();
     let media_with = |dts: i64, cts: i64| {
-        let sample = transmux::Sample::new(alloc_body(4), Some(dts), Some(cts), Some(1_000), true);
+        let sample = transmux::Sample::new(alloc_body(4), Some(dts), Some(cts), Some(1_000), true)
+            .expect("valid timing");
         let track = transmux::Track::new(
             transmux::TrackSpec::new(
                 TrackId::new(1),

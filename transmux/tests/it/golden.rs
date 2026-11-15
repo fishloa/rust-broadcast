@@ -106,7 +106,7 @@ fn wvtt_media() -> Media {
     vttc.extend_from_slice(&(8u32 + payl.len() as u32).to_be_bytes());
     vttc.extend_from_slice(b"vttc");
     vttc.extend_from_slice(&payl);
-    let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true);
+    let sample = Sample::new(vttc, Some(0), Some(0), Some(1000), true).expect("valid timing");
     Media::new(vec![Track::new(spec, vec![sample])], timescale(1000))
 }
 

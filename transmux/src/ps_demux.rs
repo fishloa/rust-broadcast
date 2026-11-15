@@ -58,6 +58,7 @@ use crate::TrackId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+use core::num::NonZeroU32;
 
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
@@ -566,13 +567,13 @@ impl<'a> PsDemux<'a> {
                 // structural evidence no H.264 NAL stream can produce by
                 // chance, so it is checked first.
                 Codec::Video if Mpeg2SeqHeader::find(&es.es_bytes).is_ok() => {
-                    build_mpeg2_track(es, track_id)
+                    build_mpeg2_track(es, track_id)?
                 }
                 // The H.264 path can fail on a resource limit (a NAL past the
                 // splitter's cap); that must surface as an error rather than
                 // "no video track" (r04-W21 review).
                 Codec::Video => build_h264_track(es, track_id)?,
-                Codec::Ac3 => build_ac3_track(es, track_id),
+                Codec::Ac3 => build_ac3_track(es, track_id)?,
                 // A private substream that is not AC-3, and the placeholder an
                 // undecided substream is parked at, both produce no track.
                 Codec::Private | Codec::Skipped => None,
@@ -869,23 +870,23 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     let samples: Vec<Sample> = order
         .iter()
         .enumerate()
-        .map(|(pos, &i)| {
+        .map(|(pos, &i)| -> crate::error::Result<Sample> {
             let dur = frame_duration(&order, &dts, pos);
             let (start, end) = ranges[i];
             let au = &es.es_bytes[start..end];
             let is_idr = au_is_idr(au);
             let display = displays[i].clone();
-            let mut sample = Sample::from_annexb(
+            let mut sample = Sample::timed_annexb(
                 au,
-                Some(to_ticks(dts[i])),
-                Some(to_ticks(pts[i])),
-                Some(dur),
+                to_ticks(dts[i]),
+                to_ticks(pts[i]),
+                NonZeroU32::new(dur),
                 is_idr,
-            );
+            )?;
             sample.display = display;
-            sample
+            Ok(sample)
         })
-        .collect();
+        .collect::<crate::error::Result<Vec<Sample>>>()?;
 
     // Anchor = the first decode-ordered sample's absolute DTS, kept in
     // lockstep with `samples[0].timing.map(|t| t.dts)` per the crate-wide IR invariant.
@@ -909,11 +910,13 @@ fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
 /// build one raw sample per picture (C6, #1009). Returns `None` if no
 /// `picture_start_code` is found (skip, never fatal) — the sequence header
 /// itself was already confirmed present by the caller.
-fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
-    let seq = Mpeg2SeqHeader::find(&es.es_bytes).ok()?;
+fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Result<Option<Track>> {
+    let Ok(seq) = Mpeg2SeqHeader::find(&es.es_bytes) else {
+        return Ok(None);
+    };
     let ranges = split_mpeg2_pictures(&es.es_bytes);
     if ranges.is_empty() {
-        return None;
+        return Ok(None);
     }
     let stamped = assign_stamps(&ranges, &es.stamps);
 
@@ -972,20 +975,20 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
             let au = &es.es_bytes[start..end];
             let is_sync = mpeg2_is_sync(au);
             let display = displays[i].clone();
-            let mut sample = Sample::new(
+            let mut sample = Sample::timed(
                 au.to_vec(),
-                Some(to_ticks(dts[i])),
-                Some(to_ticks(pts[i])),
-                Some(dur),
-                is_sync,
+                to_ticks(dts[i]),
+                to_ticks(pts[i]),
+                NonZeroU32::new(dur),
             );
+            sample.flags = crate::ir::SampleFlags::new(is_sync);
             sample.display = display;
             sample
         })
         .collect();
 
     let anchor = order.first().map(|&i| dts[i].max(0) as u64).unwrap_or(0);
-    Some(Track::new_at(
+    Ok(Some(Track::new_at(
         TrackSpec::new(
             track_id,
             VIDEO_TIMESCALE,
@@ -997,7 +1000,7 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> 
         ),
         samples,
         anchor,
-    ))
+    )))
 }
 
 /// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
@@ -1106,16 +1109,20 @@ fn split_ac3_frames(data: &[u8]) -> Vec<(usize, usize)> {
 
 /// Recover AC-3 config (syncframe BSI → `dac3`) + one raw sample per syncframe.
 /// Returns `None` if no valid AC-3 syncframe is found (skip, never fatal).
-fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
-    let info = Ac3SyncframeInfo::from_es(&es.es_bytes).ok()?;
+fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Result<Option<Track>> {
+    let Ok(info) = Ac3SyncframeInfo::from_es(&es.es_bytes) else {
+        return Ok(None);
+    };
     let sample_rate = info.sample_rate;
-    let timescale = Timescale::try_new(sample_rate).ok()?;
+    let Ok(timescale) = Timescale::try_new(sample_rate) else {
+        return Ok(None);
+    };
     let channel_count = info.channel_count() as u16;
     let config = info.into_dac3();
 
     let frames = split_ac3_frames(&es.es_bytes);
     if frames.is_empty() {
-        return None;
+        return Ok(None);
     }
 
     // Absolute dts/pts (media plane step 2c). The PES-level stamps are 90 kHz
@@ -1176,22 +1183,31 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
             // the stream's first PES timestamp, so its absolute time is
             // genuinely unknown — `None`, never fabricated.
             (None, None) => {
-                samples.push(Sample::from_raw(
-                    es.es_bytes[s..e].to_vec(),
-                    None,
-                    None,
-                    Some(AC3_SAMPLES_PER_SYNCFRAME),
-                ));
+                samples.push(
+                    Sample::from_raw(
+                        es.es_bytes[s..e].to_vec(),
+                        None,
+                        None,
+                        Some(AC3_SAMPLES_PER_SYNCFRAME),
+                    )
+                    .or_else(|_| {
+                        Sample::from_duration(
+                            es.es_bytes[s..e].to_vec(),
+                            NonZeroU32::new(AC3_SAMPLES_PER_SYNCFRAME).unwrap_or(NonZeroU32::MIN),
+                            true,
+                        )
+                    })?,
+                );
                 continue;
             }
         };
         next_dts = Some(dts + AC3_SAMPLES_PER_SYNCFRAME as i64);
         ticks_since_anchor += AC3_SAMPLES_PER_SYNCFRAME as i64;
-        samples.push(Sample::from_raw(
+        samples.push(Sample::timed_raw(
             es.es_bytes[s..e].to_vec(),
-            Some(dts),
-            Some(dts),
-            Some(AC3_SAMPLES_PER_SYNCFRAME),
+            dts,
+            dts,
+            NonZeroU32::new(AC3_SAMPLES_PER_SYNCFRAME),
         ));
     }
 
@@ -1202,7 +1218,7 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
         .and_then(|s| s.timing.and_then(|t| t.dts()))
         .map(|d| d.max(0) as u64)
         .unwrap_or(0);
-    Some(Track::new_at(
+    Ok(Some(Track::new_at(
         TrackSpec::new(
             track_id,
             timescale,
@@ -1215,7 +1231,7 @@ fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
         ),
         samples,
         anchor,
-    ))
+    )))
 }
 
 #[cfg(test)]

@@ -1536,7 +1536,8 @@ mod tests {
                     let dts = base + i64::from(i) * i64::from(FRAME_DUR);
                     Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0)
                 })
-                .collect()
+                .collect::<crate::error::Result<Vec<_>>>()
+                .expect("valid timing")
         };
 
         let first_base = 0u64;
@@ -1632,7 +1633,8 @@ mod tests {
                     let dts = base + i64::from(i) * i64::from(FRAME_DUR);
                     Sample::new(data, Some(dts), Some(dts), Some(FRAME_DUR), i == 0)
                 })
-                .collect()
+                .collect::<crate::error::Result<Vec<_>>>()
+                .expect("valid timing")
         };
         let second_base = u64::from(FRAMES * FRAME_DUR);
         let f1 = frames(0);
@@ -1692,7 +1694,8 @@ mod tests {
                         true,
                     )
                 })
-                .collect::<Vec<_>>(),
+                .collect::<crate::error::Result<Vec<_>>>()
+                .expect("valid timing"),
         );
         // A section-carried data track: no dts, no pts, no duration — ever.
         let sections = Track::new(
@@ -1705,7 +1708,7 @@ mod tests {
                     carriage: crate::ir::DataCarriage::Sections,
                 },
             ),
-            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true)],
+            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true).expect("valid timing")],
         );
 
         let playlist = HlsPackager::default()
@@ -1740,7 +1743,7 @@ mod tests {
                     carriage: crate::ir::DataCarriage::Sections,
                 },
             ),
-            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true)],
+            vec![Sample::new(vec![0xFCu8; 8], None, None, None, true).expect("valid timing")],
         );
         assert!(
             HlsPackager::default()
