@@ -308,7 +308,7 @@ fn typed_identities_survive_the_wire_unchanged() {
     let sr = SenderReport::new(ssrc, 1, 2, 3, 0, 0, Vec::new());
     assert_eq!(sr.ssrc, ssrc);
     assert_eq!(
-        Vec::<u8>::from(sr.try_to_bytes().unwrap())[4..8],
+        sr.try_to_bytes().unwrap()[4..8],
         ssrc.get().to_be_bytes()
     );
 
