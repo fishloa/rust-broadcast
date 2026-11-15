@@ -60,6 +60,15 @@ pub enum Descriptor<'a> {
 }
 
 impl<'a> Descriptor<'a> {
+    /// The spec token for this variant (issue #204 label convention). ST 2038
+    /// names no descriptor for this loop, so every entry is "other".
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Other { .. } => "other",
+        }
+    }
+
     /// The `descriptor_tag`.
     #[must_use]
     pub fn tag(&self) -> u8 {
@@ -109,6 +118,12 @@ impl<'a> Descriptor<'a> {
         let len = self.body().len();
         broadcast_common::len::fit_bits(len as u64, 8, "descriptor_length")?;
         Ok(len as u8)
+    }
+}
+
+impl core::fmt::Display for Descriptor<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}(0x{:02X})", self.name(), self.tag())
     }
 }
 
