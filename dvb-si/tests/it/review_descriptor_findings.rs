@@ -104,20 +104,17 @@ fn s2x_reserved_zero_future_use_1_over_range_is_unrepresentable() {
     assert_eq!(ReservedZero::<1>::from_bits(2).get(), 0);
 }
 
-/// extension/s2xv2_satellite_delivery_system.rs:619
-/// `None => self.reserved_zero_future_use_1 & 1`.
+/// extension/s2xv2_satellite_delivery_system.rs `None => self.reserved_zero_future_use_1 & 1`.
 #[test]
-fn s2xv2_reserved_zero_future_use_1_over_range_is_rejected_not_masked() {
+fn s2xv2_reserved_zero_future_use_1_over_range_is_unrepresentable() {
     let ok = S2Xv2SatelliteDeliverySystem::default();
     ser(&ok).expect("default must serialize");
-    let mut d = S2Xv2SatelliteDeliverySystem::default();
-    assert_eq!(d.scrambling_sequence_selector, None);
-    d.reserved_zero_future_use_1 = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_zero_future_use_1=2 must be FieldOverflow, got {r:?}"
-    );
+    assert_eq!(ok.scrambling_sequence_selector, None);
+    // reserved_zero_future_use_1 is a 1-bit `ReservedZero`; an over-range value
+    // is unrepresentable (`from_bits` masks at construction) so it can never be
+    // re-masked into a different wire byte.
+    assert_eq!(ok.reserved_zero_future_use_1.get(), 0);
+    assert_eq!(ReservedZero::<1>::from_bits(2).get(), 0);
 }
 
 // ── 2. Wire bits lost on parse -> serialize ─────────────────────────────────
