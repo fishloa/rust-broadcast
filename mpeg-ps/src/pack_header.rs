@@ -113,6 +113,12 @@ impl Serialize for PackHeader<'_> {
         if self.stuffing_length > STUFFING_LENGTH_MAX {
             return Err(Error::StuffingLengthTooLarge(self.stuffing_length));
         }
+        // `parse` refuses a zero `program_mux_rate` (Table 2-39 semantics,
+        // ISO/IEC 13818-1 §2.5.3.4), so writing one would emit a header that
+        // cannot be read back (#2744).
+        if self.program_mux_rate == 0 {
+            return Err(Error::ZeroMuxRate);
+        }
         let mux = broadcast_common::len::fit_bits(
             u64::from(self.program_mux_rate),
             PROGRAM_MUX_RATE_BITS,

@@ -3158,7 +3158,7 @@ fn harvest_damaged_au(
     if stream.probe_aus > 0 || stream.backlog_bytes > 0 {
         return;
     }
-    let Ok(pes) = PesPacket::parse(data) else {
+    let Ok((pes, _)) = PesPacket::parse_unit(data) else {
         return;
     };
     if pes.payload.is_empty() {
@@ -4406,9 +4406,29 @@ fn on_completed_pes(
     epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
 ) {
-    let Ok(pes) = PesPacket::parse(pes_bytes) else {
+    let Ok((pes, truncation)) = PesPacket::parse_unit(pes_bytes) else {
         return;
     };
+    // A unit that ended before its declared `PES_packet_length` is a normal
+    // stream join, not lost data: report it so a consumer notices, but keep
+    // the samples exactly as received.
+    if let Some(short) = truncation {
+        events.push_back(DemuxEvent::InputDegraded {
+            track: stream.track.as_ref().and_then(|t| match t {
+                TrackState::Live(live) => Some(live.track_id),
+                _ => None,
+            }),
+            kind: InputDegradation::PesUnitTruncated {
+                declared: short.declared,
+                available: short.available,
+            },
+            provenance: EventProvenance {
+                pid: Some(pid),
+                packet_index: None,
+                program_number: None,
+            },
+        });
+    }
     if pes.payload.is_empty() {
         return;
     }

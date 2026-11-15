@@ -99,8 +99,12 @@ Examples (`cargo run -p mpeg-pes --example <name>`): `parse_pes_packet`,
   (`#[non_exhaustive]` types with `new()`/`Default`).
 - **Strict where it matters.** A first flag byte other than `'10'` is
   `Error::BadHeaderMarker`; a `PES_header_data_length` that overruns a bounded
-  `PES_packet_length` is an error; a `P-STD_buffer_size` over 13 bits is
-  `Error::FieldOverflow`, never masked.
+  `PES_packet_length` is an error; a buffer shorter than the declared
+  `PES_packet_length` is `Error::BufferTooShort` (a truncated packet); a
+  `P-STD_buffer_size` over 13 bits is `Error::FieldOverflow`, never masked.
+- **`PES_packet_length` is derived, not stored.** `serialize_into` writes the
+  packet's own content length; `0` (unbounded) only for video, and only when
+  the content passes the 16-bit ceiling (ISO/IEC 13818-1 §2.4.3.7).
 - **Shared clock code.** Marker-bit PTS/DTS/ESCR packing is
   `broadcast_common::clock33`.
 - `no_std` + `alloc`, `#![warn(missing_docs)]`; label convention

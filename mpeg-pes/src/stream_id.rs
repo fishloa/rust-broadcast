@@ -68,6 +68,16 @@ impl StreamId {
     pub const fn is_video(self) -> bool {
         self.0 & 0xF0 == 0xE0
     }
+
+    /// Whether `PES_packet_length = 0` (unbounded) may be written for this
+    /// stream. ISO/IEC 13818-1 §2.4.3.7 permits the unbounded form only in a
+    /// transport stream; this crate has no stream context, so it offers it
+    /// for video (`0xE0`–`0xEF`) — the one case a muxer needs it for, since a
+    /// video access unit regularly exceeds the 16-bit length.
+    #[must_use]
+    pub const fn unbounded_length_allowed(self) -> bool {
+        self.is_video()
+    }
 }
 
 #[cfg(test)]

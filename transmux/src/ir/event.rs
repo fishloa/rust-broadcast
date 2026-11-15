@@ -191,6 +191,18 @@ pub enum InputDegradation {
     /// **dropped**, and the access unit it belonged to is damaged and not
     /// delivered. One event per scrambled packet.
     Scrambled,
+    /// A PES unit ended before its declared `PES_packet_length`
+    /// (ISO/IEC 13818-1 Table 2-21) — the bytes simply had not arrived when
+    /// the next `payload_unit_start_indicator` began the following unit (a
+    /// stream join, the norm on mid-stream captures). Nothing is lost: the
+    /// unit's payload is kept as received. Reported, not dropped, so a
+    /// consumer can tell a short unit apart from a complete one.
+    PesUnitTruncated {
+        /// The `PES_packet_length` the unit declared (bytes after that field).
+        declared: usize,
+        /// The bytes that actually followed the length field.
+        available: usize,
+    },
 }
 
 impl InputDegradation {
@@ -204,6 +216,7 @@ impl InputDegradation {
             InputDegradation::SyncLoss { .. } => "sync loss",
             InputDegradation::TruncatedPacket { .. } => "truncated packet",
             InputDegradation::Scrambled => "scrambled",
+            InputDegradation::PesUnitTruncated { .. } => "truncated PES unit",
         }
     }
 }

@@ -7,14 +7,14 @@
 //! The stream terminates with the `MPEG_program_end_code` `0x000001B9`.
 
 use alloc::vec::Vec;
-use broadcast_common::len::need_in;
+use broadcast_common::len::{need_in, need_out};
 
 use broadcast_common::{Parse, Serialize};
 
 use crate::Result;
 use crate::error::Error;
 use crate::pack_header::{PACK_START_CODE, PackHeader};
-use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap};
+use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap, program_stream_map_wire_len};
 use crate::system_header::{
     PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN, SYSTEM_HEADER_START_CODE, SystemHeader,
 };
@@ -26,6 +26,7 @@ const PROGRAM_END_CODE: u32 = 0x0000_01B9;
 /// `system_header()`, an optional Program Stream Map, and zero or more PES
 /// packets.
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct Pack<'a> {
     /// The pack header (SCR, program_mux_rate, stuffing).
     pub pack_header: PackHeader<'a>,
@@ -99,6 +100,36 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
     ))
 }
 
+impl Serialize for Pack<'_> {
+    type Error = Error;
+
+    fn serialized_len(&self) -> usize {
+        let system_header = self
+            .system_header
+            .as_ref()
+            .map_or(0, Serialize::serialized_len);
+        let psm = self.psm.as_ref().map_or(0, Serialize::serialized_len);
+        let pes: usize = self.pes_packets.iter().map(Serialize::serialized_len).sum();
+        self.pack_header.serialized_len() + system_header + psm + pes
+    }
+
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        let len = self.serialized_len();
+        need_out(buf, len)?;
+        let mut at = self.pack_header.serialize_into(buf)?;
+        if let Some(sh) = &self.system_header {
+            at += sh.serialize_into(&mut buf[at..])?;
+        }
+        if let Some(psm) = &self.psm {
+            at += psm.serialize_into(&mut buf[at..])?;
+        }
+        for pes in &self.pes_packets {
+            at += pes.serialize_into(&mut buf[at..])?;
+        }
+        Ok(at)
+    }
+}
+
 /// Parse PES packets from `data` until a `pack_start_code`/`program_end_code`
 /// or non-PES-start bytes are found — always checked exactly at the boundary
 /// right after a previously-consumed *whole* PES packet, never scanned for
@@ -110,10 +141,9 @@ pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
 /// `private_stream_1`) are not start-code-emulation-free, so a chance
 /// `00 00 01 BA` inside real payload bytes truncated the PES loop early,
 /// leaving the last real PES packet's tail unparsed and the whole pack
-/// (and, via `parse_all_packs`, the whole stream) rejected with a spurious
-/// `BufferTooShort`/`Err`. Checking for the boundary only right after a
-/// fully-parsed PES packet (by its own declared `PES_packet_length`) cannot
-/// see mid-payload emulation at all.
+/// rejected with a spurious `BufferTooShort`/`Err`. Checking for the boundary
+/// only right after a fully-parsed PES packet (by its own declared
+/// `PES_packet_length`) cannot see mid-payload emulation at all.
 fn parse_pes_loop(
     data: &[u8],
 ) -> Result<(
@@ -143,7 +173,11 @@ fn parse_pes_loop(
         // an opaque, un-mapped PES packet.
         if data[pos + 3] == MAP_STREAM_ID {
             let map = ProgramStreamMap::parse(&data[pos..])?;
-            pos += map.serialized_len();
+            // Advance by the *wire* length (`6 + program_stream_map_length`,
+            // Table 2-41), never by the re-serialized length of the parsed
+            // struct: the next packet starts where the length field says
+            // (#2743).
+            pos += program_stream_map_wire_len(&data[pos..])?;
             psm = Some(map);
             continue;
         }
@@ -160,31 +194,10 @@ fn parse_pes_loop(
     Ok((packets, psm, pos))
 }
 
-/// Iterate over all packs in a Program Stream buffer.
-///
-/// Returns all packs and the remaining trailing bytes (if any).
-pub fn parse_all_packs(b: &[u8]) -> Result<(Vec<Pack<'_>>, &[u8])> {
-    let mut packs = Vec::new();
-    let mut remaining = b;
-    while remaining.len() >= 4 {
-        let (pack_opt, consumed) = parse_pack(remaining)?;
-        match pack_opt {
-            Some(pack) => {
-                remaining = &remaining[consumed..];
-                packs.push(pack);
-            }
-            None => {
-                remaining = &remaining[4..];
-                break;
-            }
-        }
-    }
-    Ok((packs, remaining))
-}
-
 /// A span of the input [`scan_packs`] skipped because the pack starting
 /// there did not parse.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SkippedRegion {
     /// Byte offset (from the start of the scanned buffer) where the failed
     /// pack began.
@@ -198,6 +211,7 @@ pub struct SkippedRegion {
 
 /// The outcome of [`scan_packs`].
 #[derive(Debug, Clone)]
+#[non_exhaustive]
 pub struct PackScan<'a> {
     /// Every pack that parsed, in stream order.
     pub packs: Vec<Pack<'a>>,
@@ -208,8 +222,9 @@ pub struct PackScan<'a> {
     pub remaining: &'a [u8],
 }
 
-/// Walk a Program Stream like [`parse_all_packs`], but **resynchronise** after
-/// a pack that fails to parse instead of abandoning the whole stream.
+/// Walk a Program Stream, **resynchronising** after a pack that fails to
+/// parse instead of abandoning the whole stream (every pack parsed before the
+/// failure is kept).
 ///
 /// On a parse failure the failed span is recorded in
 /// [`PackScan::skipped`] (with the error, never swallowed) and scanning
@@ -292,6 +307,8 @@ mod tests {
                 stream_type: 0x02, // MPEG-2 video
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
+                pseudo_descriptor_tag: None,
+                pseudo_descriptor_length: None,
                 descriptors: &[],
             }],
             crc: 0,
