@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-15
 ### Changed
 - BREAKING: `Error::MessageParse { what, source }` carries `source: MessageParseError`, a new typed enum (`Codec(rtsp_types::ParseError)`, `TooLarge { at_least, limit }`, `Buffered { buffered, limit }`, `HeaderUnterminated { at_least, limit }`, `NotARequest`) instead of a boxed any-error, so a caller matches the failure instead of reading its text. `Error::Tls { source }` is a `rustls::pki_types::InvalidDnsNameError` and `Error::TlsConfig` wraps `rustls::Error`, both named types the `tls` feature already depends on (#2695).
 

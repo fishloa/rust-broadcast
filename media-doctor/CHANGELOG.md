@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.16.0] - 2026-11-15
 ### Added
 - `Scte35Check` reports a reassembled `splice_info_section` that does not parse (CRC-32 mismatch, impossible length, invalid field) as a `scte35-malformed` Error finding: `SpliceTracker::feed` used to drop such a section silently.
 

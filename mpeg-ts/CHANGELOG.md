@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-15
 ### Changed
 - BREAKING: `SiMux` schedules one complete `Section` at a time keyed by the new `SectionKey` (`(pid, table_id, section_number)`), and `poll`/`poll_into` take the caller's `broadcast_common::stage::Timestamp` instead of a `Duration` (#2763). The packetiser derives `section_length` and the CRC from the section itself, so an empty `Vec` can no longer collide with the PAT entry on PID 0, a batch of mixed-table sections cannot share one entry, and a truncated trailing section cannot be dropped without a word; a section that cannot be scheduled is returned and kept for `SiMux::rejected` (`RejectedSection`/`SectionRejection`). The convenience registrations (`upsert_pat`, `upsert_pmt`, `upsert_sdt_actual`, `upsert_nit`, `upsert_tdt`, `upsert_tot`) return `Result` and refuse another table's section, since a PAT interval used to apply to whatever sat under `table_id 0`; the six `TABLE_ID_*` constants name the `table_id` each one expects.
 - `TsResync` reports the bytes before the first lock as a `ResyncLoss` too: they were counted in `ResyncStats::dropped_bytes` but never surfaced, so a capture that starts mid-packet disagreed with `take_losses()` (#2765). Every byte in `dropped_bytes` is now accounted for by a loss.

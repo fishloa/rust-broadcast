@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [15.0.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common, dvb-si, mpeg-ts); no functional change.
+
 ## [14.0.0] - 2026-11-14
 ### Changed
 - Legal-duplicate TS packet detection now imports `mpeg_ts::ts_dup` instead of `broadcast_common::ts_dup` (#2466).

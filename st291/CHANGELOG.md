@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-11-15
 ### Changed
 - BREAKING: `AncRtpPayload::extended_sequence_number` is an `ExtendedSequenceNumber` instead of a bare `u16` (#2768): the field holds the high-order bits of RFC 4175's extended 32-bit sequence number, so it now names that position (`high_half()`, `extended(rtp_sequence_number)`) rather than leaving the shift to the caller. The two wire bytes are unchanged.
 - BREAKING: `AncDataDescriptor::inner_descriptors: &[u8]` is now `descriptors: Vec<Descriptor>` (#2770). The `descriptor_length` body is an ISO/IEC 13818-1 §2.6 `descriptor()` loop, so each entry is walked into a typed (borrowed) `Descriptor` with `tag()`/`body()` accessors instead of the caller re-parsing raw octets. ST 2038 §4.1.2.1 defines no descriptors for the loop, so every entry is `Descriptor::Other { tag, body }`, kept verbatim for a lossless round-trip; a truncated entry header or body is now reported as `Error::BufferTooShort` instead of being retained as opaque bytes.

@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-15
 ### Added
 - `packet::number` defines the typed SRT wire numbers `SocketId` (32-bit Destination/Source Socket ID), `SeqNo` (31-bit Packet Sequence Number with `broadcast_common::seq` wrap arithmetic and the ACK/loss-list 31-bit space), `MessageNumber` (26-bit, wrapping to `1`), `AckNumber` (32-bit ACK/ACKACK Acknowledgement Number) and `SrtTimestamp` (32-bit header Timestamp), so a sequence number, socket id and timestamp are no longer interchangeable bare `u32`s (part of #2768, #2772).
 

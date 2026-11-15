@@ -1,0 +1,15 @@
+# cc-data 0.10.0
+
+_Released 2026-11-15._
+
+Dependency/epoch bump only: the crate has no functional or API change of its own; it moves so that its published bucket names the sibling release it is known to build against.
+
+Version: 0.9.0 -> 0.10.0.
+
+## Dependencies
+
+- broadcast-common 12 -> 13.
+
+---
+
+Published from tag `cc-data-v0.10.0`.

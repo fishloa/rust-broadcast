@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.10.0] - 2026-11-15
 ### Changed
 - BREAKING: `LctHeader::tsi` is a `Tsi` and `toi` a `Toi` (new types) carrying the decoded identifier and the field width the `S`/`O`/`H` flags give it, instead of raw borrowed bytes; `Tsi::new`/`Toi::new` reject a width the flags cannot describe and a value the width cannot hold (#2770).
 - BREAKING: `fec_payload_id` is a `FecPayloadId` (new type) in `AlcPacket`, `NormData`, and `NormCmdBody::{Flush, Squelch}`, replacing the borrowed `&[u8]`; the value owns its bytes and reports its own length, so serialization no longer pairs a slice with a separately supplied length. `NormCmdBody` loses its lifetime parameter along with the borrowed field (#2770).

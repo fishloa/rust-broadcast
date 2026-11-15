@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-15
 ### Changed
 - BREAKING: `ProgramStreamMap::program_stream_info` and `EsMapEntry::descriptors` are `DescriptorLoop` (new module `mpeg_ps::descriptor_loop`) instead of `&[u8]`. The loop wraps the wire bytes verbatim (`raw()`), walks the TLV structure with `entries()` (`DescriptorEntry { tag, body }`, a truncated entry reported as `Error::DescriptorHeaderTruncated`/`DescriptorBodyTruncated` rather than silently dropped), and decodes every entry through the caller's own parser with `parse_with` (mpeg-ps keeps no `dvb-si` dependency: `dvb-si` is above `mpeg-ts`, which is above this crate, so the caller names its decoder). A caller no longer hand-builds the `descriptor()` bytes to read them. Wire bytes are unchanged. Migration: `&psm.program_stream_info[..]` -> `psm.program_stream_info.raw()`, `EsMapEntry { descriptors: &bytes, .. }` -> `EsMapEntry { descriptors: DescriptorLoop::new(&bytes), .. }` (#2770).
 - BREAKING: `program_stream_map::PACKET_START_CODE_PREFIX` (the module-local `u32` form) is private; the single public definition is `mpeg_ps::PACKET_START_CODE_PREFIX` (the `[u8; 3]` re-exported from `mpeg-pes`). The two used to be two different types under one name (#2774).

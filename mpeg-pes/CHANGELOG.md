@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.9.0] - 2026-11-15
 ### Changed
 - BREAKING: `StreamId`'s field is private: build one from the wire byte with `StreamId::new` and read the byte back with `StreamId::get` (the named associated constants are unchanged). The tuple field let a caller bypass the type when converting to and from the wire; wire bytes are unchanged (#2768). `Pts`/`Dts` (validated `Clock33`, `try_new`/`ticks()`) already carry their 33-bit value through `broadcast_common::clock33` and kept their `seconds()` convenience, which is a display helper, not a wire field.
 - The `panic_idioms` workspace guard now covers this crate; the PTS/DTS/ESCR readers that converted a length-checked slice with `.try_into().unwrap()` / `.expect("length checked above")` build the fixed array directly instead (#2773).

@@ -52,7 +52,7 @@ the specification each primitive follows.
 
 ```toml
 [dependencies]
-broadcast-common = "12"
+broadcast-common = "13"
 # embedded (no_std + alloc):
 # broadcast-common = { version = "12", default-features = false }
 ```

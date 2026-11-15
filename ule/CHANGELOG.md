@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common); no functional change.
+
 ## [0.7.0] - 2026-11-14
 ### Fixed
 - `Sndu::parse` rejects the `0xFFFF` End Indicator (`D=1`, `Length=0x7FFF`) with `Error::InvalidLength`, matching what `serialize_into` already refused (#1946).

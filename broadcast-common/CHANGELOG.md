@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [13.0.0] - 2026-11-15
 ### Changed
 - BREAKING: `http_date::parse_http_date` and `http_date::date_to_epoch_us` return a `jiff::Timestamp` (the workspace wall-clock instant) instead of Unix microseconds as a raw `i64`; `date_to_epoch_us` still refuses a `Date` before 1970 and now reports a value outside the `jiff` range as `HttpDateError::HttpDate`. Migration: `parse_http_date(t)?.as_microsecond()` for a numeric count, or drop the conversion where a wall-clock instant was wanted (#2731).
 - BREAKING: `time::MonoUtc` (and its `WallClock`/`Anchor` aliases) holds typed instants — `mono: stage::Timestamp` and `utc: jiff::Timestamp` — instead of the raw `mono_us: u64`/`utc_us: i128` microsecond fields, and its mapping methods take and return the same types (`utc_at(now: Timestamp) -> jiff::Timestamp` saturating at the wall-clock range, `mono_for_utc(utc: jiff::Timestamp) -> Timestamp` saturating at `0..=u64::MAX`); the raw-count aliases `unix_at`/`mono_for_unix` are gone, and the type is behind the `jiff` feature. Migration: build with `MonoUtc::new(Timestamp::from_micros(m), jiff::Timestamp::from_microsecond(u)?)` and take the typed result of `utc_at`/`mono_for_utc` rather than re-wrapping a microsecond count (#2731).

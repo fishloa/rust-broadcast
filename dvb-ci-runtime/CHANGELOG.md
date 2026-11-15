@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-11-15
 ### Changed
 - BREAKING: `managed::CaError::NotSent` is a struct variant `NotSent { detail: String }` (the stack's diagnostic named, not a bare positional `String`) (#2734).
 - BREAKING: `resource::DateTime::with_clock` takes a `fn() -> Option<[u8; UTC_TIME_LEN]>` clock; `None` means an instant the 5-byte `UTC_time` field cannot express (issue #2723).

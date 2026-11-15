@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-11-15
 ### Changed
 - BREAKING: follows `rmt-flute`'s typed `Tsi`/`Toi` — a `RoutePacket`'s LCT identifiers are built with `Tsi::new`/`Toi::new` rather than raw `to_be_bytes()` slices (#2770).
 
