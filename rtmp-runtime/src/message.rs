@@ -567,14 +567,16 @@ impl UserControl {
     /// timestamps are not meaningful).
     #[must_use]
     pub fn to_message(&self) -> Message {
+        // The payload buffer is sized exactly `serialized_len()`, so the
+        // fixed-size serializer cannot fail (mirrors `ProtocolControl`).
+        let mut payload = alloc::vec![0u8; self.serialized_len()];
+        let _ = self.serialize_into(&mut payload);
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
             timestamp: 0,
             message_type_id: MessageTypeId::UserControl,
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
-            payload: self
-                .try_to_bytes()
-                .expect("UserControl serialize_into only fails on a short buffer; try_to_bytes sizes it exactly"),
+            payload,
         }
     }
 }

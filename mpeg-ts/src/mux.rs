@@ -159,9 +159,7 @@ impl SectionPacketiser {
                 adaptation_field_control: AdaptationFieldControl::PayloadOnly,
                 continuity_counter: self.continuity_counter,
             };
-            header
-                .serialize_into(&mut pkt[..4])
-                .expect("4-byte header buffer");
+            pkt[..4].copy_from_slice(&header.to_bytes());
 
             self.continuity_counter = self.continuity_counter.next();
 
@@ -457,7 +455,8 @@ fn packetiser_for(packetisers: &mut Vec<SectionPacketiser>, pid: Pid) -> &mut Se
         &mut packetisers[idx]
     } else {
         packetisers.push(SectionPacketiser::new(pid));
-        packetisers.last_mut().expect("just pushed")
+        let last = packetisers.len() - 1;
+        &mut packetisers[last]
     }
 }
 

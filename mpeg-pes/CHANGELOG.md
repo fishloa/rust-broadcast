@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The `panic_idioms` workspace guard now covers this crate; the PTS/DTS/ESCR readers that converted a length-checked slice with `.try_into().unwrap()` / `.expect("length checked above")` build the fixed array directly instead (#2773).
 ### Fixed
 - `PesPacket::parse` reports a buffer shorter than the declared `PES_packet_length` as `Error::BufferTooShort` (a truncated packet) instead of a silent short read (regression from the #1159 fix that stopped re-serializing past the declared length) (#2746).
 ### Added

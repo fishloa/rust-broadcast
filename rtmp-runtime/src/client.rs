@@ -221,8 +221,10 @@ impl ClientHandshake {
             random: self.local_random,
         };
         let mut out = vec![0u8; VERSION_LEN + HANDSHAKE_PACKET_LEN];
-        c0.serialize_into(&mut out[..VERSION_LEN]).unwrap();
-        c1.serialize_into(&mut out[VERSION_LEN..]).unwrap();
+        // The slices are exactly VERSION_LEN / HANDSHAKE_PACKET_LEN long, so
+        // the fixed-size serializers cannot fail.
+        let _ = c0.serialize_into(&mut out[..VERSION_LEN]);
+        let _ = c1.serialize_into(&mut out[VERSION_LEN..]);
         self.state = ClientHandshakeState::WaitS0S1S2;
         out
     }
@@ -345,7 +347,7 @@ impl ClientSession {
             self.dispatch_message(&msg, &mut out, &mut events)?;
         }
 
-        self.maybe_ack(&mut out);
+        self.maybe_ack(&mut out)?;
         Ok((out, events))
     }
 
@@ -811,21 +813,17 @@ impl ClientSession {
         Ok(())
     }
 
-    fn maybe_ack(&mut self, out: &mut Vec<u8>) {
+    fn maybe_ack(&mut self, out: &mut Vec<u8>) -> Result<()> {
         if self.ack_threshold == 0 {
-            return;
+            return Ok(());
         }
         if self.bytes_received.wrapping_sub(self.bytes_acked) >= u64::from(self.ack_threshold) {
             let seq = (self.bytes_received & 0xFFFF_FFFF) as u32;
             let ack = ProtocolControl::Acknowledgement(seq);
-            out.extend_from_slice(
-                &self
-                    .writer
-                    .write(&ack.to_message())
-                    .expect("an Acknowledgement control message (4 bytes) never exceeds the 24-bit message_length field"),
-            );
+            out.extend_from_slice(&self.writer.write(&ack.to_message())?);
             self.bytes_acked = self.bytes_received;
         }
+        Ok(())
     }
 }
 

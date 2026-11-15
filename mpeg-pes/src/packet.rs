@@ -1200,27 +1200,37 @@ impl<'a> PesPacket<'a> {
         let (pts, dts) = match pts_dts_flags {
             0b10 => {
                 need_in(opt, cursor + 5, "PTS")?;
-                let pts = Pts::from_field_bytes(
-                    opt[cursor..cursor + 5]
-                        .try_into()
-                        .expect("length checked above"),
-                )?;
+                // `need_in` guarantees five bytes from `cursor` are present.
+                let field = [
+                    opt[cursor],
+                    opt[cursor + 1],
+                    opt[cursor + 2],
+                    opt[cursor + 3],
+                    opt[cursor + 4],
+                ];
+                let pts = Pts::from_field_bytes(&field)?;
                 cursor += 5;
                 (Some(pts), None)
             }
             0b11 => {
                 need_in(opt, cursor + 10, "PTS+DTS")?;
-                let pts = Pts::from_field_bytes_with_dts(
-                    opt[cursor..cursor + 5]
-                        .try_into()
-                        .expect("length checked above"),
-                )?;
+                let pts_field = [
+                    opt[cursor],
+                    opt[cursor + 1],
+                    opt[cursor + 2],
+                    opt[cursor + 3],
+                    opt[cursor + 4],
+                ];
+                let pts = Pts::from_field_bytes_with_dts(&pts_field)?;
                 cursor += 5;
-                let dts = Dts::from_field_bytes(
-                    opt[cursor..cursor + 5]
-                        .try_into()
-                        .expect("length checked above"),
-                )?;
+                let dts_field = [
+                    opt[cursor],
+                    opt[cursor + 1],
+                    opt[cursor + 2],
+                    opt[cursor + 3],
+                    opt[cursor + 4],
+                ];
+                let dts = Dts::from_field_bytes(&dts_field)?;
                 cursor += 5;
                 (Some(pts), Some(dts))
             }
@@ -1236,8 +1246,16 @@ impl<'a> PesPacket<'a> {
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
         let escr = if f2 & F2_ESCR != 0 {
             need_in(opt, cursor + 6, "ESCR")?;
-            let arr: &[u8; 6] = opt[cursor..cursor + 6].try_into().unwrap();
-            let e = Escr::from_field_bytes(arr)?;
+            // `need_in` guarantees six bytes from `cursor` are present.
+            let arr = [
+                opt[cursor],
+                opt[cursor + 1],
+                opt[cursor + 2],
+                opt[cursor + 3],
+                opt[cursor + 4],
+                opt[cursor + 5],
+            ];
+            let e = Escr::from_field_bytes(&arr)?;
             cursor += 6;
             Some(e)
         } else {

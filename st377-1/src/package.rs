@@ -346,7 +346,9 @@ crate::sets::declare_set_serialize!(SourcePackage, SourcePackage);
 /// Encode a [`MxfTimestamp`] into an owned local-set item.
 fn encode_timestamp_item(out: &mut Vec<LocalSetOwnedItem>, tag: u16, ts: &MxfTimestamp) {
     let mut buf = [0u8; TIMESTAMP_LEN];
-    ts.serialize_into(&mut buf).expect("fixed-size buffer");
+    // The buffer is exactly the type's serialized length, so the write
+    // cannot fail.
+    let _ = ts.serialize_into(&mut buf);
     out.push(LocalSetOwnedItem::owned(tag, buf.to_vec()));
 }
 

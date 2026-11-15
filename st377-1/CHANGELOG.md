@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The `panic_idioms` workspace guard now covers this crate; the `MxfTimestamp`/`Rational`/`ProductVersion` serializers that wrote an exactly-sized buffer with `.expect("fixed-size buffer")` now discard the provably-infallible result (#2773).
+- BREAKING: `PrimerPack::entries` is now `Vec<LocalTagEntry>` — the named `LocalTagEntry { tag: u16, uid: UlBytes }` struct (ST 377-1 Table 15) replaces the anonymous `(u16, UlBytes)` tuple, so an entry's fields are named instead of positional (#2770).
 ### Fixed
 - Counts and lengths are range-checked before they are written, instead of being narrowed with `as u32` (#2758): the Random Index Pack's trailing overall Length and the Primer Pack's entry count now go through `broadcast_common::len::fit_u32` and report `Error::FieldOverflow` when over range, rather than silently wrapping to a different value (and a different on-wire length).
 - A Primer Pack's duplicate-tag/duplicate-UL check sorts each dimension instead of running a nested loop over the untrusted entry count (#2758): a crafted ~1.2 MB Primer (65 536 distinct tags, duplicate last) cost ~2e9 comparisons before the duplicate was reported.

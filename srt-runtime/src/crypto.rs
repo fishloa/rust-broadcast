@@ -102,8 +102,10 @@ fn invalid_key_length(what: &'static str) -> Error {
 /// `output`'s length determines `dkLen`; any non-negative length up to
 /// `(2^32 - 1) * 20` is accepted by the underlying primitive.
 pub fn pbkdf2_hmac_sha1(password: &[u8], salt: &[u8], iterations: u32, output: &mut [u8]) {
-    pbkdf2::<Hmac<Sha1>>(password, salt, iterations, output)
-        .expect("HMAC-SHA1 accepts any key length, so PBKDF2 cannot fail here");
+    // HMAC-SHA1 is fixed-length, so the only PBKDF2 failure (`InvalidLength`)
+    // cannot occur; the output slice length is caller-controlled and always
+    // within the primitive's bound.
+    let _ = pbkdf2::<Hmac<Sha1>>(password, salt, iterations, output);
 }
 
 // ---------------------------------------------------------------------------

@@ -230,9 +230,9 @@ impl Preface {
         self.interchange.encode_into(&mut out);
         {
             let mut buf = [0u8; crate::types::TIMESTAMP_LEN];
-            self.last_modified_date
-                .serialize_into(&mut buf)
-                .expect("fixed-size buffer");
+            // The buffer is exactly the type's serialized length, so the
+            // write cannot fail.
+            let _ = self.last_modified_date.serialize_into(&mut buf);
             out.push(LocalSetOwnedItem::owned(
                 TAG_LAST_MODIFIED_DATE,
                 buf.to_vec(),

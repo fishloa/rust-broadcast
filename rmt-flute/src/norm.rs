@@ -837,8 +837,15 @@ impl<'a> NormCmd<'a> {
                 reserved[0] = b1;
                 need_in(data, off + 8, "NORM_CMD(CC) send_time_sec/send_time_usec")?;
                 let cc_sequence = u16::from_be_bytes([b2, b3]);
-                let send_time_sec = u32::from_be_bytes(data[off..off + 4].try_into().unwrap());
-                let send_time_usec = u32::from_be_bytes(data[off + 4..off + 8].try_into().unwrap());
+                // `need_in` guarantees eight bytes from `off` are present.
+                let send_time_sec =
+                    u32::from_be_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+                let send_time_usec = u32::from_be_bytes([
+                    data[off + 4],
+                    data[off + 5],
+                    data[off + 6],
+                    data[off + 7],
+                ]);
                 off += 8;
                 NormCmdBody::Cc {
                     cc_sequence,

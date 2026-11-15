@@ -7,8 +7,9 @@
 
 use broadcast_common::{Parse, Serialize};
 use st377_1::{
-    EventTrack, FillerComponent, InterchangeObjectFields, MaterialPackage, MxfTimestamp, PackageId,
-    Rational, Sequence, SourceClip, SourcePackage, StaticTrack, TimecodeComponent, TimelineTrack,
+    EventTrack, FillerComponent, InterchangeObjectFields, LocalTagEntry, MaterialPackage,
+    MxfTimestamp, PackageId, Rational, Sequence, SourceClip, SourcePackage, StaticTrack,
+    TimecodeComponent, TimelineTrack,
 };
 
 // ── Shared helpers ──────────────────────────────────────────────────────
@@ -531,13 +532,13 @@ fn full_op1a_structure_builds_and_round_trips() {
     assert_round_trip(&footer_pp);
 
     let primer = PrimerPack {
-        entries: vec![(
-            0x3C0A,
-            [
+        entries: vec![LocalTagEntry {
+            tag: 0x3C0A,
+            uid: [
                 0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x15, 0x02, 0x00, 0x00,
                 0x00, 0x00,
             ],
-        )],
+        }],
         len_size: BerLength::Minimal,
     };
     assert_round_trip(&primer);
