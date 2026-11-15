@@ -34,7 +34,7 @@ fn first_paragraph(doc: &Document) -> &PElement {
 #[test]
 fn specials_in_attributes_and_text_are_escaped_and_round_trip() {
     let mut doc = document_with(SPECIALS, SPECIALS);
-    let xml = doc.to_xml();
+    let xml = doc.to_xml().expect("render");
     assert!(
         xml.contains(&format!("region=\"{SPECIALS_ESCAPED}\"")),
         "attribute must be escaped on the wire:\n{xml}"
@@ -56,7 +56,7 @@ fn specials_in_attributes_and_text_are_escaped_and_round_trip() {
 fn whitespace_characters_in_attributes_round_trip() {
     let value = "x\ty\nz\rw";
     let mut doc = document_with(value, "t");
-    let xml = doc.to_xml();
+    let xml = doc.to_xml().expect("render");
     assert!(xml.contains("region=\"x&#9;y&#10;z&#13;w\""), "{xml}");
     let reparsed = Document::parse_str(&xml).expect("re-parse");
     assert_eq!(first_paragraph(&reparsed).region.as_deref(), Some(value));
@@ -83,7 +83,7 @@ fn numeric_character_references_and_cdata_decode() {
 #[test]
 fn twenty_thousand_entities_decode() {
     let mut doc = document_with("r", &"&".repeat(20_000));
-    let xml = doc.to_xml();
+    let xml = doc.to_xml().expect("render");
     assert!(xml.contains(&"&amp;".repeat(20_000)));
     let reparsed = Document::parse_str(&xml).expect("re-parse");
     assert_eq!(

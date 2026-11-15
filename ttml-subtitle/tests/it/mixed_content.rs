@@ -30,7 +30,7 @@ fn hoisted_metadata_adds_no_whitespace_text_to_a_preserve_paragraph() {
         r#"<p begin="1s" end="2s" xml:space="preserve"><metadata><ttm:title>t</ttm:title></metadata>Hello<set begin="1s" tts:color="red"/><span>s</span>T</p>"#,
     );
     let mut d = Document::parse_str(&src).unwrap();
-    let out = d.to_xml();
+    let out = d.to_xml().expect("render");
     // Nothing but the original markup between <p> and </p>: no newline/indent.
     assert_eq!(
         p_inner(&out),
@@ -42,7 +42,7 @@ fn hoisted_metadata_adds_no_whitespace_text_to_a_preserve_paragraph() {
         d, again,
         "text content must be identical after a round trip"
     );
-    assert_eq!(again.to_xml(), out);
+    assert_eq!(again.to_xml().expect("render"), out);
 }
 
 #[test]
@@ -67,7 +67,7 @@ fn unmodeled_inline_elements_keep_their_position() {
         kinds,
         ["text", "unknown", "text", "span", "text", "unknown", "text"]
     );
-    let out = d.to_xml();
+    let out = d.to_xml().expect("render");
     assert_eq!(
         p_inner(&out),
         r#"Hello <v:x a="1"/> mid <span>s</span> tail <chunk/> end"#,
@@ -76,7 +76,7 @@ fn unmodeled_inline_elements_keep_their_position() {
     // (An element in the default namespace is re-read with the `tt` prefix the
     // output also declares, so compare the serialized form, which is stable.)
     let mut again = Document::parse_str(&out).unwrap();
-    assert_eq!(again.to_xml(), out);
+    assert_eq!(again.to_xml().expect("render"), out);
 }
 
 /// An unprefixed foreign element lives in the *default* namespace it declares
@@ -88,7 +88,7 @@ fn unprefixed_foreign_elements_keep_their_default_namespace() {
         r#"<p begin="1s" end="2s"><f xmlns="urn:foo">a<g/>b<h xmlns="http://www.w3.org/ns/ttml"/>c</f></p>"#,
     );
     let mut d = Document::parse_str(&src).unwrap();
-    let out = d.to_xml();
+    let out = d.to_xml().expect("render");
     assert_eq!(
         p_inner(&out),
         r#"<f xmlns="urn:foo">a<g/>b<h xmlns="http://www.w3.org/ns/ttml"/>c</f>"#,
@@ -96,7 +96,7 @@ fn unprefixed_foreign_elements_keep_their_default_namespace() {
     );
     let mut again = Document::parse_str(&out).unwrap();
     assert_eq!(again, d, "re-parse must give the identical tree");
-    assert_eq!(again.to_xml(), out);
+    assert_eq!(again.to_xml().expect("render"), out);
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn span_metadata_and_animation_children_are_serialized() {
     };
     assert_eq!(span.metadata.len(), 1);
     assert_eq!(span.animations.len(), 1);
-    let out = d.to_xml();
+    let out = d.to_xml().expect("render");
     assert!(out.contains("<ttm:title>m</ttm:title>"), "{out}");
     assert!(
         out.contains(r#"<set begin="1s" tts:color="red"/>"#),

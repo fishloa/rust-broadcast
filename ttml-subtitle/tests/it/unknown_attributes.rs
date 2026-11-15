@@ -41,7 +41,7 @@ const PLANTED: &[(&str, &str)] = &[
 #[test]
 fn unmodeled_attributes_survive_serialization() {
     let mut doc = Document::parse_str(DOC).expect("parse");
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     for (name, value) in PLANTED {
         let needle = format!(" {name}=\"{value}\"");
         assert!(
@@ -57,13 +57,13 @@ fn unmodeled_attributes_survive_serialization() {
     // Re-parses to the same tree (and is then stable).
     let mut again = Document::parse_str(&out).expect("re-parse");
     assert_eq!(doc, again);
-    assert_eq!(again.to_xml(), out);
+    assert_eq!(again.to_xml().expect("render"), out);
 }
 
 #[test]
 fn modeled_attributes_are_not_duplicated_as_foreign() {
     let mut doc = Document::parse_str(DOC).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     // `begin`/`end`/`tts:color`/`xml:lang` are modeled: each appears once per
     // element, never also replayed as a foreign attribute.
     assert_eq!(out.matches(" begin=\"").count(), 1, "{out}");

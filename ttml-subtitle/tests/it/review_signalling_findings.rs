@@ -18,7 +18,7 @@ fn declaration_with_quote_in_version_reparses_after_to_xml() {
     let Ok(mut doc) = Document::parse_str(&xml) else {
         return; // rejecting the malformed VersionNum on parse is also a fix
     };
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert!(
         Document::parse_str(&out).is_ok(),
         "to_xml produced an unparseable document:\n{out}"
@@ -36,7 +36,7 @@ fn declaration_with_quote_in_version_reparses_after_to_xml() {
 fn foreign_element_inside_metadata_survives_to_xml() {
     let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt"><head><metadata><smpte:image xml:id="img0" imagetype="PNG" encoding="Base64">iVBORw0KGgo=</smpte:image></metadata></head><body/></tt>"#;
     let mut doc = Document::parse_str(xml).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert!(
         out.contains("iVBORw0KGgo="),
         "<smpte:image> inside <metadata> was dropped:\n{out}"

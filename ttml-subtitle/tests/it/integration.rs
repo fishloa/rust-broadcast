@@ -96,7 +96,7 @@ fn round_trip(fixture_name: &str) {
     normalize_doc(&mut doc);
 
     // Re-serialize
-    let regenerated = doc.to_xml();
+    let regenerated = doc.to_xml().expect("render");
 
     // Re-parse
     let mut doc2 = Document::parse_str(&regenerated).unwrap_or_else(|e| {
@@ -160,7 +160,7 @@ fn biting_round_trip(fixture_name: &str) {
         return;
     }
 
-    let regenerated = doc.to_xml();
+    let regenerated = doc.to_xml().expect("render");
     let mut doc2 = Document::parse_str(&regenerated).unwrap();
     normalize_doc(&mut doc2);
 
@@ -566,7 +566,7 @@ fn preserve_style_attributes_across_round_trip() {
     let xml = load_fixture("imsc1-backgroundcolor-rgba-001.ttml");
     let mut doc = Document::parse_str(&xml).unwrap();
     normalize_doc(&mut doc);
-    let regenerated = doc.to_xml();
+    let regenerated = doc.to_xml().expect("render");
     let mut doc2 = Document::parse_str(&regenerated).unwrap();
     normalize_doc(&mut doc2);
 
@@ -651,7 +651,7 @@ fn no_raw_passthrough_in_serializer() {
     let xml = load_fixture("imsc1-document-example-822.ttml");
     let mut doc = Document::parse_str(&xml).unwrap();
 
-    let original_output = doc.to_xml();
+    let original_output = doc.to_xml().expect("render");
 
     // Mutate deeply: change a style attribute on a <p>
     if let Some(ref mut body) = doc.tt.body {
@@ -662,7 +662,7 @@ fn no_raw_passthrough_in_serializer() {
         }
     }
 
-    let mutated_output = doc.to_xml();
+    let mutated_output = doc.to_xml().expect("render");
     assert_ne!(
         original_output, mutated_output,
         "Serializer should produce different output after mutation. \
@@ -919,7 +919,7 @@ const FOREIGN_TT: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 #[test]
 fn unknown_namespace_content_round_trips() {
     let mut doc = Document::parse_str(FOREIGN_TT).unwrap();
-    let xml2 = doc.to_xml();
+    let xml2 = doc.to_xml().expect("render");
     // Parse-equivalence (not string equality): same elements, attributes,
     // namespaces and text on both sides.
     assert_eq!(canonical_dump(FOREIGN_TT), canonical_dump(&xml2));
@@ -928,7 +928,7 @@ fn unknown_namespace_content_round_trips() {
 #[test]
 fn unknown_namespace_prefix_binding_is_preserved() {
     let mut doc = Document::parse_str(FOREIGN_TT).unwrap();
-    let xml2 = doc.to_xml();
+    let xml2 = doc.to_xml().expect("render");
     // The original `acme` prefix must still be bound to the same URI in the
     // serialized document.
     let acme = root_prefix_binding(&xml2, "acme").expect("acme prefix still declared");
@@ -944,7 +944,7 @@ fn unknown_tt_namespace_element_preserved() {
   <body><div><p begin="0s" end="1s">hi</p></div></body>
 </tt>"#;
     let mut doc = Document::parse_str(xml).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
 
@@ -959,7 +959,7 @@ fn prefix_collision_gets_fallback_binding() {
   </div></body>
 </tt>"#;
     let mut doc = Document::parse_str(xml).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     // `v:x` is the only content that resolved to `urn:two`; `xmlns:`
     // declarations are not attributes, so the surviving evidence is the
     // attribute's own namespace URI.
@@ -1003,7 +1003,7 @@ fn foreign_attributes_on_content_elements_are_typed_and_preserved() {
         Some(document::InlineContent::Br(br)) if br.foreign_attributes[0].local_name == "br"
     ));
 
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
 
@@ -1022,7 +1022,7 @@ fn unmodeled_tt_namespace_element_survives_in_body() {
         div.unknown_children[0].namespace.as_deref(),
         Some(document::NS_TT)
     );
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
 
@@ -1043,7 +1043,7 @@ fn round_trip_image_elements_imsc() {
     assert_eq!(img.type_.as_deref(), Some("image/png"));
     assert!(img.tts_extent.is_some(), "tts:extent preserved");
     // Round-trip keeps the image intact.
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert_eq!(canonical_dump(&xml), canonical_dump(&out));
 }
 
@@ -1051,7 +1051,7 @@ fn round_trip_image_elements_imsc() {
 fn round_trip_smpte_background_image() {
     let xml = load_fixture("imsc1-alttext-smpte-backgroundimage-001.ttml");
     let mut doc = Document::parse_str(&xml).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     let reparsed = Document::parse_str(&out).unwrap();
     let body = reparsed.tt.body.unwrap();
     assert_eq!(
@@ -1084,7 +1084,7 @@ fn inline_image_and_audio_in_paragraph_round_trip() {
         ),
         "typed inline audio"
     );
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
 
@@ -1113,7 +1113,7 @@ fn resources_font_and_source_round_trip() {
     let data = src.data.as_ref().expect("source data");
     assert_eq!(data.encoding.as_deref(), Some("base64"));
     assert_eq!(data.text.as_deref(), Some("QkJC"));
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }
 

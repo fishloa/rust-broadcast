@@ -25,7 +25,7 @@ fn check(name: &str, actual: &str) {
 fn golden_for(stem: &str, xml: &str) {
     let mut doc = Document::parse_str(xml).unwrap_or_else(|e| panic!("{stem}: {e}"));
     check(&format!("{stem}.parse.txt"), &format!("{doc:#?}\n"));
-    check(&format!("{stem}.xml"), &doc.to_xml());
+    check(&format!("{stem}.xml"), &doc.to_xml().expect("render"));
 }
 
 #[test]
