@@ -755,7 +755,7 @@ fn scratch(name: &str) -> PathBuf {
 fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
     let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
         .extra(extra)
-        .timeout_secs(VALIDATOR_TIMEOUT_SECS as u32)
+        .timeout(Duration::from_secs(VALIDATOR_TIMEOUT_SECS))
         .deadline(Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN)
         .run();
     let compact: String = json

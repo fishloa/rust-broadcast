@@ -41,7 +41,8 @@ impl Validator {
         let modified = map.typed_get::<LastModified>()?;
         map.typed_get::<Date>()?;
         let instant = |name| parse_http_date(map.get(name)?.to_str().ok()?).ok();
-        let age_us = i128::from(instant(DATE)?.as_microsecond() - instant(LAST_MODIFIED)?.as_microsecond());
+        let age_us =
+            i128::from(instant(DATE)?.as_microsecond() - instant(LAST_MODIFIED)?.as_microsecond());
         (age_us >= i128::from(MIN_STRONG_LAST_MODIFIED_AGE_US))
             .then_some(Self::LastModified(modified))
     }

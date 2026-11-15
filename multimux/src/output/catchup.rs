@@ -1352,7 +1352,7 @@ mod tests {
     /// MUST-level (requirement level 1) findings in the validator's JSON.
     fn validator_errors(dir: &std::path::Path, entry: &str) -> Vec<String> {
         let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
-            .timeout_secs(VALIDATOR_TIMEOUT_SECS as u32)
+            .timeout(std::time::Duration::from_secs(VALIDATOR_TIMEOUT_SECS))
             .deadline(std::time::Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN)
             .run();
         let compact: String = json
