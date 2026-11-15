@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for the Resolution provider Notification Table.
@@ -158,7 +159,7 @@ pub struct CridAuthority<'a> {
     pub descriptors: RntDescriptorLoop<'a>,
     /// `reserved(2)` above `CRID_authority_policy` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: u8,
+    pub reserved: ReservedOnes<2>,
 }
 
 impl<'a> CridAuthority<'a> {
@@ -173,7 +174,7 @@ impl<'a> CridAuthority<'a> {
             name,
             crid_authority_policy,
             descriptors,
-            reserved: super::RESERVED_2,
+            reserved: ReservedOnes::FILL,
         }
     }
 }
@@ -192,11 +193,11 @@ pub struct ResolutionProvider<'a> {
     /// `reserved(4)` before `resolution_provider_info_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_info_length: u8,
+    pub reserved_info_length: ReservedOnes<4>,
     /// `reserved(4)` before `resolution_provider_descriptors_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptors_length: u8,
+    pub reserved_descriptors_length: ReservedOnes<4>,
 }
 
 impl<'a> ResolutionProvider<'a> {
@@ -211,8 +212,8 @@ impl<'a> ResolutionProvider<'a> {
             name,
             descriptors,
             crid_authorities,
-            reserved_info_length: super::RESERVED_4,
-            reserved_descriptors_length: super::RESERVED_4,
+            reserved_info_length: ReservedOnes::FILL,
+            reserved_descriptors_length: ReservedOnes::FILL,
         }
     }
 }
@@ -265,7 +266,7 @@ pub struct RntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `common_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptors_length: u8,
+    pub reserved_common_descriptors_length: ReservedOnes<4>,
 }
 
 impl<'a> RntSection<'a> {
@@ -288,7 +289,7 @@ impl<'a> RntSection<'a> {
             common_descriptors,
             resolution_providers,
             bits: super::SectionBits::dvb(),
-            reserved_common_descriptors_length: super::RESERVED_4,
+            reserved_common_descriptors_length: ReservedOnes::FILL,
         }
     }
 }
@@ -452,13 +453,16 @@ impl<'a> Parse<'a> for RntSection<'a> {
 
                 let mut authority =
                     CridAuthority::new(ca_name, crid_authority_policy, ca_descriptors);
-                authority.reserved = ca_packed >> CRID_POLICY_RESERVED_SHIFT;
+                authority.reserved =
+                    ReservedOnes::from_bits(u64::from(ca_packed >> CRID_POLICY_RESERVED_SHIFT));
                 crid_authorities.push(authority);
             }
 
             let mut provider = ResolutionProvider::new(name, descriptors, crid_authorities);
-            provider.reserved_info_length = reserved_info_length;
-            provider.reserved_descriptors_length = reserved_descriptors_length;
+            provider.reserved_info_length =
+                ReservedOnes::from_bits(u64::from(reserved_info_length));
+            provider.reserved_descriptors_length =
+                ReservedOnes::from_bits(u64::from(reserved_descriptors_length));
             resolution_providers.push(provider);
             pos = rp_end;
         }
@@ -473,7 +477,9 @@ impl<'a> Parse<'a> for RntSection<'a> {
             common_descriptors,
             resolution_providers,
             bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_common_descriptors_length: super::len_reserved_of(bytes[common_desc_len_pos]),
+            reserved_common_descriptors_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[common_desc_len_pos]),
+            )),
         })
     }
 }
@@ -519,7 +525,7 @@ impl Serialize for RntSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[cdl_pos..cdl_pos + 2],
             cdl as usize,
-            self.reserved_common_descriptors_length,
+            self.reserved_common_descriptors_length.get() as u8,
         )?;
 
         let cd_start = cdl_pos + COMMON_DESC_LEN_FIELD;
@@ -537,7 +543,7 @@ impl Serialize for RntSection<'_> {
             super::write_desc_loop_len_r(
                 &mut buf[pos..pos + 2],
                 rp_info_length as usize,
-                rp.reserved_info_length,
+                rp.reserved_info_length.get() as u8,
             )?;
             pos += RP_INFO_LEN_FIELD;
 
@@ -556,7 +562,7 @@ impl Serialize for RntSection<'_> {
             super::write_desc_loop_len_r(
                 &mut buf[pos..pos + 2],
                 rdl as usize,
-                rp.reserved_descriptors_length,
+                rp.reserved_descriptors_length.get() as u8,
             )?;
             pos += RP_DESC_LEN_FIELD;
             buf[pos..pos + rp.descriptors.len()].copy_from_slice(rp.descriptors.raw());
@@ -575,11 +581,7 @@ impl Serialize for RntSection<'_> {
                     12,
                     "crid_authority_descriptors_length",
                 )?;
-                buf[pos] = (broadcast_common::len::fit_mask(
-                    ca.reserved,
-                    super::RESERVED_2,
-                    "reserved(2)",
-                )? << CRID_POLICY_RESERVED_SHIFT)
+                buf[pos] = ((ca.reserved.get() as u8) << CRID_POLICY_RESERVED_SHIFT)
                     | (broadcast_common::len::fit_mask(
                         ca.crid_authority_policy.to_u8(),
                         CRID_POLICY_MASK,
@@ -832,5 +834,27 @@ mod tests {
                 "ContextIdType round-trip failed for {byte:#04x}"
             );
         }
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let ca = CridAuthority {
+            reserved: ReservedOnes::from_bits(0xFF),
+            ..CridAuthority::new(
+                DvbText::new(b"a"),
+                CridAuthorityPolicy::Permanent,
+                RntDescriptorLoop::new(&[]),
+            )
+        };
+        assert_eq!(ca.reserved.get(), 0x03);
+        let rp = ResolutionProvider {
+            reserved_info_length: ReservedOnes::from_bits(0xFF),
+            reserved_descriptors_length: ReservedOnes::from_bits(0xFF),
+            ..ResolutionProvider::new(DvbText::new(b"n"), RntDescriptorLoop::new(&[]), vec![])
+        };
+        assert_eq!(rp.reserved_info_length.get(), 0x0F);
+        assert_eq!(rp.reserved_descriptors_length.get(), 0x0F);
     }
 }
