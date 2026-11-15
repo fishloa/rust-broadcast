@@ -8,6 +8,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -591,10 +592,10 @@ pub struct PmtStream<'a> {
     /// `reserved(3)` before `elementary_PID` (ISO/IEC 13818-1 §2.4.4.9,
     /// `111` in every edition); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pid: u8,
+    pub reserved_pid: ReservedOnes<3>,
     /// `reserved(4)` before `ES_info_length` (`1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_es_info_length: u8,
+    pub reserved_es_info_length: ReservedOnes<4>,
 }
 
 impl<'a> PmtStream<'a> {
@@ -605,8 +606,8 @@ impl<'a> PmtStream<'a> {
             stream_type,
             elementary_pid,
             es_info,
-            reserved_pid: super::RESERVED_3,
-            reserved_es_info_length: super::RESERVED_4,
+            reserved_pid: ReservedOnes::FILL,
+            reserved_es_info_length: ReservedOnes::FILL,
         }
     }
 }
@@ -643,10 +644,10 @@ pub struct PmtSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(3)` before `PCR_PID` (`111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_pcr_pid: u8,
+    pub reserved_pcr_pid: ReservedOnes<3>,
     /// `reserved(4)` before `program_info_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_program_info_length: u8,
+    pub reserved_program_info_length: ReservedOnes<4>,
 }
 
 impl<'a> PmtSection<'a> {
@@ -673,8 +674,8 @@ impl<'a> PmtSection<'a> {
             program_info,
             streams,
             bits: super::SectionBits::psi(),
-            reserved_pcr_pid: super::RESERVED_3,
-            reserved_program_info_length: super::RESERVED_4,
+            reserved_pcr_pid: ReservedOnes::FILL,
+            reserved_program_info_length: ReservedOnes::FILL,
         }
     }
 }
@@ -740,8 +741,12 @@ impl<'a> Parse<'a> for PmtSection<'a> {
                 stream_type,
                 elementary_pid,
                 es_info: DescriptorLoop::new(&bytes[es_start..es_end]),
-                reserved_pid: super::pid_reserved_of(bytes[pos + 1]),
-                reserved_es_info_length: super::len_reserved_of(bytes[pos + 3]),
+                reserved_pid: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(
+                    bytes[pos + 1],
+                ))),
+                reserved_es_info_length: ReservedOnes::from_bits(u64::from(
+                    super::len_reserved_of(bytes[pos + 3]),
+                )),
             });
             pos = es_end;
         }
@@ -766,8 +771,10 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             program_info,
             streams,
             bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_pcr_pid: super::pid_reserved_of(bytes[8]),
-            reserved_program_info_length: super::len_reserved_of(bytes[10]),
+            reserved_pcr_pid: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(bytes[8]))),
+            reserved_program_info_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[10]),
+            )),
         })
     }
 }
@@ -802,7 +809,11 @@ impl Serialize for PmtSection<'_> {
             .b5(self.version_number, self.current_next_indicator)?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        super::write_pid_r(&mut buf[8..10], self.pcr_pid, self.reserved_pcr_pid)?;
+        super::write_pid_r(
+            &mut buf[8..10],
+            self.pcr_pid,
+            self.reserved_pcr_pid.get() as u8,
+        )?;
         let pil = broadcast_common::len::fit_bits(
             self.program_info.len() as u64,
             12,
@@ -811,7 +822,7 @@ impl Serialize for PmtSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[10..12],
             pil as usize,
-            self.reserved_program_info_length,
+            self.reserved_program_info_length.get() as u8,
         )?;
 
         let prog_info_start =
@@ -825,14 +836,14 @@ impl Serialize for PmtSection<'_> {
             super::write_pid_r(
                 &mut buf[pos + 1..pos + 3],
                 stream.elementary_pid,
-                stream.reserved_pid,
+                stream.reserved_pid.get() as u8,
             )?;
             let esl =
                 broadcast_common::len::fit_bits(stream.es_info.len() as u64, 12, "es_info_length")?;
             super::write_desc_loop_len_r(
                 &mut buf[pos + 3..pos + 5],
                 esl as usize,
-                stream.reserved_es_info_length,
+                stream.reserved_es_info_length.get() as u8,
             )?;
             let es_start = pos + STREAM_HEADER_LEN;
             buf[es_start..es_start + stream.es_info.len()].copy_from_slice(stream.es_info.raw());
@@ -1383,5 +1394,22 @@ mod tests {
         assert_eq!(re.section_number, 3);
         assert_eq!(re.last_section_number, 7);
         assert_eq!(pmt, re);
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent PID/length bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let mut section = PmtSection::new(
+            1,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            Pid::from_const(0x100),
+            DescriptorLoop::new(&[]),
+            vec![],
+        );
+        section.reserved_pcr_pid = ReservedOnes::from_bits(0xFF);
+        section.reserved_program_info_length = ReservedOnes::from_bits(0xFF);
+        assert_eq!(section.reserved_pcr_pid.get(), 0x07);
+        assert_eq!(section.reserved_program_info_length.get(), 0x0F);
     }
 }

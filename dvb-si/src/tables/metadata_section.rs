@@ -15,6 +15,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` of `Metadata_section()`.
@@ -24,7 +25,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 /// Default of the 8-bit `reserved` (all ones, H.222.0 clause 2.1).
-pub const RESERVED_DEFAULT: u8 = 0xFF;
+pub const RESERVED_DEFAULT: ReservedOnes<8> = ReservedOnes::<8>::FILL;
 
 const B1_SSI: u8 = 0x80;
 const B1_PRIVATE: u8 = 0x40;
@@ -101,7 +102,8 @@ pub struct MetadataSection<'a> {
     /// `metadata_service_id`.
     pub metadata_service_id: u8,
     /// `reserved(8)`; re-emitted verbatim, default `0xFF`.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<8>,
     /// `section_fragment_indication` (Table 2-159).
     pub section_fragment_indication: SectionFragmentIndication,
     /// `version_number` (5 bits).
@@ -170,7 +172,7 @@ impl<'a> Parse<'a> for MetadataSection<'a> {
             random_access_indicator: b1 & B1_RANDOM_ACCESS != 0,
             decoder_config_flag: b1 & B1_DECODER_CONFIG != 0,
             metadata_service_id: bytes[3],
-            reserved: bytes[4],
+            reserved: ReservedOnes::from_bits(u64::from(bytes[4])),
             section_fragment_indication: SectionFragmentIndication::from_u8(
                 bytes[5] >> FRAGMENT_SHIFT,
             ),
@@ -200,7 +202,7 @@ impl Serialize for MetadataSection<'_> {
             | (u8::from(self.decoder_config_flag) * B1_DECODER_CONFIG);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3] = self.metadata_service_id;
-        buf[4] = self.reserved;
+        buf[4] = self.reserved.get() as u8;
         // version_number(5) | current_next_indicator(1), with the 2-bit
         // fragment indication in the reserved(2) position of the shared helper.
         buf[5] = super::b5_of(
@@ -261,10 +263,13 @@ mod tests {
             let mut s = MetadataSection::new(1, f, 31, 4, 9, &[]);
             s.private_indicator = true;
             s.decoder_config_flag = true;
-            s.reserved = 0x00;
+            s.reserved = ReservedOnes::from_bits(0x00);
             s.current_next_indicator = false;
             let b = rt(&s);
-            assert_eq!(MetadataSection::parse(&b).unwrap().reserved, 0);
+            assert_eq!(
+                MetadataSection::parse(&b).unwrap().reserved,
+                ReservedOnes::from_bits(0)
+            );
         }
     }
 
@@ -291,5 +296,14 @@ mod tests {
             &(s.serialize_into(&mut vec![0u8; 5000])),
             Err(crate::error::Error::FieldOverflow(_))
         ));
+    }
+
+    /// The field is 8 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the next byte.
+    #[test]
+    fn reserved_cannot_hold_more_than_eight_bits() {
+        let mut s = MetadataSection::new(1, SectionFragmentIndication::from_u8(0), 31, 4, 9, &[]);
+        s.reserved = ReservedOnes::from_bits(0x1FF);
+        assert_eq!(s.reserved.get(), 0xFF);
     }
 }

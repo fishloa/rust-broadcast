@@ -9,6 +9,7 @@ use crate::descriptors::decoder_config_flags::DecoderConfigFlags;
 use crate::descriptors::metadata_format::MetadataFormat;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for metadata_descriptor.
@@ -19,8 +20,9 @@ const DSMCC_FLAG_BIT: u8 = 0x10;
 /// Default of the 4-bit `reserved` tail of the flags byte (H.222.0 Table
 /// 2-89): clause 2.1 "reserved" = `1` (all editions 2006-08/2023, audit §5; no
 /// fixture carries the descriptor).
-pub const RESERVED_DEFAULT: u8 = 0b1111;
-const RESERVED_MASK: u8 = 0x0F;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved` field in the flags byte (4 bits).
+const RESERVED_BITS: u32 = 4;
 
 /// Decoder configuration carried in this descriptor (decoder_config_flags == 0b001).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -111,10 +113,11 @@ pub struct MetadataDescriptor<'a> {
     /// Trailing private data bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
-    /// `reserved(4)` tail of the flags byte (4 bits, right-aligned). Captured
-    /// on parse, re-emitted verbatim; [`MetadataDescriptor::new`] / [`Default`]
-    /// use [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    /// `reserved(4)` tail of the flags byte (4 bits). Captured on parse,
+    /// re-emitted verbatim; [`MetadataDescriptor::new`] / [`Default`] use
+    /// [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl<'a> MetadataDescriptor<'a> {
@@ -215,7 +218,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         let decoder_config_raw = (flags & 0xE0) >> 5;
         let decoder_config_flags = DecoderConfigFlags::from_u8(decoder_config_raw);
         let dsmcc_flag = (flags & 0x10) != 0;
-        let reserved = flags & RESERVED_MASK;
+        let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
 
         let (service_identification, mut pos) = if dsmcc_flag {
@@ -393,7 +396,7 @@ impl Serialize for MetadataDescriptor<'_> {
             0x07,
             "decoder_config_flags",
         )? << 5)
-            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+            | self.reserved.get() as u8;
         if self.service_identification.is_some() {
             flags |= DSMCC_FLAG_BIT;
         }
@@ -652,7 +655,7 @@ mod tests {
                 0xEE,
             ];
             let d = MetadataDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved, ReservedOnes::from_bits(u64::from(r)));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
@@ -670,5 +673,17 @@ mod tests {
             out,
             [TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x1F, 0x02, 0xAA, 0xBB, 0xEE]
         );
+    }
+
+    /// The field is 4 bits wide, so a wider value is unrepresentable and can
+    /// never spill into `DSM-CC_flag` below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_four_bits() {
+        let mut d = MetadataDescriptor::new(0x0100, MetadataFormat::Reserved1(0x3F), 1);
+        d.reserved = ReservedOnes::from_bits(0xFF);
+        assert_eq!(d.reserved.get(), 0x0F);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[6], 0x0F);
     }
 }

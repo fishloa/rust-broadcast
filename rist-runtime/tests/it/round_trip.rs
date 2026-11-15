@@ -7,6 +7,7 @@ use rist_runtime::{
     RistSenderCompound, RttEcho, RttEchoKind,
 };
 use rtp_packet::rtcp::{ReceiverReport, ReportBlock, SenderReport};
+use rtp_packet::{ExtendedSeqNo, Ssrc};
 
 // ---------------------------------------------------------------------------
 // GenericNack round-trips
@@ -214,7 +215,7 @@ fn rtt_echo_large_timestamp_round_trip() {
 fn sender_compound_sr_sdes_round_trip() {
     let compound = RistSenderCompound {
         report: ReportPart::Sr(SenderReport::new(
-            0x1122_3344,
+            Ssrc::new(0x1122_3344),
             0xE0E1_E2E3,
             0x1020_3040,
             0x0009_0000,
@@ -240,7 +241,7 @@ fn sender_compound_sr_sdes_round_trip() {
 fn sender_compound_with_rtt_echo_round_trip() {
     let compound = RistSenderCompound {
         report: ReportPart::Sr(SenderReport::new(
-            0x1122_3344,
+            Ssrc::new(0x1122_3344),
             0xE0E1_E2E3,
             0x1020_3040,
             0x0009_0000,
@@ -272,12 +273,12 @@ fn sender_compound_with_rtt_echo_round_trip() {
 fn receiver_compound_rr_sdes_nack_round_trip() {
     let compound = RistReceiverCompound {
         report: ReportPart::Rr(ReceiverReport::new(
-            0xAAAA_BBBB,
+            Ssrc::new(0xAAAA_BBBB),
             vec![ReportBlock {
-                ssrc: 0xCCCC_DDDD,
+                ssrc: Ssrc::new(0xCCCC_DDDD),
                 fraction_lost: 10,
                 cumulative_lost: 5,
-                ext_highest_seq: 0x0000_1000,
+                ext_highest_seq: ExtendedSeqNo::new(0x0000_1000),
                 jitter: 100,
                 lsr: 0,
                 dlsr: 0,
@@ -307,7 +308,7 @@ fn receiver_compound_rr_sdes_nack_round_trip() {
 #[test]
 fn receiver_compound_empty_rr_round_trip() {
     let compound = RistReceiverCompound {
-        report: ReportPart::Rr(ReceiverReport::new(0x0000_0001, vec![])),
+        report: ReportPart::Rr(ReceiverReport::new(Ssrc::new(0x0000_0001), vec![])),
         report_padding: vec![],
         cname: "r@e.com".to_string(),
         nacks: vec![],
@@ -330,12 +331,12 @@ fn receiver_compound_full_round_trip() {
     // classify and consume each in wire order.
     let compound = RistReceiverCompound {
         report: ReportPart::Rr(ReceiverReport::new(
-            0xAAAA_BBBB,
+            Ssrc::new(0xAAAA_BBBB),
             vec![ReportBlock {
-                ssrc: 0xCCCC_DDDD,
+                ssrc: Ssrc::new(0xCCCC_DDDD),
                 fraction_lost: 10,
                 cumulative_lost: 5,
-                ext_highest_seq: 0x0000_1000,
+                ext_highest_seq: ExtendedSeqNo::new(0x0000_1000),
                 jitter: 100,
                 lsr: 0,
                 dlsr: 0,

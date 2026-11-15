@@ -438,7 +438,7 @@ fn constructed_header_carries_spec_fill() {
         reserved: FREEZE_FRAME_RESERVED_VALUE,
     });
     h.additional_copy_info = Some(mpeg_pes::AdditionalCopyInfo::new(0x0A));
-    let mut p = PesPacket::new(StreamId(0xE0), &[]);
+    let mut p = PesPacket::new(StreamId::new(0xE0), &[]);
     p.header = Some(h);
     let mut out = vec![0u8; p.serialized_len()];
     p.serialize_into(&mut out).unwrap();

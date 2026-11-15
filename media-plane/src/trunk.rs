@@ -5000,6 +5000,7 @@ mod tests {
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::AnyCommand;
         use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};
+        use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
         use scte35_splice::time::SpliceTime;
 
         let si = SpliceInsert {
@@ -5010,7 +5011,10 @@ mod tests {
             ))),
             ..SpliceInsert::default()
         };
-        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            SpliceDescriptorLoop::new(&[]),
+        );
         section.try_to_bytes().unwrap()
     }
 

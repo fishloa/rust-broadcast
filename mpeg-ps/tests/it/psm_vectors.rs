@@ -8,6 +8,7 @@
 //! a minimal PTS-only packet.
 
 use broadcast_common::Serialize;
+use mpeg_ps::DescriptorLoop;
 use mpeg_ps::{EsMapEntry, ProgramStreamMap};
 
 const PACK_HEADER: &[u8] = &[
@@ -24,14 +25,14 @@ pub(crate) fn psm(version: u8) -> Vec<u8> {
         current_next_indicator: true,
         single_extension_stream_flag: false,
         version,
-        program_stream_info: &[],
+        program_stream_info: DescriptorLoop::new(&[]),
         elementary_stream_map: vec![EsMapEntry {
             stream_type: 0x02,
             elementary_stream_id: 0xE0,
             stream_id_extension: None,
             pseudo_descriptor_tag: None,
             pseudo_descriptor_length: None,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
         crc: 0,
     }
@@ -55,14 +56,14 @@ pub(crate) fn psm_with_extension() -> Vec<u8> {
         current_next_indicator: true,
         single_extension_stream_flag: false,
         version: 1,
-        program_stream_info: &[],
+        program_stream_info: DescriptorLoop::new(&[]),
         elementary_stream_map: vec![EsMapEntry {
             stream_type: 0x06,
             elementary_stream_id: 0xFD,
             stream_id_extension: Some(0x0F),
             pseudo_descriptor_tag: Some(0x01),
             pseudo_descriptor_length: Some(0x01),
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }],
         crc: 0,
     }
@@ -95,4 +96,65 @@ pub(crate) fn trailing_es_bytes() -> Vec<u8> {
     first.extend_from_slice(&pack(&psm(2)));
     first.extend_from_slice(PROGRAM_END_CODE);
     first
+}
+
+/// Both PSM descriptor loops are typed and walked: the program loop carries
+/// a registration descriptor (0x05) and the ES loop a subtitling descriptor
+/// (0x59), each reaching the caller's own decoder through `parse_with`, while
+/// the wire bytes stay untouched (mpeg-ps keeps no `dvb-si` dependency —
+/// `dvb-si` sits above `mpeg-ts`, which sits above this crate, so the caller
+/// names the decoder).
+#[test]
+fn psm_descriptor_loops_walk_typed_and_keep_bytes() {
+    use broadcast_common::{Parse, Serialize};
+
+    let prog = [0x05u8, 0x04, b'H', b'D', b'M', b'V'];
+    let es = [
+        0x59u8, 0x08, b'e', b'n', b'g', 0x00, 0x10, 0x00, 0x01, 0x00, 0x02,
+    ];
+    let psm = ProgramStreamMap {
+        current_next_indicator: true,
+        single_extension_stream_flag: false,
+        version: 1,
+        program_stream_info: DescriptorLoop::new(&prog),
+        elementary_stream_map: vec![EsMapEntry {
+            stream_type: 0x02,
+            elementary_stream_id: 0xE0,
+            stream_id_extension: None,
+            pseudo_descriptor_tag: None,
+            pseudo_descriptor_length: None,
+            descriptors: DescriptorLoop::new(&es),
+        }],
+        crc: 0,
+    };
+
+    let mut wire = vec![0u8; psm.serialized_len()];
+    psm.serialize_into(&mut wire).unwrap();
+    let parsed = ProgramStreamMap::parse(&wire).unwrap();
+    assert_eq!(parsed.try_to_bytes().unwrap(), wire);
+
+    let prog_tags: Vec<u8> = parsed
+        .program_stream_info
+        .parse_with(|tag, _| tag)
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(prog_tags, [0x05]);
+
+    let es_loop = &parsed.elementary_stream_map[0].descriptors;
+    let es_tags: Vec<u8> = es_loop
+        .parse_with(|tag, _| tag)
+        .filter_map(Result::ok)
+        .collect();
+    assert_eq!(es_tags, [0x59]);
+
+    assert_eq!(parsed.program_stream_info.raw(), &prog[..]);
+    assert_eq!(es_loop.raw(), &es[..]);
+
+    let entries: Vec<_> = parsed
+        .program_stream_info
+        .entries()
+        .map(|e| e.unwrap())
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!((entries[0].tag, entries[0].body), (0x05, &b"HDMV"[..]));
 }

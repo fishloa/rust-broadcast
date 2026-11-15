@@ -91,7 +91,10 @@ let ts = scte35_splice::commands::TimeSignal {
         broadcast_common::clock33::Clock33::try_new(0x0_0012_3456u64).expect("in range"),
     ),
 };
-let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
+let section = SpliceInfoSection::new_clear(
+    AnyCommand::TimeSignal(ts),
+    scte35_splice::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+);
 let bytes = section.try_to_bytes().unwrap();
 assert_eq!(bytes[0], 0xFC); // table_id
 

@@ -39,9 +39,12 @@ async fn publish_roundtrip(bind: &str, url_host: &str) {
         .await
         .unwrap();
     c.publish().await.unwrap();
-    c.send_video(0, &[0x17, 0x01, 0, 0, 0, 0xDE, 0xAD])
-        .await
-        .unwrap();
+    c.send_video(
+        rtmp_runtime::ids::Timestamp::from_millis(0),
+        &[0x17, 0x01, 0, 0, 0, 0xDE, 0xAD],
+    )
+    .await
+    .unwrap();
     let seen = accepted.await.unwrap();
     assert!(
         seen.iter()
@@ -134,10 +137,13 @@ async fn send_video_to_a_peer_that_stops_reading_times_out_the_write() {
     c.publish().await.unwrap();
     let t0 = tokio::time::Instant::now();
     let big = vec![0x42u8; 256 * 1024];
-    let err = tokio::time::timeout(Duration::from_secs(60), c.send_video(0, &big))
-        .await
-        .expect("send_video must be bounded by `write`, not hang")
-        .expect_err("peer is not reading");
+    let err = tokio::time::timeout(
+        Duration::from_secs(60),
+        c.send_video(rtmp_runtime::ids::Timestamp::from_millis(0), &big),
+    )
+    .await
+    .expect("send_video must be bounded by `write`, not hang")
+    .expect_err("peer is not reading");
     assert_eq!(err.kind(), ErrorKind::TimedOut, "{err}");
     assert_eq!(t0.elapsed(), Duration::from_secs(4));
 }

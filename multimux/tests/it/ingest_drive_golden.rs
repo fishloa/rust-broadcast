@@ -129,9 +129,9 @@ fn rtp(sequence: u16, timestamp: u32, payload: &[u8]) -> rtp_packet::RtpPacket<'
     rtp_packet::RtpPacket {
         marker: true,
         payload_type: WHIP_PAYLOAD_TYPE,
-        sequence_number: sequence,
+        sequence_number: sequence.into(),
         timestamp,
-        ssrc: RTP_SSRC,
+        ssrc: RTP_SSRC.into(),
         csrc: vec![],
         extension: None,
         padding: None,

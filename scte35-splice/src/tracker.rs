@@ -406,7 +406,10 @@ mod tests {
             },
             ..SpliceInsert::default()
         };
-        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("serialize");
         buf
@@ -514,14 +517,19 @@ mod tests {
         let si = SpliceInsert {
             ..SpliceInsert::cancel(9)
         };
-        let cancel = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let cancel = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        );
         let mut cancel_buf = alloc::vec![0u8; cancel.serialized_len()];
         cancel.serialize_into(&mut cancel_buf).expect("serialize");
         let cancel_parsed = SpliceInfoSection::parse(&cancel_buf).expect("parse");
         assert!(t.observe_section(&cancel_parsed, &cancel_buf).is_none());
 
-        let mut encrypted =
-            SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(SpliceInsert::default()), &[]);
+        let mut encrypted = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(SpliceInsert::default()),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        );
         encrypted.encrypted_packet = true;
         encrypted.clear = None;
         let payload = [0x5Au8; 24];
@@ -543,7 +551,10 @@ mod tests {
             ))),
             ..SpliceInsert::default()
         };
-        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let mut section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        );
         section.pts_adjustment = 90_000 * 8;
         let event = splice_event(
             &section.clear.as_ref().expect("clear").command,
@@ -561,7 +572,10 @@ mod tests {
             mode: SpliceMode::Program(ProgramSplice::Immediate),
             ..SpliceInsert::default()
         };
-        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        );
         let event = splice_event(&section.clear.as_ref().expect("clear").command, 0)
             .expect("a splice_insert");
         assert!(event.times.is_empty());
@@ -588,7 +602,10 @@ mod tests {
             },
             ..SpliceInsert::default()
         };
-        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        );
         let event = splice_event(&section.clear.as_ref().expect("clear").command, 0)
             .expect("a splice_insert");
         assert_eq!(event.times, [90_000, 180_000]);
@@ -618,7 +635,7 @@ mod tests {
         .concat();
         let section = SpliceInfoSection::new_clear(
             AnyCommand::SpliceInsert(splice_insert_value(7, true)),
-            &descriptor,
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&descriptor),
         )
         .try_to_bytes()
         .expect("serialize");
@@ -695,7 +712,7 @@ mod tests {
     fn a_non_insert_section_is_reported_as_not_a_cue() {
         let section = SpliceInfoSection::new_clear(
             AnyCommand::TimeSignal(crate::commands::TimeSignal::default()),
-            &[],
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
         )
         .try_to_bytes()
         .expect("serialize");

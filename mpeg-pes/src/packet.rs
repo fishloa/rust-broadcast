@@ -1127,7 +1127,7 @@ impl<'a> PesPacket<'a> {
                 found: (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]),
             }));
         }
-        let stream_id = StreamId(b[3]);
+        let stream_id = StreamId::new(b[3]);
         let pes_packet_length = u16::from_be_bytes([b[4], b[5]]);
         // Where the payload ends: bounded by PES_packet_length unless 0
         // (unbounded: the packet runs to the end of the buffer).
@@ -1368,7 +1368,7 @@ impl<'a> PesPacket<'a> {
         let len = self.serialized_len();
         need_out(buf, len)?;
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
-        buf[3] = self.stream_id.0;
+        buf[3] = self.stream_id.get();
         // PES_packet_length (ISO/IEC 13818-1 Table 2-21): every byte after the
         // field. `0` is the unbounded form — legal only where the MPEG-2
         // systems layer allows it (video in a transport stream), so a packet
@@ -1484,7 +1484,7 @@ mod tests {
             0xAA, 0xBB,
         ];
         let pkt = PesPacket::parse(&b).unwrap();
-        assert_eq!(pkt.stream_id, StreamId(0xE0));
+        assert_eq!(pkt.stream_id, StreamId::new(0xE0));
         let h = pkt.header.as_ref().unwrap();
         assert_eq!(h.pts, Some(Pts::try_new(0).unwrap()));
         assert!(h.dts.is_none());
@@ -1549,7 +1549,7 @@ mod tests {
             pes_extension: None,
             header_stuffing: &[],
         };
-        let mut pkt = PesPacket::new(StreamId(0xE0), &[0xAA]);
+        let mut pkt = PesPacket::new(StreamId::new(0xE0), &[0xAA]);
         pkt.header = Some(header);
         let mut buf = vec![0u8; pkt.serialized_len()];
         assert!(matches!(
@@ -1632,7 +1632,7 @@ mod tests {
             }),
             ..empty_header()
         };
-        let mut pkt = PesPacket::new(StreamId(0xE0), &[]);
+        let mut pkt = PesPacket::new(StreamId::new(0xE0), &[]);
         pkt.header = Some(h);
         let mut out = vec![0u8; pkt.serialized_len()];
         let err = pkt.serialize_into(&mut out).unwrap_err();
@@ -1642,7 +1642,7 @@ mod tests {
     // ── Typed optional fields round-trips ──────────────────────────────────
 
     fn build_pes<'a>(h: PesHeader<'a>, payload: &'a [u8]) -> alloc::vec::Vec<u8> {
-        let mut pkt = PesPacket::new(StreamId(0xE0), payload);
+        let mut pkt = PesPacket::new(StreamId::new(0xE0), payload);
         pkt.header = Some(h);
         let mut out = vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut out).unwrap();

@@ -7,6 +7,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for video_stream_descriptor.
@@ -18,7 +19,9 @@ const BODY_MPEG1_LEN: u8 = 1;
 /// Table 2-46): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023,
 /// audit §5; confirmed by the TSDuck oracle PMT and the real
 /// `si/tsduck-mpeg-descriptors-pmt.bin` capture).
-pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+/// Width of the trailing `reserved` field of the MPEG-2 branch (5 bits).
+const RESERVED_5_BITS: u32 = 5;
 const RESERVED_5_MASK: u8 = 0x1F;
 
 /// `frame_rate_code(4)` field mask inside byte 0: bits `[6:3]`; masks the
@@ -139,10 +142,11 @@ pub struct VideoStreamDescriptor {
     pub chroma_format: Option<u8>,
     /// Frame rate extension flag — only when `mpeg_1_only_flag` is false.
     pub frame_rate_extension_flag: Option<bool>,
-    /// Trailing `reserved(5)` of the MPEG-2 branch (5 bits, right-aligned);
-    /// not on the wire when `mpeg_1_only_flag` is set. Captured on parse,
-    /// re-emitted verbatim; the constructors use [`RESERVED_5_DEFAULT`].
-    pub reserved_5: u8,
+    /// Trailing `reserved(5)` of the MPEG-2 branch (5 bits); not on the wire when
+    /// `mpeg_1_only_flag` is set. Captured on parse, re-emitted verbatim; the
+    /// constructors use [`RESERVED_5_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
     /// Body bytes after the defined fields (after byte 0 in the MPEG-1 branch,
     /// after byte 2 otherwise): tolerated on parse and re-emitted verbatim.
     pub trailing: Vec<u8>,
@@ -255,7 +259,7 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
                 profile_and_level_indication: Some(profile_and_level_indication),
                 chroma_format: Some(chroma_format),
                 frame_rate_extension_flag: Some(frame_rate_extension_flag),
-                reserved_5: b2 & RESERVED_5_MASK,
+                reserved_5: ReservedOnes::from_bits(u64::from(b2 & RESERVED_5_MASK)),
                 trailing: body[BODY_LEN as usize..].to_vec(),
             })
         }
@@ -312,9 +316,7 @@ impl Serialize for VideoStreamDescriptor {
                     reason: "required when mpeg_1_only_flag is false",
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
-            buf[HEADER_LEN + 2] = (chroma << 6)
-                | (fre << 5)
-                | broadcast_common::len::fit_mask(self.reserved_5, RESERVED_5_MASK, "reserved_5")?;
+            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | (self.reserved_5.get() as u8);
         }
         let fixed = if self.mpeg_1_only_flag {
             BODY_MPEG1_LEN as usize
@@ -469,7 +471,7 @@ mod tests {
         for r in 0u8..=0x1F {
             let bytes = [TAG, 3, 0b1010_0011, 0xDE, 0xE0 | r];
             let d = VideoStreamDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_5, r);
+            assert_eq!(d.reserved_5, ReservedOnes::from_bits(u64::from(r)));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
@@ -501,5 +503,24 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 3, 0b1010_0011, 0xDE, 0xFF]);
+    }
+
+    /// The field is 5 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into `frame_rate_extension_flag`.
+    #[test]
+    fn reserved_cannot_hold_more_than_five_bits() {
+        let d = VideoStreamDescriptor {
+            reserved_5: ReservedOnes::from_bits(0xFF),
+            ..VideoStreamDescriptor::mpeg2(
+                false,
+                FrameRateCode::from_u8(1),
+                false,
+                false,
+                0,
+                1,
+                false,
+            )
+        };
+        assert_eq!(d.reserved_5.get(), 0x1F);
     }
 }

@@ -19,6 +19,7 @@ use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::{
     EchoPacket, HANDSHAKE_PACKET_LEN, HandshakePacket, RTMP_VERSION, Version, default_random_fill,
 };
+use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
 use crate::message::{ChunkSize, MessageTypeId, ProtocolControl, UserControl};
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -275,7 +276,7 @@ pub struct ClientSession {
     assembler: ChunkAssembler,
     writer: ChunkWriter,
     state: ClientState,
-    stream_id: Option<u32>,
+    stream_id: Option<MessageStreamId>,
     next_txn_id: f64,
     ack_threshold: u32,
     bytes_received: u64,
@@ -350,34 +351,40 @@ impl ClientSession {
     }
 
     /// Encode an audio message (type 8). Only valid in `Publishing` state.
-    pub fn send_audio(&mut self, timestamp: u32, data: &[u8]) -> Result<Vec<u8>> {
+    ///
+    /// `timestamp` is the media timestamp on the publisher's own clock
+    /// (§5.1.3), carried on the wire as whole milliseconds.
+    pub fn send_audio(&mut self, timestamp: Timestamp, data: &[u8]) -> Result<Vec<u8>> {
         if self.state != ClientState::Publishing {
             return Err(RtmpError::UnexpectedState {
                 what: "send_audio requires the Publishing state",
             });
         }
         let msg = Message {
-            chunk_stream_id: 4,
+            chunk_stream_id: ChunkStreamId::new(4),
             timestamp,
             message_type_id: MessageTypeId::Audio,
-            message_stream_id: self.stream_id.unwrap_or(1),
+            message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
             payload: data.to_vec(),
         };
         self.writer.write(&msg)
     }
 
     /// Encode a video message (type 9). Only valid in `Publishing` state.
-    pub fn send_video(&mut self, timestamp: u32, data: &[u8]) -> Result<Vec<u8>> {
+    ///
+    /// `timestamp` is the media timestamp on the publisher's own clock
+    /// (§5.1.3), carried on the wire as whole milliseconds.
+    pub fn send_video(&mut self, timestamp: Timestamp, data: &[u8]) -> Result<Vec<u8>> {
         if self.state != ClientState::Publishing {
             return Err(RtmpError::UnexpectedState {
                 what: "send_video requires the Publishing state",
             });
         }
         let msg = Message {
-            chunk_stream_id: 5,
+            chunk_stream_id: ChunkStreamId::new(5),
             timestamp,
             message_type_id: MessageTypeId::Video,
-            message_stream_id: self.stream_id.unwrap_or(1),
+            message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
             payload: data.to_vec(),
         };
         self.writer.write(&msg)
@@ -395,10 +402,10 @@ impl ClientSession {
         let obj = Amf0Value::Object(metadata.to_vec());
         payload.extend(obj.try_to_bytes()?);
         let msg = Message {
-            chunk_stream_id: 4,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(4),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::DataAmf0,
-            message_stream_id: self.stream_id.unwrap_or(1),
+            message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
             payload,
         };
         self.writer.write(&msg)
@@ -493,10 +500,10 @@ impl ClientSession {
         out.extend_from_slice(&self.writer.write(&window_ack.to_message())?);
 
         let msg = Message {
-            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload: cmd.to_body()?,
         };
         out.extend_from_slice(&self.writer.write(&msg)?);
@@ -521,10 +528,10 @@ impl ClientSession {
                 ],
             };
             let msg = Message {
-                chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-                timestamp: 0,
+                chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+                timestamp: Timestamp::ZERO,
                 message_type_id: MessageTypeId::CommandAmf0,
-                message_stream_id: 0,
+                message_stream_id: MessageStreamId::new(0),
                 payload: cmd.to_body()?,
             };
             out.extend_from_slice(&self.writer.write(&msg)?);
@@ -544,10 +551,10 @@ impl ClientSession {
             arguments: vec![Amf0Value::Null],
         };
         let msg = Message {
-            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload: cmd.to_body()?,
         };
         self.writer.write(&msg)
@@ -566,10 +573,10 @@ impl ClientSession {
             ],
         };
         let msg = Message {
-            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: self.stream_id.unwrap_or(1),
+            message_stream_id: self.stream_id.unwrap_or(MessageStreamId::new(1)),
             payload: cmd.to_body()?,
         };
         self.writer.write(&msg)
@@ -578,13 +585,13 @@ impl ClientSession {
     /// `SetBufferLength` (§6.7) then `play` (§7.2.2.1) on the created stream.
     fn build_play(&mut self) -> Result<Vec<u8>> {
         self.state = ClientState::PlaySent;
-        let stream_id = self.stream_id.unwrap_or(1);
+        let stream_id = self.stream_id.unwrap_or(MessageStreamId::new(1));
         let mut out = Vec::new();
         let buffer = UserControl::SetBufferLength {
-            stream_id,
-            buffer_ms: u32::try_from(self.config.play_buffer.as_millis()).unwrap_or(u32::MAX),
+            stream_id: stream_id.get(),
+            buffer: self.config.play_buffer,
         };
-        out.extend_from_slice(&self.writer.write(&buffer.to_message())?);
+        out.extend_from_slice(&self.writer.write(&buffer.to_message()?)?);
         let cmd = Command {
             name: "play".to_string(),
             transaction_id: 0.0,
@@ -595,8 +602,8 @@ impl ClientSession {
             ],
         };
         let msg = Message {
-            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: stream_id,
             payload: cmd.to_body()?,
@@ -660,7 +667,7 @@ impl ClientSession {
                 }
                 // #1108/RTMP-W2: was ignored — see `ChunkAssembler::abort`'s doc.
                 ProtocolControl::Abort { chunk_stream_id } => {
-                    self.assembler.abort(chunk_stream_id);
+                    self.assembler.abort(ChunkStreamId::new(chunk_stream_id));
                 }
                 _ => {}
             }
@@ -685,7 +692,12 @@ impl ClientSession {
         if self.receiving_media() {
             match msg.message_type_id {
                 MessageTypeId::Audio | MessageTypeId::Video | MessageTypeId::DataAmf0 => {
-                    self.emit_media(msg.message_type_id, msg.timestamp, &msg.payload, events)?;
+                    self.emit_media(
+                        msg.message_type_id,
+                        msg.timestamp.millis(),
+                        &msg.payload,
+                        events,
+                    )?;
                 }
                 MessageTypeId::Aggregate => {
                     unpack_aggregate(msg, |tag_type, timestamp, payload| {
@@ -704,7 +716,7 @@ impl ClientSession {
             match UserControl::parse(&msg.payload) {
                 Ok(UserControl::PingRequest(ts)) => {
                     let reply = UserControl::PingResponse(ts);
-                    out.extend_from_slice(&self.writer.write(&reply.to_message())?);
+                    out.extend_from_slice(&self.writer.write(&reply.to_message()?)?);
                 }
                 Ok(UserControl::StreamIsRecorded(_)) if self.receiving_media() => {
                     self.stream_is_recorded = true;
@@ -761,12 +773,14 @@ impl ClientSession {
             ClientState::CreateStreamSent { txn_id }
                 if (cmd.transaction_id - txn_id).abs() < 0.5 =>
             {
-                let sid = match cmd.arguments.last() {
+                let sid = MessageStreamId::new(match cmd.arguments.last() {
                     Some(Amf0Value::Number(n)) => *n as u32,
                     _ => 1,
-                };
+                });
                 self.stream_id = Some(sid);
-                events.push(ClientEvent::StreamCreated { stream_id: sid });
+                events.push(ClientEvent::StreamCreated {
+                    stream_id: sid.get(),
+                });
                 self.state = ClientState::StreamCreated;
                 match self.config.mode {
                     ClientMode::Play => out.extend_from_slice(&self.build_play()?),
@@ -816,7 +830,7 @@ impl ClientSession {
             return Ok(());
         }
         if self.bytes_received.wrapping_sub(self.bytes_acked) >= u64::from(self.ack_threshold) {
-            let seq = (self.bytes_received & 0xFFFF_FFFF) as u32;
+            let seq = SequenceNumber::new((self.bytes_received & 0xFFFF_FFFF) as u32);
             let ack = ProtocolControl::Acknowledgement(seq);
             out.extend_from_slice(&self.writer.write(&ack.to_message())?);
             self.bytes_acked = self.bytes_received;
@@ -987,7 +1001,9 @@ mod tests {
         let (_client_out, _) = client.handle_data(&s0_s1_s2).unwrap();
 
         let ping = UserControl::PingRequest(0xDEAD_BEEF);
-        let bytes = ChunkWriter::new().write(&ping.to_message()).unwrap();
+        let bytes = ChunkWriter::new()
+            .write(&ping.to_message().unwrap())
+            .unwrap();
 
         let (out, _events) = client.handle_data(&bytes).unwrap();
         let mut assembler = ChunkAssembler::new();
@@ -1230,12 +1246,16 @@ mod tests {
         };
         let mut client = ClientSession::new(config);
         client.state = ClientState::Publishing;
-        client.stream_id = Some(1);
+        client.stream_id = Some(MessageStreamId::new(1));
 
-        let audio = client.send_audio(100, &[0xAA, 0xBB]).unwrap();
+        let audio = client
+            .send_audio(Timestamp::from_millis(100), &[0xAA, 0xBB])
+            .unwrap();
         assert!(!audio.is_empty());
 
-        let video = client.send_video(200, &[0xCC, 0xDD, 0xEE]).unwrap();
+        let video = client
+            .send_video(Timestamp::from_millis(200), &[0xCC, 0xDD, 0xEE])
+            .unwrap();
         assert!(!video.is_empty());
 
         let meta = client
@@ -1257,7 +1277,7 @@ mod tests {
             ..RtmpClientConfig::default()
         });
         client.state = ClientState::Publishing;
-        client.stream_id = Some(1);
+        client.stream_id = Some(MessageStreamId::new(1));
         let huge = "x".repeat(usize::from(u16::MAX) + 1);
         let r = client.send_metadata(&[("title".to_string(), Amf0Value::String(huge))]);
         assert!(
@@ -1275,7 +1295,7 @@ mod tests {
         };
         let mut client = ClientSession::new(config);
         assert!(matches!(
-            client.send_audio(0, &[0x00]),
+            client.send_audio(Timestamp::from_millis(0), &[0x00]),
             Err(crate::error::RtmpError::UnexpectedState { .. })
         ));
     }
@@ -1309,10 +1329,10 @@ mod tests {
             ],
         };
         let msg = Message {
-            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload: error_cmd.to_body().unwrap(),
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();

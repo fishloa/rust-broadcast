@@ -36,8 +36,8 @@ use ctr::Ctr128BE;
 use hmac::{Hmac, Mac};
 use rtc_srtp::context::Context as SrtpContext;
 use rtc_srtp::protection_profile::ProtectionProfile;
-use rtp_packet::RtpPacket;
 use rtp_packet::rtcp::{CompoundPacket, RtcpPacket, SenderReport};
+use rtp_packet::{RtpPacket, SeqNo, Ssrc};
 use sha1::Sha1;
 
 // ---------------------------------------------------------------------------
@@ -255,7 +255,12 @@ fn independent_srtp_encrypt(plaintext_rtp: &[u8], roc: u32) -> Vec<u8> {
         20,
     );
 
-    let counter = generate_counter(header.sequence_number, roc, header.ssrc, &cipher_salt);
+    let counter = generate_counter(
+        header.sequence_number.get(),
+        roc,
+        header.ssrc.get(),
+        &cipher_salt,
+    );
     let mut out = plaintext_rtp.to_vec();
     let mut stream = Ctr128BE::<Aes128>::new(
         &Array::try_from(cipher_key.as_slice()).expect("16-byte cipher key"),
@@ -276,9 +281,9 @@ fn build_rtp_packet(payload: &[u8]) -> Vec<u8> {
     RtpPacket {
         marker: false,
         payload_type: 96,
-        sequence_number: 0,
+        sequence_number: SeqNo::new(0),
         timestamp: 0,
-        ssrc: 0,
+        ssrc: Ssrc::new(0),
         csrc: Vec::new(),
         extension: None,
         padding: None,
@@ -407,7 +412,7 @@ fn srtp_corrupted_ciphertext_byte_fails_auth() {
 
 fn build_sender_report(ssrc: u32) -> Vec<u8> {
     CompoundPacket::new(vec![RtcpPacket::SenderReport(SenderReport::new(
-        ssrc,
+        Ssrc::new(ssrc),
         0,
         0,
         0,

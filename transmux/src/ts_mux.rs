@@ -743,7 +743,7 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
                     max: MAX_VIDEO_STREAMS,
                 });
             }
-            let id = StreamId(STREAM_ID_VIDEO_BASE + n_video);
+            let id = StreamId::new(STREAM_ID_VIDEO_BASE + n_video);
             n_video += 1;
             id
         } else {
@@ -751,11 +751,11 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
                 EsKind::Data {
                     carriage: DataCarriage::Pes,
                     ..
-                } => StreamId(STREAM_ID_PRIVATE_1),
+                } => StreamId::new(STREAM_ID_PRIVATE_1),
                 EsKind::Data {
                     carriage: DataCarriage::Sections,
                     ..
-                } => StreamId(0),
+                } => StreamId::new(0),
                 _ => {
                     // `0xC0..=0xDF` is the audio family; `0xC0 + 32 = 0xE0` would
                     // collide with the video range (`0xE0..`) and the demuxer
@@ -766,7 +766,7 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
                             max: MAX_AUDIO_STREAMS,
                         });
                     }
-                    let id = StreamId(STREAM_ID_AUDIO_BASE + n_audio);
+                    let id = StreamId::new(STREAM_ID_AUDIO_BASE + n_audio);
                     n_audio += 1;
                     id
                 }
@@ -1941,7 +1941,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
 
     let mut out = Vec::with_capacity(MIN_LEN + HEADER_FIXED + opt_content + es_payload.len());
     out.extend_from_slice(&mpeg_pes::PACKET_START_CODE_PREFIX);
-    out.push(plan.stream_id.0);
+    out.push(plan.stream_id.get());
     out.extend_from_slice(&pes_packet_length.to_be_bytes());
     // Fixed optional-header bytes (§2.4.3.7): '10' marker + flags, then PTS_DTS
     // flags byte, then PES_header_data_length.
@@ -2062,7 +2062,7 @@ mod tests {
     fn pmt_section_crc_is_valid() {
         let plans = alloc::vec![EsPlan {
             pid: ES_PID_BASE,
-            stream_id: StreamId(STREAM_ID_VIDEO_BASE),
+            stream_id: StreamId::new(STREAM_ID_VIDEO_BASE),
             kind: EsKind::Avc,
             asc: None,
             avc_sps_pps: Vec::new(),
@@ -2081,7 +2081,7 @@ mod tests {
         let descriptors = alloc::vec![0x59, 0x02, 0xAA, 0xBB]; // fake tag+len+body
         let plans = alloc::vec![EsPlan {
             pid: ES_PID_BASE,
-            stream_id: StreamId(0),
+            stream_id: StreamId::new(0),
             kind: EsKind::Data {
                 stream_type: 0x06,
                 carriage: DataCarriage::Pes,
@@ -2315,7 +2315,7 @@ mod tests {
     fn pmt_section_length_past_1021_errors() {
         let plans = alloc::vec![EsPlan {
             pid: ES_PID_BASE,
-            stream_id: StreamId(0),
+            stream_id: StreamId::new(0),
             kind: EsKind::Data {
                 stream_type: 0x06,
                 carriage: DataCarriage::Pes,
@@ -2344,7 +2344,7 @@ mod tests {
     fn pmt_section_length_at_1021_succeeds() {
         let plans = alloc::vec![EsPlan {
             pid: ES_PID_BASE,
-            stream_id: StreamId(0),
+            stream_id: StreamId::new(0),
             kind: EsKind::Data {
                 stream_type: 0x06,
                 carriage: DataCarriage::Pes,
@@ -2367,7 +2367,7 @@ mod tests {
     fn audio_pes_packet_length_past_65535_errors() {
         let plan = EsPlan {
             pid: ES_PID_BASE,
-            stream_id: StreamId(STREAM_ID_AUDIO_BASE),
+            stream_id: StreamId::new(STREAM_ID_AUDIO_BASE),
             kind: EsKind::Ac3,
             asc: None,
             avc_sps_pps: Vec::new(),
@@ -2403,7 +2403,7 @@ mod tests {
     fn video_pes_packet_length_above_65535_is_unbounded() {
         let plan = EsPlan {
             pid: ES_PID_BASE,
-            stream_id: StreamId(STREAM_ID_VIDEO_BASE),
+            stream_id: StreamId::new(STREAM_ID_VIDEO_BASE),
             kind: EsKind::Avc,
             asc: None,
             avc_sps_pps: Vec::new(),

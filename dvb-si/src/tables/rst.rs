@@ -13,6 +13,7 @@ use super::RunningStatus;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Running Status Table.
@@ -46,7 +47,7 @@ pub struct RstEntry {
     /// `reserved_future_use(5)` before `running_status` (`11111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<5>,
 }
 
 impl RstEntry {
@@ -65,13 +66,11 @@ impl RstEntry {
             service_id,
             event_id,
             running_status,
-            reserved_future_use: RESERVED_FUTURE_USE_5,
+            reserved_future_use: ReservedOnes::FILL,
         }
     }
 }
 
-/// All-ones `reserved_future_use(5)` before `running_status`.
-const RESERVED_FUTURE_USE_5: u8 = super::RESERVED_5;
 /// Shift of `reserved_future_use(5)` above `running_status(3)`.
 const RESERVED_SHIFT: u32 = 3;
 
@@ -139,7 +138,7 @@ impl<'a> Parse<'a> for RstSection {
                 service_id: crate::wire::be_u16(entry, 4, "rst")?,
                 event_id: crate::wire::be_u16(entry, 6, "rst")?,
                 running_status: RunningStatus::from_u8(entry[8] & super::RUNNING_STATUS_MASK),
-                reserved_future_use: entry[8] >> RESERVED_SHIFT,
+                reserved_future_use: ReservedOnes::from_bits(u64::from(entry[8] >> RESERVED_SHIFT)),
             });
             off += ENTRY_LEN;
         }
@@ -172,12 +171,8 @@ impl Serialize for RstSection {
             buf[off + 4..off + 6].copy_from_slice(&e.service_id.to_be_bytes());
             buf[off + 6..off + 8].copy_from_slice(&e.event_id.to_be_bytes());
             // reserved_future_use(5)=1, running_status(3).
-            buf[off + 8] = (broadcast_common::len::fit_mask(
-                e.reserved_future_use,
-                RESERVED_FUTURE_USE_5,
-                "reserved_future_use",
-            )? << RESERVED_SHIFT)
-                | e.running_status.to_u8();
+            buf[off + 8] =
+                ((e.reserved_future_use.get() as u8) << RESERVED_SHIFT) | e.running_status.to_u8();
             off += ENTRY_LEN;
         }
         Ok(len)
@@ -333,5 +328,16 @@ mod tests {
         let j = serde_json::to_string(&rst).unwrap();
         let v: serde_json::Value = serde_json::from_str(&j).unwrap();
         assert_eq!(v["entries"][0]["service_id"], 3);
+    }
+
+    /// The field is 5 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into `running_status`.
+    #[test]
+    fn reserved_cannot_hold_more_than_five_bits() {
+        let e = RstEntry {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            ..RstEntry::new(1, 2, 3, 4, super::RunningStatus::Running)
+        };
+        assert_eq!(e.reserved_future_use.get(), 0x1F);
     }
 }

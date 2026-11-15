@@ -246,14 +246,14 @@ impl<'a> Unpackage for RtmpDemux<'a> {
                 }
                 MessageTypeId::Audio => {
                     has_audio = true;
-                    tags.push((TagType::Audio, m.timestamp, m.payload));
+                    tags.push((TagType::Audio, m.timestamp.millis(), m.payload));
                 }
                 MessageTypeId::Video => {
                     has_video = true;
-                    tags.push((TagType::Video, m.timestamp, m.payload));
+                    tags.push((TagType::Video, m.timestamp.millis(), m.payload));
                 }
                 MessageTypeId::DataAmf0 => {
-                    tags.push((TagType::Script, m.timestamp, m.payload));
+                    tags.push((TagType::Script, m.timestamp.millis(), m.payload));
                 }
                 _ => { /* control / command / user-control — not media */ }
             }
@@ -362,10 +362,10 @@ impl Package for RtmpMux {
                 _ => (CSID_DATA, MessageTypeId::DataAmf0),
             };
             let message = Message {
-                chunk_stream_id,
-                timestamp: tag.timestamp,
+                chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(chunk_stream_id),
+                timestamp: rtmp_runtime::ids::Timestamp::from_millis(tag.timestamp),
                 message_type_id,
-                message_stream_id: self.message_stream_id,
+                message_stream_id: rtmp_runtime::ids::MessageStreamId::new(self.message_stream_id),
                 payload: tag.body.to_vec(),
             };
             out.extend_from_slice(&writer.write(&message)?);
@@ -401,7 +401,7 @@ mod tests {
     #[test]
     fn media_chunk_stream_ids_are_distinct_and_outside_the_control_stream() {
         for media in [CSID_AUDIO, CSID_VIDEO, CSID_DATA] {
-            assert_ne!(media, rtmp_runtime::message::CONTROL_CHUNK_STREAM_ID);
+            assert_ne!(media, rtmp_runtime::message::CONTROL_CHUNK_STREAM_ID.get());
         }
         assert_ne!(CSID_AUDIO, CSID_VIDEO);
         assert_ne!(CSID_AUDIO, CSID_DATA);

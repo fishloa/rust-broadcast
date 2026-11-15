@@ -185,8 +185,7 @@ fn the_command_sequence_is_connect_create_stream_play_without_the_publish_preamb
             .seen
             .contains(&Seen::UserControl(UserControl::SetBufferLength {
                 stream_id: PLAY_STREAM_ID,
-                buffer_ms: u32::try_from(rtmp_runtime::client::DEFAULT_PLAY_BUFFER.as_millis())
-                    .unwrap_or(u32::MAX),
+                buffer: rtmp_runtime::client::DEFAULT_PLAY_BUFFER,
             }))
     );
     let order: Vec<&str> = rig
@@ -462,10 +461,10 @@ fn an_aggregate_message_is_unpacked_into_the_same_flv_tags() {
         body.extend_from_slice(&size.to_be_bytes());
     }
     let msg = Message {
-        chunk_stream_id: 4,
-        timestamp: tags[0].1,
+        chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(4),
+        timestamp: rtmp_runtime::ids::Timestamp::from_millis(tags[0].1),
         message_type_id: MessageTypeId::Aggregate,
-        message_stream_id: PLAY_STREAM_ID,
+        message_stream_id: rtmp_runtime::ids::MessageStreamId::new(PLAY_STREAM_ID),
         payload: body,
     };
     let bytes = rig.peer.raw_message(&msg).unwrap();
@@ -521,10 +520,10 @@ fn a_command_sent_as_amf3_is_decoded_after_its_marker_byte() {
         .unwrap(),
     );
     let msg = Message {
-        chunk_stream_id: 3,
-        timestamp: 0,
+        chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(3),
+        timestamp: rtmp_runtime::ids::Timestamp::ZERO,
         message_type_id: MessageTypeId::CommandAmf3,
-        message_stream_id: PLAY_STREAM_ID,
+        message_stream_id: rtmp_runtime::ids::MessageStreamId::new(PLAY_STREAM_ID),
         payload,
     };
     let bytes = rig.peer.raw_message(&msg).unwrap();

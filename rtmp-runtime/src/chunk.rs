@@ -15,10 +15,12 @@
 
 use alloc::collections::BTreeMap;
 use broadcast_common::len::{need_in, need_out};
+use core::time::Duration;
 
 use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
+use crate::ids::{ChunkStreamId, MessageStreamId, Timestamp};
 use crate::message::ChunkSize;
 use crate::message::MessageTypeId;
 use alloc::vec::Vec;
@@ -246,7 +248,7 @@ pub struct BasicHeader {
     /// 2-/3-byte form markers, not real ids; 2 is further reserved by the
     /// spec for low-level protocol control messages/commands but is still a
     /// structurally valid basic-header value).
-    pub chunk_stream_id: u32,
+    pub chunk_stream_id: ChunkStreamId,
 }
 
 impl<'a> Parse<'a> for BasicHeader {
@@ -258,7 +260,7 @@ impl<'a> Parse<'a> for BasicHeader {
         let fmt = Fmt::from_bits((byte0 >> BASIC_HEADER_FMT_SHIFT) & 0x03)?;
         let marker = byte0 & BASIC_HEADER_MARKER_MASK;
 
-        let chunk_stream_id = match marker {
+        let chunk_stream_id = ChunkStreamId::new(match marker {
             BASIC_HEADER_2BYTE_MARKER => {
                 need_in(bytes, 2, "chunk basic header (2-byte form)")?;
                 u32::from(bytes[1]) + BASIC_HEADER_CSID_OFFSET
@@ -270,7 +272,7 @@ impl<'a> Parse<'a> for BasicHeader {
                 u32::from(bytes[1]) + u32::from(bytes[2]) * 256 + BASIC_HEADER_CSID_OFFSET
             }
             literal => u32::from(literal),
-        };
+        });
 
         Ok(BasicHeader {
             fmt,
@@ -283,7 +285,7 @@ impl Serialize for BasicHeader {
     type Error = RtmpError;
 
     fn serialized_len(&self) -> usize {
-        match basic_header_form(self.chunk_stream_id) {
+        match basic_header_form(self.chunk_stream_id.get()) {
             Ok(BasicHeaderForm::One) => 1,
             Ok(BasicHeaderForm::Two) => 2,
             Ok(BasicHeaderForm::Three) => 3,
@@ -294,25 +296,25 @@ impl Serialize for BasicHeader {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let form = basic_header_form(self.chunk_stream_id)?;
+        let form = basic_header_form(self.chunk_stream_id.get())?;
         let fmt_bits = self.fmt.to_bits() << BASIC_HEADER_FMT_SHIFT;
 
         match form {
             BasicHeaderForm::One => {
                 need_out(buf, 1)?;
-                buf[0] = fmt_bits | (self.chunk_stream_id as u8);
+                buf[0] = fmt_bits | (self.chunk_stream_id.get() as u8);
                 Ok(1)
             }
             BasicHeaderForm::Two => {
                 need_out(buf, 2)?;
                 buf[0] = fmt_bits | BASIC_HEADER_2BYTE_MARKER;
-                buf[1] = (self.chunk_stream_id - BASIC_HEADER_CSID_OFFSET) as u8;
+                buf[1] = (self.chunk_stream_id.get() - BASIC_HEADER_CSID_OFFSET) as u8;
                 Ok(2)
             }
             BasicHeaderForm::Three => {
                 need_out(buf, 3)?;
                 buf[0] = fmt_bits | BASIC_HEADER_3BYTE_MARKER;
-                let rel = self.chunk_stream_id - BASIC_HEADER_CSID_OFFSET;
+                let rel = self.chunk_stream_id.get() - BASIC_HEADER_CSID_OFFSET;
                 buf[1] = rel as u8;
                 buf[2] = (rel >> 8) as u8;
                 Ok(3)
@@ -352,21 +354,21 @@ pub enum MessageHeader {
     Type0 {
         /// Absolute timestamp of the message (already resolved from any
         /// Extended Timestamp).
-        timestamp: u32,
+        timestamp: Timestamp,
         /// Length in bytes of the whole message (not the chunk payload).
         message_length: u32,
         /// Message type id (§6/§7.1).
         message_type_id: MessageTypeId,
         /// Message stream id. The wire encoding of this field alone is
         /// little-endian (§5.3.1.2.1).
-        message_stream_id: u32,
+        message_stream_id: MessageStreamId,
     },
     /// Type 1 (§5.3.1.2.2, 7 bytes before any Extended Timestamp). No
     /// message stream id — inherits the preceding chunk's.
     Type1 {
         /// Delta from the previous chunk's timestamp on this csid (already
         /// resolved from any Extended Timestamp).
-        timestamp_delta: u32,
+        timestamp_delta: Duration,
         /// Length in bytes of the whole message.
         message_length: u32,
         /// Message type id (§6/§7.1).
@@ -377,7 +379,7 @@ pub enum MessageHeader {
     Type2 {
         /// Delta from the previous chunk's timestamp on this csid (already
         /// resolved from any Extended Timestamp).
-        timestamp_delta: u32,
+        timestamp_delta: Duration,
     },
     /// Type 3 (§5.3.1.2.4, 0 bytes). Stream id, message length, message type
     /// id, and timestamp delta are all inherited from the preceding chunk on
@@ -403,8 +405,9 @@ impl MessageHeader {
                 let raw_timestamp = read_u24_be(&bytes[0..U24_LEN]);
                 let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
                 let message_type_id = MessageTypeId::from_u8(bytes[2 * U24_LEN]);
-                let message_stream_id =
-                    u32::from_le_bytes([bytes[7], bytes[8], bytes[9], bytes[10]]);
+                let message_stream_id = MessageStreamId::new(u32::from_le_bytes([
+                    bytes[7], bytes[8], bytes[9], bytes[10],
+                ]));
 
                 let (timestamp, consumed) = resolve_extended(raw_timestamp, bytes, TYPE0_LEN)?;
 
@@ -424,7 +427,7 @@ impl MessageHeader {
                 let message_length = read_u24_be(&bytes[U24_LEN..2 * U24_LEN]);
                 let message_type_id = MessageTypeId::from_u8(bytes[2 * U24_LEN]);
 
-                let (timestamp_delta, consumed) = resolve_extended(raw_delta, bytes, TYPE1_LEN)?;
+                let (timestamp_delta, consumed) = resolve_delta(raw_delta, bytes, TYPE1_LEN)?;
 
                 Ok((
                     MessageHeader::Type1 {
@@ -438,7 +441,7 @@ impl MessageHeader {
             Fmt::Type2 => {
                 need_in(bytes, TYPE2_LEN, "type 2 message header")?;
                 let raw_delta = read_u24_be(&bytes[0..U24_LEN]);
-                let (timestamp_delta, consumed) = resolve_extended(raw_delta, bytes, TYPE2_LEN)?;
+                let (timestamp_delta, consumed) = resolve_delta(raw_delta, bytes, TYPE2_LEN)?;
 
                 Ok((MessageHeader::Type2 { timestamp_delta }, consumed))
             }
@@ -451,7 +454,7 @@ impl MessageHeader {
 /// `bytes[..3]`, resolve it to its real value (reading the trailing 4-byte
 /// Extended Timestamp if the field read the sentinel), and return
 /// `(value, total_consumed)` where `total_consumed = fixed_len (+4)`.
-fn resolve_extended(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(u32, usize)> {
+fn resolve_extended(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(Timestamp, usize)> {
     if raw == EXTENDED_TIMESTAMP_MARKER {
         let need = fixed_len + EXTENDED_TIMESTAMP_LEN;
         need_in(bytes, need, "extended timestamp")?;
@@ -461,10 +464,17 @@ fn resolve_extended(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(u32, us
             bytes[fixed_len + 2],
             bytes[fixed_len + 3],
         ]);
-        Ok((ext, need))
+        Ok((Timestamp::from_millis(ext), need))
     } else {
-        Ok((raw, fixed_len))
+        Ok((Timestamp::from_millis(raw), fixed_len))
     }
+}
+
+/// Shared tail of Type 1/2 parsing: resolve the 24-bit `timestamp delta`
+/// field (plus its Extended Timestamp when the field read the sentinel) into
+/// the span it stands for.
+fn resolve_delta(raw: u32, bytes: &[u8], fixed_len: usize) -> Result<(Duration, usize)> {
+    resolve_extended(raw, bytes, fixed_len).map(|(ts, n)| (ts.span(), n))
 }
 
 impl Serialize for MessageHeader {
@@ -472,11 +482,13 @@ impl Serialize for MessageHeader {
 
     fn serialized_len(&self) -> usize {
         match self {
-            MessageHeader::Type0 { timestamp, .. } => TYPE0_LEN + extended_len(*timestamp),
+            MessageHeader::Type0 { timestamp, .. } => TYPE0_LEN + extended_len(timestamp.millis()),
             MessageHeader::Type1 {
                 timestamp_delta, ..
-            } => TYPE1_LEN + extended_len(*timestamp_delta),
-            MessageHeader::Type2 { timestamp_delta } => TYPE2_LEN + extended_len(*timestamp_delta),
+            } => TYPE1_LEN + extended_len(delta_millis(*timestamp_delta)),
+            MessageHeader::Type2 { timestamp_delta } => {
+                TYPE2_LEN + extended_len(delta_millis(*timestamp_delta))
+            }
             MessageHeader::Type3 => TYPE3_LEN,
         }
     }
@@ -489,13 +501,14 @@ impl Serialize for MessageHeader {
                 message_type_id,
                 message_stream_id,
             } => {
-                let extended = needs_extended_timestamp(timestamp);
+                let millis = timestamp.millis();
+                let extended = needs_extended_timestamp(millis);
                 let written = TYPE0_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
                 need_out(buf, written)?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
-                    timestamp
+                    millis
                 };
                 write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
                 write_u24_be(
@@ -504,9 +517,9 @@ impl Serialize for MessageHeader {
                     "message length",
                 )?;
                 buf[2 * U24_LEN] = message_type_id.to_u8();
-                buf[7..11].copy_from_slice(&message_stream_id.to_le_bytes());
+                buf[7..11].copy_from_slice(&message_stream_id.get().to_le_bytes());
                 if extended {
-                    buf[11..15].copy_from_slice(&timestamp.to_be_bytes());
+                    buf[11..15].copy_from_slice(&millis.to_be_bytes());
                 }
                 Ok(written)
             }
@@ -515,13 +528,14 @@ impl Serialize for MessageHeader {
                 message_length,
                 message_type_id,
             } => {
-                let extended = needs_extended_timestamp(timestamp_delta);
+                let millis = delta_millis(timestamp_delta);
+                let extended = needs_extended_timestamp(millis);
                 let written = TYPE1_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
                 need_out(buf, written)?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
-                    timestamp_delta
+                    millis
                 };
                 write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
                 write_u24_be(
@@ -531,28 +545,35 @@ impl Serialize for MessageHeader {
                 )?;
                 buf[2 * U24_LEN] = message_type_id.to_u8();
                 if extended {
-                    buf[7..11].copy_from_slice(&timestamp_delta.to_be_bytes());
+                    buf[7..11].copy_from_slice(&millis.to_be_bytes());
                 }
                 Ok(written)
             }
             MessageHeader::Type2 { timestamp_delta } => {
-                let extended = needs_extended_timestamp(timestamp_delta);
+                let millis = delta_millis(timestamp_delta);
+                let extended = needs_extended_timestamp(millis);
                 let written = TYPE2_LEN + if extended { EXTENDED_TIMESTAMP_LEN } else { 0 };
                 need_out(buf, written)?;
                 let field = if extended {
                     EXTENDED_TIMESTAMP_MARKER
                 } else {
-                    timestamp_delta
+                    millis
                 };
                 write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
                 if extended {
-                    buf[3..7].copy_from_slice(&timestamp_delta.to_be_bytes());
+                    buf[3..7].copy_from_slice(&millis.to_be_bytes());
                 }
                 Ok(written)
             }
             MessageHeader::Type3 => Ok(0),
         }
     }
+}
+
+/// The 32-bit wire value a timestamp delta stands for (a span is rounded down
+/// to the whole millisecond the field carries, §5.3.1.2).
+fn delta_millis(delta: Duration) -> u32 {
+    u32::try_from(delta.as_millis()).unwrap_or(u32::MAX)
 }
 
 /// Extra bytes (0 or 4) [`Serialize`] will write for a 24-bit
@@ -576,14 +597,14 @@ fn extended_len(field: u32) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Message {
     /// Chunk stream id this message was carried on.
-    pub chunk_stream_id: u32,
+    pub chunk_stream_id: ChunkStreamId,
     /// Absolute timestamp (already resolved from any timestamp delta /
     /// Extended Timestamp — never a delta).
-    pub timestamp: u32,
+    pub timestamp: Timestamp,
     /// Message type id (§6/§7.1).
     pub message_type_id: MessageTypeId,
     /// Message stream id.
-    pub message_stream_id: u32,
+    pub message_stream_id: MessageStreamId,
     /// The whole message payload (reassembled across every chunk it was
     /// split into).
     pub payload: Vec<u8>,
@@ -597,21 +618,21 @@ pub struct Message {
 #[derive(Debug, Clone, Default)]
 struct CsidState {
     /// Absolute timestamp of the current/most recent message on this csid.
-    timestamp: u32,
+    timestamp: Timestamp,
     /// Delta most recently applied to reach `timestamp` — re-applied
     /// unchanged when a Type 3 chunk begins a new message (inherits the
     /// prior delta). Per §3.1.2 Type 3: when a Type 3 chunk immediately
     /// follows a Type 0 chunk with no intervening Type 1/2, its implied
     /// delta equals the Type 0 chunk's own absolute timestamp — so a Type 0
     /// chunk seeds this field with its `timestamp`, not `0`.
-    timestamp_delta: u32,
+    timestamp_delta: Duration,
     /// Total length in bytes of the current/most recent message.
     message_length: u32,
     /// Message type id of the current/most recent message. `None` until the
     /// first Type 0/1 header on this csid, since a Type 3 chunk inherits it.
     message_type_id: Option<MessageTypeId>,
     /// Message stream id of the current/most recent message.
-    message_stream_id: u32,
+    message_stream_id: MessageStreamId,
     /// Whether the most recent Type 0/1/2 header on this csid used the
     /// Extended Timestamp (§5.3.1.3) — a Type 3 chunk then also carries (and
     /// must consume) that 4-byte field, per csid, until the next Type 0/1/2
@@ -652,7 +673,7 @@ struct CsidState {
 #[derive(Debug)]
 pub struct ChunkAssembler {
     chunk_size: ChunkSize,
-    csids: BTreeMap<u32, CsidState>,
+    csids: BTreeMap<ChunkStreamId, CsidState>,
     /// Bytes carried over from a previous `push` call that did not yet form
     /// a complete chunk (partial basic header, message header, extended
     /// timestamp, or payload slice).
@@ -737,7 +758,7 @@ impl ChunkAssembler {
     /// that actually starts a *new* message on that csid was instead
     /// appended to the aborted payload as a continuation — `message_length`
     /// bytes later, a corrupted merged message came out.
-    pub fn abort(&mut self, csid: u32) {
+    pub fn abort(&mut self, csid: ChunkStreamId) {
         if let Some(state) = self.csids.get_mut(&csid) {
             if state.in_progress {
                 let released = state.reserved.take().unwrap_or(0) as usize;
@@ -843,6 +864,7 @@ impl ChunkAssembler {
     ///
     /// ```
     /// use rtmp_runtime::chunk::{ChunkAssembler, ChunkWriter, Message};
+    /// use rtmp_runtime::ids::{ChunkStreamId, MessageStreamId, Timestamp};
     /// use rtmp_runtime::message::{ChunkSize, MessageTypeId, ProtocolControl};
     ///
     /// let mut writer = ChunkWriter::new();
@@ -851,10 +873,10 @@ impl ChunkAssembler {
     /// wire.extend_from_slice(&writer.write(&control)?);
     /// writer.set_chunk_size(ChunkSize::new(4096)?);
     /// let media = Message {
-    ///     chunk_stream_id: 4,
-    ///     timestamp: 0,
+    ///     chunk_stream_id: ChunkStreamId::new(4),
+    ///     timestamp: Timestamp::from_millis(0),
     ///     message_type_id: MessageTypeId::Audio,
-    ///     message_stream_id: 1,
+    ///     message_stream_id: MessageStreamId::new(1),
     ///     payload: vec![0u8; 5000],
     /// };
     /// wire.extend_from_slice(&writer.write(&media)?);
@@ -928,7 +950,7 @@ impl ChunkAssembler {
                         // the message-type-id field is below.
                         let state = self.csids.get_mut(&parsed.csid).ok_or(
                             RtmpError::ChunkStreamState {
-                                chunk_stream_id: parsed.csid,
+                                chunk_stream_id: parsed.csid.get(),
                                 what: "chunk committed but its csid entry is missing",
                             },
                         )?;
@@ -950,7 +972,7 @@ impl ChunkAssembler {
                             timestamp: state.timestamp,
                             message_type_id: state.message_type_id.ok_or(
                                 RtmpError::ChunkStreamState {
-                                    chunk_stream_id: parsed.csid,
+                                    chunk_stream_id: parsed.csid.get(),
                                     what: "completed message has no message type id",
                                 },
                             )?,
@@ -1022,7 +1044,7 @@ impl ChunkAssembler {
     /// - `Err(_)` — structurally invalid input. `states` is left untouched.
     fn try_parse_one(
         buf: &[u8],
-        states: &mut BTreeMap<u32, CsidState>,
+        states: &mut BTreeMap<ChunkStreamId, CsidState>,
         chunk_size: ChunkSize,
         in_progress_bytes: &mut usize,
         max_in_progress_bytes: usize,
@@ -1095,7 +1117,7 @@ impl ChunkAssembler {
                         // §3.1.2: a Type 3 immediately following this Type 0
                         // (no intervening Type 1/2) implies a delta equal to
                         // this Type 0's own absolute timestamp.
-                        timestamp_delta: timestamp,
+                        timestamp_delta: timestamp.span(),
                         timestamp,
                         message_length,
                         message_type_id,
@@ -1122,19 +1144,26 @@ impl ChunkAssembler {
                 },
             ) => {
                 let existing = existing.ok_or(RtmpError::ChunkStreamState {
-                    chunk_stream_id: bh.chunk_stream_id,
+                    chunk_stream_id: bh.chunk_stream_id.get(),
                     what: "type 1 header with no prior chunk to inherit from",
                 })?;
                 if existing.in_progress {
                     return Err(RtmpError::ChunkStreamState {
-                        chunk_stream_id: bh.chunk_stream_id,
+                        chunk_stream_id: bh.chunk_stream_id.get(),
                         what: "type 1 header mid-message",
                     });
                 }
                 let used_extended = mh_consumed > TYPE1_LEN;
                 (
                     ResolvedHeader {
-                        timestamp: existing.timestamp.wrapping_add(timestamp_delta),
+                        timestamp: existing.timestamp.checked_add(timestamp_delta).ok_or(
+                            RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                                field: "timestamp",
+                                value: existing.timestamp.millis() as u64
+                                    + delta_millis(timestamp_delta) as u64,
+                                max: u64::from(u32::MAX),
+                            }),
+                        )?,
                         timestamp_delta,
                         message_length,
                         message_type_id,
@@ -1146,12 +1175,12 @@ impl ChunkAssembler {
             }
             (Fmt::Type2, MessageHeader::Type2 { timestamp_delta }) => {
                 let existing = existing.ok_or(RtmpError::ChunkStreamState {
-                    chunk_stream_id: bh.chunk_stream_id,
+                    chunk_stream_id: bh.chunk_stream_id.get(),
                     what: "type 2 header with no prior chunk to inherit from",
                 })?;
                 if existing.in_progress {
                     return Err(RtmpError::ChunkStreamState {
-                        chunk_stream_id: bh.chunk_stream_id,
+                        chunk_stream_id: bh.chunk_stream_id.get(),
                         what: "type 2 header mid-message",
                     });
                 }
@@ -1160,12 +1189,19 @@ impl ChunkAssembler {
                     existing
                         .message_type_id
                         .ok_or(RtmpError::ChunkStreamState {
-                            chunk_stream_id: bh.chunk_stream_id,
+                            chunk_stream_id: bh.chunk_stream_id.get(),
                             what: "type 2 header with no message type id to inherit",
                         })?;
                 (
                     ResolvedHeader {
-                        timestamp: existing.timestamp.wrapping_add(timestamp_delta),
+                        timestamp: existing.timestamp.checked_add(timestamp_delta).ok_or(
+                            RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                                field: "timestamp",
+                                value: existing.timestamp.millis() as u64
+                                    + delta_millis(timestamp_delta) as u64,
+                                max: u64::from(u32::MAX),
+                            }),
+                        )?,
                         timestamp_delta,
                         message_length: existing.message_length,
                         message_type_id,
@@ -1177,7 +1213,7 @@ impl ChunkAssembler {
             }
             (Fmt::Type3, MessageHeader::Type3) => {
                 let existing = existing.ok_or(RtmpError::ChunkStreamState {
-                    chunk_stream_id: bh.chunk_stream_id,
+                    chunk_stream_id: bh.chunk_stream_id.get(),
                     what: "type 3 header with no prior chunk to inherit from",
                 })?;
                 let continuation = existing.in_progress;
@@ -1185,7 +1221,7 @@ impl ChunkAssembler {
                     existing
                         .message_type_id
                         .ok_or(RtmpError::ChunkStreamState {
-                            chunk_stream_id: bh.chunk_stream_id,
+                            chunk_stream_id: bh.chunk_stream_id.get(),
                             what: "type 3 header with no message type id to inherit",
                         })?;
                 if existing.extended {
@@ -1215,7 +1251,17 @@ impl ChunkAssembler {
                 } else {
                     (
                         ResolvedHeader {
-                            timestamp: existing.timestamp.wrapping_add(existing.timestamp_delta),
+                            timestamp: existing
+                                .timestamp
+                                .checked_add(existing.timestamp_delta)
+                                .ok_or(RtmpError::FieldOverflow(
+                                    broadcast_common::len::FieldOverflow {
+                                        field: "timestamp",
+                                        value: existing.timestamp.millis() as u64
+                                            + delta_millis(existing.timestamp_delta) as u64,
+                                        max: u64::from(u32::MAX),
+                                    },
+                                ))?,
                             timestamp_delta: existing.timestamp_delta,
                             message_length: existing.message_length,
                             message_type_id,
@@ -1232,7 +1278,7 @@ impl ChunkAssembler {
             // than a panic.
             _ => {
                 return Err(RtmpError::ChunkStreamState {
-                    chunk_stream_id: bh.chunk_stream_id,
+                    chunk_stream_id: bh.chunk_stream_id.get(),
                     what: "message header variant does not match its fmt",
                 });
             }
@@ -1334,11 +1380,11 @@ impl ChunkAssembler {
 /// the accumulated buffer.
 #[derive(Clone, Copy)]
 struct ExistingHeader {
-    timestamp: u32,
-    timestamp_delta: u32,
+    timestamp: Timestamp,
+    timestamp_delta: Duration,
     message_length: u32,
     message_type_id: Option<MessageTypeId>,
-    message_stream_id: u32,
+    message_stream_id: MessageStreamId,
     extended: bool,
     in_progress: bool,
     accumulated_len: usize,
@@ -1347,11 +1393,11 @@ struct ExistingHeader {
 /// Header fields resolved for one chunk, after applying `fmt`-specific
 /// inheritance from the csid's prior state.
 struct ResolvedHeader {
-    timestamp: u32,
-    timestamp_delta: u32,
+    timestamp: Timestamp,
+    timestamp_delta: Duration,
     message_length: u32,
     message_type_id: MessageTypeId,
-    message_stream_id: u32,
+    message_stream_id: MessageStreamId,
     extended: bool,
 }
 
@@ -1361,7 +1407,7 @@ struct ResolvedHeader {
 /// `consumed` (to advance its read cursor) and `csid` (to look the state
 /// back up and check for message completion).
 struct ParsedChunk {
-    csid: u32,
+    csid: ChunkStreamId,
     consumed: usize,
 }
 
@@ -1421,16 +1467,14 @@ impl ChunkWriter {
     /// (`BasicHeader::parse` never yields one outside the range); callers
     /// building a `Message` from scratch must respect it.
     pub fn write(&mut self, msg: &Message) -> Result<Vec<u8>> {
-        if !(BASIC_HEADER_1BYTE_MIN_CSID..=BASIC_HEADER_3BYTE_MAX_CSID)
-            .contains(&msg.chunk_stream_id)
-        {
+        if !msg.chunk_stream_id.basic_header_encodable() {
             return Err(RtmpError::InvalidChunkStreamId {
-                chunk_stream_id: msg.chunk_stream_id,
+                chunk_stream_id: msg.chunk_stream_id.get(),
             });
         }
         let chunk_size = usize::try_from(self.chunk_size.value()).unwrap_or(usize::MAX);
         let message_length = broadcast_common::len::fit_u24(msg.payload.len(), "message_length")?;
-        let extended = needs_extended_timestamp(msg.timestamp);
+        let extended = needs_extended_timestamp(msg.timestamp.millis());
 
         let mut out = Vec::with_capacity(TYPE0_LEN + msg.payload.len() + 16);
 
@@ -1459,7 +1503,7 @@ impl ChunkWriter {
             };
             write_serialized(&mut out, &bh)?;
             if extended {
-                out.extend_from_slice(&msg.timestamp.to_be_bytes());
+                out.extend_from_slice(&msg.timestamp.millis().to_be_bytes());
             }
             let take = chunk_size.min(msg.payload.len() - offset);
             out.extend_from_slice(&msg.payload[offset..offset + take]);
@@ -1553,7 +1597,7 @@ mod tests {
     fn serialize_into_too_small_output_reports_output_buffer_error() {
         let basic = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: 3,
+            chunk_stream_id: ChunkStreamId::new(9),
         };
         let mut buf = [0u8; 0];
         assert!(matches!(
@@ -1562,10 +1606,10 @@ mod tests {
         ));
 
         let hdr = MessageHeader::Type0 {
-            timestamp: 0,
+            timestamp: Timestamp::from_millis(0),
             message_length: 16,
             message_type_id: MessageTypeId::Video,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
         };
         let mut buf = [0u8; TYPE0_LEN - 1];
         assert!(matches!(
@@ -1574,7 +1618,7 @@ mod tests {
         ));
 
         let hdr = MessageHeader::Type1 {
-            timestamp_delta: 0,
+            timestamp_delta: Duration::from_millis(0),
             message_length: 16,
             message_type_id: MessageTypeId::Video,
         };
@@ -1584,7 +1628,9 @@ mod tests {
             Err(RtmpError::OutputBufferTooSmall(_))
         ));
 
-        let hdr = MessageHeader::Type2 { timestamp_delta: 0 };
+        let hdr = MessageHeader::Type2 {
+            timestamp_delta: Duration::ZERO,
+        };
         let mut buf = [0u8; TYPE2_LEN - 1];
         assert!(matches!(
             hdr.serialize_into(&mut buf),
@@ -1598,13 +1644,13 @@ mod tests {
         let mut buf = [0u8; 16];
         for hdr in [
             MessageHeader::Type0 {
-                timestamp: 0,
+                timestamp: Timestamp::from_millis(0),
                 message_length: 0x0100_0000,
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
             },
             MessageHeader::Type1 {
-                timestamp_delta: 0,
+                timestamp_delta: Duration::from_millis(0),
                 message_length: 0x0100_0000,
                 message_type_id: MessageTypeId::Video,
             },
@@ -1615,7 +1661,7 @@ mod tests {
             ));
         }
         let ok = MessageHeader::Type1 {
-            timestamp_delta: 0,
+            timestamp_delta: Duration::from_millis(0),
             message_length: 0x00FF_FFFF,
             message_type_id: MessageTypeId::Video,
         };
@@ -1667,7 +1713,7 @@ mod tests {
         for csid in [BASIC_HEADER_1BYTE_MIN_CSID, 5, BASIC_HEADER_1BYTE_MAX_CSID] {
             let bh = BasicHeader {
                 fmt: Fmt::Type1,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             };
             let mut buf = [0u8; 1];
             let n = bh.serialize_into(&mut buf).unwrap();
@@ -1683,7 +1729,7 @@ mod tests {
         let bytes = [0x45u8];
         let bh = BasicHeader::parse(&bytes).unwrap();
         assert_eq!(bh.fmt, Fmt::Type1);
-        assert_eq!(bh.chunk_stream_id, 5);
+        assert_eq!(bh.chunk_stream_id.get(), 5);
         let mut buf = [0u8; 1];
         bh.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
@@ -1700,7 +1746,7 @@ mod tests {
         ] {
             let bh = BasicHeader {
                 fmt: Fmt::Type2,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             };
             let mut buf = [0u8; 2];
             let n = bh.serialize_into(&mut buf).unwrap();
@@ -1716,7 +1762,7 @@ mod tests {
         let bytes = [0b10_000000u8, 0x00];
         let bh = BasicHeader::parse(&bytes).unwrap();
         assert_eq!(bh.fmt, Fmt::Type2);
-        assert_eq!(bh.chunk_stream_id, 64);
+        assert_eq!(bh.chunk_stream_id.get(), 64);
         let mut buf = [0u8; 2];
         bh.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
@@ -1733,7 +1779,7 @@ mod tests {
         ] {
             let bh = BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             };
             let mut buf = [0u8; 3];
             let n = bh.serialize_into(&mut buf).unwrap();
@@ -1749,7 +1795,7 @@ mod tests {
         let bytes = [0b00_000001u8, 0xFF, 0xFF];
         let bh = BasicHeader::parse(&bytes).unwrap();
         assert_eq!(bh.fmt, Fmt::Type0);
-        assert_eq!(bh.chunk_stream_id, BASIC_HEADER_3BYTE_MAX_CSID);
+        assert_eq!(bh.chunk_stream_id.get(), BASIC_HEADER_3BYTE_MAX_CSID);
         let mut buf = [0u8; 3];
         bh.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
@@ -1760,7 +1806,7 @@ mod tests {
         // csid = 64 + 0x0102 = 0x0142 = 322. 3-byte form: byte1=low=0x02, byte2=high=0x01.
         let bh = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: 64 + 0x0102,
+            chunk_stream_id: ChunkStreamId::new(64 + 0x0102),
         };
         let mut buf = [0u8; 3];
         bh.serialize_into(&mut buf).unwrap();
@@ -1775,7 +1821,7 @@ mod tests {
     fn basic_header_csid_zero_is_malformed_on_serialize() {
         let bh = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: 0,
+            chunk_stream_id: ChunkStreamId::new(0),
         };
         let mut buf = [0u8; 3];
         assert!(matches!(
@@ -1788,7 +1834,7 @@ mod tests {
     fn basic_header_csid_one_is_malformed_on_serialize() {
         let bh = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: 1,
+            chunk_stream_id: ChunkStreamId::new(1),
         };
         let mut buf = [0u8; 3];
         assert!(matches!(
@@ -1801,7 +1847,7 @@ mod tests {
     fn basic_header_csid_above_max_is_malformed_on_serialize() {
         let bh = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: BASIC_HEADER_3BYTE_MAX_CSID + 1,
+            chunk_stream_id: ChunkStreamId::new(BASIC_HEADER_3BYTE_MAX_CSID + 1),
         };
         let mut buf = [0u8; 3];
         assert!(matches!(
@@ -1853,10 +1899,10 @@ mod tests {
     #[test]
     fn type0_round_trip_build_serialize_parse_no_extended() {
         let mh = MessageHeader::Type0 {
-            timestamp: 0x0011_2233,
+            timestamp: Timestamp::from_millis(0x0011_2233),
             message_length: 0x0004_5566,
             message_type_id: MessageTypeId::Video,
-            message_stream_id: 0xAABB_CCDD,
+            message_stream_id: MessageStreamId::new(0xAABB_CCDD),
         };
         let mut buf = [0u8; TYPE0_LEN];
         let n = mh.serialize_into(&mut buf).unwrap();
@@ -1883,10 +1929,10 @@ mod tests {
         assert_eq!(
             mh,
             MessageHeader::Type0 {
-                timestamp: 0x0000_1122,
+                timestamp: Timestamp::from_millis(0x0000_1122),
                 message_length: 0x0033_4455,
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 0xAABB_CCDD,
+                message_stream_id: MessageStreamId::new(0xAABB_CCDD),
             }
         );
         let mut buf = [0u8; TYPE0_LEN];
@@ -1914,10 +1960,10 @@ mod tests {
         assert_eq!(
             mh,
             MessageHeader::Type0 {
-                timestamp: 0x0102_0304,
+                timestamp: Timestamp::from_millis(0x0102_0304),
                 message_length: 0x0000_0010,
                 message_type_id: MessageTypeId::Audio,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
             }
         );
         let mut buf = [0u8; TYPE0_LEN + 4];
@@ -1934,10 +1980,10 @@ mod tests {
         // timestamp == EXTENDED_TIMESTAMP_MARKER exactly: per spec this MUST
         // still go through the extended-timestamp path (">=", not ">").
         let mh = MessageHeader::Type0 {
-            timestamp: EXTENDED_TIMESTAMP_MARKER,
+            timestamp: Timestamp::from_millis(EXTENDED_TIMESTAMP_MARKER),
             message_length: 10,
             message_type_id: MessageTypeId::SetChunkSize,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
         };
         assert_eq!(mh.serialized_len(), TYPE0_LEN + 4);
         let mut buf = [0u8; TYPE0_LEN + 4];
@@ -1963,7 +2009,7 @@ mod tests {
     #[test]
     fn type1_round_trip_build_serialize_parse_no_extended() {
         let mh = MessageHeader::Type1 {
-            timestamp_delta: 20,
+            timestamp_delta: Duration::from_millis(20),
             message_length: 32,
             message_type_id: MessageTypeId::Audio,
         };
@@ -1988,7 +2034,7 @@ mod tests {
         assert_eq!(
             mh,
             MessageHeader::Type1 {
-                timestamp_delta: 0x0A0B_0C0D,
+                timestamp_delta: Duration::from_millis(0x0A0B_0C0D),
                 message_length: 0x0000_0020,
                 message_type_id: MessageTypeId::Video,
             }
@@ -2003,7 +2049,7 @@ mod tests {
     #[test]
     fn type2_round_trip_build_serialize_parse_no_extended() {
         let mh = MessageHeader::Type2 {
-            timestamp_delta: 20,
+            timestamp_delta: Duration::from_millis(20),
         };
         let mut buf = [0u8; TYPE2_LEN];
         let n = mh.serialize_into(&mut buf).unwrap();
@@ -2024,7 +2070,7 @@ mod tests {
         assert_eq!(
             mh,
             MessageHeader::Type2 {
-                timestamp_delta: 0x1122_3344,
+                timestamp_delta: Duration::from_millis(0x1122_3344),
             }
         );
         let mut buf = [0u8; TYPE2_LEN + 4];
@@ -2098,16 +2144,16 @@ mod tests {
 
     fn msg(
         csid: u32,
-        timestamp: u32,
+        timestamp_millis: u32,
         type_id: MessageTypeId,
         stream_id: u32,
         payload: Vec<u8>,
     ) -> Message {
         Message {
-            chunk_stream_id: csid,
-            timestamp,
+            chunk_stream_id: ChunkStreamId::new(csid),
+            timestamp: Timestamp::from_millis(timestamp_millis),
             message_type_id: type_id,
-            message_stream_id: stream_id,
+            message_stream_id: MessageStreamId::new(stream_id),
             payload,
         }
     }
@@ -2203,13 +2249,13 @@ mod tests {
 
         let bh0 = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: 3,
+            chunk_stream_id: ChunkStreamId::new(9),
         };
         let mh0 = MessageHeader::Type0 {
-            timestamp: 0,
+            timestamp: Timestamp::from_millis(0),
             message_length: 10,
             message_type_id: MessageTypeId::Audio,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
         };
         let mut input = Vec::new();
         write_serialized_ok(&mut input, &bh0);
@@ -2218,7 +2264,7 @@ mod tests {
 
         let bh3 = BasicHeader {
             fmt: Fmt::Type3,
-            chunk_stream_id: 3,
+            chunk_stream_id: ChunkStreamId::new(9),
         };
         write_serialized_ok(&mut input, &bh3);
         input.extend_from_slice(&[5, 6, 7, 8]);
@@ -2245,16 +2291,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 1000,
+                timestamp: Timestamp::from_millis(1000),
                 message_length: 5,
                 message_type_id: MessageTypeId::Audio,
-                message_stream_id: 7,
+                message_stream_id: MessageStreamId::new(7),
             },
         );
         input.extend_from_slice(&[0; 5]);
@@ -2263,13 +2309,13 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type1,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type1 {
-                timestamp_delta: 20,
+                timestamp_delta: Duration::from_millis(20),
                 message_length: 5,
                 message_type_id: MessageTypeId::Audio,
             },
@@ -2280,13 +2326,13 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type2,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type2 {
-                timestamp_delta: 30,
+                timestamp_delta: Duration::from_millis(30),
             },
         );
         input.extend_from_slice(&[2; 5]);
@@ -2295,7 +2341,7 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         input.extend_from_slice(&[3; 5]);
@@ -2303,18 +2349,18 @@ mod tests {
         let out = assembler.push(&input).unwrap();
         assert_eq!(out.len(), 4);
 
-        assert_eq!(out[0].timestamp, 1000);
-        assert_eq!(out[0].message_stream_id, 7);
+        assert_eq!(out[0].timestamp.millis(), 1000);
+        assert_eq!(out[0].message_stream_id.get(), 7);
         assert_eq!(out[0].message_type_id, MessageTypeId::Audio);
         assert_eq!(out[0].payload, vec![0; 5]);
 
-        assert_eq!(out[1].timestamp, 1020, "fmt1: 1000 + delta 20");
-        assert_eq!(out[1].message_stream_id, 7, "fmt1 inherits stream id");
+        assert_eq!(out[1].timestamp.millis(), 1020, "fmt1: 1000 + delta 20");
+        assert_eq!(out[1].message_stream_id.get(), 7, "fmt1 inherits stream id");
         assert_eq!(out[1].message_type_id, MessageTypeId::Audio);
         assert_eq!(out[1].payload, vec![1; 5]);
 
-        assert_eq!(out[2].timestamp, 1050, "fmt2: 1020 + delta 30");
-        assert_eq!(out[2].message_stream_id, 7, "fmt2 inherits stream id");
+        assert_eq!(out[2].timestamp.millis(), 1050, "fmt2: 1020 + delta 30");
+        assert_eq!(out[2].message_stream_id.get(), 7, "fmt2 inherits stream id");
         assert_eq!(
             out[2].message_type_id,
             MessageTypeId::Audio,
@@ -2323,10 +2369,11 @@ mod tests {
         assert_eq!(out[2].payload, vec![2; 5], "fmt2 inherits message length");
 
         assert_eq!(
-            out[3].timestamp, 1080,
+            out[3].timestamp.millis(),
+            1080,
             "fmt3 (new message) inherits fmt2's delta 30: 1050 + 30"
         );
-        assert_eq!(out[3].message_stream_id, 7, "fmt3 inherits stream id");
+        assert_eq!(out[3].message_stream_id.get(), 7, "fmt3 inherits stream id");
         assert_eq!(
             out[3].message_type_id,
             MessageTypeId::Audio,
@@ -2354,13 +2401,13 @@ mod tests {
         assembler.set_chunk_size(ChunkSize::new(4).expect("a valid chunk size"));
         let bh0 = BasicHeader {
             fmt: Fmt::Type0,
-            chunk_stream_id: csid,
+            chunk_stream_id: ChunkStreamId::new(csid),
         };
         let mh0 = MessageHeader::Type0 {
-            timestamp: 200,
+            timestamp: Timestamp::from_millis(200),
             message_length: 10,
             message_type_id: MessageTypeId::Audio,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
         };
         let mut chunk1 = Vec::new();
         write_serialized_ok(&mut chunk1, &bh0);
@@ -2374,7 +2421,7 @@ mod tests {
 
         let bh3 = BasicHeader {
             fmt: Fmt::Type3,
-            chunk_stream_id: csid,
+            chunk_stream_id: ChunkStreamId::new(csid),
         };
         let mut chunk2 = Vec::new();
         write_serialized_ok(&mut chunk2, &bh3);
@@ -2417,7 +2464,7 @@ mod tests {
         let ext_offset = bh_len + TYPE0_LEN;
         assert_eq!(
             &bytes[ext_offset..ext_offset + 4],
-            &original.timestamp.to_be_bytes()
+            &original.timestamp.millis().to_be_bytes()
         );
         let first_payload_take = 128usize;
         let second_chunk_start = first_header_len + first_payload_take;
@@ -2426,7 +2473,7 @@ mod tests {
         let second_ext_offset = second_chunk_start + 1;
         assert_eq!(
             &bytes[second_ext_offset..second_ext_offset + 4],
-            &original.timestamp.to_be_bytes(),
+            &original.timestamp.millis().to_be_bytes(),
             "fmt3 continuation must carry the same extended timestamp"
         );
 
@@ -2434,7 +2481,7 @@ mod tests {
         let out = assembler.push(&bytes).unwrap();
         assert_eq!(out.len(), 1);
         assert_eq!(out[0], original);
-        assert_eq!(out[0].timestamp, EXTENDED_TIMESTAMP_MARKER + 12345);
+        assert_eq!(out[0].timestamp.millis(), EXTENDED_TIMESTAMP_MARKER + 12345);
     }
 
     #[test]
@@ -2489,7 +2536,7 @@ mod tests {
         let out = assembler.push(&aborted_bytes[..split_at]).unwrap();
         assert!(out.is_empty(), "message must still be in progress");
 
-        assembler.abort(12);
+        assembler.abort(ChunkStreamId::new(12));
 
         // A brand-new, independent Type 0 message on the SAME csid must
         // now parse as itself.
@@ -2518,7 +2565,7 @@ mod tests {
         let out = assembler.push(&aborted_bytes[..split_at]).unwrap();
         assert!(out.is_empty());
 
-        assembler.abort(12);
+        assembler.abort(ChunkStreamId::new(12));
 
         // Bare Type 3 chunks (fmt=3, csid=12 -> (3<<6)|12 = 0xCC), a
         // DIFFERENT fill value, completing a fresh 300-byte message that
@@ -2599,13 +2646,13 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type1,
-                chunk_stream_id: 20,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type1 {
-                timestamp_delta: 5,
+                timestamp_delta: Duration::from_millis(5),
                 message_length: 3,
                 message_type_id: MessageTypeId::SetChunkSize,
             },
@@ -2614,7 +2661,7 @@ mod tests {
         assert!(matches!(
             assembler.push(&input),
             Err(RtmpError::ChunkStreamState {
-                chunk_stream_id: 20,
+                chunk_stream_id: 9,
                 ..
             })
         ));
@@ -2628,13 +2675,13 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: 21,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         assert!(matches!(
             assembler.push(&input),
             Err(RtmpError::ChunkStreamState {
-                chunk_stream_id: 21,
+                chunk_stream_id: 9,
                 ..
             })
         ));
@@ -2685,16 +2732,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 1000,
+                timestamp: Timestamp::from_millis(1000),
                 message_length: 5,
                 message_type_id: MessageTypeId::Audio,
-                message_stream_id: 2,
+                message_stream_id: MessageStreamId::new(2),
             },
         );
         input.extend_from_slice(&[1, 2, 3, 4, 5]);
@@ -2705,16 +2752,17 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         input.extend_from_slice(&[9, 9, 9, 9, 9]);
 
         let out = assembler.push(&input).unwrap();
         assert_eq!(out.len(), 2);
-        assert_eq!(out[0].timestamp, 1000);
+        assert_eq!(out[0].timestamp.millis(), 1000);
         assert_eq!(
-            out[1].timestamp, 2000,
+            out[1].timestamp.millis(),
+            2000,
             "fmt3 immediately after fmt0 implies delta == the fmt0's own timestamp (1000), not 0: 1000 + 1000"
         );
     }
@@ -2727,14 +2775,19 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type2,
-                chunk_stream_id: 22,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
-        write_serialized_ok(&mut input, &MessageHeader::Type2 { timestamp_delta: 5 });
+        write_serialized_ok(
+            &mut input,
+            &MessageHeader::Type2 {
+                timestamp_delta: Duration::from_millis(5),
+            },
+        );
         assert!(matches!(
             assembler.push(&input),
             Err(RtmpError::ChunkStreamState {
-                chunk_stream_id: 22,
+                chunk_stream_id: 9,
                 ..
             })
         ));
@@ -2765,16 +2818,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: 12,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 0,
+                timestamp: Timestamp::from_millis(0),
                 message_length: payload.len() as u32,
                 message_type_id: MessageTypeId::Audio,
-                message_stream_id: 0,
+                message_stream_id: MessageStreamId::new(0),
             },
         );
         input.extend_from_slice(&payload[0..64]);
@@ -2782,7 +2835,7 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: 12,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         input.extend_from_slice(&payload[64..128]);
@@ -2790,7 +2843,7 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: 12,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         input.extend_from_slice(&payload[128..]);
@@ -2815,16 +2868,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 1,
+                timestamp: Timestamp::from_millis(1),
                 message_length: 3,
                 message_type_id: MessageTypeId::Audio,
-                message_stream_id: 0,
+                message_stream_id: MessageStreamId::new(0),
             },
         );
         input.push(0xAA);
@@ -2832,7 +2885,7 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         input.push(0xBB);
@@ -2840,7 +2893,7 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         input.push(0xCC);
@@ -2862,16 +2915,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 0,
+                timestamp: Timestamp::from_millis(0),
                 message_length: payload.len() as u32,
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
             },
         );
         input.extend_from_slice(payload);
@@ -2895,16 +2948,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: 4,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 0,
+                timestamp: Timestamp::from_millis(0),
                 message_length: 0x00FF_FFFF, // ~16 MiB: the largest 24-bit value.
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
             },
         );
         input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE_VALUE as usize));
@@ -2932,16 +2985,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: 4,
+                chunk_stream_id: ChunkStreamId::new(9),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 0,
+                timestamp: Timestamp::from_millis(0),
                 message_length: MAX_MESSAGE_LEN,
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
             },
         );
         input.extend(core::iter::repeat_n(0u8, DEFAULT_CHUNK_SIZE_VALUE as usize));
@@ -3027,16 +3080,16 @@ mod tests {
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
-                chunk_stream_id: csid,
+                chunk_stream_id: ChunkStreamId::new(csid),
             },
         );
         write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
-                timestamp: 0,
+                timestamp: Timestamp::from_millis(0),
                 message_length: declared_len,
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
             },
         );
         input.extend_from_slice(&vec![0x5Au8; sent_len]);
@@ -3133,7 +3186,7 @@ mod tests {
             &mut tail,
             &BasicHeader {
                 fmt: Fmt::Type3,
-                chunk_stream_id: 3,
+                chunk_stream_id: ChunkStreamId::new(3),
             },
         );
         tail.extend_from_slice(&vec![
@@ -3215,15 +3268,47 @@ mod tests {
 }
 
 #[cfg(test)]
+mod typed_id_tests {
+    use super::*;
+    use crate::ids::{MessageStreamId, Timestamp};
+
+    /// A SetBufferLength buffer span and a message timestamp are typed
+    /// values that reach the wire as whole milliseconds, and a chunk stream
+    /// id is a `ChunkStreamId` everywhere it is carried.
+    #[test]
+    fn typed_spans_are_carried_as_whole_milliseconds() {
+        let msg = Message {
+            chunk_stream_id: ChunkStreamId::new(4),
+            timestamp: Timestamp::try_new(Duration::from_millis(1234)).expect("in range"),
+            message_type_id: MessageTypeId::Audio,
+            message_stream_id: MessageStreamId::new(7),
+            payload: vec![0x01, 0x02],
+        };
+        let bytes = ChunkWriter::new().write(&msg).expect("write");
+        let parsed = ChunkAssembler::new().push(&bytes).expect("parse");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].timestamp, msg.timestamp);
+        assert_eq!(parsed[0].timestamp.millis(), 1234);
+        assert_eq!(parsed[0].chunk_stream_id, ChunkStreamId::new(4));
+        assert_eq!(parsed[0].message_stream_id.get(), 7);
+    }
+
+    #[test]
+    fn a_timestamp_past_the_wire_width_is_refused_before_serializing() {
+        assert!(Timestamp::try_new(Duration::from_millis(u64::from(u32::MAX) + 1)).is_err());
+    }
+}
+
+#[cfg(test)]
 mod invalid_csid_tests {
     use super::*;
 
     fn msg(csid: u32) -> Message {
         Message {
-            chunk_stream_id: csid,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(csid),
+            timestamp: Timestamp::from_millis(0),
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
             payload: vec![1, 2, 3],
         }
     }

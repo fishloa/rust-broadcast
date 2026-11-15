@@ -37,14 +37,15 @@ fn pat_version_number_32_is_rejected_not_wrapped_to_0() {
 }
 
 #[test]
-fn pat_entry_reserved_wider_than_3_bits_is_rejected() {
+fn pat_entry_reserved_cannot_hold_more_than_3_bits() {
     let mut e = PatEntry::new(1, Pid::from_const(0x100));
-    e.reserved = 0x0F; // 4 bits into a reserved(3)
-    let r = ser(&PatSection::new(1, 0, true, 0, 0, vec![e]));
-    assert!(
-        matches!(&r, Err(dvb_si::error::Error::FieldOverflow(_))),
-        "reserved(3) = 0x0F silently truncated to 0x07"
+    e.reserved = broadcast_common::reserved::ReservedOnes::<3>::from_bits(0x0F);
+    assert_eq!(
+        e.reserved.get(),
+        0x07,
+        "the 4th bit is not part of the field"
     );
+    assert!(ser(&PatSection::new(1, 0, true, 0, 0, vec![e])).is_ok());
 }
 
 #[test]

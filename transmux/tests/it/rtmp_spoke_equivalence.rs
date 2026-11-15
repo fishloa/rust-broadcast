@@ -130,7 +130,7 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
                         }
                         continue;
                     }
-                    out.push((m.message_type_id, m.timestamp, m.payload));
+                    out.push((m.message_type_id, m.timestamp.millis(), m.payload));
                 }
                 out
             };
@@ -394,10 +394,10 @@ fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
     let mut writer = rtmp_runtime::chunk::ChunkWriter::new();
     let wire = writer
         .write(&rtmp_runtime::chunk::Message {
-            chunk_stream_id: 2,
-            timestamp: 0,
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(2),
+            timestamp: rtmp_runtime::ids::Timestamp::ZERO,
             message_type_id: MessageTypeId::SetChunkSize,
-            message_stream_id: 0,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(0),
             payload: RESERVED_BIT_CHUNK_SIZE.to_be_bytes().to_vec(),
         })
         .expect("the chunk writer frames the hostile control message");

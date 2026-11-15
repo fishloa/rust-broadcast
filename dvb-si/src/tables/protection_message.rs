@@ -25,6 +25,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
@@ -154,7 +155,7 @@ pub enum ProtectionMessageBody<'a> {
         /// `reserved(4)` before `section_hashes_loop_length` (`1111`);
         /// preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_section_hashes_loop_length: u8,
+        reserved_section_hashes_loop_length: ReservedOnes<4>,
     },
     /// Certificate collection message (extension `0x0100`; §9.5.4.9 Table 51).
     CertificateCollection {
@@ -163,12 +164,12 @@ pub enum ProtectionMessageBody<'a> {
         /// `reserved(4)` before `certificate_count` (`1111`); preserved from
         /// the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_certificate_count: u8,
+        reserved_certificate_count: ReservedOnes<4>,
         /// `reserved(4)` before each `certificate_length` (`1111`), parallel
         /// to `certificates`; entries missing from the vector default to
         /// all-ones on serialize. Preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_certificate_lengths: Vec<u8>,
+        reserved_certificate_lengths: Vec<ReservedOnes<4>>,
     },
     /// Reserved extension (`0x0101..=0xFFFF`) — body preserved verbatim.
     Raw(&'a [u8]),
@@ -180,7 +181,7 @@ impl<'a> ProtectionMessageBody<'a> {
     pub fn certificate_collection(certificates: Vec<&'a [u8]>) -> Self {
         Self::CertificateCollection {
             certificates,
-            reserved_certificate_count: super::RESERVED_4,
+            reserved_certificate_count: ReservedOnes::FILL,
             reserved_certificate_lengths: Vec::new(),
         }
     }
@@ -380,7 +381,9 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
         extension_bytes: &body[ext_start..ext_end],
         signature_key_identifier: &body[key_start..key_end],
         signature,
-        reserved_section_hashes_loop_length: super::len_reserved_of(body[3]),
+        reserved_section_hashes_loop_length: ReservedOnes::from_bits(u64::from(
+            super::len_reserved_of(body[3]),
+        )),
     })
 }
 
@@ -408,7 +411,9 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
                 available: body.len() - cert_start,
             });
         }
-        reserved_certificate_lengths.push(super::len_reserved_of(body[pos]));
+        reserved_certificate_lengths.push(ReservedOnes::from_bits(u64::from(
+            super::len_reserved_of(body[pos]),
+        )));
         certificates.push(&body[cert_start..cert_end]);
         pos = cert_end;
     }
@@ -426,7 +431,9 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     }
     Ok(ProtectionMessageBody::CertificateCollection {
         certificates,
-        reserved_certificate_count: super::len_reserved_of(body[0]),
+        reserved_certificate_count: ReservedOnes::from_bits(u64::from(super::len_reserved_of(
+            body[0],
+        ))),
         reserved_certificate_lengths,
     })
 }
@@ -503,7 +510,7 @@ impl ProtectionMessageBody<'_> {
                 super::write_desc_loop_len_r(
                     &mut buf[3..5],
                     loop_bytes,
-                    *reserved_section_hashes_loop_length,
+                    reserved_section_hashes_loop_length.get() as u8,
                 )?;
                 let mut pos = AUTH_FIXED_PREFIX;
                 for h in hashes {
@@ -567,11 +574,7 @@ impl ProtectionMessageBody<'_> {
                     });
                 }
                 // reserved(4) emitted 1s | certificate_count(4).
-                buf[0] = (broadcast_common::len::fit_mask(
-                    *reserved_certificate_count,
-                    super::RESERVED_4,
-                    "reserved(4)",
-                )? << 4)
+                buf[0] = (((*reserved_certificate_count).get() as u8) << 4)
                     | broadcast_common::len::fit_bits(certificates.len() as u64, 4, "certificates")?
                         as u8;
                 let mut pos = 1;
@@ -589,7 +592,8 @@ impl ProtectionMessageBody<'_> {
                         reserved_certificate_lengths
                             .get(i)
                             .copied()
-                            .unwrap_or(super::RESERVED_4),
+                            .unwrap_or(ReservedOnes::FILL)
+                            .get() as u8,
                     )?;
                     pos += 2;
                     buf[pos..pos + c.len()].copy_from_slice(c);
@@ -927,6 +931,24 @@ mod tests {
                 v,
                 "ReferenceType round-trip failed for {v:#04x}"
             );
+        }
+    }
+
+    /// The reserved fields are 4 bits wide, so a wider value is unrepresentable
+    /// and cannot spill into the adjacent length/count nibbles.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_four_bits() {
+        let cert = ProtectionMessageBody::certificate_collection(vec![&[0x01]]);
+        if let ProtectionMessageBody::CertificateCollection {
+            reserved_certificate_count,
+            reserved_certificate_lengths,
+            ..
+        } = cert
+        {
+            assert_eq!(reserved_certificate_count.get(), 0x0F);
+            let wide = ReservedOnes::<4>::from_bits(0xFF);
+            assert_eq!(wide.get(), 0x0F);
+            assert!(reserved_certificate_lengths.iter().all(|r| r.get() <= 0x0F));
         }
     }
 }

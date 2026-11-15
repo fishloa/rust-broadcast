@@ -41,6 +41,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the DFIS — the crate registry value (see module docs re. spec 0x4C).
@@ -92,7 +93,7 @@ pub enum FontInfo<'a> {
         /// `reserved_zero_future_use(1)` after `weight` (`0`); preserved from
         /// the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_zero_future_use: u8,
+        reserved_zero_future_use: ReservedZero<1>,
     },
     /// `font_info_type == 0x01`: reserved(4) + font_file_format(4) + uri_length(8) + uri.
     FileUri {
@@ -103,7 +104,7 @@ pub enum FontInfo<'a> {
         /// `reserved_zero_future_use(4)` before `font_file_format` (`0000`);
         /// preserved from the wire.
         #[cfg_attr(feature = "serde", serde(skip))]
-        reserved_zero_future_use: u8,
+        reserved_zero_future_use: ReservedZero<4>,
     },
     /// `font_info_type == 0x02`: font_size(16) followed by the length-delimited block.
     FontSize {
@@ -128,7 +129,7 @@ impl<'a> FontInfo<'a> {
         Self::StyleWeight {
             style,
             weight,
-            reserved_zero_future_use: 0,
+            reserved_zero_future_use: ReservedZero::FILL,
         }
     }
 
@@ -138,7 +139,7 @@ impl<'a> FontInfo<'a> {
         Self::FileUri {
             format,
             uri,
-            reserved_zero_future_use: 0,
+            reserved_zero_future_use: ReservedZero::FILL,
         }
     }
 }
@@ -243,7 +244,9 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                     font_info.push(FontInfo::StyleWeight {
                         style: b >> 5,
                         weight: (b >> 1) & WEIGHT_MASK,
-                        reserved_zero_future_use: b & RESERVED_ZERO_1,
+                        reserved_zero_future_use: ReservedZero::from_bits(u64::from(
+                            b & RESERVED_ZERO_1,
+                        )),
                     });
                 }
                 FONT_INFO_TYPE_FILE_URI => {
@@ -254,7 +257,8 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                         });
                     }
                     let format = bytes[pos] & FORMAT_MASK;
-                    let reserved_zero_future_use = bytes[pos] >> RESERVED_ZERO_4_SHIFT;
+                    let reserved_zero_future_use =
+                        ReservedZero::from_bits(u64::from(bytes[pos] >> RESERVED_ZERO_4_SHIFT));
                     let uri_length = bytes[pos + 1] as usize;
                     let uri_start = pos + 2;
                     let uri_end = uri_start + uri_length;
@@ -400,11 +404,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     buf[pos + 1] = (broadcast_common::len::fit_mask(*style, STYLE_MASK, "style")?
                         << 5)
                         | (broadcast_common::len::fit_mask(*weight, WEIGHT_MASK, "weight")? << 1)
-                        | broadcast_common::len::fit_mask(
-                            *reserved_zero_future_use,
-                            RESERVED_ZERO_1,
-                            "reserved_zero_future_use",
-                        )?;
+                        | (*reserved_zero_future_use).get() as u8;
                     pos += 2;
                 }
                 FontInfo::FileUri {
@@ -415,11 +415,8 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     guard_u8(uri.len())?;
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4) | font_file_format(4).
-                    buf[pos + 1] = (broadcast_common::len::fit_mask(
-                        *reserved_zero_future_use,
-                        FORMAT_MASK,
-                        "reserved_zero_future_use",
-                    )? << RESERVED_ZERO_4_SHIFT)
+                    buf[pos + 1] = (((*reserved_zero_future_use).get() as u8)
+                        << RESERVED_ZERO_4_SHIFT)
                         | broadcast_common::len::fit_mask(*format, FORMAT_MASK, "format")?;
                     buf[pos + 2] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + 3;
@@ -731,5 +728,30 @@ mod tests {
         section.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = DownloadableFontInfoSection::parse(&buf).expect("reparse");
         assert_eq!(section, reparsed);
+    }
+
+    /// Each reserved run is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the style/weight/format bits.
+    #[test]
+    fn reserved_zero_runs_cannot_hold_more_than_their_width() {
+        if let FontInfo::StyleWeight {
+            reserved_zero_future_use,
+            ..
+        } = FontInfo::style_weight(0, 0)
+        {
+            assert_eq!(reserved_zero_future_use.get(), 0);
+        }
+        let d = FontInfo::FileUri {
+            format: 0,
+            uri: b"",
+            reserved_zero_future_use: ReservedZero::from_bits(0xFF),
+        };
+        if let FontInfo::FileUri {
+            reserved_zero_future_use,
+            ..
+        } = d
+        {
+            assert_eq!(reserved_zero_future_use.get(), 0x0F);
+        }
     }
 }

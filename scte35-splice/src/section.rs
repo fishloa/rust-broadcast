@@ -16,7 +16,8 @@
 //! case) expose the typed command and descriptor loop.
 
 use crate::commands::AnyCommand;
-use crate::descriptors::{SpliceDescriptorIter, parse_loop};
+use crate::descriptor_loop::SpliceDescriptorLoop;
+use crate::descriptors::SpliceDescriptorIter;
 use crate::error::{Error, Result};
 use crate::time::PTS_MAX;
 use broadcast_common::len::{need_in, need_out};
@@ -48,9 +49,10 @@ const SPLICE_COMMAND_LENGTH_IGNORE: u16 = 0x0FFF;
 pub struct ClearPayload<'a> {
     /// The typed splice command (§9.7).
     pub command: AnyCommand<'a>,
-    /// Raw splice descriptor loop bytes; walk typed via
-    /// [`SpliceInfoSection::descriptors`].
-    pub descriptor_loop: &'a [u8],
+    /// The splice descriptor loop (§10.1); walk it typed via
+    /// [`SpliceDescriptorLoop::typed`] or take the wire bytes with
+    /// [`SpliceDescriptorLoop::raw`].
+    pub descriptor_loop: SpliceDescriptorLoop<'a>,
     /// `alignment_stuffing()` (§9.6.1, Table 5): padding bytes between the
     /// descriptor loop and `CRC_32`, present on every section (not only
     /// encrypted ones). Empty for the overwhelming common case of a section
@@ -109,7 +111,7 @@ impl<'a> SpliceInfoSection<'a> {
     /// Build a clear (unencrypted) section from a command and a raw descriptor
     /// loop, with `pts_adjustment`/`tier` defaulted to zero / `0x3` sap_type.
     #[must_use]
-    pub fn new_clear(command: AnyCommand<'a>, descriptor_loop: &'a [u8]) -> Self {
+    pub fn new_clear(command: AnyCommand<'a>, descriptor_loop: SpliceDescriptorLoop<'a>) -> Self {
         Self {
             sap_type: 0x3,
             protocol_version: 0,
@@ -135,8 +137,8 @@ impl<'a> SpliceInfoSection<'a> {
     #[must_use]
     pub fn descriptors(&self) -> SpliceDescriptorIter<'a> {
         match &self.clear {
-            Some(c) => parse_loop(c.descriptor_loop),
-            None => parse_loop(&[]),
+            Some(c) => c.descriptor_loop.typed(),
+            None => SpliceDescriptorLoop::new(&[]).typed(),
         }
     }
 
@@ -342,7 +344,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         let alignment_stuffing = &payload[loop_start + descriptor_loop_length..];
         section.clear = Some(ClearPayload {
             command,
-            descriptor_loop,
+            descriptor_loop: SpliceDescriptorLoop::new(descriptor_loop),
             alignment_stuffing,
             legacy_command_length_sentinel,
         });
@@ -444,7 +446,7 @@ impl Serialize for SpliceInfoSection<'_> {
                 buf[pos] = (dll >> 8) as u8;
                 buf[pos + 1] = (dll & 0xFF) as u8;
                 pos += 2;
-                buf[pos..pos + c.descriptor_loop.len()].copy_from_slice(c.descriptor_loop);
+                buf[pos..pos + c.descriptor_loop.len()].copy_from_slice(c.descriptor_loop.raw());
                 pos += c.descriptor_loop.len();
                 // W2 (#1102): re-emit alignment_stuffing instead of dropping
                 // it (both are counted by `payload_len`/`serialized_len`).
@@ -510,7 +512,7 @@ mod tests {
                 identifier: 0x4355_4549,
                 private_bytes: &private_bytes,
             }),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         assert_eq!(
@@ -539,7 +541,7 @@ mod tests {
                 identifier: 0x4355_4549,
                 private_bytes: &private_bytes,
             }),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         );
         assert_eq!(section.serialized_len() - 3, 4093);
         let bytes = section.try_to_bytes().unwrap();
@@ -557,7 +559,7 @@ mod tests {
                 identifier: 0x4355_4549,
                 private_bytes: &private_bytes,
             }),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         assert_eq!(
@@ -582,7 +584,7 @@ mod tests {
                 identifier: 0x4355_4549,
                 private_bytes: &[],
             }),
-            &descriptor_loop,
+            SpliceDescriptorLoop::new(&descriptor_loop),
         );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         assert_eq!(
@@ -618,7 +620,7 @@ mod tests {
                     identifier: 0x4355_4549,
                     private_bytes: &[],
                 }),
-                descriptor_loop: &[],
+                descriptor_loop: SpliceDescriptorLoop::new(&[]),
                 alignment_stuffing: &[0xFF, 0xFF, 0xFF],
                 legacy_command_length_sentinel: false,
             }),

@@ -4,6 +4,7 @@
 //! `pseudo_descriptor_length`), and no `Serialize` for `Pack`.
 
 use broadcast_common::{Parse, Serialize};
+use mpeg_ps::DescriptorLoop;
 use mpeg_ps::{Error, PackHeader, ProgramStreamMap, Scr};
 
 #[test]
@@ -36,7 +37,7 @@ fn the_psm_spec_length_max_is_enforced_on_both_sides() {
         current_next_indicator: true,
         single_extension_stream_flag: false,
         version: 0,
-        program_stream_info: &[0u8; 1009],
+        program_stream_info: DescriptorLoop::new(&[0u8; 1009]),
         elementary_stream_map: vec![],
         crc: 0,
     };

@@ -20,6 +20,7 @@ use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for telephone_descriptor.
@@ -41,11 +42,20 @@ const BYTE2_RESERVED_SHIFT: u8 = 7;
 /// V1.3.1-V1.8.1; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1,
 /// class A. The V1.17.1 erratum that prints a 5-bit reserved is corrected in
 /// V1.18.1).
-pub const RESERVED_FUTURE_USE_BYTE0_DEFAULT: u8 = 0b11;
+pub const RESERVED_FUTURE_USE_BYTE0_DEFAULT: ReservedOnes<BYTE0_RESERVED_BITS> =
+    ReservedOnes::<BYTE0_RESERVED_BITS>::FILL;
+/// Width of the `reserved_future_use` in byte 0 (2 bits).
+const BYTE0_RESERVED_BITS: u32 = 2;
 /// Spec default of the 1-bit `reserved_future_use` in byte 1: `1`.
-pub const RESERVED_FUTURE_USE_BYTE1_DEFAULT: u8 = 1;
+pub const RESERVED_FUTURE_USE_BYTE1_DEFAULT: ReservedOnes<BYTE1_RESERVED_BITS> =
+    ReservedOnes::<BYTE1_RESERVED_BITS>::FILL;
+/// Width of the `reserved_future_use` in byte 1 (1 bit).
+const BYTE1_RESERVED_BITS: u32 = 1;
 /// Spec default of the 1-bit `reserved_future_use` in byte 2: `1`.
-pub const RESERVED_FUTURE_USE_BYTE2_DEFAULT: u8 = 1;
+pub const RESERVED_FUTURE_USE_BYTE2_DEFAULT: ReservedOnes<BYTE2_RESERVED_BITS> =
+    ReservedOnes::<BYTE2_RESERVED_BITS>::FILL;
+/// Width of the `reserved_future_use` in byte 2 (1 bit).
+const BYTE2_RESERVED_BITS: u32 = 1;
 
 /// Telephone Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,17 +63,19 @@ pub const RESERVED_FUTURE_USE_BYTE2_DEFAULT: u8 = 1;
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 #[non_exhaustive]
 pub struct TelephoneDescriptor<'a> {
-    /// `reserved_future_use`(2) at the top of the first body byte (2 bits,
-    /// right-aligned). Captured on parse, re-emitted verbatim;
-    /// [`TelephoneDescriptor::new`] defaults to
-    /// [`RESERVED_FUTURE_USE_BYTE0_DEFAULT`].
-    pub reserved_future_use_before_foreign_availability: u8,
+    /// `reserved_future_use`(2) at the top of the first body byte (2 bits).
+    /// Captured on parse, re-emitted verbatim; [`TelephoneDescriptor::new`]
+    /// defaults to [`RESERVED_FUTURE_USE_BYTE0_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_before_foreign_availability: ReservedOnes<BYTE0_RESERVED_BITS>,
     /// `reserved_future_use`(1) ahead of `country_prefix_length` (1 bit).
     /// Default [`RESERVED_FUTURE_USE_BYTE1_DEFAULT`].
-    pub reserved_future_use_before_country_prefix_length: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_before_country_prefix_length: ReservedOnes<BYTE1_RESERVED_BITS>,
     /// `reserved_future_use`(1) ahead of `national_area_code_length` (1 bit).
     /// Default [`RESERVED_FUTURE_USE_BYTE2_DEFAULT`].
-    pub reserved_future_use_before_national_area_code_length: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_before_national_area_code_length: ReservedOnes<BYTE2_RESERVED_BITS>,
     /// When true, the number may be dialled from outside the prefix's country.
     pub foreign_availability: bool,
     /// 5-bit connection_type (meaning out of scope of EN 300 468).
@@ -158,12 +170,15 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
         let national_area_code = take(national_area_code_length);
         let core_number = take(core_number_length);
         Ok(Self {
-            reserved_future_use_before_foreign_availability: (body[0] & BYTE0_RESERVED_MASK)
-                >> BYTE0_RESERVED_SHIFT,
-            reserved_future_use_before_country_prefix_length: (body[1] & BYTE1_RESERVED_MASK)
-                >> BYTE1_RESERVED_SHIFT,
-            reserved_future_use_before_national_area_code_length: (body[2] & BYTE2_RESERVED_MASK)
-                >> BYTE2_RESERVED_SHIFT,
+            reserved_future_use_before_foreign_availability: ReservedOnes::from_bits(u64::from(
+                (body[0] & BYTE0_RESERVED_MASK) >> BYTE0_RESERVED_SHIFT,
+            )),
+            reserved_future_use_before_country_prefix_length: ReservedOnes::from_bits(u64::from(
+                (body[1] & BYTE1_RESERVED_MASK) >> BYTE1_RESERVED_SHIFT,
+            )),
+            reserved_future_use_before_national_area_code_length: ReservedOnes::from_bits(
+                u64::from((body[2] & BYTE2_RESERVED_MASK) >> BYTE2_RESERVED_SHIFT),
+            ),
             foreign_availability,
             connection_type,
             country_prefix: DvbText::new(country_prefix),
@@ -216,11 +231,8 @@ impl Serialize for TelephoneDescriptor<'_> {
         let core_number_len =
             broadcast_common::len::fit_bits(self.core_number.raw().len() as u64, 4, "core_number")?
                 as u8;
-        buf[2] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use_before_foreign_availability,
-            BYTE0_RESERVED_MASK >> BYTE0_RESERVED_SHIFT,
-            "reserved_future_use_before_foreign_availability",
-        )? << BYTE0_RESERVED_SHIFT)
+        buf[2] = ((self.reserved_future_use_before_foreign_availability.get() as u8)
+            << BYTE0_RESERVED_SHIFT)
             | if self.foreign_availability {
                 FOREIGN_AVAIL_MASK
             } else {
@@ -231,19 +243,15 @@ impl Serialize for TelephoneDescriptor<'_> {
                 CONNECTION_TYPE_MASK,
                 "connection_type",
             )?;
-        buf[3] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use_before_country_prefix_length,
-            BYTE1_RESERVED_MASK >> BYTE1_RESERVED_SHIFT,
-            "reserved_future_use_before_country_prefix_length",
-        )? << BYTE1_RESERVED_SHIFT)
+        buf[3] = ((self.reserved_future_use_before_country_prefix_length.get() as u8)
+            << BYTE1_RESERVED_SHIFT)
             | (country_prefix_len << 5)
             | (intl_area_len << 2)
             | operator_code_len;
-        buf[4] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use_before_national_area_code_length,
-            BYTE2_RESERVED_MASK >> BYTE2_RESERVED_SHIFT,
-            "reserved_future_use_before_national_area_code_length",
-        )? << BYTE2_RESERVED_SHIFT)
+        buf[4] = ((self
+            .reserved_future_use_before_national_area_code_length
+            .get() as u8)
+            << BYTE2_RESERVED_SHIFT)
             | (national_area_len << 4)
             | core_number_len;
         let mut pos = HEADER_LEN + FIXED_LEN;
@@ -390,9 +398,18 @@ mod tests {
                         b'8',
                     ];
                     let d = TelephoneDescriptor::parse(&bytes).unwrap();
-                    assert_eq!(d.reserved_future_use_before_foreign_availability, r0);
-                    assert_eq!(d.reserved_future_use_before_country_prefix_length, r1);
-                    assert_eq!(d.reserved_future_use_before_national_area_code_length, r2);
+                    assert_eq!(
+                        d.reserved_future_use_before_foreign_availability,
+                        ReservedOnes::from_bits(u64::from(r0))
+                    );
+                    assert_eq!(
+                        d.reserved_future_use_before_country_prefix_length,
+                        ReservedOnes::from_bits(u64::from(r1))
+                    );
+                    assert_eq!(
+                        d.reserved_future_use_before_national_area_code_length,
+                        ReservedOnes::from_bits(u64::from(r2))
+                    );
                     let mut buf = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut buf).unwrap();
                     assert_eq!(buf, bytes);
@@ -437,5 +454,30 @@ mod tests {
         assert!(json.contains("connection_type"));
         assert!(json.contains("foreign_availability"));
         assert_eq!(json, serde_json::to_string(&sample()).unwrap());
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent length bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let bytes = [
+            TAG, 10, 0x05, 0x14, 0x11, b'1', b'7', b'1', b'2', b'3', b'9', b'8',
+        ];
+        let mut d = TelephoneDescriptor::parse(&bytes).unwrap();
+        d.reserved_future_use_before_foreign_availability = ReservedOnes::from_bits(0xFF);
+        d.reserved_future_use_before_country_prefix_length = ReservedOnes::from_bits(0xFF);
+        d.reserved_future_use_before_national_area_code_length = ReservedOnes::from_bits(0xFF);
+        assert_eq!(
+            d.reserved_future_use_before_foreign_availability.get(),
+            0x03
+        );
+        assert_eq!(
+            d.reserved_future_use_before_country_prefix_length.get(),
+            0x01
+        );
+        assert_eq!(
+            d.reserved_future_use_before_national_area_code_length.get(),
+            0x01
+        );
     }
 }

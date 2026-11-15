@@ -21,7 +21,7 @@ const PKT: usize = 188;
 const SUBTITLE_PID: u16 = 0x008C; // component in m6-single.ts carrying DVB subtitle
 // DVB subtitle is carried in private_stream_1 with data_identifier 0x20; the same
 // PID also multiplexes padding_stream (0xBE) PES, which are not subtitle.
-const PRIVATE_STREAM_1: StreamId = StreamId(0xBD);
+const PRIVATE_STREAM_1: StreamId = StreamId::new(0xBD);
 const DATA_IDENTIFIER_DVB_SUBTITLE: u8 = 0x20;
 
 /// (pid, payload_unit_start, payload) for a TS packet carrying payload.
@@ -67,7 +67,7 @@ fn subtitle_pes(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
 /// at offset 8, then the payload (ISO/IEC 13818-1 Table 2-21) — so that
 /// payload is read directly here rather than from a packet the parser refuses.
 fn subtitle_payload(raw: &[u8]) -> Option<&[u8]> {
-    if raw.get(3) != Some(&PRIVATE_STREAM_1.0) {
+    if raw.get(3) != Some(&PRIVATE_STREAM_1.get()) {
         return None;
     }
     let hdl = usize::from(*raw.get(8)?);

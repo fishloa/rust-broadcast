@@ -433,8 +433,8 @@ impl AncDataPacket {
     /// ANC payload.
     pub fn parse(b: &[u8]) -> Result<Self> {
         let packet = mpeg_pes::PesPacket::parse(b)?;
-        if packet.stream_id.0 != ANC_STREAM_ID {
-            return Err(Error::BadStreamId(packet.stream_id.0));
+        if packet.stream_id.get() != ANC_STREAM_ID {
+            return Err(Error::BadStreamId(packet.stream_id.get()));
         }
         let header =
             packet

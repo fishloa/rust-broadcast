@@ -2,6 +2,7 @@
 //! Tables 17/18 (INT) and ETSI TS 102 006 §9.4 Table 11 (UNT) (r02-W22).
 
 use crate::descriptors::scoped::ScopedDescriptorLoop;
+use broadcast_common::reserved::ReservedOnes;
 
 /// A target/operational descriptor-loop pair — the loop element shared by the
 /// INT body (ETSI EN 301 192 §8.4.4.1 Tables 17/18) and the UNT platform loop
@@ -27,11 +28,11 @@ pub struct TargetOperationalLoop<'a, L: ScopedDescriptorLoop<'a>> {
     /// `reserved(4)` before `target_descriptor_loop_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_target_length: u8,
+    pub reserved_target_length: ReservedOnes<4>,
     /// `reserved(4)` before `operational_descriptor_loop_length` (`1111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_operational_length: u8,
+    pub reserved_operational_length: ReservedOnes<4>,
     #[cfg_attr(feature = "serde", serde(skip))]
     _lt: core::marker::PhantomData<&'a ()>,
 }
@@ -43,8 +44,8 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
         Self {
             target_descriptors,
             operational_descriptors,
-            reserved_target_length: super::RESERVED_4,
-            reserved_operational_length: super::RESERVED_4,
+            reserved_target_length: ReservedOnes::FILL,
+            reserved_operational_length: ReservedOnes::FILL,
             _lt: core::marker::PhantomData,
         }
     }
@@ -53,8 +54,8 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
     pub(crate) fn from_parts(
         target_descriptors: L,
         operational_descriptors: L,
-        reserved_target_length: u8,
-        reserved_operational_length: u8,
+        reserved_target_length: ReservedOnes<4>,
+        reserved_operational_length: ReservedOnes<4>,
     ) -> Self {
         Self {
             target_descriptors,
@@ -76,3 +77,23 @@ impl<'a, L: ScopedDescriptorLoop<'a>> TargetOperationalLoop<'a, L> {
 
 /// Wire width of the 12-bit descriptor-loop length field.
 pub(crate) const DESC_LOOP_LEN_FIELD: usize = 2;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::descriptors::UntDescriptorLoop;
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the 12-bit length below it.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_four_bits() {
+        let pair = TargetOperationalLoop::<UntDescriptorLoop<'_>>::from_parts(
+            UntDescriptorLoop::new(&[]),
+            UntDescriptorLoop::new(&[]),
+            ReservedOnes::from_bits(0xFF),
+            ReservedOnes::from_bits(0xFF),
+        );
+        assert_eq!(pair.reserved_target_length.get(), 0x0F);
+        assert_eq!(pair.reserved_operational_length.get(), 0x0F);
+    }
+}

@@ -13,6 +13,7 @@ use crate::error::{Error, Result};
 use crate::text::DvbText;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for Content Identifier Table.
@@ -86,10 +87,10 @@ pub struct CitSection<'a> {
     pub crid_entries: Vec<CridEntry<'a>>,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
 }
 
 impl<'a> CitSection<'a> {
@@ -116,8 +117,8 @@ impl<'a> CitSection<'a> {
             original_network_id,
             prepend_strings,
             crid_entries,
-            reserved_b1: super::RESERVED_2,
-            reserved_b5: super::RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
         }
     }
 }
@@ -249,8 +250,8 @@ impl<'a> Parse<'a> for CitSection<'a> {
             original_network_id,
             prepend_strings,
             crid_entries,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
         })
     }
 }
@@ -280,13 +281,13 @@ impl Serialize for CitSection<'_> {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
         buf[5] = super::b5_of(
-            self.reserved_b5,
+            self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
@@ -641,5 +642,27 @@ mod tests {
         let many = cit(&[PREPEND_STRING_PARTITION; 300]);
         assert!(many.prepend_string(254).is_some());
         assert!(many.prepend_string(0xFF).is_none());
+    }
+
+    /// The header reserved bits are 2 bits wide, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent header fields.
+    #[test]
+    fn reserved_header_bits_cannot_hold_more_than_two_bits() {
+        let c = CitSection::new(
+            false,
+            0,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            0,
+            0,
+            DvbText::new(b""),
+            vec![],
+        );
+        let c = CitSection {
+            reserved_b1: ReservedOnes::from_bits(0xFF),
+            reserved_b5: ReservedOnes::from_bits(0xFF),
+            ..c
+        };
+        assert_eq!(c.reserved_b1.get(), 0x03);
+        assert_eq!(c.reserved_b5.get(), 0x03);
     }
 }

@@ -134,7 +134,7 @@ fn fixture_is_video_pes() {
         let pes = PesPacket::parse(pes_payload(pkt)).expect("PES parses");
         assert_eq!(
             pes.stream_id,
-            StreamId(0xE0),
+            StreamId::new(0xE0),
             "expected video stream_id 0xE0"
         );
         count += 1;

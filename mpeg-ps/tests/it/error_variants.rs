@@ -4,6 +4,7 @@
 //! Serialize into a short buffer reports `OutputBufferTooSmall`.
 
 use broadcast_common::{Parse, Serialize};
+use mpeg_ps::DescriptorLoop;
 use mpeg_ps::program_stream;
 use mpeg_ps::{Error, EsMapEntry, PackHeader, ProgramStreamMap, SystemHeader};
 
@@ -99,14 +100,14 @@ fn psm_bytes() -> Vec<u8> {
         current_next_indicator: true,
         single_extension_stream_flag: false,
         version: 3,
-        program_stream_info: &[],
+        program_stream_info: DescriptorLoop::new(&[]),
         elementary_stream_map: vec![EsMapEntry {
             stream_type: 0x02,
             elementary_stream_id: 0xE0,
             stream_id_extension: None,
             pseudo_descriptor_tag: None,
             pseudo_descriptor_length: None,
-            descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'],
+            descriptors: DescriptorLoop::new(&[0x0A, 0x04, b'H', b'E', b'L', b'L']),
         }],
         crc: 0,
     };

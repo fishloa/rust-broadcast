@@ -176,7 +176,9 @@ impl PlayPeer {
                     self.chunk_size_to_adopt = Some(n);
                     self.seen.push(Seen::SetChunkSize(n.value()));
                 }
-                ProtocolControl::Acknowledgement(n) => self.seen.push(Seen::Acknowledgement(n)),
+                ProtocolControl::Acknowledgement(n) => {
+                    self.seen.push(Seen::Acknowledgement(n.get()));
+                }
                 ProtocolControl::WindowAckSize(n) => self.seen.push(Seen::WindowAckSize(n)),
                 _ => {}
             }
@@ -193,7 +195,7 @@ impl PlayPeer {
             self.seen.push(Seen::Command {
                 name: cmd.name.clone(),
                 args: cmd.arguments.clone(),
-                stream_id: msg.message_stream_id,
+                stream_id: msg.message_stream_id.get(),
             });
             self.on_command(&cmd, out)?;
         }
@@ -218,7 +220,12 @@ impl PlayPeer {
                 if let Some(n) = self.config.chunk_size_after_connect {
                     out.extend(self.set_chunk_size(n)?);
                 }
-                self.send_control(UserControl::StreamBegin(0).to_message(), out)?;
+                self.send_control(
+                    UserControl::StreamBegin(0)
+                        .to_message()
+                        .expect("control message"),
+                    out,
+                )?;
                 let props = Amf0Value::Object(vec![(
                     "fmsVer".to_string(),
                     Amf0Value::String("FMS/3,0,1,123".to_string()),
@@ -253,11 +260,18 @@ impl PlayPeer {
                 }
                 if self.config.recorded {
                     self.send_control(
-                        UserControl::StreamIsRecorded(PLAY_STREAM_ID).to_message(),
+                        UserControl::StreamIsRecorded(PLAY_STREAM_ID)
+                            .to_message()
+                            .expect("control message"),
                         out,
                     )?;
                 }
-                self.send_control(UserControl::StreamBegin(PLAY_STREAM_ID).to_message(), out)?;
+                self.send_control(
+                    UserControl::StreamBegin(PLAY_STREAM_ID)
+                        .to_message()
+                        .expect("control message"),
+                    out,
+                )?;
                 self.send_on_status("status", PLAY_RESET_CODE, out)?;
                 self.send_on_status("status", PLAY_START_CODE, out)?;
                 self.playing = true;
@@ -290,10 +304,10 @@ impl PlayPeer {
             arguments: args,
         };
         let msg = Message {
-            chunk_stream_id: COMMAND_CSID,
-            timestamp: 0,
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(COMMAND_CSID),
+            timestamp: rtmp_runtime::ids::Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: stream_id,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(stream_id),
             payload: cmd.to_body()?,
         };
         out.extend(self.writer.write(&msg)?);
@@ -347,16 +361,20 @@ impl PlayPeer {
     }
 
     pub fn ping(&mut self, ts: u32) -> Result<Vec<u8>, RtmpError> {
-        let bytes = self
-            .writer
-            .write(&UserControl::PingRequest(ts).to_message())?;
+        let bytes = self.writer.write(
+            &UserControl::PingRequest(ts)
+                .to_message()
+                .expect("control message"),
+        )?;
         Ok(self.counted(bytes))
     }
 
     pub fn stream_eof(&mut self) -> Result<Vec<u8>, RtmpError> {
-        let bytes = self
-            .writer
-            .write(&UserControl::StreamEof(PLAY_STREAM_ID).to_message())?;
+        let bytes = self.writer.write(
+            &UserControl::StreamEof(PLAY_STREAM_ID)
+                .to_message()
+                .expect("control message"),
+        )?;
         Ok(self.counted(bytes))
     }
 
@@ -372,10 +390,10 @@ impl PlayPeer {
             _ => DATA_CSID,
         };
         let bytes = self.writer.write(&Message {
-            chunk_stream_id: csid,
-            timestamp,
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(csid),
+            timestamp: rtmp_runtime::ids::Timestamp::from_millis(timestamp),
             message_type_id: tag_type,
-            message_stream_id: PLAY_STREAM_ID,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(PLAY_STREAM_ID),
             payload: payload.to_vec(),
         })?;
         Ok(self.counted(bytes))

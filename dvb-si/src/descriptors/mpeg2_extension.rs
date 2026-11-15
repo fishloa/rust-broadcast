@@ -497,6 +497,7 @@ mod tests {
     use super::*;
     use crate::descriptors::mpegh_3d_audio::*;
     use alloc::vec;
+    use broadcast_common::reserved::ReservedOnes;
 
     fn d(body: &[u8]) -> Vec<u8> {
         let mut v = vec![TAG, body.len() as u8];
@@ -530,7 +531,10 @@ mod tests {
         assert!(!a.interactivity_enabled);
         assert_eq!(a.compatible_sets, None);
         assert_eq!(a.reference_channel_layout, 1);
-        assert_eq!((a.reserved_flags, a.reserved_layout), (0x3F, 0x3));
+        assert_eq!(
+            (a.reserved_flags.get(), a.reserved_layout.get()),
+            (0x3F, 0x3)
+        );
         assert!(a.trailing.is_empty());
     }
 
@@ -652,7 +656,7 @@ mod tests {
         g.position = Some(PositionInteractivity::new(1, 2, 3, 4, 5, 6));
         g.gain = Some(GainInteractivity::new(7, 8));
         let mut pc = PresetConditionDetail {
-            reserved: 15,
+            reserved: ReservedOnes::from_bits(15),
             disable_gain_interactivity: true,
             disable_position_interactivity: false,
             gain: Some(9),
@@ -660,11 +664,11 @@ mod tests {
         };
         pc.gain = Some(9);
         let preset = GroupPreset {
-            reserved_id: 7,
+            reserved_id: ReservedOnes::from_bits(7),
             preset_id: 3,
-            reserved_kind: 7,
+            reserved_kind: ReservedOnes::from_bits(7),
             preset_kind: 1,
-            reserved_conditions: 15,
+            reserved_conditions: ReservedOnes::from_bits(15),
             conditions: vec![PresetCondition {
                 group_id: 1,
                 detail: Some(pc),
@@ -778,9 +782,9 @@ mod tests {
         let m = MpegH3dAudioMultiStream {
             this_stream_id: 0,
             main: Some(MultiStreamMain {
-                reserved_aux: 1,
+                reserved_aux: ReservedOnes::from_bits(1),
                 num_auxiliary_streams: 0,
-                reserved_groups: 1,
+                reserved_groups: ReservedOnes::from_bits(1),
                 groups: vec![MultiStreamGroup {
                     group_id: 1,
                     is_in_main_stream: true,

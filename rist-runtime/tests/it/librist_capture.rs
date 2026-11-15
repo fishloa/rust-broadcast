@@ -43,9 +43,13 @@ fn every_librist_datagram_round_trips_as_rtp() {
         assert_eq!(pkt.payload.len(), TS_PAYLOAD_LEN, "datagram {i}");
         assert_eq!(pkt.payload[0], TS_SYNC_BYTE, "datagram {i}");
         if let Some(prev) = prev_seq {
-            assert_eq!(pkt.sequence_number, prev.wrapping_add(1), "datagram {i}");
+            assert_eq!(
+                pkt.sequence_number.get(),
+                prev.wrapping_add(1),
+                "datagram {i}"
+            );
         }
-        prev_seq = Some(pkt.sequence_number);
+        prev_seq = Some(pkt.sequence_number.get());
         assert_eq!(
             pkt.try_to_bytes().unwrap().as_slice(),
             *datagram,

@@ -35,7 +35,7 @@ use rtp_packet::rfc8285::{
     ExtensionElements, OneByteElement, OneByteElements, OneByteId, TwoByteElement, TwoByteElements,
     TwoByteId, parse_extensions,
 };
-use rtp_packet::{Error, HeaderExtension, RtpPacket};
+use rtp_packet::{Error, HeaderExtension, RtpPacket, SeqNo, Ssrc};
 
 fn one_byte_worked_example_elements() -> OneByteElements<'static> {
     OneByteElements(vec![
@@ -164,9 +164,9 @@ fn full_rtp_packet_with_one_byte_extension_round_trips_through_rfc8285() {
     let pkt = RtpPacket {
         marker: true,
         payload_type: 96,
-        sequence_number: 7,
+        sequence_number: SeqNo::new(7),
         timestamp: 0x1000,
-        ssrc: 0xDEAD_BEEF,
+        ssrc: Ssrc::new(0xDEAD_BEEF),
         csrc: vec![],
         extension: Some(HeaderExtension {
             profile_id: rtp_packet::rfc8285::ONE_BYTE_PROFILE_ID,
@@ -200,9 +200,9 @@ fn full_rtp_packet_with_two_byte_extension_round_trips_through_rfc8285() {
     let pkt = RtpPacket {
         marker: false,
         payload_type: 100,
-        sequence_number: 8,
+        sequence_number: SeqNo::new(8),
         timestamp: 0x2000,
-        ssrc: 0xCAFE_BABE,
+        ssrc: Ssrc::new(0xCAFE_BABE),
         csrc: vec![0x1111_1111],
         extension: Some(HeaderExtension {
             profile_id: 0x1007, // 0x1000 | appbits(7)

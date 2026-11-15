@@ -38,6 +38,7 @@ use mpeg_ts::pid::well_known as wk;
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
+use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -1310,7 +1311,7 @@ mod tests {
         let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut pmt_bytes).unwrap();
 
-        let splice = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(Default::default()), &[]);
+        let splice = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(Default::default()), SpliceDescriptorLoop::new(&[]));
         let splice_bytes = splice.try_to_bytes().unwrap();
 
         let mut ts = Vec::new();

@@ -10,6 +10,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for service_availability_descriptor.
@@ -26,18 +27,21 @@ const RESERVED_MASK: u8 = 0b0111_1111;
 /// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.5.1-V1.20.1
 /// Table 90 (`reserved` before V1.17.1); audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved_future_use` field (7 bits).
+const RESERVED_BITS: u32 = 7;
 
 /// Service Availability Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct ServiceAvailabilityDescriptor {
-    /// `reserved_future_use`(7) after `availability_flag` (7 bits,
-    /// right-aligned). Captured on parse and re-emitted verbatim;
-    /// [`ServiceAvailabilityDescriptor::new`] defaults to
-    /// [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    /// `reserved_future_use`(7) after `availability_flag` (7 bits). Captured on
+    /// parse and re-emitted verbatim; [`ServiceAvailabilityDescriptor::new`]
+    /// defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// `availability_flag`: true = available in listed cells, false = unavailable.
     pub availability_flag: bool,
     /// cell_id entries in wire order.
@@ -86,7 +90,7 @@ impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
             cell_ids.push(crate::wire::be_u16(chunk, 0, "service_availability")?);
         }
         Ok(Self {
-            reserved_future_use: flags & RESERVED_MASK,
+            reserved_future_use: ReservedOnes::from_bits(u64::from(flags & RESERVED_MASK)),
             availability_flag,
             cell_ids,
         })
@@ -111,11 +115,7 @@ impl Serialize for ServiceAvailabilityDescriptor {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         // reserved_future_use(7) preserved from parse (default all ones).
-        let mut flags = broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_MASK,
-            "reserved_future_use",
-        )?;
+        let mut flags = self.reserved_future_use.get() as u8;
         if self.availability_flag {
             flags |= AVAILABILITY_FLAG_MASK;
         }
@@ -162,7 +162,7 @@ mod tests {
             for flag in [0u8, 0x80] {
                 let bytes = [TAG, 3, flag | r, 0x00, 0x01];
                 let d = ServiceAvailabilityDescriptor::parse(&bytes).unwrap();
-                assert_eq!(d.reserved_future_use, r);
+                assert_eq!(d.reserved_future_use, ReservedOnes::from_bits(u64::from(r)));
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
                 assert_eq!(buf, bytes);
@@ -248,5 +248,20 @@ mod tests {
             d.serialize_into(&mut buf).unwrap_err(),
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
+    }
+
+    /// The field is 7 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into `availability_flag` above it.
+    #[test]
+    fn reserved_cannot_hold_more_than_seven_bits() {
+        let d = ServiceAvailabilityDescriptor {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            availability_flag: false,
+            cell_ids: vec![],
+        };
+        assert_eq!(d.reserved_future_use.get(), 0x7F);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[HEADER_LEN], 0x7F);
     }
 }

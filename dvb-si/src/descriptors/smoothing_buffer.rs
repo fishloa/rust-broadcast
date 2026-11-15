@@ -7,6 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for smoothing_buffer_descriptor.
@@ -15,8 +16,9 @@ const HEADER_LEN: usize = 2;
 /// Default of each 2-bit `reserved` ahead of the 22-bit fields (H.222.0 Table
 /// 2-69): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023, audit
 /// §5; confirmed by the TSDuck oracle PMT).
-pub const RESERVED_DEFAULT: u8 = 0b11;
-const RESERVED_MASK: u8 = 0x03;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of each `reserved` field ahead of a 22-bit value (2 bits).
+const RESERVED_BITS: u32 = 2;
 const BODY_LEN: u8 = 6;
 
 /// Smoothing Buffer Descriptor.
@@ -29,12 +31,14 @@ pub struct SmoothingBufferDescriptor {
     pub sb_leak_rate: u32,
     /// SB size in bytes (22 bits).
     pub sb_size: u32,
-    /// `reserved(2)` ahead of `sb_leak_rate` (2 bits, right-aligned).
-    /// Captured on parse, re-emitted verbatim; defaults to [`RESERVED_DEFAULT`].
-    pub reserved_leak_rate: u8,
-    /// `reserved(2)` ahead of `sb_size` (2 bits, right-aligned). Captured on
-    /// parse, re-emitted verbatim; defaults to [`RESERVED_DEFAULT`].
-    pub reserved_size: u8,
+    /// `reserved(2)` ahead of `sb_leak_rate` (2 bits). Captured on parse,
+    /// re-emitted verbatim; defaults to [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_leak_rate: ReservedOnes<RESERVED_BITS>,
+    /// `reserved(2)` ahead of `sb_size` (2 bits). Captured on parse, re-emitted
+    /// verbatim; defaults to [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_size: ReservedOnes<RESERVED_BITS>,
 }
 
 impl SmoothingBufferDescriptor {
@@ -73,8 +77,8 @@ impl<'a> Parse<'a> for SmoothingBufferDescriptor {
         Ok(Self {
             sb_leak_rate,
             sb_size,
-            reserved_leak_rate: body[0] >> 6,
-            reserved_size: body[3] >> 6,
+            reserved_leak_rate: ReservedOnes::from_bits(u64::from(body[0] >> 6)),
+            reserved_size: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
         })
     }
 }
@@ -96,18 +100,10 @@ impl Serialize for SmoothingBufferDescriptor {
         let ss = broadcast_common::len::fit_bits(u64::from(self.sb_size), 22, "sb_size")? as u32;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
-            self.reserved_leak_rate,
-            RESERVED_MASK,
-            "reserved_leak_rate",
-        )? << 6)
-            | ((slr >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] = ((self.reserved_leak_rate.get() as u8) << 6) | ((slr >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((slr >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (slr & 0xFF) as u8;
-        buf[HEADER_LEN + 3] =
-            (broadcast_common::len::fit_mask(self.reserved_size, RESERVED_MASK, "reserved_size")?
-                << 6)
-                | ((ss >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN + 3] = ((self.reserved_size.get() as u8) << 6) | ((ss >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 4] = ((ss >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 5] = (ss & 0xFF) as u8;
         Ok(len)
@@ -186,7 +182,13 @@ mod tests {
                     0x56,
                 ];
                 let d = SmoothingBufferDescriptor::parse(&bytes).unwrap();
-                assert_eq!((d.reserved_leak_rate, d.reserved_size), (r1, r2));
+                assert_eq!(
+                    (d.reserved_leak_rate, d.reserved_size),
+                    (
+                        ReservedOnes::from_bits(u64::from(r1)),
+                        ReservedOnes::from_bits(u64::from(r2))
+                    )
+                );
                 let mut out = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut out).unwrap();
                 assert_eq!(out, bytes);
@@ -200,5 +202,21 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 6, 0xFF, 0xAB, 0xCD, 0xC2, 0x34, 0x56]);
+    }
+
+    /// Each field is 2 bits wide, so a wider value is unrepresentable and
+    /// cannot spill into the 22-bit value below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_two_bits() {
+        let d = SmoothingBufferDescriptor {
+            sb_leak_rate: 1,
+            sb_size: 2,
+            reserved_leak_rate: ReservedOnes::from_bits(0xFF),
+            reserved_size: ReservedOnes::from_bits(0xFF),
+        };
+        assert_eq!(d.reserved_leak_rate.get(), 0x03);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 6, 0xC0, 0x00, 0x01, 0xC0, 0x00, 0x02]);
     }
 }
