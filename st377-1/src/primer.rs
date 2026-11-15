@@ -24,6 +24,16 @@ const PRIMER_KEY_TAIL: [u8; 2] = [0x05, 0x01];
 /// 16-byte AUID.
 const LOCAL_TAG_ENTRY_LEN: u32 = 18;
 
+/// One Primer Pack entry (Table 15): a 2-byte local tag and the 16-byte
+/// UL/UUID it maps to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalTagEntry {
+    /// The 2-byte local tag used in this Partition's Header Metadata.
+    pub tag: u16,
+    /// The full UL/UUID the tag maps to.
+    pub uid: UlBytes,
+}
+
 /// The Primer Pack — SMPTE ST 377-1:2019 §9.2, Tables 13-15: a Batch of
 /// `{local_tag: u16, uid: AUID}` entries, scoped to the single Partition
 /// that contains it (§9.2 — never accumulated across Partitions).
@@ -35,7 +45,7 @@ const LOCAL_TAG_ENTRY_LEN: u32 = 18;
 pub struct PrimerPack {
     /// Every local-tag -> UL/UUID mapping in this Partition's Header
     /// Metadata.
-    pub entries: Vec<(u16, UlBytes)>,
+    pub entries: Vec<LocalTagEntry>,
     /// The on-wire BER length-field width — [`BerLength::Minimal`] for a
     /// freshly built value, or the exact width `parse` found on the wire.
     pub len_size: BerLength,
@@ -89,7 +99,10 @@ impl PrimerPack {
     /// Annex A tables) — e.g. `Preface`'s `IsRIPPresent`.
     #[must_use]
     pub fn resolve_ul(&self, ul: &UlBytes) -> Option<u16> {
-        self.entries.iter().find(|(_, u)| u == ul).map(|(t, _)| *t)
+        self.entries
+            .iter()
+            .find(|e| e.uid == *ul)
+            .map(|e| e.tag)
     }
 
     /// Look up the UL/UUID for a local tag, if present.
@@ -97,8 +110,8 @@ impl PrimerPack {
     pub fn resolve_tag(&self, tag: u16) -> Option<UlBytes> {
         self.entries
             .iter()
-            .find(|(t, _)| *t == tag)
-            .map(|(_, u)| *u)
+            .find(|e| e.tag == tag)
+            .map(|e| e.uid)
     }
 
     /// Parse a Primer Pack (Key + Length + Value) from `bytes`, validating
@@ -159,7 +172,7 @@ impl PrimerPack {
         for chunk in body.chunks_exact(18) {
             let tag = u16::from_be_bytes([chunk[0], chunk[1]]);
             let uid: UlBytes = ul_bytes_from_prefix(&chunk[2..]);
-            entries.push((tag, uid));
+            entries.push(LocalTagEntry { tag, uid });
         }
         // #1108/MX-W4: each local tag (and, by construction, the UL it
         // resolves to) must be unique within the Primer — `resolve_ul`/
@@ -167,19 +180,19 @@ impl PrimerPack {
         // duplicate otherwise. A nested scan is O(n^2) over an
         // attacker-chosen entry count (a ~1.2 MB Primer of 65 535 distinct
         // tags is ~2e9 comparisons), so each dimension is sorted instead.
-        let mut by_tag: Vec<u16> = entries.iter().map(|(tag, _)| *tag).collect();
+        let mut by_tag: Vec<u16> = entries.iter().map(|e| e.tag).collect();
         by_tag.sort_unstable();
         if let Some(tag) = by_tag.windows(2).find(|w| w[0] == w[1]).map(|w| w[0]) {
             return Err(Error::DuplicatePrimerTag(tag));
         }
-        let mut by_ul: Vec<UlBytes> = entries.iter().map(|(_, uid)| *uid).collect();
+        let mut by_ul: Vec<UlBytes> = entries.iter().map(|e| e.uid).collect();
         by_ul.sort_unstable();
         if let Some(w) = by_ul.windows(2).find(|w| w[0] == w[1]) {
             let dup_ul = w[0];
             let (first, second) = entries
                 .iter()
-                .filter(|(_, uid)| *uid == dup_ul)
-                .map(|(tag, _)| *tag)
+                .filter(|e| e.uid == dup_ul)
+                .map(|e| e.tag)
                 .fold((None, None), |(first, second), tag| match first {
                     None => (Some(tag), None),
                     Some(_) => (first, second.or(Some(tag))),
@@ -238,10 +251,10 @@ impl Serialize for PrimerPack {
         pos += 4;
         buf[pos..pos + 4].copy_from_slice(&LOCAL_TAG_ENTRY_LEN.to_be_bytes());
         pos += 4;
-        for (tag, uid) in &self.entries {
-            buf[pos..pos + 2].copy_from_slice(&tag.to_be_bytes());
+        for entry in &self.entries {
+            buf[pos..pos + 2].copy_from_slice(&entry.tag.to_be_bytes());
             pos += 2;
-            buf[pos..pos + 16].copy_from_slice(uid);
+            buf[pos..pos + 16].copy_from_slice(&entry.uid);
             pos += 16;
         }
         Ok(pos)
@@ -255,7 +268,10 @@ mod tests {
     #[test]
     fn primer_pack_round_trip() {
         let pack = PrimerPack {
-            entries: alloc::vec![(0x3B02, [0xAAu8; 16]), (0x3B05, [0xBBu8; 16])],
+            entries: alloc::vec![
+                LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] },
+                LocalTagEntry { tag: 0x3B05, uid: [0xBBu8; 16] },
+            ],
             ..Default::default()
         };
         let mut buf = alloc::vec![0u8; pack.serialized_len()];
@@ -279,7 +295,7 @@ mod tests {
     /// length token must round-trip byte-identically.
     #[test]
     fn non_minimal_length_token_round_trips_byte_identical() {
-        let entries = alloc::vec![(0x3B02u16, [0xAAu8; 16])];
+        let entries = alloc::vec![LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] }];
         let value_len = 8 + entries.len() * 18; // 26, fits short form
         assert!(value_len <= 0x7F);
 
@@ -289,9 +305,9 @@ mod tests {
         original.push(value_len as u8);
         original.extend_from_slice(&(entries.len() as u32).to_be_bytes());
         original.extend_from_slice(&LOCAL_TAG_ENTRY_LEN.to_be_bytes());
-        for (tag, uid) in &entries {
-            original.extend_from_slice(&tag.to_be_bytes());
-            original.extend_from_slice(uid);
+        for entry in &entries {
+            original.extend_from_slice(&entry.tag.to_be_bytes());
+            original.extend_from_slice(&entry.uid);
         }
 
         let parsed = PrimerPack::parse(&original).unwrap();
@@ -321,7 +337,10 @@ mod tests {
     #[test]
     fn rejects_duplicate_primer_tag() {
         let pack = PrimerPack {
-            entries: alloc::vec![(0x3B02, [0xAAu8; 16]), (0x3B02, [0xBBu8; 16])],
+            entries: alloc::vec![
+                LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] },
+                LocalTagEntry { tag: 0x3B02, uid: [0xBBu8; 16] },
+            ],
             ..Default::default()
         };
         let mut buf = alloc::vec![0u8; pack.serialized_len()];
@@ -337,7 +356,10 @@ mod tests {
     #[test]
     fn rejects_duplicate_primer_ul() {
         let pack = PrimerPack {
-            entries: alloc::vec![(0x3B02, [0xAAu8; 16]), (0x3B05, [0xAAu8; 16])],
+            entries: alloc::vec![
+                LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] },
+                LocalTagEntry { tag: 0x3B05, uid: [0xAAu8; 16] },
+            ],
             ..Default::default()
         };
         let mut buf = alloc::vec![0u8; pack.serialized_len()];
@@ -355,12 +377,12 @@ mod tests {
     #[test]
     fn a_full_primer_with_a_trailing_duplicate_is_rejected() {
         let distinct = usize::from(u16::MAX) + 1;
-        let mut entries: Vec<(u16, UlBytes)> = (0..distinct)
+        let mut entries: Vec<LocalTagEntry> = (0..distinct)
             .map(|tag| {
                 let tag = u16::try_from(tag).unwrap();
                 let mut uid = [0u8; 16];
                 uid[0..2].copy_from_slice(&tag.to_be_bytes());
-                (tag, uid)
+                LocalTagEntry { tag, uid }
             })
             .collect();
         let pack = PrimerPack {
