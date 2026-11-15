@@ -8,6 +8,7 @@ use broadcast_common::Serialize;
 use broadcast_common::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
+use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::time::SpliceTime;
 use std::fs;
 use timed_metadata::event::{EventKind, MediaDuration, MediaTime, TimedEvent};
@@ -68,7 +69,7 @@ fn time_signal_without_id_errors_on_daterange_conversion() {
                 broadcast_common::clock33::Clock33::try_new(1_000).expect("in range"),
             ),
         }),
-        &[],
+        scte35_splice::descriptor_loop::SpliceDescriptorLoop::new(&[]),
     );
     let raw = broadcast_common::traits::Serialize::try_to_bytes(&section).unwrap();
     let ev = TimedEvent::from_scte35(&section, &raw).unwrap();
@@ -96,9 +97,12 @@ fn splice_at_pts(pts: u64) -> Vec<u8> {
         ),
         ..Default::default()
     };
-    SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(cmd), &[])
-        .try_to_bytes()
-        .unwrap()
+    SpliceInfoSection::new_clear(
+        AnyCommand::SpliceInsert(cmd),
+        SpliceDescriptorLoop::new(&[]),
+    )
+    .try_to_bytes()
+    .unwrap()
 }
 
 #[test]

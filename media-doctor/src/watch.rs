@@ -1060,6 +1060,7 @@ pub(crate) mod tests {
         use broadcast_common::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
+        use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
         let sis = SpliceInfoSection::new_clear(
             AnyCommand::SpliceInsert(SpliceInsert {
                 splice_event_id: event_id,
@@ -1069,7 +1070,7 @@ pub(crate) mod tests {
                 ),
                 ..SpliceInsert::default()
             }),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         );
         let mut bytes = alloc::vec![0u8; sis.serialized_len()];
         let n = sis.serialize_into(&mut bytes).expect("serialize SCTE-35");
@@ -1211,6 +1212,7 @@ pub(crate) mod tests {
         use mpeg_ts::ts::TsHeader;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
+        use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 
         const PMT_PID: Pid = Pid::from_const(0x0100);
         const SCTE35_PID: Pid = Pid::from_const(0x0101);
@@ -1258,7 +1260,7 @@ pub(crate) mod tests {
                 ),
                 ..SpliceInsert::default()
             }),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         );
         let out_bytes = splice_out.try_to_bytes().unwrap();
 
@@ -1314,6 +1316,7 @@ pub(crate) mod tests {
         use mpeg_ts::ts::TsHeader;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
+        use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
         use scte35_splice::time::BreakDuration;
 
         const PMT_PID: Pid = Pid::from_const(0x0100);
@@ -1350,7 +1353,7 @@ pub(crate) mod tests {
                     }),
                     ..SpliceInsert::default()
                 }),
-                &[],
+                SpliceDescriptorLoop::new(&[]),
             )
             .try_to_bytes()
             .unwrap()

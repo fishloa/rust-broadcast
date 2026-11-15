@@ -7,6 +7,7 @@
 use broadcast_common::{Parse, Serialize};
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceInsert};
+use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::descriptors::AnySpliceDescriptor;
 use scte35_splice::dvb_ta::{
     CompactDas, CompactScte35, CompactSpliceInsert, DvbDasDescriptor, EquivalentSegmentationType,
@@ -30,7 +31,7 @@ fn das_descriptor_rides_in_a_real_splice_info_section() {
     let loop_bytes = das.try_to_bytes().unwrap();
 
     let cmd = AnyCommand::SpliceInsert(SpliceInsert::default());
-    let section = SpliceInfoSection::new_clear(cmd, &loop_bytes);
+    let section = SpliceInfoSection::new_clear(cmd, SpliceDescriptorLoop::new(&loop_bytes));
     let on_wire = section.try_to_bytes().unwrap();
 
     // table_id 0xFC, parses back byte-exact.
@@ -88,8 +89,10 @@ fn compact_splice_insert_with_das_round_trips() {
 
 #[test]
 fn stream_event_wraps_section_and_base64_inflates_by_4_3() {
-    let inner =
-        SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(SpliceInsert::default()), &[]);
+    let inner = SpliceInfoSection::new_clear(
+        AnyCommand::SpliceInsert(SpliceInsert::default()),
+        SpliceDescriptorLoop::new(&[]),
+    );
     let inner_bytes = inner.try_to_bytes().unwrap();
     let inner = SpliceInfoSection::parse(&inner_bytes).unwrap();
 
