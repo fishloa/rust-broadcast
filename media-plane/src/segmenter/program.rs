@@ -112,7 +112,7 @@ pub struct SegmenterConfig {
     pub container: transmux::Container,
     pub ts_cut_policy: transmux::SegmentCutPolicy,
     pub ts_idr_fallback: TsHlsIdrFallback,
-    pub target_duration_secs: f64,
+    pub target_duration: Duration,
     pub part_target: Duration,
     pub window_segments_cap: std::num::NonZeroUsize,
     pub route_name: String,
@@ -128,7 +128,7 @@ impl Default for SegmenterConfig {
             container: transmux::Container::default(),
             ts_cut_policy: transmux::SegmentCutPolicy::default(),
             ts_idr_fallback: TsHlsIdrFallback::default(),
-            target_duration_secs: 1.0,
+            target_duration: Duration::from_secs(1),
             part_target: Duration::from_millis(250),
             window_segments_cap: std::num::NonZeroUsize::MIN.saturating_add(7),
             route_name: "unknown".to_string(),
@@ -153,8 +153,8 @@ impl SegmenterConfig {
         self.ts_idr_fallback = v;
         self
     }
-    pub fn with_target_duration_secs(mut self, v: f64) -> Self {
-        self.target_duration_secs = v;
+    pub fn with_target_duration(mut self, v: Duration) -> Self {
+        self.target_duration = v;
         self
     }
     pub fn with_part_target(mut self, v: Duration) -> Self {
@@ -254,16 +254,15 @@ impl TsHlsIdrFallback {
     pub fn falls_back(&self) -> bool {
         !matches!(self, TsHlsIdrFallback::Never)
     }
-    pub fn bound(&self, target_duration_secs: f64) -> std::time::Duration {
+    pub fn bound(&self, target_duration: Duration) -> std::time::Duration {
         const IDR_FALLBACK_TARGETS: u32 = 3;
-        const IDR_FALLBACK_MIN_SECS: f64 = 6.0;
-        let secs = match self {
-            TsHlsIdrFallback::Targets(n) => f64::from(*n) * target_duration_secs,
+        const IDR_FALLBACK_MIN: std::time::Duration = std::time::Duration::from_secs(6);
+        match self {
+            TsHlsIdrFallback::Targets(n) => target_duration.saturating_mul(*n),
             TsHlsIdrFallback::Auto | TsHlsIdrFallback::Never => {
-                (f64::from(IDR_FALLBACK_TARGETS) * target_duration_secs).max(IDR_FALLBACK_MIN_SECS)
+                target_duration.saturating_mul(IDR_FALLBACK_TARGETS).max(IDR_FALLBACK_MIN)
             }
-        };
-        std::time::Duration::from_secs_f64(secs)
+        }
     }
     pub fn name(&self) -> &'static str {
         match self {
@@ -343,7 +342,7 @@ pub trait SiblingTrunks {
         &self,
         trunk: &crate::trunk::Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
-        target_duration_secs: f64,
+        target_duration: Duration,
         part_target: Duration,
     ) -> Vec<crate::segmenter::audio::AudioFollower>;
     fn build_subtitle_followers(
@@ -358,7 +357,7 @@ impl SiblingTrunks for () {
         &self,
         _trunk: &crate::trunk::Trunk,
         _mapped: &[(usize, transmux::pipeline::TrackSpec)],
-        _target_duration_secs: f64,
+        _target_duration: Duration,
         _part_target: Duration,
     ) -> Vec<crate::segmenter::audio::AudioFollower> {
         Vec::new()
@@ -386,7 +385,7 @@ pub(crate) struct ReadySegment {
     /// [`transmux::ts_hls::TsSegment::sequence`] is 0-based, so
     /// [`AnySegmenter::take_ready_segments`] adds one when normalising it.
     segment_seq: SegmentSeq,
-    duration: f64,
+    duration: Duration,
     discontinuous: bool,
 }
 
@@ -454,7 +453,7 @@ impl AnySegmenter {
     /// `flush` there).
     fn part_target(&self) -> Option<Duration> {
         match self {
-            AnySegmenter::Fmp4(seg) => Some(Duration::from_millis(u64::from(seg.part_target_ms()))),
+            AnySegmenter::Fmp4(seg) => Some(seg.part_target()),
             AnySegmenter::Ts(_) => None,
         }
     }
@@ -850,9 +849,13 @@ fn gate_opens_on(
     }
 }
 
-/// A part target as whole milliseconds (the LL-HLS segmenter's own unit).
-fn part_target_millis(part_target: Duration) -> u32 {
-    u32::try_from(part_target.as_millis()).unwrap_or(u32::MAX)
+/// A target segment duration as whole seconds, rounded half away from zero
+/// (the classic-MPEG-TS segmenter's integer-second cut rule).
+fn round_secs_u32(duration: Duration) -> u32 {
+    let millis = duration.as_millis();
+    u32::try_from(millis.saturating_add(500) / 1000)
+        .unwrap_or(u32::MAX)
+        .max(1)
 }
 
 impl ProgramSegmenter {
@@ -911,7 +914,7 @@ impl ProgramSegmenter {
         config: SegmenterConfig,
         siblings: &dyn SiblingTrunks,
     ) -> (Option<Self>, Vec<SegmenterEvent>) {
-        let target_duration_secs = config.target_duration_secs;
+        let target_duration = config.target_duration;
         let part_target = config.part_target;
         let (cursor, track_generation, published_tracks) =
             trunk.subscribe_from_backlog_with_tracks();
@@ -948,8 +951,8 @@ impl ProgramSegmenter {
                 match LlHlsSegmenter::with_part_target_at(
                     muxable,
                     transmux::VIDEO_CLOCK_TIMESCALE,
-                    target_duration_secs,
-                    part_target_millis(part_target),
+                    target_duration,
+                    part_target,
                     next_seq.value(),
                     next_seq.value(),
                 ) {
@@ -967,7 +970,7 @@ impl ProgramSegmenter {
                 // (`crate::config::Config::target_duration_secs`), but the
                 // classic-TS segmenter's cut rule is integer-second, per
                 // `transmux::ts_hls`'s own module doc ("no_std-friendly").
-                let target_secs = target_duration_secs.round().max(1.0) as u32;
+                let target_secs = round_secs_u32(target_duration);
                 // Seeded from `next_seq` (see this function's own doc above,
                 // on the Fmp4 arm) — a `StreamingTsHlsSegmenter::new` built
                 // from the plain, unseeded constructor always numbers its
@@ -1009,7 +1012,7 @@ impl ProgramSegmenter {
             }
         };
         let followers =
-            siblings.build_audio_followers(trunk, &mapped, target_duration_secs, part_target);
+            siblings.build_audio_followers(trunk, &mapped, target_duration, part_target);
         let subtitle_followers = if matches!(config.container, Container::Fmp4) {
             siblings.build_subtitle_followers(trunk, &tracks)
         } else {
@@ -1054,7 +1057,7 @@ impl ProgramSegmenter {
             start_gate_dropped: 0,
             start_gate_video_dropped: 0,
             start_gate_opened_logged: false,
-            idr_wait: transmux::IdrWait::new(config.ts_idr_fallback.bound(target_duration_secs)),
+            idr_wait: transmux::IdrWait::new(config.ts_idr_fallback.bound(target_duration)),
             idr_fallback_active: false,
             idr_hold: VecDeque::new(),
             idr_hold_bytes: 0,
@@ -1659,8 +1662,8 @@ impl ProgramSegmenter {
                     match LlHlsSegmenter::with_part_target_at(
                         muxable,
                         transmux::VIDEO_CLOCK_TIMESCALE,
-                        self.config.target_duration_secs,
-                        part_target_millis(self.config.part_target),
+                        self.config.target_duration,
+                        self.config.part_target,
                         next_seq,
                         current_seg,
                     ) {
@@ -1677,7 +1680,7 @@ impl ProgramSegmenter {
                             self.followers = siblings.build_audio_followers(
                                 trunk,
                                 &mapped,
-                                self.config.target_duration_secs,
+                                self.config.target_duration,
                                 self.config.part_target,
                             );
                             self.subtitle_followers.clear();
@@ -1725,7 +1728,7 @@ impl ProgramSegmenter {
                     }
                     match StreamingTsHlsSegmenter::with_start_sequence(
                         new_tracks.to_vec(),
-                        self.config.target_duration_secs.round().max(1.0) as u32,
+                        round_secs_u32(self.config.target_duration),
                         ts_segmenter_window(&self.config),
                         u64::from(next_seq.value().saturating_sub(1)),
                     ) {
@@ -1810,14 +1813,13 @@ impl ProgramSegmenter {
         }
         self.flush();
         let seq = SegmentSeq::new(self.last_queued_segment(trunk).unwrap_or(0)).saturating_next();
-        let duration = Duration::from_secs_f64(self.config.target_duration_secs);
+        let duration = self.config.target_duration;
         let start_ns = self.next_timeline_ns;
         self.next_timeline_ns = self
             .next_timeline_ns
             .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
         if !self.followers.is_empty() || !self.subtitle_followers.is_empty() {
-            self.leader_durations
-                .insert(seq.value(), duration.as_secs_f64());
+            self.leader_durations.insert(seq.value(), duration);
         }
         self.publish_without_blocking(PendingPublish::Segment(SegmentEntry::new(
             Vec::new(),
@@ -1916,7 +1918,7 @@ impl ProgramSegmenter {
                 })?;
                 Some(LeaderPart {
                     cut: *cut,
-                    duration_secs: part.duration,
+                    duration: part.duration,
                 })
             })
             .collect()
@@ -1943,7 +1945,7 @@ impl ProgramSegmenter {
     /// [`SegmentEntry`] shape and advancing [`Self::next_timeline_ns`] by
     /// its duration.
     pub(crate) fn queue_segment(&mut self, segment: ReadySegment) {
-        let duration = Duration::from_secs_f64(segment.duration);
+        let duration = segment.duration;
         let start_ns = self.next_timeline_ns;
         // Tell the trunk where this segment starts on the media (90 kHz)
         // clock, so `Trunk::events_in_segment` can attribute inband SCTE-35
@@ -2269,14 +2271,14 @@ mod segmenter_tests {
     pub(super) fn fmp4_config() -> SegmenterConfig {
         SegmenterConfig::default()
             .with_container(Container::Fmp4)
-            .with_target_duration_secs(1.0)
+            .with_target_duration(Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
     }
 
     pub(super) fn ts_config() -> SegmenterConfig {
         SegmenterConfig::default()
             .with_container(Container::MpegTs)
-            .with_target_duration_secs(1.0)
+            .with_target_duration(Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
     }
 
@@ -2692,7 +2694,7 @@ mod segmenter_tests {
         segmenter.queue_segment(ReadySegment {
             bytes: vec![0u8; 8],
             segment_seq: SegmentSeq::new(1),
-            duration: 1.0,
+            duration: Duration::from_secs(1),
             discontinuous: false,
         });
         let promoted = segmenter.anchor.expect("anchor promoted");
@@ -3179,17 +3181,17 @@ mod segmenter_tests {
         segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(0)));
 
         let parts = vec![
-            PartInfo::new(vec![0u8; 4], 0.2, 1, HlsPartIndex::new(0)).with_independent(true),
-            PartInfo::new(vec![0u8; 4], 0.2, 1, HlsPartIndex::new(1)).with_independent(false),
+            PartInfo::new(vec![0u8; 4], Duration::from_millis(200), 1, HlsPartIndex::new(0)).with_independent(true),
+            PartInfo::new(vec![0u8; 4], Duration::from_millis(200), 1, HlsPartIndex::new(1)).with_independent(false),
             // Segment 2's opening part — already produced (the segmenter
             // has started buffering the next segment) even though segment
             // 1 has not been queued yet in this same call.
-            PartInfo::new(vec![0u8; 4], 0.2, 2, HlsPartIndex::new(0)).with_independent(true),
+            PartInfo::new(vec![0u8; 4], Duration::from_millis(200), 2, HlsPartIndex::new(0)).with_independent(true),
         ];
         let segments = vec![ReadySegment {
             bytes: vec![1u8; 4],
             segment_seq: SegmentSeq::new(1),
-            duration: 1.0,
+            duration: Duration::from_secs(1),
             discontinuous: false,
         }];
 

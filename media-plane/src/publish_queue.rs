@@ -63,7 +63,7 @@ pub fn part_entry(part: PartInfo) -> PartEntry {
         part.bytes,
         SegmentSeq::new(part.segment_seq),
         PartIndex::new(part.part_index.value()),
-        Duration::from_secs_f64(part.duration),
+        part.duration,
         part.independent,
     )
 }

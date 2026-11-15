@@ -33,7 +33,7 @@ use transmux::{SegmentMeta, TrackId};
 use crate::ids::SegmentSeq;
 use crate::publish_queue::{PendingPublish, drain_publish_queue, part_entry};
 use crate::trunk::{SegmentEntry, SegmentWriter, Trunk};
-use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
+use broadcast_common::units::MILLIS_PER_SEC;
 
 /// Leader part boundaries a follower may hold back waiting for its audio to
 /// catch up with the boundary before it applies them regardless (an audio
@@ -47,7 +47,7 @@ const MAX_HELD_SAMPLES: usize = 8192;
 /// Leader segment durations remembered to size gap placeholders.
 pub const LEADER_DURATION_HISTORY: usize = 512;
 
-pub type LeaderDurations = BTreeMap<u32, f64>;
+pub type LeaderDurations = BTreeMap<u32, Duration>;
 
 /// Maps each rendition to the source audio track its selector names.
 /// Returns `(rendition index, source spec)` pairs; renditions whose selector
@@ -129,17 +129,12 @@ pub struct AudioFollower {
     next_seq: u32,
     next_timeline_ns: u64,
     first_discontinuous: bool,
-    target_duration_secs: f64,
+    target_duration: Duration,
     part_target: Duration,
     part_target_sized: bool,
     init: Option<Vec<u8>>,
     part_target_event: Option<Duration>,
     rendition: Option<usize>,
-}
-
-/// A part target as whole milliseconds (the LL-HLS segmenter's own unit).
-fn part_target_millis(part_target: Duration) -> u32 {
-    u32::try_from(part_target.as_millis()).unwrap_or(u32::MAX)
 }
 
 fn part_target_for_frame_ms(
@@ -166,7 +161,7 @@ impl AudioFollower {
     pub fn try_new(
         spec: &TrackSpec,
         trunk: &Arc<Trunk>,
-        target_duration_secs: f64,
+        target_duration: Duration,
         part_target: Duration,
     ) -> Option<Self> {
         let writer = trunk.segment_writer()?;
@@ -174,8 +169,8 @@ impl AudioFollower {
         let seg = match LlHlsSegmenter::with_part_target_at(
             vec![spec.clone()],
             transmux::VIDEO_CLOCK_TIMESCALE,
-            target_duration_secs,
-            part_target_millis(part_target),
+            target_duration,
+            part_target,
             next_seq,
             next_seq,
         ) {
@@ -206,7 +201,7 @@ impl AudioFollower {
             next_seq,
             next_timeline_ns: 0,
             first_discontinuous: false,
-            target_duration_secs,
+            target_duration,
             part_target,
             part_target_sized: false,
             init: Some(init),
@@ -391,7 +386,7 @@ impl AudioFollower {
             let duration = leaders
                 .get(&seq)
                 .copied()
-                .unwrap_or(self.target_duration_secs);
+                .unwrap_or(self.target_duration);
             self.queue_segment(Vec::new(), seq, duration);
         }
         self.next_seq = self.next_seq.max(upto);
@@ -402,12 +397,11 @@ impl AudioFollower {
             .push_back(PendingPublish::Part(part_entry(part)));
     }
 
-    fn queue_segment(&mut self, bytes: Vec<u8>, seq: u32, duration_secs: f64) {
-        let duration = Duration::from_secs_f64(duration_secs);
+    fn queue_segment(&mut self, bytes: Vec<u8>, seq: u32, duration: Duration) {
         let start_ns = self.next_timeline_ns;
         self.next_timeline_ns = self
             .next_timeline_ns
-            .saturating_add((duration_secs * (NANOS_PER_SEC as f64)) as u64);
+            .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
         self.pending
             .push_back(PendingPublish::Segment(SegmentEntry::new(
                 bytes,
@@ -482,11 +476,11 @@ mod follower_tests {
     fn the_init_is_handed_out_once_and_a_trunk_has_one_follower() {
         let trunk = trunk();
         let spec = track_spec(TrackId::new(2));
-        let mut follower = AudioFollower::try_new(&spec, &trunk, 4.0, Duration::from_millis(500))
+        let mut follower = AudioFollower::try_new(&spec, &trunk, Duration::from_secs(4), Duration::from_millis(500))
             .expect("follower");
         assert!(follower.take_init().is_some_and(|init| !init.is_empty()));
         assert!(follower.take_init().is_none());
-        assert!(AudioFollower::try_new(&spec, &trunk, 4.0, Duration::from_millis(500)).is_none());
+        assert!(AudioFollower::try_new(&spec, &trunk, Duration::from_secs(4), Duration::from_millis(500)).is_none());
     }
 
     /// The follower writes into the trunk it was given, whatever capacities the
@@ -496,7 +490,7 @@ mod follower_tests {
         let config: TrunkConfig = trunk_config();
         let trunk = Trunk::new(config);
         let spec = track_spec(TrackId::new(2));
-        let follower = AudioFollower::try_new(&spec, &trunk, 4.0, Duration::from_millis(500));
+        let follower = AudioFollower::try_new(&spec, &trunk, Duration::from_secs(4), Duration::from_millis(500));
         assert!(follower.is_some());
         assert_eq!(trunk.segment_len(), 0);
     }

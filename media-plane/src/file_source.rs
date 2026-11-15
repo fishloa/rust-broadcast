@@ -151,13 +151,13 @@ pub struct PassRange {
     /// One frame duration in the track's timescale (avoids a zero-length or
     /// whole-file-length loop boundary).
     pub frame_ticks: i64,
-    /// The track's file span in seconds (`span_ticks / timescale`) — the
-    /// cross-track pacing baseline advances by one pass's worth of *wall
-    /// time* per loop, exactly as the PTS offsets advance by `span_ticks +
-    /// frame_ticks` per track.
-    pub span_secs: f64,
-    /// One frame duration in seconds (`frame_ticks / timescale`).
-    pub frame_secs: f64,
+    /// The track's file span (`span_ticks / timescale`) — the cross-track
+    /// pacing baseline advances by one pass's worth of *wall time* per loop,
+    /// exactly as the PTS offsets advance by `span_ticks + frame_ticks` per
+    /// track.
+    pub span: Duration,
+    /// One frame duration (`frame_ticks / timescale`).
+    pub frame: Duration,
 }
 
 /// The [`transmux`] demuxer the reader selects for a probed container — the
@@ -265,8 +265,8 @@ impl ParsedFile {
                 ranges.push(PassRange {
                     span_ticks: 0,
                     frame_ticks: 1,
-                    span_secs: 0.0,
-                    frame_secs: 0.0,
+                    span: Duration::ZERO,
+                    frame: Duration::ZERO,
                 });
                 per_track.push(std::collections::VecDeque::new());
                 continue;
@@ -302,12 +302,11 @@ impl ParsedFile {
                     .next()
                     .unwrap_or(1);
             }
-            let timescale_secs = 1.0f64 / timescale;
             ranges.push(PassRange {
                 span_ticks,
                 frame_ticks: frame,
-                span_secs: span_ticks as f64 * timescale_secs,
-                frame_secs: frame as f64 * timescale_secs,
+                span: ticks_to_duration(span_ticks, track.spec.timescale),
+                frame: ticks_to_duration(frame, track.spec.timescale),
             });
 
             // This track's timed samples, in decode order (`dts`, falling back
@@ -634,6 +633,15 @@ pub fn secs_to_duration(value: f64) -> Result<Duration, FileReaderError> {
     Duration::try_from_secs_f64(value).map_err(|_| FileReaderError::PacingOverflow { value })
 }
 
+/// Convert a non-negative media-timescale tick count to a wall-clock
+/// [`Duration`] (`ticks / timescale`).
+fn ticks_to_duration(ticks: i64, timescale: Timescale) -> Duration {
+    let ticks = u128::try_from(ticks).unwrap_or(0);
+    let nanos = ticks * u128::from(broadcast_common::units::NANOS_PER_SEC)
+        / u128::from(timescale.get());
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+}
+
 /// Advance each track's accumulated PTS offset by `span + one frame` so the
 /// next pass continues on the same monotonic timeline.
 ///
@@ -788,18 +796,18 @@ impl FileIngestSession {
         // within-pass time is already behind `base.elapsed()`, so `poll` hands
         // out the whole pass in one drain and `next_due()` returns a past
         // instant — the original ~300× behaviour, restored from pass 2 onward.
-        let pass_duration_secs = self
+        let pass_duration = self
             .ranges
             .iter()
-            .map(|r| r.span_secs + r.frame_secs)
-            .fold(0.0f64, f64::max);
+            .map(|r| r.span + r.frame)
+            .fold(Duration::ZERO, |acc, d| acc.max(d));
         if self.pace
             && let Some(base) = &mut self.pass_wall_start
         {
             *base = base
-                .checked_add(secs_to_duration(pass_duration_secs)?)
+                .checked_add(pass_duration)
                 .ok_or(FileReaderError::PacingOverflow {
-                    value: pass_duration_secs,
+                    value: pass_duration.as_secs_f64(),
                 })?;
         }
         self.queue.clear();
@@ -930,6 +938,34 @@ mod tests {
     fn demux_fixture() -> ParsedFile {
         let bytes = std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("read fixture");
         probe_and_demux(&bytes).expect("demux fixture")
+    }
+
+    /// A pass span is a `Duration` whose value is exactly `span_ticks /
+    /// timescale` of wall time: 90 000 ticks at 90 kHz is 1 s, and a 1536-tick
+    /// AAC frame at 48 kHz is 32 ms. (Retyped from an `f64` seconds field,
+    /// #2731; this pins the conversion.)
+    #[test]
+    fn pass_span_is_ticks_over_timescale() {
+        assert_eq!(
+            ticks_to_duration(90_000, timescale(90_000)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            ticks_to_duration(1536, timescale(48_000)),
+            Duration::from_millis(32)
+        );
+    }
+
+    /// A real file's pacing span is the same wall time its tick count stands
+    /// for, so the loop baseline advances by the typed value.
+    #[test]
+    fn fixture_pass_span_matches_its_tick_count() {
+        let parsed = demux_fixture();
+        let (_, _, ranges) = parsed.build_playout();
+        let range = ranges.first().expect("at least one pass range");
+        let ts = parsed.tracks[0].spec.timescale;
+        assert_eq!(range.span, ticks_to_duration(range.span_ticks, ts));
+        assert_eq!(range.frame, ticks_to_duration(range.frame_ticks, ts));
     }
 
     /// Drive a session's `poll` until `None`, collecting the DTS of every
@@ -1144,8 +1180,8 @@ mod tests {
         let ranges = vec![PassRange {
             span_ticks: 100,
             frame_ticks: 10,
-            span_secs: 1.0,
-            frame_secs: 1.0,
+            span: Duration::from_secs(1),
+            frame: Duration::from_secs(1),
         }];
         let err = advance_offsets(&mut offsets, &ranges);
         assert!(
