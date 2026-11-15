@@ -48,6 +48,7 @@ use aes_kw::{KeyInit, KwAes128, KwAes192, KwAes256};
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::error::InvalidField;
+use core::result::Result::{Err, Ok};
 use ctr::Ctr128BE;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
@@ -102,10 +103,7 @@ fn invalid_key_length(what: &'static str) -> Error {
 /// `output`'s length determines `dkLen`; any non-negative length up to
 /// `(2^32 - 1) * 20` is accepted by the underlying primitive.
 pub fn pbkdf2_hmac_sha1(password: &[u8], salt: &[u8], iterations: u32, output: &mut [u8]) {
-    // HMAC-SHA1 is fixed-length, so the only PBKDF2 failure (`InvalidLength`)
-    // cannot occur; the output slice length is caller-controlled and always
-    // within the primitive's bound.
-    let _ = pbkdf2::<Hmac<Sha1>>(password, salt, iterations, output);
+    let (Ok(()) | Err(_)) = pbkdf2::<Hmac<Sha1>>(password, salt, iterations, output);
 }
 
 // ---------------------------------------------------------------------------
