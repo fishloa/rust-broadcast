@@ -357,7 +357,7 @@ fn run_gap(bytes: &[u8]) -> Host {
 
 fn declared_track_count(bytes: &[u8]) -> usize {
     let mut demux = StreamingTsDemux::new();
-    demux.feed(bytes);
+    demux.feed(bytes).expect("valid timing");
     let mut n = 0;
     while let Some(ev) = demux.poll_event() {
         if matches!(ev, DemuxEvent::TrackAdded(_)) {
@@ -513,7 +513,7 @@ impl Oracle {
     }
 
     fn chunk(&mut self, bytes: &[u8], now: u64) {
-        self.demux.feed(bytes);
+        self.demux.feed(bytes).expect("valid timing");
         let mut pcr = None;
         let mut zero: Option<(TrackId, u64)> = None;
         let mut ends: BTreeMap<TrackId, u64> = BTreeMap::new();
@@ -880,7 +880,7 @@ fn expected_pcrs(bytes: &[u8], chunk: usize) -> Vec<(Option<u64>, usize)> {
     let mut demux = StreamingTsDemux::new();
     let mut expected = Vec::new();
     for ch in bytes.chunks(chunk) {
-        demux.feed(ch);
+        demux.feed(ch).expect("valid timing");
         let mut last = None;
         let mut count = 0;
         while let Some(ev) = demux.poll_event() {

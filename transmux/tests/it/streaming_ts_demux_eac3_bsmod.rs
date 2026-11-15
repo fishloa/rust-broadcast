@@ -170,9 +170,9 @@ fn demuxed_bsmod(ts: &[u8]) -> BTreeMap<u16, u8> {
     let mut d = StreamingTsDemux::new();
     let mut out = BTreeMap::new();
     for c in ts.chunks(188 * 7) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
     }
-    d.finish();
+    d.finish().expect("valid timing");
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::TrackAdded(s) = e
             && let CodecConfig::Eac3 { config, .. } = &s.config
@@ -335,8 +335,8 @@ fn check_programs(name: &str, rel: &str) {
 
     // Every announced track belongs to the one PAT-referenced program.
     let mut d = StreamingTsDemux::new();
-    d.feed(&ts);
-    d.finish();
+    d.feed(&ts).expect("valid timing");
+    d.finish().expect("valid timing");
     let mut announced = Vec::new();
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::TrackAdded(s) = e {

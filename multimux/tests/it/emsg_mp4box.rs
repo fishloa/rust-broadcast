@@ -93,7 +93,7 @@ fn sample_at(pts: i64, is_sync: bool) -> Sample {
     let nal = [0x65u8, 0xAA, (pts % 256) as u8];
     let mut data = (nal.len() as u32).to_be_bytes().to_vec();
     data.extend_from_slice(&nal);
-    Sample::new(data, Some(pts), Some(pts), Some(FRAME_DUR), is_sync)
+    Sample::new(data, Some(pts), Some(pts), Some(FRAME_DUR), is_sync).expect("valid timing")
 }
 
 /// Build a real trunk filled with `frames` samples starting at `pts_origin`,

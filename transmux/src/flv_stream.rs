@@ -90,6 +90,7 @@
 use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use core::num::NonZeroU32;
 
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 use rtmp_runtime::RtmpError;
@@ -102,7 +103,7 @@ use crate::flv::{
     FlvError, MAX_FLV_HEADER_LEN, PREV_TAG_SIZE_LEN, TAG_HEADER_LEN, aac_packet_type, asc_rate_hz,
     avc_dimensions, avc_packet_type, build_aac_esds, read_si24, tag_type,
 };
-use crate::ir::DemuxEvent;
+use crate::ir::{DemuxEvent, SampleTiming};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 
 /// One track (video or audio)'s still-in-flight sample: buffered until the
@@ -114,10 +115,17 @@ use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 #[derive(Debug)]
 struct PendingSample {
     sample: Sample,
-    /// This sample's own FLV tag timestamp (ms) — the DTS the *next*
-    /// same-kind tag's timestamp is subtracted from to get its duration.
-    dts: i64,
+    /// This sample's own timing, which always carries its absolute DTS: the
+    /// value the *next* same-kind tag's timestamp is subtracted from to get
+    /// its duration. Held as the typed timing rather than a separate bare
+    /// integer, so a pending sample can never lack the clock its span is
+    /// derived from.
+    timing: SampleTiming,
 }
+
+/// One tick: the span a track's only sample is flushed with, the smallest span
+/// a sample can declare.
+const ONE_TICK: NonZeroU32 = NonZeroU32::MIN;
 
 /// Unrolls the 32-bit millisecond FLV tag timestamp (`Timestamp` +
 /// `TimestampExtended`, FLV spec §E.4.1) into a monotonic 64-bit clock: a
@@ -143,17 +151,18 @@ impl TimestampUnroll {
 }
 
 /// Per-track (video or audio) streaming state.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TrackState {
     /// `Some` once this track's codec config has been recovered and
     /// [`DemuxEvent::TrackAdded`] fired for it.
     track_id: Option<TrackId>,
     pending: Option<PendingSample>,
     /// The last computed forward-delta duration, reused for the final
-    /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or `0` if
-    /// only one sample was ever seen) — exactly
+    /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or one tick,
+    /// the smallest span a sample can declare, if only one sample was ever
+    /// seen) — exactly
     /// [`crate::flv`]'s `backfill_last_duration` tail rule.
-    last_duration: u32,
+    last_duration: NonZeroU32,
     /// The raw codec-config payload (the `avcC` record / the ASC) the track's
     /// current [`TrackSpec`] was built from, so a *re-sent* sequence header can
     /// be compared with it byte-for-byte: an encoder that repeats its headers
@@ -169,29 +178,66 @@ struct TrackState {
     nal_length_size: Option<usize>,
 }
 
+impl Default for TrackState {
+    fn default() -> Self {
+        Self {
+            track_id: None,
+            pending: None,
+            last_duration: ONE_TICK,
+            config_bytes: Vec::new(),
+            nal_length_size: None,
+        }
+    }
+}
+
 impl TrackState {
-    /// Advance the pending slot with a newly-decoded tag at `dts`, emitting
-    /// the *previous* pending sample now that its duration (`dts - prev.timing.and_then(|t| t.dts())`)
-    /// is known.
-    fn advance(&mut self, sample: Sample, dts: i64, events: &mut VecDeque<DemuxEvent>) {
-        let track_id = self
-            .track_id
-            .expect("TrackState::advance called before the track's config resolved");
+    /// Advance the pending slot with a newly-decoded tag whose timing is
+    /// `timing`, emitting the *previous* pending sample now that its duration
+    /// (this tag's DTS minus the previous sample's DTS) is known.
+    ///
+    /// The span is a tick count, so a tag whose DTS moved backwards inside one
+    /// unroll epoch (the FLV clock only unrolls the 32-bit wrap, Annex E
+    /// §E.4.1) is refused rather than reported as a zero-length span.
+    fn advance(
+        &mut self,
+        track_id: TrackId,
+        sample: Sample,
+        timing: SampleTiming,
+        events: &mut VecDeque<DemuxEvent>,
+    ) -> Result<(), FlvError> {
         if let Some(prev) = self.pending.take() {
-            let duration = u32::try_from((dts - prev.dts).max(0)).unwrap_or(u32::MAX);
+            let (Some(previous), Some(dts)) = (prev.timing.dts(), timing.dts()) else {
+                return Err(FlvError::TimestampBackwards {
+                    previous: prev.timing.dts(),
+                    next: timing.dts(),
+                });
+            };
+            let Some(delta) = dts.checked_sub(previous) else {
+                return Err(FlvError::TimestampBackwards {
+                    previous: Some(previous),
+                    next: Some(dts),
+                });
+            };
+            let Some(duration) = u32::try_from(delta).ok().and_then(NonZeroU32::new) else {
+                return Err(if delta <= 0 {
+                    FlvError::TimestampBackwards {
+                        previous: Some(previous),
+                        next: Some(dts),
+                    }
+                } else {
+                    FlvError::SampleDurationTooLarge { ticks: delta }
+                });
+            };
             self.last_duration = duration;
             let mut emitted = prev.sample;
-            if let Some(t) = emitted.timing.as_mut() {
-                *t = t.with_duration(duration);
-            } else {
-                emitted.timing = Some(crate::ir::SampleTiming::timed_with_duration(0, 0, duration));
-            }
+            emitted.timing = Some(prev.timing.with_duration(duration));
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
             });
         }
-        self.pending = Some(PendingSample { sample, dts });
+        self.pending = Some(PendingSample { sample, timing });
+        Ok(())
     }
 
     /// Flush a trailing pending sample at end-of-stream, reusing the last
@@ -202,15 +248,7 @@ impl TrackState {
         };
         if let Some(prev) = self.pending.take() {
             let mut emitted = prev.sample;
-            if let Some(t) = emitted.timing.as_mut() {
-                *t = t.with_duration(self.last_duration);
-            } else {
-                emitted.timing = Some(crate::ir::SampleTiming::timed_with_duration(
-                    0,
-                    0,
-                    self.last_duration,
-                ));
-            }
+            emitted.timing = Some(prev.timing.with_duration(self.last_duration));
             events.push_back(DemuxEvent::Sample {
                 track_id,
                 sample: emitted,
@@ -590,7 +628,7 @@ impl StreamingFlvDemux {
             // Dropped (not buffered) if the sequence header hasn't
             // resolved the track yet — see the module `# Ordering
             // assumption` note.
-            avc_packet_type::NALU if video.track_id.is_some() => {
+            avc_packet_type::NALU => {
                 // Absolute dts/pts (media plane step 2c): the FLV tag
                 // timestamp is already an absolute wire clock
                 // (milliseconds, `FLV_TIMESCALE`); `CompositionTime`
@@ -607,12 +645,19 @@ impl StreamingFlvDemux {
                 )?;
                 let sample = Sample {
                     data: data.into(),
-                    timing: Some(crate::ir::SampleTiming::timed(dts_abs, pts_abs)), // filled in by `TrackState::advance`/`flush`
+                    timing: Some(crate::ir::SampleTiming::timed(dts_abs, pts_abs)),
                     flags: crate::ir::SampleFlags::new(frame_type == FRAME_TYPE_KEYFRAME),
                     provenance: None,
                     display: None,
                 };
-                video.advance(sample, timestamp, events);
+                if let Some(track_id) = video.track_id {
+                    video.advance(
+                        track_id,
+                        sample,
+                        SampleTiming::timed(dts_abs, pts_abs),
+                        events,
+                    )?;
+                }
             }
             avc_packet_type::END_OF_SEQUENCE => {}
             _ => {}
@@ -689,16 +734,23 @@ impl StreamingFlvDemux {
             }
             // Dropped (not buffered) if the sequence header hasn't resolved
             // the track yet — see the module `# Ordering assumption` note.
-            aac_packet_type::RAW if audio.track_id.is_some() => {
+            aac_packet_type::RAW => {
                 let dts_abs = timestamp;
                 let sample = Sample {
                     data: data.to_vec().into(),
-                    timing: Some(crate::ir::SampleTiming::timed(dts_abs, dts_abs)), // filled in by `TrackState::advance`/`flush`
+                    timing: Some(crate::ir::SampleTiming::timed(dts_abs, dts_abs)),
                     flags: crate::ir::SampleFlags::SYNC,
                     provenance: None,
                     display: None,
                 };
-                audio.advance(sample, timestamp, events);
+                if let Some(track_id) = audio.track_id {
+                    audio.advance(
+                        track_id,
+                        sample,
+                        SampleTiming::timed(dts_abs, dts_abs),
+                        events,
+                    )?;
+                }
             }
             _ => {}
         }
@@ -1395,5 +1447,68 @@ mod tests {
         // feed only part of the (single) tag body region: header + a few bytes
         let partial = &flv[..flv.len().min(FLV_HEADER_LEN + 3)];
         assert!(demux.feed(partial).is_ok());
+    }
+
+    /// Issue #2720: a backwards tag timestamp is a typed error, never a
+    /// silently zero-length span (and never a subtract that can panic).
+    ///
+    /// `PendingSample` also holds its timing itself, so the duration path has
+    /// no "no timing" branch left to fabricate `dts = pts = 0` from.
+    #[test]
+    fn a_backwards_tag_timestamp_is_a_typed_error() {
+        let mut out = flv_header();
+        let mut seq_body = vec![(1u8 << 4) | CODEC_ID_AVC, avc_packet_type::SEQUENCE_HEADER];
+        seq_body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
+        seq_body.extend_from_slice(&minimal_avcc_bytes());
+        write_tag(&mut out, tag_type::VIDEO, 0, &seq_body);
+        for (i, ts) in [1u32, 0].into_iter().enumerate() {
+            let mut body = vec![(1u8 << 4) | CODEC_ID_AVC, avc_packet_type::NALU];
+            body.extend_from_slice(&[0, 0, 0]); // CompositionTime = 0
+            body.extend_from_slice(&1u32.to_be_bytes()); // NAL length = 1
+            body.push(i as u8);
+            write_tag(&mut out, tag_type::VIDEO, ts, &body);
+        }
+
+        let mut demux = StreamingFlvDemux::new();
+        assert_eq!(
+            demux.feed(&out),
+            Err(FlvError::TimestampBackwards {
+                previous: Some(1),
+                next: Some(0),
+            }),
+            "a rewind is reported, not emitted as a zero-length sample"
+        );
+    }
+
+    /// A buffered sample keeps its own clock all the way out, instead of
+    /// being emitted with a fabricated `dts = pts = 0`.
+    #[test]
+    fn a_pending_sample_always_carries_its_timing() {
+        let mut track = TrackState {
+            track_id: Some(TrackId::new(1)),
+            ..TrackState::default()
+        };
+        let mut events = VecDeque::new();
+        let sample = Sample {
+            data: alloc::vec![0u8].into(),
+            timing: Some(SampleTiming::timed(7, 9)),
+            flags: crate::ir::SampleFlags::SYNC,
+            provenance: None,
+            display: None,
+        };
+        track
+            .advance(
+                TrackId::new(1),
+                sample,
+                SampleTiming::timed(7, 9),
+                &mut events,
+            )
+            .expect("a first sample has no predecessor to subtract");
+        track.flush(&mut events);
+        let Some(DemuxEvent::Sample { sample, .. }) = events.pop_front() else {
+            panic!("the flushed sample is delivered");
+        };
+        let timing = sample.timing.expect("the sample keeps its timing");
+        assert_eq!((timing.dts(), timing.pts()), (Some(7), Some(9)));
     }
 }

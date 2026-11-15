@@ -109,13 +109,14 @@ fn synthetic_cuts_are_exact_and_lossless() {
             // synthetic samples (media plane step 2c — never fabricated).
             seg.push(
                 TrackId::new(1),
-                Sample::new(vec![0xAA; 16], None, None, Some(VID_DUR), is_sync),
+                Sample::new(vec![0xAA; 16], None, None, Some(VID_DUR), is_sync)
+                    .expect("valid timing"),
             )
             .unwrap();
         } else {
             seg.push(
                 TrackId::new(2),
-                Sample::from_raw(vec![0xBB; 8], None, None, Some(AUD_DUR)),
+                Sample::from_raw(vec![0xBB; 8], None, None, Some(AUD_DUR)).expect("valid timing"),
             )
             .unwrap();
         }
@@ -182,13 +183,15 @@ fn single_segment_is_byte_identical_to_batch_builder() {
                 i % 6 == 0,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     let aud: Vec<Sample> = (0..20)
         .map(|i| {
             let dts = i as i64 * 1024;
             Sample::from_raw(vec![0x5A; 6], Some(dts), Some(dts), Some(1024))
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
 
     // Batch reference: one media segment, video traf first then audio.
     let reference = build_media_segment(
@@ -240,7 +243,7 @@ fn rejects_bad_construction() {
     assert!(
         seg.push(
             TrackId::new(99),
-            Sample::from_raw(vec![0], None, None, Some(1))
+            Sample::from_raw(vec![0], None, None, Some(1)).expect("valid timing")
         )
         .is_err(),
         "unknown track_id"
@@ -428,7 +431,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
                 Some(*pts as i64),
                 Some(3000),
                 idr[i],
-            ),
+            )
+            .expect("valid timing"),
         )
         .unwrap();
     }
@@ -437,7 +441,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
             if f.len() > 7 {
                 seg.push(
                     TrackId::new(2),
-                    Sample::from_raw(f[7..].to_vec(), None, None, Some(1024)),
+                    Sample::from_raw(f[7..].to_vec(), None, None, Some(1024))
+                        .expect("valid timing"),
                 )
                 .unwrap();
             }

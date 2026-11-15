@@ -15,7 +15,8 @@ use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartCut, PartInfo, SegmentInfo};
 use transmux::media::{Media, Track};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
 use transmux::{
-    CodecConfig, Error, Sample, Severity, TsDemux, validate_init_segment, validate_media_segment,
+    CodecConfig, Error, Sample, Severity, TsDemux, validate::SegmentOrigin, validate_init_segment,
+    validate_media_segment,
 };
 
 const LEADER_TS: u32 = 90_000;
@@ -226,7 +227,7 @@ fn check_follower(audio: &Track, movie_ts: Timescale, plans: &[CutPlan]) {
         );
         assert_no_errors(
             &format!("segment {}", seg.segment_seq),
-            &validate_media_segment(&seg.bytes),
+            &validate_media_segment(&seg.bytes, SegmentOrigin::FromIr),
         );
         if si > 0 {
             let first = expected[0].timing.and_then(|t| t.dts()).unwrap();
@@ -368,6 +369,7 @@ fn frame(n: i64) -> Sample {
         Some(AAC_FRAME_TICKS as u32),
         true,
     )
+    .expect("valid timing")
 }
 
 fn frames(range: impl Iterator<Item = i64>) -> Vec<Sample> {
@@ -613,7 +615,7 @@ fn follower_push_rejects_a_sample_without_dts() {
     )
     .unwrap();
     f.follow(plan(1, 0)).unwrap();
-    let s = Sample::new(vec![1, 2], None, None, None, true);
+    let s = Sample::new(vec![1, 2], None, None, None, true).expect("valid timing");
     assert_eq!(
         f.push(audio.spec.track_id, s).unwrap_err(),
         Error::InvalidInput("follower segmenter push: sample has no dts")

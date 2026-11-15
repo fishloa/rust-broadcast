@@ -51,7 +51,7 @@ fn video_track() -> TrackSpec {
 fn vsample(is_sync: bool, byte: u8) -> Sample {
     // Duration-only synthetic sample (see `glass_to_glass.rs`): the segmenter
     // derives the timeline from `duration`, so dts/pts stay `None`.
-    Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync)
+    Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync).expect("valid timing")
 }
 
 /// Part URI convention: `seg<segment_seq>.<part_index>.m4s`.

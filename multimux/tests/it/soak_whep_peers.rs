@@ -270,7 +270,7 @@ fn frame_sample(frame: u32, sent_ns: u64) -> Sample {
     let mut data = (nal.len() as u32).to_be_bytes().to_vec();
     data.extend_from_slice(&nal);
     let pts = i64::from(frame) * i64::from(transmux::VIDEO_CLOCK_RATE) / FPS as i64;
-    Sample::new(data, Some(pts), Some(pts), None, true)
+    Sample::new(data, Some(pts), Some(pts), None, true).expect("valid timing")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

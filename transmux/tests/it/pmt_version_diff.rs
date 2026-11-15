@@ -247,7 +247,7 @@ fn feed_locked(demux: &mut StreamingTsDemux, bytes: &[u8]) {
     while buf.len() / TS_PACKET_SIZE < mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
         buf.extend_from_slice(&ts_packet(Pid::from_const(0x1FFF), false, 0, &[]));
     }
-    demux.feed(&buf);
+    demux.feed(&buf).expect("valid timing");
 }
 
 /// Feed the PAT + a PMT (`version`/`cni`/`entries`) + two PES access units per
@@ -287,7 +287,7 @@ fn feed_bootstrap(demux: &mut StreamingTsDemux, version: u8, entries: &[(u16, u8
     while bytes.len() / TS_PACKET_SIZE < mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
         bytes.extend_from_slice(&ts_packet(Pid::from_const(0x1FFF), false, 0, &[]));
     }
-    demux.feed(&bytes);
+    demux.feed(&bytes).expect("valid timing");
 }
 
 /// Drain every currently-queued event.
@@ -389,7 +389,7 @@ fn carousel_repeat_of_identical_version_emits_nothing() {
             ],
         ),
     );
-    demux.feed(&repeat);
+    demux.feed(&repeat).expect("valid timing");
     let events = drain(&mut demux);
     assert!(
         events.is_empty(),
@@ -419,7 +419,7 @@ fn next_table_cni_zero_is_not_applied() {
             ],
         ),
     );
-    demux.feed(&next);
+    demux.feed(&next).expect("valid timing");
     let events = drain(&mut demux);
     assert!(
         events.is_empty(),
@@ -463,7 +463,7 @@ fn removal_and_update_and_rearm_from_one_version_bump() {
             ],
         ),
     );
-    demux.feed(&v2);
+    demux.feed(&v2).expect("valid timing");
     let events = drain(&mut demux);
 
     let removed: Vec<_> = events
@@ -518,8 +518,8 @@ fn removal_and_update_and_rearm_from_one_version_bump() {
     // No Sample for audioB's track_id ever appears — not in this batch, and
     // not from a stray follow-up packet on its now-unclaimed PID either.
     let stray_pes = ts_packet(PID_B, true, 9, &pes_bytes(b"post-removal"));
-    demux.feed(&stray_pes);
-    demux.finish();
+    demux.feed(&stray_pes).expect("valid timing");
+    demux.finish().expect("valid timing");
     let trailing = drain(&mut demux);
     assert!(
         !trailing
@@ -561,7 +561,7 @@ fn tracks_resolved_rearms_even_when_known_pid_count_returns_to_its_prior_value()
             ],
         ),
     );
-    demux.feed(&v2);
+    demux.feed(&v2).expect("valid timing");
     let mut events = drain(&mut demux);
     assert!(
         !events
@@ -574,7 +574,7 @@ fn tracks_resolved_rearms_even_when_known_pid_count_returns_to_its_prior_value()
     let mut more = Vec::new();
     more.extend_from_slice(&ts_packet(PID_C, true, 20, &pes_bytes(b"au1")));
     more.extend_from_slice(&ts_packet(PID_C, true, 21, &pes_bytes(b"au2")));
-    demux.feed(&more);
+    demux.feed(&more).expect("valid timing");
     events.extend(drain(&mut demux));
 
     let saw_c_added = events
@@ -622,7 +622,7 @@ fn version_wrap_31_to_0_is_treated_as_a_change() {
             &[(PID_V.value(), STREAM_TYPE_V, &lang_descriptor(b"qaa", 0))],
         ),
     );
-    demux.feed(&wrapped);
+    demux.feed(&wrapped).expect("valid timing");
     let events = drain(&mut demux);
 
     let updated: Vec<_> = events
@@ -687,7 +687,7 @@ fn track_abandoned_config_unrecoverable_is_actually_emitted() {
         "abandonment is an end-of-input conclusion here, not a mid-stream one: {before:?}"
     );
 
-    demux.finish();
+    demux.finish().expect("valid timing");
     let events = drain(&mut demux);
     let abandoned: Vec<_> = events
         .iter()
@@ -787,15 +787,17 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
     );
 
     // v2: same PID, same stream_type, now with an AC-3 descriptor.
-    demux.feed(&psi_packet(
-        PMT_PID,
-        1,
-        &build_pmt(
-            2,
-            true,
-            &[(PID_V.value(), STREAM_TYPE_PES_PRIVATE, &AC3_DESCRIPTOR[..])],
-        ),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID,
+            1,
+            &build_pmt(
+                2,
+                true,
+                &[(PID_V.value(), STREAM_TYPE_PES_PRIVATE, &AC3_DESCRIPTOR[..])],
+            ),
+        ))
+        .expect("valid timing");
     drain(&mut demux);
 
     // Real AC-3 syncframes, one PES each. Before the fix this panicked on the
@@ -807,9 +809,11 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
         frames.len()
     );
     for (i, frame) in frames.iter().take(3).enumerate() {
-        demux.feed(&pes_ts_packets(PID_V, (i as u8) * 8, &pes_bytes(frame)));
+        demux
+            .feed(&pes_ts_packets(PID_V, (i as u8) * 8, &pes_bytes(frame)))
+            .expect("valid timing");
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     let events = drain(&mut demux);
 
     let added: Vec<TrackSpec> = track_added_specs(&events);
@@ -873,11 +877,13 @@ fn carrier_is_rebuilt_when_a_section_carried_pid_becomes_pes_carried() {
     drain(&mut demux);
 
     // v2 reclassifies the same PID as H.264.
-    demux.feed(&psi_packet(
-        PMT_PID,
-        1,
-        &build_pmt(2, true, &[(PID_V.value(), STREAM_TYPE_AVC, &[][..])]),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID,
+            1,
+            &build_pmt(2, true, &[(PID_V.value(), STREAM_TYPE_AVC, &[][..])]),
+        ))
+        .expect("valid timing");
     drain(&mut demux);
 
     // A minimal but real Annex B access unit: SPS + PPS + IDR slice. The
@@ -896,9 +902,11 @@ fn carrier_is_rebuilt_when_a_section_carried_pid_becomes_pes_carried() {
         au.extend_from_slice(nal);
     }
     for cc in 0u8..3 {
-        demux.feed(&pes_ts_packets(PID_V, cc * 4, &pes_bytes(&au)));
+        demux
+            .feed(&pes_ts_packets(PID_V, cc * 4, &pes_bytes(&au)))
+            .expect("valid timing");
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     let events = drain(&mut demux);
 
     let added = track_added_specs(&events);
@@ -945,7 +953,9 @@ fn corrupt_crc_pmt_is_dropped_and_disturbs_nothing() {
             // audioB dropped.
         ],
     );
-    demux.feed(&psi_packet(PMT_PID, 1, &corrupt_crc(bad)));
+    demux
+        .feed(&psi_packet(PMT_PID, 1, &corrupt_crc(bad)))
+        .expect("valid timing");
     let events = drain(&mut demux);
     assert!(
         events.is_empty(),
@@ -963,7 +973,9 @@ fn corrupt_crc_pmt_is_dropped_and_disturbs_nothing() {
             (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
         ],
     );
-    demux.feed(&psi_packet(PMT_PID, 2, &good));
+    demux
+        .feed(&psi_packet(PMT_PID, 2, &good))
+        .expect("valid timing");
     let events = drain(&mut demux);
     let removed: Vec<_> = events
         .iter()
@@ -999,13 +1011,17 @@ fn corrupt_crc_pat_cannot_hijack_a_live_es_pid() {
             (PROGRAM_NUMBER_2, PID_B.value()),
         ],
     );
-    demux.feed(&psi_packet(PAT_PID, 1, &corrupt_crc(bad)));
+    demux
+        .feed(&psi_packet(PAT_PID, 1, &corrupt_crc(bad)))
+        .expect("valid timing");
     drain(&mut demux);
 
     // audioB must still be a normal elementary stream: keep feeding it and
     // its samples must keep arriving.
     for cc in 0u8..3 {
-        demux.feed(&pes_ts_packets(PID_B, cc, &pes_bytes(b"still-audio")));
+        demux
+            .feed(&pes_ts_packets(PID_B, cc, &pes_bytes(b"still-audio")))
+            .expect("valid timing");
     }
     let events = drain(&mut demux);
     assert!(
@@ -1033,11 +1049,15 @@ fn next_pat_cni_zero_cannot_hijack_a_live_es_pid() {
             (PROGRAM_NUMBER_2, PID_B.value()),
         ],
     );
-    demux.feed(&psi_packet(PAT_PID, 1, &next));
+    demux
+        .feed(&psi_packet(PAT_PID, 1, &next))
+        .expect("valid timing");
     drain(&mut demux);
 
     for cc in 0u8..3 {
-        demux.feed(&pes_ts_packets(PID_B, cc, &pes_bytes(b"still-audio")));
+        demux
+            .feed(&pes_ts_packets(PID_B, cc, &pes_bytes(b"still-audio")))
+            .expect("valid timing");
     }
     let events = drain(&mut demux);
     assert!(
@@ -1059,27 +1079,31 @@ fn pat_remap_of_a_pmt_pid_is_honoured() {
     let track_id_b = track_id_for_pid(&specs, PID_B);
 
     // The multiplex re-issues this PMT PID under program 2.
-    demux.feed(&psi_packet(
-        PAT_PID,
-        1,
-        &build_pat_full(1, true, &[(PROGRAM_NUMBER_2, PMT_PID.value())]),
-    ));
+    demux
+        .feed(&psi_packet(
+            PAT_PID,
+            1,
+            &build_pat_full(1, true, &[(PROGRAM_NUMBER_2, PMT_PID.value())]),
+        ))
+        .expect("valid timing");
     drain(&mut demux);
 
     // A PMT under the NEW program, dropping audioB. It must be applied.
-    demux.feed(&psi_packet(
-        PMT_PID,
-        1,
-        &build_pmt_for(
-            PROGRAM_NUMBER_2,
-            2,
-            true,
-            &[
-                (PID_V.value(), STREAM_TYPE_V, &[][..]),
-                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-            ],
-        ),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID,
+            1,
+            &build_pmt_for(
+                PROGRAM_NUMBER_2,
+                2,
+                true,
+                &[
+                    (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                    (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                ],
+            ),
+        ))
+        .expect("valid timing");
     let events = drain(&mut demux);
     let removed: Vec<_> = events
         .iter()
@@ -1116,18 +1140,20 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     let old_track_id_b = track_id_for_pid(&specs, PID_B);
 
     // v2 drops audioB.
-    demux.feed(&psi_packet(
-        PMT_PID,
-        1,
-        &build_pmt(
-            2,
-            true,
-            &[
-                (PID_V.value(), STREAM_TYPE_V, &[][..]),
-                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-            ],
-        ),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID,
+            1,
+            &build_pmt(
+                2,
+                true,
+                &[
+                    (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                    (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                ],
+            ),
+        ))
+        .expect("valid timing");
     let removal = drain(&mut demux);
     assert!(
         removal
@@ -1139,28 +1165,32 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     // Orphan traffic on the now-undeclared PID.
     for i in 0u8..4 {
         let pts = ORPHAN_PTS + u64::from(i) * PTS_STEP;
-        demux.feed(&pes_ts_packets(
-            PID_B,
-            i,
-            &pes_bytes_with_pts(b"orphan", pts),
-        ));
+        demux
+            .feed(&pes_ts_packets(
+                PID_B,
+                i,
+                &pes_bytes_with_pts(b"orphan", pts),
+            ))
+            .expect("valid timing");
     }
     drain(&mut demux);
 
     // v3 re-adds the same PID.
-    demux.feed(&psi_packet(
-        PMT_PID,
-        2,
-        &build_pmt(
-            3,
-            true,
-            &[
-                (PID_V.value(), STREAM_TYPE_V, &[][..]),
-                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-                (PID_B.value(), STREAM_TYPE_B, &[][..]),
-            ],
-        ),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID,
+            2,
+            &build_pmt(
+                3,
+                true,
+                &[
+                    (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                    (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                    (PID_B.value(), STREAM_TYPE_B, &[][..]),
+                ],
+            ),
+        ))
+        .expect("valid timing");
     // Accumulate from the re-add onwards: `TrackAdded` for the fresh track can
     // land in either drain depending on when its probe resolves, and the first
     // Sample assertion below must see the whole post-re-add event stream.
@@ -1172,13 +1202,15 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     // (r04-W49: a gap drops the access unit it truncated).
     for i in 0u8..3 {
         let pts = REPLACEMENT_PTS + u64::from(i) * PTS_STEP;
-        demux.feed(&pes_ts_packets(
-            PID_B,
-            i,
-            &pes_bytes_with_pts(b"fresh", pts),
-        ));
+        demux
+            .feed(&pes_ts_packets(
+                PID_B,
+                i,
+                &pes_bytes_with_pts(b"fresh", pts),
+            ))
+            .expect("valid timing");
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     events.extend(drain(&mut demux));
 
     let new_track_id = events
@@ -1272,16 +1304,18 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
     let shared_track_id = track_id_for_pid(&specs, PID_A);
 
     // Program 1 drops the shared PID — program 2 still declares it.
-    demux.feed(&psi_packet(
-        PMT_PID,
-        1,
-        &build_pmt_for(
-            PROGRAM_NUMBER,
-            2,
-            true,
-            &[(PID_V.value(), STREAM_TYPE_V, &[][..])],
-        ),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID,
+            1,
+            &build_pmt_for(
+                PROGRAM_NUMBER,
+                2,
+                true,
+                &[(PID_V.value(), STREAM_TYPE_V, &[][..])],
+            ),
+        ))
+        .expect("valid timing");
     let events = drain(&mut demux);
     assert!(
         !events
@@ -1290,7 +1324,9 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
         "the shared PID is still declared by program 2 — no TrackRemoved yet; got {events:?}"
     );
     for cc in 0u8..3 {
-        demux.feed(&pes_ts_packets(PID_A, cc, &pes_bytes(b"still-shared")));
+        demux
+            .feed(&pes_ts_packets(PID_A, cc, &pes_bytes(b"still-shared")))
+            .expect("valid timing");
     }
     let events = drain(&mut demux);
     assert!(
@@ -1301,11 +1337,13 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
     );
 
     // Now the last declarer drops it too.
-    demux.feed(&psi_packet(
-        PMT_PID_2,
-        1,
-        &build_pmt_for(PROGRAM_NUMBER_2, 2, true, &[]),
-    ));
+    demux
+        .feed(&psi_packet(
+            PMT_PID_2,
+            1,
+            &build_pmt_for(PROGRAM_NUMBER_2, 2, true, &[]),
+        ))
+        .expect("valid timing");
     let events = drain(&mut demux);
     let removed: Vec<_> = events
         .iter()
@@ -1415,20 +1453,22 @@ fn pmt_removal_of_video_flushes_the_held_access_unit() {
         .expect("PMT in first half");
 
     let mut reference = StreamingTsDemux::new();
-    reference.feed(head);
-    reference.finish();
+    reference.feed(head).expect("valid timing");
+    reference.finish().expect("valid timing");
     let expected = drained_video_samples(&mut reference);
 
     let mut with_change = StreamingTsDemux::new();
-    with_change.feed(head);
-    with_change.feed(&pmt_without_video(last_pmt, (last_pmt[3] + 1) & 0x0F));
+    with_change.feed(head).expect("valid timing");
+    with_change
+        .feed(&pmt_without_video(last_pmt, (last_pmt[3] + 1) & 0x0F))
+        .expect("valid timing");
     let tail_no_pmt: Vec<u8> = tail
         .chunks_exact(RAW_TS_LEN)
         .filter(|p| raw_pid(p) != pmt)
         .flat_map(|p| p.iter().copied())
         .collect();
-    with_change.feed(&tail_no_pmt);
-    with_change.finish();
+    with_change.feed(&tail_no_pmt).expect("valid timing");
+    with_change.finish().expect("valid timing");
     let got = drained_video_samples(&mut with_change);
 
     assert!(

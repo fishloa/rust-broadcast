@@ -134,12 +134,12 @@ fn run(ts: &[u8], chunk: usize, what: &str) -> Vec<String> {
     let mut d = StreamingTsDemux::new();
     let mut out = Vec::new();
     for c in ts.chunks(chunk) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
         while let Some(ev) = d.poll_event() {
             out.push(summarize(&ev, what));
         }
     }
-    d.finish();
+    d.finish().expect("valid timing");
     while let Some(ev) = d.poll_event() {
         out.push(summarize(&ev, what));
     }

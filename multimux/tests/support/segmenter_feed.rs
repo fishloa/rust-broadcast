@@ -35,7 +35,8 @@ pub fn video_batches_n(n: u32) -> Vec<Vec<(u32, Sample)>> {
             let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 64];
             vec![(
                 1u32,
-                Sample::new(data, Some(ts), Some(ts), Some(FRAME_DUR), i % 30 == 0),
+                Sample::new(data, Some(ts), Some(ts), Some(FRAME_DUR), i % 30 == 0)
+                    .expect("valid timing"),
             )]
         })
         .collect()

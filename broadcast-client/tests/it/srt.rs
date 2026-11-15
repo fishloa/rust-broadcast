@@ -99,7 +99,7 @@ fn play(mut sim: SrtSim, ts: &[u8]) -> SrtSim {
 
 fn last_status(sim: &SrtSim) -> Option<Status> {
     sim.events.iter().rev().find_map(|t| match &t.event {
-        Event::Status(s) => Some(*s),
+        Event::Status(s) => Some(s.clone()),
         _ => None,
     })
 }

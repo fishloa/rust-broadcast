@@ -118,7 +118,8 @@ async fn iframe_master_variant_gating() {
             Some(i64::from(i) * 1024),
             Some(1024),
             true,
-        );
+        )
+        .expect("valid timing");
         audio_batches.push(vec![(1u32, sample)]);
     }
     let audio_store = Arc::new(RouteHandle::new(

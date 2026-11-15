@@ -39,10 +39,10 @@ fn stream(bytes: &[u8]) -> Streamed {
         }
     };
     for chunk in bytes.chunks(CHUNK) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux);
     Streamed { specs, events }
 }

@@ -259,7 +259,7 @@ fn nal_sample(is_sync: bool, dur: u32) -> Sample {
     data.extend_from_slice(&payload);
     // Duration-driven segmenter: no absolute source time for these synthetic
     // samples (media plane step 2c — never fabricated).
-    Sample::new(data, None, None, Some(dur), is_sync)
+    Sample::new(data, None, None, Some(dur), is_sync).expect("valid timing")
 }
 
 /// Build the worked example from issue #629: 5 segments s0..s4 (target 1s @

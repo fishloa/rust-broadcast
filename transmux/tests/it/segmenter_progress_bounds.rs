@@ -124,7 +124,7 @@ fn nal_payload(sync: bool) -> Vec<u8> {
 /// **`duration: Some(0)`** — exactly what an RTMP publish's first tag (and any
 /// two same-timestamp tags) produce. Before the fix these advanced no
 /// accumulator anywhere.
-fn zero_duration_au(dts: i64, sync: bool) -> Sample {
+fn zero_duration_au(dts: i64, sync: bool) -> Result<Sample, transmux::Error> {
     Sample::new(nal_payload(sync), Some(dts), Some(dts), Some(0), sync)
 }
 
@@ -137,6 +137,7 @@ fn au(dts: i64, sync: bool) -> Sample {
         Some(FRAME_TICKS as u32),
         sync,
     )
+    .expect("valid timing")
 }
 
 /// `n` frames at 30 fps, all `duration: Some(0)`, with a sync sample every
@@ -144,7 +145,8 @@ fn au(dts: i64, sync: bool) -> Sample {
 fn zero_duration_stream(n: usize) -> Vec<Sample> {
     (0..n)
         .map(|i| zero_duration_au(i as i64 * FRAME_TICKS, i % FRAMES_PER_SEC == 0))
-        .collect()
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing")
 }
 
 /// Per-`traf` `(track_id, base_media_decode_time)` of a `moof`-bearing segment.
@@ -586,7 +588,8 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     let video: Vec<Sample> = (0..(6 * FRAMES_PER_SEC))
         .map(|i| au(i as i64 * FRAME_TICKS, i % FRAMES_PER_SEC == 0))
         .collect();
-    let section = Sample::new(CUE.to_vec(), Some(CUE_DTS), Some(CUE_DTS), None, true);
+    let section =
+        Sample::new(CUE.to_vec(), Some(CUE_DTS), Some(CUE_DTS), None, true).expect("valid timing");
 
     // Batch.
     let media = Media::new(

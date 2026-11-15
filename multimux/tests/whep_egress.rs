@@ -484,7 +484,8 @@ mod instant {
                             Some(i64::from(i) * i64::from(FRAME_DUR)),
                             Some(FRAME_DUR),
                             i % 8 == 0,
-                        ),
+                        )
+                        .expect("valid timing"),
                     });
                 }
             }

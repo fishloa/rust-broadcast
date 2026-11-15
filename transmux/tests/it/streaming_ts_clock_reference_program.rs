@@ -95,7 +95,7 @@ fn clock_refs(data: &[u8]) -> Vec<Obs> {
     let mut demux = StreamingTsDemux::new();
     let mut out = Vec::new();
     for chunk in data.chunks(TS_PACKET_SIZE * 512 + 7) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::ClockReference { provenance, .. } = ev {
                 out.push(Obs {

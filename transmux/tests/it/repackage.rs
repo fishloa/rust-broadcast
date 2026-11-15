@@ -409,8 +409,9 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
     let audio = Track::new(
         aac_audio_track(1),
         vec![
-            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true),
-            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true),
+            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true).expect("valid timing"),
+            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true)
+                .expect("valid timing"),
         ],
     );
     // Deliberately different sample count / duration per sample from audio,
@@ -418,9 +419,11 @@ fn anchor_duration_picks_hevc_video_not_audio_track_zero() {
     let video = Track::new(
         hevc_video_track(2),
         vec![
-            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true),
-            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false),
-            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
+            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true).expect("valid timing"),
+            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false)
+                .expect("valid timing"),
+            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false)
+                .expect("valid timing"),
         ],
     );
     let media = Media::new(vec![audio, video], timescale(90_000));
@@ -447,9 +450,11 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let audio = Track::new(
         aac_audio_track(1),
         vec![
-            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true),
-            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true),
-            Sample::new(vec![0xACu8; 8], Some(2048), Some(2048), Some(1024), true),
+            Sample::new(vec![0xAAu8; 8], Some(0), Some(0), Some(1024), true).expect("valid timing"),
+            Sample::new(vec![0xABu8; 8], Some(1024), Some(1024), Some(1024), true)
+                .expect("valid timing"),
+            Sample::new(vec![0xACu8; 8], Some(2048), Some(2048), Some(1024), true)
+                .expect("valid timing"),
         ],
     );
     // IDR, then two non-sync samples: a window starting mid-GOP must snap
@@ -457,9 +462,11 @@ fn trim_snaps_back_off_on_hevc_video_not_audio() {
     let video = Track::new(
         hevc_video_track(2),
         vec![
-            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true),
-            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false),
-            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false),
+            Sample::new(vec![0x01u8; 8], Some(0), Some(0), Some(3000), true).expect("valid timing"),
+            Sample::new(vec![0x02u8; 8], Some(3000), Some(3000), Some(3000), false)
+                .expect("valid timing"),
+            Sample::new(vec![0x03u8; 8], Some(6000), Some(6000), Some(3000), false)
+                .expect("valid timing"),
         ],
     );
     let media = Media::new(vec![audio, video], timescale(90_000));
@@ -511,8 +518,9 @@ fn trim_window_follows_real_dts_not_duration_sum() {
     let video = Track::new(
         hevc_video_track(1),
         vec![
-            Sample::new(vec![0x00u8; 8], Some(0), Some(0), Some(3000), true),
-            Sample::new(vec![0x01u8; 8], Some(3000), Some(3000), Some(3000), false),
+            Sample::new(vec![0x00u8; 8], Some(0), Some(0), Some(3000), true).expect("valid timing"),
+            Sample::new(vec![0x01u8; 8], Some(3000), Some(3000), Some(3000), false)
+                .expect("valid timing"),
             // The hidden +5000 gap: duration still says 3000, but the real
             // dts jumps by 8000.
             Sample::new(
@@ -521,21 +529,24 @@ fn trim_window_follows_real_dts_not_duration_sum() {
                 Some(11_000),
                 Some(3000),
                 false,
-            ),
+            )
+            .expect("valid timing"),
             Sample::new(
                 vec![0x03u8; 8],
                 Some(14_000),
                 Some(14_000),
                 Some(3000),
                 false,
-            ),
+            )
+            .expect("valid timing"),
             Sample::new(
                 vec![0x04u8; 8],
                 Some(17_000),
                 Some(17_000),
                 Some(3000),
                 false,
-            ),
+            )
+            .expect("valid timing"),
         ],
     );
     let media = Media::new(vec![video], timescale(90_000));
@@ -618,7 +629,8 @@ fn one_second_track(
                 true,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     Track::new(
         TrackSpec::new(TrackId::new(track_id), timescale, config),
         samples,

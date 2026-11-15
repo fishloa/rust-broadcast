@@ -1858,6 +1858,7 @@ mod tests {
 
     fn sample(byte: u8) -> Sample {
         Sample::new(Bytes::from(vec![byte; 4]), Some(0), Some(0), Some(1), true)
+            .expect("valid timing")
     }
 
     fn opaque_track(track_id: TrackId) -> TrackSpec {

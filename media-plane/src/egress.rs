@@ -552,6 +552,7 @@ mod tests {
             None,
             true,
         )
+        .expect("valid timing")
     }
 
     fn video_spec(track_id: TrackId) -> TrackSpec {

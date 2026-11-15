@@ -64,9 +64,9 @@ fuzz_target!(|data: &[u8]| {
         for b in packet[1 + chunk.len()..].iter_mut() {
             *b = 0xFF;
         }
-        d.feed(&packet);
+        let _ = d.feed(&packet);
         drain(&mut d);
     }
-    d.finish();
+    let _ = d.finish();
     drain(&mut d);
 });

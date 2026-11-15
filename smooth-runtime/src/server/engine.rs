@@ -1251,7 +1251,8 @@ mod tests {
                         )
                     }
                     _ => Sample::new(vec![0x54; 8], Some(dts), Some(dts), Some(FRAME_DUR), true),
-                };
+                }
+                .expect("valid timing");
                 segmenter.push(spec.track_id, sample).expect("push");
             }
             for segment in segmenter.take_ready_segments() {

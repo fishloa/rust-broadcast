@@ -469,7 +469,7 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
             Some(dts + composition_offsets[i] as i64),
             Some(durations[i]),
             sync_flags[i],
-        ));
+        )?);
         next_dts += durations[i] as i64;
     }
     Ok(samples)

@@ -400,8 +400,8 @@ fn mid_gop_afd_change_through_the_demuxer() {
     }
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&ts);
-    demux.finish();
+    demux.feed(&ts).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut events = Vec::new();
     while let Some(ev) = demux.poll_event() {
         match ev {

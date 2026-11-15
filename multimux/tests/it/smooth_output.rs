@@ -105,7 +105,8 @@ impl SlideRoute {
                 Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
                 Some(W13_FRAME_DUR),
                 is_sync,
-            );
+            )
+            .expect("valid timing");
             self.seg.push(TrackId::new(1), sample).expect("push");
             self.next_frame += 1;
         }
@@ -148,7 +149,8 @@ async fn manifest_is_served_and_well_formed() {
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
             is_sync,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
     feed_via_segmenter(&store, specs, batches);
@@ -216,7 +218,8 @@ async fn advertised_equals_servable() {
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
             is_sync,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
     feed_via_segmenter(&store, specs, batches);
@@ -291,7 +294,8 @@ async fn auth_is_enforced() {
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
             i % 30 == 0,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
     feed_via_segmenter(&store, specs, batches);
@@ -388,7 +392,8 @@ async fn llhls_and_smooth_serve_from_same_trunk() {
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
             is_sync,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
     feed_via_segmenter(&store, specs, batches);
@@ -489,7 +494,8 @@ fn w13_route() -> Arc<RouteHandle> {
             Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
             Some(W13_FRAME_DUR),
             is_sync,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
     feed_via_segmenter(&store, specs, batches);
@@ -1097,7 +1103,8 @@ fn publish_route(specs: Vec<TrackSpec>) -> Arc<RouteHandle> {
                     Some(FRAME_DUR),
                     true,
                 ),
-            };
+            }
+            .expect("valid timing");
             batch.push((spec.track_id.value(), sample));
         }
         batches.push(batch);
@@ -1277,7 +1284,8 @@ async fn smooth_responses_carry_no_cache() {
             Some(i64::from(i) * i64::from(W13_FRAME_DUR)),
             Some(W13_FRAME_DUR),
             i.is_multiple_of(W13_SYNC_EVERY),
-        );
+        )
+        .expect("valid timing");
         seg.push(TrackId::new(1), sample).expect("push");
     }
     seg.flush().expect("flush");
@@ -1409,7 +1417,8 @@ async fn concurrent_requests_all_succeed_and_agree() {
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
             i % 30 == 0,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
     feed_via_segmenter(&store, vec![video_track_spec()], batches);

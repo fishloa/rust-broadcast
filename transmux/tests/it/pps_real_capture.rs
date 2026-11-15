@@ -28,10 +28,10 @@ fn updates(ts: &[u8]) -> usize {
         }
     };
     for c in ts.chunks(188 * 64) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
         drain(&mut d);
     }
-    d.finish();
+    d.finish().expect("valid timing");
     drain(&mut d);
     n
 }

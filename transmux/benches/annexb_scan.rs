@@ -65,8 +65,8 @@ fn bench_streaming_ts_demux(c: &mut Criterion) {
         group.bench_function(name, |b| {
             b.iter(|| {
                 let mut demux = StreamingTsDemux::new();
-                demux.feed(black_box(&ts));
-                demux.finish();
+                demux.feed(black_box(&ts)).expect("valid timing");
+                demux.finish().expect("valid timing");
                 let mut events = 0u64;
                 while let Some(e) = demux.poll_event() {
                     black_box(&e);

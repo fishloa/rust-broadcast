@@ -278,6 +278,7 @@ fn big_sample() -> transmux::ir::Sample {
         Some(3_000),
         true,
     )
+    .expect("valid timing")
 }
 
 /// Wait on the acceptor's `Notify` until at least `n` connections have been

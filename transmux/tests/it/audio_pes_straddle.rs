@@ -217,10 +217,10 @@ fn observe(ts: &[u8], chunk: usize) -> BTreeMap<TrackId, Vec<Sample>> {
         }
     };
     for c in ts.chunks(chunk) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
         drain(&mut d);
     }
-    d.finish();
+    d.finish().expect("valid timing");
     drain(&mut d);
     out
 }
