@@ -29,11 +29,12 @@ fn system_clock_field_widths() {
     let ok = SystemClockDescriptor::new(true, 0x3F, 0x07);
     let b = ser(&ok).unwrap();
     assert_eq!(SystemClockDescriptor::parse(&b).unwrap(), ok);
-    let edits: [fn(&mut SystemClockDescriptor); 4] = [
+    // The two `reserved` fields are typed `ReservedOnes<1>` / `ReservedOnes<5>`,
+    // so an over-range value is unrepresentable; the numeric fields remain the
+    // overflow cases here.
+    let edits: [fn(&mut SystemClockDescriptor); 2] = [
         |d| d.clock_accuracy_integer = 0x40,
         |d| d.clock_accuracy_exponent = 0x08,
-        |d| d.reserved_1 = 0x02,
-        |d| d.reserved_5 = 0x20,
     ];
     for edit in edits {
         let mut d = ok.clone();
