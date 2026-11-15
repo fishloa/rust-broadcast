@@ -11,6 +11,7 @@
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
+use broadcast_common::reserved::ReservedOnes;
 
 /// Tag of `MPEG2_stereoscopic_video_format_descriptor` (Table 2-45: 52).
 pub const TAG_VIDEO_FORMAT: u8 = 0x34;
@@ -18,8 +19,10 @@ pub const TAG_VIDEO_FORMAT: u8 = 0x34;
 pub const TAG_PROGRAM_INFO: u8 = 0x35;
 /// Tag of `Stereoscopic_video_info_descriptor` (Table 2-45: 54).
 pub const TAG_VIDEO_INFO: u8 = 0x36;
-const RESERVED_7_DEFAULT: u8 = 0x7F;
-const RESERVED_5_DEFAULT: u8 = 0x1F;
+/// Width of a `reserved(7)` field.
+const RESERVED_7_BITS: u32 = 7;
+/// Width of a `reserved(5)` field.
+const RESERVED_5_BITS: u32 = 5;
 
 // ───────────────────────── 0x34 ─────────────────────────────────────────────
 
@@ -34,7 +37,8 @@ pub struct Mpeg2StereoscopicVideoFormatDescriptor {
     pub arrangement_type: Option<u8>,
     /// `reserved(7)` carried when no `arrangement_type` is present (default
     /// `0x7F`); ignored when `arrangement_type` is `Some`.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_7_BITS>,
     /// Bytes after the syntax, preserved verbatim.
     pub trailing: Vec<u8>,
 }
@@ -45,7 +49,7 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
     pub fn new(arrangement_type: Option<u8>) -> Self {
         Self {
             arrangement_type,
-            reserved: RESERVED_7_DEFAULT,
+            reserved: ReservedOnes::FILL,
             trailing: Vec::new(),
         }
     }
@@ -56,7 +60,11 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
         let v = r.u8(7)?;
         Ok(Self {
             arrangement_type: present.then_some(v),
-            reserved: if present { RESERVED_7_DEFAULT } else { v },
+            reserved: if present {
+                ReservedOnes::FILL
+            } else {
+                ReservedOnes::from_bits(u64::from(v))
+            },
             trailing: r.rest()?.to_vec(),
         })
     }
@@ -69,7 +77,7 @@ impl Mpeg2StereoscopicVideoFormatDescriptor {
         )?;
         match self.arrangement_type {
             Some(a) => w.put(u64::from(a), 7, "arrangement_type")?,
-            None => w.put(u64::from(self.reserved), 7, "reserved")?,
+            None => w.put(self.reserved.get(), 7, "reserved")?,
         }
         w.bytes(&self.trailing)?;
         Ok(w.into_vec())
@@ -148,7 +156,8 @@ broadcast_common::impl_spec_display!(StereoscopicServiceType, Reserved);
 #[non_exhaustive]
 pub struct StereoscopicProgramInfoDescriptor {
     /// `reserved(5)`, default `0x1F`.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_5_BITS>,
     /// `stereoscopic_service_type` (Table 2-106).
     pub stereoscopic_service_type: StereoscopicServiceType,
     /// Bytes after the syntax (`descriptor_length` shall be 1, so none are
@@ -161,7 +170,7 @@ impl StereoscopicProgramInfoDescriptor {
     #[must_use]
     pub fn new(stereoscopic_service_type: StereoscopicServiceType) -> Self {
         Self {
-            reserved: RESERVED_5_DEFAULT,
+            reserved: ReservedOnes::FILL,
             stereoscopic_service_type,
             trailing: Vec::new(),
         }
@@ -170,7 +179,7 @@ impl StereoscopicProgramInfoDescriptor {
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "StereoscopicProgramInfoDescriptor");
         Ok(Self {
-            reserved: r.u8(5)?,
+            reserved: ReservedOnes::from_bits(u64::from(r.u8(5)?)),
             stereoscopic_service_type: StereoscopicServiceType::from_u8(r.u8(3)?),
             trailing: r.rest()?.to_vec(),
         })
@@ -178,7 +187,7 @@ impl StereoscopicProgramInfoDescriptor {
 
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.reserved), 5, "reserved")?;
+        w.put(self.reserved.get(), 5, "reserved")?;
         w.put(
             u64::from(self.stereoscopic_service_type.to_u8()),
             3,
@@ -276,14 +285,14 @@ pub enum StereoscopicVideoView {
     /// `base_video_flag == '1'`: the base view video stream.
     Base {
         /// `reserved(7)` before `leftview_flag`, default `0x7F`.
-        reserved: u8,
+        reserved: ReservedOnes<RESERVED_7_BITS>,
         /// `leftview_flag`: the stream is the left (true) or right view.
         leftview_flag: bool,
     },
     /// `base_video_flag == '0'`: the additional view video stream.
     Additional {
         /// `reserved(7)` before `usable_as_2D`, default `0x7F`.
-        reserved: u8,
+        reserved: ReservedOnes<RESERVED_7_BITS>,
         /// `usable_as_2D`: the additional view may also serve a 2D service.
         usable_as_2d: bool,
         /// `horizontal_upsampling_factor` (Table 2-108).
@@ -300,7 +309,8 @@ pub enum StereoscopicVideoView {
 #[non_exhaustive]
 pub struct StereoscopicVideoInfoDescriptor {
     /// `reserved(7)` before `base_video_flag`, default `0x7F`.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_7_BITS>,
     /// The part selected by `base_video_flag`.
     pub view: StereoscopicVideoView,
     /// Bytes after the syntax, preserved verbatim.
@@ -312,7 +322,7 @@ impl StereoscopicVideoInfoDescriptor {
     #[must_use]
     pub fn new(view: StereoscopicVideoView) -> Self {
         Self {
-            reserved: RESERVED_7_DEFAULT,
+            reserved: ReservedOnes::FILL,
             view,
             trailing: Vec::new(),
         }
@@ -320,16 +330,16 @@ impl StereoscopicVideoInfoDescriptor {
 
     fn parse_body(body: &[u8]) -> Result<Self> {
         let mut r = BitReader::new(body, "StereoscopicVideoInfoDescriptor");
-        let reserved = r.u8(7)?;
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(7)?));
         let base = r.flag()?;
         let view = if base {
             StereoscopicVideoView::Base {
-                reserved: r.u8(7)?,
+                reserved: ReservedOnes::from_bits(u64::from(r.u8(7)?)),
                 leftview_flag: r.flag()?,
             }
         } else {
             StereoscopicVideoView::Additional {
-                reserved: r.u8(7)?,
+                reserved: ReservedOnes::from_bits(u64::from(r.u8(7)?)),
                 usable_as_2d: r.flag()?,
                 horizontal_upsampling_factor: UpsamplingFactor::from_u8(r.u8(4)?),
                 vertical_upsampling_factor: UpsamplingFactor::from_u8(r.u8(4)?),
@@ -344,14 +354,14 @@ impl StereoscopicVideoInfoDescriptor {
 
     fn write_body(&self) -> Result<Vec<u8>> {
         let mut w = BitWriter::new();
-        w.put(u64::from(self.reserved), 7, "reserved")?;
+        w.put(self.reserved.get(), 7, "reserved")?;
         match &self.view {
             StereoscopicVideoView::Base {
                 reserved,
                 leftview_flag,
             } => {
                 w.flag(true, "base_video_flag")?;
-                w.put(u64::from(*reserved), 7, "reserved")?;
+                w.put(reserved.get(), 7, "reserved")?;
                 w.flag(*leftview_flag, "leftview_flag")?;
             }
             StereoscopicVideoView::Additional {
@@ -361,7 +371,7 @@ impl StereoscopicVideoInfoDescriptor {
                 vertical_upsampling_factor,
             } => {
                 w.flag(false, "base_video_flag")?;
-                w.put(u64::from(*reserved), 7, "reserved")?;
+                w.put(reserved.get(), 7, "reserved")?;
                 w.flag(*usable_as_2d, "usable_as_2D")?;
                 w.put(
                     u64::from(horizontal_upsampling_factor.to_u8()),
@@ -412,10 +422,10 @@ mod tests {
         // absent: the 7 reserved bits survive (here all ones)
         let d: Mpeg2StereoscopicVideoFormatDescriptor = rt(&[TAG_VIDEO_FORMAT, 1, 0x7F]);
         assert_eq!(d.arrangement_type, None);
-        assert_eq!(d.reserved, 0x7F);
+        assert_eq!(d.reserved, ReservedOnes::FILL);
         // non-default reserved bits round-trip
         let d: Mpeg2StereoscopicVideoFormatDescriptor = rt(&[TAG_VIDEO_FORMAT, 1, 0x00]);
-        assert_eq!(d.reserved, 0);
+        assert_eq!(d.reserved, ReservedOnes::from_bits(0));
         assert!(matches!(
             &(Mpeg2StereoscopicVideoFormatDescriptor::parse(&[TAG_VIDEO_FORMAT, 0])),
             Err(crate::error::Error::BufferTooShort(..))
@@ -440,7 +450,7 @@ mod tests {
         ] {
             let d: StereoscopicProgramInfoDescriptor = rt(&[TAG_PROGRAM_INFO, 1, b]);
             assert_eq!(d.stereoscopic_service_type, t);
-            assert_eq!(d.reserved, 0x1F);
+            assert_eq!(d.reserved, ReservedOnes::FILL);
         }
     }
 
@@ -491,5 +501,35 @@ mod tests {
             &(StereoscopicVideoInfoDescriptor::parse(&[TAG_VIDEO_INFO, 2, 0xFE, 0xFF])),
             Err(crate::error::Error::BufferTooShort(..))
         ));
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent flag/type bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let fmt = Mpeg2StereoscopicVideoFormatDescriptor {
+            arrangement_type: None,
+            reserved: ReservedOnes::from_bits(0xFF),
+            trailing: vec![],
+        };
+        assert_eq!(fmt.reserved.get(), 0x7F);
+        let info = StereoscopicProgramInfoDescriptor {
+            reserved: ReservedOnes::from_bits(0xFF),
+            stereoscopic_service_type: StereoscopicServiceType::Unspecified,
+            trailing: vec![],
+        };
+        assert_eq!(info.reserved.get(), 0x1F);
+        let view = StereoscopicVideoInfoDescriptor {
+            reserved: ReservedOnes::from_bits(0xFF),
+            view: StereoscopicVideoView::Base {
+                reserved: ReservedOnes::from_bits(0xFF),
+                leftview_flag: false,
+            },
+            trailing: vec![],
+        };
+        assert_eq!(view.reserved.get(), 0x7F);
+        if let StereoscopicVideoView::Base { reserved, .. } = view.view {
+            assert_eq!(reserved.get(), 0x7F);
+        }
     }
 }
