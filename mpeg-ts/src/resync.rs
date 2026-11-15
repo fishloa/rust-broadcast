@@ -72,13 +72,13 @@ pub struct ResyncStats {
     pub dropped_bytes: u64,
 }
 
-/// One span of bytes the resynchroniser discarded **after** it had locked
-/// (the stream lost sync mid-way, or ended on a truncated packet).
+/// One span of bytes the resynchroniser discarded: either the bytes before
+/// the first lock (a capture that starts mid-packet or on garbage), a
+/// mid-stream sync loss, or a truncated trailing packet.
 ///
-/// Drained with [`TsResync::take_losses`]; one entry per lost-sync event, so a
-/// caller can report each skipped unit exactly once. Junk *before* the first
-/// lock (a capture that starts mid-packet) is not a loss and is only counted in
-/// [`ResyncStats::dropped_bytes`].
+/// Drained with [`TsResync::take_losses`]; one entry per discarded span, so a
+/// caller can report each skipped unit exactly once, and the spans account for
+/// every byte in [`ResyncStats::dropped_bytes`].
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -108,6 +108,10 @@ pub struct ResyncLoss {
 /// Lock is declared after [`LOCK_CONFIRMATIONS`] consecutive sync bytes are
 /// found at the candidate stride (188 or 204).  On sync loss the resynchroniser
 /// re-scans from the byte after the lost position.
+///
+/// Every discarded byte is reported as a [`ResyncLoss`], including the bytes
+/// before the first lock: a caller that never sees a loss event therefore
+/// never silently dropped input.
 ///
 /// # Stats
 ///
@@ -229,16 +233,21 @@ impl TsResync {
     }
 
     fn lock(&mut self, offset: usize, stride: PacketStride) {
-        self.stats.dropped_bytes += offset as u64;
+        self.open_loss
+            .get_or_insert(self.consumed + self.head as u64);
         self.head += offset;
         self.stride = Some(stride);
         if let Some(start) = self.open_loss.take() {
-            self.losses.push(ResyncLoss {
-                offset: start,
-                dropped_bytes: self.consumed + self.head as u64 - start,
-                packet_index: self.stats.packets,
-                truncated_tail: false,
-            });
+            let end = self.consumed + self.head as u64;
+            if end > start {
+                self.stats.dropped_bytes += end - start;
+                self.losses.push(ResyncLoss {
+                    offset: start,
+                    dropped_bytes: end - start,
+                    packet_index: self.stats.packets,
+                    truncated_tail: false,
+                });
+            }
         }
     }
 
@@ -522,8 +531,7 @@ mod tests {
         let stream = concat_ts(&pkts);
 
         let junk_len = 7usize;
-        let junk: Vec<u8> = vec![0x00; junk_len];
-        let mut data = junk;
+        let mut data: Vec<u8> = vec![0x00; junk_len];
         data.extend_from_slice(&stream);
 
         let mut r = TsResync::new();
@@ -616,6 +624,19 @@ mod tests {
     // Test 6 — aligned 188 stream yields same packets as plain chunks(188)
     //   (equivalence: fixture-less variant using synthetic data)
     // ------------------------------------------------------------------
+    /// The losses are one per discarded span, in stream order: the leading
+    /// garbage (if any) and the mid-stream sync loss or truncated tail.
+    fn assert_one_loss_plus_leading(losses: &[ResyncLoss], leading: u64, expected: ResyncLoss) {
+        let expected_leading = usize::from(leading > 0);
+        assert_eq!(losses.len(), expected_leading + 1, "{losses:?}");
+        if leading > 0 {
+            assert_eq!(losses[0].offset, 0);
+            assert_eq!(losses[0].dropped_bytes, leading);
+            assert!(!losses[0].truncated_tail);
+        }
+        assert_eq!(losses[expected_leading], expected);
+    }
+
     #[test]
     fn broken_sync_byte_after_lock_is_one_loss_with_offset() {
         let mut bytes = Vec::new();
@@ -628,15 +649,52 @@ mod tests {
         assert_eq!(got.len(), 11);
         r.finish();
         let losses = r.take_losses();
-        assert_eq!(losses.len(), 1);
-        assert_eq!(losses[0].offset, 5 * TS_PACKET_SIZE as u64);
-        assert_eq!(losses[0].dropped_bytes, TS_PACKET_SIZE as u64);
-        assert_eq!(losses[0].packet_index, 5);
+        assert_one_loss_plus_leading(
+            &losses,
+            0,
+            ResyncLoss {
+                offset: 5 * TS_PACKET_SIZE as u64,
+                dropped_bytes: TS_PACKET_SIZE as u64,
+                packet_index: 5,
+                truncated_tail: false,
+            },
+        );
+    }
+
+    #[test]
+    fn leading_junk_at_the_first_lock_is_a_loss() {
+        let mut bytes = vec![0x11; 30];
+        for t in 1..=8u8 {
+            bytes.extend_from_slice(&ts_packet(t));
+        }
+        let mut r = TsResync::new();
+        assert_eq!(r.feed(&bytes).len(), 8);
+        let losses = r.take_losses();
+        assert_eq!(losses.len(), 1, "{losses:?}");
+        assert_eq!(losses[0].offset, 0);
+        assert_eq!(losses[0].dropped_bytes, 30);
+        assert_eq!(losses[0].packet_index, 0);
         assert!(!losses[0].truncated_tail);
     }
 
     #[test]
-    fn leading_junk_is_not_a_loss_but_truncated_tail_is() {
+    fn bulk_discarded_junk_before_lock_is_a_loss() {
+        let junk_len = LOCK_CONFIRMATIONS * RS_PACKET_SIZE + 7;
+        let mut bytes = vec![0x00; junk_len];
+        for t in 1..=8u8 {
+            bytes.extend_from_slice(&ts_packet(t));
+        }
+        let mut r = TsResync::new();
+        assert_eq!(r.feed(&bytes).len(), 8);
+        let losses = r.take_losses();
+        assert_eq!(losses.len(), 1, "{losses:?}");
+        assert_eq!(losses[0].offset, 0);
+        assert_eq!(losses[0].dropped_bytes, junk_len as u64);
+        assert_eq!(r.stats().dropped_bytes, junk_len as u64);
+    }
+
+    #[test]
+    fn leading_junk_is_a_loss_and_so_is_the_truncated_tail() {
         let mut bytes = vec![0x11; 30];
         for t in 1..=8u8 {
             bytes.extend_from_slice(&ts_packet(t));
@@ -646,10 +704,16 @@ mod tests {
         let _ = r.feed(&bytes);
         r.finish();
         let losses = r.take_losses();
-        assert_eq!(losses.len(), 1);
-        assert!(losses[0].truncated_tail);
-        assert_eq!(losses[0].offset, 30 + 8 * TS_PACKET_SIZE as u64);
-        assert_eq!(losses[0].dropped_bytes, 50);
+        assert_one_loss_plus_leading(
+            &losses,
+            30,
+            ResyncLoss {
+                offset: 30 + 8 * TS_PACKET_SIZE as u64,
+                dropped_bytes: 50,
+                packet_index: 8,
+                truncated_tail: true,
+            },
+        );
     }
 
     #[test]
@@ -749,22 +813,26 @@ mod tests {
 
         let mut r = TsResync::new();
         let mut packets = r.feed(&input);
-        assert_eq!(
-            packets.len(),
-            10,
-            "three packets cannot lock before the end"
-        );
+        let tags: Vec<u8> = packets.iter().map(|p| p[1]).collect();
+        assert_eq!(tags, (1u8..=10).collect::<Vec<_>>());
         r.finish();
         packets.extend(r.take_tail_packets());
         let tags: Vec<u8> = packets.iter().map(|p| p[1]).collect();
         assert_eq!(tags, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13, 14]);
         let stats = r.stats();
         assert_eq!(stats.packets, 13);
-        assert_eq!(stats.dropped_bytes, TS_PACKET_SIZE as u64);
+        assert_eq!(stats.dropped_bytes, TS_PACKET_SIZE as u64 + 1);
         let losses = r.take_losses();
-        assert_eq!(losses.len(), 1);
-        assert_eq!(losses[0].dropped_bytes, TS_PACKET_SIZE as u64);
-        assert!(!losses[0].truncated_tail);
+        assert_one_loss_plus_leading(
+            &losses,
+            0,
+            ResyncLoss {
+                offset: 10 * TS_PACKET_SIZE as u64,
+                dropped_bytes: TS_PACKET_SIZE as u64,
+                packet_index: 10,
+                truncated_tail: false,
+            },
+        );
     }
 
     #[test]
@@ -821,8 +889,15 @@ mod tests {
         assert_eq!(tags, (1u8..=10).collect::<Vec<_>>());
         assert!(r.take_tail_packets().is_empty());
         let losses = r.take_losses();
-        assert_eq!(losses.len(), 1);
-        assert!(losses[0].truncated_tail);
-        assert_eq!(losses[0].dropped_bytes, 5);
+        assert_one_loss_plus_leading(
+            &losses,
+            0,
+            ResyncLoss {
+                offset: 10 * TS_PACKET_SIZE as u64,
+                dropped_bytes: 5,
+                packet_index: 10,
+                truncated_tail: true,
+            },
+        );
     }
 }

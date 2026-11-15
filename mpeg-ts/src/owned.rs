@@ -11,14 +11,22 @@
 use crate::error::{Error, Result};
 use crate::pid::Pid;
 use crate::ts::{
-    ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK,
-    ContinuityCounter, PCR_FIELD_LEN, Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE,
-    TsHeader,
+    ADAPTATION_FLAG, AF_OPCR_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK,
+    ContinuityCounter, PCR_FIELD_LEN, PCR_RESERVED_BITS, PCR_RESERVED_BYTE_OFFSET,
+    PCR_RESERVED_SHIFT, Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
 };
 
 /// The 13-bit PID value used for null packets — `0x1FFF`
 /// (ISO/IEC 13818-1 §2.4.3.3, Table 2-3).
 const NULL_PID: Pid = crate::pid::well_known::NULL;
+
+/// The PCR/OPCR field starts after the 4-byte header, the
+/// `adaptation_field_length` byte and the flags byte (ISO/IEC 13818-1:2007
+/// §2.4.3.4).
+const CLOCK_REFERENCE_START: usize = 6;
+/// `adaptation_field_length` a packet needs to carry the flags byte plus one
+/// 6-byte clock-reference field: 1 + 6.
+const CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN: usize = 1 + PCR_FIELD_LEN;
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
@@ -339,48 +347,30 @@ impl OwnedTsPacket {
     /// assert_eq!(af.pcr, Some(new_pcr));
     /// ```
     pub fn set_pcr(packet: &mut [u8; TS_PACKET_SIZE], pcr: Pcr) -> Result<()> {
-        // Byte 3: check adaptation_field_control has adaptation bit set
-        // (ADAPTATION_FLAG = bit 5, ISO/IEC 13818-1 §2.4.3.3).
-        if packet[3] & ADAPTATION_FLAG == 0 {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: 6,
-                    have: 0,
-                    what: "set_pcr: no adaptation field",
-                },
-            ));
-        }
-        let af_len = packet[4] as usize;
-        // W7 (#1074): the flags byte (1) + PCR field (PCR_FIELD_LEN = 6) must
-        // both fit inside `af_len`, not just the flags byte. A malformed
-        // adaptation field with `af_len` between 1 and 6 (PCR flag set
-        // anyway) previously passed this check and then wrote 6 PCR bytes at
-        // a fixed offset — 5 of which land past what `af_len` declares as
-        // the adaptation field, i.e. into the payload.
-        const REQUIRED_AF_LEN: usize = 1 + PCR_FIELD_LEN;
-        if af_len < REQUIRED_AF_LEN {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: REQUIRED_AF_LEN,
-                    have: af_len,
-                    what: "set_pcr: adaptation field too short for flags byte + PCR",
-                },
-            ));
-        }
-        // Byte 5: adaptation field flags byte (AF_PCR_FLAG = 0x10, §2.4.3.4).
-        if packet[5] & AF_PCR_FLAG == 0 {
-            return Err(Error::BufferTooShort(
-                broadcast_common::error::BufferTooShort {
-                    need: 6,
-                    have: 0,
-                    what: "set_pcr: PCR flag not set in adaptation field",
-                },
-            ));
-        }
-        // PCR occupies the 6 bytes starting at offset 6 (after header + af_len byte + flags byte).
-        let pcr_start = 6usize;
-        let pcr_end = pcr_start + PCR_FIELD_LEN;
-        packet[pcr_start..pcr_end].copy_from_slice(&pcr.to_field_bytes());
+        let slot = clock_reference_slot(packet, AF_PCR_FLAG, "PCR")?;
+        let reserved = (packet[slot.start + PCR_RESERVED_BYTE_OFFSET] & PCR_RESERVED_BITS)
+            >> PCR_RESERVED_SHIFT;
+        let field = pcr.to_field_bytes_with_reserved(reserved)?;
+        packet[slot].copy_from_slice(&field);
+        Ok(())
+    }
+
+    /// Overwrite the OPCR value in an existing adaptation field in `packet`,
+    /// keeping the 6 `reserved` bits the packet already carries beside it.
+    ///
+    /// # Errors
+    ///
+    /// - [`Error::NoAdaptationField`] — the packet has no adaptation field.
+    /// - [`Error::AdaptationFieldTooShort`] — the adaptation field is shorter
+    ///   than the flags byte plus the OPCR field.
+    /// - [`Error::NoClockReference`] — the OPCR flag is not set.
+    pub fn set_opcr(packet: &mut [u8; TS_PACKET_SIZE], opcr: Pcr) -> Result<()> {
+        let slot = clock_reference_slot(packet, AF_OPCR_FLAG, "OPCR")?;
+        let reserved = (packet[slot.start + PCR_FIELD_LEN + PCR_RESERVED_BYTE_OFFSET]
+            & PCR_RESERVED_BITS)
+            >> PCR_RESERVED_SHIFT;
+        let field = opcr.to_field_bytes_with_reserved(reserved)?;
+        packet[slot].copy_from_slice(&field);
         Ok(())
     }
 
@@ -399,6 +389,41 @@ impl OwnedTsPacket {
         }
         Some(AdaptationField::parse(&self.raw[5..5 + af_len]))
     }
+}
+
+/// The PCR/OPCR field is the first field after the adaptation-field flags
+/// byte (ISO/IEC 13818-1:2007 §2.4.3.4), so every referenced field starts at
+/// 6 and each is 6 bytes long.
+fn clock_reference_slot(
+    packet: &[u8; TS_PACKET_SIZE],
+    flag: u8,
+    which: &'static str,
+) -> Result<core::ops::Range<usize>> {
+    if packet[3] & ADAPTATION_FLAG == 0 {
+        return Err(Error::NoAdaptationField);
+    }
+    let af_len = packet[4] as usize;
+    if af_len == 0 {
+        return Err(Error::NoAdaptationField);
+    }
+    let mut offset = 0usize;
+    let mut bit = AF_PCR_FLAG;
+    while bit != flag {
+        offset += PCR_FIELD_LEN;
+        bit >>= 1;
+    }
+    let start = CLOCK_REFERENCE_START + offset;
+    let end = start + PCR_FIELD_LEN;
+    if af_len < CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN + offset {
+        return Err(Error::AdaptationFieldTooShort {
+            need: CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN + offset,
+            have: af_len,
+        });
+    }
+    if packet[5] & flag == 0 {
+        return Err(Error::NoClockReference { which });
+    }
+    Ok(start..end)
 }
 
 #[cfg(test)]
@@ -552,11 +577,103 @@ mod tests {
 
         let pcr = Pcr::from_parts(10_000, 0).expect("in range");
         let err = OwnedTsPacket::set_pcr(&mut raw, pcr).unwrap_err();
-        assert!(matches!(err, Error::BufferTooShort(..)));
+        assert!(
+            matches!(err, Error::AdaptationFieldTooShort { need: 7, have: 1 }),
+            "expected AdaptationFieldTooShort, got {err:?}"
+        );
         assert_eq!(
             &raw[6..],
             payload_before.as_slice(),
             "payload must be untouched"
+        );
+    }
+
+    /// The three distinct causes used to be one fabricated
+    /// `BufferTooShort { need: 6, have: 0 }`, so a caller could not tell "no
+    /// adaptation field" from "no PCR slot" or "too short".
+    #[test]
+    fn set_pcr_reports_each_missing_slot_distinctly() {
+        let pcr = Pcr::from_parts(10_000, 0).expect("in range");
+
+        let mut no_af = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
+        no_af[0] = TS_SYNC_BYTE;
+        no_af[3] = crate::ts::PAYLOAD_FLAG;
+        assert_eq!(
+            OwnedTsPacket::set_pcr(&mut no_af, pcr),
+            Err(Error::NoAdaptationField)
+        );
+
+        let mut empty_af = no_af;
+        empty_af[3] = ADAPTATION_FLAG | crate::ts::PAYLOAD_FLAG;
+        empty_af[4] = 0;
+        assert_eq!(
+            OwnedTsPacket::set_pcr(&mut empty_af, pcr),
+            Err(Error::NoAdaptationField)
+        );
+
+        let mut flag_clear = empty_af;
+        flag_clear[4] = 7;
+        flag_clear[5] = 0x00;
+        assert_eq!(
+            OwnedTsPacket::set_pcr(&mut flag_clear, pcr),
+            Err(Error::NoClockReference { which: "PCR" })
+        );
+    }
+
+    /// An in-place PCR rewrite used to force the reserved bits to `1`, so a
+    /// captured packet that carries other values changed when rewritten.
+    #[test]
+    fn set_pcr_keeps_the_packets_reserved_bits() {
+        let mut raw = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[3] = ADAPTATION_FLAG | crate::ts::PAYLOAD_FLAG;
+        raw[4] = 7;
+        raw[5] = AF_PCR_FLAG;
+        raw[6..12].copy_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x00, 0x00]);
+        let before = crate::ts::TsPacket::parse(&raw).unwrap();
+        let af = before.adaptation_field().unwrap().unwrap();
+        assert_eq!(af.pcr_reserved, 0);
+
+        let pcr = Pcr::from_parts(10_000, 0).expect("in range");
+        OwnedTsPacket::set_pcr(&mut raw, pcr).unwrap();
+        assert_eq!(&raw[6..12], &pcr.to_field_bytes_with_reserved(0).unwrap());
+        let after = crate::ts::TsPacket::parse(&raw).unwrap();
+        let af = after.adaptation_field().unwrap().unwrap();
+        assert_eq!(af.pcr, Some(pcr));
+        assert_eq!(af.pcr_reserved, 0, "the packet's own reserved bits");
+    }
+
+    /// `set_opcr` writes the OPCR (after the PCR) and reports a missing slot
+    /// with the same typed errors.
+    #[test]
+    fn set_opcr_writes_after_the_pcr_and_reports_a_missing_slot() {
+        let pcr = Pcr::from_parts(10_000, 0).expect("in range");
+        let opcr = Pcr::from_parts(20_000, 1).expect("in range");
+
+        let mut raw = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[3] = ADAPTATION_FLAG | crate::ts::PAYLOAD_FLAG;
+        raw[4] = CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN as u8 + PCR_FIELD_LEN as u8;
+        raw[5] = AF_PCR_FLAG | AF_OPCR_FLAG;
+        raw[6..12].copy_from_slice(&pcr.to_field_bytes());
+        raw[12..18].copy_from_slice(&opcr.to_field_bytes());
+
+        let new_opcr = Pcr::from_parts(40_000, 2).expect("in range");
+        OwnedTsPacket::set_opcr(&mut raw, new_opcr).unwrap();
+        let parsed = crate::ts::TsPacket::parse(&raw).unwrap();
+        let af = parsed.adaptation_field().unwrap().unwrap();
+        assert_eq!(af.pcr, Some(pcr), "PCR untouched");
+        assert_eq!(af.opcr, Some(new_opcr));
+
+        raw[5] = AF_PCR_FLAG;
+        assert_eq!(
+            OwnedTsPacket::set_opcr(&mut raw, new_opcr),
+            Err(Error::NoClockReference { which: "OPCR" })
+        );
+        raw[3] = crate::ts::PAYLOAD_FLAG;
+        assert_eq!(
+            OwnedTsPacket::set_opcr(&mut raw, new_opcr),
+            Err(Error::NoAdaptationField)
         );
     }
 }

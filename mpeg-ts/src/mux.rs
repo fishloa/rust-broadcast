@@ -9,10 +9,27 @@
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use broadcast_common::Parse;
+use broadcast_common::stage::Timestamp;
+
 use crate::pid::{Pid, well_known};
+use crate::section::Section;
 use crate::ts::{
     AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
 };
+
+/// `table_id` of the PAT (ISO/IEC 13818-1 §2.4.4.3).
+pub const TABLE_ID_PAT: u8 = 0x00;
+/// `table_id` of the PMT (ISO/IEC 13818-1 §2.4.4.8).
+pub const TABLE_ID_PMT: u8 = 0x02;
+/// `table_id` of the NIT actual (ETSI EN 300 468 §5.2.1).
+pub const TABLE_ID_NIT_ACTUAL: u8 = 0x40;
+/// `table_id` of the SDT actual (ETSI EN 300 468 §5.2.3).
+pub const TABLE_ID_SDT_ACTUAL: u8 = 0x42;
+/// `table_id` of the TDT (ETSI EN 300 468 §5.2.5).
+pub const TABLE_ID_TDT: u8 = 0x70;
+/// `table_id` of the TOT (ETSI EN 300 468 §5.2.6).
+pub const TABLE_ID_TOT: u8 = 0x73;
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
 const PUSI_PAYLOAD_CAP: usize = 183;
@@ -312,20 +329,101 @@ pub const PMT_MAX_INTERVAL: SectionInterval =
 
 // ── SiMux ────────────────────────────────────────────────────────────────────
 
+/// The key one scheduled section is stored under: the PID it is carried on
+/// and its identity inside that PID — `table_id` plus `section_number`
+/// (ISO/IEC 13818-1 §2.4.4.4 / EN 300 468 §5.2). Several distinct tables
+/// share a PID by spec (TDT/TOT both on `0x0014`, SDT/BAT both on `0x0011`,
+/// EIT present/following vs. schedule sub-tables on `0x0012`), and a long
+/// table spans several sections told apart by `section_number`, so neither
+/// PID alone nor PID plus `table_id` names a section.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct SectionKey {
+    /// The PID the section is carried on.
+    pub pid: Pid,
+    /// `table_id` (ISO/IEC 13818-1 §2.4.4.1).
+    pub table_id: u8,
+    /// `section_number`: the section's position in its table.
+    pub section_number: u8,
+}
+
+/// A section [`SiMux::upsert`] could not schedule, kept so the caller can
+/// see what was refused rather than having it dropped without a word.
+///
+/// The section itself is not retained: the bytes are the caller's, and a
+/// rejection names only where they were registered and why they cannot be
+/// emitted.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct RejectedSection {
+    /// The PID the section was registered on.
+    pub pid: Pid,
+    /// Why it was rejected.
+    pub reason: SectionRejection,
+}
+
+/// Why [`SiMux::upsert`] could not put a section into the emission
+/// schedule.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum SectionRejection {
+    /// The input held no complete section (an empty slice, or a header that
+    /// declares more bytes than were given), so there is nothing to parse.
+    /// An empty input used to register a whole `(pid, table_id 0)` entry and
+    /// emit the PAT interval's worth of nothing.
+    NotASection,
+    /// Two or more sections were given for one PID. A `SectionKey` names one
+    /// section, so a batch is ambiguous; register each on its own call.
+    MoreThanOneSection,
+    /// Several sections on one PID carried the same `(table_id,
+    /// section_number)`: the second would silently replace the first.
+    DuplicateSection,
+    /// The section bytes did not parse as a section header.
+    Malformed,
+    /// A convenience registration received a section of another table: a
+    /// `table_id` other than the one that registration is for.
+    WrongTableId {
+        /// The `table_id` the registration is for.
+        expected: u8,
+        /// The `table_id` the section carries, if its header fit.
+        found: Option<u8>,
+    },
+}
+
+impl SectionRejection {
+    /// A label for the rejection.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            SectionRejection::NotASection => "not_a_section",
+            SectionRejection::MoreThanOneSection => "more_than_one_section",
+            SectionRejection::DuplicateSection => "duplicate_section",
+            SectionRejection::Malformed => "malformed",
+            SectionRejection::WrongTableId { .. } => "wrong_table_id",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(SectionRejection);
+
 /// Section-repetition scheduler that builds TS packets on a caller-supplied clock.
 ///
-/// Each entry is a PID + table_id + concatenated complete-section bytes + an
-/// emission interval. Call [`poll_into`](Self::poll_into) with
+/// Each entry is one complete [section](crate::section::Section) — its
+/// `table_id` and `section_number` identify it, its PID + interval say where
+/// and how often it goes out. Call [`poll_into`](Self::poll_into) with
 /// monotonically-increasing `now` values to get 188-byte TS packets for every
 /// entry whose interval has elapsed since its last emission.
 ///
-/// The scheduler owns its section bytes — call [`upsert`](Self::upsert) to
-/// update them when SI changes. Entries are keyed by `(pid, table_id)`, not
-/// PID alone: several distinct tables share a PID by spec (TDT/TOT both on
-/// `0x0014`, SDT/BAT both on `0x0011`, EIT present/following vs. schedule
-/// sub-tables on `0x0012`), and `table_id` — the first byte of `sections` —
-/// is exactly the field the spec uses to tell them apart, so `upsert_tot`
-/// cannot silently replace a previously-registered `upsert_tdt` entry.
+/// Entries are keyed by [`SectionKey`]: `(pid, table_id, section_number)`.
+/// A section is given as a single `Section`: the length and CRC are derived
+/// from the section's own fields when it is packetised, so a caller cannot
+/// hand the scheduler bytes that are not a section, sections of mixed tables,
+/// or a trailing truncated section that used to be dropped without a word.
+/// Input that cannot be scheduled is kept and reported by
+/// [`rejected`](Self::rejected) ([`RejectedSection`]).
 ///
 /// All entries on the same PID share one [`SectionPacketiser`] (and so one
 /// continuity counter), created lazily the first time that PID emits — this
@@ -339,25 +437,16 @@ pub const PMT_MAX_INTERVAL: SectionInterval =
 /// [`upsert`](Self::upsert) at all.
 pub struct SiMux {
     entries: Vec<Entry>,
+    rejected: Vec<RejectedSection>,
     /// One packetiser per distinct PID, shared across every table_id on it.
     packetisers: Vec<SectionPacketiser>,
 }
 
 struct Entry {
-    pid: Pid,
-    table_id: u8,
-    sections: Vec<u8>,
+    key: SectionKey,
+    section: Section<'static>,
     interval: SectionInterval,
-    last_emit: Option<Duration>,
-}
-
-/// The dedupe/lookup key for an entry: the first byte of `sections` is
-/// `table_id` for every PSI/SI section (ISO/IEC 13818-1 §2.4.4.4 / EN 300 468
-/// §5.2). An empty `sections` (no section registered yet) has no real
-/// table_id; `0` is used as a sentinel and can only collide with another
-/// empty registration on the same PID, which is a caller no-op either way.
-fn table_id_of(sections: &[u8]) -> u8 {
-    sections.first().copied().unwrap_or(0)
+    last_emit: Option<Timestamp>,
 }
 
 /// Find the packetiser for `pid`, creating one (fresh continuity counter) if
@@ -377,75 +466,195 @@ impl SiMux {
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
+            rejected: Vec::new(),
             packetisers: Vec::new(),
         }
     }
 
-    /// Register or replace the sections emitted on `pid` at `interval` (a
+    /// Register or replace one section carried on `pid` at `interval` (a
     /// validated [`SectionInterval`]: EN 300 468 §5.1.4.1's 25 ms floor).
     ///
-    /// `sections` is the concatenated complete-section bytes for one emission
-    /// cycle; its first byte (`table_id`) plus `pid` is the dedupe key, so
-    /// re-calling for the same `(pid, table_id)` updates the bytes and
-    /// interval of that one table while preserving the PID's shared
-    /// continuity counter — a *different* table_id on the same `pid` (e.g.
-    /// TOT after TDT, both on `0x0014`) becomes a second, independent entry.
-    pub fn upsert(&mut self, pid: Pid, sections: Vec<u8>, interval: SectionInterval) {
-        let table_id = table_id_of(&sections);
-        if let Some(entry) = self
-            .entries
-            .iter_mut()
-            .find(|e| e.pid == pid && e.table_id == table_id)
-        {
-            entry.sections = sections;
+    /// The section is stored under its own [`SectionKey`], so re-calling for
+    /// the same `(pid, table_id, section_number)` updates that one section
+    /// and its interval while preserving the PID's shared continuity counter;
+    /// any other section becomes a second, independent entry.
+    ///
+    /// # Errors
+    ///
+    /// Returns the [`SectionRejection`] for a section that cannot be
+    /// scheduled: [`NotASection`](SectionRejection::NotASection) (the input
+    /// held no complete section, so the key would not be its own),
+    /// [`MoreThanOneSection`](SectionRejection::MoreThanOneSection) (a
+    /// [`SectionKey`] names one section, so a batch is ambiguous),
+    /// [`DuplicateSection`](SectionRejection::DuplicateSection) or
+    /// [`Malformed`](SectionRejection::Malformed) or
+    /// [`WrongTableId`](SectionRejection::WrongTableId). Every rejection is
+    /// kept in [`rejected`](Self::rejected).
+    pub fn upsert(
+        &mut self,
+        pid: Pid,
+        section: Vec<u8>,
+        interval: SectionInterval,
+    ) -> core::result::Result<(), SectionRejection> {
+        let rejection = self.register(pid, section, interval);
+        match rejection {
+            Some(reason) => {
+                self.rejected.push(RejectedSection { pid, reason });
+                Err(reason)
+            }
+            None => Ok(()),
+        }
+    }
+
+    /// Register one complete section, replacing the entry already stored
+    /// under its key.
+    fn register(
+        &mut self,
+        pid: Pid,
+        section: Vec<u8>,
+        interval: SectionInterval,
+    ) -> Option<SectionRejection> {
+        let batch = split_sections(&section);
+        let owned = match batch.len() {
+            0 => return Some(SectionRejection::NotASection),
+            1 => match Section::parse(batch[0]) {
+                Ok(parsed) => parsed,
+                Err(_) => return Some(SectionRejection::Malformed),
+            },
+            _ => {
+                if !sections_are_distinct(&batch) {
+                    return Some(SectionRejection::DuplicateSection);
+                }
+                return Some(SectionRejection::MoreThanOneSection);
+            }
+        };
+        let key = SectionKey {
+            pid,
+            table_id: owned.table_id,
+            section_number: owned.section_number,
+        };
+        let stored = Section::into_owned(owned);
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.key == key) {
+            entry.section = stored;
             entry.interval = interval;
         } else {
             self.entries.push(Entry {
-                pid,
-                table_id,
-                sections,
+                key,
+                section: stored,
                 interval,
                 last_emit: None,
             });
         }
+        None
+    }
+
+    /// The sections that could not be scheduled, with why, in the order they
+    /// were refused. Never silently dropped: read it after
+    /// [`upsert`](Self::upsert) to surface a bad input instead of trusting the
+    /// scheduler to have taken everything.
+    #[must_use]
+    pub fn rejected(&self) -> &[RejectedSection] {
+        &self.rejected
     }
 
     /// PAT at [`PAT_MAX_INTERVAL`] on PID 0x0000.
-    pub fn upsert_pat(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::PAT, sections, PAT_MAX_INTERVAL);
+    ///
+    /// # Errors
+    ///
+    /// As [`upsert`](Self::upsert); only a PAT section is accepted.
+    pub fn upsert_pat(&mut self, section: Vec<u8>) -> core::result::Result<(), SectionRejection> {
+        upsert_checked(
+            self,
+            well_known::PAT,
+            section,
+            PAT_MAX_INTERVAL,
+            TABLE_ID_PAT,
+        )
     }
 
     /// PMT at [`PMT_MAX_INTERVAL`] on the caller-supplied `pid`.
     ///
     /// Interval cites private/specs-verified/dvb/dvb-si/ §4.1.7.
-    pub fn upsert_pmt(&mut self, pid: Pid, sections: Vec<u8>) {
-        self.upsert(pid, sections, PMT_MAX_INTERVAL);
+    ///
+    /// # Errors
+    ///
+    /// As [`upsert`](Self::upsert); the PAT interval used to apply to whatever
+    /// was stored under `table_id 0`, so only a PMT section is accepted.
+    pub fn upsert_pmt(
+        &mut self,
+        pid: Pid,
+        section: Vec<u8>,
+    ) -> core::result::Result<(), SectionRejection> {
+        upsert_checked(self, pid, section, PMT_MAX_INTERVAL, TABLE_ID_PMT)
     }
 
     /// SDT actual at [`SDT_ACTUAL_MAX_INTERVAL`] on PID 0x0011.
     ///
     /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
-    pub fn upsert_sdt_actual(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::SDT_BAT, sections, SDT_ACTUAL_MAX_INTERVAL);
+    ///
+    /// # Errors
+    ///
+    /// As [`upsert`](Self::upsert); only an SDT actual section is accepted.
+    pub fn upsert_sdt_actual(
+        &mut self,
+        section: Vec<u8>,
+    ) -> core::result::Result<(), SectionRejection> {
+        upsert_checked(
+            self,
+            well_known::SDT_BAT,
+            section,
+            SDT_ACTUAL_MAX_INTERVAL,
+            TABLE_ID_SDT_ACTUAL,
+        )
     }
 
     /// NIT at [`NIT_MAX_INTERVAL`] on PID 0x0010.
-    pub fn upsert_nit(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::NIT, sections, NIT_MAX_INTERVAL);
+    ///
+    /// # Errors
+    ///
+    /// As [`upsert`](Self::upsert); only a NIT section is accepted.
+    pub fn upsert_nit(&mut self, section: Vec<u8>) -> core::result::Result<(), SectionRejection> {
+        upsert_checked(
+            self,
+            well_known::NIT,
+            section,
+            NIT_MAX_INTERVAL,
+            TABLE_ID_NIT_ACTUAL,
+        )
     }
 
     /// TDT at [`TDT_MAX_INTERVAL`] on PID 0x0014.
     ///
     /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
-    pub fn upsert_tdt(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::TDT_TOT, sections, TDT_MAX_INTERVAL);
+    ///
+    /// # Errors
+    ///
+    /// As [`upsert`](Self::upsert); only a TDT section is accepted.
+    pub fn upsert_tdt(&mut self, section: Vec<u8>) -> core::result::Result<(), SectionRejection> {
+        upsert_checked(
+            self,
+            well_known::TDT_TOT,
+            section,
+            TDT_MAX_INTERVAL,
+            TABLE_ID_TDT,
+        )
     }
 
     /// TOT at [`TOT_MAX_INTERVAL`] on PID 0x0014.
     ///
     /// Interval cites private/specs-verified/dvb/dvb-si/text/tr_101_211/README.md §4.4.1/§4.4.2.
-    pub fn upsert_tot(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::TDT_TOT, sections, TOT_MAX_INTERVAL);
+    ///
+    /// # Errors
+    ///
+    /// As [`upsert`](Self::upsert); only a TOT section is accepted.
+    pub fn upsert_tot(&mut self, section: Vec<u8>) -> core::result::Result<(), SectionRejection> {
+        upsert_checked(
+            self,
+            well_known::TDT_TOT,
+            section,
+            TOT_MAX_INTERVAL,
+            TABLE_ID_TOT,
+        )
     }
 
     /// Emit every entry due at `now` (i.e. `now - last_emit >= interval`, and
@@ -454,11 +663,10 @@ impl SiMux {
     ///
     /// Updates each emitted entry's `last_emit = now`. Deterministic given the
     /// fed `now` sequence. Returns the packet count appended.
-    pub fn poll_into(&mut self, now: Duration, out: &mut Vec<[u8; TS_PACKET_SIZE]>) -> usize {
+    pub fn poll_into(&mut self, now: Timestamp, out: &mut Vec<[u8; TS_PACKET_SIZE]>) -> usize {
         out.clear();
         let before = out.len();
 
-        let mut tmp = Vec::new();
         let packetisers = &mut self.packetisers;
         for entry in &mut self.entries {
             let due = match entry.last_emit {
@@ -466,12 +674,13 @@ impl SiMux {
                 Some(last) => now.saturating_sub(last) >= entry.interval.duration(),
             };
             if due {
-                let refs = split_sections(&entry.sections);
-                if !refs.is_empty() {
-                    let packetiser = packetiser_for(packetisers, entry.pid);
+                let mut tmp = Vec::new();
+                if let Ok(bytes) = entry.section.serialize() {
+                    let refs: [&[u8]; 1] = [&bytes];
+                    let packetiser = packetiser_for(packetisers, entry.key.pid);
                     packetiser.packetise_into(&refs, &mut tmp);
-                    out.append(&mut tmp);
                 }
+                out.append(&mut tmp);
                 entry.last_emit = Some(now);
             }
         }
@@ -480,11 +689,49 @@ impl SiMux {
     }
 
     /// Allocating convenience wrapper over [`poll_into`](Self::poll_into).
-    pub fn poll(&mut self, now: Duration) -> Vec<[u8; TS_PACKET_SIZE]> {
+    pub fn poll(&mut self, now: Timestamp) -> Vec<[u8; TS_PACKET_SIZE]> {
         let mut out = Vec::new();
         self.poll_into(now, &mut out);
         out
     }
+}
+
+fn sections_are_distinct(sections: &[&[u8]]) -> bool {
+    let mut keys: Vec<(u8, u8)> = Vec::with_capacity(sections.len());
+    for bytes in sections {
+        let Ok(section) = Section::parse(bytes) else {
+            return true;
+        };
+        let key = (section.table_id, section.section_number);
+        if keys.contains(&key) {
+            return false;
+        }
+        keys.push(key);
+    }
+    true
+}
+
+/// The scheduler accepts only this `table_id` for a convenience registration
+/// and otherwise keeps the section as rejected.
+fn upsert_checked(
+    mux: &mut SiMux,
+    pid: Pid,
+    section: Vec<u8>,
+    interval: SectionInterval,
+    table_id: u8,
+) -> core::result::Result<(), SectionRejection> {
+    if split_sections(&section)
+        .first()
+        .is_some_and(|s| s.first().copied() != Some(table_id))
+    {
+        let reason = SectionRejection::WrongTableId {
+            expected: table_id,
+            found: section.first().copied(),
+        };
+        mux.rejected.push(RejectedSection { pid, reason });
+        return Err(reason);
+    }
+    mux.upsert(pid, section, interval)
 }
 
 impl Default for SiMux {
@@ -582,7 +829,7 @@ mod tests {
 
     #[test]
     fn split_single_section() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 5]);
         let refs = split_sections(&s);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0], s.as_slice());
@@ -590,8 +837,8 @@ mod tests {
 
     #[test]
     fn split_two_sections() {
-        let s1 = test_fixtures::psi::short_section(0x42, &[0x01, 0x02]);
-        let s2 = test_fixtures::psi::short_section(0x46, &[0x03, 0x04, 0x05]);
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01, 0x02]);
+        let s2 = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0x03, 0x04, 0x05]);
         let both = concat_sections(&[s1.clone(), s2.clone()]);
         let refs = split_sections(&both);
         assert_eq!(refs.len(), 2);
@@ -607,7 +854,7 @@ mod tests {
 
     #[test]
     fn split_trailing_garbage_ignored() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 3]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 3]);
         let mut data = s.clone();
         data.push(0xFF); // trailing byte that doesn't complete a header
         let refs = split_sections(&data);
@@ -657,40 +904,43 @@ mod tests {
     #[test]
     fn new_and_default_simux_are_empty() {
         for mut mux in [SiMux::new(), SiMux::default()] {
-            let pkts = mux.poll(Duration::ZERO);
+            let pkts = mux.poll(Timestamp::ZERO);
             assert!(pkts.is_empty());
         }
     }
 
     #[test]
     fn first_poll_always_emits() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 10]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s.clone(),
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
-        let pkts = mux.poll(Duration::ZERO);
+        )
+        .expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         assert!(!pkts.is_empty(), "first poll must emit");
     }
 
     #[test]
     fn first_poll_emits_all_entries() {
-        let s1 = test_fixtures::psi::short_section(0x42, &[0x01; 5]);
-        let s2 = test_fixtures::psi::short_section(0x46, &[0x02; 5]);
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01; 5]);
+        let s2 = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0x02; 5]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s1.clone(),
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
         mux.upsert(
             Pid::from_const(0x0200),
             s2.clone(),
             SectionInterval::from_const(Duration::from_millis(200)),
-        );
-        let pkts = mux.poll(Duration::ZERO);
+        )
+        .expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         // Both entries should emit — we count PID occurrences
         let pids: Vec<Pid> = pkts
             .iter()
@@ -704,53 +954,56 @@ mod tests {
 
     #[test]
     fn entry_emits_only_when_due() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 10]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s.clone(),
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
 
         // First poll at t=0: emits
-        let pkts0 = mux.poll(Duration::ZERO);
+        let pkts0 = mux.poll(Timestamp::ZERO);
         assert!(!pkts0.is_empty());
 
         // t=50: not yet due
-        let pkts50 = mux.poll(Duration::from_millis(50));
+        let pkts50 = mux.poll(Timestamp::from_millis(50));
         assert!(pkts50.is_empty(), "should not emit at t=50");
 
         // t=99: still not due
-        let pkts99 = mux.poll(Duration::from_millis(99));
+        let pkts99 = mux.poll(Timestamp::from_millis(99));
         assert!(pkts99.is_empty(), "should not emit at t=99");
 
         // t=100: due again
-        let pkts100 = mux.poll(Duration::from_millis(100));
+        let pkts100 = mux.poll(Timestamp::from_millis(100));
         assert!(!pkts100.is_empty(), "should emit at t=100");
     }
 
     #[test]
     fn two_entries_different_cadence() {
-        let s1 = test_fixtures::psi::short_section(0x42, &[0x01; 5]);
-        let s2 = test_fixtures::psi::short_section(0x46, &[0x02; 5]);
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01; 5]);
+        let s2 = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0x02; 5]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             concat_sections(&[s1]),
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
         mux.upsert(
             Pid::from_const(0x0200),
             concat_sections(&[s2]),
             SectionInterval::from_const(Duration::from_millis(200)),
-        );
+        )
+        .expect("scheduled section");
 
         // t=0: both emit
-        let pkts = mux.poll(Duration::ZERO);
+        let pkts = mux.poll(Timestamp::ZERO);
         assert!(!pkts.is_empty());
 
         // t=100: only 0x0100 emits (due at 100)
-        let pkts100 = mux.poll(Duration::from_millis(100));
+        let pkts100 = mux.poll(Timestamp::from_millis(100));
         assert!(!pkts100.is_empty());
         let pids100: Vec<Pid> = pkts100
             .iter()
@@ -766,11 +1019,11 @@ mod tests {
         );
 
         // t=150: neither emits
-        let pkts150 = mux.poll(Duration::from_millis(150));
+        let pkts150 = mux.poll(Timestamp::from_millis(150));
         assert!(pkts150.is_empty(), "neither should emit at t=150");
 
         // t=200: both emit again
-        let pkts200 = mux.poll(Duration::from_millis(200));
+        let pkts200 = mux.poll(Timestamp::from_millis(200));
         let pids200: Vec<Pid> = pkts200
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
@@ -787,26 +1040,27 @@ mod tests {
 
     #[test]
     fn entry_emits_again_after_full_interval() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 20]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 20]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s,
             SectionInterval::from_const(Duration::from_secs(1)),
-        );
+        )
+        .expect("scheduled section");
 
         // t=0
-        let n0 = mux.poll_into(Duration::ZERO, &mut Vec::new());
+        let n0 = mux.poll_into(Timestamp::ZERO, &mut Vec::new());
         assert!(n0 > 0);
 
         // t=999ms: not due
         let mut buf = Vec::new();
-        let n999 = mux.poll_into(Duration::from_millis(999), &mut buf);
+        let n999 = mux.poll_into(Timestamp::from_millis(999), &mut buf);
         assert_eq!(n999, 0);
 
         // t=1s: due
         let mut buf2 = Vec::new();
-        let n1000 = mux.poll_into(Duration::from_millis(1000), &mut buf2);
+        let n1000 = mux.poll_into(Timestamp::from_millis(1000), &mut buf2);
         assert!(n1000 > 0);
     }
 
@@ -816,22 +1070,24 @@ mod tests {
     fn upsert_updates_existing_entry() {
         // Same table_id (0x42, SDT actual) both times: this is a genuine
         // update of the same logical table, so it must replace, not add.
-        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
-        let s2 = test_fixtures::psi::short_section(0x42, &[0xBB; 10]);
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 5]);
+        let s2 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xBB; 10]);
         let mut mux = SiMux::new();
 
         mux.upsert(
             Pid::from_const(0x0100),
             s1,
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
         mux.upsert(
             Pid::from_const(0x0100),
             s2.clone(),
             SectionInterval::from_const(Duration::from_millis(200)),
-        );
+        )
+        .expect("scheduled section");
 
-        let pkts = mux.poll(Duration::ZERO);
+        let pkts = mux.poll(Timestamp::ZERO);
 
         // Round-trip the output to verify the updated sections
         let mut reasm = SectionReassembler::default();
@@ -854,14 +1110,14 @@ mod tests {
     /// continuous continuity counter across the shared PID.
     #[test]
     fn upsert_tdt_then_tot_both_emitted_with_continuous_cc() {
-        let tdt = test_fixtures::psi::short_section(0x70, &[0xAA; 5]); // TDT
-        let tot = test_fixtures::psi::short_section(0x73, &[0xBB; 8]); // TOT
+        let tdt = test_fixtures::psi::long_section(0x70, 1, 0, 0, &[0xAA; 5]); // TDT
+        let tot = test_fixtures::psi::long_section(0x73, 1, 0, 0, &[0xBB; 8]); // TOT
         let mut mux = SiMux::new();
 
-        mux.upsert_tdt(tdt.clone());
-        mux.upsert_tot(tot.clone());
+        mux.upsert_tdt(tdt.clone()).expect("scheduled section");
+        mux.upsert_tot(tot.clone()).expect("scheduled section");
 
-        let pkts = mux.poll(Duration::ZERO);
+        let pkts = mux.poll(Timestamp::ZERO);
         assert!(!pkts.is_empty());
 
         let mut table_ids_seen = Vec::new();
@@ -892,18 +1148,20 @@ mod tests {
     /// PID 0x0011.
     #[test]
     fn upsert_sdt_and_bat_both_emitted() {
-        let sdt = test_fixtures::psi::short_section(0x42, &[0xCC; 5]);
-        let bat = test_fixtures::psi::short_section(0x4A, &[0xDD; 6]);
+        let sdt = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xCC; 5]);
+        let bat = test_fixtures::psi::long_section(0x4A, 1, 0, 0, &[0xDD; 6]);
         let mut mux = SiMux::new();
 
-        mux.upsert_sdt_actual(sdt.clone());
+        mux.upsert_sdt_actual(sdt.clone())
+            .expect("scheduled section");
         mux.upsert(
             well_known::SDT_BAT,
             bat.clone(),
             SectionInterval::from_const(Duration::from_millis(1000)),
-        );
+        )
+        .expect("scheduled section");
 
-        let pkts = mux.poll(Duration::ZERO);
+        let pkts = mux.poll(Timestamp::ZERO);
         let mut table_ids_seen = Vec::new();
         let mut reasm = SectionReassembler::default();
         for raw in &pkts {
@@ -922,10 +1180,10 @@ mod tests {
 
     #[test]
     fn upsert_sdt_actual_uses_correct_pid() {
-        let s = test_fixtures::psi::short_section(0x42, &[0x01]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01]);
         let mut mux = SiMux::new();
-        mux.upsert_sdt_actual(s);
-        let pkts = mux.poll(Duration::ZERO);
+        mux.upsert_sdt_actual(s).expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
@@ -935,42 +1193,62 @@ mod tests {
 
     #[test]
     fn upsert_pat_uses_correct_pid() {
-        let s = test_fixtures::psi::short_section(0x00, &[0x01, 0x02]);
+        let s = test_fixtures::psi::long_section(0x00, 1, 0, 0, &[0x01, 0x02]);
         let mut mux = SiMux::new();
-        mux.upsert_pat(s);
-        let pkts = mux.poll(Duration::ZERO);
+        mux.upsert_pat(s).expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         assert!(!pkts.is_empty());
         let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(pids.iter().all(|&p| p == well_known::PAT));
-        assert!(mux.poll(PAT_MAX_INTERVAL.duration() / 2).is_empty());
-        assert!(!mux.poll(PAT_MAX_INTERVAL.duration()).is_empty());
+        assert!(
+            mux.poll(Timestamp::from_nanos(
+                (PAT_MAX_INTERVAL.duration() / 2).as_nanos() as u64
+            ))
+            .is_empty()
+        );
+        assert!(
+            !mux.poll(Timestamp::from_nanos(
+                PAT_MAX_INTERVAL.duration().as_nanos() as u64
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
     fn upsert_nit_uses_correct_pid() {
-        let s = test_fixtures::psi::short_section(0x40, &[0x01]);
+        let s = test_fixtures::psi::long_section(0x40, 1, 0, 0, &[0x01]);
         let mut mux = SiMux::new();
-        mux.upsert_nit(s);
-        let pkts = mux.poll(Duration::ZERO);
+        mux.upsert_nit(s).expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         assert!(!pkts.is_empty());
         let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
         assert!(pids.iter().all(|&p| p == well_known::NIT));
-        assert!(mux.poll(NIT_MAX_INTERVAL.duration() / 2).is_empty());
-        assert!(!mux.poll(NIT_MAX_INTERVAL.duration()).is_empty());
+        assert!(
+            mux.poll(Timestamp::from_nanos(
+                (NIT_MAX_INTERVAL.duration() / 2).as_nanos() as u64
+            ))
+            .is_empty()
+        );
+        assert!(
+            !mux.poll(Timestamp::from_nanos(
+                NIT_MAX_INTERVAL.duration().as_nanos() as u64
+            ))
+            .is_empty()
+        );
     }
 
     #[test]
     fn upsert_tdt_uses_correct_pid() {
-        let s = test_fixtures::psi::short_section(0x70, &[0x01]);
+        let s = test_fixtures::psi::long_section(0x70, 1, 0, 0, &[0x01]);
         let mut mux = SiMux::new();
-        mux.upsert_tdt(s);
-        let pkts = mux.poll(Duration::ZERO);
+        mux.upsert_tdt(s).expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
@@ -980,10 +1258,10 @@ mod tests {
 
     #[test]
     fn upsert_tot_uses_correct_pid() {
-        let s = test_fixtures::psi::short_section(0x73, &[0x01]);
+        let s = test_fixtures::psi::long_section(0x73, 1, 0, 0, &[0x01]);
         let mut mux = SiMux::new();
-        mux.upsert_tot(s);
-        let pkts = mux.poll(Duration::ZERO);
+        mux.upsert_tot(s).expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
@@ -991,20 +1269,128 @@ mod tests {
         assert!(pids.iter().all(|&p| p == well_known::TDT_TOT));
     }
 
+    // ── typed input: empty, mixed-table and trailing-garbage registrations ──
+
+    #[test]
+    fn upsert_rejects_an_empty_input() {
+        // `table_id_of(&[])` used to return 0, so an empty registration
+        // collided with the PAT entry on PID 0 and re-armed its interval.
+        let mut mux = SiMux::new();
+        let pat = test_fixtures::psi::pat_section(1, 0, &[(1, 0x1000)]);
+        mux.upsert_pat(pat.clone()).expect("PAT is schedulable");
+        assert_eq!(
+            mux.upsert(well_known::PAT, Vec::new(), PAT_MAX_INTERVAL),
+            Err(SectionRejection::NotASection)
+        );
+        assert_eq!(mux.rejected().len(), 1);
+        assert_eq!(mux.rejected()[0].pid, well_known::PAT);
+        let pkts = mux.poll(Timestamp::ZERO);
+        let mut reasm = SectionReassembler::default();
+        for raw in &pkts {
+            let pkt = TsPacket::parse(raw).unwrap();
+            reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
+        }
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].as_ref(), pat.as_slice());
+    }
+
+    #[test]
+    fn upsert_rejects_two_sections_that_share_a_key() {
+        let a = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01]);
+        let b = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x02]);
+        let mut mux = SiMux::new();
+        assert_eq!(
+            mux.upsert(
+                well_known::SDT_BAT,
+                concat_sections(&[a, b]),
+                SDT_ACTUAL_MAX_INTERVAL
+            ),
+            Err(SectionRejection::DuplicateSection)
+        );
+    }
+
+    #[test]
+    fn upsert_rejects_a_second_section_of_another_table() {
+        let sdt = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01]);
+        let bat = test_fixtures::psi::long_section(0x4A, 1, 0, 0, &[0x02]);
+        let mut mux = SiMux::new();
+        assert_eq!(
+            mux.upsert(
+                well_known::SDT_BAT,
+                concat_sections(&[sdt, bat]),
+                SDT_ACTUAL_MAX_INTERVAL
+            ),
+            Err(SectionRejection::MoreThanOneSection)
+        );
+    }
+
+    #[test]
+    fn upsert_keeps_a_complete_section_and_rejects_a_trailing_fragment() {
+        // A truncated final section used to be dropped without a word, and
+        // the caller could not tell it never went out.
+        let whole = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01]);
+        let mut with_tail = whole.clone();
+        with_tail.extend_from_slice(&[0x4A, 0x00]);
+        let mut mux = SiMux::new();
+        mux.upsert(well_known::SDT_BAT, with_tail, SDT_ACTUAL_MAX_INTERVAL)
+            .expect("the complete section is schedulable");
+        let pkts = mux.poll(Timestamp::ZERO);
+        let mut reasm = SectionReassembler::default();
+        for raw in &pkts {
+            let pkt = TsPacket::parse(raw).unwrap();
+            reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
+        }
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].as_ref(), whole.as_slice());
+    }
+
+    #[test]
+    fn sections_of_one_table_are_keyed_by_their_section_number() {
+        let first = test_fixtures::psi::long_section(0x4E, 1, 0, 0, &[0x01]);
+        let second = test_fixtures::psi::long_section(0x4E, 1, 0, 1, &[0x02]);
+        let mut mux = SiMux::new();
+        let pid = Pid::from_const(0x0012);
+        mux.upsert(pid, first.clone(), EIT_SCHED_MAX_INTERVAL)
+            .expect("first section");
+        mux.upsert(pid, second.clone(), EIT_SCHED_MAX_INTERVAL)
+            .expect("second section");
+        let pkts = mux.poll(Timestamp::ZERO);
+        let mut reasm = SectionReassembler::default();
+        for raw in &pkts {
+            let pkt = TsPacket::parse(raw).unwrap();
+            reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
+        }
+        let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
+        assert_eq!(got.len(), 2, "both sections of the table must go out");
+    }
+
+    #[test]
+    fn upsert_pat_rejects_a_section_of_another_table() {
+        let sdt = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01]);
+        let mut mux = SiMux::new();
+        assert_eq!(
+            mux.upsert_pat(sdt),
+            Err(SectionRejection::WrongTableId {
+                expected: TABLE_ID_PAT,
+                found: Some(0x42),
+            })
+        );
+        assert!(mux.poll(Timestamp::ZERO).is_empty());
+    }
+
     // ── round-trip through reassembler ───────────────────────────────────────
 
     #[test]
     fn simux_round_trip_single_entry() {
-        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 20]);
-        let s2 = test_fixtures::psi::short_section(0x46, &[0xBB; 15]);
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 20]);
+        let interval = SectionInterval::from_const(Duration::from_millis(100));
         let mut mux = SiMux::new();
-        mux.upsert(
-            Pid::from_const(0x0100),
-            concat_sections(&[s1.clone(), s2.clone()]),
-            SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        mux.upsert(Pid::from_const(0x0100), s1.clone(), interval)
+            .expect("scheduled section");
 
-        let pkts = mux.poll(Duration::ZERO);
+        let pkts = mux.poll(Timestamp::ZERO);
 
         let mut reasm = SectionReassembler::default();
         for raw in &pkts {
@@ -1014,28 +1400,29 @@ mod tests {
             }
         }
         let got: Vec<_> = core::iter::from_fn(|| reasm.pop_section()).collect();
-        assert_eq!(got.len(), 2, "round-trip must recover both sections");
+        assert_eq!(got.len(), 1, "round-trip must recover the section");
         assert_eq!(got[0].as_ref(), s1.as_slice());
-        assert_eq!(got[1].as_ref(), s2.as_slice());
     }
 
     #[test]
     fn simux_round_trip_multi_pid() {
-        let s_a = test_fixtures::psi::short_section(0x42, &[0xA0; 10]);
-        let s_b = test_fixtures::psi::short_section(0x46, &[0xB0; 10]);
+        let s_a = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xA0; 10]);
+        let s_b = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0xB0; 10]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s_a.clone(),
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
         mux.upsert(
             Pid::from_const(0x0200),
             s_b.clone(),
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
 
-        let pkts = mux.poll(Duration::ZERO);
+        let pkts = mux.poll(Timestamp::ZERO);
 
         let mut reasm_a = SectionReassembler::default();
         let mut reasm_b = SectionReassembler::default();
@@ -1060,15 +1447,16 @@ mod tests {
     #[test]
     fn continuity_counter_continuous_across_polls() {
         // Section large enough to span at least 2 packets.
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 250]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 250]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s,
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
 
-        let pkts1 = mux.poll(Duration::ZERO);
+        let pkts1 = mux.poll(Timestamp::ZERO);
         assert!(pkts1.len() >= 2, "need ≥2 packets to test CC continuity");
 
         let last_cc_pkts1 = TsPacket::parse(&pkts1[pkts1.len() - 1])
@@ -1076,7 +1464,7 @@ mod tests {
             .header
             .continuity_counter;
 
-        let pkts2 = mux.poll(Duration::from_millis(100));
+        let pkts2 = mux.poll(Timestamp::from_millis(100));
         assert!(!pkts2.is_empty(), "second poll must emit");
 
         let first_cc_pkts2 = TsPacket::parse(&pkts2[0])
@@ -1095,16 +1483,17 @@ mod tests {
 
     #[test]
     fn poll_into_clears_out_before_appending() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 5]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s,
             SectionInterval::from_const(Duration::from_millis(100)),
-        );
+        )
+        .expect("scheduled section");
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 42];
-        let n = mux.poll_into(Duration::ZERO, &mut out);
+        let n = mux.poll_into(Timestamp::ZERO, &mut out);
         assert_eq!(n, out.len(), "out must contain only new packets");
     }
 
@@ -1149,14 +1538,15 @@ mod tests {
 
     #[test]
     fn upsert_accepts_25ms_interval() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 5]);
         let mut mux = SiMux::new();
         mux.upsert(
             Pid::from_const(0x0100),
             s,
             SectionInterval::from_const(MIN_SECTION_INTERVAL),
-        );
-        let pkts = mux.poll(Duration::ZERO);
+        )
+        .expect("scheduled section");
+        let pkts = mux.poll(Timestamp::ZERO);
         assert!(!pkts.is_empty());
     }
 
@@ -1164,13 +1554,13 @@ mod tests {
 
     #[test]
     fn round_trip_single_short_section() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 10]);
         assert_round_trip(&[s]);
     }
 
     #[test]
     fn round_trip_one_byte_body() {
-        let s = test_fixtures::psi::short_section(0x46, &[0xBB]); // 4 bytes total
+        let s = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0xBB]); // 4 bytes total
         assert_round_trip(&[s]);
     }
 
@@ -1214,9 +1604,9 @@ mod tests {
 
     #[test]
     fn round_trip_multiple_short_sections_in_one_batch() {
-        let s1 = test_fixtures::psi::short_section(0x42, &[0x01, 0x02]); // 5 bytes
-        let s2 = test_fixtures::psi::short_section(0x46, &[0x03]); // 4 bytes
-        let s3 = test_fixtures::psi::short_section(0x4A, &[0x04, 0x05, 0x06]); // 6 bytes
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0x01, 0x02]); // 5 bytes
+        let s2 = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0x03]); // 4 bytes
+        let s3 = test_fixtures::psi::long_section(0x4A, 1, 0, 0, &[0x04, 0x05, 0x06]); // 6 bytes
         assert_round_trip(&[s1, s2, s3]);
     }
 
@@ -1229,7 +1619,7 @@ mod tests {
         let s1 = test_fixtures::psi::short_section(0x50, &body1);
         assert_eq!(s1.len(), PUSI_PAYLOAD_CAP);
 
-        let s2 = test_fixtures::psi::short_section(0x52, &[0xB1, 0xB2]);
+        let s2 = test_fixtures::psi::long_section(0x52, 1, 0, 0, &[0xB1, 0xB2]);
         assert_round_trip(&[s1, s2]);
     }
 
@@ -1244,7 +1634,7 @@ mod tests {
         let body1 = vec![0xA5; 366 - 3];
         let s1 = test_fixtures::psi::short_section(0x50, &body1);
         assert_eq!(s1.len(), 366);
-        let s2 = test_fixtures::psi::short_section(0x52, &[0xB1, 0xB2, 0xB3]);
+        let s2 = test_fixtures::psi::long_section(0x52, 1, 0, 0, &[0xB1, 0xB2, 0xB3]);
 
         let mut packetiser = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = packetiser.packetise(&[s1.as_slice(), s2.as_slice()]);
@@ -1272,13 +1662,13 @@ mod tests {
     fn round_trip_mix_small_large_sections() {
         // Mix of small and spanning sections that stress pointer_field and
         // concatenation.
-        let s1 = test_fixtures::psi::short_section(0x10, &[0xAA; 5]);
+        let s1 = test_fixtures::psi::long_section(0x10, 1, 0, 0, &[0xAA; 5]);
         let body2 = vec![0xBB; 200];
         let s2 = test_fixtures::psi::short_section(0x20, &body2);
-        let s3 = test_fixtures::psi::short_section(0x30, &[0xCC; 50]);
+        let s3 = test_fixtures::psi::long_section(0x30, 1, 0, 0, &[0xCC; 50]);
         let body4 = vec![0xDD; 800];
         let s4 = test_fixtures::psi::short_section(0x40, &body4);
-        let s5 = test_fixtures::psi::short_section(0x50, &[0xEE]); // 1-byte body
+        let s5 = test_fixtures::psi::long_section(0x50, 1, 0, 0, &[0xEE]); // 1-byte body
         assert_round_trip(&[s1, s2, s3, s4, s5]);
     }
 
@@ -1348,7 +1738,7 @@ mod tests {
 
     #[test]
     fn pusi_set_when_section_starts() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 10]);
         let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(!packets.is_empty());
@@ -1380,7 +1770,7 @@ mod tests {
         let body1 = vec![0xA1; 197]; // 200-byte section
         let s1 = test_fixtures::psi::short_section(0x52, &body1);
         assert_eq!(s1.len(), 200);
-        let s2 = test_fixtures::psi::short_section(0x54, &[0xB1; 47]); // 50-byte section
+        let s2 = test_fixtures::psi::long_section(0x54, 1, 0, 0, &[0xB1; 38]); // 50-byte section
         assert_eq!(s2.len(), 50);
 
         let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
@@ -1405,7 +1795,7 @@ mod tests {
 
     #[test]
     fn final_packet_unused_tail_is_stuffing() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]); // 8 bytes total
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 5]); // 8 bytes total
         let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
 
@@ -1425,8 +1815,8 @@ mod tests {
 
     #[test]
     fn reassembler_discards_stuffing() {
-        let s1 = test_fixtures::psi::short_section(0x42, &[0xAA; 10]);
-        let s2 = test_fixtures::psi::short_section(0x46, &[0xBB; 5]);
+        let s1 = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 10]);
+        let s2 = test_fixtures::psi::long_section(0x46, 1, 0, 0, &[0xBB; 5]);
 
         let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s1, &s2]);
@@ -1456,7 +1846,7 @@ mod tests {
 
     #[test]
     fn packetise_into_clears_out_first() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 5]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 5]);
         let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 99]; // pre-existing junk
@@ -1487,7 +1877,7 @@ mod tests {
 
     #[test]
     fn has_payload_always_true_no_adaptation() {
-        let s = test_fixtures::psi::short_section(0x42, &[0xAA; 50]);
+        let s = test_fixtures::psi::long_section(0x42, 1, 0, 0, &[0xAA; 50]);
         let mut p = SectionPacketiser::new(Pid::from_const(0x0100));
         let packets = p.packetise(&[&s]);
         for pkt_raw in &packets {

@@ -33,7 +33,7 @@ fn long_form_section_round_trip_is_identity() {
         reparsed.section_syntax_indicator
     );
     assert_eq!(parsed.private_indicator, reparsed.private_indicator);
-    assert_eq!(parsed.section_length, reparsed.section_length);
+    assert_eq!(parsed.section_length(), reparsed.section_length());
     assert_eq!(parsed.extension_id, reparsed.extension_id);
     assert_eq!(parsed.version_number, reparsed.version_number);
     assert_eq!(
@@ -43,7 +43,7 @@ fn long_form_section_round_trip_is_identity() {
     assert_eq!(parsed.section_number, reparsed.section_number);
     assert_eq!(parsed.last_section_number, reparsed.last_section_number);
     assert_eq!(parsed.payload, reparsed.payload);
-    assert_eq!(parsed.crc32, reparsed.crc32);
+    assert_eq!(parsed.crc32(), reparsed.crc32());
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn short_form_section_round_trip_is_identity() {
     let mut out = vec![0u8; parsed.serialized_len()];
     parsed.serialize_into(&mut out).expect("serialize");
     assert_eq!(out, raw);
-    assert!(parsed.crc32.is_none());
+    assert!(parsed.crc32().is_none());
 }
 
 #[test]

@@ -222,7 +222,7 @@ mod tests {
     fn long_form_section_len(payload: &[u8]) -> usize {
         let section = Section::parse(payload).expect("long-form section");
         assert!(section.section_syntax_indicator, "PAT is long-form");
-        let total = SECTION_HEADER_LEN + usize::from(section.section_length);
+        let total = SECTION_HEADER_LEN + section.section_length();
         assert!(total >= CRC_LEN, "long-form section carries a CRC-32");
         total
     }
@@ -450,7 +450,7 @@ mod tests {
             matches!(
                 Section::parse(&ts[payload_start..])
                     .expect("PAT section")
-                    .validate_crc(&ts[payload_start..]),
+                    .validate_crc(),
                 Err(mpeg_ts::error::Error::CrcMismatch { .. })
             ),
             "test setup must actually corrupt the CRC",
