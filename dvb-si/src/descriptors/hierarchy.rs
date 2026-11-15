@@ -7,6 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for hierarchy_descriptor.
@@ -18,16 +19,20 @@ const BODY_LEN: u8 = 4;
 /// `[3:0]`; masks the `Reserved11To14(v)` payload so it cannot bleed into
 /// the four scalability flags (r03-W2).
 const HIERARCHY_TYPE_MASK: u8 = 0x0F;
+/// Width of the `reserved` above `hierarchy_layer_index` / `hierarchy_channel` (2 bits).
+const RESERVED_2_BITS: u32 = 2;
+/// Width of the `reserved` after `tref_present_flag` (1 bit).
+const RESERVED_1_BITS: u32 = 1;
 /// Default of the 2-bit `reserved` above `hierarchy_layer_index` and above
 /// `hierarchy_channel` (H.222.0 Table 2-49): clause 2.1 "reserved" = `1` (all
 /// 9 editions 07/1995-08/2023, audit §4 row 7 / §5).
-pub const RESERVED_2_DEFAULT: u8 = 0b11;
+pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> =
+    ReservedOnes::<RESERVED_2_BITS>::FILL;
 /// Default of the 1-bit `reserved` between `tref_present_flag` and
 /// `hierarchy_embedded_layer_index` (same rule; carved from `reserved(2)` in
 /// the 06/2012 edition, the remaining bit stays reserved = `1`).
-pub const RESERVED_1_DEFAULT: u8 = 0b1;
-const RESERVED_2_MASK: u8 = 0x03;
-const RESERVED_1_MASK: u8 = 0x01;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> =
+    ReservedOnes::<RESERVED_1_BITS>::FILL;
 
 /// Hierarchy type — ISO/IEC 13818-1 Table 2-50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,15 +170,15 @@ pub struct HierarchyDescriptor {
     /// `reserved(2)` above `hierarchy_layer_index` (2 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_2_DEFAULT`].
-    pub reserved_layer_index: u8,
+    pub reserved_layer_index: ReservedOnes<RESERVED_2_BITS>,
     /// `reserved(1)` after `tref_present_flag` (1 bit, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_1_DEFAULT`].
-    pub reserved_embedded: u8,
+    pub reserved_embedded: ReservedOnes<RESERVED_1_BITS>,
     /// `reserved(2)` above `hierarchy_channel` (2 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_2_DEFAULT`].
-    pub reserved_channel: u8,
+    pub reserved_channel: ReservedOnes<RESERVED_2_BITS>,
 }
 
 impl HierarchyDescriptor {
@@ -249,9 +254,9 @@ impl<'a> Parse<'a> for HierarchyDescriptor {
             tref_present_flag,
             hierarchy_embedded_layer_index,
             hierarchy_channel,
-            reserved_layer_index: (b1 >> 6) & RESERVED_2_MASK,
-            reserved_embedded: (b2 >> 6) & RESERVED_1_MASK,
-            reserved_channel: (b3 >> 6) & RESERVED_2_MASK,
+            reserved_layer_index: ReservedOnes::from_bits(u64::from(b1 >> 6)),
+            reserved_embedded: ReservedOnes::from_bits(u64::from(b2 >> 6)),
+            reserved_channel: ReservedOnes::from_bits(u64::from(b3 >> 6)),
         })
     }
 }
@@ -277,32 +282,20 @@ impl Serialize for HierarchyDescriptor {
                 HIERARCHY_TYPE_MASK,
                 "hierarchy_type",
             )?;
-        buf[HEADER_LEN + 1] = (broadcast_common::len::fit_mask(
-            self.reserved_layer_index,
-            RESERVED_2_MASK,
-            "reserved_layer_index",
-        )? << 6)
+        buf[HEADER_LEN + 1] = ((self.reserved_layer_index.get() as u8) << 6)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_layer_index,
                 0x3F,
                 "hierarchy_layer_index",
             )?;
         buf[HEADER_LEN + 2] = ((self.tref_present_flag as u8) << 7)
-            | (broadcast_common::len::fit_mask(
-                self.reserved_embedded,
-                RESERVED_1_MASK,
-                "reserved_embedded",
-            )? << 6)
+            | ((self.reserved_embedded.get() as u8) << 6)
             | broadcast_common::len::fit_mask(
                 self.hierarchy_embedded_layer_index,
                 0x3F,
                 "hierarchy_embedded_layer_index",
             )?;
-        buf[HEADER_LEN + 3] = (broadcast_common::len::fit_mask(
-            self.reserved_channel,
-            RESERVED_2_MASK,
-            "reserved_channel",
-        )? << 6)
+        buf[HEADER_LEN + 3] = ((self.reserved_channel.get() as u8) << 6)
             | broadcast_common::len::fit_mask(self.hierarchy_channel, 0x3F, "hierarchy_channel")?;
         Ok(len)
     }
@@ -420,11 +413,11 @@ mod tests {
                     let d = HierarchyDescriptor::parse(&bytes).unwrap();
                     assert_eq!(
                         (
-                            d.reserved_layer_index,
-                            d.reserved_embedded,
-                            d.reserved_channel
+                            d.reserved_layer_index.get(),
+                            d.reserved_embedded.get(),
+                            d.reserved_channel.get()
                         ),
-                        (r_layer, r_emb, r_chan)
+                        (u64::from(r_layer), u64::from(r_emb), u64::from(r_chan))
                     );
                     let mut out = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut out).unwrap();
