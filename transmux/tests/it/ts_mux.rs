@@ -432,7 +432,8 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
             carriage: transmux::ir::DataCarriage::Pes,
         },
     );
-    let sample = Sample::new(vec![0u8; 70_000], Some(0), Some(0), Some(1536), true);
+    let sample =
+        Sample::new(vec![0u8; 70_000], Some(0), Some(0), Some(1536), true).expect("valid timing");
     let track = transmux::media::Track::new(spec, vec![sample]);
     let media = Media::new(vec![track], timescale(48_000));
 
@@ -506,13 +507,10 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
                     carriage: DataCarriage::Pes,
                 },
             ),
-            vec![Sample::new(
-                vec![0xAAu8; 32],
-                Some(0),
-                Some(0),
-                Some(9000),
-                false,
-            )],
+            vec![
+                Sample::new(vec![0xAAu8; 32], Some(0), Some(0), Some(9000), false)
+                    .expect("valid timing"),
+            ],
         ),
     );
     let ts = TsMux::new().package(&media).unwrap();

@@ -83,7 +83,8 @@ fn synthetic_track() -> Track {
                 i == 0 || i == SYNTHETIC_SYNC2_INDEX,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     Track::new(synthetic_spec(), samples)
 }
 
@@ -269,7 +270,8 @@ fn no_sync_samples_returns_error() {
             let dts = i64::from(i) * 100;
             Sample::new(vec![i], Some(dts), Some(dts), Some(100), false)
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     let src = Track::new(synthetic_spec(), samples);
 
     let err = derive_iframe_track(&src).expect_err("must fail when no sync samples");

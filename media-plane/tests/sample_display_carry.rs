@@ -30,7 +30,8 @@ fn info(width: u32, aspect_ratio: AspectRatioIdc) -> Arc<DisplayInfo> {
 }
 
 fn video_sample(byte: u8, display: Option<Arc<DisplayInfo>>) -> Sample {
-    let sample = Sample::new(Bytes::from(vec![byte; 4]), Some(0), Some(0), Some(1), true);
+    let sample = Sample::new(Bytes::from(vec![byte; 4]), Some(0), Some(0), Some(1), true)
+        .expect("valid timing");
     match display {
         Some(d) => sample.with_display(d),
         None => sample,

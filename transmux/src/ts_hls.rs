@@ -696,6 +696,7 @@ struct StreamTrackState {
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+/// #         .expect("valid timing")
 /// # }
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();
@@ -1719,7 +1720,7 @@ mod tests {
     /// An AAC-shaped audio sample: always a sync sample (mirrors
     /// `Sample::from_raw`), with a real, caller-supplied duration.
     fn audio_sample(duration: u32) -> Sample {
-        Sample::from_raw(vec![0u8; 4], None, None, Some(duration))
+        Sample::from_raw(vec![0u8; 4], None, None, Some(duration)).expect("valid timing")
     }
 
     #[test]

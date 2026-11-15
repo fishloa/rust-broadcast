@@ -121,10 +121,10 @@ fn run_stream(ts: &[u8], track_id: TrackId) -> Vec<Seen> {
         }
     };
     for chunk in ts.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux, &mut out);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux, &mut out);
     out
 }

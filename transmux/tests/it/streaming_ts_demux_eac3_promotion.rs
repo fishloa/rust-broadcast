@@ -19,7 +19,7 @@ fn run(data: &[u8]) -> Outcome {
     let mut d = StreamingTsDemux::new();
     let mut ev = Vec::new();
     for c in data.chunks(188 * 7) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
         while let Some(e) = d.poll_event() {
             ev.push(e);
         }
@@ -28,7 +28,7 @@ fn run(data: &[u8]) -> Outcome {
         .iter()
         .filter(|e| matches!(e, DemuxEvent::TrackAdded(_)))
         .count();
-    d.finish();
+    d.finish().expect("valid timing");
     while let Some(e) = d.poll_event() {
         ev.push(e);
     }

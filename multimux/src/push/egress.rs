@@ -444,6 +444,7 @@ mod tests {
             Some(3_000),
             true,
         )
+        .expect("valid timing")
     }
 
     /// Audit r07-W17: a (re)connect lands mid-GOP. Until the first video sync
@@ -459,7 +460,8 @@ mod tests {
             Some(0),
             Some(3_000),
             false,
-        );
+        )
+        .expect("valid timing");
         let item = |track: u32, s: &transmux::ir::Sample| SampleCursorItem::Timed {
             track_id: TrackId::new(track),
             sample: s.clone(),

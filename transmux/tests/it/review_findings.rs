@@ -81,8 +81,8 @@ fn eac3_cc_gap_in_next_pes_drops_the_held_intact_access_unit() {
 
     // Same through the streaming demuxer.
     let mut d = StreamingTsDemux::new();
-    d.feed(&damaged);
-    d.finish();
+    d.feed(&damaged).expect("valid timing");
+    d.finish().expect("valid timing");
     let mut n = 0;
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::Sample { .. } = e {

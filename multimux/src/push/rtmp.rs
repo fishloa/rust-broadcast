@@ -373,7 +373,7 @@ pub fn tc_url_for_test(url: &str) -> Result<String, String> {
     let app = segs.next().unwrap_or("").to_string();
     let stream_key = segs.collect::<Vec<_>>().join("/");
     RtmpTarget::from_parts(url, &app, &stream_key)
-        .map(|t| t.tc_url)
+        .map(|t| t.tc_url().to_owned())
         .map_err(|e| e.to_string())
 }
 

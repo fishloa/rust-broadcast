@@ -81,6 +81,7 @@ fn sample(tag: u8, index: usize, duration: u32, is_sync: bool) -> Sample {
         Some(duration),
         is_sync,
     )
+    .expect("valid timing")
 }
 
 /// A video track: first sample is a sync sample (keyframe), then `sync_period`
@@ -134,7 +135,8 @@ fn video_track_at(
                 i % sync_period == 0,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     Track::new_at(avc_spec(track_id), samples, start_dts.max(0) as u64)
 }
 
@@ -154,7 +156,8 @@ fn data_track_at(
             let dts = start_dts + i as i64 * i64::from(dur);
             Sample::new(vec![tag, i as u8], Some(dts), Some(dts), Some(dur), true)
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     Track::new_at(
         TrackSpec::new(
             TrackId::new(track_id),
@@ -200,7 +203,8 @@ fn data_track(
                 Sample::new(vec![tag, i as u8], None, None, None, true)
             }
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     Track::new(
         TrackSpec::new(
             TrackId::new(track_id),

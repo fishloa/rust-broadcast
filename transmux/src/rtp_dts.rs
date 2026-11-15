@@ -302,6 +302,7 @@ mod tests {
 
     fn sample(pts: i64) -> Sample {
         Sample::new(alloc::vec![0u8; 4], Some(pts), Some(pts), Some(3600), true)
+            .expect("valid timing")
     }
 
     fn pyramid_wire(frames: i64) -> Vec<i64> {

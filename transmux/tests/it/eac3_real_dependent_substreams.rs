@@ -217,10 +217,10 @@ fn assert_ts_recovers_the_stream(name: &str) {
             }
         };
         for c in ts.chunks(chunk) {
-            d.feed(c);
+            d.feed(c).expect("valid timing");
             drain(&mut d);
         }
-        d.finish();
+        d.finish().expect("valid timing");
         drain(&mut d);
         assert_eq!(out, want, "{name}: streaming, chunk {chunk}");
     }

@@ -52,6 +52,7 @@ pub const MAX_OPEN_EVENTS: usize = 1024;
 
 /// What one non-cancelled `splice_insert` did to the open set.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct SpliceObservation {
     /// The event's `splice_event_id`.
     pub event_id: u32,

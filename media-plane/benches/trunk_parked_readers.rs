@@ -94,7 +94,8 @@ fn run(readers: usize) -> (Vec<u64>, Vec<u64>) {
             Some(stamp),
             None,
             true,
-        );
+        )
+        .expect("valid timing");
         let started = Instant::now();
         writer.publish(TrackId::new(TRACK), RetentionClass::Timed, sample);
         publish_ns.push(started.elapsed().as_nanos() as u64);

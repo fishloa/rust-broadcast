@@ -47,7 +47,7 @@ impl Stage for TsIngestSession {
     type Error = Infallible;
 
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
-        self.demux.feed(input);
+        self.demux.feed(input).expect("valid timing");
         self.drain_demux();
         Ok(())
     }
@@ -57,7 +57,7 @@ impl Stage for TsIngestSession {
     }
 
     fn finish(&mut self) -> Result<(), Infallible> {
-        self.demux.finish();
+        self.demux.finish().expect("valid timing");
         self.drain_demux();
         Ok(())
     }

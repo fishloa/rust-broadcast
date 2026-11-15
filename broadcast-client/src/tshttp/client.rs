@@ -58,10 +58,13 @@ impl TsHttpClient {
     }
 
     fn flush_demux(&mut self, now: Timestamp) {
-        self.demux.finish();
+        let finished = self.demux.finish();
         let policy = &mut self.policy;
         if drain_demux(&mut self.demux, |ev| policy.push_event(ev)) {
             policy.on_sample(now);
+        }
+        if let Err(error) = finished {
+            policy.push_event(Event::DemuxError(error));
         }
     }
 
@@ -91,9 +94,12 @@ impl TsHttpClient {
         if chunk.is_empty() || !self.policy.accepts_bytes() {
             return;
         }
-        self.demux.feed(chunk);
+        let fed = self.demux.feed(chunk);
         let policy = &mut self.policy;
         let sampled = drain_demux(&mut self.demux, |ev| policy.push_event(ev));
+        if let Err(error) = fed {
+            policy.push_event(Event::DemuxError(error));
+        }
         policy.on_bytes(chunk.len(), now, sampled);
     }
 
@@ -127,10 +133,16 @@ impl TsHttpClient {
     /// Advance timers (T6, T10-T12, T15).
     pub fn poll_timeout(&mut self, now: Timestamp) {
         let demux = &mut self.demux;
+        let mut error = None;
         self.policy.poll_timeout_with(now, |events| {
-            demux.finish();
+            if let Err(e) = demux.finish() {
+                error = Some(e);
+            }
             drain_demux(demux, |ev| events.push_back(ev))
         });
+        if let (Some(error), false) = (error, self.policy.is_ended()) {
+            self.policy.push_event(Event::DemuxError(error));
+        }
         self.sync_demux();
     }
 

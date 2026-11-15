@@ -146,7 +146,8 @@ impl Stage for InstantSession {
                     Some(i64::from(i) * i64::from(FRAME_DUR)),
                     Some(FRAME_DUR),
                     is_sync,
-                );
+                )
+                .expect("valid timing");
                 self.pending.push_back(SessionEvent::Sample {
                     program: ProgramId(0),
                     track_id: TrackId::new(1),
@@ -265,7 +266,8 @@ impl Stage for TickerSession {
                 Some(pts),
                 Some(FRAME_DUR),
                 self.frame.is_multiple_of(TICKER_GOP),
-            ),
+            )
+            .expect("valid timing"),
         });
         self.frame += 1;
         Ok(())

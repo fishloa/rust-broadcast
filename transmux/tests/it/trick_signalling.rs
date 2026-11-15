@@ -466,7 +466,8 @@ fn minimal_video_media() -> transmux::media::Media {
             let dts = i64::from(i) * 3000;
             Sample::new(vec![i; 8], Some(dts), Some(dts), Some(3000), i == 0)
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     let track = Track::new(spec, samples);
     // `Media::new` sets an empty `pcr`/`skipped` — exactly what the struct
     // literal here spelled out before `Media` became `#[non_exhaustive]`.

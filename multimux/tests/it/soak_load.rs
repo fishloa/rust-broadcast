@@ -197,7 +197,8 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
         sample_writer.publish(
             TrackId::new(1),
             RetentionClass::Timed,
-            Sample::new(vec![0xAB; SAMPLE_BYTES], Some(pts), Some(pts), None, true),
+            Sample::new(vec![0xAB; SAMPLE_BYTES], Some(pts), Some(pts), None, true)
+                .expect("valid timing"),
         );
         published += 1;
         if tick % TICKS_PER_FRAME == 0 {
@@ -212,7 +213,8 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
                         Some(pts),
                         Some(FRAME_DUR),
                         frame.is_multiple_of(FRAMES_PER_SEGMENT),
-                    ),
+                    )
+                    .expect("valid timing"),
                 )
                 .expect("push");
             for part in segmenter.take_ready_parts() {

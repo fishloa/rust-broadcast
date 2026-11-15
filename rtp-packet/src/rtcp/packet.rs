@@ -309,7 +309,7 @@ broadcast_common::impl_spec_display!(RtcpPacketType, Unknown);
 /// The 4-byte RTCP common header shared by every packet type (RFC 3550 §6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CommonHeader {
+pub(crate) struct CommonHeader {
     /// The `P` (padding) bit.
     pub padding: bool,
     /// The `RC`/`SC` 5-bit count (report count for SR/RR, source count for

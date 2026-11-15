@@ -50,7 +50,14 @@
 //!   the sum of `trun` sample sizes must land within the `mdat` payload
 //!   (§8.8.8: sample data is addressed inside `mdat`).
 //! - **`media.sample.zero-duration`** (ERROR) — a sample duration of 0 is a
-//!   timing fault (§8.8.8, `sample_duration`).
+//!   timing fault (§8.8.8, `sample_duration`). A sample whose timing states a
+//!   zero-tick span (`SampleTiming::timed_with_duration(.., 0)`) states one,
+//!   so it is judged here; a timed sample whose span is merely unknown
+//!   (`duration: None`) is reported by `media.sample.timing` below, not
+//!   conflated with a declared zero.
+//! - **`media.sample.timing`** (WARNING) — a segment read without an IR
+//!   (`SegmentOrigin::External`) whose `trun` duration is 0: the span is
+//!   unknown, not zero.
 //!
 //! ## Cross-segment ([`validate_cmaf_track`])
 //! - **`track.tfdt.discontinuity`** (ERROR) — across consecutive segments the
@@ -362,19 +369,43 @@ struct TrackFragmentInfo {
     total_duration: u64,
 }
 
+/// Where a media segment's timing came from: whether its sample spans are the
+/// IR's own (`from_ir`) or were read without one.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SegmentOrigin {
+    /// Bytes this crate's fragment writer produced: every `trun` duration is
+    /// the IR sample's span verbatim, so a zero states a declared zero span
+    /// (`SampleTiming::Timed { duration: Some(0) }`) — the
+    /// `media.sample.zero-duration` case.
+    FromIr,
+    /// Bytes from elsewhere: an IR never stated these spans, so a zero only
+    /// says the span is unknown and is reported as `media.sample.timing`.
+    External,
+}
+
 /// Validate a fMP4/CMAF **media segment** against ISO/IEC 14496-12:2026 + CMAF.
+///
+/// `origin` says whether the segment's sample spans are the IR's own (see
+/// [`SegmentOrigin`]), which decides whether a zero duration is a declared
+/// zero span or an unstated one.
 ///
 /// Returns every structural [`ConformanceIssue`] found (empty ⇒ conformant).
 /// Malformed input is reported as issues, never a panic.
-pub fn validate_media_segment(bytes: &[u8]) -> Vec<ConformanceIssue> {
+pub fn validate_media_segment(bytes: &[u8], origin: SegmentOrigin) -> Vec<ConformanceIssue> {
     let mut issues = Vec::new();
-    validate_media_inner(bytes, &mut issues);
+    validate_media_inner(bytes, origin, &[], &mut issues);
     issues
 }
 
 /// Core media-segment walk. Returns the decoded [`MediaInfo`] (for the first
 /// `moof`) so the cross-segment validator can reuse it without re-walking.
-fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Option<MediaInfo> {
+fn validate_media_inner(
+    bytes: &[u8],
+    origin: SegmentOrigin,
+    video_tracks: &[TrackId],
+    issues: &mut Vec<ConformanceIssue>,
+) -> Option<MediaInfo> {
     let top = children(bytes);
 
     // styp (CMAF §7.3.2.3 / §8.14.2).
@@ -454,7 +485,13 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
     let mdat_extents = crate::frag_offsets::mdat_ranges(bytes);
     for &mp in &moof_positions {
         let (_, moof_bx) = &top[mp];
-        let (seq_no, info) = validate_moof(moof_bx.body, mp + 1, issues);
+        let (seq_no, info) = validate_moof(
+            moof_bx.body,
+            mp + 1,
+            origin,
+            &|id: TrackId| video_tracks.contains(&id),
+            issues,
+        );
         // The parsed `moof`, for the shared §8.8.7 offset resolver below.
         let moof_parsed = MovieFragmentBox::parse_body(moof_bx.body).ok();
         // Byte offset of this `moof` in `bytes`, for the §8.8.7 resolver (which
@@ -602,9 +639,13 @@ fn styp_whole<'a>(bytes: &'a [u8], bx: &BoxRef<'a>) -> Option<&'a [u8]> {
     bytes.get(start..end)
 }
 
+/// `origin` decides how a zero `trun` duration is judged (see
+/// [`SegmentOrigin`]).
 fn validate_moof(
     moof: &[u8],
     moof_no: usize,
+    origin: SegmentOrigin,
+    video_track: &dyn Fn(TrackId) -> bool,
     issues: &mut Vec<ConformanceIssue>,
 ) -> (Option<u32>, Vec<TrafInfo>) {
     let mut sequence_number = None;
@@ -649,7 +690,19 @@ fn validate_moof(
 
     let mut traf_infos = Vec::with_capacity(trafs.len());
     for (idx, (_, traf)) in trafs.iter().enumerate() {
-        traf_infos.push(validate_traf(traf.body, moof_no, idx + 1, issues));
+        // The traf's own track id, from its tfhd (§8.8.7), decides whether a
+        // zero span can be stated at all.
+        let is_video = child_body(traf.body, &TFHD)
+            .and_then(|b| TrackFragmentHeaderBox::parse_body(b).ok())
+            .is_some_and(|h| video_track(h.track_id));
+        traf_infos.push(validate_traf(
+            traf.body,
+            moof_no,
+            idx + 1,
+            origin,
+            is_video,
+            issues,
+        ));
     }
 
     (sequence_number, traf_infos)
@@ -659,6 +712,8 @@ fn validate_traf(
     traf: &[u8],
     moof_no: usize,
     traf_no: usize,
+    origin: SegmentOrigin,
+    video_track: bool,
     issues: &mut Vec<ConformanceIssue>,
 ) -> TrafInfo {
     // tfhd (§8.8.7) — parse for default_sample_duration/size, tolerate absence.
@@ -730,6 +785,12 @@ fn validate_traf(
     // (audit r05-W30d): a fragment with a broken sample table produced
     // thousands of identical issues, drowning every other finding.
     let mut zero_duration_samples: u64 = 0;
+    // The fragment writer states the IR's own span verbatim. For a video IR
+    // sample a zero span is an impossibility (a video frame has no zero
+    // length), so it can only be a span the IR never stated; for any other
+    // track a zero states a deliberately zero-length sample (a style cue, a
+    // timestamp-less section). The two are not the same finding.
+    let mut unstated_duration_samples: u64 = 0;
     for (_, trun_bx) in &truns {
         let Ok(run) = TrackFragmentRunBox::parse_body(trun_bx.body) else {
             continue;
@@ -738,7 +799,10 @@ fn validate_traf(
             let dur = s.sample_duration.or(default_duration).unwrap_or(0);
             total_duration += u64::from(dur);
             if dur == 0 {
-                zero_duration_samples += 1;
+                match origin {
+                    SegmentOrigin::FromIr if video_track => unstated_duration_samples += 1,
+                    _ => zero_duration_samples += 1,
+                }
             }
         }
     }
@@ -748,6 +812,15 @@ fn validate_traf(
             format!(
                 "moof #{moof_no}, traf #{traf_no}: {zero_duration_samples} sample(s) have \
                  zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
+            ),
+        ));
+    }
+    if unstated_duration_samples > 0 {
+        issues.push(ConformanceIssue::warning(
+            "media.sample.timing",
+            format!(
+                "moof #{moof_no}, traf #{traf_no}: {unstated_duration_samples} sample(s) carry \
+                 no stated span, written as a zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
             ),
         ));
     }
@@ -832,6 +905,38 @@ fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> 
     owner.get(start..end)
 }
 
+/// The `track_id`s an init segment types as video, from every
+/// `moov > trak > tkhd` whose `mdia > hdlr` handler is `vide`
+/// (ISO/IEC 14496-12:2026 §8.4.3). Empty when the init segment cannot be walked.
+fn init_video_track_ids(init: &[u8]) -> Vec<TrackId> {
+    use crate::init_segment::{HandlerBox, TrackHeaderBox};
+    use broadcast_common::Parse;
+
+    let Some(moov) = child_body(init, &MOOV) else {
+        return Vec::new();
+    };
+    let mut ids = Vec::new();
+    for (t, trak) in children(moov) {
+        if &t != b"trak" {
+            continue;
+        }
+        let Some(bytes) = child_whole(moov, trak.body, &TKHD) else {
+            continue;
+        };
+        let Ok(header) = TrackHeaderBox::parse(bytes) else {
+            continue;
+        };
+        let is_video = child_body(trak.body, &MDIA)
+            .and_then(|mdia| child_whole(moov, mdia, &HDLR))
+            .and_then(|hd| HandlerBox::parse(hd).ok())
+            .is_some_and(|h| &h.handler_type == b"vide");
+        if is_video {
+            ids.push(header.track_id);
+        }
+    }
+    ids
+}
+
 /// The `track_id`s an init segment declares, from every `moov > trak > tkhd`
 /// (ISO/IEC 14496-12:2026 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
 fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
@@ -865,7 +970,13 @@ fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
 ///   `prev.tfdt + Σ(prev sample durations)` (contiguous decode timeline).
 /// - `track.mfhd.sequence` (WARNING): `mfhd.sequence_number` must strictly
 ///   increase.
-pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIssue> {
+///
+/// `origin` is forwarded to [`validate_media_segment`] for every segment.
+pub fn validate_cmaf_track(
+    init: &[u8],
+    segments: &[&[u8]],
+    origin: SegmentOrigin,
+) -> Vec<ConformanceIssue> {
     let mut issues = validate_init_segment(init);
 
     // The track ids the init segment declares (`moov.trak.tkhd.track_id`,
@@ -873,10 +984,21 @@ pub fn validate_cmaf_track(init: &[u8], segments: &[&[u8]]) -> Vec<ConformanceIs
     // (audit r05-W30c). A fragment for an undeclared track cannot be decoded —
     // there is no `stsd` for it — and a client silently drops it.
     let declared = init_track_ids(init);
+    // A zero span on a video sample cannot be stated (a frame has no zero
+    // length), so the tracks the init segment types as video are the ones
+    // whose zero durations mean "span unknown" rather than "zero-length".
+    let video_tracks = init_video_track_ids(init);
 
     let mut infos: Vec<MediaInfo> = Vec::with_capacity(segments.len());
+    // Any zero span on a video track is the "span unknown" case, even where
+    // the init segment cannot be walked to type its tracks.
+    let video_tracks: Vec<TrackId> = if video_tracks.is_empty() {
+        declared.clone()
+    } else {
+        video_tracks
+    };
     for seg in segments {
-        if let Some(info) = validate_media_inner(seg, &mut issues) {
+        if let Some(info) = validate_media_inner(seg, origin, &video_tracks, &mut issues) {
             for track in &info.tracks {
                 if !declared.is_empty() && !declared.contains(&track.track_id) {
                     issues.push(ConformanceIssue::error(

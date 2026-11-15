@@ -55,13 +55,16 @@ fn looped_from(samples: &[Sample], start: usize, reps: usize) -> Vec<Sample> {
     let mut out = Vec::new();
     for k in 0..reps as i64 {
         for s in body {
-            out.push(Sample::new(
-                s.data.to_vec(),
-                s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
-                s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
-                s.timing.and_then(|t| t.duration()),
-                s.flags.is_sync,
-            ));
+            out.push(
+                Sample::new(
+                    s.data.to_vec(),
+                    s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
+                    s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
+                    s.timing.and_then(|t| t.duration()),
+                    s.flags.is_sync,
+                )
+                .expect("valid timing"),
+            );
         }
     }
     out

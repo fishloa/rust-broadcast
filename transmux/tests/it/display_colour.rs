@@ -53,10 +53,10 @@ fn streaming_display(data: &[u8]) -> Vec<Option<transmux::ir::DisplayGeometry>> 
         }
     };
     for chunk in data.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         take(&mut demux, &mut out);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     take(&mut demux, &mut out);
     out
 }

@@ -86,10 +86,10 @@ fn streaming(ts: &[u8], chunk: usize) -> Vec<S> {
         }
     };
     for c in ts.chunks(chunk) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
         drain(&mut d);
     }
-    d.finish();
+    d.finish().expect("valid timing");
     drain(&mut d);
     out
 }

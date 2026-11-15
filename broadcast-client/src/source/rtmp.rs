@@ -55,13 +55,14 @@ pub(crate) fn parse_target(url: &Url) -> Result<Target, Error> {
         Host::Ipv4(a) => a.to_string(),
         Host::Ipv6(a) => a.to_string(),
     };
+    let tc_url = target.tc_url().to_owned();
     Ok(Target {
         host,
         port: target.port,
         tls: target.tls,
         app: target.app,
         stream: target.stream_key,
-        tc_url: target.tc_url,
+        tc_url,
     })
 }
 
