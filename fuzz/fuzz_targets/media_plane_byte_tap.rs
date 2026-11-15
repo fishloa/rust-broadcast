@@ -23,7 +23,9 @@ fuzz_target!(|data: &[u8]| {
     } else {
         TapPoint::PostTransform
     };
-    let mut tap = ByteTap::new(point, capacity);
+    let Ok(mut tap) = ByteTap::new(point, capacity) else {
+        return;
+    };
 
     let mut recorded: u64 = 0;
     let mut observed: u64 = 0;

@@ -20,7 +20,8 @@ use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, Sc
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};
 use playout_runtime::transition::next_transition;
 use scte35_splice::SpliceInfoSection;
-use scte35_splice::commands::AnyCommand;
+use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
+use scte35_splice::time::SpliceTime;
 use std::fs;
 use std::time::Duration;
 
@@ -28,6 +29,14 @@ use std::time::Duration;
 /// same capture's `moof`/`traf`/`tfdt`/`trun` boxes — see
 /// `fixtures/scte35/PROVENANCE.md`, "Cue-to-IDR alignment".
 const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
+
+/// The one program-mode `splice_time()` the emitted cue carries.
+fn program_splice_time(insert: &SpliceInsert) -> SpliceTime {
+    match &insert.mode {
+        SpliceMode::Program(ProgramSplice::At(splice_time)) => *splice_time,
+        other => panic!("expected a scheduled program splice, got {other:?}"),
+    }
+}
 
 /// Reduce an absolute representation-clock instant onto the 33-bit PTS
 /// circle `splice_time().pts_time` lives on (ISO/IEC 13818-1 §2.4.3.7).
@@ -113,7 +122,9 @@ fn main() {
         AnyCommand::SpliceInsert(reparsed_insert) => {
             assert_eq!(reparsed_insert.splice_event_id, 0x6A78_D416);
             assert_eq!(
-                reparsed_insert.splice_time.unwrap().pts_time,
+                program_splice_time(&reparsed_insert)
+                    .pts_time
+                    .map(|c| c.ticks()),
                 Some(NEAREST_KEYFRAME_PTS % (1u64 << 33))
             );
         }

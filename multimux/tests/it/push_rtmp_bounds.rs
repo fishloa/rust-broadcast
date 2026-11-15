@@ -70,7 +70,12 @@ fn captured_tc_url(raw: &[u8]) -> String {
     // The client announces its own chunk size (SetChunkSize) before `connect`
     // and frames everything after it with that size.
     let messages = ChunkAssembler::new()
-        .with_chunk_size(rtmp_runtime::client::RtmpClientConfig::default().chunk_size)
+        .with_chunk_size(
+            rtmp_runtime::ChunkSize::new(
+                rtmp_runtime::client::RtmpClientConfig::default().chunk_size,
+            )
+            .expect("the default client chunk size is valid"),
+        )
         .push(&raw[HANDSHAKE_PREFIX..])
         .expect("the client's chunk stream decodes");
     for m in messages

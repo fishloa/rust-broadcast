@@ -101,7 +101,9 @@ fn opt_u32(e: &Elem<Ns>, name: &'static str) -> Result<Option<u32>, MpdError> {
 
 fn opt_timescale(e: &Elem<Ns>) -> Result<Option<Timescale>, MpdError> {
     opt_u32(e, "timescale")?
-        .map(|v| Timescale::new(v).ok_or_else(|| invalid("timescale", "must be greater than zero")))
+        .map(|v| {
+            Timescale::try_new(v).map_err(|_| invalid("timescale", "must be greater than zero"))
+        })
         .transpose()
 }
 

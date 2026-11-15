@@ -54,12 +54,12 @@ pub const DYNAMIC_PT_MAX: u8 = 127;
 /// `sampling_frequency_index` value that adds an explicit 24-bit `sampling_frequency`.
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
-fn short(what: &'static str) -> Error {
-    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-        need: 0,
-        have: 0,
-        what,
-    })
+/// Convert a bit-level read failure into a [`BufferTooShort`] carrying the
+/// real byte counts, naming `what` (the field being read).
+fn short_bit(what: &'static str, error: broadcast_common::bits::BitError) -> Error {
+    let mut too_short = broadcast_common::error::BufferTooShort::from(error);
+    too_short.what = what;
+    Error::BufferTooShort(too_short)
 }
 
 fn bad(field: &'static str, value: u64, reason: &'static str) -> Error {
@@ -245,7 +245,7 @@ pub struct AatfFrame<'a> {
 }
 
 fn rd(r: &mut BitReader<'_>, n: u32, what: &'static str) -> Result<u64> {
-    r.read_bits(n).map_err(|_| short(what))
+    r.read_bits(n).map_err(|e| short_bit(what, e))
 }
 
 impl<'a> AatfFrame<'a> {
@@ -588,6 +588,9 @@ pub fn packetize(frame: &[u8], max_payload: usize) -> impl Iterator<Item = (&[u8
 pub struct Av3aDepacketizer {
     buf: Vec<u8>,
     max_frame_bytes: usize,
+    /// Set when a frame exceeded the cap: fragments are dropped without
+    /// buffering until the next `marker`, which ends the over-size frame.
+    discarding: bool,
 }
 
 impl Default for Av3aDepacketizer {
@@ -617,6 +620,7 @@ impl Av3aDepacketizer {
         Self {
             buf: Vec::new(),
             max_frame_bytes,
+            discarding: false,
         }
     }
 
@@ -625,12 +629,21 @@ impl Av3aDepacketizer {
     ///
     /// # Errors
     /// [`Error::InvalidValue`] when the frame would exceed the configured
-    /// maximum; the partial frame is dropped so the caller can carry on with
-    /// the next one.
+    /// maximum; the over-size frame (and any remaining fragments up to its
+    /// `marker`) are dropped so the caller can carry on with the next frame.
     pub fn push(&mut self, marker: bool, payload: &[u8]) -> Result<Option<Vec<u8>>> {
+        if self.discarding {
+            // Drop the remaining fragments of the over-size frame until its
+            // marker arrives; only then resume reassembly.
+            if marker {
+                self.discarding = false;
+            }
+            return Ok(None);
+        }
         let total = self.buf.len().saturating_add(payload.len());
         if total > self.max_frame_bytes {
             self.buf.clear();
+            self.discarding = !marker;
             return Err(bad(
                 "aatf_frame size",
                 total as u64,
@@ -644,6 +657,7 @@ impl Av3aDepacketizer {
     /// Drop any partially collected frame (after packet loss).
     pub fn reset(&mut self) {
         self.buf.clear();
+        self.discarding = false;
     }
 
     /// Bytes currently buffered (a partial frame).
@@ -1196,6 +1210,22 @@ mod tests {
     }
 
     /// An endless run of M=0 packets must not buffer without bound.
+    /// Audit #2750: a truncated header reports the real byte shortfall, not a
+    /// fabricated `need`/`have` of 0.
+    #[test]
+    fn truncated_header_reports_real_byte_counts() {
+        // 16 bits: syncword (12) + audio_codec_id (4), then the `anc_data_index`
+        // bit is missing.
+        match AatfFrame::parse(&[0xFF, 0xF0]) {
+            Err(crate::error::Error::BufferTooShort(bs)) => {
+                assert_eq!(bs.need, 1);
+                assert_eq!(bs.have, 0);
+                assert_eq!(bs.what, "aatf_frame header");
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
     #[test]
     fn depacketizer_caps_buffered_frame() {
         let mut d = Av3aDepacketizer::with_max_frame_bytes(10);
@@ -1209,6 +1239,10 @@ mod tests {
             "11 bytes > cap of 10"
         );
         assert_eq!(d.buffered(), 0, "partial frame dropped on overflow");
+        // The over-size frame's marker closes it and is discarded, not emitted
+        // as a bogus short frame.
+        assert!(d.push(true, &[0xAA]).unwrap().is_none());
+        assert_eq!(d.buffered(), 0);
         // a frame exactly at the cap still completes, and the next one works
         assert_eq!(d.push(true, &[7; 10]).unwrap().unwrap().len(), 10);
         assert_eq!(d.push(true, &[1]).unwrap().unwrap(), [1]);
@@ -1220,5 +1254,27 @@ mod tests {
             Err(crate::error::Error::InvalidValue(..))
         ));
         assert_eq!(Av3aFmtp::parse("").unwrap(), Av3aFmtp::default());
+    }
+
+    /// Audit #2750: the tail of an over-size frame must not be emitted as a
+    /// bogus short frame. Once a fragment overflows the cap, the depacketizer
+    /// discards every later fragment (including the marker one) up to the
+    /// frame's marker, then resumes on the next frame.
+    #[test]
+    fn depacketizer_discards_the_tail_of_an_over_size_frame() {
+        let mut d = Av3aDepacketizer::with_max_frame_bytes(4);
+        // Frame A fragments: fits, then overflows at the third fragment.
+        assert!(d.push(false, &[0; 2]).unwrap().is_none());
+        assert!(d.push(false, &[0; 2]).unwrap().is_none());
+        assert!(matches!(
+            d.push(false, &[1]),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+        // The over-size frame's remaining fragment (marker) is dropped, not
+        // reassembled into a 1-byte frame.
+        assert!(d.push(true, &[9]).unwrap().is_none());
+        assert_eq!(d.buffered(), 0);
+        // A following frame is reassembled normally.
+        assert_eq!(d.push(true, &[7; 4]).unwrap().unwrap(), [7; 4]);
     }
 }

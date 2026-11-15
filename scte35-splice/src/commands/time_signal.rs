@@ -52,7 +52,9 @@ mod tests {
     #[test]
     fn round_trip_with_time() {
         let cmd = TimeSignal {
-            splice_time: SpliceTime::with_pts(0x0_1234_5678),
+            splice_time: SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(0x0_1234_5678).expect("in range"),
+            ),
         };
         let bytes = cmd.try_to_bytes().unwrap();
         let back = TimeSignal::parse(&bytes).unwrap();

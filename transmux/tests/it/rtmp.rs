@@ -68,7 +68,10 @@ fn rtmp_demux_matches_flv_demux() {
 
     // Chunk everything, then RtmpDemux → IR.
     let mut writer = ChunkWriter::new();
-    writer.set_chunk_size(u32::try_from(CHUNK).expect("chunk size fits u32"));
+    writer.set_chunk_size(
+        rtmp_runtime::ChunkSize::new(u32::try_from(CHUNK).expect("chunk size fits u32"))
+            .expect("a valid chunk size"),
+    );
     let mut wire = Vec::new();
     for message in &messages {
         wire.extend_from_slice(&writer.write(message).expect("chunk message"));

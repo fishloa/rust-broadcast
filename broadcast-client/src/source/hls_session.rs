@@ -65,15 +65,19 @@ pub(crate) struct HlsSession {
 }
 
 impl HlsSession {
-    pub(crate) fn new(url: &Url, config: &Config, seed: u64) -> Self {
+    /// # Errors
+    ///
+    /// [`Error::InvalidConfig`] when the configured retry schedule is not one a
+    /// [`crate::source::fetch::retry::RetrySchedule`] can run with; reported, never repaired.
+    pub(crate) fn new(url: &Url, config: &Config, seed: u64) -> Result<Self, Error> {
         let alloc = ConnAlloc::new();
-        let main = HlsSource::new(url, config, alloc.clone(), Role::Main, seed);
+        let main = HlsSource::new(url, config, alloc.clone(), Role::Main, seed)?;
         let mode = if config.auto_select_audio {
             AudioMode::Auto
         } else {
             AudioMode::Manual(None)
         };
-        Self {
+        Ok(Self {
             config: config.clone(),
             seed,
             alloc,
@@ -92,7 +96,7 @@ impl HlsSession {
             discontinuity_seen: None,
             actions: VecDeque::new(),
             events: VecDeque::new(),
-        }
+        })
     }
 
     pub(crate) fn playout_source(&self) -> Source {
@@ -314,13 +318,17 @@ impl HlsSession {
         if self.audio.as_ref().map(|a| &a.url) != want_url.as_ref() {
             self.stop_audio();
             if let Some(url) = want_url.as_deref().and_then(|u| Url::parse(u).ok()) {
-                let source = HlsSource::new(
+                // The main playlist was built from this same schedule, so a
+                // rendition cannot fail here.
+                let Ok(source) = HlsSource::new(
                     &url,
                     &self.config,
                     self.alloc.clone(),
                     Role::Audio,
                     broadcast_common::backoff::mix_seed(self.seed),
-                );
+                ) else {
+                    return;
+                };
                 self.audio = Some(Audio {
                     source,
                     url: url.to_string(),

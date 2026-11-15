@@ -46,7 +46,8 @@ fn main() {
         bytes.len()
     );
 
-    let mut tap = ByteTap::new(TapPoint::Wire, TAP_CAPACITY);
+    let mut tap = ByteTap::new(TapPoint::Wire, TAP_CAPACITY)
+        .unwrap_or_else(|e| panic!("a non-zero tap capacity is built: {e}"));
 
     let mut delivered = 0u64;
     let mut lagged_total = 0u64;
