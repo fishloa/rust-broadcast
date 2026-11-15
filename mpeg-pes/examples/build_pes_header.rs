@@ -122,7 +122,7 @@ fn main() {
     let pkt = PesPacket::parse(&bytes).expect("PES with PTS+DTS must parse");
     let hdr = pkt.header.as_ref().expect("video PES has optional header");
     println!("--- PTS + DTS ---");
-    println!("stream_id       : 0x{:02X} (video)", pkt.stream_id.0);
+    println!("stream_id       : 0x{:02X} (video)", pkt.stream_id.get());
     let pts = hdr.pts.unwrap();
     let dts = hdr.dts.unwrap();
     println!(

@@ -7,7 +7,7 @@ use broadcast_common::Serialize;
 use mpeg_pes::{PesHeader, PesPacket, StreamId};
 
 fn packet<'a>(header: Option<PesHeader<'a>>, payload: &'a [u8]) -> PesPacket<'a> {
-    let mut pes = PesPacket::new(StreamId(0xE0), payload);
+    let mut pes = PesPacket::new(StreamId::new(0xE0), payload);
     pes.header = header;
     pes
 }
@@ -35,7 +35,7 @@ fn a_payload_past_the_16_bit_length_ceiling_is_bounded() {
     assert_eq!(u16::from_be_bytes([video[4], video[5]]), 0);
     // Audio may not, and the length must not wrap to a smaller value.
     let mut audio = packet(Some(PesHeader::new()), &payload);
-    audio.stream_id = StreamId(0xC0);
+    audio.stream_id = StreamId::new(0xC0);
     assert!(matches!(
         audio.try_to_bytes(),
         Err(mpeg_pes::Error::FieldOverflow(

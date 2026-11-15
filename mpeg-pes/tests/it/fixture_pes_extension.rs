@@ -86,7 +86,11 @@ fn extended_stream_id_pes_parses_and_extension_field_is_typed() {
         let pes = PesPacket::parse(raw).unwrap_or_else(|e| {
             panic!("pkt {i}: PES_extension_flag_2 packet must parse, got {e:?}")
         });
-        assert_eq!(pes.stream_id, StreamId(0xFD), "pkt {i}: extended_stream_id");
+        assert_eq!(
+            pes.stream_id,
+            StreamId::new(0xFD),
+            "pkt {i}: extended_stream_id"
+        );
 
         let header = pes
             .header

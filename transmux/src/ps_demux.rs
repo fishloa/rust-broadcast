@@ -446,7 +446,7 @@ impl<'a> PsDemux<'a> {
 
         for pack in &packs {
             for pes in &pack.pes_packets {
-                let sid = pes.stream_id.0;
+                let sid = pes.stream_id.get();
                 let Some(codec) = Codec::from_stream_id(sid) else {
                     continue;
                 };
