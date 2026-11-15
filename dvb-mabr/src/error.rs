@@ -96,7 +96,7 @@ pub enum Error {
 
     /// The XML writer refused an event while rendering the document.
     #[error("XML write failed: {0}")]
-    XmlWrite(#[from] broadcast_common::xml_chars::XmlWriteError),
+    XmlWrite(#[from] broadcast_common::xml_chars::WriteRefusal),
 }
 
 /// Why well-formed XML is not a valid configuration document shape.

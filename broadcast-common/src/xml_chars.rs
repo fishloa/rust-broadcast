@@ -380,12 +380,14 @@ pub fn new_writer() -> XmlWriter {
     Writer::new_with_indent(Vec::new(), b' ', 2)
 }
 
-/// One successful write into an [`XmlWriter`].
-pub type XmlWrite = core::result::Result<(), XmlWriteError>;
+/// A write into an [`XmlWriter`]'s outcome.
+pub type WriteOutcome = core::result::Result<(), WriteRefusal>;
 
-/// Names what could not be written into an [`XmlWriter`].
+/// Why a [`XmlWriter`] helper refused to write: its own message for a write
+/// the writer rejects, or a tag attribute value that is not valid UTF-8.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum XmlWriteError {
+#[non_exhaustive]
+pub enum WriteRefusal {
     /// The writer refused the event; the string is the writer's message.
     Write(String),
     /// [`open_element`] or [`empty_element`] was given an attribute value
@@ -393,24 +395,29 @@ pub enum XmlWriteError {
     ValueNotUtf8,
 }
 
-impl fmt::Display for XmlWriteError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl WriteRefusal {
+    /// The failure's label — the guard's `name()`/`Display` pair for a
+    /// crate error enum.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
         match self {
-            XmlWriteError::Write(message) => write!(f, "XML write failed: {message}"),
-            XmlWriteError::ValueNotUtf8 => f.write_str("XML attribute value is not valid UTF-8"),
+            WriteRefusal::Write(_) => "write",
+            WriteRefusal::ValueNotUtf8 => "value not UTF-8",
         }
     }
 }
 
-impl core::error::Error for XmlWriteError {}
+crate::impl_spec_display!(WriteRefusal);
 
-fn write_event(w: &mut XmlWriter, event: Event<'_>) -> XmlWrite {
+impl core::error::Error for WriteRefusal {}
+
+fn write_event(w: &mut XmlWriter, event: Event<'_>) -> WriteOutcome {
     w.write_event(event)
-        .map_err(|e| XmlWriteError::Write(e.to_string()))
+        .map_err(|e| WriteRefusal::Write(e.to_string()))
 }
 
 /// `<?xml version="1.0" encoding="{encoding}"?>`.
-pub fn write_declaration(w: &mut XmlWriter, encoding: &str) -> XmlWrite {
+pub fn write_declaration(w: &mut XmlWriter, encoding: &str) -> WriteOutcome {
     write_event(w, Event::Decl(BytesDecl::new("1.0", Some(encoding), None)))
 }
 
@@ -431,9 +438,13 @@ pub fn start_tag<'a, V: AsRef<str>>(name: &'a str, attrs: &'a [(&str, V)]) -> By
 /// `<name a="b">`.
 ///
 /// # Errors
-/// [`XmlWriteError::ValueNotUtf8`] if an attribute value is not UTF-8, or
-/// [`XmlWriteError::Write`] if the writer refuses the event.
-pub fn open_element<V: AsRef<str>>(w: &mut XmlWriter, name: &str, attrs: &[(&str, V)]) -> XmlWrite {
+/// [`WriteRefusal::ValueNotUtf8`] if an attribute value is not UTF-8, or
+/// [`WriteRefusal::Write`] if the writer refuses the event.
+pub fn open_element<V: AsRef<str>>(
+    w: &mut XmlWriter,
+    name: &str,
+    attrs: &[(&str, V)],
+) -> WriteOutcome {
     let start = start_tag(name, attrs);
     check_values(&start)?;
     write_event(w, Event::Start(start))
@@ -447,19 +458,19 @@ pub fn empty_element<V: AsRef<str>>(
     w: &mut XmlWriter,
     name: &str,
     attrs: &[(&str, V)],
-) -> XmlWrite {
+) -> WriteOutcome {
     let start = start_tag(name, attrs);
     check_values(&start)?;
     write_event(w, Event::Empty(start))
 }
 
 /// Every attribute value of `start` is valid UTF-8.
-fn check_values(start: &BytesStart<'_>) -> XmlWrite {
+fn check_values(start: &BytesStart<'_>) -> WriteOutcome {
     for attribute in start.attributes() {
-        let attribute = attribute.map_err(|e| XmlWriteError::Write(e.to_string()))?;
+        let attribute = attribute.map_err(|e| WriteRefusal::Write(e.to_string()))?;
         attribute
             .normalized_value(XmlVersion::Implicit1_0)
-            .map_err(|_| XmlWriteError::ValueNotUtf8)?;
+            .map_err(|_| WriteRefusal::ValueNotUtf8)?;
     }
     Ok(())
 }
@@ -467,16 +478,16 @@ fn check_values(start: &BytesStart<'_>) -> XmlWrite {
 /// `</name>`.
 ///
 /// # Errors
-/// [`XmlWriteError::Write`] if the writer refuses the event.
-pub fn close_element(w: &mut XmlWriter, name: &str) -> XmlWrite {
+/// [`WriteRefusal::Write`] if the writer refuses the event.
+pub fn close_element(w: &mut XmlWriter, name: &str) -> WriteOutcome {
     write_event(w, Event::End(BytesEnd::new(name)))
 }
 
 /// Escaped character data.
 ///
 /// # Errors
-/// [`XmlWriteError::Write`] if the writer refuses the event.
-pub fn write_text(w: &mut XmlWriter, text: &str) -> XmlWrite {
+/// [`WriteRefusal::Write`] if the writer refuses the event.
+pub fn write_text(w: &mut XmlWriter, text: &str) -> WriteOutcome {
     write_event(w, Event::Text(BytesText::new(text)))
 }
 
@@ -484,7 +495,7 @@ pub fn write_text(w: &mut XmlWriter, text: &str) -> XmlWrite {
 ///
 /// # Errors
 /// As [`open_element`].
-pub fn text_element(w: &mut XmlWriter, name: &str, text: &str) -> XmlWrite {
+pub fn text_element(w: &mut XmlWriter, name: &str, text: &str) -> WriteOutcome {
     open_element(w, name, NO_ATTRS)?;
     write_text(w, text)?;
     close_element(w, name)

@@ -17,7 +17,7 @@ use std::io;
 use core::fmt::Display;
 
 use broadcast_common::xml_chars::{
-    XmlWriteError, XmlWriter, finish_document, new_writer, write_declaration,
+    WriteRefusal, XmlWriter, finish_document, new_writer, write_declaration,
 };
 use quick_xml::events::{BytesStart, BytesText, Event};
 
@@ -38,7 +38,7 @@ where
 {
     let mut w = new_writer();
     write_declaration(&mut w, "UTF-8")?;
-    body(&mut w).map_err(|e| crate::Error::XmlWrite(XmlWriteError::Write(e.to_string())))?;
+    body(&mut w).map_err(|e| crate::Error::XmlWrite(WriteRefusal::Write(e.to_string())))?;
     Ok(finish_document(w))
 }
 

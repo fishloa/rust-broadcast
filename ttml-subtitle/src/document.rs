@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::foreign::{ForeignAttribute, UnknownElement, UnknownNode};
-use broadcast_common::xml_chars::{XmlLimits, XmlWrite, XmlWriteError};
+use broadcast_common::xml_chars::{WriteOutcome, WriteRefusal, XmlLimits};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
@@ -237,9 +237,9 @@ impl Document {
     /// (#1110/TT-W1). The document remains parseable/serializable afterwards.
     ///
     /// # Errors
-    /// [`XmlWriteError`] if the writer refuses an event: an attribute value
+    /// [`WriteRefusal`] if the writer refuses an event: an attribute value
     /// that is not valid UTF-8 (a tree built through the struct API).
-    pub fn to_xml(&mut self) -> core::result::Result<String, XmlWriteError> {
+    pub fn to_xml(&mut self) -> core::result::Result<String, WriteRefusal> {
         let mut w = W::new();
         let default_decl = XmlDeclaration::default();
         let decl = self.xml_declaration.as_ref().unwrap_or(&default_decl);
@@ -3692,15 +3692,15 @@ impl W {
     }
 }
 
-fn emit(w: &mut W, event: Event<'_>) -> XmlWrite {
+fn emit(w: &mut W, event: Event<'_>) -> WriteOutcome {
     w.inner
         .write_event(event)
-        .map_err(|e| XmlWriteError::Write(e.to_string()))
+        .map_err(|e| WriteRefusal::Write(e.to_string()))
 }
 
 /// Layout whitespace (spaces/newlines) between block elements; dropped inside
 /// mixed content (see [`W`]).
-fn layout(w: &mut W, whitespace: &str) -> XmlWrite {
+fn layout(w: &mut W, whitespace: &str) -> WriteOutcome {
     if w.compact > 0 {
         return Ok(());
     }
@@ -3708,55 +3708,55 @@ fn layout(w: &mut W, whitespace: &str) -> XmlWrite {
 }
 
 /// Two spaces per nesting level.
-fn put_indent(w: &mut W, level: usize) -> XmlWrite {
+fn put_indent(w: &mut W, level: usize) -> WriteOutcome {
     layout(w, &"  ".repeat(level))
 }
 
-fn put_nl(w: &mut W) -> XmlWrite {
+fn put_nl(w: &mut W) -> WriteOutcome {
     layout(w, "\n")
 }
 
 /// Character data, escaped by quick-xml.
-fn put_text(w: &mut W, content: &str) -> XmlWrite {
+fn put_text(w: &mut W, content: &str) -> WriteOutcome {
     emit(w, Event::Text(BytesText::new(content)))
 }
 
 /// `<tag .../>` followed by a newline.
-fn empty_line(w: &mut W, t: BytesStart<'_>) -> XmlWrite {
+fn empty_line(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
     emit(w, Event::Empty(t))?;
     put_nl(w)
 }
 
 /// `<tag .../>` with no layout whitespace (inline content).
-fn empty_inline(w: &mut W, t: BytesStart<'_>) -> XmlWrite {
+fn empty_inline(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
     emit(w, Event::Empty(t))
 }
 
 /// `<tag ...>` followed by a newline.
-fn start_line(w: &mut W, t: BytesStart<'_>) -> XmlWrite {
+fn start_line(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
     emit(w, Event::Start(t))?;
     put_nl(w)
 }
 
 /// `<tag ...>` with no layout whitespace (inline content or a text-only body).
-fn start_inline(w: &mut W, t: BytesStart<'_>) -> XmlWrite {
+fn start_inline(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
     emit(w, Event::Start(t))
 }
 
 /// An indented `</tag>` followed by a newline.
-fn end_line(w: &mut W, level: usize, name: &str) -> XmlWrite {
+fn end_line(w: &mut W, level: usize, name: &str) -> WriteOutcome {
     put_indent(w, level)?;
     end_inline_line(w, name)
 }
 
 /// `</tag>` followed by a newline (the text body before it was written inline).
-fn end_inline_line(w: &mut W, name: &str) -> XmlWrite {
+fn end_inline_line(w: &mut W, name: &str) -> WriteOutcome {
     emit(w, Event::End(BytesEnd::new(name)))?;
     put_nl(w)
 }
 
 /// `</tag>` with no layout whitespace.
-fn end_inline(w: &mut W, name: &str) -> XmlWrite {
+fn end_inline(w: &mut W, name: &str) -> WriteOutcome {
     emit(w, Event::End(BytesEnd::new(name)))
 }
 
@@ -3774,7 +3774,7 @@ fn serialize_ns_attrs(
     t: &mut BytesStart<'_>,
     attrs: &[ForeignAttribute],
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     for attr in attrs {
         match attr.namespace.as_deref() {
             // Unprefixed attribute in no namespace (struct-built trees only;
@@ -3793,7 +3793,7 @@ fn serialize_ns_attrs(
 /// Write `xml:space` (§7.7): `Some(Default)` comes from an explicit
 /// `xml:space="default"`, `None` from its absence, so both spellings
 /// round-trip distinctly (#1110/TT-W1).
-fn serialize_xml_space(t: &mut BytesStart<'_>, space: &Option<XmlSpace>) -> XmlWrite {
+fn serialize_xml_space(t: &mut BytesStart<'_>, space: &Option<XmlSpace>) -> WriteOutcome {
     if let Some(space) = space {
         push_attr(t, "xml:space", space.name());
     }
@@ -3801,7 +3801,7 @@ fn serialize_xml_space(t: &mut BytesStart<'_>, space: &Option<XmlSpace>) -> XmlW
 }
 
 /// Write `xml:base` (TTML2 §7.4, #1110/TT-W1).
-fn serialize_xml_base(t: &mut BytesStart<'_>, base: &Option<String>) -> XmlWrite {
+fn serialize_xml_base(t: &mut BytesStart<'_>, base: &Option<String>) -> WriteOutcome {
     serialize_opt_attr(t, "xml:base", base)
 }
 
@@ -4633,7 +4633,7 @@ fn serialize_tt_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("tt");
     // The five core bindings, byte-identical to the pre-#1110 output.
@@ -4750,7 +4750,7 @@ fn serialize_unknown_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     let name = match elem.prefix.as_deref() {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", elem.local_name),
         _ => elem.local_name.clone(),
@@ -4848,7 +4848,7 @@ fn serialize_head_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("head");
     serialize_opt_attr(&mut t, "xml:id", &head.xml_id)?;
@@ -4883,7 +4883,7 @@ fn serialize_body_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("body");
     serialize_common_timing_attrs(
@@ -4934,7 +4934,7 @@ fn serialize_div_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("div");
     serialize_common_timing_attrs(
@@ -4995,7 +4995,12 @@ fn serialize_div_element(
 /// API cannot overflow the stack; metadata/animation children are hoisted
 /// before the inline content, glued to the opening tag so no whitespace text
 /// node appears where the source had none.
-fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) -> XmlWrite {
+fn serialize_p_element(
+    p: &PElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("p");
     serialize_common_timing_attrs(
@@ -5050,7 +5055,11 @@ fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut Namespac
 /// Iterative (explicit stack), not recursive: a `<span>` chain built via the
 /// struct API can nest far deeper than `MAX_NESTING_DEPTH` (which only bounds
 /// `Document::parse_str`), and a recursive walk would overflow the stack.
-fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut NamespaceMap) -> XmlWrite {
+fn serialize_inline_content(
+    content: &InlineContent,
+    w: &mut W,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
     enum Frame<'a> {
         Node(&'a InlineContent),
         Unknown(&'a UnknownElement),
@@ -5147,14 +5156,14 @@ fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut Namespa
 
 /// Inline `<image>`: same attributes as the block form, written on one line
 /// (it is inline content of `<p>`/`<span>` — TTML2 §9.1.5).
-fn serialize_inline_image(image: &ImageElement, w: &mut W, ns: &mut NamespaceMap) -> XmlWrite {
+fn serialize_inline_image(image: &ImageElement, w: &mut W, ns: &mut NamespaceMap) -> WriteOutcome {
     let mut t = BytesStart::new("image");
     serialize_image_attrs(image, &mut t, ns)?;
     empty_inline(w, t)
 }
 
 /// Inline `<audio>`: attributes plus optional character data (§9.1.1).
-fn serialize_inline_audio(audio: &AudioElement, w: &mut W, ns: &mut NamespaceMap) -> XmlWrite {
+fn serialize_inline_audio(audio: &AudioElement, w: &mut W, ns: &mut NamespaceMap) -> WriteOutcome {
     let mut t = BytesStart::new("audio");
     serialize_audio_attrs(audio, &mut t, ns)?;
     match audio.text.as_deref() {
@@ -5172,7 +5181,7 @@ fn serialize_image_attrs(
     image: &ImageElement,
     t: &mut BytesStart<'_>,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     serialize_common_timing_attrs(
         t,
         image.begin.as_deref(),
@@ -5209,7 +5218,7 @@ fn serialize_audio_attrs(
     audio: &AudioElement,
     t: &mut BytesStart<'_>,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     serialize_common_timing_attrs(
         t,
         audio.begin.as_deref(),
@@ -5241,7 +5250,7 @@ fn serialize_image_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("image");
     serialize_image_attrs(image, &mut t, ns)?;
@@ -5276,7 +5285,7 @@ fn serialize_audio_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("audio");
     serialize_audio_attrs(audio, &mut t, ns)?;
@@ -5339,7 +5348,7 @@ fn serialize_resources_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("resources");
     serialize_opt_attr(&mut t, "xml:id", &resources.xml_id)?;
@@ -5375,7 +5384,7 @@ fn serialize_data_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("data");
     serialize_opt_attr(&mut t, "xml:id", &data.xml_id)?;
@@ -5434,7 +5443,7 @@ fn serialize_chunk_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("chunk");
     serialize_opt_attr(&mut t, "xml:id", &chunk.xml_id)?;
@@ -5459,7 +5468,7 @@ fn serialize_font_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("font");
     serialize_opt_attr(&mut t, "xml:id", &font.xml_id)?;
@@ -5507,7 +5516,7 @@ fn serialize_source_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("source");
     serialize_opt_attr(&mut t, "xml:id", &source.xml_id)?;
@@ -5551,7 +5560,7 @@ fn serialize_metadata_child(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     enum Frame<'a> {
         Node(&'a MetadataChild, usize),
         Unknown(&'a UnknownElement, usize),
@@ -5685,7 +5694,7 @@ fn write_text_body(
     unknown_children: &[UnknownElement],
     name: &str,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     start_inline(w, t)?;
     put_text(w, text)?;
     w.compact += 1;
@@ -5705,7 +5714,7 @@ fn finish_with_unknowns(
     indent: usize,
     name: &str,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     if unknown_children.is_empty() {
         return empty_line(w, t);
     }
@@ -5724,7 +5733,7 @@ fn serialize_ttm_text_like(
     w: &mut W,
     depth: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, depth)?;
     let mut t = BytesStart::new(tag);
     serialize_opt_attr(&mut t, "xml:id", &elem.xml_id)?;
@@ -5744,7 +5753,7 @@ fn serialize_ttm_name(
     w: &mut W,
     depth: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, depth)?;
     let mut t = BytesStart::new("ttm:name");
     serialize_opt_attr(&mut t, "type", &n.type_)?;
@@ -5765,7 +5774,7 @@ fn serialize_ttm_item(
     w: &mut W,
     depth: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, depth)?;
     let mut t = BytesStart::new("ttm:item");
     serialize_opt_attr(&mut t, "name", &item.name)?;
@@ -5811,7 +5820,7 @@ fn serialize_styling_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("styling");
     serialize_opt_attr(&mut t, "xml:id", &styling.xml_id)?;
@@ -5857,7 +5866,7 @@ fn serialize_layout_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("layout");
     serialize_opt_attr(&mut t, "xml:id", &layout.xml_id)?;
@@ -5881,7 +5890,7 @@ fn serialize_region_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     put_indent(w, indent)?;
     let mut t = BytesStart::new("region");
     serialize_common_timing_attrs(
@@ -5943,7 +5952,7 @@ fn serialize_animation_child(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) -> XmlWrite {
+) -> WriteOutcome {
     match anim {
         AnimationChild::Set(set) => {
             put_indent(w, indent)?;
@@ -5991,7 +6000,7 @@ fn serialize_common_timing_attrs(
     dur: Option<&str>,
     end: Option<&str>,
     time_container: Option<&str>,
-) -> XmlWrite {
+) -> WriteOutcome {
     if let Some(b) = begin {
         push_attr(t, "begin", b);
     }
@@ -6008,7 +6017,7 @@ fn serialize_common_timing_attrs(
 }
 
 /// Write an optional attribute, skipping absent and empty values.
-fn serialize_opt_attr(t: &mut BytesStart<'_>, name: &str, value: &Option<String>) -> XmlWrite {
+fn serialize_opt_attr(t: &mut BytesStart<'_>, name: &str, value: &Option<String>) -> WriteOutcome {
     if let Some(v) = value
         && !v.is_empty()
     {
@@ -6019,7 +6028,10 @@ fn serialize_opt_attr(t: &mut BytesStart<'_>, name: &str, value: &Option<String>
 
 /// Like `serialize_style_attrs` but skips the tts:extent attribute
 /// (used when tts:extent is already output via an explicit field like on ImageElement).
-fn serialize_style_attrs_skip_extent(attrs: &StyleAttributes, t: &mut BytesStart<'_>) -> XmlWrite {
+fn serialize_style_attrs_skip_extent(
+    attrs: &StyleAttributes,
+    t: &mut BytesStart<'_>,
+) -> WriteOutcome {
     serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color)?;
     serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip)?;
     serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent)?;
@@ -6084,7 +6096,7 @@ fn serialize_style_attrs_skip_extent(attrs: &StyleAttributes, t: &mut BytesStart
     serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align)
 }
 
-fn serialize_style_attrs(attrs: &StyleAttributes, t: &mut BytesStart<'_>) -> XmlWrite {
+fn serialize_style_attrs(attrs: &StyleAttributes, t: &mut BytesStart<'_>) -> WriteOutcome {
     serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color)?;
     serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip)?;
     serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent)?;

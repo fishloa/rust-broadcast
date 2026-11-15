@@ -57,13 +57,13 @@ use core::str::FromStr;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::xml::{Elem, Namespace, XmlError, read_tree};
 use broadcast_common::xml_chars::{
-    LimitExceeded, NO_ATTRS, XmlLimit, XmlLimits, XmlWriteError, XmlWriter, close_element as close,
+    LimitExceeded, NO_ATTRS, WriteRefusal, XmlLimit, XmlLimits, XmlWriter, close_element as close,
     empty_element as empty, finish_document, new_writer, open_element as open, text_element,
     write_declaration,
 };
 
 /// Why [`SmoothManifest::to_xml`] could not render the document.
-pub type ManifestWriteError = XmlWriteError;
+pub type ManifestWriteError = WriteRefusal;
 
 // ---------------------------------------------------------------------------
 // Error
