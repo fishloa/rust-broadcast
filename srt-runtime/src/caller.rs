@@ -32,6 +32,7 @@ use crate::handshake_sm::{
     INDUCTION_LEGACY_SOCKET_TYPE, NegotiatedParams, RejectionReason, Retransmit, RetransmitStep,
     SRT_MAGIC_CODE, WireClock,
 };
+use crate::packet::number::{SocketId, SrtTimestamp};
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
     HandshakePacket, HandshakeType, HsExtMessage,
@@ -130,8 +131,8 @@ impl CallerHandshake {
             });
         }
         let hp = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: 0, // §4.3.1.1: 0 is interpreted as a connection request.
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::CONNECTION_REQUEST, // §4.3.1.1: 0 is interpreted as a connection request.
             version: HANDSHAKE_VERSION_4,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(INDUCTION_LEGACY_SOCKET_TYPE),
@@ -267,9 +268,9 @@ impl CallerHandshake {
             handshake_sm::build_conclusion_extensions(ExtensionType::HsReq, &ext_contents);
 
         let hp_out = HandshakePacket {
-            timestamp: self.clock.now(),
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
             // 0, not the captured Listener Socket ID — libsrt `CUDT::processAsyncConnectRequest` (srtcore/core.cpp), draft §4.3.1; libsrt interop.
-            dest_socket_id: 0,
+            dest_socket_id: SocketId::CONNECTION_REQUEST,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(ext_flags),
@@ -418,8 +419,8 @@ mod tests {
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let conclusion_response = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0x0001),
@@ -460,7 +461,7 @@ mod tests {
                 assert_eq!(hp.handshake_type, HandshakeType::Induction);
                 assert_eq!(hp.srt_socket_id, 0xAAAA_BBBB);
                 assert_eq!(hp.syn_cookie, 0);
-                assert_eq!(hp.dest_socket_id, 0);
+                assert_eq!(hp.dest_socket_id, SocketId::CONNECTION_REQUEST);
             }
             _ => panic!("expected handshake"),
         }
@@ -469,8 +470,8 @@ mod tests {
 
     fn induction_response(cookie: u32, listener_id: u32) -> ControlPacket<'static> {
         ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(SRT_MAGIC_CODE),
@@ -504,7 +505,7 @@ mod tests {
                 assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
                 assert_eq!(hp.syn_cookie, 0xC0FF_EE00);
                 // libsrt `CUDT::processAsyncConnectRequest`; see `on_induction_response`.
-                assert_eq!(hp.dest_socket_id, 0);
+                assert_eq!(hp.dest_socket_id, SocketId::CONNECTION_REQUEST);
                 assert_eq!(hp.extension_field.0 & HS_EXT_FLAG_HSREQ, HS_EXT_FLAG_HSREQ);
                 let blocks: Vec<_> = hp.extensions.iter().collect();
                 assert_eq!(blocks.len(), 1);
@@ -579,8 +580,8 @@ mod tests {
         let mut c = CallerHandshake::new(1, HandshakeConfig::default());
         c.start().unwrap();
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::CONNECTION_REQUEST,
             libsrt_pad: false,
         });
         assert!(matches!(
@@ -653,8 +654,8 @@ mod tests {
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let response = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0x0001),
@@ -685,8 +686,8 @@ mod tests {
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let pkt = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0x0001),

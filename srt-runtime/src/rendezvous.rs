@@ -104,6 +104,7 @@ use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason,
     Retransmit, RetransmitStep, WireClock,
 };
+use crate::packet::number::{SocketId, SrtTimestamp};
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags,
     HandshakeExtensionMessageFlags, HandshakeExtensions, HandshakePacket, HandshakeType,
@@ -393,8 +394,8 @@ impl RendezvousHandshake {
             });
         }
         let hp = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: 0, // Unknown yet — mirrors CallerHandshake::start's INDUCTION.
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::CONNECTION_REQUEST, // Unknown yet — mirrors CallerHandshake::start's INDUCTION.
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(0),
@@ -841,8 +842,8 @@ impl RendezvousHandshake {
             _ => (HandshakeExtensions(Vec::new()), 0),
         };
         let hp = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: self.peer_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::from_wire(self.peer_socket_id),
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(ext_flags),
@@ -863,8 +864,8 @@ impl RendezvousHandshake {
     /// Builds and sends an AGREEMENT: no extensions (§4.3.2.1, L2224-2230).
     fn send_agreement(&mut self) -> Result<Vec<HandshakeOutput>> {
         let hp = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: self.peer_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::from_wire(self.peer_socket_id),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0),
@@ -988,8 +989,8 @@ mod tests {
 
     fn wavehand(socket_id: u32, cookie: u32) -> ControlPacket<'static> {
         ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0),
@@ -1173,8 +1174,8 @@ mod tests {
         // A CONCLUSION whose extension section declares a block length far
         // larger than the bytes present.
         let bad = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ),
@@ -1212,8 +1213,8 @@ mod tests {
         let mut r = RendezvousHandshake::new(1, 500, HandshakeConfig::default());
         r.start().unwrap();
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0),
             libsrt_pad: false,
         });
         assert!(matches!(
@@ -1229,8 +1230,8 @@ mod tests {
     fn broken_internal_invariants_are_errors_not_panics() {
         use crate::packet::{EncryptionField, HandshakeExtensionFlags, HandshakeExtensions};
         let hp = HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
             version: 5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0),

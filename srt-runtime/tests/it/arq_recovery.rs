@@ -9,6 +9,7 @@ use core::time::Duration;
 
 use srt_runtime::arq::{FULL_ACK_PERIOD, Receiver, Sender};
 use srt_runtime::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, DataPacket, NakPacket};
+use srt_runtime::packet::{SocketId, SrtTimestamp};
 
 const SENDER_ID: u32 = 0x1111_1111;
 const RECEIVER_ID: u32 = 0x2222_2222;
@@ -261,8 +262,8 @@ fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
     }
     let ack = AckPacket {
         ack_number: 0,
-        timestamp: 0,
-        dest_socket_id: RECEIVER_ID,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(RECEIVER_ID),
         cif: AckCif::Light { last_ack_seq: 1000 },
     };
     s.on_ack(&ack, Timestamp::ZERO);

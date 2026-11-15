@@ -8,7 +8,7 @@ use srt_runtime::packet::misc::KeepAlivePacket;
 use srt_runtime::packet::{
     Cipher, ControlPacket, DataPacket, EncryptionKeyField, GroupFlags, GroupMembershipExtension,
     GroupType, HandshakeExtensionMessageFlags, HsExtMessage, KeyMaterial, KmAuth, KmKeyFlag,
-    PacketPosition, SrtPacket, StreamEncapsulation,
+    PacketPosition, SocketId, SrtPacket, SrtTimestamp, StreamEncapsulation,
 };
 
 fn through_traits<'a, T>(value: &T, wire: &'a mut Vec<u8>)
@@ -30,16 +30,16 @@ fn data_packet() -> DataPacket<'static> {
         key_flag: EncryptionKeyField::Even,
         retransmitted: false,
         message_number: 0x0155_5555,
-        timestamp: 0xAABB_CCDD,
-        dest_socket_id: 0x1122_3344,
+        timestamp: SrtTimestamp::from_wire(0xAABB_CCDD),
+        dest_socket_id: SocketId::from_wire(0x1122_3344),
         data: &[0x47, 0x00, 0x01, 0x02],
     }
 }
 
 fn keep_alive() -> ControlPacket<'static> {
     ControlPacket::KeepAlive(KeepAlivePacket {
-        timestamp: 7,
-        dest_socket_id: 9,
+        timestamp: SrtTimestamp::from_wire(7),
+        dest_socket_id: SocketId::from_wire(9),
         libsrt_pad: false,
     })
 }

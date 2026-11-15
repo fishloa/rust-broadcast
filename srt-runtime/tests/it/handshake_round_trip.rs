@@ -16,6 +16,7 @@ use srt_runtime::caller::{CallerHandshake, CallerHandshakeState};
 use srt_runtime::handshake_sm::{HandshakeOutput, RejectionReason};
 use srt_runtime::listener::{ListenerHandshake, ListenerHandshakeState};
 use srt_runtime::packet::{ControlPacket, GroupFlags, GroupMembershipExtension, GroupType};
+use srt_runtime::packet::{SocketId, SrtTimestamp};
 
 const CALLER_SOCKET_ID: u32 = 0x1111_1111;
 const LISTENER_SOCKET_ID: u32 = 0x2222_2222;
@@ -152,8 +153,8 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
         ListenerHandshake::new(LISTENER_SOCKET_ID, SYN_COOKIE, HandshakeConfig::default());
 
     let induction = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 0,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::CONNECTION_REQUEST,
         version: 4,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(2),
@@ -177,8 +178,8 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
     };
     let ext = build_extension_block(ExtensionType::HsReq, &hs_msg.to_bytes()).unwrap();
     let conclusion = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: LISTENER_SOCKET_ID,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(LISTENER_SOCKET_ID),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0x0001),

@@ -30,6 +30,7 @@ use crate::handshake_sm::{
     self, HANDSHAKE_VERSION_5, HandshakeConfig, HandshakeOutput, NegotiatedParams, RejectionReason,
     Retransmit, RetransmitStep, SRT_MAGIC_CODE, WireClock,
 };
+use crate::packet::number::{SocketId, SrtTimestamp};
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
     HandshakePacket, HandshakeType, HsExtMessage,
@@ -215,8 +216,8 @@ impl ListenerHandshake {
         self.peer_socket_id = hp.srt_socket_id;
 
         let hp_out = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: self.peer_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::from_wire(self.peer_socket_id),
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(SRT_MAGIC_CODE),
@@ -341,8 +342,8 @@ impl ListenerHandshake {
             handshake_sm::build_conclusion_extensions(ExtensionType::HsRsp, &ext_contents);
 
         let hp_out = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: self.peer_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::from_wire(self.peer_socket_id),
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(ext_flags),
@@ -374,8 +375,8 @@ impl ListenerHandshake {
     ) -> Result<Vec<HandshakeOutput>> {
         self.state = ListenerHandshakeState::Rejected;
         let hp_out = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: hp.srt_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::from_wire(hp.srt_socket_id),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0),
@@ -404,8 +405,8 @@ mod tests {
 
     fn caller_induction(caller_id: u32) -> ControlPacket<'static> {
         ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::CONNECTION_REQUEST,
             version: crate::handshake_sm::HANDSHAKE_VERSION_4,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(2),
@@ -437,7 +438,7 @@ mod tests {
                 assert_eq!(hp.handshake_type, HandshakeType::Induction);
                 assert_eq!(hp.srt_socket_id, 0x9999);
                 assert_eq!(hp.syn_cookie, 0xC0FF_EE00);
-                assert_eq!(hp.dest_socket_id, 0x1234);
+                assert_eq!(hp.dest_socket_id, SocketId::from_wire(0x1234));
             }
             _ => panic!("expected handshake"),
         }
@@ -464,8 +465,8 @@ mod tests {
         let ext: &'static [u8] = Vec::leak(ext);
         let ext = HandshakeExtensions::parse(ext).expect("test extension bytes");
         ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: listener_id,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(listener_id),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ),
@@ -530,8 +531,8 @@ mod tests {
         // Message — must reject cleanly, not panic.
         let ext: &'static [u8] = &[0x00, 0x01, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF];
         let bad = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(HS_EXT_FLAG_HSREQ),

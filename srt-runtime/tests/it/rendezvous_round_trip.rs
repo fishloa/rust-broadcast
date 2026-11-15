@@ -16,6 +16,7 @@ use core::time::Duration;
 use srt_runtime::handshake_sm::HandshakeOutput;
 use srt_runtime::packet::{
     ControlPacket, EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
+    SocketId, SrtTimestamp,
 };
 use srt_runtime::rendezvous::{RendezvousHandshake, RendezvousHandshakeState};
 use srt_runtime::{HandshakeConfig, RendezvousRole};
@@ -146,8 +147,8 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
 
     // Get `a` into Attention (Initiator) first.
     let peer_wave = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 0,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::CONNECTION_REQUEST,
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -166,8 +167,8 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
     // A CONCLUSION carrying an extension section that overruns the bytes
     // actually present — must be rejected cleanly, never panic.
     let bad = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 1,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(1),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(1),

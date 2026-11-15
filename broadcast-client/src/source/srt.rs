@@ -19,7 +19,8 @@ use srt_runtime::crypto::{SALT_LEN, aes_ctr_apply, select_sek};
 use srt_runtime::handshake_sm::{CryptoConfig, HandshakeConfig, HandshakeOutput, NegotiatedParams};
 use srt_runtime::packet::misc::ShutdownPacket;
 use srt_runtime::packet::{
-    ControlPacket, DropReqPacket, EncryptionField, EncryptionKeyField, SrtPacket,
+    ControlPacket, DropReqPacket, EncryptionField, EncryptionKeyField, SocketId, SrtPacket,
+    SrtTimestamp,
 };
 use srt_runtime::tsbpd::{TickOutcome, TsbpdScheduler};
 
@@ -200,7 +201,7 @@ impl SrtCaller {
                         self.fail_handshake();
                         return;
                     };
-                    self.connected(&params, hp.initial_seq_number, hp.timestamp, now_us);
+                    self.connected(&params, hp.initial_seq_number, hp.timestamp.value(), now_us);
                     return;
                 }
                 HandshakeOutput::Rejected(reason) => {
@@ -392,8 +393,10 @@ impl SrtCaller {
             return None;
         };
         let pkt = ControlPacket::Shutdown(ShutdownPacket {
-            timestamp: wire_timestamp(now_us.saturating_sub(link.epoch_us)),
-            dest_socket_id: link.peer_socket_id,
+            timestamp: SrtTimestamp::from_wire(wire_timestamp(
+                now_us.saturating_sub(link.epoch_us),
+            )),
+            dest_socket_id: SocketId::from_wire(link.peer_socket_id),
             libsrt_pad: true,
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -450,7 +453,7 @@ impl Link {
             stats.duplicates = stats.duplicates.saturating_add(1);
         }
         self.staged.entry(d.seq_number).or_insert(payload);
-        self.tsbpd.feed_data(d.seq_number, d.timestamp, now)
+        self.tsbpd.feed_data(d.seq_number, d.timestamp.value(), now)
     }
 
     fn drop_request(&mut self, d: &DropReqPacket, now: Timestamp) -> TickOutcome {

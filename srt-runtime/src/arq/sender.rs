@@ -28,6 +28,7 @@ use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use crate::error::Result;
+use crate::packet::number::SocketId;
 use crate::packet::{
     AckAckPacket, AckCif, AckPacket, ControlPacket, DataPacket, EncryptionKeyField, LossListEntry,
     NakPacket, PacketPosition,
@@ -181,7 +182,7 @@ impl Sender {
             retransmitted: false,
             message_number,
             timestamp: timestamp_to_wire_us(now),
-            dest_socket_id: self.dest_socket_id,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             data: payload,
         };
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -222,7 +223,7 @@ impl Sender {
             retransmitted: false,
             message_number,
             timestamp: timestamp_to_wire_us(now),
-            dest_socket_id: self.dest_socket_id,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             data: payload,
         };
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -311,7 +312,7 @@ impl Sender {
                 retransmitted: true,
                 message_number: sent.message_number,
                 timestamp: timestamp_to_wire_us(now),
-                dest_socket_id: self.dest_socket_id,
+                dest_socket_id: SocketId::from_wire(self.dest_socket_id),
                 data: &sent.payload,
             };
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -361,7 +362,7 @@ impl Sender {
             let pkt = ControlPacket::AckAck(AckAckPacket {
                 ack_number: ack.ack_number,
                 timestamp: timestamp_to_wire_us(now),
-                dest_socket_id: self.dest_socket_id,
+                dest_socket_id: SocketId::from_wire(self.dest_socket_id),
                 libsrt_pad: true,
             });
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -385,7 +386,7 @@ mod tests {
     use crate::error::Error;
     use crate::packet::SEQ_NUMBER_MASK;
     use crate::packet::data::MESSAGE_NUMBER_MASK;
-    use crate::packet::number::SeqNo;
+    use crate::packet::number::{SeqNo, SocketId, SrtTimestamp};
 
     const PEER: u32 = 0xAAAA;
 
@@ -396,8 +397,8 @@ mod tests {
 
     fn nak_bytes(entries: &[LossListEntry]) -> Vec<u8> {
         let pkt = ControlPacket::Nak(NakPacket {
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             entries: entries.to_vec(),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -461,8 +462,8 @@ mod tests {
 
         let ack = AckPacket {
             ack_number: 1,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             cif: AckCif::Full {
                 last_ack_seq: 2,
                 rtt_us: 20_000,
@@ -489,8 +490,8 @@ mod tests {
         s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
         let ack = AckPacket {
             ack_number: 0,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             cif: AckCif::Light { last_ack_seq: 1 },
         };
         assert!(s.on_ack(&ack, Timestamp::ZERO).is_none());
@@ -605,8 +606,8 @@ mod tests {
         assert_eq!(s.pending_retransmit_count(), 4);
         let ack = AckPacket {
             ack_number: 0,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             cif: AckCif::Light { last_ack_seq: 3 },
         };
         assert!(s.on_ack(&ack, Timestamp::ZERO).is_none());

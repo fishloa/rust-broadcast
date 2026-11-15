@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
-use crate::packet::number::SeqNo;
+use crate::packet::number::{SeqNo, SocketId, SrtTimestamp};
 use crate::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, LossListEntry, NakPacket};
 
 use super::rtt::RttEstimator;
@@ -344,7 +344,7 @@ impl Receiver {
     fn nak_datagram(&self, entries: &[LossListEntry], now: Timestamp) -> Option<Vec<u8>> {
         let pkt = ControlPacket::Nak(NakPacket {
             timestamp: timestamp_to_wire_us(now),
-            dest_socket_id: self.dest_socket_id,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             entries: entries.to_vec(),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -427,7 +427,7 @@ impl Receiver {
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number,
             timestamp: timestamp_to_wire_us(now),
-            dest_socket_id: self.dest_socket_id,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             cif: AckCif::Full {
                 last_ack_seq: self.next_expected,
                 rtt_us: self.rtt.rtt_us(),
@@ -451,8 +451,8 @@ impl Receiver {
         // (rule 24).
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number: 0,
-            timestamp: 0,
-            dest_socket_id: self.dest_socket_id,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             cif: AckCif::Light {
                 last_ack_seq: self.next_expected,
             },
@@ -704,8 +704,8 @@ mod tests {
         };
         let ackack = AckAckPacket {
             ack_number: ack.ack_number,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             libsrt_pad: false,
         };
         let sample = Duration::from_millis(20);
@@ -824,8 +824,8 @@ mod tests {
         };
         let ackack = AckAckPacket {
             ack_number: ack.ack_number,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             libsrt_pad: false,
         };
         let rtt_before = r.rtt();

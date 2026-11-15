@@ -14,7 +14,7 @@
 
 use alloc::vec::Vec;
 
-use super::number::SeqNo;
+use super::number::{SeqNo, SocketId, SrtTimestamp};
 use super::{Error, F_BIT, Result, be32, put_be32};
 
 /// One decoded entry of a NAK loss list (Appendix A). Data-carrying ADT — not
@@ -36,9 +36,9 @@ pub enum LossListEntry {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct NakPacket {
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// The decoded loss-list entries (Appendix A), serialized on write.
     pub entries: Vec<LossListEntry>,
 }
@@ -50,7 +50,11 @@ impl NakPacket {
     /// [`Error::InvalidLossList`] when the bytes are not a sequence of whole
     /// entries, when a range start is not followed by its end, or when that
     /// end has the range marker bit set.
-    pub fn parse_cif(timestamp: u32, dest_socket_id: u32, cif: &[u8]) -> Result<Self> {
+    pub fn parse_cif(
+        timestamp: SrtTimestamp,
+        dest_socket_id: SocketId,
+        cif: &[u8],
+    ) -> Result<Self> {
         let mut entries = Vec::with_capacity(cif.len() / 4);
         let mut rest = cif;
         while !rest.is_empty() {
@@ -135,8 +139,8 @@ mod tests {
             LossListEntry::Single(sn(30)),
         ];
         let pkt = ControlPacket::Nak(NakPacket {
-            timestamp: 1,
-            dest_socket_id: 2,
+            timestamp: SrtTimestamp::from_wire(1),
+            dest_socket_id: SocketId::from_wire(2),
             entries: entries.clone(),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -164,7 +168,7 @@ mod tests {
         let mut raw = Vec::new();
         raw.extend_from_slice(&(1u32 | F_BIT).to_be_bytes());
         raw.extend_from_slice(&(2u32 | F_BIT).to_be_bytes());
-        let err = NakPacket::parse_cif(0, 0, &raw)
+        let err = NakPacket::parse_cif(SrtTimestamp::ZERO, SocketId::CONNECTION_REQUEST, &raw)
             .expect_err("a range end with the top bit set is malformed");
         assert!(matches!(err, Error::InvalidLossList { .. }));
     }
@@ -172,8 +176,9 @@ mod tests {
     #[test]
     fn a_truncated_loss_list_is_rejected_on_parse() {
         // Three bytes are not a whole 4-byte entry.
-        let err = NakPacket::parse_cif(0, 0, &[0, 0, 0])
-            .expect_err("trailing bytes are not a whole entry");
+        let err =
+            NakPacket::parse_cif(SrtTimestamp::ZERO, SocketId::CONNECTION_REQUEST, &[0, 0, 0])
+                .expect_err("trailing bytes are not a whole entry");
         assert!(matches!(err, Error::InvalidLossList { .. }));
     }
 
@@ -195,7 +200,7 @@ mod tests {
     #[test]
     fn a_range_missing_its_end_is_rejected_on_parse() {
         let raw = (1u32 | F_BIT).to_be_bytes();
-        let err = NakPacket::parse_cif(0, 0, &raw)
+        let err = NakPacket::parse_cif(SrtTimestamp::ZERO, SocketId::CONNECTION_REQUEST, &raw)
             .expect_err("a range start without its end is malformed");
         assert!(matches!(err, Error::InvalidLossList { .. }));
     }

@@ -3,6 +3,7 @@
 //! Drop Request (§3.2.9), and Peer Error (§3.2.10).
 
 use super::data::MESSAGE_NUMBER_BITS;
+use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, SEQ_NUMBER_MASK, be32, put_be32};
 use broadcast_common::error::BufferTooShort;
 
@@ -15,9 +16,9 @@ pub const PEER_ERROR_FILE_SYSTEM: u32 = 4000;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct KeepAlivePacket {
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
     /// empty CIF of draft-sharabayko-srt-01.
     pub libsrt_pad: bool,
@@ -29,9 +30,9 @@ pub struct KeepAlivePacket {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CongestionWarningPacket {
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
     /// empty CIF of draft-sharabayko-srt-01.
     pub libsrt_pad: bool,
@@ -42,9 +43,9 @@ pub struct CongestionWarningPacket {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ShutdownPacket {
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
     /// empty CIF of draft-sharabayko-srt-01.
     pub libsrt_pad: bool,
@@ -57,9 +58,9 @@ pub struct AckAckPacket {
     /// Acknowledgement Number of the Full ACK being acknowledged.
     pub ack_number: u32,
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
     /// empty CIF of draft-sharabayko-srt-01.
     pub libsrt_pad: bool,
@@ -73,9 +74,9 @@ pub struct DropReqPacket {
     /// longer has the packets and cannot restore it).
     pub message_number: u32,
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// First Packet Sequence Number of the range to drop.
     pub first_seq: u32,
     /// Last Packet Sequence Number of the range to drop.
@@ -85,8 +86,8 @@ pub struct DropReqPacket {
 impl DropReqPacket {
     pub(crate) fn parse_cif(
         message_number: u32,
-        timestamp: u32,
-        dest_socket_id: u32,
+        timestamp: SrtTimestamp,
+        dest_socket_id: SocketId,
         cif: &[u8],
     ) -> Result<Self> {
         if cif.len() != 8 {
@@ -139,9 +140,9 @@ pub struct PeerErrorPacket {
     /// Peer error code (see [`PEER_ERROR_FILE_SYSTEM`]).
     pub error_code: u32,
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// `true` when the CIF carries libsrt's 4-byte zero pad; `false` for the
     /// empty CIF of draft-sharabayko-srt-01.
     pub libsrt_pad: bool,
@@ -159,8 +160,8 @@ mod tests {
     fn drop_req_round_trips() {
         let d = DropReqPacket {
             message_number: 7,
-            timestamp: 100,
-            dest_socket_id: 200,
+            timestamp: SrtTimestamp::from_wire(100),
+            dest_socket_id: SocketId::from_wire(200),
             first_seq: 10,
             last_seq: 20,
         };
@@ -179,8 +180,8 @@ mod tests {
     fn drop_req_rejects_numbers_that_do_not_fit_their_wire_fields() {
         let fits = DropReqPacket {
             message_number: 7,
-            timestamp: 100,
-            dest_socket_id: 200,
+            timestamp: SrtTimestamp::from_wire(100),
+            dest_socket_id: SocketId::from_wire(200),
             first_seq: SEQ_NUMBER_MASK,
             last_seq: SEQ_NUMBER_MASK,
         };
@@ -216,30 +217,30 @@ mod tests {
     fn keepalive_congestion_shutdown_ackack_peererror_round_trip() {
         let cases: Vec<ControlPacket> = alloc::vec![
             ControlPacket::KeepAlive(KeepAlivePacket {
-                timestamp: 1,
-                dest_socket_id: 2,
+                timestamp: SrtTimestamp::from_wire(1),
+                dest_socket_id: SocketId::from_wire(2),
                 libsrt_pad: true,
             }),
             ControlPacket::CongestionWarning(CongestionWarningPacket {
-                timestamp: 3,
-                dest_socket_id: 4,
+                timestamp: SrtTimestamp::from_wire(3),
+                dest_socket_id: SocketId::from_wire(4),
                 libsrt_pad: true,
             }),
             ControlPacket::Shutdown(ShutdownPacket {
-                timestamp: 5,
-                dest_socket_id: 6,
+                timestamp: SrtTimestamp::from_wire(5),
+                dest_socket_id: SocketId::from_wire(6),
                 libsrt_pad: true,
             }),
             ControlPacket::AckAck(AckAckPacket {
                 ack_number: 9,
-                timestamp: 7,
-                dest_socket_id: 8,
+                timestamp: SrtTimestamp::from_wire(7),
+                dest_socket_id: SocketId::from_wire(8),
                 libsrt_pad: true,
             }),
             ControlPacket::PeerError(PeerErrorPacket {
                 error_code: PEER_ERROR_FILE_SYSTEM,
-                timestamp: 11,
-                dest_socket_id: 12,
+                timestamp: SrtTimestamp::from_wire(11),
+                dest_socket_id: SocketId::from_wire(12),
                 libsrt_pad: true,
             }),
         ];
@@ -262,30 +263,30 @@ mod tests {
     fn keepalive_congestion_shutdown_ackack_peererror_accept_empty_cif() {
         let cases: Vec<ControlPacket> = alloc::vec![
             ControlPacket::KeepAlive(KeepAlivePacket {
-                timestamp: 1,
-                dest_socket_id: 2,
+                timestamp: SrtTimestamp::from_wire(1),
+                dest_socket_id: SocketId::from_wire(2),
                 libsrt_pad: false,
             }),
             ControlPacket::CongestionWarning(CongestionWarningPacket {
-                timestamp: 3,
-                dest_socket_id: 4,
+                timestamp: SrtTimestamp::from_wire(3),
+                dest_socket_id: SocketId::from_wire(4),
                 libsrt_pad: false,
             }),
             ControlPacket::Shutdown(ShutdownPacket {
-                timestamp: 5,
-                dest_socket_id: 6,
+                timestamp: SrtTimestamp::from_wire(5),
+                dest_socket_id: SocketId::from_wire(6),
                 libsrt_pad: false,
             }),
             ControlPacket::AckAck(AckAckPacket {
                 ack_number: 9,
-                timestamp: 7,
-                dest_socket_id: 8,
+                timestamp: SrtTimestamp::from_wire(7),
+                dest_socket_id: SocketId::from_wire(8),
                 libsrt_pad: false,
             }),
             ControlPacket::PeerError(PeerErrorPacket {
                 error_code: PEER_ERROR_FILE_SYSTEM,
-                timestamp: 11,
-                dest_socket_id: 12,
+                timestamp: SrtTimestamp::from_wire(11),
+                dest_socket_id: SocketId::from_wire(12),
                 libsrt_pad: false,
             }),
         ];
@@ -307,8 +308,8 @@ mod tests {
     #[test]
     fn sixteen_byte_keepalive_round_trip_byte_identical() {
         let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0x1234,
-            dest_socket_id: 0x5678,
+            timestamp: SrtTimestamp::from_wire(0x1234),
+            dest_socket_id: SocketId::from_wire(0x5678),
             libsrt_pad: false,
         });
         let mut buf = [0u8; 16];
@@ -329,8 +330,8 @@ mod tests {
     #[test]
     fn twenty_byte_keepalive_round_trip_byte_identical() {
         let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0x1234,
-            dest_socket_id: 0x5678,
+            timestamp: SrtTimestamp::from_wire(0x1234),
+            dest_socket_id: SocketId::from_wire(0x5678),
             libsrt_pad: true,
         });
         let mut buf = [0u8; 20];

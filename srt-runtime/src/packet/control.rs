@@ -24,6 +24,7 @@ use super::misc::{
     ShutdownPacket,
 };
 use super::nak::NakPacket;
+use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, SRT_HEADER_LEN, be32, put_be32};
 use broadcast_common::error::ReservedBits;
 use broadcast_common::len::{need_in, need_out};
@@ -153,9 +154,9 @@ pub struct UserDefinedPacket<'a> {
     /// The header `Type-specific Information` word.
     pub type_specific_info: u32,
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// The raw CIF bytes.
     pub cif: &'a [u8],
 }
@@ -271,8 +272,8 @@ impl<'a> ControlPacket<'a> {
         let control_type_bits = ((word0 >> 16) & 0x7FFF) as u16;
         let subtype = (word0 & 0xFFFF) as u16;
         let type_specific_info = be32(bytes, 4);
-        let timestamp = be32(bytes, 8);
-        let dest_socket_id = be32(bytes, 12);
+        let timestamp = SrtTimestamp::from_wire(be32(bytes, 8));
+        let dest_socket_id = SocketId::from_wire(be32(bytes, 12));
         let cif = &bytes[SRT_HEADER_LEN..];
         let control_type = ControlType::from_bits(control_type_bits);
 
@@ -417,7 +418,7 @@ impl<'a> ControlPacket<'a> {
         })
     }
 
-    fn timestamp(&self) -> u32 {
+    fn timestamp(&self) -> SrtTimestamp {
         match self {
             ControlPacket::Handshake(h) => h.timestamp,
             ControlPacket::KeepAlive(k) => k.timestamp,
@@ -432,7 +433,7 @@ impl<'a> ControlPacket<'a> {
         }
     }
 
-    fn dest_socket_id(&self) -> u32 {
+    fn dest_socket_id(&self) -> SocketId {
         match self {
             ControlPacket::Handshake(h) => h.dest_socket_id,
             ControlPacket::KeepAlive(k) => k.dest_socket_id,
@@ -509,8 +510,8 @@ impl<'a> ControlPacket<'a> {
         let word0 = super::F_BIT | (u32::from(control_type_bits) << 16) | u32::from(self.subtype());
         put_be32(buf, 0, word0);
         put_be32(buf, 4, self.word1()?);
-        put_be32(buf, 8, self.timestamp());
-        put_be32(buf, 12, self.dest_socket_id());
+        put_be32(buf, 8, self.timestamp().value());
+        put_be32(buf, 12, self.dest_socket_id().value());
         let cif = &mut buf[SRT_HEADER_LEN..len];
         match self {
             ControlPacket::Handshake(h) => {

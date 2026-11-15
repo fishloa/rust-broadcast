@@ -43,6 +43,7 @@ pub use receiver::{FeedOutcome, Receiver};
 pub use rtt::RttEstimator;
 pub use sender::Sender;
 
+use crate::packet::number::SrtTimestamp;
 use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
@@ -91,9 +92,9 @@ pub(crate) fn duration_to_wire_us(d: Duration) -> u32 {
 /// caller's epoch — not clamping to `u32::MAX`. See
 /// [`duration_to_wire_us`] for why a clamp (instead of a wrap) stalls a real
 /// peer's Too-Late-Packet-Drop.
-pub(crate) fn timestamp_to_wire_us(ts: Timestamp) -> u32 {
+pub(crate) fn timestamp_to_wire_us(ts: Timestamp) -> SrtTimestamp {
     // Keep exactly the low 32 bits: the wire field is "microseconds mod 2^32".
-    u32::try_from(ts.as_micros() & u64::from(u32::MAX)).unwrap_or(0)
+    SrtTimestamp::from_wire(u32::try_from(ts.as_micros() & u64::from(u32::MAX)).unwrap_or(0))
 }
 
 /// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`private/specs-verified/rules/srt-arq.md`
@@ -119,15 +120,21 @@ mod tests {
     /// later packet's timestamp and Too-Late-Packet-Drop a real peer).
     #[test]
     fn timestamp_to_wire_us_wraps_mod_2_32() {
-        assert_eq!(timestamp_to_wire_us(Timestamp::from_micros(0)), 0);
-        assert_eq!(timestamp_to_wire_us(Timestamp::from_micros(1_000)), 1_000);
+        assert_eq!(
+            timestamp_to_wire_us(Timestamp::from_micros(0)),
+            SrtTimestamp::ZERO
+        );
+        assert_eq!(
+            timestamp_to_wire_us(Timestamp::from_micros(1_000)),
+            SrtTimestamp::from_wire(1_000)
+        );
         assert_eq!(
             timestamp_to_wire_us(Timestamp::from_micros(u64::from(u32::MAX))),
-            u32::MAX
+            SrtTimestamp::from_wire(u32::MAX)
         );
         assert_eq!(
             timestamp_to_wire_us(Timestamp::from_micros(u64::from(u32::MAX) + 1)),
-            0,
+            SrtTimestamp::ZERO,
             "the wrap is modulo 2^32, not a clamp"
         );
     }

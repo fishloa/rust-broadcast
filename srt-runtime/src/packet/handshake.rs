@@ -30,6 +30,7 @@ use broadcast_common::error::{BufferTooShort, OutputBufferTooSmall};
 use broadcast_common::len::need_in;
 
 use super::key_material::KeyMaterial;
+use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, be16, be32, put_be16, put_be32};
 
 /// Length in bytes of the fixed Handshake CIF core (Version through Peer IP
@@ -759,9 +760,9 @@ impl<'a> HandshakeExtensions<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct HandshakePacket<'a> {
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// A base protocol version number (`4` or `5`; `>5` reserved).
     pub version: u32,
     /// Block cipher family and key size (Table 2).
@@ -789,7 +790,11 @@ pub struct HandshakePacket<'a> {
 }
 
 impl<'a> HandshakePacket<'a> {
-    pub(crate) fn parse_cif(timestamp: u32, dest_socket_id: u32, cif: &'a [u8]) -> Result<Self> {
+    pub(crate) fn parse_cif(
+        timestamp: SrtTimestamp,
+        dest_socket_id: SocketId,
+        cif: &'a [u8],
+    ) -> Result<Self> {
         need_in(cif, HANDSHAKE_CIF_FIXED_LEN, "handshake CIF")?;
         let version = be32(cif, 0);
         let word1 = be32(cif, 4);
@@ -869,8 +874,8 @@ mod tests {
 
     fn sample_no_ext() -> HandshakePacket<'static> {
         HandshakePacket {
-            timestamp: 111,
-            dest_socket_id: 222,
+            timestamp: SrtTimestamp::from_wire(111),
+            dest_socket_id: SocketId::from_wire(222),
             version: 5,
             encryption_field: EncryptionField::Aes128,
             extension_field: HandshakeExtensionFlags(0),

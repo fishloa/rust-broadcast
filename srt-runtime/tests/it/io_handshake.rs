@@ -20,7 +20,8 @@ use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
 use srt_runtime::listener::ListenerHandshake;
 use srt_runtime::packet::{
     ControlPacket, DataPacket, EncryptionField, EncryptionKeyField, HandshakeExtensionFlags,
-    HandshakeExtensions, HandshakePacket, HandshakeType, PacketPosition, SrtPacket,
+    HandshakeExtensions, HandshakePacket, HandshakeType, PacketPosition, SocketId, SrtPacket,
+    SrtTimestamp,
 };
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -190,8 +191,8 @@ async fn stray_datagrams_do_not_abort_or_hijack_the_connect() {
 
 fn rejection(to_socket_id: u32, reason: RejectionReason) -> Vec<u8> {
     let pkt = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: to_socket_id,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(to_socket_id),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -445,7 +446,7 @@ async fn dropping_a_socket_sends_the_peer_a_shutdown() {
     })
     .await
     .expect("no SHUTDOWN arrived after the socket was dropped");
-    assert_eq!(shutdown.dest_socket_id, LISTENER_ID);
+    assert_eq!(shutdown.dest_socket_id, SocketId::from_wire(LISTENER_ID));
 }
 
 async fn connected_pair() -> (SrtSocket, SrtSocket) {
@@ -530,8 +531,8 @@ async fn a_caller_far_into_its_own_clock_is_delivered_promptly() {
         key_flag: EncryptionKeyField::NotEncrypted,
         retransmitted: false,
         message_number: 1,
-        timestamp: CALLER_CLOCK_US + 1_000,
-        dest_socket_id: listener_socket_id,
+        timestamp: SrtTimestamp::from_wire(CALLER_CLOCK_US + 1_000),
+        dest_socket_id: SocketId::from_wire(listener_socket_id),
         data: payload,
     };
     let mut wire = vec![0u8; pkt.serialized_len()];
@@ -674,8 +675,8 @@ fn send_data(seq: u32, dest: u32) -> Vec<u8> {
         key_flag: EncryptionKeyField::NotEncrypted,
         retransmitted: false,
         message_number: 1,
-        timestamp: 1_000_000_000,
-        dest_socket_id: dest,
+        timestamp: SrtTimestamp::from_wire(1_000_000_000),
+        dest_socket_id: SocketId::from_wire(dest),
         data: b"x",
     };
     let mut wire = vec![0u8; pkt.serialized_len()];
@@ -784,7 +785,7 @@ async fn the_caller_stamps_the_time_since_it_started_on_its_conclusion() {
 
     let (induction, src) = recv_from(&raw).await;
     let timestamp_of = |d: &[u8]| match SrtPacket::parse(d).expect("parse") {
-        SrtPacket::Control(ControlPacket::Handshake(hp)) => hp.timestamp,
+        SrtPacket::Control(ControlPacket::Handshake(hp)) => hp.timestamp.value(),
         other => panic!("expected a handshake, got {other:?}"),
     };
     assert!(timestamp_of(&induction) < 100_000);
