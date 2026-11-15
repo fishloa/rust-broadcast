@@ -2,9 +2,14 @@
 
 _Released 2026-11-15._
 
-### Changed
-- Dependency/epoch bump only (follows broadcast-common); no functional change.
+Lockstep release: the version moves with the family and the crate follows `broadcast-common` 12 -> 13. No functional change; nothing to migrate in this crate's own API.
+
+Version: 14.0.0 -> 15.0.0.
+
+## Dependencies
+
+- `broadcast-common` 12 -> 13 (published first, from tag `broadcast-common-v13.0.0`).
 
 ---
 
-Published from tag `dvb-bbframe-v15.0.0`.
+Published from tag `v15.0.0`.

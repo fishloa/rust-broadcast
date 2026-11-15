@@ -2,32 +2,164 @@
 
 _Released 2026-11-15._
 
-### Changed
-- BREAKING: `http_date::parse_http_date` and `http_date::date_to_epoch_us` return a `jiff::Timestamp` (the workspace wall-clock instant) instead of Unix microseconds as a raw `i64`; `date_to_epoch_us` still refuses a `Date` before 1970 and now reports a value outside the `jiff` range as `HttpDateError::HttpDate`. Migration: `parse_http_date(t)?.as_microsecond()` for a numeric count, or drop the conversion where a wall-clock instant was wanted (#2731).
-- BREAKING: `time::MonoUtc` (and its `WallClock`/`Anchor` aliases) holds typed instants — `mono: stage::Timestamp` and `utc: jiff::Timestamp` — instead of the raw `mono_us: u64`/`utc_us: i128` microsecond fields, and its mapping methods take and return the same types (`utc_at(now: Timestamp) -> jiff::Timestamp` saturating at the wall-clock range, `mono_for_utc(utc: jiff::Timestamp) -> Timestamp` saturating at `0..=u64::MAX`); the raw-count aliases `unix_at`/`mono_for_unix` are gone, and the type is behind the `jiff` feature. Migration: build with `MonoUtc::new(Timestamp::from_micros(m), jiff::Timestamp::from_microsecond(u)?)` and take the typed result of `utc_at`/`mono_for_utc` rather than re-wrapping a microsecond count (#2731).
-- BREAKING: `backoff::InvalidBackoff` no longer implements `Eq`, and its growth-factor failure is the new `backoff::InvalidBackoff::GrowthFactor { factor: backoff::GrowthFactor }` (`GrowthFactor::Nan` or `GrowthFactor::Below(f64)`) instead of `GrowthBelowOne { factor: f64 }`: a NaN factor made the error unequal to its own copy, so the `Eq` claim was false. `InvalidBackoff::reason()` (a `String`-producing error API) is gone; `Display` is the message and `core::error::Error` is still implemented (`GrowthFactor::name()` carries the description, the workspace's label convention for a public enum) (#2725). Migration: match `GrowthFactor` variants rather than the raw `f64`, and render the message with `to_string()` instead of `reason()`.
+Major release (12 -> 13). This is the wave where the workspace's shared time, clock and backoff vocabulary landed: instants are `stage::Timestamp`, wall clocks are `jiff::Timestamp`, media positions are validated `Clock27`/`Clock33` values, and every fallible construction reports a typed error instead of asserting. Because every crate in the workspace depends on `broadcast-common`, all of them move to a new caret epoch in this wave.
 
-### Added
-- `backoff::RetrySchedule::no_delay(seed)`: the schedule no bound can refuse (a zero cap with no step table, every attempt waiting nothing), the value `from_steps(&[], Duration::ZERO, seed)` yields, named so a caller that must hold a schedule in a field it cannot build fallibly does not rebuild it by hand (#2727).
-- `reserved::{Reserved, ReservedOnes, ReservedZero}`: the workspace's one typed run of `reserved` / `reserved_future_use` bits in a fixed-width field, moved here from `dvb-ci` so a CAM object and a DVB descriptor use the same type. The width is a `const` (1..=64), so a value wider than the field is unrepresentable and a serializer never re-masks one (it now also carries the 12-bit `cable_delivery_system` run); `Default` is the spec fill and it serializes as the bare number. `dvb_ci::reserved` re-exports these names (#2738).
-- `backoff::ReconnectPolicy`: the workspace's one reconnect/backoff policy (a `BackoffSteps` schedule plus an `Option<NonZeroU32>` attempt bound), `ReconnectPolicy::doubling` (an exponential schedule from two bounds), and `ReconnectPolicy::exhausted` (#2690).
-- `clock33::Clock27::from_27mhz_wrapping`: the infallible position a raw 27 MHz count names, reduced modulo `PCR_WRAP_27MHZ` when it is past the wrap (a counter that has run over it), unchanged below it; `from_27mhz` stays the checked one (#2687).
-- `range::ByteSpan`: the one byte-range type the pull clients carry (`offset` + non-zero `len`), rendering the `Range: bytes=<first>-<last>` field value via `range_header()`; `broadcast-hls`/`broadcast-dash` convert their own `ByteRange` to and from it at the parser edge (#2655 C1). Needs `serde` for its optional derive.
-- `timescale::Timescale`: `Display`, a transparent `Debug` (the bare number), `serde::Serialize` (transparent, `serde` feature), `Timescale::NANOS`, and `clock33::PTS_TIMESCALE` / `clock33::PCR_TIMESCALE` (the 90 kHz and 27 MHz clocks as `Timescale`s) (#2657).
-- `clock33::Clock33` and `clock33::Clock27` with `clock33::ClockOutOfRange`: the workspace's validated clock values. `Clock33` is a 33-bit 90 kHz sample (PTS/DTS/SCTE-35 `pts_time`) that cannot hold a value at or above 2^33; `Clock27` is a 27 MHz `base * 300 + ext` (PCR, ESCR, program-stream SCR) whose base is a `Clock33` and whose extension is below 300, with `from_parts`/`from_27mhz` (validating), `ticks`, `seconds` and `signed_distance_to`. `mpeg-ts`'s `Pcr` and `mpeg-ps`'s `Scr` are these values rather than unchecked copies. Constructing is strict, parsing is lossless: `Clock27::from_wire_parts(base, ext)` keeps the two parts a wire field carried (a 9-bit PCR/ESCR/SCR extension may be 300..=511, off the clock), `to_clock27()` is the checked view that reports such a value as `ClockOutOfRange`, `is_valid()` answers the question directly, and `ClockOutOfRange::base(value)` reports an over-wide base for a type that kept wire parts (#2656).
-- `http_date::date_to_epoch_us` converts the typed `headers::Date` an HTTP client holds to Unix microseconds, refusing a value before 1970 or outside the microsecond range; the `http-date` feature now pulls in `headers` and `http` (#2692).
-- `net` module: `UdpOptions` (the one UDP bind/join option set: `recv_buffer_bytes`, `reuse_address`, `reuse_port`, `multicast`), `MulticastJoin` (`group` + `interface` + optional source-specific `source`) and `MulticastInterface` (`Any` / `V4(Ipv4Addr)` / `V6Index(u32)` / `Name(String)`, `parse`/`as_str`), plus `UdpOptions::validate` and `JoinMismatch`. Plain `core::net` data, `no_std`, so a sans-IO engine can carry it in an action (#2663).
-- `backoff::MAX_FLOOR` (the largest floor a schedule may be built with, the largest whole second both `Duration` and `f64` hold) and `backoff::InvalidBackoff` (`CapBelowFloor`, `FloorAboveCeiling`, `GrowthBelowOne`; `reason()` renders the message `Display` and `core::error::Error` carry); `RetrySchedule::peek_delay_for_attempt` reads the delay the schedule would compute for its current jitter term without advancing it (#2701).
-### Changed
-- BREAKING: `stage::Timestamp` no longer has a public inner field. `Timestamp(raw_micros)` built a reading beside `from_micros`/`from_nanos`/`from_millis` while skipping their round-toward-the-later-instant rule, so two spellings of one thing disagreed by a microsecond; the field is private and `as_micros()` is the way out. The module docs now say what the type does: its arithmetic clamps a *reading* (`saturating_*`) while a *deadline* is `checked_add`, where `None` means "never fires" (`docs/API-CONVENTIONS.md`). Users that made a never-firing deadline with `Timestamp(u64::MAX)` now keep `Option<Timestamp>`.
-- BREAKING: `timescale::Timescale` has no panicking constructor: its field is private, and the only infallible builder, `Timescale::from_nonzero(n: NonZeroU32)`, takes the proof as a `NonZeroU32` and so has no path to a panic at all. A literal (or a named constant) goes through the new exported `broadcast_common::timescale!(LIT)` macro, whose `match` runs inside an inline `const { }` block: `timescale!(0)` is a compile error even inside a function, and there is no runtime path that reaches its `panic!`. Runtime values stay on `new`/`try_new`/`TryFrom<u32>`. Migration: `Timescale::from_nonzero(90_000)` (which panicked on a runtime zero) becomes `broadcast_common::timescale!(90_000)`; `Timescale::from_nonzero(nonzero)` now takes the `NonZeroU32` (#2687).
-- BREAKING: `timescale::Timescale::new` is gone. It returned `Option<Self>` beside `try_new`'s `Result<_, InvalidValue>` for the same job, so one zero reached the caller as `None` or as a typed error depending on which spelling it used. Runtime values go through `Timescale::try_new` (or `TryFrom<u32>`, which is it), literals through `broadcast_common::timescale!(LIT)`. Migration: `Timescale::new(v)` becomes `Timescale::try_new(v)` (`.ok()` where a match arm wants the `Option`), and `Timescale::new(LIT).unwrap()`/`.expect(..)` becomes `timescale!(LIT)` (#2732).
-- BREAKING: `seq::SeqSpace::new` is gone, and `len::fit_bits` no longer asserts. `SeqSpace::new` asserted a runtime width, so a config value of `0` or above 31 panicked; `SeqSpace::try_new` returns the new `seq::InvalidSeqSpace { bits }` instead, and a literal width goes through the new exported `broadcast_common::seq_space!(LIT)`, whose check is a compile-time `const` (a `SeqSpace` from a width already proven is `SeqSpace::from_valid_bits`, and `bits()` reads the width back). `fit_bits` answered a width of `0` or above 64 with a `panic!`; it now returns the same `FieldOverflow` it returns for an over-wide value, so no public constructor in this crate panics. Migration: `SeqSpace::new(n)` becomes `SeqSpace::try_new(n)` (or `seq_space!(LIT)`), and a caller that relied on `fit_bits` panicking on a bad width now gets `Err` (#2733).
-- BREAKING: `xml_chars::char_data`, `namespace_of` and `read_event` fail with the new typed `xml_chars::XmlCharError` (`BadChar`, `UndefinedEntity { name }`, `UnknownPrefix { prefix }`, `Reader { message }`) instead of a `String`, so a caller matches the failure kind instead of the text; the `Display` of each variant is the description the old `String` carried, and `broadcast-dash`/`broadcast-smooth` gain a `From<XmlCharError>` for their error enums (the pull readers in `dvb-mabr`/`ttml-subtitle` carry `Result<Option<String>, XmlCharError>` for an element's namespace, still reporting it through their own `XmlParse` with the byte position) (#2646).
-- BREAKING: `net::UdpOptions::recv_buffer_bytes` is `Option<core::num::NonZeroU32>` (was `Option<usize>`). A zero-byte receive-buffer request could not be told apart from `None` (the kernel keeps the OS default either way), so it is now unrepresentable; `UdpOptions::with_recv_buffer_bytes` takes a `NonZeroU32`. Migration: `with_recv_buffer_bytes(n)` becomes `with_recv_buffer_bytes(NonZeroU32::new(n).unwrap())` (or `?`, or a literal `NonZeroU32::new(n)` the caller already has), and `options.recv_buffer_bytes` reads as `Option<NonZeroU32>` (`bytes.get()` for the `usize`/`u32` a socket call wants) (#2654 B5).
-- BREAKING: the `chrono` feature is replaced by `jiff` (no alias): `time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc` and `encode_seconds_since_2000_utc` take and return `jiff::Timestamp` instead of `chrono::DateTime<Utc>`, with the same MJD + BCD semantics; `chrono` is no longer a dependency. `decode_seconds_since_2000_utc` returns `None` for `subsec_nanos` of a whole second or more (chrono accepted 1–2 s as a leap second). `jiff` stays `no_std`-compatible (#2635).
-- `time::mjd_to_ymd` and `time::ymd_to_mjd` no longer need a feature (#2635).
-- BREAKING: `backoff::RetrySchedule::new`, `seeded`, `from_steps` and `BackoffSteps::schedule` return `Result<_, InvalidBackoff>` instead of silently repairing a bad schedule: a cap under the floor, a floor above `MAX_FLOOR`, and a growth factor under one or NaN are each their own variant (a factor of one, a flat series, is still accepted), so no schedule is ever a different one than the caller asked for. `raw_delay_for_attempt` and `delay_for_attempt` compute a product only when `Duration` can hold it (a visit beyond `MAX_FLOOR` is the cap), so no bound can panic them. Migration: `RetrySchedule::new(..)` becomes `RetrySchedule::new(..)?` (or `.expect(..)` for a hard-coded schedule), and a caller that relied on `max < min` being raised to `min` now gets `InvalidBackoff::CapBelowFloor` and must choose the cap it wants (#2701).
+Version: 12.0.0 -> 13.0.0.
+
+## Breaking changes and migration
+
+### `stage::Timestamp` is microsecond-valued with a private field
+
+`Timestamp(raw_micros)` is gone: the field is private, `as_micros()` reads it, and the type is built with `from_micros`/`from_millis`/`from_nanos` (which round toward the later instant). Its arithmetic splits by purpose: a *reading* clamps (`saturating_add`/`saturating_sub`), a *deadline* is `checked_add`, where `None` means "never fires".
+
+```rust
+// before
+let now = Timestamp(1_700_000_000_000_000);
+let deadline = Timestamp(u64::MAX);
+// after
+let now = Timestamp::from_micros(1_700_000_000_000_000);
+let micros = now.as_micros();
+let deadline: Option<Timestamp> = now.checked_add(Duration::from_secs(5)); // None: never fires
+```
+
+### `Timescale` constructors
+
+`Timescale::new` (an `Option<Self>` beside `try_new`'s `Result` for the same job) is gone, and `from_nonzero` takes a `NonZeroU32` rather than a bare `u32`. A literal or a named constant goes through the exported `broadcast_common::timescale!` macro, whose check runs inside an inline `const { }` block, so a zero is a compile error with no runtime panic path.
+
+```rust
+use core::num::NonZeroU32;
+// before
+let ts = Timescale::from_nonzero(90_000);           // panicked on a runtime zero
+let ts = Timescale::new(value)?;                    // Option
+// after
+let ts = broadcast_common::timescale!(90_000);      // literal
+let ts = Timescale::from_nonzero(NonZeroU32::new(90_000).unwrap());
+let ts = Timescale::try_new(value)?;                // runtime value
+```
+
+### `SeqSpace` constructors and `len::fit_bits`
+
+`SeqSpace::new` asserted a runtime width, so a config value of `0` or above 31 panicked; it is gone. A literal width goes through `broadcast_common::seq_space!` (a compile-time check), a runtime width through `SeqSpace::try_new`, and a width already proven through `SeqSpace::from_valid_bits`. `len::fit_bits` no longer panics on a width of `0` or above 64: it returns the same `FieldOverflow` it returns for an over-wide value, so no public constructor in this crate panics.
+
+```rust
+// before
+let space = SeqSpace::new(16);
+// after
+let space = broadcast_common::seq_space!(16);
+let space = SeqSpace::try_new(bits)?;   // InvalidSeqSpace { bits } on a bad width
+```
+
+### `xml_chars` reports a typed error
+
+`xml_chars::char_data`, `namespace_of` and `read_event` fail with `XmlCharError` (`BadChar`, `UndefinedEntity { name }`, `UnknownPrefix { prefix }`, `Reader { message }`) instead of a `String`, so a caller matches the failure kind; each variant's `Display` is the description the old `String` carried. `broadcast-dash` and `broadcast-smooth` gain a `From<XmlCharError>` for their own error enums.
+
+```rust
+// before
+fn text(raw: &str) -> Result<String, String> { xml_chars::char_data(raw) }
+// after
+fn text(raw: &str) -> Result<String, broadcast_common::xml_chars::XmlCharError> {
+    broadcast_common::xml_chars::char_data(raw)
+}
+```
+
+### `net::UdpOptions::recv_buffer_bytes` is `Option<NonZeroU32>`
+
+It was `Option<usize>`, so a zero-byte request could not be told apart from `None` (the kernel keeps its default either way); a zero is now unrepresentable.
+
+```rust
+// before
+let options = UdpOptions::new().with_recv_buffer_bytes(4 * 1024 * 1024);
+// after
+let options = UdpOptions::new().with_recv_buffer_bytes(NonZeroU32::new(4 * 1024 * 1024).unwrap());
+let bytes: Option<NonZeroU32> = options.recv_buffer_bytes;
+```
+
+### `chrono` feature replaced by `jiff`
+
+`time::decode_mjd_bcd_utc`, `encode_mjd_bcd_utc`, `decode_seconds_since_2000_utc` and `encode_seconds_since_2000_utc` take and return `jiff::Timestamp` instead of `chrono::DateTime<Utc>`, with the same MJD + BCD semantics; `chrono` is no longer a dependency. `decode_seconds_since_2000_utc` returns `None` for `subsec_nanos` of a whole second or more (chrono accepted one or two seconds as a leap second). `time::mjd_to_ymd`/`ymd_to_mjd` no longer need a feature.
+
+```toml
+# before
+broadcast-common = { version = "12", features = ["chrono"] }
+# after
+broadcast-common = { version = "13", features = ["jiff"] }
+```
+
+### `http_date` and `time::MonoUtc` carry `jiff` instants
+
+`http_date::parse_http_date` and `date_to_epoch_us` return a `jiff::Timestamp` instead of Unix microseconds as a raw `i64`; `date_to_epoch_us` still refuses a `Date` before 1970 and reports a value outside the `jiff` range as `HttpDateError::HttpDate`. `time::MonoUtc` (behind the `jiff` feature, with its `WallClock`/`Anchor` aliases) holds typed instants instead of `mono_us`/`utc_us` fields, its mapping methods take and return those types, and the raw-count aliases `unix_at`/`mono_for_unix` are gone.
+
+```rust
+// before
+let unix_us = parse_http_date(&value)?;
+let utc = mono.utc_at(now_us);
+// after
+let unix_us = parse_http_date(&value)?.as_microsecond();
+let utc = mono.utc_at(Timestamp::from_micros(now_us)); // -> jiff::Timestamp
+let mono = MonoUtc::new(Timestamp::from_micros(m), jiff::Timestamp::from_microsecond(u)?);
+```
+
+### `backoff::RetrySchedule` is fallible
+
+`RetrySchedule::new`, `seeded`, `from_steps` and `BackoffSteps::schedule` return `Result<_, InvalidBackoff>` instead of silently repairing a bad schedule: a cap under the floor, a floor above `MAX_FLOOR` and a growth factor under one or NaN are each their own variant (a factor of one, a flat series, is still accepted). A caller that relied on `max < min` being raised to `min` now gets `InvalidBackoff::CapBelowFloor` and must choose the cap it wants. `RetrySchedule::no_delay(seed)` is the schedule no bound can refuse.
+
+```rust
+// before
+let schedule = RetrySchedule::new(Duration::from_millis(50), Duration::from_secs(30), 2.0, seed);
+// after
+let schedule = RetrySchedule::new(Duration::from_millis(50), Duration::from_secs(30), 2.0, seed)?;
+let never = RetrySchedule::no_delay(seed);
+```
+
+### `backoff::ReconnectPolicy` replaces the hand-rolled reconnect loops
+
+`ReconnectPolicy` is the workspace's one reconnect policy: a `BackoffSteps` schedule plus an `Option<NonZeroU32>` attempt bound, with `ReconnectPolicy::doubling` for an exponential schedule from two bounds and `ReconnectPolicy::exhausted` to read the bound. The runtimes' own reconnect timers and `Backoff` structs are gone in favour of it (see their notes).
+
+```rust
+// before: a per-crate timer struct
+let policy = broadcast_client::ReconnectTimer::new(500, 30_000);
+// after
+use core::num::NonZeroU32;
+let policy = ReconnectPolicy::doubling(Duration::from_millis(500), Duration::from_secs(30))
+    .with_max_attempts(NonZeroU32::new(10).unwrap());
+```
+
+### `InvalidBackoff` is typed and no longer `Eq`
+
+`InvalidBackoff::GrowthBelowOne { factor: f64 }` is `InvalidBackoff::GrowthFactor { factor: GrowthFactor }` (`GrowthFactor::Nan` or `GrowthFactor::Below(f64)`), because a NaN factor made the error unequal to its own copy. `InvalidBackoff::reason()` is gone: `Display` is the message, `core::error::Error` is still implemented, and `GrowthFactor::name()` carries the description. Match the `GrowthFactor` variants rather than the raw `f64`, and render the message with `to_string()`.
+
+```rust
+// before
+if let InvalidBackoff::GrowthBelowOne { .. } = err { .. }
+let text = err.reason();
+// after
+if let InvalidBackoff::GrowthFactor { factor: GrowthFactor::Below(_) } = err { .. }
+let text = err.to_string();
+```
+
+## Removed
+
+- `timescale::Timescale::new`, `seq::SeqSpace::new` and `stage::Timestamp`'s public field (see above).
+- `backoff::InvalidBackoff::reason` and `backoff::InvalidBackoff::GrowthBelowOne`.
+- `time::MonoUtc::unix_at` and `time::MonoUtc::mono_for_unix`.
+- The `chrono` feature and the `chrono` dependency.
+
+## Fixes
+
+- `ber::encode_ber_length`/`encode_ber_length_as` write their length byte through `len::fit_u8` instead of clamping an over-range value into the wire, so an unrepresentable length is reported as a `KlvError` rather than silently changed.
+- `xml::read_tree` rejects CDATA sections and non-XML-S whitespace outside the root element; `Elem::text` documents that it holds only direct text.
+
+## Added
+
+- `clock33::Clock33` and `clock33::Clock27` (with `ClockOutOfRange`): validated 33-bit 90 kHz and 27 MHz clock values, with strict construction (`from_parts`, `from_27mhz`, `from_27mhz_wrapping`) and lossless parsing (`from_wire_parts`, `to_clock27`, `is_valid`). `clock33::PTS_TIMESCALE` and `clock33::PCR_TIMESCALE` name the two clocks as `Timescale`s.
+- `reserved::{Reserved, ReservedOnes, ReservedZero}`: the workspace's one typed run of reserved bits in a fixed-width field, moved here from `dvb-ci` (`dvb_ci::reserved` re-exports these names).
+- `net::{UdpOptions, MulticastJoin, MulticastInterface}` (plus `UdpOptions::validate` and `JoinMismatch`): the one UDP bind/join option set, plain `core::net` data, `no_std`.
+- `range::ByteSpan`: the one byte-range type (offset plus non-zero length), rendering the `Range: bytes=<first>-<last>` field value.
+- `backoff::MAX_FLOOR`, `RetrySchedule::peek_delay_for_attempt`, `Timescale::NANOS`, `Timescale`'s `Display`/transparent `Debug`/`serde`, and `http_date::date_to_epoch_us` taking the typed `headers::Date`.
+
+## Dependencies
+
+- None. `broadcast-common` is the root of the graph and is published first, from tag `broadcast-common-v13.0.0`.
 
 ---
 
