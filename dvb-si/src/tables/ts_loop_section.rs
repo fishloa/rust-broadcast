@@ -8,6 +8,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 
 pub(super) const MIN_HEADER_LEN: usize = 3;
 pub(super) const EXTENSION_HEADER_LEN: usize = 5;
@@ -33,7 +34,7 @@ pub struct TransportStreamEntry<'a> {
     /// `reserved_future_use(4)` before `transport_descriptors_length`
     /// (EN 300 468 §5.2.1 / §5.2.2, `1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<4>,
 }
 
 impl<'a> TransportStreamEntry<'a> {
@@ -48,7 +49,7 @@ impl<'a> TransportStreamEntry<'a> {
             transport_stream_id,
             original_network_id,
             descriptors,
-            reserved_future_use: super::RESERVED_4,
+            reserved_future_use: ReservedOnes::FILL,
         }
     }
 }
@@ -154,7 +155,7 @@ pub(super) fn parse<'a>(bytes: &'a [u8], labels: &Labels) -> Result<Parsed<'a>> 
             transport_stream_id: crate::wire::be_u16(hdr, 0, labels.extension)?,
             original_network_id: crate::wire::be_u16(hdr, 2, labels.extension)?,
             descriptors: DescriptorLoop::new(&bytes[ts_desc_start..ts_desc_end]),
-            reserved_future_use: super::len_reserved_of(hdr[4]),
+            reserved_future_use: ReservedOnes::from_bits(u64::from(super::len_reserved_of(hdr[4]))),
         });
         pos = ts_desc_end;
     }
@@ -241,7 +242,7 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
         super::write_desc_loop_len_r(
             &mut buf[pos + 4..pos + 6],
             ts_desc_length as usize,
-            ts.reserved_future_use,
+            ts.reserved_future_use.get() as u8,
         )?;
         let ts_desc_start = pos + TS_HEADER_LEN;
         buf[ts_desc_start..ts_desc_start + ts.descriptors.len()]
@@ -251,4 +252,20 @@ pub(super) fn serialize_into(table_id: u8, view: &View<'_, '_>, buf: &mut [u8]) 
 
     super::write_crc(buf, len - CRC_LEN);
     Ok(len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the 12-bit transport_descriptors_length below it.
+    #[test]
+    fn reserved_future_use_cannot_hold_more_than_four_bits() {
+        let e = TransportStreamEntry {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            ..TransportStreamEntry::new(1, 2, DescriptorLoop::new(&[]))
+        };
+        assert_eq!(e.reserved_future_use.get(), 0x0F);
+    }
 }
