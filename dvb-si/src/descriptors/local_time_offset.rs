@@ -270,14 +270,15 @@ impl Serialize for LocalTimeOffsetDescriptor {
                 REGION_ID_BITS,
                 "country_region_id",
             )? as u8;
-            let flags = (broadcast_common::len::fit_mask(region_id, REGION_ID_MASK >> 2, "region_id")?
-                << 2)
-                | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
-                | if entry.local_time_offset_negative {
-                    POLARITY_MASK
-                } else {
-                    0
-                };
+            let flags =
+                (broadcast_common::len::fit_mask(region_id, REGION_ID_MASK >> 2, "region_id")?
+                    << 2)
+                    | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
+                    | if entry.local_time_offset_negative {
+                        POLARITY_MASK
+                    } else {
+                        0
+                    };
             buf[offset + 3] = flags;
             buf[offset + 4..offset + 6].copy_from_slice(&entry.local_time_offset_bcd.to_be_bytes());
             buf[offset + 6..offset + 11].copy_from_slice(&entry.time_of_change_raw);

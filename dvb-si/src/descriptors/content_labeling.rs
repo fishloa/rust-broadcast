@@ -22,8 +22,7 @@ const HEADER_LEN: usize = 2;
 /// "reserved" = `1` (all editions 2006-08/2023, audit §5). The
 /// `time_base_association_data` bytes are `reserved(8)` per entry and are
 /// carried verbatim in [`ContentTimeBaseAssociation::data`].
-pub const RESERVED_3_DEFAULT: ReservedOnes<RESERVED_3_BITS> =
-    ReservedOnes::<RESERVED_3_BITS>::FILL;
+pub const RESERVED_3_DEFAULT: ReservedOnes<RESERVED_3_BITS> = ReservedOnes::<RESERVED_3_BITS>::FILL;
 /// Width of the 3-bit `reserved` after `content_time_base_indicator`.
 const RESERVED_3_BITS: u32 = 3;
 /// Width of the 7-bit `reserved` ahead of each 33-bit time-base value.
@@ -151,7 +150,10 @@ impl Default for ContentLabelingDescriptor<'_> {
 // same byte, followed by 4 full bytes (32 more bits). Returns
 // `(reserved(7), value(33))`.
 fn read_33bit(bytes: &[u8], pos: usize) -> (ReservedOnes<RESERVED_7_BITS>, u64) {
-    (ReservedOnes::from_bits(u64::from(bytes[pos] >> 1)), read_33bit_value(bytes, pos))
+    (
+        ReservedOnes::from_bits(u64::from(bytes[pos] >> 1)),
+        read_33bit_value(bytes, pos),
+    )
 }
 
 fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
@@ -164,7 +166,12 @@ fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
         ]))
 }
 
-fn write_33bit(buf: &mut [u8], pos: usize, reserved: ReservedOnes<RESERVED_7_BITS>, value: u64) -> Result<()> {
+fn write_33bit(
+    buf: &mut [u8],
+    pos: usize,
+    reserved: ReservedOnes<RESERVED_7_BITS>,
+    value: u64,
+) -> Result<()> {
     // A value wider than 33 bits used to be masked down silently (audit
     // r03-W3 class).
     let v = broadcast_common::len::fit_bits(value, 33, "time_base_value")?;

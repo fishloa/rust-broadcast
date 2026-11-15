@@ -330,7 +330,11 @@ mod tests {
         assert!(!s.easy_reader);
         assert!(s.wide_aspect_ratio);
         assert_eq!(
-            (d.reserved_head.get(), s.reserved_a.get(), s.reserved_b.get()),
+            (
+                d.reserved_head.get(),
+                s.reserved_a.get(),
+                s.reserved_b.get()
+            ),
             (7, 1, 0x3FFF)
         );
     }

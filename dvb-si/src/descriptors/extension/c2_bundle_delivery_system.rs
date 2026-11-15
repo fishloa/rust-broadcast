@@ -135,7 +135,8 @@ impl Serialize for C2BundleDeliverySystem {
                     0x07,
                     "guard_interval",
                 )?;
-            buf[p + 7] = (u8::from(e.primary_channel) << 7) | e.reserved_zero_future_use.get() as u8;
+            buf[p + 7] =
+                (u8::from(e.primary_channel) << 7) | e.reserved_zero_future_use.get() as u8;
             p += C2_BUNDLE_ENTRY_LEN;
         }
         Ok(len)

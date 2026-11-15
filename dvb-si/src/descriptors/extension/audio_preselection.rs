@@ -259,7 +259,8 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                     ));
                 }
                 let ext_len = (sel[pos] & 0x1F) as usize;
-                reserved_zero_future_use_3 = Some(ReservedZero::from_bits(u64::from(sel[pos] >> 5)));
+                reserved_zero_future_use_3 =
+                    Some(ReservedZero::from_bits(u64::from(sel[pos] >> 5)));
                 pos += 1;
                 need_in(sel, pos + ext_len, "audio_preselection body")?;
                 let ext = &sel[pos..pos + ext_len];
@@ -362,7 +363,8 @@ impl Serialize for AudioPreselection<'_> {
                     5,
                     "future_extension_length",
                 )? as u8)
-                    | ((s.reserved_zero_future_use_3
+                    | ((s
+                        .reserved_zero_future_use_3
                         .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT)
                         .get() as u8)
                         << 5);

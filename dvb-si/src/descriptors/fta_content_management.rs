@@ -154,7 +154,9 @@ impl<'a> Parse<'a> for FtaContentManagementDescriptor {
         }
         let flags = body[0];
         Ok(Self {
-            reserved_future_use: ReservedOnes::from_bits(u64::from((flags & RESERVED_MASK) >> RESERVED_SHIFT)),
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                (flags & RESERVED_MASK) >> RESERVED_SHIFT,
+            )),
             user_defined: flags & USER_DEFINED_MASK != 0,
             do_not_scramble: flags & DO_NOT_SCRAMBLE_MASK != 0,
             control_remote_access_over_internet: ControlRemoteAccess::from_u8(

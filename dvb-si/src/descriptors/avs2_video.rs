@@ -236,10 +236,7 @@ mod tests {
     /// cannot be stored (the old raw `u8` accepted `0x20` and had to re-mask).
     #[test]
     fn reserved_field_is_five_bits() {
-        assert_eq!(
-            ReservedOnes::<RESERVED_BITS>::from_bits(0x20).get(),
-            0
-        );
+        assert_eq!(ReservedOnes::<RESERVED_BITS>::from_bits(0x20).get(), 0);
         assert_eq!(
             ReservedOnes::<RESERVED_BITS>::from_bits(u64::MAX).get(),
             0x1F

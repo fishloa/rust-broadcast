@@ -239,7 +239,13 @@ impl Default for J2kVideoDescriptor<'_> {
 fn parse_extended_capability(
     body: &[u8],
     mut pos: usize,
-) -> Result<(J2kExtendedCapability, bool, bool, ReservedOnes<RESERVED_6_BITS>, usize)> {
+) -> Result<(
+    J2kExtendedCapability,
+    bool,
+    bool,
+    ReservedOnes<RESERVED_6_BITS>,
+    usize,
+)> {
     // stripe_flag(1) + block_flag(1) + mdm_flag(1) + reserved(5) = 1 byte
     if body.len() < pos + 1 {
         return Err(Error::InvalidDescriptor {
@@ -444,12 +450,11 @@ fn serialize_extended_capability(
     buf[pos] = ext.colour_primaries;
     buf[pos + 1] = ext.transfer_characteristics;
     buf[pos + 2] = ext.matrix_coefficients;
-    buf[pos + 3] =
-        if ext.video_full_range_flag {
-            0x80
-        } else {
-            0x00
-        } | ext.reserved_7.get() as u8;
+    buf[pos + 3] = if ext.video_full_range_flag {
+        0x80
+    } else {
+        0x00
+    } | ext.reserved_7.get() as u8;
     pos += 4;
 
     if let Some(ref s) = ext.stripe {

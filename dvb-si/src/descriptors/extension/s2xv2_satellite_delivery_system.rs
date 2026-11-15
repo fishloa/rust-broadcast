@@ -608,8 +608,8 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 })?;
             let idx =
                 broadcast_common::len::fit_mask(idx, 0x0003_FFFF, "scrambling_sequence_index")?;
-            buf[p] = ((self.reserved_zero_future_use_6.get() as u8) << 2)
-                | ((idx >> 16) as u8 & 0x03);
+            buf[p] =
+                ((self.reserved_zero_future_use_6.get() as u8) << 2) | ((idx >> 16) as u8 & 0x03);
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
             p += S2XV2_SCRAMBLING_LEN;

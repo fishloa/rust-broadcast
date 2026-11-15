@@ -194,7 +194,13 @@ impl HevcTimingAndHrd {
 
 /// `hrd_management_valid_flag(1) reserved(6) picture_and_timing_info_present_flag(1)
 /// [picture_and_timing_info]` — identical in Tables 2-139 and 2-141.
-fn read_flag_block(r: &mut BitReader<'_>) -> Result<(bool, ReservedOnes<RESERVED_6_BITS>, Option<PictureAndTimingInfo>)> {
+fn read_flag_block(
+    r: &mut BitReader<'_>,
+) -> Result<(
+    bool,
+    ReservedOnes<RESERVED_6_BITS>,
+    Option<PictureAndTimingInfo>,
+)> {
     let hrd_management_valid_flag = r.flag()?;
     let reserved = ReservedOnes::from_bits(u64::from(r.u8(6)?));
     let picture_timing = if r.flag()? {

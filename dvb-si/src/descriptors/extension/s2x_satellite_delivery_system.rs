@@ -505,7 +505,8 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         let mut reserved_zero_future_use_6 = ReservedZero::<RZFU_6_BITS>::default();
         let scrambling_sequence_index = if scrambling_sequence_selector {
             need_in(sel, pos + S2X_SCRAMBLING_LEN, "S2X body")?;
-            reserved_zero_future_use_6 = ReservedZero::from_bits(u64::from(sel[pos] >> RZFU_6_SHIFT));
+            reserved_zero_future_use_6 =
+                ReservedZero::from_bits(u64::from(sel[pos] >> RZFU_6_SHIFT));
             let idx = (u32::from(sel[pos] & 0x03) << 16)
                 | (u32::from(sel[pos + 1]) << 8)
                 | u32::from(sel[pos + 2]);
@@ -551,7 +552,8 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             let bond_byte = sel[pos];
             pos += 1;
             // reserved_zero_future_use(7) | num_channel_bonds_minus_one(1)
-            reserved_zero_future_use_7 = ReservedZero::from_bits(u64::from(bond_byte >> RZFU_7_SHIFT));
+            reserved_zero_future_use_7 =
+                ReservedZero::from_bits(u64::from(bond_byte >> RZFU_7_SHIFT));
             let num_channel_bonds = (bond_byte & 0x01) as usize + 1;
             let mut bonds = Vec::with_capacity(num_channel_bonds);
             for _ in 0..num_channel_bonds {
@@ -1028,8 +1030,14 @@ mod tests {
                     assert_eq!(b.reserved_zero_future_use_1.get(), u64::from(r1));
                     assert_eq!(b.reserved_zero_future_use_4.get(), u64::from(r4));
                     assert_eq!(b.reserved_zero_future_use_7.get(), u64::from(r7));
-                    assert_eq!(b.channel_bonds[0].reserved_zero_future_use_1.get(), u64::from(r1 ^ 1));
-                    assert_eq!(b.channel_bonds[0].reserved_zero_future_use_4.get(), u64::from(r4 ^ 0x0F));
+                    assert_eq!(
+                        b.channel_bonds[0].reserved_zero_future_use_1.get(),
+                        u64::from(r1 ^ 1)
+                    );
+                    assert_eq!(
+                        b.channel_bonds[0].reserved_zero_future_use_4.get(),
+                        u64::from(r4 ^ 0x0F)
+                    );
                 }
                 other => panic!("expected S2X, got {other:?}"),
             }

@@ -541,7 +541,13 @@ impl Avs3AudioDescriptor {
             }
             Avs3AudioBody::Other(_) => {}
         }
-        out.push(pack(self.resolution, 2, self.reserved.get() as u8, 6, "resolution")?);
+        out.push(pack(
+            self.resolution,
+            2,
+            self.reserved.get() as u8,
+            6,
+            "resolution",
+        )?);
         out.extend_from_slice(&self.addition_info);
         Ok(out)
     }

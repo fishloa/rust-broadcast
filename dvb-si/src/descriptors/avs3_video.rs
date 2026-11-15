@@ -48,8 +48,7 @@ const RESERVED_BITS: u32 = 2;
 /// Width of the final `reserved` byte (8 bits).
 const RESERVED_TAIL_BITS: u32 = 8;
 const RESERVED2_ONES: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
-const RESERVED8_ONES: ReservedOnes<RESERVED_TAIL_BITS> =
-    ReservedOnes::<RESERVED_TAIL_BITS>::FILL;
+const RESERVED8_ONES: ReservedOnes<RESERVED_TAIL_BITS> = ReservedOnes::<RESERVED_TAIL_BITS>::FILL;
 
 /// `frame_rate_code` (4 bits, GY/T 420 Table 7 / T/AI 109.6 Table 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -472,7 +471,10 @@ mod tests {
     /// no wider, so an over-wide value cannot be stored.
     #[test]
     fn reserved_fields_cannot_overflow() {
-        assert_eq!(ReservedOnes::<RESERVED_BITS>::from_bits(u64::MAX).get(), 0b11);
+        assert_eq!(
+            ReservedOnes::<RESERVED_BITS>::from_bits(u64::MAX).get(),
+            0b11
+        );
         assert_eq!(
             ReservedOnes::<RESERVED_TAIL_BITS>::from_bits(u64::MAX).get(),
             0xFF

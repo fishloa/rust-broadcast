@@ -99,7 +99,8 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
             let service_id = crate::wire::be_u16(chunk, 0, "logical_channel")?;
             let flags = chunk[2];
             let visible_service = flags & VISIBLE_MASK != 0;
-            let reserved = ReservedOnes::from_bits(u64::from((flags & RESERVED_BITS_MASK) >> RESERVED_SHIFT));
+            let reserved =
+                ReservedOnes::from_bits(u64::from((flags & RESERVED_BITS_MASK) >> RESERVED_SHIFT));
             let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(chunk[3]);
             entries.push(LogicalChannelEntry {
                 service_id,

@@ -70,10 +70,7 @@ fn cp_reserved_future_use_over_range_is_unrepresentable() {
     // reserved_future_use is a 3-bit `ReservedOnes`, so an over-range value is
     // unrepresentable: `from_bits` masks at construction, and it can never
     // reach the serializer to be re-masked into a different byte.
-    assert_eq!(
-        Cp::parse(&sel).unwrap().reserved_future_use.get(),
-        0b111
-    );
+    assert_eq!(Cp::parse(&sel).unwrap().reserved_future_use.get(), 0b111);
     assert_eq!(ReservedOnes::<3>::from_bits(0b1000).get(), 0);
 }
 

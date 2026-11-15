@@ -156,8 +156,7 @@ impl Serialize for ApplicationStorageDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        let reserved =
-            self.reserved_flags.get() as u8;
+        let reserved = self.reserved_flags.get() as u8;
         let version = broadcast_common::len::fit_mask(self.version, VERSION_MASK, "version")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
@@ -242,7 +241,10 @@ mod tests {
         // reserved_flags is a 5-bit `ReservedOnes`; an over-range value is
         // unrepresentable (`from_bits` masks at construction) so it can never be
         // re-masked into a different wire byte.
-        assert_eq!(ReservedOnes::<RESERVED_FLAGS_BITS>::from_bits(0x20).get(), 0);
+        assert_eq!(
+            ReservedOnes::<RESERVED_FLAGS_BITS>::from_bits(0x20).get(),
+            0
+        );
     }
 
     #[test]

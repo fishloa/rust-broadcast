@@ -83,11 +83,17 @@ impl<'a> Parse<'a> for T2mi<'a> {
             //   byte 0: reserved_zero_future_use(5) | t2mi_stream_id(3)
             //   byte 1: reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
             //   byte 2: reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
-            reserved_zero_future_use_stream: ReservedZero::from_bits(u64::from(sel[0] >> RZFU_5_SHIFT)),
+            reserved_zero_future_use_stream: ReservedZero::from_bits(u64::from(
+                sel[0] >> RZFU_5_SHIFT,
+            )),
             t2mi_stream_id: sel[0] & 0x07,
-            reserved_zero_future_use_num: ReservedZero::from_bits(u64::from(sel[1] >> RZFU_5_SHIFT)),
+            reserved_zero_future_use_num: ReservedZero::from_bits(u64::from(
+                sel[1] >> RZFU_5_SHIFT,
+            )),
             num_t2mi_streams_minus_one: sel[1] & 0x07,
-            reserved_zero_future_use_flag: ReservedZero::from_bits(u64::from(sel[2] >> RZFU_7_SHIFT)),
+            reserved_zero_future_use_flag: ReservedZero::from_bits(u64::from(
+                sel[2] >> RZFU_7_SHIFT,
+            )),
             pcr_iscr_common_clock_flag: (sel[2] & 0x01) != 0,
             reserved_tail: &sel[T2MI_MIN_LEN..],
         })

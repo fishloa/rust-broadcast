@@ -403,8 +403,14 @@ mod tests {
                         0xA0 | r5,
                     ];
                     let d = AvcTimingAndHrdDescriptor::parse(&bytes).unwrap();
-                    assert_eq!((d.reserved_6.get(), d.reserved_5.get()), (u64::from(r6), u64::from(r5)));
-                    assert_eq!(d.picture_timing.as_ref().unwrap().reserved_7.get(), u64::from(r7));
+                    assert_eq!(
+                        (d.reserved_6.get(), d.reserved_5.get()),
+                        (u64::from(r6), u64::from(r5))
+                    );
+                    assert_eq!(
+                        d.picture_timing.as_ref().unwrap().reserved_7.get(),
+                        u64::from(r7)
+                    );
                     let mut out = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut out).unwrap();
                     assert_eq!(out, bytes);

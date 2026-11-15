@@ -26,13 +26,11 @@ const RESERVED_1_BITS: u32 = 1;
 /// Default of the 2-bit `reserved` above `hierarchy_layer_index` and above
 /// `hierarchy_channel` (H.222.0 Table 2-49): clause 2.1 "reserved" = `1` (all
 /// 9 editions 07/1995-08/2023, audit §4 row 7 / §5).
-pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> =
-    ReservedOnes::<RESERVED_2_BITS>::FILL;
+pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> = ReservedOnes::<RESERVED_2_BITS>::FILL;
 /// Default of the 1-bit `reserved` between `tref_present_flag` and
 /// `hierarchy_embedded_layer_index` (same rule; carved from `reserved(2)` in
 /// the 06/2012 edition, the remaining bit stays reserved = `1`).
-pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> =
-    ReservedOnes::<RESERVED_1_BITS>::FILL;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
 
 /// Hierarchy type — ISO/IEC 13818-1 Table 2-50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
