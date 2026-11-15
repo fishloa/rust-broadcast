@@ -10,6 +10,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for J2K_video_descriptor.
@@ -19,16 +20,20 @@ const HEADER_LEN: usize = 2;
 /// (H.222.0 Table 2-101, 08/2018-08/2023, audit §4 row 14): the table says
 /// "reserved (all bits to be set to '0')", an explicit exception to the
 /// clause 2.1 "reserved = 1" rule.
-pub const RESERVED_5_EXTENDED_DEFAULT: u8 = 0;
+pub const RESERVED_5_EXTENDED_DEFAULT: ReservedZero<RESERVED_5_BITS> =
+    ReservedZero::<RESERVED_5_BITS>::FILL;
 /// Default of the 6-bit `reserved` after `still_mode`/`interlaced_video`
 /// (both branches) — plain `reserved`, clause 2.1 = `1` (all ones).
-pub const RESERVED_6_DEFAULT: u8 = 0b11_1111;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
 /// Default of the 7-bit `reserved` after `video_full_range_flag` — plain
 /// `reserved`, clause 2.1 = `1` (all ones).
-pub const RESERVED_7_DEFAULT: u8 = 0x7F;
-const RESERVED_5_MASK: u8 = 0x1F;
-const RESERVED_6_MASK: u8 = 0x3F;
-const RESERVED_7_MASK: u8 = 0x7F;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
+/// Width of the `reserved` after the `stripe/block/mdm` flags (5 bits).
+const RESERVED_5_BITS: u32 = 5;
+/// Width of the `reserved` after `still_mode`/`interlaced_video` (6 bits).
+const RESERVED_6_BITS: u32 = 6;
+/// Width of the `reserved` after `video_full_range_flag` (7 bits).
+const RESERVED_7_BITS: u32 = 7;
 
 /// Stripe sub-block — present when extended_capability_flag AND stripe_flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,11 +125,11 @@ pub struct J2kExtendedCapability {
     /// `reserved(5)` after the `mdm_flag` (5 bits, right-aligned; the spec
     /// says "all bits to be set to '0'"). Captured on parse, re-emitted
     /// verbatim; defaults to [`RESERVED_5_EXTENDED_DEFAULT`] (0).
-    pub reserved_5: u8,
+    pub reserved_5: ReservedZero<RESERVED_5_BITS>,
     /// `reserved(7)` after `video_full_range_flag` (7 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_7: u8,
+    pub reserved_7: ReservedOnes<RESERVED_7_BITS>,
 }
 
 impl J2kExtendedCapability {
@@ -197,7 +202,7 @@ pub struct J2kVideoDescriptor<'a> {
     /// right-aligned; present in both the extended and the legacy branch).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_6_DEFAULT`].
-    pub reserved_6: u8,
+    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
 }
 
 impl<'a> J2kVideoDescriptor<'a> {
@@ -234,7 +239,7 @@ impl Default for J2kVideoDescriptor<'_> {
 fn parse_extended_capability(
     body: &[u8],
     mut pos: usize,
-) -> Result<(J2kExtendedCapability, bool, bool, u8, usize)> {
+) -> Result<(J2kExtendedCapability, bool, bool, ReservedOnes<RESERVED_6_BITS>, usize)> {
     // stripe_flag(1) + block_flag(1) + mdm_flag(1) + reserved(5) = 1 byte
     if body.len() < pos + 1 {
         return Err(Error::InvalidDescriptor {
@@ -246,7 +251,7 @@ fn parse_extended_capability(
     let stripe_flag = (sb & 0x80) != 0;
     let block_flag = (sb & 0x40) != 0;
     let mdm_flag = (sb & 0x20) != 0;
-    let reserved_5 = sb & RESERVED_5_MASK;
+    let reserved_5 = ReservedZero::from_bits(u64::from(sb));
     pos += 1;
 
     // Table 2-101: still_mode(1) | interlaced_video(1) | reserved(6) comes
@@ -261,7 +266,7 @@ fn parse_extended_capability(
     let sm_iv = body[pos];
     let still_mode = (sm_iv & 0x80) != 0;
     let interlaced_video = (sm_iv & 0x40) != 0;
-    let reserved_6 = sm_iv & RESERVED_6_MASK;
+    let reserved_6 = ReservedOnes::from_bits(u64::from(sm_iv));
     pos += 1;
 
     // colour_primaries(1) + transfer(1) + matrix(1) + video_full_range(1) + reserved(7) = 4 bytes
@@ -276,7 +281,7 @@ fn parse_extended_capability(
     let matrix_coefficients = body[pos + 2];
     let vfr = body[pos + 3];
     let video_full_range_flag = (vfr & 0x80) != 0;
-    let reserved_7 = vfr & RESERVED_7_MASK;
+    let reserved_7 = ReservedOnes::from_bits(u64::from(vfr));
     pos += 4;
 
     // Stripe sub-block: strp_max_idx(1) + strp_height(2) = 3 bytes
@@ -406,13 +411,13 @@ fn serialize_extended_capability(
     ext: &J2kExtendedCapability,
     still_mode: bool,
     interlaced_video: bool,
-    reserved_6: u8,
+    reserved_6: ReservedOnes<RESERVED_6_BITS>,
     buf: &mut [u8],
     mut pos: usize,
 ) -> Result<usize> {
     // The three sub-block flags are derived from which sub-blocks exist, so a
     // stored flag can never promise bytes that are not written (r03-W5).
-    let mut sb = broadcast_common::len::fit_mask(ext.reserved_5, RESERVED_5_MASK, "reserved_5")?;
+    let mut sb = ext.reserved_5.get() as u8;
     if ext.stripe.is_some() {
         sb |= 0x80;
     }
@@ -426,7 +431,7 @@ fn serialize_extended_capability(
     pos += 1;
 
     // still_mode/interlaced_video precede the colour parameters here (Table 2-101).
-    let mut sm_iv = broadcast_common::len::fit_mask(reserved_6, RESERVED_6_MASK, "reserved_6")?;
+    let mut sm_iv = reserved_6.get() as u8;
     if still_mode {
         sm_iv |= 0x80;
     }
@@ -444,7 +449,7 @@ fn serialize_extended_capability(
             0x80
         } else {
             0x00
-        } | broadcast_common::len::fit_mask(ext.reserved_7, RESERVED_7_MASK, "reserved_7")?;
+        } | ext.reserved_7.get() as u8;
     pos += 4;
 
     if let Some(ref s) = ext.stripe {
@@ -567,7 +572,7 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
                 Some(cs),
                 still_mode,
                 interlaced_video,
-                sm_iv & RESERVED_6_MASK,
+                ReservedOnes::from_bits(u64::from(sm_iv)),
                 pos + 2,
             )
         };
@@ -648,8 +653,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
             buf[pos] = cs;
             pos += 1;
 
-            let mut sm_iv =
-                broadcast_common::len::fit_mask(self.reserved_6, RESERVED_6_MASK, "reserved_6")?;
+            let mut sm_iv = self.reserved_6.get() as u8;
             if self.still_mode {
                 sm_iv |= 0x80;
             }
@@ -949,7 +953,7 @@ mod tests {
         assert_eq!((d.den_frame_rate, d.num_frame_rate), (1001, 60000));
         assert!(d.still_mode);
         assert!(d.interlaced_video);
-        assert_eq!(d.reserved_6, 1);
+        assert_eq!(d.reserved_6.get(), 1);
         assert_eq!(d.color_specification, None);
         let ext = d.extended_capability.as_ref().unwrap();
         assert!(ext.stripe_flag && ext.block_flag && ext.mdm_flag);
@@ -962,7 +966,7 @@ mod tests {
             (9, 16, 9)
         );
         assert!(ext.video_full_range_flag);
-        assert_eq!(ext.reserved_7, 0x7F);
+        assert_eq!(ext.reserved_7.get(), 0x7F);
         let s = ext.stripe.as_ref().unwrap();
         assert_eq!((s.strp_max_idx, s.strp_height), (7, 540));
         let b = ext.block.as_ref().unwrap();
@@ -1105,9 +1109,12 @@ mod tests {
                     bytes.extend_from_slice(&[r5, 0x80 | r6, 1, 16, 0, 0x80 | r7]);
                     bytes[1] = (bytes.len() - 2) as u8;
                     let d = J2kVideoDescriptor::parse(&bytes).unwrap();
-                    assert_eq!(d.reserved_6, r6);
+                    assert_eq!(d.reserved_6.get(), u64::from(r6));
                     let ext = d.extended_capability.as_ref().unwrap();
-                    assert_eq!((ext.reserved_5, ext.reserved_7), (r5, r7));
+                    assert_eq!(
+                        (ext.reserved_5.get(), ext.reserved_7.get()),
+                        (u64::from(r5), u64::from(r7))
+                    );
                     let mut out = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut out).unwrap();
                     assert_eq!(out, bytes);
@@ -1118,7 +1125,7 @@ mod tests {
             bytes.extend_from_slice(&[0x03, 0x40 | r6]);
             bytes[1] = (bytes.len() - 2) as u8;
             let d = J2kVideoDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_6, r6);
+            assert_eq!(d.reserved_6.get(), u64::from(r6));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
