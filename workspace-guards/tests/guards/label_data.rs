@@ -87,6 +87,7 @@ pub const TABLE: &[Crate] = &[
             "AuthResult",
             "AuthDecision",
             "AuthEvent",
+            "TrustedProxyFailure",
         ],
         expected: None,
         min_enums: None,
@@ -275,15 +276,16 @@ pub const TABLE: &[Crate] = &[
     // `SourceFormat`, `TargetFormat`, and `Support` (this crate's own
     // conversion-matrix vocabulary, not a wire spec, but labelled the same
     // way per project convention). `Error` is the documented skip (a
-    // structured error type, no spec label). `MatrixEntry` is a struct, not an
-    // enum, and is not scanned here.
+    // structured error type, no spec label), as are its `WebVttError`/
+    // `SrtError` error-kind payloads (structured errors, no spec label).
+    // `MatrixEntry` is a struct, not an enum, and is not scanned here.
     Crate {
         name: "caption-convert",
         scope: Scope::Crate,
         matcher: Matcher::Loose,
         // Enums that are intentionally **not** spec/field labels: the structured
-        // error type has no spec label.
-        skip: &["Error"],
+        // error type and its error-kind payloads have no spec label.
+        skip: &["Error", "SrtError", "WebVttError"],
         expected: Some(&["SourceFormat", "Support", "TargetFormat"]),
         min_enums: None,
     },
@@ -1147,6 +1149,10 @@ pub const TABLE: &[Crate] = &[
             "RtspPushError",
             "SendMediaError",
             "MuxError",
+            "RtmpConnectError",
+            "RtmpProtocolError",
+            "RtspConnectError",
+            "RtspProtocolError",
             "DvrError",
             "ProtocolFailure",
             "InputSpec",

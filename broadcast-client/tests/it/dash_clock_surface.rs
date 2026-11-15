@@ -315,7 +315,7 @@ fn no_source_emits_clock_synced_before_the_dash_source_exists() {
 
 fn field_of(config: Config) -> Option<&'static str> {
     match Session::open(Url::parse(URL).unwrap(), config, ts(0)) {
-        Err(Error::InvalidConfig { field }) => Some(field),
+        Err(Error::InvalidConfig(field)) => Some(field.name()),
         Err(other) => panic!("unexpected error {other}"),
         Ok(_) => None,
     }
@@ -416,9 +416,9 @@ fn an_invalid_dash_config_fails_a_session_that_does_not_play_dash() {
     config.kind = broadcast_client::SourceKind::TsHttp;
     assert!(matches!(
         Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)),
-        Err(Error::InvalidConfig {
-            field: "dash.early_retry"
-        })
+        Err(Error::InvalidConfig(
+            broadcast_client::error::ConfigField::DashEarlyRetry
+        ))
     ));
 }
 

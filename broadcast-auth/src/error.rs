@@ -25,8 +25,13 @@ pub enum Error {
 
     /// A trusted-proxy entry was not an IP address or CIDR block (see
     /// [`crate::TrustedProxy`]) — a setup-time error.
-    #[error("invalid trusted proxy {0}")]
-    InvalidTrustedProxy(String),
+    #[error("invalid trusted proxy {input:?}: {kind}")]
+    InvalidTrustedProxy {
+        /// The offending input.
+        input: String,
+        /// Why it is not a trusted proxy.
+        kind: TrustedProxyFailure,
+    },
 
     /// [`crate::SignedUrlKeySet::new`] rejected a key whose secret is shorter
     /// than the required minimum (issue #747) — a setup-time error, never
@@ -48,8 +53,11 @@ pub enum Error {
     /// [`crate::Verifier::verify`], which folds every signed-URL rejection
     /// reason into the same [`crate::AuthResult::Unauthorized`] (see that
     /// module's docs).
-    #[error("signed-url keyset has no key with kid {0:?}")]
-    UnknownSignedUrlKeyId(String),
+    #[error("signed-url keyset has no key with kid {kid:?}")]
+    UnknownSignedUrlKeyId {
+        /// The key id the keyset has no secret for.
+        kid: String,
+    },
 
     /// A parameter that RFC 6750 (or `resource_metadata`) says MUST NOT repeat
     /// appeared twice in one challenge.
@@ -77,10 +85,11 @@ pub enum Error {
     #[error("bearer token is not a valid Authorization header value")]
     InvalidBearerToken,
 
-    /// A URL's userinfo is not valid UTF-8 once percent-decoded. The message
-    /// carries the decoder's reason only, never the (encoded) credential.
-    #[error("invalid percent-encoded userinfo: {0}")]
-    InvalidUserinfo(String),
+    /// A URL's userinfo is not valid UTF-8 once percent-decoded. There is a
+    /// single failure mode (the decoder refused the bytes), so no reason is
+    /// carried; never expose the (encoded) credential.
+    #[error("invalid percent-encoded userinfo")]
+    InvalidUserinfo,
 
     /// A URL cannot carry userinfo (a cannot-be-a-base URL), so the named
     /// component (`"username"` / `"password"`) could not be removed.
@@ -99,3 +108,15 @@ impl core::fmt::Display for HttpAuthError {
 }
 
 impl core::error::Error for HttpAuthError {}
+
+/// Why a trusted-proxy entry is not an IP address or CIDR block.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum TrustedProxyFailure {
+    /// The address is not a valid IPv4/IPv6 literal.
+    #[error("not an IP address")]
+    NotIpAddress,
+    /// The prefix length is out of range for the address family.
+    #[error("prefix length out of range")]
+    PrefixOutOfRange,
+}

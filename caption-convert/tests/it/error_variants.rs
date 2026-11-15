@@ -8,8 +8,8 @@ fn an_empty_document_is_empty_input() {
 #[test]
 fn a_malformed_cue_timestamp_is_an_invalid_timestamp_naming_it() {
     let doc = "WEBVTT\n\n00:00:xx.000 --> 00:00:02.000\nhello\n";
-    assert_eq!(
+    assert!(matches!(
         webvtt_to_srt(doc).unwrap_err(),
-        Error::InvalidTimestamp("00:00:xx.000".to_string())
-    );
+        Error::InvalidTimestamp { timestamp } if timestamp == "00:00:xx.000"
+    ));
 }

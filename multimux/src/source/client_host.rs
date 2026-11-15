@@ -31,7 +31,7 @@ use tokio::time::Instant;
 use transmux::{TrackId, TrackSpec};
 
 use crate::clock::{HostClock, SystemHostClock};
-use crate::error::{MultimuxError, Phase, ProtocolFailure};
+use crate::error::{ConfigField, MultimuxError, Phase, ProtocolFailure};
 use crate::source::driver::{IngestStep, StepOutcome, ts};
 use http;
 use media_plane::ts_session::ProgramTracker;
@@ -239,9 +239,9 @@ impl SessionStep {
             Timestamp::from_micros(0),
         )
         .map_err(|e| match e {
-            Error::InvalidConfig { field } => MultimuxError::ConfigInvalid {
-                field,
-                reason: format!("{}: {e}", labels.what),
+            Error::InvalidConfig(field) => MultimuxError::ConfigInvalid {
+                field: ConfigField::RoutesInput,
+                reason: format!("{}: {}: {e}", labels.what, field.name()),
             },
             other => MultimuxError::Connect {
                 reason: format!("{}: {other}", labels.what),
@@ -582,7 +582,9 @@ impl SessionStep {
                             "recv" => Phase::Recv,
                             other => Phase::Other(other),
                         },
-                        kind: ProtocolFailure::Other(format!("non-success status {status}")),
+                        kind: ProtocolFailure::Other {
+                            reason: format!("non-success status {status}"),
+                        },
                     }));
                 }
                 Event::Error { kind, fatal: false } if kind.ends_connection() => {
@@ -1024,7 +1026,7 @@ mod tests {
         assert!(
             matches!(
                 &error,
-                MultimuxError::ConfigInvalid { field, .. } if *field == "udp.reorder_packets"
+                MultimuxError::ConfigInvalid { field, .. } if *field == ConfigField::RoutesInput
             ),
             "{error:?}"
         );

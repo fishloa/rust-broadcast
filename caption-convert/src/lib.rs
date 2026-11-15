@@ -55,7 +55,7 @@ mod cc;
 #[cfg_attr(docsrs, doc(cfg(feature = "teletext")))]
 mod teletext;
 
-pub use error::Error;
+pub use error::{Error, SrtError, WebVttError};
 pub use matrix::{MATRIX, MatrixEntry, SourceFormat, Support, TargetFormat, check};
 pub use srt::{format_srt_timestamp, parse_srt, write_srt};
 pub use timed_metadata::MediaTime;

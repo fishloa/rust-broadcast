@@ -98,9 +98,9 @@ pub(crate) struct SrtCaller {
 impl SrtCaller {
     pub(crate) fn new(config: &SrtCallerConfig) -> Result<Self, crate::Error> {
         if config.entropy_seed.is_none() {
-            return Err(crate::Error::InvalidConfig {
-                field: "srt.entropy_seed",
-            });
+            return Err(crate::Error::InvalidConfig(
+                crate::error::ConfigField::SrtEntropySeed,
+            ));
         }
         Ok(Self {
             config: config.clone(),

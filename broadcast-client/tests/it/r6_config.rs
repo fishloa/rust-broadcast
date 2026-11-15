@@ -12,7 +12,7 @@ const URL: &str = "http://h/live.ts";
 
 fn field_of(config: Config) -> Option<&'static str> {
     match Session::open(Url::parse(URL).unwrap(), config, ts(0)) {
-        Err(Error::InvalidConfig { field }) => Some(field),
+        Err(Error::InvalidConfig(field)) => Some(field.name()),
         Err(other) => panic!("unexpected error {other}"),
         Ok(_) => None,
     }

@@ -702,7 +702,7 @@ mod tests {
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
             || MultimuxError::ConfigInvalid {
-                field: "udp.sdp",
+                field: crate::error::ConfigField::RoutesInput,
                 reason: "rtp/udp: invalid config: udp.sdp".into(),
             },
             call_count.clone(),

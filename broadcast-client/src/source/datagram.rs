@@ -305,20 +305,18 @@ impl Datagram {
                 .unwrap_or_else(|| MulticastJoin::new(ip));
             options = options.with_join(join.with_group(ip));
         } else if options.join.is_some() {
-            return Err(Error::InvalidConfig {
-                field: "udp.options.join",
-            });
+            return Err(Error::InvalidConfig(crate::error::ConfigField::UdpJoin));
         }
-        options.validate().map_err(|error| Error::InvalidConfig {
-            field: match error {
-                JoinMismatch::Family => "udp.options.join.interface",
-                JoinMismatch::SourceFamily => "udp.options.join.source",
-                _ => "udp.options.join.group",
-            },
+        options.validate().map_err(|error| {
+            Error::InvalidConfig(match error {
+                JoinMismatch::Family => crate::error::ConfigField::UdpJoinInterface,
+                JoinMismatch::SourceFamily => crate::error::ConfigField::UdpJoinSource,
+                _ => crate::error::ConfigField::UdpJoinGroup,
+            })
         })?;
         let kind = match config.sdp.as_deref() {
             Some(sdp) if rtp => Kind::Sdp(Box::new(crate::source::rtp_sdp::SdpRtp::new(sdp)?)),
-            Some(_) => return Err(Error::InvalidConfig { field: "udp.sdp" }),
+            Some(_) => return Err(Error::InvalidConfig(crate::error::ConfigField::UdpSdp)),
             None => Kind::Udp(Ingest::new(rtp, config)),
         };
         Ok(Self {
