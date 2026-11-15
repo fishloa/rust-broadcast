@@ -4,6 +4,7 @@
 //! `main` (9fe7a022) and must pass once the defect is fixed. Inputs are real
 //! wire bytes built from the cited syntax tables.
 
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::extension::{
     Cp, ExtensionDescriptor, S2XSatelliteDeliverySystem, S2Xv2SatelliteDeliverySystem,
@@ -61,17 +62,19 @@ fn nordig_v1_reserved_over_range_is_rejected_not_masked() {
 
 /// extension/cp.rs:89 `self.reserved_future_use & 0b111`.
 #[test]
-fn cp_reserved_future_use_over_range_is_rejected_not_masked() {
+fn cp_reserved_future_use_over_range_is_unrepresentable() {
     // CP_system_id 0x1234, reserved_future_use 111, CP_PID 0x0100.
     let sel = [0x12, 0x34, 0xE1, 0x00];
-    let mut d = Cp::parse(&sel).unwrap();
+    let d = Cp::parse(&sel).unwrap();
     assert_eq!(ser(&d).unwrap(), sel);
-    d.reserved_future_use = 0b1000;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_future_use=8 must be FieldOverflow, got {r:?}"
+    // reserved_future_use is a 3-bit `ReservedOnes`, so an over-range value is
+    // unrepresentable: `from_bits` masks at construction, and it can never
+    // reach the serializer to be re-masked into a different byte.
+    assert_eq!(
+        Cp::parse(&sel).unwrap().reserved_future_use.get(),
+        0b111
     );
+    assert_eq!(ReservedOnes::<3>::from_bits(0b1000).get(), 0);
 }
 
 /// extension/supplementary_audio.rs:117 `(self.reserved_future_use & 1) << 1`.
