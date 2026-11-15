@@ -176,19 +176,23 @@ impl<'a> Parse<'a> for Preface {
             get_optional_fixed::<4>(items, TAG_OBJECT_MODEL_VERSION, "Object Model Version")?
                 .map(u32::from_be_bytes);
         let primary_package =
-            get_optional_fixed::<16>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?;
+            get_optional_fixed::<16>(items, TAG_PRIMARY_PACKAGE, "Primary Package")?.map(UlBytes);
         let identifications_batch = get_optional_raw(items, TAG_IDENTIFICATIONS)
             .map(UidBatch::parse)
             .transpose()?;
         let identifications = identifications_batch.as_ref().map(|b| b.items().to_vec());
-        let content_storage =
-            get_required_fixed::<16>(items, TAG_CONTENT_STORAGE, "Content Storage", "Preface")?;
-        let operational_pattern = get_required_fixed::<16>(
+        let content_storage = UlBytes(get_required_fixed::<16>(
+            items,
+            TAG_CONTENT_STORAGE,
+            "Content Storage",
+            "Preface",
+        )?);
+        let operational_pattern = UlBytes(get_required_fixed::<16>(
             items,
             TAG_OPERATIONAL_PATTERN,
             "Operational Pattern",
             "Preface",
-        )?;
+        )?);
         let essence_containers_batch = UidBatch::parse(get_required_raw(
             items,
             TAG_ESSENCE_CONTAINERS,
@@ -249,7 +253,7 @@ impl Preface {
             ));
         }
         if let Some(p) = self.primary_package {
-            out.push(LocalSetOwnedItem::fixed(TAG_PRIMARY_PACKAGE, p));
+            out.push(LocalSetOwnedItem::fixed(TAG_PRIMARY_PACKAGE, p.0));
         }
         if let Some(ref ids) = self.identifications {
             out.push(LocalSetOwnedItem::owned(
@@ -259,11 +263,11 @@ impl Preface {
         }
         out.push(LocalSetOwnedItem::fixed(
             TAG_CONTENT_STORAGE,
-            self.content_storage,
+            self.content_storage.0,
         ));
         out.push(LocalSetOwnedItem::fixed(
             TAG_OPERATIONAL_PATTERN,
-            self.operational_pattern,
+            self.operational_pattern.0,
         ));
         out.push(LocalSetOwnedItem::owned(
             TAG_ESSENCE_CONTAINERS,
@@ -286,13 +290,14 @@ crate::sets::declare_set_serialize!(Preface, Preface);
 mod tests {
     use super::*;
     use crate::sets::{finish_owned_set, owned_set_serialized_len, serialize_owned_set};
+    use crate::types::UlBytes;
     use broadcast_common::Serialize;
 
     fn sample() -> Preface {
         Preface {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x11; 16],
-                generation_uid: Some([0x22; 16]),
+                instance_uid: UlBytes([0x11; 16]),
+                generation_uid: Some(UlBytes([0x22; 16])),
                 object_class: None,
             },
             last_modified_date: MxfTimestamp {
@@ -306,12 +311,12 @@ mod tests {
             },
             version: VERSION_1_3,
             object_model_version: Some(1),
-            primary_package: Some([0x33; 16]),
-            identifications: Some(alloc::vec![[0x44; 16]]),
+            primary_package: Some(UlBytes([0x33; 16])),
+            identifications: Some(alloc::vec![UlBytes([0x44; 16])]),
             identifications_batch: None,
-            content_storage: [0x55; 16],
-            operational_pattern: [0x66; 16],
-            essence_containers: alloc::vec![[0x77; 16]],
+            content_storage: UlBytes([0x55; 16]),
+            operational_pattern: UlBytes([0x66; 16]),
+            essence_containers: alloc::vec![UlBytes([0x77; 16])],
             essence_containers_batch: None,
             dm_schemes: Vec::new(),
             dm_schemes_batch: None,

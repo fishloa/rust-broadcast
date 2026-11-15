@@ -40,7 +40,8 @@ use srt_runtime::handshake_sm::{
 };
 use srt_runtime::listener::ListenerHandshake;
 use srt_runtime::packet::{
-    ControlPacket, DataPacket, EncryptionField, EncryptionKeyField, PacketPosition, SrtPacket,
+    ControlPacket, DataPacket, EncryptionField, EncryptionKeyField, PacketPosition, SocketId,
+    SrtPacket, SrtTimestamp,
 };
 
 include!("support/skip.rs");
@@ -169,8 +170,10 @@ fn libsrt_listener_accepts_our_key_material_and_decrypts_our_data() {
             key_flag: EncryptionKeyField::Even,
             retransmitted: false,
             message_number: index + 1,
-            timestamp: u32::try_from(started.elapsed().as_micros()).unwrap(),
-            dest_socket_id: negotiated.peer_socket_id,
+            timestamp: SrtTimestamp::from_wire(
+                u32::try_from(started.elapsed().as_micros()).unwrap(),
+            ),
+            dest_socket_id: SocketId::from_wire(negotiated.peer_socket_id),
             data: &data,
         };
         let mut wire = vec![0u8; pkt.serialized_len()];

@@ -45,8 +45,8 @@ use atsc3_route::{Codepoint, RoutePacket};
 use broadcast_common::{Parse, Serialize};
 
 let cci = [0u8; 4];
-let tsi = 3000u32.to_be_bytes();
-let toi = 6034u32.to_be_bytes();
+let tsi = rmt_flute::Tsi::new(3000, 4).unwrap();
+let toi = rmt_flute::Toi::new(6034, 4).unwrap();
 let lct = rmt_flute::LctHeader {
     reserved: 0,
     version: rmt_flute::LCT_VERSION,
@@ -55,8 +55,8 @@ let lct = rmt_flute::LctHeader {
     close_object: false,
     codepoint: 128,
     cci: &cci,
-    tsi: &tsi,
-    toi: &toi,
+    tsi,
+    toi,
     extensions: vec![],
 };
 let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];

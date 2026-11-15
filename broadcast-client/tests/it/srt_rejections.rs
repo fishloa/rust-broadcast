@@ -10,7 +10,7 @@ use srt_runtime::RejectionReason;
 
 use srt_runtime::packet::{
     ControlPacket, EncryptionField, HandshakeExtensionFlags, HandshakeExtensions, HandshakePacket,
-    HandshakeType, SrtPacket,
+    HandshakeType, SocketId, SrtPacket, SrtTimestamp,
 };
 
 const URL: &str = "srt://127.0.0.1:9000";
@@ -19,8 +19,8 @@ const SECOND_US: u64 = 1_000_000;
 
 fn rejection_for(reason: RejectionReason, own_socket_id: u32) -> Vec<u8> {
     let packet = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: own_socket_id,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(own_socket_id),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -31,7 +31,7 @@ fn rejection_for(reason: RejectionReason, own_socket_id: u32) -> Vec<u8> {
         srt_socket_id: 0,
         syn_cookie: 0,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     });
     let mut bytes = vec![0u8; packet.serialized_len()];
     packet

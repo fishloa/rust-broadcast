@@ -62,7 +62,7 @@ use st377_1::{
     ContentStorage, Error, EssenceContainerData, EventTrack, FillerComponent, Identification,
     KlvItem, LocalSet, MaterialPackage, PartitionPack, Preface, PrimerPack, RandomIndexPack,
     Sequence, SourceClip, SourcePackage, StaticTrack, StructuralSetKind, TimecodeComponent,
-    TimelineTrack, UidBatch, collect_klv_items, is_fill_item_key, is_local_set_key,
+    TimelineTrack, UidBatch, UlBytes, collect_klv_items, is_fill_item_key, is_local_set_key,
 };
 
 fn fixture_bytes() -> Vec<u8> {
@@ -107,7 +107,7 @@ fn assert_real_batch_header(set: &LocalSet<'_>, name: &str, batch: &UidBatch, i:
         .find(|item| item.value.len() >= header.len() && item.value[..header.len()] == header)
         .map(|item| item.value)
         .unwrap_or_else(|| panic!("item {i}: {name} Batch: no property carried that header"));
-    let elements: Vec<u8> = batch.items().concat();
+    let elements: Vec<u8> = batch.items().iter().flat_map(|item| item.0).collect();
     assert_eq!(
         &original[header.len()..],
         elements.as_slice(),
@@ -147,7 +147,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
     let mut uid_batches_seen = 0usize;
 
     for (i, (offset, item)) in items.iter().enumerate() {
-        if is_fill_item_key(&item.key) {
+        if is_fill_item_key(&UlBytes(item.key)) {
             continue;
         }
 
@@ -158,7 +158,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
             .unwrap_or_else(|e| panic!("item {i}: re-deriving consumed length failed: {e}"));
         let klv = &bytes[*offset..*offset + consumed];
 
-        if PartitionPack::is_partition_key(&item.key) {
+        if PartitionPack::is_partition_key(&UlBytes(item.key)) {
             let pp = PartitionPack::parse(klv)
                 .unwrap_or_else(|e| panic!("item {i}: PartitionPack parse failed: {e}"));
             let mut out = vec![0u8; pp.serialized_len()];
@@ -171,7 +171,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
             continue;
         }
 
-        if PrimerPack::is_primer_key(&item.key) {
+        if PrimerPack::is_primer_key(&UlBytes(item.key)) {
             let primer = PrimerPack::parse(klv)
                 .unwrap_or_else(|e| panic!("item {i}: PrimerPack parse failed: {e}"));
             let mut out = vec![0u8; primer.serialized_len()];
@@ -185,7 +185,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
             continue;
         }
 
-        if RandomIndexPack::is_rip_key(&item.key) {
+        if RandomIndexPack::is_rip_key(&UlBytes(item.key)) {
             let rip = RandomIndexPack::parse(klv)
                 .unwrap_or_else(|e| panic!("item {i}: RandomIndexPack parse failed: {e}"));
             let mut out = vec![0u8; rip.serialized_len()];
@@ -198,7 +198,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
             continue;
         }
 
-        if !is_local_set_key(&item.key) {
+        if !is_local_set_key(&UlBytes(item.key)) {
             // Essence Container element or Index Table segment (confirmed
             // NOT a local-set key, not merely assumed) — opaque, out of
             // scope for this crate. Nothing to assert.
@@ -222,7 +222,7 @@ fn real_fixture_every_klv_item_round_trips_byte_identical() {
             out,
             klv,
             "item {i}: LocalSet not byte-identical after round-trip (key {:02x?})",
-            &item.key[..4]
+            &UlBytes(item.key).0[..4]
         );
 
         // Sets with a typed representation in this crate must ALSO parse
@@ -351,7 +351,7 @@ fn typed_preface_reserializes_its_uid_batches_byte_identically() {
     let items = collect_klv_items(&bytes).expect("collect KLV items");
     let mut seen = 0usize;
     for (i, (offset, item)) in items.iter().enumerate() {
-        if !is_local_set_key(&item.key) {
+        if !is_local_set_key(&UlBytes(item.key)) {
             continue;
         }
         let (_, consumed) = KlvItem::parse_prefix(&bytes[*offset..]).unwrap();
@@ -385,7 +385,7 @@ fn real_fixture_op1a_qualifier_matches_actual_essence_layout() {
     let header_partition = items
         .iter()
         .find_map(|(_offset, item)| {
-            if PartitionPack::is_partition_key(&item.key) {
+            if PartitionPack::is_partition_key(&UlBytes(item.key)) {
                 PartitionPack::parse(&item.try_to_bytes().unwrap()).ok()
             } else {
                 None
@@ -398,7 +398,7 @@ fn real_fixture_op1a_qualifier_matches_actual_essence_layout() {
         "fixture's Partition Pack operational_pattern must be an OP1a UL, got {:02x?}",
         header_partition.operational_pattern
     );
-    let qualifier_byte = header_partition.operational_pattern[14];
+    let qualifier_byte = header_partition.operational_pattern.0[14];
     assert_eq!(
         qualifier_byte, 0x09,
         "fixture's known OP1a qualifier byte is 0x09 (verified directly against the file's \

@@ -18,7 +18,12 @@ fn main() {
     println!("RTP payload_type: {}", rtp.payload_type);
     println!("RTP timestamp:    {}", rtp.timestamp);
     println!("RTP ssrc:         {:#010x}", rtp.ssrc);
-    println!("Extended Sequence Number: {}", anc.extended_sequence_number);
+    println!(
+        "Extended Sequence Number: {} (extended {} of {})",
+        anc.extended_sequence_number.value(),
+        anc.extended_sequence_number.extended(0),
+        u32::MAX
+    );
     println!("F (field sense):  {}", anc.field_sense);
     println!("ANC_Count:        {}", anc.anc_count());
     for (i, pkt) in anc.anc_packets.iter().enumerate() {

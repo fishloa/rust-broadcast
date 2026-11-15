@@ -24,25 +24,27 @@ pub const FILL_ITEM_KEY_SUFFIX: [u8; 8] = [0x03, 0x01, 0x02, 0x10, 0x01, 0x00, 0
 /// version number) per the spec's own decoder rule.
 #[must_use]
 pub fn is_fill_item_key(key: &UlBytes) -> bool {
-    key[..7] == FILL_ITEM_KEY_PREFIX && key[8..] == FILL_ITEM_KEY_SUFFIX
+    let bytes = key.as_bytes();
+    bytes[..7] == FILL_ITEM_KEY_PREFIX && bytes[8..] == FILL_ITEM_KEY_SUFFIX
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
 
     #[test]
     fn fill_item_key_matches_ignoring_version_byte() {
-        let rp210 = [
+        let rp210 = UlBytes([
             0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01, 0x02, 0x03, 0x01, 0x02, 0x10, 0x01, 0x00,
             0x00, 0x00,
-        ];
-        let legacy = [
+        ]);
+        let legacy = UlBytes([
             0x06, 0x0E, 0x2B, 0x34, 0x01, 0x01, 0x01, 0x01, 0x03, 0x01, 0x02, 0x10, 0x01, 0x00,
             0x00, 0x00,
-        ];
+        ]);
         assert!(is_fill_item_key(&rp210));
         assert!(is_fill_item_key(&legacy));
-        assert!(!is_fill_item_key(&[0u8; 16]));
+        assert!(!is_fill_item_key(&UlBytes([0u8; 16])));
     }
 }

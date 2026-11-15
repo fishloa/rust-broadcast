@@ -912,7 +912,7 @@ impl SrtSocket {
                         Ok(SrtPacket::Control(ControlPacket::Handshake(hp))) => {
                             last_peer_hs = Some(PeerHandshake {
                                 initial_seq_number: hp.initial_seq_number,
-                                timestamp_us: hp.timestamp,
+                                timestamp_us: hp.timestamp.value(),
                             });
                             match hs.feed_bytes(&bytes) {
                                 Ok(o) => o,
@@ -1055,9 +1055,10 @@ impl Drop for SrtSocket {
             // the driver already ended: the peer shut down (or went silent)
             // and has nothing left to be told.
             if !handle.is_finished() {
-                let timestamp = crate::arq::duration_to_wire_us(
-                    Instant::now().saturating_duration_since(self.epoch),
-                );
+                let timestamp =
+                    crate::packet::SrtTimestamp::from_wire(crate::arq::duration_to_wire_us(
+                        Instant::now().saturating_duration_since(self.epoch),
+                    ));
                 send_shutdown(&self.udp, self.peer_addr, self.peer_socket_id, timestamp);
             }
             handle.abort();
@@ -1066,10 +1067,13 @@ impl Drop for SrtSocket {
 }
 
 /// The SHUTDOWN datagram (§3.2.7) for a peer.
-fn shutdown_datagram(peer_socket_id: u32, timestamp: u32) -> Option<Vec<u8>> {
+fn shutdown_datagram(
+    peer_socket_id: u32,
+    timestamp: crate::packet::SrtTimestamp,
+) -> Option<Vec<u8>> {
     let pkt = ControlPacket::Shutdown(ShutdownPacket {
         timestamp,
-        dest_socket_id: peer_socket_id,
+        dest_socket_id: crate::packet::SocketId::from_wire(peer_socket_id),
         libsrt_pad: true,
     });
     let mut buf = vec![0u8; pkt.serialized_len()];
@@ -1081,7 +1085,12 @@ fn shutdown_datagram(peer_socket_id: u32, timestamp: u32) -> Option<Vec<u8>> {
 /// nothing can be awaited. A failure (socket buffer full, peer unreachable, or
 /// a socket that was never polled for writability) is ignored: the peer's idle
 /// timeout is the fallback.
-fn send_shutdown(udp: &UdpSocket, peer: std::net::SocketAddr, peer_socket_id: u32, timestamp: u32) {
+fn send_shutdown(
+    udp: &UdpSocket,
+    peer: std::net::SocketAddr,
+    peer_socket_id: u32,
+    timestamp: crate::packet::SrtTimestamp,
+) {
     if let Some(buf) = shutdown_datagram(peer_socket_id, timestamp) {
         let _ = udp.try_send_to(&buf, peer);
     }
@@ -1631,7 +1640,7 @@ impl Driver {
             subtype,
             type_specific_info: 0,
             timestamp: self.elapsed_us(),
-            dest_socket_id: self.peer_socket_id,
+            dest_socket_id: crate::packet::SocketId::from_wire(self.peer_socket_id),
             cif: &cif,
         });
         let mut out = vec![0u8; ud.serialized_len()];
@@ -1760,7 +1769,7 @@ impl Driver {
         &mut self,
         datagram: Bytes,
         seq_number: u32,
-        timestamp: u32,
+        timestamp: crate::packet::SrtTimestamp,
         key_flag: EncryptionKeyField,
         now: Timestamp,
     ) {
@@ -1842,7 +1851,7 @@ impl Driver {
         // point live mode skips the unrecoverable gap and delivers that
         // packet (only if TLPKTDROP was negotiated, §3.2.1.1.1; otherwise it waits for the
         // retransmission, and the ARQ ack point never moves past the gap).
-        let tsbpd_out = self.tsbpd.feed_data(seq_number, timestamp, now);
+        let tsbpd_out = self.tsbpd.feed_data(seq_number, timestamp.value(), now);
         self.release(&tsbpd_out);
     }
 
@@ -1995,7 +2004,7 @@ impl Driver {
     fn queue_keepalive(&mut self) {
         let pkt = ControlPacket::KeepAlive(KeepAlivePacket {
             timestamp: self.elapsed_us(),
-            dest_socket_id: self.peer_socket_id,
+            dest_socket_id: crate::packet::SocketId::from_wire(self.peer_socket_id),
             libsrt_pad: true,
         });
         let mut buf = vec![0u8; pkt.serialized_len()];
@@ -2018,7 +2027,7 @@ impl Driver {
     /// modulo `2^32` past ~71.58 minutes, matching `arq::timestamp_to_wire_us`
     /// (issue #1063; a clamp here made every control packet after that point
     /// carry the exact same wire timestamp forever).
-    fn elapsed_us(&self) -> u32 {
+    fn elapsed_us(&self) -> crate::packet::SrtTimestamp {
         crate::arq::timestamp_to_wire_us(self.elapsed())
     }
 
@@ -2735,7 +2744,7 @@ impl ListenerCore {
         {
             // The first CONCLUSION fixes the pair (a repeat must not move it).
             if entry.concluded_at.is_none() {
-                entry.peer_timestamp_us = hp.timestamp;
+                entry.peer_timestamp_us = hp.timestamp.value();
                 entry.concluded_at = Some(Instant::now());
             }
         }
@@ -3030,8 +3039,8 @@ fn build_encryption_rejection(
     config: &HandshakeConfig,
 ) -> Result<Vec<u8>> {
     let hp_out = HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: hp.srt_socket_id,
+        timestamp: crate::packet::SrtTimestamp::ZERO,
+        dest_socket_id: crate::packet::SocketId::from_wire(hp.srt_socket_id),
         version: handshake_sm::HANDSHAKE_VERSION_5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -3042,7 +3051,7 @@ fn build_encryption_rejection(
         srt_socket_id: own_socket_id,
         syn_cookie: 0,
         peer_ip: config.local_ip,
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     };
     handshake_sm::build_bytes(hp_out)
 }
@@ -3216,7 +3225,7 @@ fn peer_handshake(bytes: &[u8]) -> Result<PeerHandshake> {
     match SrtPacket::parse(bytes) {
         Ok(SrtPacket::Control(ControlPacket::Handshake(hp))) => Ok(PeerHandshake {
             initial_seq_number: hp.initial_seq_number,
-            timestamp_us: hp.timestamp,
+            timestamp_us: hp.timestamp.value(),
         }),
         _ => Err(Error::InvalidField(InvalidField {
             field: "peer handshake",
@@ -3278,8 +3287,8 @@ mod isn_tests {
 
     fn handshake_bytes(initial_seq_number: u32) -> Vec<u8> {
         let hp = HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
             version: 5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0),
@@ -3290,7 +3299,7 @@ mod isn_tests {
             srt_socket_id: 42,
             syn_cookie: 0,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         crate::handshake_sm::build_bytes(hp).expect("build handshake bytes")
     }
@@ -3329,8 +3338,8 @@ mod isn_tests {
         // A well-formed control packet of the WRONG type (Keep-Alive, not
         // Handshake) must also error rather than default to 0.
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0,
-            dest_socket_id: 7,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(7),
             libsrt_pad: false,
         });
         let mut buf = alloc::vec![0u8; ka.serialized_len()];
@@ -3435,8 +3444,8 @@ mod adapter_tests {
             key_flag: EncryptionKeyField::NotEncrypted,
             retransmitted: false,
             message_number: seq & crate::packet::data::MESSAGE_NUMBER_MASK,
-            timestamp,
-            dest_socket_id: 1,
+            timestamp: crate::packet::SrtTimestamp::from_wire(timestamp),
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
             data: payload,
         };
         let mut buf = alloc::vec![0u8; dp.serialized_len()];
@@ -3456,8 +3465,8 @@ mod adapter_tests {
     fn dropreq_bytes(first: u32, last: u32) -> Vec<u8> {
         let pkt = ControlPacket::DropReq(DropReqPacket {
             message_number: 0,
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
             first_seq: first,
             last_seq: last,
         });
@@ -3468,8 +3477,8 @@ mod adapter_tests {
 
     fn induction_bytes(socket_id: u32) -> Vec<u8> {
         let hp = HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
             version: crate::handshake_sm::HANDSHAKE_VERSION_4,
             encryption_field: crate::packet::EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(
@@ -3482,7 +3491,7 @@ mod adapter_tests {
             srt_socket_id: socket_id,
             syn_cookie: 0,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let pkt = ControlPacket::Handshake(hp);
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -3994,8 +4003,8 @@ mod adapter_tests {
 
         let ack = ControlPacket::Ack(AckPacket {
             ack_number: 1,
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
             cif: AckCif::Full {
                 last_ack_seq: 0,
                 rtt_us: 0,
@@ -4275,8 +4284,8 @@ mod adapter_tests {
             control_type: crate::packet::ControlType::UserDefined.to_bits(),
             subtype: crate::packet::handshake::EXT_TYPE_KMREQ,
             type_specific_info: 0,
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
             cif: &km_buf,
         });
         let mut out = vec![0u8; ud.serialized_len()];
@@ -4481,8 +4490,8 @@ mod adapter_tests {
         let mut listener = test_core(HandshakeConfig::default()).await;
         let stray = {
             let hp = HandshakePacket {
-                timestamp: 0,
-                dest_socket_id: 0,
+                timestamp: crate::packet::SrtTimestamp::ZERO,
+                dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
                 version: crate::handshake_sm::HANDSHAKE_VERSION_5,
                 encryption_field: crate::packet::EncryptionField::NoEncryption,
                 extension_field: HandshakeExtensionFlags(0),
@@ -4493,7 +4502,7 @@ mod adapter_tests {
                 srt_socket_id: 5,
                 syn_cookie: 0,
                 peer_ip: [0; 4],
-                extensions: HandshakeExtensions(&[]),
+                extensions: HandshakeExtensions(Vec::new()),
             };
             let pkt = ControlPacket::Handshake(hp);
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -4635,8 +4644,8 @@ mod adapter_tests {
 
     fn keepalive_bytes() -> Vec<u8> {
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
             libsrt_pad: true,
         });
         let mut buf = alloc::vec![0u8; ka.serialized_len()];
@@ -4681,7 +4690,11 @@ mod adapter_tests {
                 _ => None,
             })
             .expect("keepalive");
-        assert_eq!(ka.dest_socket_id, 1, "addressed to the peer's socket id");
+        assert_eq!(
+            ka.dest_socket_id,
+            crate::packet::SocketId::from_wire(1),
+            "addressed to the peer's socket id"
+        );
 
         // Sending it restarts the idle clock: half a second later, no more.
         driver.flush_outbound().await.expect("flush");
@@ -4753,8 +4766,8 @@ mod adapter_tests {
 
         let ack = ControlPacket::Ack(AckPacket {
             ack_number: 0,
-            timestamp: 0,
-            dest_socket_id: 1,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
             cif: AckCif::Light {
                 last_ack_seq: driver.next_send_seq,
             },
@@ -4831,8 +4844,8 @@ mod adapter_tests {
         // engine expects an INDUCTION.
         let conclusion = {
             let hp = HandshakePacket {
-                timestamp: 0,
-                dest_socket_id: 0,
+                timestamp: crate::packet::SrtTimestamp::ZERO,
+                dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
                 version: crate::handshake_sm::HANDSHAKE_VERSION_5,
                 encryption_field: crate::packet::EncryptionField::NoEncryption,
                 extension_field: HandshakeExtensionFlags(0),
@@ -4843,7 +4856,7 @@ mod adapter_tests {
                 srt_socket_id: 5,
                 syn_cookie: 0,
                 peer_ip: [0; 4],
-                extensions: HandshakeExtensions(&[]),
+                extensions: HandshakeExtensions(Vec::new()),
             };
             let pkt = ControlPacket::Handshake(hp);
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -5028,15 +5041,16 @@ mod adapter_tests {
     /// does — read from the length instead of re-parsing the packet.
     #[tokio::test(start_paused = true)]
     async fn a_retransmission_is_accounted_by_its_payload_length() {
-        use crate::packet::nak::build_loss_list;
+        use crate::packet::number::SeqNo;
         use crate::packet::{LossListEntry, NakPacket};
         let (mut driver, _rx) = test_driver(8192).await;
         driver.send_one(&[0u8; 1000]); // seq 0
-        let raw = build_loss_list(&[LossListEntry::Single(0)]).expect("loss list");
         let nak = ControlPacket::Nak(NakPacket {
-            timestamp: 0,
-            dest_socket_id: 1,
-            raw_loss_list: &raw,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
+            entries: alloc::vec![LossListEntry::Single(
+                SeqNo::try_new(0).expect("fits 31 bits")
+            )],
         });
         let mut bytes = alloc::vec![0u8; nak.serialized_len()];
         nak.serialize_into(&mut bytes).expect("serialize nak");
@@ -5088,7 +5102,8 @@ mod adapter_tests {
             }
         };
         assert_eq!(
-            shutdown.dest_socket_id, 1,
+            shutdown.dest_socket_id,
+            crate::packet::SocketId::from_wire(1),
             "addressed to the peer's socket id"
         );
     }

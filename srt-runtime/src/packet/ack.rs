@@ -9,6 +9,7 @@
 //!   Size.
 //! - **Light** (4-byte CIF): only Last Acknowledged Packet Sequence Number.
 
+use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, SEQ_NUMBER_MASK, be32, put_be32};
 
 /// CIF length, in bytes, of a Full ACK (§3.2.4).
@@ -75,9 +76,9 @@ pub struct AckPacket {
     /// Acknowledgement Number.
     pub ack_number: u32,
     /// Timestamp (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// The CIF, shaped per variant.
     pub cif: AckCif,
 }
@@ -85,8 +86,8 @@ pub struct AckPacket {
 impl AckPacket {
     pub(crate) fn parse_cif(
         ack_number: u32,
-        timestamp: u32,
-        dest_socket_id: u32,
+        timestamp: SrtTimestamp,
+        dest_socket_id: SocketId,
         cif: &[u8],
     ) -> Result<Self> {
         let parsed = match cif.len() {
@@ -183,8 +184,8 @@ mod tests {
     fn full_ack_round_trips_hand_computed_bytes() {
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number: 42,
-            timestamp: 1000,
-            dest_socket_id: 2000,
+            timestamp: SrtTimestamp::from_wire(1000),
+            dest_socket_id: SocketId::from_wire(2000),
             cif: AckCif::Full {
                 last_ack_seq: 1,
                 rtt_us: 2,
@@ -219,8 +220,8 @@ mod tests {
         ] {
             let pkt = ControlPacket::Ack(AckPacket {
                 ack_number: 0,
-                timestamp: 1,
-                dest_socket_id: 2,
+                timestamp: SrtTimestamp::from_wire(1),
+                dest_socket_id: SocketId::from_wire(2),
                 cif,
             });
             let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -242,8 +243,8 @@ mod tests {
         };
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number: 2u32.pow(ACK_NUMBER_BITS) - 1,
-            timestamp: 1000,
-            dest_socket_id: 2000,
+            timestamp: SrtTimestamp::from_wire(1000),
+            dest_socket_id: SocketId::from_wire(2000),
             cif: full,
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -271,8 +272,8 @@ mod tests {
         ] {
             let p = AckPacket {
                 ack_number: 1,
-                timestamp: 1000,
-                dest_socket_id: 2000,
+                timestamp: SrtTimestamp::from_wire(1000),
+                dest_socket_id: SocketId::from_wire(2000),
                 cif,
             };
             assert!(matches!(
@@ -283,8 +284,8 @@ mod tests {
 
         let p = AckPacket {
             ack_number: 2u32.pow(ACK_NUMBER_BITS),
-            timestamp: 1000,
-            dest_socket_id: 2000,
+            timestamp: SrtTimestamp::from_wire(1000),
+            dest_socket_id: SocketId::from_wire(2000),
             cif: full,
         };
         assert!(matches!(
@@ -308,8 +309,8 @@ mod tests {
     fn mutate_field_changes_bytes() {
         let mut pkt = AckPacket {
             ack_number: 1,
-            timestamp: 2,
-            dest_socket_id: 3,
+            timestamp: SrtTimestamp::from_wire(2),
+            dest_socket_id: SocketId::from_wire(3),
             cif: AckCif::Light { last_ack_seq: 4 },
         };
         let mut buf1 = [0u8; 20];

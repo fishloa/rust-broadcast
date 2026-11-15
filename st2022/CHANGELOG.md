@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+### Changed
+- BREAKING: `PayloadHeader::video_timestamp` is an `Option<VideoTimestamp>` instead of a bare `u32` (#2768). The field is a count of ticks of the media clock `ClockFrequency` names (27 MHz, 148.5 MHz, ...), so the new `VideoTimestamp` type carries that meaning (`from_ticks`, `ticks`, `Display`) rather than leaving it in a doc comment; `video_timestamp_ticks()` returns the 32-bit wire count unchanged and the on-wire bytes are identical.
 - The `panic_idioms` workspace guard now covers this crate (already clear of panicking idioms in non-test code) (#2773).
 
 ## [0.4.0] - 2026-11-14

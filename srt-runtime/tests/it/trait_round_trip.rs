@@ -3,12 +3,13 @@
 use broadcast_common::error::OutputBufferTooSmall;
 use broadcast_common::{Parse, Serialize};
 use core::fmt::Debug;
+use core::time::Duration;
 use srt_runtime::Error;
 use srt_runtime::packet::misc::KeepAlivePacket;
 use srt_runtime::packet::{
     Cipher, ControlPacket, DataPacket, EncryptionKeyField, GroupFlags, GroupMembershipExtension,
     GroupType, HandshakeExtensionMessageFlags, HsExtMessage, KeyMaterial, KmAuth, KmKeyFlag,
-    PacketPosition, SrtPacket, StreamEncapsulation,
+    PacketPosition, SocketId, SrtPacket, SrtTimestamp, StreamEncapsulation,
 };
 
 fn through_traits<'a, T>(value: &T, wire: &'a mut Vec<u8>)
@@ -30,16 +31,16 @@ fn data_packet() -> DataPacket<'static> {
         key_flag: EncryptionKeyField::Even,
         retransmitted: false,
         message_number: 0x0155_5555,
-        timestamp: 0xAABB_CCDD,
-        dest_socket_id: 0x1122_3344,
+        timestamp: SrtTimestamp::from_wire(0xAABB_CCDD),
+        dest_socket_id: SocketId::from_wire(0x1122_3344),
         data: &[0x47, 0x00, 0x01, 0x02],
     }
 }
 
 fn keep_alive() -> ControlPacket<'static> {
     ControlPacket::KeepAlive(KeepAlivePacket {
-        timestamp: 7,
-        dest_socket_id: 9,
+        timestamp: SrtTimestamp::from_wire(7),
+        dest_socket_id: SocketId::from_wire(9),
         libsrt_pad: false,
     })
 }
@@ -88,8 +89,8 @@ fn hs_ext_message_round_trips() {
     let m = HsExtMessage {
         srt_version: 0x0001_0500,
         srt_flags: HandshakeExtensionMessageFlags(0x0000_00BF),
-        receiver_tsbpd_delay_ms: 120,
-        sender_tsbpd_delay_ms: 80,
+        receiver_tsbpd_delay: Duration::from_millis(120),
+        sender_tsbpd_delay: Duration::from_millis(80),
     };
     let mut wire = Vec::new();
     through_traits(&m, &mut wire);
@@ -113,8 +114,8 @@ fn serialize_into_short_buffer_is_output_buffer_too_small() {
     let m = HsExtMessage {
         srt_version: 1,
         srt_flags: HandshakeExtensionMessageFlags(0),
-        receiver_tsbpd_delay_ms: 0,
-        sender_tsbpd_delay_ms: 0,
+        receiver_tsbpd_delay: Duration::from_millis(0),
+        sender_tsbpd_delay: Duration::from_millis(0),
     };
     assert_eq!(
         Serialize::serialize_into(&m, &mut [0u8; 11]),

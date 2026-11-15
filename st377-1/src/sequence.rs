@@ -14,10 +14,9 @@ use broadcast_common::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
-use crate::sets::batch_bytes;
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
-    get_required_fixed, get_required_raw,
+    get_required_fixed, get_required_raw, strong_ref_batch_bytes,
 };
 use crate::types::{StrongRef, UidBatch, UlBytes};
 
@@ -100,8 +99,12 @@ impl<'a> Parse<'a> for Sequence {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Sequence")?;
-        let data_definition =
-            get_required_fixed::<16>(items, TAG_DATA_DEFINITION, "Data Definition", "Sequence")?;
+        let data_definition = UlBytes(get_required_fixed::<16>(
+            items,
+            TAG_DATA_DEFINITION,
+            "Data Definition",
+            "Sequence",
+        )?);
         let duration =
             get_optional_fixed::<8>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
         let structural_components_batch = UidBatch::parse(get_required_raw(
@@ -110,7 +113,12 @@ impl<'a> Parse<'a> for Sequence {
             "Structural Components",
             "Sequence",
         )?)?;
-        let structural_components = structural_components_batch.items().to_vec();
+        let structural_components: Vec<StrongRef> = structural_components_batch
+            .items()
+            .iter()
+            .copied()
+            .map(StrongRef::from)
+            .collect();
         let dark = collect_dark(items, &KNOWN_TAGS);
 
         Ok(Sequence {
@@ -130,14 +138,14 @@ impl Sequence {
         self.interchange.encode_into(&mut out);
         out.push(LocalSetOwnedItem::fixed(
             TAG_DATA_DEFINITION,
-            self.data_definition,
+            self.data_definition.0,
         ));
         if let Some(d) = self.duration {
             out.push(LocalSetOwnedItem::fixed(TAG_DURATION, d.to_be_bytes()));
         }
         out.push(LocalSetOwnedItem::owned(
             TAG_STRUCTURAL_COMPONENTS,
-            batch_bytes(
+            strong_ref_batch_bytes(
                 self.structural_components_batch.as_ref(),
                 &self.structural_components,
             ),
@@ -151,24 +159,25 @@ crate::sets::declare_set_serialize!(Sequence, Sequence);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
     use broadcast_common::Serialize;
 
     /// SMPTE-RP 224 Picture essence data definition UL (test placeholder).
-    const PICTURE_DD: UlBytes = [
+    const PICTURE_DD: UlBytes = UlBytes([
         0x06, 0x0E, 0x2B, 0x34, 0x04, 0x01, 0x01, 0x01, 0x01, 0x03, 0x02, 0x02, 0x01, 0x00, 0x00,
         0x00,
-    ];
+    ]);
 
     fn sample() -> Sequence {
         Sequence {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x01; 16],
+                instance_uid: UlBytes([0x01; 16]),
                 generation_uid: None,
                 object_class: None,
             },
             data_definition: PICTURE_DD,
             duration: Some(250),
-            structural_components: alloc::vec![[0x02; 16], [0x03; 16]],
+            structural_components: alloc::vec![StrongRef([0x02; 16]), StrongRef([0x03; 16])],
             structural_components_batch: None,
             dark: Vec::new(),
         }
@@ -224,7 +233,7 @@ mod tests {
     fn mutation_changes_serialized_bytes() {
         let mut seq = sample();
         let before = seq.try_to_bytes().unwrap();
-        seq.structural_components.push([0x04; 16]);
+        seq.structural_components.push(StrongRef([0x04; 16]));
         let after = seq.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(
