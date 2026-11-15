@@ -40,7 +40,9 @@ pub struct RtmpTarget {
     /// as written: the query is an opaque string the origin parses itself.
     pub stream_key: String,
     /// `rtmp[s]://host[:port]/app`, IPv6 bracketed, userinfo/query/fragment removed.
-    pub tc_url: String,
+    /// Derived from `host`/`port`/`tls`/`app`, so it is read-only (see
+    /// [`RtmpTarget::tc_url`]) and can never disagree with `app`.
+    tc_url: String,
 }
 
 /// Manual `Debug`: the stream key (path remainder plus query) is the publish
@@ -148,6 +150,14 @@ impl RtmpTarget {
         Self::build(&parse_base(base)?, app, stream_key)
     }
 
+    /// The RTMP `tcUrl` to send in the `connect` command:
+    /// `rtmp[s]://host[:port]/app`, IPv6 bracketed, userinfo/query/fragment
+    /// removed. Derived from `host`/`port`/`tls`/`app`, so it can never
+    /// disagree with them.
+    pub fn tc_url(&self) -> &str {
+        &self.tc_url
+    }
+
     fn build(base: &Url, app: &str, stream_key: &str) -> Result<Self, RtmpUrlError> {
         let host = base.host().ok_or(RtmpUrlError::NoHost)?.to_owned();
         let tls = base.scheme() == SCHEME_RTMPS;
@@ -210,7 +220,7 @@ mod tests {
             (t.port, t.app.as_str(), t.stream_key.as_str()),
             (1935, "live", "key")
         );
-        assert_eq!(t.tc_url, "rtmp://example.test/live");
+        assert_eq!(t.tc_url(), "rtmp://example.test/live");
     }
 
     /// Defect 8: an IPv6 host must stay bracketed in tcUrl; building it from a bare
@@ -219,9 +229,9 @@ mod tests {
     fn ipv6_host_is_bracketed_in_tc_url() {
         let t = RtmpTarget::parse("rtmp://[::1]:1935/live/key").unwrap();
         assert_eq!(t.host, url::Host::<String>::Ipv6("::1".parse().unwrap()));
-        assert_eq!(t.tc_url, "rtmp://[::1]:1935/live");
+        assert_eq!(t.tc_url(), "rtmp://[::1]:1935/live");
         let t = RtmpTarget::parse("rtmp://[2001:db8::7]/live/key").unwrap();
-        assert_eq!(t.tc_url, "rtmp://[2001:db8::7]/live");
+        assert_eq!(t.tc_url(), "rtmp://[2001:db8::7]/live");
         assert_eq!(t.port, 1935);
     }
 
@@ -229,15 +239,15 @@ mod tests {
     fn ipv4_literal_is_a_domain_host_for_this_non_special_scheme() {
         let t = RtmpTarget::parse("rtmp://127.0.0.1:1936/live/k").unwrap();
         assert_eq!(t.host, url::Host::<String>::Domain("127.0.0.1".into()));
-        assert_eq!(t.tc_url, "rtmp://127.0.0.1:1936/live");
+        assert_eq!(t.tc_url(), "rtmp://127.0.0.1:1936/live");
     }
 
     #[test]
     fn userinfo_query_and_fragment_never_reach_tc_url() {
         let t = RtmpTarget::parse("rtmp://user:s3cret@host:1936/live/key?token=a/b#frag").unwrap();
-        assert_eq!(t.tc_url, "rtmp://host:1936/live");
+        assert_eq!(t.tc_url(), "rtmp://host:1936/live");
         assert_eq!(t.stream_key, "key?token=a/b");
-        assert!(!t.tc_url.contains("s3cret"));
+        assert!(!t.tc_url().contains("s3cret"));
     }
 
     #[test]
@@ -275,7 +285,7 @@ mod tests {
     #[test]
     fn from_parts_takes_host_and_port_from_base_only() {
         let t = RtmpTarget::from_parts("rtmp://[::1]:1940/ignored/path", "live", "k").unwrap();
-        assert_eq!(t.tc_url, "rtmp://[::1]:1940/live");
+        assert_eq!(t.tc_url(), "rtmp://[::1]:1940/live");
         assert_eq!(
             (t.app.as_str(), t.stream_key.as_str(), t.port),
             ("live", "k", 1940)
@@ -303,7 +313,7 @@ mod tests {
         let t = RtmpTarget::parse("rtmps://h.example/live/key").unwrap();
         assert!(t.tls);
         assert_eq!(t.port, RTMPS_DEFAULT_PORT);
-        assert_eq!(t.tc_url, "rtmps://h.example/live");
+        assert_eq!(t.tc_url(), "rtmps://h.example/live");
         let t = RtmpTarget::parse("rtmps://h.example:8443/live/key").unwrap();
         assert_eq!(t.port, 8443);
         assert!(!RtmpTarget::parse("rtmp://h.example/live/key").unwrap().tls);

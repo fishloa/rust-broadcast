@@ -153,11 +153,11 @@ fn opt_duration(e: &Elem<Ns>, name: &'static str) -> Result<Option<Duration>, Mp
         .transpose()
 }
 
-fn opt_time(e: &Elem<Ns>, name: &'static str) -> Result<Option<i64>, MpdError> {
+fn opt_time(e: &Elem<Ns>, name: &'static str) -> Result<Option<jiff::Timestamp>, MpdError> {
     e.attr(name)
         .map(|v| {
             parse_xs_datetime(v)
-                .map(|t| t.unix_us)
+                .map(|t| t.unix)
                 .map_err(|_| invalid(name, v))
         })
         .transpose()
@@ -890,9 +890,9 @@ impl Mpd {
                 })
                 .unwrap_or_default(),
             kind,
-            availability_start_time_us: opt_time(&root, "availabilityStartTime")?,
-            availability_end_time_us: opt_time(&root, "availabilityEndTime")?,
-            publish_time_us: opt_time(&root, "publishTime")?,
+            availability_start_time: opt_time(&root, "availabilityStartTime")?,
+            availability_end_time: opt_time(&root, "availabilityEndTime")?,
+            publish_time: opt_time(&root, "publishTime")?,
             media_presentation_duration: opt_duration(&root, "mediaPresentationDuration")?,
             minimum_update_period: opt_duration(&root, "minimumUpdatePeriod")?,
             min_buffer_time: opt_duration(&root, "minBufferTime")?,

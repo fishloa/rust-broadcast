@@ -4,6 +4,7 @@
 //! `private/specs-verified/rules/srt-arq.md` (`draft-sharabayko-srt-01` §4.8/§4.8.1/§4.8.2/
 //! §4.10).
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use srt_runtime::arq::{FULL_ACK_PERIOD, Receiver, Sender};
@@ -45,14 +46,14 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
     let mut sender = Sender::new(RECEIVER_ID);
     let mut receiver = Receiver::new(SENDER_ID, 0, MAX_FLOW_WINDOW);
 
-    let mut now = Duration::ZERO;
+    let mut now = Timestamp::ZERO;
     const TARGET_RTT: Duration = Duration::from_millis(30);
 
     // --- Phase 1: drive 40 ACK/ACKACK round trips at a fixed simulated
     // network delay, and check RTT converges toward it on both sides
     // (srt-arq.md rules 26-31, 33).
     for _ in 0..40 {
-        now += Duration::from_millis(50);
+        now = now.saturating_add(Duration::from_millis(50));
         let outputs = receiver.tick(now);
         let ack = outputs
             .iter()
@@ -63,7 +64,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
             .expect("a Full ACK must trigger an ACKACK (rules 3, 9)");
         let ackack = as_ackack(&ackack_bytes).expect("ACKACK control type");
         // The ACKACK "arrives back" at the receiver one injected RTT later.
-        receiver.on_ackack(&ackack, now + TARGET_RTT);
+        receiver.on_ackack(&ackack, now.saturating_add(TARGET_RTT));
     }
 
     let receiver_rtt_ms = receiver.rtt().as_millis() as i64;
@@ -78,7 +79,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
          also converge toward 30ms, got {sender_rtt_ms}ms"
     );
 
-    now += Duration::from_millis(50);
+    now = now.saturating_add(Duration::from_millis(50));
 
     // --- Phase 2: send 10 data packets, drop #3 and #7 "in transit".
     const TOTAL: u32 = 10;
@@ -92,7 +93,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
         if !DROPPED.contains(&seq) {
             in_flight.push(bytes);
         }
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
     assert_eq!(sender.buffered_count(), TOTAL as usize);
 
@@ -105,7 +106,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
         if let Some(nak) = outcome.nak {
             naks.push(nak);
         }
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
     assert_eq!(
         naks.len(),
@@ -144,7 +145,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
             outcome.nak.is_none(),
             "filling an already-known gap must not open a new one"
         );
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
 
     assert_eq!(
@@ -157,7 +158,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
 
     // --- Phase 3: the next Full ACK/ACKACK exchange advances the sender's
     // acknowledged sequence and frees its send buffer (rules 1, 7, 8).
-    now += FULL_ACK_PERIOD + Duration::from_millis(1);
+    now = now.saturating_add(FULL_ACK_PERIOD + Duration::from_millis(1));
     let outputs = receiver.tick(now);
     let ack = outputs
         .iter()
@@ -176,7 +177,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
         "the ACK must free every acknowledged packet from the send buffer"
     );
     let ackack = as_ackack(&ackack_bytes).unwrap();
-    receiver.on_ackack(&ackack, now + Duration::from_millis(5));
+    receiver.on_ackack(&ackack, now.saturating_add(Duration::from_millis(5)));
 }
 
 /// Negative case: a loss-free run must never emit a NAK, either from the
@@ -185,7 +186,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
 fn zero_loss_run_emits_no_spurious_naks() {
     let mut sender = Sender::new(RECEIVER_ID);
     let mut receiver = Receiver::new(SENDER_ID, 0, MAX_FLOW_WINDOW);
-    let mut now = Duration::ZERO;
+    let mut now = Timestamp::ZERO;
 
     for seq in 0..50u32 {
         let payload = alloc_payload(seq);
@@ -198,13 +199,13 @@ fn zero_loss_run_emits_no_spurious_naks() {
             outcome.nak.is_none(),
             "no loss occurred; feed_data must not emit a NAK for seq {seq}"
         );
-        now += Duration::from_millis(1);
+        now = now.saturating_add(Duration::from_millis(1));
     }
 
     // Drive well past several NAKInterval/Full-ACK periods; still nothing,
     // because the loss list stays empty (srt-arq.md rules 21-22).
     for _ in 0..20 {
-        now += Duration::from_millis(50);
+        now = now.saturating_add(Duration::from_millis(50));
         let outputs = receiver.tick(now);
         for bytes in &outputs {
             assert!(
@@ -225,7 +226,7 @@ fn alloc_payload(seq: u32) -> Vec<u8> {
 #[test]
 fn receiver_ack_point_crosses_a_dropreq_range_announced_ahead_of_it() {
     let mut r = Receiver::new(RECEIVER_ID, 0, MAX_FLOW_WINDOW);
-    let t = Duration::ZERO;
+    let t = Timestamp::ZERO;
     r.feed_data(0, t);
     r.feed_data(5, t);
     r.skip_range(3, 4);
@@ -241,9 +242,9 @@ fn receiver_ack_point_crosses_a_dropreq_range_announced_ahead_of_it() {
 #[test]
 fn receiver_ignores_a_dropreq_range_wider_than_the_flow_window() {
     let mut r = Receiver::new(RECEIVER_ID, 0, MAX_FLOW_WINDOW);
-    r.feed_data(0, Duration::ZERO);
+    r.feed_data(0, Timestamp::ZERO);
     r.skip_range(1, 0x3FFF_FFFF);
-    let out = r.feed_data(1, Duration::ZERO);
+    let out = r.feed_data(1, Timestamp::ZERO);
     assert_eq!(
         out.delivered,
         vec![1],
@@ -256,7 +257,7 @@ fn receiver_ignores_a_dropreq_range_wider_than_the_flow_window() {
 fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
     let mut s = Sender::new(RECEIVER_ID);
     for seq in 0..5u32 {
-        s.on_data(seq, seq, b"x", Duration::ZERO).unwrap();
+        s.on_data(seq, seq, b"x", Timestamp::ZERO).unwrap();
     }
     let ack = AckPacket {
         ack_number: 0,
@@ -264,7 +265,7 @@ fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
         dest_socket_id: RECEIVER_ID,
         cif: AckCif::Light { last_ack_seq: 1000 },
     };
-    s.on_ack(&ack, Duration::ZERO);
+    s.on_ack(&ack, Timestamp::ZERO);
     assert_eq!(
         s.buffered_count(),
         5,

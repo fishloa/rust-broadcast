@@ -352,7 +352,8 @@ fuzz_target!(|data: &[u8]| {
     let mpd = pick_mpd(&world.mpds, head[0], head[1], head[2], &mut rest);
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
         .ok()
-        .and_then(|m| m.publish_time_us)
+        .and_then(|m| m.publish_time)
+        .map(|t| t.as_microsecond())
         .unwrap_or(DEFAULT_PUBLISH_US);
 
     let Ok(mut session) = Session::open(Url::parse(MPD_URL).unwrap(), config, Timestamp::from_micros(0)) else {

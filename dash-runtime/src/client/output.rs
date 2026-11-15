@@ -172,8 +172,8 @@ pub enum Output {
         index: usize,
         /// `Period@id`.
         id: Option<String>,
-        /// PeriodStart, microseconds from the presentation start.
-        start_us: i128,
+        /// PeriodStart from the presentation start.
+        start: Duration,
         /// `true` only for a boundary signalled period-continuous
         /// (`urn:mpeg:dash:period-continuity:2015`, 23009-1 5.3.2.4) whose
         /// init is unchanged: nothing is re-announced and no `Discontinuity`

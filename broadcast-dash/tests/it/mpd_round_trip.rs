@@ -77,9 +77,9 @@ fn a_model_with_every_field_set_round_trips() {
     mpd.id = Some("mpd".to_string());
     mpd.profiles = vec!["p1".to_string(), "p2".to_string()];
     mpd.kind = PresentationType::Dynamic;
-    mpd.availability_start_time_us = Some(1_000_000);
-    mpd.availability_end_time_us = Some(2_000_000);
-    mpd.publish_time_us = Some(3_000_000);
+    mpd.availability_start_time = Some(jiff::Timestamp::from_microsecond(1_000_000).unwrap());
+    mpd.availability_end_time = Some(jiff::Timestamp::from_microsecond(2_000_000).unwrap());
+    mpd.publish_time = Some(jiff::Timestamp::from_microsecond(3_000_000).unwrap());
     mpd.media_presentation_duration = Some(Duration::from_secs(10));
     mpd.minimum_update_period = Some(Duration::from_secs(1));
     mpd.min_buffer_time = Some(Duration::from_secs(2));

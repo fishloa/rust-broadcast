@@ -23,13 +23,38 @@ use super::template::{self, TemplateError, TemplateFault, TemplateUse};
 use super::timeline::TimelineIndex;
 use crate::error::Unsupported;
 use crate::timing::availability::{
-    init_available_from, segment_available_from_ticks, segment_available_until_ticks, ticks_to_us,
+    init_available_from, segment_available_from_ticks, segment_available_until_ticks,
+    ticks_to_micros,
 };
 use broadcast_common::timescale::{Rounding, Timescale, from_micros};
 use broadcast_dash::inherit::{ListInfo, ResolvedMulti, SegmentInfo, TemplateInfo};
 use broadcast_dash::{BaseInfo, ByteRange, UrlType};
+use core::time::Duration;
+use jiff::{SignedDuration, Timestamp};
 
 const MICROS: i128 = 1_000_000;
+
+fn duration_micros(d: Duration) -> i128 {
+    i128::from(d.as_secs()) * MICROS + i128::from(d.subsec_micros())
+}
+
+fn micros_to_signed(us: i128) -> SignedDuration {
+    let fallback = if us < 0 {
+        SignedDuration::MIN
+    } else {
+        SignedDuration::MAX
+    };
+    SignedDuration::try_from_micros_i128(us).unwrap_or(fallback)
+}
+
+fn micros_to_duration(us: i128) -> Duration {
+    Duration::from_micros(u64::try_from(us.max(0)).unwrap_or(u64::MAX))
+}
+
+fn micros_to_timestamp(us: i128) -> Option<Timestamp> {
+    let us = i64::try_from(us.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).ok()?;
+    Timestamp::from_microsecond(us).ok()
+}
 
 fn us_to_ticks_ceil(us: i128, timescale: Timescale) -> u64 {
     u64::try_from(from_micros(us.max(0), timescale, Rounding::Ceil)).unwrap_or(u64::MAX)
@@ -39,28 +64,28 @@ fn us_to_ticks_ceil(us: i128, timescale: Timescale) -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct DynamicContext {
-    /// `MPD@availabilityStartTime` as Unix microseconds.
-    pub availability_start_us: i128,
+    /// `MPD@availabilityStartTime`.
+    pub availability_start: Timestamp,
     /// The effective `@timeShiftBufferDepth` (Representation level over MPD
-    /// level), microseconds; `None` means unbounded.
-    pub time_shift_buffer_depth_us: Option<i128>,
-    /// Sum of `@availabilityTimeOffset` over every level that built the URL,
-    /// microseconds; zero unless the caller opted into early requests.
-    pub availability_time_offset_us: i128,
-    /// `FetchTime + minimumUpdatePeriod` in UTC microseconds: where a trailing
-    /// negative `@r` runs to when the Period has no known end (A.3.2).
-    pub horizon_utc_us: Option<i128>,
+    /// level); `None` means unbounded.
+    pub time_shift_buffer_depth: Option<Duration>,
+    /// Sum of `@availabilityTimeOffset` over every level that built the URL;
+    /// zero unless the caller opted into early requests.
+    pub availability_time_offset: SignedDuration,
+    /// `FetchTime + minimumUpdatePeriod` where a trailing negative `@r` runs
+    /// to when the Period has no known end (A.3.2).
+    pub horizon_utc: Option<Timestamp>,
 }
 
 impl DynamicContext {
     /// A context with no ATO and no horizon.
     #[must_use]
-    pub fn new(availability_start_us: i128, time_shift_buffer_depth_us: Option<i128>) -> Self {
+    pub fn new(availability_start: Timestamp, time_shift_buffer_depth: Option<Duration>) -> Self {
         Self {
-            availability_start_us,
-            time_shift_buffer_depth_us,
-            availability_time_offset_us: 0,
-            horizon_utc_us: None,
+            availability_start,
+            time_shift_buffer_depth,
+            availability_time_offset: SignedDuration::ZERO,
+            horizon_utc: None,
         }
     }
 }
@@ -75,10 +100,10 @@ pub struct PlanInput<'a> {
     pub bandwidth: u64,
     /// The resolved Segment information.
     pub info: &'a SegmentInfo,
-    /// PeriodStart in microseconds from the presentation start.
-    pub period_start_us: i128,
+    /// PeriodStart from the presentation start.
+    pub period_start: Duration,
     /// The Period end in the same domain, when known.
-    pub period_end_us: Option<i128>,
+    pub period_end: Option<Duration>,
     /// Dynamic-MPD context; `None` for a static MPD.
     pub dynamic: Option<DynamicContext>,
     /// The parsed `sidx` and the anchor offset (SegmentBase only).
@@ -93,8 +118,8 @@ impl<'a> PlanInput<'a> {
             representation_id,
             bandwidth,
             info,
-            period_start_us: 0,
-            period_end_us: None,
+            period_start: Duration::ZERO,
+            period_end: None,
             dynamic: None,
             index: None,
         }
@@ -115,20 +140,20 @@ pub struct SegmentRef {
     pub duration_ticks: u64,
     /// Ticks per second.
     pub timescale: Timescale,
-    /// Start relative to the Period start, microseconds
+    /// Start relative to the Period start
     /// (`(time - PTO) / timescale` for a timeline).
-    pub start_us: i128,
-    /// Duration in microseconds.
-    pub duration_us: i128,
+    pub start: SignedDuration,
+    /// Duration.
+    pub duration: Duration,
     /// The URL reference to resolve against the BaseURL chain; empty means the
     /// BaseURL itself.
     pub reference: String,
     /// The byte range, when the segment is a part of a file.
     pub byte_range: Option<ByteRange>,
     /// Availability start (dynamic MPD).
-    pub available_from_us: Option<i128>,
+    pub available_from: Option<Timestamp>,
     /// Availability end (dynamic MPD with a time-shift buffer).
-    pub available_until_us: Option<i128>,
+    pub available_until: Option<Timestamp>,
 }
 
 /// An Initialization or Index Segment address.
@@ -140,9 +165,9 @@ pub struct ResourceRef {
     /// Byte range.
     pub byte_range: Option<ByteRange>,
     /// Availability start (dynamic MPD).
-    pub available_from_us: Option<i128>,
+    pub available_from: Option<Timestamp>,
     /// Availability end: that of the last Media Segment.
-    pub available_until_us: Option<i128>,
+    pub available_until: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -224,10 +249,10 @@ fn period_end_media_ticks(
         return Some(pd.saturating_add(pto));
     }
     let dynamic = input.dynamic.as_ref()?;
-    let horizon = dynamic.horizon_utc_us?;
-    let rel = horizon
-        .saturating_sub(dynamic.availability_start_us)
-        .saturating_sub(input.period_start_us);
+    let horizon = dynamic.horizon_utc?;
+    let rel = i128::from(horizon.as_microsecond())
+        .saturating_sub(i128::from(dynamic.availability_start.as_microsecond()))
+        .saturating_sub(duration_micros(input.period_start));
     Some(us_to_ticks_ceil(rel, multi.timescale).saturating_add(pto))
 }
 
@@ -240,9 +265,9 @@ impl SegmentPlan {
     /// fetched).
     pub fn build(input: &PlanInput<'_>) -> Result<Self, AddressError> {
         let avail = input.dynamic.as_ref().map(|d| Avail {
-            ast_us: d.availability_start_us,
-            ato_us: d.availability_time_offset_us,
-            tsb_us: d.time_shift_buffer_depth_us,
+            ast_us: d.availability_start.as_microsecond() as i128,
+            ato_us: d.availability_time_offset.as_micros(),
+            tsb_us: d.time_shift_buffer_depth.map(duration_micros),
         });
         let mut plan = match input.info {
             SegmentInfo::Template(t) => Self::from_template(input, t)?,
@@ -251,14 +276,16 @@ impl SegmentPlan {
             _ => return Err(AddressError::UnsupportedFeature),
         };
         plan.avail = avail;
-        plan.period_start_us = input.period_start_us;
+        plan.period_start_us = duration_micros(input.period_start);
         Ok(plan)
     }
 
     fn period_duration_us(input: &PlanInput<'_>) -> Option<i128> {
-        input
-            .period_end_us
-            .map(|e| e.saturating_sub(input.period_start_us).max(0))
+        input.period_end.map(|e| {
+            duration_micros(e)
+                .saturating_sub(duration_micros(input.period_start))
+                .max(0)
+        })
     }
 
     fn from_template(input: &PlanInput<'_>, t: &TemplateInfo) -> Result<Self, AddressError> {
@@ -471,9 +498,16 @@ impl SegmentPlan {
         self.pto
     }
 
-    /// PeriodStart in microseconds.
+    /// PeriodStart in whole microseconds from the presentation start.
     #[must_use]
-    pub fn period_start_us(&self) -> i128 {
+    pub fn period_start(&self) -> Duration {
+        micros_to_duration(self.period_start_us)
+    }
+
+    /// Internal microseconds form of [`Self::period_start`] for the
+    /// availability arithmetic.
+    #[must_use]
+    pub(crate) fn period_start_micros(&self) -> i128 {
         self.period_start_us
     }
 
@@ -598,9 +632,9 @@ impl SegmentPlan {
                 )
             }
         };
-        let start_us = ticks_to_us(start_ticks, self.timescale);
-        let duration_us = ticks_to_us(i128::from(duration), self.timescale);
-        let (available_from_us, available_until_us) = match &self.avail {
+        let start_us = ticks_to_micros(start_ticks, self.timescale);
+        let duration_us = ticks_to_micros(i128::from(duration), self.timescale);
+        let (available_from, available_until) = match &self.avail {
             Some(a) => (
                 Some(segment_available_from_ticks(
                     a.ast_us,
@@ -627,12 +661,12 @@ impl SegmentPlan {
             time_ticks: time,
             duration_ticks: duration,
             timescale: self.timescale,
-            start_us,
-            duration_us,
+            start: micros_to_signed(start_us),
+            duration: micros_to_duration(duration_us),
             reference,
             byte_range: range,
-            available_from_us,
-            available_until_us,
+            available_from: available_from.and_then(micros_to_timestamp),
+            available_until: available_until.and_then(micros_to_timestamp),
         }))
     }
 
@@ -671,31 +705,34 @@ impl SegmentPlan {
         let from = self
             .avail
             .as_ref()
-            .map(|a| init_available_from(a.ast_us, self.period_start_us));
+            .and_then(|a| micros_to_timestamp(init_available_from(a.ast_us, self.period_start_us)));
         let until =
             self.len()
                 .and_then(|n| n.checked_sub(1))
                 .and_then(|last| match self.get(last) {
-                    Ok(Some(s)) => s.available_until_us,
+                    Ok(Some(s)) => s.available_until,
                     _ => None,
                 });
         ResourceRef {
             reference: reference.to_owned(),
             byte_range: range,
-            available_from_us: from,
-            available_until_us: until,
+            available_from: from,
+            available_until: until,
         }
     }
 
     /// Index of the last segment whose Period-relative start is at or before
-    /// `period_time_us`; `None` before the first segment.
-    pub fn index_at_or_before(&self, period_time_us: i128) -> Result<Option<u64>, AddressError> {
+    /// `period_time`; `None` before the first segment.
+    pub fn index_at_or_before(
+        &self,
+        period_time: SignedDuration,
+    ) -> Result<Option<u64>, AddressError> {
         let n = self.len();
         let (mut lo, mut hi) = (0u64, n.unwrap_or(u64::MAX / 2));
         while lo < hi {
             let mid = lo + (hi - lo) / 2;
             match self.get(mid) {
-                Ok(Some(s)) if s.start_us <= period_time_us => lo = mid + 1,
+                Ok(Some(s)) if s.start <= period_time => lo = mid + 1,
                 Ok(Some(_)) | Ok(None) | Err(_) => hi = mid,
             }
         }
@@ -703,13 +740,13 @@ impl SegmentPlan {
     }
 
     /// Availability start of the segment at `index`.
-    pub fn available_from_us(&self, index: u64) -> Result<Option<i128>, AddressError> {
-        Ok(self.get(index)?.and_then(|s| s.available_from_us))
+    pub fn available_from(&self, index: u64) -> Result<Option<Timestamp>, AddressError> {
+        Ok(self.get(index)?.and_then(|s| s.available_from))
     }
 
     /// Availability end of the segment at `index`.
-    pub fn available_until_us(&self, index: u64) -> Result<Option<i128>, AddressError> {
-        Ok(self.get(index)?.and_then(|s| s.available_until_us))
+    pub fn available_until(&self, index: u64) -> Result<Option<Timestamp>, AddressError> {
+        Ok(self.get(index)?.and_then(|s| s.available_until))
     }
 
     /// The first index, and the number of segments, for which `pred` holds on

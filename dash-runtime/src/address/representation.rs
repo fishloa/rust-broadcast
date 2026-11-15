@@ -9,8 +9,8 @@ use super::AddressError;
 use super::plan::{DynamicContext, PlanInput, SegmentPlan};
 use crate::mpd::urls::{BaseCandidate, representation_candidates};
 use crate::selection::RepRef;
-use crate::timing::availability::ato_seconds_to_us;
-use crate::timing::period::{PeriodTiming, duration_us, period_timings};
+use crate::timing::availability::ato_seconds;
+use crate::timing::period::{PeriodTiming, period_timings};
 use broadcast_dash::inherit::{InheritError, SegmentInfo, resolve_segment_info};
 use broadcast_dash::{Mpd, PresentationType};
 
@@ -41,9 +41,9 @@ pub enum PlanError {
 pub struct PlanOptions<'a> {
     /// Apply `@availabilityTimeOffset` (early requests; LL-DASH).
     pub use_availability_time_offset: bool,
-    /// `FetchTime + minimumUpdatePeriod` in UTC microseconds, for a trailing
-    /// negative `@r` of a Period with no known end.
-    pub horizon_utc_us: Option<i128>,
+    /// `FetchTime + minimumUpdatePeriod`, for a trailing negative `@r` of a
+    /// Period with no known end.
+    pub horizon_utc: Option<jiff::Timestamp>,
     /// The parsed `sidx` and its anchor, for a SegmentBase Representation.
     pub index: Option<(&'a SegmentIndexBox, u64)>,
 }
@@ -58,8 +58,8 @@ impl<'a> PlanOptions<'a> {
 
     /// Set the horizon of a trailing negative `@r`.
     #[must_use]
-    pub fn with_horizon_utc_us(mut self, horizon_utc_us: i128) -> Self {
-        self.horizon_utc_us = Some(horizon_utc_us);
+    pub fn with_horizon(mut self, horizon_utc: jiff::Timestamp) -> Self {
+        self.horizon_utc = Some(horizon_utc);
         self
     }
 
@@ -118,29 +118,27 @@ pub fn plan_representation(
     let timing = *period_timings(mpd)
         .get(at.period)
         .ok_or(PlanError::NoSuchRepresentation)?;
-    let start = timing.start_us.ok_or(PlanError::PeriodUnresolved)?;
+    let start = timing.start.ok_or(PlanError::PeriodUnresolved)?;
     let candidates = representation_candidates(mpd, period, set, rep);
     let mut input = PlanInput::new(&rep.id, rep.bandwidth, &info);
-    input.period_start_us = start;
-    input.period_end_us = timing.end_us;
+    input.period_start = start;
+    input.period_end = timing.end;
     input.index = opts.index;
     if mpd.kind == PresentationType::Dynamic {
         let ast = mpd
-            .availability_start_time_us
+            .availability_start_time
             .ok_or(PlanError::MissingAvailabilityStartTime)?;
         let tsb = info_tsb(&info)
             .or_else(|| rep.base_urls.iter().find_map(|b| b.time_shift_buffer_depth))
-            .or(mpd.time_shift_buffer_depth)
-            .map(duration_us);
-        let mut ctx = DynamicContext::new(i128::from(ast), tsb);
+            .or(mpd.time_shift_buffer_depth);
+        let mut ctx = DynamicContext::new(ast, tsb);
         if opts.use_availability_time_offset {
             let base_ato = candidates
                 .first()
                 .map_or(0.0, |c| c.availability_time_offset_s);
-            ctx.availability_time_offset_us =
-                ato_seconds_to_us(base_ato + info_ato(&info).unwrap_or(0.0));
+            ctx.availability_time_offset = ato_seconds(base_ato + info_ato(&info).unwrap_or(0.0));
         }
-        ctx.horizon_utc_us = opts.horizon_utc_us;
+        ctx.horizon_utc = opts.horizon_utc;
         input.dynamic = Some(ctx);
     }
     let plan = SegmentPlan::build(&input)?;

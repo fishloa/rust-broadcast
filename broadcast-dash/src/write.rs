@@ -136,7 +136,7 @@ impl Mpd {
         if ns.cenc {
             root.push_attribute(("xmlns:cenc", NS_CENC));
         }
-        if let Some(v) = self.availability_start_time_us {
+        if let Some(v) = self.availability_start_time {
             root.push_attribute((
                 "availabilityStartTime",
                 format_xs_datetime(v)
@@ -147,7 +147,7 @@ impl Mpd {
                     .as_str(),
             ));
         }
-        if let Some(v) = self.publish_time_us {
+        if let Some(v) = self.publish_time {
             root.push_attribute((
                 "publishTime",
                 format_xs_datetime(v)
@@ -173,7 +173,7 @@ impl Mpd {
         if let Some(v) = &self.id {
             root.push_attribute(("id", v.as_str()));
         }
-        if let Some(v) = self.availability_end_time_us {
+        if let Some(v) = self.availability_end_time {
             root.push_attribute((
                 "availabilityEndTime",
                 format_xs_datetime(v)

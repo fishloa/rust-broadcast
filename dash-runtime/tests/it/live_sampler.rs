@@ -153,7 +153,10 @@ fn a_valid_direct_value_anchors_without_any_request() {
         anchor.source,
         dash_runtime::timing::clock::ClockSource::UtcTiming
     );
-    assert_eq!(anchor.utc_us, AST_US + 41 * MICROS);
+    assert_eq!(
+        anchor.utc,
+        jiff::Timestamp::from_microsecond(AST_US + 41 * MICROS).unwrap()
+    );
 }
 
 #[test]

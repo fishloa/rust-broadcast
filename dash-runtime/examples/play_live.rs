@@ -122,8 +122,8 @@ fn availability(mpd: &Mpd, base: &Url) -> BTreeMap<String, i64> {
                         Ok(dash_runtime::mpd::base_url::ResolvedRef::Relative(s)) => s,
                         Err(_) => continue,
                     };
-                    if let Some(from) = seg.available_from_us {
-                        out.insert(url, i64::try_from(from).unwrap_or(i64::MAX));
+                    if let Some(from) = seg.available_from {
+                        out.insert(url, from.as_microsecond());
                     }
                 }
             }
@@ -148,7 +148,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         utf8_percent_encode(name, NON_ALPHANUMERIC)
     ))?;
     let mpd = Mpd::parse(&std::fs::read(&path)?)?;
-    let publish = mpd.publish_time_us.ok_or("the MPD has no publishTime")?;
+    let publish = mpd
+        .publish_time
+        .ok_or("the MPD has no publishTime")?
+        .as_microsecond();
     let avail = availability(&mpd, &url);
     let true_start = publish + START_AFTER_PUBLISH_US;
 

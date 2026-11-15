@@ -263,7 +263,7 @@ impl SrtCaller {
             return;
         };
         link.last_rx_us = now_us;
-        let now = Duration::from_micros(now_us.saturating_sub(link.epoch_us));
+        let now = Timestamp::from_micros(now_us.saturating_sub(link.epoch_us));
         let Ok(packet) = SrtPacket::parse(bytes) else {
             self.stats.malformed = self.stats.malformed.saturating_add(1);
             return;
@@ -335,7 +335,7 @@ impl SrtCaller {
                     self.out.notices.push(Notice::PeerIdle);
                     return;
                 }
-                let now = Duration::from_micros(now_us.saturating_sub(link.epoch_us));
+                let now = Timestamp::from_micros(now_us.saturating_sub(link.epoch_us));
                 link.tick(now);
                 let released = link.tsbpd.tick(now);
                 link.release(&released, &mut self.stats, &mut self.out);
@@ -360,15 +360,17 @@ impl SrtCaller {
             State::Connected(link) => {
                 let idle = Timestamp::from_micros(link.last_rx_us)
                     .checked_add(self.config.timeouts.read_idle);
-                let ack =
-                    Timestamp::from_micros(link.epoch_us).checked_add(link.receiver.next_timeout());
+                let ack = link.receiver.next_timeout().and_then(|t| {
+                    Timestamp::from_micros(link.epoch_us)
+                        .checked_add(Duration::from_micros(t.as_micros()))
+                });
                 // A deadline past the end of the clock is no deadline; the others still bind.
                 let mut at = match (idle, ack) {
                     (Some(idle), Some(ack)) => Some(idle.min(ack)),
                     (Some(one), None) | (None, Some(one)) => Some(one),
                     (None, None) => None,
                 };
-                let now = Duration::from_micros(now_us.saturating_sub(link.epoch_us));
+                let now = Timestamp::from_micros(now_us.saturating_sub(link.epoch_us));
                 if let Some(t) = link.tsbpd.next_release_after(now) {
                     // A scheduled release past the end of the clock is no release: no deadline.
                     let release = Timestamp::from_micros(link.epoch_us).checked_add(t);
@@ -412,7 +414,7 @@ impl Link {
     fn ingest_data(
         &mut self,
         d: &srt_runtime::packet::DataPacket<'_>,
-        now: Duration,
+        now: Timestamp,
         stats: &mut DatagramStats,
     ) -> TickOutcome {
         let mut payload = d.data.to_vec();
@@ -451,7 +453,7 @@ impl Link {
         self.tsbpd.feed_data(d.seq_number, d.timestamp, now)
     }
 
-    fn drop_request(&mut self, d: &DropReqPacket, now: Duration) -> TickOutcome {
+    fn drop_request(&mut self, d: &DropReqPacket, now: Timestamp) -> TickOutcome {
         let first = d.first_seq & SEQ_NUMBER_MASK;
         let last = d.last_seq & SEQ_NUMBER_MASK;
         if seq_diff(last, first) < 0 {
@@ -484,7 +486,7 @@ impl Link {
         }
     }
 
-    fn tick(&mut self, now: Duration) {
+    fn tick(&mut self, now: Timestamp) {
         for bytes in self.receiver.tick(now) {
             self.control.push_back(bytes);
         }

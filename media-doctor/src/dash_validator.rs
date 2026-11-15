@@ -84,7 +84,7 @@ pub fn check_dash_mpd(text: &str, report: &mut Report) {
 
     // dash-dynamic-mpd-no-availability-start — ISO/IEC 23009-1:2012 §5.3.1.2 Table 3
     // CM (Conditionally Mandatory) — must be present for @type='dynamic'.
-    if mpd.kind == PresentationType::Dynamic && mpd.availability_start_time_us.is_none() {
+    if mpd.kind == PresentationType::Dynamic && mpd.availability_start_time.is_none() {
         report.push(Finding::new(
             Severity::Error,
             Location::new(1),

@@ -47,8 +47,14 @@ fn livesim2_dynamic_mpd_values() {
     let bytes = test_fixtures::read("dash/livesim2/segtimeline_time_a.mpd");
     let mpd = Mpd::parse(&bytes).unwrap();
     assert_eq!(mpd.kind, PresentationType::Dynamic);
-    assert_eq!(mpd.availability_start_time_us, Some(0));
-    assert_eq!(mpd.publish_time_us, Some(1_791_934_510_000_000));
+    assert_eq!(
+        mpd.availability_start_time,
+        Some(jiff::Timestamp::from_second(0).unwrap())
+    );
+    assert_eq!(
+        mpd.publish_time,
+        Some(jiff::Timestamp::from_microsecond(1_791_934_510_000_000).unwrap())
+    );
     assert_eq!(mpd.periods.len(), 1);
     assert_eq!(mpd.periods[0].adaptation_sets.len(), 2);
     assert_eq!(mpd.utc_timings.len(), 1);

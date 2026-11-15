@@ -9,7 +9,6 @@ use libfuzzer_sys::fuzz_target;
 use test_fixtures::fuzz::MAX_INPUT;
 
 const SEGMENTS_WALKED: usize = 64;
-const SAMPLE_CLOCK_US: i128 = 1_800_000_000_000_000;
 
 // Fuzz the MPD parser and everything built on a parsed MPD: selection, Period
 // timing and the segment plan of every Representation. Must not panic and must
@@ -40,9 +39,11 @@ fuzz_target!(|data: &[u8]| {
                         .map(|c| c.resolve(None, &seg.reference));
                 }
                 if plan.is_dynamic() {
-                    let _ = newest_complete(plan, SAMPLE_CLOCK_US);
-                    let _ = window(plan, SAMPLE_CLOCK_US);
-                    let _ = join_index(plan, SAMPLE_CLOCK_US, 4_000_000);
+                    let clock = jiff::Timestamp::from_microsecond(1_800_000_000_000_000)
+                        .unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+                    let _ = newest_complete(plan, clock);
+                    let _ = window(plan, clock);
+                    let _ = join_index(plan, clock, std::time::Duration::from_millis(4_000));
                 }
             }
         }

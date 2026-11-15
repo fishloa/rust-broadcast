@@ -6,9 +6,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             30s,
         ),
@@ -373,12 +373,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1767225600000000,
+        availability_start_time: Some(
+            2026-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1767229200000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-01-01T01:00:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -567,12 +567,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1769904000000000,
+        availability_start_time: Some(
+            2026-02-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1769905800000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-02-01T00:30:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -944,9 +944,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             60s,
         ),
@@ -1187,9 +1187,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             10s,
         ),
@@ -1546,9 +1546,9 @@ Ok(
             "urn:mpeg:dash:profile:cmaf:2019",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -1780,12 +1780,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-ext-live:2014",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1772323200000000,
+        availability_start_time: Some(
+            2026-03-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1772323800000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-03-01T00:10:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -2043,12 +2043,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1772323200000000,
+        availability_start_time: Some(
+            2026-03-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1775001600000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-04-01T00:00:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -2254,12 +2254,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1777593600000000,
+        availability_start_time: Some(
+            2026-05-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1777593900000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-05-01T00:05:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -2520,12 +2520,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1793006284725000,
+        availability_start_time: Some(
+            2026-10-26T09:18:04.725Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1793006300392000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-10-26T09:18:20.392Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -2871,12 +2871,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1793006300766000,
+        availability_start_time: Some(
+            2026-10-26T09:18:20.766Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1793006316438000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-10-26T09:18:36.438Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -3270,12 +3270,12 @@ Ok(
             "http://dashif.org/guidelines/dash-if-simple",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            0,
+        availability_start_time: Some(
+            1970-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1791934510000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-10-13T23:35:10Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -3755,12 +3755,12 @@ Ok(
             "http://dashif.org/guidelines/dash-if-simple",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            0,
+        availability_start_time: Some(
+            1970-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1791934514000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-10-13T23:35:14Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -4254,12 +4254,12 @@ Ok(
             "http://dashif.org/guidelines/dash-if-simple",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            0,
+        availability_start_time: Some(
+            1970-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1791934478000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-10-13T23:34:38Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -4743,12 +4743,12 @@ Ok(
             "http://dashif.org/guidelines/dash-if-simple",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            0,
+        availability_start_time: Some(
+            1970-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1791934486000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2026-10-13T23:34:46Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -5231,9 +5231,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3s,
         ),
@@ -5705,9 +5705,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3s,
         ),
@@ -6099,9 +6099,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -6502,9 +6502,9 @@ Ok(
             "urn:mpeg:dash:profile:full:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -7108,9 +7108,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -7453,9 +7453,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -7794,9 +7794,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -8241,9 +8241,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3s,
         ),
@@ -8631,9 +8631,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             12s,
         ),
@@ -8993,12 +8993,12 @@ Ok(
             "http://dashif.org/guidelines/dash-if-simple",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            0,
+        availability_start_time: Some(
+            1970-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            0,
+        availability_end_time: None,
+        publish_time: Some(
+            1970-01-01T00:00:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -9362,9 +9362,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             23.75s,
         ),
@@ -9546,9 +9546,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             23.75s,
         ),
@@ -9730,12 +9730,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1635406557755000,
+        availability_start_time: Some(
+            2021-10-28T07:35:57.755Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1635406589744000,
+        availability_end_time: None,
+        publish_time: Some(
+            2021-10-28T07:36:29.744Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -10303,12 +10303,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1635406587755000,
+        availability_start_time: Some(
+            2021-10-28T07:36:27.755Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1635406589744000,
+        availability_end_time: None,
+        publish_time: Some(
+            2021-10-28T07:36:29.744Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -10532,12 +10532,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1635406557755000,
+        availability_start_time: Some(
+            2021-10-28T07:35:57.755Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1635406589744000,
+        availability_end_time: None,
+        publish_time: Some(
+            2021-10-28T07:36:29.744Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -11107,9 +11107,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             71.88s,
         ),
@@ -11488,9 +11488,9 @@ Ok(
             "http://dashif.org/guidelines/dash264",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             594s,
         ),
@@ -12003,9 +12003,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -12792,12 +12792,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1432978210000000,
+        availability_start_time: Some(
+            2015-05-30T09:30:10Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1432978210000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2015-05-30T09:30:10Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -13158,9 +13158,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             704s,
         ),
@@ -14138,12 +14138,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-main:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1413566225000000,
+        availability_start_time: Some(
+            2014-10-17T17:17:05Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1413566225000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2014-10-17T17:17:05Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -15046,9 +15046,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-ext-live:2014",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -15305,9 +15305,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-ext-live:2014",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -15628,12 +15628,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-ext-live:2014",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1553462400000000,
+        availability_start_time: Some(
+            2019-03-24T21:20:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1553460273540000,
+        availability_end_time: None,
+        publish_time: Some(
+            2019-03-24T20:44:33.54Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -16020,12 +16020,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1545285862000000,
+        availability_start_time: Some(
+            2018-12-20T06:04:22Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1545285862000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2018-12-20T06:04:22Z,
         ),
         media_presentation_duration: Some(
             249.708s,
@@ -16705,12 +16705,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1545285862000000,
+        availability_start_time: Some(
+            2018-12-20T06:04:22Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1545285862000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2018-12-20T06:04:22Z,
         ),
         media_presentation_duration: Some(
             249.708s,
@@ -17502,12 +17502,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1545285862000000,
+        availability_start_time: Some(
+            2018-12-20T06:04:22Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1545285862000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2018-12-20T06:04:22Z,
         ),
         media_presentation_duration: Some(
             249.708s,
@@ -18004,12 +18004,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-ext-live:2014",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1565098260000000,
+        availability_start_time: Some(
+            2019-08-06T13:31:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1565098260000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2019-08-06T13:31:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -18454,11 +18454,11 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: Some(
-            1413566225000000,
+        availability_start_time: Some(
+            2014-10-17T17:17:05Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             24s,
         ),
@@ -18875,12 +18875,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1413566225000000,
+        availability_start_time: Some(
+            2014-10-17T17:17:05Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1413566225000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2014-10-17T17:17:05Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -19435,12 +19435,12 @@ Ok(
             "urn:dvb:dash:profile:dvb-dash:2014",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1582108922684000,
+        availability_start_time: Some(
+            2020-02-19T10:42:02.684Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1582110102688000,
+        availability_end_time: None,
+        publish_time: Some(
+            2020-02-19T11:01:42.688Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -19929,12 +19929,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1493622000000000,
+        availability_start_time: Some(
+            2017-05-01T07:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1589348046000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2020-05-13T05:34:06Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -20526,12 +20526,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1602955025000000,
+        availability_start_time: Some(
+            2020-10-17T17:17:05Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1602955025000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2020-10-17T17:17:05Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -20874,12 +20874,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            0,
+        availability_start_time: Some(
+            1970-01-01T00:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1552353450000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2019-03-12T01:17:30Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -21149,12 +21149,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            233431200000000,
+        availability_start_time: Some(
+            1977-05-25T18:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1618632927145000,
+        availability_end_time: None,
+        publish_time: Some(
+            2021-04-17T04:15:27.145Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -22684,12 +22684,12 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            233431200000000,
+        availability_start_time: Some(
+            1977-05-25T18:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1699649047025000,
+        availability_end_time: None,
+        publish_time: Some(
+            2023-11-10T20:44:07.025Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -23267,12 +23267,12 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            233431200000000,
+        availability_start_time: Some(
+            1977-05-25T18:00:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1636577047025000,
+        availability_end_time: None,
+        publish_time: Some(
+            2021-11-10T20:44:07.025Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -23695,9 +23695,9 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -23937,9 +23937,9 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -24196,9 +24196,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -24446,9 +24446,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -24688,12 +24688,12 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1668014778000000,
+        availability_start_time: Some(
+            2022-11-09T17:26:18Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1668020102000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2022-11-09T18:55:02Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -24948,12 +24948,12 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1703507400000000,
+        availability_start_time: Some(
+            2023-12-25T12:30:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1703507400000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2023-12-25T12:30:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -25291,10 +25291,10 @@ Ok(
             "urn:mpeg:dash:profile:list:2024",
         ],
         kind: List,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1324816200000000,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: Some(
+            2011-12-25T12:30:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: None,
@@ -25485,11 +25485,11 @@ Ok(
             "urn:mpeg:dash:profile:mp2t-simple:2011",
         ],
         kind: Static,
-        availability_start_time_us: Some(
-            1305008202000000,
+        availability_start_time: Some(
+            2011-05-10T06:16:42Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             6158s,
         ),
@@ -25883,9 +25883,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             634s,
         ),
@@ -26146,9 +26146,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -26443,9 +26443,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-main:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -27428,9 +27428,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -27771,9 +27771,9 @@ Ok(
             "http://dashif.org/guidelines/dash264",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             594s,
         ),
@@ -28383,9 +28383,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -28936,9 +28936,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             3256s,
         ),
@@ -29490,12 +29490,12 @@ Ok(
             "urn:mpeg:dash:profile:isoff-live:2011",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1324816200000000,
+        availability_start_time: Some(
+            2011-12-25T12:30:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: Some(
-            1324816200000000,
+        availability_end_time: None,
+        publish_time: Some(
+            2011-12-25T12:30:00Z,
         ),
         media_presentation_duration: None,
         minimum_update_period: Some(
@@ -30153,9 +30153,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             10s,
         ),
@@ -30491,9 +30491,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             10s,
         ),
@@ -31282,9 +31282,9 @@ Ok(
             "urn:mpeg:dash:profile:isoff-on-demand:2011",
         ],
         kind: Static,
-        availability_start_time_us: None,
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_start_time: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: Some(
             10s,
         ),
@@ -31731,11 +31731,11 @@ Ok(
             "urn:mpeg:dash:profile:advanced-linear:2025",
         ],
         kind: Dynamic,
-        availability_start_time_us: Some(
-            1645792200000000,
+        availability_start_time: Some(
+            2022-02-25T12:30:00Z,
         ),
-        availability_end_time_us: None,
-        publish_time_us: None,
+        availability_end_time: None,
+        publish_time: None,
         media_presentation_duration: None,
         minimum_update_period: Some(
             30s,

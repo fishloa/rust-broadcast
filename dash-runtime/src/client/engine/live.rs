@@ -18,8 +18,8 @@ use crate::client::config::DashClockPolicy;
 use crate::client::meta::UtcResponse;
 use crate::client::utc_sampler::{Step, UtcSampler};
 use crate::timing::clock::{AdoptReason, Anchor, ClockSource, OfferOutcome, OfferPolicy};
-use crate::timing::live_edge::{join_index, oldest_in_window, presentation_delay_us};
-use crate::timing::period::duration_us;
+use crate::timing::live_edge::{join_index, oldest_in_window, presentation_delay};
+use crate::timing::period::duration_micros;
 use crate::timing::utc_timing::{Exchange, UtcSample, sample_from_date_header};
 use core::time::Duration;
 
@@ -46,7 +46,7 @@ pub(super) struct Refresh {
     pub(super) next_at: Option<Timestamp>,
     pub(super) forced_at: Option<Timestamp>,
     pub(super) last_request: Option<Timestamp>,
-    pub(super) publish_time_us: Option<i64>,
+    pub(super) publish_time: Option<jiff::Timestamp>,
     pub(super) body: Vec<u8>,
     pub(super) validators: MpdValidators,
     pub(super) redirect_url: Option<String>,
@@ -122,8 +122,9 @@ fn i128_from_i64(v: i64) -> i128 {
     i128::from(v)
 }
 
-fn unix_i64(us: i128) -> i64 {
-    i64::try_from(us.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).unwrap_or(i64::MAX)
+fn timestamp_from_micros_i128(us: i128) -> Option<jiff::Timestamp> {
+    let us = i64::try_from(us.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).ok()?;
+    jiff::Timestamp::from_microsecond(us).ok()
 }
 
 fn micros(d: core::time::Duration) -> u64 {
@@ -152,9 +153,9 @@ impl DashClient {
             return;
         }
         let sample = UtcSample {
-            mono_us: now.as_micros(),
-            utc_us: unix_i64(i128::from(unix.as_microsecond())),
-            uncertainty_us: micros(self.dash.host_clock_uncertainty),
+            mono: now,
+            utc: unix,
+            uncertainty: self.dash.host_clock_uncertainty,
         };
         let allow_downgrade = self.dash.clock_policy == DashClockPolicy::PreferHost;
         let outcome = self.clock.offer(
@@ -186,10 +187,9 @@ impl DashClient {
         self.clock.anchor().copied()
     }
 
-    /// UTC in Unix microseconds at the monotonic instant `now`, once an
-    /// anchor exists.
+    /// UTC at the monotonic instant `now`, once an anchor exists.
     #[must_use]
-    pub fn utc_at(&self, now: Timestamp) -> Option<i64> {
+    pub fn utc_at(&self, now: Timestamp) -> Option<jiff::Timestamp> {
         self.clock.utc_at(now)
     }
 
@@ -226,7 +226,8 @@ impl DashClient {
             }
         }
         if let Some(w) = live.wake_utc
-            && let Some(m) = self.clock.mono_for_utc(unix_i64(w))
+            && let Some(ts) = timestamp_from_micros_i128(w)
+            && let Some(m) = self.clock.mono_for_utc(ts)
         {
             take(m);
         }
@@ -327,10 +328,13 @@ impl DashClient {
             return false;
         };
         let run = &self.periods[pi];
-        let Some(end) = period_timings(mpd).get(run.index).and_then(|t| t.end_us) else {
+        let Some(end_us) = period_timings(mpd)
+            .get(run.index)
+            .and_then(|t| t.end.map(duration_micros))
+        else {
             return true;
         };
-        let len = end.saturating_sub(run.start_us);
+        let len = end_us.saturating_sub(run.start_us);
         let reaches = run.lanes.iter().filter_map(Lane::current).all(|r| {
             r.plan.as_ref().is_some_and(|p| {
                 p.len()
@@ -339,9 +343,10 @@ impl DashClient {
                     .ok()
                     .flatten()
                     .is_some_and(|s| {
-                        s.start_us
-                            .saturating_add(s.duration_us)
-                            .saturating_add(MISSING_TAIL_MAX_US)
+                        s.start
+                            .as_micros()
+                            .saturating_add(duration_micros(s.duration))
+                            .saturating_add(duration_micros(MISSING_TAIL_MAX))
                             >= len
                     })
             })
@@ -352,11 +357,13 @@ impl DashClient {
         let Some(utc) = self.utc_now(now) else {
             return false;
         };
-        let ast = i128::from(mpd.availability_start_time_us.unwrap_or(0));
-        let mup = mpd.minimum_update_period.map_or(0, duration_us);
-        let seg = mpd.max_segment_duration.map_or(0, duration_us);
+        let ast = mpd
+            .availability_start_time
+            .map_or(0, |t| i128_from_i64(t.as_microsecond()));
+        let mup = mpd.minimum_update_period.map_or(0, duration_micros);
+        let seg = mpd.max_segment_duration.map_or(0, duration_micros);
         let grace = mup.max(seg.saturating_mul(PERIOD_FINAL_SEGMENTS));
-        utc < ast.saturating_add(end).saturating_add(grace)
+        utc < ast.saturating_add(end_us).saturating_add(grace)
     }
 
     pub(super) fn can_activate(&self, next: usize) -> bool {
@@ -369,27 +376,29 @@ impl DashClient {
         mpd.kind == PresentationType::Static
             || period_timings(mpd)
                 .get(next)
-                .is_some_and(|t| t.start_us.is_some())
+                .is_some_and(|t| t.start.is_some())
     }
 
     pub(super) fn utc_now(&self, now: Timestamp) -> Option<i128> {
-        self.clock.utc_at(now).map(i128_from_i64)
+        self.clock
+            .utc_at(now)
+            .map(|t| i128_from_i64(t.as_microsecond()))
     }
 
     pub(super) fn plan_options(&self) -> PlanOptions<'static> {
         let mut o = PlanOptions::default()
             .with_availability_time_offset(self.dash.use_availability_time_offset);
         if let Some(h) = self.horizon() {
-            o = o.with_horizon_utc_us(h);
+            o = o.with_horizon(h);
         }
         o
     }
 
-    fn horizon(&self) -> Option<i128> {
+    fn horizon(&self) -> Option<jiff::Timestamp> {
         let mpd = self.mpd.as_ref()?;
-        let mup = duration_us(mpd.minimum_update_period?);
+        let mup = duration_micros(mpd.minimum_update_period?);
         let fetch = self.live.as_ref()?.fetch_utc_us?;
-        Some(fetch.saturating_add(mup))
+        timestamp_from_micros_i128(fetch.saturating_add(mup))
     }
 
     // Wake bookkeeping --------------------------------------------------------
@@ -411,7 +420,7 @@ impl DashClient {
             return;
         }
         let mut failed: Vec<(usize, DropCause)> = Vec::new();
-        let tail_us = self
+        let tail = self
             .periods
             .get(self.issue)
             .map(|p| {
@@ -423,7 +432,7 @@ impl DashClient {
                         let plan = r.plan.as_ref()?;
                         let last = plan.len()?.checked_sub(1)?;
                         match plan.get(last) {
-                            Ok(s) => s.map(|s| s.duration_us),
+                            Ok(s) => s.map(|s| s.duration),
                             Err(e) => {
                                 failed.push((li, DropCause::Addressing(address_name(&e))));
                                 None
@@ -431,14 +440,13 @@ impl DashClient {
                         }
                     })
                     .max()
-                    .unwrap_or(0)
+                    .unwrap_or(Duration::ZERO)
             })
-            .unwrap_or(0);
+            .unwrap_or(Duration::ZERO);
         for (li, cause) in failed {
             self.drop_rep(self.issue, li, cause);
         }
-        let wait = Duration::from_micros(u64::try_from(tail_us.max(0)).unwrap_or(u64::MAX));
-        self.force_refresh_after(now, wait);
+        self.force_refresh_after(now, tail);
     }
 
     // Timers ------------------------------------------------------------------
@@ -587,7 +595,7 @@ impl DashClient {
         self.note_exchange(now, meta);
         if let Some(l) = self.live.as_mut() {
             l.refresh.body = bytes.to_vec();
-            l.refresh.publish_time_us = self.mpd.as_ref().and_then(|m| m.publish_time_us);
+            l.refresh.publish_time = self.mpd.as_ref().and_then(|m| m.publish_time);
             l.refresh.last_request = Some(meta.sent.min(meta.received));
         }
         self.speculative_activate(now);
@@ -645,12 +653,16 @@ impl DashClient {
                 .checked_add(half)
                 .unwrap_or(l.mpd_exchange.sent)
         });
-        let fetch_utc = self.clock.utc_at(mid).map(i128_from_i64).or_else(|| {
-            self.mpd
-                .as_ref()
-                .and_then(|m| m.publish_time_us)
-                .map(i128_from_i64)
-        });
+        let fetch_utc = self
+            .clock
+            .utc_at(mid)
+            .map(|t| i128_from_i64(t.as_microsecond()))
+            .or_else(|| {
+                self.mpd
+                    .as_ref()
+                    .and_then(|m| m.publish_time)
+                    .map(|t| i128_from_i64(t.as_microsecond()))
+            });
         if let Some(l) = self.live.as_mut() {
             l.fetch_utc_us = fetch_utc;
         }
@@ -802,7 +814,7 @@ impl DashClient {
         live.announced_clock = Some(anchor.source);
         self.outputs.push_back(Output::ClockSynced {
             source: anchor.source,
-            uncertainty: Duration::from_micros(anchor.uncertainty_us),
+            uncertainty: anchor.uncertainty,
         });
     }
 
@@ -825,28 +837,32 @@ impl DashClient {
 
     // Join ----------------------------------------------------------------------
 
-    fn delay_us(&self, plan_hint_us: i128) -> i128 {
+    fn delay(&self, plan_hint: Duration) -> Duration {
         let Some(mpd) = self.mpd.as_ref() else {
-            return 0;
+            return Duration::ZERO;
         };
-        let max_seg = mpd.max_segment_duration.map_or(plan_hint_us, duration_us);
-        presentation_delay_us(
+        let max_seg = mpd.max_segment_duration.unwrap_or(plan_hint);
+        presentation_delay(
             mpd.suggested_presentation_delay,
             max_seg,
-            mpd.time_shift_buffer_depth.map(duration_us),
-            self.dash.live_delay.map(span_micros),
+            mpd.time_shift_buffer_depth,
+            self.dash.live_delay,
         )
     }
 
     fn choose_join_period(&self, utc: i128) -> Option<usize> {
         let mpd = self.mpd.as_ref()?;
-        let ast = i128::from(mpd.availability_start_time_us?);
-        let target = utc.saturating_sub(self.delay_us(0)).saturating_sub(ast);
+        let ast = mpd
+            .availability_start_time
+            .map(|t| i128_from_i64(t.as_microsecond()))?;
+        let target = utc
+            .saturating_sub(duration_micros(self.delay(Duration::ZERO)))
+            .saturating_sub(ast);
         let timings = period_timings(mpd);
         let mut chosen: Option<usize> = None;
         for (i, t) in timings.iter().enumerate() {
-            let Some(start) = t.start_us else { continue };
-            if chosen.is_none() || start <= target {
+            let Some(start) = t.start else { continue };
+            if chosen.is_none() || duration_micros(start) <= target {
                 chosen = Some(i);
             }
         }
@@ -859,9 +875,7 @@ impl DashClient {
             .and_then(|u| self.choose_join_period(u))
             .or_else(|| {
                 let mpd = self.mpd.as_ref()?;
-                period_timings(mpd)
-                    .iter()
-                    .rposition(|t| t.start_us.is_some())
+                period_timings(mpd).iter().rposition(|t| t.start.is_some())
             });
         if let Some(index) = pick {
             self.activate(index);
@@ -949,12 +963,16 @@ impl DashClient {
             };
             if !rep.joined {
                 let hint = match plan.get(0) {
-                    Ok(Some(s)) => s.duration_us,
-                    Ok(None) => 0,
+                    Ok(Some(s)) => s.duration,
+                    Ok(None) => Duration::ZERO,
                     Err(e) => return Candidate::Unaddressable(address_name(&e)),
                 };
-                let delay = self.delay_us(hint);
-                match join_index(plan, utc, delay) {
+                let delay = self.delay(hint);
+                let utc_ts = match timestamp_from_micros_i128(utc) {
+                    Some(t) => t,
+                    None => return Candidate::Idle,
+                };
+                match join_index(plan, utc_ts, delay) {
                     Some(idx) => {
                         let last = match idx.checked_sub(1).map_or(Ok(None), |i| plan.get(i)) {
                             Ok(s) => s.map(|s| s.time_ticks),
@@ -974,8 +992,8 @@ impl DashClient {
                             Err(e) => return Candidate::Unaddressable(address_name(&e)),
                         };
                         let first = first
-                            .and_then(|s| s.available_from_us)
-                            .map(|a| a.saturating_add(margin));
+                            .and_then(|s| s.available_from)
+                            .map(|a| i128_from_i64(a.as_microsecond()).saturating_add(margin));
                         return match first {
                             Some(a) if a > utc => Candidate::Wait(a),
                             _ => {
@@ -992,30 +1010,35 @@ impl DashClient {
                 Ok(None) => return Candidate::Idle,
                 Err(e) => return Candidate::Unaddressable(address_name(&e)),
             };
-            if seg.available_until_us.is_some_and(|u| u < utc) {
+            if seg
+                .available_until
+                .is_some_and(|u| i128_from_i64(u.as_microsecond()) < utc)
+            {
                 self.expire_before_request(pi, li, utc);
                 continue;
             }
             let from = seg
-                .available_from_us
-                .unwrap_or(i128::MIN)
-                .saturating_add(margin);
+                .available_from
+                .map(|a| i128_from_i64(a.as_microsecond()).saturating_add(margin))
+                .unwrap_or(i128::MIN);
             if utc < from {
                 return Candidate::Wait(from);
             }
-            return Candidate::Ready(seg.start_us);
+            return Candidate::Ready(seg.start.as_micros());
         }
         Candidate::Idle
     }
 
     fn expire_before_request(&mut self, pi: usize, li: usize, utc: i128) {
+        let utc_ts = timestamp_from_micros_i128(utc);
         let (oldest, next) = {
             let lane = &self.periods[pi].lanes[li];
             let Some(rep) = lane.current() else { return };
             let Some(plan) = rep.plan.as_ref() else {
                 return;
             };
-            (oldest_in_window(plan, utc), rep.next_issue)
+            let oldest = utc_ts.and_then(|t| oldest_in_window(plan, t));
+            (oldest, rep.next_issue)
         };
         self.outputs.push_back(Output::Notice(Notice::FellBehind));
         let lane = &mut self.periods[pi].lanes[li];
@@ -1092,9 +1115,9 @@ impl DashClient {
             let (from, until) = self
                 .reqs
                 .get(&id)
-                .map_or((None, None), |r| (r.avail_from_us, r.avail_until_us));
-            let grace = span_micros(self.dash.early_grace);
-            let past_window = until.is_some_and(|u| utc > u);
+                .map_or((None, None), |r| (r.avail_from, r.avail_until));
+            let grace = self.dash.early_grace;
+            let past_window = until.is_some_and(|u| utc > i128_from_i64(u.as_microsecond()));
             let refused_past_window = past_window
                 && status == Some(STATUS_TOO_EARLY)
                 && self
@@ -1103,7 +1126,13 @@ impl DashClient {
                     .is_some_and(|a| a.source == ClockSource::UtcTiming);
             let early = !refused_past_window
                 && (status == Some(STATUS_TOO_EARLY)
-                    || from.is_some_and(|f| utc < f.saturating_add(grace)));
+                    || from.is_some_and(|f| {
+                        f.saturating_add(
+                            jiff::SignedDuration::try_from(grace)
+                                .unwrap_or(jiff::SignedDuration::MAX),
+                        )
+                        .map_or(true, |fw| utc < i128_from_i64(fw.as_microsecond()))
+                    }));
             if early {
                 return Ok(self.early_wait(now, id, from, utc));
             }
@@ -1129,7 +1158,7 @@ impl DashClient {
         &mut self,
         now: Timestamp,
         id: ResourceId,
-        from: Option<i128>,
+        from: Option<jiff::Timestamp>,
         utc: i128,
     ) -> FailureClass {
         self.inflight.remove(&id);
@@ -1150,7 +1179,7 @@ impl DashClient {
             e.retry_at = at;
             at
         };
-        if from.is_some_and(|f| utc >= f) {
+        if from.is_some_and(|f| utc >= i128_from_i64(f.as_microsecond())) {
             self.request_resync(now);
         }
         match retry_at {
@@ -1170,11 +1199,12 @@ impl DashClient {
             slot.state = SlotState::Skipped { marker: true };
         }
         self.outputs.push_back(Output::Notice(Notice::FellBehind));
+        let utc_ts = timestamp_from_micros_i128(utc);
         if let Some((pi, li, _)) = self.rep_loc.get(&id.rep()).copied() {
             let (oldest, next) = {
                 let lane = &self.periods[pi].lanes[li];
                 match lane.current().and_then(|r| r.plan.as_ref().map(|p| (r, p))) {
-                    Some((r, p)) => (oldest_in_window(p, utc), r.next_issue),
+                    Some((r, p)) => (utc_ts.and_then(|t| oldest_in_window(p, t)), r.next_issue),
                     None => (None, 0),
                 }
             };
@@ -1293,7 +1323,7 @@ impl DashClient {
         let (stale, same) = {
             let live = self.live.as_ref().expect("live present");
             let stale = matches!(
-                (new.publish_time_us, live.refresh.publish_time_us),
+                (new.publish_time, live.refresh.publish_time),
                 (Some(n), Some(o)) if n < o
             );
             (stale, live.refresh.body == bytes)
@@ -1312,7 +1342,7 @@ impl DashClient {
         }
         if let Some(l) = self.live.as_mut() {
             l.refresh.body = bytes.to_vec();
-            l.refresh.publish_time_us = new.publish_time_us.or(l.refresh.publish_time_us);
+            l.refresh.publish_time = new.publish_time.or(l.refresh.publish_time);
         }
         self.apply_mpd(now, new);
         self.refresh_schedule_after_apply(now);
@@ -1327,7 +1357,7 @@ impl DashClient {
             return;
         }
         let dynamic = new.kind == PresentationType::Dynamic;
-        if dynamic && new.availability_start_time_us.is_none() {
+        if dynamic && new.availability_start_time.is_none() {
             return;
         }
         let patch_location = new.has_patch_location();
@@ -1341,9 +1371,7 @@ impl DashClient {
                 .chain(new.supplemental_properties.iter())
                 .any(|d| d.scheme_id_uri == SCHEME_RESET);
             let old_dynamic = old.kind == PresentationType::Dynamic;
-            (old_dynamic
-                && dynamic
-                && old.availability_start_time_us != new.availability_start_time_us)
+            (old_dynamic && dynamic && old.availability_start_time != new.availability_start_time)
                 || ids_differ
                 || has_reset
         };
@@ -1378,7 +1406,10 @@ impl DashClient {
                 .enumerate()
                 .position(|(i, p)| match (&run.id, &p.id) {
                     (Some(a), Some(b)) => a == b,
-                    (None, None) => timings.get(i).and_then(|t| t.start_us) == Some(run.start_us),
+                    (None, None) => {
+                        timings.get(i).and_then(|t| t.start).map(duration_micros)
+                            == Some(run.start_us)
+                    }
                     _ => false,
                 });
             match found {
@@ -1479,7 +1510,7 @@ impl DashClient {
                 .and_then(|c| c.plan.as_ref().map(|p| p.get(c.next_issue)))
         };
         let switch_us = match switch {
-            Some(Ok(seg)) => seg.map(|s| s.start_us),
+            Some(Ok(seg)) => seg.map(|s| s.start),
             Some(Err(e)) => {
                 self.drop_rep(pi, li, DropCause::Addressing(address_name(&e)));
                 None

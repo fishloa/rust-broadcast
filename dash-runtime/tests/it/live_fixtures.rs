@@ -9,18 +9,19 @@ use dash_runtime::mpd::PresentationType;
 use dash_runtime::selection::RepRef;
 use dash_runtime::timing::datetime::parse_xs_datetime;
 use dash_runtime::timing::live_edge::{join_index, newest_complete, oldest_in_window, window};
+use std::time::Duration;
 
-const SECOND_US: i128 = 1_000_000;
+const SECOND: Duration = Duration::from_secs(1);
 
-fn ts(text: &str) -> i128 {
-    i128::from(parse_xs_datetime(text).unwrap().unix_us)
+fn ts(text: &str) -> jiff::Timestamp {
+    parse_xs_datetime(text).unwrap().unix
 }
 
 #[test]
 fn ffmpeg_live_number_window_matches_the_capture() {
     let l = load("dash/live-number/live.mpd");
     assert_eq!(l.mpd.kind, PresentationType::Dynamic);
-    let publish = i128::from(l.mpd.publish_time_us.unwrap());
+    let publish = l.mpd.publish_time.unwrap();
     assert_eq!(publish, ts("2026-10-26T09:18:20.392Z"));
     let video = l.plan(RepRef::at(0, 0, 0));
     assert!(video.plan.len().is_none(), "no Period end: open-ended plan");
@@ -40,34 +41,34 @@ fn ffmpeg_live_number_window_matches_the_capture() {
     }
     let eight = video.plan.get(7).unwrap().unwrap();
     assert!(
-        eight.available_from_us.unwrap() > publish,
+        eight.available_from.unwrap() > publish,
         "segment 8 is on disk but not yet announced available"
     );
     assert_eq!(eight.reference, "seg-0-008.m4s");
     // SPD 2 s: T_join = publish - 2 s - AST = 13.667 s, inside segment 7.
-    let delay = 2 * SECOND_US;
+    let delay = 2 * SECOND;
     let join = join_index(&video.plan, publish, delay).unwrap();
     assert_eq!(video.plan.get(join).unwrap().unwrap().number, 7);
     // Delay 0 puts T_join inside the not-yet-complete segment 8: clamped back to 7.
-    let join0 = join_index(&video.plan, publish, 0).unwrap();
+    let join0 = join_index(&video.plan, publish, Duration::ZERO).unwrap();
     assert_eq!(video.plan.get(join0).unwrap().unwrap().number, 7);
     // A much older clock clamps to the oldest segment still in the window.
     let w = window(&video.plan, publish).unwrap();
     assert_eq!(
-        join_index(&video.plan, publish, 100 * SECOND_US).unwrap(),
+        join_index(&video.plan, publish, 100 * SECOND).unwrap(),
         w.oldest
     );
     // Before the first segment completes there is nothing to join.
-    let ast = i128::from(l.mpd.availability_start_time_us.unwrap());
-    assert!(newest_complete(&video.plan, ast + SECOND_US).is_none());
+    let ast = l.mpd.availability_start_time.unwrap();
+    assert!(newest_complete(&video.plan, ast.saturating_add(SECOND).unwrap()).is_none());
     // Init is available from AST + PeriodStart.
-    assert_eq!(video.plan.init().unwrap().available_from_us, Some(ast));
+    assert_eq!(video.plan.init().unwrap().available_from, Some(ast));
 }
 
 #[test]
 fn ffmpeg_live_timeline_window_matches_the_capture() {
     let l = load("dash/live-timeline/live.mpd");
-    let publish = i128::from(l.mpd.publish_time_us.unwrap());
+    let publish = l.mpd.publish_time.unwrap();
     let video = l.plan(RepRef::at(0, 0, 0));
     let audio = l.plan(RepRef::at(0, 1, 0));
     assert_eq!(video.plan.len(), Some(4));
@@ -91,27 +92,18 @@ fn ffmpeg_live_timeline_window_matches_the_capture() {
     let newest = newest_complete(&video.plan, publish).unwrap();
     assert_eq!(video.plan.get(newest).unwrap().unwrap().number, 5);
     assert_eq!(video.plan.get(3).unwrap().unwrap().number, 6);
-    assert!(
-        video
-            .plan
-            .get(3)
-            .unwrap()
-            .unwrap()
-            .available_from_us
-            .unwrap()
-            > publish
-    );
+    assert!(video.plan.get(3).unwrap().unwrap().available_from.unwrap() > publish);
 }
 
 #[test]
 fn livesim2_time_timeline_window_and_numbers() {
     let l = load("dash/livesim2/segtimeline_time_a.mpd");
     assert_eq!(
-        l.mpd.availability_start_time_us,
-        Some(0),
+        l.mpd.availability_start_time,
+        Some(jiff::Timestamp::from_second(0).unwrap()),
         "epoch zero is a value"
     );
-    let publish = i128::from(l.mpd.publish_time_us.unwrap());
+    let publish = l.mpd.publish_time.unwrap();
     let audio = l.plan(RepRef::at(0, 0, 0));
     let video = l.plan(RepRef::at(0, 1, 0));
     assert_eq!(video.plan.len(), Some(31));
@@ -121,7 +113,7 @@ fn livesim2_time_timeline_window_and_numbers() {
     let last = video.plan.get(30).unwrap().unwrap();
     assert_eq!(last.reference, "V300/161274105720000.m4s");
     assert_eq!(
-        last.available_from_us.unwrap(),
+        last.available_from.unwrap(),
         publish,
         "newest segment completes at publishTime"
     );
@@ -130,23 +122,24 @@ fn livesim2_time_timeline_window_and_numbers() {
     assert_eq!(video.plan.init().unwrap().reference, "V300/init.mp4");
     // Join six seconds behind the live edge: T_join falls exactly on the start
     // of the 29th segment (index 28), the one that contains it, not the next.
-    let join = join_index(&video.plan, publish, 6 * SECOND_US).unwrap();
+    let join = join_index(&video.plan, publish, 6 * SECOND).unwrap();
     assert_eq!(join, 28);
-    let join_mid = join_index(&video.plan, publish, 6 * SECOND_US - 1).unwrap();
+    let join_mid = join_index(&video.plan, publish, 6 * SECOND - Duration::from_micros(1)).unwrap();
     assert_eq!(
         join_mid, 28,
         "one microsecond closer to the edge is still inside it"
     );
-    let join_before = join_index(&video.plan, publish, 6 * SECOND_US + 1).unwrap();
+    let join_before =
+        join_index(&video.plan, publish, 6 * SECOND + Duration::from_micros(1)).unwrap();
     assert_eq!(join_before, 27);
     let total: u64 = audio.plan.iter().map(|s| s.duration_ticks).sum();
     assert_eq!(
         audio.plan.get(0).unwrap().unwrap().time_ticks,
         86_012_853_504_000
     );
-    let audio_end_us = (i128::from(86_012_853_504_000u64) + i128::from(total)) * SECOND_US / 48_000;
+    let audio_end_us = (i128::from(86_012_853_504_000u64) + i128::from(total)) * 1_000_000 / 48_000;
     assert!(
-        (audio_end_us - publish).abs() < 2 * SECOND_US,
+        (audio_end_us - i128::from(publish.as_microsecond())).abs() < 2_000_000,
         "audio list ends near publishTime"
     );
 }
@@ -156,7 +149,7 @@ fn livesim2_consecutive_refreshes_keep_numbers_stable() {
     let a = load("dash/livesim2/segtimelinenr_a.mpd");
     let b = load("dash/livesim2/segtimelinenr_b.mpd");
     assert!(
-        b.mpd.publish_time_us > a.mpd.publish_time_us,
+        b.mpd.publish_time > a.mpd.publish_time,
         "b is the later refresh"
     );
     for set in 0..2 {
@@ -197,13 +190,17 @@ fn a_segment_is_in_the_window_through_its_availability_end_and_out_one_microseco
     let l = load("dash/livesim2/segtimeline_time_a.mpd");
     let video = l.plan(RepRef::at(0, 1, 0));
     let first = video.plan.get(0).unwrap();
-    let until = first.unwrap().available_until_us.unwrap();
-    let newest_at = |utc: i128| oldest_in_window(&video.plan, utc);
-    let publish = i128::from(l.mpd.publish_time_us.unwrap());
+    let until = first.unwrap().available_until.unwrap();
+    let newest_at = |utc: jiff::Timestamp| oldest_in_window(&video.plan, utc);
+    let publish = l.mpd.publish_time.unwrap();
     assert!(
         until > publish,
         "the first listed segment outlives the publish time"
     );
     assert_eq!(newest_at(until), Some(0), "still available at SegAvailEnd");
-    assert_eq!(newest_at(until + 1), Some(1), "gone one microsecond later");
+    assert_eq!(
+        newest_at(until.saturating_add(Duration::from_micros(1)).unwrap()),
+        Some(1),
+        "gone one microsecond later"
+    );
 }

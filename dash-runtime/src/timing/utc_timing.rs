@@ -56,17 +56,17 @@ impl Exchange {
     }
 }
 
-/// One clock measurement: at monotonic `mono_us` the UTC time was `utc_us`
-/// (Unix microseconds), give or take `uncertainty_us`.
+/// One clock measurement: at monotonic `mono` the UTC time was `utc`, give or
+/// take `uncertainty`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct UtcSample {
-    /// Monotonic microseconds the sample refers to.
-    pub mono_us: u64,
-    /// Unix microseconds at that instant.
-    pub utc_us: i64,
+    /// Monotonic instant the sample refers to.
+    pub mono: Timestamp,
+    /// Wall-clock instant at that instant.
+    pub utc: jiff::Timestamp,
     /// Half-width of the error bar.
-    pub uncertainty_us: u64,
+    pub uncertainty: Duration,
 }
 
 /// Build a sample from a timed exchange and the server time it returned.
@@ -80,7 +80,7 @@ pub struct UtcSample {
 /// [`TimingError::RttTooLarge`] when the round trip exceeds `max_rtt`.
 pub fn sample_from_exchange(
     exchange: Exchange,
-    server_utc_us: i64,
+    server_utc: jiff::Timestamp,
     resolution: Duration,
     max_rtt: Duration,
 ) -> Result<UtcSample, TimingError> {
@@ -94,9 +94,9 @@ pub fn sample_from_exchange(
     let half = rtt / 2;
     let mono = Timestamp::from_micros(exchange.sent.as_micros() + micros(half));
     Ok(UtcSample {
-        mono_us: mono.as_micros(),
-        utc_us: server_utc_us,
-        uncertainty_us: micros(half.saturating_add(resolution)),
+        mono,
+        utc: server_utc,
+        uncertainty: half.saturating_add(resolution),
     })
 }
 
@@ -143,14 +143,12 @@ pub fn sample_from_date_header(
     exchange: Exchange,
     max_rtt: Duration,
 ) -> Result<UtcSample, TimingError> {
-    let seconds_us = date_to_epoch_us(date)?;
-    let half_second = i64::try_from(DATE_HEADER_HALF_SECOND.as_micros()).unwrap_or(i64::MAX);
-    sample_from_exchange(
-        exchange,
-        seconds_us.saturating_add(half_second),
-        DATE_HEADER_HALF_SECOND,
-        max_rtt,
-    )
+    let seconds = date_to_epoch_us(date)?;
+    let server = jiff::Timestamp::from_microsecond(seconds)
+        .unwrap_or(jiff::Timestamp::MAX)
+        .saturating_add(DATE_HEADER_HALF_SECOND)
+        .unwrap_or(jiff::Timestamp::MAX);
+    sample_from_exchange(exchange, server, DATE_HEADER_HALF_SECOND, max_rtt)
 }
 
 /// Sample from a `direct` scheme `@value`, taken at the midpoint of the MPD
@@ -175,16 +173,14 @@ fn sample_from_datetime(
     if dt.fraction_digits > 0 {
         return sample_from_exchange(
             exchange,
-            dt.unix_us,
+            dt.unix,
             Duration::from_micros(dt.resolution_us()),
             max_rtt,
         );
     }
-    let half_second = i64::try_from(DATE_HEADER_HALF_SECOND.as_micros()).unwrap_or(i64::MAX);
-    sample_from_exchange(
-        exchange,
-        dt.unix_us.saturating_add(half_second),
-        DATE_HEADER_HALF_SECOND,
-        max_rtt,
-    )
+    let server = dt
+        .unix
+        .saturating_add(DATE_HEADER_HALF_SECOND)
+        .unwrap_or(jiff::Timestamp::MAX);
+    sample_from_exchange(exchange, server, DATE_HEADER_HALF_SECOND, max_rtt)
 }

@@ -33,7 +33,7 @@ const UTC_XSDATE: &str = "http://utc.test/xsdate";
 const TOLERANCE_US: i64 = 2_000;
 
 fn ts_unix(text: &str) -> i64 {
-    parse_xs_datetime(text).unwrap().unix_us
+    parse_xs_datetime(text).unwrap().unix.as_microsecond()
 }
 
 fn live(
@@ -577,8 +577,16 @@ fn livesim2_pair() -> (Livesim2Pair, i64, i64) {
             }
         }
     }
-    let publish_a = Mpd::parse(a.as_bytes()).unwrap().publish_time_us.unwrap();
-    let publish_b = Mpd::parse(b.as_bytes()).unwrap().publish_time_us.unwrap();
+    let publish_a = Mpd::parse(a.as_bytes())
+        .unwrap()
+        .publish_time
+        .unwrap()
+        .as_microsecond();
+    let publish_b = Mpd::parse(b.as_bytes())
+        .unwrap()
+        .publish_time
+        .unwrap()
+        .as_microsecond();
     (
         Livesim2Pair {
             a,

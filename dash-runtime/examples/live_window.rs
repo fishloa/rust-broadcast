@@ -19,11 +19,10 @@ use dash_runtime::address::{PlanOptions, plan_representation};
 use dash_runtime::mpd::{Mpd, PresentationType};
 use dash_runtime::selection::{Policy, select};
 use dash_runtime::timing::datetime::parse_xs_datetime;
-use dash_runtime::timing::live_edge::{join_index, newest_complete, presentation_delay_us, window};
-use dash_runtime::timing::period::duration_us;
+use dash_runtime::timing::live_edge::{join_index, newest_complete, presentation_delay, window};
 
 const DEFAULT_MPD: &str = "../fixtures/dash/live-number/live.mpd";
-const FALLBACK_SEGMENT_US: i128 = 2_000_000;
+const FALLBACK_SEGMENT: Duration = Duration::from_secs(2);
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(DEFAULT_MPD);
@@ -44,19 +43,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if mpd.kind != PresentationType::Dynamic {
         return Err("this example needs a dynamic MPD".into());
     }
-    let now_us = match utc_arg {
-        Some(t) => i128::from(parse_xs_datetime(&t)?.unix_us),
-        None => i128::from(mpd.publish_time_us.ok_or("no publishTime; pass --utc")?),
+    let now = match utc_arg {
+        Some(t) => parse_xs_datetime(&t)?.unix,
+        None => mpd.publish_time.ok_or("no publishTime; pass --utc")?,
     };
     let sel = select(&mpd, 0, &Policy::default());
-    let max_segment = mpd
-        .max_segment_duration
-        .map_or(FALLBACK_SEGMENT_US, duration_us);
-    let tsb = mpd.time_shift_buffer_depth.map(duration_us);
-    let delay = presentation_delay_us(mpd.suggested_presentation_delay, max_segment, tsb, None);
+    let max_segment = mpd.max_segment_duration.unwrap_or(FALLBACK_SEGMENT);
+    let tsb = mpd.time_shift_buffer_depth;
+    let delay = presentation_delay(mpd.suggested_presentation_delay, max_segment, tsb, None);
     println!(
-        "clock {now_us} us, presentation delay {:.3}s (suggested {:?})",
-        delay as f64 / 1e6,
+        "clock {}, presentation delay {:.3}s (suggested {:?})",
+        now,
+        delay.as_secs_f64(),
         mpd.suggested_presentation_delay
             .map(|d: Duration| d.as_secs_f64())
     );
@@ -67,7 +65,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let Some(at) = rep else { continue };
         let planned = plan_representation(&mpd, at, &PlanOptions::default())?;
         let plan = &planned.plan;
-        match window(plan, now_us) {
+        match window(plan, now) {
             None => println!("{label}: no segment obtainable yet"),
             Some(w) => {
                 let show = |i: u64| {
@@ -82,18 +80,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     show(w.oldest),
                     show(w.newest)
                 );
-                if let Some(j) = join_index(plan, now_us, delay) {
+                if let Some(j) = join_index(plan, now, delay) {
                     println!("{label}: join at {}", show(j));
                 }
             }
         }
-        let next = newest_complete(plan, now_us).map_or(0, |n| n + 1);
+        let next = newest_complete(plan, now).map_or(0, |n| n + 1);
         if let Some(seg) = plan.get(next).ok().flatten() {
-            let wait = seg.available_from_us.unwrap_or(now_us) - now_us;
+            let wait = seg
+                .available_from
+                .map(|f| f.duration_since(now))
+                .unwrap_or(jiff::SignedDuration::ZERO);
             println!(
                 "{label}: next segment #{} in {:.3}s",
                 seg.number,
-                wait as f64 / 1e6
+                wait.as_micros() as f64 / 1e6
             );
         }
     }

@@ -99,7 +99,8 @@ pub fn run(data: &[u8], load: &dyn Fn(&str) -> Vec<u8>) -> bool {
     let mpd = pick_mpd(&world.mpds, head[1], head[2], head[3], &mut rest);
     let publish = dash_runtime::mpd::Mpd::parse(&mpd)
         .ok()
-        .and_then(|m| m.publish_time_us)
+        .and_then(|m| m.publish_time)
+        .map(|t| t.as_microsecond())
         .unwrap_or(DEFAULT_PUBLISH_US);
     let host_mode = head[5] % 4;
 

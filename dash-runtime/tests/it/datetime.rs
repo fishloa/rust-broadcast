@@ -29,7 +29,7 @@ fn accepted_table() {
     ];
     for (text, us) in cases {
         let got = parse_xs_datetime(text).unwrap_or_else(|e| panic!("{text}: {e}"));
-        assert_eq!(got.unix_us, *us, "{text}");
+        assert_eq!(got.unix.as_microsecond(), *us, "{text}");
     }
 }
 
@@ -100,7 +100,10 @@ fn ntp_timestamp_maps_prime_epoch() {
     let unix_epoch_in_ntp_seconds: u32 = 2_208_988_800;
     let mut bytes = unix_epoch_in_ntp_seconds.to_be_bytes().to_vec();
     bytes.extend_from_slice(&0x8000_0000u32.to_be_bytes());
-    assert_eq!(parse_ntp_timestamp(&bytes).unwrap(), 500_000);
+    assert_eq!(
+        parse_ntp_timestamp(&bytes).unwrap(),
+        jiff::Timestamp::from_microsecond(500_000).unwrap()
+    );
     assert!(matches!(
         parse_ntp_timestamp(&bytes[..7]),
         Err(dash_runtime::timing::datetime::DateTimeError::Ntp)
