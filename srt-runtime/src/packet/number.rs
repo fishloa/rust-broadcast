@@ -8,11 +8,15 @@
 //! behaviour travel with the value instead of living in a comment, and the
 //! node-budget/parse sites convert once at the wire edge.
 //!
-//! [`SeqNo`] is the one sequence-number type in the crate: the ACK's 31-bit
-//! Acknowledgement Number and the NAK/DROPREQ loss-list endpoints are the same
-//! 31-bit sequence space, so all of them are a [`SeqNo`]. The wrap arithmetic
-//! is [`broadcast_common::seq`] (31 bits), never `wrapping_add` or `abs_diff`
-//! on a raw integer.
+//! [`SeqNo`] is the one sequence-number type in the crate: the ACK's Last
+//! Acknowledged Packet Sequence Number and the NAK/DROPREQ loss-list endpoints
+//! are the same 31-bit sequence space, so all of them are a [`SeqNo`]. The wrap
+//! arithmetic is [`broadcast_common::seq`] (31 bits), never `wrapping_add` or
+//! `abs_diff` on a raw integer.
+//!
+//! [`AckNumber`] is deliberately *not* a [`SeqNo`]: the ACK/ACKACK
+//! Acknowledgement Number lives in a whole 32-bit header word (§3.2.4,
+//! §3.2.8), so every `u32` value is a legal acknowledgement number.
 
 use broadcast_common::seq::{MAX_SEQ_BITS, SeqSpace};
 
@@ -236,6 +240,64 @@ impl core::fmt::Display for SocketId {
     }
 }
 
+/// The sequential number of a Full ACK control packet — the
+/// `draft-sharabayko-srt-01` §3.2.4 (Figure 13) `Acknowledgement Number`,
+/// carried in the control header's `Type-specific Information` word, and
+/// echoed back by the ACKACK that acknowledges it (§3.2.8, Figure 17).
+///
+/// Unlike [`SeqNo`], whose 31-bit space exists because the top bit of a *data*
+/// packet's first header word is the `F` flag, this field occupies a whole
+/// 32-bit word: no bit in it is reserved and no value is unrepresentable, so
+/// there is no range rejection. The type keeps an ACK's numbering (an
+/// incrementing counter, §4.8.1) from being confused with a sequence number, a
+/// socket id, a timestamp or a plain count.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct AckNumber(u32);
+
+impl AckNumber {
+    /// The zero acknowledgement number — what a Small/Light ACK carries
+    /// (§3.2.4: their `Type-specific Information` "should be set to 0").
+    pub const ZERO: AckNumber = AckNumber(0);
+
+    /// Construct an `AckNumber` from its 32-bit wire value.
+    #[must_use]
+    pub const fn from_wire(value: u32) -> Self {
+        Self(value)
+    }
+
+    /// The raw 32-bit wire value.
+    #[must_use]
+    pub const fn value(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<u32> for AckNumber {
+    fn from(value: u32) -> Self {
+        AckNumber(value)
+    }
+}
+
+impl From<AckNumber> for u32 {
+    fn from(n: AckNumber) -> Self {
+        n.0
+    }
+}
+
+impl core::fmt::Debug for AckNumber {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "AckNumber({})", self.0)
+    }
+}
+
+impl core::fmt::Display for AckNumber {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 /// A 26-bit SRT Message Number (`draft-sharabayko-srt-01` §3.1, Figure 3:
 /// `Message Number (26)`).
 ///
@@ -392,6 +454,21 @@ impl core::fmt::Display for SrtTimestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An ACK/ACKACK Acknowledgement Number is a whole 32-bit word
+    /// (§3.2.4/§3.2.8): no value is out of range, unlike the 31-bit
+    /// [`SeqNo`], so the type never rejects or masks one.
+    #[test]
+    fn ack_number_keeps_every_32_bit_value() {
+        for v in [0, 1, 0x7FFF_FFFF, 0x8000_0000, 0xFFFF_FFFF] {
+            let n = AckNumber::from_wire(v);
+            assert_eq!(n.value(), v);
+            assert_eq!(u32::from(AckNumber::from(v)), v);
+            assert_eq!(alloc::format!("{n:?}"), alloc::format!("AckNumber({v})"));
+            assert_eq!(alloc::format!("{n}"), alloc::format!("{v}"));
+        }
+        assert_eq!(AckNumber::ZERO.value(), 0);
+    }
 
     #[test]
     fn seq_space_matches_the_wire_mask() {

@@ -457,8 +457,8 @@ impl Link {
     }
 
     fn drop_request(&mut self, d: &DropReqPacket, now: Timestamp) -> TickOutcome {
-        let first = d.first_seq & SEQ_NUMBER_MASK;
-        let last = d.last_seq & SEQ_NUMBER_MASK;
+        let first = d.first_seq.value();
+        let last = d.last_seq.value();
         if seq_diff(last, first) < 0 {
             return TickOutcome::default();
         }

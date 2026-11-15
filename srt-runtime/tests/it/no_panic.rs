@@ -13,8 +13,8 @@ use srt_runtime::arq::{Receiver, Sender};
 use srt_runtime::caller::CallerHandshake;
 use srt_runtime::listener::ListenerHandshake;
 use srt_runtime::packet::{
-    AckCif, AckPacket, ControlPacket, DataPacket, GroupMembershipExtension, HandshakeExtensions,
-    HsExtMessage, KeyMaterial, NakPacket, SocketId, SrtTimestamp,
+    AckCif, AckNumber, AckPacket, ControlPacket, DataPacket, GroupMembershipExtension,
+    HandshakeExtensions, HsExtMessage, KeyMaterial, NakPacket, SeqNo, SocketId, SrtTimestamp,
 };
 use srt_runtime::rendezvous::RendezvousHandshake;
 use srt_runtime::tsbpd::TsbpdScheduler;
@@ -224,11 +224,11 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
         }
         if rng.next_u64().is_multiple_of(64) {
             let cif = AckCif::Light {
-                last_ack_seq: (rng.next_u64() as u32) & 0x7FFF_FFFF,
+                last_ack_seq: SeqNo::from_wire_masked(rng.next_u64() as u32),
             };
             let _ = sender.on_ack(
                 &AckPacket {
-                    ack_number: 0,
+                    ack_number: AckNumber::from_wire(rng.next_u64() as u32),
                     timestamp: SrtTimestamp::ZERO,
                     dest_socket_id: SocketId::CONNECTION_REQUEST,
                     cif,

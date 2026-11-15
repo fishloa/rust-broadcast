@@ -36,7 +36,7 @@ pub use misc::{
     ShutdownPacket,
 };
 pub use nak::{LossListEntry, NakPacket};
-pub use number::{MessageNumber, SeqNo, SocketId, SrtTimestamp};
+pub use number::{AckNumber, MessageNumber, SeqNo, SocketId, SrtTimestamp};
 
 use crate::error::{Error, Result};
 use broadcast_common::len::need_in;

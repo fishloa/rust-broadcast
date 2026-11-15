@@ -9,8 +9,8 @@
 //!   Size.
 //! - **Light** (4-byte CIF): only Last Acknowledged Packet Sequence Number.
 
-use super::number::{SocketId, SrtTimestamp};
-use super::{Error, Result, SEQ_NUMBER_MASK, be32, put_be32};
+use super::number::{AckNumber, SeqNo, SocketId, SrtTimestamp};
+use super::{Error, Result, be32, put_be32};
 
 /// CIF length, in bytes, of a Full ACK (§3.2.4).
 pub const ACK_CIF_LEN_FULL: usize = 28;
@@ -18,10 +18,6 @@ pub const ACK_CIF_LEN_FULL: usize = 28;
 pub const ACK_CIF_LEN_SMALL: usize = 16;
 /// CIF length, in bytes, of a Light ACK (§3.2.4).
 pub const ACK_CIF_LEN_LIGHT: usize = 4;
-/// Bit width of the 31-bit Acknowledgement Number (§3.2.4). The field shares
-/// the `Type-specific Information` word's low 31 bits; the top bit is the `F`
-/// bit.
-pub const ACK_NUMBER_BITS: u32 = 31;
 
 /// The ACK Control Information Field — its shape (Full/Small/Light) is
 /// selected by which fields are present on the wire (§3.2.4). Data-carrying
@@ -33,7 +29,7 @@ pub enum AckCif {
     /// Full ACK — all seven CIF fields.
     Full {
         /// Last Acknowledged Packet Sequence Number.
-        last_ack_seq: u32,
+        last_ack_seq: SeqNo,
         /// RTT estimate, in microseconds.
         rtt_us: u32,
         /// RTT variance, in microseconds.
@@ -50,7 +46,7 @@ pub enum AckCif {
     /// Small ACK — fields up to and including Available Buffer Size.
     Small {
         /// Last Acknowledged Packet Sequence Number.
-        last_ack_seq: u32,
+        last_ack_seq: SeqNo,
         /// RTT estimate, in microseconds.
         rtt_us: u32,
         /// RTT variance, in microseconds.
@@ -61,20 +57,20 @@ pub enum AckCif {
     /// Light ACK — only Last Acknowledged Packet Sequence Number.
     Light {
         /// Last Acknowledged Packet Sequence Number.
-        last_ack_seq: u32,
+        last_ack_seq: SeqNo,
     },
 }
 
 /// ACK control packet (§3.2.4, Figure 13). `ack_number` occupies the header
 /// `Type-specific Information` word ("the sequential number of the full
-/// acknowledgment packet starting from 1"); per §3.2.4 it "should be set to
-/// 0" for Small/Light ACKs, but is stored and round-tripped verbatim
-/// regardless of variant.
+/// acknowledgment packet starting from 1") in full — a 32-bit
+/// [`AckNumber`]; per §3.2.4 it "should be set to 0" for Small/Light ACKs,
+/// but is stored and round-tripped verbatim regardless of variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AckPacket {
-    /// Acknowledgement Number.
-    pub ack_number: u32,
+    /// Acknowledgement Number (§3.2.4, Figure 13).
+    pub ack_number: AckNumber,
     /// Timestamp (§3).
     pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
@@ -92,7 +88,7 @@ impl AckPacket {
     ) -> Result<Self> {
         let parsed = match cif.len() {
             ACK_CIF_LEN_FULL => AckCif::Full {
-                last_ack_seq: be32(cif, 0),
+                last_ack_seq: SeqNo::from_wire_masked(be32(cif, 0)),
                 rtt_us: be32(cif, 4),
                 rtt_var_us: be32(cif, 8),
                 avail_buf_size: be32(cif, 12),
@@ -101,18 +97,18 @@ impl AckPacket {
                 recv_rate_bps: be32(cif, 24),
             },
             ACK_CIF_LEN_SMALL => AckCif::Small {
-                last_ack_seq: be32(cif, 0),
+                last_ack_seq: SeqNo::from_wire_masked(be32(cif, 0)),
                 rtt_us: be32(cif, 4),
                 rtt_var_us: be32(cif, 8),
                 avail_buf_size: be32(cif, 12),
             },
             ACK_CIF_LEN_LIGHT => AckCif::Light {
-                last_ack_seq: be32(cif, 0),
+                last_ack_seq: SeqNo::from_wire_masked(be32(cif, 0)),
             },
             other => return Err(Error::InvalidAckLength { len: other }),
         };
         Ok(AckPacket {
-            ack_number,
+            ack_number: AckNumber::from_wire(ack_number),
             timestamp,
             dest_socket_id,
             cif: parsed,
@@ -128,16 +124,6 @@ impl AckPacket {
     }
 
     pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
-        let last_ack_seq = match self.cif {
-            AckCif::Full { last_ack_seq, .. }
-            | AckCif::Small { last_ack_seq, .. }
-            | AckCif::Light { last_ack_seq } => last_ack_seq,
-        };
-        broadcast_common::len::fit_bits(
-            u64::from(last_ack_seq),
-            SEQ_NUMBER_MASK.count_ones(),
-            "Last Acknowledged Packet Sequence Number",
-        )?;
         match self.cif {
             AckCif::Full {
                 last_ack_seq,
@@ -148,7 +134,7 @@ impl AckPacket {
                 est_link_capacity,
                 recv_rate_bps,
             } => {
-                put_be32(buf, 0, last_ack_seq);
+                put_be32(buf, 0, last_ack_seq.value());
                 put_be32(buf, 4, rtt_us);
                 put_be32(buf, 8, rtt_var_us);
                 put_be32(buf, 12, avail_buf_size);
@@ -162,13 +148,13 @@ impl AckPacket {
                 rtt_var_us,
                 avail_buf_size,
             } => {
-                put_be32(buf, 0, last_ack_seq);
+                put_be32(buf, 0, last_ack_seq.value());
                 put_be32(buf, 4, rtt_us);
                 put_be32(buf, 8, rtt_var_us);
                 put_be32(buf, 12, avail_buf_size);
             }
             AckCif::Light { last_ack_seq } => {
-                put_be32(buf, 0, last_ack_seq);
+                put_be32(buf, 0, last_ack_seq.value());
             }
         }
         Ok(())
@@ -177,17 +163,28 @@ impl AckPacket {
 
 #[cfg(test)]
 mod tests {
+    use super::super::SrtPacket;
     use super::super::control::ControlPacket;
     use super::*;
+
+    const FULL_CIF: AckCif = AckCif::Full {
+        last_ack_seq: SeqNo::MAX,
+        rtt_us: 2,
+        rtt_var_us: 3,
+        avail_buf_size: 4,
+        pkt_recv_rate: 5,
+        est_link_capacity: 6,
+        recv_rate_bps: 7,
+    };
 
     #[test]
     fn full_ack_round_trips_hand_computed_bytes() {
         let pkt = ControlPacket::Ack(AckPacket {
-            ack_number: 42,
+            ack_number: AckNumber::from_wire(42),
             timestamp: SrtTimestamp::from_wire(1000),
             dest_socket_id: SocketId::from_wire(2000),
             cif: AckCif::Full {
-                last_ack_seq: 1,
+                last_ack_seq: SeqNo::from_wire_masked(1),
                 rtt_us: 2,
                 rtt_var_us: 3,
                 avail_buf_size: 4,
@@ -211,15 +208,17 @@ mod tests {
     fn small_and_light_ack_round_trip() {
         for cif in [
             AckCif::Small {
-                last_ack_seq: 10,
+                last_ack_seq: SeqNo::from_wire_masked(10),
                 rtt_us: 20,
                 rtt_var_us: 30,
                 avail_buf_size: 40,
             },
-            AckCif::Light { last_ack_seq: 99 },
+            AckCif::Light {
+                last_ack_seq: SeqNo::from_wire_masked(99),
+            },
         ] {
             let pkt = ControlPacket::Ack(AckPacket {
-                ack_number: 0,
+                ack_number: AckNumber::ZERO,
                 timestamp: SrtTimestamp::from_wire(1),
                 dest_socket_id: SocketId::from_wire(2),
                 cif,
@@ -230,68 +229,101 @@ mod tests {
         }
     }
 
+    /// An Acknowledgement Number is a whole 32-bit `Type-specific
+    /// Information` word (§3.2.4, Figure 13): a value above the 31-bit
+    /// sequence space — which a peer can put on the wire and `parse` must
+    /// accept — still serializes back byte-identically. This was a fuzz
+    /// crash: the serializer bounded the field to 31 bits and refused a
+    /// packet `parse` had accepted.
     #[test]
-    fn ack_rejects_numbers_that_do_not_fit_their_wire_fields() {
-        let full = AckCif::Full {
-            last_ack_seq: super::super::SEQ_NUMBER_MASK,
-            rtt_us: 2,
-            rtt_var_us: 3,
-            avail_buf_size: 4,
-            pkt_recv_rate: 5,
-            est_link_capacity: 6,
-            recv_rate_bps: 7,
-        };
-        let pkt = ControlPacket::Ack(AckPacket {
-            ack_number: 2u32.pow(ACK_NUMBER_BITS) - 1,
+    fn every_ack_number_a_peer_can_send_serializes_back() {
+        let mut ack = AckPacket {
+            ack_number: AckNumber::ZERO,
             timestamp: SrtTimestamp::from_wire(1000),
             dest_socket_id: SocketId::from_wire(2000),
-            cif: full,
-        });
-        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-        assert_eq!(pkt.serialize_into(&mut buf).unwrap(), buf.len());
+            cif: FULL_CIF,
+        };
+        for ack_number in [
+            0,
+            1,
+            u32::from(SeqNo::MAX),
+            u32::from(SeqNo::MAX) + 1,
+            // The ACK fuzz crash input (high bit set, all four bytes equal).
+            0x8E8E_8E8E,
+            u32::MAX,
+        ] {
+            ack.ack_number = AckNumber::from_wire(ack_number);
+            let mut buf = alloc::vec![0u8; ControlPacket::Ack(ack).serialized_len()];
+            assert_eq!(
+                ControlPacket::Ack(ack).serialize_into(&mut buf).unwrap(),
+                44
+            );
+            assert_eq!(&buf[4..8], &ack_number.to_be_bytes());
+            let parsed = ControlPacket::parse(&buf).unwrap();
+            assert_eq!(parsed, ControlPacket::Ack(ack));
+            assert_eq!(parsed.serialized_len(), buf.len());
+        }
+    }
 
-        for cif in [
+    /// The minimized ACK artifact from the fuzz crash, byte for byte: an
+    /// ACK whose Acknowledgement Number is `0x8E8E_8E8E`.
+    #[test]
+    fn fuzz_artifact_ack_round_trips() {
+        let bytes = [
+            128, 2, 0, 0, 142, 142, 142, 142, 142, 148, 142, 14, 142, 142, 142, 142, 142, 142, 142,
+            142,
+        ];
+        let parsed = SrtPacket::parse(&bytes).expect("parse accepts the fuzz input");
+        assert!(matches!(
+            &parsed,
+            SrtPacket::Control(ControlPacket::Ack(a))
+                if a.ack_number == AckNumber::from_wire(0x8E8E_8E8E)
+        ));
+        let mut buf = alloc::vec![0u8; parsed.serialized_len()];
+        assert_eq!(parsed.serialize_into(&mut buf).unwrap(), buf.len());
+        // The Acknowledgement Number bytes survive verbatim; the CIF's Last
+        // Acknowledged Packet Sequence Number keeps only its 31-bit value
+        // (top bit masked, see `last_ack_seq_top_bit_is_masked_at_parse`).
+        assert_eq!(&buf[4..8], &bytes[4..8]);
+        assert_eq!(SrtPacket::parse(&buf).unwrap(), parsed);
+    }
+
+    /// The Last Acknowledged Packet Sequence Number is 31 bits of its word
+    /// (the same packet-sequence space as a data packet's, §3.1): the top bit
+    /// is not a sequence value, so it is masked at the parse edge rather than
+    /// stored — the typed `SeqNo` cannot hold it, and serialize therefore
+    /// cannot refuse a number it previously accepted.
+    #[test]
+    fn last_ack_seq_top_bit_is_masked_at_parse() {
+        let mut buf = alloc::vec![0u8; 16 + 28];
+        ControlPacket::Ack(AckPacket {
+            ack_number: AckNumber::from_wire(1),
+            timestamp: SrtTimestamp::from_wire(2),
+            dest_socket_id: SocketId::from_wire(3),
+            cif: FULL_CIF,
+        })
+        .serialize_into(&mut buf)
+        .unwrap();
+        buf[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        let parsed = ControlPacket::parse(&buf).unwrap();
+        let ControlPacket::Ack(a) = parsed else {
+            panic!("an ACK");
+        };
+        assert_eq!(
+            a.cif,
             AckCif::Full {
-                last_ack_seq: super::super::SEQ_NUMBER_MASK + 1,
+                last_ack_seq: SeqNo::MAX,
                 rtt_us: 2,
                 rtt_var_us: 3,
                 avail_buf_size: 4,
                 pkt_recv_rate: 5,
                 est_link_capacity: 6,
                 recv_rate_bps: 7,
-            },
-            AckCif::Small {
-                last_ack_seq: super::super::SEQ_NUMBER_MASK + 1,
-                rtt_us: 2,
-                rtt_var_us: 3,
-                avail_buf_size: 4,
-            },
-            AckCif::Light {
-                last_ack_seq: super::super::SEQ_NUMBER_MASK + 1,
-            },
-        ] {
-            let p = AckPacket {
-                ack_number: 1,
-                timestamp: SrtTimestamp::from_wire(1000),
-                dest_socket_id: SocketId::from_wire(2000),
-                cif,
-            };
-            assert!(matches!(
-                ControlPacket::Ack(p).serialize_into(&mut buf),
-                Err(Error::FieldOverflow(_))
-            ));
-        }
-
-        let p = AckPacket {
-            ack_number: 2u32.pow(ACK_NUMBER_BITS),
-            timestamp: SrtTimestamp::from_wire(1000),
-            dest_socket_id: SocketId::from_wire(2000),
-            cif: full,
-        };
-        assert!(matches!(
-            ControlPacket::Ack(p).serialize_into(&mut buf),
-            Err(Error::FieldOverflow(_))
-        ));
+            }
+        );
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[16..20], &SeqNo::MAX.value().to_be_bytes());
     }
 
     #[test]
@@ -308,14 +340,16 @@ mod tests {
     #[test]
     fn mutate_field_changes_bytes() {
         let mut pkt = AckPacket {
-            ack_number: 1,
+            ack_number: AckNumber::from_wire(1),
             timestamp: SrtTimestamp::from_wire(2),
             dest_socket_id: SocketId::from_wire(3),
-            cif: AckCif::Light { last_ack_seq: 4 },
+            cif: AckCif::Light {
+                last_ack_seq: SeqNo::from_wire_masked(4),
+            },
         };
         let mut buf1 = [0u8; 20];
         ControlPacket::Ack(pkt).serialize_into(&mut buf1).unwrap();
-        pkt.ack_number = 99;
+        pkt.ack_number = AckNumber::from_wire(99);
         let mut buf2 = [0u8; 20];
         ControlPacket::Ack(pkt).serialize_into(&mut buf2).unwrap();
         assert_ne!(buf1, buf2);

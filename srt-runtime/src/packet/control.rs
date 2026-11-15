@@ -17,14 +17,14 @@
 //! stored in the typed per-type structs — see the crate root's reserved-bit
 //! policy.
 
-use super::ack::{ACK_NUMBER_BITS, AckPacket};
+use super::ack::AckPacket;
 use super::handshake::HandshakePacket;
 use super::misc::{
     AckAckPacket, CongestionWarningPacket, DropReqPacket, KeepAlivePacket, PeerErrorPacket,
     ShutdownPacket,
 };
 use super::nak::NakPacket;
-use super::number::{SocketId, SrtTimestamp};
+use super::number::{AckNumber, SocketId, SrtTimestamp};
 use super::{Error, Result, SRT_HEADER_LEN, be32, put_be32};
 use broadcast_common::error::ReservedBits;
 use broadcast_common::len::{need_in, need_out};
@@ -335,7 +335,7 @@ impl<'a> ControlPacket<'a> {
                 check_reserved_u16("Subtype", subtype)?;
                 let libsrt_pad = check_no_cif_or_libsrt_pad("ACKACK CIF", cif)?;
                 ControlPacket::AckAck(AckAckPacket {
-                    ack_number: type_specific_info,
+                    ack_number: AckNumber::from_wire(type_specific_info),
                     timestamp,
                     dest_socket_id,
                     libsrt_pad,
@@ -403,16 +403,13 @@ impl<'a> ControlPacket<'a> {
             | ControlPacket::Nak(_)
             | ControlPacket::CongestionWarning(_)
             | ControlPacket::Shutdown(_) => 0,
-            ControlPacket::Ack(a) => {
-                broadcast_common::len::fit_bits(
-                    u64::from(a.ack_number),
-                    ACK_NUMBER_BITS,
-                    "Acknowledgement Number",
-                )?;
-                a.ack_number
-            }
-            ControlPacket::AckAck(a) => a.ack_number,
-            ControlPacket::DropReq(d) => d.message_number,
+            // An ACK's and an ACKACK's Acknowledgement Number fill their
+            // whole `Type-specific Information` word (§3.2.4, §3.2.8): every
+            // `u32` is a legal value, so nothing is bounded here (it was, to
+            // 31 bits, which made serialize refuse a packet parse accepted).
+            ControlPacket::Ack(a) => a.ack_number.value(),
+            ControlPacket::AckAck(a) => a.ack_number.value(),
+            ControlPacket::DropReq(d) => d.message_number.value(),
             ControlPacket::PeerError(p) => p.error_code,
             ControlPacket::UserDefined(u) => u.type_specific_info,
         })
