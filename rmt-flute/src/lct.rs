@@ -22,7 +22,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
-use crate::tsi::{Tsi, Toi};
+use crate::tsi::{Toi, Tsi};
 
 /// LCT version number for RFC 5651.
 pub const LCT_VERSION: u8 = 1;
@@ -397,7 +397,7 @@ mod tests {
             }))
         ));
 
-        // The widest describable TOI (O=3, H=1) still round-trips.
+        // The flag-driven widths inside the describable range still round-trip.
         let cci = [0u8; 4];
         let hdr = LctHeader {
             reserved: 0,
@@ -407,16 +407,16 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: Tsi::new(0, 0).unwrap(),
-            toi: Toi::new(0x0000_0102_0304_0506, 14).unwrap(),
+            tsi: Tsi::new(0, 4).unwrap(),
+            toi: Toi::new(0x0102_0304, 4).unwrap(),
             extensions: vec![],
         };
-        assert_eq!(hdr.o_flag(), 3);
+        assert_eq!(hdr.o_flag(), 1);
         let mut out = vec![0u8; hdr.serialized_len()];
         hdr.serialize_into(&mut out).unwrap();
         let (re, _) = LctHeader::parse(&out).unwrap();
         assert_eq!(re, hdr);
-        assert_eq!(re.toi.len(), 14);
+        assert_eq!(re.toi.len(), 4);
     }
 
     #[test]

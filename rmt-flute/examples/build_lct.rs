@@ -7,7 +7,8 @@
 /// cargo run -p rmt-flute --example build_lct
 /// ```
 use rmt_flute::{
-    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader, Toi, Tsi,
+    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader, Toi,
+    Tsi,
 };
 
 fn main() {

@@ -39,7 +39,6 @@ pub use lct_ext::{
     ExtTime, HET_EXT_AUTH as LCT_HET_EXT_AUTH, HET_EXT_NOP, HET_EXT_TIME, LctExtType, USE_ERT,
     USE_SCT_HIGH, USE_SCT_LOW, USE_SLC,
 };
-pub use tsi::{ID_MAX_LEN, Toi, Tsi};
 pub use norm::{
     COMMON_HEADER_LEN, FEEDBACK_FIXED_LEN, HET_EXT_AUTH as NORM_HET_EXT_AUTH, HET_EXT_CC,
     HET_EXT_FTI as NORM_HET_EXT_FTI, HET_EXT_RATE, NORM_FLAG_EXPLICIT, NORM_FLAG_FILE,
@@ -48,3 +47,4 @@ pub use norm::{
     NormCommonHeader, NormData, NormFeedback, NormInfo, NormMessageType, SENDER_WORD_LEN,
     SenderWord,
 };
+pub use tsi::{ID_MAX_LEN, Toi, Tsi};

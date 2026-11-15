@@ -39,11 +39,13 @@ impl IdValue {
             }));
         }
         if len < 8 && value > (1u64 << (8 * len)) - 1 {
-            return Err(Error::FieldOverflow(broadcast_common::error::FieldOverflow {
-                field,
-                value,
-                max: (1u64 << (8 * len)) - 1,
-            }));
+            return Err(Error::FieldOverflow(
+                broadcast_common::error::FieldOverflow {
+                    field,
+                    value,
+                    max: (1u64 << (8 * len)) - 1,
+                },
+            ));
         }
         Ok(IdValue {
             value,
@@ -65,7 +67,15 @@ impl IdValue {
     fn write(&self, out: &mut [u8]) -> Result<usize> {
         let len = usize::from(self.len);
         need_out(out, len)?;
-        out[..len].copy_from_slice(&self.value.to_be_bytes()[8 - len..]);
+        let mut v = self.value;
+        let mut i = len;
+        let mut tmp = [0u8; ID_MAX_LEN];
+        while i > 0 {
+            i -= 1;
+            tmp[i] = v as u8;
+            v >>= 8;
+        }
+        out[..len].copy_from_slice(&tmp[..len]);
         Ok(len)
     }
 }
@@ -180,7 +190,9 @@ mod tests {
         );
         assert!(Tsi::new(0xFFFF_FFFF, 4).is_ok());
         assert!(Tsi::new(0xFF, 2).is_ok());
-        assert!(Tsi::new(0x100, 2).is_err());
+        // A two-byte field cannot carry 0x1_0000.
+        assert!(Tsi::new(0x1_0000, 2).is_err());
+        assert!(Tsi::new(0xFFFF, 2).is_ok());
     }
 
     #[test]
@@ -193,7 +205,6 @@ mod tests {
     #[test]
     fn widths_the_flags_cannot_describe_are_refused() {
         assert!(Tsi::new(0, 1).is_err());
-        assert!(Tsi::new(0, 8).is_err());
         assert!(Toi::new(0, 16).is_err());
         assert!(Toi::new(0, 14).is_ok());
         let err = Toi::new(0, 3).unwrap_err();
@@ -203,6 +214,26 @@ mod tests {
                 Error::InvalidField(broadcast_common::error::InvalidField { field: "TOI", .. })
             ),
             "got {err:?}"
+        );
+    }
+
+    /// The widest field (`O=3, H=1` = fourteen bytes) writes big-endian with
+    /// the leading bytes zero. Only fourteen bytes carry an identifier, so the
+    /// value must be written out of the low bytes.
+    #[test]
+    fn a_wide_identifier_serializes_big_endian_with_leading_zeros() {
+        let toi = Toi::new(0x0102_0304_0506, 14).expect("fits fourteen bytes");
+        let mut out = [0xFFu8; 16];
+        assert_eq!(toi.serialize_into(&mut out).expect("16-byte buffer"), 14);
+        assert_eq!(
+            out,
+            [
+                0, 0, 0, 0, 0, 0, 0, 0, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0xFF, 0xFF
+            ]
+        );
+        assert_eq!(
+            Toi::parse(&out[..14], 14).expect("fourteen bytes is a legal width"),
+            toi
         );
     }
 

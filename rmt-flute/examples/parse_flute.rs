@@ -38,7 +38,11 @@ fn main() {
     );
     println!("HDR_LEN: {} words", pkt.lct.hdr_len());
     println!("CCI: {:02X?}", pkt.lct.cci);
-    println!("TSI: {} in {} bytes", pkt.lct.tsi.value(), pkt.lct.tsi.len());
+    println!(
+        "TSI: {} in {} bytes",
+        pkt.lct.tsi.value(),
+        pkt.lct.tsi.len()
+    );
     println!(
         "TOI: {} in {} bytes  (0 => FDT Instance)",
         pkt.lct.toi.value(),

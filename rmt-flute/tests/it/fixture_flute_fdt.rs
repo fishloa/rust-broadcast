@@ -5,13 +5,16 @@
 //! field widths and EXT_FDT fields, and verify a byte-exact round-trip.
 
 use rmt_flute::{
-    AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, TOI_FDT,
-    Toi,
+    AlcPacket, ExtFdt, FEC_PAYLOAD_ID_128_LEN, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT,
+    TOI_FDT, Toi,
 };
 
 fn fixture() -> Vec<u8> {
     test_fixtures::read("flute/flute-fdt.bin")
 }
+
+/// The capture's Transport Session Identifier (its LCT TSI field bytes).
+const TSI: u64 = 0x0000_002A;
 
 #[test]
 fn parses_flute_fdt_lct_widths() {
@@ -27,7 +30,7 @@ fn parses_flute_fdt_lct_widths() {
     assert_eq!(pkt.lct.cci.len(), 4);
     assert_eq!(pkt.lct.tsi.len(), 4);
     assert_eq!(pkt.lct.toi.len(), 4);
-    assert_eq!(pkt.lct.tsi.value(), 0);
+    assert_eq!(pkt.lct.tsi.value(), TSI);
 
     // HDR_LEN = (4 fixed + 4 CCI + 4 TSI + 4 TOI + 4 EXT_FDT) / 4 = 5 words.
     assert_eq!(pkt.lct.hdr_len(), 5);
