@@ -11,7 +11,7 @@ use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 
 /// `packet_start_code_prefix` — `0x000001`.
-pub const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
+const PACKET_START_CODE_PREFIX: u32 = 0x00_0001;
 /// `map_stream_id` — `0xBC`, combined with the prefix forms the PSM start code.
 pub const MAP_STREAM_ID: u8 = 0xBC;
 /// The combined PSM start code: `packet_start_code_prefix` + `map_stream_id`

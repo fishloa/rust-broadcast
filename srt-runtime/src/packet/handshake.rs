@@ -508,13 +508,11 @@ broadcast_common::impl_spec_display!(GroupType, Reserved);
 pub struct GroupFlags(pub u8);
 
 impl GroupFlags {
-    #[cfg(test)]
     const M_BIT: u8 = 0x01;
 
     /// `M`: synchronize on message numbers (`true`) vs sequence numbers
     /// (`false`).
-    #[cfg(test)]
-    pub(crate) fn message_number_sync(self) -> bool {
+    pub fn message_number_sync(self) -> bool {
         self.0 & Self::M_BIT != 0
     }
 }

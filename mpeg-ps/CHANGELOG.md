@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - The `panic_idioms` workspace guard now covers this crate (already clear of panicking idioms in non-test code) (#2773).
+- BREAKING: `program_stream_map::PACKET_START_CODE_PREFIX` (the module-local `u32` form) is private; the single public definition is `mpeg_ps::PACKET_START_CODE_PREFIX` (the `[u8; 3]` re-exported from `mpeg-pes`). The two used to be two different types under one name (#2774).
 ### Fixed
 - The pack walker advances past a Program Stream Map by its wire length (`6 + program_stream_map_length`, ISO/IEC 13818-1 Table 2-41) instead of the re-serialized length of the parsed struct, which is shorter whenever the ES loop carries bytes no entry claims; every later pack of such a stream used to be lost (#2743).
 - BREAKING: `ProgramStreamMap::parse` rejects a PSM whose elementary-stream entries do not cover the declared `elementary_stream_map_length` with the new `Error::ElementaryStreamMapTrailingBytes { declared, parsed }`, instead of silently dropping the remainder (#2743).
