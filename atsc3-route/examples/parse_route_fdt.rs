@@ -16,9 +16,9 @@ fn main() {
     let pkt = RoutePacket::parse(&bytes).expect("parse ROUTE FDT-Instance packet");
 
     println!(
-        "TSI={:?} TOI={:?} CP={} ({}) SPI={}",
-        pkt.lct.tsi,
-        pkt.lct.toi,
+        "TSI={} TOI={} CP={} ({}) SPI={}",
+        pkt.lct.tsi.value(),
+        pkt.lct.toi.value(),
         pkt.lct.codepoint,
         pkt.codepoint(),
         pkt.spi()
