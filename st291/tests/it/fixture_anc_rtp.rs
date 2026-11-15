@@ -6,7 +6,7 @@
 //! independently-known expected values, and verify a byte-exact round-trip.
 
 use broadcast_common::Serialize;
-use st291::{AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
+use st291::{AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense, RtpAncPacket};
 
 fn fixture() -> Vec<u8> {
     test_fixtures::read("rtp/anc-rtp.bin")
@@ -28,12 +28,12 @@ fn parses_expected_fields() {
     assert!(rtp.padding.is_none());
 
     // ANC RTP payload header expectations.
-    assert_eq!(anc.extended_sequence_number, 0);
+    assert_eq!(anc.extended_sequence_number, ExtendedSequenceNumber(0));
     assert_eq!(anc.field_sense, FieldSense::ProgressiveOrUnspecified);
     assert_eq!(anc.anc_count(), 2);
 
     let expected = AncRtpPayload {
-        extended_sequence_number: 0,
+        extended_sequence_number: ExtendedSequenceNumber(0),
         field_sense: FieldSense::ProgressiveOrUnspecified,
         anc_packets: vec![
             RtpAncPacket {

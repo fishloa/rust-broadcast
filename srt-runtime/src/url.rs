@@ -22,11 +22,13 @@
 //! ambiguous (is `9000` a port or the last group?), so the operator brackets
 //! it.
 //!
-//! The query is split off the raw text rather than read through
-//! `Url::query_pairs`, a documented exception to the workspace's de-hand-roll
-//! rule (spec §9): a Haivision `streamid=#!::r=…` value contains a `#` that a
-//! `Url` treats as a fragment delimiter, which would cut the value short
-//! unless it were percent-encoded. Splitting first keeps the whole value.
+//! The whole string is parsed with `url::Url` (so the scheme is matched
+//! case-insensitively and the authority is read by the `url` crate, not by a
+//! hand-rolled split). A Haivision `streamid=#!::r=…` value contains a `#` that
+//! a `Url` treats as a fragment delimiter, which would cut the value short
+//! unless it were percent-encoded; every `#` after the query separator is
+//! escaped to `%23` before parsing and the query is then split on `&` and
+//! percent-decoded value-by-value, restoring it.
 
 use alloc::string::{String, ToString};
 use core::net::{IpAddr, SocketAddr};
@@ -150,17 +152,12 @@ impl SrtUrl {
     /// [`UrlRejection::LatencyNotANumber`]/[`UrlRejection::LatencyTooLarge`]
     /// for a `latency`, and [`UrlRejection::Mode`] for an unknown `mode`.
     pub fn parse(url: &str) -> Result<Self, UrlRejection> {
-        let (authority, query) = match url.split_once("srt://") {
-            Some(("", rest)) => match rest.split_once('?') {
-                Some((authority, query)) => (authority, Some(query)),
-                None => (rest, None),
-            },
-            _ => match url.split_once('?') {
-                Some((authority, query)) => (authority, Some(query)),
-                None => (url, None),
-            },
-        };
-        let (host, port) = parse_authority(authority).ok_or(UrlRejection::Authority)?;
+        let parsed_url = parse_url(url).ok_or(UrlRejection::Authority)?;
+        if !parsed_url.username().is_empty() || parsed_url.password().is_some() {
+            return Err(UrlRejection::Authority);
+        }
+        let host = bracketed_host(&parsed_url).ok_or(UrlRejection::Authority)?;
+        let port = parsed_url.port().unwrap_or(DEFAULT_PORT);
 
         let mut parsed = Self {
             host,
@@ -170,7 +167,7 @@ impl SrtUrl {
             mode: SrtMode::Caller,
             passphrase: None,
         };
-        if let Some(query) = query {
+        if let Some(query) = parsed_url.query() {
             let mut seen: alloc::vec::Vec<String> = alloc::vec::Vec::new();
             for pair in query.split('&') {
                 if pair.is_empty() {
@@ -213,18 +210,60 @@ impl SrtUrl {
     }
 }
 
-/// Parse an SRT authority into `(host, port)`, or `None` when it is not one.
-fn parse_authority(authority: &str) -> Option<(String, u16)> {
-    let authority = authority.trim_end_matches('/');
-    if authority.is_empty() {
-        return None;
+/// Parse the whole `srt://host[:port][?query]` or scheme-less `host[:port][?query]`
+/// string into a `url::Url`, or `None` when it is not one.
+///
+/// A Haivision `streamid=#!::r=…` value contains a `#` that a `Url` treats as
+/// a fragment delimiter (cutting the value short) unless it is percent-encoded,
+/// so every `#` after the query separator is escaped to `%23` before parsing;
+/// the query is then percent-decoded value-by-value, restoring it. The SRT
+/// scheme is matched case-insensitively by [`has_srt_scheme`], so `SRT://` names
+/// the same endpoint as `srt://`; a string with no explicit SRT scheme is an
+/// operator's bare `host:port` and is prefixed with `srt://` before parsing.
+fn parse_url(input: &str) -> Option<url::Url> {
+    let escaped = escape_query_fragments(input);
+    if has_srt_scheme(&escaped) {
+        url::Url::parse(&escaped).ok()
+    } else {
+        url::Url::parse(&alloc::format!("srt://{escaped}")).ok()
     }
-    let url = url::Url::parse(&format!("srt://{authority}")).ok()?;
-    if !url.username().is_empty() || url.password().is_some() {
-        return None;
+}
+
+/// Whether `input` opens with an explicit `srt://` scheme, matched
+/// case-insensitively. An explicit scheme is parsed as an absolute URL (and a
+/// malformed one is rejected), never re-prefixed: that keeps a bad authority
+/// like `srt://::1` an error instead of turning into a host named `srt`.
+fn has_srt_scheme(input: &str) -> bool {
+    input
+        .get(.."srt://".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("srt://"))
+}
+
+/// Percent-encode every `#` that occurs after the first `?`, so a `#` inside a
+/// query value is not read as a fragment delimiter (see [`parse_url`]).
+fn escape_query_fragments(input: &str) -> alloc::string::String {
+    match input.split_once('?') {
+        Some((head, query)) => {
+            let mut out = alloc::string::String::with_capacity(input.len() + 8);
+            out.push_str(head);
+            out.push('?');
+            for ch in query.chars() {
+                if ch == '#' {
+                    out.push_str("%23");
+                } else {
+                    out.push(ch);
+                }
+            }
+            out
+        }
+        None => input.into(),
     }
-    let host = url.host_str()?.to_string();
-    Some((host, url.port().unwrap_or(DEFAULT_PORT)))
+}
+
+/// The host as `SrtUrl` exposes it: a bracketed IPv6 literal keeps its
+/// brackets (`[::1]`), matching [`SrtUrl::dial_addr`]'s output.
+fn bracketed_host(url: &url::Url) -> Option<String> {
+    url.host_str().map(alloc::string::ToString::to_string)
 }
 
 /// Parse a `latency` value: whole milliseconds, at most [`MAX_LATENCY_MS`].
@@ -341,5 +380,24 @@ mod tests {
     fn valid_percent_encoded_utf8_streamid_decodes() {
         let url = SrtUrl::parse("srt://h:9000?streamid=%C3%A9").expect("valid utf8");
         assert_eq!(url.stream_id.as_deref(), Some("é"));
+    }
+
+    #[test]
+    fn the_srt_scheme_is_case_insensitive() {
+        // Before this parsed through `url::Url`, the scheme was matched by a
+        // case-sensitive `split_once("srt://")`, so `SRT://` fell through to
+        // the scheme-less branch and became a host literally named `SRT://h`.
+        let url = SrtUrl::parse("SRT://h:9000").expect("uppercase scheme names the same endpoint");
+        assert_eq!(url.host, "h");
+        assert_eq!(url.port, 9000);
+    }
+
+    #[test]
+    fn a_hash_inside_a_streamid_value_is_kept_whole() {
+        // A Haivision streamid value carries a `#`; a naive `Url` parse would
+        // treat it as a fragment delimiter and cut the value short.
+        let url = SrtUrl::parse("srt://h:9000?streamid=#!::r=live/cam,m=publish")
+            .expect("hash-bearing streamid");
+        assert_eq!(url.stream_id.as_deref(), Some("#!::r=live/cam,m=publish"));
     }
 }

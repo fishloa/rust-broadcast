@@ -4,7 +4,8 @@ use broadcast_common::{Parse, Serialize};
 use libfuzzer_sys::fuzz_target;
 use st377_1::{
     ContentStorage, EssenceContainerData, Identification, KlvItem, LocalSet, PartitionPack,
-    Preface, PrimerPack, RandomIndexPack, StructuralSetKind, is_fill_item_key, is_local_set_key,
+    Preface, PrimerPack, RandomIndexPack, StructuralSetKind, UlBytes, is_fill_item_key,
+    is_local_set_key,
 };
 
 fuzz_target!(|data: &[u8]| {
@@ -15,8 +16,9 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let full = item.try_to_bytes().unwrap();
+    let key = UlBytes(item.key);
 
-    if PartitionPack::is_partition_key(&item.key) {
+    if PartitionPack::is_partition_key(&key) {
         if let Ok(pp) = PartitionPack::parse(&full) {
             let reserialized = pp.try_to_bytes().unwrap();
             if let Ok(reparsed) = PartitionPack::parse(&reserialized) {
@@ -30,7 +32,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    if PrimerPack::is_primer_key(&item.key) {
+    if PrimerPack::is_primer_key(&key) {
         if let Ok(pp) = PrimerPack::parse(&full) {
             let reserialized = pp.try_to_bytes().unwrap();
             if let Ok(reparsed) = PrimerPack::parse(&reserialized) {
@@ -44,7 +46,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    if RandomIndexPack::is_rip_key(&item.key) {
+    if RandomIndexPack::is_rip_key(&key) {
         if let Ok(rip) = RandomIndexPack::parse(&full) {
             let reserialized = rip.try_to_bytes().unwrap();
             if let Ok(reparsed) = RandomIndexPack::parse(&reserialized) {
@@ -58,11 +60,11 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
 
-    if is_fill_item_key(&item.key) {
+    if is_fill_item_key(&key) {
         return;
     }
 
-    if is_local_set_key(&item.key) {
+    if is_local_set_key(&key) {
         let Ok(set) = LocalSet::parse(&full) else {
             return;
         };

@@ -70,17 +70,18 @@ impl PrimerPack {
         key[12] = 0x01; // Structure Kind
         key[13..15].copy_from_slice(&PRIMER_KEY_TAIL);
         key[15] = 0x00; // reserved
-        key
+        UlBytes(key)
     }
 
     /// True if `key` is the Primer Pack Key (Table 13), ignoring byte 8
     /// (registry version, wildcard).
     #[must_use]
     pub fn is_primer_key(key: &UlBytes) -> bool {
-        key[0..7] == PRIMER_KEY_PREFIX
-            && key[8..12] == PRIMER_KEY_MID
-            && key[12] == 0x01
-            && key[13..15] == PRIMER_KEY_TAIL
+        let bytes = key.as_bytes();
+        bytes[0..7] == PRIMER_KEY_PREFIX
+            && bytes[8..12] == PRIMER_KEY_MID
+            && bytes[12] == 0x01
+            && bytes[13..15] == PRIMER_KEY_TAIL
     }
 
     fn check_key(key: &UlBytes) -> Result<()> {
@@ -235,7 +236,7 @@ impl Serialize for PrimerPack {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(buf, total)?;
-        buf[0..16].copy_from_slice(&Self::key());
+        buf[0..16].copy_from_slice(Self::key().as_ref());
         let value_len = 8 + self.entries.len() * 18;
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
@@ -248,7 +249,7 @@ impl Serialize for PrimerPack {
         for entry in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&entry.tag.to_be_bytes());
             pos += 2;
-            buf[pos..pos + 16].copy_from_slice(&entry.uid);
+            buf[pos..pos + 16].copy_from_slice(entry.uid.as_ref());
             pos += 16;
         }
         Ok(pos)
@@ -265,11 +266,11 @@ mod tests {
             entries: alloc::vec![
                 LocalTagEntry {
                     tag: 0x3B02,
-                    uid: [0xAAu8; 16]
+                    uid: UlBytes([0xAAu8; 16])
                 },
                 LocalTagEntry {
                     tag: 0x3B05,
-                    uid: [0xBBu8; 16]
+                    uid: UlBytes([0xBBu8; 16])
                 },
             ],
             ..Default::default()
@@ -278,8 +279,8 @@ mod tests {
         pack.serialize_into(&mut buf).unwrap();
         let parsed = PrimerPack::parse(&buf).unwrap();
         assert_eq!(parsed, pack);
-        assert_eq!(parsed.resolve_tag(0x3B02), Some([0xAAu8; 16]));
-        assert_eq!(parsed.resolve_ul(&[0xBBu8; 16]), Some(0x3B05));
+        assert_eq!(parsed.resolve_tag(0x3B02), Some(UlBytes([0xAAu8; 16])));
+        assert_eq!(parsed.resolve_ul(&UlBytes([0xBBu8; 16])), Some(0x3B05));
         assert_eq!(parsed.resolve_tag(0x9999), None);
     }
 
@@ -297,20 +298,20 @@ mod tests {
     fn non_minimal_length_token_round_trips_byte_identical() {
         let entries = alloc::vec![LocalTagEntry {
             tag: 0x3B02,
-            uid: [0xAAu8; 16]
+            uid: UlBytes([0xAAu8; 16])
         }];
         let value_len = 8 + entries.len() * 18; // 26, fits short form
         assert!(value_len <= 0x7F);
 
         let mut original = alloc::vec::Vec::new();
-        original.extend_from_slice(&PrimerPack::key());
+        original.extend_from_slice(PrimerPack::key().as_ref());
         original.push(0x81); // long form, 1 following byte
         original.push(value_len as u8);
         original.extend_from_slice(&(entries.len() as u32).to_be_bytes());
         original.extend_from_slice(&LOCAL_TAG_ENTRY_LEN.to_be_bytes());
         for entry in &entries {
             original.extend_from_slice(&entry.tag.to_be_bytes());
-            original.extend_from_slice(&entry.uid);
+            original.extend_from_slice(entry.uid.as_ref());
         }
 
         let parsed = PrimerPack::parse(&original).unwrap();
@@ -343,11 +344,11 @@ mod tests {
             entries: alloc::vec![
                 LocalTagEntry {
                     tag: 0x3B02,
-                    uid: [0xAAu8; 16]
+                    uid: UlBytes([0xAAu8; 16])
                 },
                 LocalTagEntry {
                     tag: 0x3B02,
-                    uid: [0xBBu8; 16]
+                    uid: UlBytes([0xBBu8; 16])
                 },
             ],
             ..Default::default()
@@ -368,11 +369,11 @@ mod tests {
             entries: alloc::vec![
                 LocalTagEntry {
                     tag: 0x3B02,
-                    uid: [0xAAu8; 16]
+                    uid: UlBytes([0xAAu8; 16])
                 },
                 LocalTagEntry {
                     tag: 0x3B05,
-                    uid: [0xAAu8; 16]
+                    uid: UlBytes([0xAAu8; 16])
                 },
             ],
             ..Default::default()
@@ -397,7 +398,10 @@ mod tests {
                 let tag = u16::try_from(tag).unwrap();
                 let mut uid = [0u8; 16];
                 uid[0..2].copy_from_slice(&tag.to_be_bytes());
-                LocalTagEntry { tag, uid }
+                LocalTagEntry {
+                    tag,
+                    uid: UlBytes(uid),
+                }
             })
             .collect();
         let pack = PrimerPack {

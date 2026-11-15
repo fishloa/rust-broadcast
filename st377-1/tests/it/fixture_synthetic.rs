@@ -17,7 +17,7 @@ use broadcast_common::{Parse, Serialize};
 use st377_1::{
     ContentStorage, EssenceContainerData, Identification, KlvItem, LocalSet, PartitionKind,
     PartitionPack, PartitionStatus, Preface, PrimerPack, RandomIndexPack, StructuralSetKind,
-    collect_klv_items, is_fill_item_key,
+    UlBytes, collect_klv_items, is_fill_item_key,
 };
 
 fn fixture_bytes() -> Vec<u8> {
@@ -43,18 +43,18 @@ fn synthetic_fixture_every_top_level_klv_item_identifies_and_parses() {
     let mut seen_kinds = Vec::new();
     for (_, item) in &items {
         let full = klv_bytes(item);
-        if PartitionPack::is_partition_key(&item.key) {
+        if PartitionPack::is_partition_key(&UlBytes(item.key)) {
             let pp = PartitionPack::parse(&full).expect("parse Partition Pack");
             seen_kinds.push(format!("Partition({})", pp.kind));
-        } else if PrimerPack::is_primer_key(&item.key) {
+        } else if PrimerPack::is_primer_key(&UlBytes(item.key)) {
             let _pp = PrimerPack::parse(&full).expect("parse Primer Pack");
             seen_kinds.push("PrimerPack".into());
-        } else if RandomIndexPack::is_rip_key(&item.key) {
+        } else if RandomIndexPack::is_rip_key(&UlBytes(item.key)) {
             let _rip = RandomIndexPack::parse(&full).expect("parse Random Index Pack");
             seen_kinds.push("RandomIndexPack".into());
-        } else if is_fill_item_key(&item.key) {
+        } else if is_fill_item_key(&UlBytes(item.key)) {
             seen_kinds.push("Fill".into());
-        } else if st377_1::is_local_set_key(&item.key) {
+        } else if st377_1::is_local_set_key(&UlBytes(item.key)) {
             let set = LocalSet::parse(&full).expect("parse Local Set");
             match set.kind() {
                 StructuralSetKind::Preface => {
@@ -118,7 +118,7 @@ fn synthetic_fixture_preface_fields_decode_correctly() {
         .iter()
         .map(|(_, i)| i)
         .find(|i| {
-            st377_1::is_local_set_key(&i.key)
+            st377_1::is_local_set_key(&UlBytes(i.key))
                 && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::Preface
         })
@@ -149,7 +149,7 @@ fn synthetic_fixture_identification_fields_decode_correctly() {
         .iter()
         .map(|(_, i)| i)
         .find(|i| {
-            st377_1::is_local_set_key(&i.key)
+            st377_1::is_local_set_key(&UlBytes(i.key))
                 && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::Identification
         })
@@ -177,7 +177,7 @@ fn synthetic_fixture_essence_container_data_fields() {
         .iter()
         .map(|(_, i)| i)
         .find(|i| {
-            st377_1::is_local_set_key(&i.key)
+            st377_1::is_local_set_key(&UlBytes(i.key))
                 && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::EssenceContainerData
         })
@@ -201,7 +201,7 @@ fn synthetic_fixture_content_storage_fields() {
         .iter()
         .map(|(_, i)| i)
         .find(|i| {
-            st377_1::is_local_set_key(&i.key)
+            st377_1::is_local_set_key(&UlBytes(i.key))
                 && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::ContentStorage
         })
@@ -219,7 +219,7 @@ fn synthetic_fixture_random_index_pack_lists_every_partition() {
     let items = collect_klv_items(&bytes).unwrap();
     let (_, rip_item) = items
         .iter()
-        .find(|(_, i)| RandomIndexPack::is_rip_key(&i.key))
+        .find(|(_, i)| RandomIndexPack::is_rip_key(&UlBytes(i.key)))
         .expect("Random Index Pack present");
     let rip = RandomIndexPack::parse(&rip_item.try_to_bytes().unwrap()).unwrap();
 

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `UlBytes` and `StrongRef` are distinct newtypes over `[u8; 16]` instead of type aliases (ST 377-1 §4.2/§5.4.4). A UL key, a Strong Reference and an `Auid` share one wire form, so as aliases the compiler could not tell a reference target from a key it was passed for; every typed field keeps the same bytes on the wire (`From<[u8; 16]>`/`From<UlBytes> for [u8; 16]`, `as_bytes()` convert). `Auid` is now transparent over `UlBytes` (#2772).
 - The `panic_idioms` workspace guard now covers this crate; the `MxfTimestamp`/`Rational`/`ProductVersion` serializers that wrote an exactly-sized buffer with `.expect("fixed-size buffer")` now discard the provably-infallible result (#2773).
 - BREAKING: `PrimerPack::entries` is now `Vec<LocalTagEntry>` — the named `LocalTagEntry { tag: u16, uid: UlBytes }` struct (ST 377-1 Table 15) replaces the anonymous `(u16, UlBytes)` tuple, so an entry's fields are named instead of positional (#2770).
 ### Fixed

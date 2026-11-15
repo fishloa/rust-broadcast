@@ -33,41 +33,16 @@
 //! disagreeing hand-rolled copies of this rule in `dvb-conformance`,
 //! `media-doctor` and `ts-fix`.
 
+use crate::ts::{AF_PCR_FLAG, ClockReferenceSlot, PAYLOAD_FLAG, clock_reference_slot};
+
 /// Byte offset of `adaptation_field_control` (bits `[5:4]`) and
 /// `continuity_counter` (bits `[3:0]`) within a raw TS packet — ITU-T
 /// H.222.0 (08/2023) §2.4.3.3, Table 2-5.
 const AFC_BYTE: usize = 3;
 
-/// `adaptation_field_control` bit indicating a payload is present (`01` or
-/// `11`) — H.222.0 Table 2-5.
-const PAYLOAD_FLAG: u8 = 0x10;
-
-/// `adaptation_field_control` bit indicating an adaptation field is present
-/// (`10` or `11`) — H.222.0 Table 2-5.
-const ADAPTATION_FLAG: u8 = 0x20;
-
-/// Byte offset of `adaptation_field_length` within a raw TS packet —
-/// H.222.0 §2.4.3.4.
-const AF_LEN_BYTE: usize = 4;
-
-/// Byte offset of the adaptation-field flags byte (the byte immediately
-/// after `adaptation_field_length`) within a raw TS packet — H.222.0
-/// §2.4.3.4 Table 2-6.
-const AF_FLAGS_BYTE: usize = 5;
-
 /// Adaptation-field flags-byte bit for `PCR_flag` — H.222.0 §2.4.3.4
 /// Table 2-6.
-const PCR_FLAG: u8 = 0x10;
-
-/// Byte offset (relative to the start of the packet) of the first PCR byte,
-/// when `PCR_flag` is set — immediately after the flags byte, H.222.0
-/// §2.4.3.5.
-const PCR_FIELD_START: usize = AF_FLAGS_BYTE + 1;
-
-/// Encoded PCR field width: 33-bit `program_clock_reference_base` + 6
-/// reserved bits + 9-bit `program_clock_reference_extension` = 48 bits —
-/// H.222.0 §2.4.3.5.
-const PCR_FIELD_LEN: usize = 6;
+const PCR_FLAG: u8 = AF_PCR_FLAG;
 
 /// Minimum `adaptation_field_length` for a `PCR_flag`-bearing adaptation
 /// field: the flags byte itself (1) plus the 6-byte PCR field — H.222.0
@@ -76,32 +51,25 @@ const PCR_FIELD_LEN: usize = 6;
 /// claims `PCR_flag` but declares fewer than this many bytes does not
 /// actually reach the PCR — whatever follows the flags byte within the
 /// packet is unrelated payload, not the PCR exception.
-const MIN_AF_LEN_WITH_PCR: u8 = 1 + PCR_FIELD_LEN as u8;
+#[cfg(test)]
+const MIN_AF_LEN_WITH_PCR: u8 = (1 + crate::ts::PCR_FIELD_LEN) as u8;
 
 /// Locate the PCR field's byte range within `pkt`, if one is present.
 ///
 /// Returns `None` when the packet carries no adaptation field, an empty
 /// adaptation field, no `PCR_flag`, or is too short to hold the field it
 /// claims to have — any of which means there is no PCR exception to apply.
-fn pcr_field_range(pkt: &[u8]) -> Option<(usize, usize)> {
-    if pkt.len() <= AF_FLAGS_BYTE {
-        return None;
+///
+/// Delegates to the crate's single clock-reference locator,
+/// [`crate::ts::clock_reference_slot`].
+fn pcr_field_range(pkt: &[u8]) -> Option<core::ops::Range<usize>> {
+    match clock_reference_slot(pkt, PCR_FLAG) {
+        ClockReferenceSlot::Field(range) => Some(range),
+        ClockReferenceSlot::NoAdaptationField
+        | ClockReferenceSlot::TooShort { .. }
+        | ClockReferenceSlot::FlagClear
+        | ClockReferenceSlot::Truncated { .. } => None,
     }
-    if pkt[AFC_BYTE] & ADAPTATION_FLAG == 0 {
-        return None;
-    }
-    let af_len = pkt[AF_LEN_BYTE];
-    if af_len < MIN_AF_LEN_WITH_PCR {
-        return None;
-    }
-    if pkt[AF_FLAGS_BYTE] & PCR_FLAG == 0 {
-        return None;
-    }
-    let end = PCR_FIELD_START + PCR_FIELD_LEN;
-    if end > pkt.len() {
-        return None;
-    }
-    Some((PCR_FIELD_START, end))
 }
 
 /// Whether `curr` is a legal §2.4.3.3 duplicate of `prev`, ignoring the
@@ -133,7 +101,7 @@ pub fn is_legal_duplicate_pair(prev: &[u8], curr: &[u8]) -> bool {
     let pcr_range = pcr_field_range(curr);
 
     for i in 0..prev.len() {
-        let in_pcr_field = matches!(pcr_range, Some((start, end)) if i >= start && i < end);
+        let in_pcr_field = pcr_range.as_ref().is_some_and(|r| r.contains(&i));
         if !in_pcr_field && prev[i] != curr[i] {
             // Property 1: every byte identical, PCR fields excepted.
             return false;
@@ -199,6 +167,7 @@ pub fn check_duplicate(prev: &[u8], curr: &[u8], dup_already_used: bool) -> Dupl
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ts::ADAPTATION_FLAG;
 
     /// 188-byte packet, sync=0x47, given PID, AFC/CC byte, and a payload
     /// filled with a repeating pattern. No adaptation field.

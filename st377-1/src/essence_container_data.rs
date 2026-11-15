@@ -123,12 +123,13 @@ crate::sets::declare_set_serialize!(EssenceContainerData, EssenceContainerData);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
     use broadcast_common::Serialize;
 
     fn sample() -> EssenceContainerData {
         EssenceContainerData {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x11; 16],
+                instance_uid: UlBytes([0x11; 16]),
                 generation_uid: None,
                 object_class: None,
             },

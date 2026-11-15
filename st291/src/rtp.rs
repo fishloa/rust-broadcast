@@ -279,6 +279,52 @@ impl RtpAncPacket {
 }
 
 // ---------------------------------------------------------------------------
+// ExtendedSequenceNumber — RFC 8331 §2.1 / RFC 4175 §2.1
+// ---------------------------------------------------------------------------
+
+/// The `Extended Sequence Number` (16 bits) — the high-order bits of the
+/// extended 32-bit RTP sequence number of RFC 8331 §2.1 (the same field
+/// RFC 4175 defines).
+///
+/// A structured sequence number, not a bare `u16`: the full 32-bit counter
+/// is this value in the top 16 bits and the RTP fixed header's own 16-bit
+/// sequence number in the bottom 16 ([`RtpPacket::sequence_number`]).
+/// Reconstructing the 32-bit counter across packets (RFC 4175's stateful
+/// sliding-window algorithm) is explicitly out of scope for this stateless
+/// per-packet parser; this pins the position of the high half.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct ExtendedSequenceNumber(pub u16);
+
+impl ExtendedSequenceNumber {
+    /// Bits this field contributes to the extended 32-bit counter.
+    pub const WIDTH_BITS: u32 = 16;
+
+    /// The value this field carries.
+    #[must_use]
+    pub fn value(self) -> u16 {
+        self.0
+    }
+
+    /// This field's position in the extended 32-bit sequence number: its
+    /// value shifted into the high half.
+    #[must_use]
+    pub fn high_half(self) -> u32 {
+        u32::from(self.0) << Self::WIDTH_BITS
+    }
+
+    /// The sequence number this field combined with `rtp_sequence_number`
+    /// (`RtpPacket::sequence_number`) names, modulo 2^32 per RFC 4175's
+    /// wrap.
+    #[must_use]
+    pub fn extended(self, rtp_sequence_number: u16) -> u32 {
+        self.high_half()
+            .wrapping_add(u32::from(rtp_sequence_number))
+    }
+}
+
+// ---------------------------------------------------------------------------
 // AncRtpPayload — the full RFC 8331 §2.1 payload header + ANC packet list
 // ---------------------------------------------------------------------------
 
@@ -296,11 +342,9 @@ impl RtpAncPacket {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AncRtpPayload {
     /// `Extended Sequence Number` (16 bits) — the high-order bits of the
-    /// extended 32-bit RFC 4175 sequence number. Reconstructing the full
-    /// 32-bit counter (RFC 4175's stateful sliding-window algorithm) is
-    /// explicitly **out of scope** for this stateless per-packet parser (see
-    /// `private/specs-verified/smpte/st291/anc_rtp_8331.md`); this is the raw 16-bit field only.
-    pub extended_sequence_number: u16,
+    /// extended 32-bit RFC 4175 sequence number (see
+    /// [`ExtendedSequenceNumber`]).
+    pub extended_sequence_number: ExtendedSequenceNumber,
     /// `F` (2 bits) — field-sense signalling (§2.1); see [`FieldSense`].
     pub field_sense: FieldSense,
     /// The ANC data packets carried in this payload, in wire order.
@@ -359,7 +403,7 @@ impl<'a> Parse<'a> for AncRtpPayload {
     /// declared `Length`.
     fn parse(b: &'a [u8]) -> Result<Self> {
         need_in(b, ANC_RTP_PAYLOAD_HEADER_LEN, "ANC RTP payload header")?;
-        let extended_sequence_number = u16::from_be_bytes([b[0], b[1]]);
+        let extended_sequence_number = ExtendedSequenceNumber(u16::from_be_bytes([b[0], b[1]]));
         let length = usize::from(u16::from_be_bytes([b[2], b[3]]));
         let anc_count = usize::from(b[4]);
         let f_bits = b[5] >> F_SHIFT;
@@ -427,7 +471,7 @@ impl Serialize for AncRtpPayload {
         let body_len = self.body_len();
         broadcast_common::len::fit_bits(body_len as u64, 16, "Length")?;
 
-        buf[0..2].copy_from_slice(&self.extended_sequence_number.to_be_bytes());
+        buf[0..2].copy_from_slice(&self.extended_sequence_number.value().to_be_bytes());
         buf[2..4].copy_from_slice(&(body_len as u16).to_be_bytes());
         buf[4] = anc_count as u8;
         buf[5] = self.field_sense.to_bits() << F_SHIFT; // reserved bits: 0
@@ -453,7 +497,7 @@ mod tests {
 
     fn sample_payload() -> AncRtpPayload {
         AncRtpPayload {
-            extended_sequence_number: 0x0001,
+            extended_sequence_number: ExtendedSequenceNumber(0x0001),
             field_sense: FieldSense::ProgressiveOrUnspecified,
             anc_packets: vec![
                 RtpAncPacket {
@@ -492,6 +536,19 @@ mod tests {
         );
     }
 
+    /// The Extended Sequence Number names its position in the 32-bit
+    /// counter instead of leaving the caller to shift a bare `u16` by a
+    /// width defined for a different field.
+    #[test]
+    fn extended_sequence_number_joins_the_rtp_sequence_number() {
+        let extended = ExtendedSequenceNumber(0x00AB);
+        assert_eq!(extended.high_half(), 0x00AB_0000);
+        assert_eq!(extended.extended(0xCDEF), 0x00AB_CDEF);
+        let top = ExtendedSequenceNumber(u16::MAX).extended(u16::MAX);
+        assert_eq!(top, u32::MAX);
+        assert_eq!(top.wrapping_add(1), 0);
+    }
+
     #[test]
     fn round_trip() {
         let p = sample_payload();
@@ -514,7 +571,7 @@ mod tests {
     #[test]
     fn empty_payload_has_zero_count_and_length() {
         let p = AncRtpPayload {
-            extended_sequence_number: 0,
+            extended_sequence_number: ExtendedSequenceNumber(0),
             field_sense: FieldSense::ProgressiveOrUnspecified,
             anc_packets: vec![],
         };
@@ -717,7 +774,7 @@ mod tests {
     fn rejects_too_many_anc_packets() {
         let one = &sample_payload().anc_packets[0];
         let mut p = AncRtpPayload {
-            extended_sequence_number: 0,
+            extended_sequence_number: ExtendedSequenceNumber(0),
             field_sense: FieldSense::ProgressiveOrUnspecified,
             anc_packets: Vec::new(),
         };

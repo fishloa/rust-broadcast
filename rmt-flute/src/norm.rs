@@ -19,6 +19,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
+use crate::id::FecPayloadId;
 
 /// NORM protocol version (RFC 5740 = 1).
 pub const NORM_VERSION: u8 = 1;
@@ -381,7 +382,8 @@ pub const NORM_FLAG_STREAM: u8 = 0x20;
 /// NORM_DATA fixed header beyond the common header + sender word (RFC 5740
 /// §4.2.1, Figure 4): `flags | fec_id | object_transport_id | fec_payload_id`.
 ///
-/// The `fec_payload_id` is opaque (size per `fec_id`). STREAM-only
+/// The `fec_payload_id` is a [`FecPayloadId`] (opaque bytes, size per
+/// `fec_id`). STREAM-only
 /// `payload_len`/`payload_msg_start`/`payload_offset` fields and the payload
 /// data are part of `payload` (they do not contribute to `hdr_len`); the caller
 /// interprets them when `NORM_FLAG_STREAM` is set.
@@ -399,7 +401,7 @@ pub struct NormData<'a> {
     /// Monotonic NormTransportId of the object.
     pub object_transport_id: u16,
     /// FEC coding-block + symbol identifier (opaque, size per `fec_id`).
-    pub fec_payload_id: &'a [u8],
+    pub fec_payload_id: FecPayloadId,
     /// Header-extension chain.
     pub extensions: Vec<HeaderExtension<'a>>,
     /// Source/parity content (and, for STREAM, the leading payload_* fields).
@@ -445,8 +447,7 @@ impl<'a> NormData<'a> {
         let object_transport_id = u16::from_be_bytes([data[off + 2], data[off + 3]]);
         off += WORD;
 
-        need_in(data, off + fec_payload_id_len, "NORM_DATA fec_payload_id")?;
-        let fec_payload_id = &data[off..off + fec_payload_id_len];
+        let fec_payload_id = FecPayloadId::parse(&data[off..], fec_payload_id_len)?;
         off += fec_payload_id_len;
 
         // hdr_len bounds the header (incl. extensions). Everything from off..
@@ -485,8 +486,7 @@ impl<'a> NormData<'a> {
         out[off + 1] = self.fec_id;
         out[off + 2..off + 4].copy_from_slice(&self.object_transport_id.to_be_bytes());
         off += WORD;
-        out[off..off + self.fec_payload_id.len()].copy_from_slice(self.fec_payload_id);
-        off += self.fec_payload_id.len();
+        off += self.fec_payload_id.serialize_into(&mut out[off..])?;
         off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
         off += self.payload.len();
@@ -639,7 +639,7 @@ broadcast_common::impl_spec_display!(NormAckType, Reserved, Application);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
-pub enum NormCmdBody<'a> {
+pub enum NormCmdBody {
     /// NORM_CMD(FLUSH) sub-type=1 (Figure 10).
     Flush {
         /// FEC Encoding ID; implies `fec_payload_id` size/format.
@@ -649,7 +649,7 @@ pub enum NormCmdBody<'a> {
         /// Current logical transmit position (block/symbol); opaque, size per
         /// `fec_id`. Counts toward `hdr_len` (unlike `content`'s
         /// `acking_node_list`).
-        fec_payload_id: &'a [u8],
+        fec_payload_id: FecPayloadId,
     },
     /// NORM_CMD(EOT) sub-type=2 (Figure 11). The 24-bit `reserved` word is kept
     /// in [`NormCmd::reserved`].
@@ -662,7 +662,7 @@ pub enum NormCmdBody<'a> {
         object_transport_id: u16,
         /// Repair-window start; opaque, size per `fec_id`. Counts toward
         /// `hdr_len` (unlike `content`'s `invalid_object_list`).
-        fec_payload_id: &'a [u8],
+        fec_payload_id: FecPayloadId,
     },
     /// NORM_CMD(CC) sub-type=4 (Figure 13).
     Cc {
@@ -694,7 +694,7 @@ pub enum NormCmdBody<'a> {
     Other([u8; 3]),
 }
 
-impl<'a> NormCmdBody<'a> {
+impl NormCmdBody {
     /// Bytes of this fixed body beyond the sub-type word itself (0 for every
     /// variant except FLUSH/SQUELCH's `fec_payload_id` and CC's 8-byte
     /// `send_time_sec`+`send_time_usec`).
@@ -757,7 +757,7 @@ pub struct NormCmd<'a> {
     /// senders write 0.
     pub reserved: [u8; 3],
     /// The sub-type-specific fixed body (RFC 5740 §4.2.3, Figures 10-16).
-    pub body: NormCmdBody<'a>,
+    pub body: NormCmdBody,
     /// Header-extension chain (e.g. EXT_RATE in CC, EXT_CC in REPAIR_ADV).
     pub extensions: Vec<HeaderExtension<'a>>,
     /// Remaining sub-type-specific content (node lists, app content, etc.),
@@ -808,12 +808,7 @@ impl<'a> NormCmd<'a> {
             NormCmdType::Flush | NormCmdType::Squelch => {
                 let fec_id = b1;
                 let object_transport_id = u16::from_be_bytes([b2, b3]);
-                need_in(
-                    data,
-                    off + fec_payload_id_len,
-                    "NORM_CMD(FLUSH/SQUELCH) fec_payload_id",
-                )?;
-                let fec_payload_id = &data[off..off + fec_payload_id_len];
+                let fec_payload_id = FecPayloadId::parse(&data[off..], fec_payload_id_len)?;
                 off += fec_payload_id_len;
                 if sub_type == NormCmdType::Flush {
                     NormCmdBody::Flush {
@@ -905,8 +900,7 @@ impl<'a> NormCmd<'a> {
         match &self.body {
             NormCmdBody::Flush { fec_payload_id, .. }
             | NormCmdBody::Squelch { fec_payload_id, .. } => {
-                out[off..off + fec_payload_id.len()].copy_from_slice(fec_payload_id);
-                off += fec_payload_id.len();
+                off += fec_payload_id.serialize_into(&mut out[off..])?;
             }
             NormCmdBody::Cc {
                 send_time_sec,
@@ -1131,7 +1125,7 @@ mod tests {
     #[test]
     fn norm_data_round_trip_with_fec_payload_id() {
         // fec_id=129 → 8-byte fec_payload_id.
-        let fpid = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02];
+        let fpid = FecPayloadId::new(&[0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02]);
         let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];
         let d = NormData {
             common: common(NormMessageType::Data),
@@ -1139,7 +1133,7 @@ mod tests {
             flags: NORM_FLAG_FILE,
             fec_id: 129,
             object_transport_id: 0x0007,
-            fec_payload_id: &fpid,
+            fec_payload_id: fpid.clone(),
             extensions: vec![],
             payload: &payload,
         };
@@ -1150,6 +1144,21 @@ mod tests {
         assert_eq!(out[1], 6, "hdr_len");
         let re = NormData::parse(&out, 8).unwrap();
         assert_eq!(re, d);
+        assert_eq!(re.fec_payload_id.len(), 8);
+
+        // A different FEC Payload ID changes the wire: the value, not a
+        // caller-supplied length, decides what is written.
+        let changed = NormData {
+            fec_payload_id: FecPayloadId::new(&[0x00u8, 0x00, 0x00, 0x02, 0x00, 0x05, 0x00, 0x02]),
+            ..d
+        };
+        let mut other = vec![0u8; changed.serialized_len()];
+        changed.serialize_into(&mut other).unwrap();
+        assert_ne!(other, out);
+        assert_eq!(
+            &other[16..24],
+            &[0x00, 0x00, 0x00, 0x02, 0x00, 0x05, 0x00, 0x02]
+        );
     }
 
     #[test]
@@ -1161,14 +1170,14 @@ mod tests {
         ];
         let (ext_fti, used) = HeaderExtension::parse(&fti).unwrap();
         assert_eq!(used, 16);
-        let fpid = [0u8; 8];
+        let fpid = FecPayloadId::new(&[0u8; 8]);
         let d = NormData {
             common: common(NormMessageType::Data),
             sender: sender(),
             flags: 0,
             fec_id: 129,
             object_transport_id: 1,
-            fec_payload_id: &fpid,
+            fec_payload_id: fpid,
             extensions: vec![ext_fti],
             payload: &[],
         };
@@ -1234,7 +1243,9 @@ mod tests {
             NormCmdBody::Flush {
                 fec_id: 129,
                 object_transport_id: 7,
-                fec_payload_id: &[0x00, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02],
+                fec_payload_id: FecPayloadId::new(&[
+                    0x00, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02,
+                ]),
             }
         );
         assert!(c.extensions.is_empty());
@@ -1263,7 +1274,9 @@ mod tests {
             NormCmdBody::Squelch {
                 fec_id: 129,
                 object_transport_id: 0,
-                fec_payload_id: &[0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00],
+                fec_payload_id: FecPayloadId::new(&[
+                    0x00, 0x00, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00,
+                ]),
             }
         );
         assert!(c.content.is_empty());
@@ -1341,14 +1354,14 @@ mod tests {
         let wire = Serialize::try_to_bytes(&f).unwrap();
         assert_eq!(<NormFeedback as Parse>::parse(&wire).unwrap(), f);
 
-        let fpid = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02];
+        let fpid = FecPayloadId::new(&[0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02]);
         let d = NormData {
             common: common(NormMessageType::Data),
             sender: s,
             flags: NORM_FLAG_FILE,
             fec_id: 129,
             object_transport_id: 0x0007,
-            fec_payload_id: &fpid,
+            fec_payload_id: fpid,
             extensions: vec![],
             payload: &[0xDE, 0xAD, 0xBE, 0xEF],
         };

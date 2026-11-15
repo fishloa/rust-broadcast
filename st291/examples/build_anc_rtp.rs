@@ -7,13 +7,16 @@
 /// ```
 use broadcast_common::Serialize;
 use rtp_packet::{RtpPacket, SeqNo, Ssrc};
-use st291::{ANC_RTP_DEFAULT_CLOCK_RATE, AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
+use st291::{
+    ANC_RTP_DEFAULT_CLOCK_RATE, AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense,
+    RtpAncPacket,
+};
 
 fn main() {
     // The RFC 8331 §2.1 ANC payload: two ANC packets, on lines 9 and 10 (as
     // in RFC 8331 Figure 1's own worked example).
     let anc_payload = AncRtpPayload {
-        extended_sequence_number: 0,
+        extended_sequence_number: ExtendedSequenceNumber(0),
         field_sense: FieldSense::ProgressiveOrUnspecified,
         anc_packets: vec![
             RtpAncPacket {
