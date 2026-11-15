@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- BREAKING: `client::FetchFailure::retry_after_us: u64` is `retry_after: core::time::Duration`, the server's `Retry-After` wait as a span rather than a raw microsecond count (RFC 9110 §10.2.3) (#2731).
 - BREAKING: `error::SmoothError` no longer implements `Eq` (it keeps `PartialEq`), because its `InvalidBackoff` payload no longer does: `InvalidBackoff` carries a NaN growth factor, which is not equal to itself (broadcast-common #2725). Nothing compared `SmoothError` values for a total order.
 - BREAKING: `client::FetchFailure::status`, `client::Dropped::Fragment::status` and `error::SmoothError::Fragment::status` are `Option<http::StatusCode>` (was `Option<u16>`), so a host reports a refused fetch with the status it already holds (#2692).
 - Adopts `transmux::smooth_fragment::fragment_track_id`'s `TrackId` return (transmux #2647): a stream's discovered local track id is held as a `TrackId` end to end rather than a raw integer. No public API change.

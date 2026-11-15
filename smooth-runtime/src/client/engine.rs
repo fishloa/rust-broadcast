@@ -42,6 +42,11 @@ fn micros_now(now: Timestamp) -> u64 {
     now.as_micros()
 }
 
+/// A fetch failure's `Retry-After` as the engine's microsecond wait.
+fn retry_after_us(failure: FetchFailure) -> u64 {
+    u64::try_from(failure.retry_after.as_micros()).unwrap_or(u64::MAX)
+}
+
 fn codec_family(four_cc: &str) -> String {
     let upper = four_cc.to_ascii_uppercase();
     if FOURCC_AVC.contains(&upper.as_str()) {
@@ -300,10 +305,10 @@ impl SmoothClient {
             if failure.is_not_found() {
                 self.outputs.push_back(Output::ManifestNotFound);
             }
-            return self.manifest_failed(now, ManifestFault::Fetch, failure.retry_after_us);
+            return self.manifest_failed(now, ManifestFault::Fetch, retry_after_us(failure));
         }
         if let Some((si, chunk)) = self.take_fragment(id) {
-            self.fragment_failed(now, si, chunk, failure.status, failure.retry_after_us);
+            self.fragment_failed(now, si, chunk, failure.status, retry_after_us(failure));
             self.advance(now);
         }
     }
@@ -448,7 +453,7 @@ impl SmoothClient {
         }
         let missing = FetchFailure {
             status,
-            retry_after_us: 0,
+            retry_after: core::time::Duration::ZERO,
         }
         .is_not_found();
         if self.is_live && missing && matches!(self.manifest, ManifestCursor::Idle) {

@@ -115,7 +115,7 @@ impl Host {
             id,
             FetchFailure {
                 status,
-                retry_after_us,
+                retry_after: core::time::Duration::from_micros(retry_after_us),
             },
         );
     }
