@@ -30,7 +30,7 @@
 //! detection) so caller state can never disagree with the wire.
 
 use broadcast_common::len::{need_in, need_out};
-use broadcast_common::{Parse, Serialize, Timestamp};
+use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 
@@ -488,6 +488,47 @@ impl ClockFrequency {
 broadcast_common::impl_spec_display!(ClockFrequency, Reserved);
 
 // ---------------------------------------------------------------------------
+// VideoTimestamp — the Video Timestamp row, §6.4
+// ---------------------------------------------------------------------------
+
+/// The 32-bit Video Timestamp (§6.4): a count of ticks of the media clock
+/// that [`PayloadHeader::clock_frequency`] names (27 MHz, 148.5 MHz,
+/// 297 MHz, or a /1.001 variant), counting from that clock's own origin.
+///
+/// It is not a host clock reading and not a duration: a span between two
+/// timestamps is `(later.ticks() - earlier.ticks())` ticks of that named
+/// clock, and only the `clock_frequency` value turns a tick into time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+#[repr(transparent)]
+pub struct VideoTimestamp(u32);
+
+impl VideoTimestamp {
+    /// The largest tick count the 32-bit wire field can hold: the clock
+    /// rolls over after this many ticks.
+    pub const MAX_TICKS: u32 = u32::MAX;
+
+    /// Wrap a raw 32-bit tick count (the exact wire value).
+    #[must_use]
+    pub const fn from_ticks(ticks: u32) -> Self {
+        Self(ticks)
+    }
+
+    /// The raw 32-bit tick count — the exact wire value.
+    #[must_use]
+    pub const fn ticks(self) -> u32 {
+        self.0
+    }
+}
+
+impl core::fmt::Display for VideoTimestamp {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} ticks", self.0)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // MapStructure — MAP field, §6.4 (Video Source Format row)
 // ---------------------------------------------------------------------------
 
@@ -902,12 +943,10 @@ pub struct PayloadHeader<'a> {
     /// independently — it is exactly `self.video_source_format.is_some()`.
     pub video_source_format: Option<VideoSourceFormat>,
     /// The 32-bit Video Timestamp, present iff `clock_frequency` !=
-    /// [`ClockFrequency::NoTimestamp`]. An instant on the sample clock
-    /// `clock_frequency` names, so it is a [`Timestamp`] (nanoseconds from
-    /// that clock's origin, never rounded by `Timestamp`'s microsecond
-    /// resolution) rather than a bare count whose unit lived only in this
-    /// doc comment.
-    pub video_timestamp: Option<Timestamp>,
+    /// [`ClockFrequency::NoTimestamp`]: a count of ticks of the media clock
+    /// `clock_frequency` names (see [`VideoTimestamp`]), not a host clock
+    /// reading.
+    pub video_timestamp: Option<VideoTimestamp>,
     /// The Header Extension (§6.4's Tag/Length/Value chain — see
     /// `private/specs-verified/smpte/st2022/st2022-6-framing.md` §3.4), present iff `Ext` != 0. `Ext` is
     /// not stored independently — it is exactly
@@ -936,7 +975,7 @@ impl<'a> PayloadHeader<'a> {
         clock_frequency: ClockFrequency,
         reserve: u8,
         video_source_format: Option<VideoSourceFormat>,
-        video_timestamp: Option<Timestamp>,
+        video_timestamp: Option<VideoTimestamp>,
         extension: Option<HeaderExtension<'a>>,
     ) -> Result<Self> {
         let header = Self {
@@ -955,12 +994,11 @@ impl<'a> PayloadHeader<'a> {
         Ok(header)
     }
 
-    /// The 32-bit wire field holding the video timestamp: its raw value,
-    /// unrounded (the `Timestamp` was built from exactly this count).
+    /// The raw 32-bit wire value of the Video Timestamp, or `None` when the
+    /// header omits it.
     #[must_use]
     pub fn video_timestamp_ticks(&self) -> Option<u32> {
-        self.video_timestamp
-            .map(|ts| u32::try_from(ts.ticks()).unwrap_or(u32::MAX))
+        self.video_timestamp.map(VideoTimestamp::ticks)
     }
 
     /// `Ext` — the wire nibble, derived from [`Self::extension`]'s length.
@@ -1130,12 +1168,12 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
         let video_timestamp = if clock_frequency != ClockFrequency::NoTimestamp {
             let end = pos + VIDEO_TIMESTAMP_LEN;
             need_in(bytes, end, "video timestamp")?;
-            let ts = Timestamp::from_micros(u64::from(u32::from_be_bytes([
+            let ts = VideoTimestamp(u32::from_be_bytes([
                 bytes[pos],
                 bytes[pos + 1],
                 bytes[pos + 2],
                 bytes[pos + 3],
-            ])));
+            ]));
             pos = end;
             Some(ts)
         } else {
@@ -1208,10 +1246,7 @@ impl Serialize for PayloadHeader<'_> {
             pos += VIDEO_SOURCE_FORMAT_LEN;
         }
         if let Some(ts) = self.video_timestamp {
-            // The wire field is 32 bits, and `Timestamp`'s constructor was
-            // handed exactly this count when the header was built.
-            let ticks = u32::try_from(ts.ticks()).unwrap_or(u32::MAX);
-            buf[pos..pos + VIDEO_TIMESTAMP_LEN].copy_from_slice(&ticks.to_be_bytes());
+            buf[pos..pos + VIDEO_TIMESTAMP_LEN].copy_from_slice(&ts.ticks().to_be_bytes());
             pos += VIDEO_TIMESTAMP_LEN;
         }
         if let Some(ext) = self.extension {
@@ -1315,7 +1350,7 @@ mod tests {
             ClockFrequency::Mhz148_5,
             0,
             Some(vsf),
-            Some(Timestamp::from_micros(0x1234_5678)),
+            Some(VideoTimestamp::from_ticks(0x1234_5678)),
             None,
         )
         .unwrap();
@@ -1340,7 +1375,7 @@ mod tests {
             ClockFrequency::Mhz27,
             0,
             None,
-            Some(Timestamp::from_micros(0xAAAA_BBBB)),
+            Some(VideoTimestamp::from_ticks(0xAAAA_BBBB)),
             Some(HeaderExtension::new(&ext_bytes).unwrap()),
         )
         .unwrap();
@@ -1379,7 +1414,7 @@ mod tests {
             ClockFrequency::Reserved(0x0A),
             0x1F,
             None,
-            Some(Timestamp::from_micros(0x0BAD_F00D)),
+            Some(VideoTimestamp::from_ticks(0x0BAD_F00D)),
             None,
         )
         .unwrap();
@@ -1495,7 +1530,7 @@ mod tests {
                             let ts = if cf == ClockFrequency::NoTimestamp {
                                 None
                             } else {
-                                Some(Timestamp::from_micros(0x1122_3344))
+                                Some(VideoTimestamp::from_ticks(0x1122_3344))
                             };
                             let header =
                                 PayloadHeader::new(vsid, 0, r, s, fec, cf, 0, None, ts, None)
@@ -1545,7 +1580,7 @@ mod tests {
             ClockFrequency::NoTimestamp,
             0,
             None,
-            Some(Timestamp::ZERO),
+            Some(VideoTimestamp::from_ticks(0)),
             None,
         )
         .unwrap_err();
@@ -1706,10 +1741,10 @@ mod tests {
         assert_eq!(SampleStructure::Yuv4224At12Bit.name(), "4:2:2:4, 12 bits");
     }
 
-    /// The Video Timestamp is an instant on the sample clock `CF` names, not
-    /// a bare count whose unit lived only in a doc comment: it is reachable
-    /// through the shared clock type, and the wire field is the count it was
-    /// built from with no rounding in between.
+    /// The Video Timestamp is a count of ticks of the clock `CF` names, not
+    /// a bare count whose unit lived only in a doc comment: `VideoTimestamp`
+    /// carries it, the wire field is exactly `ticks()`, and it renders as a
+    /// tick count rather than a date.
     #[test]
     fn video_timestamp_is_a_clock_value_not_a_bare_count() {
         let header = PayloadHeader::new(
@@ -1721,15 +1756,20 @@ mod tests {
             ClockFrequency::Mhz27,
             0,
             None,
-            Some(Timestamp::from_micros(0xA1B2_C3D4)),
+            Some(VideoTimestamp::from_ticks(0xA1B2_C3D4)),
             None,
         )
         .unwrap();
         assert_eq!(
             header.video_timestamp,
-            Some(Timestamp::from_micros(0xA1B2_C3D4))
+            Some(VideoTimestamp::from_ticks(0xA1B2_C3D4))
         );
         assert_eq!(header.video_timestamp_ticks(), Some(0xA1B2_C3D4));
+        assert_eq!(header.video_timestamp_ticks(), Some(0xA1B2_C3D4));
+        assert_eq!(
+            header.video_timestamp.map(|ts| ts.to_string()).as_deref(),
+            Some("2712847316 ticks")
+        );
         let bytes = header.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], &[0xA1, 0xB2, 0xC3, 0xD4]);
         assert_eq!(PayloadHeader::parse(&bytes).unwrap(), header);
@@ -1774,7 +1814,7 @@ mod tests {
             ClockFrequency::Mhz148_5,
             0,
             Some(vsf),
-            Some(Timestamp::from_micros(0xDEADBEEF)),
+            Some(VideoTimestamp::from_ticks(0xDEADBEEF)),
             None,
         )
         .unwrap();

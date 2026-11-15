@@ -3,7 +3,7 @@
 use broadcast_common::{Parse, Serialize};
 use st2022::{
     ClockFrequency, FecUsage, FrameRate, FrameStructure, MapStructure, PayloadHeader,
-    SampleStructure, Scrambling, Timestamp, TimestampRef, VideoSourceFormat, VideoSourceId,
+    SampleStructure, Scrambling, TimestampRef, VideoSourceFormat, VideoSourceId, VideoTimestamp,
 };
 
 fn main() {
@@ -24,7 +24,7 @@ fn main() {
         ClockFrequency::Mhz148_5,
         0,
         Some(vsf),
-        Some(Timestamp::from_micros(0xDEAD_BEEF)),
+        Some(VideoTimestamp::from_ticks(0xDEAD_BEEF)),
         None,
     )
     .expect("valid header");
@@ -37,6 +37,9 @@ fn main() {
         "  Timestamp: 0x{:08x}",
         header.video_timestamp_ticks().unwrap_or(0)
     );
+    if let Some(ts) = header.video_timestamp {
+        println!("  Timestamp ticks: {ts}");
+    }
 
     let bytes = header.try_to_bytes().unwrap();
     println!("Serialized to {} bytes", bytes.len());
