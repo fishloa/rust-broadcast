@@ -633,7 +633,6 @@ impl UserControl {
     /// [`CONTROL_CHUNK_STREAM_ID`], message stream id
     /// [`CONTROL_MESSAGE_STREAM_ID`], timestamp `0` (effective on receipt;
     /// timestamps are not meaningful).
-    #[must_use]
     ///
     /// # Errors
     /// See [`UserControl::to_bytes`].

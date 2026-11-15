@@ -95,6 +95,7 @@ pub enum Error {
     MissingComponentType,
 
     /// The XML writer refused an event while rendering the document.
+    #[cfg(feature = "std")]
     #[error("XML write failed: {0}")]
     XmlWrite(#[from] broadcast_common::xml_chars::WriteRefusal),
 }
