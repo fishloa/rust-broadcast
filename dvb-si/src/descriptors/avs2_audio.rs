@@ -33,14 +33,15 @@ use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, fit_u8, need_out};
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVS2_audio_descriptor (T/AI 109.7 Table 9: 211).
 pub const TAG: u8 = 0xD3;
 const HEADER_LEN: usize = 2;
 const LANG_LEN: usize = 3;
-const RESERVED6_ONES: u8 = 0x3F;
-const RESERVED3_ONES: u8 = 0b111;
+const RESERVED6_ONES: ReservedOnes<6> = ReservedOnes::<6>::FILL;
+const RESERVED3_ONES: ReservedOnes<3> = ReservedOnes::<3>::FILL;
 
 /// `audio_codec_id == 0` body of the version block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,7 +53,7 @@ pub struct Avs2AudioCodec0 {
     /// `bitstream_type` (1 bit).
     pub bitstream_type: bool,
     /// `reserved` (3 bits).
-    pub reserved: u8,
+    pub reserved: ReservedOnes<3>,
     /// `raw_frame_length` (16 bits).
     pub raw_frame_length: u16,
 }
@@ -86,7 +87,7 @@ pub struct Avs2AudioVersion {
     /// `resolution` (2 bits).
     pub resolution: u8,
     /// `reserved` (6 bits) after `resolution`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<6>,
 }
 
 impl Avs2AudioVersion {
@@ -120,7 +121,7 @@ pub struct Avs2AudioDescriptor {
     /// `sample_rate_index` (4 bits, GB/T 33475.3 Annex A.2).
     pub sample_rate_index: u8,
     /// `reserved` (1 bit) after `language_present_flag`; printed as `'0'`.
-    pub reserved: u8,
+    pub reserved: ReservedZero<1>,
     /// `text[]`: 16-bit Unicode units, present iff `text_present_flag`.
     pub text: Option<Vec<u16>>,
     /// `language` (24 bits, GB/T 4880.2-2000), present iff `language_present_flag`.
@@ -140,7 +141,7 @@ impl Avs2AudioDescriptor {
         Self {
             num_channels,
             sample_rate_index,
-            reserved: 0,
+            reserved: ReservedZero::<1>::FILL,
             text: None,
             language: None,
             version: None,
@@ -214,7 +215,7 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
                 Some(Avs2AudioCodec0 {
                     bitrate_index: x >> 4,
                     bitstream_type: x & 0x08 != 0,
-                    reserved: x & 0x07,
+                    reserved: ReservedOnes::from_bits(u64::from(x)),
                     raw_frame_length: u16::from_be_bytes([hi, lo]),
                 })
             } else {
@@ -227,7 +228,7 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
                 coding_profile: v0 & 0x07,
                 codec0,
                 resolution: r >> 6,
-                reserved: r & 0x3F,
+                reserved: ReservedOnes::from_bits(u64::from(r)),
             })
         } else {
             None
@@ -235,7 +236,7 @@ impl<'a> Parse<'a> for Avs2AudioDescriptor {
         Ok(Self {
             num_channels,
             sample_rate_index: b1 >> 4,
-            reserved: b1 & 0x01,
+            reserved: ReservedZero::from_bits(u64::from(b1)),
             text,
             language,
             version,
@@ -249,7 +250,7 @@ impl Avs2AudioDescriptor {
         let mut out = Vec::new();
         out.push(self.num_channels);
         let sri = fit_bits(u64::from(self.sample_rate_index), 4, "sample_rate_index")? as u8;
-        let rsv = fit_bits(u64::from(self.reserved), 1, "reserved")? as u8;
+        let rsv = self.reserved.get() as u8;
         out.push(
             (sri << 4)
                 | (u8::from(self.version.is_some()) << 3)
@@ -273,7 +274,7 @@ impl Avs2AudioDescriptor {
             match (id, &v.codec0) {
                 (0, Some(c)) => {
                     let br = fit_bits(u64::from(c.bitrate_index), 4, "bitrate_index")? as u8;
-                    let rs = fit_bits(u64::from(c.reserved), 3, "reserved")? as u8;
+                    let rs = c.reserved.get() as u8;
                     out.push((br << 4) | (u8::from(c.bitstream_type) << 3) | rs);
                     out.extend_from_slice(&c.raw_frame_length.to_be_bytes());
                 }
@@ -286,7 +287,7 @@ impl Avs2AudioDescriptor {
                 _ => {}
             }
             let res = fit_bits(u64::from(v.resolution), 2, "resolution")? as u8;
-            let rs6 = fit_bits(u64::from(v.reserved), 6, "reserved")? as u8;
+            let rs6 = v.reserved.get() as u8;
             out.push((res << 6) | rs6);
         }
         out.extend_from_slice(&self.trailing);
@@ -363,7 +364,7 @@ mod tests {
             (c0.bitrate_index, c0.bitstream_type, c0.raw_frame_length),
             (5, true, 0x0400)
         );
-        assert_eq!((ver.resolution, ver.reserved), (1, 0x3F));
+        assert_eq!((ver.resolution, ver.reserved.get()), (1, 0x3F));
         assert_eq!(d.trailing, [0xAB]);
     }
 
