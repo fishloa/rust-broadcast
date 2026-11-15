@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AncPacket::validate` returns `Result<ValidationReport>` so its derived-field check can report a length overflow.
 - Parsing rejects a packet whose stored `Data_Count` or `Checksum_Word` disagrees with its fields (new `Error::DataCountMismatch`; existing `Error::ChecksumMismatch`) instead of silently rewriting them on serialization.
 - `Error::Pes(mpeg_pes::Error)` replaces the PES-header error variants `BadPtsDtsFlags` and `BadHeaderDataLength`; a malformed PES header (bad start code, bad `PES_header_data_length`, a payload shorter than `PES_packet_length`) is now `Error::Pes(..)`, the last case as `mpeg_pes`'s own `BufferTooShort` (#2746). `Error::PesLengthOverflow` is removed (the check moved into `mpeg_pes`); `Error::BadStreamId` and `Error::ReservedBits` stay.
+- PTS construction goes through `mpeg_pes::Pts::try_new` and `PES_scrambling_control` is checked against `mpeg_pes::ScramblingControl::NotScrambled` (matching mpeg-pes's checked-timestamp and typed-scrambling fields, #2747); the `Error::FieldOverflow { field: "PTS" }` an over-range PTS reports is unchanged.
 
 ### Dependencies
 - New dependency on the workspace sibling `mpeg-pes` (the PES header codec, #2762). No published version requires a caret-epoch change.

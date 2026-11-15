@@ -135,8 +135,8 @@ fn ts_to_cmaf_end_to_end() {
                 if let Some(completed) = vid_assembler.feed(pkt.pusi(), payload) {
                     // Parse PTS/DTS from the PES header
                     if let Ok(pes) = mpeg_pes::PesPacket::parse(&completed) {
-                        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-                        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+                        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+                        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
                         vid_pes_bufs.push((pes.payload.to_vec(), pts.unwrap_or(0), dts));
                     } else {
                         // If PES parse fails, still push the payload
@@ -172,8 +172,8 @@ fn ts_to_cmaf_end_to_end() {
     if let Some(completed) = vid_assembler.flush()
         && let Ok(pes) = mpeg_pes::PesPacket::parse(&completed)
     {
-        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
         vid_pes_bufs.push((pes.payload.to_vec(), pts.unwrap_or(0), dts));
     }
     if let Some(completed) = aud_assembler.flush()
