@@ -586,7 +586,9 @@ fn cmaf_hls_playlist_covers_input_once() {
         std::fs::write(dir.join(n), b).unwrap();
     }
     let v = test_fixtures::process::msv::MsvRun::new(&dir, "out.m3u8")
-        .timeout_secs(crate::common::MSV_TOOL_TIMEOUT_SECS as u32)
+        .timeout(core::time::Duration::from_secs(
+            crate::common::MSV_TOOL_TIMEOUT_SECS,
+        ))
         .deadline(crate::common::MSV_DEADLINE)
         .run();
     let mut errors = Vec::new();

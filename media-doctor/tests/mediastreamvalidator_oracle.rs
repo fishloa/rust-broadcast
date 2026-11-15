@@ -183,7 +183,7 @@ impl std::fmt::Display for Finding {
 fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -> Vec<Finding> {
     let json = test_fixtures::process::msv::MsvRun::new(dir, entry)
         .parse_only(parse_only)
-        .timeout_secs(timeout_secs)
+        .timeout(Duration::from_secs(u64::from(timeout_secs)))
         .deadline(Duration::from_secs(u64::from(timeout_secs)) + VALIDATOR_MARGIN)
         .run();
     let mut findings = Vec::new();

@@ -67,26 +67,14 @@ impl Anchor {
     /// UTC at `now`, saturating at the wall-clock range.
     #[must_use]
     pub fn utc_at(&self, now: Timestamp) -> WallTimestamp {
-        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc.as_microsecond()));
-        let us = m.utc_at(now.as_micros());
-        let us = us.clamp(i128::from(i64::MIN), i128::from(i64::MAX));
-        let us = i64::try_from(us).unwrap_or(if us < 0 { i64::MIN } else { i64::MAX });
-        WallTimestamp::from_microsecond(us).unwrap_or(if us < 0 {
-            WallTimestamp::MIN
-        } else {
-            WallTimestamp::MAX
-        })
+        MonoUtc::new(self.mono, self.utc).utc_at(now)
     }
 
-    /// The monotonic instant at which UTC reaches `utc`, saturating at
-    /// `0..=u64::MAX`.
+    /// The monotonic instant at which UTC reaches `utc`, saturating at the
+    /// monotonic range.
     #[must_use]
     pub fn mono_for_utc(&self, utc: WallTimestamp) -> Option<Timestamp> {
-        let m = MonoUtc::new(self.mono.as_micros(), i128::from(self.utc.as_microsecond()));
-        let mono = m.mono_for_utc(i128::from(utc.as_microsecond()));
-        u64::try_from(mono.clamp(0, i128::from(u64::MAX)))
-            .ok()
-            .map(Timestamp::from_micros)
+        Some(MonoUtc::new(self.mono, self.utc).mono_for_utc(utc))
     }
 }
 

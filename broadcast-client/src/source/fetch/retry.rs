@@ -93,12 +93,11 @@ pub(crate) fn retry_after(
     } else {
         let until = parse_http_date(value).ok()?;
         let now_unix = match wall {
-            Some(wall) => Some(wall.utc_at(now.as_micros())),
+            Some(wall) => wall.utc_at(now),
             None => crate::headers::text(headers, HEADER_DATE)
-                .and_then(|date| parse_http_date(date).ok())
-                .map(i128::from),
-        }?;
-        i128::from(until) - now_unix
+                .and_then(|date| parse_http_date(date).ok())?,
+        };
+        i128::from(until.as_microsecond()) - i128::from(now_unix.as_microsecond())
     };
     let capped = wait_us.min(i128::from(MAX_RETRY_AFTER_SECS * MICROS_PER_SEC));
     Some(Duration::from_micros(u64::try_from(capped).unwrap_or(0)))
@@ -490,6 +489,12 @@ mod tests {
         u64::try_from(span.as_micros()).unwrap_or(u64::MAX)
     }
 
+    fn wall(mono: u64, utc_us: u64) -> WallClock {
+        let utc = jiff::Timestamp::from_microsecond(i64::try_from(utc_us).unwrap_or(i64::MAX))
+            .unwrap_or(jiff::Timestamp::MAX);
+        WallClock::new(Timestamp::from_micros(mono), utc)
+    }
+
     fn retry(status: StatusCode, headers: &HeaderMap) -> u64 {
         retry_after(status, headers, at(NOW), None).map_or(0, us)
     }
@@ -504,7 +509,7 @@ mod tests {
     }
 
     fn anchored() -> WallClock {
-        WallClock::new(NOW, RESPONSE_UNIX_US)
+        wall(NOW, RESPONSE_UNIX_US)
     }
 
     #[test]
@@ -710,10 +715,10 @@ mod tests {
     #[test]
     fn a_far_future_anchor_is_not_a_past_date() {
         let h = date_pair("Mon, 26 Oct 2026 08:39:34 GMT", RESPONSE_DATE);
-        let anchor = WallClock::new(0, i128::from(u64::MAX));
+        let anchor = WallClock::new(Timestamp::from_micros(0), jiff::Timestamp::MAX);
         assert_eq!(
-            anchor.unix_at(0),
-            i128::from(u64::MAX),
+            anchor.utc_at(Timestamp::from_micros(0)),
+            jiff::Timestamp::MAX,
             "the crate's own mapping"
         );
         assert_eq!(
@@ -784,7 +789,7 @@ mod tests {
     #[test]
     fn extreme_anchors_neither_overflow_nor_wrap() {
         let h = header("Retry-After", "Mon, 26 Oct 2026 08:39:34 GMT");
-        let max_unix = WallClock::new(0, u64::MAX);
+        let max_unix = wall(0, u64::MAX);
         assert_eq!(
             retry_after(
                 StatusCode::from_u16(503).unwrap(),
@@ -794,7 +799,7 @@ mod tests {
             ),
             Some(Duration::ZERO)
         );
-        let zero_unix = WallClock::new(u64::MAX, 0);
+        let zero_unix = wall(u64::MAX, 0);
         assert_eq!(
             retry_after(
                 StatusCode::from_u16(503).unwrap(),
@@ -805,7 +810,7 @@ mod tests {
             Some(SIXTY_S),
             "a response far before the anchor clamps"
         );
-        let late = WallClock::new(0, 0);
+        let late = wall(0, 0);
         assert_eq!(
             retry_after(
                 StatusCode::from_u16(503).unwrap(),

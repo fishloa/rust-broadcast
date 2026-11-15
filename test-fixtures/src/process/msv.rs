@@ -133,7 +133,7 @@ pub struct MsvRun<'a> {
     dir: &'a std::path::Path,
     entry: &'a str,
     parse_only: bool,
-    timeout_secs: u32,
+    timeout: std::time::Duration,
     extra: Vec<String>,
     deadline: Option<std::time::Duration>,
 }
@@ -145,7 +145,7 @@ impl<'a> MsvRun<'a> {
             dir,
             entry,
             parse_only: false,
-            timeout_secs: 5,
+            timeout: std::time::Duration::from_secs(5),
             extra: Vec::new(),
             deadline: None,
         }
@@ -158,8 +158,8 @@ impl<'a> MsvRun<'a> {
     }
 
     #[must_use]
-    pub fn timeout_secs(mut self, v: u32) -> Self {
-        self.timeout_secs = v;
+    pub fn timeout(mut self, v: std::time::Duration) -> Self {
+        self.timeout = v;
         self
     }
 
@@ -187,7 +187,7 @@ impl<'a> MsvRun<'a> {
         static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
         let deadline = self
             .deadline
-            .unwrap_or_else(|| std::time::Duration::from_secs(u64::from(self.timeout_secs) + 30));
+            .unwrap_or_else(|| self.timeout + std::time::Duration::from_secs(30));
         let mut attempts_diag: Vec<MsvAttempt> = Vec::new();
         let run = |attempt: u32| -> Option<String> {
             let call_id = CALL_COUNTER.fetch_add(1, Ordering::Relaxed);
@@ -207,7 +207,7 @@ impl<'a> MsvRun<'a> {
             }
             cmd.arg("--quiet")
                 .arg("-t")
-                .arg(self.timeout_secs.to_string())
+                .arg(self.timeout.as_secs().to_string())
                 .arg("-O")
                 .arg(&out_json)
                 .arg(self.entry);
