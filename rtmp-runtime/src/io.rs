@@ -366,7 +366,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
         let cfg = SessionClientConfig {
             app: config.target.app.clone(),
             stream_key: config.target.stream_key.clone(),
-            tc_url: Some(config.target.tc_url.clone()),
+            tc_url: Some(config.target.tc_url().to_owned()),
             ..SessionClientConfig::default()
         };
         let mut codec = ClientCodec::new(ClientSession::new(cfg));

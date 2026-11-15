@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `SpliceObservation` (returned by `SpliceTracker::feed`) is `#[non_exhaustive]`, so a field added later is not a breaking change (#2771).
 - BREAKING: `SpliceTracker::feed` takes the packet's `ContinuityCounter` and adaptation-field `discontinuity_indicator` and returns `FeedOutcome` (`Result<(), NoCue>`) instead of `()` (audit 19b, finding 16). It fed the reassembler without continuity handling, so a legally repeated TS packet (ISO/IEC 13818-1 §2.4.3.3) doubled the section bytes into a corrupt one, and a section that failed CRC or parse vanished in a `continue` with no count or event. A non-cue section now comes back as `NoCue::Malformed { raw, error }` or `NoCue::NotACue`. Migration: `feed(payload, pusi, on_event)` becomes `feed(payload, pusi, continuity_counter, discontinuity, on_event)`; a caller that ignores the outcome writes `let _ = tracker.feed(..)`.
 - BREAKING: the `MAX_OPEN_EVENTS` cap evicts the oldest open event instead of the numerically smallest `splice_event_id` (the `BTreeSet::pop_first` it used), which deleted a recent, low id whenever ids wrapped or a producer's numbering started low.
 - `NoCue`, `FeedOutcome`, `NoCue::Malformed`'s `raw`/`error` and the packet-level duplicate rule: `media-doctor check` reports a corrupt cue as a `scte35-malformed` Error finding instead of dropping it.

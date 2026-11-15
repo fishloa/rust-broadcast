@@ -49,7 +49,7 @@ const SOURCE_BLOCK_LENGTH_BITS: u32 = 16;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SourceBlockPartition {
     /// The transport object length in octets (`L`, Transfer-Length).
-    pub transfer_length: u64,
+    transfer_length: u64,
     /// The encoding symbol length in octets (`E`, Encoding-Symbol-Length).
     encoding_symbol_length: u32,
     /// Total source symbols in the object (`T = ceil(L / E)`).
