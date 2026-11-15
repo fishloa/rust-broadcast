@@ -170,8 +170,8 @@ fn packager_output_truncations_all_error() {
 #[test]
 fn ll_utc_timing_escapes_scheme_and_value() {
     let mut pkg = transmux::ll_dash::LlDashPackager::new(
-        2.0,
-        0.5,
+        std::time::Duration::from_secs(2),
+        std::time::Duration::from_millis(500),
         std::time::Duration::from_secs(3),
         "2024-01-01T00:00:00Z",
     )
