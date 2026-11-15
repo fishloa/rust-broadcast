@@ -52,12 +52,12 @@ use multimux::route::RouteHandle;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, Sample, TrackSpec, TsDemux};
 
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const PART_TARGET_MS: u32 = 120;
 const WINDOW_SEGMENTS: usize = 8;
 
 /// A live playback advance this far in must have crossed at least one
-/// segment boundary (`TARGET_DURATION_SECS` == 1.0 s) -- proving continuous
+/// segment boundary (`TARGET_DURATION` == 1.0 s) -- proving continuous
 /// playback across the chunked-transfer -> closed-segment transition, not
 /// just the first in-progress segment.
 const MIN_CURRENT_TIME_SECS: f64 = 1.8;
@@ -126,8 +126,8 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![spec],
         movie_timescale,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init segment builds"));
@@ -160,7 +160,7 @@ async fn start_ll_dash_origin(
 ) -> (Arc<RouteHandle>, String, tokio::task::JoinHandle<()>) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(WINDOW_SEGMENTS),
     ));
@@ -272,8 +272,12 @@ async fn dashjs_low_latency_playback_against_real_ll_dash_origin() {
 
     eprintln!(
         "lldash_dashjs result: currentTime={:.3}s liveLatencySamples={:?} fatalError={:?} \
-         reason={:?} (segment target = {TARGET_DURATION_SECS}s)",
-        result.current_time, result.live_latency_samples, result.fatal_error, result.reason,
+         reason={:?} (segment target = {}s)",
+        result.current_time,
+        result.live_latency_samples,
+        result.fatal_error,
+        result.reason,
+        TARGET_DURATION.as_secs_f64(),
     );
 
     assert!(
@@ -297,10 +301,11 @@ async fn dashjs_low_latency_playback_against_real_ll_dash_origin() {
         .copied()
         .fold(f64::INFINITY, f64::min);
     assert!(
-        min_latency < TARGET_DURATION_SECS,
+        min_latency < TARGET_DURATION.as_secs_f64(),
         "measured live latency ({min_latency}s) must be below the whole-segment target \
-         ({TARGET_DURATION_SECS}s) -- proves chunked (not whole-segment) availability: \
+         ({}s) -- proves chunked (not whole-segment) availability: \
          samples={:?}",
+        TARGET_DURATION.as_secs_f64(),
         result.live_latency_samples
     );
     assert!(

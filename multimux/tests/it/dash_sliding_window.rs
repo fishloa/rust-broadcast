@@ -16,6 +16,7 @@
 //! every one must be served; the MPD must also pass `media-doctor`'s DASH
 //! validator and keep `startNumber`/`@duration` constant as it refreshes.
 
+use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,7 +35,7 @@ use tower::ServiceExt;
 use transmux::TsDemux;
 use transmux::ll_hls::LlHlsSegmenter;
 
-const TARGET_SECS: f64 = 2.0;
+const TARGET_DURATION: Duration = Duration::from_secs(2);
 const PART_MS: u32 = 500;
 /// Segments the route's rolling window holds.
 const WINDOW: usize = 3;
@@ -107,7 +108,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
 
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_MS)))
             .with_window_segments(WINDOW),
     ));
@@ -116,8 +117,8 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_SECS,
-        PART_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_MS)),
     )
     .expect("segmenter");
     store.set_init(program, seg.init_segment().expect("init"));

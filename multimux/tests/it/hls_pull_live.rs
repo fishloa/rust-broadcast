@@ -28,13 +28,13 @@ use crate::support::listener;
 use crate::support::shared_it::observe_extinf;
 use listener::bind_tcp;
 
-const SOURCE_SEGMENT_SECS: f64 = 2.0;
+const SOURCE_SEGMENT: Duration = Duration::from_secs(2);
 const PLAYLIST_TARGET_DURATION: u32 = 4;
 const WINDOW_SEGMENTS: usize = 4;
 const LIVE_ADVANCE: Duration = Duration::from_millis(300);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
 const VOD_SETTLE: Duration = Duration::from_secs(4);
-const ROUTE_TARGET_DURATION_SECS: f64 = 1.0;
+const ROUTE_TARGET_DURATION: Duration = Duration::from_secs(1);
 const ROUTE_PART_TARGET_MS: u32 = 200;
 const ROUTE_WINDOW_SEGMENTS: usize = 8;
 
@@ -46,7 +46,7 @@ struct Cmaf {
 fn cmaf_from_real_ts() -> Cmaf {
     let ts = std::fs::read(test_fixtures::path("ts/h264-aac-40s.ts")).expect("read fixture");
     let media = transmux::TsDemux::new().demux(&ts).expect("demux fixture");
-    let out = Repackage::new(SOURCE_SEGMENT_SECS)
+    let out = Repackage::new(SOURCE_SEGMENT)
         .run_media(&media)
         .expect("repackage");
     Cmaf {
@@ -84,7 +84,7 @@ fn playlist(origin: &Origin) -> String {
          #EXT-X-MEDIA-SEQUENCE:{first}\n#EXT-X-MAP:URI=\"init.mp4\"\n"
     );
     for i in first..=last {
-        out.push_str(&format!("#EXTINF:{SOURCE_SEGMENT_SECS:.1},\nseg{i}.m4s\n"));
+        out.push_str(&format!("#EXTINF:{:.1},\nseg{i}.m4s\n", SOURCE_SEGMENT.as_secs_f64()));
     }
     if endlist {
         out.push_str("#EXT-X-ENDLIST\n");
@@ -131,7 +131,7 @@ async fn serve_origin(mode: Mode) -> (String, Arc<Origin>) {
 fn route_config(bind: SocketAddr, upstream: String) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
+        .with_target_duration(ROUTE_TARGET_DURATION)
         .with_part_target(Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)))
         .with_window_segments(ROUTE_WINDOW_SEGMENTS)
         .with_routes(vec![Route {

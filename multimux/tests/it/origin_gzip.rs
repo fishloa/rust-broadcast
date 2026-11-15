@@ -6,6 +6,7 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
+use std::time::Duration;
 use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
@@ -30,7 +31,7 @@ use transmux::{CodecConfig, TrackSpec};
 fn make_app() -> (axum::Router, Arc<RouteHandle>) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
@@ -50,7 +51,7 @@ fn make_app() -> (axum::Router, Arc<RouteHandle>) {
     store
         .add_segment(
             ProgramId(0),
-            SegmentInfo::new(vec![0x33; 16], 4.0, 1).with_part_count(1),
+            SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1).with_part_count(1),
         )
         .expect("add_segment");
 

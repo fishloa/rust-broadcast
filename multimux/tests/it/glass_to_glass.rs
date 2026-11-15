@@ -86,7 +86,7 @@ const SYNC_EVERY: u32 = 15;
 /// Small part target so parts/blocking-reload/preload-hint all cycle
 /// quickly relative to the 1s test-suite budget this needs to stay under.
 const PART_TARGET_MS: u32 = 120;
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const WINDOW_SEGMENTS: usize = 8;
 /// Steady-state glass-to-glass bound (issue #717 headline acceptance): the 90th-percentile latency must stay under one second.
 const P90_LATENCY_BOUND: Duration = Duration::from_secs(1);
@@ -177,7 +177,7 @@ async fn start_ll_origin() -> (
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
@@ -224,8 +224,8 @@ async fn run_live_producer(store: Arc<RouteHandle>) {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track()],
         MOVIE_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init segment builds"));
@@ -373,7 +373,12 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
         // `origin_loop.rs`'s own non-LL test's segment-boundary trick, so
         // `seg1` ends up with exactly `fed_samples.len()` samples.
         let mut seg =
-            LlHlsSegmenter::with_part_target(vec![video_track()], MOVIE_TIMESCALE, 1.0, 100_000)
+            LlHlsSegmenter::with_part_target(
+                vec![video_track()],
+                MOVIE_TIMESCALE,
+                Duration::from_secs(1),
+                Duration::from_millis(100_000),
+            )
                 .expect("segmenter builds");
         let mut fed_samples: Vec<Sample> = Vec::new();
         for i in 0..30u32 {
@@ -400,8 +405,7 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
                 uri: "seg1.m4s".to_string(),
                 // The segmenter's own computed duration over real sample
                 // timestamps — always finite and non-negative (issue #1140).
-                duration: DecimalSeconds::new(seg1.duration)
-                    .expect("segmenter duration is finite, >= 0"),
+                duration: DecimalSeconds::from_duration(seg1.duration),
                 discontinuous: false,
                 parts: vec![],
                 byte_range: None,

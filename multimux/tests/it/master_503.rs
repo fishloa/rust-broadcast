@@ -1,5 +1,6 @@
 //! Master playlist 503/Retry-After gate (issue #1426 part A).
 
+use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -17,7 +18,7 @@ fn llhls_route_declared(declared: u64) -> Arc<RouteHandle> {
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
@@ -30,7 +31,7 @@ fn llhls_route_declared(declared: u64) -> Arc<RouteHandle> {
 fn llhls_route_undeclared_unpublished() -> Arc<RouteHandle> {
     Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ))
@@ -39,7 +40,7 @@ fn llhls_route_undeclared_unpublished() -> Arc<RouteHandle> {
 fn llhls_route_with_segment() -> Arc<RouteHandle> {
     let route = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
@@ -47,7 +48,7 @@ fn llhls_route_with_segment() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], 4.0, 1),
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], Duration::from_secs(4), 1),
         )
         .expect("add_segment");
     route
@@ -58,7 +59,7 @@ fn ts_route_undeclared_unpublished() -> Arc<RouteHandle> {
     Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
@@ -158,7 +159,7 @@ fn published_without_segment(output: &Arc<dyn Output>) -> Arc<RouteHandle> {
     use transmux::Container;
     let mut route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     );
@@ -200,7 +201,7 @@ async fn master_503_when_published_but_no_segment_and_no_declared_bandwidth() {
 async fn master_ratchets_bandwidth_over_http() {
     let route = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
@@ -225,7 +226,7 @@ async fn master_ratchets_bandwidth_over_http() {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], 4.0, 1),
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], Duration::from_secs(4), 1),
         )
         .expect("add_segment");
     let resp = app
@@ -251,7 +252,7 @@ async fn master_ratchets_bandwidth_over_http() {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x21; 1_500_000], 1.0, 2),
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 1_500_000], Duration::from_secs(1), 2),
         )
         .expect("add_segment");
     let resp = app
@@ -277,7 +278,7 @@ async fn master_ratchets_bandwidth_over_http() {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x21; 10], 3.0, 3),
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 10], Duration::from_secs(3), 3),
         )
         .expect("add_segment");
     let resp = app

@@ -1667,14 +1667,13 @@ impl TsHlsIdrFallback {
 
     /// How much IDR-less media the output tolerates before it reports (and,
     /// unless [`Self::falls_back`] is `false`, falls back).
-    pub fn bound(&self, target_duration_secs: f64) -> std::time::Duration {
-        let secs = match self {
-            TsHlsIdrFallback::Targets(n) => f64::from(*n) * target_duration_secs,
-            TsHlsIdrFallback::Auto | TsHlsIdrFallback::Never => {
-                (f64::from(IDR_FALLBACK_TARGETS) * target_duration_secs).max(IDR_FALLBACK_MIN_SECS)
-            }
-        };
-        std::time::Duration::from_secs_f64(secs)
+    pub fn bound(&self, target_duration: Duration) -> std::time::Duration {
+        match self {
+            TsHlsIdrFallback::Targets(n) => target_duration.saturating_mul(*n),
+            TsHlsIdrFallback::Auto | TsHlsIdrFallback::Never => target_duration
+                .saturating_mul(IDR_FALLBACK_TARGETS)
+                .max(Duration::from_secs_f64(IDR_FALLBACK_MIN_SECS)),
+        }
     }
 
     /// The config token for this setting.
@@ -2172,6 +2171,18 @@ mod millis_duration {
     }
 }
 
+/// Reads a JSON number of whole-and-fractional seconds (`4.0`, `0.5`) into a
+/// `Duration`, keeping the wire key and unit the field has always had.
+pub(super) mod seconds_duration {
+    use serde::{Deserialize, Deserializer};
+    use std::time::Duration;
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
+        let secs = f64::deserialize(d)?;
+        Duration::try_from_secs_f64(secs).map_err(serde::de::Error::custom)
+    }
+}
+
 /// multimux runtime configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -2179,8 +2190,10 @@ mod millis_duration {
 pub struct Config {
     /// `host:port` the HTTP origin binds.
     pub bind: String,
-    /// Target full-segment duration (seconds).
-    pub target_duration_secs: f64,
+    /// Target full-segment duration. The JSON key stays `target_duration_secs`
+    /// and its value stays seconds.
+    #[serde(rename = "target_duration_secs", with = "seconds_duration")]
+    pub target_duration_secs: Duration,
     /// LL-HLS part target. The JSON key stays `part_target_ms` and its value
     /// stays whole milliseconds.
     #[serde(rename = "part_target_ms", with = "millis_duration")]
@@ -2196,7 +2209,8 @@ pub struct Config {
     /// legitimate long-poll blocking request would be cut off by this layer
     /// before it ever gets the chance to resolve or fall back on its own —
     /// enforced by [`Config::validate`].
-    pub request_timeout_secs: f64,
+    #[serde(with = "seconds_duration")]
+    pub request_timeout_secs: Duration,
     /// Maximum number of requests serviced concurrently, across every route
     /// — see [`crate::origin::HttpLimits::max_concurrent_requests`].
     pub max_concurrent_requests: usize,
@@ -2225,15 +2239,19 @@ pub struct Config {
     /// [`crate::origin::HttpLimits::queue_timeout`] and
     /// [`crate::origin::limit`]. Defaults to 5 s. Must be positive; a
     /// non-positive value is rejected by [`Config::validate`].
-    #[serde(default = "default_concurrency_queue_timeout_secs")]
-    pub concurrency_queue_timeout_secs: f64,
+    #[serde(default = "default_concurrency_queue_timeout_secs", with = "seconds_duration")]
+    pub concurrency_queue_timeout_secs: Duration,
     /// Ingest connect-handshake timeout, in seconds, applied to every route's
     /// source (issue #663 P5, audit-ingest #3) — see
-    /// [`broadcast_common::timeouts::Timeouts::connect`].
-    pub ingest_connect_timeout_secs: f64,
+    /// [`broadcast_common::timeouts::Timeouts::connect`]. The JSON value stays
+    /// seconds.
+    #[serde(with = "seconds_duration")]
+    pub ingest_connect_timeout_secs: Duration,
     /// Ingest per-read timeout, in seconds, applied to every route's source
-    /// — see [`broadcast_common::timeouts::Timeouts::read_idle`].
-    pub ingest_read_timeout_secs: f64,
+    /// — see [`broadcast_common::timeouts::Timeouts::read_idle`]. The JSON value
+    /// stays seconds.
+    #[serde(with = "seconds_duration")]
+    pub ingest_read_timeout_secs: Duration,
     /// The media-playlist filename served at `/{stream}/{playlist_name}`
     /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
     /// `#EXT-X-STREAM-INF` reference follows suit
@@ -2385,8 +2403,8 @@ fn default_max_blocking_reloads_per_route() -> usize {
 
 /// Default [`Config::concurrency_queue_timeout_secs`] — the limit's own
 /// default, so the two cannot drift.
-fn default_concurrency_queue_timeout_secs() -> f64 {
-    crate::origin::DEFAULT_QUEUE_TIMEOUT.as_secs_f64()
+fn default_concurrency_queue_timeout_secs() -> Duration {
+    crate::origin::DEFAULT_QUEUE_TIMEOUT
 }
 
 fn default_playlist_name() -> String {
@@ -2407,19 +2425,19 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             bind: "0.0.0.0:8080".to_string(),
-            target_duration_secs: 4.0,
+            target_duration_secs: Duration::from_secs(4),
             part_target: Duration::from_millis(500),
             window_segments: 8,
             routes: Vec::new(),
-            request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64(),
+            request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT,
             max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_blocking_reloads_per_route: default_max_blocking_reloads_per_route(),
             max_concurrent_warms_per_route: default_max_concurrent_warms_per_route(),
             whep_media_sockets_per_ip: default_whep_media_sockets_per_ip(),
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
-            concurrency_queue_timeout_secs: crate::origin::DEFAULT_QUEUE_TIMEOUT.as_secs_f64(),
-            ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
-            ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
+            concurrency_queue_timeout_secs: crate::origin::DEFAULT_QUEUE_TIMEOUT,
+            ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT,
+            ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT,
             playlist_name: default_playlist_name(),
             program_date_time: default_program_date_time(),
             hold_cold_playlist: default_hold_cold_playlist(),
@@ -2440,10 +2458,10 @@ impl Config {
         self
     }
 
-    /// Set the target full-segment duration (seconds).
+    /// Set the target full-segment duration.
     #[must_use]
-    pub fn with_target_duration_secs(mut self, target_duration_secs: f64) -> Self {
-        self.target_duration_secs = target_duration_secs;
+    pub fn with_target_duration(mut self, target_duration: Duration) -> Self {
+        self.target_duration_secs = target_duration;
         self
     }
 
@@ -2468,10 +2486,10 @@ impl Config {
         self
     }
 
-    /// Set the per-request HTTP timeout (seconds).
+    /// Set the per-request HTTP timeout.
     #[must_use]
-    pub fn with_request_timeout_secs(mut self, request_timeout_secs: f64) -> Self {
-        self.request_timeout_secs = request_timeout_secs;
+    pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout_secs = request_timeout;
         self
     }
 
@@ -2516,27 +2534,27 @@ impl Config {
         self
     }
 
-    /// Set the concurrency-queue timeout (seconds).
+    /// Set the concurrency-queue timeout.
     #[must_use]
-    pub fn with_concurrency_queue_timeout_secs(
+    pub fn with_concurrency_queue_timeout(
         mut self,
-        concurrency_queue_timeout_secs: f64,
+        concurrency_queue_timeout: Duration,
     ) -> Self {
-        self.concurrency_queue_timeout_secs = concurrency_queue_timeout_secs;
+        self.concurrency_queue_timeout_secs = concurrency_queue_timeout;
         self
     }
 
-    /// Set the ingest connect-handshake timeout (seconds).
+    /// Set the ingest connect-handshake timeout.
     #[must_use]
-    pub fn with_ingest_connect_timeout_secs(mut self, ingest_connect_timeout_secs: f64) -> Self {
-        self.ingest_connect_timeout_secs = ingest_connect_timeout_secs;
+    pub fn with_ingest_connect_timeout(mut self, ingest_connect_timeout: Duration) -> Self {
+        self.ingest_connect_timeout_secs = ingest_connect_timeout;
         self
     }
 
-    /// Set the ingest per-read timeout (seconds).
+    /// Set the ingest per-read timeout.
     #[must_use]
-    pub fn with_ingest_read_timeout_secs(mut self, ingest_read_timeout_secs: f64) -> Self {
-        self.ingest_read_timeout_secs = ingest_read_timeout_secs;
+    pub fn with_ingest_read_timeout(mut self, ingest_read_timeout: Duration) -> Self {
+        self.ingest_read_timeout_secs = ingest_read_timeout;
         self
     }
 
@@ -2607,15 +2625,26 @@ pub(crate) const MAX_TIMEOUT_SECS: f64 = 86_400.0;
 /// move independently without one silently redefining the other.
 const MAX_TARGET_DURATION_SECS: f64 = 86_400.0;
 
-/// Validate a seconds-valued timeout: finite, `> 0`, and `<= MAX_TIMEOUT_SECS`.
-/// Rejects NaN/infinity/negative and an overflowing-but-finite value such as
-/// `1e20` (which `Duration::from_secs_f64` would panic on) — audit W19.
-fn validate_timeout_secs(field: ConfigField, secs: f64) -> Result<()> {
-    if !secs.is_finite() || secs <= 0.0 || secs > MAX_TIMEOUT_SECS {
+/// `MAX_TIMEOUT_SECS` as the `Duration` the config fields hold.
+fn max_timeout() -> Duration {
+    Duration::from_secs_f64(MAX_TIMEOUT_SECS)
+}
+
+/// `MAX_TARGET_DURATION_SECS` as the `Duration` the target field holds.
+fn max_target_duration() -> Duration {
+    Duration::from_secs_f64(MAX_TARGET_DURATION_SECS)
+}
+
+/// Validate a timeout: non-zero and `<= MAX_TIMEOUT_SECS`. A `Duration` is
+/// already finite and non-negative, so only the zero and the upper bound can
+/// fail (audit W19).
+fn validate_timeout(field: ConfigField, timeout: Duration) -> Result<()> {
+    if timeout.is_zero() || timeout > max_timeout() {
         return Err(MultimuxError::ConfigInvalid {
             field,
             reason: format!(
-                "must be a finite number of seconds in (0, {MAX_TIMEOUT_SECS}], got {secs}"
+                "must be a positive number of seconds in (0, {MAX_TIMEOUT_SECS}], got {} s",
+                timeout.as_secs_f64()
             ),
         });
     }
@@ -2674,10 +2703,10 @@ impl Config {
                 reason: "no routes configured".into(),
             });
         }
-        if !self.target_duration_secs.is_finite() || self.target_duration_secs <= 0.0 {
+        if self.target_duration_secs.is_zero() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::TargetDurationSecs,
-                reason: "must be a finite positive number".into(),
+                reason: "must be positive".into(),
             });
         }
         // Upper bound too: an unreasonably large target duration is nonsensical
@@ -2685,12 +2714,12 @@ impl Config {
         // guard — that would only bite past ~1.8e19 s), and it would also fail
         // the DASH `xs:duration` render and 404 the manifest. Reject it up
         // front, with a clear error.
-        if self.target_duration_secs > MAX_TARGET_DURATION_SECS {
+        if self.target_duration_secs > max_target_duration() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::TargetDurationSecs,
                 reason: format!(
-                    "must not exceed {MAX_TARGET_DURATION_SECS} seconds (24 h), got {}",
-                    self.target_duration_secs
+                    "must not exceed {MAX_TARGET_DURATION_SECS} seconds (24 h), got {} s",
+                    self.target_duration_secs.as_secs_f64()
                 ),
             });
         }
@@ -2706,14 +2735,14 @@ impl Config {
         // `chunk = part_target_ms / 1000` and `segment = target_duration_secs`.
         // Reject the combination here, where it can carry a clear error, rather
         // than letting every MPD request for an `ll_dash` route fail at runtime.
-        let part_target_secs = self.part_target.as_secs_f64();
-        if part_target_secs > self.target_duration_secs {
+        if self.part_target > self.target_duration_secs {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::PartTarget,
                 reason: format!(
                     "a part/chunk duration of {} s must not exceed target_duration_secs ({} s) \
                      — a part is a sub-division of a whole segment",
-                    part_target_secs, self.target_duration_secs
+                    self.part_target.as_secs_f64(),
+                    self.target_duration_secs.as_secs_f64()
                 ),
             });
         }
@@ -2723,13 +2752,13 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
-        if self.request_timeout_secs <= MIN_REQUEST_TIMEOUT_SECS {
+        if self.request_timeout_secs <= Duration::from_secs_f64(MIN_REQUEST_TIMEOUT_SECS) {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::RequestTimeoutSecs,
                 reason: format!(
                     "must exceed {MIN_REQUEST_TIMEOUT_SECS} (the LL-HLS blocking-reload cap), \
-                     got {}",
-                    self.request_timeout_secs
+                     got {} s",
+                    self.request_timeout_secs.as_secs_f64()
                 ),
             });
         }
@@ -2763,16 +2792,15 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
-        validate_timeout_secs(
+        validate_timeout(
             ConfigField::IngestConnectTimeoutSecs,
             self.ingest_connect_timeout_secs,
         )?;
-        validate_timeout_secs(
+        validate_timeout(
             ConfigField::IngestReadTimeoutSecs,
             self.ingest_read_timeout_secs,
         )?;
-        if !self.concurrency_queue_timeout_secs.is_finite()
-            || self.concurrency_queue_timeout_secs <= 0.0
+        if self.concurrency_queue_timeout_secs.is_zero() || self.concurrency_queue_timeout_secs > max_timeout()
         {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::ConcurrencyQueueTimeoutSecs,
@@ -3257,7 +3285,9 @@ mod tests {
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.bind, "127.0.0.1:9000");
-        // the JSON key and unit are unchanged: whole milliseconds
+        // the JSON key and unit are unchanged: `target_duration_secs` loads as
+        // seconds into a `Duration`, `part_target_ms` as whole milliseconds.
+        assert_eq!(cfg.target_duration_secs, Duration::from_secs(2));
         assert_eq!(cfg.part_target, Duration::from_millis(250));
         assert_eq!(cfg.routes.len(), 2);
         assert_eq!(cfg.routes[1].name, "cam2");
@@ -3268,45 +3298,41 @@ mod tests {
         cfg.validate().unwrap();
     }
 
-    /// A NaN / infinite / non-positive `target_duration_secs` must be rejected
-    /// by `validate()`: `<= 0.0` alone lets NaN and +inf through, and the
-    /// HLS origin builder then refused it at publish time (release audit).
+    /// A zero or over-bound `target_duration` must be rejected by `validate()`:
+    /// a `Duration` cannot be NaN, infinite or negative, so only those two
+    /// remain rejectable (the former NaN/inf checks are unreachable by type).
     #[test]
-    fn validate_rejects_non_finite_or_non_positive_target_duration() {
+    fn validate_rejects_zero_or_over_bound_target_duration() {
         let json = r#"{ "routes": [
             { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
         ] }"#;
         let base: Config = serde_json::from_str(json).unwrap();
         base.validate().unwrap();
         for bad in [
-            f64::NAN,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            0.0,
-            -1.0,
+            Duration::ZERO,
             // Over the 24 h bound: would overflow the DASH xs:duration render.
-            86_401.0,
-            f64::MAX,
+            Duration::from_secs(86_401),
+            Duration::MAX,
         ] {
             let mut cfg = base.clone();
             cfg.target_duration_secs = bad;
             match cfg.validate() {
                 Err(MultimuxError::ConfigInvalid { field, .. }) => {
-                    assert_eq!(field.name(), "target_duration_secs", "{bad}");
+                    assert_eq!(field.name(), "target_duration_secs", "{bad:?}");
                 }
-                other => panic!("{bad}: expected ConfigInvalid, got {other:?}"),
+                other => panic!("{bad:?}: expected ConfigInvalid, got {other:?}"),
             }
         }
         // The exact upper bound is accepted; just past it is rejected.
         let mut at_bound = base.clone();
-        at_bound.target_duration_secs = MAX_TARGET_DURATION_SECS;
+        at_bound.target_duration_secs = max_target_duration();
         // `part_target_ms` must not exceed the segment, so keep the part tiny.
         at_bound.part_target = Duration::from_millis(1);
         at_bound
             .validate()
             .expect("exactly the 24 h bound must be accepted");
         let mut just_over = base.clone();
-        just_over.target_duration_secs = MAX_TARGET_DURATION_SECS + 0.1;
+        just_over.target_duration_secs = max_target_duration() + Duration::from_millis(100);
         just_over.part_target = Duration::from_millis(1);
         let err = just_over
             .validate()
@@ -3334,12 +3360,12 @@ mod tests {
 
         // Exactly one part long is fine; a part longer than the segment is not.
         let mut ok = base.clone();
-        ok.target_duration_secs = 1.0;
+        ok.target_duration_secs = Duration::from_secs(1);
         ok.part_target = Duration::from_millis(1000);
         ok.validate().expect("a full-segment part is valid");
 
         let mut bad = base.clone();
-        bad.target_duration_secs = 0.5;
+        bad.target_duration_secs = Duration::from_millis(500);
         bad.part_target = Duration::from_millis(1000);
         match bad.validate() {
             Err(MultimuxError::ConfigInvalid { field, reason }) => {
@@ -3435,7 +3461,7 @@ mod tests {
         let cfg: Config = serde_json::from_str(json).unwrap();
         assert_eq!(
             cfg.request_timeout_secs,
-            crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64()
+            crate::origin::DEFAULT_REQUEST_TIMEOUT
         );
         assert_eq!(
             cfg.max_concurrent_requests,
@@ -3454,7 +3480,7 @@ mod tests {
     /// fall back.
     #[test]
     fn validate_rejects_request_timeout_at_or_below_blocking_cap() {
-        for bad in [1.0, 5.0] {
+        for bad in [Duration::from_secs(1), Duration::from_secs(5)] {
             let cfg = Config {
                 routes: vec![Route {
                     name: "x".into(),
@@ -3481,7 +3507,7 @@ mod tests {
                     cfg.validate(),
                     Err(crate::error::MultimuxError::ConfigInvalid { .. })
                 ),
-                "{bad} must be rejected"
+                "{bad:?} must be rejected"
             );
         }
     }
@@ -3556,7 +3582,7 @@ mod tests {
             ]
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.request_timeout_secs, 15.0);
+        assert_eq!(cfg.request_timeout_secs, Duration::from_secs(15));
         assert_eq!(cfg.max_concurrent_requests, 100);
         assert_eq!(cfg.max_request_body_bytes, 2048);
         cfg.validate().unwrap();
@@ -3755,15 +3781,16 @@ mod tests {
         // A sane policy passes.
         route_with(ReconnectPolicy::default()).validate().unwrap();
 
-        // NaN and an overflowing (but finite) timeout are both rejected.
-        for bad in [f64::NAN, f64::INFINITY, 1e20] {
+        // A zero and an overflowing timeout are both rejected (a `Duration`
+        // cannot be NaN or negative, so only these remain reachable).
+        for bad in [Duration::ZERO, Duration::MAX] {
             let cfg = Config {
                 ingest_read_timeout_secs: bad,
                 ..route_with(ReconnectPolicy::default())
             };
             assert!(
                 cfg.validate().is_err(),
-                "ingest_read_timeout_secs {bad} must be rejected"
+                "ingest_read_timeout_secs {bad:?} must be rejected"
             );
         }
     }
@@ -3773,8 +3800,8 @@ mod tests {
     #[test]
     fn ingest_timeouts_from_extreme_config_does_not_panic() {
         let cfg = Config {
-            ingest_connect_timeout_secs: f64::NAN,
-            ingest_read_timeout_secs: 1e20,
+            ingest_connect_timeout_secs: Duration::ZERO,
+            ingest_read_timeout_secs: Duration::ZERO,
             ..Config::default()
         };
         let timeouts = crate::source::ingest_timeouts(&cfg);

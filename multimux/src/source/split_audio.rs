@@ -31,7 +31,7 @@ pub(crate) fn build_core_followers(
     route: &RouteHandle,
     trunk: &Trunk,
     mapped: &[(usize, TrackSpec)],
-    target_duration_secs: f64,
+    target_duration_secs: std::time::Duration,
     part_target: std::time::Duration,
 ) -> Vec<media_plane::segmenter::audio::AudioFollower> {
     if mapped.is_empty() {

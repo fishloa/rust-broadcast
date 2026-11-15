@@ -666,6 +666,7 @@ struct PartCursor {
 #[cfg(test)]
 mod tests {
     use crate::route::RouteConfig;
+    use std::time::Duration;
     /// `parse_segment_filename` accepts the legacy and the instance-named
     /// segment forms (issue #1422: before, only the legacy form parsed, so
     /// SCTE-35 `emsg` injection never ran for the origin's real names) and
@@ -704,7 +705,7 @@ mod tests {
     fn part(seq: u32, idx: u32) -> PartInfo {
         PartInfo::new(
             vec![0x10 + idx as u8; 4],
-            0.5,
+            Duration::from_millis(500),
             seq,
             broadcast_hls::PartIndex::new(idx),
         )
@@ -712,7 +713,7 @@ mod tests {
     }
 
     fn seg(seq: u32) -> SegmentInfo {
-        SegmentInfo::new(vec![0x20 + seq as u8; 8], 4.0, seq).with_part_count(2)
+        SegmentInfo::new(vec![0x20 + seq as u8; 8], Duration::from_secs(4), seq).with_part_count(2)
     }
 
     /// A populated route: a closed segment 1, plus two live parts of
@@ -724,7 +725,7 @@ mod tests {
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -789,7 +790,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -827,7 +828,7 @@ mod tests {
     /// sync byte is `0x47` — the same byte ffprobe/mediastreamvalidator key
     /// their container detection on.
     fn ts_seg(seq: u32) -> SegmentInfo {
-        SegmentInfo::new(vec![0x47; 188], 4.0, seq)
+        SegmentInfo::new(vec![0x47; 188], Duration::from_secs(4), seq)
     }
 
     #[tokio::test]
@@ -854,7 +855,7 @@ mod tests {
     async fn audio_only_fmp4_part_is_video_iso_segment() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -996,7 +997,7 @@ mod tests {
         // would have nothing to serve yet and would 404/block differently.
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -1044,7 +1045,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             route_for_start.add_part(
                 crate::route::SPTS_PROGRAM_ID,
-                PartInfo::new(vec![0x77; 4], 0.5, 3, broadcast_hls::PartIndex::new(0))
+                PartInfo::new(vec![0x77; 4], Duration::from_millis(500), 3, broadcast_hls::PartIndex::new(0))
                     .with_independent(true),
             );
         });
@@ -1122,7 +1123,7 @@ mod tests {
     async fn dynamic_file_not_yet_announced_is_503_not_404() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -1360,7 +1361,7 @@ mod tests {
     fn range_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -1369,7 +1370,7 @@ mod tests {
         route
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                SegmentInfo::new((0..100u8).collect(), 4.0, 1),
+                SegmentInfo::new((0..100u8).collect(), Duration::from_secs(4), 1),
             )
             .expect("add_segment");
         route
@@ -1681,7 +1682,7 @@ mod tests {
     async fn range_dynamic_file_applies_to_spliced_bytes() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -1800,7 +1801,7 @@ mod tests {
         let program = crate::route::SPTS_PROGRAM_ID;
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));

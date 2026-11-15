@@ -17,9 +17,10 @@
 //! `RouteHandle`'s own doc), and this test exists precisely to drive it
 //! directly and publish it.
 
+use std::time::Duration;
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
-    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_track_spec,
+    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, feed_via_segmenter, video_track_spec,
 };
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
@@ -60,7 +61,7 @@ fn first_segment_uri(playlist: &str) -> Option<&str> {
 async fn end_to_end_pipeline_serves_valid_llhls() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -160,7 +161,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
 fn part(seq: u32, idx: u32) -> PartInfo {
     PartInfo::new(
         vec![0x10 + idx as u8; 4],
-        0.5,
+        Duration::from_millis(500),
         seq,
         broadcast_hls::PartIndex::new(idx),
     )
@@ -176,7 +177,7 @@ fn part(seq: u32, idx: u32) -> PartInfo {
 async fn blocking_reload_resolves_when_part_arrives() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));

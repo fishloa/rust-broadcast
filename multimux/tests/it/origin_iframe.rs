@@ -6,9 +6,10 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
+use std::time::Duration;
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
-    PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
+    PART_TARGET_MS, TARGET_DURATION, feed_via_segmenter, video_batches_n, video_track_spec,
 };
 use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
@@ -38,7 +39,7 @@ async fn iframe_master_variant_gating() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -47,8 +48,8 @@ async fn iframe_master_variant_gating() {
     let seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     let program = media_plane::ProgramId(0);
@@ -75,7 +76,7 @@ async fn iframe_master_variant_gating() {
     // after segments: exactly one
     let store2 = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -124,7 +125,7 @@ async fn iframe_master_variant_gating() {
     }
     let audio_store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -152,7 +153,7 @@ async fn iframe_playlist_byterange_matches_independent_calc() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -237,7 +238,7 @@ async fn iframe_range_requests() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -313,7 +314,7 @@ async fn iframe_part_query_rejected() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -345,7 +346,7 @@ async fn iframe_msn_with_part_query_served() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -379,7 +380,7 @@ async fn blocking_reload_timeout_is_503() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -428,7 +429,7 @@ async fn ts_hls_no_iframe() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -475,7 +476,7 @@ async fn iframe_validator_clean() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -486,8 +487,8 @@ async fn iframe_validator_clean() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init"));
@@ -627,7 +628,7 @@ async fn iframe_scte35_emsg_shift() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -650,8 +651,8 @@ async fn iframe_scte35_emsg_shift() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init"));
@@ -790,7 +791,7 @@ async fn iframe_rendition_report_uses_configured_playlist_name() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )

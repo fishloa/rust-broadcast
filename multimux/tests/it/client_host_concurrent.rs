@@ -80,7 +80,7 @@ async fn eight_ts_http_pulls_all_progress_on_the_multi_thread_runtime() {
         );
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -119,7 +119,7 @@ async fn cancelling_a_pull_stops_its_session_promptly() {
     let route = TsHttpRoute::new("hung", format!("http://{addr}/stream.ts"));
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));

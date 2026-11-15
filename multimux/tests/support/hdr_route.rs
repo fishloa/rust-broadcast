@@ -1,5 +1,6 @@
 //! Shared helpers for the multimux HEVC HDR route tests (`hdr10_route`, `hdr10plus_route`, `dovi_route`, `heaac_override`): one `RouteHandle` + `ProgramSegmenter` over a `Trunk`, read back through the axum router.
 
+use std::time::Duration;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
@@ -24,7 +25,7 @@ use multimux::route::{RouteConfig, RouteHandle};
 
 use crate::support::shared;
 
-pub const TARGET_DURATION_SECS: f64 = 1.0;
+pub const TARGET_DURATION: Duration = Duration::from_secs(1);
 pub const PART_TARGET_MS: u32 = 200;
 pub const WINDOW_SEGMENTS: usize = 64;
 pub const RING: usize = 1 << 16;
@@ -103,7 +104,7 @@ pub fn route_app_with_profiles(
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )

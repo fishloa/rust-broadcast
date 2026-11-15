@@ -100,7 +100,7 @@ fn config_with(
 ) -> Config {
     let mut cfg = Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_hold_cold_playlist(false)

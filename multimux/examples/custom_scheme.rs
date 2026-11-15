@@ -322,7 +322,7 @@ async fn main() {
     // moves samples end to end.
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(Duration::from_secs(1))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
@@ -332,7 +332,7 @@ async fn main() {
         name: "cam1".to_string(),
         params: serde_json::Value::Null,
         store: store.clone(),
-        target_duration_secs: 1.0,
+        target_duration_secs: std::time::Duration::from_secs(1),
         part_target: std::time::Duration::from_millis(500),
         cancel,
     })

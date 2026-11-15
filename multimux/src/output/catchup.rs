@@ -521,6 +521,7 @@ fn parse_seg_filename(file: &str, ext: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use crate::dvr::{ArchiveOverrunSerde, DvrConfig};
     use crate::route::RouteConfig;
     use crate::route::SPTS_PROGRAM_ID;
@@ -569,7 +570,7 @@ mod tests {
     }
 
     fn seg_bytes(seq: u32, byte: u8) -> transmux::ll_hls::SegmentInfo {
-        transmux::ll_hls::SegmentInfo::new(vec![byte; 24], 3.0, seq).with_part_count(1)
+        transmux::ll_hls::SegmentInfo::new(vec![byte; 24], Duration::from_secs(3), seq).with_part_count(1)
     }
 
     async fn body_bytes(resp: Response) -> Vec<u8> {
@@ -615,7 +616,7 @@ mod tests {
             let route = Arc::new(
                 RouteHandle::new(
                     RouteConfig::default()
-                        .with_target_duration_secs(1.0)
+                        .with_target_duration(std::time::Duration::from_secs(1))
                         .with_part_target(std::time::Duration::from_millis(250))
                         .with_window_segments(64),
                 )
@@ -627,7 +628,7 @@ mod tests {
             route
                 .add_segment(
                     SPTS_PROGRAM_ID,
-                    transmux::ll_hls::SegmentInfo::new(vec![0x5A; SEG_LEN], 3.0, 1)
+                    transmux::ll_hls::SegmentInfo::new(vec![0x5A; SEG_LEN], Duration::from_secs(3), 1)
                         .with_part_count(1),
                 )
                 .expect("add_segment");
@@ -728,13 +729,13 @@ mod tests {
     async fn one_routes_exhausted_scan_pool_does_not_delay_another_route() {
         let busy = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         ));
         let idle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -768,7 +769,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
@@ -843,7 +844,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -915,7 +916,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -933,7 +934,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -991,7 +992,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1023,7 +1024,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1053,7 +1054,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1095,7 +1096,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1113,7 +1114,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1136,7 +1137,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
@@ -1249,7 +1250,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
@@ -1398,7 +1399,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(std::time::Duration::from_millis(250))
                     .with_window_segments(8),
             )
@@ -1406,7 +1407,7 @@ mod tests {
             .with_dvr(dvr_config(&tmp)),
         );
         let info = |seq: u32, name: &str| {
-            transmux::ll_hls::SegmentInfo::new(read(name), 1.0, seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(read(name), Duration::from_secs(1), seq).with_part_count(1)
         };
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, init_a.clone());
@@ -1484,7 +1485,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(2.0)
+                    .with_target_duration(std::time::Duration::from_secs(2))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1521,7 +1522,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(2.0)
+                    .with_target_duration(std::time::Duration::from_secs(2))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -1564,7 +1565,7 @@ mod tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(2.0)
+                    .with_target_duration(std::time::Duration::from_secs(2))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )

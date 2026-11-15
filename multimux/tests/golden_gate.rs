@@ -231,7 +231,7 @@ async fn drive_pull(playlist_url: &str, enough: usize, probe: &Probe) -> ClientR
 
 // ── LL origin standup (mirrors glass_to_glass.rs's start_ll_origin) ────────
 
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 /// The movie timescale the origin's segmenter and the rebuilt init share.
 const MOVIE_TIMESCALE: broadcast_common::timescale::Timescale =
     broadcast_common::timescale!(90_000);
@@ -250,8 +250,8 @@ async fn run_live_producer(store: Arc<RouteHandle>, spec: TrackSpec, samples: Ve
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![spec],
         movie_timescale,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init segment builds"));
@@ -289,7 +289,7 @@ async fn start_ll_origin(
 ) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(WINDOW_SEGMENTS),
     ));
@@ -504,7 +504,12 @@ async fn non_ll_full_segment_path_also_decodes() {
     // longer than the fixture's ~3s runtime means nothing auto-splits until
     // the trailing `flush()` closes the one and only segment.
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale, 3600.0, 3_600_000)
+        LlHlsSegmenter::with_part_target(
+            vec![spec.clone()],
+            spec.timescale,
+            Duration::from_secs(3600),
+            Duration::from_millis(3_600_000),
+        )
             .expect("segmenter builds");
     for sample in fed_samples.clone() {
         seg.push(spec.track_id, sample).expect("push succeeds");
@@ -526,8 +531,7 @@ async fn non_ll_full_segment_path_also_decodes() {
             uri: "seg1.m4s".to_string(),
             // The segmenter's own computed duration over real sample
             // timestamps — always finite and non-negative (issue #1140).
-            duration: DecimalSeconds::new(seg1.duration)
-                .expect("segmenter duration is finite, >= 0"),
+            duration: DecimalSeconds::from_duration(seg1.duration),
             discontinuous: false,
             parts: vec![],
             byte_range: None,
@@ -691,7 +695,12 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
 
     // A real fMP4 init, then a single segment holding every sample.
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale, 3600.0, 3_600_000)
+        LlHlsSegmenter::with_part_target(
+            vec![spec.clone()],
+            spec.timescale,
+            Duration::from_secs(3600),
+            Duration::from_millis(3_600_000),
+        )
             .expect("segmenter builds");
     let init = seg.init_segment().expect("init segment builds");
     recorder
@@ -707,7 +716,7 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
             .publish_segment(SegmentEntry::new(
                 segment.bytes,
                 media_plane::ids::SegmentSeq::new(segment.segment_seq),
-                Duration::from_secs_f64(segment.duration),
+                segment.duration,
                 broadcast_common::Timestamp::from_nanos(0),
                 transmux::SegmentMeta {
                     discontinuous: false,

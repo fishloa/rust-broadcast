@@ -418,7 +418,7 @@ mod tests {
     fn every_output_kind_merges_without_panicking() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         ));

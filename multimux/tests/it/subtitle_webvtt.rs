@@ -34,7 +34,7 @@ use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const PART_TARGET_MS: u32 = 200;
 const WINDOW_SEGMENTS: usize = 64;
 const RING: usize = 1 << 16;
@@ -132,7 +132,7 @@ fn fresh_route(subtitles: bool) -> Arc<RouteHandle> {
     Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
@@ -810,7 +810,7 @@ async fn cue_times_line_up_with_the_video_timeline_after_a_source_reconnect() {
         .iter()
         .map(|s| s.mpegts)
         .collect();
-    let derived = (number - 1) as f64 * TARGET_DURATION_SECS * TICKS_PER_SEC;
+    let derived = (number - 1) as f64 * TARGET_DURATION.as_secs_f64() * TICKS_PER_SEC;
     assert!(
         maps.iter().all(|m| *m as f64 >= derived - TICKS_PER_SEC),
         "MPEGTS {maps:?} does not start at the derived {derived}"

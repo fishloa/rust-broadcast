@@ -23,7 +23,7 @@ use multimux::registry::SchemeRegistry;
 use crate::support::listener;
 use listener::bind_tcp;
 
-const ROUTE_TARGET_DURATION_SECS: f64 = 1.0;
+const ROUTE_TARGET_DURATION: Duration = Duration::from_secs(1);
 const ROUTE_PART_TARGET_MS: u32 = 200;
 const ROUTE_WINDOW_SEGMENTS: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -80,7 +80,7 @@ async fn two_origins() -> (String, Arc<Media>) {
 fn route_config(bind: SocketAddr, mpd: String, allow_cross_origin: bool) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
+        .with_target_duration(ROUTE_TARGET_DURATION)
         .with_part_target(Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)))
         .with_window_segments(ROUTE_WINDOW_SEGMENTS)
         .with_routes(vec![Route {
