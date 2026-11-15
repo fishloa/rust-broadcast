@@ -4,12 +4,12 @@
 //! Run with `cargo run -p st377-1 --example build_preface`.
 
 use broadcast_common::{Parse, Serialize};
-use st377_1::{InterchangeObjectFields, MxfTimestamp, Preface, VERSION_1_3};
+use st377_1::{InterchangeObjectFields, MxfTimestamp, Preface, UlBytes, VERSION_1_3};
 
 fn main() {
     let preface = Preface {
         interchange: InterchangeObjectFields {
-            instance_uid: [0x01; 16],
+            instance_uid: UlBytes([0x01; 16]),
             generation_uid: None,
             object_class: None,
         },
@@ -25,11 +25,11 @@ fn main() {
         version: VERSION_1_3,
         object_model_version: Some(1),
         primary_package: None,
-        identifications: Some(vec![[0x02; 16]]),
+        identifications: Some(vec![UlBytes([0x02; 16])]),
         identifications_batch: None,
-        content_storage: [0x03; 16],
-        operational_pattern: [0x04; 16],
-        essence_containers: vec![[0x05; 16]],
+        content_storage: UlBytes([0x03; 16]),
+        operational_pattern: UlBytes([0x04; 16]),
+        essence_containers: vec![UlBytes([0x05; 16])],
         essence_containers_batch: None,
         dm_schemes: Vec::new(),
         dm_schemes_batch: None,

@@ -32,6 +32,12 @@ impl UlBytes {
     }
 }
 
+impl Default for UlBytes {
+    fn default() -> Self {
+        Self::NULL
+    }
+}
+
 impl From<[u8; 16]> for UlBytes {
     fn from(bytes: [u8; 16]) -> Self {
         Self(bytes)
@@ -87,6 +93,13 @@ impl From<[u8; 16]> for StrongRef {
 impl From<StrongRef> for [u8; 16] {
     fn from(reference: StrongRef) -> Self {
         reference.0
+    }
+}
+
+/// Reinterpret a 16-byte UUID as a Strong Reference (§5.4.4).
+impl From<UlBytes> for StrongRef {
+    fn from(ul: UlBytes) -> Self {
+        Self(ul.0)
     }
 }
 
@@ -161,19 +174,6 @@ pub(crate) fn ul_bytes_from_prefix(bytes: &[u8]) -> UlBytes {
         i += 1;
     }
     UlBytes(out)
-}
-
-/// [`ul_bytes_from_prefix`] for a Strong Reference (`count` 16-byte UUIDs).
-///
-/// Callers must have already verified `bytes.len() >= 16 * count`.
-pub(crate) fn strong_refs_from_prefix(bytes: &[u8], count: usize) -> Vec<StrongRef> {
-    let mut out = Vec::with_capacity(count);
-    let mut i = 0;
-    while i < count {
-        out.push(StrongRef(ul_bytes_from_prefix(&bytes[i * 16..]).0));
-        i += 1;
-    }
-    out
 }
 
 /// A "Package ID" (§4.2): a 32-byte Basic UMID (SMPTE ST 330) or 32 zero
@@ -651,19 +651,46 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
 
+    /// A UL key, a Strong Reference and an AUID share one 16-byte wire form
+    /// but are three different values: as bare `[u8; 16]` aliases they were
+    /// interchangeable, so a reference target could be passed where a UL key
+    /// belongs and still compile. This test only compiles while they are
+    /// distinct types.
+    #[test]
+    fn ul_key_and_strong_reference_are_distinct_types() {
+        fn key_length(key: &UlBytes) -> usize {
+            key.as_bytes().len()
+        }
+        fn reference_length(reference: &StrongRef) -> usize {
+            reference.as_bytes().len()
+        }
+        let ul = UlBytes([0x11; 16]);
+        let reference = StrongRef([0x11; 16]);
+        assert_eq!((key_length(&ul), reference_length(&reference)), (16, 16));
+        assert_eq!(reference, StrongRef::from(ul));
+        assert_eq!(<[u8; 16]>::from(reference), <[u8; 16]>::from(ul));
+        assert_eq!(
+            Auid(ul).as_uuid_bytes(),
+            UlBytes([
+                0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x11,
+                0x11, 0x11
+            ])
+        );
+    }
+
     #[test]
     fn auid_uuid_swaps_the_top_and_bottom_eight_bytes() {
-        let uuid: UlBytes = [
+        let uuid = UlBytes([
             0x07, 0x72, 0x26, 0x2E, 0x76, 0x55, 0x43, 0x6F, 0x8F, 0xF3, 0x8A, 0xC5, 0x1B, 0x77,
             0x1E, 0x02,
-        ];
+        ]);
         let auid = Auid::from_uuid(uuid);
         assert_eq!(
             auid.0,
-            [
+            UlBytes([
                 0x8F, 0xF3, 0x8A, 0xC5, 0x1B, 0x77, 0x1E, 0x02, 0x07, 0x72, 0x26, 0x2E, 0x76, 0x55,
                 0x43, 0x6F
-            ]
+            ])
         );
         assert!(!auid.is_ul(), "a UUID's stored top bit is always 1");
         assert_eq!(auid.as_uuid_bytes(), uuid);
@@ -745,7 +772,7 @@ mod tests {
 
     #[test]
     fn uid_batch_round_trip() {
-        let items = alloc::vec![[1u8; 16], [2u8; 16], [3u8; 16]];
+        let items = alloc::vec![UlBytes([1u8; 16]), UlBytes([2u8; 16]), UlBytes([3u8; 16])];
         let bytes = serialize_uid_batch(&items).unwrap();
         assert_eq!(UidBatch::parse(&bytes).unwrap().items(), items);
     }

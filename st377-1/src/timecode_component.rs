@@ -84,12 +84,12 @@ impl<'a> Parse<'a> for TimecodeComponent {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Timecode Component")?;
-        let data_definition = get_required_fixed::<16>(
+        let data_definition = UlBytes(get_required_fixed::<16>(
             items,
             TAG_DATA_DEFINITION,
             "Data Definition",
             "Timecode Component",
-        )?;
+        )?);
         let duration =
             get_optional_fixed::<8>(items, TAG_DURATION, "Duration")?.map(i64::from_be_bytes);
         let start_timecode = i64::from_be_bytes(get_required_fixed::<8>(
@@ -127,7 +127,7 @@ impl TimecodeComponent {
         self.interchange.encode_into(&mut out);
         out.push(LocalSetOwnedItem::fixed(
             TAG_DATA_DEFINITION,
-            self.data_definition,
+            self.data_definition.0,
         ));
         if let Some(d) = self.duration {
             out.push(LocalSetOwnedItem::fixed(TAG_DURATION, d.to_be_bytes()));
@@ -156,15 +156,15 @@ mod tests {
     use broadcast_common::Serialize;
 
     /// SMPTE-RP 224 Timecode data definition UL (test placeholder).
-    const TIMECODE_DD: UlBytes = [
+    const TIMECODE_DD: UlBytes = UlBytes([
         0x06, 0x0E, 0x2B, 0x34, 0x04, 0x01, 0x01, 0x01, 0x01, 0x03, 0x02, 0x01, 0x01, 0x00, 0x00,
         0x00,
-    ];
+    ]);
 
     fn sample() -> TimecodeComponent {
         TimecodeComponent {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x01; 16],
+                instance_uid: UlBytes([0x01; 16]),
                 generation_uid: None,
                 object_class: None,
             },

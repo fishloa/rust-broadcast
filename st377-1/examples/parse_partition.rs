@@ -5,7 +5,7 @@
 //! Run with `cargo run -p st377-1 --example parse_partition`.
 
 use broadcast_common::{Parse, Serialize};
-use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus};
+use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus, UlBytes};
 
 fn main() {
     let pack = PartitionPack {
@@ -24,11 +24,11 @@ fn main() {
         body_sid: 1,
         // A placeholder Operational Pattern UL (see §8) — a real encoder
         // would use one of the registered OP1a/OP-Atom/etc. values.
-        operational_pattern: [
+        operational_pattern: UlBytes([
             0x06, 0x0E, 0x2B, 0x34, 0x04, 0x01, 0x01, 0x01, 0x0D, 0x01, 0x02, 0x01, 0x01, 0x01,
             0x01, 0x00,
-        ],
-        essence_containers: vec![[0x11; 16]],
+        ]),
+        essence_containers: vec![UlBytes([0x11; 16])],
         essence_containers_batch: None,
         len_size: BerLength::Minimal,
     };

@@ -135,18 +135,19 @@ crate::sets::declare_set_serialize!(ContentStorage, ContentStorage);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
     use broadcast_common::Serialize;
 
     fn sample() -> ContentStorage {
         ContentStorage {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x11; 16],
+                instance_uid: UlBytes([0x11; 16]),
                 generation_uid: None,
                 object_class: None,
             },
-            packages: alloc::vec![[0x22; 16], [0x33; 16]],
+            packages: alloc::vec![UlBytes([0x22; 16]), UlBytes([0x33; 16])],
             packages_batch: None,
-            essence_container_data: Some(alloc::vec![[0x44; 16]]),
+            essence_container_data: Some(alloc::vec![UlBytes([0x44; 16])]),
             essence_container_data_batch: None,
             dark: Vec::new(),
         }
@@ -175,7 +176,7 @@ mod tests {
     fn mutation_changes_serialized_bytes() {
         let mut cs = sample();
         let before = cs.try_to_bytes().unwrap();
-        cs.packages.push([0x55; 16]);
+        cs.packages.push(UlBytes([0x55; 16]));
         let after = cs.try_to_bytes().unwrap();
         assert_ne!(before, after);
     }

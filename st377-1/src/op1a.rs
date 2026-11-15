@@ -144,7 +144,7 @@ mod tests {
     fn default_op1a_ul() {
         let ul = op1a_ul(Op1aQualifier::default());
         assert!(is_op1a(&ul));
-        let q = Op1aQualifier::from_byte(ul[14]);
+        let q = Op1aQualifier::from_byte(ul.0[14]);
         assert!(!q.external_essence());
         assert!(!q.non_streamable());
         assert!(!q.multi_track());
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn is_op1a_false_for_other_ops() {
         let mut ul = op1a_ul(Op1aQualifier::default());
-        ul[13] = 0x02; // change to something else
+        ul.0[13] = 0x02; // change to something else
         assert!(!is_op1a(&ul));
     }
 
@@ -178,7 +178,7 @@ mod tests {
             let q = Op1aQualifier::from_byte(byte);
             let ul = op1a_ul(q);
             assert!(is_op1a(&ul));
-            assert_eq!(ul[14], byte | MARKER_BIT);
+            assert_eq!(ul.0[14], byte | MARKER_BIT);
         }
     }
 

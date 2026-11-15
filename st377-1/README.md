@@ -20,7 +20,7 @@ It does **not**:
 
 - decode essence: Essence Container payload bytes stay opaque `KlvItem`s;
 - type Essence Descriptors (F.2 to F.6 and the per-codec registrations such as
-  MPEG Video / Wave Audio): `SourcePackage::descriptor` is a bare `StrongRef`
+  MPEG Video / Wave Audio): `SourcePackage::descriptor` is a `StrongRef`
   this crate can neither resolve nor build a target for;
 - decode Index Table contents, DM Segments / DM Source Clips, or Application
   Metadata Sets (they are identified via `StructuralSetKind` and preserved as
@@ -69,7 +69,7 @@ Objects, plus `Unknown([u8; 2])` for any Set not in Table 17.
 
 ```rust
 use broadcast_common::{Parse, Serialize};
-use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus};
+use st377_1::{BerLength, PartitionKind, PartitionPack, PartitionStatus, UlBytes};
 
 let pack = PartitionPack {
     kind: PartitionKind::Header,
@@ -85,7 +85,7 @@ let pack = PartitionPack {
     index_sid: 0,
     body_offset: 0,
     body_sid: 0,
-    operational_pattern: [0u8; 16],
+    operational_pattern: UlBytes([0u8; 16]),
     essence_containers: Vec::new(),
     essence_containers_batch: None,
     len_size: BerLength::Minimal,
