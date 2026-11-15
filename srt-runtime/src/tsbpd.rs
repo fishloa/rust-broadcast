@@ -343,7 +343,12 @@ impl TsbpdScheduler {
     /// * `pkt_timestamp` — the data packet's 32-bit timestamp (§3.1).
     /// * `now` — current receiver time since the fixed epoch (the `T_NOW`
     ///   used to decide whether `PktTsbpdTime ≤ now`).
-    pub fn feed_data(&mut self, seq_number: u32, pkt_timestamp: u32, now: Timestamp) -> TickOutcome {
+    pub fn feed_data(
+        &mut self,
+        seq_number: u32,
+        pkt_timestamp: u32,
+        now: Timestamp,
+    ) -> TickOutcome {
         let now_us = now.as_micros();
         let unwrapped_ts = self.unwrap_timestamp(pkt_timestamp);
 
@@ -1002,7 +1007,9 @@ mod tests {
         assert_eq!(s.buffered_count(), 2);
 
         // Even ticking far in the future should not deliver without packet 0.
-        let outcome = s.tick(Timestamp::from_micros(TIME_BASE + 100_000 + DELAY_MS * 1000));
+        let outcome = s.tick(Timestamp::from_micros(
+            TIME_BASE + 100_000 + DELAY_MS * 1000,
+        ));
         assert!(outcome.delivered.is_empty());
         assert!(s.has_gap());
     }

@@ -403,7 +403,9 @@ mod tests {
     #[test]
     fn on_data_buffers_and_returns_wire_bytes() {
         let mut s = Sender::new(PEER);
-        let bytes = s.on_data(5, 5, b"hello", Timestamp::from_millis(1)).unwrap();
+        let bytes = s
+            .on_data(5, 5, b"hello", Timestamp::from_millis(1))
+            .unwrap();
         assert_eq!(s.buffered_count(), 1);
         let dp = DataPacket::parse(&bytes).unwrap();
         assert_eq!(dp.seq_number, 5);

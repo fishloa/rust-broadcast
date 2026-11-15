@@ -1393,8 +1393,7 @@ impl Driver {
     fn poll_timeout(&self) -> Option<Instant> {
         let now = self.elapsed();
         // Full ACK / NAK.
-        let mut at = self.epoch
-            + Duration::from_micros(self.receiver.next_timeout().as_micros());
+        let mut at = self.epoch + Duration::from_micros(self.receiver.next_timeout().as_micros());
         // TSBPD release / TLPKTDROP skip.
         if let Some(t) = self.tsbpd.next_release_after(now) {
             at = at.min(self.epoch + t);

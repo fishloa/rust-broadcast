@@ -360,9 +360,9 @@ impl SrtCaller {
             State::Connected(link) => {
                 let idle = Timestamp::from_micros(link.last_rx_us)
                     .checked_add(self.config.timeouts.read_idle);
-                let ack = Timestamp::from_micros(link.epoch_us).checked_add(
-                    Duration::from_micros(link.receiver.next_timeout().as_micros()),
-                );
+                let ack = Timestamp::from_micros(link.epoch_us).checked_add(Duration::from_micros(
+                    link.receiver.next_timeout().as_micros(),
+                ));
                 // A deadline past the end of the clock is no deadline; the others still bind.
                 let mut at = match (idle, ack) {
                     (Some(idle), Some(ack)) => Some(idle.min(ack)),
