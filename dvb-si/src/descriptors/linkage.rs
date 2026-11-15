@@ -17,6 +17,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for linkage_descriptor.
@@ -32,18 +33,24 @@ const HANDOVER_TYPE_VALUE_MASK: u8 = 0x0F;
 const ORIGIN_TYPE_MASK: u8 = 0x01;
 const RESERVED_HANDOVER_MASK: u8 = 0x0E;
 const RESERVED_HANDOVER_SHIFT: u8 = 1;
+/// Width of the mobile hand-over `reserved_future_use` (3 bits).
+const RESERVED_HANDOVER_BITS: u32 = 3;
 /// Spec default of the mobile hand-over `reserved_future_use`(3): all ones
 /// (EN 300 468 V1.12.1-V1.20.1 Table 61; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A).
-pub const RESERVED_HANDOVER_DEFAULT: u8 = 0b111;
+pub const RESERVED_HANDOVER_DEFAULT: ReservedOnes<RESERVED_HANDOVER_BITS> =
+    ReservedOnes::<RESERVED_HANDOVER_BITS>::FILL;
 
 const TARGET_LISTED_MASK: u8 = 0x80;
 const EVENT_SIMULCAST_MASK: u8 = 0x40;
 const RESERVED_EVENT_MASK: u8 = 0x3F;
+/// Width of the event-linkage `reserved_future_use` (6 bits).
+const RESERVED_EVENT_BITS: u32 = 6;
 /// Spec default of the event-linkage `reserved_future_use`(6) (`reserved`
 /// before V1.17.1): all ones (EN 300 468 V1.12.1-V1.20.1 Table 64; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
-pub const RESERVED_EVENT_DEFAULT: u8 = 0x3F;
+pub const RESERVED_EVENT_DEFAULT: ReservedOnes<RESERVED_EVENT_BITS> =
+    ReservedOnes::<RESERVED_EVENT_BITS>::FILL;
 
 const EXT_TARGET_LISTED_MASK: u8 = 0x80;
 const EXT_EVENT_SIMULCAST_MASK: u8 = 0x40;
@@ -352,7 +359,7 @@ pub struct MobileHandOverInfo {
     /// `reserved_future_use`(3) between `hand_over_type` and `origin_type`
     /// (3 bits, right-aligned). Captured on parse, re-emitted verbatim;
     /// [`MobileHandOverInfo::new`] defaults to [`RESERVED_HANDOVER_DEFAULT`].
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_HANDOVER_BITS>,
     /// hand_over_type — 4 bits `[7:4]`.  See Table 62.
     pub hand_over_type: HandOverType,
     /// origin_type — 1 bit `[0]`.  `false` = NIT, `true` = SDT (Table 63).
@@ -393,11 +400,7 @@ impl MobileHandOverInfo {
             HANDOVER_TYPE_VALUE_MASK,
             "hand_over_type",
         )? << 4)
-            | (broadcast_common::len::fit_mask(
-                self.reserved_future_use,
-                RESERVED_HANDOVER_MASK >> RESERVED_HANDOVER_SHIFT,
-                "reserved_future_use",
-            )? << RESERVED_HANDOVER_SHIFT)
+            | ((self.reserved_future_use.get() as u8) << RESERVED_HANDOVER_SHIFT)
             | u8::from(self.origin_type);
         buf[0] = flags_byte;
         let mut pos = 1;
@@ -420,7 +423,7 @@ pub struct EventLinkageInfo {
     /// `reserved_future_use`(6) after `event_simulcast` (6 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim;
     /// [`EventLinkageInfo::new`] defaults to [`RESERVED_EVENT_DEFAULT`].
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_EVENT_BITS>,
     /// target_event_id — 16 bits.
     pub target_event_id: u16,
     /// target_listed — 1 bit `[7]`.
@@ -450,11 +453,7 @@ impl EventLinkageInfo {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, Self::SERIALIZED_LEN)?;
         buf[0..2].copy_from_slice(&self.target_event_id.to_be_bytes());
-        let mut byte2: u8 = broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_EVENT_MASK,
-            "reserved_future_use",
-        )?;
+        let mut byte2: u8 = self.reserved_future_use.get() as u8;
         if self.target_listed {
             byte2 |= TARGET_LISTED_MASK;
         }
@@ -796,7 +795,9 @@ fn parse_mobile_handover(bytes: &[u8], end: usize) -> Result<MobileHandOverInfo>
         None
     };
     Ok(MobileHandOverInfo {
-        reserved_future_use: (flags_byte & RESERVED_HANDOVER_MASK) >> RESERVED_HANDOVER_SHIFT,
+        reserved_future_use: ReservedOnes::from_bits(u64::from(
+            (flags_byte & RESERVED_HANDOVER_MASK) >> RESERVED_HANDOVER_SHIFT,
+        )),
         hand_over_type,
         origin_type,
         network_id,
@@ -815,7 +816,7 @@ fn parse_event_linkage(bytes: &[u8]) -> Result<EventLinkageInfo> {
     let target_listed = (hdr[2] & TARGET_LISTED_MASK) != 0;
     let event_simulcast = (hdr[2] & EVENT_SIMULCAST_MASK) != 0;
     Ok(EventLinkageInfo {
-        reserved_future_use: hdr[2] & RESERVED_EVENT_MASK,
+        reserved_future_use: ReservedOnes::from_bits(u64::from(hdr[2] & RESERVED_EVENT_MASK)),
         target_event_id,
         target_listed,
         event_simulcast,
@@ -1435,7 +1436,9 @@ mod tests {
                 bytes[1] = (bytes.len() - 2) as u8;
                 let d = LinkageDescriptor::parse(&bytes).unwrap();
                 match &d.linkage_data {
-                    LinkageData::MobileHandOver(m) => assert_eq!(m.reserved_future_use, r),
+                    LinkageData::MobileHandOver(m) => {
+                        assert_eq!(m.reserved_future_use.get(), u64::from(r))
+                    }
                     other => panic!("expected MobileHandOver, got {other:?}"),
                 }
                 let mut buf = vec![0u8; d.serialized_len()];
@@ -1448,7 +1451,9 @@ mod tests {
                 let bytes = [TAG, 10, 0, 1, 0, 2, 0, 3, 0x0D, 0xAB, 0xCD, hi | r];
                 let d = LinkageDescriptor::parse(&bytes).unwrap();
                 match &d.linkage_data {
-                    LinkageData::EventLinkage(e) => assert_eq!(e.reserved_future_use, r),
+                    LinkageData::EventLinkage(e) => {
+                        assert_eq!(e.reserved_future_use.get(), u64::from(r))
+                    }
                     other => panic!("expected EventLinkage, got {other:?}"),
                 }
                 let mut buf = vec![0u8; d.serialized_len()];
