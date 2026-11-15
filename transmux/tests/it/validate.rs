@@ -758,3 +758,18 @@ fn unknown_span_is_reported_not_conflated_with_a_zero_one() {
         "an untyped track's zero duration stays the declared-zero report: {codes:?}"
     );
 }
+
+#[test]
+fn unknown_video_span_is_reported_without_the_init_segment() {
+    // TEMP probe
+    let samples = video_samples(&fixture());
+    let mut unstated = samples.clone();
+    unstated[1] = Sample::timed(unstated[1].data.clone(), 512, 512, None);
+    let media = clean_media(1, 0, &unstated);
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
+    eprintln!("PROBE issues {issues:?}");
+    assert!(
+        has_code(&issues, "media.sample.timing"),
+        "an unstated video span must be reported without the init segment: {issues:?}"
+    );
+}
