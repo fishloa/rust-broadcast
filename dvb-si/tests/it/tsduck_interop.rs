@@ -242,7 +242,7 @@ fn decodes_tsduck_compiled_protection_message() {
                 seen = true;
                 assert_eq!(ext.kind(), Some(ExtensionTag::ProtectionMessage));
                 // TSDuck encoded reserved bits as all-ones; we must preserve them.
-                assert_eq!(pm.reserved, 0x0F);
+                assert_eq!(pm.reserved.get(), 0x0F);
                 assert_eq!(pm.component_tags, &[0x10, 0x20, 0x33]);
                 // Byte-exact round-trip of the descriptor TSDuck produced.
                 let mut buf = vec![0u8; ext.serialized_len()];
