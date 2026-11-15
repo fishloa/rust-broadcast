@@ -42,7 +42,7 @@ fn main() {
                 println!("    Sample: {}", vsf.sample.name());
             }
             if let Some(ts) = header.video_timestamp {
-                println!("  Video timestamp: 0x{:08x}", ts);
+                println!("  Video timestamp: {ts} (0x{:08x})", ts.ticks());
             }
         }
         Err(e) => {

@@ -95,12 +95,13 @@ const SET_KEY_BYTE12: u8 = 0x01;
 /// (reserved) is not checked (some dark extensions may not zero it).
 #[must_use]
 pub fn is_local_set_key(key: &UlBytes) -> bool {
-    SET_KEY_FIXED.iter().all(|&(i, v)| key[i] == v)
-        && ItemLengthMode::from_registry_designator_byte(key[5]).is_some()
-        && key[8] == 0x0D
-        && key[9] == SET_KEY_BYTE10
-        && key[10] == 0x01
-        && key[12] == SET_KEY_BYTE12
+    let bytes = key.as_bytes();
+    SET_KEY_FIXED.iter().all(|&(i, v)| bytes[i] == v)
+        && ItemLengthMode::from_registry_designator_byte(bytes[5]).is_some()
+        && bytes[8] == 0x0D
+        && bytes[9] == SET_KEY_BYTE10
+        && bytes[10] == 0x01
+        && bytes[12] == SET_KEY_BYTE12
 }
 
 /// Set Kind (Table 17 — this crate's byte 14/15 identification list for
@@ -327,7 +328,7 @@ impl Eq for LocalSetItem<'_> {}
 /// `PartialEq`/`Eq` compare only `key`/`items` — `len_size` is a
 /// serialization-*form* preference, not part of the Set's logical value
 /// (see [`crate::KlvItem`]'s doc; issue #1047 / audit MX-C1).
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct LocalSet<'a> {
     /// The Set Key (all 16 bytes, as found on the wire).
     pub key: UlBytes,
@@ -347,11 +348,21 @@ impl PartialEq for LocalSet<'_> {
 
 impl Eq for LocalSet<'_> {}
 
+impl Default for LocalSet<'_> {
+    fn default() -> Self {
+        Self {
+            key: UlBytes::NULL,
+            items: Vec::new(),
+            len_size: BerLength::default(),
+        }
+    }
+}
+
 impl<'a> LocalSet<'a> {
     /// This Set's Kind (Table 17), from its Key's bytes 14/15.
     #[must_use]
     pub fn kind(&self) -> StructuralSetKind {
-        StructuralSetKind::from_bytes(self.key[13], self.key[14])
+        StructuralSetKind::from_bytes(self.key.as_bytes()[13], self.key.as_bytes()[14])
     }
 
     /// This Set's item length mode (Table 16 byte 6).
@@ -363,7 +374,7 @@ impl<'a> LocalSet<'a> {
     /// self-constructed `LocalSet` with an invalid key.
     #[must_use]
     pub fn item_length_mode(&self) -> ItemLengthMode {
-        ItemLengthMode::from_registry_designator_byte(self.key[5])
+        ItemLengthMode::from_registry_designator_byte(self.key.as_bytes()[5])
             .unwrap_or(ItemLengthMode::TwoByte)
     }
 
@@ -378,7 +389,7 @@ impl<'a> LocalSet<'a> {
     #[must_use]
     pub fn build_key(kind: StructuralSetKind, mode: ItemLengthMode) -> UlBytes {
         let [b14, b15] = kind.to_bytes();
-        [
+        UlBytes([
             0x06,
             0x0E,
             0x2B,
@@ -395,7 +406,7 @@ impl<'a> LocalSet<'a> {
             b14,
             b15,
             0x00,
-        ]
+        ])
     }
 
     /// Parse one Local Set (Key + BER Length + items) from the start of
@@ -412,7 +423,7 @@ impl<'a> LocalSet<'a> {
         // is_local_set_key already confirmed key[5] is a valid mode byte;
         // TwoByte is unreachable here but kept as the same documented
         // fallback item_length_mode() uses, rather than a second code path.
-        let mode = ItemLengthMode::from_registry_designator_byte(key[5])
+        let mode = ItemLengthMode::from_registry_designator_byte(key.as_bytes()[5])
             .unwrap_or(ItemLengthMode::TwoByte);
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
@@ -548,7 +559,7 @@ impl Serialize for LocalSet<'_> {
         }
         let total = self.serialized_len();
         need_out(buf, total)?;
-        buf[..16].copy_from_slice(&self.key);
+        buf[..16].copy_from_slice(self.key.as_ref());
         let mode = self.item_length_mode();
         let items_len: usize = self
             .items
@@ -733,7 +744,7 @@ mod tests {
     #[test]
     fn serialize_rejects_bad_key() {
         let mut key = LocalSet::build_key(StructuralSetKind::Preface, ItemLengthMode::TwoByte);
-        key[5] = 0xFF; // not a valid registry designator byte
+        key.0[5] = 0xFF; // not a valid registry designator byte
         let set = LocalSet {
             key,
             items: alloc::vec::Vec::new(),
@@ -754,7 +765,7 @@ mod tests {
         // One item: tag(2) + len(2) + value(4) = 8 bytes, well within
         // short form; force a non-minimal 2-byte long-form token instead.
         let mut original = alloc::vec::Vec::new();
-        original.extend_from_slice(&key);
+        original.extend_from_slice(key.as_ref());
         original.push(0x81);
         original.push(8);
         original.extend_from_slice(&0x3B02u16.to_be_bytes());
@@ -780,7 +791,7 @@ mod tests {
         // Outer items_len = tag(2) + item-len-token(2, non-minimal) +
         // value(4) = 8.
         let mut original = alloc::vec::Vec::new();
-        original.extend_from_slice(&key);
+        original.extend_from_slice(key.as_ref());
         original.push(8); // outer: minimal short form
         original.extend_from_slice(&0x3C01u16.to_be_bytes());
         original.push(0x81); // item length: long form, 1 following byte

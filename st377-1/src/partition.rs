@@ -227,7 +227,7 @@ impl PartitionPack {
         key[13] = kind.to_byte();
         key[14] = status.to_byte();
         key[15] = 0x00;
-        key
+        UlBytes(key)
     }
 
     /// True if `key` matches the Partition Pack Key (Table 4): the fixed
@@ -244,6 +244,7 @@ impl PartitionPack {
     /// checked too, not just the shared prefix.
     #[must_use]
     pub fn is_partition_key(key: &UlBytes) -> bool {
+        let key = key.as_bytes();
         key[0..7] == PARTITION_KEY_PREFIX
             && key[8..12] == PARTITION_KEY_MID
             && key[12] == 0x01
@@ -251,15 +252,19 @@ impl PartitionPack {
     }
 
     fn parse_key(key: &UlBytes) -> Result<(PartitionKind, PartitionStatus)> {
-        if key[0..7] != PARTITION_KEY_PREFIX || key[8..12] != PARTITION_KEY_MID || key[12] != 0x01 {
+        let bytes = key.as_bytes();
+        if bytes[0..7] != PARTITION_KEY_PREFIX
+            || bytes[8..12] != PARTITION_KEY_MID
+            || bytes[12] != 0x01
+        {
             return Err(Error::KeyPrefixMismatch {
                 what: "Partition Pack (Table 4)",
             });
         }
-        let kind = PartitionKind::from_byte(key[13])?;
-        let status = PartitionStatus::from_byte(key[14])?;
+        let kind = PartitionKind::from_byte(bytes[13])?;
+        let status = PartitionStatus::from_byte(bytes[14])?;
         if kind == PartitionKind::Footer && status.is_open() {
-            return Err(Error::OpenFooterPartition { byte: key[14] });
+            return Err(Error::OpenFooterPartition { byte: bytes[14] });
         }
         Ok((kind, status))
     }
@@ -366,7 +371,7 @@ impl Serialize for PartitionPack {
         }
         let total = self.serialized_len();
         need_out(buf, total)?;
-        buf[0..16].copy_from_slice(&Self::key(self.kind, self.status));
+        buf[0..16].copy_from_slice(Self::key(self.kind, self.status).as_ref());
         let batch = match self.essence_containers_batch.as_ref() {
             Some(parsed) if parsed.items() == self.essence_containers.as_slice() => {
                 parsed.serialize()?
@@ -399,7 +404,7 @@ impl Serialize for PartitionPack {
         pos += 8;
         buf[pos..pos + 4].copy_from_slice(&self.body_sid.to_be_bytes());
         pos += 4;
-        buf[pos..pos + 16].copy_from_slice(&self.operational_pattern);
+        buf[pos..pos + 16].copy_from_slice(self.operational_pattern.as_ref());
         pos += 16;
         buf[pos..pos + batch.len()].copy_from_slice(&batch);
         pos += batch.len();
@@ -410,6 +415,7 @@ impl Serialize for PartitionPack {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
 
     fn sample(kind: PartitionKind, status: PartitionStatus) -> PartitionPack {
         PartitionPack {
@@ -426,8 +432,8 @@ mod tests {
             index_sid: 0,
             body_offset: 0,
             body_sid: 1,
-            operational_pattern: [0xAA; 16],
-            essence_containers: alloc::vec![[0xBBu8; 16]],
+            operational_pattern: UlBytes([0xAA; 16]),
+            essence_containers: alloc::vec![UlBytes([0xBBu8; 16])],
             essence_containers_batch: None,
             len_size: BerLength::Minimal,
         }
@@ -446,7 +452,7 @@ mod tests {
         // Same fields, but force a non-minimal 3-byte long-form length
         // token (0x82 hi lo) instead of the 1-byte short form.
         let mut original = alloc::vec::Vec::new();
-        original.extend_from_slice(&PartitionPack::key(pp.kind, pp.status));
+        original.extend_from_slice(PartitionPack::key(pp.kind, pp.status).as_ref());
         original.push(0x82);
         original.extend_from_slice(&(value_len as u16).to_be_bytes());
         let mut rest = alloc::vec![0u8; minimal_len];
@@ -501,7 +507,7 @@ mod tests {
     fn parse_rejects_open_footer_key() {
         let key = PartitionPack::key(PartitionKind::Footer, PartitionStatus::OpenComplete);
         let mut bytes = alloc::vec::Vec::new();
-        bytes.extend_from_slice(&key);
+        bytes.extend_from_slice(key.as_ref());
         bytes.push(0); // zero-length value (short-form BER)
         assert!(matches!(
             PartitionPack::parse(&bytes),
