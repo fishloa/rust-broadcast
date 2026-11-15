@@ -17,6 +17,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::RtmpError;
 use crate::chunk::{MAX_CHUNK_SIZE, Message};
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
