@@ -52,9 +52,20 @@ fn main() {
         pes.push(v);
     }
 
+    // Real captures declare a `PES_packet_length` longer than the bytes that
+    // arrive before the next unit starts, so read each unit with the lenient
+    // `parse_unit` and report any shortfall rather than rejecting the stream.
     let mut pts_ticks = Vec::new();
+    let mut short_units = 0usize;
     for raw in &pes {
-        let pkt = PesPacket::parse(raw).expect("captured PES must parse");
+        let (pkt, truncation) = PesPacket::parse_unit(raw).expect("captured PES must parse");
+        if let Some(t) = truncation {
+            short_units += 1;
+            println!(
+                "truncated unit : declared {} bytes, {} available",
+                t.declared, t.available
+            );
+        }
         if let Some(pts) = pkt.header.as_ref().and_then(|h| h.pts) {
             assert!(pts.ticks() < (1 << 33), "PTS must be 33-bit");
             pts_ticks.push(pts.ticks());
@@ -62,9 +73,10 @@ fn main() {
     }
 
     println!(
-        "PID {PES_PID:#06X}: {} PES packets, {} with PTS",
+        "PID {PES_PID:#06X}: {} PES packets, {} with PTS, {} truncated",
         pes.len(),
-        pts_ticks.len()
+        pts_ticks.len(),
+        short_units
     );
     if let (Some(&min), Some(&max)) = (pts_ticks.iter().min(), pts_ticks.iter().max()) {
         let span = (max - min) as f64 / 90_000.0;
