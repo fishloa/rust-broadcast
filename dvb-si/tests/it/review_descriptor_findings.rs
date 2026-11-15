@@ -44,19 +44,19 @@ where
 // `(value & MASK)` in a serializer is a checked `fit_mask`; these five sites
 // still mask a hand-set over-range reserved value into a different value.
 
-/// nordig.rs:152 `(entry.reserved & 1) << 6`: reserved = 2 is written as 0.
+/// nordig.rs `(entry.reserved & 1) << 6`: the field is now a typed
+/// `ReservedOnes<1>`, so an over-range value is unrepresentable — it is dropped
+/// at construction (`from_bits(2)` keeps the low bit) and the serializer writes
+/// the stored value with no re-mask.
 #[test]
-fn nordig_v1_reserved_over_range_is_rejected_not_masked() {
+fn nordig_v1_reserved_over_range_is_unrepresentable_not_masked() {
     // tag 0x83, one entry: service 0x0001, visible=1 reserved=1 LCN 5.
     let bytes = [0x83, 4, 0x00, 0x01, 0xC0, 0x05];
     let mut d = NordigLogicalChannelV1::parse(&bytes).unwrap();
     assert_eq!(ser(&d).unwrap(), bytes);
-    d.entries[0].reserved = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved=2 must be FieldOverflow, got {r:?}"
-    );
+    d.entries[0].reserved = broadcast_common::reserved::ReservedOnes::from_bits(2);
+    assert_eq!(d.entries[0].reserved.get(), 0);
+    assert_eq!(ser(&d).unwrap(), [0x83, 4, 0x00, 0x01, 0x80, 0x05]);
 }
 
 /// extension/cp.rs:89 `self.reserved_future_use & 0b111`.
