@@ -67,20 +67,21 @@ impl RandomIndexPack {
         key[12] = 0x01; // Structure Kind
         key[13..15].copy_from_slice(&RIP_KEY_TAIL);
         key[15] = 0x00; // reserved
-        key
+        crate::types::UlBytes(key)
     }
 
     /// True if `key` is the Random Index Pack Key (Table 29), ignoring
     /// byte 8 (registry version, wildcard).
     #[must_use]
-    pub fn is_rip_key(key: &[u8; 16]) -> bool {
+    pub fn is_rip_key(key: &crate::types::UlBytes) -> bool {
+        let key = key.as_bytes();
         key[0..7] == RIP_KEY_PREFIX
             && key[8..12] == RIP_KEY_MID
             && key[12] == 0x01
             && key[13..15] == RIP_KEY_TAIL
     }
 
-    fn check_key(key: &[u8; 16]) -> Result<()> {
+    fn check_key(key: &crate::types::UlBytes) -> Result<()> {
         if Self::is_rip_key(key) {
             Ok(())
         } else {
@@ -94,7 +95,7 @@ impl RandomIndexPack {
     /// trailing overall-length field) from `bytes`.
     pub fn parse_prefix(bytes: &[u8]) -> Result<(Self, usize)> {
         need_in(bytes, 16, "Random Index Pack key")?;
-        let key: [u8; 16] = ul_bytes_from_prefix(bytes);
+        let key = ul_bytes_from_prefix(bytes);
         Self::check_key(&key)?;
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;
@@ -197,7 +198,7 @@ impl Serialize for RandomIndexPack {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
         need_out(buf, total)?;
-        buf[0..16].copy_from_slice(&Self::key());
+        buf[0..16].copy_from_slice(Self::key().as_ref());
         let value_len = self.partitions.len() * 12 + 4;
         let len_size = encode_ber_length_as(value_len as u64, self.len_size, &mut buf[16..])?;
         let mut pos = 16 + len_size;
@@ -258,7 +259,7 @@ mod tests {
         assert!(value_len <= 0x7F);
 
         let mut original = alloc::vec::Vec::new();
-        original.extend_from_slice(&RandomIndexPack::key());
+        original.extend_from_slice(RandomIndexPack::key().as_ref());
         original.push(0x81); // long form, 1 following byte
         original.push(value_len as u8);
         for p in &partitions {

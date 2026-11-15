@@ -8,12 +8,12 @@
 
 use atsc3_route::{RouteFecPayloadId, RoutePacket, SourceFecPayloadId};
 use broadcast_common::{Parse, Serialize};
-use rmt_flute::{HeaderExtension, LctHeader};
+use rmt_flute::{HeaderExtension, LctHeader, Toi, Tsi};
 
 fn main() {
     let cci = [0u8; 4]; // C = 00, ROUTE-mandated
-    let tsi = 3000u32.to_be_bytes(); // S = 1, H = 0
-    let toi = 6034u32.to_be_bytes(); // O = 01, H = 0
+    let tsi = Tsi::new(3000, 4).unwrap(); // S = 1, H = 0
+    let toi = Toi::new(6034, 4).unwrap(); // O = 01, H = 0
 
     // EXT_FTI (HET=64, HEL=4): 14-byte HEC, matching the real fixture's
     // shape (exact field semantics of the HEC beyond byte 4-5 are
@@ -29,8 +29,8 @@ fn main() {
         close_object: false,
         codepoint: 128, // indirect -- resolved via SrcFlow.Payload@codePoint=128 in the S-TSID
         cci: &cci,
-        tsi: &tsi,
-        toi: &toi,
+        tsi,
+        toi,
         extensions,
     };
 
@@ -51,9 +51,9 @@ fn main() {
     let re = RoutePacket::parse(&bytes).expect("round-trip parse");
     assert_eq!(re, pkt);
     println!(
-        "round trip OK: TSI={:?} TOI={:?} CP={} SPI={}",
-        re.lct.tsi,
-        re.lct.toi,
+        "round trip OK: TSI={} TOI={} CP={} SPI={}",
+        re.lct.tsi.value(),
+        re.lct.toi.value(),
         re.codepoint(),
         re.spi()
     );
