@@ -30,7 +30,7 @@ fn origin() -> HlsOrigin {
             .with_part_capacity(nz(64)),
     );
     HlsOrigin::new(
-        HlsOriginConfig::new(trunk, 4.0, nz(4))
+        HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
             .with_instance(7)
             .with_declared_bandwidth_bps(5_000_000),
     )
@@ -114,7 +114,7 @@ fn set_init_reset_clears_frame_rate() {
             .with_part_capacity(nz(64)),
     );
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(trunk, 4.0, nz(4))
+        HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
             .with_container(Container::Fmp4)
             .with_instance(7)
             .with_declared_bandwidth_bps(5_000_000),
@@ -143,7 +143,7 @@ const NANOS_PER_SEC: u64 = 1_000_000_000;
 fn ts_origin_fed_with(
     tracks: Vec<transmux::Track>,
     shape: impl Fn(usize, i64, &mut transmux::Sample) -> bool,
-) -> (HlsOrigin, Vec<(Vec<u8>, f64)>) {
+) -> (HlsOrigin, Vec<(Vec<u8>, Duration)>) {
     let specs: Vec<TrackSpec> = tracks.iter().map(|t| t.spec.clone()).collect();
     let mut segmenter = transmux::ts_hls::StreamingTsHlsSegmenter::new(
         specs.clone(),
@@ -184,7 +184,7 @@ fn ts_origin_fed_with(
     let origin = HlsOrigin::new(
         HlsOriginConfig::new(
             Arc::clone(&trunk),
-            f64::from(SEGMENT_TARGET_SECS) + 1.0,
+            Duration::from_secs(u64::from(SEGMENT_TARGET_SECS) + 1),
             nz(64),
         )
         .with_container(Container::MpegTs)
@@ -197,7 +197,7 @@ fn ts_origin_fed_with(
     let mut published = Vec::new();
     for (n, segment) in segmenter.take_ready().into_iter().enumerate() {
         published.push((segment.bytes.clone(), segment.duration));
-        let duration = Duration::from_secs_f64(segment.duration);
+        let duration = segment.duration;
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(segment.bytes),
@@ -209,7 +209,7 @@ fn ts_origin_fed_with(
                 },
             ))
             .expect("monotonic");
-        start += (segment.duration * NANOS_PER_SEC as f64) as u64;
+        start += u64::try_from(segment.duration.as_nanos()).unwrap_or(u64::MAX);
     }
     (origin, published)
 }
@@ -344,7 +344,10 @@ fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant
         "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n",
     );
     for (n, (bytes, duration)) in segments.iter().enumerate() {
-        media.push_str(&format!("#EXTINF:{duration:.3},\nseg{n}.ts\n"));
+        media.push_str(&format!(
+            "#EXTINF:{:.3},\nseg{n}.ts\n",
+            duration.as_secs_f64()
+        ));
         std::fs::write(dir.join(format!("seg{n}.ts")), bytes).unwrap();
     }
     media.push_str("#EXT-X-ENDLIST\n");
@@ -370,7 +373,7 @@ fn video_piece(
     tracks: &[transmux::Track],
     samples: usize,
     ticks: u32,
-) -> (Vec<TrackSpec>, Vec<(Vec<u8>, f64)>) {
+) -> (Vec<TrackSpec>, Vec<(Vec<u8>, Duration)>) {
     let track = &tracks[0];
     let specs = vec![track.spec.clone()];
     let mut segmenter = transmux::ts_hls::StreamingTsHlsSegmenter::new(
@@ -421,7 +424,7 @@ impl Feed {
         );
         let writer = trunk.segment_writer().expect("segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(trunk, 2.0, nz(3))
+            HlsOriginConfig::new(trunk, core::time::Duration::from_secs(2), nz(3))
                 .with_container(Container::MpegTs)
                 .with_instance(7)
                 .with_declared_bandwidth_bps(5_000_000),
@@ -435,13 +438,13 @@ impl Feed {
         }
     }
 
-    fn publish(&mut self, piece: &[(Vec<u8>, f64)]) {
+    fn publish(&mut self, piece: &[(Vec<u8>, Duration)]) {
         for (bytes, duration) in piece {
             self.writer
                 .publish_segment(SegmentEntry::new(
                     Bytes::from(bytes.clone()),
                     SegmentSeq::new(self.next),
-                    Duration::from_secs_f64(*duration),
+                    *duration,
                     broadcast_common::Timestamp::from_nanos(u64::from(self.next) * NANOS_PER_SEC),
                     transmux::SegmentMeta {
                         discontinuous: false,

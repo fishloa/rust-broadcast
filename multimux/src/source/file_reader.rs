@@ -354,7 +354,7 @@ impl FileReader {
         // it.
         let pass_duration_secs = pass_ranges
             .iter()
-            .map(|r| r.span_secs + r.frame_secs)
+            .map(|r| (r.span + r.frame).as_secs_f64())
             .fold(0.0f64, f64::max);
 
         announce_tracks(&writer, &track_refs);

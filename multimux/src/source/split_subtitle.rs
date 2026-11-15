@@ -224,7 +224,7 @@ mod tests {
         );
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(2.0)
+                .with_target_duration(std::time::Duration::from_secs(2))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )

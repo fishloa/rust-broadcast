@@ -31,7 +31,7 @@ pub(crate) fn build_core_followers(
     route: &RouteHandle,
     trunk: &Trunk,
     mapped: &[(usize, TrackSpec)],
-    target_duration_secs: f64,
+    target_duration: std::time::Duration,
     part_target: std::time::Duration,
 ) -> Vec<media_plane::segmenter::audio::AudioFollower> {
     if mapped.is_empty() {
@@ -45,7 +45,7 @@ pub(crate) fn build_core_followers(
             let mut core = media_plane::segmenter::audio::AudioFollower::try_new(
                 spec,
                 &serving.trunk,
-                target_duration_secs,
+                target_duration,
                 part_target,
             )?
             .with_rendition(*rendition);

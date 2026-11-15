@@ -66,7 +66,7 @@ fn driver_feed_nanos() -> u64 {
 fn driver_backed_route_serves_real_media_through_ll_hls() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -133,7 +133,7 @@ fn burst_driver(frames: u32) -> IngestDriver<TsIngestSession> {
 fn a_large_queued_burst_is_segmented_in_bounded_batches() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -156,7 +156,7 @@ fn a_large_queued_burst_is_segmented_in_bounded_batches() {
 fn a_small_burst_is_segmented_in_one_call() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -171,7 +171,7 @@ fn a_small_burst_is_segmented_in_one_call() {
 async fn a_large_queued_burst_does_not_starve_another_task() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -203,7 +203,7 @@ fn drive_program_segmenters_bumps_parts_and_segments_produced_counters() {
     crate::prometheus::install();
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     )
@@ -267,7 +267,7 @@ fn drive_program_segmenters_bumps_parts_and_segments_produced_counters() {
 fn samples_published_in_the_same_feed_as_new_program_are_still_segmented() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -304,7 +304,7 @@ fn samples_published_in_the_same_feed_as_new_program_are_still_segmented() {
 fn segmenter_feeds_the_same_trunk_the_driver_writes_samples_into() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -437,7 +437,7 @@ impl IngestSession for TwoProgramSession {
 fn two_programs_on_one_route_segment_independently() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     );
@@ -584,7 +584,7 @@ fn count_pmt_sections(ts_bytes: &[u8]) -> usize {
 fn ts_hls_mpts_route_serves_each_program_as_its_own_single_pmt_playlist() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     )
@@ -767,7 +767,7 @@ fn feed_until_a_segment_closes(
 fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -866,7 +866,7 @@ fn new_tracks_media_appears_in_output_after_mid_stream_addition() {
 fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -954,7 +954,7 @@ fn existing_tracks_are_uninterrupted_across_mid_stream_addition() {
 fn track_change_lands_on_segment_boundary() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -1013,7 +1013,7 @@ fn track_change_lands_on_segment_boundary() {
 fn dash_output_logs_and_continues_on_mid_stream_addition() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -1236,7 +1236,7 @@ impl GapRig {
         GapRig {
             route: RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(Duration::from_millis(250))
                     .with_window_segments(16),
             )
@@ -1418,7 +1418,7 @@ fn program_segmenter_notes_each_segments_start_media_time() {
 
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -1534,7 +1534,7 @@ impl IngestSession for MptsSession {
 fn mpts_programs_segment_independently() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     );
@@ -1572,7 +1572,7 @@ fn mpts_programs_segment_independently() {
 fn ts_hls_mpts_serves_one_pmt_per_program() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8)
             .with_container(Container::MpegTs),
@@ -1628,7 +1628,7 @@ fn jump_source_starts(jump: i64) -> Vec<Option<u64>> {
     writer.set_tracks(vec![track_spec(TrackId::new(1))]);
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -1705,7 +1705,7 @@ fn sibling_trunk_built_by_the_host_carries_the_routes_trunk_config() {
     ]);
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8)
             .with_audio_renditions(vec![hls_runtime::server::AudioRenditionDecl {
@@ -1736,7 +1736,7 @@ fn sibling_trunk_built_by_the_host_carries_the_routes_trunk_config() {
         &route,
         &trunk,
         &mapped,
-        1.0,
+        Duration::from_secs(1),
         Duration::from_millis(250),
     );
     assert_eq!(followers.len(), 1, "one audio rendition, one follower");
@@ -1762,7 +1762,7 @@ fn sibling_trunk_built_by_the_host_carries_the_routes_trunk_config() {
 fn route_segments_without_any_output_auth() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(Duration::from_millis(250))
             .with_window_segments(8),
     );
@@ -1777,13 +1777,13 @@ fn route_segments_without_any_output_auth() {
 fn a_route_signals_its_own_config_to_the_segmenter() {
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(2.5)
+            .with_target_duration(std::time::Duration::from_millis(2500))
             .with_part_target(Duration::from_millis(333))
             .with_window_segments(12)
             .with_container(Container::MpegTs),
     );
     let config = route.segmenter_config();
-    assert_eq!(config.target_duration_secs, 2.5);
+    assert_eq!(config.target_duration, Duration::from_millis(2500));
     assert_eq!(config.part_target, Duration::from_millis(333));
     assert_eq!(config.window_segments_cap.get(), 12);
     assert_eq!(

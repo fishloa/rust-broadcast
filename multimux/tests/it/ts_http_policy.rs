@@ -46,7 +46,7 @@ fn timeouts(read: Duration) -> broadcast_common::timeouts::Timeouts {
 async fn run(route: &TsHttpRoute) -> (Result<(), MultimuxError>, Arc<RouteHandle>) {
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
@@ -172,7 +172,7 @@ async fn mid_body_stall_fails_with_the_stall_reason() {
     let route = TsHttpRoute::new("stalled", url).with_timeouts(timeouts(STALL_READ));
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));

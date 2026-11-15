@@ -17,6 +17,7 @@
 use crate::hub_fixtures::dummy_avc_config;
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
+use core::time::Duration;
 use transmux::TrackId;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,
@@ -76,7 +77,7 @@ fn video_track_b() -> TrackSpec {
 /// Timescale = 90_000 ticks/s; each sample is 45_000 ticks (0.5 s).
 /// Two sync samples → one cut (≥ target_ticks = 90_000).
 fn make_segmenter(track: TrackSpec) -> Segmenter {
-    Segmenter::new(vec![track], timescale(1000), 1.0).unwrap()
+    Segmenter::new(vec![track], timescale(1000), Duration::from_secs(1)).unwrap()
 }
 
 // ---------------------------------------------------------------------------

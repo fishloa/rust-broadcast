@@ -522,7 +522,7 @@ mod tests {
         }
         let route = std::sync::Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -549,7 +549,7 @@ mod tests {
     async fn the_media_playlist_stays_valid_across_a_source_reconnect() {
         let route = std::sync::Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -619,7 +619,7 @@ mod tests {
     fn part(seq: u32, idx: u32) -> PartInfo {
         PartInfo::new(
             vec![0x10 + idx as u8; 4],
-            0.5,
+            Duration::from_millis(500),
             seq,
             broadcast_hls::PartIndex::new(idx),
         )
@@ -627,7 +627,7 @@ mod tests {
     }
 
     fn seg(seq: u32) -> SegmentInfo {
-        SegmentInfo::new(vec![0x20 + seq as u8; 8], 4.0, seq).with_part_count(2)
+        SegmentInfo::new(vec![0x20 + seq as u8; 8], Duration::from_secs(4), seq).with_part_count(2)
     }
 
     /// A populated route: a closed segment 1, plus two live parts of
@@ -641,7 +641,7 @@ mod tests {
     fn make_route() -> Arc<RouteHandle> {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -915,7 +915,7 @@ mod tests {
         // route connecting and its first `SessionEvent::NewProgram`.
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -950,6 +950,7 @@ mod ts_tests {
     use super::*;
     use crate::route::{RouteConfig, RouteHandle};
     use crate::testutil::body_string;
+    use std::time::Duration;
     use transmux::Container;
     use transmux::ll_hls::SegmentInfo;
 
@@ -960,7 +961,7 @@ mod ts_tests {
     /// `media_playlist_version_is_broadcast_hls_derived_not_hardcoded` below
     /// has a real, non-trivial version to compare against.
     fn seg(seq: u32, byte: u8) -> SegmentInfo {
-        SegmentInfo::new(vec![byte; 8], 4.2, seq)
+        SegmentInfo::new(vec![byte; 8], Duration::from_millis(4200), seq)
     }
 
     /// A populated classic-TS route: two closed segments. Publishes
@@ -971,7 +972,7 @@ mod ts_tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -1209,7 +1210,7 @@ mod ts_tests {
         let route = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(4),
             )

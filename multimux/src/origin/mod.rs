@@ -167,26 +167,19 @@ impl From<&crate::config::Config> for HttpLimits {
         // (a caller-constructed `Config`), so convert defensively (item 7):
         // clamp into a sane range instead of panicking.
         HttpLimits {
-            request_timeout: secs_or_default(cfg.request_timeout_secs, DEFAULT_REQUEST_TIMEOUT),
+            request_timeout: timeout_or_default(cfg.request_timeout, DEFAULT_REQUEST_TIMEOUT),
             max_concurrent_requests: cfg.max_concurrent_requests,
             max_blocking_reloads_per_route: cfg.max_blocking_reloads_per_route,
             max_request_body_bytes: cfg.max_request_body_bytes,
-            queue_timeout: secs_or_default(
-                cfg.concurrency_queue_timeout_secs,
-                DEFAULT_QUEUE_TIMEOUT,
-            ),
+            queue_timeout: timeout_or_default(cfg.concurrency_queue, DEFAULT_QUEUE_TIMEOUT),
         }
     }
 }
 
-/// A finite, positive `Duration` from `secs`, or `fallback` for a negative,
-/// NaN or overflowing value — never a panic (item 7).
-fn secs_or_default(secs: f64, fallback: Duration) -> Duration {
-    if secs.is_finite() && secs > 0.0 {
-        Duration::try_from_secs_f64(secs).unwrap_or(fallback)
-    } else {
-        fallback
-    }
+/// `timeout` when positive, or `fallback` for a zero value — never a panic. A
+/// `Duration` is finite and non-negative already (item 7).
+fn timeout_or_default(timeout: Duration, fallback: Duration) -> Duration {
+    if timeout.is_zero() { fallback } else { timeout }
 }
 
 /// How long `serve` waits for a route's supervisor task to notice shutdown
@@ -363,7 +356,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(std::time::Duration::from_secs(4))
             .with_part_target(Duration::from_millis(500))
             .with_window_segments(4),
     ));
@@ -1405,7 +1398,7 @@ async fn serve_with_registry_impl(
     );
 
     let mut streams: HashMap<String, StreamRoute> = HashMap::new();
-    let target_duration_secs = config.target_duration_secs;
+    let target_duration = config.target_duration;
     let part_target = config.part_target;
     let cancel = tokio_util::sync::CancellationToken::new();
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
@@ -1427,7 +1420,7 @@ async fn serve_with_registry_impl(
         // see numbers reused for different media (audit r07-C5, #1083).
         let archive_floor = admin::archive_floor_of(route).await;
         let route_config = RouteConfig::default()
-            .with_target_duration_secs(target_duration_secs)
+            .with_target_duration(target_duration)
             .with_part_target(part_target)
             .with_window_segments(config.window_segments)
             .with_container(route_container(route))
@@ -2107,7 +2100,7 @@ fn spawn_ingest(
                 name,
                 params: params.clone(),
                 store: ctx.store,
-                target_duration_secs: config.target_duration_secs,
+                target_duration: config.target_duration,
                 part_target: config.part_target,
                 cancel: ctx.cancel,
             })?
@@ -2280,7 +2273,7 @@ mod tests {
         let store = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -2353,7 +2346,7 @@ mod tests {
         let store = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -2497,7 +2490,7 @@ mod tests {
         let store = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -2530,7 +2523,7 @@ mod tests {
         let store = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -2580,7 +2573,7 @@ mod tests {
         let store = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -2693,7 +2686,7 @@ mod tests {
     async fn both_outputs_serve_from_shared_segments_and_mpd_resolves() {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -2713,7 +2706,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], 4.0, 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
 
@@ -2809,7 +2803,7 @@ mod tests {
     async fn dash_only_route_has_no_llhls_routes() {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -2859,7 +2853,7 @@ mod tests {
     async fn ll_dash_output_signals_and_resolves_alongside_dash_and_llhls() {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -2879,7 +2873,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], 4.0, 1).with_part_count(2),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(2),
             )
             .expect("add_segment");
         // Live parts of the in-progress segment (seq 2) -- not yet closed.
@@ -2887,7 +2882,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             transmux::ll_hls::PartInfo::new(
                 vec![0x50; 4],
-                0.5,
+                Duration::from_millis(500),
                 2,
                 broadcast_hls::PartIndex::new(0),
             )
@@ -2897,7 +2892,7 @@ mod tests {
             crate::route::SPTS_PROGRAM_ID,
             transmux::ll_hls::PartInfo::new(
                 vec![0x51; 4],
-                0.5,
+                Duration::from_millis(500),
                 2,
                 broadcast_hls::PartIndex::new(1),
             )
@@ -2990,7 +2985,8 @@ mod tests {
             store_for_close
                 .add_segment(
                     crate::route::SPTS_PROGRAM_ID,
-                    transmux::ll_hls::SegmentInfo::new(vec![0x99; 8], 1.0, 2).with_part_count(2), // distinct from the concatenated parts
+                    transmux::ll_hls::SegmentInfo::new(vec![0x99; 8], Duration::from_secs(1), 2)
+                        .with_part_count(2), // distinct from the concatenated parts
                 )
                 .expect("add_segment");
         });
@@ -3017,7 +3013,7 @@ mod tests {
     async fn manifest_and_resource_responses_carry_expected_cache_control_and_cors() {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -3037,7 +3033,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], 4.0, 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         let mut streams = HashMap::new();
@@ -3089,7 +3086,7 @@ mod tests {
     async fn origin_response_headers_match_golden() {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -3109,7 +3106,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], 4.0, 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         // Probe a real instance-named init resource (`init-{track}-{instance}-
@@ -3274,7 +3272,7 @@ mod tests {
     async fn global_timeout_layer_cuts_off_a_slow_blocking_request() {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -3283,7 +3281,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], 4.0, 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         let mut streams = HashMap::new();
@@ -3345,7 +3344,7 @@ mod tests {
         let mut streams = HashMap::new();
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -3354,7 +3353,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], 4.0, 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         streams.insert(
@@ -3448,7 +3448,7 @@ mod tests {
         let mut streams = HashMap::new();
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -3457,7 +3457,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], 1.0, 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(1), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         streams.insert(
@@ -3529,24 +3530,25 @@ mod tests {
     /// `Config` — a NaN/negative/overflowing timeout falls back to the
     /// default rather than `Duration::from_secs_f64`'s panic.
     ///
-    /// Biting test: use `Duration::from_secs_f64` directly and a NaN
-    /// `request_timeout_secs` panics.
+    /// An unvalidated config's zero (or otherwise unusable) timeout falls back
+    /// to a positive default rather than a zero one. A `Duration` cannot be NaN
+    /// or negative, so only zero and an absurd value remain reachable.
     #[test]
     fn http_limits_from_an_unvalidated_config_does_not_panic() {
-        for bad in [f64::NAN, f64::INFINITY, -1.0, 0.0, f64::MAX] {
+        for bad in [std::time::Duration::ZERO, std::time::Duration::MAX] {
             let cfg = crate::config::Config {
-                request_timeout_secs: bad,
-                concurrency_queue_timeout_secs: bad,
+                request_timeout: bad,
+                concurrency_queue: bad,
                 ..crate::config::Config::default()
             };
             let limits = HttpLimits::from(&cfg);
             assert!(
                 limits.request_timeout > std::time::Duration::ZERO,
-                "a bad request_timeout ({bad}) must fall back to a positive default"
+                "a bad request_timeout ({bad:?}) must fall back to a positive default"
             );
             assert!(
                 limits.queue_timeout > std::time::Duration::ZERO,
-                "a bad queue_timeout ({bad}) must fall back to a positive default"
+                "a bad queue_timeout ({bad:?}) must fall back to a positive default"
             );
         }
     }
@@ -3559,7 +3561,7 @@ mod tests {
         let store = Arc::new(
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(Duration::from_millis(500))
                     .with_window_segments(4),
             )
@@ -4344,7 +4346,7 @@ mod tests {
 
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -4354,7 +4356,7 @@ mod tests {
             name: "cam1".into(),
             params: serde_json::json!({"marker": "ok"}),
             store: store.clone(),
-            target_duration_secs: 4.0,
+            target_duration: std::time::Duration::from_secs(4),
             part_target: Duration::from_millis(500),
             cancel,
         })
@@ -4426,7 +4428,7 @@ mod tests {
         };
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -4578,8 +4580,8 @@ mod tests {
         // SRT-caller-dialing-nobody path resolve in well under a second
         // instead of waiting the production 30 s/10 s defaults.
         let config = crate::config::Config {
-            ingest_connect_timeout_secs: 0.2,
-            ingest_read_timeout_secs: 0.2,
+            ingest_connect_timeout: std::time::Duration::from_millis(200),
+            ingest_read_timeout: std::time::Duration::from_millis(200),
             ..crate::config::Config::default()
         };
 
@@ -4684,7 +4686,7 @@ mod tests {
             };
             let store = Arc::new(RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(config.target_duration_secs)
+                    .with_target_duration(config.target_duration)
                     .with_part_target(config.part_target)
                     .with_window_segments(config.window_segments),
             ));
@@ -4867,7 +4869,7 @@ mod tests {
     async fn egress_follows_a_replaced_trunk() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -4935,7 +4937,7 @@ mod tests {
     async fn follower_ends_when_the_egress_ends_or_the_route_is_cancelled() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -4959,7 +4961,7 @@ mod tests {
 
         let empty = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(Duration::from_millis(500))
                 .with_window_segments(4),
         ));

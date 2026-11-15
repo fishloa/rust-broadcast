@@ -29,7 +29,7 @@ use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
 /// Target full-segment duration, in seconds.
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 /// LL-HLS part target, in milliseconds.
 const PART_TARGET: Duration = Duration::from_millis(500);
 /// Rolling window depth: full segments this origin advertises in a
@@ -66,7 +66,7 @@ fn main() {
     let origin = HlsOrigin::new(
         HlsOriginConfig::new(
             std::sync::Arc::clone(&trunk),
-            TARGET_DURATION_SECS,
+            TARGET_DURATION,
             nz(WINDOW_SEGMENTS),
         )
         .with_low_latency(PART_TARGET),

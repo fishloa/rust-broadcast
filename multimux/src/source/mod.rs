@@ -137,20 +137,22 @@ pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// any other ingest error: log, mark the route reconnecting, retry with
 /// backoff, never a silent hang.
 pub fn ingest_timeouts(cfg: &crate::config::Config) -> Timeouts {
-    // `Duration::from_secs_f64` PANICS on a negative, NaN or overflowing
-    // value (audit run 7, W19). `Config::validate` rejects those, but a
-    // config built in-process (an embedder, an unvalidated admin add)
-    // reaches here without validation, so fall back to the default rather
-    // than panicking at startup — matching `HttpLimits::from`'s own clamp.
+    // `Config::validate` rejects a zero timeout, but a config built in-process
+    // (an embedder, an unvalidated admin add) reaches here without validation,
+    // so fall back to the default rather than a zero timeout — matching
+    // `HttpLimits::from`'s own clamp.
+    fn timeout_or_default(timeout: Duration, fallback: Duration) -> Duration {
+        if timeout.is_zero() { fallback } else { timeout }
+    }
     Timeouts::default()
-        .with_connect(
-            Duration::try_from_secs_f64(cfg.ingest_connect_timeout_secs)
-                .unwrap_or(DEFAULT_CONNECT_TIMEOUT),
-        )
-        .with_read_idle(
-            Duration::try_from_secs_f64(cfg.ingest_read_timeout_secs)
-                .unwrap_or(DEFAULT_READ_TIMEOUT),
-        )
+        .with_connect(timeout_or_default(
+            cfg.ingest_connect_timeout,
+            DEFAULT_CONNECT_TIMEOUT,
+        ))
+        .with_read_idle(timeout_or_default(
+            cfg.ingest_read_timeout,
+            DEFAULT_READ_TIMEOUT,
+        ))
 }
 
 // --- issue #805 task 2: driver-backed ingest <-> RouteHandle registry glue ---
@@ -511,7 +513,7 @@ mod driver_progress_tests {
         let mut driver = driver();
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -544,7 +546,7 @@ mod driver_progress_tests {
         let mut driver = driver();
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -584,7 +586,7 @@ mod driver_progress_tests {
         let mut driver = driver();
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -676,7 +678,7 @@ mod driver_progress_tests {
         );
         let route = crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -747,7 +749,7 @@ mod advance_route_tests {
     async fn advance_route_both_publishes_and_segments() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         );

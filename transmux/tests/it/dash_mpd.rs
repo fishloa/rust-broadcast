@@ -56,9 +56,9 @@ fn demux_media() -> Media {
 /// [`transmux::LlSegmenter::package`]'s merge so a segment boundary sees that
 /// segment's audio already buffered, matching real live-remux ordering).
 /// Returns the init segment plus every media segment's raw bytes.
-fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u8>>) {
+fn segment_via_segmenter(media: &Media, target: Duration) -> (Vec<u8>, Vec<Vec<u8>>) {
     let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    let mut seg = Segmenter::new(specs, media.movie_timescale, target_secs).expect("segmenter");
+    let mut seg = Segmenter::new(specs, media.movie_timescale, target).expect("segmenter");
     let init = seg.init_segment().expect("init segment");
 
     let anchor_id = media
@@ -171,7 +171,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
 
     // Real multi-segment cut (1.0 s target — the fixture's keyframes are
     // exactly 1.0 s apart, see module docs).
-    let (init, raw_segments) = segment_via_segmenter(&media, 1.0);
+    let (init, raw_segments) = segment_via_segmenter(&media, Duration::from_secs(1));
     assert!(
         raw_segments.len() >= 2,
         "expected multiple real segments, got {}",
@@ -306,7 +306,7 @@ fn parse_xs_duration_tenths(s: &str) -> u64 {
 #[test]
 fn segment_timeline_time_addressing_matches_tfdt() {
     let media = demux_media();
-    let (init, raw_segments) = segment_via_segmenter(&media, 1.0);
+    let (init, raw_segments) = segment_via_segmenter(&media, Duration::from_secs(1));
     assert!(raw_segments.len() >= 2);
     let recovered = recover_segment_timing(&init, &raw_segments);
 
@@ -494,8 +494,8 @@ fn static_mpd_needs_no_publish_time() {
 fn ll_dash_without_publish_time_is_rejected() {
     let media = demux_media();
     let err = transmux::ll_dash::LlDashPackager::new(
-        2.0,
-        0.5,
+        Duration::from_secs(2),
+        Duration::from_millis(500),
         Duration::from_secs(3),
         "2024-01-01T00:00:00Z",
     )
@@ -518,8 +518,8 @@ fn ll_dash_without_publish_time_is_rejected() {
 fn ll_dash_with_publish_time_carries_it() {
     let media = demux_media();
     let mut pkg = transmux::ll_dash::LlDashPackager::new(
-        2.0,
-        0.5,
+        Duration::from_secs(2),
+        Duration::from_millis(500),
         Duration::from_secs(3),
         "2024-01-01T00:00:00Z",
     )
@@ -766,8 +766,12 @@ fn ffprobe_reads_the_static_mpd_if_available() {
             .select_tracks_by(|tt| tt.spec.track_id == id)
             .expect("select single track");
         let track = &single.tracks[0];
-        let mut seg = Segmenter::new(vec![track.spec.clone()], media.movie_timescale, 100.0)
-            .expect("single-track segmenter");
+        let mut seg = Segmenter::new(
+            vec![track.spec.clone()],
+            media.movie_timescale,
+            Duration::from_secs(100),
+        )
+        .expect("single-track segmenter");
         let init = seg.init_segment().expect("init segment");
         for s in &track.samples {
             seg.push(id, s.clone()).expect("push sample");

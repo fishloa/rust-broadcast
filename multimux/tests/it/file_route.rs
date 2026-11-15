@@ -32,7 +32,7 @@ const TAIL_TOLERANCE_SECS: f64 = 0.1;
 fn file_config(bind: SocketAddr, path: String, loop_file: bool) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {

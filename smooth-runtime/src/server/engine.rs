@@ -46,7 +46,7 @@ const LOOK_AHEAD_FRAGMENT_COUNT: u32 = 0;
 /// above any real segment so one `Trunk` segment maps to exactly one Smooth
 /// fragment. Whole seconds because [`SmoothPackager::target_duration_secs`] is
 /// an integer.
-const SINGLE_SEGMENT_FRAGMENT_TARGET_SECS: u32 = 3600;
+const SINGLE_SEGMENT_FRAGMENT_TARGET: std::time::Duration = std::time::Duration::from_secs(3600);
 /// Bits per second floor of the advertised `Bitrate` for an AAC track.
 const MIN_AUDIO_BITRATE: u64 = 64_000;
 /// Bits per second ceiling of the advertised `Bitrate` for an AAC track (320
@@ -753,7 +753,7 @@ fn chunk_timeline(
     key: StreamKey,
 ) -> Result<Vec<ChunkTiming>, SmoothOriginError> {
     let packager = SmoothPackager {
-        target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
+        target_duration: SINGLE_SEGMENT_FRAGMENT_TARGET,
     };
     let mut chunks: Vec<ChunkTiming> = Vec::with_capacity(segments.len());
     for (sequence, bytes) in segments {
@@ -969,7 +969,7 @@ fn package_fragment(
         reason: "the segment does not carry the requested stream".to_string(),
     })?;
     let fragment = SmoothPackager {
-        target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
+        target_duration: SINGLE_SEGMENT_FRAGMENT_TARGET,
     }
     .package_track_fragment(track, chunk.sequence.value(), chunk.start)
     .map_err(|error| SmoothOriginError::Codec {
@@ -1219,8 +1219,8 @@ mod tests {
         let mut segmenter = LlHlsSegmenter::with_part_target(
             specs.clone(),
             transmux::VIDEO_CLOCK_TIMESCALE,
-            2.0,
-            500,
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_millis(500),
         )
         .expect("segmenter builds");
         let truncated = trunk.writer().expect("fresh trunk");

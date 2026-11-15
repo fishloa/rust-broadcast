@@ -24,7 +24,7 @@ fn dvr_config(tmp: &std::path::Path) -> DvrConfig {
 fn file_config(bind: std::net::SocketAddr, path: String, tmp: &std::path::Path) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {

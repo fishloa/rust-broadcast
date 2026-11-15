@@ -10,7 +10,7 @@
 
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
-    PART_TARGET_MS, TARGET_DURATION_SECS, feed_via_segmenter, video_batches_n, video_track_spec,
+    PART_TARGET_MS, TARGET_DURATION, feed_via_segmenter, video_batches_n, video_track_spec,
 };
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
@@ -56,7 +56,7 @@ async fn arrival_pdt_on_media_and_iframe() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -131,7 +131,7 @@ async fn off_emits_no_pdt() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -167,7 +167,7 @@ async fn ts_hls_route_carries_pdt() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -216,7 +216,7 @@ async fn pdt_validator_clean() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -227,8 +227,8 @@ async fn pdt_validator_clean() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track_spec()],
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init"));
@@ -337,7 +337,7 @@ fn file_config(
 ) -> Config {
     let mut cfg = Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {

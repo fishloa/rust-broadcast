@@ -8,6 +8,7 @@
 //! over a `Trunk`, read back through the axum router as a player would.
 
 use crate::support::hdr_route::{contains, get, init_bytes, load, ok, route_app_with_profiles};
+use std::time::Duration;
 
 use axum::Router;
 use axum::http::StatusCode;
@@ -137,7 +138,6 @@ fn audio_profiles_config_parses_and_rejects_duplicates() {
 
 async fn validator_findings(app: &Router, tag: &str) -> Vec<test_fixtures::process::msv::Finding> {
     use std::fs;
-    use std::time::Duration;
 
     let scratch = std::env::temp_dir().join(format!(
         "heaac-override-validator-{}-{tag}",

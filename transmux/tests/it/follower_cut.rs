@@ -11,6 +11,7 @@
 
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
+use core::time::Duration;
 use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartCut, PartInfo, SegmentInfo};
 use transmux::media::{Media, Track};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
@@ -24,8 +25,8 @@ const LEADER_SCALE: Timescale = broadcast_common::timescale!(LEADER_TS);
 const AAC_FRAME_TICKS: i64 = 1024;
 const AAC_RATE: u32 = 48_000;
 const LEADER_TICKS_PER_8_FOLLOWER_TICKS: i64 = 15;
-const PART_TARGET_MS: u32 = 334;
-const SEGMENT_TARGET_SECS: f64 = 2.0;
+const PART_TARGET: Duration = Duration::from_millis(334);
+const SEGMENT_TARGET: Duration = Duration::from_secs(2);
 
 fn leader_ticks(follower_ticks: i64) -> i64 {
     assert_eq!(follower_ticks % 8, 0, "not exactly representable at 90 kHz");
@@ -121,8 +122,8 @@ fn run_follower(
     let mut f = LlHlsSegmenter::with_part_target(
         vec![audio.spec.clone()],
         movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     let init = f.init_segment().unwrap();
@@ -141,8 +142,8 @@ fn leader_plans(video: &Track, movie_ts: Timescale) -> Vec<CutPlan> {
     let mut l = LlHlsSegmenter::with_part_target(
         vec![video.spec.clone()],
         movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     l.record_cuts();
@@ -530,8 +531,8 @@ fn pending_buffer_cap_is_a_typed_error_at_the_exact_limit() {
     let mut f = LlHlsSegmenter::with_part_target(
         vec![audio.spec.clone()],
         movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     f.follow(plan(1, 0)).unwrap();
@@ -560,8 +561,8 @@ fn follow_rejects_invalid_plans_with_typed_errors() {
         LlHlsSegmenter::with_part_target(
             vec![audio.spec.clone()],
             movie_ts,
-            SEGMENT_TARGET_SECS,
-            PART_TARGET_MS,
+            SEGMENT_TARGET,
+            PART_TARGET,
         )
         .unwrap()
     };
@@ -610,8 +611,8 @@ fn follower_push_rejects_a_sample_without_dts() {
     let mut f = LlHlsSegmenter::with_part_target(
         vec![audio.spec.clone()],
         movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     f.follow(plan(1, 0)).unwrap();
@@ -628,8 +629,8 @@ fn flush_with_buffered_samples_and_no_plan_is_an_error() {
     let mut f = LlHlsSegmenter::with_part_target(
         vec![audio.spec.clone()],
         movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     f.follow(plan(1, 0)).unwrap();
@@ -666,8 +667,8 @@ fn follower_with_origin(origin_frame: i64) -> LlHlsSegmenter {
     let mut f = LlHlsSegmenter::with_part_target(
         vec![audio.spec.clone()],
         movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     f.set_timeline_origin(leader_ticks(origin_frame * AAC_FRAME_TICKS), LEADER_SCALE);
@@ -730,8 +731,8 @@ fn incremental_part_cuts_match_whole_segment() {
         LlHlsSegmenter::with_part_target(
             vec![track.spec.clone()],
             ir.movie_timescale,
-            SEGMENT_TARGET_SECS,
-            PART_TARGET_MS,
+            SEGMENT_TARGET,
+            PART_TARGET,
         )
         .unwrap()
     };
@@ -810,13 +811,8 @@ fn incremental_part_cuts_match_whole_segment() {
 
 fn part_follower() -> LlHlsSegmenter {
     let (audio, movie_ts) = audio_template();
-    LlHlsSegmenter::with_part_target(
-        vec![audio.spec],
-        movie_ts,
-        SEGMENT_TARGET_SECS,
-        PART_TARGET_MS,
-    )
-    .unwrap()
+    LlHlsSegmenter::with_part_target(vec![audio.spec], movie_ts, SEGMENT_TARGET, PART_TARGET)
+        .unwrap()
 }
 
 #[test]

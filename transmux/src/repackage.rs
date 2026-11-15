@@ -297,7 +297,7 @@ impl Media {
 /// ```no_run
 /// use transmux::Repackage;
 /// # fn f(fmp4: &[u8]) -> transmux::Result<()> {
-/// let out = Repackage::new(2.0)          // 2-second target segments
+/// let out = Repackage::new(core::time::Duration::from_secs(2)) // 2-second target segments
 ///     .select_tracks(&[0])               // keep only track 0 (video)
 ///     .trim(0, 90_000)                    // first second (movie timescale)
 ///     .run(fmp4)?;
@@ -307,18 +307,18 @@ impl Media {
 /// ```
 #[derive(Debug, Clone)]
 pub struct Repackage {
-    target_duration_secs: f64,
+    target_duration: core::time::Duration,
     select: Option<Vec<usize>>,
     trim: Option<(u64, u64)>,
 }
 
 impl Repackage {
-    /// Create a repackager that resegments at `target_duration_secs` seconds,
-    /// keeping all tracks and the full timeline unless [`Repackage::select_tracks`]
-    /// / [`Repackage::trim`] are set.
-    pub fn new(target_duration_secs: f64) -> Self {
+    /// Create a repackager that resegments at `target_duration`, keeping all
+    /// tracks and the full timeline unless [`Repackage::select_tracks`] /
+    /// [`Repackage::trim`] are set.
+    pub fn new(target_duration: core::time::Duration) -> Self {
         Self {
-            target_duration_secs,
+            target_duration,
             select: None,
             trim: None,
         }
@@ -372,7 +372,7 @@ impl Repackage {
         }
         let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
         let movie_timescale = media.movie_timescale;
-        let mut seg = Segmenter::new(specs, movie_timescale, self.target_duration_secs)?;
+        let mut seg = Segmenter::new(specs, movie_timescale, self.target_duration)?;
         // Each track's first `tfdt` is its first decode time on the origin
         // common to all tracks, so a track starting later keeps that offset
         // (issue #1021) instead of every track restarting at 0.

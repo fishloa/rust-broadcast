@@ -6,6 +6,7 @@
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -20,7 +21,7 @@ use transmux::ll_hls::PartInfo;
 fn fmp4_route() -> Arc<RouteHandle> {
     let route = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     ));
@@ -30,13 +31,19 @@ fn fmp4_route() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], 4.0, 1).with_part_count(2),
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], Duration::from_secs(4), 1)
+                .with_part_count(2),
         )
         .expect("add_segment");
     route.add_part(
         media_plane::ProgramId(0),
-        PartInfo::new(vec![0x10; 4], 0.5, 2, broadcast_hls::PartIndex::new(0))
-            .with_independent(true),
+        PartInfo::new(
+            vec![0x10; 4],
+            Duration::from_millis(500),
+            2,
+            broadcast_hls::PartIndex::new(0),
+        )
+        .with_independent(true),
     );
     route
 }
@@ -46,7 +53,7 @@ fn ts_route() -> Arc<RouteHandle> {
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
@@ -56,7 +63,7 @@ fn ts_route() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x47; 188], 4.0, 1),
+            transmux::ll_hls::SegmentInfo::new(vec![0x47; 188], Duration::from_secs(4), 1),
         )
         .expect("add_segment");
     route

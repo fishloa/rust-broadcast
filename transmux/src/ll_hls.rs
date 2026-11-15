@@ -51,7 +51,7 @@ use crate::pipeline::{FragmentTrackData, Sample, TrackSpec, build_init_segment};
 use crate::segmenter::{
     MAX_PENDING_SAMPLES_PER_TRACK, MediaClock, choose_anchor, no_sync_sample_error,
 };
-use broadcast_common::units::MILLIS_PER_SEC;
+use broadcast_common::units::{MILLIS_PER_SEC, NANOS_PER_SEC};
 
 /// One finished LL-HLS **partial segment** ("part") — RFC 8216bis §4.4.4.9.
 ///
@@ -63,9 +63,10 @@ use broadcast_common::units::MILLIS_PER_SEC;
 pub struct PartInfo {
     /// The part bytes: a bare `moof`+`mdat` fragment (no `styp`).
     pub bytes: Vec<u8>,
-    /// Part duration in seconds (the anchor track's buffered duration for this
-    /// part) — the `#EXT-X-PART:DURATION` value.
-    pub duration: f64,
+    /// Part duration (the anchor track's buffered duration for this part) —
+    /// rendered as the `#EXT-X-PART:DURATION` value via
+    /// [`broadcast_hls::DecimalSeconds::from_duration`].
+    pub duration: Duration,
     /// `true` when this part contains a sync sample of the anchor track
     /// (`INDEPENDENT=YES`, RFC 8216bis §4.4.4.9), wherever it sits in the part.
     pub independent: bool,
@@ -80,7 +81,7 @@ impl PartInfo {
     #[must_use]
     pub fn new(
         bytes: Vec<u8>,
-        duration: f64,
+        duration: Duration,
         segment_seq: u32,
         part_index: broadcast_hls::PartIndex,
     ) -> Self {
@@ -109,8 +110,8 @@ pub struct SegmentInfo {
     /// The whole-segment bytes (`styp`+`moof`+`mdat`), byte-identical to
     /// [`crate::build_media_segment`] for the segment's samples.
     pub bytes: Vec<u8>,
-    /// Segment duration in seconds.
-    pub duration: f64,
+    /// Segment duration.
+    pub duration: Duration,
     /// 1-based sequence number of this segment.
     pub segment_seq: u32,
     /// Number of parts that made up this segment.
@@ -120,7 +121,7 @@ pub struct SegmentInfo {
 impl SegmentInfo {
     /// Build a segment record from its bytes, duration, and sequence number.
     #[must_use]
-    pub fn new(bytes: Vec<u8>, duration: f64, segment_seq: u32) -> Self {
+    pub fn new(bytes: Vec<u8>, duration: Duration, segment_seq: u32) -> Self {
         Self {
             bytes,
             duration,
@@ -309,7 +310,7 @@ struct TrackState {
 /// #         .expect("valid timing")
 /// # }
 /// // 1 s target segments, ~334 ms parts.
-/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), 1.0, 334).unwrap();
+/// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(1), core::time::Duration::from_millis(334)).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
@@ -392,9 +393,8 @@ pub struct LlHlsSegmenter {
 
 impl LlHlsSegmenter {
     /// Create an LL-HLS segmenter for `tracks`, cutting segments roughly every
-    /// `target_duration_secs` on the anchor track's keyframes, and flushing a
-    /// part whenever the anchor buffers `part_target_ms` milliseconds since the
-    /// last part.
+    /// `target_duration` on the anchor track's keyframes, and flushing a
+    /// part whenever the anchor buffers `part_target` since the last part.
     ///
     /// The anchor is chosen by the shared
     /// [`crate::segmenter::choose_anchor`] — the first **video**
@@ -404,13 +404,13 @@ impl LlHlsSegmenter {
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate `track_id`s,
-    /// `target_duration_secs` is not positive and finite, `part_target_ms` is 0,
-    /// or no track is anchor-capable (every track is section-carried).
+    /// `target_duration` or `part_target` is zero, or no track is
+    /// anchor-capable (every track is section-carried).
     pub fn with_part_target(
         tracks: Vec<TrackSpec>,
         movie_timescale: impl Into<Timescale>,
-        target_duration_secs: f64,
-        part_target_ms: u32,
+        target_duration: Duration,
+        part_target: Duration,
     ) -> Result<Self> {
         let movie_timescale = movie_timescale.into();
         if tracks.is_empty() {
@@ -418,14 +418,14 @@ impl LlHlsSegmenter {
                 "ll-hls segmenter needs at least one track",
             ));
         }
-        if !(target_duration_secs.is_finite() && target_duration_secs > 0.0) {
-            return Err(Error::InvalidInput(
-                "target_duration_secs must be positive and finite",
-            ));
+        if target_duration.is_zero() {
+            return Err(Error::InvalidInput("target_duration must be positive"));
         }
-        if part_target_ms == 0 {
-            return Err(Error::InvalidInput("part_target_ms must be >= 1"));
+        if part_target.is_zero() {
+            return Err(Error::InvalidInput("part_target must be positive"));
         }
+        let target_duration_secs = target_duration.as_secs_f64();
+        let part_target_ms = u32::try_from(part_target.as_millis()).unwrap_or(u32::MAX);
         for (i, a) in tracks.iter().enumerate() {
             if tracks[i + 1..].iter().any(|b| b.track_id == a.track_id) {
                 return Err(Error::InvalidInput("duplicate track_id"));
@@ -504,27 +504,23 @@ impl LlHlsSegmenter {
         })
     }
 
-    /// The part-target duration in seconds — the `#EXT-X-PART-INF:PART-TARGET`
-    /// value a caller should advertise (see [`broadcast_hls::LowLatencyConfig`]).
-    pub fn part_target_secs(&self) -> f64 {
-        // The anchor's timescale is a `Timescale` (`mdhd.timescale` refused
-        // when it parses as zero, ISO/IEC 14496-12:2026 §8.4.2), so this
-        // division can neither divide by zero nor render `inf`/`NaN` into
-        // `#EXT-X-PART-INF` (audit finding #5 is unreachable by type).
-        self.part_target_ticks as f64 / f64::from(self.tracks[self.anchor].spec.timescale.get())
-    }
-
-    /// The part target in whole milliseconds, the value to advertise as
-    /// `#EXT-X-PART-INF:PART-TARGET`. It starts as the configured target and,
-    /// once the anchor's constant frame duration has been measured from its
-    /// first samples, is raised to a whole number of frames when needed (RFC 8216bis
-    /// §4.4.4.9: every non-terminal Partial Segment lasts between 85% and
-    /// 100% of the Part Target Duration, which a frame grid that does not
-    /// divide the target cannot satisfy). A configured target whose whole-frame
-    /// floor already lies within that band is kept. A variable or unmeasurable frame
-    /// duration leaves the configured target in force.
-    pub fn part_target_ms(&self) -> u32 {
-        self.part_target_ms
+    /// The part-target duration — the `#EXT-X-PART-INF:PART-TARGET` value a
+    /// caller should advertise (see [`broadcast_hls::LowLatencyConfig`], whose
+    /// `with_part_target` takes a [`broadcast_hls::DecimalSeconds`]).
+    ///
+    /// It starts as the configured target and, once the anchor's constant
+    /// frame duration has been measured from its first samples, is raised to a
+    /// whole number of frames when needed (RFC 8216bis §4.4.4.9: every
+    /// non-terminal Partial Segment lasts between 85% and 100% of the Part
+    /// Target Duration, which a frame grid that does not divide the target
+    /// cannot satisfy). A configured target whose whole-frame floor already
+    /// lies within that band is kept. A variable or unmeasurable frame duration
+    /// leaves the configured target in force.
+    pub fn part_target(&self) -> Duration {
+        // Advertised whole milliseconds; the anchor's timescale is a
+        // `Timescale` (`mdhd.timescale` refused when it parses as zero,
+        // ISO/IEC 14496-12:2026 §8.4.2), so the value is always well formed.
+        Duration::from_millis(u64::from(self.part_target_ms))
     }
 
     /// The `(next_seq, current_segment)` pair this segmenter would give the
@@ -550,17 +546,13 @@ impl LlHlsSegmenter {
     pub fn with_part_target_at(
         tracks: Vec<TrackSpec>,
         movie_timescale: impl Into<Timescale>,
-        target_duration_secs: f64,
-        part_target_ms: u32,
+        target_duration: Duration,
+        part_target: Duration,
         next_seq: u32,
         current_segment: u32,
     ) -> Result<Self> {
-        let mut seg = Self::with_part_target(
-            tracks,
-            movie_timescale,
-            target_duration_secs,
-            part_target_ms,
-        )?;
+        let mut seg =
+            Self::with_part_target(tracks, movie_timescale, target_duration, part_target)?;
         seg.next_seq = next_seq;
         seg.current_segment = current_segment;
         // Restart the part counter at 0 (the new segment being built is
@@ -918,7 +910,7 @@ impl LlHlsSegmenter {
             .iter()
             .position(|&a| a)
             .ok_or(Error::InvalidInput("follow_part: part has no track"))?;
-        let duration = span_secs(
+        let duration = span_duration(
             &self.tracks[first_ti],
             self.tracks[first_ti].part_start,
             take_ends[first_ti],
@@ -1095,7 +1087,7 @@ impl LlHlsSegmenter {
                 .position(|t| t.spec.track_id == first.track_id)
                 .ok_or(Error::InvalidInput("follow: part track vanished"))?;
             let independent = first.samples.iter().any(|s| s.flags.is_sync);
-            let duration = span_secs(
+            let duration = span_duration(
                 &self.tracks[first_ti],
                 bounds[first_ti][k],
                 bounds[first_ti][k + 1],
@@ -1169,7 +1161,7 @@ impl LlHlsSegmenter {
             .collect();
         let bytes = crate::pipeline::build_media_segment(self.next_seq, &seg_frags)?;
         self.next_seq += 1;
-        let duration = span_secs(&self.tracks[first_ti], 0, splits[first_ti]);
+        let duration = span_duration(&self.tracks[first_ti], 0, splits[first_ti]);
         self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes,
             duration,
@@ -1222,13 +1214,6 @@ impl LlHlsSegmenter {
             t.seg_base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
             t.part_base_decode = t.seg_base_decode;
         }
-    }
-
-    /// Start every track's decode clock at `start` nanoseconds into a run that
-    /// continues an earlier one; [`Self::set_start_time`] in the sub-second
-    /// unit a wire field may carry.
-    pub fn set_start_time_ns(&mut self, start_ns: u64) {
-        self.set_start_time(Duration::from_nanos(start_ns));
     }
 
     /// Align a follower's timeline with its leader's (issue #1428 slice 2b).
@@ -1336,7 +1321,7 @@ impl LlHlsSegmenter {
 
         // See `part_target_secs` above for why `.max(1)` guards this division.
         let seg_duration =
-            self.anchor_seg_dur as f64 / self.tracks[self.anchor].spec.timescale.get() as f64;
+            ticks_duration(self.anchor_seg_dur, self.tracks[self.anchor].spec.timescale);
         self.ready.push_back(LlHlsStageOutput::Segment(SegmentInfo {
             bytes: seg_bytes,
             duration: seg_duration,
@@ -1509,7 +1494,7 @@ impl LlHlsSegmenter {
         if anchor_span_ticks == 0 {
             return Ok(());
         }
-        let part_secs = anchor_span_ticks as f64 / self.tracks[anchor].spec.timescale.get() as f64;
+        let part_duration = ticks_duration(anchor_span_ticks, self.tracks[anchor].spec.timescale);
 
         let seq = self.next_seq;
         let part_bytes = {
@@ -1563,7 +1548,7 @@ impl LlHlsSegmenter {
 
         self.ready.push_back(LlHlsStageOutput::Part(PartInfo {
             bytes: part_bytes,
-            duration: part_secs,
+            duration: part_duration,
             independent,
             segment_seq: self.current_segment,
             part_index,
@@ -1771,8 +1756,16 @@ fn follower_dts(sample: &Sample) -> i64 {
     sample.timing.and_then(|t| t.dts()).unwrap_or(i64::MIN)
 }
 
-/// Duration in seconds of `track.pending[from..to]`.
-fn span_secs(track: &TrackState, from: usize, to: usize) -> f64 {
+/// Convert a media-timescale tick count to whole nanoseconds of wall-clock time.
+fn ticks_duration(ticks: u64, timescale: Timescale) -> Duration {
+    let denom = u128::from(timescale.get());
+    let nanos = (u128::from(ticks) * u128::from(NANOS_PER_SEC) + denom / 2) / denom;
+    Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
+}
+
+/// Duration of `track.pending[from..to]` in the track's media timescale,
+/// converted to whole nanoseconds of wall-clock time.
+fn span_duration(track: &TrackState, from: usize, to: usize) -> Duration {
     let mut clock = MediaClock::resumed_at(
         from.checked_sub(1)
             .and_then(|i| track.pending.get(i))
@@ -1780,5 +1773,5 @@ fn span_secs(track: &TrackState, from: usize, to: usize) -> f64 {
             .or(track.seg_clock.last_dts()),
     );
     let ticks: u64 = track.pending[from..to].iter().map(|s| clock.tick(s)).sum();
-    ticks as f64 / f64::from(track.spec.timescale.get())
+    ticks_duration(ticks, track.spec.timescale)
 }

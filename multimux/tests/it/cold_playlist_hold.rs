@@ -26,8 +26,8 @@ use test_fixtures::process::{output_bounded, tool_available};
 use crate::support::listener::bind_tcp;
 use crate::support::origin::{body_string, get};
 use crate::support::segmenter_feed::{
-    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, drain_ready, feed_open_segment,
-    video_batches_n, video_track_spec,
+    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, drain_ready, feed_open_segment, video_batches_n,
+    video_track_spec,
 };
 
 const FRAMES_PER_SEGMENT: u32 = 30;
@@ -39,7 +39,7 @@ const MIN_BLOCKING_TIMEOUT: Duration = Duration::from_secs(5);
 fn cold_route() -> (Arc<RouteHandle>, transmux::ll_hls::LlHlsSegmenter) {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -177,7 +177,7 @@ async fn msn_requests_on_a_cold_stream_keep_their_semantics() {
 fn unannounced_route() -> Arc<RouteHandle> {
     Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ))
@@ -232,8 +232,7 @@ async fn a_program_announced_late_without_a_segment_waits_one_bound_in_total() {
         () = announce => panic!("the request never finished"),
     };
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let playlist_timeout =
-        MIN_BLOCKING_TIMEOUT.max(Duration::from_secs_f64(TARGET_DURATION_SECS * 3.0));
+    let playlist_timeout = MIN_BLOCKING_TIMEOUT.max(TARGET_DURATION * 3);
     assert!(
         started.elapsed() <= playlist_timeout + Duration::from_secs(1),
         "waited {:?}, more than one playlist timeout ({playlist_timeout:?}) plus 1 s",
@@ -262,7 +261,7 @@ async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -276,7 +275,7 @@ async fn with_the_hold_off_a_request_before_the_program_is_an_immediate_503() {
     assert_eq!(started.elapsed(), Duration::ZERO);
 }
 
-const FIXTURE_TARGET_SECS: f64 = 2.0;
+const FIXTURE_TARGET: Duration = Duration::from_secs(2);
 const FIXTURE_PART_TARGET_MS: u32 = 200;
 const FIXTURE_WINDOW_SEGMENTS: usize = 8;
 const POLL_INTERVAL: Duration = Duration::from_millis(20);
@@ -288,7 +287,7 @@ const FFMPEG_READ_SECS: &str = "3";
 fn fixture_config(bind: std::net::SocketAddr, loop_file: bool) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(FIXTURE_TARGET_SECS)
+        .with_target_duration(FIXTURE_TARGET)
         .with_part_target(Duration::from_millis(u64::from(FIXTURE_PART_TARGET_MS)))
         .with_window_segments(FIXTURE_WINDOW_SEGMENTS)
         .with_routes(vec![Route {

@@ -7,6 +7,7 @@
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
 use broadcast_common::timescale::Timescale;
+use core::time::Duration;
 use std::path::PathBuf;
 use transmux::TrackId;
 
@@ -108,7 +109,9 @@ fn coded_bytes(media: &Media, track_idx: usize) -> Vec<Bytes> {
 #[test]
 fn identity_repackage_is_lossless() {
     let ir = oracle_ir();
-    let out = Repackage::new(2.0).run_media(&ir).expect("repackage");
+    let out = Repackage::new(Duration::from_secs(2))
+        .run_media(&ir)
+        .expect("repackage");
     let round = Fmp4Demux::new()
         .unpackage(&out.to_contiguous())
         .expect("re-demux");
@@ -140,7 +143,7 @@ fn identity_repackage_is_lossless() {
 #[test]
 fn track_select_video_only() {
     let ir = oracle_ir();
-    let out = Repackage::new(2.0)
+    let out = Repackage::new(Duration::from_secs(2))
         .select_tracks(&[0])
         .run_media(&ir)
         .expect("repackage video-only");
@@ -207,7 +210,7 @@ fn trim_selects_window_and_snaps_to_keyframe() {
         "oracle window must keep video samples"
     );
 
-    let out = Repackage::new(2.0)
+    let out = Repackage::new(Duration::from_secs(2))
         .trim(start, end)
         .run_media(&ir)
         .expect("trim repackage");
@@ -258,7 +261,7 @@ fn resegment_cut_count_and_keyframe_starts() {
     let target_ticks = (target_secs * ts as f64) as u64;
     let expected_segments = total.div_ceil(target_ticks) as usize;
 
-    let out = Repackage::new(target_secs)
+    let out = Repackage::new(Duration::from_secs(1))
         .run_media(&ir)
         .expect("resegment");
     assert_eq!(
@@ -287,7 +290,9 @@ fn resegment_cut_count_and_keyframe_starts() {
 #[test]
 fn resegment_preserves_full_sample_sequence() {
     let ir = oracle_ir();
-    let out = Repackage::new(0.5).run_media(&ir).expect("resegment");
+    let out = Repackage::new(Duration::from_millis(500))
+        .run_media(&ir)
+        .expect("resegment");
 
     // Re-demux the whole contiguous output and compare the full video sequence.
     let round = Fmp4Demux::new()
@@ -656,7 +661,7 @@ fn resegment_interleaves_huge_coprime_timescales() {
         timescale(1000),
     );
 
-    let out = Repackage::new(2.0)
+    let out = Repackage::new(Duration::from_secs(2))
         .run_media(&media)
         .expect("resegment across huge coprime timescales");
 

@@ -116,8 +116,13 @@ fn child_boxes<'a>(body: &'a [u8], four_cc: &[u8; 4]) -> Vec<&'a [u8]> {
 // ---------------------------------------------------------------------------
 
 fn chunks_for(media: &Media, chunk_samples: usize) -> Vec<Chunk> {
-    let mut seg = LlSegmenter::new(specs(media), media.movie_timescale, 0.5, chunk_samples)
-        .expect("LlSegmenter");
+    let mut seg = LlSegmenter::new(
+        specs(media),
+        media.movie_timescale,
+        Duration::from_millis(500),
+        chunk_samples,
+    )
+    .expect("LlSegmenter");
     seg.package(media).expect("package chunks")
 }
 
@@ -236,7 +241,13 @@ fn chunk_concat_equals_whole_segment_samples() {
     let chunks = chunks_for(&media, 3); // several frames per chunk
 
     let init = {
-        let seg = LlSegmenter::new(specs(&media), media.movie_timescale, 0.5, 3).unwrap();
+        let seg = LlSegmenter::new(
+            specs(&media),
+            media.movie_timescale,
+            Duration::from_millis(500),
+            3,
+        )
+        .unwrap();
         seg.init_segment().unwrap()
     };
 
@@ -289,7 +300,13 @@ fn full_stream_video_nal_sequence_preserved() {
     let chunks = chunks_for(&media, 2);
 
     let init = {
-        let seg = LlSegmenter::new(specs(&media), media.movie_timescale, 0.5, 2).unwrap();
+        let seg = LlSegmenter::new(
+            specs(&media),
+            media.movie_timescale,
+            Duration::from_millis(500),
+            2,
+        )
+        .unwrap();
         seg.init_segment().unwrap()
     };
 
@@ -324,8 +341,12 @@ fn full_stream_video_nal_sequence_preserved() {
 #[test]
 fn ll_mpd_carries_availability_and_service_description() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
-        .with_playback_rate(0.9, 1.1);
+    let mut pkg = crate::ll_packager::ll_packager(
+        Duration::from_secs(2),
+        Duration::from_millis(500),
+        Duration::from_secs(3),
+    )
+    .with_playback_rate(0.9, 1.1);
     let xml = pkg.package(&media).expect("LL MPD");
 
     let root = xml::parse(&xml);
@@ -389,7 +410,11 @@ fn ll_mpd_carries_availability_for_timeline_addressing() {
         })
         .collect();
 
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
+    let mut pkg = crate::ll_packager::ll_packager(
+        Duration::from_secs(2),
+        Duration::from_millis(500),
+        Duration::from_secs(3),
+    );
     pkg.base.addressing = transmux::Addressing::Timeline;
     pkg.base.segments = segments;
     let xml = pkg.package(&media).expect("LL MPD (Timeline addressing)");
@@ -622,11 +647,15 @@ mod xml {
 #[test]
 fn ll_mpd_carries_utc_timing() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
-        .with_utc_timing(
-            transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
-            "https://time.example/x?a=1&b=2",
-        );
+    let mut pkg = crate::ll_packager::ll_packager(
+        Duration::from_secs(2),
+        Duration::from_millis(500),
+        Duration::from_secs(3),
+    )
+    .with_utc_timing(
+        transmux::ll_dash::UTCTIMING_HTTP_HEAD_2014,
+        "https://time.example/x?a=1&b=2",
+    );
     let xml = pkg.package(&media).expect("LL MPD");
 
     let root = xml::parse(&xml);
@@ -655,7 +684,11 @@ fn ll_mpd_carries_utc_timing() {
 #[test]
 fn ll_mpd_omits_utc_timing_by_default() {
     let media = demux_media();
-    let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3));
+    let mut pkg = crate::ll_packager::ll_packager(
+        Duration::from_secs(2),
+        Duration::from_millis(500),
+        Duration::from_secs(3),
+    );
     let xml = pkg.package(&media).expect("LL MPD");
     assert!(
         !xml.contains("<UTCTiming"),
@@ -712,8 +745,12 @@ fn ll_mpd_emits_each_registered_utc_timing_scheme() {
     ];
     for (constant, uri) in schemes {
         assert_eq!(constant, uri);
-        let mut pkg = crate::ll_packager::ll_packager(2.0, 0.5, Duration::from_secs(3))
-            .with_utc_timing(constant, "time.example");
+        let mut pkg = crate::ll_packager::ll_packager(
+            Duration::from_secs(2),
+            Duration::from_millis(500),
+            Duration::from_secs(3),
+        )
+        .with_utc_timing(constant, "time.example");
         let xml = pkg.package(&media).expect("LL MPD");
         let root = xml::parse(&xml);
         let utc = root.find("UTCTiming").expect("UTCTiming element");

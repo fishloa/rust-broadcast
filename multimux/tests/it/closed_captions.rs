@@ -25,7 +25,7 @@ use multimux::output::Output;
 use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const PART_TARGET_MS: u32 = 200;
 const WINDOW_SEGMENTS: usize = 64;
 const RING: usize = 1 << 16;
@@ -166,7 +166,7 @@ fn build_with(
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )

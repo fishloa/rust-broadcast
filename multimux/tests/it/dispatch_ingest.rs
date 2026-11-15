@@ -111,7 +111,7 @@ fn reserve_tcp_addr() -> SocketAddr {
 fn base_config(bind: SocketAddr, input: InputSpec) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {

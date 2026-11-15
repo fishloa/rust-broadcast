@@ -63,8 +63,8 @@ struct Cli {
     bind: String,
 
     /// Target full-segment duration, in seconds.
-    #[arg(long, value_name = "SECS", default_value_t = Config::default().target_duration_secs)]
-    target_duration: f64,
+    #[arg(long, value_name = "SECS", default_value_t = Config::default().target_duration.as_secs())]
+    target_duration: u64,
 
     /// LL-HLS part target, in milliseconds.
     #[arg(long, value_name = "MS", default_value_t = u32::try_from(Config::default().part_target.as_millis()).unwrap_or(u32::MAX))]
@@ -172,7 +172,7 @@ fn build_config(cli: Cli) -> Result<Config> {
 
     let config = Config::default()
         .with_bind(cli.bind)
-        .with_target_duration_secs(cli.target_duration)
+        .with_target_duration(std::time::Duration::from_secs(cli.target_duration))
         .with_part_target(std::time::Duration::from_millis(u64::from(cli.part_ms)))
         .with_window_segments(cli.window)
         .with_routes(vec![Route {
