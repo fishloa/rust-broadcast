@@ -38,8 +38,8 @@ pub enum MultimuxError {
     /// A parsed config (or CLI-built config) failed semantic validation.
     #[error("invalid config field {field:?}: {reason}")]
     ConfigInvalid {
-        /// The offending field's name.
-        field: &'static str,
+        /// The offending field.
+        field: ConfigField,
         /// Why it's invalid.
         reason: String,
     },
@@ -191,6 +191,139 @@ pub enum MultimuxError {
     },
 }
 
+/// Which config field failed validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConfigField {
+    AdminBind,
+    AdminReload,
+    AudioProfiles,
+    AudioRenditionSources,
+    AudioRenditions,
+    ArchiveRoot,
+    ClosedCaptionOverrides,
+    ConcurrencyQueueTimeoutSecs,
+    Dvr,
+    IngestConnectTimeoutSecs,
+    IngestReadTimeoutSecs,
+    MaxBlockingReloadsPerRoute,
+    MaxConcurrentRequests,
+    MaxConcurrentWarmsPerRoute,
+    MaxRequestBodyBytes,
+    OutputAuthForwardedForHeader,
+    OutputAuthKeys,
+    OutputAuthKeysKid,
+    OutputAuthKeysSecret,
+    OutputAuthToken,
+    OutputAuthTrustedProxies,
+    OutputAuthUserHeader,
+    OutputAuthUsername,
+    Outputs,
+    PartTarget,
+    PeriodDurationSecs,
+    PlaylistName,
+    RequestTimeoutSecs,
+    Retention,
+    RouteName,
+    Rtsp,
+    Routes,
+    RoutesDeclaredBandwidthBps,
+    RoutesDvr,
+    RoutesInput,
+    RoutesInputAddr,
+    RoutesInputAuthBearerToken,
+    RoutesInputAuthUsername,
+    RoutesInputBodyTimeoutSecs,
+    RoutesInputListen,
+    RoutesInputMaxObjectBytes,
+    RoutesInputMulticastGroup,
+    RoutesInputMulticastInterface,
+    RoutesInputPath,
+    RoutesInputPublishingPoint,
+    RoutesInputRecvBufferBytes,
+    RoutesInputRemote,
+    RoutesInputSdp,
+    RoutesInputUrl,
+    RoutesName,
+    RoutesOutputs,
+    RoutesOutputsFormat,
+    RoutesOutputsReconnectBackoffCap,
+    RoutesOutputsReconnectBackoffSteps,
+    RoutesOutputsUrl,
+    TargetDurationSecs,
+    WhepMediaSocketsPerIp,
+    WindowSegments,
+}
+
+impl ConfigField {
+    /// Stable, dotted field path for the field.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::AdminBind => "admin.bind",
+            Self::AdminReload => "admin.reload",
+            Self::AudioProfiles => "audio_profiles",
+            Self::AudioRenditionSources => "audio_rendition_sources",
+            Self::AudioRenditions => "audio_renditions",
+            Self::ArchiveRoot => "archive_root",
+            Self::ClosedCaptionOverrides => "closed_caption_overrides",
+            Self::ConcurrencyQueueTimeoutSecs => "concurrency_queue_timeout_secs",
+            Self::Dvr => "dvr",
+            Self::IngestConnectTimeoutSecs => "ingest_connect_timeout_secs",
+            Self::IngestReadTimeoutSecs => "ingest_read_timeout_secs",
+            Self::MaxBlockingReloadsPerRoute => "max_blocking_reloads_per_route",
+            Self::MaxConcurrentRequests => "max_concurrent_requests",
+            Self::MaxConcurrentWarmsPerRoute => "max_concurrent_warms_per_route",
+            Self::MaxRequestBodyBytes => "max_request_body_bytes",
+            Self::OutputAuthForwardedForHeader => "output_auth.forwarded_for_header",
+            Self::OutputAuthKeys => "output_auth.keys",
+            Self::OutputAuthKeysKid => "output_auth.keys[].kid",
+            Self::OutputAuthKeysSecret => "output_auth.keys[].secret",
+            Self::OutputAuthToken => "output_auth.token",
+            Self::OutputAuthTrustedProxies => "output_auth.trusted_proxies",
+            Self::OutputAuthUserHeader => "output_auth.user_header",
+            Self::OutputAuthUsername => "output_auth.username",
+            Self::Outputs => "outputs",
+            Self::PartTarget => "part_target",
+            Self::PeriodDurationSecs => "period_duration_secs",
+            Self::PlaylistName => "playlist_name",
+            Self::RequestTimeoutSecs => "request_timeout_secs",
+            Self::Retention => "retention",
+            Self::RouteName => "route_name",
+            Self::Rtsp => "rtsp",
+            Self::Routes => "routes",
+            Self::RoutesDeclaredBandwidthBps => "routes.declared_bandwidth_bps",
+            Self::RoutesDvr => "routes.dvr",
+            Self::RoutesInput => "routes.input",
+            Self::RoutesInputAddr => "routes.input.addr",
+            Self::RoutesInputAuthBearerToken => "routes.input.auth.bearer_token",
+            Self::RoutesInputAuthUsername => "routes.input.auth.username",
+            Self::RoutesInputBodyTimeoutSecs => "routes.input.body_timeout_secs",
+            Self::RoutesInputListen => "routes.input.listen",
+            Self::RoutesInputMaxObjectBytes => "routes.input.max_object_bytes",
+            Self::RoutesInputMulticastGroup => "routes.input.multicast_group",
+            Self::RoutesInputMulticastInterface => "routes.input.multicast_interface",
+            Self::RoutesInputPath => "routes.input.path",
+            Self::RoutesInputPublishingPoint => "routes.input.publishing_point",
+            Self::RoutesInputRecvBufferBytes => "routes.input.recv_buffer_bytes",
+            Self::RoutesInputRemote => "routes.input.remote",
+            Self::RoutesInputSdp => "routes.input.sdp",
+            Self::RoutesInputUrl => "routes.input.url",
+            Self::RoutesName => "routes.name",
+            Self::RoutesOutputs => "routes.outputs",
+            Self::RoutesOutputsFormat => "routes.outputs[].format",
+            Self::RoutesOutputsReconnectBackoffCap => "routes.outputs[].reconnect.backoff.cap",
+            Self::RoutesOutputsReconnectBackoffSteps => "routes.outputs[].reconnect.backoff.steps",
+            Self::RoutesOutputsUrl => "routes.outputs[].url",
+            Self::TargetDurationSecs => "target_duration_secs",
+            Self::WhepMediaSocketsPerIp => "whep_media_sockets_per_ip",
+            Self::WindowSegments => "window_segments",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ConfigField);
+
 /// Which phase of an ingest/protocol exchange failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -238,9 +371,12 @@ pub enum ProtocolFailure {
     /// An RTMP runtime error.
     #[error(transparent)]
     Rtmp(#[from] rtmp_runtime::RtmpError),
-    /// A formatted reason with no typed source.
-    #[error("{0}")]
-    Other(String),
+    /// Any other protocol failure, carrying its description.
+    #[error("{reason}")]
+    Other {
+        /// The failure description.
+        reason: String,
+    },
 }
 
 /// Error carrying an SDP rejection reason.

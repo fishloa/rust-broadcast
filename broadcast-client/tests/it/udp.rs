@@ -228,7 +228,7 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
         ),
     ] {
         match open(url, with(udp)) {
-            Error::InvalidConfig { field: f } => assert_eq!(f, field, "{url}"),
+            Error::InvalidConfig(f) => assert_eq!(f.name(), field, "{url}"),
             other => panic!("{url}: {other:?}"),
         }
     }

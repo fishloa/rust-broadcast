@@ -1295,46 +1295,47 @@ impl Config {
     }
 
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
-        let invalid = |field| Err(crate::Error::InvalidConfig { field });
+        use crate::error::ConfigField;
+        let invalid = |field| Err(crate::Error::InvalidConfig(field));
         if self.max_queued_events == 0 {
-            return invalid("max_queued_events");
+            return invalid(ConfigField::MaxQueuedEvents);
         }
         if self.max_queued_bytes == 0 {
-            return invalid("max_queued_bytes");
+            return invalid(ConfigField::MaxQueuedBytes);
         }
         if self.max_recorded_buffer_inputs == 0 {
-            return invalid("max_recorded_buffer_inputs");
+            return invalid(ConfigField::MaxRecordedBufferInputs);
         }
         if self.max_manifest_bytes == 0 {
-            return invalid("max_manifest_bytes");
+            return invalid(ConfigField::MaxManifestBytes);
         }
         if self.max_segment_bytes == 0 {
-            return invalid("max_segment_bytes");
+            return invalid(ConfigField::MaxSegmentBytes);
         }
         if self.max_key_bytes == 0 {
-            return invalid("max_key_bytes");
+            return invalid(ConfigField::MaxKeyBytes);
         }
         if self.request_timeout.is_zero() {
-            return invalid("request_timeout");
+            return invalid(ConfigField::RequestTimeout);
         }
         if self.segment_timeout.is_zero() {
-            return invalid("segment_timeout");
+            return invalid(ConfigField::SegmentTimeout);
         }
         if self.segment_inactivity_timeout.is_zero() {
-            return invalid("segment_inactivity_timeout");
+            return invalid(ConfigField::SegmentInactivityTimeout);
         }
         if self.hls_key_timeout.is_zero() {
-            return invalid("hls_key_timeout");
+            return invalid(ConfigField::HlsKeyTimeout);
         }
         if self.buffer.validate().is_err() {
-            return invalid("buffer");
+            return invalid(ConfigField::Buffer);
         }
         if let Some(jump) = &self.timeline_jump {
             if jump.backward.is_zero() {
-                return invalid("timeline_jump.backward");
+                return invalid(ConfigField::TimelineJumpBackward);
             }
             if jump.forward_slack.is_zero() {
-                return invalid("timeline_jump.forward_slack");
+                return invalid(ConfigField::TimelineJumpForwardSlack);
             }
         }
         self.udp.validate()?;
@@ -1349,29 +1350,31 @@ impl Config {
     }
 
     fn validate_tracks_hold(&self) -> Result<(), crate::Error> {
+        use crate::error::ConfigField;
         if self.tracks_hold_quiet_input_bytes == 0 {
-            return Err(crate::Error::InvalidConfig {
-                field: "tracks_hold_quiet_input_bytes",
-            });
+            return Err(crate::Error::InvalidConfig(
+                ConfigField::TracksHoldQuietInputBytes,
+            ));
         }
         if self.tracks_hold_max_input_bytes < self.tracks_hold_quiet_input_bytes {
-            return Err(crate::Error::InvalidConfig {
-                field: "tracks_hold_max_input_bytes",
-            });
+            return Err(crate::Error::InvalidConfig(
+                ConfigField::TracksHoldMaxInputBytes,
+            ));
         }
         Ok(())
     }
 }
 
-fn dash_field(name: &str) -> &'static str {
+fn dash_field(name: &str) -> crate::error::ConfigField {
+    use crate::error::ConfigField;
     match name {
-        "utc_timeout" => "dash.utc_timeout",
-        "utc_wait" => "dash.utc_wait",
-        "utc_max_rtt" => "dash.utc_max_rtt",
-        "utc_resync" => "dash.utc_resync",
-        "early_retry" => "dash.early_retry",
-        "min_mpd_refresh" => "dash.min_mpd_refresh",
-        _ => "dash",
+        "utc_timeout" => ConfigField::DashUtcTimeout,
+        "utc_wait" => ConfigField::DashUtcWait,
+        "utc_max_rtt" => ConfigField::DashUtcMaxRtt,
+        "utc_resync" => ConfigField::DashUtcResync,
+        "early_retry" => ConfigField::DashEarlyRetry,
+        "min_mpd_refresh" => ConfigField::DashMinMpdRefresh,
+        _ => ConfigField::Dash,
     }
 }
 

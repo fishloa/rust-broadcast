@@ -4,6 +4,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `Error::InvalidWebVtt(String)` carries a typed `WebVttError` (`MissingSignature`/`IdentifierWithoutTiming`/`MalformedTiming { line }`/`EndBeforeStart`), `Error::InvalidSrt(String)` a typed `SrtError` (`EmptyBlock`/`BadSequenceNumber { line }`/`SequenceWithoutTiming`/`NoArrow { line }`/`EndBeforeStart`), and `Error::InvalidTimestamp(String)` is a struct variant `InvalidTimestamp { timestamp }`, so a caller branches on the typed kind rather than the message text (#2734). Both new enums are re-exported at the crate root.
+
 ## [0.6.0] - 2026-11-14
 ### Fixed
 - `cc_data()` with `process_cc_data_flag` clear is discarded instead of producing cues.

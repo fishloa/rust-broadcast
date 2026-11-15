@@ -151,11 +151,11 @@ struct Reader<'a, N> {
     marker: core::marker::PhantomData<N>,
 }
 
-fn ns_of<N: Namespace>(result: ResolveResult<'_>) -> Result<N, String> {
+fn ns_of<N: Namespace>(result: ResolveResult<'_>) -> Result<N, crate::xml_chars::XmlCharError> {
     match crate::xml_chars::namespace_of(result) {
         Ok(None) => Ok(N::NONE),
         Ok(Some(uri)) => Ok(N::classify(&uri)),
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(e),
     }
 }
 
@@ -267,7 +267,7 @@ pub fn read_tree<N: Namespace>(
                     reader.budget.close_element();
                 }
                 let local = e.local_name().into_inner();
-                let resolved = ns_of_event.map_err(|m| reader.fail(m))?;
+                let resolved = ns_of_event.map_err(|m| reader.fail(m.to_string()))?;
                 if stack.is_empty() && (resolved != N::TARGET || local != root) {
                     return Err(XmlError::WrongRoot {
                         found: local.to_owned(),

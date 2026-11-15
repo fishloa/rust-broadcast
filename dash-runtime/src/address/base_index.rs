@@ -46,7 +46,7 @@ pub fn anchor_after(index_range: &ByteRange) -> Result<u64, AddressError> {
 /// # Errors
 /// [`AddressError::Sidx`] when the bytes are not a `sidx` box.
 pub fn parse_index(bytes: &[u8]) -> Result<SegmentIndexBox, AddressError> {
-    SegmentIndexBox::parse(bytes).map_err(|e| AddressError::Sidx(e.to_string()))
+    SegmentIndexBox::parse(bytes).map_err(AddressError::Sidx)
 }
 
 /// The subsegments of `sidx`, with byte ranges relative to the file start.

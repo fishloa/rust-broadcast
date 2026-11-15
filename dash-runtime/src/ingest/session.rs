@@ -48,9 +48,9 @@ pub struct IngestObject<'a> {
 
 /// Error returned by [`DashifIngestSession`]'s [`Stage`] implementation.
 ///
-/// Exposes the underlying [`IngestError`] (with its §5.3 HTTP status) for the
-/// P2b listener, plus a stringly-typed demux failure for everything else.
-#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+/// Exposes the underlying [`IngestError`] (with its §5.3 HTTP status) and the
+/// [`transmux::Error`] from a failed CMAF demux, never a formatted message.
+#[derive(Debug, Clone, thiserror::Error, PartialEq)]
 #[non_exhaustive]
 pub enum SessionError {
     /// An ingest-protocol error carrying its §5.3 status.
@@ -58,7 +58,7 @@ pub enum SessionError {
     Ingest(#[from] IngestError),
     /// A CMAF demux failure (init or segment).
     #[error("demux: {0}")]
-    Demux(String),
+    Demux(#[from] transmux::Error),
 }
 
 #[derive(Default)]
@@ -213,7 +213,7 @@ impl DashifIngestSession {
         // Demux init: must carry at least one track.
         let media = Fmp4Demux::new()
             .unpackage(bytes)
-            .map_err(|e| SessionError::Demux(e.to_string()))?;
+            .map_err(SessionError::Demux)?;
         if media.tracks.is_empty() {
             return Err(SessionError::Ingest(IngestError::BadRequest));
         }
@@ -423,7 +423,7 @@ impl DashifIngestSession {
             combined.extend_from_slice(&group);
             let media = Fmp4Demux::new()
                 .unpackage(&combined)
-                .map_err(|e| SessionError::Demux(e.to_string()))?;
+                .map_err(SessionError::Demux)?;
 
             if self.new_program_emitted {
                 let l2g = self

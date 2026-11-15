@@ -211,9 +211,7 @@ fn malformed_identities_fail_open_with_a_typed_error() {
                 ts(0)
             )
             .unwrap_err(),
-            Error::InvalidConfig {
-                field: "client_identity"
-            }
+            Error::InvalidConfig(broadcast_client::error::ConfigField::ClientIdentity)
         ));
     }
     for identity in [leaf.pem_identity(), leaf.der_identity()] {
@@ -234,7 +232,9 @@ fn malformed_identities_fail_open_with_a_typed_error() {
         )
         .unwrap_err()
         {
-            Error::InvalidConfig { field } => assert_eq!(field, "client_identity"),
+            Error::InvalidConfig(field) => {
+                assert_eq!(field, broadcast_client::error::ConfigField::ClientIdentity)
+            }
             other => panic!("{other:?}"),
         }
     }

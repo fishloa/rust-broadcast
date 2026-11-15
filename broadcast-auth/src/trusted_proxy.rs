@@ -4,7 +4,7 @@
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::str::FromStr;
 
-use crate::error::Error;
+use crate::error::{Error, TrustedProxyFailure};
 
 const V4_BITS: u8 = 32;
 const V6_BITS: u8 = 128;
@@ -75,12 +75,18 @@ impl FromStr for TrustedProxy {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self, Error> {
-        let bad = |why: &str| Error::InvalidTrustedProxy(format!("{s:?}: {why}"));
+        let bad = |kind| Error::InvalidTrustedProxy {
+            input: s.to_string(),
+            kind,
+        };
         let (addr, len) = match s.split_once('/') {
             Some((addr, len)) => (addr, Some(len)),
             None => (s, None),
         };
-        let network: IpAddr = addr.trim().parse().map_err(|_| bad("not an IP address"))?;
+        let network: IpAddr = addr
+            .trim()
+            .parse()
+            .map_err(|_| bad(TrustedProxyFailure::NotIpAddress))?;
         let max = if network.is_ipv4() { V4_BITS } else { V6_BITS };
         let prefix_len = match len {
             Some(len) => len
@@ -88,7 +94,7 @@ impl FromStr for TrustedProxy {
                 .parse::<u8>()
                 .ok()
                 .filter(|l| *l <= max)
-                .ok_or_else(|| bad("prefix length out of range"))?,
+                .ok_or_else(|| bad(TrustedProxyFailure::PrefixOutOfRange))?,
             None => max,
         };
         Ok(TrustedProxy {

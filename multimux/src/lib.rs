@@ -56,7 +56,7 @@ pub mod test_seam {
     pub use crate::push::srt::parse_srt_url_for_test;
 }
 
-pub use error::{MultimuxError, Result};
+pub use error::{ConfigField, MultimuxError, Result};
 // Re-exported so an external crate wiring up a `crate::registry::SchemeRegistry`
 // factory (issue #663) has everything it needs at the crate root, without
 // reaching into internal module paths:

@@ -170,7 +170,7 @@ fn a_short_wall_limit_releases_a_stream_whose_declared_pid_never_sends() {
 
 fn rejected(config: Config) -> &'static str {
     match Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)) {
-        Err(Error::InvalidConfig { field }) => field,
+        Err(Error::InvalidConfig(field)) => field.name(),
         other => panic!("expected InvalidConfig, got {:?}", other.map(|_| ())),
     }
 }

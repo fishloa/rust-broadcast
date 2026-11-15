@@ -55,12 +55,131 @@ pub enum Error {
         name: String,
     },
     /// A [`crate::Config`] field holds a value no session can run with.
-    #[error("invalid config: {field}")]
-    InvalidConfig {
-        /// The offending field name.
-        field: &'static str,
-    },
+    #[error("invalid config: {0}")]
+    InvalidConfig(ConfigField),
 }
+
+/// Which [`crate::Config`] field failed validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ConfigField {
+    /// `backoff` is not a schedule the retry driver can run with.
+    Backoff,
+    /// `client_identity` cannot be read as usable TLS material.
+    ClientIdentity,
+    /// `srt.entropy_seed` is not set (SRT encryption needs it).
+    SrtEntropySeed,
+    /// `srt.timeouts.handshake` is zero.
+    SrtHandshakeTimeout,
+    /// `srt.timeouts.read_idle` is zero.
+    SrtReadIdleTimeout,
+    /// `srt.encryption.passphrase` is empty.
+    SrtPassphrase,
+    /// `tracks_hold_max_input_bytes` is zero or below the quiet floor.
+    TracksHoldMaxInputBytes,
+    /// `tracks_hold_quiet_input_bytes` is zero.
+    TracksHoldQuietInputBytes,
+    /// `udp.options.join` is set on a unicast bind.
+    UdpJoin,
+    /// `udp.options.join.interface` is unusable.
+    UdpJoinInterface,
+    /// `udp.options.join.source` is unusable.
+    UdpJoinSource,
+    /// `udp.options.join.group` is unusable.
+    UdpJoinGroup,
+    /// `udp.sdp` is supplied for a non-RTP bind.
+    UdpSdp,
+    /// `udp.reorder_packets` is zero or above the cap.
+    UdpReorderPackets,
+    /// `udp.reorder_wait` is zero.
+    UdpReorderWait,
+    /// `max_queued_events` is zero.
+    MaxQueuedEvents,
+    /// `max_queued_bytes` is zero.
+    MaxQueuedBytes,
+    /// `max_recorded_buffer_inputs` is zero.
+    MaxRecordedBufferInputs,
+    /// `max_manifest_bytes` is zero.
+    MaxManifestBytes,
+    /// `max_segment_bytes` is zero.
+    MaxSegmentBytes,
+    /// `max_key_bytes` is zero.
+    MaxKeyBytes,
+    /// `request_timeout` is zero.
+    RequestTimeout,
+    /// `segment_timeout` is zero.
+    SegmentTimeout,
+    /// `segment_inactivity_timeout` is zero.
+    SegmentInactivityTimeout,
+    /// `hls_key_timeout` is zero.
+    HlsKeyTimeout,
+    /// `buffer` is not a controller config the buffer can run with.
+    Buffer,
+    /// `timeline_jump.backward` is zero.
+    TimelineJumpBackward,
+    /// `timeline_jump.forward_slack` is zero.
+    TimelineJumpForwardSlack,
+    /// `dash.utc_timeout` is zero.
+    DashUtcTimeout,
+    /// `dash.utc_wait` is zero.
+    DashUtcWait,
+    /// `dash.utc_max_rtt` is zero.
+    DashUtcMaxRtt,
+    /// `dash.utc_resync` is zero.
+    DashUtcResync,
+    /// `dash.early_retry` is zero.
+    DashEarlyRetry,
+    /// `dash.min_mpd_refresh` is zero.
+    DashMinMpdRefresh,
+    /// A `dash` field not separately named.
+    Dash,
+}
+
+impl ConfigField {
+    /// Stable, dot-separated label for the field.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Backoff => "backoff",
+            Self::ClientIdentity => "client_identity",
+            Self::SrtEntropySeed => "srt.entropy_seed",
+            Self::SrtHandshakeTimeout => "srt.timeouts.handshake",
+            Self::SrtReadIdleTimeout => "srt.timeouts.read_idle",
+            Self::SrtPassphrase => "srt.encryption.passphrase",
+            Self::TracksHoldMaxInputBytes => "tracks_hold_max_input_bytes",
+            Self::TracksHoldQuietInputBytes => "tracks_hold_quiet_input_bytes",
+            Self::UdpJoin => "udp.options.join",
+            Self::UdpJoinInterface => "udp.options.join.interface",
+            Self::UdpJoinSource => "udp.options.join.source",
+            Self::UdpJoinGroup => "udp.options.join.group",
+            Self::UdpSdp => "udp.sdp",
+            Self::UdpReorderPackets => "udp.reorder_packets",
+            Self::UdpReorderWait => "udp.reorder_wait",
+            Self::MaxQueuedEvents => "max_queued_events",
+            Self::MaxQueuedBytes => "max_queued_bytes",
+            Self::MaxRecordedBufferInputs => "max_recorded_buffer_inputs",
+            Self::MaxManifestBytes => "max_manifest_bytes",
+            Self::MaxSegmentBytes => "max_segment_bytes",
+            Self::MaxKeyBytes => "max_key_bytes",
+            Self::RequestTimeout => "request_timeout",
+            Self::SegmentTimeout => "segment_timeout",
+            Self::SegmentInactivityTimeout => "segment_inactivity_timeout",
+            Self::HlsKeyTimeout => "hls_key_timeout",
+            Self::Buffer => "buffer",
+            Self::TimelineJumpBackward => "timeline_jump.backward",
+            Self::TimelineJumpForwardSlack => "timeline_jump.forward_slack",
+            Self::DashUtcTimeout => "dash.utc_timeout",
+            Self::DashUtcWait => "dash.utc_wait",
+            Self::DashUtcMaxRtt => "dash.utc_max_rtt",
+            Self::DashUtcResync => "dash.utc_resync",
+            Self::DashEarlyRetry => "dash.early_retry",
+            Self::DashMinMpdRefresh => "dash.min_mpd_refresh",
+            Self::Dash => "dash",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ConfigField);
 
 /// Why a connection ended, as the host reports it to
 /// [`crate::Session::on_closed`].

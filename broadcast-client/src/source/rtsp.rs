@@ -213,7 +213,7 @@ impl RtspSource {
             stalled: false,
             attempt: 0,
             retry: ReconnectTimer::new(&cfg.backoff, mix_seed(now_us))
-                .map_err(|_| crate::Error::InvalidConfig { field: "backoff" })?,
+                .map_err(|_| crate::Error::InvalidConfig(crate::error::ConfigField::Backoff))?,
             connected_at: now,
             last_byte_at: now,
             last_sample_at: now,
