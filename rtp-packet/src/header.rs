@@ -8,6 +8,7 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
+use crate::ids::{SeqNo, Ssrc};
 
 // ---------------------------------------------------------------------------
 // Named constants (no magic numbers) — RFC 3550 §5.1 / §5.3.1
@@ -121,11 +122,11 @@ pub struct RtpPacket<'a> {
     /// `payload type (PT)`, 7 bits (§5.1).
     pub payload_type: u8,
     /// `sequence number`, 16 bits (§5.1).
-    pub sequence_number: u16,
+    pub sequence_number: SeqNo,
     /// `timestamp`, 32 bits (§5.1).
     pub timestamp: u32,
     /// `SSRC` — synchronization source identifier, 32 bits (§5.1).
-    pub ssrc: u32,
+    pub ssrc: Ssrc,
     /// The CSRC identifier list, 0–15 entries (§5.1 `CC`/CSRC list). `CC` is
     /// always `csrc.len()` — there is no separate stored count.
     pub csrc: Vec<u32>,
@@ -175,9 +176,11 @@ impl<'a> Parse<'a> for RtpPacket<'a> {
         let marker = byte1 & MARKER_BIT_MASK != 0;
         let payload_type = byte1 & PAYLOAD_TYPE_MASK;
 
-        let sequence_number = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let sequence_number = SeqNo::new(u16::from_be_bytes([bytes[2], bytes[3]]));
         let timestamp = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let ssrc = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
+        let ssrc = Ssrc::new(u32::from_be_bytes([
+            bytes[8], bytes[9], bytes[10], bytes[11],
+        ]));
 
         let mut pos = FIXED_HEADER_LEN;
 
@@ -347,9 +350,9 @@ impl Serialize for RtpPacket<'_> {
         }
         buf[1] = byte1;
 
-        buf[2..4].copy_from_slice(&self.sequence_number.to_be_bytes());
+        buf[2..4].copy_from_slice(&self.sequence_number.get().to_be_bytes());
         buf[4..8].copy_from_slice(&self.timestamp.to_be_bytes());
-        buf[8..12].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.ssrc.get().to_be_bytes());
 
         let mut pos = FIXED_HEADER_LEN;
         for &c in &self.csrc {
@@ -387,9 +390,9 @@ mod tests {
         RtpPacket {
             marker: true,
             payload_type: 97,
-            sequence_number: 5,
+            sequence_number: SeqNo::new(5),
             timestamp: 0x0000_1400,
-            ssrc: 0x1234_5678,
+            ssrc: Ssrc::new(0x1234_5678),
             csrc: Vec::new(),
             extension: None,
             padding: None,
@@ -551,7 +554,7 @@ mod tests {
     fn field_mutation_changes_bytes() {
         let a = simple_packet();
         let mut b = a.clone();
-        b.sequence_number = a.sequence_number.wrapping_add(1);
+        b.sequence_number = a.sequence_number.wrapping_next();
         let mut oa = vec![0u8; a.serialized_len()];
         let mut ob = vec![0u8; b.serialized_len()];
         a.serialize_into(&mut oa).unwrap();
