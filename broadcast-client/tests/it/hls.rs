@@ -653,7 +653,7 @@ fn an_unrunnable_backoff_schedule_reports_invalid_config_at_open() {
     let err = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0))
         .expect_err("a schedule above MAX_FLOOR is refused");
     assert!(
-        matches!(err, Error::InvalidConfig { .. }),
+        matches!(err, Error::InvalidConfig(_)),
         "reported, never repaired into a zero-cap schedule: {err:?}"
     );
 }

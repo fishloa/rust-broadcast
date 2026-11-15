@@ -350,7 +350,7 @@ fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant
     media.push_str("#EXT-X-ENDLIST\n");
     std::fs::write(dir.join("media.m3u8"), media).unwrap();
     let json = test_fixtures::process::msv::MsvRun::new(&dir, "master.m3u8")
-        .timeout_secs(5)
+        .timeout(Duration::from_secs(5))
         .deadline(Duration::from_secs(35))
         .run();
     let text = json.to_string();

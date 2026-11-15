@@ -37,7 +37,7 @@ pub(crate) struct SdpRtp {
 }
 
 fn declared(sdp: &str) -> Result<Vec<Declared>, Error> {
-    let invalid = Error::InvalidConfig { field: "udp.sdp" };
+    let invalid = Error::InvalidConfig(crate::error::ConfigField::UdpSdp);
     let session = SdpSession::parse(sdp.as_bytes()).map_err(|_| invalid.clone())?;
     let mut out = Vec::new();
     for (media_index, media) in session.medias.iter().enumerate() {

@@ -193,7 +193,9 @@ impl Identification {
         ));
         if let Some(pv) = self.product_version {
             let mut buf = [0u8; crate::types::PRODUCT_VERSION_LEN];
-            pv.serialize_into(&mut buf).expect("fixed-size buffer");
+            // The buffer is exactly the type's serialized length, so the
+            // write cannot fail.
+            let _ = pv.serialize_into(&mut buf);
             out.push(LocalSetOwnedItem::owned(TAG_PRODUCT_VERSION, buf.to_vec()));
         }
         out.push(LocalSetOwnedItem::owned(
@@ -203,9 +205,9 @@ impl Identification {
         out.push(LocalSetOwnedItem::fixed(TAG_PRODUCT_UID, self.product_uid));
         {
             let mut buf = [0u8; crate::types::TIMESTAMP_LEN];
-            self.modification_date
-                .serialize_into(&mut buf)
-                .expect("fixed-size buffer");
+            // The buffer is exactly the type's serialized length, so the
+            // write cannot fail.
+            let _ = self.modification_date.serialize_into(&mut buf);
             out.push(LocalSetOwnedItem::owned(
                 TAG_MODIFICATION_DATE,
                 buf.to_vec(),
@@ -213,7 +215,9 @@ impl Identification {
         }
         if let Some(tv) = self.toolkit_version {
             let mut buf = [0u8; crate::types::PRODUCT_VERSION_LEN];
-            tv.serialize_into(&mut buf).expect("fixed-size buffer");
+            // The buffer is exactly the type's serialized length, so the
+            // write cannot fail.
+            let _ = tv.serialize_into(&mut buf);
             out.push(LocalSetOwnedItem::owned(TAG_TOOLKIT_VERSION, buf.to_vec()));
         }
         if let Some(platform) = &self.platform {

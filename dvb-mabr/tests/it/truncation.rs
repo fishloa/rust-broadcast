@@ -1,11 +1,19 @@
 //! Truncation gate: cutting a committed fixture at ANY offset before the end of
-//! its root end tag must be a structured `Error::XmlParse` (a network-truncated
-//! configuration must never parse as a valid, shorter one). The only accepted
+//! its root end tag must be a structured XML error (`Error::XmlParse`,
+//! `Error::XmlInvalid` or `Error::InvalidStructure`) — a network-truncated
+//! configuration must never parse as a valid, shorter one. The only accepted
 //! prefixes are the complete document plus trailing whitespace, asserted
 //! explicitly as `Ok`.
 #![cfg(feature = "std")]
 
 use dvb_mabr::{Error, MulticastGatewayConfiguration, MulticastServerConfiguration};
+
+fn is_xml_error(err: &Error) -> bool {
+    matches!(
+        err,
+        Error::XmlParse(_) | Error::XmlInvalid(_) | Error::InvalidStructure(_)
+    )
+}
 
 fn fixture(name: &str) -> String {
     test_fixtures::read_to_string(&format!("mabr/{name}"))
@@ -38,8 +46,8 @@ fn assert_every_truncation_errors<T: std::fmt::Debug>(
         let result = parse(&text[..end]);
         if end < complete {
             assert!(
-                matches!(result, Err(Error::XmlParse(_))),
-                "{name}: truncation at byte {end}/{} must be Err(XmlParse), got {result:?}",
+                matches!(result, Err(ref e) if is_xml_error(e)),
+                "{name}: truncation at byte {end}/{} must be a typed XML error, got {result:?}",
                 text.len()
             );
         } else {

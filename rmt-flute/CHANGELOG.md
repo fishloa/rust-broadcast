@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - BREAKING: `SourceBlockPartition`'s fields are private; read them with the `transfer_length()`/`encoding_symbol_length()`/`source_symbols()`/`num_blocks()`/`larger_block_len()`/`smaller_block_len()`/`larger_blocks()` accessors (#2766, #2771).
+- The `panic_idioms` workspace guard now covers this crate; the NORM_CMD CC `send_time_sec`/`send_time_usec` reader builds the 4-byte arrays directly instead of `.try_into().unwrap()` (#2773).
 - `SourceBlockPartition::new` returns `Error::FieldOverflow` when the partition exceeds what a `FecPayloadId128` can address (more than `u32::MAX` source blocks, or more than `u16::MAX` symbols in a block) (#2766).
 
 ### Fixed

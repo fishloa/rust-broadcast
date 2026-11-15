@@ -238,7 +238,7 @@ pub enum SegmenterEvent {
         languages: Vec<(InstreamId, String)>,
     },
     TsIdrMissing(TsHlsIdrStatus),
-    OutputFailed(String),
+    OutputFailed(TsHlsRejection),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -293,6 +293,46 @@ impl TsHlsIdrStatus {
 }
 
 broadcast_common::impl_spec_display!(TsHlsIdrStatus);
+
+/// Why a classic MPEG-TS HLS output could not be produced: the codec a track
+/// carries that Apple HLS Authoring Spec 1.5 (AVC-only video in TS) forbids.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TsHlsRejection {
+    /// The track is HEVC.
+    Hevc,
+    /// The track is AV1.
+    Av1,
+}
+
+impl TsHlsRejection {
+    pub fn name(&self) -> &'static str {
+        match self {
+            TsHlsRejection::Hevc => "HEVC",
+            TsHlsRejection::Av1 => "AV1",
+        }
+    }
+
+    /// The refusal reason (the codec is forbidden); the route's full
+    /// user-facing message adds the `ts_hls output cannot carry <codec>:` prefix.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            TsHlsRejection::Hevc => "HEVC is not allowed in MPEG-TS HLS segments",
+            TsHlsRejection::Av1 => "AV1 is not allowed in MPEG-TS HLS segments",
+        }
+    }
+
+    /// The full user-facing message a route reports as its `output_error`.
+    pub fn message(&self) -> String {
+        format!(
+            "ts_hls output cannot carry {}: {}",
+            self.name(),
+            self.reason()
+        )
+    }
+}
+
+broadcast_common::impl_spec_display!(TsHlsRejection);
 
 pub trait SiblingTrunks {
     /// Build audio follower renditions for `trunk`. The only registration
@@ -772,20 +812,13 @@ fn ts_hls_tracks_acceptable<'a>(
     configs: impl IntoIterator<Item = &'a CodecConfig>,
 ) -> bool {
     for cfg in configs {
-        let (codec, reason) = match cfg {
-            transmux::pipeline::CodecConfig::Hevc { .. } => {
-                ("HEVC", "HEVC is not allowed in MPEG-TS HLS segments")
-            }
-            transmux::pipeline::CodecConfig::Av1 { .. } => {
-                ("AV1", "AV1 is not allowed in MPEG-TS HLS segments")
-            }
+        let rejection = match cfg {
+            transmux::pipeline::CodecConfig::Hevc { .. } => TsHlsRejection::Hevc,
+            transmux::pipeline::CodecConfig::Av1 { .. } => TsHlsRejection::Av1,
             _ => continue,
         };
-        let _ = codec;
-        events.push(SegmenterEvent::OutputFailed(format!(
-            "ts_hls output cannot carry {codec}: {reason}"
-        )));
-        tracing::error!(route = %config.route_name, "ts_hls output failed: {}", reason);
+        events.push(SegmenterEvent::OutputFailed(rejection));
+        tracing::error!(route = %config.route_name, "ts_hls output failed: {}", rejection.reason());
         return false;
     }
     true

@@ -3350,7 +3350,8 @@ mod isn_tests {
 // Adapter security tests (r08-SRT-C2 / C6 / C7)
 // ===========================================================================
 
-#[cfg(all(test, feature = "tokio"))]
+#[cfg(test)]
+#[cfg(feature = "tokio")]
 mod adapter_tests {
     use super::*;
     use crate::packet::{

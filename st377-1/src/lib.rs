@@ -50,7 +50,7 @@ pub use package::{MaterialPackage, SourcePackage};
 pub use partition::{PartitionKind, PartitionPack, PartitionStatus};
 pub use preface::Preface;
 pub use preface::VERSION_1_3;
-pub use primer::PrimerPack;
+pub use primer::{LocalTagEntry, PrimerPack};
 pub use random_index_pack::{PartitionLocation, RandomIndexPack};
 pub use sequence::Sequence;
 pub use sets::InterchangeObjectFields;

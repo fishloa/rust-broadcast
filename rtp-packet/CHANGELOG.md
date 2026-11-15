@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The `panic_idioms` workspace guard now covers this crate (already clear of panicking idioms in non-test code) (#2773).
 ### Added
 - BREAKING: each typed RTCP packet (`SenderReport`, `ReceiverReport`, `SourceDescription`, `Bye`, `App`) now carries its trailing `P` (padding) octets as a public `padding: Option<RtcpPadding>` field, so a padded packet re-serializes byte-identically with its padding and `P` bit intact (audit19b #2742). The unpadded body region is validated separately from the padding octets.
 

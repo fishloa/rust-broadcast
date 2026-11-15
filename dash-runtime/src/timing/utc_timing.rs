@@ -143,9 +143,7 @@ pub fn sample_from_date_header(
     exchange: Exchange,
     max_rtt: Duration,
 ) -> Result<UtcSample, TimingError> {
-    let seconds = date_to_epoch_us(date)?;
-    let server = jiff::Timestamp::from_microsecond(seconds)
-        .unwrap_or(jiff::Timestamp::MAX)
+    let server = date_to_epoch_us(date)?
         .saturating_add(DATE_HEADER_HALF_SECOND)
         .unwrap_or(jiff::Timestamp::MAX);
     sample_from_exchange(exchange, server, DATE_HEADER_HALF_SECOND, max_rtt)

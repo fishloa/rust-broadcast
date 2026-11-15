@@ -15,7 +15,7 @@ use broadcast_dash::inherit::{InheritError, SegmentInfo, resolve_segment_info};
 use broadcast_dash::{Mpd, PresentationType};
 
 /// Why a Representation could not be planned.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum PlanError {
     /// `RepRef` names nothing in this MPD.

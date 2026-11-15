@@ -1729,7 +1729,25 @@ struct RenderStamp {
     siblings: Vec<(u64, u64, u64)>,
 }
 
-type RenderCell = Arc<OnceLock<core::result::Result<String, String>>>;
+/// Why a playlist cannot be rendered (always resolved to `NotFound` by the
+/// caller, never differentiated on message text).
+#[derive(Debug, Clone, PartialEq, thiserror::Error)]
+enum PlaylistRenderError {
+    /// The requested variant is not an fMP4 container.
+    #[error("not fmp4")]
+    NotFmp4,
+    /// The video track id is not set.
+    #[error("no video track")]
+    NoVideoTrack,
+    /// The window carries no I-frame entry.
+    #[error("no iframe entry")]
+    NoIframeEntry,
+    /// Rendering the playlist text failed.
+    #[error(transparent)]
+    Serialization(#[from] broadcast_hls::Error),
+}
+
+type RenderCell = Arc<OnceLock<core::result::Result<String, PlaylistRenderError>>>;
 
 #[derive(Default)]
 struct RenderCache {
@@ -3087,8 +3105,8 @@ impl HlsOrigin {
     fn cached_render(
         &self,
         key: RenderKey,
-        render: impl FnOnce() -> core::result::Result<String, String>,
-    ) -> core::result::Result<String, String> {
+        render: impl FnOnce() -> core::result::Result<String, PlaylistRenderError>,
+    ) -> core::result::Result<String, PlaylistRenderError> {
         let stamp = self.render_stamp();
         let cell = {
             let mut cache = locked(&self.render_cache);
@@ -3348,7 +3366,7 @@ impl HlsOrigin {
         &self,
         track_id: TrackId,
         skip: Option<SkipDirective>,
-    ) -> core::result::Result<String, String> {
+    ) -> core::result::Result<String, PlaylistRenderError> {
         self.drain();
         self.cached_render(RenderKey::Media { track_id, skip }, || {
             self.render_playlist_uncached(track_id, skip)
@@ -3359,7 +3377,7 @@ impl HlsOrigin {
         &self,
         track_id: TrackId,
         skip: Option<SkipDirective>,
-    ) -> core::result::Result<String, String> {
+    ) -> core::result::Result<String, PlaylistRenderError> {
         #[cfg(test)]
         self.renders
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -3687,7 +3705,7 @@ impl HlsOrigin {
             rendition_reports,
             ..Default::default()
         };
-        playlist.to_m3u8().map_err(|error| error.to_string())
+        playlist.to_m3u8().map_err(PlaylistRenderError::from)
     }
 
     fn resolve_playlist(
@@ -3832,7 +3850,7 @@ impl HlsOrigin {
         &self,
         track_id: TrackId,
         media_playlist_name: &str,
-    ) -> core::result::Result<String, String> {
+    ) -> core::result::Result<String, PlaylistRenderError> {
         self.drain();
         self.cached_render(
             RenderKey::IFrame {
@@ -3847,20 +3865,20 @@ impl HlsOrigin {
         &self,
         track_id: TrackId,
         media_playlist_name: &str,
-    ) -> core::result::Result<String, String> {
+    ) -> core::result::Result<String, PlaylistRenderError> {
         #[cfg(test)]
         self.renders
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if self.container != Container::Fmp4 {
-            return Err("not fmp4".to_string());
+            return Err(PlaylistRenderError::NotFmp4);
         }
         if locked(&self.video_track_id).is_none() {
-            return Err("no video track".to_string());
+            return Err(PlaylistRenderError::NoVideoTrack);
         }
         let window = self.window_view();
         // D3': collect entries; a `None` is allowed only before the first entry.
         let Some(entries) = self.iframe_entries(&window) else {
-            return Err("no iframe entry".to_string());
+            return Err(PlaylistRenderError::NoIframeEntry);
         };
 
         // RFC 8216 §4.3.3.1: `EXT-X-TARGETDURATION` is frozen once published.
@@ -3983,7 +4001,7 @@ impl HlsOrigin {
             iframes_only: true,
             ..Default::default()
         };
-        playlist.to_m3u8().map_err(|error| error.to_string())
+        playlist.to_m3u8().map_err(PlaylistRenderError::from)
     }
 
     /// A part request is the preload-hinted Partial Segment a client fetches

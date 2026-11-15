@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- The `panic_idioms` workspace guard now covers this crate; the `#[cfg(all(test, any(feature = "ts", feature = "rtp")))]` test module is gated as stacked `#[cfg(test)]` + `#[cfg(any(feature = "ts", feature = "rtp"))]` so the shared lexer recognises it as test-only (#2773).
 ### Fixed
 - `AncPacket` can no longer be serialized with a stale `Data_Count` or `Checksum_Word` (#2762): ST 291-1:2011 §6.5/§6.7 derive both from `DID`/`SDID`/`User_Data_Words`, so they are now computed on serialize instead of written from a stored field. Editing a user data word used to write bytes whose declared count/checksum contradicted the words themselves; the round-trip test `hand_computed_wire_bytes` still pins the canonical bytes (derived `Data_Count` `0x102`, checksum `0x134`).
 - The ANC PES header is parsed and written by `mpeg-pes`'s `PesPacket` (`Error::Pes` wraps its errors) instead of a second copy of the PES timestamp/BER coding (#2762); ST 2038 Table 2's pinned fields (`stream_id` `0xBD`, `PES_scrambling_control` `'00'`, `data_alignment_indicator` `'1'`, PTS-only, `PES_header_data_length` `0x05`) are still enforced on top. The `.expect("length checked above")` in the hand-rolled PTS reader is gone with it.
