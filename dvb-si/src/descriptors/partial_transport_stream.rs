@@ -18,6 +18,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for partial_transport_stream_descriptor.
@@ -31,8 +32,10 @@ const MAX_22: u32 = (1 << 22) - 1;
 const MAX_14: u16 = (1 << 14) - 1;
 /// Default of each 2-bit `reserved_future_use` (EN 300 468 Table 165):
 /// `reserved_future_use` = `1` (all editions, audit §6.1).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
-const RESERVED_MASK: u8 = 0x03;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of each `reserved_future_use` field (2 bits).
+const RESERVED_BITS: u32 = 2;
 
 /// Partial Transport Stream Descriptor (tag 0x63).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,18 +48,21 @@ pub struct PartialTransportStreamDescriptor {
     pub minimum_overall_smoothing_rate: u32,
     /// 14-bit maximum_overall_smoothing_buffer (0x3FFF = undefined, PDF p. 155).
     pub maximum_overall_smoothing_buffer: u16,
-    /// `reserved_future_use(2)` ahead of `peak_rate` (2 bits, right-aligned).
-    /// Captured on parse, re-emitted verbatim; defaults to
+    /// `reserved_future_use(2)` ahead of `peak_rate` (2 bits). Captured on
+    /// parse, re-emitted verbatim; defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use_peak_rate: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_peak_rate: ReservedOnes<RESERVED_BITS>,
     /// `reserved_future_use(2)` ahead of `minimum_overall_smoothing_rate`
-    /// (2 bits, right-aligned). Captured on parse, re-emitted verbatim;
-    /// defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use_min_rate: u8,
+    /// (2 bits). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_min_rate: ReservedOnes<RESERVED_BITS>,
     /// `reserved_future_use(2)` ahead of `maximum_overall_smoothing_buffer`
-    /// (2 bits, right-aligned). Captured on parse, re-emitted verbatim;
-    /// defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use_buffer: u8,
+    /// (2 bits). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_buffer: ReservedOnes<RESERVED_BITS>,
 }
 
 impl PartialTransportStreamDescriptor {
@@ -103,9 +109,9 @@ impl<'a> Parse<'a> for PartialTransportStreamDescriptor {
             peak_rate,
             minimum_overall_smoothing_rate,
             maximum_overall_smoothing_buffer,
-            reserved_future_use_peak_rate: body[0] >> 6,
-            reserved_future_use_min_rate: body[3] >> 6,
-            reserved_future_use_buffer: body[6] >> 6,
+            reserved_future_use_peak_rate: ReservedOnes::from_bits(u64::from(body[0] >> 6)),
+            reserved_future_use_min_rate: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
+            reserved_future_use_buffer: ReservedOnes::from_bits(u64::from(body[6] >> 6)),
         })
     }
 }
@@ -136,27 +142,15 @@ impl Serialize for PartialTransportStreamDescriptor {
         let b = HEADER_LEN;
         // reserved_future_use bits re-emitted as captured (top 2 bits of each
         // high byte).
-        buf[b] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use_peak_rate,
-            RESERVED_MASK,
-            "reserved_future_use_peak_rate",
-        )? << 6)
+        buf[b] = ((self.reserved_future_use_peak_rate.get() as u8) << 6)
             | ((self.peak_rate >> 16) as u8 & 0x3F);
         buf[b + 1] = (self.peak_rate >> 8) as u8;
         buf[b + 2] = self.peak_rate as u8;
-        buf[b + 3] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use_min_rate,
-            RESERVED_MASK,
-            "reserved_future_use_min_rate",
-        )? << 6)
+        buf[b + 3] = ((self.reserved_future_use_min_rate.get() as u8) << 6)
             | ((self.minimum_overall_smoothing_rate >> 16) as u8 & 0x3F);
         buf[b + 4] = (self.minimum_overall_smoothing_rate >> 8) as u8;
         buf[b + 5] = self.minimum_overall_smoothing_rate as u8;
-        buf[b + 6] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use_buffer,
-            RESERVED_MASK,
-            "reserved_future_use_buffer",
-        )? << 6)
+        buf[b + 6] = ((self.reserved_future_use_buffer.get() as u8) << 6)
             | ((self.maximum_overall_smoothing_buffer >> 8) as u8 & 0x3F);
         buf[b + 7] = self.maximum_overall_smoothing_buffer as u8;
         Ok(len)
@@ -180,7 +174,7 @@ mod tests {
         assert_eq!(d.peak_rate, 0x01_2345);
         assert_eq!(d.minimum_overall_smoothing_rate, 0x0A_BCDE);
         assert_eq!(d.maximum_overall_smoothing_buffer, 0x1234);
-        assert_eq!(d.reserved_future_use_peak_rate, 0b11);
+        assert_eq!(d.reserved_future_use_peak_rate, ReservedOnes::FILL);
     }
 
     #[test]
@@ -286,7 +280,11 @@ mod tests {
                             d.reserved_future_use_min_rate,
                             d.reserved_future_use_buffer
                         ),
-                        (r1, r2, r3)
+                        (
+                            ReservedOnes::from_bits(u64::from(r1)),
+                            ReservedOnes::from_bits(u64::from(r2)),
+                            ReservedOnes::from_bits(u64::from(r3))
+                        )
                     );
                     let mut out = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut out).unwrap();
@@ -304,6 +302,27 @@ mod tests {
         assert_eq!(
             out,
             [TAG, 8, 0xC1, 0x23, 0x45, 0xCA, 0xBC, 0xDE, 0xD2, 0x34]
+        );
+    }
+
+    /// Each field is 2 bits wide, so a wider value is unrepresentable and
+    /// cannot spill into the 22-/14-bit value below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_two_bits() {
+        let d = PartialTransportStreamDescriptor {
+            peak_rate: 1,
+            minimum_overall_smoothing_rate: 2,
+            maximum_overall_smoothing_buffer: 3,
+            reserved_future_use_peak_rate: ReservedOnes::from_bits(0xFF),
+            reserved_future_use_min_rate: ReservedOnes::from_bits(0xFF),
+            reserved_future_use_buffer: ReservedOnes::from_bits(0xFF),
+        };
+        assert_eq!(d.reserved_future_use_peak_rate.get(), 0x03);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out,
+            [TAG, 8, 0xC0, 0x00, 0x01, 0xC0, 0x00, 0x02, 0xC0, 0x03]
         );
     }
 }
