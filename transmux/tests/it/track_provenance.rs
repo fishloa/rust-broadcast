@@ -270,8 +270,8 @@ fn streaming_demux_track_added_matches_batch_provenance() {
     let ts = fixture_bytes();
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&ts);
-    demux.finish();
+    demux.feed(&ts).expect("valid timing");
+    demux.finish().expect("valid timing");
 
     let mut streamed: BTreeMap<TrackId, (Option<Pid>, Vec<u8>)> = BTreeMap::new();
     while let Some(event) = demux.poll_event() {

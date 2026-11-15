@@ -709,7 +709,7 @@ mod playout_tests {
         let reader = FileReader::new(
             FileReaderConfig::new(std::path::PathBuf::from("unused"), true, trunk).with_pace(false),
         );
-        let samples = vec![Sample::new(vec![0], None, None, None, false)];
+        let samples = vec![Sample::new(vec![0], None, None, None, false).expect("valid timing")];
         let parsed = ParsedFile {
             tracks: vec![Track::new(
                 media_plane::ts_session::test_support::track_spec(transmux::TrackId::new(1)),

@@ -1170,7 +1170,7 @@ impl RtpStreamDepacketiser {
             // across the discontinuity (`unwrap_ts` cannot know the two
             // runs' clocks are unrelated — RFC 3550 §5.1).
             let mut held = Vec::new();
-            Self::drain_pending(st, loss_events, track_id, &mut held);
+            Self::drain_pending(st, loss_events, track_id, &mut held)?;
             for p in st.pending.drain(..) {
                 loss_events.push_back(RtpLossEvent::DroppedAccessUnit {
                     track_id,
@@ -1333,7 +1333,7 @@ impl RtpStreamDepacketiser {
             Self::drain_complete_or_discard(st, loss_events, track_id, &mut out);
             st.cur_ts = None;
         }
-        Self::drain_pending(st, loss_events, track_id, &mut out);
+        Self::drain_pending(st, loss_events, track_id, &mut out)?;
         Ok(derive_dts(st, loss_events, track_id, out, true))
     }
 
@@ -1342,9 +1342,9 @@ impl RtpStreamDepacketiser {
         loss_events: &mut VecDeque<RtpLossEvent>,
         track_id: TrackId,
         out: &mut Vec<Sample>,
-    ) {
+    ) -> Result<()> {
         if st.reordered && st.kind == RtpMediaKind::H264 {
-            Self::resolve_window(st, loss_events, track_id, out, true);
+            Self::resolve_window(st, loss_events, track_id, out, true)?;
         } else if let Some(duration) = known_duration(st) {
             for (index, p) in st.pending.drain(..).enumerate() {
                 let offset = u64::from(duration) * index as u64;
@@ -1355,9 +1355,10 @@ impl RtpStreamDepacketiser {
                     Some(ts),
                     Some(duration),
                     p.is_sync,
-                ));
+                )?);
             }
         }
+        Ok(())
     }
 
     /// Resolve the oldest AUs of a reordered video track's window.
@@ -1383,7 +1384,7 @@ impl RtpStreamDepacketiser {
         track_id: TrackId,
         out: &mut Vec<Sample>,
         drain_all: bool,
-    ) {
+    ) -> Result<()> {
         while !st.pending.is_empty() {
             let head_ts = st.pending[0].unwrapped_ts;
             let successor = st
@@ -1432,7 +1433,7 @@ impl RtpStreamDepacketiser {
                 Some(ts),
                 Some(duration),
                 p.is_sync,
-            ));
+            )?);
         }
         if st.pending.len() > MAX_REORDER_WINDOW {
             let excess = st.pending.len() - MAX_REORDER_WINDOW;
@@ -1443,6 +1444,7 @@ impl RtpStreamDepacketiser {
                 });
             }
         }
+        Ok(())
     }
 
     /// Reassemble the buffered packets into AUs, then for each: unwrap its
@@ -1525,7 +1527,7 @@ impl RtpStreamDepacketiser {
                     is_sync: au.is_sync,
                     data: au.data,
                 });
-                Self::resolve_window(st, loss_events, track_id, out, false);
+                Self::resolve_window(st, loss_events, track_id, out, false)?;
                 continue;
             }
             let same_packet_group = st.kind == RtpMediaKind::Aac
@@ -1589,7 +1591,7 @@ impl RtpStreamDepacketiser {
                                 Some(ts),
                                 Some(duration),
                                 p.is_sync,
-                            ));
+                            )?);
                         }
                     }
                     _ => {
@@ -1606,7 +1608,7 @@ impl RtpStreamDepacketiser {
                                     Some(ts),
                                     Some(each),
                                     p.is_sync,
-                                ));
+                                )?);
                             }
                         }
                     }

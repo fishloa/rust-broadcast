@@ -201,8 +201,10 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
         },
     );
     let samples = vec![
-        Sample::from_raw(vec![0xAA, 0xBB, 0xCC, 0xDD], Some(0), Some(0), Some(1536)),
-        Sample::from_raw(vec![0x11, 0x22, 0x33], Some(1536), Some(1536), Some(1536)),
+        Sample::from_raw(vec![0xAA, 0xBB, 0xCC, 0xDD], Some(0), Some(0), Some(1536))
+            .expect("valid timing"),
+        Sample::from_raw(vec![0x11, 0x22, 0x33], Some(1536), Some(1536), Some(1536))
+            .expect("valid timing"),
     ];
     let media = Media::new(vec![Track::new(spec, samples.clone())], timescale(48_000));
 

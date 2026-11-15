@@ -34,7 +34,7 @@ fn streaming_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
     let mut demux = StreamingTsDemux::new();
     let mut specs = Vec::new();
     for chunk in data.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(ev) = demux.poll_event() {
             match ev {
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
@@ -46,7 +46,7 @@ fn streaming_video_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(ev) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) = ev
             && matches!(spec.config, CodecConfig::Avc { .. })
@@ -162,7 +162,7 @@ fn track_updated_lands_after_the_last_old_config_sample() {
     let mut demux = StreamingTsDemux::new();
     let mut sequence = Vec::new();
     for chunk in data.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(ev) = demux.poll_event() {
             match ev {
                 DemuxEvent::Sample {
@@ -186,7 +186,7 @@ fn track_updated_lands_after_the_last_old_config_sample() {
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     let track = sequence
         .iter()
         .find_map(|o| match o {

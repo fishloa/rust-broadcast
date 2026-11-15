@@ -355,7 +355,8 @@ fn rtp_packetiser_per_packet_cost_is_independent_of_payload_size() {
                 s.flags.is_sync,
             )
         })
-        .collect();
+        .collect::<Result<Vec<_>, _>>()
+        .expect("valid timing");
     let scaled_track = Track::new(spec, scaled_samples);
     let total_payload_10x: usize = scaled_track.samples.iter().map(|s| s.data.len()).sum();
     eprintln!("PROOF 10× payload: {total_payload_10x} bytes");

@@ -618,7 +618,7 @@ fn silence_is_a_stall_then_live_again_then_a_rebind() {
     assert!(
         matches!(
             host.events.iter().rev().find_map(|t| match &t.event {
-                Event::Status(s) => Some(*s),
+                Event::Status(s) => Some(s.clone()),
                 _ => None,
             }),
             Some(Status::Live)

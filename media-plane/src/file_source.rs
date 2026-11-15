@@ -537,11 +537,11 @@ fn map_demux_error(e: DemuxError) -> FileReaderError {
 /// into a [`Media`].
 fn demux_streaming_ts(bytes: &[u8]) -> Result<Media, DemuxError> {
     let mut demux = StreamingTsDemux::new();
-    demux.feed(bytes);
+    demux.feed(bytes).map_err(DemuxError::Transmux)?;
     // End of input: without `finish()` the demux never announces a track whose
     // sibling PID stayed silent and never emits each live track's held-back
     // final access unit (it needs the *next* unit for its duration).
-    demux.finish();
+    demux.finish().map_err(DemuxError::Transmux)?;
     collect_streaming_media(&mut demux, |d| d.poll_event())
 }
 
@@ -1085,7 +1085,8 @@ mod tests {
         let samples = pts
             .iter()
             .map(|&p| Sample::new(vec![0], Some(p), Some(p), Some(10), true))
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid timing");
         ParsedFile {
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),
@@ -1119,7 +1120,8 @@ mod tests {
     /// PTS).
     #[test]
     fn zero_duration_falls_back_to_unit_frame() {
-        let samples = vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true)];
+        let samples =
+            vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true).expect("valid timing")];
         let parsed = ParsedFile {
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),
@@ -1157,7 +1159,7 @@ mod tests {
     /// spinning a no-op publish loop.
     #[test]
     fn no_playable_samples_fails_session() {
-        let samples = vec![Sample::new(vec![0], None, None, None, false)];
+        let samples = vec![Sample::new(vec![0], None, None, None, false).expect("valid timing")];
         let parsed = ParsedFile {
             tracks: vec![Track::new(
                 avc_spec(TrackId::new(1), timescale(90_000)),

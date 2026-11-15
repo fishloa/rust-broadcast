@@ -127,9 +127,9 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
 fn feed_in_chunks(data: &[u8], chunk_size: usize) -> Media {
     let mut demux = StreamingTsDemux::new().with_strict_pmt_order();
     for chunk in data.chunks(chunk_size.max(1)) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     assemble(demux)
 }
 
@@ -201,8 +201,8 @@ fn m6_single_track_added_covers_every_live_pid_incl_data_tracks() {
     let data = read(&fixtures_ts_dir().join("m6-single.ts"));
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&data);
-    demux.finish();
+    demux.feed(&data).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut added: Vec<TrackSpec> = Vec::new();
     while let Some(event) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = event {
@@ -238,8 +238,8 @@ fn france_discontinuity_fixture_fires_discontinuity_event() {
     let data = read(&fixtures_ts_dir().join("france-pcr-discontinuity.ts"));
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&data);
-    demux.finish();
+    demux.feed(&data).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut saw_discontinuity = false;
     while let Some(event) = demux.poll_event() {
         if matches!(event, DemuxEvent::Discontinuity { .. }) {
@@ -261,8 +261,8 @@ fn h264_aac_pcr_event_count_matches_batch_media_pcr_len() {
     assert!(!batch.pcr.is_empty(), "h264-aac.ts must carry PCR");
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&data);
-    demux.finish();
+    demux.feed(&data).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut pcr_events = 0usize;
     while let Some(event) = demux.poll_event() {
         if matches!(event, DemuxEvent::ClockReference { .. }) {
@@ -300,14 +300,14 @@ fn bounded_memory_smoke_double_feed_eager_poll() {
     let mut demux = StreamingTsDemux::new();
     let mut sample_count = 0usize;
     for chunk in doubled.chunks(188) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(event) = demux.poll_event() {
             if matches!(event, DemuxEvent::Sample { .. }) {
                 sample_count += 1;
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(event) = demux.poll_event() {
         if matches!(event, DemuxEvent::Sample { .. }) {
             sample_count += 1;
@@ -345,7 +345,7 @@ fn finish_flushes_trailing_partial_access_unit_only_at_finish() {
     assert!(oracle_total > 0, "truncated input must still yield samples");
 
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&truncated);
+    demux.feed(&truncated).expect("valid timing");
     let mut before_count = 0usize;
     while let Some(event) = demux.poll_event() {
         if matches!(event, DemuxEvent::Sample { .. }) {
@@ -358,7 +358,7 @@ fn finish_flushes_trailing_partial_access_unit_only_at_finish() {
          (before={before_count}, full-oracle-total={oracle_total})"
     );
 
-    demux.finish();
+    demux.finish().expect("valid timing");
     let mut after_count = 0usize;
     while let Some(event) = demux.poll_event() {
         if matches!(event, DemuxEvent::Sample { .. }) {

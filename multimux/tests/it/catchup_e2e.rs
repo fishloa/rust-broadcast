@@ -10,7 +10,7 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use transmux::validate::{Severity, validate_media_segment};
+use transmux::validate::{SegmentOrigin, Severity, validate_media_segment};
 
 fn dvr_config(tmp: &std::path::Path) -> DvrConfig {
     DvrConfig::default()
@@ -139,7 +139,7 @@ async fn catchup_output_end_to_end() {
         assert_eq!(resp.status(), StatusCode::OK, "GET {url}");
         let bytes = resp.bytes().await.unwrap();
         assert!(!bytes.is_empty(), "empty segment {url}");
-        let issues = validate_media_segment(&bytes);
+        let issues = validate_media_segment(&bytes, SegmentOrigin::FromIr);
         let errors: Vec<_> = issues
             .iter()
             .filter(|i| i.severity == Severity::Error)

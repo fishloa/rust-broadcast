@@ -90,6 +90,7 @@
 use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
+use core::num::NonZeroU32;
 
 use broadcast_common::{Demand, Parse, Stage, Timestamp};
 use rtmp_runtime::RtmpError;
@@ -122,6 +123,10 @@ struct PendingSample {
     timing: SampleTiming,
 }
 
+/// One tick: the span a track's only sample is flushed with, the smallest span
+/// a sample can declare.
+const ONE_TICK: NonZeroU32 = NonZeroU32::MIN;
+
 /// Unrolls the 32-bit millisecond FLV tag timestamp (`Timestamp` +
 /// `TimestampExtended`, FLV spec §E.4.1) into a monotonic 64-bit clock: a
 /// step of less than half the 32-bit range in either direction is the real
@@ -146,17 +151,18 @@ impl TimestampUnroll {
 }
 
 /// Per-track (video or audio) streaming state.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TrackState {
     /// `Some` once this track's codec config has been recovered and
     /// [`DemuxEvent::TrackAdded`] fired for it.
     track_id: Option<TrackId>,
     pending: Option<PendingSample>,
     /// The last computed forward-delta duration, reused for the final
-    /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or `0` if
-    /// only one sample was ever seen) — exactly
+    /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or one tick,
+    /// the smallest span a sample can declare, if only one sample was ever
+    /// seen) — exactly
     /// [`crate::flv`]'s `backfill_last_duration` tail rule.
-    last_duration: u32,
+    last_duration: NonZeroU32,
     /// The raw codec-config payload (the `avcC` record / the ASC) the track's
     /// current [`TrackSpec`] was built from, so a *re-sent* sequence header can
     /// be compared with it byte-for-byte: an encoder that repeats its headers
@@ -170,6 +176,18 @@ struct TrackState {
     /// sample reaches the pipeline (r04-W43). `None` until a sequence header
     /// resolves the track.
     nal_length_size: Option<usize>,
+}
+
+impl Default for TrackState {
+    fn default() -> Self {
+        Self {
+            track_id: None,
+            pending: None,
+            last_duration: ONE_TICK,
+            config_bytes: Vec::new(),
+            nal_length_size: None,
+        }
+    }
 }
 
 impl TrackState {
@@ -200,8 +218,8 @@ impl TrackState {
                     next: Some(dts),
                 });
             };
-            let Ok(duration) = u32::try_from(delta) else {
-                return Err(if delta < 0 {
+            let Some(duration) = u32::try_from(delta).ok().and_then(NonZeroU32::new) else {
+                return Err(if delta <= 0 {
                     FlvError::TimestampBackwards {
                         previous: Some(previous),
                         next: Some(dts),

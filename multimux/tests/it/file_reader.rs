@@ -190,10 +190,10 @@ fn unsupported_fixtures_yield_distinct_format_errors() {
 fn source_track_dts(rel: &str, track_id: TrackId) -> Vec<i64> {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&bytes);
+    demux.feed(&bytes).expect("valid timing");
     // End of input: the source's own sample set includes the access units the
     // demux holds back until `finish()`.
-    demux.finish();
+    demux.finish().expect("valid timing");
     let mut dts = Vec::new();
     while let Some(ev) = demux.poll_event() {
         let DemuxEvent::Sample {
@@ -260,8 +260,8 @@ async fn ts_with_a_silent_declared_pid_publishes_everything_at_end_of_input() {
     };
     let bytes = std::fs::read(&path).unwrap();
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&bytes);
-    demux.finish();
+    demux.feed(&bytes).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut expected: std::collections::BTreeMap<TrackId, usize> = Default::default();
     while let Some(ev) = demux.poll_event() {
         // Timestamp-less (section-carried) samples cannot be placed on the
@@ -466,8 +466,8 @@ async fn loop_preserves_dts_monotonicity_across_boundary() {
 fn source_sample_count(rel: &str) -> usize {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&bytes);
-    demux.finish();
+    demux.feed(&bytes).expect("valid timing");
+    demux.finish().expect("valid timing");
     let mut n = 0usize;
     while let Some(ev) = demux.poll_event() {
         if let DemuxEvent::Sample { .. } = ev {
@@ -618,7 +618,7 @@ async fn random_bytes_yield_a_probe_error_never_panic() {
 fn fixture_content_duration_secs(rel: &str) -> f64 {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&bytes);
+    demux.feed(&bytes).expect("valid timing");
     let mut spans: std::collections::HashMap<TrackId, (i64, i64, u32)> =
         std::collections::HashMap::new(); // track_id -> (first, last, timescale)
     while let Some(ev) = demux.poll_event() {

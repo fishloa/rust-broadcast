@@ -33,12 +33,12 @@ fn feed_recording_events(
 ) -> Vec<DemuxEvent> {
     let mut events = Vec::new();
     for chunk in data.chunks(chunk_size.max(1)) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(ev) = demux.poll_event() {
             events.push(ev);
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(ev) = demux.poll_event() {
         events.push(ev);
     }
@@ -103,8 +103,8 @@ fn tracks_resolved_fires_once_after_both_tracks_added_no_spam() {
 fn tracks_resolved_fires_with_whole_buffer_fed_at_once() {
     let data = fixture_bytes();
     let mut demux = StreamingTsDemux::new();
-    demux.feed(&data);
-    demux.finish();
+    demux.feed(&data).expect("valid timing");
+    demux.finish().expect("valid timing");
 
     let mut resolved_count = 0usize;
     let mut track_added_count = 0usize;

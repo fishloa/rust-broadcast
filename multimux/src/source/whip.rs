@@ -2601,7 +2601,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             None,
             None,
             true,
-        );
+        )
+        .expect("valid timing");
         session.try_capture_config(TrackId::new(1), &sample);
         assert!(
             session
@@ -2619,7 +2620,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         both.extend_from_slice(&[0x67, 0x42, 0x00, 0x1F]);
         both.extend_from_slice(&2u32.to_be_bytes());
         both.extend_from_slice(&[0x68, 0xCE]);
-        let sample = Sample::new(bytes::Bytes::copy_from_slice(&both), None, None, None, true);
+        let sample = Sample::new(bytes::Bytes::copy_from_slice(&both), None, None, None, true)
+            .expect("valid timing");
         session.try_capture_config(TrackId::new(1), &sample);
         assert!(
             session

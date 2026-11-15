@@ -260,7 +260,8 @@ mod segmenter_cuts {
                 let dts = (i as i64) * 90_000;
                 Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(90_000), true)
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid timing");
         let (n, allocs, _) = measure(|| {
             for s in samples {
                 seg.push(TrackId::new(1), s).unwrap();

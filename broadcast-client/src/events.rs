@@ -96,7 +96,7 @@ pub use transmux::AvSync;
 
 /// Status values carried by [`Event::Status`].
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Status {
     /// Connection being established.
     Establishing,
@@ -122,6 +122,14 @@ pub enum Status {
     WaitingForCredentials,
     /// Waiting for a declared track to resolve before the first `Start`.
     AwaitingTracks,
+    /// The demuxer refused a sample whose timing cannot be represented (a PTS
+    /// with no DTS). The stream is otherwise intact; that sample is dropped.
+    /// The reason is carried as its message: [`Status`] is a flat state value
+    /// (historically `Copy`), not a place to carry a nested error tree.
+    DemuxError {
+        /// The demuxer's message.
+        reason: String,
+    },
     /// Ended.
     Ended,
     /// A media-class request of a segment-pull source received no response head and no body
@@ -147,6 +155,7 @@ impl Status {
             Self::AwaitingTracks => "awaiting-tracks",
             Self::Ended => "ended",
             Self::RequestStalled { .. } => "request-stalled",
+            Self::DemuxError { .. } => "demux-error",
         }
     }
 }

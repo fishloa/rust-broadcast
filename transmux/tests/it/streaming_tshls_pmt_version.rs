@@ -172,14 +172,14 @@ fn late_track_reaches_a_streaming_demux_that_joined_before_it() {
     let mut d = StreamingTsDemux::new();
     let mut added = Vec::new();
     for c in ts.chunks(TS_PACKET_SIZE * 64) {
-        d.feed(c);
+        d.feed(c).expect("valid timing");
         while let Some(e) = d.poll_event() {
             if let DemuxEvent::TrackAdded(spec) = e {
                 added.push(spec.config.clone());
             }
         }
     }
-    d.finish();
+    d.finish().expect("valid timing");
     while let Some(e) = d.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = e {
             added.push(spec.config.clone());

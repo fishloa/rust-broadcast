@@ -288,7 +288,8 @@ fn media_with_video_sample(sample_len: usize) -> Media {
         .find(|t| matches!(t.config(), transmux::ir::CodecConfig::Avc { .. }))
         .expect("fixture carries a video track");
     let spec = video.spec.clone();
-    let sample = transmux::Sample::new(vec![0u8; sample_len], Some(0), Some(0), None, true);
+    let sample = transmux::Sample::new(vec![0u8; sample_len], Some(0), Some(0), None, true)
+        .expect("valid timing");
     let track = transmux::Track::new(spec.clone(), vec![sample]);
     Media::new(vec![track], spec.timescale)
 }

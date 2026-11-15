@@ -3679,6 +3679,7 @@ mod tests {
 
     fn sample(byte: u8, len: usize) -> Sample {
         Sample::new(Bytes::from(vec![byte; len]), Some(0), Some(0), None, true)
+            .expect("valid timing")
     }
 
     fn timed_data(item: &SampleCursorItem) -> Option<(TrackId, &Sample)> {

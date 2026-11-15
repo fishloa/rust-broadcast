@@ -974,7 +974,7 @@ mod tests {
         if let Some(t) = s.timing.as_mut() {
             *t = t
                 .with_composition(i64::MAX, i64::MAX)
-                .with_duration(FAR_PTS_DURATION);
+                .with_duration(std::num::NonZeroU32::new(FAR_PTS_DURATION).expect("non-zero"))
         } else {
             s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 i64::MAX,
@@ -1141,12 +1141,15 @@ mod tests {
             let mut s = st.video.1[0].clone();
             let pts = BASE + pts_slot * FRAME;
             let dts = BASE + dts_slot * FRAME;
-            let dur = u32::try_from(FRAME).unwrap();
+            let dur = std::num::NonZeroU32::new(u32::try_from(FRAME).unwrap())
+                .expect("a non-zero frame span");
             if let Some(t) = s.timing.as_mut() {
-                *t = t.with_composition(dts, pts).with_duration(dur);
+                *t = t.with_composition(dts, pts).with_duration(dur)
             } else {
                 s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
-                    dts, pts, dur,
+                    dts,
+                    pts,
+                    dur.get(),
                 ));
             }
             f.on_sample(vid, &s, Some(join));
@@ -1322,8 +1325,9 @@ mod tests {
             for id in self.emitting.clone() {
                 let spec = &self.specs[&id];
                 let ts = i64::from(spec.timescale.get());
-                let dur = u32::try_from(ts / SLICES_PER_SEC).unwrap();
-                let pts = ts + k * i64::from(dur);
+                let slice = u32::try_from(ts / SLICES_PER_SEC).unwrap();
+                let dur = std::num::NonZeroU32::new(slice).expect("a non-zero slice span");
+                let pts = ts + k * i64::from(slice);
                 let track = TrackId::new(id);
                 let mut s = if id == VIDEO_ID {
                     if k == 0 {
@@ -1335,10 +1339,12 @@ mod tests {
                     self.audio.clone()
                 };
                 if let Some(t) = s.timing.as_mut() {
-                    *t = t.with_composition(pts, pts).with_duration(dur);
+                    *t = t.with_composition(pts, pts).with_duration(dur)
                 } else {
                     s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
-                        pts, pts, dur,
+                        pts,
+                        pts,
+                        dur.get(),
                     ));
                 }
                 let join = if id == VIDEO_ID && k == 0 {

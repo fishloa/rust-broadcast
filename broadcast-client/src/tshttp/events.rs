@@ -76,6 +76,10 @@ pub enum Event {
     },
     /// Stream ended cleanly (VOD).
     Ended,
+    /// The demuxer refused a sample whose timing cannot be represented (a
+    /// PTS with no DTS, ISO/IEC 13818-1 §2.4.3.7 leaves the pair open). The
+    /// stream is intact otherwise; the affected sample is the one dropped.
+    DemuxError(transmux::Error),
     /// Reconnecting (T9).
     Reconnecting {
         /// Attempt number.
@@ -93,6 +97,7 @@ enum EventSerde {
     Finite { expected_bytes: u64 },
     Ended,
     Reconnecting { attempt: u32 },
+    DemuxError { reason: String },
 }
 
 #[cfg(feature = "serde")]
@@ -118,6 +123,10 @@ impl serde::Serialize for Event {
             Self::Reconnecting { attempt } => {
                 EventSerde::Reconnecting { attempt: *attempt }.serialize(serializer)
             }
+            Self::DemuxError(error) => EventSerde::DemuxError {
+                reason: error.to_string(),
+            }
+            .serialize(serializer),
         }
     }
 }

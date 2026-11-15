@@ -64,7 +64,8 @@ fn push_frames(
             Some(ts),
             Some(FRAME_DUR),
             i % FRAMES_PER_SEGMENT == 0,
-        );
+        )
+        .expect("valid timing");
         seg.push(transmux::TrackId::new(1), sample).expect("push");
         drain_ready(store, seg);
     }

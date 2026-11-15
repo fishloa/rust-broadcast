@@ -464,6 +464,7 @@ mod tests {
             .map(|i| {
                 let dts = i as i64;
                 Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1), true)
+                    .expect("valid timing")
             })
             .collect();
         Track::new(

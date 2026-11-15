@@ -365,6 +365,7 @@ fn sample_at(i: u32, is_sync: bool) -> Sample {
         Some(FRAME_DUR),
         is_sync,
     )
+    .expect("valid timing")
 }
 
 const FRAME_DUR: u32 = transmux::VIDEO_CLOCK_RATE / 30;
@@ -1200,7 +1201,8 @@ impl Stage for GapSession {
                 Some(audio_dts),
                 Some(u32::try_from(GAP_AUDIO_FRAME_TICKS).expect("fits")),
                 true,
-            ),
+            )
+            .expect("valid timing"),
         });
         Ok(())
     }

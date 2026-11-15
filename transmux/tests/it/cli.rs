@@ -30,7 +30,7 @@
 use std::path::PathBuf;
 
 use transmux::cli::{Args, Container, Opts, Output, OutputFormat, detect_container, run_bytes};
-use transmux::{Severity, validate_init_segment, validate_media_segment};
+use transmux::{Severity, validate::SegmentOrigin, validate_init_segment, validate_media_segment};
 
 fn fixtures() -> PathBuf {
     test_fixtures::root()
@@ -89,7 +89,7 @@ fn ts_to_cmaf_validates_clean() {
 
     let (init, media) = split_cmaf(&cmaf);
     let init_errs = errors(&validate_init_segment(init));
-    let media_errs = errors(&validate_media_segment(media));
+    let media_errs = errors(&validate_media_segment(media, SegmentOrigin::FromIr));
     assert!(
         init_errs.is_empty(),
         "init segment has validator errors: {init_errs:?}"
@@ -156,7 +156,7 @@ fn mp4_to_hls_playlist_and_segments() {
             "segment {name} must not repeat the moov the #EXT-X-MAP names"
         );
         assert!(
-            errors(&validate_media_segment(bytes)).is_empty(),
+            errors(&validate_media_segment(bytes, SegmentOrigin::FromIr)).is_empty(),
             "segment {name} media has errors"
         );
     }
@@ -302,7 +302,7 @@ fn real_dvb_multiplex_to_cmaf_does_not_fail_on_opaque_data_tracks() {
 
     let (init, media) = split_cmaf(&cmaf);
     let init_errs = errors(&validate_init_segment(init));
-    let media_errs = errors(&validate_media_segment(media));
+    let media_errs = errors(&validate_media_segment(media, SegmentOrigin::FromIr));
     assert!(
         init_errs.is_empty(),
         "init segment has validator errors: {init_errs:?}"

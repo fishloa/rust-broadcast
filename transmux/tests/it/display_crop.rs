@@ -150,7 +150,7 @@ fn streaming_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
     let mut demux = StreamingTsDemux::new();
     let mut specs = Vec::new();
     for chunk in data.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::TrackAdded(s) | DemuxEvent::TrackUpdated(s) = ev
                 && matches!(s.config, transmux::pipeline::CodecConfig::Avc { .. })
@@ -159,7 +159,7 @@ fn streaming_specs(data: &[u8]) -> Vec<transmux::ir::TrackSpec> {
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(ev) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(s) | DemuxEvent::TrackUpdated(s) = ev
             && matches!(s.config, transmux::pipeline::CodecConfig::Avc { .. })

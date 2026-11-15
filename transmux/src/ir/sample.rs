@@ -124,18 +124,14 @@ impl SampleTiming {
         }
     }
 
-    /// Absolute decode/presentation timestamps with an explicit span; a
-    /// `duration` of zero stores `None` (no span stated), exactly as the old
-    /// `from_options` treated a zero duration.
+    /// Absolute decode/presentation timestamps with the span the source
+    /// stated; a `duration` of zero stores `None` (no span stated).
     #[must_use]
     pub const fn timed_with_duration(dts: i64, pts: i64, duration: u32) -> Self {
         Self::Timed {
             dts,
             pts,
-            duration: match NonZeroU32::new(duration) {
-                Some(duration) => Some(duration),
-                None => None,
-            },
+            duration: NonZeroU32::new(duration),
         }
     }
 
@@ -205,25 +201,21 @@ impl SampleTiming {
 
     /// This timing with its span set to `duration`; a timed sample keeps its
     /// timestamps and takes the span, a duration-only one takes the span.
+    ///
+    /// A span is a positive tick count: no value of this method states "no
+    /// duration", so an unknown span is communicated by not calling it (see
+    /// [`Sample::timing`](super::Sample)). It cannot fail — a positive tick
+    /// count is exactly what a span is — so callers never have to discard an
+    /// error they could not act on.
     #[must_use]
-    pub fn with_duration(self, duration: u32) -> Self {
-        match NonZeroU32::new(duration) {
-            Some(duration) => match self {
-                Self::Timed { dts, pts, .. } => Self::Timed {
-                    dts,
-                    pts,
-                    duration: Some(duration),
-                },
-                Self::DurationOnly { .. } => Self::DurationOnly { duration },
+    pub fn with_duration(self, duration: NonZeroU32) -> Self {
+        match self {
+            Self::Timed { dts, pts, .. } => Self::Timed {
+                dts,
+                pts,
+                duration: Some(duration),
             },
-            None => match self {
-                Self::Timed { dts, pts, .. } => Self::Timed {
-                    dts,
-                    pts,
-                    duration: None,
-                },
-                Self::DurationOnly { duration } => Self::DurationOnly { duration },
-            },
+            Self::DurationOnly { .. } => Self::DurationOnly { duration },
         }
     }
 }
@@ -266,32 +258,98 @@ pub struct Sample {
 }
 
 impl Sample {
+    /// A timed sample with an absolute decode and presentation timestamp, and
+    /// the span the source stated (`None` where it stated none).
+    ///
+    /// Infallible, because both timestamps are given: a decode timestamp is
+    /// never invented from a presentation one. Use [`SampleTiming::timed`] to
+    /// build the timing alone.
+    #[must_use]
+    pub fn timed(data: impl Into<Bytes>, dts: i64, pts: i64, duration: Option<NonZeroU32>) -> Self {
+        Self {
+            data: data.into(),
+            timing: Some(SampleTiming::Timed { dts, pts, duration }),
+            flags: SampleFlags::new(false),
+            provenance: None,
+            display: None,
+        }
+    }
+
+    /// A timed sample from an Annex B access unit (NAL units converted to the
+    /// length-prefixed form), both timestamps given; see [`Self::timed`].
+    ///
+    /// # Errors
+    /// [`crate::Error::InvalidInput`] when a NAL unit falls outside the
+    /// length-prefixed `mdat` form (see [`Sample::from_annexb`]); the
+    /// timestamps themselves are never the reason.
+    pub fn timed_annexb(
+        annexb: &[u8],
+        dts: i64,
+        pts: i64,
+        duration: Option<NonZeroU32>,
+        is_sync: bool,
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
+            data: annexb_to_length_prefixed(annexb).into(),
+            timing: Some(SampleTiming::Timed { dts, pts, duration }),
+            flags: SampleFlags::new(is_sync),
+            provenance: None,
+            display: None,
+        })
+    }
+
+    /// A timed sample from a raw coded frame (audio is always a sync sample),
+    /// both timestamps given; see [`Self::timed`].
+    #[must_use]
+    pub fn timed_raw(
+        data: impl Into<Bytes>,
+        dts: i64,
+        pts: i64,
+        duration: Option<NonZeroU32>,
+    ) -> Self {
+        Self {
+            data: data.into(),
+            timing: Some(SampleTiming::Timed { dts, pts, duration }),
+            flags: SampleFlags::SYNC,
+            provenance: None,
+            display: None,
+        }
+    }
+
     /// This sample with `dts`, `pts` and `duration` re-expressed from a
     /// `from` Hz media timescale in a `to` Hz one; the instant each describes
     /// is unchanged.
-    #[must_use]
+    ///
+    /// # Errors
+    /// [`crate::Error::InvalidInput`] when a rescaled span no longer fits the
+    /// 32-bit tick count a duration is (every span rescales to at least one
+    /// tick, so a span never silently becomes nothing).
     pub fn rescale_timescale(
         self,
         from: broadcast_common::timescale::Timescale,
         to: broadcast_common::timescale::Timescale,
-    ) -> Self {
+    ) -> crate::error::Result<Self> {
         if from == to {
-            return self;
+            return Ok(self);
         }
-        let timing = self.timing.map(|timing| match timing {
-            SampleTiming::Timed { dts, pts, duration } => SampleTiming::Timed {
-                dts: rescale_i64(dts, from, to, Rounding::Floor),
-                pts: rescale_i64(pts, from, to, Rounding::Floor),
-                duration: duration.map(|duration| {
-                    NonZeroU32::new(rescale_ticks(duration.get(), from, to)).unwrap_or(duration)
-                }),
-            },
-            SampleTiming::DurationOnly { duration } => SampleTiming::DurationOnly {
-                duration: NonZeroU32::new(rescale_ticks(duration.get(), from, to))
-                    .unwrap_or(duration),
-            },
-        });
-        Self { timing, ..self }
+        let timing = self
+            .timing
+            .map(|timing| -> crate::error::Result<SampleTiming> {
+                Ok(match timing {
+                    SampleTiming::Timed { dts, pts, duration } => SampleTiming::Timed {
+                        dts: rescale_i64(dts, from, to, Rounding::Floor),
+                        pts: rescale_i64(pts, from, to, Rounding::Floor),
+                        duration: duration
+                            .map(|duration| rescale_ticks(duration, from, to))
+                            .transpose()?,
+                    },
+                    SampleTiming::DurationOnly { duration } => SampleTiming::DurationOnly {
+                        duration: rescale_ticks(duration, from, to)?,
+                    },
+                })
+            });
+        let timing = timing.transpose()?;
+        Ok(Self { timing, ..self })
     }
 
     /// Build a sample from already-encoded bytes with every field explicit
@@ -305,74 +363,97 @@ impl Sample {
     /// both `None` only for a sample whose span is all it knows (a
     /// `DurationOnly` timing) or, with no `duration` either, for a genuinely
     /// timestamp-less (section-carried) sample. Never fabricate a value.
+    ///
+    /// # Errors
+    /// Whatever [`timing_of`] reports: a `pts` without a `dts`, or a zero span
+    /// with no timestamps. A caller that has **both** timestamps uses
+    /// [`Sample::timed`], which cannot fail: nothing it is told is
+    /// unrepresentable.
     pub fn new(
         data: impl Into<Bytes>,
         dts: Option<i64>,
         pts: Option<i64>,
         duration: Option<u32>,
         is_sync: bool,
-    ) -> Self {
-        Self {
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
             data: data.into(),
-            timing: timing_of(dts, pts, duration),
+            timing: timing_of(dts, pts, duration)?,
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
-        }
+        })
     }
 
     /// Build a video sample from an Annex B access unit, converting its NAL
     /// units to the length-prefixed `mdat` form. `dts`/`pts` are absolute, in
     /// the track's media timescale.
+    ///
+    /// # Errors
+    /// Whatever [`timing_of`] reports: a `pts` without a `dts`, or a zero span
+    /// with no timestamps. With both timestamps given, use
+    /// [`Sample::timed_annexb`], whose only failure is a NAL unit that cannot
+    /// be length-prefixed (never a timestamp).
     pub fn from_annexb(
         annexb: &[u8],
         dts: Option<i64>,
         pts: Option<i64>,
         duration: Option<u32>,
         is_sync: bool,
-    ) -> Self {
-        Self {
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
             data: annexb_to_length_prefixed(annexb).into(),
-            timing: timing_of(dts, pts, duration),
+            timing: timing_of(dts, pts, duration)?,
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
-        }
+        })
     }
 
     /// Build an audio sample from a raw coded frame (e.g. an AAC access
     /// unit). Audio samples are always sync samples. `dts`/`pts` are
     /// absolute, in the track's media timescale.
+    ///
+    /// # Errors
+    /// Whatever [`timing_of`] reports: a `pts` without a `dts`, or a zero span
+    /// with no timestamps. With both timestamps given, use
+    /// [`Sample::timed_raw`], which cannot fail.
     pub fn from_raw(
         data: impl Into<Bytes>,
         dts: Option<i64>,
         pts: Option<i64>,
         duration: Option<u32>,
-    ) -> Self {
-        Self {
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
             data: data.into(),
-            timing: timing_of(dts, pts, duration),
+            timing: timing_of(dts, pts, duration)?,
             flags: SampleFlags::SYNC,
             provenance: None,
             display: None,
-        }
+        })
     }
 
     /// A sample that declares only its span (no timestamps at all): the
-    /// reader measured how long it lasts and has no instant to give it. A
-    /// `duration` of zero is stored as one tick, the smallest span a
-    /// `DurationOnly` sample can legitimately carry.
-    pub fn from_duration(data: impl Into<Bytes>, duration: u32, is_sync: bool) -> Self {
-        Self {
+    /// reader measured how long it lasts and has no instant to give it.
+    ///
+    /// # Errors
+    /// [`crate::Error::InvalidInput`] for a `duration` that is negative or
+    /// too large for a 32-bit tick count; a zero span is refused like any
+    /// other non-positive one, exactly as [`SampleTiming::duration_only`]
+    /// reports it (turning it into one tick would invent a length the reader
+    /// never measured).
+    pub fn from_duration(
+        data: impl Into<Bytes>,
+        duration: NonZeroU32,
+        is_sync: bool,
+    ) -> crate::error::Result<Self> {
+        Ok(Self {
             data: data.into(),
-            timing: Some(SampleTiming::DurationOnly {
-                duration: NonZeroU32::new(duration)
-                    .unwrap_or_else(|| NonZeroU32::new(1).expect("one is non-zero")),
-            }),
+            timing: Some(SampleTiming::DurationOnly { duration }),
             flags: SampleFlags::new(is_sync),
             provenance: None,
             display: None,
-        }
+        })
     }
 
     /// This sample with its timing replaced, returning `self` (builder
@@ -424,32 +505,51 @@ impl Sample {
 /// timestamps (with the stated span kept) for a `Timed` sample, a positive
 /// span alone for a `DurationOnly` one, and `None` when the sample carries
 /// neither.
-fn timing_of(dts: Option<i64>, pts: Option<i64>, duration: Option<u32>) -> Option<SampleTiming> {
+///
+/// # Errors
+/// [`crate::Error::InvalidInput`] when `dts` is absent but `pts` is present:
+/// no value of a decode timestamp can be read out of a presentation one, and
+/// inventing `dts = pts` is the fabrication [`SampleTiming`] exists to
+/// prevent — the caller either states both (§2.4.3.7 leaves the pair open) or
+/// builds a span-only sample from a measured duration. A zero `duration` with
+/// no timestamps is likewise refused by [`SampleTiming::duration_only`], not
+/// swallowed. A timed sample keeps the span it was given, including an
+/// explicit zero, exactly as stated.
+pub fn timing_of(
+    dts: Option<i64>,
+    pts: Option<i64>,
+    duration: Option<u32>,
+) -> crate::error::Result<Option<SampleTiming>> {
     match (dts, pts) {
-        (Some(dts), pts) => Some(SampleTiming::Timed {
+        (Some(dts), pts) => Ok(Some(SampleTiming::Timed {
             dts,
             pts: pts.unwrap_or(dts),
             duration: duration.and_then(NonZeroU32::new),
-        }),
-        (None, Some(pts)) => Some(SampleTiming::Timed {
-            dts: pts,
-            pts,
-            duration: duration.and_then(NonZeroU32::new),
-        }),
-        (None, None) => duration.and_then(|duration| SampleTiming::duration_only(duration).ok()),
+        })),
+        (None, Some(_)) => Err(crate::Error::InvalidInput(
+            "a sample with a PTS needs a DTS to be tied to the decode timeline",
+        )),
+        (None, None) => match duration {
+            Some(duration) => SampleTiming::duration_only(duration).map(Some),
+            None => Ok(None),
+        },
     }
 }
 
 /// `ticks` rescaled from `from` to `to`, floored at one tick: a nonzero span
 /// never rescales away to nothing.
 fn rescale_ticks(
-    ticks: u32,
+    ticks: NonZeroU32,
     from: broadcast_common::timescale::Timescale,
     to: broadcast_common::timescale::Timescale,
-) -> u32 {
-    u32::try_from(rescale_i64(i64::from(ticks), from, to, Rounding::Floor))
-        .unwrap_or(u32::MAX)
-        .max(1)
+) -> crate::error::Result<NonZeroU32> {
+    let rescaled = rescale_i64(i64::from(ticks.get()), from, to, Rounding::Floor);
+    let rescaled = u32::try_from(rescaled).map_err(|_| {
+        crate::Error::InvalidInput("a rescaled sample duration does not fit the 32-bit field")
+    })?;
+    NonZeroU32::new(rescaled.max(1)).ok_or(crate::Error::InvalidInput(
+        "a rescaled sample duration is at least one tick",
+    ))
 }
 
 /// One track's samples for a single media segment.
@@ -474,5 +574,71 @@ impl<'a> FragmentTrackData<'a> {
             base_media_decode_time,
             samples,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::timescale::Timescale;
+
+    fn nz(value: u32) -> NonZeroU32 {
+        NonZeroU32::new(value).expect("a positive span")
+    }
+
+    /// A span is a positive tick count: setting one always states exactly
+    /// that span, and an unknown span is expressed by not setting one.
+    #[test]
+    fn with_duration_states_a_positive_span_and_nothing_else() {
+        let timing = SampleTiming::timed(5, 6).with_duration(nz(3));
+        assert_eq!(timing.duration(), Some(3));
+        let duration_only = SampleTiming::duration_only(7)
+            .expect("a positive span")
+            .with_duration(nz(9));
+        assert_eq!(duration_only.duration(), Some(9));
+    }
+
+    /// A PTS with no DTS is refused, never resolved as `dts = pts`.
+    #[test]
+    fn a_pts_without_a_dts_is_refused_not_invented() {
+        let err = Sample::new(vec![0u8], None, Some(1), None, false)
+            .expect_err("a decode timestamp cannot be read out of a presentation one");
+        assert!(matches!(err, crate::Error::InvalidInput(_)));
+        let timed = Sample::new(vec![0u8], Some(1), None, None, false).expect("a dts alone");
+        assert_eq!(timed.timing.and_then(|t| t.dts()), Some(1));
+    }
+
+    /// A zero span with no timestamps is reported, not swallowed into a
+    /// spanless sample.
+    #[test]
+    fn a_zero_span_without_timestamps_is_refused() {
+        assert!(Sample::new(vec![0u8], None, None, Some(0), false).is_err());
+        assert!(Sample::from_raw(vec![0u8], None, None, Some(0)).is_err());
+    }
+
+    /// A timed span the source stated as zero stays that stated span.
+    #[test]
+    fn a_stated_zero_span_is_kept_on_a_timed_sample() {
+        let timing = SampleTiming::timed_with_duration(0, 0, 0);
+        assert_eq!(timing.dts(), Some(0));
+        assert_eq!(timing.duration(), None);
+    }
+
+    /// Rescaling a span is a checked conversion: it never clamps, and the
+    /// same timescale is the identity.
+    #[test]
+    fn rescaling_a_span_is_checked() {
+        let from = Timescale::try_new(90_000).expect("90 kHz");
+        let sample = Sample::timed(vec![0u8], 1, 1, NonZeroU32::new(90_000));
+        let same = sample
+            .clone()
+            .rescale_timescale(from, from)
+            .expect("the identity rescale");
+        assert_eq!(same.timing.and_then(|t| t.duration()), Some(90_000));
+        let to = Timescale::try_new(1_000).expect("1 kHz");
+        let rescaled = sample
+            .rescale_timescale(from, to)
+            .expect("a representable span");
+        assert_eq!(rescaled.timing.and_then(|t| t.duration()), Some(1_000));
     }
 }

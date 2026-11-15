@@ -30,7 +30,7 @@ fn vsample(is_sync: bool, byte: u8) -> Sample {
     // Synthetic sample for the duration-driven segmenter: dts/pts stay `None`
     // (media plane step 2c — never fabricate a timestamp); the timeline comes
     // from `duration`, exactly as before.
-    Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync)
+    Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync).expect("valid timing")
 }
 
 // ---------------------------------------------------------------------------
@@ -375,7 +375,8 @@ fn part_media_matches_whole_segment_build() {
                 None,
                 None,
                 Some(AUD_DUR),
-            );
+            )
+            .expect("valid timing");
             aud_samples.push(s.clone());
             seg.push(TrackId::new(2), s).unwrap();
         }
@@ -715,7 +716,7 @@ fn every_part_carries_both_tracks() {
         for _ in 0..2 {
             seg.push(
                 TrackId::new(2),
-                Sample::new(vec![ai as u8; 8], None, None, Some(1024), true),
+                Sample::new(vec![ai as u8; 8], None, None, Some(1024), true).expect("valid timing"),
             )
             .unwrap();
             ai += 1;
@@ -824,7 +825,8 @@ fn long_segment_parts_stay_within_part_target() {
         } else {
             seg.push(
                 TrackId::new(2),
-                Sample::new(vec![(i % 251) as u8; 8], None, None, Some(AUD_DUR), true),
+                Sample::new(vec![(i % 251) as u8; 8], None, None, Some(AUD_DUR), true)
+                    .expect("valid timing"),
             )
             .unwrap();
         }
@@ -974,7 +976,9 @@ fn lagging_audio_never_makes_a_zero_duration_part() {
         200,
     )
     .unwrap();
-    let audio = |n: usize| Sample::new(vec![n as u8; 8], None, None, Some(1024), true);
+    let audio = |n: usize| {
+        Sample::new(vec![n as u8; 8], None, None, Some(1024), true).expect("valid timing")
+    };
     let mut audio_pushed = 0usize;
     for i in 0..FRAMES {
         seg.push(TrackId::new(1), vsample(i % GOP == 0, i as u8))
@@ -1049,7 +1053,8 @@ fn cut_parts(
     )
     .unwrap();
     for (i, d) in durations.iter().enumerate() {
-        let sample = Sample::new(vec![0u8; 16], None, None, Some(*d), i % gop == 0);
+        let sample =
+            Sample::new(vec![0u8; 16], None, None, Some(*d), i % gop == 0).expect("valid timing");
         seg.push(TrackId::new(1), sample).unwrap();
     }
     seg.flush().unwrap();
@@ -1123,7 +1128,7 @@ fn samples_without_durations_keep_the_configured_part_target() {
     let mut seg =
         LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 2.0, 200).unwrap();
     for i in 0..40u8 {
-        let sample = Sample::new(vec![0u8; 16], None, None, None, i == 0);
+        let sample = Sample::new(vec![0u8; 16], None, None, None, i == 0).expect("valid timing");
         seg.push(TrackId::new(1), sample).unwrap();
     }
     assert_eq!(seg.part_target_ms(), 200);
@@ -1161,7 +1166,8 @@ fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
         LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 60.0, 200).unwrap();
     let mut cut_at = Vec::new();
     for (i, d) in durations.iter().enumerate() {
-        let sample = Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0);
+        let sample =
+            Sample::new(vec![0u8; 16], None, None, Some(*d), i == 0).expect("valid timing");
         seg.push(TrackId::new(1), sample).unwrap();
         if !seg.take_ready_parts().is_empty() {
             cut_at.push(i);

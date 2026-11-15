@@ -429,7 +429,9 @@ mod tests {
         p.on_tracks(std::slice::from_ref(&track.spec));
         let mut s = track.samples[0].clone();
         if let Some(t) = s.timing.as_mut() {
-            *t = t.with_composition(i64::MAX, i64::MAX).with_duration(3_000);
+            *t = t
+                .with_composition(i64::MAX, i64::MAX)
+                .with_duration(std::num::NonZeroU32::new(3_000).expect("non-zero"))
         } else {
             s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 i64::MAX,
@@ -472,9 +474,10 @@ mod tests {
         let mut s = template.clone();
         let pts = index * timescale;
         if let Some(t) = s.timing.as_mut() {
-            *t = t
-                .with_composition(pts, pts)
-                .with_duration(spec.timescale.get());
+            *t = t.with_composition(pts, pts).with_duration(
+                std::num::NonZeroU32::new(spec.timescale.get())
+                    .unwrap_or(std::num::NonZeroU32::MIN),
+            )
         } else {
             s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 pts,
@@ -676,9 +679,10 @@ mod tests {
         let mut s1 = samples[0].clone();
         let pts1 = base + 5 * ts;
         if let Some(t) = s1.timing.as_mut() {
-            *t = t
-                .with_composition(pts1, pts1)
-                .with_duration(spec.timescale.get());
+            *t = t.with_composition(pts1, pts1).with_duration(
+                std::num::NonZeroU32::new(spec.timescale.get())
+                    .unwrap_or(std::num::NonZeroU32::MIN),
+            )
         } else {
             s1.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 pts1,
@@ -696,9 +700,10 @@ mod tests {
         let mut s2 = samples[0].clone();
         let pts2 = base + 6 * ts;
         if let Some(t) = s2.timing.as_mut() {
-            *t = t
-                .with_composition(pts2, pts2)
-                .with_duration(spec.timescale.get());
+            *t = t.with_composition(pts2, pts2).with_duration(
+                std::num::NonZeroU32::new(spec.timescale.get())
+                    .unwrap_or(std::num::NonZeroU32::MIN),
+            )
         } else {
             s2.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
                 pts2,

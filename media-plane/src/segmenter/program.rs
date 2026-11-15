@@ -2010,7 +2010,9 @@ fn in_declared_timescale(
     sample: Sample,
 ) -> Sample {
     match moves.get(&track_id) {
-        Some(&(from, to)) => sample.rescale_timescale(from, to),
+        Some(&(from, to)) => sample
+            .rescale_timescale(from, to)
+            .expect("test timing rescales"),
         None => sample,
     }
 }
@@ -2075,6 +2077,7 @@ mod segmenter_tests {
             Some(FRAME_DUR),
             is_sync,
         )
+        .expect("valid timing")
     }
 
     /// A real H.264 video track at 90 kHz, as `media_plane::ts_session`'s
@@ -3490,6 +3493,7 @@ mod segmenter_gate_tests {
             Some(FRAME_DUR),
             is_sync,
         )
+        .expect("valid timing")
     }
 
     fn marks_in(bytes: &[u8]) -> (bool, bool) {

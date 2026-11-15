@@ -2426,7 +2426,7 @@ fn carried_frame_remainder(live: &LiveTrack, data: &[u8]) -> usize {
 /// COMPLETE access unit received intact in an earlier PES alongside the
 /// partial tail: only the tail is damaged, so the whole held access unit is
 /// emitted ([`flush_audio_carry`]) before the carry is dropped.
-fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
+fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) -> Result<()> {
     if let Some(TrackState::Live(live)) = stream.track.as_mut()
         && let LiveTrack {
             track_id,
@@ -2435,10 +2435,11 @@ fn clear_audio_carry(stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>
         } = live.as_mut()
     {
         if anchor.hold_final_au {
-            flush_audio_carry(kind, anchor, *track_id, events);
+            flush_audio_carry(kind, anchor, *track_id, events)?;
         }
         anchor.carry.clear();
     }
+    Ok(())
 }
 
 /// Split one access unit into its coded frames and emit each immediately
@@ -2461,7 +2462,7 @@ fn emit_audio_au(
     dts_uw: i128,
     track_id: TrackId,
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<TrackId> {
     // Resolve this AU's track-tick base: reuse the running frame-exact
     // cursor in the steady state, or (re-)anchor from the wire clock when
     // there is no cursor yet or it has drifted beyond the discontinuity
@@ -2547,7 +2548,7 @@ fn emit_audio_au(
                     Some(seed.next_dts + held_ticks),
                     Some(seed.next_pts + held_ticks),
                     Some(f.duration),
-                );
+                )?;
                 if let Some(prov) = anchor.carry_provenance {
                     sample = sample.with_provenance(prov);
                 }
@@ -2625,10 +2626,13 @@ fn emit_audio_au(
     // media plane step 2c stores them directly instead of discarding them
     // into a write-only `SourceTiming`; issue B5: `dts0`/`pts0` are now
     // frame-exact rather than re-derived from the lossy wire clock per AU).
-    let audio_sample = |data: Vec<u8>, duration: u32, elapsed: u64| -> Sample {
+    let audio_sample = |data: Vec<u8>, duration: u32, elapsed: u64| -> Result<Sample> {
         let dts = dts0 + elapsed as i64;
         let pts = pts0 + elapsed as i64;
-        Sample::from_raw(data, Some(dts), Some(pts), Some(duration)).with_provenance(au_provenance)
+        Ok(
+            Sample::from_raw(data, Some(dts), Some(pts), Some(duration))?
+                .with_provenance(au_provenance),
+        )
     };
     match kind {
         // AAC (ISO/IEC 13818-7 §6.2): the CRC (if present) is stripped with the
@@ -2649,7 +2653,7 @@ fn emit_audio_au(
                     if let Some(payload) = &f.data {
                         events.push_back(DemuxEvent::Sample {
                             track_id,
-                            sample: audio_sample(payload.to_vec(), f.duration, elapsed),
+                            sample: audio_sample(payload.to_vec(), f.duration, elapsed)?,
                         });
                     }
                     elapsed += f.duration as u64;
@@ -2693,6 +2697,7 @@ fn emit_audio_au(
         anchor.carry = plan.tail.to_vec();
         anchor.carry_provenance = Some(au_provenance);
     }
+    Ok(track_id)
 }
 
 /// Emit the whole frames still held in a live audio track's carry at end of
@@ -2704,15 +2709,15 @@ fn flush_audio_carry(
     anchor: &mut AudioAnchor,
     track_id: TrackId,
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<()> {
     let carry = core::mem::take(&mut anchor.carry);
     let (Some(seed), false) = (anchor.seed, carry.is_empty()) else {
-        return;
+        return Ok(());
     };
     let mut plan = plan_audio_frames(kind, &carry, 0);
     scale_plan_durations(&mut plan, anchor.duration_scale);
     let Some(plan) = plan else {
-        return;
+        return Ok(());
     };
     let mut elapsed = 0i64;
     for f in &plan.frames {
@@ -2722,7 +2727,7 @@ fn flush_audio_carry(
                 Some(seed.next_dts + elapsed),
                 Some(seed.next_pts + elapsed),
                 Some(f.duration),
-            );
+            )?;
             if let Some(p) = anchor.carry_provenance {
                 sample = sample.with_provenance(p);
             }
@@ -2739,6 +2744,7 @@ fn flush_audio_carry(
         ticks_since_anchor: seed.ticks_since_anchor + elapsed,
         ..seed
     });
+    Ok(())
 }
 
 /// Does this E-AC-3 config carry dependent substreams (a `dec3` substream entry
@@ -2767,132 +2773,135 @@ fn push_live_au(
     provenance: EventProvenance,
     display: Option<Arc<DisplayInfo>>,
     events: &mut VecDeque<DemuxEvent>,
-) {
-    let track_id = live.track_id;
-    match &mut live.kind {
-        LiveKind::Video {
-            pending,
-            last_duration,
-            codec,
-            paff,
-        } => {
-            use crate::slice_header::AvcPicture;
-            // The events this access unit raises travel with its own slot and
-            // are pushed immediately before its Sample (design §6.5). A PAFF
-            // second field merges into the first field's slot below, so its
-            // events are carried over into that slot.
-            let raised = PendingDisplayEvents {
-                config: live.pending_config.take(),
-                display: live.display.take(),
-            };
-            let (bytes, is_sync) = video_sample_bytes(*codec, data);
-            let mut this_field = None;
-            if *codec == VideoCodec::H264
-                && let AvcPicture::Field(second) = paff.params.classify_au(data)
-            {
-                if let (Some(first), Some(p)) = (paff.first_field, pending.as_mut())
-                    && first.pairs_with(&second)
-                    && (0..=MAX_FIELD_PAIR_DTS_TICKS).contains(&(dts_uw - p.dts_uw))
+) -> Result<()> {
+    (|| -> Result<()> {
+        let track_id = live.track_id;
+        match &mut live.kind {
+            LiveKind::Video {
+                pending,
+                last_duration,
+                codec,
+                paff,
+            } => {
+                use crate::slice_header::AvcPicture;
+                // The events this access unit raises travel with its own slot and
+                // are pushed immediately before its Sample (design §6.5). A PAFF
+                // second field merges into the first field's slot below, so its
+                // events are carried over into that slot.
+                let raised = PendingDisplayEvents {
+                    config: live.pending_config.take(),
+                    display: live.display.take(),
+                };
+                let (bytes, is_sync) = video_sample_bytes(*codec, data);
+                let mut this_field = None;
+                if *codec == VideoCodec::H264
+                    && let AvcPicture::Field(second) = paff.params.classify_au(data)
                 {
-                    // Second field of a complementary pair: one sample, the
-                    // first field's timestamps; drop its AUD (one AU = one AUD).
-                    let raised = PendingDisplayEvents {
-                        config: p.pending_events.config.take().or(raised.config),
-                        display: p.pending_events.display.take().or(raised.display),
-                    };
-                    p.data
-                        .extend_from_slice(&annexb_to_length_prefixed_no_aud(data));
-                    p.pending_events = raised;
-                    paff.first_field = None;
-                    return;
+                    if let (Some(first), Some(p)) = (paff.first_field, pending.as_mut())
+                        && first.pairs_with(&second)
+                        && (0..=MAX_FIELD_PAIR_DTS_TICKS).contains(&(dts_uw - p.dts_uw))
+                    {
+                        // Second field of a complementary pair: one sample, the
+                        // first field's timestamps; drop its AUD (one AU = one AUD).
+                        let raised = PendingDisplayEvents {
+                            config: p.pending_events.config.take().or(raised.config),
+                            display: p.pending_events.display.take().or(raised.display),
+                        };
+                        p.data
+                            .extend_from_slice(&annexb_to_length_prefixed_no_aud(data));
+                        p.pending_events = raised;
+                        paff.first_field = None;
+                        return Ok(());
+                    }
+                    this_field = Some(second);
                 }
-                this_field = Some(second);
+                paff.first_field = this_field;
+                advance_one_behind(
+                    pending,
+                    last_duration,
+                    bytes,
+                    is_sync,
+                    pts_uw,
+                    dts_uw,
+                    false,
+                    track_id,
+                    provenance,
+                    display,
+                    raised,
+                    events,
+                );
             }
-            paff.first_field = this_field;
-            advance_one_behind(
+            LiveKind::Data {
                 pending,
                 last_duration,
-                bytes,
-                is_sync,
-                pts_uw,
-                dts_uw,
-                false,
-                track_id,
-                provenance,
-                display,
-                raised,
-                events,
-            );
-        }
-        LiveKind::Data {
-            pending,
-            last_duration,
-        } => {
-            advance_one_behind(
-                pending,
-                last_duration,
-                data.to_vec(),
-                true,
-                pts_uw,
-                dts_uw,
-                true,
-                track_id,
-                provenance,
-                display,
-                PendingDisplayEvents::default(),
-                events,
-            );
-        }
-        LiveKind::Audio {
-            sample_rate,
-            kind,
-            anchor,
-        } => {
-            // Sticky: the announced config says whether dependents exist, and
-            // `emit_audio_au` also sets it on seeing one (a track promoted from
-            // an unverified first frame announces no dependent substream).
-            anchor.hold_final_au |= eac3_has_dependent_substreams(&live.config);
-            emit_audio_au(
+            } => {
+                advance_one_behind(
+                    pending,
+                    last_duration,
+                    data.to_vec(),
+                    true,
+                    pts_uw,
+                    dts_uw,
+                    true,
+                    track_id,
+                    provenance,
+                    display,
+                    PendingDisplayEvents::default(),
+                    events,
+                );
+            }
+            LiveKind::Audio {
+                sample_rate,
                 kind,
-                *sample_rate,
                 anchor,
-                data,
-                pts_uw,
-                dts_uw,
-                track_id,
-                events,
-            );
-        }
-        LiveKind::MpegH {
-            pending,
-            last_duration,
-        } => {
-            let is_sync = find_mpegh3da_config(data).is_some();
-            advance_one_behind(
+            } => {
+                // Sticky: the announced config says whether dependents exist, and
+                // `emit_audio_au` also sets it on seeing one (a track promoted from
+                // an unverified first frame announces no dependent substream).
+                anchor.hold_final_au |= eac3_has_dependent_substreams(&live.config);
+                emit_audio_au(
+                    kind,
+                    *sample_rate,
+                    anchor,
+                    data,
+                    pts_uw,
+                    dts_uw,
+                    track_id,
+                    events,
+                )?;
+            }
+            LiveKind::MpegH {
                 pending,
                 last_duration,
-                data.to_vec(),
-                is_sync,
-                pts_uw,
-                dts_uw,
-                true,
-                track_id,
-                provenance,
-                display,
-                PendingDisplayEvents::default(),
-                events,
-            );
+            } => {
+                let is_sync = find_mpegh3da_config(data).is_some();
+                advance_one_behind(
+                    pending,
+                    last_duration,
+                    data.to_vec(),
+                    is_sync,
+                    pts_uw,
+                    dts_uw,
+                    true,
+                    track_id,
+                    provenance,
+                    display,
+                    PendingDisplayEvents::default(),
+                    events,
+                );
+            }
+            LiveKind::Section => {
+                // Sections carry no timestamp at all (`pts_uw`/`dts_uw` are dummy
+                // zeros from `on_completed_section`, never read here) — emit
+                // immediately, no lookahead, and never fabricate a dts/pts/duration.
+                events.push_back(DemuxEvent::Sample {
+                    track_id,
+                    sample: Sample::new(data.to_vec(), None, None, None, false)?,
+                });
+            }
         }
-        LiveKind::Section => {
-            // Sections carry no timestamp at all (`pts_uw`/`dts_uw` are dummy
-            // zeros from `on_completed_section`, never read here) — emit
-            // immediately, no lookahead, and never fabricate a dts/pts/duration.
-            events.push_back(DemuxEvent::Sample {
-                track_id,
-                sample: Sample::from_raw(data.to_vec(), None, None, None),
-            });
-        }
-    }
+        Ok(())
+    })()
 }
 
 /// Track a live track's in-band codec-configuration **content**, access unit by
@@ -3764,13 +3773,13 @@ fn advance_track(
     pts_uw: i128,
     dts_uw: i128,
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<()> {
     // `StreamState.track` is `None` only transiently, inside this function and
     // `try_promote_ready` — never on entry. Degrade (drop this access unit)
     // instead of panicking if that ever stops holding: this crate is
     // `#![forbid(unsafe_code)]` and must not abort on remote input.
     let Some(track) = stream.track.take() else {
-        return;
+        return Ok(());
     };
     // Damaged input (issue #1171): count parameter-set NALs this access unit
     // carries that were rejected (see [`parameter_set_is_valid`]), so a consumer
@@ -3862,13 +3871,13 @@ fn advance_track(
                     // Parked on the video slot this access unit goes into, so
                     // it is released immediately before that sample (§6.5).
                     live.pending_config = Some(updated);
-                    push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
+                    push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events)?;
                 } else {
                     events.push_back(DemuxEvent::TrackUpdated(updated));
-                    push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
+                    push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events)?;
                 }
             } else {
-                push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events);
+                push_live_au(&mut live, data, pts_uw, dts_uw, provenance, display, events)?;
             }
             TrackState::Live(live)
         }
@@ -3901,7 +3910,7 @@ fn advance_track(
             // pushed above. Degrade to "not resolvable yet" rather than
             // panicking if that ever stops holding.
             let Some(latest) = backlog.last() else {
-                return;
+                return Ok(());
             };
             // E-AC-3 prefers the window that starts at the EARLIEST held
             // independent frame, so the config describes the stream's first
@@ -4032,6 +4041,7 @@ fn advance_track(
         }
     };
     stream.track = Some(new_track);
+    Ok(())
 }
 
 /// Bytes of the earlier access units an audio probe keeps/joins at a PES
@@ -4324,9 +4334,9 @@ fn feed_pes_bounded(
     pusi: bool,
     payload: &[u8],
     events: &mut VecDeque<DemuxEvent>,
-) -> Option<Vec<u8>> {
+) -> Result<Option<Vec<u8>>> {
     let Carrier::Pes(assembler) = &mut stream.carrier else {
-        return None;
+        return Ok(None);
     };
     // Track how much of the in-progress PES has arrived and what it declared,
     // so a later CC gap can tell "the unit was already complete" from "the unit
@@ -4361,7 +4371,7 @@ fn feed_pes_bounded(
     if overflow {
         let dropped_bytes = projected as u64;
         let _ = assembler.flush();
-        clear_audio_carry(stream, events);
+        clear_audio_carry(stream, events)?;
         let track = match stream.track.as_ref() {
             Some(TrackState::Live(live)) => Some(live.track_id),
             _ => None,
@@ -4378,7 +4388,7 @@ fn feed_pes_bounded(
             },
         });
     }
-    completed
+    Ok(completed)
 }
 
 /// Resolve a completed PES packet's `(pts, dts)` and drive it through
@@ -4405,12 +4415,12 @@ fn on_completed_pes(
     pes_bytes: &[u8],
     epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<()> {
     let Ok(pes) = PesPacket::parse(pes_bytes) else {
-        return;
+        return Ok(());
     };
     if pes.payload.is_empty() {
-        return;
+        return Ok(());
     }
     // `(pts, dts)` this access unit resolved, and whether either came off the
     // wire — the only values that may update the measured frame period.
@@ -4515,7 +4525,7 @@ fn on_completed_pes(
                 == DiscontinuityVerdict::Forward;
     }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts, epoch);
-    advance_track(stream, pid, pes.payload, pts_uw, dts_uw, events);
+    advance_track(stream, pid, pes.payload, pts_uw, dts_uw, events)
 }
 
 /// Drive one reassembled PSI/private section through [`advance_track`]
@@ -4526,11 +4536,11 @@ fn on_completed_section(
     pid: Pid,
     section: &[u8],
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<()> {
     if section.is_empty() {
-        return;
+        return Ok(());
     }
-    advance_track(stream, pid, section, 0, 0, events);
+    advance_track(stream, pid, section, 0, 0, events)
 }
 
 /// [`DemuxEvent`] moved to `crate::ir::event` (media plane step 2e: it is
@@ -4915,15 +4925,16 @@ impl StreamingTsDemux {
     /// `feed`. If events may legitimately go undrained, bound the
     /// diagnostic volume with
     /// [`with_max_degraded_events`](Self::with_max_degraded_events).
-    pub fn feed(&mut self, data: &[u8]) {
+    pub fn feed(&mut self, data: &[u8]) -> Result<()> {
         let packets = self.resync.feed(data);
-        self.process_resynced(&packets);
+        self.process_resynced(&packets)?;
         self.enforce_degraded_cap();
+        Ok(())
     }
 
     /// Process `packets` the resynchroniser just emitted, interleaving the
     /// losses it recorded with them.
-    fn process_resynced(&mut self, packets: &[[u8; TS_PACKET_SIZE]]) {
+    fn process_resynced(&mut self, packets: &[[u8; TS_PACKET_SIZE]]) -> Result<()> {
         let mut losses = self.resync.take_losses().into_iter().peekable();
         for raw in packets {
             // A loss sits *between* two packets: report it before the first
@@ -4931,11 +4942,12 @@ impl StreamingTsDemux {
             while let Some(loss) = losses.next_if(|l| l.packet_index <= self.packet_index) {
                 self.push_resync_loss(loss);
             }
-            self.process_packet(raw);
+            self.process_packet(raw)?;
         }
         for loss in losses {
             self.push_resync_loss(loss);
         }
+        Ok(())
     }
 
     /// Surface one [`mpeg_ts::resync::ResyncLoss`] as a
@@ -4977,408 +4989,413 @@ impl StreamingTsDemux {
         }
     }
 
-    fn process_packet(&mut self, raw: &[u8; TS_PACKET_SIZE]) {
+    fn process_packet(&mut self, raw: &[u8; TS_PACKET_SIZE]) -> Result<()> {
         let idx = self.packet_index;
         self.packet_index += 1;
-        let Ok(pkt) = TsPacket::parse(raw) else {
-            return;
-        };
-
-        // TEI degradation (issue #778) — the demodulator-set flag on an
-        // uncorrectable packet error, independent of PID classification or
-        // adaptation field handling.
-        if pkt.header.tei {
-            let provenance = EventProvenance {
-                pid: Some(pkt.header.pid),
-                packet_index: Some(idx),
-                program_number: None,
+        (|| {
+            let Ok(pkt) = TsPacket::parse(raw) else {
+                return Ok(());
             };
-            self.events.push_back(DemuxEvent::InputDegraded {
-                track: self.live_track_id(pkt.header.pid),
-                kind: InputDegradation::TransportError,
-                provenance,
-            });
-        }
 
-        // CC check (issue #778) — payload-bearing, non-null packets only,
-        // excluding signalled discontinuities (the adaptation-field check
-        // that follows).
-        let discontinuity_signalled = pkt.header.has_adaptation()
-            && raw
-                .get(4)
-                .is_some_and(|af_len| *af_len > 0 && raw.get(5).is_some_and(|b| b & 0x80 != 0));
-
-        // PCR / discontinuity — independent of PID classification, matches
-        // every packet's adaptation field regardless of payload routing.
-        if let Some(Ok(af)) = pkt.adaptation_field() {
-            let provenance = EventProvenance {
-                pid: Some(pkt.header.pid),
-                packet_index: Some(idx),
-                program_number: None,
-            };
-            if af.discontinuity_indicator {
-                // §2.4.3.5: a system time-base discontinuity is signalled by
-                // the `discontinuity_indicator` in a packet of the program's
-                // **PCR_PID** — "When the discontinuity state is true for a
-                // transport stream packet of a PID designated as a PCR_PID, the
-                // next PCR in a transport stream packet with that same PID
-                // represents a sample of a new system time clock for the
-                // associated program." So the rebase is scoped twice over:
-                // only the packet's own PID can carry it, and only that PID's
-                // *program* is rebased. A multi-program multiplex therefore
-                // leaves the other programs' timelines untouched (r04-W50
-                // review), where the first attempt marked every stream in the
-                // demux.
-                let pid = pkt.header.pid;
-                let program_ok = self.pmt_reasm.values().any(|pmt| pmt.pcr_pid == Some(pid));
-                if program_ok {
-                    // Every elementary stream of this program: the ones whose
-                    // declaring PMT is this PCR_PID's.
-                    let members: Vec<Pid> = self
-                        .es_declarers
-                        .iter()
-                        .filter(|(_, pmt_pids)| {
-                            pmt_pids.iter().any(|pmt_pid| {
-                                self.pmt_reasm
-                                    .get(pmt_pid)
-                                    .is_some_and(|pmt| pmt.pcr_pid == Some(pid))
-                            })
-                        })
-                        .map(|(&es_pid, _)| es_pid)
-                        .collect();
-                    for es_pid in members {
-                        if let Some(stream) = self.streams.get_mut(&es_pid) {
-                            stream.pending_rebase = true;
-                            self.program_epochs
-                                .entry(stream.epoch_key)
-                                .or_default()
-                                .splice_offset = None;
-                        }
-                    }
-                }
-                self.events.push_back(DemuxEvent::Discontinuity {
-                    track: self.live_track_id(pid),
-                    kind: DiscontinuityKind::Signalled,
+            // TEI degradation (issue #778) — the demodulator-set flag on an
+            // uncorrectable packet error, independent of PID classification or
+            // adaptation field handling.
+            if pkt.header.tei {
+                let provenance = EventProvenance {
+                    pid: Some(pkt.header.pid),
+                    packet_index: Some(idx),
+                    program_number: None,
+                };
+                self.events.push_back(DemuxEvent::InputDegraded {
+                    track: self.live_track_id(pkt.header.pid),
+                    kind: InputDegradation::TransportError,
                     provenance,
                 });
             }
-            if let Some(pcr) = af.pcr {
-                // Issue #1354 / §2.4.3.5 + §2.4.4.9: only a program's
-                // PCR_PID carries that program's clock. One event per
-                // program naming this PID; see `DemuxEvent::ClockReference`
-                // for the pre-PMT (`program_number: None`) policy.
-                let mut programs: Vec<u16> = self
-                    .pmt_reasm
-                    .values()
-                    .filter(|pmt| pmt.pcr_pid == Some(pkt.header.pid))
-                    .map(|pmt| pmt.program_number)
-                    .collect();
-                programs.sort_unstable();
-                programs.dedup();
-                let pmts_pending = self.pmt_reasm.is_empty()
-                    || self.pmt_reasm.values().any(|pmt| pmt.pcr_pid.is_none());
-                let mut emit = |program_number: Option<u16>| {
-                    let ticks = pcr.as_27mhz();
-                    self.events.push_back(DemuxEvent::ClockReference {
-                        ticks,
-                        pcr: Some(pcr),
-                        clock_hz: PCR_CLOCK_HZ,
-                        discontinuous: af.discontinuity_indicator,
-                        provenance: EventProvenance {
-                            program_number,
-                            ..provenance
-                        },
-                    });
+
+            // CC check (issue #778) — payload-bearing, non-null packets only,
+            // excluding signalled discontinuities (the adaptation-field check
+            // that follows).
+            let discontinuity_signalled = pkt.header.has_adaptation()
+                && raw
+                    .get(4)
+                    .is_some_and(|af_len| *af_len > 0 && raw.get(5).is_some_and(|b| b & 0x80 != 0));
+
+            // PCR / discontinuity — independent of PID classification, matches
+            // every packet's adaptation field regardless of payload routing.
+            if let Some(Ok(af)) = pkt.adaptation_field() {
+                let provenance = EventProvenance {
+                    pid: Some(pkt.header.pid),
+                    packet_index: Some(idx),
+                    program_number: None,
                 };
-                if programs.is_empty() {
-                    if pmts_pending {
-                        emit(None);
+                if af.discontinuity_indicator {
+                    // §2.4.3.5: a system time-base discontinuity is signalled by
+                    // the `discontinuity_indicator` in a packet of the program's
+                    // **PCR_PID** — "When the discontinuity state is true for a
+                    // transport stream packet of a PID designated as a PCR_PID, the
+                    // next PCR in a transport stream packet with that same PID
+                    // represents a sample of a new system time clock for the
+                    // associated program." So the rebase is scoped twice over:
+                    // only the packet's own PID can carry it, and only that PID's
+                    // *program* is rebased. A multi-program multiplex therefore
+                    // leaves the other programs' timelines untouched (r04-W50
+                    // review), where the first attempt marked every stream in the
+                    // demux.
+                    let pid = pkt.header.pid;
+                    let program_ok = self.pmt_reasm.values().any(|pmt| pmt.pcr_pid == Some(pid));
+                    if program_ok {
+                        // Every elementary stream of this program: the ones whose
+                        // declaring PMT is this PCR_PID's.
+                        let members: Vec<Pid> = self
+                            .es_declarers
+                            .iter()
+                            .filter(|(_, pmt_pids)| {
+                                pmt_pids.iter().any(|pmt_pid| {
+                                    self.pmt_reasm
+                                        .get(pmt_pid)
+                                        .is_some_and(|pmt| pmt.pcr_pid == Some(pid))
+                                })
+                            })
+                            .map(|(&es_pid, _)| es_pid)
+                            .collect();
+                        for es_pid in members {
+                            if let Some(stream) = self.streams.get_mut(&es_pid) {
+                                stream.pending_rebase = true;
+                                self.program_epochs
+                                    .entry(stream.epoch_key)
+                                    .or_default()
+                                    .splice_offset = None;
+                            }
+                        }
                     }
-                } else {
-                    for program in programs {
-                        emit(Some(program));
-                    }
+                    self.events.push_back(DemuxEvent::Discontinuity {
+                        track: self.live_track_id(pid),
+                        kind: DiscontinuityKind::Signalled,
+                        provenance,
+                    });
                 }
-            }
-        }
-
-        let mut cc_verdict = CcVerdict::Deliver;
-        // CC gap degradation (issue #778) — payload-bearing, non-null packets
-        // only. The discontinuity flag is passed in so check_cc can suppress
-        // the EVENT but STILL UPDATE the per-PID state (matching both in-repo
-        // reference implementations: dvb-conformance's check_cc at
-        // lib.rs:979-982 and media-doctor's CcAnomalyCheck at cc_anomaly.rs:110-113
-        // — both update last_cc unconditionally on every payload-bearing packet,
-        // including those with discontinuity_indicator set).
-        if pkt.header.has_payload() && pkt.header.pid != NULL_PACKET_PID {
-            cc_verdict = self.check_cc(
-                pkt.header.pid,
-                pkt.header.continuity_counter,
-                raw,
-                discontinuity_signalled,
-                idx,
-            );
-        }
-
-        let pid = pkt.header.pid;
-        let pusi = pkt.header.pusi;
-        let Some(payload) = pkt.payload else {
-            return;
-        };
-
-        // r04-W49. A legal §2.4.3.3 duplicate is discarded outright — feeding
-        // it on would append its 184 payload bytes a second time to the access
-        // unit under construction. (`check_cc` already updated the per-PID
-        // baseline, exactly as the spec's "same continuity_counter as the
-        // original" requires.)
-        if cc_verdict == CcVerdict::Duplicate {
-            self.try_promote_ready();
-            return;
-        }
-        // A gap left the access unit currently in the reassembler short of
-        // bytes, so it must not be delivered: the IR cannot tell a complete
-        // PES from a truncated one, and every downstream muxer would write the
-        // corruption out. Mark it abandoned (`keep_payload = false`) rather
-        // than resetting the assembler — a reset would also stop the byte
-        // accounting that bounds a runaway PES. A `payload_unit_start` clears
-        // the mark, because it begins a new, intact access unit from its first
-        // byte. Adaptation-field-only packets never reach here.
-
-        if pid == PAT_PID {
-            self.pat_reasm.feed(payload, pusi);
-            while let Some(section) = self.pat_reasm.pop_section() {
-                // A corrupt PAT must never rebind a PID: an ES PID wrongly
-                // landing in `pmt_reasm` shadows `streams` for the rest of the
-                // stream (see `psi_section_crc_ok`).
-                if !psi_section_crc_ok(&section) {
-                    continue;
-                }
-                // A "next" PAT (§2.4.4.1) is parsed but not applied — the same
-                // `current_next_indicator == 1` rule PMT application uses.
-                if !section_current_next(&section) {
-                    continue;
-                }
-                if let Ok(pat) = dvb_si::tables::pat::PatSection::parse(&section) {
-                    for entry in pat.entries {
-                        if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT {
-                            self.learn_pmt_pid(entry.pid, entry.program_number);
+                if let Some(pcr) = af.pcr {
+                    // Issue #1354 / §2.4.3.5 + §2.4.4.9: only a program's
+                    // PCR_PID carries that program's clock. One event per
+                    // program naming this PID; see `DemuxEvent::ClockReference`
+                    // for the pre-PMT (`program_number: None`) policy.
+                    let mut programs: Vec<u16> = self
+                        .pmt_reasm
+                        .values()
+                        .filter(|pmt| pmt.pcr_pid == Some(pkt.header.pid))
+                        .map(|pmt| pmt.program_number)
+                        .collect();
+                    programs.sort_unstable();
+                    programs.dedup();
+                    let pmts_pending = self.pmt_reasm.is_empty()
+                        || self.pmt_reasm.values().any(|pmt| pmt.pcr_pid.is_none());
+                    let mut emit = |program_number: Option<u16>| {
+                        let ticks = pcr.as_27mhz();
+                        self.events.push_back(DemuxEvent::ClockReference {
+                            ticks,
+                            pcr: Some(pcr),
+                            clock_hz: PCR_CLOCK_HZ,
+                            discontinuous: af.discontinuity_indicator,
+                            provenance: EventProvenance {
+                                program_number,
+                                ..provenance
+                            },
+                        });
+                    };
+                    if programs.is_empty() {
+                        if pmts_pending {
+                            emit(None);
+                        }
+                    } else {
+                        for program in programs {
+                            emit(Some(program));
                         }
                     }
                 }
             }
-            return;
-        }
 
-        if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
-            pmt_state.reasm.feed(payload, pusi);
-            let mut sections: Vec<bytes::Bytes> = Vec::new();
-            while let Some(section) = pmt_state.reasm.pop_section() {
-                sections.push(section);
+            let mut cc_verdict = CcVerdict::Deliver;
+            // CC gap degradation (issue #778) — payload-bearing, non-null packets
+            // only. The discontinuity flag is passed in so check_cc can suppress
+            // the EVENT but STILL UPDATE the per-PID state (matching both in-repo
+            // reference implementations: dvb-conformance's check_cc at
+            // lib.rs:979-982 and media-doctor's CcAnomalyCheck at cc_anomaly.rs:110-113
+            // — both update last_cc unconditionally on every payload-bearing packet,
+            // including those with discontinuity_indicator set).
+            if pkt.header.has_payload() && pkt.header.pid != NULL_PACKET_PID {
+                cc_verdict = self.check_cc(
+                    pkt.header.pid,
+                    pkt.header.continuity_counter,
+                    raw,
+                    discontinuity_signalled,
+                    idx,
+                );
             }
-            let program_number = pmt_state.program_number;
-            let mut to_apply: Option<Vec<(Pid, Codec, Vec<u8>)>> = None;
-            for section in &sections {
-                // CRC first, before *anything* observable happens: PMT
-                // application is destructive (it can tear a live track down
-                // and reassign track_ids), and even bumping
-                // `last_applied_version` off a corrupt section would suppress
-                // the genuine version that follows. See `psi_section_crc_ok`.
-                if !psi_section_crc_ok(section) {
-                    continue;
-                }
-                let Ok(pmt) = dvb_si::tables::pmt::PmtSection::parse(section) else {
-                    continue;
-                };
-                if pmt.program_number != program_number {
-                    // Defensive cross-check (issue #774): a PMT PID's
-                    // program_number must match the PAT entry it was learned
-                    // under. A mismatch is stream corruption or a PAT/PMT
-                    // race — never act on it.
-                    continue;
-                }
-                if pmt.section_number != 0 || pmt.last_section_number != 0 {
-                    // A PMT is always single-section (§2.4.4.9) — a
-                    // multi-section claim is malformed, ignore it.
-                    continue;
-                }
-                if !pmt.current_next_indicator {
-                    // A "next" table: parsed, never applied.
-                    continue;
-                }
-                if pmt_state.last_applied_version == Some(pmt.version_number) {
-                    // Carousel repeat (identical applied version) — dropped
-                    // before the diff, never re-processed.
-                    continue;
-                }
-                // The version is consumed only by a body that parses: a
-                // CRC-valid but unparseable section must not suppress the
-                // intact repeat of the same version.
-                let mut es_list: Vec<(Pid, Codec, Vec<u8>)> = Vec::new();
-                for stream in &pmt.streams {
-                    let descriptors = stream.es_info.raw().to_vec();
-                    let codec = Codec::from_stream_type(stream.stream_type.to_u8())
-                        .refine_with_descriptors(stream.stream_type.to_u8(), &descriptors);
-                    es_list.push((stream.elementary_pid, codec, descriptors));
-                }
-                pmt_state.last_applied_version = Some(pmt.version_number);
-                // Record the PCR_PID the program just declared: it is the
-                // PID on which a system time-base discontinuity for this
-                // program is signalled (§2.4.3.5), and the key for scoping
-                // a rebase to this program's streams (r04-W50 review).
-                pmt_state.pcr_pid = Some(pmt.pcr_pid);
-                to_apply = Some(es_list);
-            }
-            if let Some(es_list) = to_apply {
-                let old_applied_es = pmt_state.applied_es.clone();
-                let new_applied_es: BTreeSet<Pid> = es_list.iter().map(|(p, _, _)| *p).collect();
-                self.apply_pmt_diff(pid, &old_applied_es, es_list);
-                if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
-                    pmt_state.applied_es = new_applied_es;
-                }
-            }
-            self.try_promote_ready();
-            return;
-        }
 
-        if let Some(stream) = self.streams.get_mut(&pid) {
-            stream.payload_packets = stream.payload_packets.saturating_add(1);
-            let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
-            if pkt.header.scrambling != ScramblingControl::NotScrambled
-                && matches!(stream.carrier, Carrier::Pes(_))
-            {
-                drop_scrambled_payload(stream, pid, pusi, idx, epoch, &mut self.events);
-                self.try_promote_ready();
-                return;
+            let pid = pkt.header.pid;
+            let pusi = pkt.header.pusi;
+            let Some(payload) = pkt.payload else {
+                return Ok(());
+            };
+
+            // r04-W49. A legal §2.4.3.3 duplicate is discarded outright — feeding
+            // it on would append its 184 payload bytes a second time to the access
+            // unit under construction. (`check_cc` already updated the per-PID
+            // baseline, exactly as the spec's "same continuity_counter as the
+            // original" requires.)
+            if cc_verdict == CcVerdict::Duplicate {
+                self.try_promote_ready()?;
+                return Ok(());
             }
-            let mut sections: Vec<bytes::Bytes> = Vec::new();
-            // ── r04-W49 intactness rule ────────────────────────────────────
-            //
-            // An access unit is delivered only when nothing was lost from it:
-            //
-            //  * **A gap on a continuation packet** (`cc_verdict == Gap`,
-            //    `pusi == false`) means 184 bytes of the unit in progress are
-            //    missing. It is marked damaged, and the mark survives to the
-            //    end of the unit — no later packet may clear it.
-            //  * **A gap on a `payload_unit_start` packet** is benign: a
-            //    `payload_unit_start` *ends* the previous unit, so nothing
-            //    after the jump belongs to it. The byte stream simply
-            //    restarts — which is what every independently muxed segment
-            //    does (its counter begins wherever its own muxer chose), and
-            //    what a splice looks like when the source sets no
-            //    `discontinuity_indicator`. Anything genuinely lost inside the
-            //    completing unit shows up as a gap on one of its own
-            //    continuation packets, which the first rule catches.
-            //  * **A signalled discontinuity** (`discontinuity_indicator`) is
-            //    **This is not, by itself, a reason to drop anything.** The
-            //    indicator says the source's byte stream is discontinuous here,
-            //    and when it lands on a *continuation* packet that packet's
-            //    bytes are indeed missing (the gap rule above marks it). But a
-            //    packet carrying the indicator which *completes* a whole unit —
-            //    a normal HLS or splice seam, where the last unit of the old
-            //    segment is intact and the indicator merely precedes the new
-            //    one — must still be delivered. Dropping it lost the last old
-            //    access unit at every seam, which is exactly the loss this
-            //    rule exists to avoid. Only an actual CC gap inside the unit,
-            //    or a bounded PES short of its declared length, damages it.
-            //
-            // A `payload_unit_start` always begins a *new*, whole unit.
-            let gap_here = cc_verdict == CcVerdict::Gap;
-            // An independent, length-based check: a *bounded* PES
-            // (`PES_packet_length != 0`) that received fewer bytes than its own
-            // header declared is truncated, whatever the continuity counter
-            // says. `PES_packet_length` counts the bytes after its own field,
-            // so the whole packet is `PES_LENGTH_FIELD_END + declared`; the
-            // received count is TS-payload bytes, which can exceed that by the
-            // last packet's `0xFF` stuffing, so the test is `<`.
-            let short_of_declared = stream.pes_declared_len > 0
-                && stream.pes_received < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
-            // A unit is damaged only by something that actually lost bytes from
-            // it: a continuity-counter gap on one of its own packets (the mark)
-            // or a bounded PES that arrived short of its declared length. A
-            // `discontinuity_indicator` is *not* such evidence on its own —
-            // see the rule above.
-            let tail_lost =
-                gap_here && pusi && stream.pes_declared_len == 0 && stream.last_payload_full;
-            let completed_intact = matches!(stream.pes_assembly, PesAssembly::Whole)
-                && !short_of_declared
-                && !tail_lost;
-            let mut completed_pes = None;
-            if gap_here
-                && !pusi
-                && matches!(stream.codec, Codec::H264 | Codec::Hevc)
-                && matches!(stream.carrier, Carrier::Pes(_))
-            {
-                if let Carrier::Pes(assembler) = &mut stream.carrier
-                    && let Some(bytes) = assembler.flush()
-                {
-                    harvest_damaged_au(stream, pid, &bytes, &mut self.events);
-                }
-                stream.pes_assembly = PesAssembly::Damaged;
-                clear_audio_carry(stream, &mut self.events);
-            } else if matches!(stream.carrier, Carrier::Pes(_)) {
-                completed_pes = feed_pes_bounded(stream, pid, pusi, payload, &mut self.events);
-            } else if let Carrier::Section(reasm) = &mut stream.carrier {
-                reasm.feed(payload, pusi);
-                while let Some(s) = reasm.pop_section() {
-                    sections.push(s);
-                }
-            }
-            // `completed_intact` false means dropped, not delivered (r04-W49).
-            if completed_pes.is_some() && !completed_intact {
-                // A dropped unit loses its bytes, so an audio frame tail held
-                // from the previous unit can no longer be joined to what
-                // follows (issue #1160).
-                clear_audio_carry(stream, &mut self.events);
-            }
-            if completed_intact && let Some(completed) = completed_pes {
-                on_completed_pes(stream, pid, &completed, epoch, &mut self.events);
-            } else if let Some(completed) = completed_pes
-                && matches!(stream.codec, Codec::H264 | Codec::Hevc)
-            {
-                harvest_damaged_au(stream, pid, &completed, &mut self.events);
-            }
-            if gap_here {
-                // Bytes were lost on this PID: whatever frame tail an audio
-                // track holds (including the one the unit just completed
-                // above may have left) is no longer contiguous with the next
-                // payload (issue #1160).
-                clear_audio_carry(stream, &mut self.events);
-            }
-            stream.last_payload_full = payload.len() == TS_MAX_PAYLOAD_BYTES;
-            if matches!(stream.carrier, Carrier::Pes(_)) {
-                if pusi {
-                    // A new unit begins whole from its first byte.
-                    stream.pes_assembly = PesAssembly::Whole;
-                } else if gap_here {
-                    // The unit in progress lost bytes. Two things are needed:
-                    // the mark (so the unit is dropped, never delivered
-                    // truncated), and an assembler reset — without it the
-                    // bytes arriving *after* the gap would be appended to the
-                    // pre-gap bytes as if contiguous, welding two unrelated
-                    // fragments into one buffer that some later
-                    // `payload_unit_start` would hand on. The byte accounting
-                    // is deliberately left alone: `pes_bytes` continues to
-                    // count what this PID is buffering, so a runaway PES is
-                    // still bounded.
-                    stream.pes_assembly = PesAssembly::Damaged;
-                    if let Carrier::Pes(assembler) = &mut stream.carrier {
-                        let _ = assembler.flush();
+            // A gap left the access unit currently in the reassembler short of
+            // bytes, so it must not be delivered: the IR cannot tell a complete
+            // PES from a truncated one, and every downstream muxer would write the
+            // corruption out. Mark it abandoned (`keep_payload = false`) rather
+            // than resetting the assembler — a reset would also stop the byte
+            // accounting that bounds a runaway PES. A `payload_unit_start` clears
+            // the mark, because it begins a new, intact access unit from its first
+            // byte. Adaptation-field-only packets never reach here.
+
+            if pid == PAT_PID {
+                self.pat_reasm.feed(payload, pusi);
+                while let Some(section) = self.pat_reasm.pop_section() {
+                    // A corrupt PAT must never rebind a PID: an ES PID wrongly
+                    // landing in `pmt_reasm` shadows `streams` for the rest of the
+                    // stream (see `psi_section_crc_ok`).
+                    if !psi_section_crc_ok(&section) {
+                        continue;
+                    }
+                    // A "next" PAT (§2.4.4.1) is parsed but not applied — the same
+                    // `current_next_indicator == 1` rule PMT application uses.
+                    if !section_current_next(&section) {
+                        continue;
+                    }
+                    if let Ok(pat) = dvb_si::tables::pat::PatSection::parse(&section) {
+                        for entry in pat.entries {
+                            if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT {
+                                self.learn_pmt_pid(entry.pid, entry.program_number);
+                            }
+                        }
                     }
                 }
+                return Ok(());
             }
-            for s in sections {
-                on_completed_section(stream, pid, &s[..], &mut self.events);
+
+            if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
+                pmt_state.reasm.feed(payload, pusi);
+                let mut sections: Vec<bytes::Bytes> = Vec::new();
+                while let Some(section) = pmt_state.reasm.pop_section() {
+                    sections.push(section);
+                }
+                let program_number = pmt_state.program_number;
+                let mut to_apply: Option<Vec<(Pid, Codec, Vec<u8>)>> = None;
+                for section in &sections {
+                    // CRC first, before *anything* observable happens: PMT
+                    // application is destructive (it can tear a live track down
+                    // and reassign track_ids), and even bumping
+                    // `last_applied_version` off a corrupt section would suppress
+                    // the genuine version that follows. See `psi_section_crc_ok`.
+                    if !psi_section_crc_ok(section) {
+                        continue;
+                    }
+                    let Ok(pmt) = dvb_si::tables::pmt::PmtSection::parse(section) else {
+                        continue;
+                    };
+                    if pmt.program_number != program_number {
+                        // Defensive cross-check (issue #774): a PMT PID's
+                        // program_number must match the PAT entry it was learned
+                        // under. A mismatch is stream corruption or a PAT/PMT
+                        // race — never act on it.
+                        continue;
+                    }
+                    if pmt.section_number != 0 || pmt.last_section_number != 0 {
+                        // A PMT is always single-section (§2.4.4.9) — a
+                        // multi-section claim is malformed, ignore it.
+                        continue;
+                    }
+                    if !pmt.current_next_indicator {
+                        // A "next" table: parsed, never applied.
+                        continue;
+                    }
+                    if pmt_state.last_applied_version == Some(pmt.version_number) {
+                        // Carousel repeat (identical applied version) — dropped
+                        // before the diff, never re-processed.
+                        continue;
+                    }
+                    // The version is consumed only by a body that parses: a
+                    // CRC-valid but unparseable section must not suppress the
+                    // intact repeat of the same version.
+                    let mut es_list: Vec<(Pid, Codec, Vec<u8>)> = Vec::new();
+                    for stream in &pmt.streams {
+                        let descriptors = stream.es_info.raw().to_vec();
+                        let codec = Codec::from_stream_type(stream.stream_type.to_u8())
+                            .refine_with_descriptors(stream.stream_type.to_u8(), &descriptors);
+                        es_list.push((stream.elementary_pid, codec, descriptors));
+                    }
+                    pmt_state.last_applied_version = Some(pmt.version_number);
+                    // Record the PCR_PID the program just declared: it is the
+                    // PID on which a system time-base discontinuity for this
+                    // program is signalled (§2.4.3.5), and the key for scoping
+                    // a rebase to this program's streams (r04-W50 review).
+                    pmt_state.pcr_pid = Some(pmt.pcr_pid);
+                    to_apply = Some(es_list);
+                }
+                if let Some(es_list) = to_apply {
+                    let old_applied_es = pmt_state.applied_es.clone();
+                    let new_applied_es: BTreeSet<Pid> =
+                        es_list.iter().map(|(p, _, _)| *p).collect();
+                    self.apply_pmt_diff(pid, &old_applied_es, es_list)?;
+                    if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
+                        pmt_state.applied_es = new_applied_es;
+                    }
+                }
+                self.try_promote_ready()?;
+                return Ok(());
             }
-        } else if pid != NULL_PACKET_PID && !self.removed_pids.contains(&pid) {
-            self.unattributed
-                .entry(pid)
-                .or_default()
-                .push_back((pusi, payload.to_vec()));
-            self.unattributed_order.push_back(pid.value());
-            self.unattributed_bytes += payload.len();
-            self.evict_unattributed();
-        }
-        self.try_promote_ready();
+
+            if let Some(stream) = self.streams.get_mut(&pid) {
+                stream.payload_packets = stream.payload_packets.saturating_add(1);
+                let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
+                if pkt.header.scrambling != ScramblingControl::NotScrambled
+                    && matches!(stream.carrier, Carrier::Pes(_))
+                {
+                    drop_scrambled_payload(stream, pid, pusi, idx, epoch, &mut self.events)?;
+                    self.try_promote_ready()?;
+                    return Ok(());
+                }
+                let mut sections: Vec<bytes::Bytes> = Vec::new();
+                // ── r04-W49 intactness rule ────────────────────────────────────
+                //
+                // An access unit is delivered only when nothing was lost from it:
+                //
+                //  * **A gap on a continuation packet** (`cc_verdict == Gap`,
+                //    `pusi == false`) means 184 bytes of the unit in progress are
+                //    missing. It is marked damaged, and the mark survives to the
+                //    end of the unit — no later packet may clear it.
+                //  * **A gap on a `payload_unit_start` packet** is benign: a
+                //    `payload_unit_start` *ends* the previous unit, so nothing
+                //    after the jump belongs to it. The byte stream simply
+                //    restarts — which is what every independently muxed segment
+                //    does (its counter begins wherever its own muxer chose), and
+                //    what a splice looks like when the source sets no
+                //    `discontinuity_indicator`. Anything genuinely lost inside the
+                //    completing unit shows up as a gap on one of its own
+                //    continuation packets, which the first rule catches.
+                //  * **A signalled discontinuity** (`discontinuity_indicator`) is
+                //    **This is not, by itself, a reason to drop anything.** The
+                //    indicator says the source's byte stream is discontinuous here,
+                //    and when it lands on a *continuation* packet that packet's
+                //    bytes are indeed missing (the gap rule above marks it). But a
+                //    packet carrying the indicator which *completes* a whole unit —
+                //    a normal HLS or splice seam, where the last unit of the old
+                //    segment is intact and the indicator merely precedes the new
+                //    one — must still be delivered. Dropping it lost the last old
+                //    access unit at every seam, which is exactly the loss this
+                //    rule exists to avoid. Only an actual CC gap inside the unit,
+                //    or a bounded PES short of its declared length, damages it.
+                //
+                // A `payload_unit_start` always begins a *new*, whole unit.
+                let gap_here = cc_verdict == CcVerdict::Gap;
+                // An independent, length-based check: a *bounded* PES
+                // (`PES_packet_length != 0`) that received fewer bytes than its own
+                // header declared is truncated, whatever the continuity counter
+                // says. `PES_packet_length` counts the bytes after its own field,
+                // so the whole packet is `PES_LENGTH_FIELD_END + declared`; the
+                // received count is TS-payload bytes, which can exceed that by the
+                // last packet's `0xFF` stuffing, so the test is `<`.
+                let short_of_declared = stream.pes_declared_len > 0
+                    && stream.pes_received
+                        < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
+                // A unit is damaged only by something that actually lost bytes from
+                // it: a continuity-counter gap on one of its own packets (the mark)
+                // or a bounded PES that arrived short of its declared length. A
+                // `discontinuity_indicator` is *not* such evidence on its own —
+                // see the rule above.
+                let tail_lost =
+                    gap_here && pusi && stream.pes_declared_len == 0 && stream.last_payload_full;
+                let completed_intact = matches!(stream.pes_assembly, PesAssembly::Whole)
+                    && !short_of_declared
+                    && !tail_lost;
+                let mut completed_pes = None;
+                if gap_here
+                    && !pusi
+                    && matches!(stream.codec, Codec::H264 | Codec::Hevc)
+                    && matches!(stream.carrier, Carrier::Pes(_))
+                {
+                    if let Carrier::Pes(assembler) = &mut stream.carrier
+                        && let Some(bytes) = assembler.flush()
+                    {
+                        harvest_damaged_au(stream, pid, &bytes, &mut self.events);
+                    }
+                    stream.pes_assembly = PesAssembly::Damaged;
+                    clear_audio_carry(stream, &mut self.events)?;
+                } else if matches!(stream.carrier, Carrier::Pes(_)) {
+                    completed_pes = feed_pes_bounded(stream, pid, pusi, payload, &mut self.events)?;
+                } else if let Carrier::Section(reasm) = &mut stream.carrier {
+                    reasm.feed(payload, pusi);
+                    while let Some(s) = reasm.pop_section() {
+                        sections.push(s);
+                    }
+                }
+                // `completed_intact` false means dropped, not delivered (r04-W49).
+                if completed_pes.is_some() && !completed_intact {
+                    // A dropped unit loses its bytes, so an audio frame tail held
+                    // from the previous unit can no longer be joined to what
+                    // follows (issue #1160).
+                    clear_audio_carry(stream, &mut self.events)?;
+                }
+                if completed_intact && let Some(completed) = completed_pes {
+                    on_completed_pes(stream, pid, &completed, epoch, &mut self.events)?;
+                } else if let Some(completed) = completed_pes
+                    && matches!(stream.codec, Codec::H264 | Codec::Hevc)
+                {
+                    harvest_damaged_au(stream, pid, &completed, &mut self.events);
+                }
+                if gap_here {
+                    // Bytes were lost on this PID: whatever frame tail an audio
+                    // track holds (including the one the unit just completed
+                    // above may have left) is no longer contiguous with the next
+                    // payload (issue #1160).
+                    clear_audio_carry(stream, &mut self.events)?;
+                }
+                stream.last_payload_full = payload.len() == TS_MAX_PAYLOAD_BYTES;
+                if matches!(stream.carrier, Carrier::Pes(_)) {
+                    if pusi {
+                        // A new unit begins whole from its first byte.
+                        stream.pes_assembly = PesAssembly::Whole;
+                    } else if gap_here {
+                        // The unit in progress lost bytes. Two things are needed:
+                        // the mark (so the unit is dropped, never delivered
+                        // truncated), and an assembler reset — without it the
+                        // bytes arriving *after* the gap would be appended to the
+                        // pre-gap bytes as if contiguous, welding two unrelated
+                        // fragments into one buffer that some later
+                        // `payload_unit_start` would hand on. The byte accounting
+                        // is deliberately left alone: `pes_bytes` continues to
+                        // count what this PID is buffering, so a runaway PES is
+                        // still bounded.
+                        stream.pes_assembly = PesAssembly::Damaged;
+                        if let Carrier::Pes(assembler) = &mut stream.carrier {
+                            let _ = assembler.flush();
+                        }
+                    }
+                }
+                for s in sections {
+                    on_completed_section(stream, pid, &s[..], &mut self.events)?;
+                }
+            } else if pid != NULL_PACKET_PID && !self.removed_pids.contains(&pid) {
+                self.unattributed
+                    .entry(pid)
+                    .or_default()
+                    .push_back((pusi, payload.to_vec()));
+                self.unattributed_order.push_back(pid.value());
+                self.unattributed_bytes += payload.len();
+                self.evict_unattributed();
+            }
+            self.try_promote_ready()?;
+            Ok(())
+        })()
     }
 
     /// Check the continuity counter for `pid` against the tracking state,
@@ -5587,8 +5604,8 @@ impl StreamingTsDemux {
     /// for a PID never seen before. A codec-changed *re*-registration (see
     /// `apply_pmt_diff`) instead goes through [`Self::register_new_es_at`] to
     /// preserve the PID's original PMT-declaration-order slot.
-    fn register_new_es(&mut self, es_pid: Pid, codec: Codec, descriptors: Vec<u8>) {
-        self.register_new_es_at(es_pid, codec, descriptors, None);
+    fn register_new_es(&mut self, es_pid: Pid, codec: Codec, descriptors: Vec<u8>) -> Result<()> {
+        self.register_new_es_at(es_pid, codec, descriptors, None)
     }
 
     /// As [`Self::register_new_es`], but inserts the PID at `reinsert_at`
@@ -5607,7 +5624,7 @@ impl StreamingTsDemux {
         codec: Codec,
         descriptors: Vec<u8>,
         reinsert_at: Option<usize>,
-    ) {
+    ) -> Result<()> {
         // A PID declared again is no longer an orphan: lift the post-removal
         // buffering blacklist (see `remove_track`) so its fresh traffic is
         // routed normally from here on.
@@ -5667,7 +5684,7 @@ impl StreamingTsDemux {
                         buf_pusi,
                         &buf_payload,
                         &mut self.events,
-                    )
+                    )?
                 } else if let Carrier::Section(reasm) = &mut stream.carrier {
                     reasm.feed(&buf_payload, buf_pusi);
                     while let Some(s) = reasm.pop_section() {
@@ -5679,14 +5696,15 @@ impl StreamingTsDemux {
                 };
                 if let Some(completed) = completed_pes {
                     let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
-                    on_completed_pes(&mut stream, es_pid, &completed, epoch, &mut self.events);
+                    on_completed_pes(&mut stream, es_pid, &completed, epoch, &mut self.events)?;
                 }
                 for s in sections {
-                    on_completed_section(&mut stream, es_pid, &s[..], &mut self.events);
+                    on_completed_section(&mut stream, es_pid, &s[..], &mut self.events)?;
                 }
             }
         }
         self.streams.insert(es_pid, stream);
+        Ok(())
     }
 
     /// Drop a PID that a PMT no longer declares (issue #774): remove it from
@@ -5707,7 +5725,7 @@ impl StreamingTsDemux {
     /// track's first samples, anchoring its `start_decode_time` in the past.
     /// The blacklist is lifted by [`Self::register_new_es`] the moment a PMT
     /// declares the PID again.
-    fn remove_track(&mut self, pid: Pid) {
+    fn remove_track(&mut self, pid: Pid) -> Result<()> {
         self.es_seen.remove(&pid);
         self.codec_order.retain(|&p| p != pid);
         self.data_order.retain(|&p| p != pid);
@@ -5732,8 +5750,8 @@ impl StreamingTsDemux {
             // assembler, the one-behind pending sample and any held audio
             // carry go out before `TrackRemoved`, as `finish()` would emit them.
             let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
-            flush_stream_pes_tail(pid, &mut stream, epoch, &mut self.events);
-            flush_stream_live_tail(pid, &mut stream, &mut self.events);
+            flush_stream_pes_tail(pid, &mut stream, epoch, &mut self.events)?;
+            flush_stream_live_tail(pid, &mut stream, &mut self.events)?;
             if let Some(TrackState::Live(live)) = stream.track {
                 self.events.push_back(DemuxEvent::TrackRemoved {
                     track_id: live.track_id,
@@ -5745,6 +5763,7 @@ impl StreamingTsDemux {
                 });
             }
         }
+        Ok(())
     }
 
     /// Apply one PMT's newly-parsed, version-changed ES list against
@@ -5759,7 +5778,7 @@ impl StreamingTsDemux {
         pmt_pid: Pid,
         old_applied_es: &BTreeSet<Pid>,
         es_list: Vec<(Pid, Codec, Vec<u8>)>,
-    ) {
+    ) -> Result<()> {
         let new_pids: BTreeSet<Pid> = es_list.iter().map(|(p, _, _)| *p).collect();
 
         let removed: Vec<Pid> = old_applied_es
@@ -5787,14 +5806,14 @@ impl StreamingTsDemux {
                 None => false,
             };
             if !still_declared {
-                self.remove_track(pid);
+                self.remove_track(pid)?;
             }
         }
 
         for (es_pid, codec, descriptors) in es_list {
             self.es_declarers.entry(es_pid).or_default().insert(pmt_pid);
             if self.es_seen.insert(es_pid) {
-                self.register_new_es(es_pid, codec, descriptors);
+                self.register_new_es(es_pid, codec, descriptors)?;
                 continue;
             }
             // Compare through a shared borrow first, then act — the two
@@ -5886,12 +5905,12 @@ impl StreamingTsDemux {
                 } else {
                     None
                 };
-                self.remove_track(es_pid);
+                self.remove_track(es_pid)?;
                 // `es_seen` is the "currently declared" set, which
                 // `remove_track` clears — but this PID *is* still declared,
                 // just as something else.
                 self.es_seen.insert(es_pid);
-                self.register_new_es_at(es_pid, codec, descriptors, order_slot);
+                self.register_new_es_at(es_pid, codec, descriptors, order_slot)?;
                 continue;
             }
             // Descriptors-only change: nothing derived from the codec is
@@ -5909,6 +5928,7 @@ impl StreamingTsDemux {
         }
 
         self.generation = self.generation.wrapping_add(1);
+        Ok(())
     }
 
     /// Promote every `Parked` PID that has reached its PMT-declaration-order
@@ -5922,7 +5942,7 @@ impl StreamingTsDemux {
     /// PID that has seen [`PROBE_HEAD_BLOCK_AUS`] access units without
     /// resolving is stepped over rather than stopped at, so one probe that
     /// cannot resolve never holds back every track behind it.
-    fn try_promote_ready(&mut self) {
+    fn try_promote_ready(&mut self) -> Result<()> {
         // PIDs still awaiting promotion, in PMT-declaration order. A snapshot:
         // nothing below adds or reorders PIDs.
         let pending: Vec<Pid> = self
@@ -6139,7 +6159,7 @@ impl StreamingTsDemux {
                             provenance,
                             display,
                             &mut self.events,
-                        );
+                        )?;
                     }
                     stream.track = Some(TrackState::Live(Box::new(live)));
                     stream.backlog_bytes = 0;
@@ -6219,6 +6239,7 @@ impl StreamingTsDemux {
             }
         }
         self.maybe_signal_tracks_resolved();
+        Ok(())
     }
 
     /// Declare that the input fed so far is a complete, self-contained unit
@@ -6234,7 +6255,7 @@ impl StreamingTsDemux {
     /// changes: a PES that continues into the next unit is untouched, so a
     /// conformant or non-conformant cut yields the same samples as without
     /// this call, only earlier.
-    pub fn release_silent_heads(&mut self) {
+    pub fn release_silent_heads(&mut self) -> Result<()> {
         for stream in self.streams.values_mut() {
             if stream.payload_packets == 0
                 && matches!(stream.track, Some(TrackState::Probing { .. }))
@@ -6242,7 +6263,7 @@ impl StreamingTsDemux {
                 stream.unit_released = true;
             }
         }
-        self.try_promote_ready();
+        self.try_promote_ready()
     }
 
     /// Bytes currently held in the `Probing`/`Parked` backlogs of every
@@ -6308,10 +6329,10 @@ impl StreamingTsDemux {
     /// PIDs — mirrors the old batch demuxer's own "never resolved, skip"
     /// conclusion, which likewise needed the whole file), and emits the
     /// final one-behind pending sample for every live video/data track.
-    pub fn finish(&mut self) {
-        self.flush_pes_tails();
+    pub fn finish(&mut self) -> Result<()> {
+        self.flush_pes_tails()?;
         self.resolve_eac3_probes_from_tail();
-        self.try_promote_ready();
+        self.try_promote_ready()?;
 
         while let Some(&next_pid) = self
             .codec_order
@@ -6337,14 +6358,15 @@ impl StreamingTsDemux {
                             program_number: None,
                         },
                     });
-                    self.try_promote_ready();
+                    self.try_promote_ready()?;
                 }
                 _ => break,
             }
         }
 
-        self.flush_live_tails();
+        self.flush_live_tails()?;
         self.enforce_degraded_cap();
+        Ok(())
     }
 
     /// Declare that a new, unrelated timeline begins with the next input (an
@@ -6365,15 +6387,15 @@ impl StreamingTsDemux {
     /// `Probing` keep probing but drop their old-timeline backlog, and stop
     /// holding back the PIDs behind them (as [`finish`](Self::finish) would
     /// have released them).
-    pub fn restart_timeline(&mut self) {
-        self.flush_pes_tails();
+    pub fn restart_timeline(&mut self) -> Result<()> {
+        self.flush_pes_tails()?;
         for stream in self.streams.values_mut() {
             if matches!(stream.track, Some(TrackState::Probing { .. })) {
                 stream.unit_released = true;
             }
         }
-        self.try_promote_ready();
-        self.flush_live_tails();
+        self.try_promote_ready()?;
+        self.flush_live_tails()?;
         for pmt in self.pmt_reasm.values_mut() {
             pmt.last_applied_version = None;
         }
@@ -6383,17 +6405,19 @@ impl StreamingTsDemux {
             stream.restart_timeline();
         }
         self.enforce_degraded_cap();
+        Ok(())
     }
 
     /// Complete every PID's buffered PES payload at end of a timeline.
-    fn flush_pes_tails(&mut self) {
+    fn flush_pes_tails(&mut self) -> Result<()> {
         self.resync.finish();
         let tail = self.resync.take_tail_packets();
-        self.process_resynced(&tail);
+        self.process_resynced(&tail)?;
         for (&pid, stream) in self.streams.iter_mut() {
             let epoch = self.program_epochs.entry(stream.epoch_key).or_default();
-            flush_stream_pes_tail(pid, stream, epoch, &mut self.events);
+            flush_stream_pes_tail(pid, stream, epoch, &mut self.events)?;
         }
+        Ok(())
     }
 
     fn resolve_eac3_probes_from_tail(&mut self) {
@@ -6426,10 +6450,11 @@ impl StreamingTsDemux {
 
     /// Emit the one-behind pending sample and the held audio carry of every
     /// live track.
-    fn flush_live_tails(&mut self) {
+    fn flush_live_tails(&mut self) -> Result<()> {
         for (&pid, stream) in self.streams.iter_mut() {
-            flush_stream_live_tail(pid, stream, &mut self.events);
+            flush_stream_live_tail(pid, stream, &mut self.events)?;
         }
+        Ok(())
     }
 }
 
@@ -6443,7 +6468,7 @@ fn drop_scrambled_payload(
     packet_index: u64,
     epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<()> {
     let track = match &stream.track {
         Some(TrackState::Live(live)) => Some(live.track_id),
         _ => None,
@@ -6458,7 +6483,7 @@ fn drop_scrambled_payload(
         },
     });
     if pusi {
-        flush_stream_pes_tail(pid, stream, epoch, events);
+        flush_stream_pes_tail(pid, stream, epoch, events)?;
     } else if let Carrier::Pes(assembler) = &mut stream.carrier
         && let Some(bytes) = assembler.flush()
         && matches!(stream.codec, Codec::H264 | Codec::Hevc)
@@ -6467,7 +6492,8 @@ fn drop_scrambled_payload(
     }
     stream.pes_assembly = PesAssembly::Damaged;
     stream.last_payload_full = false;
-    clear_audio_carry(stream, events);
+    clear_audio_carry(stream, events)?;
+    Ok(())
 }
 
 /// Complete one PID's buffered PES payload at end of a timeline.
@@ -6476,7 +6502,7 @@ fn flush_stream_pes_tail(
     stream: &mut StreamState,
     epoch: &mut ProgramEpoch,
     events: &mut VecDeque<DemuxEvent>,
-) {
+) -> Result<()> {
     // Only a PES assembler has a trailing partial payload to flush; a trailing
     // partial (incomplete) section is genuinely undecodable and is simply
     // dropped by `SectionReassembler` itself.
@@ -6493,15 +6519,20 @@ fn flush_stream_pes_tail(
         let short_of_declared = stream.pes_declared_len > 0
             && completed.len() < PES_LENGTH_FIELD_END + stream.pes_declared_len as usize;
         if matches!(stream.pes_assembly, PesAssembly::Whole) && !short_of_declared {
-            on_completed_pes(stream, pid, &completed, epoch, events);
+            on_completed_pes(stream, pid, &completed, epoch, events)?;
         } else if matches!(stream.codec, Codec::H264 | Codec::Hevc) {
             harvest_damaged_au(stream, pid, &completed, events);
         }
     }
+    Ok(())
 }
 
 /// Emit one PID's one-behind pending sample and held audio carry.
-fn flush_stream_live_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDeque<DemuxEvent>) {
+fn flush_stream_live_tail(
+    pid: Pid,
+    stream: &mut StreamState,
+    events: &mut VecDeque<DemuxEvent>,
+) -> Result<()> {
     if let Some(TrackState::Live(live)) = &mut stream.track {
         let provenance = EventProvenance {
             pid: Some(pid),
@@ -6527,11 +6558,12 @@ fn flush_stream_live_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDe
                 flush_one_behind(pending, *last_duration, live.track_id, provenance, events);
             }
             LiveKind::Audio { kind, anchor, .. } => {
-                flush_audio_carry(kind, anchor, live.track_id, events);
+                flush_audio_carry(kind, anchor, live.track_id, events)?;
             }
             LiveKind::Section => {}
         }
     }
+    Ok(())
 }
 
 /// [`Stage`] adoption (media plane step 2e): a thin, honest delegation to the
@@ -6546,13 +6578,15 @@ fn flush_stream_live_tail(pid: Pid, stream: &mut StreamState, events: &mut VecDe
 impl Stage for StreamingTsDemux {
     type In<'a> = &'a [u8];
     type Out = DemuxEvent;
-    /// `feed`/`finish` are infallible here — TS resynchronises on `0x47`
-    /// rather than erroring on malformed input (see the type's own docs).
-    type Error = core::convert::Infallible;
+    /// Malformed TS never errors (it resynchronises on `0x47` and skips what it
+    /// cannot parse); the one error `feed`/`finish` can report is a sample
+    /// whose timing cannot be represented (see
+    /// [`Error::InvalidInput`](crate::Error::InvalidInput) on a PTS with no
+    /// DTS), carried out instead of a fabricated value.
+    type Error = crate::Error;
 
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> core::result::Result<(), Self::Error> {
-        self.feed(input);
-        Ok(())
+        StreamingTsDemux::feed(self, input)
     }
 
     fn poll(&mut self) -> Option<Self::Out> {
@@ -6560,8 +6594,7 @@ impl Stage for StreamingTsDemux {
     }
 
     fn finish(&mut self) -> core::result::Result<(), Self::Error> {
-        self.finish();
-        Ok(())
+        StreamingTsDemux::finish(self)
     }
 
     /// Honest against the one bound this demuxer actually enforces
@@ -6630,8 +6663,8 @@ impl<'a> TsDemux<'a> {
         let mut demux = StreamingTsDemux::new()
             .with_afd_persistence(self.afd_persistence)
             .with_strict_pmt_order();
-        demux.feed(input);
-        demux.finish();
+        demux.feed(input)?;
+        demux.finish()?;
 
         let mut tracks: Vec<Track> = Vec::new();
         let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
@@ -6828,7 +6861,9 @@ pub(crate) mod tests {
 
         let mut demux = StreamingTsDemux::new();
         for i in 0..packet_count {
-            demux.feed(&payload_only_packet(unclaimed_pid, i as u8));
+            demux
+                .feed(&payload_only_packet(unclaimed_pid, i as u8))
+                .expect("valid timing");
         }
 
         // The counter is capped …
@@ -6895,13 +6930,14 @@ pub(crate) mod tests {
                 let dts = i64::from(i) * i64::from(frame_dur);
                 Sample::new(data, Some(dts), Some(dts), Some(frame_dur), i == 0)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .expect("valid timing");
         let track = Track::new(spec, samples);
         let media = Media::new(vec![track], VIDEO_TIMESCALE);
         let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&ts_bytes);
+        demux.feed(&ts_bytes).expect("valid timing");
         // Drain the legitimate startup events (TrackAdded/Sample/…) — not
         // under test here, just clearing the queue for a clean assertion
         // below.
@@ -6926,7 +6962,7 @@ pub(crate) mod tests {
         pkt[2] = (ES_PID.value() & 0xFF) as u8;
         pkt[3] = 0x10 | (cc & 0x0F);
         cc = cc.wrapping_add(1);
-        demux.feed(&pkt);
+        demux.feed(&pkt).expect("valid timing");
         let mut hit_cap = false;
         for _ in 0..30_000u32 {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -6935,7 +6971,7 @@ pub(crate) mod tests {
             pkt[2] = (ES_PID.value() & 0xFF) as u8;
             pkt[3] = 0x10 | (cc & 0x0F);
             cc = cc.wrapping_add(1);
-            demux.feed(&pkt);
+            demux.feed(&pkt).expect("valid timing");
             if matches!(
                 demux.poll_event(),
                 Some(DemuxEvent::Discontinuity { provenance, .. }) if provenance.pid == Some(ES_PID)
@@ -6964,7 +7000,7 @@ pub(crate) mod tests {
         pkt[2] = (ES_PID.value() & 0xFF) as u8;
         pkt[3] = 0x10 | (cc & 0x0F);
         pkt[4] = 0; // pointer/no-op first byte for a PES (not a pointer_field — PES has none)
-        demux.feed(&pkt);
+        demux.feed(&pkt).expect("valid timing");
         assert_eq!(
             {
                 let s = demux.streams.get(&ES_PID).unwrap();
@@ -7026,7 +7062,8 @@ pub(crate) mod tests {
                 let dts = i64::from(i) * i64::from(frame_dur);
                 Sample::new(data, Some(dts), Some(dts), Some(frame_dur), false)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .expect("valid timing");
         let video_track = Track::new(video_spec, video_samples);
 
         // PID B (rank 1): opaque data — `ConfigProbe::Data` resolves on its
@@ -7048,14 +7085,15 @@ pub(crate) mod tests {
                 let dts = i64::from(i) * i64::from(frame_dur);
                 Sample::new(payload, Some(dts), Some(dts), Some(frame_dur), true)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .expect("valid timing");
         let data_track = Track::new(data_spec, data_samples);
 
         let media = Media::new(vec![video_track, data_track], VIDEO_TIMESCALE);
         let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&ts_bytes);
+        demux.feed(&ts_bytes).expect("valid timing");
         let mut abandoned_pids: Vec<Pid> = Vec::new();
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::TrackAbandoned {
@@ -7077,7 +7115,7 @@ pub(crate) mod tests {
         // issue #774: this path used to emit a mis-typed `Discontinuity` for
         // exactly this condition — re-feed and confirm none appears anymore.
         let mut demux2 = StreamingTsDemux::new();
-        demux2.feed(&ts_bytes);
+        demux2.feed(&ts_bytes).expect("valid timing");
         let saw_discontinuity_for_abandoned_pid = std::iter::from_fn(|| demux2.poll_event())
             .any(|ev| matches!(ev, DemuxEvent::Discontinuity { provenance, .. } if provenance.pid == Some(PID_A)));
         assert!(
@@ -7160,13 +7198,14 @@ pub(crate) mod tests {
                 let dts = i64::from(i) * i64::from(frame_dur);
                 Sample::new(data, Some(dts), Some(dts), Some(frame_dur), false)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .expect("valid timing");
         let video_track = Track::new(video_spec, video_samples);
         let media = Media::new(vec![video_track], VIDEO_TIMESCALE);
         let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&ts_bytes);
+        demux.feed(&ts_bytes).expect("valid timing");
         assert!(
             !matches!(
                 demux.streams.get(&PID_A).and_then(|s| s.track.as_ref()),
@@ -7177,7 +7216,7 @@ pub(crate) mod tests {
         );
         while demux.poll_event().is_some() {}
 
-        demux.finish();
+        demux.finish().expect("valid timing");
         let mut saw_config_unrecoverable = false;
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::TrackAbandoned {
@@ -7559,7 +7598,8 @@ pub(crate) mod tests {
                 let dts = i64::from(i) * i64::from(frame_dur);
                 Sample::new(data, Some(dts), Some(dts), Some(frame_dur), sync)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .expect("valid timing");
         let head_config = if audio_head {
             CodecConfig::Data {
                 stream_type: 0x04,
@@ -7589,7 +7629,8 @@ pub(crate) mod tests {
                         true,
                     )
                 })
-                .collect();
+                .collect::<Result<Vec<_>>>()
+                .expect("valid timing");
             tracks.push(Track::new(
                 TrackSpec::new(
                     TrackId::new(2 + k as u32),
@@ -7614,7 +7655,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let mut pids = Vec::new();
         for chunk in ts.chunks(TS_PACKET_SIZE * 16) {
-            demux.feed(chunk);
+            demux.feed(chunk).expect("valid timing");
             while let Some(ev) = demux.poll_event() {
                 if let DemuxEvent::TrackAdded(spec) = ev {
                     pids.push(spec.source_pid.map_or(0, |p| p.value()));
@@ -7661,7 +7702,7 @@ pub(crate) mod tests {
     /// E-AC-3 `TrackAdded`s seen feeding `ts` live (no `finish()`).
     fn live_eac3_tracks(ts: &[u8]) -> usize {
         let mut demux = StreamingTsDemux::new();
-        demux.feed(ts);
+        demux.feed(ts).expect("valid timing");
         let mut n = 0;
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::TrackAdded(spec) = ev
@@ -7676,7 +7717,7 @@ pub(crate) mod tests {
     /// `dec3.bsmod` of the first (only) track of `ts`, live (no `finish()`).
     fn live_eac3_bsmod(ts: &[u8]) -> Option<u8> {
         let mut demux = StreamingTsDemux::new();
-        demux.feed(ts);
+        demux.feed(ts).expect("valid timing");
         while let Some(ev) = demux.poll_event() {
             if let DemuxEvent::TrackAdded(spec) = ev
                 && let CodecConfig::Eac3 { config, .. } = spec.config
@@ -7786,7 +7827,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let mut out = Vec::new();
         for chunk in ts.chunks(TS_PACKET_SIZE * 16) {
-            demux.feed(chunk);
+            demux.feed(chunk).expect("valid timing");
             while let Some(ev) = demux.poll_event() {
                 if let DemuxEvent::TrackAdded(spec) = ev {
                     out.push((
@@ -7878,7 +7919,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let mut out = Vec::new();
         for chunk in ts.chunks(TS_PACKET_SIZE * 16) {
-            demux.feed(chunk);
+            demux.feed(chunk).expect("valid timing");
             while let Some(ev) = demux.poll_event() {
                 match ev {
                     DemuxEvent::TrackAdded(spec) => out.push(Seen::Added(
@@ -8038,7 +8079,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let mut prev = 0usize;
         for (i, chunk) in ts.chunks(TS_PACKET_SIZE).enumerate() {
-            demux.feed(chunk);
+            demux.feed(chunk).expect("valid timing");
             while let Some(ev) = demux.poll_event() {
                 if matches!(ev, DemuxEvent::TrackAdded(_)) {
                     return Some((i, prev));
@@ -8173,7 +8214,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let mut parked = 0usize;
         for chunk in ts.chunks(TS_PACKET_SIZE) {
-            demux.feed(chunk);
+            demux.feed(chunk).expect("valid timing");
             parked = parked.max(demux.streams.get(&flood).map_or(0, |s| s.backlog_bytes));
         }
         assert!(
@@ -8199,12 +8240,12 @@ pub(crate) mod tests {
             FLOOD_PAST_CRITERION,
         );
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&ts);
+        demux.feed(&ts).expect("valid timing");
         assert!(
             demux.skipped.contains(&Pid::from_const(0x0100)),
             "the silent head was stepped over"
         );
-        demux.finish();
+        demux.finish().expect("valid timing");
         assert!(
             demux.resolved.contains(&Pid::from_const(0x0100)),
             "finish abandoned the head"
@@ -8285,7 +8326,7 @@ pub(crate) mod tests {
             &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_PES_PRIVATE),
         ));
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
+        demux.feed(&input).expect("valid timing");
         assert!(
             demux.es_seen.contains(&ES_PID_UNDER_TEST),
             "the intact repeat of the unparseable version must be applied"
@@ -8317,8 +8358,8 @@ pub(crate) mod tests {
         ];
         let ts = single_es_pes_ts(STREAM_TYPE_EAC3, &payloads);
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&ts);
-        demux.finish();
+        demux.feed(&ts).expect("valid timing");
+        demux.finish().expect("valid timing");
         let mut samples: Vec<Vec<u8>> = Vec::new();
         while let Some(ev) = demux.poll_event() {
             match ev {
@@ -8364,7 +8405,7 @@ pub(crate) mod tests {
             let payloads: Vec<Vec<u8>> = es.chunks(1).map(<[u8]>::to_vec).collect();
             let ts = single_es_pes_ts(STREAM_TYPE_EAC3, &payloads);
             let mut demux = StreamingTsDemux::new();
-            demux.feed(&ts);
+            demux.feed(&ts).expect("valid timing");
             let walks = demux.streams[&ES_PID_UNDER_TEST].probe_walks;
             let mut tracks = 0;
             while let Some(ev) = demux.poll_event() {
@@ -8418,7 +8459,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let mut gated_with_tail = false;
         for chunk in ts.chunks(TS_PACKET_SIZE) {
-            demux.feed(chunk);
+            demux.feed(chunk).expect("valid timing");
             let Some(stream) = demux.streams.get(&ES_PID_UNDER_TEST) else {
                 continue;
             };
@@ -8462,8 +8503,8 @@ pub(crate) mod tests {
 
         let count_updates = |bytes: &[u8]| -> (usize, Vec<u16>) {
             let mut demux = StreamingTsDemux::new();
-            demux.feed(bytes);
-            demux.finish();
+            demux.feed(bytes).expect("valid timing");
+            demux.finish().expect("valid timing");
             let mut n = 0usize;
             let mut channels = Vec::new();
             while let Some(event) = demux.poll_event() {
@@ -8636,8 +8677,8 @@ pub(crate) mod tests {
 
         let before = sync_probes();
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let probes = sync_probes() - before;
 
         // The PID must genuinely still be probing when the input ends, so this
@@ -8733,8 +8774,8 @@ pub(crate) mod tests {
 
             let before = sync_probes();
             let mut demux = StreamingTsDemux::new();
-            demux.feed(&input);
-            demux.finish();
+            demux.feed(&input).expect("valid timing");
+            demux.finish().expect("valid timing");
             let probes = sync_probes() - before;
 
             assert!(
@@ -8814,8 +8855,8 @@ pub(crate) mod tests {
     /// The `TrackUpdated` width a TS produces, if any.
     fn updated_avc_width(bytes: &[u8]) -> Option<u16> {
         let mut demux = StreamingTsDemux::new();
-        demux.feed(bytes);
-        demux.finish();
+        demux.feed(bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         std::iter::from_fn(|| demux.poll_event()).find_map(|e| match e {
             DemuxEvent::TrackUpdated(spec) => match spec.config {
                 CodecConfig::Avc { width, .. } => Some(width),
@@ -8939,8 +8980,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
         let ids: BTreeMap<TrackId, Pid> = events
             .iter()
@@ -9077,8 +9118,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
         let ids: BTreeMap<TrackId, Pid> = events
             .iter()
@@ -9215,8 +9256,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let got: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
@@ -9318,8 +9359,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
@@ -9378,8 +9419,8 @@ pub(crate) mod tests {
         input.extend_from_slice(&packets[..TS_PACKET_SIZE]);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let samples = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
             .count();
@@ -9470,8 +9511,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
@@ -9562,8 +9603,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
@@ -9658,8 +9699,8 @@ pub(crate) mod tests {
         let bytes = avc_ts_over(&aus);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         let added_width = std::iter::from_fn(|| demux.poll_event()).find_map(|e| match e {
             DemuxEvent::TrackAdded(spec) => match spec.config {
                 CodecConfig::Avc { width, .. } => Some(width),
@@ -9738,8 +9779,8 @@ pub(crate) mod tests {
         let bytes = avc_ts_over(&aus);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         let updates: Vec<(u16, u16)> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::TrackUpdated(spec) => match spec.config {
@@ -9782,8 +9823,8 @@ pub(crate) mod tests {
         let bytes = avc_ts_over(&aus);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         let updates = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::TrackUpdated(_)))
             .count();
@@ -9812,8 +9853,8 @@ pub(crate) mod tests {
         }
         let bytes = avc_ts_over(&aus);
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         let updates = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::TrackUpdated(_)))
             .count();
@@ -9883,7 +9924,7 @@ pub(crate) mod tests {
         let mut log = Vec::new();
         let mut updates = 0;
         for c in bytes.chunks(chunk) {
-            demux.feed(c);
+            demux.feed(c).expect("valid timing");
             while let Some(e) = demux.poll_event() {
                 if matches!(e, DemuxEvent::TrackUpdated(_)) {
                     updates += 1;
@@ -9891,7 +9932,7 @@ pub(crate) mod tests {
                 log.push(format!("{e:?}"));
             }
         }
-        demux.finish();
+        demux.finish().expect("valid timing");
         while let Some(e) = demux.poll_event() {
             if matches!(e, DemuxEvent::TrackUpdated(_)) {
                 updates += 1;
@@ -10142,8 +10183,8 @@ pub(crate) mod tests {
         let path = test_fixtures::path("ts/h264-two-resolutions.ts");
         let bytes = std::fs::read(&path).unwrap();
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         let mut out = Vec::new();
         while let Some(e) = demux.poll_event() {
             let spec = match e {
@@ -10213,8 +10254,8 @@ pub(crate) mod tests {
         ];
         let bytes = avc_ts_over(&aus);
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
         let updates = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::TrackUpdated(_)))
             .count();
@@ -10243,8 +10284,8 @@ pub(crate) mod tests {
             std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()));
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&bytes);
-        demux.finish();
+        demux.feed(&bytes).expect("valid timing");
+        demux.finish().expect("valid timing");
 
         let mut added: Option<(u32, u16, u16)> = None;
         let mut updates: Vec<(u32, u16, u16)> = Vec::new();
@@ -10338,8 +10379,8 @@ pub(crate) mod tests {
             }
 
             let mut demux = StreamingTsDemux::new();
-            demux.feed(&input);
-            demux.finish();
+            demux.feed(&input).expect("valid timing");
+            demux.finish().expect("valid timing");
             let channel_count = std::iter::from_fn(|| demux.poll_event())
                 .find_map(|e| match e {
                     DemuxEvent::TrackAdded(spec) => match spec.config {
@@ -10491,8 +10532,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let mut saw_signalled = false;
         let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
@@ -10623,8 +10664,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
@@ -10711,8 +10752,8 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
@@ -10767,8 +10808,8 @@ pub(crate) mod tests {
         input.extend_from_slice(&pkt2);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
@@ -10821,8 +10862,8 @@ pub(crate) mod tests {
         input.extend_from_slice(&pkt2);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
@@ -10868,7 +10909,8 @@ pub(crate) mod tests {
                 let dts = i64::from(i) * i64::from(frame_dur);
                 Sample::new(data, Some(dts), Some(dts), Some(frame_dur), true)
             })
-            .collect();
+            .collect::<Result<Vec<_>>>()
+            .expect("valid timing");
         let media = Media::new(vec![Track::new(spec, samples)], VIDEO_TIMESCALE);
 
         // Two separately muxed copies of the same track, concatenated as a
@@ -10879,8 +10921,8 @@ pub(crate) mod tests {
         concatenated.extend_from_slice(&segment);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&concatenated);
-        demux.finish();
+        demux.feed(&concatenated).expect("valid timing");
+        demux.finish().expect("valid timing");
         let video_samples = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
             .count();
@@ -10930,8 +10972,8 @@ pub(crate) mod tests {
         input.extend_from_slice(&packets[2 * TS_PACKET_SIZE..]);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let samples = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
             .count();
@@ -11004,8 +11046,8 @@ pub(crate) mod tests {
         ));
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
@@ -11061,8 +11103,8 @@ pub(crate) mod tests {
         input.extend_from_slice(&pes_packets(ES_PID_UNDER_TEST, 2, &pes2));
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let got: Vec<Vec<u8>> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample.data.to_vec()),
@@ -11172,8 +11214,8 @@ pub(crate) mod tests {
         );
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample),
@@ -11275,7 +11317,8 @@ pub(crate) mod tests {
                 ts,
                 TrackId::new(1),
                 &mut events,
-            );
+            )
+            .expect("valid timing");
         }
 
         assert!(
@@ -11328,7 +11371,8 @@ pub(crate) mod tests {
                 ts,
                 TrackId::new(1),
                 events,
-            );
+            )
+            .expect("valid timing");
         };
         for n in 0..FRAMES_BEFORE {
             emit(n * PES_INCREMENT_TICKS, &mut anchor, &mut events);
@@ -11518,7 +11562,8 @@ pub(crate) mod tests {
                 dts_uw,
                 TrackId::new(1),
                 &mut events,
-            );
+            )
+            .expect("valid timing");
             dts_uw += AAC_SAMPLES_PER_FRAME as i128;
         }
 
@@ -11571,7 +11616,8 @@ pub(crate) mod tests {
             0,
             TrackId::new(1),
             &mut events,
-        );
+        )
+        .expect("valid timing");
 
         let emitted: Vec<(Vec<u8>, Option<u32>)> = events
             .iter()
@@ -11657,7 +11703,8 @@ pub(crate) mod tests {
             0,
             TrackId::new(1),
             &mut events,
-        );
+        )
+        .expect("valid timing");
         events
             .iter()
             .filter_map(|e| match e {
@@ -11857,16 +11904,20 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
 
         // PMT A declares the shared PID; PMT B declares it too (same codec).
-        demux.apply_pmt_diff(
-            Pid::from_const(PMT_A),
-            &BTreeSet::new(),
-            alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
-        );
-        demux.apply_pmt_diff(
-            Pid::from_const(PMT_B),
-            &BTreeSet::new(),
-            alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
-        );
+        demux
+            .apply_pmt_diff(
+                Pid::from_const(PMT_A),
+                &BTreeSet::new(),
+                alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
+            )
+            .expect("valid timing");
+        demux
+            .apply_pmt_diff(
+                Pid::from_const(PMT_B),
+                &BTreeSet::new(),
+                alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
+            )
+            .expect("valid timing");
         assert_eq!(
             demux.es_declarers.get(&SHARED_PID).map(|d| d.len()),
             Some(2),
@@ -11893,7 +11944,7 @@ pub(crate) mod tests {
                 },
                 backlog: Vec::new(),
             })));
-        demux.try_promote_ready();
+        demux.try_promote_ready().expect("valid timing");
         let track_id_before = match demux.streams.get(&SHARED_PID).unwrap().track.as_ref() {
             Some(TrackState::Live(live)) => live.track_id,
             _ => panic!("expected the shared PID to be Live after promotion"),
@@ -11905,11 +11956,13 @@ pub(crate) mod tests {
         // unchanged — this call only ever represents PMT A's own view.
         let mut pmt_a_applied = BTreeSet::new();
         pmt_a_applied.insert(SHARED_PID);
-        demux.apply_pmt_diff(
-            Pid::from_const(PMT_A),
-            &pmt_a_applied,
-            alloc::vec![(SHARED_PID, Codec::Ac3, Vec::new())],
-        );
+        demux
+            .apply_pmt_diff(
+                Pid::from_const(PMT_A),
+                &pmt_a_applied,
+                alloc::vec![(SHARED_PID, Codec::Ac3, Vec::new())],
+            )
+            .expect("valid timing");
 
         // The shared track must survive, unchanged, with its original
         // track_id — PMT B still declares it, so PMT A's reclassification
@@ -11944,7 +11997,9 @@ pub(crate) mod tests {
         // (last) declarer.
         let mut pmt_b_applied = BTreeSet::new();
         pmt_b_applied.insert(SHARED_PID);
-        demux.apply_pmt_diff(Pid::from_const(PMT_B), &pmt_b_applied, Vec::new());
+        demux
+            .apply_pmt_diff(Pid::from_const(PMT_B), &pmt_b_applied, Vec::new())
+            .expect("valid timing");
         assert_eq!(
             demux.es_declarers.get(&SHARED_PID).map(|d| d.len()),
             Some(1),
@@ -11953,11 +12008,13 @@ pub(crate) mod tests {
 
         // PMT A reclassifies again: as the *last* declarer, the
         // teardown-and-rebuild now proceeds.
-        demux.apply_pmt_diff(
-            Pid::from_const(PMT_A),
-            &pmt_a_applied,
-            alloc::vec![(SHARED_PID, Codec::Aac, Vec::new())],
-        );
+        demux
+            .apply_pmt_diff(
+                Pid::from_const(PMT_A),
+                &pmt_a_applied,
+                alloc::vec![(SHARED_PID, Codec::Aac, Vec::new())],
+            )
+            .expect("valid timing");
         assert!(
             demux
                 .events
@@ -11982,14 +12039,16 @@ pub(crate) mod tests {
         const PID_Y: Pid = Pid::from_const(0x0051);
 
         let mut demux = StreamingTsDemux::new();
-        demux.apply_pmt_diff(
-            Pid::from_const(PMT),
-            &BTreeSet::new(),
-            alloc::vec![
-                (PID_X, Codec::Data(0x06), Vec::new()),
-                (PID_Y, Codec::Data(0x07), Vec::new()),
-            ],
-        );
+        demux
+            .apply_pmt_diff(
+                Pid::from_const(PMT),
+                &BTreeSet::new(),
+                alloc::vec![
+                    (PID_X, Codec::Data(0x06), Vec::new()),
+                    (PID_Y, Codec::Data(0x07), Vec::new()),
+                ],
+            )
+            .expect("valid timing");
         assert_eq!(demux.data_order, alloc::vec![PID_X, PID_Y]);
 
         // PID X's stream_type changes (still opaque `Codec::Data`, so the
@@ -11997,14 +12056,16 @@ pub(crate) mod tests {
         let mut old_applied = BTreeSet::new();
         old_applied.insert(PID_X);
         old_applied.insert(PID_Y);
-        demux.apply_pmt_diff(
-            Pid::from_const(PMT),
-            &old_applied,
-            alloc::vec![
-                (PID_X, Codec::Data(0x08), Vec::new()),
-                (PID_Y, Codec::Data(0x07), Vec::new()),
-            ],
-        );
+        demux
+            .apply_pmt_diff(
+                Pid::from_const(PMT),
+                &old_applied,
+                alloc::vec![
+                    (PID_X, Codec::Data(0x08), Vec::new()),
+                    (PID_Y, Codec::Data(0x07), Vec::new()),
+                ],
+            )
+            .expect("valid timing");
 
         assert_eq!(
             demux.data_order,
@@ -12064,7 +12125,7 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock with enough null packets.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let pkt = ts_packet_degradation(
             true, // tei
@@ -12074,7 +12135,7 @@ pub(crate) mod tests {
             None,
             b"some payload",
         );
-        demux.feed(&pkt);
+        demux.feed(&pkt).expect("valid timing");
         let events: Vec<_> = std::iter::from_fn(|| demux.poll_event()).collect();
         let degraded: Vec<_> = events
             .iter()
@@ -12107,8 +12168,8 @@ pub(crate) mod tests {
         let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&data);
-        demux.finish();
+        demux.feed(&data).expect("valid timing");
+        demux.finish().expect("valid timing");
         let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
             .collect();
@@ -12133,8 +12194,8 @@ pub(crate) mod tests {
         let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&data);
-        demux.finish();
+        demux.feed(&data).expect("valid timing");
+        demux.finish().expect("valid timing");
 
         let gap_count = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| {
@@ -12169,8 +12230,8 @@ pub(crate) mod tests {
         let data = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&data);
-        demux.finish();
+        demux.feed(&data).expect("valid timing");
+        demux.finish().expect("valid timing");
 
         let mut saw_discontinuity = false;
         while let Some(event) = demux.poll_event() {
@@ -12192,7 +12253,7 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let payload = b"duplicate payload bytes";
         let pkt = |cc: u8| -> [u8; TS_PACKET_SIZE] {
@@ -12207,9 +12268,9 @@ pub(crate) mod tests {
         };
 
         // First packet: CC=0.
-        demux.feed(&pkt(0));
+        demux.feed(&pkt(0)).expect("valid timing");
         // Second packet: legal duplicate — same CC=0, identical payload.
-        demux.feed(&pkt(0));
+        demux.feed(&pkt(0)).expect("valid timing");
 
         let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
@@ -12306,8 +12367,8 @@ pub(crate) mod tests {
         );
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
         let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample),
@@ -12370,9 +12431,9 @@ pub(crate) mod tests {
         let pkt2 = pes_packets(ES_PID_UNDER_TEST, 2, &pes2);
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.feed(&pkt2);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.feed(&pkt2).expect("valid timing");
+        demux.finish().expect("valid timing");
 
         let degraded = std::iter::from_fn(|| demux.poll_event()).any(|e| {
             matches!(
@@ -12389,9 +12450,9 @@ pub(crate) mod tests {
         );
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
-        demux.feed(&pkt2);
-        demux.finish();
+        demux.feed(&input).expect("valid timing");
+        demux.feed(&pkt2).expect("valid timing");
+        demux.finish().expect("valid timing");
         let samples: Vec<Sample> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
                 DemuxEvent::Sample { sample, .. } => Some(sample),
@@ -12419,7 +12480,7 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let payload_a = b"first packet";
         let payload_b = b"second different";
@@ -12435,9 +12496,9 @@ pub(crate) mod tests {
         };
 
         // First packet: CC=0.
-        demux.feed(&pkt(0, payload_a));
+        demux.feed(&pkt(0, payload_a)).expect("valid timing");
         // Second packet: CC=5 (gap: expected=1, got=5), different payload.
-        demux.feed(&pkt(5, payload_b));
+        demux.feed(&pkt(5, payload_b)).expect("valid timing");
 
         let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
@@ -12487,7 +12548,7 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let payload = b"identical";
         let pkt = |cc: u8| -> [u8; TS_PACKET_SIZE] {
@@ -12500,8 +12561,8 @@ pub(crate) mod tests {
             p[4..end].copy_from_slice(&payload[..end - 4]);
             p
         };
-        demux.feed(&pkt(0));
-        demux.feed(&pkt(0)); // legal duplicate — same CC, same payload
+        demux.feed(&pkt(0)).expect("valid timing");
+        demux.feed(&pkt(0)).expect("valid timing"); // legal duplicate — same CC, same payload
 
         let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
@@ -12525,7 +12586,7 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let pkt = |cc: u8, payload: &[u8]| -> [u8; TS_PACKET_SIZE] {
             let mut p = [0xFFu8; TS_PACKET_SIZE];
@@ -12537,8 +12598,8 @@ pub(crate) mod tests {
             p[4..end].copy_from_slice(&payload[..end - 4]);
             p
         };
-        demux.feed(&pkt(0, b"first"));
-        demux.feed(&pkt(0, b"second")); // same CC, DIFFERENT payload — NOT a duplicate
+        demux.feed(&pkt(0, b"first")).expect("valid timing");
+        demux.feed(&pkt(0, b"second")).expect("valid timing"); // same CC, DIFFERENT payload — NOT a duplicate
 
         let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|e| match e {
@@ -12570,19 +12631,21 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let payload = b"payload";
 
         // First packet: CC=0, no adaptation, PID=0x0077.
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0077),
-            0,
-            0x10,
-            None,
-            payload,
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0077),
+                0,
+                0x10,
+                None,
+                payload,
+            ))
+            .expect("valid timing");
         // Second packet: CC=5 (gap), BUT adaptation field with
         // discontinuity_indicator=1. Should emit Discontinuity, NOT
         // InputDegraded::ContinuityGap.
@@ -12590,14 +12653,16 @@ pub(crate) mod tests {
             0x80u8, // discontinuity_indicator=1, no other flags
             0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // stuffing
         ];
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0077),
-            5,
-            0x30,
-            Some(&af),
-            payload, // AFC=11
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0077),
+                5,
+                0x30,
+                Some(&af),
+                payload, // AFC=11
+            ))
+            .expect("valid timing");
 
         let mut saw_discontinuity = false;
         let mut saw_cc_gap = false;
@@ -12630,7 +12695,7 @@ pub(crate) mod tests {
         // Bootstrap TsResync lock.
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
         let pkt = |cc: u8| -> [u8; TS_PACKET_SIZE] {
             let mut p = [0xFFu8; TS_PACKET_SIZE];
@@ -12643,9 +12708,9 @@ pub(crate) mod tests {
         };
 
         // CC 14, 15, 0 — no gap, normal wrap.
-        demux.feed(&pkt(14));
-        demux.feed(&pkt(15));
-        demux.feed(&pkt(0));
+        demux.feed(&pkt(14)).expect("valid timing");
+        demux.feed(&pkt(15)).expect("valid timing");
+        demux.feed(&pkt(0)).expect("valid timing");
 
         let degraded: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
@@ -12670,38 +12735,44 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
 
         let payload = b"payload";
         // First: normal packet, CC=0, PID=0x0083.
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0083),
-            0,
-            0x10,
-            None,
-            payload,
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0083),
+                0,
+                0x10,
+                None,
+                payload,
+            ))
+            .expect("valid timing");
         // Second: discontinuity_indicator=1, CC=5 (gap — suppressed event, but state updated).
         let af = [0x80u8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0083),
-            5,
-            0x30,
-            Some(&af),
-            payload,
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0083),
+                5,
+                0x30,
+                Some(&af),
+                payload,
+            ))
+            .expect("valid timing");
         // Third: legal follow-up, CC=6 ((5+1) & 0x0F). Must NOT fire ContinuityGap.
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0083),
-            6,
-            0x10,
-            None,
-            payload,
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0083),
+                6,
+                0x10,
+                None,
+                payload,
+            ))
+            .expect("valid timing");
 
         let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| {
@@ -12735,7 +12806,7 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         let null = null_packet();
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-            demux.feed(&null);
+            demux.feed(&null).expect("valid timing");
         }
 
         let payload = b"identical payload for duplicate test";
@@ -12745,14 +12816,16 @@ pub(crate) mod tests {
             0x10u8, // PCR flag only
             0x00, 0x00, 0x00, 0x00, 0x7E, 0x64, // PCR = 100 (encoded as 6-byte PCR field)
         ];
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0100),
-            0,
-            0x30, // AFC=11: adaptation + payload
-            Some(&af_pcr_100),
-            payload,
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0100),
+                0,
+                0x30, // AFC=11: adaptation + payload
+                Some(&af_pcr_100),
+                payload,
+            ))
+            .expect("valid timing");
 
         // Second: CC=0 (legal duplicate), same payload, adaptation field with
         // PCR=200 (different PCR encoding — NOT a different payload).
@@ -12760,14 +12833,16 @@ pub(crate) mod tests {
             0x10u8, // PCR flag only
             0x00, 0x00, 0x00, 0x00, 0x7E, 0xC8, // PCR = 200
         ];
-        demux.feed(&ts_packet_degradation(
-            false,
-            Pid::from_const(0x0100),
-            0, // same CC
-            0x30,
-            Some(&af_pcr_200),
-            payload, // same payload
-        ));
+        demux
+            .feed(&ts_packet_degradation(
+                false,
+                Pid::from_const(0x0100),
+                0, // same CC
+                0x30,
+                Some(&af_pcr_200),
+                payload, // same payload
+            ))
+            .expect("valid timing");
 
         let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
             .filter(|e| {
@@ -12976,10 +13051,10 @@ pub(crate) mod tests {
             }
         };
         for c in ts.chunks(chunk) {
-            d.feed(c);
+            d.feed(c).expect("valid timing");
             drain(&mut d);
         }
-        d.finish();
+        d.finish().expect("valid timing");
         drain(&mut d);
         (samples, disc)
     }
@@ -13667,7 +13742,7 @@ pub(crate) mod tests {
         let mut d = StreamingTsDemux::new();
         let mut got = 0usize;
         for c in ts.chunks(188) {
-            d.feed(c);
+            d.feed(c).expect("valid timing");
             while let Some(e) = d.poll_event() {
                 got += usize::from(matches!(e, DemuxEvent::Sample { .. }));
             }
@@ -13808,7 +13883,7 @@ pub(crate) mod tests {
             let mut d = StreamingTsDemux::new();
             let mut max_carry = 0usize;
             for c in ts.chunks(TS_PACKET_SIZE) {
-                d.feed(c);
+                d.feed(c).expect("valid timing");
                 let n = carry_len(&d).unwrap_or(0);
                 assert!(
                     n <= AUDIO_CARRY_MAX_BYTES,
@@ -13820,7 +13895,7 @@ pub(crate) mod tests {
                 );
                 max_carry = max_carry.max(n);
             }
-            d.finish();
+            d.finish().expect("valid timing");
             assert!(
                 max_carry > 40,
                 "{label}: the hostile tail must have actually been carried (max {max_carry})"
@@ -13860,15 +13935,17 @@ pub(crate) mod tests {
             pkt[3] = 0x10 | cc;
             cc = cc.wrapping_add(1);
             pkt[4..4 + payload.len()].copy_from_slice(payload);
-            demux.feed(&pkt);
+            demux.feed(&pkt).expect("valid timing");
         }
-        demux.feed(&psi_section_packets(
-            Pid::from_const(0),
-            0,
-            0x00,
-            &pat_body(),
-        ));
-        demux.feed(&pmt); // the replay runs now
+        demux
+            .feed(&psi_section_packets(
+                Pid::from_const(0),
+                0,
+                0x00,
+                &pat_body(),
+            ))
+            .expect("valid timing");
+        demux.feed(&pmt).expect("valid timing"); // the replay runs now
         let held = match demux.streams.get(&ES_PID).map(|s| &s.carrier) {
             Some(Carrier::Pes(a)) => a.len(),
             _ => 0,
@@ -13991,7 +14068,7 @@ pub(crate) mod tests {
         }
 
         let mut demux = StreamingTsDemux::new();
-        demux.feed(&input);
+        demux.feed(&input).expect("valid timing");
         let observed: Vec<Pcr> = std::iter::from_fn(|| demux.poll_event())
             .filter_map(|event| match event {
                 DemuxEvent::ClockReference { pcr: Some(pcr), .. } => Some(pcr),

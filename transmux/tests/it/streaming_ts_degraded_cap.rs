@@ -33,14 +33,14 @@ fn is_degraded(e: &DemuxEvent) -> bool {
 fn run(mut demux: StreamingTsDemux, data: &[u8], drain: bool) -> (Vec<DemuxEvent>, u64) {
     let mut events = Vec::new();
     for chunk in data.chunks(PACKET * 13 + 5) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         if drain {
             while let Some(e) = demux.poll_event() {
                 events.push(e);
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(e) = demux.poll_event() {
         events.push(e);
     }

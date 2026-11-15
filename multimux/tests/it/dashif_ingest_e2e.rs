@@ -10,7 +10,7 @@ use transmux::FragmentTrackData;
 use transmux::dash::DashPackager;
 use transmux::pipeline::{build_init_segment, build_media_segment};
 use transmux::ts_demux::TsDemux;
-use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
+use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
 use crate::support::listener;
 use listener::bind_tcp;
@@ -313,7 +313,7 @@ async fn ingested_presentation_is_served_as_valid_llhls() {
             .unwrap();
         assert_eq!(r.status(), 200, "{uri}");
         let b: Bytes = r.bytes().await.unwrap();
-        let errs: Vec<_> = validate_media_segment(&b)
+        let errs: Vec<_> = validate_media_segment(&b, SegmentOrigin::FromIr)
             .into_iter()
             .filter(|i| i.severity == Severity::Error)
             .collect();
@@ -873,7 +873,7 @@ async fn first_chunk_is_published_while_the_request_is_still_open() {
         .unwrap();
     assert_eq!(r.status(), 200, "{uri}");
     let bytes: Bytes = r.bytes().await.unwrap();
-    let errs: Vec<_> = validate_media_segment(&bytes)
+    let errs: Vec<_> = validate_media_segment(&bytes, SegmentOrigin::FromIr)
         .into_iter()
         .filter(|i| i.severity == Severity::Error)
         .collect();

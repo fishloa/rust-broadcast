@@ -34,7 +34,7 @@ use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::ll_hls::PartInfo;
 use transmux::pipeline::Sample;
-use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
+use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
 /// Only `Severity::Error` issues fail the gate — warnings (e.g. a missing
 /// `mvex`/`trex` on a segment that isn't the init segment) are informational.
@@ -80,7 +80,8 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
             Some(i64::from(i) * i64::from(FRAME_DUR)),
             Some(FRAME_DUR),
             is_sync,
-        );
+        )
+        .expect("valid timing");
         batches.push(vec![(1u32, sample)]);
     }
 
@@ -141,7 +142,7 @@ async fn end_to_end_pipeline_serves_valid_llhls() {
     assert_eq!(resp.status(), StatusCode::OK, "segment URI: {seg_uri}");
     let seg_bytes = body_bytes(resp).await;
     assert!(!seg_bytes.is_empty(), "segment body non-empty");
-    let seg_issues = validate_media_segment(&seg_bytes);
+    let seg_issues = validate_media_segment(&seg_bytes, SegmentOrigin::FromIr);
     let seg_errors = errors_only(&seg_issues);
     assert!(
         seg_errors.is_empty(),

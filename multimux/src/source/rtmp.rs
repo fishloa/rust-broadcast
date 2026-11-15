@@ -1132,6 +1132,7 @@ mod tests {
 
     fn flv_sample(dts: i64) -> Sample {
         Sample::new(vec![0, 0, 0, 1, 0x65], Some(dts), Some(dts), Some(40), true)
+            .expect("valid timing")
     }
 
     /// Deferred item (#1083): an FLV publisher that re-sends a *changed*

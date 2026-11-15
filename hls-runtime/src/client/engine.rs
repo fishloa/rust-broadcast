@@ -2178,7 +2178,9 @@ impl HlsClient {
         let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
             return Ok(());
         };
-        demux.restart_timeline();
+        demux
+            .restart_timeline()
+            .map_err(|source| super::Error::Demux { id, source })?;
         self.drain_ts_demux(id)
     }
 
@@ -2209,7 +2211,9 @@ impl HlsClient {
         let TsDemuxState(demux) = self
             .ts_demux
             .get_or_insert_with(|| TsDemuxState(StreamingTsDemux::new()));
-        demux.feed(bytes);
+        demux
+            .feed(bytes)
+            .map_err(|source| super::Error::Demux { id, source })?;
         self.drain_ts_demux(id)
     }
 
@@ -2220,7 +2224,9 @@ impl HlsClient {
         let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
             return Ok(());
         };
-        demux.release_silent_heads();
+        demux
+            .release_silent_heads()
+            .map_err(|source| super::Error::Demux { id, source })?;
         self.drain_ts_demux(id)
     }
 
@@ -2230,7 +2236,9 @@ impl HlsClient {
         let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
             return Ok(());
         };
-        demux.finish();
+        demux
+            .finish()
+            .map_err(|source| super::Error::Demux { id, source })?;
         self.drain_ts_demux(id)
     }
 

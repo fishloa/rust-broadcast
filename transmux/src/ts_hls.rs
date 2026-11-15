@@ -1719,7 +1719,7 @@ mod tests {
     /// An AAC-shaped audio sample: always a sync sample (mirrors
     /// `Sample::from_raw`), with a real, caller-supplied duration.
     fn audio_sample(duration: u32) -> Sample {
-        Sample::from_raw(vec![0u8; 4], None, None, Some(duration))
+        Sample::from_raw(vec![0u8; 4], None, None, Some(duration)).expect("valid timing")
     }
 
     #[test]

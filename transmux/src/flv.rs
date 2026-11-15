@@ -48,6 +48,7 @@ use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use core::fmt;
 use core::marker::PhantomData;
+use core::num::NonZeroU32;
 use rtmp_runtime::RtmpError;
 use rtmp_runtime::amf0::{Amf0Value, amf0_values};
 use rtmp_runtime::flv::FlvHeader;
@@ -965,13 +966,17 @@ fn backfill_last_duration(samples: &mut [Sample]) {
     // forward delta dts[i+1]-dts[i] by shifting left by one.
     for i in 0..n.saturating_sub(1) {
         let dur = samples[i + 1].timing.and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur) {
+        if let (Some(a), Some(d)) = (samples[i].timing.as_mut(), dur)
+            && let Ok(d) = NonZeroU32::try_from(d)
+        {
             *a = a.with_duration(d);
         }
     }
     if n >= 2 {
         let dur = samples[n - 2].timing.and_then(|t| t.duration());
-        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur) {
+        if let (Some(a), Some(d)) = (samples[n - 1].timing.as_mut(), dur)
+            && let Ok(d) = NonZeroU32::try_from(d)
+        {
             *a = a.with_duration(d);
         }
     }

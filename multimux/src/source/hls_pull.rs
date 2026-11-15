@@ -355,7 +355,8 @@ mod tests {
                 Some(i64::from(i) * i64::from(FRAME_DUR)),
                 Some(FRAME_DUR),
                 is_sync,
-            );
+            )
+            .expect("valid timing");
             seg.push(TRACK_ID, sample).expect("push succeeds");
             for _ in seg.take_ready_parts() {} // non-LL playlist: parts unused
         }

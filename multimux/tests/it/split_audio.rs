@@ -19,7 +19,7 @@ use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};
 use tower::ServiceExt;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 use transmux::ts_demux::TsDemux;
-use transmux::validate::{Severity, validate_init_segment, validate_media_segment};
+use transmux::validate::{SegmentOrigin, Severity, validate_init_segment, validate_media_segment};
 
 use crate::support::shared;
 
@@ -495,13 +495,16 @@ async fn check_rendition(
             "{uri} MSN {seq}: audio tfdt {:.4}s vs video {expected:.4}s (delta {delta:.4}s > {tolerance:.4}s)",
             at as f64 / audio_ts,
         );
-        assert_clean(&format!("{uri} seg {seq}"), validate_media_segment(&abytes));
+        assert_clean(
+            &format!("{uri} seg {seq}"),
+            validate_media_segment(&abytes, SegmentOrigin::FromIr),
+        );
         for part in &a.parts {
             let (status, pbytes) = rig.get(&part.uri).await;
             assert_eq!(status, StatusCode::OK, "{uri}: part {}", part.uri);
             assert_clean(
                 &format!("{uri} part {}", part.uri),
-                validate_media_segment(&pbytes),
+                validate_media_segment(&pbytes, SegmentOrigin::FromIr),
             );
         }
     }

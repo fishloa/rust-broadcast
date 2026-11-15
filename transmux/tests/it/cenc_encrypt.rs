@@ -579,18 +579,22 @@ fn avc_media(valid_count: usize, with_bad_sample: bool) -> Media {
                 i == 0,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     if with_bad_sample {
         // Declares a 512-byte NAL but carries only 8 payload bytes.
         let mut bad = vec![0x00, 0x00, 0x02, 0x00];
         bad.extend_from_slice(&[0x41; 8]);
-        samples.push(transmux::Sample::new(
-            bad,
-            Some(valid_count as i64 * 100),
-            Some(valid_count as i64 * 100),
-            Some(100),
-            false,
-        ));
+        samples.push(
+            transmux::Sample::new(
+                bad,
+                Some(valid_count as i64 * 100),
+                Some(valid_count as i64 * 100),
+                Some(100),
+                false,
+            )
+            .expect("valid timing"),
+        );
     }
     Media::new(vec![Track::new(avc_spec(1), samples)], timescale(90_000))
 }
