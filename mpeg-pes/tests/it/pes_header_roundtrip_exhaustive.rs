@@ -432,7 +432,7 @@ fn real_tsduck_test_002_pes_header_counts_are_pinned() {
 fn constructed_header_carries_spec_fill() {
     use mpeg_pes::{Escr, FREEZE_FRAME_RESERVED_VALUE, PesHeader, StreamId, TrickMode};
     let mut h = PesHeader::new();
-    h.escr = Some(Escr::from_27mhz(0));
+    h.escr = Some(Escr::from_27mhz(0).unwrap());
     h.dsm_trick_mode = Some(TrickMode::FreezeFrame {
         field_id: 0,
         reserved: FREEZE_FRAME_RESERVED_VALUE,
@@ -459,7 +459,10 @@ fn expect_bad_marker(b: &[u8], what: &'static str) {
 #[test]
 fn escr_with_a_cleared_marker_bit_is_rejected() {
     let mut b = vec![0x00, 0x00, 0x01, 0xE0, 0x00, 0x0B, 0x80, 0x20, 0x06];
-    let mut escr = mpeg_pes::Escr::from_27mhz(12345).to_field_bytes();
+    let mut escr = mpeg_pes::Escr::from_27mhz(12345)
+        .unwrap()
+        .to_field_bytes()
+        .unwrap();
     escr[2] &= !0x04;
     b.extend_from_slice(&escr);
     b.extend_from_slice(&[0xAA, 0xBB]);

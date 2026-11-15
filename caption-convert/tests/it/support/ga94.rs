@@ -64,7 +64,11 @@ fn first_video_pid(ts: &[u8]) -> Option<u16> {
 
 fn collect(pes_bytes: &[u8], out: &mut Vec<(u64, Vec<u8>)>) {
     let pes = PesPacket::parse(pes_bytes).expect("PES packet");
-    let pts = pes.header.as_ref().and_then(|h| h.pts).map_or(0, |p| p.0);
+    let pts = pes
+        .header
+        .as_ref()
+        .and_then(|h| h.pts)
+        .map_or(0, |p| p.ticks());
     for nal in annex_b_nals(pes.payload) {
         if nal.first().map(|b| b & NAL_TYPE_MASK) == Some(SEI_NAL_TYPE) {
             for cc in ga94_in_sei(&nal[1..]) {
