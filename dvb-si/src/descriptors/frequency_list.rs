@@ -8,6 +8,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for frequency_list_descriptor.
@@ -22,9 +23,12 @@ pub const ENTRY_LEN: usize = 4;
 pub const CODING_TYPE_MASK: u8 = 0x03;
 /// Shift of `reserved_future_use(6)` in the coding byte (top 6 bits).
 const RESERVED_SHIFT: u8 = 2;
+/// Width of the `reserved_future_use` ahead of `coding_type` (6 bits).
+const RESERVED_BITS: u32 = 6;
 /// Spec default of the 6-bit `reserved_future_use` ahead of `coding_type`:
 /// all ones (EN 300 468 Table 31, V1.3.1-V1.20.1, audit §6.1 class A).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x3F;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// Coding type selects the interpretation of each 4-byte frequency entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +68,7 @@ pub struct FrequencyListDescriptor {
     /// Captured on parse and re-emitted verbatim;
     /// [`FrequencyListDescriptor::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0x3F`).
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// Interpretation of every `centre_frequencies_bcd` entry.
     pub coding_type: CodingType,
     /// Raw 4-byte centre_frequency entries in wire order. Interpretation
@@ -193,7 +197,7 @@ impl<'a> Parse<'a> for FrequencyListDescriptor {
 
         let coding_byte = body[0];
         // Top 6 bits are reserved_future_use: captured and re-emitted.
-        let reserved_future_use = coding_byte >> RESERVED_SHIFT;
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(coding_byte >> RESERVED_SHIFT));
         let coding_type_value = coding_byte & CODING_TYPE_MASK;
         let coding_type = match coding_type_value {
             0b00 => CodingType::Undefined,
@@ -241,12 +245,7 @@ impl Serialize for FrequencyListDescriptor {
         let body_length = CODING_BYTE_LEN + self.centre_frequencies_bcd.len() * ENTRY_LEN;
 
         crate::descriptors::write_descriptor_header(buf, TAG, body_length)?;
-        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_FUTURE_USE_DEFAULT,
-            "reserved_future_use",
-        )? << RESERVED_SHIFT)
-            | coding_type_bits;
+        buf[HEADER_LEN] = ((self.reserved_future_use.get() as u8) << RESERVED_SHIFT) | coding_type_bits;
 
         let mut offset = HEADER_LEN + CODING_BYTE_LEN;
         for entry in &self.centre_frequencies_bcd {
@@ -440,7 +439,7 @@ mod tests {
             for ct in 0u8..=3 {
                 let raw = [TAG, 5, (r << 2) | ct, 0x01, 0x17, 0x25, 0x00];
                 let d = FrequencyListDescriptor::parse(&raw).unwrap();
-                assert_eq!(d.reserved_future_use, r);
+                assert_eq!(d.reserved_future_use.get(), u64::from(r));
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
                 assert_eq!(buf, raw, "r {r:#x} ct {ct}");
