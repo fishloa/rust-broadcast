@@ -323,14 +323,14 @@ fn decodes_tsduck_compiled_dts_descriptors() {
                         assert!(!hd.substream_1_flag);
                         assert!(!hd.substream_2_flag);
                         assert!(!hd.substream_3_flag);
-                        assert_eq!(hd.reserved, 7);
+                        assert_eq!(hd.reserved.get(), 7);
                         assert_eq!(hd.substreams.len(), 1);
                         let s = &hd.substreams[0];
                         assert_eq!(s.channel_count, 6);
                         assert!(s.lfe_flag);
                         assert_eq!(s.sampling_frequency, SamplingFrequency::Khz48);
                         assert!(s.sample_resolution);
-                        assert_eq!(s.reserved, 3);
+                        assert_eq!(s.reserved.get(), 3);
                         assert_eq!(s.assets.len(), 1);
                         let a = &s.assets[0];
                         assert_eq!(a.asset_construction, 1);
@@ -339,7 +339,7 @@ fn decodes_tsduck_compiled_dts_descriptors() {
                         assert!(a.component_type_flag);
                         assert!(a.language_code_flag);
                         assert_eq!(a.bit_rate_or_scaled, 755);
-                        assert_eq!(a.reserved, 3);
+                        assert_eq!(a.reserved.get(), 3);
                         assert_eq!(a.component_type, Some(0x42));
                         assert_eq!(a.iso_639_language_code, Some(LangCode(*b"eng")));
                         assert!(hd.additional_info.is_empty());
