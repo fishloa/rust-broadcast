@@ -12,11 +12,14 @@
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
+use broadcast_common::reserved::ReservedOnes;
 
 /// Descriptor tag of `MVC_operation_point_descriptor` (Table 2-45: 51).
 pub const TAG: u8 = 0x33;
-const RESERVED_5_DEFAULT: u8 = 0x1F;
-const RESERVED_2_DEFAULT: u8 = 0x03;
+/// Width of the `reserved` field before `applicable_temporal_id` (5 bits).
+const RESERVED_5_BITS: u32 = 5;
+/// Width of the `reserved` field before `ES_reference` (2 bits).
+const RESERVED_2_BITS: u32 = 2;
 
 /// One `ES_reference` of an operation point.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +27,8 @@ const RESERVED_2_DEFAULT: u8 = 0x03;
 #[non_exhaustive]
 pub struct MvcEsReference {
     /// `reserved(2)`, default 3.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_2_BITS>,
     /// `ES_reference` (6 bits): a `hierarchy_layer_index` of the hierarchy descriptor.
     pub es_reference: u8,
 }
@@ -34,7 +38,7 @@ impl MvcEsReference {
     #[must_use]
     pub const fn new(es_reference: u8) -> Self {
         Self {
-            reserved: RESERVED_2_DEFAULT,
+            reserved: ReservedOnes::FILL,
             es_reference,
         }
     }
@@ -46,7 +50,8 @@ impl MvcEsReference {
 #[non_exhaustive]
 pub struct MvcOperationPointEntry {
     /// `reserved(5)`, default `0x1F`.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_5_BITS>,
     /// `applicable_temporal_id` (3 bits).
     pub applicable_temporal_id: u8,
     /// `num_target_output_views`.
@@ -64,7 +69,7 @@ impl MvcOperationPointEntry {
         es_references: Vec<MvcEsReference>,
     ) -> Self {
         Self {
-            reserved: RESERVED_5_DEFAULT,
+            reserved: ReservedOnes::FILL,
             applicable_temporal_id,
             num_target_output_views,
             es_references,
@@ -145,14 +150,14 @@ impl MvcOperationPointDescriptor {
             let ops = r.bits(8)?;
             let mut operation_points = Vec::new();
             for _ in 0..ops {
-                let reserved = r.u8(5)?;
+                let reserved = ReservedOnes::from_bits(u64::from(r.u8(5)?));
                 let applicable_temporal_id = r.u8(3)?;
                 let num_target_output_views = r.u8(8)?;
                 let es_count = r.bits(8)?;
                 let mut es_references = Vec::new();
                 for _ in 0..es_count {
                     es_references.push(MvcEsReference {
-                        reserved: r.u8(2)?,
+                        reserved: ReservedOnes::from_bits(u64::from(r.u8(2)?)),
                         es_reference: r.u8(6)?,
                     });
                 }
@@ -193,7 +198,7 @@ impl MvcOperationPointDescriptor {
             w.put(u64::from(l.level_idc), 8, "level_idc")?;
             w.put(l.operation_points.len() as u64, 8, "operation_points_count")?;
             for op in &l.operation_points {
-                w.put(u64::from(op.reserved), 5, "reserved")?;
+                w.put(op.reserved.get(), 5, "reserved")?;
                 w.put(
                     u64::from(op.applicable_temporal_id),
                     3,
@@ -206,7 +211,7 @@ impl MvcOperationPointDescriptor {
                 )?;
                 w.put(op.es_references.len() as u64, 8, "ES_count")?;
                 for e in &op.es_references {
-                    w.put(u64::from(e.reserved), 2, "reserved")?;
+                    w.put(e.reserved.get(), 2, "reserved")?;
                     w.put(u64::from(e.es_reference), 6, "ES_reference")?;
                 }
             }
@@ -277,5 +282,23 @@ mod tests {
             d.serialize_into(&mut out),
             Err(crate::Error::FieldOverflow(..))
         ));
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let es = MvcEsReference {
+            reserved: ReservedOnes::from_bits(0xFF),
+            es_reference: 5,
+        };
+        assert_eq!(es.reserved.get(), 0x03);
+        let op = MvcOperationPointEntry {
+            reserved: ReservedOnes::from_bits(0xFF),
+            applicable_temporal_id: 0,
+            num_target_output_views: 1,
+            es_references: vec![es],
+        };
+        assert_eq!(op.reserved.get(), 0x1F);
     }
 }
