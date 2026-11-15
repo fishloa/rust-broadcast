@@ -803,7 +803,7 @@ pub(crate) struct ProgramServing {
 /// The primary origin's settings every sibling origin repeats.
 #[derive(Clone, Copy)]
 struct SiblingParams {
-    target_duration_secs: Duration,
+    target_duration: Duration,
     part_target: Duration,
     window_segments: NonZeroUsize,
     media_sequence_offset: u64,
@@ -936,7 +936,7 @@ impl ProgramServing {
         epoch: ProgramEpoch,
         previous: Option<&ProgramContinuation>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
-        let target_duration_secs = route.target_duration_secs;
+        let target_duration = route.target_duration;
         let part_target = route.part_target;
         let window_segments = route.window_segments_cap;
         let container = route.container;
@@ -951,7 +951,7 @@ impl ProgramServing {
         let warms = Arc::clone(&route.warms);
         let media_sequence_offset = epoch.seq_offset;
         let mut builder =
-            HlsOriginConfig::new(Arc::clone(&trunk), target_duration_secs, window_segments)
+            HlsOriginConfig::new(Arc::clone(&trunk), target_duration, window_segments)
                 .with_container(container)
                 .with_media_sequence_offset(media_sequence_offset)
                 .with_discontinuity_sequence(epoch.discontinuity_sequence)
@@ -986,15 +986,12 @@ impl ProgramServing {
         for (idx, decl) in sibling_decls.iter().enumerate() {
             let sibling_trunk = Arc::new(Trunk::new(route.trunk_config));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
-            let mut ab = HlsOriginConfig::new(
-                Arc::clone(&sibling_trunk),
-                target_duration_secs,
-                window_segments,
-            )
-            .with_container(Container::Fmp4)
-            .with_media_sequence_offset(media_sequence_offset)
-            .with_discontinuity_sequence(epoch.discontinuity_sequence)
-            .with_hold_cold_playlist(hold_cold_playlist);
+            let mut ab =
+                HlsOriginConfig::new(Arc::clone(&sibling_trunk), target_duration, window_segments)
+                    .with_container(Container::Fmp4)
+                    .with_media_sequence_offset(media_sequence_offset)
+                    .with_discontinuity_sequence(epoch.discontinuity_sequence)
+                    .with_hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 ab = ab.with_program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
@@ -1092,7 +1089,7 @@ impl ProgramServing {
             audio_rendition_servings: audio_servings,
             subtitle_servings: Mutex::new(Vec::new()),
             sibling_params: SiblingParams {
-                target_duration_secs,
+                target_duration,
                 part_target,
                 window_segments,
                 media_sequence_offset,
@@ -1225,7 +1222,7 @@ impl ProgramServing {
             );
             let mut builder = HlsOriginConfig::new(
                 Arc::clone(&trunk),
-                params.target_duration_secs,
+                params.target_duration,
                 params.window_segments,
             )
             .with_container(Container::WebVtt)
@@ -1652,7 +1649,7 @@ impl ProgramServing {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RouteConfig {
-    pub target_duration_secs: Duration,
+    pub target_duration: Duration,
     pub part_target: Duration,
     /// Advertised-window depth: the segment log's capacity, the playlist
     /// window's article, and the segment capacity of every program/trunk
@@ -1678,7 +1675,7 @@ pub struct RouteConfig {
 impl Default for RouteConfig {
     fn default() -> Self {
         RouteConfig {
-            target_duration_secs: Duration::from_secs(1),
+            target_duration: Duration::from_secs(1),
             part_target: Duration::from_millis(250),
             window_segments: DEFAULT_WINDOW_SEGMENTS,
             container: Container::default(),
@@ -1700,7 +1697,7 @@ impl Default for RouteConfig {
 impl RouteConfig {
     #[must_use]
     pub fn with_target_duration(mut self, v: Duration) -> Self {
-        self.target_duration_secs = v;
+        self.target_duration = v;
         self
     }
 
@@ -1817,7 +1814,7 @@ pub struct RouteHandle {
     /// Fires when this route is replaced or removed; see [`Self::retire`].
     retired: tokio_util::sync::CancellationToken,
     health: Mutex<HealthState>,
-    target_duration_secs: Duration,
+    target_duration: Duration,
     part_target: Duration,
     /// Stored so [`Self::publish_program`]/[`Self::publish_new_program`] can
     /// build every program's [`ProgramServing`]/`Trunk` with the same
@@ -1949,7 +1946,7 @@ impl RouteHandle {
         let window_segments =
             NonZeroUsize::new(config.window_segments).unwrap_or(NonZeroUsize::MIN);
         let RouteConfig {
-            target_duration_secs,
+            target_duration,
             part_target,
             container,
             ts_cut_policy,
@@ -1970,7 +1967,7 @@ impl RouteHandle {
             warms,
             retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
-            target_duration_secs,
+            target_duration,
             part_target,
             window_segments_cap: window_segments,
             container,
@@ -2428,10 +2425,8 @@ impl RouteHandle {
             seq_offset,
             media_start_ns: previous_epoch.map_or(0, |e| {
                 let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
-                u64::try_from(
-                    u128::from(slots).saturating_mul(self.target_duration_secs.as_nanos()),
-                )
-                .unwrap_or(u64::MAX)
+                u64::try_from(u128::from(slots).saturating_mul(self.target_duration.as_nanos()))
+                    .unwrap_or(u64::MAX)
             }),
             discontinuity_sequence: previous
                 .as_ref()
@@ -2909,7 +2904,7 @@ impl RouteHandle {
     /// program on a route shares one segmenter configuration), so this needs
     /// no [`ProgramId`].
     pub fn target_duration(&self) -> Duration {
-        self.target_duration_secs
+        self.target_duration
     }
 
     /// Configured LL-HLS part target — route-wide, see

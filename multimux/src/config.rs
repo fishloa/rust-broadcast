@@ -2193,7 +2193,7 @@ pub struct Config {
     /// Target full-segment duration. The JSON key stays `target_duration_secs`
     /// and its value stays seconds.
     #[serde(rename = "target_duration_secs", with = "seconds_duration")]
-    pub target_duration_secs: Duration,
+    pub target_duration: Duration,
     /// LL-HLS part target. The JSON key stays `part_target_ms` and its value
     /// stays whole milliseconds.
     #[serde(rename = "part_target_ms", with = "millis_duration")]
@@ -2209,8 +2209,8 @@ pub struct Config {
     /// legitimate long-poll blocking request would be cut off by this layer
     /// before it ever gets the chance to resolve or fall back on its own —
     /// enforced by [`Config::validate`].
-    #[serde(with = "seconds_duration")]
-    pub request_timeout_secs: Duration,
+    #[serde(rename = "request_timeout_secs", with = "seconds_duration")]
+    pub request_timeout: Duration,
     /// Maximum number of requests serviced concurrently, across every route
     /// — see [`crate::origin::HttpLimits::max_concurrent_requests`].
     pub max_concurrent_requests: usize,
@@ -2241,20 +2241,21 @@ pub struct Config {
     /// non-positive value is rejected by [`Config::validate`].
     #[serde(
         default = "default_concurrency_queue_timeout_secs",
+        rename = "concurrency_queue_timeout_secs",
         with = "seconds_duration"
     )]
-    pub concurrency_queue_timeout_secs: Duration,
+    pub concurrency_queue: Duration,
     /// Ingest connect-handshake timeout, in seconds, applied to every route's
     /// source (issue #663 P5, audit-ingest #3) — see
     /// [`broadcast_common::timeouts::Timeouts::connect`]. The JSON value stays
     /// seconds.
-    #[serde(with = "seconds_duration")]
-    pub ingest_connect_timeout_secs: Duration,
+    #[serde(rename = "ingest_connect_timeout_secs", with = "seconds_duration")]
+    pub ingest_connect_timeout: Duration,
     /// Ingest per-read timeout, in seconds, applied to every route's source
     /// — see [`broadcast_common::timeouts::Timeouts::read_idle`]. The JSON value
     /// stays seconds.
-    #[serde(with = "seconds_duration")]
-    pub ingest_read_timeout_secs: Duration,
+    #[serde(rename = "ingest_read_timeout_secs", with = "seconds_duration")]
+    pub ingest_read_timeout: Duration,
     /// The media-playlist filename served at `/{stream}/{playlist_name}`
     /// (issue #663 "configurable `playlist_name`") — `master.m3u8`'s
     /// `#EXT-X-STREAM-INF` reference follows suit
@@ -2404,7 +2405,7 @@ fn default_max_blocking_reloads_per_route() -> usize {
     crate::origin::DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE
 }
 
-/// Default [`Config::concurrency_queue_timeout_secs`] — the limit's own
+/// Default [`Config::concurrency_queue`] — the limit's own
 /// default, so the two cannot drift.
 fn default_concurrency_queue_timeout_secs() -> Duration {
     crate::origin::DEFAULT_QUEUE_TIMEOUT
@@ -2428,19 +2429,19 @@ impl Default for Config {
     fn default() -> Self {
         Config {
             bind: "0.0.0.0:8080".to_string(),
-            target_duration_secs: Duration::from_secs(4),
+            target_duration: Duration::from_secs(4),
             part_target: Duration::from_millis(500),
             window_segments: 8,
             routes: Vec::new(),
-            request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT,
+            request_timeout: crate::origin::DEFAULT_REQUEST_TIMEOUT,
             max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_blocking_reloads_per_route: default_max_blocking_reloads_per_route(),
             max_concurrent_warms_per_route: default_max_concurrent_warms_per_route(),
             whep_media_sockets_per_ip: default_whep_media_sockets_per_ip(),
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
-            concurrency_queue_timeout_secs: crate::origin::DEFAULT_QUEUE_TIMEOUT,
-            ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT,
-            ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT,
+            concurrency_queue: crate::origin::DEFAULT_QUEUE_TIMEOUT,
+            ingest_connect_timeout: crate::source::DEFAULT_CONNECT_TIMEOUT,
+            ingest_read_timeout: crate::source::DEFAULT_READ_TIMEOUT,
             playlist_name: default_playlist_name(),
             program_date_time: default_program_date_time(),
             hold_cold_playlist: default_hold_cold_playlist(),
@@ -2464,7 +2465,7 @@ impl Config {
     /// Set the target full-segment duration.
     #[must_use]
     pub fn with_target_duration(mut self, target_duration: Duration) -> Self {
-        self.target_duration_secs = target_duration;
+        self.target_duration = target_duration;
         self
     }
 
@@ -2492,7 +2493,7 @@ impl Config {
     /// Set the per-request HTTP timeout.
     #[must_use]
     pub fn with_request_timeout(mut self, request_timeout: Duration) -> Self {
-        self.request_timeout_secs = request_timeout;
+        self.request_timeout = request_timeout;
         self
     }
 
@@ -2540,21 +2541,21 @@ impl Config {
     /// Set the concurrency-queue timeout.
     #[must_use]
     pub fn with_concurrency_queue_timeout(mut self, concurrency_queue_timeout: Duration) -> Self {
-        self.concurrency_queue_timeout_secs = concurrency_queue_timeout;
+        self.concurrency_queue = concurrency_queue_timeout;
         self
     }
 
     /// Set the ingest connect-handshake timeout.
     #[must_use]
     pub fn with_ingest_connect_timeout(mut self, ingest_connect_timeout: Duration) -> Self {
-        self.ingest_connect_timeout_secs = ingest_connect_timeout;
+        self.ingest_connect_timeout = ingest_connect_timeout;
         self
     }
 
     /// Set the ingest per-read timeout.
     #[must_use]
     pub fn with_ingest_read_timeout(mut self, ingest_read_timeout: Duration) -> Self {
-        self.ingest_read_timeout_secs = ingest_read_timeout;
+        self.ingest_read_timeout = ingest_read_timeout;
         self
     }
 
@@ -2703,7 +2704,7 @@ impl Config {
                 reason: "no routes configured".into(),
             });
         }
-        if self.target_duration_secs.is_zero() {
+        if self.target_duration.is_zero() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::TargetDurationSecs,
                 reason: "must be positive".into(),
@@ -2714,12 +2715,12 @@ impl Config {
         // guard — that would only bite past ~1.8e19 s), and it would also fail
         // the DASH `xs:duration` render and 404 the manifest. Reject it up
         // front, with a clear error.
-        if self.target_duration_secs > max_target_duration() {
+        if self.target_duration > max_target_duration() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::TargetDurationSecs,
                 reason: format!(
                     "must not exceed {MAX_TARGET_DURATION_SECS} seconds (24 h), got {} s",
-                    self.target_duration_secs.as_secs_f64()
+                    self.target_duration.as_secs_f64()
                 ),
             });
         }
@@ -2735,14 +2736,14 @@ impl Config {
         // `chunk = part_target_ms / 1000` and `segment = target_duration_secs`.
         // Reject the combination here, where it can carry a clear error, rather
         // than letting every MPD request for an `ll_dash` route fail at runtime.
-        if self.part_target > self.target_duration_secs {
+        if self.part_target > self.target_duration {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::PartTarget,
                 reason: format!(
                     "a part/chunk duration of {} s must not exceed target_duration_secs ({} s) \
                      — a part is a sub-division of a whole segment",
                     self.part_target.as_secs_f64(),
-                    self.target_duration_secs.as_secs_f64()
+                    self.target_duration.as_secs_f64()
                 ),
             });
         }
@@ -2752,13 +2753,13 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
-        if self.request_timeout_secs <= Duration::from_secs_f64(MIN_REQUEST_TIMEOUT_SECS) {
+        if self.request_timeout <= Duration::from_secs_f64(MIN_REQUEST_TIMEOUT_SECS) {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::RequestTimeoutSecs,
                 reason: format!(
                     "must exceed {MIN_REQUEST_TIMEOUT_SECS} (the LL-HLS blocking-reload cap), \
                      got {} s",
-                    self.request_timeout_secs.as_secs_f64()
+                    self.request_timeout.as_secs_f64()
                 ),
             });
         }
@@ -2794,15 +2795,10 @@ impl Config {
         }
         validate_timeout(
             ConfigField::IngestConnectTimeoutSecs,
-            self.ingest_connect_timeout_secs,
+            self.ingest_connect_timeout,
         )?;
-        validate_timeout(
-            ConfigField::IngestReadTimeoutSecs,
-            self.ingest_read_timeout_secs,
-        )?;
-        if self.concurrency_queue_timeout_secs.is_zero()
-            || self.concurrency_queue_timeout_secs > max_timeout()
-        {
+        validate_timeout(ConfigField::IngestReadTimeoutSecs, self.ingest_read_timeout)?;
+        if self.concurrency_queue.is_zero() || self.concurrency_queue > max_timeout() {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::ConcurrencyQueueTimeoutSecs,
                 reason: "must be a finite, positive number of seconds".into(),
@@ -3288,7 +3284,7 @@ mod tests {
         assert_eq!(cfg.bind, "127.0.0.1:9000");
         // the JSON key and unit are unchanged: `target_duration_secs` loads as
         // seconds into a `Duration`, `part_target_ms` as whole milliseconds.
-        assert_eq!(cfg.target_duration_secs, Duration::from_secs(2));
+        assert_eq!(cfg.target_duration, Duration::from_secs(2));
         assert_eq!(cfg.part_target, Duration::from_millis(250));
         assert_eq!(cfg.routes.len(), 2);
         assert_eq!(cfg.routes[1].name, "cam2");
@@ -3297,6 +3293,29 @@ mod tests {
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    /// The renamed `Duration` fields keep their old JSON key names and seconds
+    /// unit: a config file written before the rename still parses, each value
+    /// landing in its now-suffix-less field (#2731).
+    #[test]
+    fn renamed_duration_fields_still_load_from_their_old_json_keys() {
+        let json = r#"{
+            "target_duration_secs": 4.0,
+            "request_timeout_secs": 30.0,
+            "concurrency_queue_timeout_secs": 5.0,
+            "ingest_connect_timeout_secs": 8.0,
+            "ingest_read_timeout_secs": 15.0,
+            "routes": [
+                { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.target_duration, Duration::from_secs(4));
+        assert_eq!(cfg.request_timeout, Duration::from_secs(30));
+        assert_eq!(cfg.concurrency_queue, Duration::from_secs(5));
+        assert_eq!(cfg.ingest_connect_timeout, Duration::from_secs(8));
+        assert_eq!(cfg.ingest_read_timeout, Duration::from_secs(15));
     }
 
     /// A zero or over-bound `target_duration` must be rejected by `validate()`:
@@ -3316,7 +3335,7 @@ mod tests {
             Duration::MAX,
         ] {
             let mut cfg = base.clone();
-            cfg.target_duration_secs = bad;
+            cfg.target_duration = bad;
             match cfg.validate() {
                 Err(MultimuxError::ConfigInvalid { field, .. }) => {
                     assert_eq!(field.name(), "target_duration_secs", "{bad:?}");
@@ -3326,14 +3345,14 @@ mod tests {
         }
         // The exact upper bound is accepted; just past it is rejected.
         let mut at_bound = base.clone();
-        at_bound.target_duration_secs = max_target_duration();
+        at_bound.target_duration = max_target_duration();
         // `part_target_ms` must not exceed the segment, so keep the part tiny.
         at_bound.part_target = Duration::from_millis(1);
         at_bound
             .validate()
             .expect("exactly the 24 h bound must be accepted");
         let mut just_over = base.clone();
-        just_over.target_duration_secs = max_target_duration() + Duration::from_millis(100);
+        just_over.target_duration = max_target_duration() + Duration::from_millis(100);
         just_over.part_target = Duration::from_millis(1);
         let err = just_over
             .validate()
@@ -3361,12 +3380,12 @@ mod tests {
 
         // Exactly one part long is fine; a part longer than the segment is not.
         let mut ok = base.clone();
-        ok.target_duration_secs = Duration::from_secs(1);
+        ok.target_duration = Duration::from_secs(1);
         ok.part_target = Duration::from_millis(1000);
         ok.validate().expect("a full-segment part is valid");
 
         let mut bad = base.clone();
-        bad.target_duration_secs = Duration::from_millis(500);
+        bad.target_duration = Duration::from_millis(500);
         bad.part_target = Duration::from_millis(1000);
         match bad.validate() {
             Err(MultimuxError::ConfigInvalid { field, reason }) => {
@@ -3460,10 +3479,7 @@ mod tests {
             ]
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(
-            cfg.request_timeout_secs,
-            crate::origin::DEFAULT_REQUEST_TIMEOUT
-        );
+        assert_eq!(cfg.request_timeout, crate::origin::DEFAULT_REQUEST_TIMEOUT);
         assert_eq!(
             cfg.max_concurrent_requests,
             crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS
@@ -3500,7 +3516,7 @@ mod tests {
                     audio_profiles: Vec::new(),
                     subtitles: true,
                 }],
-                request_timeout_secs: bad,
+                request_timeout: bad,
                 ..Config::default()
             };
             assert!(
@@ -3583,7 +3599,7 @@ mod tests {
             ]
         }"#;
         let cfg: Config = serde_json::from_str(json).unwrap();
-        assert_eq!(cfg.request_timeout_secs, Duration::from_secs(15));
+        assert_eq!(cfg.request_timeout, Duration::from_secs(15));
         assert_eq!(cfg.max_concurrent_requests, 100);
         assert_eq!(cfg.max_request_body_bytes, 2048);
         cfg.validate().unwrap();
@@ -3786,7 +3802,7 @@ mod tests {
         // cannot be NaN or negative, so only these remain reachable).
         for bad in [Duration::ZERO, Duration::MAX] {
             let cfg = Config {
-                ingest_read_timeout_secs: bad,
+                ingest_read_timeout: bad,
                 ..route_with(ReconnectPolicy::default())
             };
             assert!(
@@ -3801,8 +3817,8 @@ mod tests {
     #[test]
     fn ingest_timeouts_from_extreme_config_does_not_panic() {
         let cfg = Config {
-            ingest_connect_timeout_secs: Duration::ZERO,
-            ingest_read_timeout_secs: Duration::ZERO,
+            ingest_connect_timeout: Duration::ZERO,
+            ingest_read_timeout: Duration::ZERO,
             ..Config::default()
         };
         let timeouts = crate::source::ingest_timeouts(&cfg);

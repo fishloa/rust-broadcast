@@ -2281,7 +2281,7 @@ fn initial_as_json(config: &Config) -> serde_json::Value {
     });
     serde_json::json!({
         "bind": config.bind,
-        "target_duration_secs": config.target_duration_secs.as_secs_f64(),
+        "target_duration_secs": config.target_duration.as_secs_f64(),
         "part_target_ms": u32::try_from(config.part_target.as_millis()).unwrap_or(u32::MAX),
         "window_segments": config.window_segments,
         "routes": routes,

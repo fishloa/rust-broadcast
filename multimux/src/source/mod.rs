@@ -146,11 +146,11 @@ pub fn ingest_timeouts(cfg: &crate::config::Config) -> Timeouts {
     }
     Timeouts::default()
         .with_connect(timeout_or_default(
-            cfg.ingest_connect_timeout_secs,
+            cfg.ingest_connect_timeout,
             DEFAULT_CONNECT_TIMEOUT,
         ))
         .with_read_idle(timeout_or_default(
-            cfg.ingest_read_timeout_secs,
+            cfg.ingest_read_timeout,
             DEFAULT_READ_TIMEOUT,
         ))
 }

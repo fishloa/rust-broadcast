@@ -448,7 +448,7 @@ impl RouteRegistry {
             })
             .collect::<crate::Result<Vec<_>>>()?;
         let route_config = RouteConfig::default()
-            .with_target_duration(self.ctx.base_config.target_duration_secs)
+            .with_target_duration(self.ctx.base_config.target_duration)
             .with_part_target(self.ctx.base_config.part_target)
             .with_window_segments(self.ctx.base_config.window_segments)
             .with_container(super::route_container(route))

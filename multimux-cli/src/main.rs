@@ -63,7 +63,7 @@ struct Cli {
     bind: String,
 
     /// Target full-segment duration, in seconds.
-    #[arg(long, value_name = "SECS", default_value_t = Config::default().target_duration_secs.as_secs())]
+    #[arg(long, value_name = "SECS", default_value_t = Config::default().target_duration.as_secs())]
     target_duration: u64,
 
     /// LL-HLS part target, in milliseconds.

@@ -167,14 +167,11 @@ impl From<&crate::config::Config> for HttpLimits {
         // (a caller-constructed `Config`), so convert defensively (item 7):
         // clamp into a sane range instead of panicking.
         HttpLimits {
-            request_timeout: timeout_or_default(cfg.request_timeout_secs, DEFAULT_REQUEST_TIMEOUT),
+            request_timeout: timeout_or_default(cfg.request_timeout, DEFAULT_REQUEST_TIMEOUT),
             max_concurrent_requests: cfg.max_concurrent_requests,
             max_blocking_reloads_per_route: cfg.max_blocking_reloads_per_route,
             max_request_body_bytes: cfg.max_request_body_bytes,
-            queue_timeout: timeout_or_default(
-                cfg.concurrency_queue_timeout_secs,
-                DEFAULT_QUEUE_TIMEOUT,
-            ),
+            queue_timeout: timeout_or_default(cfg.concurrency_queue, DEFAULT_QUEUE_TIMEOUT),
         }
     }
 }
@@ -1401,7 +1398,7 @@ async fn serve_with_registry_impl(
     );
 
     let mut streams: HashMap<String, StreamRoute> = HashMap::new();
-    let target_duration_secs = config.target_duration_secs;
+    let target_duration = config.target_duration;
     let part_target = config.part_target;
     let cancel = tokio_util::sync::CancellationToken::new();
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
@@ -1423,7 +1420,7 @@ async fn serve_with_registry_impl(
         // see numbers reused for different media (audit r07-C5, #1083).
         let archive_floor = admin::archive_floor_of(route).await;
         let route_config = RouteConfig::default()
-            .with_target_duration(target_duration_secs)
+            .with_target_duration(target_duration)
             .with_part_target(part_target)
             .with_window_segments(config.window_segments)
             .with_container(route_container(route))
@@ -2103,7 +2100,7 @@ fn spawn_ingest(
                 name,
                 params: params.clone(),
                 store: ctx.store,
-                target_duration_secs: config.target_duration_secs,
+                target_duration: config.target_duration,
                 part_target: config.part_target,
                 cancel: ctx.cancel,
             })?
@@ -3540,8 +3537,8 @@ mod tests {
     fn http_limits_from_an_unvalidated_config_does_not_panic() {
         for bad in [std::time::Duration::ZERO, std::time::Duration::MAX] {
             let cfg = crate::config::Config {
-                request_timeout_secs: bad,
-                concurrency_queue_timeout_secs: bad,
+                request_timeout: bad,
+                concurrency_queue: bad,
                 ..crate::config::Config::default()
             };
             let limits = HttpLimits::from(&cfg);
@@ -4359,7 +4356,7 @@ mod tests {
             name: "cam1".into(),
             params: serde_json::json!({"marker": "ok"}),
             store: store.clone(),
-            target_duration_secs: std::time::Duration::from_secs(4),
+            target_duration: std::time::Duration::from_secs(4),
             part_target: Duration::from_millis(500),
             cancel,
         })
@@ -4583,8 +4580,8 @@ mod tests {
         // SRT-caller-dialing-nobody path resolve in well under a second
         // instead of waiting the production 30 s/10 s defaults.
         let config = crate::config::Config {
-            ingest_connect_timeout_secs: std::time::Duration::from_millis(200),
-            ingest_read_timeout_secs: std::time::Duration::from_millis(200),
+            ingest_connect_timeout: std::time::Duration::from_millis(200),
+            ingest_read_timeout: std::time::Duration::from_millis(200),
             ..crate::config::Config::default()
         };
 
@@ -4689,7 +4686,7 @@ mod tests {
             };
             let store = Arc::new(RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration(config.target_duration_secs)
+                    .with_target_duration(config.target_duration)
                     .with_part_target(config.part_target)
                     .with_window_segments(config.window_segments),
             ));
