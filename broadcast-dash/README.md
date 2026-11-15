@@ -4,7 +4,7 @@ MPEG-DASH (ISO/IEC 23009-1) manifest syntax: the MPD model, its bounded parser, 
 
 ```toml
 [dependencies]
-broadcast-dash = "0.1"
+broadcast-dash = "0.2"
 ```
 
 ## What it does / what it does not

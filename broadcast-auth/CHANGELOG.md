@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-15
 ### Changed
 - BREAKING: the string errors are typed (#2734): `Error::InvalidTrustedProxy(String)` is a struct variant `InvalidTrustedProxy { input, kind: TrustedProxyFailure }` (`NotIpAddress`/`PrefixOutOfRange`), `Error::UnknownSignedUrlKeyId(String)` is `UnknownSignedUrlKeyId { kid }`, and `Error::InvalidUserinfo(String)` is a unit variant (the percent-decode failure has one mode, so no reason is carried). A caller branches on the typed kind rather than the message text.
 - BREAKING: `AuthState::handle_unauthorized` takes `status: http::StatusCode` and `&HeaderMap` (was `u16` and `&[(String, String)]`), `AuthState::receive_cookies` takes `&HeaderMap`, `AuthEvent::AuthRejected { status }` is a `http::StatusCode`, and `carries_credentials` takes `&HeaderMap`. The `Authorization`/`WWW-Authenticate` values come from the response's own header map instead of hand-built pairs (#2692).

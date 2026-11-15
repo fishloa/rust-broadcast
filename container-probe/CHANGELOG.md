@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common, mpeg-ps, mpeg-ts, st377-1); no functional change.
+
 ## [0.4.0] - 2026-11-14
 ### Added
 - The ISOBMFF prober and `segment::{media_fragment, progressive_movie}` recognise the compressed top-level boxes of ISO/IEC 14496-12:2026 §8.16: `!mov` counts as `moov` (progressive layout), `!mof` as `moof` (fragmented layout / media fragment), and either may be the first box. Nothing is inflated; an `otyp` after `ftyp`/`styp` is walked as an ordinary box (#1910).

@@ -12,7 +12,7 @@ on `broadcast-common`.
 
 ```toml
 [dependencies]
-cc-data = "0.9"
+cc-data = "0.10"
 ```
 
 ## What it does / what it does not

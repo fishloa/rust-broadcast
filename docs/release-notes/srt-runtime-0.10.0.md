@@ -1,0 +1,50 @@
+# srt-runtime 0.10.0
+
+_Released 2026-11-15._
+
+### Added
+- `packet::number` defines the typed SRT wire numbers `SocketId` (32-bit Destination/Source Socket ID), `SeqNo` (31-bit Packet Sequence Number with `broadcast_common::seq` wrap arithmetic and the ACK/loss-list 31-bit space), `MessageNumber` (26-bit, wrapping to `1`), `AckNumber` (32-bit ACK/ACKACK Acknowledgement Number) and `SrtTimestamp` (32-bit header Timestamp), so a sequence number, socket id and timestamp are no longer interchangeable bare `u32`s (part of #2768, #2772).
+
+### Fixed
+- An ACK or ACKACK whose Acknowledgement Number has bit 31 set no longer fails to serialize: the field is a whole 32-bit `Type-specific Information` word (`draft-sharabayko-srt-01` §3.2.4 Figure 13, §3.2.8 Figure 17), so every value a peer can put on the wire was accepted by `parse` but refused by `serialize_into` with `Error::FieldOverflow` (found by the `srt_packet` fuzz target). The bound added in #2766 is removed; `AckPacket::ack_number` and `AckAckPacket::ack_number` are now `packet::AckNumber`.
+- The remaining #2766 bounds sit at the parse edge instead of the serializer, so `parse` can never yield a packet `serialize` refuses: a DROPREQ whose Message Number word is wider than the 26-bit Message Number it names is rejected with `Error::FieldOverflow`, and the 31-bit sequence numbers (ACK `last_ack_seq`, DROPREQ `first_seq`/`last_seq`) are masked at parse — `AckCif::*::last_ack_seq`, `DropReqPacket::first_seq`/`last_seq` and `DropReqPacket::message_number` are now `SeqNo`/`MessageNumber`.
+
+### Changed
+- BREAKING: `packet::HsExtMessage`'s `receiver_tsbpd_delay`/`sender_tsbpd_delay` are `core::time::Duration` (were `receiver_tsbpd_delay_ms`/`sender_tsbpd_delay_ms: u16`), converted to the wire's whole milliseconds at the edge with a sub-millisecond remainder dropped. Migration: `receiver_tsbpd_delay_ms: 120` -> `receiver_tsbpd_delay: Duration::from_millis(120)` (part of #2768).
+- BREAKING: every packet's header `timestamp` is `packet::SrtTimestamp` and its `dest_socket_id` is `packet::SocketId` (data, ACK, NAK, keep-alive, congestion warning, shutdown, ACKACK, drop request, peer error, user-defined, handshake), converted once at the parse/serialize edge; `ControlPacket::{timestamp, dest_socket_id}` and `NakPacket::parse_cif` take and return the typed values. A socket id can no longer be passed where a header timestamp belongs (part of #2768).
+- BREAKING: `packet::HandshakeExtensions` is the decoded extension block list (`Vec<HandshakeExtensionBlock>`), not a borrowed `&[u8]` walked lazily: `HandshakeExtensions::parse` decodes a handshake's extension section once, so a list whose declared block length overruns the bytes present now fails the control-packet parse (`ControlPacket::parse` returns `Error::ExtensionOverrun`) instead of a later walk. `iter()` yields blocks directly (it was `Iterator<Item = Result<HandshakeExtensionBlock>>`). The concluding handshakes build their blocks through `ConclusionExtensionContents`, which also ends the whole-block byte concatenation the Key Material blocks used (part of #2768).
+- BREAKING: `packet::NakPacket` carries a decoded `entries: Vec<LossListEntry>` instead of a borrowed `raw_loss_list: &[u8]`, and is no longer lifetime-generic. `LossListEntry::{Single, Range}` hold `SeqNo` values, so an over-wide endpoint cannot be constructed (the old `packet::nak::build_loss_list` returned `Error::FieldOverflow` at serialization time) and the listener dispatch (`ControlPacket::parse`) now rejects a malformed loss list with `Error::InvalidLossList` instead of merely exposing it to a walker the caller might never run. `NakPacket::parse_cif` is public for a caller that already holds the CIF, and `LossListIter`/`build_loss_list` are removed. Migration: `NakPacket { raw_loss_list: &raw, .. }` -> `NakPacket { entries, .. }`, `nak.entries()` -> `nak.entries` (part of #2768).
+- `url::SrtUrl::parse` parses the whole string through `url::Url` instead of a hand-rolled `srt://` / `?` split: the scheme is matched case-insensitively, so `SRT://host` now names the same endpoint as `srt://host` (it was previously rejected by the scheme-less branch), and a malformed explicit authority (`srt://::1`) stays an error instead of becoming a host named `srt`. A `#` inside a `streamid` value is still kept whole (escaped to `%23` before parsing, decoded back on read). Wire addresses are unchanged (part of #2772).
+
+### Changed
+- BREAKING: the sans-IO engines take the caller-supplied monotonic "now" as `broadcast_common::stage::Timestamp` instead of `core::time::Duration`: `arq::Receiver::{feed_data, tick, on_ackack}`, `arq::Sender::{on_data, on_data_keyed, tick, on_ack}`, `tsbpd::TsbpdScheduler::{feed_data, tick, next_release_after}`, `filecc::FileCc::on_ack`, and `arq::Receiver::next_timeout` now returns `Option<Timestamp>` (a `Timestamp::checked_add` deadline: `None` is a deadline past the end of the clock that never fires, never a saturated instant equal to "now"). Migration: `now: Duration::from_millis(n)` -> `now: Timestamp::from_millis(n)` (the `Duration` stays for spans and deadlines), and `next_timeout()` -> `next_timeout().unwrap_or(<fallback>)` (#2769).
+- BREAKING: `km_refresh::KmRefreshThresholds` is `#[non_exhaustive]` with private fields; build it with `KmRefreshThresholds::new(refresh_period, pre_announcement_period)`, which rejects `pre_announcement_period == 0` and any pre-announcement at or past the refresh period, and read it back with `refresh_period()`/`pre_announcement_period()`. A zero refresh period no longer rotates the active key on every packet. Migration: `KmRefreshThresholds { refresh_period: r, pre_announcement_period: p }` -> `KmRefreshThresholds::new(r, p)` (#2753, #2771).
+- `KmRefreshDriver::on_packet_sent` rotates through every cycle a batch crosses, returning each cycle's PreAnnounce/Switchover/Decommission in order, instead of at most one switchover per call (#2753).
+- The `panic_idioms` workspace guard now covers this crate. `pbkdf2_hmac_sha1` no longer discards the HMAC-SHA1 result with `.expect(..)` (the only primitive failure, `InvalidLength`, cannot occur); the `#[cfg(all(test, feature = "tokio"))]` / `#[cfg(all(test, feature = "crypto"))]` test modules are gated as stacked `#[cfg(test)]` + `#[cfg(feature = ..)]` so the shared lexer recognises them as test-only (#2773).
+- `packet::GroupFlags` grows a public `message_number_sync()` accessor (the `M` bit, §3.2.1.4 Figure 9) in place of the `#[cfg(test)]`-only one, so a consumer can read the flag instead of poking the raw `u8` (#2774).
+
+### Removed
+- BREAKING: `filecc::FileCc::tick` (an empty, dead method kept only for the signature) is deleted; FileCC is driven solely by `on_ack`/`on_loss`/`on_timeout` (#2769).
+
+### Fixed
+- A truncated handshake extension block header now reports the bytes actually available in `BufferTooShort::have` instead of always `0` (#2752).
+
+### Changed
+- BREAKING: every TSBPD latency and handshake retransmit setting is a `core::time::Duration` instead of a bare integer: `HandshakeConfig::latency` (was `latency_ms: u16`), `HandshakeConfig::retransmit_after` (was `retransmit_after_ticks: u32`, now the caller-clock silence before a retransmit), their setters `with_latency`/`with_retransmit_after` (were `with_latency_ms`/`with_retransmit_after_ticks`), `NegotiatedParams::latency` (was `latency_ms`), `url::SrtUrl::latency` (was `latency_ms: Option<u16>`), and `CallerHandshake::tick`/`ListenerHandshake::tick`/`RendezvousHandshake::tick` take the caller-clock time advanced since the last call (`tick(elapsed: Duration)`) instead of counting fixed ticks. A latency still goes on the wire as whole milliseconds (rounded down, `DEFAULT_RETRANSMIT_AFTER` replaces the old three-tick default). Migration: `with_latency_ms(180)` -> `with_latency(Duration::from_millis(180))`, `with_retransmit_after_ticks(n)` -> `with_retransmit_after(period / n)`, and `tick()` -> `tick(period)` (#2693).
+
+### Changed
+- BREAKING: `CryptoConfig` and `NegotiatedParams` are now `#[non_exhaustive]`; build `CryptoConfig` with `CryptoConfig::new(passphrase, salt, sek)` instead of a struct literal (#2664).
+- BREAKING: `TsbpdScheduler::new` takes the TSBPD delay as a `core::time::Duration` instead of `tsbpd_delay_ms: u64`; the 120 ms floor is unchanged, applied to the duration's whole milliseconds. Migration: `TsbpdScheduler::new(.., 120, ..)` -> `TsbpdScheduler::new(.., Duration::from_millis(120), ..)`.
+
+### Removed
+- BREAKING: the `packet::control::CONTROL_TYPE_*` (`u16`) and `packet::handshake::ENCRYPTION_FIELD_*` (`u16`) / `HANDSHAKE_TYPE_*` (`u32`) constants; they duplicated the wire values of `ControlType`, `EncryptionField` and `HandshakeType`, which carry them through `from_bits`/`to_bits` (and `name()`/`Display`). Migration: `HANDSHAKE_TYPE_INDUCTION` -> `HandshakeType::Induction` (compare `handshake_type.to_bits()` with it), `CONTROL_TYPE_SHUTDOWN` -> `ControlType::Shutdown`, `ENCRYPTION_FIELD_NONE` -> `EncryptionField::NoEncryption` (#2666).
+
+### Changed
+- BREAKING: `io::SrtConfig` is `io::SrtSocketConfig`, matching `RtspClientConfig`/`RtmpClientConfig`/`HlsClientConfig`; it is named for its role, not `SrtClientConfig`, because one config serves both the caller (`SrtSocket::connect`) and the listener (`SrtListener::bind`). Migration: every `srt_runtime::io::SrtConfig` becomes `srt_runtime::io::SrtSocketConfig`.
+
+### Removed
+- BREAKING: `impl Into<SrtSocketConfig>` on the `SrtSocket`/`SrtListener` constructors and the `From<HandshakeConfig>` impl: `connect`, `connect_from`, `connect_from_socket`, `rendezvous`, `rendezvous_from_socket` and `bind` take an `io::SrtSocketConfig` by value, so a config is written out explicitly rather than implied at the call site. Migration: `bind(addr, handshake)` -> `bind(addr, SrtSocketConfig::new(handshake))`, `connect(addr, handshake.clone())` -> `connect(addr, SrtSocketConfig::default())` when the handshake is the default, and `SrtConfig::default()` -> `SrtSocketConfig::default()` (#2660).
+
+---
+
+Published from tag `srt-runtime-v0.10.0`.

@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common); no functional change.
+
 ## [0.9.0] - 2026-11-14
 ### Fixed
 - 608 Text Restart (and RTD) no longer erase the caption screen, and characters typed in text mode no longer appear in the channel's caption text: text mode now has its own screen.

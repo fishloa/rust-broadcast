@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.8.0] - 2026-11-15
 ### Changed
 - BREAKING: the RTP/RTCP identities are typed instead of bare integers: `RtpPacket::sequence_number` is `SeqNo` (16-bit), `RtpPacket::ssrc`, `rtcp::ReportBlock::ssrc`, `rtcp::SenderReport::ssrc`, `rtcp::ReceiverReport::ssrc` and `rtcp::App::ssrc` are `Ssrc` (32-bit), and `rtcp::ReportBlock::ext_highest_seq` is `ExtendedSeqNo`. Each has `new`/`get` (plus `From`/`Into` for its raw integer), so an SSRC can no longer be passed where a sequence number belongs. `SenderReport::new` and `ReceiverReport::new` take an `Ssrc`. Wire bytes are unchanged. Migration: read `.get()` where a raw integer is needed, wrap with `Ssrc::new`/`SeqNo::new` when building a packet (`pkt.ssrc` -> `pkt.ssrc.get()`, `ssrc: 1` -> `ssrc: Ssrc::new(1)`) (#2768).
 - `SeqNo` carries the 16-bit wrap arithmetic: `wrapping_next()` and `forward_distance(earlier)`.

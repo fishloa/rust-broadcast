@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.2.0] - 2026-11-15
 ### Changed
 - BREAKING: the MPD wall-clock fields are `jiff::Timestamp`, not Unix microsecond integers (#2730). `Mpd` is `{ availability_start_time: Option<jiff::Timestamp>, availability_end_time: Option<jiff::Timestamp>, publish_time: Option<jiff::Timestamp> }` (the `_us`-suffixed `i64` fields are removed), `xs_datetime::XsDateTime::unix` is a `jiff::Timestamp` (was `unix_us: i64`), `format_xs_datetime` takes a `jiff::Timestamp`, and `parse_ntp_timestamp` returns a `jiff::Timestamp`. Migration: `Some(unix_us)` -> `jiff::Timestamp::from_microsecond(unix_us)`, `t.unix_us` -> `t.unix.as_microsecond()`.
 - `MpdError` gains `From<broadcast_common::xml_chars::XmlCharError>`, the typed character-data and namespace failure the shared XML helper now reports (#2646).

@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [15.0.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common); no functional change.
+
 ## [14.0.0] - 2026-11-14
 ### Changed
 - The `crc` module doc now states that it is CRC-8/DVB-S2 (0xD5, 8-bit), a different check from `broadcast_common`'s CRC-32/MPEG-2; the code is unchanged (c6 C6-12).

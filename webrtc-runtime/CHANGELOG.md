@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-15
 ### Changed
 - BREAKING: `WebRtcClientConfig`'s `bearer_token: Option<String>`/`with_bearer_token` are `credentials: Option<broadcast_auth::Credentials>`/`with_credentials(Credentials)`, the rtsp-runtime shape: one auth vocabulary across the runtimes. Bearer is applied as before; Basic is applied pre-emptively (a WHIP endpoint behind a proxy); the redacting `Debug` now hides `credentials`. Migration: `.with_bearer_token(t)` -> `.with_credentials(broadcast_auth::Credentials::Bearer { token: t })` (#2661 2.2).
 - BREAKING: `media::MediaTransportConfig`, `HttpRequest` and `HttpResponse` are now `#[non_exhaustive]`; build them with `MediaTransportConfig::new(..)`/`HttpRequest::new(..)`/`HttpResponse::new(..)` + `with_*` instead of struct literals (#2664).

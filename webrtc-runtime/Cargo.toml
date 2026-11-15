@@ -1,6 +1,6 @@
 [package]
 name    = "webrtc-runtime"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 description = "Sans-IO WHIP (RFC 9725) + WHEP (draft-ietf-wish-whep) HTTP signalling engine — SDP offer/answer, Trickle ICE, ICE restart, session lifecycle. No IO adapter; caller drives HTTP."
 license      = "MIT OR Apache-2.0"
@@ -20,10 +20,10 @@ rustdoc-args = ["--cfg", "docsrs"]
 # The WHIP/WHEP core is `std` (SP2.2: it speaks `http`/`headers` types), so both
 # take their default (std) features in every configuration; the `std` feature
 # below is kept as a name so `default-features = false` consumers still resolve.
-broadcast-common = { path = "../broadcast-common", version = "12.0.0", features = ["url"] }
+broadcast-common = { path = "../broadcast-common", version = "13.0.0", features = ["url"] }
 # The client's credentials are `broadcast_auth::Credentials` (one auth
 # vocabulary across the runtimes, issue #2661 2.2); the core is `std`.
-broadcast-auth = { path = "../broadcast-auth", version = "0.7.0" }
+broadcast-auth = { path = "../broadcast-auth", version = "0.8.0" }
 thiserror = { version = "2" }
 # `log` was once declared here and referenced by not one line of this crate; it
 # is gone. (`broadcast-auth` is now a real dependency for the client's
@@ -39,7 +39,7 @@ headers     = { workspace = true }
 # that only needs WHIP/WHEP signalling does not build the ICE/DTLS-SRTP
 # transport and its dependency tree.
 # ---------------------------------------------------------------------------
-rtp-packet  = { path = "../rtp-packet",  version = "0.7.0", optional = true }
+rtp-packet  = { path = "../rtp-packet",  version = "0.8.0", optional = true }
 rtc-ice     = { version = "0.21", optional = true }
 rtc-dtls    = { version = "0.21.1", optional = true }
 rtc-srtp    = { version = "0.21", optional = true }

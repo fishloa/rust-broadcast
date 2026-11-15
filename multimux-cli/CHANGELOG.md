@@ -4,6 +4,11 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows multimux); no functional change.
+
 ## [0.16.0] - 2026-11-14
 ### Changed
 - Dependency/epoch bump only (follows multimux); no functional change.

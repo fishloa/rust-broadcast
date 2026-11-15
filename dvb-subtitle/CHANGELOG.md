@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-15
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common, mpeg-pes); no functional change.
+
 ## [0.8.0] - 2026-11-14
 ### Changed
 - Major-class release for epoch purity only: no API or behaviour change in this crate; its sibling dependencies move to new caret epochs.

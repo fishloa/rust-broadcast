@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-15
 ### Changed
 - BREAKING: the wire identities are typed instead of bare integers (new module `ids`): `chunk::BasicHeader::chunk_stream_id`, `chunk::Message::chunk_stream_id` and `ProtocolControl::Abort`'s field are `ChunkStreamId` (2..=65599, `basic_header_encodable()`); `chunk::Message::message_stream_id` and `chunk::MessageHeader::Type0`'s field are `MessageStreamId`; `chunk::Message::timestamp` and `Type0`/`Type1`/`Type2`'s timestamp fields are `Timestamp` (a span carried as whole milliseconds) and their deltas are `core::time::Duration`; `ProtocolControl::Acknowledgement` wraps `SequenceNumber`; `chunk::ChunkAssembler::abort` takes a `ChunkStreamId`; `message::CONTROL_CHUNK_STREAM_ID`/`CONTROL_MESSAGE_STREAM_ID` are the typed constants. A chunk stream id can no longer be passed where a message stream id belongs. Wire bytes are unchanged. Migration: `Message { chunk_stream_id: 4, timestamp: 0, .. }` -> `Message { chunk_stream_id: ChunkStreamId::new(4), timestamp: Timestamp::ZERO, .. }`, `msg.timestamp` -> `msg.timestamp.millis()` where a raw count is wanted, `abort(4)` -> `abort(ChunkStreamId::new(4))` (#2768).
 - BREAKING: `UserControl::SetBufferLength`'s `buffer_ms: u32` is `buffer: core::time::Duration` (wire unchanged: whole milliseconds, a span the 32-bit field cannot hold is `RtmpError::FieldOverflow` instead of a clamped value) (#2768).
