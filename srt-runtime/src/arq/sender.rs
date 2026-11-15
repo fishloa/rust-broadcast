@@ -24,6 +24,7 @@
 
 use alloc::collections::{BTreeSet, VecDeque};
 use alloc::vec::Vec;
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use crate::error::Result;
@@ -33,7 +34,7 @@ use crate::packet::{
 };
 
 use super::rtt::RttEstimator;
-use super::{duration_to_wire_us, seq};
+use super::{seq, timestamp_to_wire_us};
 
 /// A NAK loss-list range is a compact wire encoding (Appendix A), but
 /// nothing stops a malformed/adversarial range from declaring billions of
@@ -159,7 +160,7 @@ impl Sender {
         seq: u32,
         message_number: u32,
         payload: &[u8],
-        now: Duration,
+        now: Timestamp,
     ) -> Result<Vec<u8>> {
         // The wire fields are 31 and 26 bits wide (§3.1): a wider value is a
         // caller bug, reported rather than silently wrapped into another
@@ -179,7 +180,7 @@ impl Sender {
             key_flag: EncryptionKeyField::NotEncrypted,
             retransmitted: false,
             message_number,
-            timestamp: duration_to_wire_us(now),
+            timestamp: timestamp_to_wire_us(now),
             dest_socket_id: self.dest_socket_id,
             data: payload,
         };
@@ -203,7 +204,7 @@ impl Sender {
         message_number: u32,
         payload: &[u8],
         key_flag: EncryptionKeyField,
-        now: Duration,
+        now: Timestamp,
     ) -> Result<Vec<u8>> {
         broadcast_common::len::fit_bits(u64::from(seq), 31, "Packet Sequence Number")?;
         broadcast_common::len::fit_bits(u64::from(message_number), 26, "Message Number")?;
@@ -220,7 +221,7 @@ impl Sender {
             key_flag,
             retransmitted: false,
             message_number,
-            timestamp: duration_to_wire_us(now),
+            timestamp: timestamp_to_wire_us(now),
             dest_socket_id: self.dest_socket_id,
             data: payload,
         };
@@ -284,7 +285,7 @@ impl Sender {
     /// counter incremented). A queued sequence number no longer in the
     /// buffer (freed by a since-received ACK) is dropped without emitting
     /// anything (rule 17).
-    pub fn tick(&mut self, now: Duration) -> Vec<Vec<u8>> {
+    pub fn tick(&mut self, now: Timestamp) -> Vec<Vec<u8>> {
         let mut seqs: Vec<u32> = core::mem::take(&mut self.pending_retransmit)
             .into_iter()
             .collect();
@@ -308,7 +309,7 @@ impl Sender {
                 key_flag: sent.key_flag,
                 retransmitted: true,
                 message_number: sent.message_number,
-                timestamp: duration_to_wire_us(now),
+                timestamp: timestamp_to_wire_us(now),
                 dest_socket_id: self.dest_socket_id,
                 data: &sent.payload,
             };
@@ -325,7 +326,7 @@ impl Sender {
     /// Process an incoming ACK: free every acknowledged packet (rules 7, 8,
     /// 16, 17), and — for a Full ACK only — update RTT/RTTVar (rule 33) and
     /// return the ACKACK reply (rules 3, 9).
-    pub fn on_ack(&mut self, ack: &AckPacket, now: Duration) -> Option<Vec<u8>> {
+    pub fn on_ack(&mut self, ack: &AckPacket, now: Timestamp) -> Option<Vec<u8>> {
         let last_ack_seq = match ack.cif {
             AckCif::Full { last_ack_seq, .. }
             | AckCif::Small { last_ack_seq, .. }
@@ -358,7 +359,7 @@ impl Sender {
 
             let pkt = ControlPacket::AckAck(AckAckPacket {
                 ack_number: ack.ack_number,
-                timestamp: duration_to_wire_us(now),
+                timestamp: timestamp_to_wire_us(now),
                 dest_socket_id: self.dest_socket_id,
                 libsrt_pad: true,
             });
@@ -402,7 +403,7 @@ mod tests {
     #[test]
     fn on_data_buffers_and_returns_wire_bytes() {
         let mut s = Sender::new(PEER);
-        let bytes = s.on_data(5, 5, b"hello", Duration::from_millis(1)).unwrap();
+        let bytes = s.on_data(5, 5, b"hello", Timestamp::from_millis(1)).unwrap();
         assert_eq!(s.buffered_count(), 1);
         let dp = DataPacket::parse(&bytes).unwrap();
         assert_eq!(dp.seq_number, 5);
@@ -413,8 +414,8 @@ mod tests {
     #[test]
     fn nak_then_tick_retransmits_with_r_flag_set() {
         let mut s = Sender::new(PEER);
-        s.on_data(0, 0, b"a", Duration::ZERO).unwrap();
-        s.on_data(1, 1, b"b", Duration::ZERO).unwrap();
+        s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
+        s.on_data(1, 1, b"b", Timestamp::ZERO).unwrap();
 
         let raw = nak_bytes(&[LossListEntry::Single(1)]);
         let ControlPacket::Nak(nak) = ControlPacket::parse(&raw).unwrap() else {
@@ -423,7 +424,7 @@ mod tests {
         s.on_nak(&nak);
         assert_eq!(s.pending_retransmit_count(), 1);
 
-        let out = s.tick(Duration::from_millis(5));
+        let out = s.tick(Timestamp::from_millis(5));
         assert_eq!(out.len(), 1);
         let dp = DataPacket::parse(&out[0]).unwrap();
         assert_eq!(dp.seq_number, 1);
@@ -434,22 +435,22 @@ mod tests {
     #[test]
     fn nak_for_unbuffered_seq_is_ignored() {
         let mut s = Sender::new(PEER);
-        s.on_data(0, 0, b"a", Duration::ZERO).unwrap();
+        s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
         let raw = nak_bytes(&[LossListEntry::Single(99)]);
         let ControlPacket::Nak(nak) = ControlPacket::parse(&raw).unwrap() else {
             panic!("expected NAK");
         };
         s.on_nak(&nak);
         assert_eq!(s.pending_retransmit_count(), 0);
-        assert!(s.tick(Duration::ZERO).is_empty());
+        assert!(s.tick(Timestamp::ZERO).is_empty());
     }
 
     #[test]
     fn full_ack_frees_buffer_and_updates_rtt_and_replies_ackack() {
         let mut s = Sender::new(PEER);
-        s.on_data(0, 0, b"a", Duration::ZERO).unwrap();
-        s.on_data(1, 1, b"b", Duration::ZERO).unwrap();
-        s.on_data(2, 2, b"c", Duration::ZERO).unwrap();
+        s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
+        s.on_data(1, 1, b"b", Timestamp::ZERO).unwrap();
+        s.on_data(2, 2, b"c", Timestamp::ZERO).unwrap();
 
         let ack = AckPacket {
             ack_number: 1,
@@ -465,7 +466,7 @@ mod tests {
                 recv_rate_bps: 0,
             },
         };
-        let reply = s.on_ack(&ack, Duration::from_millis(1)).unwrap();
+        let reply = s.on_ack(&ack, Timestamp::from_millis(1)).unwrap();
         assert_eq!(s.buffered_count(), 1); // seq 2 remains (not < last_ack_seq)
         assert!(s.rtt() < Duration::from_millis(100)); // moved from the 100ms init toward 20ms
 
@@ -478,14 +479,14 @@ mod tests {
     #[test]
     fn light_ack_does_not_trigger_ackack() {
         let mut s = Sender::new(PEER);
-        s.on_data(0, 0, b"a", Duration::ZERO).unwrap();
+        s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
         let ack = AckPacket {
             ack_number: 0,
             timestamp: 0,
             dest_socket_id: PEER,
             cif: AckCif::Light { last_ack_seq: 1 },
         };
-        assert!(s.on_ack(&ack, Duration::ZERO).is_none());
+        assert!(s.on_ack(&ack, Timestamp::ZERO).is_none());
         assert_eq!(s.buffered_count(), 0);
     }
 
@@ -511,7 +512,7 @@ mod tests {
         const RANGES: usize = 180;
         let mut s = Sender::new(PEER);
         for q in 0..BUFFERED {
-            s.on_data(q, q, b"x", Duration::ZERO).unwrap();
+            s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
         // 180 entries each claiming [5 000, 0x3FFF_FFFF]; 180 x 8 B = 1 440 B
         // fits one datagram.
@@ -532,7 +533,7 @@ mod tests {
     fn single_nak_entry_lookup_is_logarithmic() {
         let mut s = Sender::new(PEER);
         for q in 0..8192u32 {
-            s.on_data(q, q, b"x", Duration::ZERO).unwrap();
+            s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
         feed_nak(&mut s, &[LossListEntry::Single(8000)]);
         assert_eq!(s.pending_retransmit_count(), 1);
@@ -543,7 +544,7 @@ mod tests {
         );
         // And the retransmit lookup in `tick` is logarithmic too.
         let before = s.lookup_steps;
-        let out = s.tick(Duration::ZERO);
+        let out = s.tick(Timestamp::ZERO);
         assert_eq!(out.len(), 1);
         assert!(s.lookup_steps - before <= 14);
         assert_eq!(DataPacket::parse(&out[0]).unwrap().seq_number, 8000);
@@ -558,12 +559,12 @@ mod tests {
         const MAX: u32 = crate::packet::SEQ_NUMBER_MASK;
         let mut s = Sender::new(PEER);
         for q in [MAX - 2, MAX - 1, MAX, 0, 1, 2] {
-            s.on_data(q, 1, b"x", Duration::ZERO).unwrap();
+            s.on_data(q, 1, b"x", Timestamp::ZERO).unwrap();
         }
         feed_nak(&mut s, &[LossListEntry::Range(MAX - 1, 1)]);
         assert_eq!(s.pending_retransmit_count(), 4);
         let seqs: Vec<u32> = s
-            .tick(Duration::ZERO)
+            .tick(Timestamp::ZERO)
             .iter()
             .map(|b| DataPacket::parse(b).unwrap().seq_number)
             .collect();
@@ -575,7 +576,7 @@ mod tests {
     fn malformed_nak_range_names_nothing() {
         let mut s = Sender::new(PEER);
         for q in 0..20u32 {
-            s.on_data(q, q, b"x", Duration::ZERO).unwrap();
+            s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
         feed_nak(&mut s, &[LossListEntry::Range(10, 5)]);
         assert_eq!(s.pending_retransmit_count(), 0);
@@ -591,7 +592,7 @@ mod tests {
     fn ack_purges_only_freed_seqs_from_the_retransmit_queue() {
         let mut s = Sender::new(PEER);
         for q in 0..6u32 {
-            s.on_data(q, q, b"x", Duration::ZERO).unwrap();
+            s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
         feed_nak(&mut s, &[LossListEntry::Range(1, 4)]);
         assert_eq!(s.pending_retransmit_count(), 4);
@@ -601,11 +602,11 @@ mod tests {
             dest_socket_id: PEER,
             cif: AckCif::Light { last_ack_seq: 3 },
         };
-        assert!(s.on_ack(&ack, Duration::ZERO).is_none());
+        assert!(s.on_ack(&ack, Timestamp::ZERO).is_none());
         // seqs 1, 2 freed; 3, 4 still pending and still buffered.
         assert_eq!(s.pending_retransmit_count(), 2);
         let seqs: Vec<u32> = s
-            .tick(Duration::ZERO)
+            .tick(Timestamp::ZERO)
             .iter()
             .map(|b| DataPacket::parse(b).unwrap().seq_number)
             .collect();
@@ -618,16 +619,16 @@ mod tests {
     fn on_data_rejects_values_wider_than_their_wire_fields() {
         let mut s = Sender::new(PEER);
         assert!(matches!(
-            s.on_data(SEQ_NUMBER_MASK + 1, 0, b"x", Duration::ZERO),
+            s.on_data(SEQ_NUMBER_MASK + 1, 0, b"x", Timestamp::ZERO),
             Err(Error::FieldOverflow(e)) if e.max == u64::from(SEQ_NUMBER_MASK)
         ));
         assert!(matches!(
-            s.on_data(0, MESSAGE_NUMBER_MASK + 1, b"x", Duration::ZERO),
+            s.on_data(0, MESSAGE_NUMBER_MASK + 1, b"x", Timestamp::ZERO),
             Err(Error::FieldOverflow(e)) if e.max == u64::from(MESSAGE_NUMBER_MASK)
         ));
         assert_eq!(s.buffered_count(), 0, "a rejected packet is not buffered");
         let bytes = s
-            .on_data(SEQ_NUMBER_MASK, MESSAGE_NUMBER_MASK, b"x", Duration::ZERO)
+            .on_data(SEQ_NUMBER_MASK, MESSAGE_NUMBER_MASK, b"x", Timestamp::ZERO)
             .unwrap();
         let dp = DataPacket::parse(&bytes).unwrap();
         assert_eq!(dp.seq_number, SEQ_NUMBER_MASK);

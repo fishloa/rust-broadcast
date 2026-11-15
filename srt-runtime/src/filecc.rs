@@ -17,13 +17,14 @@
 //!
 //! ```rust
 //! use srt_runtime::filecc::{FileCc, Phase};
+//! use broadcast_common::stage::Timestamp;
 //! use core::time::Duration;
 //!
 //! let mut cc = FileCc::new(0);
 //! assert_eq!(cc.phase(), Phase::SlowStart);
 //!
 //! // On each full ACK, feed the receiver-reported rate/RTT samples:
-//! cc.on_ack(Duration::from_millis(10), 16, 5_000, 1_000, Duration::from_millis(50));
+//! cc.on_ack(Timestamp::from_millis(10), 16, 5_000, 1_000, Duration::from_millis(50));
 //!
 //! // A NAK (loss report) ends slow start on the first loss (rule 4/9):
 //! cc.on_loss(8, 16, 0.5);
@@ -33,11 +34,8 @@
 //! ## Sans-IO contract
 //!
 //! Like every other engine in this crate, [`FileCc`] never reads a wall
-//! clock: [`FileCc::on_ack`] takes an explicit `now: Duration`; [`FileCc::on_loss`]
+//! clock: [`FileCc::on_ack`] takes an explicit `now: Timestamp`; [`FileCc::on_loss`]
 //! and [`FileCc::on_timeout`] are driven purely by caller-reported events.
-//! [`FileCc::tick`] is provided for forward compatibility (mirrors
-//! [`crate::livecc::LiveCC::tick`]) but this section defines no periodic,
-//! time-only state transition beyond the three events already covered.
 //!
 //! ## Shared state, not redefined here
 //!
@@ -103,6 +101,7 @@
 //! crate is not designated for; this implementation stays literal to the
 //! curated draft text. See `filecc::tests::repeat_decrease_is_a_one_shot_per_period_once_dec_random_exceeds_one`.
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use crate::arq::FULL_ACK_PERIOD;
@@ -307,7 +306,7 @@ pub struct FileCc {
     /// `LastRCTime` — `None` until the first ACK (rate-control gate always
     /// passes on the very first call; the draft does not give an initial
     /// value, this is the implementation-defined resolution).
-    last_rc_time: Option<Duration>,
+    last_rc_time: Option<Timestamp>,
     /// `LAST_ACK_SEQNO` — initialized to the caller-supplied `initial_seqno`
     /// (representing "no data packet acknowledged yet"; the draft does not
     /// give LAST_ACK_SEQNO's initial value either).
@@ -483,7 +482,7 @@ impl FileCc {
     /// `rtt` — the current (already-smoothed elsewhere) RTT estimate.
     pub fn on_ack(
         &mut self,
-        now: Duration,
+        now: Timestamp,
         ack_seqno: u32,
         receiving_rate_pps: u64,
         est_link_capacity_pps: u64,
@@ -690,13 +689,6 @@ impl FileCc {
             self.end_slow_start();
         }
     }
-
-    /// Time-driven tick — currently a no-op (mirrors
-    /// [`crate::livecc::LiveCC::tick`]). Provided for forward compatibility:
-    /// this section's algorithm is driven entirely by the three named
-    /// events (send / ACK / timeout, rule 5); there is no additional
-    /// periodic-only state transition to run here.
-    pub fn tick(&mut self, _now: Duration) {}
 }
 
 impl Default for FileCc {
@@ -731,7 +723,7 @@ mod tests {
     fn slow_start_cwnd_grows_by_ack_seqno_delta() {
         let mut cc = FileCc::new(0);
         cc.on_ack(
-            Duration::from_millis(10),
+            Timestamp::from_millis(10),
             5,
             0,
             0,
@@ -749,7 +741,7 @@ mod tests {
     fn rate_control_gate_blocks_updates_within_rc_interval() {
         let mut cc = FileCc::new(0);
         cc.on_ack(
-            Duration::from_millis(10),
+            Timestamp::from_millis(10),
             5,
             0,
             0,
@@ -758,7 +750,7 @@ mod tests {
         assert_eq!(cc.cwnd_size(), 21.0);
         // Only 1ms later (< RC_INTERVAL = 10ms): must be a no-op.
         cc.on_ack(
-            Duration::from_millis(11),
+            Timestamp::from_millis(11),
             999,
             0,
             0,
@@ -801,7 +793,7 @@ mod tests {
         let mut cc = FileCc::new(0);
         cc.set_max_cwnd_size(20.0);
         cc.on_ack(
-            Duration::from_millis(10),
+            Timestamp::from_millis(10),
             10,
             0,
             0,
@@ -817,7 +809,7 @@ mod tests {
         cc.on_loss(1, 1, 0.9); // -> Congestion Avoidance
         cc.set_max_bw_bytes_per_sec(Some(1)); // absurdly low MAX_BW
         cc.on_ack(
-            Duration::from_millis(10),
+            Timestamp::from_millis(10),
             1,
             1_000,
             1_000,
@@ -834,7 +826,7 @@ mod tests {
         cc.set_max_bw_bytes_per_sec(Some(0));
         assert_eq!(cc.max_bw_bytes_per_sec(), None);
         cc.on_ack(
-            Duration::from_millis(10),
+            Timestamp::from_millis(10),
             1,
             1_000,
             1_000,

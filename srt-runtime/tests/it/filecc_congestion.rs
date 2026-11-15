@@ -4,6 +4,7 @@
 //! style) so a trivial/no-op/constant implementation must fail every test
 //! here. Spec grounding: `private/specs-verified/rules/srt-congestion.md`.
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 use srt_runtime::filecc::{FileCc, Phase};
 
@@ -29,7 +30,7 @@ fn slow_start_growth_matches_hand_computed_formula() {
     // ACK 1: ack_seqno=5, LAST_ACK_SEQNO starts at initial_seqno=0.
     // CWND_SIZE = 16 + (5 - 0) = 21.
     cc.on_ack(
-        Duration::from_millis(10),
+        Timestamp::from_millis(10),
         5,
         0,
         0,
@@ -41,7 +42,7 @@ fn slow_start_growth_matches_hand_computed_formula() {
     // ACK 2 too soon (only 1ms later, < RC_INTERVAL=10ms): Step 1 gate
     // must block this update entirely, even with an outrageous ack_seqno.
     cc.on_ack(
-        Duration::from_millis(11),
+        Timestamp::from_millis(11),
         100_000,
         0,
         0,
@@ -57,7 +58,7 @@ fn slow_start_growth_matches_hand_computed_formula() {
     // ack_seqno=13, LAST_ACK_SEQNO=5 (unchanged by the blocked ACK 2).
     // CWND_SIZE = 21 + (13 - 5) = 29.
     cc.on_ack(
-        Duration::from_millis(21),
+        Timestamp::from_millis(21),
         13,
         0,
         0,
@@ -67,7 +68,7 @@ fn slow_start_growth_matches_hand_computed_formula() {
 
     // ACK 4: 32ms. ack_seqno=29. CWND_SIZE = 29 + (29 - 13) = 45.
     cc.on_ack(
-        Duration::from_millis(32),
+        Timestamp::from_millis(32),
         29,
         0,
         0,
@@ -131,7 +132,7 @@ fn congestion_avoidance_cwnd_matches_exact_formula() {
     //           = 300_000_000 / 1_000_000 + 16
     //           = 300 + 16 = 316.
     cc.on_ack(
-        Duration::from_millis(50),
+        Timestamp::from_millis(50),
         1,
         5_000,
         0,

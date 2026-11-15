@@ -7,8 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed
+- BREAKING: the sans-IO engines take the caller-supplied monotonic "now" as `broadcast_common::stage::Timestamp` instead of `core::time::Duration`: `arq::Receiver::{feed_data, tick, on_ackack}`, `arq::Sender::{on_data, on_data_keyed, tick, on_ack}`, `tsbpd::TsbpdScheduler::{feed_data, tick, next_release_after}`, `filecc::FileCc::on_ack`, and `arq::Receiver::next_timeout`'s return. Migration: `now: Duration::from_millis(n)` -> `now: Timestamp::from_millis(n)` (the `Duration` stays for spans and deadlines) (#2769).
 - BREAKING: `km_refresh::KmRefreshThresholds` is `#[non_exhaustive]` with private fields; build it with `KmRefreshThresholds::new(refresh_period, pre_announcement_period)`, which rejects `pre_announcement_period == 0` and any pre-announcement at or past the refresh period, and read it back with `refresh_period()`/`pre_announcement_period()`. A zero refresh period no longer rotates the active key on every packet. Migration: `KmRefreshThresholds { refresh_period: r, pre_announcement_period: p }` -> `KmRefreshThresholds::new(r, p)` (#2753, #2771).
 - `KmRefreshDriver::on_packet_sent` rotates through every cycle a batch crosses, returning each cycle's PreAnnounce/Switchover/Decommission in order, instead of at most one switchover per call (#2753).
+
+### Removed
+- BREAKING: `filecc::FileCc::tick` (an empty, dead method kept only for the signature) is deleted; FileCC is driven solely by `on_ack`/`on_loss`/`on_timeout` (#2769).
 
 ### Fixed
 - A truncated handshake extension block header now reports the bytes actually available in `BufferTooShort::have` instead of always `0` (#2752).

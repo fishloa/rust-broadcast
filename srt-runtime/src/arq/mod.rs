@@ -9,8 +9,8 @@
 //!
 //! Sans-IO, like the rest of this crate: [`Sender`] and [`Receiver`] never
 //! read a wall clock. All timing is driven by a caller-supplied
-//! `now: core::time::Duration` (elapsed time since a fixed epoch the caller
-//! owns) passed to `tick`/`feed_data`/`on_data`/`on_ack`/`on_ackack`.
+//! `now: broadcast_common::stage::Timestamp` (monotonic time since a fixed
+//! epoch the caller owns) passed to `tick`/`feed_data`/`on_data`/`on_ack`/`on_ackack`.
 //!
 //! # Module map
 //! - [`seq`] — wrap-safe 31-bit sequence-number arithmetic (not itself a
@@ -43,6 +43,7 @@ pub use receiver::{FeedOutcome, Receiver};
 pub use rtt::RttEstimator;
 pub use sender::Sender;
 
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 /// Full ACK timer period — 10 milliseconds (`private/specs-verified/rules/srt-arq.md` rule
@@ -84,6 +85,17 @@ pub(crate) fn duration_to_wire_us(d: Duration) -> u32 {
     u32::try_from(d.as_micros() & u128::from(u32::MAX)).unwrap_or(0)
 }
 
+/// Convert a [`Timestamp`] to the wire `Timestamp` field's microsecond `u32`
+/// (`draft-sharabayko-srt-01` §3), wrapping modulo `2^32` once the
+/// microsecond count exceeds `u32::MAX` (about 71.58 minutes) since the
+/// caller's epoch — not clamping to `u32::MAX`. See
+/// [`duration_to_wire_us`] for why a clamp (instead of a wrap) stalls a real
+/// peer's Too-Late-Packet-Drop.
+pub(crate) fn timestamp_to_wire_us(ts: Timestamp) -> u32 {
+    // Keep exactly the low 32 bits: the wire field is "microseconds mod 2^32".
+    u32::try_from(ts.as_micros() & u64::from(u32::MAX)).unwrap_or(0)
+}
+
 /// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`private/specs-verified/rules/srt-arq.md`
 /// rule 22, verbatim from `draft-sharabayko-srt-01` L2953-2960, unit
 /// resolution cross-referenced from §5.2's L3276 restatement).
@@ -94,5 +106,29 @@ pub(crate) fn nak_interval(rtt: Duration, rtt_var: Duration) -> Duration {
         NAK_INTERVAL_FLOOR
     } else {
         half
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `timestamp_to_wire_us` keeps exactly the low 32 bits, so a `Timestamp`
+    /// past `u32::MAX` microseconds (about 71.58 minutes) wraps the way the
+    /// §3 wire field defines — it never clamps (a clamp would freeze every
+    /// later packet's timestamp and Too-Late-Packet-Drop a real peer).
+    #[test]
+    fn timestamp_to_wire_us_wraps_mod_2_32() {
+        assert_eq!(timestamp_to_wire_us(Timestamp::from_micros(0)), 0);
+        assert_eq!(timestamp_to_wire_us(Timestamp::from_micros(1_000)), 1_000);
+        assert_eq!(
+            timestamp_to_wire_us(Timestamp::from_micros(u64::from(u32::MAX))),
+            u32::MAX
+        );
+        assert_eq!(
+            timestamp_to_wire_us(Timestamp::from_micros(u64::from(u32::MAX) + 1)),
+            0,
+            "the wrap is modulo 2^32, not a clamp"
+        );
     }
 }

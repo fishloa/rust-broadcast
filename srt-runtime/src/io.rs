@@ -67,6 +67,7 @@
 //! module is compiled.
 
 use broadcast_common::error::InvalidField;
+use broadcast_common::stage::Timestamp;
 use broadcast_common::timeouts::Timeouts;
 use std::hash::{Hash, Hasher};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1247,7 +1248,7 @@ struct Driver {
     next_message_number: u32,
     next_send_seq: u32,
 
-    // Wall-clock epoch for `now: Duration`.
+    // Wall-clock epoch for `now: Timestamp`.
     epoch: Instant,
 
     // Staging: seq → received datagram, released to `deliver` by TSBPD/ARQ.
@@ -1392,7 +1393,8 @@ impl Driver {
     fn poll_timeout(&self) -> Option<Instant> {
         let now = self.elapsed();
         // Full ACK / NAK.
-        let mut at = self.epoch + self.receiver.next_timeout();
+        let mut at = self.epoch
+            + Duration::from_micros(self.receiver.next_timeout().as_micros());
         // TSBPD release / TLPKTDROP skip.
         if let Some(t) = self.tsbpd.next_release_after(now) {
             at = at.min(self.epoch + t);
@@ -1742,7 +1744,7 @@ impl Driver {
         seq_number: u32,
         timestamp: u32,
         key_flag: EncryptionKeyField,
-        now: Duration,
+        now: Timestamp,
     ) {
         // Decrypt an encrypted data packet in place before staging, using the
         // SEK named by its `KK` flag. A missing key (not yet unwrapped, or
@@ -1826,7 +1828,7 @@ impl Driver {
         self.release(&tsbpd_out);
     }
 
-    fn ingress_control(&mut self, c: &ControlPacket<'_>, now: Duration) {
+    fn ingress_control(&mut self, c: &ControlPacket<'_>, now: Timestamp) {
         match c {
             ControlPacket::Ack(ack) => {
                 if let Some(ackack_bytes) = self.sender.on_ack(ack, now) {
@@ -1871,7 +1873,7 @@ impl Driver {
     /// range (the sender has given up on the message they belonged to), then
     /// drive one release pass so whatever the gap was blocking becomes
     /// deliverable immediately.
-    fn handle_dropreq(&mut self, d: &DropReqPacket, now: Duration) {
+    fn handle_dropreq(&mut self, d: &DropReqPacket, now: Timestamp) {
         let first = d.first_seq & SEQ_NUMBER_MASK;
         let last = d.last_seq & SEQ_NUMBER_MASK;
         if seq_diff(last, first) < 0 {
@@ -1984,16 +1986,22 @@ impl Driver {
         }
     }
 
-    fn elapsed(&self) -> Duration {
-        Instant::now().saturating_duration_since(self.epoch)
+    fn elapsed(&self) -> Timestamp {
+        let micros = u64::try_from(
+            Instant::now()
+                .saturating_duration_since(self.epoch)
+                .as_micros(),
+        )
+        .unwrap_or(u64::MAX);
+        Timestamp::from_micros(micros)
     }
 
     /// The Keep-Alive/ACKACK/etc. control-packet wire `Timestamp` — wraps
-    /// modulo `2^32` past ~71.58 minutes, matching `arq::duration_to_wire_us`
+    /// modulo `2^32` past ~71.58 minutes, matching `arq::timestamp_to_wire_us`
     /// (issue #1063; a clamp here made every control packet after that point
     /// carry the exact same wire timestamp forever).
     fn elapsed_us(&self) -> u32 {
-        crate::arq::duration_to_wire_us(self.elapsed())
+        crate::arq::timestamp_to_wire_us(self.elapsed())
     }
 
     /// How long until the DATA packet at the front of the outbound data

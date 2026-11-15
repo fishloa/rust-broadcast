@@ -4,8 +4,9 @@
 //! `private/specs-verified/rules/srt-arq.md`.
 //!
 //! Sans-IO: [`Receiver`] never reads a wall clock — [`Receiver::feed_data`]
-//! and [`Receiver::tick`] take a caller-supplied `now: core::time::Duration`
-//! (elapsed time since a fixed epoch the caller owns).
+//! and [`Receiver::tick`] take a caller-supplied
+//! `now: broadcast_common::stage::Timestamp` (monotonic time since a fixed
+//! epoch the caller owns).
 //!
 //! # Delivery model
 //! [`FeedOutcome::delivered`] lists the sequence numbers that became
@@ -23,13 +24,14 @@
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use crate::packet::nak::build_loss_list;
 use crate::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, LossListEntry, NakPacket};
 
 use super::rtt::RttEstimator;
-use super::{FULL_ACK_PERIOD, LIGHT_ACK_THRESHOLD, duration_to_wire_us, nak_interval, seq};
+use super::{FULL_ACK_PERIOD, LIGHT_ACK_THRESHOLD, nak_interval, seq, timestamp_to_wire_us};
 
 /// The most sequence numbers ahead of the cumulative ack point this receiver
 /// will ever track (a bound on `loss_list` + `out_of_order`, which together
@@ -113,14 +115,14 @@ pub struct Receiver {
     /// Packets received since the last ACK of either kind (rule 12).
     packets_since_ack: u32,
     /// Absolute time the last Full ACK was sent (rule 11).
-    last_full_ack_at: Duration,
+    last_full_ack_at: Timestamp,
     /// Absolute time the last periodic NAK was sent (rule 22).
-    last_nak_at: Duration,
+    last_nak_at: Timestamp,
     /// Next Full ACK's Acknowledgement Number ("starting from 1", §3.2.4).
     next_ack_number: u32,
     /// Outstanding Full ACKs awaiting their ACKACK, send-time keyed by
     /// Acknowledgement Number (rules 24, 26-28).
-    outstanding_acks: BTreeMap<u32, Duration>,
+    outstanding_acks: BTreeMap<u32, Timestamp>,
     rtt: RttEstimator,
     /// The Full ACK's "Available Buffer Size" (packets) — the negotiated
     /// Maximum Flow Window Size (§3.2.1), the most this receiver will ever
@@ -155,8 +157,8 @@ impl Receiver {
             pending_skips: Vec::new(),
             highest_received: None,
             packets_since_ack: 0,
-            last_full_ack_at: Duration::ZERO,
-            last_nak_at: Duration::ZERO,
+            last_full_ack_at: Timestamp::ZERO,
+            last_nak_at: Timestamp::ZERO,
             next_ack_number: 1,
             outstanding_acks: BTreeMap::new(),
             rtt: RttEstimator::new(),
@@ -215,7 +217,7 @@ impl Receiver {
     /// A packet more than the flow window ahead of the ack point is ignored
     /// ([`FeedOutcome::out_of_window`]): a crafted sequence jump therefore
     /// never grows the loss list or the out-of-order set past the window.
-    pub fn feed_data(&mut self, seq_number: u32, now: Duration) -> FeedOutcome {
+    pub fn feed_data(&mut self, seq_number: u32, now: Timestamp) -> FeedOutcome {
         // Not a 31-bit sequence number at all (§3.1): never a real packet.
         if seq_number > crate::packet::SEQ_NUMBER_MASK {
             return FeedOutcome {
@@ -310,7 +312,7 @@ impl Receiver {
     /// Serialize `entries` into one or more NAK datagrams, none larger than
     /// the MTU allows (a periodic NAK of a bursty-loss list otherwise grows
     /// past one datagram, which the socket refuses with `EMSGSIZE`).
-    fn build_naks(&self, entries: &[LossListEntry], now: Duration) -> Vec<Vec<u8>> {
+    fn build_naks(&self, entries: &[LossListEntry], now: Timestamp) -> Vec<Vec<u8>> {
         let budget = self.max_nak_cif_len();
         let mut out = Vec::new();
         let mut chunk: Vec<LossListEntry> = Vec::new();
@@ -338,10 +340,10 @@ impl Receiver {
     /// encoded (a sequence number wider than 31 bits — unreachable, every
     /// entry derives from a masked sequence number — is dropped rather than
     /// panicking the connection).
-    fn nak_datagram(&self, entries: &[LossListEntry], now: Duration) -> Option<Vec<u8>> {
+    fn nak_datagram(&self, entries: &[LossListEntry], now: Timestamp) -> Option<Vec<u8>> {
         let raw = build_loss_list(entries).ok()?;
         let pkt = ControlPacket::Nak(NakPacket {
-            timestamp: duration_to_wire_us(now),
+            timestamp: timestamp_to_wire_us(now),
             dest_socket_id: self.dest_socket_id,
             raw_loss_list: &raw,
         });
@@ -356,7 +358,7 @@ impl Receiver {
     /// since the last ACK (rule 12), and a periodic NAK once `NAKInterval`
     /// has elapsed *and* the loss list is non-empty (rules 21, 22) — never a
     /// NAK when nothing is believed lost.
-    pub fn tick(&mut self, now: Duration) -> Vec<Vec<u8>> {
+    pub fn tick(&mut self, now: Timestamp) -> Vec<Vec<u8>> {
         let mut out = Vec::new();
 
         if elapsed(now, self.last_full_ack_at) >= FULL_ACK_PERIOD {
@@ -384,29 +386,31 @@ impl Receiver {
         out
     }
 
-    /// Absolute (since the connection epoch) time of the next periodic Full
-    /// ACK or, while the loss list is non-empty, the next periodic NAK —
-    /// whichever is earlier. Always defined: the 10 ms Full ACK is
-    /// unconditional (rule 11), so an idle connection still has a deadline.
-    pub fn next_timeout(&self) -> Duration {
-        let ack = self.last_full_ack_at + FULL_ACK_PERIOD;
+    /// Time until the next periodic Full ACK or, while the loss list is
+    /// non-empty, the next periodic NAK — whichever is earlier. Always
+    /// defined: the 10 ms Full ACK is unconditional (rule 11), so an idle
+    /// connection still has a deadline.
+    pub fn next_timeout(&self) -> Timestamp {
+        let ack = self.last_full_ack_at.saturating_add(FULL_ACK_PERIOD);
         if self.loss_list.is_empty() {
             return ack;
         }
-        let nak = self.last_nak_at + nak_interval(self.rtt.rtt(), self.rtt.rtt_var());
+        let nak = self
+            .last_nak_at
+            .saturating_add(nak_interval(self.rtt.rtt(), self.rtt.rtt_var()));
         ack.min(nak)
     }
 
     /// Forget Full ACKs whose ACKACK never came (W3): a lost ACKACK, or a
     /// peer that never sends one, would otherwise leave one entry per Full
     /// ACK (100/s) forever.
-    fn expire_outstanding_acks(&mut self, now: Duration) {
+    fn expire_outstanding_acks(&mut self, now: Timestamp) {
         let retention = (self.rtt.rtt() * ACK_RETENTION_RTTS).max(ACK_RETENTION_FLOOR);
         self.outstanding_acks
             .retain(|_, sent_at| elapsed(now, *sent_at) <= retention);
     }
 
-    fn build_full_ack(&mut self, now: Duration) -> Option<Vec<u8>> {
+    fn build_full_ack(&mut self, now: Timestamp) -> Option<Vec<u8>> {
         let ack_number = self.next_ack_number;
         self.next_ack_number = self.next_ack_number.wrapping_add(1);
         if self.outstanding_acks.len() >= MAX_OUTSTANDING_ACKS {
@@ -416,7 +420,7 @@ impl Receiver {
         self.outstanding_acks.insert(ack_number, now);
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number,
-            timestamp: duration_to_wire_us(now),
+            timestamp: timestamp_to_wire_us(now),
             dest_socket_id: self.dest_socket_id,
             cif: AckCif::Full {
                 last_ack_seq: self.next_expected,
@@ -456,7 +460,7 @@ impl Receiver {
     /// it acknowledges and update RTT/RTTVar from the round-trip sample
     /// (rules 26-30). An ACKACK for an unknown/already-matched
     /// Acknowledgement Number is ignored.
-    pub fn on_ackack(&mut self, ackack: &AckAckPacket, now: Duration) {
+    pub fn on_ackack(&mut self, ackack: &AckAckPacket, now: Timestamp) {
         if let Some(sent_at) = self.outstanding_acks.remove(&ackack.ack_number) {
             self.rtt.update(elapsed(now, sent_at));
         }
@@ -526,8 +530,8 @@ impl Receiver {
 /// `now - since`, clamped to zero rather than panicking on a non-monotonic
 /// `now` (a caller bug, not a protocol condition this module needs to
 /// reject).
-fn elapsed(now: Duration, since: Duration) -> Duration {
-    now.checked_sub(since).unwrap_or(Duration::ZERO)
+fn elapsed(now: Timestamp, since: Timestamp) -> Duration {
+    now.saturating_sub(since)
 }
 
 /// Coalesce a run of sequence numbers (already circularly increasing) into
@@ -561,26 +565,31 @@ mod tests {
     const PEER: u32 = 0xBBBB;
     const MAX_FLOW_WINDOW: u32 = 8192;
 
+    /// A `Timestamp` at `d` microseconds since the test epoch.
+    fn ts(d: Duration) -> Timestamp {
+        Timestamp::from_micros(u64::try_from(d.as_micros()).expect("in range"))
+    }
+
     #[test]
     fn next_timeout_is_the_full_ack_period_then_tracks_the_nak_interval() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         assert_eq!(
             r.next_timeout(),
-            FULL_ACK_PERIOD,
+            ts(FULL_ACK_PERIOD),
             "fresh receiver: first Full ACK at 10 ms"
         );
-        let _ = r.tick(FULL_ACK_PERIOD);
-        assert_eq!(r.next_timeout(), FULL_ACK_PERIOD * 2);
+        let _ = r.tick(ts(FULL_ACK_PERIOD));
+        assert_eq!(r.next_timeout(), ts(FULL_ACK_PERIOD * 2));
         // a gap puts a NAK deadline on the table; it can only make the deadline earlier or equal
-        let _ = r.feed_data(5, Duration::from_millis(11)); // 1..=4 now lost
-        assert!(r.next_timeout() <= FULL_ACK_PERIOD * 2);
+        let _ = r.feed_data(5, Timestamp::from_millis(11)); // 1..=4 now lost
+        assert!(r.next_timeout() <= ts(FULL_ACK_PERIOD * 2));
     }
 
     #[test]
     fn in_order_arrivals_deliver_immediately_without_nak() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for seq_number in 0..5u32 {
-            let outcome = r.feed_data(seq_number, Duration::ZERO);
+            let outcome = r.feed_data(seq_number, Timestamp::ZERO);
             assert_eq!(outcome.delivered, alloc::vec![seq_number]);
             assert!(outcome.nak.is_none());
         }
@@ -591,9 +600,9 @@ mod tests {
     #[test]
     fn a_gap_triggers_an_immediate_nak_and_stalls_delivery() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        r.feed_data(0, Duration::ZERO);
-        r.feed_data(1, Duration::ZERO);
-        let outcome = r.feed_data(3, Duration::ZERO); // seq 2 missing
+        r.feed_data(0, Timestamp::ZERO);
+        r.feed_data(1, Timestamp::ZERO);
+        let outcome = r.feed_data(3, Timestamp::ZERO); // seq 2 missing
         assert!(outcome.delivered.is_empty());
         let nak = outcome.nak.expect("gap must trigger an immediate NAK");
         let ControlPacket::Nak(n) = ControlPacket::parse(&nak).unwrap() else {
@@ -605,7 +614,7 @@ mod tests {
         assert_eq!(r.loss_list_len(), 1);
 
         // Filling the gap unblocks the buffered seq 3 too.
-        let fill = r.feed_data(2, Duration::ZERO);
+        let fill = r.feed_data(2, Timestamp::ZERO);
         assert_eq!(fill.delivered, alloc::vec![2, 3]);
         assert!(fill.nak.is_none());
         assert_eq!(r.ack_point(), 4);
@@ -616,10 +625,10 @@ mod tests {
     fn zero_loss_tick_never_emits_a_nak() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for seq_number in 0..5u32 {
-            r.feed_data(seq_number, Duration::ZERO);
+            r.feed_data(seq_number, Timestamp::ZERO);
         }
         for ms in 1..200u64 {
-            let out = r.tick(Duration::from_millis(ms));
+            let out = r.tick(Timestamp::from_millis(ms));
             for bytes in &out {
                 assert!(!matches!(
                     ControlPacket::parse(bytes).unwrap(),
@@ -632,7 +641,7 @@ mod tests {
     #[test]
     fn full_ack_fires_on_the_10ms_timer_and_light_ack_on_the_64_packet_threshold() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        let out = r.tick(FULL_ACK_PERIOD);
+        let out = r.tick(ts(FULL_ACK_PERIOD));
         assert_eq!(out.len(), 1);
         let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
             panic!("expected ACK");
@@ -642,12 +651,12 @@ mod tests {
 
         // Under the Full ACK period, but past the light-ack packet count.
         for seq_number in 0..LIGHT_ACK_THRESHOLD {
-            r.feed_data(seq_number, Duration::ZERO);
+            r.feed_data(seq_number, Timestamp::ZERO);
         }
-        let out = r.tick(FULL_ACK_PERIOD + Duration::from_millis(1));
+        let out = r.tick(ts(FULL_ACK_PERIOD + Duration::from_millis(1)));
         // Immediately after a Full ACK, the next tick 1ms later is still
         // under the 10ms period, so a Light ACK fires instead.
-        let out2 = r.tick(FULL_ACK_PERIOD + Duration::from_millis(2));
+        let out2 = r.tick(ts(FULL_ACK_PERIOD + Duration::from_millis(2)));
         let light =
             out.into_iter()
                 .chain(out2)
@@ -664,7 +673,7 @@ mod tests {
     #[test]
     fn ackack_updates_rtt_from_the_measured_round_trip() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        let out = r.tick(FULL_ACK_PERIOD);
+        let out = r.tick(ts(FULL_ACK_PERIOD));
         let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
             panic!("expected ACK");
         };
@@ -675,7 +684,7 @@ mod tests {
             libsrt_pad: false,
         };
         let sample = Duration::from_millis(20);
-        r.on_ackack(&ackack, FULL_ACK_PERIOD + sample);
+        r.on_ackack(&ackack, ts(FULL_ACK_PERIOD + sample));
         // moved from the 100ms initial value toward the 20ms sample.
         assert!(r.rtt() < Duration::from_millis(100));
         assert!(r.rtt() > sample);
@@ -697,7 +706,7 @@ mod tests {
     fn a_sequence_number_wider_than_31_bits_is_refused() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for seq in [0x8000_0000u32, 0x8000_0001, u32::MAX] {
-            let out = r.feed_data(seq, Duration::ZERO);
+            let out = r.feed_data(seq, Timestamp::ZERO);
             assert!(out.out_of_window, "{seq:#x}");
             assert!(out.delivered.is_empty() && out.nak.is_none());
         }
@@ -709,9 +718,9 @@ mod tests {
     #[test]
     fn a_hostile_sequence_jump_is_ignored_not_enumerated() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        r.feed_data(0, Duration::ZERO);
+        r.feed_data(0, Timestamp::ZERO);
         for jump in [(1u32 << 30) - 1, 1 << 20, 1 << 18, 5 << 16] {
-            let out = r.feed_data(jump, Duration::ZERO);
+            let out = r.feed_data(jump, Timestamp::ZERO);
             assert!(out.out_of_window, "jump to {jump} must be refused");
             assert!(out.nak.is_none());
             assert!(out.delivered.is_empty());
@@ -730,11 +739,11 @@ mod tests {
     fn the_flow_window_boundary_is_exact() {
         const WINDOW: u32 = 1000;
         let mut r = Receiver::new(PEER, 0, WINDOW);
-        let beyond = r.feed_data(WINDOW + 1, Duration::ZERO);
+        let beyond = r.feed_data(WINDOW + 1, Timestamp::ZERO);
         assert!(beyond.out_of_window);
         assert_eq!(r.loss_list_len(), 0);
 
-        let edge = r.feed_data(WINDOW, Duration::ZERO);
+        let edge = r.feed_data(WINDOW, Timestamp::ZERO);
         assert!(!edge.out_of_window);
         assert_eq!(r.loss_list_len(), (WINDOW - 1) as usize + 1); // 0..WINDOW-1
         let nak = edge.nak.expect("the gap is NAKed immediately");
@@ -751,7 +760,7 @@ mod tests {
     #[test]
     fn an_oversized_negotiated_window_is_clamped() {
         let mut r = Receiver::new(PEER, 0, u32::MAX);
-        let out = r.feed_data((1 << 30) - 1, Duration::ZERO);
+        let out = r.feed_data((1 << 30) - 1, Timestamp::ZERO);
         assert!(out.out_of_window);
         assert_eq!(r.loss_list_len(), 0);
     }
@@ -762,7 +771,7 @@ mod tests {
     fn unanswered_full_acks_age_out() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for tick in 1..=5_000u64 {
-            r.tick(Duration::from_millis(10 * tick));
+            r.tick(Timestamp::from_millis(10 * tick));
         }
         // Retention is max(4 x RTT, 1 s) = 1 s of 10 ms ACKs.
         let retention_acks =
@@ -780,7 +789,7 @@ mod tests {
     #[test]
     fn ackack_after_expiry_is_ignored() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        let out = r.tick(FULL_ACK_PERIOD);
+        let out = r.tick(ts(FULL_ACK_PERIOD));
         let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
             panic!("expected ACK");
         };
@@ -793,9 +802,9 @@ mod tests {
         let rtt_before = r.rtt();
         // Age the entry out (no ACKACK for 10 s), then deliver the ACKACK.
         for tick in 2..=1_000u64 {
-            r.tick(Duration::from_millis(10 * tick));
+            r.tick(Timestamp::from_millis(10 * tick));
         }
-        r.on_ackack(&ackack, Duration::from_secs(10));
+        r.on_ackack(&ackack, ts(Duration::from_secs(10)));
         assert_eq!(r.rtt(), rtt_before, "an expired ACK must not move the RTT");
     }
 
@@ -805,7 +814,7 @@ mod tests {
     fn outstanding_acks_are_capped() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
         for _ in 0..(MAX_OUTSTANDING_ACKS * 5) {
-            r.build_full_ack(Duration::ZERO);
+            r.build_full_ack(Timestamp::ZERO);
         }
         assert_eq!(r.outstanding_acks.len(), MAX_OUTSTANDING_ACKS);
         // The survivors are the newest.
@@ -819,17 +828,17 @@ mod tests {
     #[test]
     fn periodic_nak_is_split_to_fit_the_mtu() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        r.feed_data(0, Duration::ZERO);
+        r.feed_data(0, Timestamp::ZERO);
         // Receive every other packet: 2, 4, ..., 2000 → 1000 isolated losses.
         let mut lost = Vec::new();
         for q in (2..=2000u32).step_by(2) {
-            r.feed_data(q, Duration::ZERO);
+            r.feed_data(q, Timestamp::ZERO);
             lost.push(q - 1);
         }
         assert_eq!(r.loss_list_len(), 1000);
 
         let naks: Vec<Vec<u8>> = r
-            .tick(Duration::from_secs(1))
+            .tick(ts(Duration::from_secs(1)))
             .into_iter()
             .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
             .collect();
@@ -857,12 +866,12 @@ mod tests {
     #[test]
     fn nak_chunking_follows_the_configured_mtu() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW).with_mtu(576);
-        r.feed_data(0, Duration::ZERO);
+        r.feed_data(0, Timestamp::ZERO);
         for q in (2..=400u32).step_by(2) {
-            r.feed_data(q, Duration::ZERO);
+            r.feed_data(q, Timestamp::ZERO);
         }
         let naks: Vec<Vec<u8>> = r
-            .tick(Duration::from_secs(1))
+            .tick(ts(Duration::from_secs(1)))
             .into_iter()
             .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
             .collect();
@@ -879,14 +888,14 @@ mod tests {
     fn periodic_nak_coalesces_a_loss_run_across_the_wrap() {
         const MAX: u32 = crate::packet::SEQ_NUMBER_MASK;
         let mut r = Receiver::new(PEER, MAX - 2, MAX_FLOW_WINDOW);
-        r.feed_data(MAX - 2, Duration::ZERO);
-        let imm = r.feed_data(2, Duration::ZERO); // MAX-1, MAX, 0, 1 lost
+        r.feed_data(MAX - 2, Timestamp::ZERO);
+        let imm = r.feed_data(2, Timestamp::ZERO); // MAX-1, MAX, 0, 1 lost
         assert_eq!(
             nak_entries(&imm.nak.expect("gap NAK")),
             alloc::vec![LossListEntry::Range(MAX - 1, 1)]
         );
         let naks: Vec<Vec<u8>> = r
-            .tick(Duration::from_secs(1))
+            .tick(ts(Duration::from_secs(1)))
             .into_iter()
             .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
             .collect();
@@ -905,10 +914,10 @@ mod tests {
     #[test]
     fn gap_after_a_dropreq_starts_at_the_ack_point() {
         let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
-        r.feed_data(0, Duration::ZERO);
+        r.feed_data(0, Timestamp::ZERO);
         r.skip_range(1, 99); // sender gave up on 1..=99
         assert_eq!(r.ack_point(), 100);
-        let out = r.feed_data(105, Duration::ZERO);
+        let out = r.feed_data(105, Timestamp::ZERO);
         assert_eq!(
             nak_entries(&out.nak.expect("gap NAK")),
             alloc::vec![LossListEntry::Range(100, 104)]

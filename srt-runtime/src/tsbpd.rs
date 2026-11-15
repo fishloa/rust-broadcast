@@ -59,6 +59,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use crate::arq::seq;
@@ -94,10 +95,6 @@ const MAX_TLPKT_SKIP_SPAN: u32 = 1 << 16;
 const MAX_SKIPS: usize = 1024;
 
 /// `now` as whole microseconds, saturating (a `Duration` past ~584 000 years).
-fn duration_us(now: Duration) -> u64 {
-    u64::try_from(now.as_micros()).unwrap_or(u64::MAX)
-}
-
 /// Outcome of one [`TsbpdScheduler::tick`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[non_exhaustive]
@@ -346,8 +343,8 @@ impl TsbpdScheduler {
     /// * `pkt_timestamp` — the data packet's 32-bit timestamp (§3.1).
     /// * `now` — current receiver time since the fixed epoch (the `T_NOW`
     ///   used to decide whether `PktTsbpdTime ≤ now`).
-    pub fn feed_data(&mut self, seq_number: u32, pkt_timestamp: u32, now: Duration) -> TickOutcome {
-        let now_us = duration_us(now);
+    pub fn feed_data(&mut self, seq_number: u32, pkt_timestamp: u32, now: Timestamp) -> TickOutcome {
+        let now_us = now.as_micros();
         let unwrapped_ts = self.unwrap_timestamp(pkt_timestamp);
 
         // Track highest fed (monotonic, for detecting when delivery advances
@@ -412,8 +409,8 @@ impl TsbpdScheduler {
     /// Packets whose `PktTsbpdTime ≤ now` are released in sequence order.
     /// If too-late drop is enabled, packets whose play time has already
     /// passed the threshold are dropped instead.
-    pub fn tick(&mut self, now: Duration) -> TickOutcome {
-        let now_us = duration_us(now);
+    pub fn tick(&mut self, now: Timestamp) -> TickOutcome {
+        let now_us = now.as_micros();
         let (delivered, dropped) = self.release_ready(now_us);
         TickOutcome { delivered, dropped }
     }
@@ -423,8 +420,8 @@ impl TsbpdScheduler {
     /// A buffered packet whose time has passed but that cannot be released
     /// (waiting for a gap with TLPKTDROP off) yields no wake-up: it is
     /// re-examined on the next event, never by a busy timer.
-    pub fn next_release_after(&self, now: Duration) -> Option<Duration> {
-        let now_us = duration_us(now);
+    pub fn next_release_after(&self, now: Timestamp) -> Option<Duration> {
+        let now_us = now.as_micros();
         self.buffer
             .values()
             .copied()
@@ -628,6 +625,11 @@ mod tests {
     use alloc::vec;
     use core::time::Duration;
 
+    /// A `Timestamp` at `d` microseconds since the test epoch.
+    fn ts(d: Duration) -> Timestamp {
+        Timestamp::from_micros(u64::try_from(d.as_micros()).expect("in range"))
+    }
+
     const TIME_BASE: u64 = 1_000_000; // arbitrary TsbpdTimeBase
     const TIME_BASE_I64: i64 = 1_000_000; // the same, as the scheduler's signed seed
     const DELAY_MS: u64 = 120; // minimum
@@ -649,19 +651,19 @@ mod tests {
     fn next_release_after_is_the_earliest_future_play_time() {
         let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, true, None);
         assert_eq!(
-            s.next_release_after(Duration::ZERO),
+            s.next_release_after(Timestamp::ZERO),
             None,
             "nothing buffered"
         );
-        let _ = s.feed_data(0, 0, Duration::ZERO);
+        let _ = s.feed_data(0, 0, Timestamp::ZERO);
         let t = s
-            .next_release_after(Duration::ZERO)
+            .next_release_after(Timestamp::ZERO)
             .expect("one packet buffered");
         assert_eq!(t, Duration::from_millis(DELAY_MS));
-        assert_eq!(s.next_release_after(t), None, "strictly after");
-        let _ = s.tick(t);
+        assert_eq!(s.next_release_after(ts(t)), None, "strictly after");
+        let _ = s.tick(ts(t));
         assert_eq!(
-            s.next_release_after(Duration::ZERO),
+            s.next_release_after(Timestamp::ZERO),
             None,
             "released packets leave the buffer"
         );
@@ -670,8 +672,8 @@ mod tests {
     #[test]
     fn a_stuck_gap_without_tlpktdrop_produces_no_busy_wakeup() {
         let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, false, None);
-        let _ = s.feed_data(2, 0, Duration::ZERO); // 0 and 1 missing, drop disabled
-        let late = Duration::from_millis(DELAY_MS * 10);
+        let _ = s.feed_data(2, 0, Timestamp::ZERO); // 0 and 1 missing, drop disabled
+        let late = Timestamp::from_millis(DELAY_MS * 10);
         let _ = s.tick(late);
         assert_eq!(
             s.next_release_after(late),
@@ -697,23 +699,23 @@ mod tests {
 
         // Feed at now=0 — neither is deliverable yet (PktTsbpdTime is
         // in the future).
-        let outcome = s.feed_data(0, ts_a, Duration::ZERO);
+        let outcome = s.feed_data(0, ts_a, Timestamp::ZERO);
         assert!(outcome.delivered.is_empty());
         assert!(outcome.dropped.is_empty());
         assert_eq!(s.buffered_count(), 1);
 
-        let outcome = s.feed_data(1, ts_b, Duration::ZERO);
+        let outcome = s.feed_data(1, ts_b, Timestamp::ZERO);
         assert!(outcome.delivered.is_empty());
         assert!(outcome.dropped.is_empty());
         assert_eq!(s.buffered_count(), 2);
 
         // Advance clock past packet 1's PktTsbpdTime but not packet 2's.
         let pkt1_tsbpd = TIME_BASE + u64::from(ts_a) + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(pkt1_tsbpd));
         assert_eq!(outcome.delivered, vec![0]);
 
         let pkt2_tsbpd = TIME_BASE + u64::from(ts_b) + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt2_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(pkt2_tsbpd));
         assert_eq!(outcome.delivered, vec![1]);
         assert!(s.buffer.is_empty());
     }
@@ -727,13 +729,13 @@ mod tests {
         // `gap_skip_delivers_successor_at_its_play_time`).
         let ts = 10_000u32;
         let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
-        let outcome = s.feed_data(1, ts, Duration::ZERO);
+        let outcome = s.feed_data(1, ts, Timestamp::ZERO);
         assert!(outcome.delivered.is_empty());
         assert_eq!(s.buffered_count(), 1);
 
         // Now packet 0 arrives — tick at the same time so that both are
         // past their play time and can be delivered together.
-        let outcome = s.feed_data(0, 0, Duration::from_micros(pkt1_tsbpd));
+        let outcome = s.feed_data(0, 0, Timestamp::from_micros(pkt1_tsbpd));
         // Both should be delivered in order.
         assert_eq!(outcome.delivered, vec![0, 1]);
         assert!(s.buffer.is_empty());
@@ -749,7 +751,7 @@ mod tests {
         // Arrive now at PktTsbpdTime + threshold + 1 µs — just past the
         // drop window.
         let threshold_us = (DELAY_MS * 5).div_ceil(4) * 1000;
-        let very_late_now = Duration::from_micros(pkt_tsbpd + threshold_us + 1);
+        let very_late_now = Timestamp::from_micros(pkt_tsbpd + threshold_us + 1);
         let outcome = s.feed_data(0, 0, very_late_now);
         assert!(
             outcome.delivered.is_empty(),
@@ -775,27 +777,27 @@ mod tests {
         );
 
         // Feed packets 1 and 2 well before their play times — they buffer.
-        s.feed_data(1, 10_000, Duration::ZERO);
-        s.feed_data(2, 20_000, Duration::ZERO);
+        s.feed_data(1, 10_000, Timestamp::ZERO);
+        s.feed_data(2, 20_000, Timestamp::ZERO);
         assert_eq!(s.buffered_count(), 2);
 
         // At packet 1's play time the missing packet 0 is reported dropped
         // and packet 1 delivered — not thrown away with the gap.
         let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(pkt1_tsbpd));
         assert_eq!(outcome.delivered, vec![1]);
         assert_eq!(outcome.dropped, vec![0]);
 
         // Packet 2 is now left sitting past its too-late threshold.
         let pkt2_tsbpd = TIME_BASE + 20_000 + DELAY_MS * 1000;
         let threshold = (DELAY_MS * 5).div_ceil(4) * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt2_tsbpd + threshold + 1));
+        let outcome = s.tick(Timestamp::from_micros(pkt2_tsbpd + threshold + 1));
         assert!(outcome.delivered.is_empty());
         assert_eq!(outcome.dropped, vec![2]);
 
         // A late duplicate of the skipped packet 0 is a no-op — the cursor
         // has already advanced past it.
-        let outcome = s.feed_data(0, 0, Duration::from_micros(pkt2_tsbpd + threshold * 10));
+        let outcome = s.feed_data(0, 0, Timestamp::from_micros(pkt2_tsbpd + threshold * 10));
         assert!(outcome.delivered.is_empty());
         assert_eq!(s.next_release(), 3);
         assert_eq!(s.buffered_count(), 0);
@@ -808,7 +810,7 @@ mod tests {
         let ts_step = 10_000u32;
         let num_packets = 5;
         for i in 0..num_packets {
-            s.feed_data(i, ts_step * i, Duration::ZERO);
+            s.feed_data(i, ts_step * i, Timestamp::ZERO);
         }
         // All are buffered.
         assert_eq!(s.buffered_count(), num_packets as usize);
@@ -816,7 +818,7 @@ mod tests {
         // Tick past the last packet's play time.
         let last_tsbpd =
             TIME_BASE + u64::from(ts_step) * (num_packets - 1) as u64 + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(last_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(last_tsbpd));
         assert_eq!(outcome.delivered, (0..num_packets).collect::<Vec<_>>());
     }
 
@@ -844,10 +846,10 @@ mod tests {
         // (`0x1_0000_0000 - 0xFFFF_FF00 + 500 = 256 + 500 = 756`).
         let past_wrap: u32 = 500;
 
-        let outcome = s.feed_data(0, near_wrap, Duration::ZERO);
+        let outcome = s.feed_data(0, near_wrap, Timestamp::ZERO);
         assert!(outcome.delivered.is_empty());
 
-        let outcome = s.feed_data(1, past_wrap, Duration::ZERO);
+        let outcome = s.feed_data(1, past_wrap, Timestamp::ZERO);
         assert!(outcome.delivered.is_empty());
         assert_eq!(s.buffered_count(), 2);
 
@@ -856,15 +858,15 @@ mod tests {
         // play time ~71 minutes BEFORE pkt0's, so it would be released the
         // instant pkt0 is — that is what the checkpoints below pin down.
         let pkt0_tsbpd = TIME_BASE + u64::from(near_wrap) + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(pkt0_tsbpd));
         assert_eq!(
             outcome.delivered,
             vec![0],
             "at pkt0's play time only pkt0 is due"
         );
-        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd + 755));
+        let outcome = s.tick(Timestamp::from_micros(pkt0_tsbpd + 755));
         assert!(outcome.delivered.is_empty(), "pkt1 is 756 µs later");
-        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd + 756));
+        let outcome = s.tick(Timestamp::from_micros(pkt0_tsbpd + 756));
         assert_eq!(outcome.delivered, vec![1]);
     }
 
@@ -931,10 +933,10 @@ mod tests {
     #[test]
     fn a_reordered_pre_wrap_packet_keeps_its_play_time_before_the_first_post_wrap_one() {
         let mut s = TsbpdScheduler::new(0, 0, Duration::from_millis(DELAY_MS), 0, false, None);
-        let _ = s.feed_data(1, 5, Duration::ZERO);
-        let _ = s.feed_data(0, u32::MAX - 15, Duration::ZERO);
+        let _ = s.feed_data(1, 5, Timestamp::ZERO);
+        let _ = s.feed_data(0, u32::MAX - 15, Timestamp::ZERO);
         assert_eq!(
-            s.next_release_after(Duration::ZERO),
+            s.next_release_after(Timestamp::ZERO),
             Some(Duration::from_micros(DELAY_MS * 1000 - 16)),
             "16 us before the wrap point, so before the epoch the post-wrap packet seeded"
         );
@@ -963,7 +965,7 @@ mod tests {
         // Feed a packet very late but with tlpktdrop disabled.
         let ts = 0u32;
         let very_late_now =
-            Duration::from_micros(TIME_BASE + u64::from(ts) + DELAY_MS * 1000 + 1_000_000);
+            Timestamp::from_micros(TIME_BASE + u64::from(ts) + DELAY_MS * 1000 + 1_000_000);
         let outcome = s.feed_data(0, ts, very_late_now);
         // Should be delivered (not dropped) because tlpktdrop is disabled.
         assert_eq!(outcome.delivered, vec![0]);
@@ -989,18 +991,18 @@ mod tests {
         s.feed_data(
             1,
             10_000,
-            Duration::from_micros(TIME_BASE + 10_000 + DELAY_MS * 1000),
+            Timestamp::from_micros(TIME_BASE + 10_000 + DELAY_MS * 1000),
         );
         s.feed_data(
             2,
             20_000,
-            Duration::from_micros(TIME_BASE + 20_000 + DELAY_MS * 1000),
+            Timestamp::from_micros(TIME_BASE + 20_000 + DELAY_MS * 1000),
         );
         assert!(s.has_gap());
         assert_eq!(s.buffered_count(), 2);
 
         // Even ticking far in the future should not deliver without packet 0.
-        let outcome = s.tick(Duration::from_micros(TIME_BASE + 100_000 + DELAY_MS * 1000));
+        let outcome = s.tick(Timestamp::from_micros(TIME_BASE + 100_000 + DELAY_MS * 1000));
         assert!(outcome.delivered.is_empty());
         assert!(s.has_gap());
     }
@@ -1011,12 +1013,12 @@ mod tests {
         // its play time, the missing positions before it are dropped and IT
         // is delivered — not thrown away with the gap.
         let mut s = sched(); // too-late drop enabled
-        s.feed_data(1, 10_000, Duration::ZERO);
-        s.feed_data(2, 20_000, Duration::ZERO);
+        s.feed_data(1, 10_000, Timestamp::ZERO);
+        s.feed_data(2, 20_000, Timestamp::ZERO);
         assert_eq!(s.buffered_count(), 2);
 
         let pkt1_tsbpd = TIME_BASE + 10_000 + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(pkt1_tsbpd));
         assert_eq!(
             outcome.delivered,
             vec![1],
@@ -1029,7 +1031,7 @@ mod tests {
         );
 
         let pkt2_tsbpd = TIME_BASE + 20_000 + DELAY_MS * 1000;
-        let outcome = s.tick(Duration::from_micros(pkt2_tsbpd));
+        let outcome = s.tick(Timestamp::from_micros(pkt2_tsbpd));
         assert_eq!(outcome.delivered, vec![2]);
     }
 
@@ -1037,7 +1039,7 @@ mod tests {
     fn duplicate_arrival_does_not_advance_clock() {
         let mut s = sched();
         let ts = 0u32;
-        let now = Duration::from_micros(TIME_BASE + DELAY_MS * 1000);
+        let now = Timestamp::from_micros(TIME_BASE + DELAY_MS * 1000);
         s.feed_data(0, ts, now);
         assert_eq!(s.buffered_count(), 0); // delivered immediately
 
@@ -1059,7 +1061,7 @@ mod tests {
             s.feed_data(
                 first_seq + i,
                 i * 1000,
-                Duration::from_micros(u64::try_from(arrival).unwrap()),
+                Timestamp::from_micros(u64::try_from(arrival).unwrap()),
             );
         }
     }
@@ -1129,7 +1131,7 @@ mod tests {
         s.feed_data(
             DRIFT_SAMPLE_COUNT - 1,
             999 * 1000,
-            Duration::from_micros(u64::try_from(predicted + 999 * 2).unwrap()),
+            Timestamp::from_micros(u64::try_from(predicted + 999 * 2).unwrap()),
         );
         assert_eq!(s.drift_us(), 999);
         assert_eq!(
@@ -1152,7 +1154,7 @@ mod tests {
             false,
             None,
         );
-        let t = Duration::from_micros(u64::try_from(TIME_BASE_I64).unwrap());
+        let t = Timestamp::from_micros(u64::try_from(TIME_BASE_I64).unwrap());
         s.feed_data(0, 0, t);
         assert_eq!(s.drift_sample_count, 1, "the first packet is a sample");
         s.feed_data(5, 5_000, t); // jumps a gap
@@ -1206,10 +1208,10 @@ mod tests {
             // The wire field is the true value modulo 2^32.
             let raw = u32::try_from(true_ts & 0xFFFF_FFFF).unwrap();
             last_now = true_ts + 10_000;
-            let out = s.feed_data(i, raw, Duration::from_micros(last_now));
+            let out = s.feed_data(i, raw, Timestamp::from_micros(last_now));
             dropped.extend(out.dropped);
         }
-        let out = s.tick(Duration::from_micros(last_now + DELAY_MS * 1000));
+        let out = s.tick(Timestamp::from_micros(last_now + DELAY_MS * 1000));
         dropped.extend(out.dropped);
         assert!(dropped.is_empty(), "dropped across the wrap: {dropped:?}");
         assert_eq!(s.next_release(), PACKETS, "every packet was released");
