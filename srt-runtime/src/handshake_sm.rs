@@ -10,12 +10,14 @@
 //!
 //! This module also holds the `crypto`-feature-gated §6.1.5 Key Material
 //! Exchange helpers ([`CryptoConfig`], `build_key_material_extension`,
-//! `recover_sek`, `echo_key_material_as_response`, `verify_km_echo`) shared
+//! `recover_sek`, `verify_km_echo`) shared
 //! by [`crate::caller::CallerHandshake`] / [`crate::listener::ListenerHandshake`]
 //! — see [`CryptoConfig`]'s doc and `private/specs-verified/rules/srt-crypto.md`. Congestion
 //! control beyond LiveCC packet pacing is an explicit follow-up — see the
 //! crate root docs.
 
+#[cfg(feature = "crypto")]
+use alloc::borrow::Cow;
 use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -33,8 +35,9 @@ use crate::packet::handshake::{HS_EXT_FLAG_CONFIG, HS_EXT_FLAG_HSREQ};
 #[cfg(feature = "crypto")]
 use crate::packet::{Cipher, KmAuth, KmKeyFlag, StreamEncapsulation};
 use crate::packet::{
-    ControlPacket, EncryptionField, GroupMembershipExtension, HandshakeExtensionMessageFlags,
-    HandshakePacket, HandshakeType, HsExtMessage,
+    ControlPacket, EncryptionField, GroupMembershipExtension, HandshakeExtensionBlock,
+    HandshakeExtensionMessageFlags, HandshakeExtensions, HandshakePacket, HandshakeType,
+    HsExtMessage,
 };
 
 /// A base protocol version number of `4` — the value the Caller's INDUCTION
@@ -749,33 +752,75 @@ pub(crate) fn build_bytes(hp: HandshakePacket<'_>) -> Result<Vec<u8>> {
 /// Builds the extensions payload for a CONCLUSION-phase handshake carrying a
 /// Handshake Extension Message plus optional Stream ID / Group Membership,
 /// returning `(bytes, Extension Field flags)`.
-pub(crate) fn build_conclusion_extensions(
+pub(crate) fn build_conclusion_extensions<'a>(
     hs_ext_type: crate::packet::ExtensionType,
-    hs_msg: &HsExtMessage,
-    stream_id: Option<&str>,
-    group: Option<GroupMembershipExtension>,
-) -> Result<(Vec<u8>, u16)> {
-    use crate::packet::handshake::{build_extension_block, encode_stream_id};
-
-    let mut ext_bytes = Vec::new();
-    ext_bytes.extend(build_extension_block(hs_ext_type, &hs_msg.to_bytes())?);
+    contents: &'a ConclusionExtensionContents,
+) -> (HandshakeExtensions<'a>, u16) {
+    let mut blocks = alloc::vec![HandshakeExtensionBlock {
+        ext_type: hs_ext_type,
+        contents: &contents.hs_msg,
+    }];
     let mut ext_flags = HS_EXT_FLAG_HSREQ;
-    if let Some(sid) = stream_id {
-        let sid_bytes = encode_stream_id(sid);
-        ext_bytes.extend(build_extension_block(
-            crate::packet::ExtensionType::Sid,
-            &sid_bytes,
-        )?);
+    if let Some(sid) = contents.stream_id.as_ref() {
+        blocks.push(HandshakeExtensionBlock {
+            ext_type: crate::packet::ExtensionType::Sid,
+            contents: sid,
+        });
         ext_flags |= HS_EXT_FLAG_CONFIG;
     }
-    if let Some(g) = group {
-        ext_bytes.extend(build_extension_block(
-            crate::packet::ExtensionType::Group,
-            &g.to_bytes(),
-        )?);
+    if let Some(group) = contents.group.as_ref() {
+        blocks.push(HandshakeExtensionBlock {
+            ext_type: crate::packet::ExtensionType::Group,
+            contents: group,
+        });
         ext_flags |= HS_EXT_FLAG_CONFIG;
     }
-    Ok((ext_bytes, ext_flags))
+    if let Some((ext_type, km)) = contents.km.as_ref() {
+        blocks.push(HandshakeExtensionBlock {
+            ext_type: *ext_type,
+            contents: km,
+        });
+        ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+    }
+    (HandshakeExtensions(blocks), ext_flags)
+}
+
+/// The extension contents a CONCLUSION carries, encoded once and owned by the
+/// handshake that sends it (the packet borrows them).
+pub(crate) struct ConclusionExtensionContents {
+    hs_msg: Vec<u8>,
+    stream_id: Option<Vec<u8>>,
+    group: Option<Vec<u8>>,
+    km: Option<(crate::packet::ExtensionType, Vec<u8>)>,
+}
+
+impl ConclusionExtensionContents {
+    /// Encode a Handshake Extension Message plus optional Stream ID and Group
+    /// Membership (§3.2.1.1, §3.2.1.3, §3.2.1.4).
+    pub(crate) fn new(
+        hs_msg: HsExtMessage,
+        stream_id: Option<&str>,
+        group: Option<GroupMembershipExtension>,
+    ) -> Self {
+        use crate::packet::handshake::encode_stream_id;
+        ConclusionExtensionContents {
+            hs_msg: Vec::from(hs_msg.to_bytes()),
+            stream_id: stream_id.map(encode_stream_id),
+            group: group.map(|g| Vec::from(g.to_bytes())),
+            km: None,
+        }
+    }
+
+    /// Add an `SRT_CMD_KMREQ` Key Material message (§6.1.5) — the Caller's
+    /// request, or the Listener's `SRT_CMD_KMRSP` echo.
+    #[cfg(feature = "crypto")]
+    pub(crate) fn set_key_material(
+        &mut self,
+        ext_type: crate::packet::ExtensionType,
+        contents: Vec<u8>,
+    ) {
+        self.km = Some((ext_type, contents));
+    }
 }
 
 /// A parsed peer extension payload relevant to the Caller-Listener handshake:
@@ -811,12 +856,6 @@ pub(crate) fn parse_peer_extensions<'a>(
 
     let mut out = ParsedPeerExtensions::default();
     for block in hp.extensions.iter() {
-        let block = block.map_err(|_| {
-            Error::InvalidField(InvalidField {
-                field: "handshake extensions",
-                reason: "malformed extension block",
-            })
-        })?;
         match block.ext_type {
             ExtensionType::HsReq | ExtensionType::HsRsp => {
                 let msg = block.as_hs_ext_message().map_err(|_| {
@@ -893,6 +932,36 @@ pub(crate) fn build_key_material_extension(crypto: &CryptoConfig) -> Result<Vec<
     crate::packet::handshake::build_extension_block(crate::packet::ExtensionType::KmReq, &buf)
 }
 
+/// The `SRT_CMD_KMREQ` Key Material message itself (§3.2.1.2/§3.2.2) —
+/// [`build_key_material_extension`] without its block header, ready to be a
+/// packet's extension contents.
+#[cfg(feature = "crypto")]
+pub(crate) fn build_key_material_contents(crypto: &CryptoConfig) -> Result<Vec<u8>> {
+    let block = build_key_material_extension(crypto)?;
+    Ok(block[crate::packet::handshake::HANDSHAKE_EXT_BLOCK_HEADER_LEN..].to_vec())
+}
+
+/// The `SRT_CMD_KMRSP` contents echoing a peer's Key Material message: its
+/// own bytes when we have them (a parsed block), else a re-serialization of
+/// the decoded message (§6.1.5).
+#[cfg(feature = "crypto")]
+pub(crate) fn echo_key_material_contents<'a>(
+    hp: &'a HandshakePacket<'a>,
+    km: &KeyMaterial<'_>,
+) -> Result<Cow<'a, [u8]>> {
+    for block in hp.extensions.iter() {
+        if matches!(
+            block.ext_type,
+            crate::packet::ExtensionType::KmReq | crate::packet::ExtensionType::KmRsp
+        ) {
+            return Ok(Cow::Borrowed(block.contents));
+        }
+    }
+    let mut contents = alloc::vec![0u8; km.serialized_len()];
+    km.serialize_into(&mut contents)?;
+    Ok(Cow::Owned(contents))
+}
+
 /// A recovered/negotiated `(SEK, Salt)` pair.
 #[cfg(feature = "crypto")]
 pub(crate) type RecoveredSek = (SecretBytes, [u8; crate::crypto::SALT_LEN]);
@@ -962,17 +1031,6 @@ pub(crate) fn recover_both_seks(
     ))
 }
 
-/// Re-serialize a parsed Key Material message and wrap it as a `KmRsp`
-/// extension block — the responder's confirmation echo (§6.1.5: "the
-/// responder ... echoes the same KM message back to prove it derived the
-/// same SEK").
-#[cfg(feature = "crypto")]
-pub(crate) fn echo_key_material_as_response(km: &KeyMaterial<'_>) -> Result<Vec<u8>> {
-    let mut buf = alloc::vec![0u8; km.serialized_len()];
-    km.serialize_into(&mut buf)?;
-    crate::packet::handshake::build_extension_block(crate::packet::ExtensionType::KmRsp, &buf)
-}
-
 /// Verify a Listener's echoed Key Material matches what this Caller sent.
 /// Recomputed deterministically from `crypto` (the same passphrase/salt/sek
 /// always wraps to the same bytes, §6.2.1) rather than requiring the Caller
@@ -997,17 +1055,9 @@ pub(crate) fn verify_km_echo(crypto: &CryptoConfig, echoed: &KeyMaterial<'_>) ->
 /// The greater-of-both-parties TSBPD latency rule (§4.3.1.2), rounded down to
 /// the whole milliseconds the wire carries.
 pub(crate) fn negotiate_latency(local: Duration, peer_msg: &HsExtMessage) -> Duration {
-    let local_ms = u64::try_from(local.as_millis()).unwrap_or(u64::MAX);
-    let ms = local_ms
-        .max(u64::from(peer_msg.receiver_tsbpd_delay_ms))
-        .max(u64::from(peer_msg.sender_tsbpd_delay_ms));
-    Duration::from_millis(ms)
-}
-
-/// A latency as the whole milliseconds the wire carries (a sub-millisecond
-/// remainder is dropped, and a value past `u16::MAX` ms saturates).
-pub(crate) fn wire_latency_ms(latency: Duration) -> u16 {
-    u16::try_from(latency.as_millis()).unwrap_or(u16::MAX)
+    local
+        .max(peer_msg.receiver_tsbpd_delay)
+        .max(peer_msg.sender_tsbpd_delay)
 }
 
 /// SipHash-2-4 (Aumasson & Bernstein, "SipHash: a fast short-input PRF",

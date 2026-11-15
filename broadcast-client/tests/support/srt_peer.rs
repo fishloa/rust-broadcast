@@ -12,7 +12,7 @@ use srt_runtime::packet::misc::{AckAckPacket, ShutdownPacket};
 
 use srt_runtime::packet::{
     ControlPacket, DataPacket, DropReqPacket, EncryptionField, EncryptionKeyField, LossListEntry,
-    PacketPosition, SrtPacket,
+    PacketPosition, SocketId, SrtPacket, SrtTimestamp,
 };
 
 pub const PEER_SOCKET_ID: u32 = 0x1234_5678;
@@ -131,18 +131,18 @@ impl SrtPeer {
                 }
                 let pkt = ControlPacket::AckAck(AckAckPacket {
                     ack_number: ack.ack_number,
-                    timestamp: self.ts(now_us),
-                    dest_socket_id: self.caller_socket_id,
+                    timestamp: SrtTimestamp::from_wire(self.ts(now_us)),
+                    dest_socket_id: SocketId::from_wire(self.caller_socket_id),
                     libsrt_pad: true,
                 });
                 replies.push(serialize(&pkt));
             }
             Ok(SrtPacket::Control(ControlPacket::Nak(nak))) => {
                 self.naks_received += 1;
-                for entry in nak.entries().flatten() {
-                    let (first, last) = match entry {
-                        LossListEntry::Single(s) => (s, s),
-                        LossListEntry::Range(a, b) => (a, b),
+                for entry in &nak.entries {
+                    let (first, last) = match *entry {
+                        LossListEntry::Single(s) => (s.value(), s.value()),
+                        LossListEntry::Range(a, b) => (a.value(), b.value()),
                         _ => continue,
                     };
                     let mut s = first;
@@ -209,8 +209,8 @@ impl SrtPeer {
             key_flag: flag,
             retransmitted: false,
             message_number: seq & 0x03FF_FFFF,
-            timestamp: self.ts(now_us),
-            dest_socket_id: self.caller_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.ts(now_us)),
+            dest_socket_id: SocketId::from_wire(self.caller_socket_id),
             data: &body,
         };
         let mut buf = vec![0u8; pkt.serialized_len()];
@@ -222,8 +222,8 @@ impl SrtPeer {
     pub fn drop_request(&self, first: u32, last: u32, now_us: u64) -> Vec<u8> {
         serialize(&ControlPacket::DropReq(DropReqPacket {
             message_number: 0,
-            timestamp: self.ts(now_us),
-            dest_socket_id: self.caller_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.ts(now_us)),
+            dest_socket_id: SocketId::from_wire(self.caller_socket_id),
             first_seq: first,
             last_seq: last,
         }))
@@ -231,8 +231,8 @@ impl SrtPeer {
 
     pub fn shutdown(&self, now_us: u64) -> Vec<u8> {
         serialize(&ControlPacket::Shutdown(ShutdownPacket {
-            timestamp: self.ts(now_us),
-            dest_socket_id: self.caller_socket_id,
+            timestamp: SrtTimestamp::from_wire(self.ts(now_us)),
+            dest_socket_id: SocketId::from_wire(self.caller_socket_id),
             libsrt_pad: true,
         }))
     }

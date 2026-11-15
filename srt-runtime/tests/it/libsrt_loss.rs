@@ -31,7 +31,7 @@ use test_fixtures::process::KillOnDrop;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket, SrtSocketConfig};
-use srt_runtime::packet::{ControlPacket, SrtPacket};
+use srt_runtime::packet::{ControlPacket, SRT_HEADER_LEN, SrtPacket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
@@ -396,7 +396,9 @@ async fn libsrt_sender_recovers_a_hundreds_of_losses_list_from_our_periodic_nak(
                 let SrtPacket::Control(ControlPacket::Nak(nak)) = packet else {
                     return false;
                 };
-                if nak.raw_loss_list.len() > SMALL_NAK_LIST_LEN {
+                if ControlPacket::Nak(nak.clone()).serialized_len() - SRT_HEADER_LEN
+                    > SMALL_NAK_LIST_LEN
+                {
                     periodic_nak_forwarded.store(true, Ordering::Relaxed);
                     return false;
                 }
