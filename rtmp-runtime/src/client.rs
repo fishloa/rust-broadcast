@@ -221,10 +221,8 @@ impl ClientHandshake {
             random: self.local_random,
         };
         let mut out = vec![0u8; VERSION_LEN + HANDSHAKE_PACKET_LEN];
-        // The slices are exactly VERSION_LEN / HANDSHAKE_PACKET_LEN long, so
-        // the fixed-size serializers cannot fail.
-        let _ = c0.serialize_into(&mut out[..VERSION_LEN]);
-        let _ = c1.serialize_into(&mut out[VERSION_LEN..]);
+        out[..VERSION_LEN].copy_from_slice(&c0.to_bytes());
+        out[VERSION_LEN..].copy_from_slice(&c1.to_bytes());
         self.state = ClientHandshakeState::WaitS0S1S2;
         out
     }
