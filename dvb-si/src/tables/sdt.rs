@@ -10,6 +10,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id value for SDT describing services on the actual TS.
@@ -65,7 +66,7 @@ pub struct SdtService<'a> {
     /// `reserved_future_use(6)` before `EIT_schedule_flag` (EN 300 468
     /// §5.2.3, `111111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<6>,
 }
 
 impl<'a> SdtService<'a> {
@@ -86,15 +87,11 @@ impl<'a> SdtService<'a> {
             running_status,
             free_ca_mode,
             descriptors,
-            reserved_future_use: RESERVED_FUTURE_USE_6,
+            reserved_future_use: ReservedOnes::FILL,
         }
     }
 }
 
-/// All-ones `reserved_future_use(6)` before the EIT flags.
-const RESERVED_FUTURE_USE_6: u8 = super::RESERVED_6;
-/// All-ones `reserved_future_use(8)` after `original_network_id`.
-const RESERVED_FUTURE_USE_8: u8 = 0xFF;
 /// Shift of `reserved_future_use(6)` in the EIT-flags byte.
 const EIT_FLAGS_RESERVED_SHIFT: u32 = 2;
 
@@ -126,7 +123,7 @@ pub struct SdtSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(8)` after `original_network_id` (`0xFF`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<8>,
 }
 
 impl<'a> SdtSection<'a> {
@@ -150,7 +147,7 @@ impl<'a> SdtSection<'a> {
             original_network_id,
             services,
             bits: super::SectionBits::dvb(),
-            reserved_future_use: RESERVED_FUTURE_USE_8,
+            reserved_future_use: ReservedOnes::FILL,
         }
     }
 }
@@ -226,7 +223,9 @@ impl<'a> Parse<'a> for SdtSection<'a> {
                 running_status,
                 free_ca_mode,
                 descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
-                reserved_future_use: flags >> EIT_FLAGS_RESERVED_SHIFT,
+                reserved_future_use: ReservedOnes::from_bits(u64::from(
+                    flags >> EIT_FLAGS_RESERVED_SHIFT,
+                )),
             });
             pos = desc_end;
         }
@@ -251,7 +250,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             original_network_id,
             services,
             bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_future_use: bytes[10],
+            reserved_future_use: ReservedOnes::from_bits(u64::from(bytes[10])),
         })
     }
 }
@@ -283,16 +282,12 @@ impl Serialize for SdtSection<'_> {
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[10] = self.reserved_future_use;
+        buf[10] = self.reserved_future_use.get() as u8;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         for svc in &self.services {
             buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
-            let flags = (broadcast_common::len::fit_mask(
-                svc.reserved_future_use,
-                RESERVED_FUTURE_USE_6,
-                "reserved_future_use",
-            )? << EIT_FLAGS_RESERVED_SHIFT)
+            let flags = ((svc.reserved_future_use.get() as u8) << EIT_FLAGS_RESERVED_SHIFT)
                 | (u8::from(svc.eit_schedule_flag) << 1)
                 | u8::from(svc.eit_present_following_flag);
             buf[pos + 2] = flags;
@@ -610,5 +605,35 @@ mod tests {
         );
         let sdt = SdtSection::parse(&bytes).unwrap();
         assert_eq!(sdt.services.len(), 2);
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the neighbouring syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let svc = SdtService {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            ..SdtService::new(
+                1,
+                false,
+                false,
+                RunningStatus::Undefined,
+                false,
+                DescriptorLoop::new(&[]),
+            )
+        };
+        assert_eq!(svc.reserved_future_use.get(), 0x3F);
+        let section = SdtSection::new(
+            SdtKind::Actual,
+            1,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            2,
+            vec![svc],
+        );
+        let section = SdtSection {
+            reserved_future_use: ReservedOnes::from_bits(0x1FF),
+            ..section
+        };
+        assert_eq!(section.reserved_future_use.get(), 0xFF);
     }
 }
