@@ -99,19 +99,13 @@ impl PrimerPack {
     /// Annex A tables) — e.g. `Preface`'s `IsRIPPresent`.
     #[must_use]
     pub fn resolve_ul(&self, ul: &UlBytes) -> Option<u16> {
-        self.entries
-            .iter()
-            .find(|e| e.uid == *ul)
-            .map(|e| e.tag)
+        self.entries.iter().find(|e| e.uid == *ul).map(|e| e.tag)
     }
 
     /// Look up the UL/UUID for a local tag, if present.
     #[must_use]
     pub fn resolve_tag(&self, tag: u16) -> Option<UlBytes> {
-        self.entries
-            .iter()
-            .find(|e| e.tag == tag)
-            .map(|e| e.uid)
+        self.entries.iter().find(|e| e.tag == tag).map(|e| e.uid)
     }
 
     /// Parse a Primer Pack (Key + Length + Value) from `bytes`, validating
@@ -269,8 +263,14 @@ mod tests {
     fn primer_pack_round_trip() {
         let pack = PrimerPack {
             entries: alloc::vec![
-                LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] },
-                LocalTagEntry { tag: 0x3B05, uid: [0xBBu8; 16] },
+                LocalTagEntry {
+                    tag: 0x3B02,
+                    uid: [0xAAu8; 16]
+                },
+                LocalTagEntry {
+                    tag: 0x3B05,
+                    uid: [0xBBu8; 16]
+                },
             ],
             ..Default::default()
         };
@@ -295,7 +295,10 @@ mod tests {
     /// length token must round-trip byte-identically.
     #[test]
     fn non_minimal_length_token_round_trips_byte_identical() {
-        let entries = alloc::vec![LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] }];
+        let entries = alloc::vec![LocalTagEntry {
+            tag: 0x3B02,
+            uid: [0xAAu8; 16]
+        }];
         let value_len = 8 + entries.len() * 18; // 26, fits short form
         assert!(value_len <= 0x7F);
 
@@ -338,8 +341,14 @@ mod tests {
     fn rejects_duplicate_primer_tag() {
         let pack = PrimerPack {
             entries: alloc::vec![
-                LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] },
-                LocalTagEntry { tag: 0x3B02, uid: [0xBBu8; 16] },
+                LocalTagEntry {
+                    tag: 0x3B02,
+                    uid: [0xAAu8; 16]
+                },
+                LocalTagEntry {
+                    tag: 0x3B02,
+                    uid: [0xBBu8; 16]
+                },
             ],
             ..Default::default()
         };
@@ -357,8 +366,14 @@ mod tests {
     fn rejects_duplicate_primer_ul() {
         let pack = PrimerPack {
             entries: alloc::vec![
-                LocalTagEntry { tag: 0x3B02, uid: [0xAAu8; 16] },
-                LocalTagEntry { tag: 0x3B05, uid: [0xAAu8; 16] },
+                LocalTagEntry {
+                    tag: 0x3B02,
+                    uid: [0xAAu8; 16]
+                },
+                LocalTagEntry {
+                    tag: 0x3B05,
+                    uid: [0xAAu8; 16]
+                },
             ],
             ..Default::default()
         };

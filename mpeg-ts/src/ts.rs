@@ -1055,7 +1055,13 @@ impl<'a> AdaptationFieldExtension<'a> {
         // seamless_splice: 5 bytes with splice_type(4) + DTS_next_AU in PTS-field encoding
         let seamless_splice = if flags & AFE_SEAMLESS_SPLICE_FLAG != 0 {
             need_in(ext, cursor + 5, "seamless_splice DTS_next_AU")?;
-            let field = [ext[cursor], ext[cursor + 1], ext[cursor + 2], ext[cursor + 3], ext[cursor + 4]];
+            let field = [
+                ext[cursor],
+                ext[cursor + 1],
+                ext[cursor + 2],
+                ext[cursor + 3],
+                ext[cursor + 4],
+            ];
             // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS,
             // with `splice_type` in the prefix nibble.
             let splice = SeamlessSplice::from_marked_field(&field);

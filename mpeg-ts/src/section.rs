@@ -307,11 +307,15 @@ impl<'a> Parse<'a> for Section<'a> {
         // present and `section_total_len` cannot return `None`.
         let total = match crate::ts::section_total_len(bytes) {
             Some(t) => t,
-            None => return Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-                need: MIN_HEADER_LEN,
-                have: bytes.len(),
-                what: "section header",
-            })),
+            None => {
+                return Err(Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort {
+                        need: MIN_HEADER_LEN,
+                        have: bytes.len(),
+                        what: "section header",
+                    },
+                ));
+            }
         };
 
         if bytes.len() < total {

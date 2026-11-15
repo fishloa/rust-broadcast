@@ -1234,7 +1234,7 @@ impl ChunkAssembler {
                 return Err(RtmpError::ChunkStreamState {
                     chunk_stream_id: bh.chunk_stream_id,
                     what: "message header variant does not match its fmt",
-                })
+                });
             }
         };
 
