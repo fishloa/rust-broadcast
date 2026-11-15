@@ -291,8 +291,8 @@ fn real_fixture_remux_is_lossless_and_parseable() {
 
     let ingest_vid = |completed: &[u8], vid: &mut Vec<(Vec<u8>, u64, Option<u64>)>| {
         if let Ok(pes) = mpeg_pes::PesPacket::parse(completed) {
-            let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-            let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+            let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+            let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
             if !pes.payload.is_empty() {
                 vid.push((pes.payload.to_vec(), pts.unwrap_or(0), dts));
             }
