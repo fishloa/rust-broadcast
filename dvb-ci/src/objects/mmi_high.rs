@@ -169,7 +169,7 @@ impl<'a> Parse<'a> for Enq<'a> {
         need_in(body, ENQ_PREFIX, "enq")?;
         Ok(Self {
             length_form,
-            reserved: ReservedOnes::from_bits(body[0] >> 1),
+            reserved: ReservedOnes::from_bits(u64::from(body[0] >> 1)),
             blind_answer: (body[0] & 0x01) != 0,
             answer_text_length: body[1],
             text_chars: &body[ENQ_PREFIX..],
@@ -186,7 +186,7 @@ impl Serialize for Enq<'_> {
         let body_len = ENQ_PREFIX + self.text_chars.len();
         let mut pos = super::write_apdu_header(tag::ENQ, body_len, self.length_form, buf)?;
         // reserved(7), blind_answer(1).
-        buf[pos] = (self.reserved.get() << 1) | u8::from(self.blind_answer);
+        buf[pos] = ((self.reserved.get() << 1) as u8) | u8::from(self.blind_answer);
         buf[pos + 1] = self.answer_text_length;
         pos += ENQ_PREFIX;
         buf[pos..pos + self.text_chars.len()].copy_from_slice(self.text_chars);

@@ -324,7 +324,7 @@ impl<'a> Parse<'a> for FileAck<'a> {
             length_form,
             file_ok: body[0] & FILE_OK_BIT != 0,
             file: &body[1..],
-            reserved: ReservedZero::from_bits(body[0] >> 1),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 1)),
         })
     }
 }
@@ -336,7 +336,7 @@ impl Serialize for FileAck<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + self.file.len();
         let mut pos = objects::write_apdu_header(tag::FILE_ACK, body_len, self.length_form, buf)?;
-        buf[pos] = (self.reserved.get() << 1) | u8::from(self.file_ok);
+        buf[pos] = ((self.reserved.get() << 1) as u8) | u8::from(self.file_ok);
         pos += 1;
         buf[pos..pos + self.file.len()].copy_from_slice(self.file);
         Ok(pos + self.file.len())

@@ -172,7 +172,7 @@ impl<'a> Parse<'a> for EitSectionReq {
             section_number: body[4],
             original_network_id: u16::from_be_bytes([body[5], body[6]]),
             ok_to_disrupt_service: (body[7] & 0x01) != 0,
-            reserved: ReservedZero::from_bits(body[7] >> 1),
+            reserved: ReservedZero::from_bits(u64::from(body[7] >> 1)),
         })
     }
 }
@@ -193,7 +193,7 @@ impl Serialize for EitSectionReq {
         buf[pos + 4] = self.section_number;
         buf[pos + 5..pos + 7].copy_from_slice(&self.original_network_id.to_be_bytes());
         // Reserved(7), OKToDisruptService(1).
-        buf[pos + 7] = (self.reserved.get() << 1) | u8::from(self.ok_to_disrupt_service);
+        buf[pos + 7] = ((self.reserved.get() << 1) as u8) | u8::from(self.ok_to_disrupt_service);
         Ok(pos + EIT_SECTION_REQ_BODY)
     }
 }
@@ -270,7 +270,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             length_form,
             response_code,
             events,
-            reserved: ReservedZero::from_bits(body[0] >> 6),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 6)),
         })
     }
 }
@@ -303,7 +303,7 @@ impl Serialize for EitSectionAck<'_> {
             objects::write_apdu_header(tag::EIT_SECTION_ACK, body_len, self.length_form, buf)?;
         let len16 = length as u16;
         // Reserved(2), ResponseCode(2), Length(12).
-        buf[pos] = (self.reserved.get() << 6)
+        buf[pos] = ((self.reserved.get() << 6) as u8)
             | (self.response_code.to_u8() << 4)
             | ((len16 >> 8) as u8 & 0x0F);
         buf[pos + 1] = len16 as u8;

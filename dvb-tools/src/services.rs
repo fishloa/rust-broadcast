@@ -21,7 +21,7 @@ use std::process::ExitCode;
 
 use dvb_si::TableId;
 use dvb_si::collect::{CompleteSdt, CompleteSdtService, SectionSetCollector};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
 use dvb_si::tables::RunningStatus;
 
@@ -117,7 +117,7 @@ pub fn run(path: &str) -> ExitCode {
         Err(code) => return code,
     };
 
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut collector = SectionSetCollector::new();
     let mut services: HashMap<ServiceKey, ServiceRow> = HashMap::new();
     // Logical channel numbers, keyed the same way as `services` so an LCN

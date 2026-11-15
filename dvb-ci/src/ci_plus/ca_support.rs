@@ -111,9 +111,9 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
         let program_number = u16::from_be_bytes([body[2], body[3]]);
         // reserved(3) + PMT_PID(13).
         let pmt_pid = Pid::from_wire_masked((((body[4] & 0x1F) as u16) << 8) | body[5] as u16);
-        let reserved_pmt_pid = ReservedOnes::from_bits(body[4] >> 5);
-        let reserved_version = ReservedOnes::from_bits(body[6] >> 6);
-        let reserved_program_info = ReservedOnes::from_bits(body[7] >> 4);
+        let reserved_pmt_pid = ReservedOnes::from_bits(u64::from(body[4] >> 5));
+        let reserved_version = ReservedOnes::from_bits(u64::from(body[6] >> 6));
+        let reserved_program_info = ReservedOnes::from_bits(u64::from(body[7] >> 4));
         // reserved(2) + version(5) + cni(1).
         let version_number = (body[6] >> 1) & 0x1F;
         let current_next_indicator = (body[6] & 0x01) != 0;
@@ -176,14 +176,16 @@ impl Serialize for MsCaPmt<'_> {
         buf[pos + 1] = self.list_management.to_u8();
         buf[pos + 2..pos + 4].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(3), PMT_PID(13). Range-checked above.
-        buf[pos + 4] = (self.reserved_pmt_pid.get() << 5) | (self.pmt_pid.value() >> 8) as u8;
+        buf[pos + 4] =
+            ((self.reserved_pmt_pid.get() << 5) as u8) | (self.pmt_pid.value() >> 8) as u8;
         buf[pos + 5] = self.pmt_pid.value() as u8;
         // reserved(2), version(5), current_next(1). Range-checked above.
-        buf[pos + 6] = (self.reserved_version.get() << 6)
+        buf[pos + 6] = ((self.reserved_version.get() << 6) as u8)
             | (self.version_number << 1)
             | u8::from(self.current_next_indicator);
         // reserved(4), program_info_length(12). Range-checked above.
-        buf[pos + 7] = (self.reserved_program_info.get() << 4) | (program_info_length >> 8) as u8;
+        buf[pos + 7] =
+            ((self.reserved_program_info.get() << 4) as u8) | (program_info_length >> 8) as u8;
         buf[pos + 8] = program_info_length as u8;
         pos += MS_CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;
@@ -256,7 +258,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
             current_next_indicator,
             ca_enable,
             streams,
-            reserved_version: ReservedOnes::from_bits(body[3] >> 6),
+            reserved_version: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
             reserved_ca_enable,
         })
     }
@@ -281,7 +283,7 @@ impl Serialize for MsCaPmtReply {
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2), version(5), current_next(1). Range-checked above.
-        buf[pos + 3] = (self.reserved_version.get() << 6)
+        buf[pos + 3] = ((self.reserved_version.get() << 6) as u8)
             | (self.version_number << 1)
             | u8::from(self.current_next_indicator);
         buf[pos + 4] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);

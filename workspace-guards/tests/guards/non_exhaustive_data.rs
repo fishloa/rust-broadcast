@@ -168,32 +168,22 @@ pub const TABLE: &[Crate] = &[
     // `EmsgConfig` and `TimedEvent` are conversion/value structs that grow;
     // the DATERANGE/WebVTT models carry no suffix and are handled elsewhere.
     runtime("timed-metadata", &[], &["TimedEvent"]),
-    // The codec configuration records (`*DecoderConfigurationRecord`,
-    // `*SpsInfo`, `*SyncframeInfo`, `AudioSpecificConfig`, `VvcPtlRecord`,
-    // `DtsCoreFrameInfo`, `AvcFieldInfo`, `NclxColourInfo`,
-    // `DecoderSpecificInfo`) are spec-fixed wire layouts that share the
-    // `Config`/`Info`/`Record` suffix; `PartInfo`/`SegmentInfo` are LL-HLS
-    // output value structs that grow, and `TimelineJumpConfig`/`EncryptConfig`
-    // are runtime config.
+    // The codec configuration records (`*DecoderConfigurationRecord`, `*PtlRecord`)
+    // are spec-fixed wire layouts that share the `Config`/`Record` suffix; the
+    // decoded `*SpsInfo`/`*SyncframeInfo`/`AudioSpecificConfig`/`DtsCoreFrameInfo`/
+    // `AvcFieldInfo`/`NclxColourInfo`/`DecoderSpecificInfo` records are
+    // `#[non_exhaustive]` too (so a newly decoded field is additive); `PartInfo`/
+    // `SegmentInfo` are LL-HLS output value structs that grow, and
+    // `TimelineJumpConfig`/`EncryptConfig` are runtime config.
     runtime(
         "transmux",
         &[
             "AVCDecoderConfigurationRecord",
-            "Ac3SyncframeInfo",
-            "AudioSpecificConfig",
-            "AvcFieldInfo",
-            "AvcSpsInfo",
-            "DecoderSpecificInfo",
             "DoviDecoderConfigurationRecord",
-            "DtsCoreFrameInfo",
-            "Ec3SyncframeInfo",
             "HEVCDecoderConfigurationRecord",
-            "HevcSpsInfo",
             "MHADecoderConfigurationRecord",
-            "NclxColourInfo",
             "VvcDecoderConfigurationRecord",
             "VvcPtlRecord",
-            "VvcSpsInfo",
         ],
         &[],
     ),

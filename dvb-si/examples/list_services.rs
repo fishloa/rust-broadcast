@@ -4,7 +4,7 @@
 //! `ts` feature). Reads a committed French TNT capture (which carries an SDT)
 //! at runtime.
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::AnyTableSection;
 use std::collections::BTreeMap;
@@ -23,7 +23,7 @@ fn main() {
         )
     });
 
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut tables: BTreeMap<&'static str, u32> = BTreeMap::new();
     let mut services = Vec::new();
 

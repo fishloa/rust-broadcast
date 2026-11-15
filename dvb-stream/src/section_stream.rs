@@ -26,7 +26,7 @@
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use dvb_si::demux::{SectionEvent, SiDemux};
+use dvb_si::demux::{SectionEvent, SiDemux, SiDemuxConfig};
 use futures_core::Stream;
 use tokio::io::AsyncRead;
 use tokio_util::codec::FramedRead;
@@ -68,7 +68,7 @@ impl<R: AsyncRead + Unpin> SectionStream<R> {
     /// (all standard DVB/SI PIDs, PAT-follow enabled, version gating).
     #[must_use]
     pub fn new(reader: R) -> Self {
-        Self::with_demux(reader, SiDemux::builder().build())
+        Self::with_demux(reader, SiDemux::new(SiDemuxConfig::default()))
     }
 
     /// Create a `SectionStream` with an already-constructed [`SiDemux`].
@@ -126,7 +126,7 @@ impl UdpSectionStream {
     /// Wrap an already-bound socket (tests bind port 0 and read the port back).
     #[must_use]
     pub fn from_socket(socket: tokio::net::UdpSocket) -> Self {
-        Self::from_socket_with_demux(socket, SiDemux::builder().build())
+        Self::from_socket_with_demux(socket, SiDemux::new(SiDemuxConfig::default()))
     }
 
     /// Like [`from_socket`](Self::from_socket) with an already-constructed [`SiDemux`].

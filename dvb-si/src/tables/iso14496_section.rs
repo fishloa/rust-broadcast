@@ -190,8 +190,8 @@ mod tests {
     fn reserved_and_private_bits_preserved() {
         let mut s = Iso14496Section::new(0x04, 1, 0, true, 0, 0, &[]);
         s.bits.private_indicator = true;
-        s.bits.reserved_b1 = 0;
-        s.bits.reserved_b5 = 0;
+        s.bits.reserved_b1 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
+        s.bits.reserved_b5 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0);
         let b = rt(&s);
         assert_eq!(b[1] & 0xF0, 0xC0);
         assert_eq!(b[5] & 0xC0, 0);

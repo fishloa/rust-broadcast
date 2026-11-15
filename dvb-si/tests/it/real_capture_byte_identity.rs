@@ -22,7 +22,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::Serialize;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop, parse_loop};
 use dvb_si::tables::AnyTableSection;
 use std::collections::{BTreeMap, BTreeSet};
@@ -330,7 +330,7 @@ fn survey_file(s: &mut Survey, path: &Path) {
     // set (private sections, DSM-CC, MPE) from the PMTs.
     let mut extra: BTreeSet<mpeg_ts::pid::Pid> = BTreeSet::new();
     {
-        let mut d = SiDemux::builder().build();
+        let mut d = SiDemux::new(SiDemuxConfig::default());
         let mut p = start;
         while p + pre + TS_LEN <= data.len() {
             let pkt = &data[p + pre..p + pre + TS_LEN];
@@ -349,11 +349,11 @@ fn survey_file(s: &mut Survey, path: &Path) {
             }
         }
     }
-    let mut b = SiDemux::builder().emit_repeats(true);
+    let mut b = SiDemuxConfig::default().with_emit_repeats(true);
     for pid in &extra {
-        b = b.pid(*pid);
+        b = b.with_pid(*pid);
     }
-    let mut demux = b.build();
+    let mut demux = SiDemux::new(b);
     let mut seen_sections: BTreeSet<Vec<u8>> = BTreeSet::new();
     let mut seen_desc: BTreeSet<Vec<u8>> = BTreeSet::new();
     let before = s.sections.values().map(|x| x.total).sum::<u64>();

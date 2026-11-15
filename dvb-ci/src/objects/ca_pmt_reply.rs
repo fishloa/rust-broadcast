@@ -150,7 +150,7 @@ impl<'a> Parse<'a> for CaPmtReply {
             current_next_indicator,
             ca_enable,
             streams,
-            reserved_version: ReservedOnes::from_bits(body[2] >> 6),
+            reserved_version: ReservedOnes::from_bits(u64::from(body[2] >> 6)),
             reserved_ca_enable,
         })
     }
@@ -179,7 +179,7 @@ pub(crate) fn parse_reply_streams(
         streams.push(CaPmtReplyStream {
             elementary_pid,
             ca_enable,
-            reserved_pid: ReservedOnes::from_bits(body[pos] >> 5),
+            reserved_pid: ReservedOnes::from_bits(u64::from(body[pos] >> 5)),
             reserved_ca_enable,
         });
         pos += ES_LEN;
@@ -199,7 +199,7 @@ pub(crate) fn write_reply_streams(
     streams: &[CaPmtReplyStream],
 ) -> usize {
     for s in streams {
-        buf[pos] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
+        buf[pos] = ((s.reserved_pid.get() << 5) as u8) | (s.elementary_pid.value() >> 8) as u8;
         buf[pos + 1] = s.elementary_pid.value() as u8;
         buf[pos + 2] = encode_enable_byte(s.ca_enable, s.reserved_ca_enable);
         pos += ES_LEN;
@@ -225,7 +225,7 @@ impl Serialize for CaPmtReply {
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
-        buf[pos + 2] = (self.reserved_version.get() << 6)
+        buf[pos + 2] = ((self.reserved_version.get() << 6) as u8)
             | (self.version_number << 1)
             | u8::from(self.current_next_indicator);
         buf[pos + 3] = encode_enable_byte(self.ca_enable, self.reserved_ca_enable);
@@ -239,7 +239,7 @@ impl Serialize for CaPmtReply {
 pub(crate) fn encode_enable_byte(enable: Option<CaEnable>, reserved: ReservedOnes<7>) -> u8 {
     match enable {
         Some(e) => 0x80 | (e.to_u8() & 0x7F),
-        None => reserved.get(),
+        None => reserved.get() as u8,
     }
 }
 
@@ -250,7 +250,7 @@ pub(crate) fn decode_enable_byte(b: u8) -> (Option<CaEnable>, ReservedOnes<7>) {
     if b & 0x80 != 0 {
         (Some(CaEnable::from_u8(b & 0x7F)), ReservedOnes::default())
     } else {
-        (None, ReservedOnes::from_bits(b))
+        (None, ReservedOnes::from_bits(u64::from(b)))
     }
 }
 

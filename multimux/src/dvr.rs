@@ -190,7 +190,7 @@ use std::time::{Duration, SystemTime};
 use transmux::TrackId;
 
 use broadcast_common::Timestamp;
-use dvb_si::demux::{SectionEvent, SiDemux};
+use dvb_si::demux::{SectionEvent, SiDemux, SiDemuxConfig};
 use dvb_si::tables::eit::{EitKind, PID as EIT_PID};
 use dvb_si::tables::{AnyTableSection, RunningStatus};
 use media_plane::egress::SegmentEgress;
@@ -792,9 +792,13 @@ impl DvrRecorder {
         // EIT p/f is carried on one well-known PID (EN 300 468 §5.2.4);
         // watch only that PID, not the full default DVB SI set — this
         // recorder has no use for PAT/NIT/SDT/TDT.
-        let si_demux = config
-            .dvb_service_id
-            .map(|_| SiDemux::builder().dvb_si_pids(false).pid(EIT_PID).build());
+        let si_demux = config.dvb_service_id.map(|_| {
+            SiDemux::new(
+                SiDemuxConfig::default()
+                    .with_dvb_si_pids(false)
+                    .with_pid(EIT_PID),
+            )
+        });
         let target_service_id = config.dvb_service_id;
         Ok(DvrRecorder {
             route_name,
@@ -3416,7 +3420,11 @@ mod tests {
         // segmentation, ETSI EN 300 468 §5.2.4's `segment_last_section_
         // number`), so the present and following events must be gathered
         // from across every matching section, not just the first.
-        let mut discover = SiDemux::builder().dvb_si_pids(false).pid(EIT_PID).build();
+        let mut discover = SiDemux::new(
+            SiDemuxConfig::default()
+                .with_dvb_si_pids(false)
+                .with_pid(EIT_PID),
+        );
         let mut genuine_section_bytes: Vec<bytes::Bytes> = Vec::new();
         for chunk in ts_bytes.chunks_exact(TS_PACKET_LEN) {
             for event in discover.feed(chunk) {
@@ -3608,7 +3616,11 @@ mod tests {
             .expect("read real DVB-T fixture");
         // The genuine following event, promoted to running, as in
         // `eit_transition_rolls_the_period...`.
-        let mut discover = SiDemux::builder().dvb_si_pids(false).pid(EIT_PID).build();
+        let mut discover = SiDemux::new(
+            SiDemuxConfig::default()
+                .with_dvb_si_pids(false)
+                .with_pid(EIT_PID),
+        );
         let mut sections = Vec::new();
         for chunk in ts_bytes.chunks_exact(TS_PACKET_LEN) {
             for event in discover.feed(chunk) {

@@ -20,7 +20,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::{Parse, Serialize};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::bat::BatSection;
 use dvb_si::tables::nit::NitSection;
@@ -48,7 +48,7 @@ where
 fn real_section(file: &str, tid: u8) -> Vec<u8> {
     let path = test_fixtures::path(file);
     let data = std::fs::read(&path).expect("committed fixture");
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     for chunk in data.chunks(TS_PACKET_SIZE) {
         if chunk.len() != TS_PACKET_SIZE {
             continue;
