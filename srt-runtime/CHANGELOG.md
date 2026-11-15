@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `packet::number` defines the typed SRT wire numbers `SocketId` (32-bit Destination/Source Socket ID), `SeqNo` (31-bit Packet Sequence Number with `broadcast_common::seq` wrap arithmetic and the ACK/loss-list 31-bit space), `MessageNumber` (26-bit, wrapping to `1`) and `SrtTimestamp` (32-bit header Timestamp), so a sequence number, socket id and timestamp are no longer interchangeable bare `u32`s (part of #2768, #2772).
+
+### Changed
+- `url::SrtUrl::parse` parses the whole string through `url::Url` instead of a hand-rolled `srt://` / `?` split: the scheme is matched case-insensitively, so `SRT://host` now names the same endpoint as `srt://host` (it was previously rejected by the scheme-less branch), and a malformed explicit authority (`srt://::1`) stays an error instead of becoming a host named `srt`. A `#` inside a `streamid` value is still kept whole (escaped to `%23` before parsing, decoded back on read). Wire addresses are unchanged (part of #2772).
+
 ### Changed
 - BREAKING: the sans-IO engines take the caller-supplied monotonic "now" as `broadcast_common::stage::Timestamp` instead of `core::time::Duration`: `arq::Receiver::{feed_data, tick, on_ackack}`, `arq::Sender::{on_data, on_data_keyed, tick, on_ack}`, `tsbpd::TsbpdScheduler::{feed_data, tick, next_release_after}`, `filecc::FileCc::on_ack`, and `arq::Receiver::next_timeout` now returns `Option<Timestamp>` (a `Timestamp::checked_add` deadline: `None` is a deadline past the end of the clock that never fires, never a saturated instant equal to "now"). Migration: `now: Duration::from_millis(n)` -> `now: Timestamp::from_millis(n)` (the `Duration` stays for spans and deadlines), and `next_timeout()` -> `next_timeout().unwrap_or(<fallback>)` (#2769).
 - BREAKING: `km_refresh::KmRefreshThresholds` is `#[non_exhaustive]` with private fields; build it with `KmRefreshThresholds::new(refresh_period, pre_announcement_period)`, which rejects `pre_announcement_period == 0` and any pre-announcement at or past the refresh period, and read it back with `refresh_period()`/`pre_announcement_period()`. A zero refresh period no longer rotates the active key on every packet. Migration: `KmRefreshThresholds { refresh_period: r, pre_announcement_period: p }` -> `KmRefreshThresholds::new(r, p)` (#2753, #2771).
