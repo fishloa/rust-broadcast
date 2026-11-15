@@ -10,6 +10,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_in;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id value for NIT actual (current TS).
@@ -60,10 +61,10 @@ pub struct NitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `network_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_network_descriptors_length: u8,
+    pub reserved_network_descriptors_length: ReservedOnes<4>,
     /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_transport_stream_loop_length: u8,
+    pub reserved_transport_stream_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> NitSection<'a> {
@@ -86,8 +87,8 @@ impl<'a> NitSection<'a> {
             network_descriptors,
             transport_streams,
             bits: super::SectionBits::dvb(),
-            reserved_network_descriptors_length: super::RESERVED_4,
-            reserved_transport_stream_loop_length: super::RESERVED_4,
+            reserved_network_descriptors_length: ReservedOnes::FILL,
+            reserved_transport_stream_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -126,8 +127,12 @@ impl<'a> Parse<'a> for NitSection<'a> {
             network_descriptors: p.descriptors,
             transport_streams: p.transport_streams,
             bits: p.bits,
-            reserved_network_descriptors_length: p.reserved_descriptors_length,
-            reserved_transport_stream_loop_length: p.reserved_transport_stream_loop_length,
+            reserved_network_descriptors_length: ReservedOnes::from_bits(u64::from(
+                p.reserved_descriptors_length,
+            )),
+            reserved_transport_stream_loop_length: ReservedOnes::from_bits(u64::from(
+                p.reserved_transport_stream_loop_length,
+            )),
         })
     }
 }
@@ -154,8 +159,10 @@ impl Serialize for NitSection<'_> {
                 descriptors: &self.network_descriptors,
                 transport_streams: &self.transport_streams,
                 bits: &self.bits,
-                reserved_descriptors_length: self.reserved_network_descriptors_length,
-                reserved_transport_stream_loop_length: self.reserved_transport_stream_loop_length,
+                reserved_descriptors_length: self.reserved_network_descriptors_length.get() as u8,
+                reserved_transport_stream_loop_length: self
+                    .reserved_transport_stream_loop_length
+                    .get() as u8,
                 descriptors_length_what: "network_descriptors_length",
             },
             buf,
@@ -399,5 +406,25 @@ mod tests {
             nit.network_descriptors.raw(),
             reparsed.network_descriptors.raw()
         );
+    }
+
+    /// Each reserved field is 4 bits wide, so a wider value is unrepresentable
+    /// and cannot spill into the 12-bit length below it.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_four_bits() {
+        let d = NitSection::new(
+            NitKind::Actual,
+            1,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            DescriptorLoop::new(&[]),
+            vec![],
+        );
+        let d = NitSection {
+            reserved_network_descriptors_length: ReservedOnes::from_bits(0xFF),
+            reserved_transport_stream_loop_length: ReservedOnes::from_bits(0xFF),
+            ..d
+        };
+        assert_eq!(d.reserved_network_descriptors_length.get(), 0x0F);
+        assert_eq!(d.reserved_transport_stream_loop_length.get(), 0x0F);
     }
 }
