@@ -43,9 +43,13 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 fn origin_fmp4() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let (trunk, writer) = trunk_with();
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-            .with_low_latency(Duration::from_millis(500))
-            .with_instance(7),
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_low_latency(Duration::from_millis(500))
+        .with_instance(7),
     )
     .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
@@ -754,9 +758,15 @@ fn a_bare_msn_iframe_reload_waits_for_a_segment_the_window_holds() {
             .expect("publish");
     };
     publish(1);
-    let origin =
-        HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4)).with_instance(7))
-            .expect("origin");
+    let origin = HlsOrigin::new(
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_instance(7),
+    )
+    .expect("origin");
     origin.set_init(Bytes::from(fixture_bytes("init.mp4")));
     let reload = |msn: u64| {
         let (now, policy) = patient();

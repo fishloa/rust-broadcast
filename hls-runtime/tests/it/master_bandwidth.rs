@@ -39,8 +39,11 @@ fn origin_declared(trunk: &Arc<Trunk>, declared: u64) -> HlsOrigin {
 }
 
 fn origin_undeclared(trunk: &Arc<Trunk>) -> HlsOrigin {
-    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(4), nz(4)).with_instance(7))
-        .expect("origin builds")
+    HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(4), nz(4))
+            .with_instance(7),
+    )
+    .expect("origin builds")
 }
 
 fn publish_seg_bytes(w: &SegmentWriter, seq: u32, secs: u64, bytes: usize) {
@@ -129,17 +132,25 @@ fn declared_zero_or_over_u32_rejected_at_build() {
             .with_part_capacity(nz(64)),
     );
     match HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-            .with_instance(7)
-            .with_declared_bandwidth_bps(0),
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_instance(7)
+        .with_declared_bandwidth_bps(0),
     ) {
         Err(HlsOriginBuildError::InvalidDeclaredBandwidth) => {}
         _other => panic!("expected InvalidDeclaredBandwidth"),
     }
     match HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-            .with_instance(7)
-            .with_declared_bandwidth_bps(u64::from(u32::MAX) + 1),
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_instance(7)
+        .with_declared_bandwidth_bps(u64::from(u32::MAX) + 1),
     ) {
         Err(HlsOriginBuildError::InvalidDeclaredBandwidth) => {}
         _other => panic!("expected InvalidDeclaredBandwidth"),

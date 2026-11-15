@@ -4,10 +4,10 @@
 //! a `Trunk` fed with demuxed fixture samples — and reads the result back over
 //! the axum router the way a player would.
 
-use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;

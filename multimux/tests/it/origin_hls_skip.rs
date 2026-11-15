@@ -4,11 +4,11 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-use std::time::Duration;
 use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

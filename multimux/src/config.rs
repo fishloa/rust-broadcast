@@ -2239,7 +2239,10 @@ pub struct Config {
     /// [`crate::origin::HttpLimits::queue_timeout`] and
     /// [`crate::origin::limit`]. Defaults to 5 s. Must be positive; a
     /// non-positive value is rejected by [`Config::validate`].
-    #[serde(default = "default_concurrency_queue_timeout_secs", with = "seconds_duration")]
+    #[serde(
+        default = "default_concurrency_queue_timeout_secs",
+        with = "seconds_duration"
+    )]
     pub concurrency_queue_timeout_secs: Duration,
     /// Ingest connect-handshake timeout, in seconds, applied to every route's
     /// source (issue #663 P5, audit-ingest #3) — see
@@ -2536,10 +2539,7 @@ impl Config {
 
     /// Set the concurrency-queue timeout.
     #[must_use]
-    pub fn with_concurrency_queue_timeout(
-        mut self,
-        concurrency_queue_timeout: Duration,
-    ) -> Self {
+    pub fn with_concurrency_queue_timeout(mut self, concurrency_queue_timeout: Duration) -> Self {
         self.concurrency_queue_timeout_secs = concurrency_queue_timeout;
         self
     }
@@ -2800,7 +2800,8 @@ impl Config {
             ConfigField::IngestReadTimeoutSecs,
             self.ingest_read_timeout_secs,
         )?;
-        if self.concurrency_queue_timeout_secs.is_zero() || self.concurrency_queue_timeout_secs > max_timeout()
+        if self.concurrency_queue_timeout_secs.is_zero()
+            || self.concurrency_queue_timeout_secs > max_timeout()
         {
             return Err(MultimuxError::ConfigInvalid {
                 field: ConfigField::ConcurrencyQueueTimeoutSecs,

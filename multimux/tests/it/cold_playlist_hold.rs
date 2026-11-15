@@ -26,8 +26,8 @@ use test_fixtures::process::{output_bounded, tool_available};
 use crate::support::listener::bind_tcp;
 use crate::support::origin::{body_string, get};
 use crate::support::segmenter_feed::{
-    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, drain_ready, feed_open_segment,
-    video_batches_n, video_track_spec,
+    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, drain_ready, feed_open_segment, video_batches_n,
+    video_track_spec,
 };
 
 const FRAMES_PER_SEGMENT: u32 = 30;
@@ -232,8 +232,7 @@ async fn a_program_announced_late_without_a_segment_waits_one_bound_in_total() {
         () = announce => panic!("the request never finished"),
     };
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let playlist_timeout =
-        MIN_BLOCKING_TIMEOUT.max(TARGET_DURATION * 3);
+    let playlist_timeout = MIN_BLOCKING_TIMEOUT.max(TARGET_DURATION * 3);
     assert!(
         started.elapsed() <= playlist_timeout + Duration::from_secs(1),
         "waited {:?}, more than one playlist timeout ({playlist_timeout:?}) plus 1 s",

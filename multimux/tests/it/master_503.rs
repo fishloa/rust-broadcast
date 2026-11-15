@@ -1,9 +1,9 @@
 //! Master playlist 503/Retry-After gate (issue #1426 part A).
 
-use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};

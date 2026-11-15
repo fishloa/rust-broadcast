@@ -145,8 +145,14 @@ pub fn ingest_timeouts(cfg: &crate::config::Config) -> Timeouts {
         if timeout.is_zero() { fallback } else { timeout }
     }
     Timeouts::default()
-        .with_connect(timeout_or_default(cfg.ingest_connect_timeout_secs, DEFAULT_CONNECT_TIMEOUT))
-        .with_read_idle(timeout_or_default(cfg.ingest_read_timeout_secs, DEFAULT_READ_TIMEOUT))
+        .with_connect(timeout_or_default(
+            cfg.ingest_connect_timeout_secs,
+            DEFAULT_CONNECT_TIMEOUT,
+        ))
+        .with_read_idle(timeout_or_default(
+            cfg.ingest_read_timeout_secs,
+            DEFAULT_READ_TIMEOUT,
+        ))
 }
 
 // --- issue #805 task 2: driver-backed ingest <-> RouteHandle registry glue ---

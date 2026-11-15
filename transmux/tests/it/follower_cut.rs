@@ -9,9 +9,9 @@
 
 #![cfg(feature = "std")]
 
-use core::time::Duration;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
+use core::time::Duration;
 use transmux::ll_hls::{CutPlan, LlHlsSegmenter, PartCut, PartInfo, SegmentInfo};
 use transmux::media::{Media, Track};
 use transmux::segmenter::MAX_PENDING_SAMPLES_PER_TRACK;
@@ -811,13 +811,8 @@ fn incremental_part_cuts_match_whole_segment() {
 
 fn part_follower() -> LlHlsSegmenter {
     let (audio, movie_ts) = audio_template();
-    LlHlsSegmenter::with_part_target(
-        vec![audio.spec],
-        movie_ts,
-        SEGMENT_TARGET,
-        PART_TARGET,
-    )
-    .unwrap()
+    LlHlsSegmenter::with_part_target(vec![audio.spec], movie_ts, SEGMENT_TARGET, PART_TARGET)
+        .unwrap()
 }
 
 #[test]

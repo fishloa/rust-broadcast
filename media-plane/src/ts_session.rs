@@ -865,7 +865,7 @@ mod tests {
         use crate::ingress::{IngestDriver, ProgramId};
         use crate::trunk::{PartEntry, SampleCursorItem, SegmentEntry};
         use broadcast_common::Timestamp;
-            use transmux::ll_hls::LlHlsSegmenter;
+        use transmux::ll_hls::LlHlsSegmenter;
         use transmux::segmenter::SegmentMeta;
 
         let mut driver = IngestDriver::new(

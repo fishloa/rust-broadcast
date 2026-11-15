@@ -16,10 +16,10 @@
 //! every one must be served; the MPD must also pass `media-doctor`'s DASH
 //! validator and keep `startNumber`/`@duration` constant as it refreshes.
 
-use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use transmux::TrackId;
 
 use crate::support::origin::{body_string, get};

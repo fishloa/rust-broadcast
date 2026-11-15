@@ -3,10 +3,10 @@
 //! fragmented-MP4 segments/parts are `video/iso.segment`, MPEG-2 TS
 //! segments are `video/mp2t`. Range (206) responses carry the same type.
 
-use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode, header};
@@ -31,13 +31,19 @@ fn fmp4_route() -> Arc<RouteHandle> {
     route
         .add_segment(
             media_plane::ProgramId(0),
-            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], Duration::from_secs(4), 1).with_part_count(2),
+            transmux::ll_hls::SegmentInfo::new(vec![0x21; 8], Duration::from_secs(4), 1)
+                .with_part_count(2),
         )
         .expect("add_segment");
     route.add_part(
         media_plane::ProgramId(0),
-        PartInfo::new(vec![0x10; 4], Duration::from_millis(500), 2, broadcast_hls::PartIndex::new(0))
-            .with_independent(true),
+        PartInfo::new(
+            vec![0x10; 4],
+            Duration::from_millis(500),
+            2,
+            broadcast_hls::PartIndex::new(0),
+        )
+        .with_independent(true),
     );
     route
 }

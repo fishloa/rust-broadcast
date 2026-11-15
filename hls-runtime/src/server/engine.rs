@@ -4258,9 +4258,13 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-                .with_low_latency(Duration::from_millis(500))
-                .with_instance(7),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
         )
         .expect("valid configuration");
         origin.set_init(vec![0xAAu8; 8]);
@@ -4367,10 +4371,14 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-                .with_low_latency(Duration::from_millis(500))
-                .with_instance(7)
-                .with_hold_cold_playlist(hold),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7)
+            .with_hold_cold_playlist(hold),
         )
         .expect("valid configuration");
         origin.set_init(vec![0xAAu8; 8]);
@@ -4418,8 +4426,12 @@ mod tests {
                 .with_event_capacity(nz(8))
                 .with_part_capacity(nz(64)),
         );
-        let origin =
-            HlsOrigin::new(HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))).expect("valid configuration");
+        let origin = HlsOrigin::new(HlsOriginConfig::new(
+            trunk,
+            core::time::Duration::from_secs(4),
+            nz(4),
+        ))
+        .expect("valid configuration");
         assert!(origin.hold_cold_playlist);
     }
 
@@ -4489,10 +4501,14 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-                .with_low_latency(Duration::from_millis(500))
-                .with_instance(7)
-                .with_hold_cold_playlist(true),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7)
+            .with_hold_cold_playlist(true),
         )
         .expect("valid configuration");
         let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
@@ -5165,12 +5181,13 @@ mod tests {
                 .with_event_capacity(nz(8))
                 .with_part_capacity(nz(64)),
         );
-        let origin = HlsOrigin::new(HlsOriginConfig::new(trunk, Duration::from_millis(2500), nz(4)))
-            .expect("valid configuration");
-        assert_eq!(
-            origin.published_target_duration(),
-            Duration::from_secs(3)
-        );
+        let origin = HlsOrigin::new(HlsOriginConfig::new(
+            trunk,
+            Duration::from_millis(2500),
+            nz(4),
+        ))
+        .expect("valid configuration");
+        assert_eq!(origin.published_target_duration(), Duration::from_secs(3));
     }
 
     #[test]
@@ -5345,8 +5362,12 @@ mod tests {
                 .with_part_capacity(nz(64)),
         );
         let writer = trunk.segment_writer().expect("first segment writer");
-        let mut config =
-            HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4)).with_container(container);
+        let mut config = HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_container(container);
         if let Some(ms) = low_latency_ms {
             config = config.with_low_latency(Duration::from_millis(u64::from(ms)));
         }
@@ -5786,12 +5807,21 @@ mod tests {
                 .with_event_capacity(nz(8))
                 .with_part_capacity(nz(64)),
         );
-        match HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(0), nz(4))) {
+        match HlsOrigin::new(HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(0),
+            nz(4),
+        )) {
             Err(e) => assert_eq!(e, HlsOriginBuildError::InvalidTargetDuration),
             Ok(_) => panic!("expected an error: target_duration_secs must be positive"),
         }
         match HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4)).with_low_latency(Duration::ZERO),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::ZERO),
         ) {
             Err(e) => assert_eq!(e, HlsOriginBuildError::ZeroPartTarget),
             Ok(_) => panic!("expected an error: a zero part target is invalid"),

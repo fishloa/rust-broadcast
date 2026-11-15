@@ -766,8 +766,12 @@ fn ffprobe_reads_the_static_mpd_if_available() {
             .select_tracks_by(|tt| tt.spec.track_id == id)
             .expect("select single track");
         let track = &single.tracks[0];
-        let mut seg = Segmenter::new(vec![track.spec.clone()], media.movie_timescale, Duration::from_secs(100))
-            .expect("single-track segmenter");
+        let mut seg = Segmenter::new(
+            vec![track.spec.clone()],
+            media.movie_timescale,
+            Duration::from_secs(100),
+        )
+        .expect("single-track segmenter");
         let init = seg.init_segment().expect("init segment");
         for s in &track.samples {
             seg.push(id, s.clone()).expect("push sample");

@@ -2428,8 +2428,10 @@ impl RouteHandle {
             seq_offset,
             media_start_ns: previous_epoch.map_or(0, |e| {
                 let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
-                u64::try_from(u128::from(slots).saturating_mul(self.target_duration_secs.as_nanos()))
-                    .unwrap_or(u64::MAX)
+                u64::try_from(
+                    u128::from(slots).saturating_mul(self.target_duration_secs.as_nanos()),
+                )
+                .unwrap_or(u64::MAX)
             }),
             discontinuity_sequence: previous
                 .as_ref()
@@ -3259,7 +3261,9 @@ mod program_registry_tests {
         use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
         use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 
-        let info = |seq: u32| transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], Duration::from_secs(4), seq);
+        let info = |seq: u32| {
+            transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], Duration::from_secs(4), seq)
+        };
         let route = RouteHandle::new(
             RouteConfig::default()
                 .with_target_duration(std::time::Duration::from_secs(4))
@@ -3429,7 +3433,8 @@ mod program_registry_tests {
     #[test]
     fn a_replacement_starts_a_new_init_generation_only_when_its_init_differs() {
         let info = |seq: u32, byte: u8| {
-            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq)
+                .with_part_count(1)
         };
         let route = || {
             RouteHandle::new(
@@ -3496,7 +3501,8 @@ mod program_registry_tests {
     #[test]
     fn set_init_from_starts_the_new_init_at_the_named_segment() {
         let info = |seq: u32, byte: u8| {
-            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq)
+                .with_part_count(1)
         };
         let route = RouteHandle::new(
             RouteConfig::default()
@@ -3541,7 +3547,8 @@ mod program_registry_tests {
     #[test]
     fn a_restart_without_dvr_and_a_reconnect_never_reuse_an_immutable_name() {
         let info = |seq: u32, byte: u8| {
-            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq)
+                .with_part_count(1)
         };
         // "Process" 1: segments 1..=2 served, part 0 of the open segment 3.
         let p1 = RouteHandle::new(
@@ -3930,7 +3937,9 @@ mod program_registry_tests {
         .with_dvr(dvr_cfg);
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
-        route.add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1))).unwrap();
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .unwrap();
         let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
         serving.poll_dvr().await;
         assert_eq!(archived_periods(&tmp), 1);

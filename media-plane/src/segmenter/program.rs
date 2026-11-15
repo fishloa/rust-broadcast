@@ -259,9 +259,9 @@ impl TsHlsIdrFallback {
         const IDR_FALLBACK_MIN: std::time::Duration = std::time::Duration::from_secs(6);
         match self {
             TsHlsIdrFallback::Targets(n) => target_duration.saturating_mul(*n),
-            TsHlsIdrFallback::Auto | TsHlsIdrFallback::Never => {
-                target_duration.saturating_mul(IDR_FALLBACK_TARGETS).max(IDR_FALLBACK_MIN)
-            }
+            TsHlsIdrFallback::Auto | TsHlsIdrFallback::Never => target_duration
+                .saturating_mul(IDR_FALLBACK_TARGETS)
+                .max(IDR_FALLBACK_MIN),
         }
     }
     pub fn name(&self) -> &'static str {
@@ -3181,12 +3181,30 @@ mod segmenter_tests {
         segmenter.publish_without_blocking(PendingPublish::Segment(fake_ready_entry(0)));
 
         let parts = vec![
-            PartInfo::new(vec![0u8; 4], Duration::from_millis(200), 1, HlsPartIndex::new(0)).with_independent(true),
-            PartInfo::new(vec![0u8; 4], Duration::from_millis(200), 1, HlsPartIndex::new(1)).with_independent(false),
+            PartInfo::new(
+                vec![0u8; 4],
+                Duration::from_millis(200),
+                1,
+                HlsPartIndex::new(0),
+            )
+            .with_independent(true),
+            PartInfo::new(
+                vec![0u8; 4],
+                Duration::from_millis(200),
+                1,
+                HlsPartIndex::new(1),
+            )
+            .with_independent(false),
             // Segment 2's opening part — already produced (the segmenter
             // has started buffering the next segment) even though segment
             // 1 has not been queued yet in this same call.
-            PartInfo::new(vec![0u8; 4], Duration::from_millis(200), 2, HlsPartIndex::new(0)).with_independent(true),
+            PartInfo::new(
+                vec![0u8; 4],
+                Duration::from_millis(200),
+                2,
+                HlsPartIndex::new(0),
+            )
+            .with_independent(true),
         ];
         let segments = vec![ReadySegment {
             bytes: vec![1u8; 4],

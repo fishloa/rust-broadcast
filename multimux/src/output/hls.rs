@@ -949,8 +949,8 @@ mod tests {
 mod ts_tests {
     use super::*;
     use crate::route::{RouteConfig, RouteHandle};
-    use std::time::Duration;
     use crate::testutil::body_string;
+    use std::time::Duration;
     use transmux::Container;
     use transmux::ll_hls::SegmentInfo;
 

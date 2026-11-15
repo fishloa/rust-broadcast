@@ -259,7 +259,8 @@ mod segmenter_cuts {
     /// Push `cuts` one-sample GOPs (each keyframe closes the previous segment) and
     /// return `(segments_ready, allocs)` over the push loop only.
     fn run(cuts: usize) -> (usize, usize) {
-        let mut seg = Segmenter::new(vec![spec()], timescale(1000), Duration::from_millis(500)).unwrap();
+        let mut seg =
+            Segmenter::new(vec![spec()], timescale(1000), Duration::from_millis(500)).unwrap();
         let samples: Vec<Sample> = (0..cuts)
             .map(|i| {
                 let dts = (i as i64) * 90_000;

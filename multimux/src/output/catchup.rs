@@ -521,11 +521,11 @@ fn parse_seg_filename(file: &str, ext: &str) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::dvr::{ArchiveOverrunSerde, DvrConfig};
     use crate::route::RouteConfig;
     use crate::route::SPTS_PROGRAM_ID;
     use crate::testutil::body_string;
+    use std::time::Duration;
 
     fn temp_dir() -> PathBuf {
         use std::sync::atomic::{AtomicU64, Ordering};
@@ -570,7 +570,8 @@ mod tests {
     }
 
     fn seg_bytes(seq: u32, byte: u8) -> transmux::ll_hls::SegmentInfo {
-        transmux::ll_hls::SegmentInfo::new(vec![byte; 24], Duration::from_secs(3), seq).with_part_count(1)
+        transmux::ll_hls::SegmentInfo::new(vec![byte; 24], Duration::from_secs(3), seq)
+            .with_part_count(1)
     }
 
     async fn body_bytes(resp: Response) -> Vec<u8> {
@@ -628,8 +629,12 @@ mod tests {
             route
                 .add_segment(
                     SPTS_PROGRAM_ID,
-                    transmux::ll_hls::SegmentInfo::new(vec![0x5A; SEG_LEN], Duration::from_secs(3), 1)
-                        .with_part_count(1),
+                    transmux::ll_hls::SegmentInfo::new(
+                        vec![0x5A; SEG_LEN],
+                        Duration::from_secs(3),
+                        1,
+                    )
+                    .with_part_count(1),
                 )
                 .expect("add_segment");
 
@@ -1407,7 +1412,8 @@ mod tests {
             .with_dvr(dvr_config(&tmp)),
         );
         let info = |seq: u32, name: &str| {
-            transmux::ll_hls::SegmentInfo::new(read(name), Duration::from_secs(1), seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(read(name), Duration::from_secs(1), seq)
+                .with_part_count(1)
         };
         let first = route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, init_a.clone());

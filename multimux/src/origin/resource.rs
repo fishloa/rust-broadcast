@@ -1045,8 +1045,13 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             route_for_start.add_part(
                 crate::route::SPTS_PROGRAM_ID,
-                PartInfo::new(vec![0x77; 4], Duration::from_millis(500), 3, broadcast_hls::PartIndex::new(0))
-                    .with_independent(true),
+                PartInfo::new(
+                    vec![0x77; 4],
+                    Duration::from_millis(500),
+                    3,
+                    broadcast_hls::PartIndex::new(0),
+                )
+                .with_independent(true),
             );
         });
 

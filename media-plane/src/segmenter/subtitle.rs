@@ -525,11 +525,9 @@ impl SubtitleFollower {
                 }
                 Ready::Segment(segment) => {
                     let start_ns = self.next_timeline_ns;
-                    self.next_timeline_ns = self
-                        .next_timeline_ns
-                        .saturating_add(
-                            u64::try_from(segment.duration.as_nanos()).unwrap_or(u64::MAX),
-                        );
+                    self.next_timeline_ns = self.next_timeline_ns.saturating_add(
+                        u64::try_from(segment.duration.as_nanos()).unwrap_or(u64::MAX),
+                    );
                     self.pending
                         .push_back(PendingPublish::Segment(SegmentEntry::new(
                             segment.body.into_bytes(),

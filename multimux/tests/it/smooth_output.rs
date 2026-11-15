@@ -11,7 +11,6 @@
 //!   proving shared Trunk.
 //! Test 5: Config round-trip — `"smooth"` deserialises and validates.
 
-use std::time::Duration;
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, VIDEO_TIMESCALE,
@@ -21,6 +20,7 @@ use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use transmux::TrackId;
 
 fn timescale(value: u32) -> Timescale {

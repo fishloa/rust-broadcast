@@ -84,7 +84,10 @@ fn playlist(origin: &Origin) -> String {
          #EXT-X-MEDIA-SEQUENCE:{first}\n#EXT-X-MAP:URI=\"init.mp4\"\n"
     );
     for i in first..=last {
-        out.push_str(&format!("#EXTINF:{:.1},\nseg{i}.m4s\n", SOURCE_SEGMENT.as_secs_f64()));
+        out.push_str(&format!(
+            "#EXTINF:{:.1},\nseg{i}.m4s\n",
+            SOURCE_SEGMENT.as_secs_f64()
+        ));
     }
     if endlist {
         out.push_str("#EXT-X-ENDLIST\n");

@@ -40,8 +40,15 @@ fn trunk_with(segment_cap: usize) -> (Arc<Trunk>, SegmentWriter) {
 }
 
 fn origin(trunk: &Arc<Trunk>, window: usize) -> HlsOrigin {
-    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(4), nz(window)).with_instance(7))
-        .expect("origin builds")
+    HlsOrigin::new(
+        HlsOriginConfig::new(
+            Arc::clone(trunk),
+            core::time::Duration::from_secs(4),
+            nz(window),
+        )
+        .with_instance(7),
+    )
+    .expect("origin builds")
 }
 
 /// Publish one closed segment of `bytes` length over `millis` milliseconds
@@ -134,9 +141,13 @@ fn average_bandwidth_survives_window_eviction() {
 fn average_bandwidth_is_omitted_when_nothing_is_measurable() {
     let (trunk, w) = trunk_with(8);
     let o = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-            .with_instance(7)
-            .with_declared_bandwidth_bps(5_000_000),
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_instance(7)
+        .with_declared_bandwidth_bps(5_000_000),
     )
     .expect("origin builds");
 

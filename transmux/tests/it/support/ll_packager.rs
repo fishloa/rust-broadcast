@@ -7,13 +7,9 @@ pub fn ll_packager(
     chunk: Duration,
     latency: Duration,
 ) -> transmux::ll_dash::LlDashPackager {
-    let mut pkg = transmux::ll_dash::LlDashPackager::new(
-        segment,
-        chunk,
-        latency,
-        LL_TEST_PUBLISH_TIME,
-    )
-    .expect("packager");
+    let mut pkg =
+        transmux::ll_dash::LlDashPackager::new(segment, chunk, latency, LL_TEST_PUBLISH_TIME)
+            .expect("packager");
     pkg.base.publish_time = Some(LL_TEST_PUBLISH_TIME.to_string());
     pkg
 }

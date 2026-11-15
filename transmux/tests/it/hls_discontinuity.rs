@@ -14,10 +14,10 @@
 //! 4. **Placement** — the tag immediately precedes `#EXTINF` (and any
 //!    `EXT-X-MAP`-like prefix), never appears after it.
 
-use core::time::Duration;
 use crate::hub_fixtures::dummy_avc_config;
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
+use core::time::Duration;
 use transmux::TrackId;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,

@@ -1,9 +1,9 @@
 //! Shared helpers for the multimux HEVC HDR route tests (`hdr10_route`, `hdr10plus_route`, `dovi_route`, `heaac_override`): one `RouteHandle` + `ProgramSegmenter` over a `Trunk`, read back through the axum router.
 
-use std::time::Duration;
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;

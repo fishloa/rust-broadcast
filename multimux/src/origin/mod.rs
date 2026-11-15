@@ -2709,7 +2709,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
 
@@ -2875,7 +2876,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1).with_part_count(2),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(2),
             )
             .expect("add_segment");
         // Live parts of the in-progress segment (seq 2) -- not yet closed.
@@ -2986,7 +2988,8 @@ mod tests {
             store_for_close
                 .add_segment(
                     crate::route::SPTS_PROGRAM_ID,
-                    transmux::ll_hls::SegmentInfo::new(vec![0x99; 8], Duration::from_secs(1), 2).with_part_count(2), // distinct from the concatenated parts
+                    transmux::ll_hls::SegmentInfo::new(vec![0x99; 8], Duration::from_secs(1), 2)
+                        .with_part_count(2), // distinct from the concatenated parts
                 )
                 .expect("add_segment");
         });
@@ -3033,7 +3036,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         let mut streams = HashMap::new();
@@ -3105,7 +3109,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x33; 16], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         // Probe a real instance-named init resource (`init-{track}-{instance}-
@@ -3279,7 +3284,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(4), 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         let mut streams = HashMap::new();
@@ -3350,7 +3356,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(4), 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(4), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         streams.insert(
@@ -3453,7 +3460,8 @@ mod tests {
         store
             .add_segment(
                 crate::route::SPTS_PROGRAM_ID,
-                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(1), 1).with_part_count(1),
+                transmux::ll_hls::SegmentInfo::new(vec![0x20; 8], Duration::from_secs(1), 1)
+                    .with_part_count(1),
             )
             .expect("add_segment");
         streams.insert(

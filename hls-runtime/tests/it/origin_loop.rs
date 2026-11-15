@@ -20,12 +20,12 @@ fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
 }
 
-use std::time::Duration;
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{
     DecimalSeconds, LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
 };
 use hls_runtime::client::{Action, HlsClient, Output, ResourceId};
+use std::time::Duration;
 use transmux::TrackId;
 use transmux::ll_hls::{LlHlsSegmenter, PartInfo, SegmentInfo};
 use transmux::{CodecConfig, Sample, TrackSpec};
@@ -220,8 +220,13 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     // --- Build the origin: one closed segment (3 parts) + an open second
     // segment with 1 known part and a preload hint for its next (not-yet-
     // available) part. ---
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .unwrap();
     let mut fed_samples: Vec<Sample> = Vec::new();
     for i in 0..30u8 {
         let s = vsample(i == 0, i);
@@ -596,9 +601,13 @@ fn can_block_reload_no_yields_non_blocking_reload_with_backoff() {
 
 #[test]
 fn non_ll_playlist_plays_via_full_segment_fallback() {
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(100_000))
-            .unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(100_000),
+    )
+    .unwrap();
     let mut fed_samples: Vec<Sample> = Vec::new();
     for i in 0..30u8 {
         let s = vsample(i == 0, i);

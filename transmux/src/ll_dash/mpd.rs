@@ -238,8 +238,13 @@ mod tests {
 
     #[test]
     fn apply_ll_sets_the_availability_fields_on_every_template() {
-        let packager =
-            LlDashPackager::new(Duration::from_secs(4), Duration::from_secs(1), Duration::from_secs(3), "2026-01-01T00:00:00Z").unwrap();
+        let packager = LlDashPackager::new(
+            Duration::from_secs(4),
+            Duration::from_secs(1),
+            Duration::from_secs(3),
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap();
         let mut mpd = mpd_with_one_template();
         packager.apply_ll(&mut mpd);
         let template = mpd.periods[0].adaptation_sets[0].representations[0]
@@ -259,11 +264,15 @@ mod tests {
 
     #[test]
     fn apply_ll_adds_utc_timing_and_playback_rate_when_configured() {
-        let packager =
-            LlDashPackager::new(Duration::from_secs(4), Duration::from_secs(1), Duration::from_secs(3), "2026-01-01T00:00:00Z")
-                .unwrap()
-                .with_playback_rate(0.96, 1.04)
-                .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z");
+        let packager = LlDashPackager::new(
+            Duration::from_secs(4),
+            Duration::from_secs(1),
+            Duration::from_secs(3),
+            "2026-01-01T00:00:00Z",
+        )
+        .unwrap()
+        .with_playback_rate(0.96, 1.04)
+        .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z");
         let mut mpd = mpd_with_one_template();
         packager.apply_ll(&mut mpd);
         let rate = mpd.service_descriptions[0].playback_rate.as_ref().unwrap();

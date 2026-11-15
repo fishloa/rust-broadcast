@@ -551,12 +551,8 @@ impl LlHlsSegmenter {
         next_seq: u32,
         current_segment: u32,
     ) -> Result<Self> {
-        let mut seg = Self::with_part_target(
-            tracks,
-            movie_timescale,
-            target_duration,
-            part_target,
-        )?;
+        let mut seg =
+            Self::with_part_target(tracks, movie_timescale, target_duration, part_target)?;
         seg.next_seq = next_seq;
         seg.current_segment = current_segment;
         // Restart the part counter at 0 (the new segment being built is
@@ -1498,8 +1494,7 @@ impl LlHlsSegmenter {
         if anchor_span_ticks == 0 {
             return Ok(());
         }
-        let part_duration =
-            ticks_duration(anchor_span_ticks, self.tracks[anchor].spec.timescale);
+        let part_duration = ticks_duration(anchor_span_ticks, self.tracks[anchor].spec.timescale);
 
         let seq = self.next_seq;
         let part_bytes = {

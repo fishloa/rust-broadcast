@@ -383,10 +383,7 @@ impl AudioFollower {
 
     fn fill_gaps(&mut self, upto: u32, leaders: &LeaderDurations) {
         for seq in self.next_seq..upto {
-            let duration = leaders
-                .get(&seq)
-                .copied()
-                .unwrap_or(self.target_duration);
+            let duration = leaders.get(&seq).copied().unwrap_or(self.target_duration);
             self.queue_segment(Vec::new(), seq, duration);
         }
         self.next_seq = self.next_seq.max(upto);
@@ -476,11 +473,24 @@ mod follower_tests {
     fn the_init_is_handed_out_once_and_a_trunk_has_one_follower() {
         let trunk = trunk();
         let spec = track_spec(TrackId::new(2));
-        let mut follower = AudioFollower::try_new(&spec, &trunk, Duration::from_secs(4), Duration::from_millis(500))
-            .expect("follower");
+        let mut follower = AudioFollower::try_new(
+            &spec,
+            &trunk,
+            Duration::from_secs(4),
+            Duration::from_millis(500),
+        )
+        .expect("follower");
         assert!(follower.take_init().is_some_and(|init| !init.is_empty()));
         assert!(follower.take_init().is_none());
-        assert!(AudioFollower::try_new(&spec, &trunk, Duration::from_secs(4), Duration::from_millis(500)).is_none());
+        assert!(
+            AudioFollower::try_new(
+                &spec,
+                &trunk,
+                Duration::from_secs(4),
+                Duration::from_millis(500)
+            )
+            .is_none()
+        );
     }
 
     /// The follower writes into the trunk it was given, whatever capacities the
@@ -490,7 +500,12 @@ mod follower_tests {
         let config: TrunkConfig = trunk_config();
         let trunk = Trunk::new(config);
         let spec = track_spec(TrackId::new(2));
-        let follower = AudioFollower::try_new(&spec, &trunk, Duration::from_secs(4), Duration::from_millis(500));
+        let follower = AudioFollower::try_new(
+            &spec,
+            &trunk,
+            Duration::from_secs(4),
+            Duration::from_millis(500),
+        );
         assert!(follower.is_some());
         assert_eq!(trunk.segment_len(), 0);
     }

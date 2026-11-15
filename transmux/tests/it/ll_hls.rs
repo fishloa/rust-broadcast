@@ -9,10 +9,10 @@
 //!    non-low-latency playlist is asserted to carry NONE of them (opt-in);
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
-use core::time::Duration;
 use crate::hub_fixtures::{audio_track, dummy_avc_config, video_track};
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
+use core::time::Duration;
 use transmux::TrackId;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{CodecConfig, FragmentTrackData, MovieFragmentBox, Sample, TrackSpec};
@@ -49,9 +49,8 @@ fn part_target_duration_renders_the_exact_wire_value() {
     )
     .unwrap();
     assert_eq!(seg.part_target(), Duration::from_millis(334));
-    let ll = LowLatencyConfig::default().with_part_target(DecimalSeconds::from_duration(
-        seg.part_target(),
-    ));
+    let ll = LowLatencyConfig::default()
+        .with_part_target(DecimalSeconds::from_duration(seg.part_target()));
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 1,
@@ -108,8 +107,13 @@ fn find_box_body<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 #[test]
 fn parts_are_valid_fragments_and_sum_to_segment() {
     // segment target 1000 ms, part target 334 ms.
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .unwrap();
 
     // ~1 s of 30 fps video: 30 AUs @ 3000 ticks. First AU is a keyframe.
     for i in 0..30u8 {
@@ -166,8 +170,13 @@ fn parts_are_valid_fragments_and_sum_to_segment() {
 
 #[test]
 fn independent_flag_tracks_sync_first_sample() {
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .unwrap();
 
     // 30 AUs: keyframe only at index 0. Part 1 starts at a sync sample; parts 2
     // and 3 start mid-GOP (no sync).
@@ -257,8 +266,13 @@ fn independent_flag_tracks_sync_first_sample() {
 
 #[test]
 fn part_with_a_mid_part_sync_sample_is_independent() {
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .unwrap();
     for i in 0..30u8 {
         seg.push(TrackId::new(1), vsample(i == 0 || i == 15, i))
             .unwrap();
@@ -569,8 +583,13 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
             height: 240,
         },
     );
-    let mut seg = LlHlsSegmenter::with_part_target(vec![zero_ts_video], timescale(1000), Duration::from_secs(1), Duration::from_millis(334))
-        .expect("construction does not itself validate per-track timescale");
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![zero_ts_video],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .expect("construction does not itself validate per-track timescale");
 
     for i in 0..10u8 {
         seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
@@ -779,8 +798,13 @@ fn every_part_carries_both_tracks() {
 #[test]
 fn part_duration_never_exceeds_part_target() {
     // 334 ms part target, 33.3 ms AUs: the pre-fix code emitted 367 ms parts.
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .unwrap();
     for i in 0..30u8 {
         seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
     }
@@ -1009,7 +1033,8 @@ fn lagging_audio_never_makes_a_zero_duration_part() {
     }
     seg.flush().unwrap();
 
-    let mut parts: std::collections::BTreeMap<u32, Vec<Duration>> = std::collections::BTreeMap::new();
+    let mut parts: std::collections::BTreeMap<u32, Vec<Duration>> =
+        std::collections::BTreeMap::new();
     for p in seg.take_ready_parts() {
         assert!(
             !p.duration.is_zero(),
@@ -1150,8 +1175,13 @@ fn variable_frame_duration_keeps_the_configured_part_target() {
 
 #[test]
 fn samples_without_durations_keep_the_configured_part_target() {
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(2), Duration::from_millis(200)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(2),
+        Duration::from_millis(200),
+    )
+    .unwrap();
     for i in 0..40u8 {
         let sample = Sample::new(vec![0u8; 16], None, None, None, i == 0).expect("valid timing");
         seg.push(TrackId::new(1), sample).unwrap();
@@ -1187,8 +1217,13 @@ fn jittered_frame_timestamps_still_land_parts_within_the_band() {
 #[test]
 fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
     let durations = frame_ticks(24_000, 1001, 120);
-    let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(60), Duration::from_millis(200)).unwrap();
+    let mut seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(60),
+        Duration::from_millis(200),
+    )
+    .unwrap();
     let mut cut_at = Vec::new();
     for (i, d) in durations.iter().enumerate() {
         let sample =
@@ -1210,9 +1245,13 @@ fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
 #[test]
 fn start_time_moves_every_tfdt_and_nothing_else() {
     let tfdts = |start_ns: Option<u64>| {
-        let mut seg =
-            LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334))
-                .unwrap();
+        let mut seg = LlHlsSegmenter::with_part_target(
+            vec![video_track()],
+            timescale(1000),
+            Duration::from_secs(1),
+            Duration::from_millis(334),
+        )
+        .unwrap();
         if let Some(ns) = start_ns {
             seg.set_start_time(std::time::Duration::from_nanos(ns));
         }

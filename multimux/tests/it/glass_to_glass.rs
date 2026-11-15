@@ -372,14 +372,13 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
         // 2 that only `flush()` (not this test) closes — mirroring
         // `origin_loop.rs`'s own non-LL test's segment-boundary trick, so
         // `seg1` ends up with exactly `fed_samples.len()` samples.
-        let mut seg =
-            LlHlsSegmenter::with_part_target(
-                vec![video_track()],
-                MOVIE_TIMESCALE,
-                Duration::from_secs(1),
-                Duration::from_millis(100_000),
-            )
-                .expect("segmenter builds");
+        let mut seg = LlHlsSegmenter::with_part_target(
+            vec![video_track()],
+            MOVIE_TIMESCALE,
+            Duration::from_secs(1),
+            Duration::from_millis(100_000),
+        )
+        .expect("segmenter builds");
         let mut fed_samples: Vec<Sample> = Vec::new();
         for i in 0..30u32 {
             let s = timestamped_sample(i == 0);

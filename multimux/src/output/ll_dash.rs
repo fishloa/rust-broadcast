@@ -69,10 +69,10 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::output::dash::DASH_MANIFEST_CONTENT_TYPE;
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn ll_dash_continues_across_a_source_reconnect() {
@@ -193,7 +193,10 @@ mod tests {
         );
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, Duration::from_secs(4)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         let first = publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"));
         assert_eq!(
@@ -201,7 +204,10 @@ mod tests {
             publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"))
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, Duration::from_millis(500)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(2, Duration::from_millis(500)),
+            )
             .expect("add_segment");
         let second = publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"));
         let (t1, t2): (jiff::Timestamp, jiff::Timestamp) = (
@@ -324,13 +330,22 @@ mod tests {
             vec![video_spec(TrackId::new(1))],
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, Duration::from_secs(4)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, Duration::from_secs(4)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(2, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, Duration::from_secs(4)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(3, Duration::from_secs(4)),
+            )
             .expect("add_segment"); // evicts seq 1 (window_segments == 2)
 
         let mpd = render_ll_dash_mpd(&route).unwrap();
@@ -358,7 +373,10 @@ mod tests {
             vec![video_spec(TrackId::new(1))],
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, Duration::from_secs(2)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(2)),
+            )
             .expect("add_segment");
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(mpd.contains("timeShiftBufferDepth=\"PT2S\""), "{mpd}");
@@ -380,10 +398,16 @@ mod tests {
             vec![video_spec(TrackId::new(1))],
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, Duration::from_secs(4)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, Duration::from_secs(4)))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(2, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let instance = route

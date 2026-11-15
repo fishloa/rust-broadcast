@@ -1,10 +1,10 @@
 //! Route-level `audio_renditions` config and its effect on `/master.m3u8`
 //! (issue #1428 slice 1).
 
-use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

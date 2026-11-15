@@ -213,9 +213,13 @@ fn discontinuity_sequence_zero_on_iframe_playlist() {
         (t, w)
     };
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
-            .with_low_latency(Duration::from_millis(500))
-            .with_instance(7),
+        HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_low_latency(Duration::from_millis(500))
+        .with_instance(7),
     )
     .expect("origin");
     let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");

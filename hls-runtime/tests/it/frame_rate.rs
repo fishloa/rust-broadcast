@@ -344,7 +344,10 @@ fn mediastreamvalidator_reports_no_missing_frame_rate_on_the_measured_ts_variant
         "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n",
     );
     for (n, (bytes, duration)) in segments.iter().enumerate() {
-        media.push_str(&format!("#EXTINF:{:.3},\nseg{n}.ts\n", duration.as_secs_f64()));
+        media.push_str(&format!(
+            "#EXTINF:{:.3},\nseg{n}.ts\n",
+            duration.as_secs_f64()
+        ));
         std::fs::write(dir.join(format!("seg{n}.ts")), bytes).unwrap();
     }
     media.push_str("#EXT-X-ENDLIST\n");

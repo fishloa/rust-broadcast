@@ -9,10 +9,10 @@
 //!  2. A **real-fixture** test remuxes `fixtures/ts/h264-aac.ts` through the
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
-use core::time::Duration;
 use crate::hub_fixtures::{audio_track, video_track};
 use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
+use core::time::Duration;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
 use transmux::TrackId;
@@ -84,7 +84,12 @@ fn moof_summary(segment: &[u8]) -> Vec<(TrackId, u64, usize, u32)> {
 /// them through a segmenter with a 0.3 s target. Video keyframes every 10 AUs.
 #[test]
 fn synthetic_cuts_are_exact_and_lossless() {
-    let mut seg = Segmenter::new(vec![video_track(), audio_track()], timescale(1000), Duration::from_millis(300)).unwrap();
+    let mut seg = Segmenter::new(
+        vec![video_track(), audio_track()],
+        timescale(1000),
+        Duration::from_millis(300),
+    )
+    .unwrap();
 
     // 30 video AUs @ 3000 ticks (=1/30 s), IDR every 10th → keyframes at 0,10,20.
     const N_VID: usize = 30;
@@ -205,8 +210,12 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     .unwrap();
 
     // Segmenter with a 1000 s target → no mid cut. Push interleaved; flush once.
-    let mut seg =
-        Segmenter::new(vec![video_track(), audio_track()], timescale(1000), Duration::from_secs(1000)).unwrap();
+    let mut seg = Segmenter::new(
+        vec![video_track(), audio_track()],
+        timescale(1000),
+        Duration::from_secs(1000),
+    )
+    .unwrap();
     for v in &vid {
         seg.push(TrackId::new(1), v.clone()).unwrap();
     }
@@ -233,10 +242,16 @@ fn rejects_bad_construction() {
         "zero duration"
     );
     assert!(
-        Segmenter::new(vec![video_track(), video_track()], timescale(1000), Duration::from_secs(2)).is_err(),
+        Segmenter::new(
+            vec![video_track(), video_track()],
+            timescale(1000),
+            Duration::from_secs(2)
+        )
+        .is_err(),
         "duplicate track_id"
     );
-    let mut seg = Segmenter::new(vec![video_track()], timescale(1000), Duration::from_secs(2)).unwrap();
+    let mut seg =
+        Segmenter::new(vec![video_track()], timescale(1000), Duration::from_secs(2)).unwrap();
     assert!(
         seg.push(
             TrackId::new(99),
@@ -413,7 +428,12 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         }
     }
 
-    let mut seg = Segmenter::new(vec![vtrack, atrack], timescale(1000), Duration::from_millis(500)).unwrap();
+    let mut seg = Segmenter::new(
+        vec![vtrack, atrack],
+        timescale(1000),
+        Duration::from_millis(500),
+    )
+    .unwrap();
     let init = seg.init_segment().expect("init");
     assert!(find_box_body(&init, b"ftyp").is_some() && find_box_body(&init, b"moov").is_some());
 

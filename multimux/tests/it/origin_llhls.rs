@@ -17,7 +17,6 @@
 //! `RouteHandle`'s own doc), and this test exists precisely to drive it
 //! directly and publish it.
 
-use std::time::Duration;
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
     FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, feed_via_segmenter, video_track_spec,
@@ -25,6 +24,7 @@ use crate::support::segmenter_feed::{
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::http::StatusCode;
 use tower::ServiceExt;

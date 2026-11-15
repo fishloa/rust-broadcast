@@ -6,8 +6,8 @@
 //! crate's own [`Fmp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
-use core::time::Duration;
 use broadcast_common::timescale::Timescale;
+use core::time::Duration;
 use std::path::PathBuf;
 use transmux::TrackId;
 
@@ -109,7 +109,9 @@ fn coded_bytes(media: &Media, track_idx: usize) -> Vec<Bytes> {
 #[test]
 fn identity_repackage_is_lossless() {
     let ir = oracle_ir();
-    let out = Repackage::new(Duration::from_secs(2)).run_media(&ir).expect("repackage");
+    let out = Repackage::new(Duration::from_secs(2))
+        .run_media(&ir)
+        .expect("repackage");
     let round = Fmp4Demux::new()
         .unpackage(&out.to_contiguous())
         .expect("re-demux");
@@ -288,7 +290,9 @@ fn resegment_cut_count_and_keyframe_starts() {
 #[test]
 fn resegment_preserves_full_sample_sequence() {
     let ir = oracle_ir();
-    let out = Repackage::new(Duration::from_millis(500)).run_media(&ir).expect("resegment");
+    let out = Repackage::new(Duration::from_millis(500))
+        .run_media(&ir)
+        .expect("resegment");
 
     // Re-demux the whole contiguous output and compare the full video sequence.
     let round = Fmp4Demux::new()

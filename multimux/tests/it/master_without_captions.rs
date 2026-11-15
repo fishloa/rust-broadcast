@@ -1,10 +1,10 @@
 //! A route whose video carries no captions serves the same master playlist
 //! it did before caption detection existed (issue #1428).
 
-use std::time::Duration;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
