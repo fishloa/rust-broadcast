@@ -44,8 +44,8 @@ pub struct FetchFailure {
     /// for a transport error or a timeout.
     pub status: Option<http::StatusCode>,
     /// The wait the server asked for with `Retry-After` (RFC 9110 §10.2.3);
-    /// [`Duration::ZERO`] when it asked for none. The retry waits at least this
-    /// long, never less than the configured backoff.
+    /// zero when it asked for none. The retry waits at least this long, never
+    /// less than the configured backoff.
     pub retry_after: core::time::Duration,
 }
 
