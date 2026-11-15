@@ -84,11 +84,11 @@ impl<'a> Parse<'a> for CcPinReply {
             length_form,
             lts_id,
             pincode_status: body[2],
-            reserved: ReservedZero::from_bits(body[0] >> 1),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 1)),
             reserved_lts: if lts_bound {
                 ReservedZero::default()
             } else {
-                ReservedZero::from_bits(body[1])
+                ReservedZero::from_bits(u64::from(body[1]))
             },
         })
     }
@@ -107,13 +107,13 @@ impl Serialize for CcPinReply {
         )?;
         match self.lts_id {
             Some(id) => {
-                buf[pos] = (self.reserved.get() << 1) | LTS_BOUND_FLAG_BIT;
+                buf[pos] = ((self.reserved.get() << 1) as u8) | LTS_BOUND_FLAG_BIT;
                 buf[pos + 1] = id;
             }
             None => {
-                buf[pos] = self.reserved.get() << 1;
+                buf[pos] = (self.reserved.get() << 1) as u8;
                 // else branch: reserved(8).
-                buf[pos + 1] = self.reserved_lts.get();
+                buf[pos + 1] = self.reserved_lts.get() as u8;
             }
         }
         buf[pos + 2] = self.pincode_status;

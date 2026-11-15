@@ -153,8 +153,9 @@ fn ac3_frame_words(fscod: u8, frmsizecod: u8) -> Option<u16> {
 // ---------------------------------------------------------------------------
 
 /// Fields parsed from an AC-3 `syncinfo()` + `bsi()`, sufficient to build an
-/// [`Ac3SpecificBox`].
+/// [`Ac3SpecificBox`]. The parser is the only producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Ac3SyncframeInfo {
     pub fscod: u8,
     pub frmsizecod: u8,
@@ -317,8 +318,10 @@ pub fn split_ac3_syncframe_ranges(payload: &[u8], resync: bool) -> Vec<(usize, u
 // ---------------------------------------------------------------------------
 
 /// Fields parsed from an E-AC-3 syncframe, sufficient to build an
-/// [`Ec3SpecificBox`] and calculate `data_rate`.
+/// [`Ec3SpecificBox`] and calculate `data_rate`. The parser is the only
+/// producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct Ec3SyncframeInfo {
     pub strmtyp: u8,
     pub substreamid: u8,
@@ -341,6 +344,36 @@ pub struct Ec3SyncframeInfo {
 }
 
 impl Ec3SyncframeInfo {
+    fn with_fields(
+        strmtyp: u8,
+        substreamid: u8,
+        frmsiz: u16,
+        fscod: u8,
+        numblks: u8,
+        acmod: u8,
+        lfeon: bool,
+        bsid: u8,
+        sample_rate: u32,
+        sample_rate_khz: u32,
+        chanmap: Option<u16>,
+        bsmod: u8,
+    ) -> Self {
+        Self {
+            strmtyp,
+            substreamid,
+            frmsiz,
+            fscod,
+            numblks,
+            acmod,
+            lfeon,
+            bsid,
+            sample_rate,
+            sample_rate_khz,
+            chanmap,
+            bsmod,
+        }
+    }
+
     /// Parse the first E-AC-3 syncframe from an elementary stream buffer.
     pub fn from_es(data: &[u8]) -> Result<Self> {
         let off = find_syncword(data)?;
@@ -415,7 +448,7 @@ impl Ec3SyncframeInfo {
         let bsmod = bsmod.unwrap_or(0);
 
         Ok((
-            Self {
+            Ec3SyncframeInfo::with_fields(
                 strmtyp,
                 substreamid,
                 frmsiz,
@@ -428,7 +461,7 @@ impl Ec3SyncframeInfo {
                 sample_rate_khz,
                 chanmap,
                 bsmod,
-            },
+            ),
             bsmod_present,
         ))
     }
@@ -459,20 +492,20 @@ impl Ec3SyncframeInfo {
                 reason: "syncframe CRC does not check out (false sync or damaged frame)",
             }));
         }
-        Ok(Self {
-            strmtyp: EAC3_STRMTYP_INDEPENDENT,
-            substreamid: 0,
-            frmsiz: words - 1,
-            fscod: ac3.fscod,
-            numblks: AC3_BLOCKS_PER_SYNCFRAME as u8,
-            acmod: ac3.acmod,
-            lfeon: ac3.lfeon,
-            bsid: ac3.bsid,
-            sample_rate: ac3.sample_rate,
-            sample_rate_khz: ac3_sample_rate_khz(ac3.fscod),
-            chanmap: None,
-            bsmod: ac3.bsmod,
-        })
+        Ok(Ec3SyncframeInfo::with_fields(
+            EAC3_STRMTYP_INDEPENDENT,
+            0,
+            words - 1,
+            ac3.fscod,
+            AC3_BLOCKS_PER_SYNCFRAME as u8,
+            ac3.acmod,
+            ac3.lfeon,
+            ac3.bsid,
+            ac3.sample_rate,
+            ac3_sample_rate_khz(ac3.fscod),
+            None,
+            ac3.bsmod,
+        ))
     }
 
     /// Parse the syncframes of the **first access unit** in an E-AC-3
@@ -2467,30 +2500,40 @@ pub(crate) mod tests {
     fn chanmap_to_chan_loc_covers_the_spec_locations() {
         // All 16 chanmap bits set → every chan_loc location that chanmap can
         // express is present.
-        let info = Ec3SyncframeInfo {
-            strmtyp: EAC3_STRMTYP_DEPENDENT,
-            substreamid: 1,
-            frmsiz: 1,
-            fscod: 0,
-            numblks: 6,
-            acmod: 2,
-            lfeon: false,
-            bsid: 16,
-            sample_rate: 48000,
-            sample_rate_khz: 48,
-            chanmap: Some(0xFFFF),
-            bsmod: 0,
-        };
+        let info = Ec3SyncframeInfo::with_fields(
+            EAC3_STRMTYP_DEPENDENT,
+            1,
+            1,
+            0,
+            6,
+            2,
+            false,
+            16,
+            48000,
+            48,
+            Some(0xFFFF),
+            0,
+        );
         assert_eq!(chan_loc_for_frame(&info), 0b1_1111_1111);
         // Table E.1.4 numbers its bits MSB-first, so on the wire the standard
         // 5.1 locations are bits 0-4 and 15 — which is the *low* end and the
         // *top* of the 16-bit value when it is read MSB-first as the spec
         // describes. Written as a wire-order bit string and converted with the
         // same `15 - bit` shift the code uses, they contribute no `chan_loc`.
-        let base = Ec3SyncframeInfo {
-            chanmap: Some(wire_chanmap(&[0, 1, 2, 3, 4, 15])),
-            ..info
-        };
+        let base = Ec3SyncframeInfo::with_fields(
+            info.strmtyp,
+            info.substreamid,
+            info.frmsiz,
+            info.fscod,
+            info.numblks,
+            info.acmod,
+            info.lfeon,
+            info.bsid,
+            info.sample_rate,
+            info.sample_rate_khz,
+            Some(wire_chanmap(&[0, 1, 2, 3, 4, 15])),
+            info.bsmod,
+        );
         assert_eq!(
             chan_loc_for_frame(&base),
             0,
@@ -2499,10 +2542,20 @@ pub(crate) mod tests {
         // A single extra location, expressed in wire order: Table E.1.4 bit 6
         // (Lrs/Rrs pair) is the 7th bit read, i.e. `1 << (15 - 6)` in the value,
         // and maps to Table F.6.1 `chan_loc` bit 1.
-        let lrs_rrs = Ec3SyncframeInfo {
-            chanmap: Some(wire_chanmap(&[0, 1, 2, 3, 4, 6, 15])),
-            ..info
-        };
+        let lrs_rrs = Ec3SyncframeInfo::with_fields(
+            info.strmtyp,
+            info.substreamid,
+            info.frmsiz,
+            info.fscod,
+            info.numblks,
+            info.acmod,
+            info.lfeon,
+            info.bsid,
+            info.sample_rate,
+            info.sample_rate_khz,
+            Some(wire_chanmap(&[0, 1, 2, 3, 4, 6, 15])),
+            info.bsmod,
+        );
         assert_eq!(
             chan_loc_for_frame(&lrs_rrs),
             0b10,
@@ -2510,17 +2563,37 @@ pub(crate) mod tests {
         );
         // And the two ends: E.1.4 bit 5 (Lc/Rc) -> chan_loc bit 0; bit 14
         // (LFE2) -> chan_loc bit 8.
-        let ends = Ec3SyncframeInfo {
-            chanmap: Some(wire_chanmap(&[5, 14])),
-            ..info
-        };
+        let ends = Ec3SyncframeInfo::with_fields(
+            info.strmtyp,
+            info.substreamid,
+            info.frmsiz,
+            info.fscod,
+            info.numblks,
+            info.acmod,
+            info.lfeon,
+            info.bsid,
+            info.sample_rate,
+            info.sample_rate_khz,
+            Some(wire_chanmap(&[5, 14])),
+            info.bsmod,
+        );
         assert_eq!(chan_loc_for_frame(&ends), 0b1_0000_0001);
         // A frame with no custom map contributes nothing.
         assert_eq!(
-            chan_loc_for_frame(&Ec3SyncframeInfo {
-                chanmap: None,
-                ..info
-            }),
+            chan_loc_for_frame(&Ec3SyncframeInfo::with_fields(
+                info.strmtyp,
+                info.substreamid,
+                info.frmsiz,
+                info.fscod,
+                info.numblks,
+                info.acmod,
+                info.lfeon,
+                info.bsid,
+                info.sample_rate,
+                info.sample_rate_khz,
+                None,
+                info.bsmod,
+            )),
             0
         );
     }

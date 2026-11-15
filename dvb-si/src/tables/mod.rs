@@ -221,10 +221,10 @@ pub struct SectionBits {
     /// definable) = `reserved_future_use` (ETSI EN 300 468 §5.1.1).
     pub private_indicator: bool,
     /// Byte 1 bits `[5:4]`: `reserved(2)`.
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// Byte 5 bits `[7:6]`: `reserved(2)` before `version_number` (long-form
     /// sections only; unused by short-form sections).
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
 }
 
 /// Value of an all-ones 2-bit reserved field.
@@ -238,8 +238,8 @@ impl SectionBits {
         Self {
             section_syntax_indicator: true,
             private_indicator: false,
-            reserved_b1: RESERVED_2,
-            reserved_b5: RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
         }
     }
 
@@ -250,8 +250,8 @@ impl SectionBits {
         Self {
             section_syntax_indicator: true,
             private_indicator: true,
-            reserved_b1: RESERVED_2,
-            reserved_b5: RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
         }
     }
 
@@ -270,8 +270,10 @@ impl SectionBits {
         Self {
             section_syntax_indicator: b1 & SECTION_B1_SSI != 0,
             private_indicator: b1 & B1_PRIVATE_INDICATOR != 0,
-            reserved_b1: (b1 >> B1_RESERVED_SHIFT) & RESERVED_2,
-            reserved_b5: b5.map_or(RESERVED_2, |b| b >> B5_RESERVED_SHIFT),
+            reserved_b1: ReservedOnes::from_bits(u64::from(b1 >> B1_RESERVED_SHIFT)),
+            reserved_b5: b5.map_or(ReservedOnes::FILL, |b| {
+                ReservedOnes::from_bits(u64::from(b >> B5_RESERVED_SHIFT))
+            }),
         }
     }
 
@@ -280,13 +282,17 @@ impl SectionBits {
         b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )
     }
 
     /// Byte 5: `reserved(2) | version_number(5) | current_next_indicator(1)`.
     pub(crate) fn b5(&self, version_number: u8, current_next_indicator: bool) -> crate::Result<u8> {
-        b5_of(self.reserved_b5, version_number, current_next_indicator)
+        b5_of(
+            self.reserved_b5.get() as u8,
+            version_number,
+            current_next_indicator,
+        )
     }
 }
 
@@ -636,6 +642,7 @@ pub(crate) const LOW_NIBBLE_MASK: u8 = 0x0F;
 /// section; test/fixture helper counterpart of [`write_section_length`].
 #[cfg(test)]
 use alloc::vec::Vec;
+use broadcast_common::reserved::ReservedOnes;
 #[cfg(test)]
 pub(crate) fn push_section_header(v: &mut Vec<u8>, flags: u8, len: usize) {
     v.push(flags | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));

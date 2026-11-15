@@ -48,11 +48,13 @@ fn pat_entry_reserved_wider_than_3_bits_is_rejected() {
 }
 
 #[test]
-fn section_bits_reserved_wider_than_2_bits_is_rejected() {
+fn section_bits_reserved_cannot_hold_more_than_2_bits() {
     let mut p = PatSection::new(1, 0, true, 0, 0, vec![]);
-    p.bits.reserved_b1 = 0x07; // 3 bits into a reserved(2)
-    assert!(
-        matches!(&ser(&p), Err(dvb_si::error::Error::FieldOverflow(_))),
-        "reserved_b1 = 7 silently truncated to 3"
+    p.bits.reserved_b1 = broadcast_common::reserved::ReservedOnes::<2>::from_bits(0x07);
+    assert_eq!(
+        p.bits.reserved_b1.get(),
+        0x03,
+        "the 3rd bit is not part of the field"
     );
+    assert!(ser(&p).is_ok(), "a reserved(2) is always in range");
 }

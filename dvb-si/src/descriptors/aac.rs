@@ -15,6 +15,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AAC_descriptor.
@@ -23,12 +24,13 @@ const HEADER_LEN: usize = 2;
 
 const FLAG_AAC_TYPE: u8 = 0x80;
 const FLAG_SAOC_DE: u8 = 0x40;
-/// Width mask of `reserved_zero_future_use` (6 bits).
-const RESERVED_ZERO_MASK: u8 = 0x3F;
+/// Width of `reserved_zero_future_use` (6 bits).
+const RESERVED_ZERO_BITS: u32 = 6;
 /// Spec default of the 6-bit `reserved_zero_future_use` field: EN 300 468
 /// V1.16.1+ Table H.1 says 0 (V1.15.1 `reserved_future_use`, V1.11-V1.14
 /// `reserved`(7) = 1 with `SAOC_DE_flag` inside it; audit §4 row 1 carve-out).
-pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
+pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_BITS> =
+    ReservedZero::<RESERVED_ZERO_BITS>::FILL;
 
 /// Decoded AAC component_type — ETSI EN 300 468 Table 26 / Annex H.
 ///
@@ -114,7 +116,7 @@ pub struct AacExtension<'a> {
     /// `reserved_zero_future_use` (6 bits, right-aligned) after
     /// `AAC_type_flag`/`SAOC_DE_flag`. Captured on parse and re-emitted verbatim;
     /// [`AacExtension::new`] defaults to [`RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: u8,
+    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_BITS>,
     /// AAC_type — component_type when stream_content is 0x06 (Table 26).
     /// `Some` iff AAC_type_flag was set.
     pub aac_type: Option<u8>,
@@ -314,7 +316,7 @@ impl<'a> Parse<'a> for AacDescriptor<'a> {
             let additional_info = &body[pos..];
             Some(AacExtension {
                 saoc_de_flag,
-                reserved_zero_future_use: flags & RESERVED_ZERO_MASK,
+                reserved_zero_future_use: ReservedZero::from_bits(u64::from(flags)),
                 aac_type,
                 additional_info,
             })
@@ -360,12 +362,7 @@ impl Serialize for AacDescriptor<'_> {
                 flags |= FLAG_SAOC_DE;
             }
             // reserved_zero_future_use(6): preserved from parse, 0 when constructed.
-            buf[pos] = flags
-                | broadcast_common::len::fit_mask(
-                    ext.reserved_zero_future_use,
-                    RESERVED_ZERO_MASK,
-                    "reserved_zero_future_use",
-                )?;
+            buf[pos] = flags | ext.reserved_zero_future_use.get() as u8;
             pos += 1;
             if let Some(t) = ext.aac_type {
                 buf[pos] = t;
@@ -513,11 +510,14 @@ mod tests {
     /// ones) re-serializes byte-identically.
     #[test]
     fn aac_reserved_preserved() {
-        for r in 0u8..=RESERVED_ZERO_MASK {
+        for r in 0u8..=u8::try_from(ReservedZero::<RESERVED_ZERO_BITS>::MASK).unwrap_or(u8::MAX) {
             for flags in [0u8, FLAG_SAOC_DE] {
                 let bytes = [TAG, 3, 0x50, flags | r, 0xEE];
                 let d = AacDescriptor::parse(&bytes).unwrap();
-                assert_eq!(d.extension.as_ref().unwrap().reserved_zero_future_use, r);
+                assert_eq!(
+                    d.extension.as_ref().unwrap().reserved_zero_future_use,
+                    ReservedZero::<RESERVED_ZERO_BITS>::from_bits(u64::from(r))
+                );
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
                 assert_eq!(buf, bytes, "r={r:#x} flags={flags:#x}");
@@ -545,7 +545,7 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // flags byte: no flags set, reserved zeros => 0x00.
-        assert_eq!(buf[3] & RESERVED_ZERO_MASK, 0);
+        assert_eq!(buf[3] & ReservedZero::<RESERVED_ZERO_BITS>::MASK as u8, 0);
         assert_eq!(buf[3], 0x00);
     }
 }

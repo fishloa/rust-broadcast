@@ -184,11 +184,11 @@ dvb-si = "14"
 Read SDT service names from a transport stream:
 
 ```rust
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::AnyTableSection;
 
-let mut demux = SiDemux::builder().build();
+let mut demux = SiDemux::new(SiDemuxConfig::default());
 for packet in ts_packets {                       // each aligned 188-byte packet
     for event in demux.feed(&packet) {           // only sections that changed
         if let Ok(AnyTableSection::SdtSection(sdt)) = event.table_section() {

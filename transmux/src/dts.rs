@@ -168,7 +168,9 @@ fn find_dts_sync(data: &[u8]) -> Result<usize> {
 /// Fields parsed from a DTS core-substream frame header (ETSI TS 102 114
 /// §5.3/§5.4, Table 5-1), sufficient to describe the elementary stream and
 /// build a core-only [`DtsSpecificBox`] via [`into_ddts`](Self::into_ddts).
+/// The parser is the only producer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct DtsCoreFrameInfo {
     /// Core sampling frequency in Hz (Table 5-5).
     pub sample_rate: u32,
@@ -193,6 +195,32 @@ pub struct DtsCoreFrameInfo {
 }
 
 impl DtsCoreFrameInfo {
+    fn with_fields(
+        sample_rate: u32,
+        channels: u8,
+        samples_per_frame: u32,
+        frame_size: usize,
+        amode: u8,
+        lff: u8,
+        nblks: u8,
+        fsize: u16,
+        rate: u8,
+        sfreq: u8,
+    ) -> Self {
+        Self {
+            sample_rate,
+            channels,
+            samples_per_frame,
+            frame_size,
+            amode,
+            lff,
+            nblks,
+            fsize,
+            rate,
+            sfreq,
+        }
+    }
+
     /// Parse the first core-substream frame header from a DTS elementary
     /// stream buffer. Scans for the `0x7FFE8001` sync word, then parses the
     /// fixed-position fields `SYNC..HFLAG` (Table 5-1).
@@ -252,18 +280,18 @@ impl DtsCoreFrameInfo {
         }))?;
         let channels = chs + u8::from(lff != 0);
 
-        Ok(Self {
+        Ok(DtsCoreFrameInfo::with_fields(
             sample_rate,
             channels,
-            samples_per_frame: DTS_SAMPLES_PER_BLOCK * (nblks as u32 + 1),
-            frame_size: fsize as usize + 1,
+            DTS_SAMPLES_PER_BLOCK * (nblks as u32 + 1),
+            fsize as usize + 1,
             amode,
             lff,
             nblks,
             fsize,
             rate,
             sfreq,
-        })
+        ))
     }
 
     /// Build a core-only [`DtsSpecificBox`] (`dtsc`) from the parsed header —

@@ -13,7 +13,7 @@ use std::fs;
 
 use broadcast_common::Parse;
 use dvb_si::carousel::{DownloadDataBlock, UnMessage};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::ait::AnyAitDescriptor;
 use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::dsmcc::DsmccSection;
@@ -136,11 +136,11 @@ fn hotbird_mhp_dvb_j_descriptors_typed() {
 
     // The demux follows PAT → PMT well-known PIDs but not AIT PIDs (signalled
     // via application_signalling_descriptor), so add the observed AIT PIDs.
-    let mut builder = SiDemux::builder();
+    let mut builder = SiDemuxConfig::default();
     for pid in AIT_PIDS {
-        builder = builder.pid(Pid::from_wire_masked(pid));
+        builder = builder.with_pid(Pid::from_wire_masked(pid));
     }
-    let mut demux = builder.build();
+    let mut demux = SiDemux::new(builder);
 
     let mut ait_sections = 0usize;
     let mut dvb_j_app = 0usize;

@@ -167,8 +167,8 @@ pub enum InputDegradation {
     /// packet's `sync_byte` was not `0x47` (or garbage sat between packets), so
     /// `dropped_bytes` bytes starting at byte `offset` were discarded until the
     /// resynchroniser re-locked on a run of sync bytes. Whatever those bytes
-    /// carried (PES payload, a PSI section) is lost. One event per lost-sync
-    /// span, never for junk before the first lock (a capture that starts
+    /// carried (PES payload, a PSI section) is lost. One event per discarded
+    /// span, including the bytes before the first lock (a capture that starts
     /// mid-packet). `provenance.packet_index` is the index of the next intact
     /// packet.
     SyncLoss {

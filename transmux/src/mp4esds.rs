@@ -343,9 +343,12 @@ impl fmt::Display for StreamType {
 ///
 /// The byte payload is opaque to this layer; its meaning depends on
 /// `objectTypeIndication` + `streamType`. For AAC (OTI 0x40) this is the
-/// `AudioSpecificConfig` per ISO/IEC 14496-3 §1.6.
+/// `AudioSpecificConfig` per ISO/IEC 14496-3 §1.6. Build it with
+/// [`DecoderSpecificInfo::new`] or by parsing; the size varint width is never
+/// a caller's to choose.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct DecoderSpecificInfo {
     /// Opaque codec-configuration bytes.
     pub data: Vec<u8>,
@@ -365,16 +368,17 @@ impl DecoderSpecificInfo {
             size_width: VARINT_WIDTH_FIXED,
         }
     }
+
+    fn with_size_width(data: Vec<u8>, size_width: usize) -> Self {
+        Self { data, size_width }
+    }
 }
 
 impl<'a> Parse<'a> for DecoderSpecificInfo {
     type Error = Error;
 
     fn parse(body: &'a [u8]) -> Result<Self> {
-        Ok(Self {
-            data: body.to_vec(),
-            size_width: VARINT_WIDTH_FIXED,
-        })
+        Ok(Self::with_size_width(body.to_vec(), VARINT_WIDTH_FIXED))
     }
 }
 

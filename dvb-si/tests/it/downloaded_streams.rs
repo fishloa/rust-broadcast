@@ -12,7 +12,7 @@
 
 use std::fs;
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 #[test]
@@ -33,7 +33,7 @@ fn downloaded_streams_parse_without_panic() {
             .to_string_lossy()
             .into_owned();
 
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
         let (mut sections, mut errors) = (0usize, 0usize);
         for chunk in data.chunks(TS_PACKET_SIZE) {
             if chunk.len() != TS_PACKET_SIZE || chunk[0] != 0x47 {

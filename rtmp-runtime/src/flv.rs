@@ -182,14 +182,12 @@ pub struct FlvHeader<'a> {
     pub has_audio: bool,
     /// `TypeFlags` bit 2 (§E.2): the file carries video tags.
     pub has_video: bool,
-    /// `DataOffset` as it was on the wire (§E.2): the first byte after the
-    /// header. [`FLV_DATA_OFFSET`] on every header this crate writes; an
-    /// input may declare a larger one (extra header bytes the caller skips),
-    /// and keeping it makes a parse/serialize round trip byte-exact.
-    pub data_offset: u32,
     /// The `DataOffset - 9` extra header bytes between the fixed 9-byte
     /// header and the `PreviousTagSize0` that the parser skipped (§E.2).
-    /// Empty on every header this crate writes.
+    /// Empty on every header this crate writes. The `DataOffset` field itself
+    /// is derived from this length ([`FlvHeader::data_offset`]), never stored
+    /// beside it, so a serialized header always declares exactly the bytes it
+    /// carries.
     pub extra: &'a [u8],
 }
 
@@ -200,7 +198,6 @@ impl<'a> FlvHeader<'a> {
         Self {
             has_audio,
             has_video,
-            data_offset: FLV_DATA_OFFSET,
             extra: &[],
         }
     }
@@ -217,15 +214,16 @@ impl<'a> FlvHeader<'a> {
         flags
     }
 
+    /// The `DataOffset` (§E.2) this header declares: [`FLV_HEADER_LEN`] plus
+    /// the length of [`FlvHeader::extra`].
+    pub fn data_offset(&self) -> usize {
+        FLV_HEADER_LEN.saturating_add(self.extra.len())
+    }
+
     /// Offset of the first tag's header: past the `DataOffset` the header
-    /// declares and its `PreviousTagSize0` (§E.2). A `DataOffset` shorter
-    /// than the header itself is clamped to [`FLV_HEADER_LEN`], since the
-    /// first tag cannot start inside the header.
+    /// declares and its `PreviousTagSize0` (§E.2).
     pub fn first_tag_offset(&self) -> usize {
-        usize::try_from(self.data_offset)
-            .unwrap_or(usize::MAX)
-            .max(FLV_HEADER_LEN)
-            .saturating_add(FLV_PREV_TAG_SIZE_LEN)
+        self.data_offset().saturating_add(FLV_PREV_TAG_SIZE_LEN)
     }
 }
 
@@ -270,7 +268,6 @@ impl<'a> Parse<'a> for FlvHeader<'a> {
         Ok(Self {
             has_audio: flags & FLV_FLAG_AUDIO != 0,
             has_video: flags & FLV_FLAG_VIDEO != 0,
-            data_offset: u32::try_from(data_offset).unwrap_or(u32::MAX),
             extra,
         })
     }
@@ -298,8 +295,7 @@ impl<'a> Serialize for FlvHeader<'a> {
         if let Some(b) = out.get_mut(FLV_SIGNATURE.len() + 1) {
             *b = self.type_flags();
         }
-        let offset = usize::try_from(self.data_offset).unwrap_or(usize::MAX);
-        let offset = fit_u32(offset, "DataOffset")?;
+        let offset = fit_u32(self.data_offset(), "DataOffset")?;
         out.get_mut(5..FLV_HEADER_LEN)
             .unwrap_or_default()
             .copy_from_slice(&offset.to_be_bytes());

@@ -7,7 +7,7 @@
 //! vectors.
 #![cfg(all(feature = "ts", feature = "jiff"))]
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::epg::EpgStore;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
@@ -21,7 +21,7 @@ fn read_fixture(name: &str) -> Vec<u8> {
 #[test]
 fn isi6_real_epg_build_and_now_next() {
     let data = read_fixture("tnt-5w-12732v-isi6-10s.ts");
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut store = EpgStore::new();
 
     // Demux the capture; feed every EIT section into the EPG store.

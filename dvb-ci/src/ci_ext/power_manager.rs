@@ -160,7 +160,7 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
         Ok(Self {
             length_form,
             activation_state: ActivationState::from_u8(body[0] & 0x0F),
-            reserved: ReservedZero::from_bits(body[0] >> 4),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 4)),
         })
     }
 }
@@ -177,7 +177,7 @@ impl Serialize for ActivationStateChangeRequest {
             buf,
         )?;
         // reserved(4), activation_state(4).
-        buf[pos] = (self.reserved.get() << 4) | (self.activation_state.to_u8() & 0x0F);
+        buf[pos] = ((self.reserved.get() << 4) as u8) | (self.activation_state.to_u8() & 0x0F);
         Ok(pos + REQUEST_BODY)
     }
 }

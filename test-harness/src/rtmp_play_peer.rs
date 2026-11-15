@@ -27,8 +27,8 @@ const PLAY_NOT_FOUND_CODE: &str = "NetStream.Play.StreamNotFound";
 pub struct PeerConfig {
     pub stream_name: String,
     pub window_ack_size: u32,
-    pub chunk_size_after_connect: Option<u32>,
-    pub client_chunk_size: u32,
+    pub chunk_size_after_connect: Option<ChunkSize>,
+    pub client_chunk_size: ChunkSize,
     pub recorded: bool,
 }
 
@@ -38,7 +38,7 @@ impl Default for PeerConfig {
             stream_name: "live".to_string(),
             window_ack_size: 2_500_000,
             chunk_size_after_connect: None,
-            client_chunk_size: 4096,
+            client_chunk_size: ChunkSize::new(4096).expect("4096 is a valid chunk size"),
             recorded: false,
         }
     }
@@ -68,6 +68,10 @@ pub struct PlayPeer {
     pub bytes_sent_after_handshake: u64,
     next_stream_id: u32,
     playing: bool,
+    /// A peer Set Chunk Size decoded in the current `on_bytes` call. It takes
+    /// effect for the chunks that follow it in the same input, so the bytes
+    /// still unparsed are re-fed at the new size rather than the next call.
+    chunk_size_to_adopt: Option<ChunkSize>,
 }
 
 impl PlayPeer {
@@ -84,6 +88,7 @@ impl PlayPeer {
             bytes_sent_after_handshake: 0,
             next_stream_id: PLAY_STREAM_ID,
             playing: false,
+            chunk_size_to_adopt: None,
         }
     }
 
@@ -142,8 +147,23 @@ impl PlayPeer {
         }
         self.chunk_bytes_received += rest.len() as u64;
         let handshake_len = out.len();
-        for msg in self.assembler.push(&rest)? {
-            self.on_message(&msg, &mut out)?;
+        let mut buffer: Vec<u8> = rest.clone();
+        let mut parsed = 0usize;
+        self.assembler.feed(&buffer);
+        loop {
+            let before = self.assembler.pending_len();
+            let Some(message) = self.assembler.next_message()? else {
+                break;
+            };
+            parsed = parsed.saturating_add(before.saturating_sub(self.assembler.pending_len()));
+            self.on_message(&message, &mut out)?;
+            if let Some(chunk_size) = self.chunk_size_to_adopt.take() {
+                buffer.drain(..parsed.min(buffer.len()));
+                parsed = 0;
+                self.assembler.set_chunk_size(chunk_size);
+                self.assembler.swap_pending(&[]);
+                self.assembler.feed(&buffer);
+            }
         }
         self.bytes_sent_after_handshake += (out.len() - handshake_len) as u64;
         Ok(out)
@@ -153,7 +173,7 @@ impl PlayPeer {
         if let Some(pc) = ProtocolControl::from_message(msg)? {
             match pc {
                 ProtocolControl::SetChunkSize(n) => {
-                    self.assembler.set_chunk_size(n.value());
+                    self.chunk_size_to_adopt = Some(n);
                     self.seen.push(Seen::SetChunkSize(n.value()));
                 }
                 ProtocolControl::Acknowledgement(n) => self.seen.push(Seen::Acknowledgement(n)),
@@ -314,12 +334,16 @@ impl PlayPeer {
         )
     }
 
-    pub fn set_chunk_size(&mut self, n: u32) -> Result<Vec<u8>, RtmpError> {
+    pub fn set_chunk_size(&mut self, chunk_size: ChunkSize) -> Result<Vec<u8>, RtmpError> {
         let bytes = self
             .writer
-            .write(&ProtocolControl::SetChunkSize(ChunkSize::new(n).unwrap()).to_message())?;
-        self.writer.set_chunk_size(n);
+            .write(&ProtocolControl::SetChunkSize(chunk_size).to_message())?;
+        self.writer.set_chunk_size(chunk_size);
         Ok(self.counted(bytes))
+    }
+
+    pub fn set_chunk_size_now(&mut self, chunk_size: ChunkSize) -> Result<Vec<u8>, RtmpError> {
+        self.set_chunk_size(chunk_size)
     }
 
     pub fn ping(&mut self, ts: u32) -> Result<Vec<u8>, RtmpError> {

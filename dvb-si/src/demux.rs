@@ -13,7 +13,7 @@
 //!
 //! ```
 //! use broadcast_common::Serialize;
-//! use dvb_si::demux::SiDemux;
+//! use dvb_si::demux::{SiDemux, SiDemuxConfig};
 //! use dvb_si::tables::AnyTableSection;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
 //!
@@ -39,7 +39,7 @@
 //! packet[4] = POINTER_FIELD_START;
 //! packet[5..5 + section.len()].copy_from_slice(&section);
 //!
-//! let mut demux = SiDemux::builder().build();
+//! let mut demux = SiDemux::new(SiDemuxConfig::default());
 //! let events: Vec<_> = demux.feed(&packet).collect();
 //! assert_eq!(events.len(), 1);
 //! match events[0].table_section() {
@@ -78,11 +78,15 @@
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
+use core::num::NonZeroUsize;
 
 use bytes::Bytes;
 
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
+
+/// Default number of distinct gate keys [`SiDemuxConfig`] retains.
+pub const GATE_CAPACITY_DEFAULT: usize = 65_536;
 
 /// table_id of the Program Association Table (PAT) — followed for PMT PIDs.
 const PAT_TABLE_ID: u8 = 0x00;
@@ -236,42 +240,45 @@ struct GateEntry {
     crc: u32,
 }
 
-/// Configuration captured by [`SiDemuxBuilder`].
+/// Configuration captured by [`SiDemuxConfig`].
 struct Config {
     follow_pat: bool,
     emit_repeats: bool,
     gate_capacity: usize,
 }
 
-/// Builder for [`SiDemux`].
+/// Configuration for [`SiDemux`]: `SiDemuxConfig::default()` plus `with_*`
+/// setters, applied with [`SiDemux::new`].
 ///
 /// Defaults: `follow_pat = true`, `dvb_si_pids = true`,
-/// `emit_repeats = false`, `gate_capacity = 65_536`.
-pub struct SiDemuxBuilder {
+/// `emit_repeats = false`, `gate_capacity = GATE_CAPACITY_DEFAULT`.
+#[non_exhaustive]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SiDemuxConfig {
     follow_pat: bool,
     dvb_si_pids: bool,
     emit_repeats: bool,
-    gate_capacity: usize,
+    gate_capacity: NonZeroUsize,
     extra_pids: Vec<Pid>,
 }
 
-impl Default for SiDemuxBuilder {
+impl Default for SiDemuxConfig {
     fn default() -> Self {
         Self {
             follow_pat: true,
             dvb_si_pids: true,
             emit_repeats: false,
-            gate_capacity: 65_536,
+            gate_capacity: NonZeroUsize::new(GATE_CAPACITY_DEFAULT).unwrap_or(NonZeroUsize::MIN),
             extra_pids: Vec::new(),
         }
     }
 }
 
-impl SiDemuxBuilder {
+impl SiDemuxConfig {
     /// When `true` (default), an emitted (changed) PAT auto-adds each
     /// programme's PMT PID to the watch set.
     #[must_use]
-    pub fn follow_pat(mut self, on: bool) -> Self {
+    pub fn with_follow_pat(mut self, on: bool) -> Self {
         self.follow_pat = on;
         self
     }
@@ -279,14 +286,14 @@ impl SiDemuxBuilder {
     /// When `true` (default), pre-populate the watch set with the well-known
     /// DVB/MPEG-2 SI PIDs (PAT, CAT, NIT, SDT/BAT, EIT, RST, TDT/TOT, SAT).
     #[must_use]
-    pub fn dvb_si_pids(mut self, on: bool) -> Self {
+    pub fn with_dvb_si_pids(mut self, on: bool) -> Self {
         self.dvb_si_pids = on;
         self
     }
 
     /// Add a PID to the watch set (additive; may be called repeatedly).
     #[must_use]
-    pub fn pid(mut self, pid: Pid) -> Self {
+    pub fn with_pid(mut self, pid: Pid) -> Self {
         self.extra_pids.push(pid);
         self
     }
@@ -294,61 +301,20 @@ impl SiDemuxBuilder {
     /// When `true`, emit every complete valid section, bypassing the version
     /// gate's suppression (the gate is still updated). Default `false`.
     #[must_use]
-    pub fn emit_repeats(mut self, on: bool) -> Self {
+    pub fn with_emit_repeats(mut self, on: bool) -> Self {
         self.emit_repeats = on;
         self
     }
 
     /// Maximum number of distinct gate keys retained. At capacity the gate
     /// FIFO-evicts the oldest key. Default 65 536.
+    ///
+    /// The capacity is a [`NonZeroUsize`], so a gate that retains nothing is
+    /// unrepresentable.
     #[must_use]
-    pub fn gate_capacity(mut self, cap: usize) -> Self {
+    pub fn with_gate_capacity(mut self, cap: NonZeroUsize) -> Self {
         self.gate_capacity = cap;
         self
-    }
-
-    /// Build the [`SiDemux`].
-    #[must_use]
-    pub fn build(self) -> SiDemux {
-        let mut pids: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
-        let mut protected_pids: BTreeSet<Pid> = BTreeSet::new();
-        if self.dvb_si_pids {
-            use mpeg_ts::pid::well_known as wk;
-            for pid in [
-                wk::PAT,
-                wk::CAT,
-                wk::NIT,
-                wk::SDT_BAT,
-                wk::EIT,
-                wk::RST,
-                wk::TDT_TOT,
-                wk::SAT,
-            ] {
-                pids.entry(pid).or_default();
-                protected_pids.insert(pid);
-            }
-        }
-        for p in self.extra_pids {
-            pids.entry(p).or_default();
-            protected_pids.insert(p);
-        }
-        SiDemux {
-            pids,
-            gate: BTreeMap::new(),
-            gate_order: VecDeque::new(),
-            cfg: Config {
-                follow_pat: self.follow_pat,
-                emit_repeats: self.emit_repeats,
-                gate_capacity: self.gate_capacity,
-            },
-            stats: Stats::default(),
-            scratch: Vec::new(),
-            completed_scratch: Vec::new(),
-            protected_pids,
-            pmt_pids: BTreeSet::new(),
-            pat_generation: None,
-            pat_sections: BTreeMap::new(),
-        }
     }
 }
 
@@ -383,10 +349,48 @@ pub struct SiDemux {
 }
 
 impl SiDemux {
-    /// Start building a demux. See [`SiDemuxBuilder`] for defaults.
+    /// A demux carrying `config`, with its watch set already populated.
     #[must_use]
-    pub fn builder() -> SiDemuxBuilder {
-        SiDemuxBuilder::default()
+    pub fn new(config: SiDemuxConfig) -> Self {
+        let mut pids: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
+        let mut protected_pids: BTreeSet<Pid> = BTreeSet::new();
+        if config.dvb_si_pids {
+            use mpeg_ts::pid::well_known as wk;
+            for pid in [
+                wk::PAT,
+                wk::CAT,
+                wk::NIT,
+                wk::SDT_BAT,
+                wk::EIT,
+                wk::RST,
+                wk::TDT_TOT,
+                wk::SAT,
+            ] {
+                pids.entry(pid).or_default();
+                protected_pids.insert(pid);
+            }
+        }
+        for p in config.extra_pids {
+            pids.entry(p).or_default();
+            protected_pids.insert(p);
+        }
+        SiDemux {
+            pids,
+            gate: BTreeMap::new(),
+            gate_order: VecDeque::new(),
+            cfg: Config {
+                follow_pat: config.follow_pat,
+                emit_repeats: config.emit_repeats,
+                gate_capacity: config.gate_capacity.get(),
+            },
+            stats: Stats::default(),
+            scratch: Vec::new(),
+            completed_scratch: Vec::new(),
+            protected_pids,
+            pmt_pids: BTreeSet::new(),
+            pat_generation: None,
+            pat_sections: BTreeMap::new(),
+        }
     }
 
     /// Accumulated statistics.
@@ -622,9 +626,52 @@ mod tests {
     use mpeg_ts::ts::TS_PACKET_SIZE;
     use test_fixtures::psi::{long_section, pat_section, pmt_section, ts_packet};
 
+    /// A gate capacity of zero retains nothing, so with the old `usize` setter
+    /// `gate_capacity(0)` behaved as capacity 1 (an entry was stored, then
+    /// evicted on the next insert). The capacity is now a `NonZeroUsize`:
+    /// `SiDemuxConfig::default().with_gate_capacity(NonZeroUsize::new(0)..)`
+    /// does not type-check, and the only representable capacities are >= 1.
+    #[test]
+    fn gate_capacity_cannot_be_zero() {
+        assert!(NonZeroUsize::new(0).is_none());
+        let cfg = SiDemuxConfig::default().with_gate_capacity(NonZeroUsize::MIN);
+        let mut demux = SiDemux::new(cfg);
+        let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
+        assert_eq!(demux.feed(&ts_packet(0x0000, &pat)).count(), 1);
+        assert_eq!(demux.stats().gate_evictions, 0);
+    }
+
+    /// The `with_*` setters carry through to the created demux: a config with
+    /// the DVB SI PIDs off and one extra PID watches only that PID, and one
+    /// with repeat emission on re-emits an unchanged section.
+    #[test]
+    fn config_setters_reach_the_created_demux() {
+        let pkt = ts_packet(
+            crate::tables::eit::PID.value(),
+            &long_section(
+                crate::tables::eit::TABLE_ID_PF_ACTUAL,
+                0x0001,
+                0,
+                1,
+                &[0xAA],
+            ),
+        );
+        let mut quiet = SiDemux::new(
+            SiDemuxConfig::default()
+                .with_dvb_si_pids(false)
+                .with_emit_repeats(true)
+                .with_pid(crate::tables::eit::PID),
+        );
+        assert_eq!(quiet.feed(&pkt).count(), 1);
+        assert_eq!(quiet.feed(&pkt).count(), 1, "repeats are emitted");
+
+        let mut elsewhere = SiDemux::new(SiDemuxConfig::default().with_dvb_si_pids(false));
+        assert_eq!(elsewhere.feed(&pkt).count(), 0, "EIT PID not watched");
+    }
+
     #[test]
     fn pat_emits_once_suppresses_repeat_reemits_on_version_change() {
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
 
         let pat_v0 = pat_section(0x0001, 0, &[(1, 0x0100)]);
         let pat_v1 = pat_section(0x0001, 1, &[(1, 0x0100)]);
@@ -654,7 +701,7 @@ mod tests {
     #[test]
     fn follow_pat_registers_pmt_pid_and_emits_typed_pmt() {
         use crate::tables::AnyTableSection;
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
 
         // PAT maps programme 1 -> PMT on PID 0x0100.
         let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
@@ -679,7 +726,7 @@ mod tests {
     #[test]
     fn follow_pat_stops_watching_pmt_pid_dropped_by_a_later_pat_version() {
         use crate::tables::AnyTableSection;
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
 
         // v0: programme 1 -> PMT on 0x0100.
         let pat_v0 = pat_section(0x0001, 0, &[(1, 0x0100)]);
@@ -711,7 +758,7 @@ mod tests {
     /// version drops.
     #[test]
     fn follow_pat_never_drops_a_protected_pid() {
-        let mut demux = SiDemux::builder().pid(Pid::from_const(0x0100)).build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default().with_pid(Pid::from_const(0x0100)));
 
         let pat_v0 = pat_section(0x0001, 0, &[(1, 0x0100)]);
         demux.feed(&ts_packet(0x0000, &pat_v0)).for_each(drop);
@@ -727,7 +774,7 @@ mod tests {
 
     #[test]
     fn corrupted_crc_sdt_dropped_and_counted() {
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
         // SDT actual = table_id 0x42, carried on SDT_BAT pid 0x0011.
         let mut sdt = long_section(0x42, 0x0001, 0, 0, &[0xDE, 0xAD, 0xBE, 0xEF]);
         // Corrupt a payload byte AFTER the CRC was computed.
@@ -742,7 +789,9 @@ mod tests {
 
     #[test]
     fn gate_capacity_evicts_fifo_and_reemits() {
-        let mut demux = SiDemux::builder().gate_capacity(2).build();
+        let mut demux = SiDemux::new(
+            SiDemuxConfig::default().with_gate_capacity(NonZeroUsize::new(2).unwrap()),
+        );
 
         // Three distinct EIT sections (table_id 0x4E) by table_id_extension,
         // all on the EIT pid 0x0012.
@@ -762,7 +811,7 @@ mod tests {
 
     #[test]
     fn garbage_packet_counted_no_panic() {
-        let mut demux = SiDemux::builder().build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default());
         let garbage = [0x00u8; TS_PACKET_SIZE]; // bad sync byte
         let evts: Vec<_> = demux.feed(&garbage).collect();
         assert_eq!(evts.len(), 0);
@@ -772,7 +821,7 @@ mod tests {
 
     #[test]
     fn emit_repeats_bypasses_suppression() {
-        let mut demux = SiDemux::builder().emit_repeats(true).build();
+        let mut demux = SiDemux::new(SiDemuxConfig::default().with_emit_repeats(true));
         let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
         let pkt = ts_packet(0x0000, &pat);
         assert_eq!(demux.feed(&pkt).count(), 1);
@@ -801,7 +850,7 @@ mod tests {
             b
         }
 
-        let mut d = SiDemux::builder().build();
+        let mut d = SiDemux::new(SiDemuxConfig::default());
         d.feed(&ts_packet(0, &pat_bytes(0, true, 0, 1, 0x0100)))
             .for_each(drop);
         d.feed(&ts_packet(0, &pat_bytes(0, true, 1, 1, 0x0101)))

@@ -5,10 +5,11 @@
 //! feeds the PAT PID through `SectionReassembler` to verify the CRC.
 
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::Pcr;
 use std::collections::HashMap;
 use std::fs;
 
-use broadcast_common::Parse;
+use broadcast_common::{Parse, Serialize};
 use mpeg_ts::section::Section;
 use mpeg_ts::ts::{
     AdaptationFieldControl, ScramblingControl, SectionReassembler, TS_PACKET_SIZE, TsHeader,
@@ -189,9 +190,116 @@ fn pat_section_reassembles_and_crc_validates() {
     // Parse the section header and validate the CRC-32.
     let section = Section::parse(&section_bytes).expect("PAT section header parses");
     assert_eq!(section.table_id, 0x00, "PAT table_id must be 0x00");
-    section
-        .validate_crc(&section_bytes)
-        .expect("PAT CRC-32 must validate");
+    section.validate_crc().expect("PAT CRC-32 must validate");
+    mpeg_ts::section::validate_crc(&section_bytes).expect("PAT CRC-32 must validate");
+}
+
+#[test]
+fn real_fixture_sections_round_trip_through_the_generic_section() {
+    // Every complete long-form section a real mux carries must re-serialize
+    // byte-identically from its parsed form, CRC recomputed (#2749). The
+    // PSI PIDs carry the PAT, PMT and SDT here.
+    let pids = [0x0000u16, 0x1000, 0x0011];
+    let buf = fs::read(fixture_path()).expect("read fixture");
+    let mut checked = 0usize;
+    for raw_pid in pids {
+        let pid = Pid::try_new(raw_pid).expect("13-bit pid");
+        let mut reasm = SectionReassembler::default();
+        for pkt in iter_packets(&buf) {
+            if pkt.header.pid != pid {
+                continue;
+            }
+            if let Some(payload) = pkt.payload {
+                reasm.feed(payload, pkt.header.pusi);
+            }
+        }
+        while let Some(bytes) = reasm.pop_section() {
+            let section = Section::parse(&bytes).expect("fixture section parses");
+            mpeg_ts::section::validate_crc(&bytes).expect("fixture section CRC");
+            let mut out = vec![0u8; section.serialized_len()];
+            let n = section.serialize_into(&mut out).expect("section serialize");
+            assert_eq!(n, bytes.len(), "pid {raw_pid:#06x}");
+            assert_eq!(out.as_slice(), bytes, "pid {raw_pid:#06x}");
+            checked += 1;
+        }
+    }
+    assert!(checked > 0, "fixture must carry at least one PSI section");
+}
+
+#[test]
+fn real_fixture_pcr_rewrite_keeps_every_other_byte() {
+    // An in-place PCR rewrite must change the 6 PCR bytes and nothing else,
+    // including the PCR's own reserved bits (a real capture carries `0`).
+    let buf = fs::read(test_fixtures::path("ts/af-pcr-stuffing.ts"))
+        .expect("af-pcr-stuffing.ts fixture must be present");
+    let target = Pcr::from_parts(12_345, 7).expect("in range");
+    let mut rewritten = 0usize;
+    for pkt in buf.chunks_exact(TS_PACKET_SIZE) {
+        let Ok(parsed) = TsPacket::parse(pkt) else {
+            continue;
+        };
+        let Some(Ok(af)) = parsed.adaptation_field() else {
+            continue;
+        };
+        if af.pcr.is_none() {
+            continue;
+        }
+        let mut raw: [u8; TS_PACKET_SIZE] = pkt.try_into().expect("188 bytes");
+        let before = raw;
+        let before_reserved = af.pcr_reserved;
+        mpeg_ts::OwnedTsPacket::set_pcr(&mut raw, target).expect("PCR slot present");
+        let reparsed = TsPacket::parse(&raw).expect("still parses");
+        let af = reparsed.adaptation_field().expect("AF").expect("AF parses");
+        assert_eq!(af.pcr, Some(target));
+        assert_eq!(af.pcr_reserved, before_reserved, "reserved bits kept");
+        for (i, (old, new)) in before.iter().zip(raw.iter()).enumerate() {
+            if (6..12).contains(&i) {
+                continue;
+            }
+            assert_eq!(old, new, "byte {i} must not change");
+        }
+        rewritten += 1;
+    }
+    assert!(rewritten > 0, "fixture must carry at least one PCR packet");
+}
+
+#[test]
+fn real_fixture_pat_pmt_schedule_round_trips_through_simux() {
+    // Every PMT and the PAT a real mux carries, scheduled by `SiMux` and
+    // reassembled, must come out byte-identical (#2763).
+    let buf = fs::read(fixture_path()).expect("read fixture");
+    let mut mux = mpeg_ts::mux::SiMux::new();
+    let mut registered = 0usize;
+    for raw_pid in [0x0000u16, 0x1000] {
+        let pid = Pid::try_new(raw_pid).expect("13-bit pid");
+        let mut reasm = SectionReassembler::default();
+        for pkt in iter_packets(&buf) {
+            if pkt.header.pid != pid {
+                continue;
+            }
+            if let Some(payload) = pkt.payload {
+                reasm.feed(payload, pkt.header.pusi);
+            }
+        }
+        if let Some(bytes) = reasm.pop_section() {
+            mux.upsert(pid, bytes.to_vec(), mpeg_ts::mux::PAT_MAX_INTERVAL)
+                .expect("fixture section is schedulable");
+            registered += 1;
+        }
+    }
+    assert!(registered > 0, "fixture must carry a PSI section");
+    let packets = mux.poll(broadcast_common::Timestamp::ZERO);
+    let mut out = Vec::new();
+    let mut reasm = SectionReassembler::default();
+    for raw in &packets {
+        let pkt = TsPacket::parse(raw).expect("generated packet parses");
+        reasm.feed(pkt.payload.expect("payload"), pkt.header.pusi);
+    }
+    while let Some(section) = reasm.pop_section() {
+        out.push(section);
+    }
+    assert!(!out.is_empty(), "scheduled sections must reassemble");
+    assert!(mux.rejected().is_empty());
 }
 
 #[test]

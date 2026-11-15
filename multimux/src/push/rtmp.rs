@@ -33,9 +33,7 @@ fn on_metadata_values(
     let name = Amf0Value::parse(body)?;
     let rest = &body[name.serialized_len()..];
     let Amf0Value::String(handler) = name else {
-        return Err(rtmp_runtime::RtmpError::Malformed {
-            what: "onMetaData body does not start with its handler name",
-        });
+        return Err(rtmp_runtime::RtmpError::CommandNameNotString { value: name });
     };
     Ok(vec![(handler, Amf0Value::parse(rest)?)])
 }

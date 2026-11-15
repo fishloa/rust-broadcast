@@ -13,7 +13,7 @@
 
 use std::fs;
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
@@ -31,11 +31,12 @@ fn france_tnt_ait_descriptors_parse() {
     // AIT PIDs observed in this capture (0x010E, 0x0302, 0x00AA).
     // The demux follows PAT → PMT well-known PIDs, but AIT PIDs are
     // signalled via application_signalling_descriptor, so add them explicitly.
-    let mut demux = SiDemux::builder()
-        .pid(Pid::from_const(0x010E))
-        .pid(Pid::from_const(0x0302))
-        .pid(Pid::from_const(0x00AA))
-        .build();
+    let mut demux = SiDemux::new(
+        SiDemuxConfig::default()
+            .with_pid(Pid::from_const(0x010E))
+            .with_pid(Pid::from_const(0x0302))
+            .with_pid(Pid::from_const(0x00AA)),
+    );
     let mut ait_sections = 0usize;
     let mut applications = 0usize;
     let mut app_name_count = 0usize;
