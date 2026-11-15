@@ -10,7 +10,9 @@
 //! 4-byte zero pad, `srtcore/packet.cpp`'s `CPacket::pack`) were unparseable
 //! and silently dropped by `io.rs`'s `let _ = self.ingress(...)`.
 
-use srt_runtime::packet::{AckAckPacket, ControlPacket, KeepAlivePacket, SrtPacket};
+use srt_runtime::packet::{
+    AckAckPacket, ControlPacket, KeepAlivePacket, SocketId, SrtPacket, SrtTimestamp,
+};
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = test_fixtures::path(&format!("srt/{name}"));
@@ -38,8 +40,8 @@ fn real_libsrt_keepalive_parses_and_round_trips_byte_exact() {
     assert_eq!(
         ka,
         KeepAlivePacket {
-            timestamp: u32::from_be_bytes([0x00, 0x0f, 0x4f, 0x79]),
-            dest_socket_id: u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a]),
+            timestamp: SrtTimestamp::from_wire(u32::from_be_bytes([0x00, 0x0f, 0x4f, 0x79])),
+            dest_socket_id: SocketId::from_wire(u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a])),
             libsrt_pad: true,
         }
     );
@@ -70,8 +72,8 @@ fn real_libsrt_ackack_parses_and_round_trips_byte_exact() {
         ackack,
         AckAckPacket {
             ack_number: 1,
-            timestamp: u32::from_be_bytes([0x00, 0x0f, 0xc0, 0xd5]),
-            dest_socket_id: u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a]),
+            timestamp: SrtTimestamp::from_wire(u32::from_be_bytes([0x00, 0x0f, 0xc0, 0xd5])),
+            dest_socket_id: SocketId::from_wire(u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a])),
             libsrt_pad: true,
         }
     );

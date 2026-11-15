@@ -14,7 +14,7 @@ use srt_runtime::caller::CallerHandshake;
 use srt_runtime::listener::ListenerHandshake;
 use srt_runtime::packet::{
     AckCif, AckPacket, ControlPacket, DataPacket, GroupMembershipExtension, HandshakeExtensions,
-    HsExtMessage, KeyMaterial, NakPacket,
+    HsExtMessage, KeyMaterial, NakPacket, SocketId, SrtTimestamp,
 };
 use srt_runtime::rendezvous::RendezvousHandshake;
 use srt_runtime::tsbpd::TsbpdScheduler;
@@ -65,28 +65,25 @@ fn no_panic_on_arbitrary_input() {
         let _ = HsExtMessage::parse(input);
         let _ = GroupMembershipExtension::parse(input);
 
-        // Lazily-walked loops must terminate and never panic on malformed
-        // input when constructed directly from raw bytes...
-        let nak = NakPacket {
-            timestamp: 0,
-            dest_socket_id: 0,
-            raw_loss_list: input,
-        };
-        for (i, entry) in nak.entries().enumerate() {
-            let _ = entry;
+        // A loss list decoded straight from raw bytes is bounded by the
+        // bytes it came from (four per entry) and never panics.
+        if let Ok(nak) =
+            NakPacket::parse_cif(SrtTimestamp::ZERO, SocketId::CONNECTION_REQUEST, input)
+        {
             assert!(
-                i <= MAX_LOOP_ITEMS,
-                "NAK loss-list iterator did not terminate for {input:?}"
+                nak.entries.len() <= MAX_LOOP_ITEMS,
+                "NAK loss list is unbounded for {input:?}"
             );
         }
 
-        let exts = HandshakeExtensions(input);
-        for (i, block) in exts.iter().enumerate() {
-            let _ = block;
-            assert!(
-                i <= MAX_LOOP_ITEMS,
-                "handshake extension iterator did not terminate for {input:?}"
-            );
+        if let Ok(exts) = HandshakeExtensions::parse(input) {
+            for (i, block) in exts.iter().enumerate() {
+                let _ = block;
+                assert!(
+                    i <= MAX_LOOP_ITEMS,
+                    "handshake extension loop did not terminate for {input:?}"
+                );
+            }
         }
 
         // ...and when reached through the real dispatcher, which also
@@ -96,12 +93,10 @@ fn no_panic_on_arbitrary_input() {
             match &ctrl {
                 ControlPacket::Handshake(h) => {
                     for (i, block) in h.extensions.iter().enumerate() {
-                        if let Ok(b) = block {
-                            let _ = b.as_hs_ext_message();
-                            let _ = b.as_key_material();
-                            let _ = b.as_stream_id();
-                            let _ = b.as_group_membership();
-                        }
+                        let _ = block.as_hs_ext_message();
+                        let _ = block.as_key_material();
+                        let _ = block.as_stream_id();
+                        let _ = block.as_group_membership();
                         assert!(
                             i <= MAX_LOOP_ITEMS,
                             "handshake extension loop via dispatch did not terminate"
@@ -109,13 +104,10 @@ fn no_panic_on_arbitrary_input() {
                     }
                 }
                 ControlPacket::Nak(n) => {
-                    for (i, entry) in n.entries().enumerate() {
-                        let _ = entry;
-                        assert!(
-                            i <= MAX_LOOP_ITEMS,
-                            "NAK loop via dispatch did not terminate"
-                        );
-                    }
+                    assert!(
+                        n.entries.len() <= MAX_LOOP_ITEMS,
+                        "NAK loss list via dispatch is unbounded"
+                    );
                 }
                 ControlPacket::UserDefined(u) => {
                     let _ = u.as_key_material();
@@ -220,11 +212,13 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
     for _ in 0..ITERATIONS {
         let len = (rng.next_u64() as usize) % (MAX_LEN + 1);
         rng.fill(&mut raw[..len]);
-        sender.on_nak(&NakPacket {
-            timestamp: 0,
-            dest_socket_id: 0,
-            raw_loss_list: &raw[..len],
-        });
+        if let Ok(nak) = NakPacket::parse_cif(
+            SrtTimestamp::ZERO,
+            SocketId::CONNECTION_REQUEST,
+            &raw[..len],
+        ) {
+            sender.on_nak(&nak);
+        }
         if rng.next_u64().is_multiple_of(16) {
             let _ = sender.tick(Timestamp::from_millis(1));
         }
@@ -235,8 +229,8 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
             let _ = sender.on_ack(
                 &AckPacket {
                     ack_number: 0,
-                    timestamp: 0,
-                    dest_socket_id: 0,
+                    timestamp: SrtTimestamp::ZERO,
+                    dest_socket_id: SocketId::CONNECTION_REQUEST,
                     cif,
                 },
                 Timestamp::ZERO,
@@ -302,8 +296,8 @@ fn good_peer_wavehand(peer_socket_id: u32, peer_cookie: u32) -> ControlPacket<'s
         EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
     };
     ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 0,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::CONNECTION_REQUEST,
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -314,7 +308,7 @@ fn good_peer_wavehand(peer_socket_id: u32, peer_cookie: u32) -> ControlPacket<'s
         srt_socket_id: peer_socket_id,
         syn_cookie: peer_cookie,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }
 
@@ -326,8 +320,8 @@ fn good_peer_empty_conclusion(peer_socket_id: u32, peer_cookie: u32) -> ControlP
         EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
     };
     ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 1,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(1),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -338,7 +332,7 @@ fn good_peer_empty_conclusion(peer_socket_id: u32, peer_cookie: u32) -> ControlP
         srt_socket_id: peer_socket_id,
         syn_cookie: peer_cookie,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }
 
@@ -350,8 +344,8 @@ fn good_induction_request(caller_socket_id: u32) -> ControlPacket<'static> {
         EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
     };
     ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 0,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::CONNECTION_REQUEST,
         version: 4,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(2),
@@ -362,7 +356,7 @@ fn good_induction_request(caller_socket_id: u32) -> ControlPacket<'static> {
         srt_socket_id: caller_socket_id,
         syn_cookie: 0,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }
 
@@ -374,8 +368,8 @@ fn good_induction_response(listener_socket_id: u32) -> ControlPacket<'static> {
         EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
     };
     ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 1,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(1),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0x4A17),
@@ -386,6 +380,6 @@ fn good_induction_response(listener_socket_id: u32) -> ControlPacket<'static> {
         srt_socket_id: listener_socket_id,
         syn_cookie: 0xC0FF_EE00,
         peer_ip: [0; 4],
-        extensions: HandshakeExtensions(&[]),
+        extensions: HandshakeExtensions(Vec::new()),
     })
 }

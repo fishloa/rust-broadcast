@@ -20,6 +20,7 @@ pub mod handshake;
 pub mod key_material;
 pub mod misc;
 pub mod nak;
+pub mod number;
 
 pub use ack::{AckCif, AckPacket};
 pub use control::{ControlPacket, ControlType, UserDefinedPacket};
@@ -35,6 +36,7 @@ pub use misc::{
     ShutdownPacket,
 };
 pub use nak::{LossListEntry, NakPacket};
+pub use number::{MessageNumber, SeqNo, SocketId, SrtTimestamp};
 
 use crate::error::{Error, Result};
 use broadcast_common::len::need_in;
@@ -52,7 +54,7 @@ pub(crate) const F_BIT: u32 = 0x8000_0000;
 
 /// Mask for a 31-bit packet sequence number (data packet §3.1, NAK loss list
 /// Appendix A): all bits below the `F`/range-marker bit.
-pub(crate) const SEQ_NUMBER_MASK: u32 = 0x7FFF_FFFF;
+pub(crate) const SEQ_NUMBER_MASK: u32 = SeqNo::MAX.value();
 
 /// Byte offset of the Destination Socket ID — the last of the four fixed
 /// header words shared by every data and control packet (§3, Figure 2).

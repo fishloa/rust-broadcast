@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
-use crate::packet::nak::build_loss_list;
+use crate::packet::number::{SeqNo, SocketId, SrtTimestamp};
 use crate::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, LossListEntry, NakPacket};
 
 use super::rtt::RttEstimator;
@@ -263,6 +263,10 @@ impl Receiver {
                     }
                     s = seq::seq_next(s);
                 }
+                let (first_lost, last_lost) = (
+                    SeqNo::from_wire_masked(first_lost),
+                    SeqNo::from_wire_masked(last_lost),
+                );
                 nak_entries.push(if first_lost == last_lost {
                     LossListEntry::Single(first_lost)
                 } else {
@@ -336,16 +340,12 @@ impl Receiver {
         out
     }
 
-    /// One NAK datagram for `entries`, or `None` if the entries cannot be
-    /// encoded (a sequence number wider than 31 bits — unreachable, every
-    /// entry derives from a masked sequence number — is dropped rather than
-    /// panicking the connection).
+    /// One NAK datagram for `entries`, or `None` if it cannot be serialized.
     fn nak_datagram(&self, entries: &[LossListEntry], now: Timestamp) -> Option<Vec<u8>> {
-        let raw = build_loss_list(entries).ok()?;
         let pkt = ControlPacket::Nak(NakPacket {
             timestamp: timestamp_to_wire_us(now),
-            dest_socket_id: self.dest_socket_id,
-            raw_loss_list: &raw,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
+            entries: entries.to_vec(),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut buf).ok()?;
@@ -427,7 +427,7 @@ impl Receiver {
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number,
             timestamp: timestamp_to_wire_us(now),
-            dest_socket_id: self.dest_socket_id,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             cif: AckCif::Full {
                 last_ack_seq: self.next_expected,
                 rtt_us: self.rtt.rtt_us(),
@@ -451,8 +451,8 @@ impl Receiver {
         // (rule 24).
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number: 0,
-            timestamp: 0,
-            dest_socket_id: self.dest_socket_id,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             cif: AckCif::Light {
                 last_ack_seq: self.next_expected,
             },
@@ -554,6 +554,7 @@ fn coalesce(seqs: &[u32]) -> Vec<LossListEntry> {
             end = seqs[j];
             j += 1;
         }
+        let (start, end) = (SeqNo::from_wire_masked(start), SeqNo::from_wire_masked(end));
         if start == end {
             out.push(LossListEntry::Single(start));
         } else {
@@ -633,8 +634,7 @@ mod tests {
         let ControlPacket::Nak(n) = ControlPacket::parse(&nak).unwrap() else {
             panic!("expected NAK");
         };
-        let entries: Vec<LossListEntry> = n.entries().map(|e| e.unwrap()).collect();
-        assert_eq!(entries, alloc::vec![LossListEntry::Single(2)]);
+        assert_eq!(n.entries, alloc::vec![LossListEntry::Single(sn(2))]);
         assert_eq!(r.ack_point(), 2); // stalled at the gap
         assert_eq!(r.loss_list_len(), 1);
 
@@ -704,8 +704,8 @@ mod tests {
         };
         let ackack = AckAckPacket {
             ack_number: ack.ack_number,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             libsrt_pad: false,
         };
         let sample = Duration::from_millis(20);
@@ -719,7 +719,11 @@ mod tests {
         let ControlPacket::Nak(n) = ControlPacket::parse(bytes).unwrap() else {
             panic!("expected NAK");
         };
-        n.entries().map(|e| e.unwrap()).collect()
+        n.entries
+    }
+
+    fn sn(v: u32) -> SeqNo {
+        SeqNo::try_new(v).expect("fits 31 bits")
     }
 
     /// r08-SRT-W2: a sequence number past the flow window is ignored, so one
@@ -775,7 +779,7 @@ mod tests {
         // One Range entry, not 1000 singles.
         assert_eq!(
             nak_entries(&nak),
-            alloc::vec![LossListEntry::Range(0, WINDOW - 1)]
+            alloc::vec![LossListEntry::Range(sn(0), sn(WINDOW - 1))]
         );
         assert!(r.out_of_order.len() <= WINDOW as usize);
     }
@@ -820,8 +824,8 @@ mod tests {
         };
         let ackack = AckAckPacket {
             ack_number: ack.ack_number,
-            timestamp: 0,
-            dest_socket_id: PEER,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
             libsrt_pad: false,
         };
         let rtt_before = r.rtt();
@@ -878,7 +882,7 @@ mod tests {
             );
             for e in nak_entries(nak) {
                 match e {
-                    LossListEntry::Single(s) => named.push(s),
+                    LossListEntry::Single(s) => named.push(s.value()),
                     other => panic!("unexpected entry {other:?}"),
                 }
             }
@@ -917,7 +921,7 @@ mod tests {
         let imm = r.feed_data(2, Timestamp::ZERO); // MAX-1, MAX, 0, 1 lost
         assert_eq!(
             nak_entries(&imm.nak.expect("gap NAK")),
-            alloc::vec![LossListEntry::Range(MAX - 1, 1)]
+            alloc::vec![LossListEntry::Range(sn(MAX - 1), sn(1))]
         );
         let naks: Vec<Vec<u8>> = r
             .tick(ts(Duration::from_secs(1)))
@@ -927,7 +931,7 @@ mod tests {
         assert_eq!(naks.len(), 1);
         assert_eq!(
             nak_entries(&naks[0]),
-            alloc::vec![LossListEntry::Range(MAX - 1, 1)]
+            alloc::vec![LossListEntry::Range(sn(MAX - 1), sn(1))]
         );
     }
 
@@ -945,7 +949,7 @@ mod tests {
         let out = r.feed_data(105, Timestamp::ZERO);
         assert_eq!(
             nak_entries(&out.nak.expect("gap NAK")),
-            alloc::vec![LossListEntry::Range(100, 104)]
+            alloc::vec![LossListEntry::Range(sn(100), sn(104))]
         );
         assert_eq!(r.loss_list_len(), 5);
     }

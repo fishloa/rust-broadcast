@@ -32,6 +32,7 @@ use crate::handshake_sm::{
     INDUCTION_LEGACY_SOCKET_TYPE, NegotiatedParams, RejectionReason, Retransmit, RetransmitStep,
     SRT_MAGIC_CODE, WireClock,
 };
+use crate::packet::number::{SocketId, SrtTimestamp};
 use crate::packet::{
     ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakeExtensions,
     HandshakePacket, HandshakeType, HsExtMessage,
@@ -130,8 +131,8 @@ impl CallerHandshake {
             });
         }
         let hp = HandshakePacket {
-            timestamp: self.clock.now(),
-            dest_socket_id: 0, // §4.3.1.1: 0 is interpreted as a connection request.
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
+            dest_socket_id: SocketId::CONNECTION_REQUEST, // §4.3.1.1: 0 is interpreted as a connection request.
             version: HANDSHAKE_VERSION_4,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(INDUCTION_LEGACY_SOCKET_TYPE),
@@ -142,7 +143,7 @@ impl CallerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: 0,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         };
         let bytes = handshake_sm::build_bytes(hp)?;
         self.retransmit.arm(&bytes);
@@ -244,33 +245,32 @@ impl CallerHandshake {
         let hs_msg = HsExtMessage {
             srt_version: self.config.srt_version,
             srt_flags: self.config.flags,
-            receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
-            sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
+            receiver_tsbpd_delay: self.config.latency,
+            sender_tsbpd_delay: self.config.latency,
         };
-        let (ext_bytes, ext_flags) = handshake_sm::build_conclusion_extensions(
-            ExtensionType::HsReq,
-            &hs_msg,
+        let ext_contents = handshake_sm::ConclusionExtensionContents::new(
+            hs_msg,
             self.config.stream_id.as_deref(),
             self.config.group,
-        )?;
+        );
         // §6.1.5: the connection initiator (Caller) is the one that sends
         // the Key Material request, piggybacked on this same CONCLUSION.
         #[cfg(feature = "crypto")]
-        let (ext_bytes, ext_flags) = {
-            let mut ext_bytes = ext_bytes;
-            let mut ext_flags = ext_flags;
-            if let Some(crypto) = &self.config.crypto {
-                let km_ext = handshake_sm::build_key_material_extension(crypto)?;
-                ext_bytes.extend(km_ext);
-                ext_flags |= crate::packet::handshake::HS_EXT_FLAG_KMREQ;
-            }
-            (ext_bytes, ext_flags)
-        };
+        let mut ext_contents = ext_contents;
+        #[cfg(feature = "crypto")]
+        if let Some(crypto) = &self.config.crypto {
+            ext_contents.set_key_material(
+                crate::packet::ExtensionType::KmReq,
+                handshake_sm::build_key_material_contents(crypto)?,
+            );
+        }
+        let (extensions, ext_flags) =
+            handshake_sm::build_conclusion_extensions(ExtensionType::HsReq, &ext_contents);
 
         let hp_out = HandshakePacket {
-            timestamp: self.clock.now(),
+            timestamp: SrtTimestamp::from_wire(self.clock.now()),
             // 0, not the captured Listener Socket ID — libsrt `CUDT::processAsyncConnectRequest` (srtcore/core.cpp), draft §4.3.1; libsrt interop.
-            dest_socket_id: 0,
+            dest_socket_id: SocketId::CONNECTION_REQUEST,
             version: HANDSHAKE_VERSION_5,
             encryption_field: self.config.encryption_field,
             extension_field: HandshakeExtensionFlags(ext_flags),
@@ -281,7 +281,7 @@ impl CallerHandshake {
             srt_socket_id: self.own_socket_id,
             syn_cookie: self.syn_cookie,
             peer_ip: self.config.local_ip,
-            extensions: HandshakeExtensions(&ext_bytes),
+            extensions,
         };
         let bytes = handshake_sm::build_bytes(hp_out)?;
         self.retransmit.arm_fresh(&bytes);
@@ -414,13 +414,13 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: HandshakeConfig::default().flags,
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let conclusion_response = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0x0001),
@@ -431,7 +431,7 @@ mod tests {
             srt_socket_id: CONCLUSION_LISTENER_ID,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&ext),
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
         });
         let outputs = c.feed(&conclusion_response).unwrap();
         assert!(
@@ -461,7 +461,7 @@ mod tests {
                 assert_eq!(hp.handshake_type, HandshakeType::Induction);
                 assert_eq!(hp.srt_socket_id, 0xAAAA_BBBB);
                 assert_eq!(hp.syn_cookie, 0);
-                assert_eq!(hp.dest_socket_id, 0);
+                assert_eq!(hp.dest_socket_id, SocketId::CONNECTION_REQUEST);
             }
             _ => panic!("expected handshake"),
         }
@@ -470,8 +470,8 @@ mod tests {
 
     fn induction_response(cookie: u32, listener_id: u32) -> ControlPacket<'static> {
         ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(SRT_MAGIC_CODE),
@@ -482,7 +482,7 @@ mod tests {
             srt_socket_id: listener_id,
             syn_cookie: cookie,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&[]),
+            extensions: HandshakeExtensions(Vec::new()),
         })
     }
 
@@ -505,9 +505,9 @@ mod tests {
                 assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
                 assert_eq!(hp.syn_cookie, 0xC0FF_EE00);
                 // libsrt `CUDT::processAsyncConnectRequest`; see `on_induction_response`.
-                assert_eq!(hp.dest_socket_id, 0);
+                assert_eq!(hp.dest_socket_id, SocketId::CONNECTION_REQUEST);
                 assert_eq!(hp.extension_field.0 & HS_EXT_FLAG_HSREQ, HS_EXT_FLAG_HSREQ);
-                let blocks: Vec<_> = hp.extensions.iter().map(|b| b.unwrap()).collect();
+                let blocks: Vec<_> = hp.extensions.iter().collect();
                 assert_eq!(blocks.len(), 1);
                 assert_eq!(blocks[0].ext_type, ExtensionType::HsReq);
             }
@@ -580,8 +580,8 @@ mod tests {
         let mut c = CallerHandshake::new(1, HandshakeConfig::default());
         c.start().unwrap();
         let ka = ControlPacket::KeepAlive(KeepAlivePacket {
-            timestamp: 0,
-            dest_socket_id: 0,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::CONNECTION_REQUEST,
             libsrt_pad: false,
         });
         assert!(matches!(
@@ -649,13 +649,13 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: HandshakeConfig::default().flags,
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let response = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0x0001),
@@ -666,7 +666,7 @@ mod tests {
             srt_socket_id: 0x1111_2222,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&ext),
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
         });
         let out = c.feed(&response).unwrap();
         assert!(
@@ -681,13 +681,13 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: HandshakeConfig::default().flags,
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let pkt = ControlPacket::Handshake(HandshakePacket {
-            timestamp: 0,
-            dest_socket_id: 0xAAAA_BBBB,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
             version: HANDSHAKE_VERSION_5,
             encryption_field: EncryptionField::NoEncryption,
             extension_field: HandshakeExtensionFlags(0x0001),
@@ -698,7 +698,7 @@ mod tests {
             srt_socket_id: 0x3333_4444,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions(&ext),
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut buf).unwrap();
