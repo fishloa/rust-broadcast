@@ -291,7 +291,7 @@ impl AncContent {
     ///
     /// # Errors
     /// [`Error::FieldOverflow`] if `n` exceeds `u8::MAX`.
-    #[cfg(any(feature = "ts", feature = "rtp"))]
+    #[cfg(feature = "ts")]
     pub(crate) fn udw_count_fields(n: usize) -> Result<usize> {
         let count = broadcast_common::len::fit_u8(n, "Data_Count")?;
         Ok(usize::from(count))
