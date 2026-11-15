@@ -11,6 +11,7 @@ use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for country_availability_descriptor.
@@ -23,12 +24,13 @@ const MIN_BODY_LEN: usize = FLAG_LEN;
 const MAX_BODY_LEN: usize = u8::MAX as usize;
 /// country_availability_flag occupies bit 7 (MSB) of the flag byte.
 const AVAILABILITY_FLAG_MASK: u8 = 0x80;
-/// Lower 7 bits of the flag byte are `reserved_future_use`.
-const RESERVED_MASK: u8 = 0x7F;
+/// Lower 7 bits of the flag byte are `reserved_future_use`. Width in bits.
+const RESERVED_BITS: u32 = 7;
 /// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.3.1-V1.20.1,
 /// audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A: stable in
 /// every edition).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// Country Availability Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,7 +40,7 @@ pub struct CountryAvailabilityDescriptor {
     /// `reserved_future_use`(7) after the flag (7 bits, right-aligned).
     /// Captured on parse and re-emitted verbatim; [`Self::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// true = available in the listed countries; false = available everywhere
     /// EXCEPT the listed countries.
     pub country_availability_flag: bool,
@@ -87,7 +89,7 @@ impl<'a> Parse<'a> for CountryAvailabilityDescriptor {
             country_codes.push(LangCode([chunk[0], chunk[1], chunk[2]]));
         }
         Ok(Self {
-            reserved_future_use: flags & RESERVED_MASK,
+            reserved_future_use: ReservedOnes::from_bits(u64::from(flags)),
             country_availability_flag,
             country_codes,
         })
@@ -118,12 +120,7 @@ impl Serialize for CountryAvailabilityDescriptor {
         } else {
             0
         };
-        buf[HEADER_LEN] = flag_bit
-            | broadcast_common::len::fit_mask(
-                self.reserved_future_use,
-                RESERVED_MASK,
-                "reserved_future_use",
-            )?;
+        buf[HEADER_LEN] = flag_bit | self.reserved_future_use.get() as u8;
         let mut pos = HEADER_LEN + FLAG_LEN;
         for code in &self.country_codes {
             buf[pos..pos + COUNTRY_CODE_LEN].copy_from_slice(&code.0);
@@ -221,7 +218,7 @@ mod tests {
             for flag in [0u8, 0x80] {
                 let bytes = [TAG, 4, flag | r, b'G', b'B', b'R'];
                 let d = CountryAvailabilityDescriptor::parse(&bytes).unwrap();
-                assert_eq!(d.reserved_future_use, r);
+                assert_eq!(d.reserved_future_use.get(), u64::from(r));
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
                 assert_eq!(buf, bytes);

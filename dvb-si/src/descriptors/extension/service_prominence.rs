@@ -2,6 +2,7 @@
 use super::*;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const TAG_EXTENSION: u8 = 0x22;
@@ -10,11 +11,13 @@ impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
 
 /// `sogi_priority` is 12 bits.
 const SOGI_PRIORITY_BITS: u32 = 12;
+/// Width of the per-entry `reserved_future_use` (1 bit).
+const SOGI_RESERVED_BITS: u32 = 1;
 /// Spec default of the 1-bit `reserved_future_use` in each SOGI entry (bit 4
 /// of its first byte): 1 (EN 300 468 Table 162c, V1.19.1/V1.20.1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const SOGI_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x01;
-const SOGI_RESERVED_MASK: u8 = 0x01;
+pub const SOGI_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<SOGI_RESERVED_BITS> =
+    ReservedOnes::<SOGI_RESERVED_BITS>::FILL;
 
 /// service_prominence body (Table 162c). The SOGI loop is unfolded;
 /// each entry's target_region loop uses the typed
@@ -40,7 +43,7 @@ pub struct SogiEntry {
     /// `reserved_future_use` (1 bit, right-aligned) — bit 4 of the entry's
     /// first byte. Preserved on parse; [`SogiEntry::new`] uses
     /// [`SOGI_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<SOGI_RESERVED_BITS>,
     /// `SOGI_priority` (12 bits).
     pub sogi_priority: u16,
     /// `service_id` (16 bits), present iff `service_flag` wire bit is set.
@@ -100,7 +103,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             let sogi_flag = (byte0 >> 7) != 0;
             let target_region_flag = ((byte0 >> 6) & 0x01) != 0;
             let service_flag = ((byte0 >> 5) & 0x01) != 0;
-            let reserved_future_use = (byte0 >> 4) & SOGI_RESERVED_MASK;
+            let reserved_future_use = ReservedOnes::from_bits(u64::from(byte0 >> 4));
             let sogi_priority = ((u16::from(byte0) & 0x0F) << 8) | u16::from(byte1);
             k += 2;
             let service_id = if service_flag {
@@ -198,11 +201,7 @@ impl Serialize for ServiceProminence<'_> {
             buf[p] = ((e.sogi_flag as u8) << 7)
                 | ((e.target_region_loop.is_some() as u8) << 6)
                 | ((e.service_id.is_some() as u8) << 5)
-                | (broadcast_common::len::fit_mask(
-                    e.reserved_future_use,
-                    SOGI_RESERVED_MASK,
-                    "reserved_future_use",
-                )? << 4)
+                | ((e.reserved_future_use.get() as u8) << 4)
                 | ((priority >> 8) as u8 & 0x0F);
             buf[p + 1] = priority as u8;
             p += 2;
@@ -342,7 +341,7 @@ mod tests {
             let d = ExtensionDescriptor::parse(&bytes).unwrap();
             match &d.body {
                 ExtensionBody::ServiceProminence(b) => {
-                    assert_eq!(b.sogi_list[0].reserved_future_use, r);
+                    assert_eq!(b.sogi_list[0].reserved_future_use.get(), u64::from(r));
                 }
                 other => panic!("expected ServiceProminence, got {other:?}"),
             }

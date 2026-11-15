@@ -26,6 +26,7 @@ use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, fit_u8, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for the ATSC caption_service_descriptor.
@@ -47,10 +48,12 @@ const LINE21_RESERVED_SHIFT: u32 = 1;
 const EASY_READER_BIT: u8 = 0x80;
 const WIDE_ASPECT_RATIO_BIT: u8 = 0x40;
 const RESERVED_B_HI_MASK: u8 = 0x3F;
-const RESERVED_HEAD_ONES: u8 = 0b111;
-const RESERVED_A_ONES: u8 = 1;
-const RESERVED_LINE21_ONES: u8 = 0b11111;
-const RESERVED_B_ONES: u16 = 0x3FFF;
+const RESERVED_HEAD_ONES: ReservedOnes<RESERVED_HEAD_BITS> =
+    ReservedOnes::<RESERVED_HEAD_BITS>::FILL;
+const RESERVED_A_ONES: ReservedOnes<1> = ReservedOnes::<1>::FILL;
+const RESERVED_LINE21_ONES: ReservedOnes<RESERVED_LINE21_BITS> =
+    ReservedOnes::<RESERVED_LINE21_BITS>::FILL;
+const RESERVED_B_ONES: ReservedOnes<RESERVED_B_BITS> = ReservedOnes::<RESERVED_B_BITS>::FILL;
 const RESERVED_HEAD_BITS: u32 = 3;
 const RESERVED_LINE21_BITS: u32 = 5;
 const RESERVED_B_BITS: u32 = 14;
@@ -64,7 +67,7 @@ pub enum AtscCaptionKind {
     /// `digital_cc` = 0: a CEA-608 data stream.
     Cea608 {
         /// `reserved` (5 bits) before `line21_field`.
-        reserved: u8,
+        reserved: ReservedOnes<RESERVED_LINE21_BITS>,
         /// `line21_field` (1 bit); A/65 does not expect receivers to use it.
         line21_field: bool,
     },
@@ -95,7 +98,7 @@ pub struct AtscCaptionService {
     /// `language` (24 bits): ISO 639-2/B code, ISO 8859-1 characters.
     pub language: LangCode,
     /// `reserved` (1 bit) after `digital_cc`.
-    pub reserved_a: u8,
+    pub reserved_a: ReservedOnes<1>,
     /// `digital_cc` branch: 608 stream or 708 service.
     pub kind: AtscCaptionKind,
     /// `easy_reader`.
@@ -103,7 +106,7 @@ pub struct AtscCaptionService {
     /// `wide_aspect_ratio`: `false` = 4:3, `true` = 16:9.
     pub wide_aspect_ratio: bool,
     /// `reserved` (14 bits) closing the entry.
-    pub reserved_b: u16,
+    pub reserved_b: ReservedOnes<RESERVED_B_BITS>,
 }
 
 impl AtscCaptionService {
@@ -155,7 +158,7 @@ impl AtscCaptionService {
 #[non_exhaustive]
 pub struct AtscCaptionServiceDescriptor {
     /// `reserved` (3 bits) before `number_of_services`.
-    pub reserved_head: u8,
+    pub reserved_head: ReservedOnes<RESERVED_HEAD_BITS>,
     /// The caption services; `number_of_services` is derived on serialize.
     pub services: Vec<AtscCaptionService>,
 }
@@ -202,7 +205,9 @@ impl<'a> Parse<'a> for AtscCaptionServiceDescriptor {
                 let flags = chunk[LANGUAGE_LEN];
                 let kind = if flags & DIGITAL_CC_BIT == 0 {
                     AtscCaptionKind::Cea608 {
-                        reserved: (flags & LINE21_RESERVED_MASK) >> LINE21_RESERVED_SHIFT,
+                        reserved: ReservedOnes::from_bits(u64::from(
+                            (flags & LINE21_RESERVED_MASK) >> LINE21_RESERVED_SHIFT,
+                        )),
                         line21_field: flags & LINE21_FIELD_BIT != 0,
                     }
                 } else {
@@ -213,17 +218,21 @@ impl<'a> Parse<'a> for AtscCaptionServiceDescriptor {
                 let tail = chunk[LANGUAGE_LEN + 1];
                 AtscCaptionService {
                     language: LangCode([chunk[0], chunk[1], chunk[2]]),
-                    reserved_a: (flags & RESERVED_A_BIT) >> RESERVED_A_SHIFT,
+                    reserved_a: ReservedOnes::from_bits(u64::from(
+                        (flags & RESERVED_A_BIT) >> RESERVED_A_SHIFT,
+                    )),
                     kind,
                     easy_reader: tail & EASY_READER_BIT != 0,
                     wide_aspect_ratio: tail & WIDE_ASPECT_RATIO_BIT != 0,
-                    reserved_b: (u16::from(tail & RESERVED_B_HI_MASK) << u8::BITS)
-                        | u16::from(chunk[LANGUAGE_LEN + 2]),
+                    reserved_b: ReservedOnes::from_bits(
+                        (u64::from(tail & RESERVED_B_HI_MASK) << u8::BITS)
+                            | u64::from(chunk[LANGUAGE_LEN + 2]),
+                    ),
                 }
             })
             .collect();
         Ok(Self {
-            reserved_head: head >> RESERVED_HEAD_SHIFT,
+            reserved_head: ReservedOnes::from_bits(u64::from(head >> RESERVED_HEAD_SHIFT)),
             services,
         })
     }
@@ -246,22 +255,17 @@ impl Serialize for AtscCaptionServiceDescriptor {
         }
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let count = fit_u8(self.services.len(), "number_of_services")?;
-        let head = fit_bits(
-            u64::from(self.reserved_head),
-            RESERVED_HEAD_BITS,
-            "reserved",
-        )? as u8;
+        let head = self.reserved_head.get() as u8;
         buf[HEADER_LEN] = (head << RESERVED_HEAD_SHIFT) | count;
         let mut i = HEADER_LEN + COUNT_BYTE_LEN;
         for s in &self.services {
-            let reserved_a = fit_bits(u64::from(s.reserved_a), 1, "reserved")? as u8;
+            let reserved_a = s.reserved_a.get() as u8;
             let (kind_bit, low) = match s.kind {
                 AtscCaptionKind::Cea608 {
                     reserved,
                     line21_field,
                 } => {
-                    let reserved =
-                        fit_bits(u64::from(reserved), RESERVED_LINE21_BITS, "reserved")? as u8;
+                    let reserved = reserved.get() as u8;
                     (
                         0,
                         (reserved << LINE21_RESERVED_SHIFT) | u8::from(line21_field),
@@ -278,7 +282,7 @@ impl Serialize for AtscCaptionServiceDescriptor {
                     )? as u8,
                 ),
             };
-            let reserved_b = fit_bits(u64::from(s.reserved_b), RESERVED_B_BITS, "reserved")? as u16;
+            let reserved_b = s.reserved_b.get() as u16;
             buf[i..i + LANGUAGE_LEN].copy_from_slice(&s.language.0);
             buf[i + LANGUAGE_LEN] = kind_bit | (reserved_a << RESERVED_A_SHIFT) | low;
             buf[i + LANGUAGE_LEN + 1] = (u8::from(s.easy_reader) * EASY_READER_BIT)
@@ -326,7 +330,11 @@ mod tests {
         assert!(!s.easy_reader);
         assert!(s.wide_aspect_ratio);
         assert_eq!(
-            (d.reserved_head, s.reserved_a, s.reserved_b),
+            (
+                d.reserved_head.get(),
+                s.reserved_a.get(),
+                s.reserved_b.get()
+            ),
             (7, 1, 0x3FFF)
         );
     }
@@ -341,7 +349,7 @@ mod tests {
         assert_eq!(
             d.services[0].kind,
             AtscCaptionKind::Cea608 {
-                reserved: 0b11111,
+                reserved: ReservedOnes::from_bits(0b11111),
                 line21_field: true
             }
         );
@@ -354,9 +362,9 @@ mod tests {
     fn non_default_reserved_bits_survive() {
         let bytes = [TAG, 7, 0xA1, b'f', b'r', b'e', 0x80, 0x00, 0x00];
         let d = round_trip(&bytes);
-        assert_eq!(d.reserved_head, 5);
-        assert_eq!(d.services[0].reserved_a, 0);
-        assert_eq!(d.services[0].reserved_b, 0);
+        assert_eq!(d.reserved_head.get(), 5);
+        assert_eq!(d.services[0].reserved_a.get(), 0);
+        assert_eq!(d.services[0].reserved_b.get(), 0);
     }
 
     #[test]
@@ -427,7 +435,7 @@ mod tests {
     fn kind_label() {
         assert_eq!(
             AtscCaptionKind::Cea608 {
-                reserved: 31,
+                reserved: ReservedOnes::from_bits(31),
                 line21_field: false
             }
             .to_string(),

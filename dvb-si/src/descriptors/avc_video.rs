@@ -6,17 +6,19 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVC_video_descriptor.
 pub const TAG: u8 = 0x28;
 const HEADER_LEN: usize = 2;
+/// Width of the `reserved` tail of body byte 3 (5 bits).
+const RESERVED_BITS: u32 = 5;
 /// Default of the 5-bit `reserved` tail of body byte 3 (H.222.0 Table 2-105):
 /// clause 2.1 "reserved" = `1` (all editions that carry the descriptor,
 /// 06/2012-08/2023, audit §4 row 8 / §5; the 2012 edition carved
 /// `Frame_Packing_SEI_not_present_flag` out of it, which is typed here).
-pub const RESERVED_DEFAULT: u8 = 0b1_1111;
-const RESERVED_MASK: u8 = 0x1F;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 const BODY_LEN: u8 = 4;
 
 /// AVC Video Descriptor.
@@ -52,7 +54,7 @@ pub struct AvcVideoDescriptor {
     /// `reserved(5)` tail of body byte 3 (5 bits, right-aligned). Captured on
     /// parse, re-emitted verbatim; [`AvcVideoDescriptor::new`] /
     /// [`Default`] use [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl AvcVideoDescriptor {
@@ -122,7 +124,7 @@ impl<'a> Parse<'a> for AvcVideoDescriptor {
             avc_still_present: (b3 & 0x80) != 0,
             avc_24_hour_picture_flag: (b3 & 0x40) != 0,
             frame_packing_sei_not_present_flag: (b3 & 0x20) != 0,
-            reserved: b3 & RESERVED_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(b3)),
         })
     }
 }
@@ -155,7 +157,7 @@ impl Serialize for AvcVideoDescriptor {
         buf[HEADER_LEN + 3] = ((self.avc_still_present as u8) << 7)
             | ((self.avc_24_hour_picture_flag as u8) << 6)
             | ((self.frame_packing_sei_not_present_flag as u8) << 5)
-            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+            | self.reserved.get() as u8;
         Ok(len)
     }
 }
@@ -221,11 +223,20 @@ mod tests {
         for r in 0u8..=0x1F {
             let bytes = [TAG, 4, 0x4D, 0x95, 0x29, 0x40 | r];
             let d = AvcVideoDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved.get(), u64::from(r));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
         }
+    }
+
+    /// A value wider than the 5-bit field is unrepresentable.
+    #[test]
+    fn avc_video_reserved_is_five_bits() {
+        assert_eq!(
+            ReservedOnes::<RESERVED_BITS>::from_bits(u64::MAX).get(),
+            0x1F
+        );
     }
 
     #[test]
