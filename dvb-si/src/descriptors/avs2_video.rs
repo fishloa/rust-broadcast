@@ -27,13 +27,18 @@ use super::avs3_video::Avs3FrameRateCode;
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use broadcast_common::len::{fit_bits, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVS2_video_descriptor (GY/T 420 Table 3: 64).
 pub const TAG: u8 = 0x40;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: usize = 5;
-const RESERVED5_ONES: u8 = 0x1F;
+/// Width of the `reserved` tail (5 bits).
+const RESERVED_BITS: u32 = 5;
+/// Spec/default of the 5-bit `reserved` field: all ones when hand-built
+/// (the standard states no value; parse preserves whatever was sent).
+const RESERVED5_ONES: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// AVS2_video_descriptor (GY/T 420-2025 Table 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,7 +62,7 @@ pub struct Avs2VideoDescriptor {
     /// `sample_precision` (3 bits, GY/T 299.1-2016).
     pub sample_precision: u8,
     /// `reserved` (5 bits, right-aligned).
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl Avs2VideoDescriptor {
@@ -111,7 +116,7 @@ impl<'a> Parse<'a> for Avs2VideoDescriptor {
             avs_still_present: b3 & 0x04 != 0,
             chroma_format: b3 & 0x03,
             sample_precision: b4 >> 5,
-            reserved: b4 & 0x1F,
+            reserved: ReservedOnes::from_bits(u64::from(b4)),
         })
     }
 }
@@ -132,7 +137,7 @@ impl Serialize for Avs2VideoDescriptor {
         )? as u8;
         let cf = fit_bits(u64::from(self.chroma_format), 2, "chroma_format")? as u8;
         let sp = fit_bits(u64::from(self.sample_precision), 3, "sample_precision")? as u8;
-        let rsv = fit_bits(u64::from(self.reserved), 5, "reserved")? as u8;
+        let rsv = self.reserved.get() as u8;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
         buf[2] = self.profile_id;
         buf[3] = self.level_id;
@@ -178,7 +183,7 @@ mod tests {
         assert_eq!(d.frame_rate_code, Avs3FrameRateCode::Fps30);
         assert!(!d.avs_still_present);
         assert_eq!(
-            (d.chroma_format, d.sample_precision, d.reserved),
+            (d.chroma_format, d.sample_precision, d.reserved.get()),
             (1, 2, 0x1F)
         );
     }
@@ -220,17 +225,25 @@ mod tests {
             Err(crate::error::Error::FieldOverflow(_))
         ));
         d.sample_precision = 1;
-        d.reserved = 0x20;
-        assert!(matches!(
-            d.serialize_into(&mut [0u8; 8]),
-            Err(Error::FieldOverflow(..))
-        ));
-        d.reserved = 0x1F;
         d.chroma_format = 4;
         assert!(matches!(
             d.serialize_into(&mut [0u8; 8]),
             Err(Error::FieldOverflow(..))
         ));
+    }
+
+    /// `reserved` is a 5-bit typed field, so a value wider than the wire field
+    /// cannot be stored (the old raw `u8` accepted `0x20` and had to re-mask).
+    #[test]
+    fn reserved_field_is_five_bits() {
+        assert_eq!(
+            ReservedOnes::<RESERVED_BITS>::from_bits(0x20).get(),
+            0
+        );
+        assert_eq!(
+            ReservedOnes::<RESERVED_BITS>::from_bits(u64::MAX).get(),
+            0x1F
+        );
     }
 
     #[test]
