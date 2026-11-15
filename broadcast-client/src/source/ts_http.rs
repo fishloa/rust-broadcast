@@ -494,6 +494,12 @@ impl TsHttpSource {
                 self.release_hold();
                 self.push(Event::Starved(k));
             }
+            crate::tshttp::Event::DemuxError(error) => {
+                self.release_hold();
+                self.push(Event::Status(Status::DemuxError {
+                    reason: error.to_string(),
+                }));
+            }
         }
     }
 }

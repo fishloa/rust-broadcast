@@ -145,6 +145,7 @@ struct TrackState {
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+/// #         .expect("valid timing")
 /// # }
 /// // 2 s target segments, one video frame per chunk (per-frame LL).
 /// let mut seg = LlSegmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), 2.0, 1).unwrap();

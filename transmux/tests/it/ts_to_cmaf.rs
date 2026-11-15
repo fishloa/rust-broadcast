@@ -135,8 +135,8 @@ fn ts_to_cmaf_end_to_end() {
                 if let Some(completed) = vid_assembler.feed(pkt.pusi(), payload) {
                     // Parse PTS/DTS from the PES header
                     if let Ok(pes) = mpeg_pes::PesPacket::parse(&completed) {
-                        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-                        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+                        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+                        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
                         vid_pes_bufs.push((pes.payload.to_vec(), pts.unwrap_or(0), dts));
                     } else {
                         // If PES parse fails, still push the payload
@@ -172,8 +172,8 @@ fn ts_to_cmaf_end_to_end() {
     if let Some(completed) = vid_assembler.flush()
         && let Ok(pes) = mpeg_pes::PesPacket::parse(&completed)
     {
-        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+        let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+        let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
         vid_pes_bufs.push((pes.payload.to_vec(), pts.unwrap_or(0), dts));
     }
     if let Some(completed) = aud_assembler.flush()
@@ -278,7 +278,8 @@ fn ts_to_cmaf_end_to_end() {
                 is_sync,
             )
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
 
     // ---- Phase 5: Build audio samples ---------------------------------------
     // Split each PES payload into individual ADTS frames, strip the header.
@@ -291,13 +292,10 @@ fn ts_to_cmaf_end_to_end() {
             // Strip the 7-byte ADTS header → raw AAC frame
             if frame.len() > 7 {
                 let dts = total_adts_frames as i64 * 1024;
-                audio_samples_vec.push(Sample::new(
-                    frame[7..].to_vec(),
-                    Some(dts),
-                    Some(dts),
-                    Some(1024),
-                    true,
-                ));
+                audio_samples_vec.push(
+                    Sample::new(frame[7..].to_vec(), Some(dts), Some(dts), Some(1024), true)
+                        .expect("valid timing"),
+                );
                 total_adts_frames += 1;
             }
         }

@@ -183,20 +183,14 @@ fn assert_samples_match(got: &[Sample], oracle: &[Sample], what: &str) {
 #[test]
 #[should_panic(expected = "payload bytes must match")]
 fn assert_samples_match_catches_wrong_payload_at_matching_count() {
-    let got = [Sample::new(
-        vec![0x01, 0x02, 0x03],
-        Some(0),
-        Some(0),
-        Some(10),
-        true,
-    )];
-    let oracle = [Sample::new(
-        vec![0x01, 0x02, 0xFF],
-        Some(0),
-        Some(0),
-        Some(10),
-        true,
-    )];
+    let got = [
+        Sample::new(vec![0x01, 0x02, 0x03], Some(0), Some(0), Some(10), true)
+            .expect("valid timing"),
+    ];
+    let oracle = [
+        Sample::new(vec![0x01, 0x02, 0xFF], Some(0), Some(0), Some(10), true)
+            .expect("valid timing"),
+    ];
     assert_samples_match(&got, &oracle, "synthetic");
 }
 
@@ -418,7 +412,7 @@ fn audio_samples(n: usize) -> Vec<(TrackId, Sample)> {
         .map(|_| {
             (
                 TrackId::new(1),
-                Sample::from_raw(vec![0u8; 4], None, None, Some(1024)),
+                Sample::from_raw(vec![0u8; 4], None, None, Some(1024)).expect("valid timing"),
             )
         })
         .collect()

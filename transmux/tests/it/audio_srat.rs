@@ -79,13 +79,10 @@ fn mux_one(rate: u32) -> Vec<u8> {
                 sample_size: 16,
             },
         ),
-        vec![transmux::Sample::new(
-            vec![0u8; 16],
-            Some(0),
-            Some(0),
-            Some(1024),
-            true,
-        )],
+        vec![
+            transmux::Sample::new(vec![0u8; 16], Some(0), Some(0), Some(1024), true)
+                .expect("valid timing"),
+        ],
     );
     transmux::CmafMux::new(1)
         .package(&transmux::Media::new(vec![track], timescale(1000)))

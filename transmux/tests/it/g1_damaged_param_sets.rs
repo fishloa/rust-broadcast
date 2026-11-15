@@ -75,14 +75,14 @@ fn first_track_added_packet(bytes: &[u8]) -> Option<usize> {
     let mut demux = StreamingTsDemux::new();
     let mut first = None;
     for (i, chunk) in bytes.chunks(188).enumerate() {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(e) = demux.poll_event() {
             if matches!(e, DemuxEvent::TrackAdded(_)) && first.is_none() {
                 first = Some(i);
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(e) = demux.poll_event() {
         if matches!(e, DemuxEvent::TrackAdded(_)) && first.is_none() {
             first = Some(usize::MAX);
@@ -95,7 +95,7 @@ fn count_invalid_param_sets(bytes: &[u8]) -> usize {
     let mut demux = StreamingTsDemux::new();
     let mut n = 0usize;
     for chunk in bytes.chunks(188) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(e) = demux.poll_event() {
             if let DemuxEvent::InputDegraded { kind, .. } = e
                 && format!("{:?}", kind).contains("InvalidParameterSet")
@@ -104,7 +104,7 @@ fn count_invalid_param_sets(bytes: &[u8]) -> usize {
             }
         }
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     while let Some(e) = demux.poll_event() {
         if let DemuxEvent::InputDegraded { kind, .. } = e
             && format!("{:?}", kind).contains("InvalidParameterSet")

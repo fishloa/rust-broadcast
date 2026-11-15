@@ -14,8 +14,10 @@ use libfuzzer_sys::fuzz_target;
 // sync-byte alignment to reach the PAT/PMT/PES parsing paths behind it.
 fuzz_target!(|data: &[u8]| {
     let mut d = transmux::StreamingTsDemux::new();
-    d.feed(data);
+    // A sample whose timing cannot be represented is a typed error, never a
+    // panic: a fuzz round only has to survive it.
+    let _ = d.feed(data);
     while d.poll_event().is_some() {}
-    d.finish();
+    let _ = d.finish();
     while d.poll_event().is_some() {}
 });

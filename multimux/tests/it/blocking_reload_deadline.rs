@@ -77,7 +77,8 @@ impl Feeder {
                 Some(pts),
                 Some(FRAME_DUR),
                 i % FRAMES_PER_SEGMENT == 0,
-            );
+            )
+            .expect("valid timing");
             self.seg.push(TrackId::new(1), sample).expect("push");
             for part in self.seg.take_ready_parts() {
                 self.store.add_part(program, part);

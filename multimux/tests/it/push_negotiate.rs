@@ -172,7 +172,8 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
         Some(0),
         Some(3_000),
         true,
-    );
+    )
+    .expect("valid timing");
     let publish_media = media.clone();
     let publish_task = tokio::spawn(async move {
         loop {

@@ -70,7 +70,8 @@ impl Stage for FuzzSession {
                         Some(0),
                         Some(1),
                         true,
-                    ),
+                    )
+                    .expect("valid timing"),
                 }),
             }
         }

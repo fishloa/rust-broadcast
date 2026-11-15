@@ -913,7 +913,8 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
             data.extend_from_slice(&nal);
             Sample::new(data, Some(dts), Some(dts + co), Some(DUR as u32), i == 0)
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
 
     let media = Media::new(
         vec![Track::new_at(spec, samples, ANCHOR)],

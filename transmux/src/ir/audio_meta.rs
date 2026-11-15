@@ -391,7 +391,7 @@ impl Track {
                 .samples
                 .into_iter()
                 .map(|s| s.rescale_timescale(from, to))
-                .collect();
+                .collect::<crate::error::Result<Vec<_>>>()?;
             self.start_decode_time = u64::try_from(rescale_i64(
                 i64::try_from(self.start_decode_time).unwrap_or(i64::MAX),
                 from,

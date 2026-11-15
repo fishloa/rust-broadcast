@@ -216,10 +216,10 @@ fn run_stream(ts: &[u8], policy: AfdPersistence) -> Vec<Seen> {
         }
     };
     for chunk in ts.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux, &mut out);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux, &mut out);
     out
 }
@@ -555,10 +555,10 @@ fn hevc_prefix_sei_afd_works() {
         }
     };
     for chunk in ts.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux);
     assert_eq!(changed_count, 1);
     assert_eq!(afd0, Some(ActiveFormatDescription::Centre4x3));
@@ -592,10 +592,10 @@ fn hevc_suffix_sei_ignored() {
         }
     };
     for chunk in ts.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux);
     assert_eq!(afd0, None);
 }
@@ -631,10 +631,10 @@ fn hevc_prefix_plus_suffix_keeps_prefix() {
         }
     };
     for chunk in ts.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux);
     assert_eq!(afd0, Some(ActiveFormatDescription::Centre4x3));
 }

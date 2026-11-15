@@ -58,6 +58,7 @@
 //!     .map(|i| {
 //!         let dts = i as i64 * 100;
 //!         Sample::new(vec![i], Some(dts), Some(dts), Some(100), i == 0 || i == 4)
+//!             .expect("valid timing")
 //!     })
 //!     .collect();
 //!

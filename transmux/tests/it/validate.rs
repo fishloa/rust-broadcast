@@ -12,8 +12,8 @@ use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::{
     CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,
-    Severity, StblChild, TrackSpec, build_init_segment, build_media_segment, validate_cmaf_track,
-    validate_init_segment, validate_media_segment,
+    Severity, StblChild, TrackSpec, build_init_segment, build_media_segment,
+    validate::SegmentOrigin, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
 
 // ---------------------------------------------------------------------------
@@ -110,13 +110,16 @@ fn video_samples(data: &[u8]) -> Vec<Sample> {
         let size = ts.sample_size.expect("sample_size") as usize;
         let dur = ts.sample_duration.unwrap_or(3000);
         let co = ts.sample_composition_time_offset.unwrap_or(0);
-        samples.push(Sample::new(
-            data[cursor..cursor + size].to_vec(),
-            Some(next_dts),
-            Some(next_dts + co),
-            Some(dur),
-            i == 0,
-        ));
+        samples.push(
+            Sample::new(
+                data[cursor..cursor + size].to_vec(),
+                Some(next_dts),
+                Some(next_dts + co),
+                Some(dur),
+                i == 0,
+            )
+            .expect("valid timing"),
+        );
         next_dts += i64::from(dur);
         cursor += size;
     }
@@ -252,7 +255,7 @@ fn clean_media_has_no_errors() {
     let data = fixture();
     let samples = video_samples(&data);
     let media = clean_media(1, 0, &samples);
-    let issues = validate_media_segment(&media);
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
     assert!(
         errors(&issues).is_empty(),
         "clean media flagged errors: {:?}",
@@ -271,7 +274,7 @@ fn clean_track_has_no_errors() {
         .sum();
     let seg1 = clean_media(1, 0, &samples);
     let seg2 = clean_media(2, total, &samples);
-    let issues = validate_cmaf_track(&init, &[&seg1, &seg2]);
+    let issues = validate_cmaf_track(&init, &[&seg1, &seg2], SegmentOrigin::FromIr);
     assert!(
         errors(&issues).is_empty(),
         "clean track flagged errors: {:?}",
@@ -291,14 +294,14 @@ fn tfdt_missing_bites() {
 
     // positive: clean media → no tfdt.missing.
     assert!(!has_code(
-        &validate_media_segment(&media),
+        &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.tfdt.missing"
     ));
 
     // negative: turn the tfdt into a free box (same size → offsets intact) so
     // ONLY the missing-tfdt error fires, not a flood of size-driven ones.
     let broken = rename_box(&media, b"tfdt", b"free");
-    let issues = validate_media_segment(&broken);
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.tfdt.missing"),
         "expected media.tfdt.missing, got {:?}",
@@ -326,7 +329,7 @@ fn mdat_overrun_bites() {
 
     // positive: intact mdat → no overrun.
     assert!(!has_code(
-        &validate_media_segment(&media),
+        &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.mdat.overrun"
     ));
 
@@ -343,7 +346,7 @@ fn mdat_overrun_bites() {
     broken.extend_from_slice(&media[mdat_off + 8..mdat_off + mdat_size - cut]);
     // (anything after mdat is dropped)
 
-    let issues = validate_media_segment(&broken);
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.mdat.overrun"),
         "expected media.mdat.overrun, got {:?}",
@@ -364,7 +367,7 @@ fn mdat_overrun_lower_bound_bites() {
 
     // positive: intact data_offset → no overrun.
     assert!(!has_code(
-        &validate_media_segment(&media),
+        &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.mdat.overrun"
     ));
 
@@ -380,7 +383,7 @@ fn mdat_overrun_lower_bound_bites() {
     let data_offset_off = trun_start + 8 + 4 + 4;
     broken[data_offset_off..data_offset_off + 4].copy_from_slice(&0i32.to_be_bytes());
 
-    let issues = validate_media_segment(&broken);
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.mdat.overrun"),
         "expected media.mdat.overrun (lower bound), got {:?}",
@@ -395,7 +398,7 @@ fn moof_without_mdat_bites() {
     let media = clean_media(1, 0, &samples);
 
     // positive: moof+mdat present → no pairing error.
-    let clean = validate_media_segment(&media);
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
     assert!(!has_code(&clean, "media.mdat.missing"));
     assert!(!has_code(&clean, "media.mdat.orphan"));
 
@@ -404,7 +407,7 @@ fn moof_without_mdat_bites() {
     let (mdat_off, _, _) = *boxes.iter().find(|(_, _, t)| t == b"mdat").unwrap();
     let broken = media[..mdat_off].to_vec();
 
-    let issues = validate_media_segment(&broken);
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.mdat.missing"),
         "expected media.mdat.missing, got {:?}",
@@ -429,7 +432,7 @@ fn mdat_orphan_bites() {
     buf.extend_from_slice(b"mdat");
     buf.extend_from_slice(&[0xAA, 0xBB, 0xCC, 0xDD]);
 
-    let issues = validate_media_segment(&buf);
+    let issues = validate_media_segment(&buf, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.mdat.orphan"),
         "expected media.mdat.orphan, got {:?}",
@@ -450,7 +453,7 @@ fn tfdt_continuity_bites() {
     // positive: two contiguous segments → no continuity error.
     let seg1 = clean_media(1, 0, &samples);
     let seg2_ok = clean_media(2, total, &samples);
-    let ok = validate_cmaf_track(&init, &[&seg1, &seg2_ok]);
+    let ok = validate_cmaf_track(&init, &[&seg1, &seg2_ok], SegmentOrigin::FromIr);
     assert!(
         !has_code(&ok, "track.tfdt.discontinuity"),
         "contiguous segments must not flag discontinuity: {:?}",
@@ -459,7 +462,7 @@ fn tfdt_continuity_bites() {
 
     // negative: segment 2 tfdt < segment 1 (rewinds) → continuity error.
     let seg2_bad = clean_media(2, 0, &samples); // same base time as seg1
-    let bad = validate_cmaf_track(&init, &[&seg1, &seg2_bad]);
+    let bad = validate_cmaf_track(&init, &[&seg1, &seg2_bad], SegmentOrigin::FromIr);
     assert!(
         has_code(&bad, "track.tfdt.discontinuity"),
         "expected track.tfdt.discontinuity, got {:?}",
@@ -480,7 +483,7 @@ fn mfhd_sequence_bites() {
     let seg1 = clean_media(5, 0, &samples);
     // Second segment with a NON-increasing sequence number (same as first).
     let seg2 = clean_media(5, total, &samples);
-    let issues = validate_cmaf_track(&init, &[&seg1, &seg2]);
+    let issues = validate_cmaf_track(&init, &[&seg1, &seg2], SegmentOrigin::FromIr);
     assert!(
         issues
             .iter()
@@ -497,7 +500,7 @@ fn zero_duration_sample_bites() {
     // negative: force a zero-duration sample.
     samples[0].timing = Some(transmux::ir::SampleTiming::timed(0, 0));
     let media = clean_media(1, 0, &samples);
-    let issues = validate_media_segment(&media);
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.sample.zero-duration"),
         "expected media.sample.zero-duration, got {:?}",
@@ -591,7 +594,7 @@ fn init_missing_mvex_warns() {
 fn garbage_buffer_no_panic() {
     let garbage = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55];
     let i1 = validate_init_segment(&garbage);
-    let i2 = validate_media_segment(&garbage);
+    let i2 = validate_media_segment(&garbage, SegmentOrigin::FromIr);
     // No ftyp/moov → init errors.
     assert!(has_code(&i1, "init.ftyp.missing"));
     assert!(has_code(&i1, "init.moov.missing"));
@@ -602,9 +605,9 @@ fn garbage_buffer_no_panic() {
 #[test]
 fn empty_buffer_no_panic() {
     assert!(!validate_init_segment(&[]).is_empty());
-    assert!(!validate_media_segment(&[]).is_empty());
+    assert!(!validate_media_segment(&[], SegmentOrigin::FromIr).is_empty());
     // cross-segment on empties must not panic.
-    let _ = validate_cmaf_track(&[], &[&[], &[]]);
+    let _ = validate_cmaf_track(&[], &[&[], &[]], SegmentOrigin::FromIr);
 }
 
 #[test]
@@ -637,7 +640,7 @@ fn mdat_overrun_checks_every_trun_range() {
 
     // Baseline is clean.
     assert!(!has_code(
-        &validate_media_segment(&media),
+        &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.mdat.overrun"
     ));
 
@@ -652,7 +655,7 @@ fn mdat_overrun_checks_every_trun_range() {
     let data_offset_off = trun_start + 8 + 4 + 4;
     broken[data_offset_off..data_offset_off + 4].copy_from_slice(&0x00FF_FFFFu32.to_be_bytes());
 
-    let issues = validate_media_segment(&broken);
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "media.mdat.overrun"),
         "an out-of-range trun data_offset must be caught, got {:?}",
@@ -663,7 +666,7 @@ fn mdat_overrun_checks_every_trun_range() {
     // clean — so the check is on the range, not merely on the presence of a
     // trun.
     assert!(!has_code(
-        &validate_media_segment(&media),
+        &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.mdat.overrun"
     ));
 }
@@ -697,7 +700,7 @@ fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
         .sum();
     let seg3 = clean_media(3, dur_a + dur_b, a);
 
-    let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg3]);
+    let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg3], SegmentOrigin::FromIr);
     assert!(
         !has_code(&issues, "track.tfdt.discontinuity"),
         "a multi-moof segment must not report a false tfdt discontinuity: {:?}",
@@ -706,7 +709,7 @@ fn multi_moof_segment_has_no_false_tfdt_discontinuity() {
 
     // And a genuinely discontinuous next segment still bites.
     let seg_bad = clean_media(3, dur_a + dur_b + 999_999, a);
-    let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg_bad]);
+    let issues = validate_cmaf_track(&clean_init(), &[&multi, &seg_bad], SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "track.tfdt.discontinuity"),
         "a real discontinuity must still be reported"
@@ -723,7 +726,7 @@ fn unknown_track_id_bites() {
     let media = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(7), 0, &samples)])
         .expect("build media with an undeclared track id");
 
-    let issues = validate_cmaf_track(&clean_init(), &[&media]);
+    let issues = validate_cmaf_track(&clean_init(), &[&media], SegmentOrigin::FromIr);
     assert!(
         has_code(&issues, "track.tfhd.unknown-track"),
         "an undeclared tfhd.track_id must be reported: {:?}",
@@ -731,30 +734,27 @@ fn unknown_track_id_bites() {
     );
 }
 
-/// (d) A fragment whose samples all have zero duration reports **one**
-/// `media.sample.zero-duration` issue, not one per sample.
+/// (d) A fragment whose samples all have a zero span reports **one**
+/// `media.sample.zero-duration` issue, not one per sample. A span is a
+/// positive tick count, so "no span" is stated by leaving the timing's
+/// `duration` at `None`: the fragment writer emits a zero `trun` duration for
+/// it (a non-zero span cannot be stated with `SampleTiming::with_duration`,
+/// and a zero is not silently kept or cleared).
 #[test]
-fn zero_duration_reported_once_per_traf() {
-    let data = fixture();
-    let mut samples = video_samples(&data);
-    for s in &mut samples {
-        if let Some(t) = s.timing.as_mut() {
-            *t = t.with_duration(0);
-        } else {
-            s.timing = Some(transmux::ir::SampleTiming::timed(0, 0));
-        }
-    }
+fn unknown_span_is_reported_not_conflated_with_a_zero_one() {
+    // A video IR sample whose span no source stated is written as a zero
+    // `trun` duration. A video frame cannot have a zero length, so the
+    // validator reports an unstated span, not a declared zero length — which
+    // a track the init segment cannot type as video (any other) keeps as the
+    // declared-zero-class finding.
+    let samples = vec![
+        Sample::from_raw(vec![0x65, 0x88], Some(0), Some(0), None).expect("timestamps, no span"),
+    ];
     let media = clean_media(1, 0, &samples);
-
-    let issues = validate_media_segment(&media);
-    let count = issues
-        .iter()
-        .filter(|i| i.code == "media.sample.zero-duration")
-        .count();
-    assert_eq!(
-        count,
-        1,
-        "one deduplicated issue per traf, got {count} (issues: {:?})",
-        errors(&issues)
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
+    let codes: Vec<&str> = issues.iter().map(|i| i.code).collect();
+    assert!(
+        codes.contains(&"media.sample.zero-duration"),
+        "an untyped track's zero duration stays the declared-zero report: {codes:?}"
     );
 }

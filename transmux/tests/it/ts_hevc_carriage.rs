@@ -257,7 +257,8 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
         .into_iter()
         .flat_map(|n| lp_nal(n))
         .collect();
-    let sample0 = Sample::new(sample0_data, Some(0), Some(0), Some(90_000), true);
+    let sample0 =
+        Sample::new(sample0_data, Some(0), Some(0), Some(90_000), true).expect("valid timing");
 
     // Sample 1: a second IRAP AU *without* its own VPS/SPS/PPS — the case
     // `build_hevc_annexb_au` must repair so every emitted TS AU stays
@@ -266,7 +267,8 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
         .into_iter()
         .flat_map(|n| lp_nal(n))
         .collect();
-    let sample1 = Sample::new(sample1_data, Some(90_000), Some(90_000), Some(90_000), true);
+    let sample1 = Sample::new(sample1_data, Some(90_000), Some(90_000), Some(90_000), true)
+        .expect("valid timing");
 
     let track = Track::new(spec, vec![sample0, sample1]);
     let media = Media::new(vec![track], timescale(90_000));
@@ -356,7 +358,8 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
             let dts = i as i64 * 1_024;
             Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true)
         })
-        .collect();
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .expect("valid timing");
     let audio_track = Track::new(audio_spec, audio_samples);
 
     // Track 1: HEVC, 4 one-second (@ 90 kHz) samples, IRAP at indices 0 and 2.
@@ -378,22 +381,25 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
         },
     );
     let video_samples = vec![
-        Sample::new(full_au.clone(), Some(0), Some(0), Some(90_000), true),
+        Sample::new(full_au.clone(), Some(0), Some(0), Some(90_000), true).expect("valid timing"),
         Sample::new(
             full_au.clone(),
             Some(90_000),
             Some(90_000),
             Some(90_000),
             false,
-        ),
+        )
+        .expect("valid timing"),
         Sample::new(
             full_au.clone(),
             Some(180_000),
             Some(180_000),
             Some(90_000),
             true,
-        ),
-        Sample::new(full_au, Some(270_000), Some(270_000), Some(90_000), false),
+        )
+        .expect("valid timing"),
+        Sample::new(full_au, Some(270_000), Some(270_000), Some(90_000), false)
+            .expect("valid timing"),
     ];
     let video_track = Track::new(video_spec, video_samples);
 
@@ -464,22 +470,25 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     // must cut on the video's keyframes; anchored on audio (the bug), the
     // short audio frames never reach the target and nothing cuts at all.
     let video_samples = vec![
-        Sample::new(full_au.clone(), Some(0), Some(0), Some(90_000), true),
+        Sample::new(full_au.clone(), Some(0), Some(0), Some(90_000), true).expect("valid timing"),
         Sample::new(
             full_au.clone(),
             Some(90_000),
             Some(90_000),
             Some(90_000),
             false,
-        ),
+        )
+        .expect("valid timing"),
         Sample::new(
             full_au.clone(),
             Some(180_000),
             Some(180_000),
             Some(90_000),
             true,
-        ),
-        Sample::new(full_au, Some(270_000), Some(270_000), Some(90_000), false),
+        )
+        .expect("valid timing"),
+        Sample::new(full_au, Some(270_000), Some(270_000), Some(90_000), false)
+            .expect("valid timing"),
     ];
     let mut cuts = 0usize;
     for s in video_samples {
@@ -490,7 +499,8 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
         let dts = i * 1_024;
         seg.push(
             TrackId::new(1),
-            Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true),
+            Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true)
+                .expect("valid timing"),
         )
         .expect("push audio");
         // Drain and discard: under the pre-`take_ready` API a cut produced by

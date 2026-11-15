@@ -1456,7 +1456,7 @@ pub(crate) mod tests {
             pes.push(0x80); // flags1: marker + no special flags
             pes.push(0x80); // flags2: PTS_DTS_flags = 10
             pes.push(HDR_LEN as u8);
-            pes.extend_from_slice(&mpeg_pes::Pts(pts).to_field_bytes());
+            pes.extend_from_slice(&mpeg_pes::Pts::try_new(pts).unwrap().to_field_bytes());
             pes.extend_from_slice(payload);
             pes
         }

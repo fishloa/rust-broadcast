@@ -137,9 +137,9 @@ fn streaming_demux_reports_the_same_losses_at_any_chunking() {
         let mut d = StreamingTsDemux::new();
         let mut losses = Vec::new();
         for c in damaged.chunks(chunk) {
-            d.feed(c);
+            d.feed(c).expect("valid timing");
         }
-        d.finish();
+        d.finish().expect("valid timing");
         while let Some(ev) = d.poll_event() {
             if let DemuxEvent::InputDegraded {
                 kind:

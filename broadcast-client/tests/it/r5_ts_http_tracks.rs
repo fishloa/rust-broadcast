@@ -69,7 +69,7 @@ fn reference_samples(bytes: &[u8]) -> Vec<(TrackId, Option<i64>, usize)> {
     let mut demux = StreamingTsDemux::new();
     let mut out = Vec::new();
     for chunk in bytes.chunks(CHUNK) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(e) = demux.poll_event() {
             if let DemuxEvent::Sample {
                 track_id, sample, ..
@@ -90,7 +90,7 @@ fn final_track_set(bytes: &[u8]) -> Vec<TrackId> {
     let mut demux = StreamingTsDemux::new();
     let mut ids = Vec::new();
     for chunk in bytes.chunks(CHUNK) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         while let Some(e) = demux.poll_event() {
             if let DemuxEvent::TrackAdded(spec) = e {
                 ids.push(spec.track_id);

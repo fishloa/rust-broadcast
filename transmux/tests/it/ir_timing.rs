@@ -130,8 +130,8 @@ fn push_pes(out: &mut Vec<PesAu>, bytes: &[u8]) {
     if pes.payload.is_empty() {
         return;
     }
-    let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-    let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+    let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+    let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
     // `PES_packet_length` counts the bytes after its own two-byte field: three
     // fixed optional-header bytes, `PES_header_data_length` optional bytes,
     // then the payload. Both are read from the raw header (offsets 4-5 and 8,
@@ -804,7 +804,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
                     carriage: DataCarriage::Pes,
                 },
             ),
-            vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
+            vec![Sample::from_raw(vec![1, 2, 3], None, None, None).expect("valid timing")],
         )],
         timescale(90_000),
     );
@@ -818,7 +818,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
                     height: 480,
                 },
             ),
-            vec![Sample::from_raw(vec![1, 2, 3], None, None, None)],
+            vec![Sample::from_raw(vec![1, 2, 3], None, None, None).expect("valid timing")],
         )],
         timescale(90_000),
     );
@@ -894,6 +894,7 @@ fn provenance_builder_round_trips() {
     // media plane step 2c: absolute timing lives on the sample itself; the raw
     // pre-unwrap wire stamps survive only as debug-only `Provenance`.
     let s = Sample::from_raw(vec![0u8; 4], Some(12000), Some(12345), Some(100))
+        .expect("valid timing")
         .with_provenance(transmux::Provenance::new(Some(12000), Some(12345)));
     assert_eq!(
         s.timing.and_then(|t| t.dts()),

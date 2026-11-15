@@ -287,7 +287,9 @@ fn variable_frame_rate_reports_the_maximum_not_the_overall_mean() {
         }
         if let Some(t) = sample.timing.as_mut() {
             let doubled = t.duration().unwrap_or(2).saturating_mul(2);
-            *t = t.with_duration(doubled);
+            *t = t.with_duration(
+                core::num::NonZeroU32::new(doubled).unwrap_or(core::num::NonZeroU32::MIN),
+            )
         }
         i % 2 == 0
     });
@@ -380,7 +382,9 @@ fn video_piece(
     for sample in track.samples.iter().take(samples) {
         let mut sample = sample.clone();
         if let Some(t) = sample.timing.as_mut() {
-            *t = t.with_duration(ticks);
+            *t = t.with_duration(
+                core::num::NonZeroU32::new(ticks).unwrap_or(core::num::NonZeroU32::MIN),
+            )
         } else {
             sample.timing = Some(transmux::ir::SampleTiming::duration_only(ticks).unwrap_or(
                 transmux::ir::SampleTiming::DurationOnly {

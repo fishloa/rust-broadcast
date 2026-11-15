@@ -439,7 +439,7 @@ mod tests {
     }
 
     fn sample(data: Vec<u8>, pts: i64) -> Sample {
-        Sample::new(data, Some(pts), Some(pts), None, false)
+        Sample::new(data, Some(pts), Some(pts), None, false).expect("valid timing")
     }
 
     // ── H.264 ──────────────────────────────────────────────────────────

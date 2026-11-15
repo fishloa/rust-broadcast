@@ -130,10 +130,10 @@ fn stream(data: &[u8]) -> Vec<Seen> {
         }
     };
     for chunk in data.chunks(188 * 512) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux, &mut out, &mut count);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux, &mut out, &mut count);
     out
 }

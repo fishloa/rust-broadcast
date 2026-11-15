@@ -258,10 +258,10 @@ fn streamed_video(bytes: &[u8]) -> Vec<Sample> {
         }
     };
     for chunk in bytes.chunks(HTTP_CHUNK_PACKETS * TS_PACKET) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         drain(&mut demux);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     drain(&mut demux);
     out
 }
@@ -448,13 +448,16 @@ fn looped_ts(rel: &str, tag: &str, skip: usize, reps: usize) -> PathBuf {
     let mut stream = Vec::new();
     for k in 0..reps as i64 {
         for s in body {
-            stream.push(Sample::new(
-                s.data.to_vec(),
-                s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
-                s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
-                s.timing.and_then(|t| t.duration()),
-                s.flags.is_sync,
-            ));
+            stream.push(
+                Sample::new(
+                    s.data.to_vec(),
+                    s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
+                    s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
+                    s.timing.and_then(|t| t.duration()),
+                    s.flags.is_sync,
+                )
+                .expect("valid timing"),
+            );
         }
     }
     let media = Media::new(vec![Track::new(track.spec, stream)], MOVIE_TIMESCALE);

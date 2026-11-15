@@ -84,10 +84,10 @@ fn video_events(data: &[u8]) -> Vec<Ev> {
         }
     };
     for chunk in data.chunks(188 * 64) {
-        demux.feed(chunk);
+        demux.feed(chunk).expect("valid timing");
         take(&mut demux, &mut out, &mut video);
     }
-    demux.finish();
+    demux.finish().expect("valid timing");
     take(&mut demux, &mut out, &mut video);
     out
 }

@@ -75,13 +75,16 @@ fn looped(samples: &[Sample], reps: usize) -> Vec<Sample> {
     let mut out = Vec::with_capacity(samples.len() * reps);
     for k in 0..reps as i64 {
         for s in samples {
-            out.push(Sample::new(
-                s.data.to_vec(),
-                s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
-                s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
-                s.timing.and_then(|t| t.duration()),
-                s.flags.is_sync,
-            ));
+            out.push(
+                Sample::new(
+                    s.data.to_vec(),
+                    s.timing.and_then(|t| t.dts()).map(|d| d + span * k),
+                    s.timing.and_then(|t| t.pts()).map(|p| p + span * k),
+                    s.timing.and_then(|t| t.duration()),
+                    s.flags.is_sync,
+                )
+                .expect("valid timing"),
+            );
         }
     }
     out
@@ -213,6 +216,7 @@ fn hevc_patch_irap(sample: &Sample, nal_type: u8) -> Sample {
         sample.timing.and_then(|t| t.duration()),
         sample.flags.is_sync,
     )
+    .expect("valid timing")
 }
 
 fn hevc_stream_with_irap(nal_type: u8) -> (Video, Vec<Sample>) {
@@ -482,6 +486,7 @@ fn with_sps_prefix(idr: &Sample, p_frame: &Sample, dts: i64) -> Sample {
         p_frame.timing.and_then(|t| t.duration()),
         true,
     )
+    .expect("valid timing")
 }
 
 #[test]
