@@ -11,7 +11,7 @@ Every format here is **IETF RMT** (RFC 5651, 5775, 6726, 5740); no broadcast-spe
 
 Use it to parse or build LCT/ALC packets, FLUTE extension headers and NORM messages byte-exactly, and to compute the scheme-agnostic source-block partition of a transport object. It does **not**:
 
-- implement a FEC scheme: the FEC Payload ID and Scheme-specific FEC OTI layouts depend on the FEC Encoding ID (RFC 5052 and the scheme documents) and travel as opaque byte slices whose length the caller supplies (`FecPayloadId128` is one concrete example layout);
+- implement a FEC scheme: the FEC Payload ID and Scheme-specific FEC OTI layouts depend on the FEC Encoding ID (RFC 5052 and the scheme documents) and travel as a `FecPayloadId` whose bytes are opaque (its size is supplied when parsing; `FecPayloadId128` is one concrete example layout);
 - encode or decode FEC symbols (no Reed-Solomon, Raptor, LDPC or similar);
 - parse the FLUTE FDT Instance: it is XML carried as the packet payload on TOI 0 and is out of scope of this binary crate (a caller supplies its own XML parser);
 - run a sender/receiver session, congestion control, or NORM state machines (it is wire format only, no I/O);
@@ -71,9 +71,9 @@ cargo run -p rmt-flute --example parse_flute
 
 ## What is implemented
 
-- `LctHeader` (RFC 5651 §5): the fixed first word carries `V`/`C`/`PSI`/`S`/`O`/`H`/`A`/`B`, `HDR_LEN` and the Codepoint; the `C`, `S`, `O`, `H` flags drive the byte-widths of **CCI** (`4*(C+1)`), **TSI** (`4*S+2*H`) and **TOI** (`4*O+2*H`). The shared `H` half-word feeds both TSI and TOI. Flag bits and `HDR_LEN` are recomputed on serialize from the typed field lengths; there is no raw passthrough.
+- `LctHeader` (RFC 5651 §5): the fixed first word carries `V`/`C`/`PSI`/`S`/`O`/`H`/`A`/`B`, `HDR_LEN` and the Codepoint; the `C`, `S`, `O`, `H` flags drive the byte-widths of **CCI** (`4*(C+1)`), **TSI** (`4*S+2*H`) and **TOI** (`4*O+2*H`). The shared `H` half-word feeds both TSI and TOI. Flag bits and `HDR_LEN` are recomputed on serialize from the typed field lengths; there is no raw passthrough. The identifiers are the typed `Tsi`/`Toi` values, which carry the decoded number and the width the flags give it.
 - `HeaderExtension` with `parse_chain` / `serialize_chain` / `chain_len`: variable-length (`HET` 0..=127, carries `HEL`) and fixed-length (`HET` 128..=255, one word) forms; `ExtTime` and the `LctExtType` registry (EXT_NOP / EXT_AUTH / EXT_TIME).
-- `AlcPacket` (RFC 5775): LCT header, opaque FEC Payload ID, encoding-symbol payload; `EXT_FTI`; `FecPayloadId128`.
+- `AlcPacket` (RFC 5775): LCT header, opaque `FecPayloadId`, encoding-symbol payload; `EXT_FTI`; `FecPayloadId128`.
 - `ExtFdt` / `ExtCenc` / `CencAlgorithm` (RFC 6726): the FLUTE LCT extensions and the TOI 0 constant `TOI_FDT`.
 - `NormCommonHeader`, `NormInfo`, `NormData`, `NormCmd` (with a typed `NormCmdBody` per command sub-type), `NormFeedback` (NACK/ACK), `NormMessageType`, `NormCmdType`, `NormAckType`, `SenderWord`.
 - `SourceBlockPartition` (RFC 5052 §9.1): given Transfer-Length, Encoding-Symbol-Length and Maximum-Source-Block-Length, derive the number and length of source blocks. This is a scheme-agnostic substrate for `atsc3-route` (and any future DVB-MABR transport) that avoids hardcoding any FEC scheme.
