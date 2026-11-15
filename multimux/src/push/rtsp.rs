@@ -174,15 +174,12 @@ impl PushTransport for RtspTransport {
     type Error = RtspPushError;
 
     async fn connect(url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
-        let mut parsed = url::Url::parse(url).map_err(|e| RtspPushError::Connect(e.to_string()))?;
+        let mut parsed = url::Url::parse(url).map_err(|e| RtspPushError::Connect(e.into()))?;
         // A cannot-be-a-base URL (`rtsp:cam`, no `//host`) parses but names no
         // host; reject it rather than silently dialing 127.0.0.1 (the
         // fallback below) or panicking in `control_url`.
         let Some(host) = parsed.host_str() else {
-            return Err(RtspPushError::Connect(
-                "rtsp push URL has no host (expected `rtsp://host[:port]/path`, e.g. not `rtsp:cam`)"
-                    .to_string(),
-            ));
+            return Err(RtspPushError::Connect(RtspConnectError::NoHost));
         };
         let host = host.to_string();
         let port = parsed.port().unwrap_or(554);
@@ -191,13 +188,13 @@ impl PushTransport for RtspTransport {
         // Config credentials win over the URL's own userinfo (the same
         // precedence the pull routes use).
         let url_credentials = broadcast_auth::credentials_from_url(&parsed)
-            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
+            .map_err(|e| RtspPushError::Connect(e.into()))?;
         let _ = parsed.set_username("");
         let _ = parsed.set_password(None);
         let clean_url = parsed.to_string();
 
         let mut session = ClientSession::new(rtsp_runtime::RtspClientConfig::default())
-            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
+            .map_err(|e| RtspPushError::Connect(e.into()))?;
         let creds = config
             .credentials
             .as_ref()
@@ -210,7 +207,7 @@ impl PushTransport for RtspTransport {
         // The push's publish flow derives its control URL, so a host-less URL
         // is rejected here, before dialing.
         rtsp_runtime::sdp::control_url(&parsed)
-            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
+            .map_err(|e| RtspPushError::Connect(e.into()))?;
 
         // Every IO the adapter performs is bounded by `config.timeouts`
         // (SP6.1, defect 4): the OPTIONS exchange below and every later
@@ -222,21 +219,19 @@ impl PushTransport for RtspTransport {
                 .with_timeouts(config.timeouts),
         )
         .await
-        .map_err(|e| RtspPushError::Connect(e.to_string()))?;
+        .map_err(|e| RtspPushError::Connect(e.into()))?;
 
         match client.options(&clean_url).await {
             Ok(ClientEvent::Response { status, .. }) if status.is_success() => {}
             Ok(ClientEvent::Response { status, .. }) => {
-                return Err(RtspPushError::Protocol(format!(
-                    "OPTIONS rejected: {status:?}"
-                )));
+                return Err(RtspPushError::Protocol(RtspProtocolError::Status {
+                    status: format!("OPTIONS rejected: {status:?}"),
+                }));
             }
             Ok(_) => {
-                return Err(RtspPushError::Protocol(
-                    "OPTIONS: unexpected event".to_string(),
-                ));
+                return Err(RtspPushError::Protocol(RtspProtocolError::UnexpectedEvent));
             }
-            Err(e) => return Err(RtspPushError::Protocol(e.to_string())),
+            Err(e) => return Err(RtspPushError::Protocol(e.into())),
         }
 
         #[cfg(feature = "test-hooks")]
@@ -262,7 +257,7 @@ impl PushTransport for RtspTransport {
         let client = self
             .client
             .as_mut()
-            .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
+            .ok_or_else(|| RtspPushError::Connect(RtspConnectError::NotConnected))?;
         match client.start_record(&self.publish_url, &sdp, channel).await {
             Ok(()) => {
                 self.timestamp = self.rtp_timestamp();
@@ -279,15 +274,13 @@ impl PushTransport for RtspTransport {
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
         let channel = self.channel;
         if !data.len().is_multiple_of(mpeg_ts::ts::TS_PACKET_SIZE) {
-            return Err(RtspPushError::Protocol(
-                "RTSP push payload is not a whole number of 188-byte TS packets".to_string(),
-            ));
+            return Err(RtspPushError::Protocol(RtspProtocolError::NotTsAligned));
         }
         let packets = self.packetise(data)?;
         let client = self
             .client
             .as_mut()
-            .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
+            .ok_or_else(|| RtspPushError::Connect(RtspConnectError::NotConnected))?;
         for packet in packets {
             client
                 .send_interleaved(channel, &packet)
@@ -349,8 +342,8 @@ fn teardown_runtime_handle() -> Option<tokio::runtime::Handle> {
 /// protocol error so the push reconnects instead of retrying in place.
 fn map_rtsp_error(e: rtsp_runtime::Error) -> RtspPushError {
     match e {
-        rtsp_runtime::Error::SessionNotFound { .. } => RtspPushError::SessionLost(e.to_string()),
-        other => RtspPushError::Protocol(other.to_string()),
+        rtsp_runtime::Error::SessionNotFound { .. } => RtspPushError::SessionLost(e),
+        other => RtspPushError::Protocol(RtspProtocolError::Rtsp(other)),
     }
 }
 
@@ -377,7 +370,7 @@ impl RtspTransport {
             packets.extend(
                 self.stream
                     .packetise(row, timestamp)
-                    .map_err(|e| RtspPushError::Protocol(e.to_string()))?,
+                    .map_err(|e| RtspPushError::Protocol(e.into()))?,
             );
         }
         Ok(packets)
@@ -428,7 +421,7 @@ fn build_sdp() -> Result<String, RtspPushError> {
     let connection =
         sdp_types::Connection::new(sdp_types::NetType::In, sdp_types::AddrType::Ip4, "0.0.0.0");
     session_description(SESSION_NAME, origin, connection, vec![push_media()])
-        .map_err(|e| RtspPushError::Protocol(format!("SDP session: {e}")))
+        .map_err(|e| RtspPushError::Protocol(e.into()))
 }
 
 /// One `m=` section for the whole MPEG-2 TS-muxed stream: RFC 2250 §2's
@@ -472,15 +465,60 @@ pub fn push_media_for_test() -> Vec<sdp_types::Media> {
 #[derive(Debug, thiserror::Error)]
 pub enum RtspPushError {
     #[error("RTSP connect failed: {0}")]
-    Connect(String),
+    Connect(#[from] RtspConnectError),
     #[error("RTSP protocol error: {0}")]
-    Protocol(String),
+    Protocol(#[from] RtspProtocolError),
     /// The server no longer has the session (RFC 2326 §11.3.4 `454 Session
     /// Not Found`) — the push must reconnect rather than keep sending.
     #[error("RTSP session lost: {0}")]
-    SessionLost(String),
+    SessionLost(rtsp_runtime::Error),
     #[error("RTSP I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Why an RTSP push could not connect.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum RtspConnectError {
+    /// The push URL could not be parsed.
+    #[error("bad rtsp URL: {0}")]
+    Url(#[from] url::ParseError),
+    /// The push URL names no host.
+    #[error("rtsp push URL has no host (expected `rtsp://host[:port]/path`)")]
+    NoHost,
+    /// The URL userinfo could not be read as credentials.
+    #[error(transparent)]
+    Credentials(#[from] broadcast_auth::Error),
+    /// An rtsp-runtime session/control-URL failure.
+    #[error(transparent)]
+    Rtsp(#[from] rtsp_runtime::Error),
+    /// The client has not connected (or was closed) when a send was attempted.
+    #[error("not connected")]
+    NotConnected,
+}
+
+/// Why an RTSP push failed at the protocol layer.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum RtspProtocolError {
+    /// A request was answered with a non-success status.
+    #[error("request rejected: {status}")]
+    Status {
+        /// The response status.
+        status: String,
+    },
+    /// An unexpected client event was received mid-exchange.
+    #[error("unexpected client event")]
+    UnexpectedEvent,
+    /// An rtsp-runtime protocol failure.
+    #[error(transparent)]
+    Rtsp(#[from] rtsp_runtime::Error),
+    /// Packetising the TS payload into RTP failed.
+    #[error(transparent)]
+    Packetise(#[from] transmux::Error),
+    /// The payload is not a whole number of 188-byte TS packets.
+    #[error("RTSP push payload is not a whole number of 188-byte TS packets")]
+    NotTsAligned,
 }
 
 #[cfg(test)]

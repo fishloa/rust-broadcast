@@ -26,7 +26,7 @@ use broadcast_common::xml_chars::{
 use quick_xml::NsReader;
 use quick_xml::events::{BytesStart, Event};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, StructureError};
 
 /// Baseline session-configuration namespace, schema version 2 (current) —
 /// Annex A.2.
@@ -156,17 +156,14 @@ impl<'a> Events<'a> {
     fn raw(&mut self) -> Result<Event<'a>> {
         let event = match self.reader.read_event() {
             Ok(event) => event,
-            Err(e) => return Err(self.fail(&e.to_string())),
+            Err(e) => return Err(Error::XmlParse(e)),
         };
         self.account(&event)?;
         Ok(event)
     }
 
-    fn fail(&self, message: &str) -> Error {
-        Error::XmlParse(broadcast_common::xml_chars::message_at(
-            &self.reader,
-            message,
-        ))
+    fn structure(kind: StructureError) -> Error {
+        Error::InvalidStructure(kind)
     }
 
     /// Build the [`StartTag`] for a start/empty event, resolving the element
@@ -177,11 +174,11 @@ impl<'a> Events<'a> {
         e: &BytesStart<'_>,
         empty: bool,
     ) -> Result<StartTag> {
-        let namespace = ns.map_err(|e| self.fail(&e.to_string()))?;
+        let namespace = ns.map_err(Error::XmlInvalid)?;
         let attributes = broadcast_common::xml_chars::read_attributes_checked(
             &self.reader,
             e,
-            |m| self.fail(m),
+            |m| Error::XmlInvalid(XmlCharError::Reader { message: m.to_string() }),
             |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
         )?;
         Ok(StartTag {
@@ -200,7 +197,7 @@ impl<'a> Events<'a> {
         Event<'a>,
     )> {
         let (ns, event) = broadcast_common::xml_chars::read_event(&mut self.reader)
-            .map_err(|e| self.fail(&e.to_string()))?;
+            .map_err(Error::XmlInvalid)?;
         self.account(&event)?;
         Ok((ns, event))
     }
@@ -212,7 +209,7 @@ impl<'a> Events<'a> {
     /// every other event. Every path that sees content — the modelled `text`,
     /// the child walk, and the subtree skip — goes through it.
     fn char_data(&self, event: &Event<'_>) -> Result<Option<String>> {
-        broadcast_common::xml_chars::char_data(event).map_err(|e| self.fail(&e.to_string()))
+        broadcast_common::xml_chars::char_data(event).map_err(Error::XmlInvalid)
     }
 
     /// Consume the content of an already-open element up to and including its
@@ -229,9 +226,9 @@ impl<'a> Events<'a> {
                 Event::Start(_) => depth += 1,
                 Event::End(_) => depth -= 1,
                 Event::DocType(_) => {
-                    return Err(self.fail("DOCTYPE declarations are not allowed"));
+                    return Err(Self::structure(StructureError::Doctype));
                 }
-                Event::Eof => return Err(self.fail("unexpected end of input inside an element")),
+                Event::Eof => return Err(Self::structure(StructureError::UnexpectedEof)),
                 _ => {}
             }
         }
@@ -254,9 +251,9 @@ impl<'a> Events<'a> {
                 Event::End(_) => return Ok(None),
                 // The parent element is still open: a truncated document, not
                 // an end of its children.
-                Event::Eof => return Err(self.fail("unexpected end of input inside an element")),
+                Event::Eof => return Err(Self::structure(StructureError::UnexpectedEof)),
                 Event::DocType(_) => {
-                    return Err(self.fail("DOCTYPE declarations are not allowed"));
+                    return Err(Self::structure(StructureError::Doctype));
                 }
                 _ => {}
             }
@@ -271,15 +268,15 @@ impl<'a> Events<'a> {
                 Event::Start(e) => return self.start_tag(ns, &e, false),
                 Event::Empty(e) => return self.start_tag(ns, &e, true),
                 Event::Text(t) if !t.trim_ascii().is_empty() => {
-                    return Err(self.fail("character data outside the root element"));
+                    return Err(Self::structure(StructureError::CharDataOutsideRoot));
                 }
                 Event::CData(_) | Event::GeneralRef(_) => {
-                    return Err(self.fail("character data outside the root element"));
+                    return Err(Self::structure(StructureError::CharDataOutsideRoot));
                 }
                 Event::DocType(_) => {
-                    return Err(self.fail("DOCTYPE declarations are not allowed"));
+                    return Err(Self::structure(StructureError::Doctype));
                 }
-                Event::Eof => return Err(self.fail("no root element")),
+                Event::Eof => return Err(Self::structure(StructureError::NoRoot)),
                 _ => {}
             }
         }
@@ -296,9 +293,9 @@ impl<'a> Events<'a> {
                 Event::Text(t) if t.trim_ascii().is_empty() => {}
                 Event::Comment(_) | Event::PI(_) => {}
                 Event::Start(_) | Event::Empty(_) => {
-                    return Err(self.fail("more than one root element"));
+                    return Err(Self::structure(StructureError::MultipleRoots));
                 }
-                _ => return Err(self.fail("content after the root element")),
+                _ => return Err(Self::structure(StructureError::ContentAfterRoot)),
             }
         }
     }
@@ -312,7 +309,7 @@ impl<'a> Events<'a> {
             match event {
                 Event::Eof => return Ok(()),
                 Event::DocType(_) => {
-                    return Err(self.fail("DOCTYPE declarations are not allowed"));
+                    return Err(Self::structure(StructureError::Doctype));
                 }
                 _ => {}
             }
@@ -355,9 +352,9 @@ impl<'a> Events<'a> {
                 Event::Start(_) => self.skip_content()?,
                 Event::End(_) => return Ok(text.trim().to_string()),
                 Event::DocType(_) => {
-                    return Err(self.fail("DOCTYPE declarations are not allowed"));
+                    return Err(Self::structure(StructureError::Doctype));
                 }
-                Event::Eof => return Err(self.fail("unexpected end of input inside an element")),
+                Event::Eof => return Err(Self::structure(StructureError::UnexpectedEof)),
                 _ => {}
             }
         }
@@ -576,7 +573,10 @@ mod tests {
         assert!(skip_root("<a><b><c>text</c></b></a>").is_ok());
         for cut in ["<a>", "<a><b>", "<a><b><c>text", "<a><b><c>text</c></b>"] {
             assert!(
-                matches!(skip_root(cut), Err(Error::XmlParse(_))),
+                matches!(
+                    skip_root(cut),
+                    Err(Error::XmlParse(_) | Error::InvalidStructure(StructureError::UnexpectedEof))
+                ),
                 "{cut}: {:?}",
                 skip_root(cut)
             );

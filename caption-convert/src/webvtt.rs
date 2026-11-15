@@ -26,7 +26,7 @@
 //!   consumers tolerate basic tags -- but flagged `lossy` because it is not
 //!   part of the (nonexistent) SRT specification.
 
-use crate::error::Error;
+use crate::error::{Error, WebVttError};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use timed_metadata::webvtt::{
@@ -56,7 +56,7 @@ pub struct ParsedWebVtt {
 fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
     parse_cue_timestamp(s, sep)
         .map(|t| t.0)
-        .map_err(|_| Error::InvalidTimestamp(s.to_string()))
+        .map_err(|_| Error::InvalidTimestamp { timestamp: s.to_string() })
 }
 
 /// Parse a WebVTT document (W3C WebVTT SS4) into [`ParsedWebVtt`].
@@ -78,9 +78,7 @@ pub fn parse_webvtt(input: &str) -> Result<ParsedWebVtt, Error> {
     let mut lines = normalized.lines().peekable();
     let header = lines.next().ok_or(Error::EmptyInput)?;
     if !(header == "WEBVTT" || header.starts_with("WEBVTT ") || header.starts_with("WEBVTT\t")) {
-        return Err(Error::InvalidWebVtt(
-            "missing WEBVTT signature on line 1".to_string(),
-        ));
+        return Err(Error::InvalidWebVtt(WebVttError::MissingSignature));
     }
 
     // An `X-TIMESTAMP-MAP` header line (RFC 8216 SS3.5) immediately follows
@@ -183,14 +181,18 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
         // An identifier line precedes the timing line.
         lossy = true;
         let t = *lines.get(1).ok_or_else(|| {
-            Error::InvalidWebVtt("cue identifier with no timing line".to_string())
+            Error::InvalidWebVtt(WebVttError::IdentifierWithoutTiming)
         })?;
         (2, t)
     };
 
     let (start_str, after_arrow) = timing_line
         .split_once("-->")
-        .ok_or_else(|| Error::InvalidWebVtt(format_timing(timing_line)))?;
+        .ok_or_else(|| {
+            Error::InvalidWebVtt(WebVttError::MalformedTiming {
+                line: format_timing(timing_line),
+            })
+        })?;
     let after_arrow = after_arrow.trim_start();
     let (end_str, settings) = match after_arrow.split_once(char::is_whitespace) {
         Some((e, s)) if !s.trim().is_empty() => (e, Some(s)),
@@ -204,9 +206,7 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
     let end = parse_timestamp(end_str.trim(), '.')?;
     // W3C WebVTT §4.3.1: a cue's end time must not precede its start time.
     if end < start {
-        return Err(Error::InvalidWebVtt(
-            "cue end time is before its start time".to_string(),
-        ));
+        return Err(Error::InvalidWebVtt(WebVttError::EndBeforeStart));
     }
 
     let text_lines = &lines[idx..];

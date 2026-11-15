@@ -21,7 +21,7 @@ pub use plan::{DynamicContext, PlanInput, ResourceRef, SegmentPlan, SegmentRef};
 pub use representation::{PlanError, PlanOptions, PlannedRepresentation, plan_representation};
 
 /// Why a Representation's segments cannot be addressed.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum AddressError {
     /// A template string is invalid (5.3.9.4.4); the Representation is
@@ -86,7 +86,7 @@ pub enum AddressError {
     },
     /// The index bytes are not a usable `sidx`.
     #[error("sidx: {0}")]
-    Sidx(String),
+    Sidx(#[from] transmux::Error),
     /// Arithmetic overflow on hostile values.
     #[error("segment arithmetic overflow")]
     Overflow,

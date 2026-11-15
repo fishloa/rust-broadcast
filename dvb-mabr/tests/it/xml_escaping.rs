@@ -83,8 +83,10 @@ fn twenty_thousand_entities_decode() {
 
 fn assert_xml_parse_error(xml: &str, what: &str) {
     match MulticastGatewayConfiguration::parse_str(xml) {
-        Err(Error::XmlParse(_)) => {}
-        other => panic!("{what}: expected Error::XmlParse, got {other:?}"),
+        Err(
+            Error::XmlParse(_) | Error::XmlInvalid(_) | Error::InvalidStructure(_),
+        ) => {}
+        other => panic!("{what}: expected a typed XML error, got {other:?}"),
     }
 }
 
@@ -136,13 +138,13 @@ fn deeply_nested_document_does_not_overflow_the_stack() {
         "<a>".repeat(depth),
         "</a>".repeat(depth)
     );
-    assert_eq!(
+    assert!(matches!(
         MulticastGatewayConfiguration::parse_str(&xml).unwrap_err(),
         Error::TooLarge {
             limit: XmlLimit::Depth,
-            max: XmlLimits::default().max_depth
-        }
-    );
+            max
+        } if max == XmlLimits::default().max_depth
+    ));
 }
 
 fn tight(change: impl FnOnce(&mut XmlLimits)) -> XmlLimits {

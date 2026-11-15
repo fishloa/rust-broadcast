@@ -238,9 +238,12 @@ pub enum ProtocolFailure {
     /// An RTMP runtime error.
     #[error(transparent)]
     Rtmp(#[from] rtmp_runtime::RtmpError),
-    /// A formatted reason with no typed source.
-    #[error("{0}")]
-    Other(String),
+    /// Any other protocol failure, carrying its description.
+    #[error("{reason}")]
+    Other {
+        /// The failure description.
+        reason: String,
+    },
 }
 
 /// Error carrying an SDP rejection reason.

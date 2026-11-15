@@ -16,8 +16,7 @@
 //! [`crate::webvtt::parse_webvtt`]'s `lossy` flag, which
 //! [`crate::webvtt_to_srt`] forwards.
 
-use crate::error::Error;
-use alloc::format;
+use crate::error::{Error, SrtError};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt::Write as _;
@@ -48,7 +47,7 @@ fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
             }
         })
         .map(|t| t.0)
-        .map_err(|_| Error::InvalidTimestamp(s.to_string()))
+        .map_err(|_| Error::InvalidTimestamp { timestamp: s.to_string() })
 }
 
 /// Render cues as an SRT document: `<index>\n<timings>\n<payload>\n\n` per
@@ -119,7 +118,7 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
         let mut lines = block.lines();
         let first = lines
             .next()
-            .ok_or_else(|| Error::InvalidSrt("empty block".to_string()))?;
+            .ok_or_else(|| Error::InvalidSrt(SrtError::EmptyBlock))?;
 
         let timing_line = if first.contains("-->") {
             first
@@ -128,17 +127,19 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
             // discard the number (SRT requires it be sequential, but this
             // parser does not require re-numbering to be gapless on input).
             if first.trim().parse::<u64>().is_err() {
-                return Err(Error::InvalidSrt(format!(
-                    "expected a sequence number, got {first:?}"
-                )));
+                return Err(Error::InvalidSrt(SrtError::BadSequenceNumber {
+                    line: first.to_string(),
+                }));
             }
             lines.next().ok_or_else(|| {
-                Error::InvalidSrt("sequence number with no timing line".to_string())
+                Error::InvalidSrt(SrtError::SequenceWithoutTiming)
             })?
         };
 
         let (start_str, after_arrow) = timing_line.split_once("-->").ok_or_else(|| {
-            Error::InvalidSrt(format!("no '-->' in timing line: {timing_line:?}"))
+            Error::InvalidSrt(SrtError::NoArrow {
+                line: timing_line.to_string(),
+            })
         })?;
         // A styling tail (rare, some encoders emit "X1:.. Y1:..") is
         // discarded the same way the WebVTT parser discards cue settings.
@@ -147,9 +148,7 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
         let start = parse_timestamp(start_str.trim(), ',')?;
         let end = parse_timestamp(end_str.trim(), ',')?;
         if end < start {
-            return Err(Error::InvalidSrt(
-                "cue end time is before its start time".to_string(),
-            ));
+            return Err(Error::InvalidSrt(SrtError::EndBeforeStart));
         }
 
         let text = lines.collect::<Vec<_>>().join("\n");

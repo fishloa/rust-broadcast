@@ -174,10 +174,10 @@ fn a_list_duration_that_overflows_the_segment_start_is_rejected() {
 #[test]
 fn bytes_that_are_not_a_sidx_box_are_a_sidx_error() {
     match base_index::parse_index(&[0u8; 4]) {
-        Err(AddressError::Sidx(message)) => assert_eq!(
-            message,
-            "buffer too short: need 16 bytes, have 4 (while parsing sidx box)"
-        ),
+        Err(AddressError::Sidx(error)) => assert!(matches!(
+            error,
+            transmux::Error::BufferTooShort(..)
+        )),
         other => panic!("expected AddressError::Sidx, got {other:?}"),
     }
 }

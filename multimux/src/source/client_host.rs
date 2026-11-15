@@ -582,7 +582,9 @@ impl SessionStep {
                             "recv" => Phase::Recv,
                             other => Phase::Other(other),
                         },
-                        kind: ProtocolFailure::Other(format!("non-success status {status}")),
+                        kind: ProtocolFailure::Other {
+                            reason: format!("non-success status {status}"),
+                        },
                     }));
                 }
                 Event::Error { kind, fatal: false } if kind.ends_connection() => {

@@ -127,7 +127,7 @@ impl PushTransport for RtmpTransport {
         // `rtmp://::1:1935/live` for an IPv6 address (defect 8). The `app`/
         // `stream_key` come from the config, not the URL path.
         let target = RtmpTarget::from_parts(url, &config.app, &config.stream_key)
-            .map_err(|e| RtmpPushError::Connect(format!("bad rtmp URL: {e}")))?;
+            .map_err(|e| RtmpPushError::Connect(e.into()))?;
 
         // Every IO the adapter performs is bounded (SP6.1, defect 4):
         // connect/handshake and each write by `config.timeouts` (audit run 7, W17).
@@ -135,11 +135,11 @@ impl PushTransport for RtmpTransport {
             rtmp_runtime::io::RtmpClientConfig::new(target).with_timeouts(config.timeouts),
         )
         .await
-        .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+        .map_err(|e| RtmpPushError::Connect(e.into()))?;
         client
             .publish()
             .await
-            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+            .map_err(|e| RtmpPushError::Connect(e.into()))?;
 
         Ok(Self {
             client: Some(client),
@@ -151,7 +151,7 @@ impl PushTransport for RtmpTransport {
         let client = self
             .client
             .as_mut()
-            .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+            .ok_or_else(|| RtmpPushError::Connect(RtmpConnectError::NotConnected))?;
         client.send_video(0, data).await.map_err(RtmpPushError::Io)
     }
 
@@ -165,7 +165,7 @@ impl PushTransport for RtmpTransport {
         let client = self
             .client
             .as_mut()
-            .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+            .ok_or_else(|| RtmpPushError::Connect(RtmpConnectError::NotConnected))?;
         client
             .write_frame(message.to_vec())
             .await
@@ -190,9 +190,7 @@ impl PushTransport for RtmpTransport {
             .cloned()
             .collect();
         if flv_tracks.is_empty() {
-            return Err(RtmpPushError::Protocol(
-                "no AVC video or AAC audio track to publish over RTMP".into(),
-            ));
+            return Err(RtmpPushError::Protocol(RtmpProtocolError::NoCarriableTrack));
         }
 
         // A zero-sample `Media` is enough for the metadata and the
@@ -210,19 +208,19 @@ impl PushTransport for RtmpTransport {
             let client = self
                 .client
                 .as_mut()
-                .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+                .ok_or_else(|| RtmpPushError::Connect(RtmpConnectError::NotConnected))?;
             let body = transmux::on_metadata_body(&media, None)
-                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+                .map_err(|e| RtmpPushError::Protocol(e.into()))?;
             let values =
-                on_metadata_values(&body).map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+                on_metadata_values(&body).map_err(|e| RtmpPushError::Protocol(e.into()))?;
             client
                 .encode_metadata(&values)
-                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
+                .map_err(|e| RtmpPushError::Protocol(e.into()))?
         };
         self.write_message(&meta_bytes).await?;
 
         let headers = transmux::flv_sequence_header_payloads(&media)
-            .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            .map_err(|e| RtmpPushError::Protocol(e.into()))?;
         for header in &headers {
             // `FlvPayloadKind` is `#[non_exhaustive]`: only `Video`/`Audio`
             // exist today (transmux's FLV mainstream); a future kind is
@@ -231,13 +229,13 @@ impl PushTransport for RtmpTransport {
                 let client = self
                     .client
                     .as_mut()
-                    .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+                    .ok_or_else(|| RtmpPushError::Connect(RtmpConnectError::NotConnected))?;
                 match header.kind {
                     transmux::FlvPayloadKind::Video => client.encode_video(0, &header.body),
                     transmux::FlvPayloadKind::Audio => client.encode_audio(0, &header.body),
                     _ => continue,
                 }
-                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
+                .map_err(|e| RtmpPushError::Protocol(e.into()))?
             };
             self.write_message(&bytes).await?;
         }
@@ -295,7 +293,7 @@ impl PushTransport for RtmpTransport {
 
         let Some(client) = self.client.as_mut() else {
             return Err(SendMediaError::Transport(Box::new(RtmpPushError::Connect(
-                "not connected".into(),
+                RtmpConnectError::NotConnected,
             ))));
         };
         let mut messages = Vec::with_capacity(payloads.len());
@@ -313,7 +311,7 @@ impl PushTransport for RtmpTransport {
                 _ => continue,
             }
             .map_err(|e| {
-                SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.to_string())))
+                SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.into())))
             })?;
             messages.push(bytes::Bytes::from(bytes));
         }
@@ -347,13 +345,46 @@ impl PushTransport for RtmpTransport {
 pub enum RtmpPushError {
     /// Connection failed.
     #[error("RTMP connect failed: {0}")]
-    Connect(String),
+    Connect(#[from] RtmpConnectError),
     /// Protocol error.
     #[error("RTMP protocol error: {0}")]
-    Protocol(String),
+    Protocol(#[from] RtmpProtocolError),
     /// I/O error.
     #[error("RTMP I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Why an RTMP push could not connect.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum RtmpConnectError {
+    /// The push URL could not be turned into an RTMP target.
+    #[error("bad rtmp URL: {0}")]
+    Url(#[from] rtmp_runtime::target::RtmpUrlError),
+    /// The client has not connected (or was closed) when a send was attempted.
+    #[error("not connected")]
+    NotConnected,
+    /// The connect or publish handshake failed.
+    #[error(transparent)]
+    Handshake(#[from] std::io::Error),
+}
+
+/// Why an RTMP push failed at the protocol/encoding layer.
+#[non_exhaustive]
+#[derive(Debug, thiserror::Error)]
+pub enum RtmpProtocolError {
+    /// No track of the batch can be published over RTMP (not AVC/AAC).
+    #[error("no AVC video or AAC audio track to publish over RTMP")]
+    NoCarriableTrack,
+    /// Building the FLV/onMetaData payload failed.
+    #[error(transparent)]
+    Flv(#[from] transmux::FlvError),
+    /// Decoding the onMetaData body failed.
+    #[error(transparent)]
+    Amf(#[from] rtmp_runtime::RtmpError),
+    /// Encoding a message failed.
+    #[error(transparent)]
+    Encode(#[from] std::io::Error),
 }
 
 /// `test-seams` hook: build the `tcUrl` through [`RtmpTarget::from_parts`] —
@@ -420,7 +451,7 @@ mod tests {
         assert!(
             matches!(
                 &err,
-                RtmpPushError::Connect(msg) if msg.contains("timed out") || msg.contains("exceeded")
+                RtmpPushError::Connect(RtmpConnectError::Handshake(_))
             ),
             "the failure must be the connect timeout: {err:?}"
         );
