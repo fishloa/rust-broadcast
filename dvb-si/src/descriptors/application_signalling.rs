@@ -12,6 +12,7 @@ use crate::error::{Error, Result};
 use crate::tables::ait::ApplicationType;
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_signalling_descriptor.
@@ -29,10 +30,16 @@ const AIT_VERSION_MAX: u8 = 0x1F;
 /// set to 1"). Older MHP editions (TS 101 812 V1.1.1-V1.3.2) have no such bit
 /// — `application_type` is 16 bits there — so MHP-era senders write 0 here
 /// (audit §3.2); parse keeps whatever the sender wrote.
-pub const RESERVED_FUTURE_USE_1_DEFAULT: u8 = 0b1;
+pub const RESERVED_FUTURE_USE_1_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_1_BITS> =
+    ReservedOnes::<RESERVED_FUTURE_USE_1_BITS>::FILL;
+/// Width of `reserved_future_use_1` (1 bit).
+const RESERVED_FUTURE_USE_1_BITS: u32 = 1;
+/// Width of `reserved_future_use_3` (3 bits).
+const RESERVED_FUTURE_USE_3_BITS: u32 = 3;
 /// Default of the 3-bit `reserved_future_use` before `AIT_version_number`
 /// (TS 102 809 §5.3.3.2: `1`s).
-pub const RESERVED_FUTURE_USE_3_DEFAULT: u8 = 0b111;
+pub const RESERVED_FUTURE_USE_3_DEFAULT: ReservedOnes<RESERVED_FUTURE_USE_3_BITS> =
+    ReservedOnes::<RESERVED_FUTURE_USE_3_BITS>::FILL;
 
 /// One application-signalling loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,10 +49,10 @@ pub struct ApplicationSignallingEntry {
     /// `reserved_future_use(1)` ahead of `application_type` (TS 102 809
     /// Table 17), captured on parse and re-emitted verbatim. 0 on MHP-era
     /// (TS 101 812) senders, 1 per TS 102 809.
-    pub reserved_future_use_1: u8,
+    pub reserved_future_use_1: ReservedOnes<RESERVED_FUTURE_USE_1_BITS>,
     /// `reserved_future_use(3)` ahead of `AIT_version_number` (3 bits,
     /// right-aligned), captured on parse and re-emitted verbatim.
-    pub reserved_future_use_3: u8,
+    pub reserved_future_use_3: ReservedOnes<RESERVED_FUTURE_USE_3_BITS>,
     /// 15-bit application_type — reuses [`crate::tables::ait::ApplicationType`]
     /// (ETSI TS 102 809 §5.3.5.1 / DVB Services registry).
     pub application_type: ApplicationType,
@@ -105,8 +112,8 @@ impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
             let application_type = ApplicationType::from_u16(application_type_raw);
             let ait_version_number = chunk[2] & AIT_VERSION_MAX;
             entries.push(ApplicationSignallingEntry {
-                reserved_future_use_1: (word >> 15) as u8,
-                reserved_future_use_3: chunk[2] >> 5,
+                reserved_future_use_1: ReservedOnes::from_bits(u64::from(word >> 15)),
+                reserved_future_use_3: ReservedOnes::from_bits(u64::from(chunk[2] >> 5)),
                 application_type,
                 ait_version_number,
             });
@@ -148,11 +155,7 @@ impl Serialize for ApplicationSignallingDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             // reserved_future_use(1): preserved from parse, default 1.
-            let word = (u16::from(broadcast_common::len::fit_mask(
-                e.reserved_future_use_1,
-                1,
-                "reserved_future_use_1",
-            )?) << 15)
+            let word = (u16::from(e.reserved_future_use_1.get() as u8) << 15)
                 | broadcast_common::len::fit_mask(
                     e.application_type.to_u16(),
                     APPLICATION_TYPE_MAX,
@@ -160,11 +163,7 @@ impl Serialize for ApplicationSignallingDescriptor {
                 )?;
             buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
             // reserved_future_use(3): preserved from parse, default 111.
-            buf[pos + 2] = (broadcast_common::len::fit_mask(
-                e.reserved_future_use_3,
-                0x07,
-                "reserved_future_use_3",
-            )? << 5)
+            buf[pos + 2] = ((e.reserved_future_use_3.get() as u8) << 5)
                 | broadcast_common::len::fit_mask(
                     e.ait_version_number,
                     AIT_VERSION_MAX,
@@ -219,8 +218,8 @@ mod tests {
             ApplicationType::Reserved(0x7FFF)
         );
         assert_eq!(d.entries[0].ait_version_number, 0x1F);
-        assert_eq!(d.entries[0].reserved_future_use_1, 1);
-        assert_eq!(d.entries[0].reserved_future_use_3, 0b111);
+        assert_eq!(d.entries[0].reserved_future_use_1.get(), 1);
+        assert_eq!(d.entries[0].reserved_future_use_3.get(), 0b111);
     }
 
     /// Every real-sender reserved-bit combination (MHP-era 0 bit, 000 / 111 in
@@ -231,8 +230,8 @@ mod tests {
             for r3 in 0u8..=7 {
                 let bytes = [TAG, 3, r1 << 7, 0x10, (r3 << 5) | 0x03];
                 let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
-                assert_eq!(d.entries[0].reserved_future_use_1, r1);
-                assert_eq!(d.entries[0].reserved_future_use_3, r3);
+                assert_eq!(d.entries[0].reserved_future_use_1.get(), u64::from(r1));
+                assert_eq!(d.entries[0].reserved_future_use_3.get(), u64::from(r3));
                 let mut buf = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut buf).unwrap();
                 assert_eq!(buf, bytes);
