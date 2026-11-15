@@ -443,7 +443,7 @@ impl SmoothPackager {
     /// Build the Smooth client Manifest for the resolved streams and render
     /// it with the model's serializer
     /// ([`broadcast_smooth::SmoothManifest::to_xml`]).
-    fn render_manifest(&self, streams: &[StreamInfo]) -> String {
+    fn render_manifest(&self, streams: &[StreamInfo]) -> Result<String> {
         let duration = streams.iter().map(|s| s.total_duration).max().unwrap_or(0);
         let mut seen: Vec<(SmoothStreamType, usize)> = Vec::new();
         let streams = streams
@@ -462,9 +462,9 @@ impl SmoothPackager {
                 self.stream_manifest_index(stream, ordinal)
             })
             .collect();
-        SmoothManifest::new(streams)
+        Ok(SmoothManifest::new(streams)
             .with_duration(duration)
-            .to_xml()
+            .to_xml()?)
     }
 
     /// The manifest `StreamIndex` for one resolved track; `ordinal` is its
@@ -566,7 +566,7 @@ impl broadcast_common::Package for SmoothPackager {
             let mut next_seq = 1u32;
             streams.push(self.build_track(track, &origin, &mut next_seq, &mut fragments)?);
         }
-        let manifest = self.render_manifest(&streams);
+        let manifest = self.render_manifest(&streams)?;
         Ok(SmoothOutput {
             manifest,
             fragments,

@@ -461,15 +461,16 @@ fn playready_wrmheader_matches_golden() {
     let kid_b: [u8; 16] = core::array::from_fn(|i| i as u8);
     check(
         "golden/smooth/wrm-two-kids.xml",
-        &playready_wrmheader(&[kid_a, kid_b], Some("https://la.example.com/x?a=1&b=2")),
+        &playready_wrmheader(&[kid_a, kid_b], Some("https://la.example.com/x?a=1&b=2"))
+            .expect("WRMHEADER renders"),
     );
     check(
         "golden/smooth/wrm-no-url.xml",
-        &playready_wrmheader(&[kid_a], None),
+        &playready_wrmheader(&[kid_a], None).expect("WRMHEADER renders"),
     );
     check(
         "golden/smooth/wrm-specials.xml",
-        &playready_wrmheader(&[kid_a], Some("a&b<c>d\"e'f")),
+        &playready_wrmheader(&[kid_a], Some("a&b<c>d\"e'f")).expect("WRMHEADER renders"),
     );
 }
 

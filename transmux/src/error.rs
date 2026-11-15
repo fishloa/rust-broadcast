@@ -56,6 +56,20 @@ pub enum Error {
     #[error(transparent)]
     InvalidValue(#[from] broadcast_common::error::InvalidValue),
 
+    /// The XML writer refused an event while building a PlayReady
+    /// WRMHEADER; the string is the writer's message.
+    #[cfg(feature = "std")]
+    #[error("WRMHEADER write failed: {message}")]
+    Wrmheader {
+        /// The writer's message.
+        message: String,
+    },
+
+    /// The XML writer refused an event while rendering a manifest.
+    #[cfg(feature = "std")]
+    #[error(transparent)]
+    ManifestWrite(#[from] broadcast_smooth::ManifestWriteError),
+
     /// A KLV triplet or BER length token failure (SMPTE ST 336 framing).
     #[error(transparent)]
     Klv(#[from] broadcast_common::klv::KlvError),

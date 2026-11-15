@@ -129,17 +129,19 @@ const PRO_RECORD_TYPE_HEADER: u16 = 0x0001;
 ///
 /// `kids` are CENC big-endian UUID key-ids. `la_url`, if present, becomes the
 /// `<LA_URL>` element.
-pub fn playready_wrmheader(kids: &[[u8; 16]], la_url: Option<&str>) -> String {
+///
+/// # Errors
+/// [`Error::Wrmheader`] if the XML writer refuses an event (an in-memory
+/// writer has no such failure in practice).
+pub fn playready_wrmheader(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<String> {
     let version = "4.2.0.0";
     let mut w = Writer::new(Vec::new());
-    // Writing to an in-memory `Vec` cannot fail, so the write results are
-    // intentionally discarded.
     let mut root = BytesStart::new("WRMHEADER");
     root.push_attribute(("xmlns", WRMHEADER_NAMESPACE));
     root.push_attribute(("version", version));
-    let _ = w.write_event(Event::Start(root));
+    wrm_event(&mut w, Event::Start(root))?;
     for name in ["DATA", "PROTECTINFO", "KIDS"] {
-        let _ = w.write_event(Event::Start(BytesStart::new(name)));
+        wrm_event(&mut w, Event::Start(BytesStart::new(name)))?;
     }
     for kid in kids {
         let guid = cenc_kid_to_playready(*kid);
@@ -148,23 +150,35 @@ pub fn playready_wrmheader(kids: &[[u8; 16]], la_url: Option<&str>) -> String {
         let mut kid_tag = BytesStart::new("KID");
         kid_tag.push_attribute(("ALGID", PLAYREADY_ALGID_AESCTR));
         kid_tag.push_attribute(("VALUE", value.as_str()));
-        let _ = w.write_event(Event::Start(kid_tag));
-        let _ = w.write_event(Event::End(BytesEnd::new("KID")));
+        wrm_event(&mut w, Event::Start(kid_tag))?;
+        wrm_event(&mut w, Event::End(BytesEnd::new("KID")))?;
     }
     for name in ["KIDS", "PROTECTINFO"] {
-        let _ = w.write_event(Event::End(BytesEnd::new(name)));
+        wrm_event(&mut w, Event::End(BytesEnd::new(name)))?;
     }
     if let Some(url) = la_url {
-        let _ = w.write_event(Event::Start(BytesStart::new("LA_URL")));
+        wrm_event(&mut w, Event::Start(BytesStart::new("LA_URL")))?;
         // Element content: `&`, `<`, `>` escaped (quotes need no escaping in
         // text).
-        let _ = w.write_event(Event::Text(BytesText::from_escaped(partial_escape(url))));
-        let _ = w.write_event(Event::End(BytesEnd::new("LA_URL")));
+        wrm_event(
+            &mut w,
+            Event::Text(BytesText::from_escaped(partial_escape(url))),
+        )?;
+        wrm_event(&mut w, Event::End(BytesEnd::new("LA_URL")))?;
     }
     for name in ["DATA", "WRMHEADER"] {
-        let _ = w.write_event(Event::End(BytesEnd::new(name)));
+        wrm_event(&mut w, Event::End(BytesEnd::new(name)))?;
     }
-    String::from_utf8_lossy(&w.into_inner()).into_owned()
+    Ok(String::from_utf8_lossy(&w.into_inner()).into_owned())
+}
+
+#[cfg(feature = "std")]
+/// Write one WRMHEADER event, keeping the writer's own failure as a typed
+/// error.
+fn wrm_event(w: &mut Writer<Vec<u8>>, event: Event<'_>) -> Result<()> {
+    w.write_event(event).map_err(|e| Error::Wrmheader {
+        message: e.to_string(),
+    })
 }
 
 #[cfg(feature = "std")]
@@ -192,7 +206,7 @@ fn utf16le_bytes(s: &str) -> Vec<u8> {
 /// Returns [`Error::FieldOverflow`] if the encoded WRMHEADER value is 64 KiB
 /// (2^16) or larger — the record's `value length` is a 16-bit field (#1129).
 pub fn playready_pro(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<Vec<u8>> {
-    let wrm = playready_wrmheader(kids, la_url);
+    let wrm = playready_wrmheader(kids, la_url)?;
     let value = utf16le_bytes(&wrm);
     let record_count: u16 = 1;
     // total = 4 (length) + 2 (count) + 2 (type) + 2 (value length) + value
