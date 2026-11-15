@@ -11,8 +11,11 @@
 //! not call into or modify that file, which lives outside this crate's
 //! scope).
 
-use atsc3_route::{Codepoint, RouteFecPayloadId, RoutePacket, SourceFecPayloadId};
+use atsc3_route::{
+    Codepoint, ROUTE_TOI_LEN, ROUTE_TSI_LEN, RouteFecPayloadId, RoutePacket, SourceFecPayloadId,
+};
 use broadcast_common::{Parse, Serialize};
+use rmt_flute::{Toi, Tsi};
 
 fn fixture_path(name: &str) -> std::path::PathBuf {
     test_fixtures::path(&format!("atsc3/{name}"))
@@ -46,8 +49,8 @@ fn fdt_instance_parses_and_byte_exact_round_trips() {
     assert!(!pkt.lct.close_session);
     assert!(pkt.lct.close_object); // Close-Object flag set
     assert_eq!(pkt.lct.cci, [0, 0, 0, 0]);
-    assert_eq!(pkt.lct.tsi, [0, 0, 0, 0]); // TSI = 0
-    assert_eq!(pkt.lct.toi, [0, 0, 0, 0]); // TOI = 0 (FDT-Instance convention)
+    assert_eq!(pkt.lct.tsi, Tsi::new(0, ROUTE_TSI_LEN as u8).unwrap()); // TSI = 0
+    assert_eq!(pkt.lct.toi, Toi::new(0, ROUTE_TOI_LEN as u8).unwrap()); // TOI = 0 (FDT-Instance convention)
     assert_eq!(pkt.lct.codepoint, 4);
     assert_eq!(pkt.codepoint(), Codepoint::NrtSignedPackageMode);
 
@@ -128,8 +131,18 @@ fn media_fragments_parse_and_byte_exact_round_trip() {
             panic!("parse {} failed: {e}", expect.fixture);
         });
 
-        assert_eq!(pkt.lct.tsi, expect.tsi.to_be_bytes(), "{}", expect.fixture);
-        assert_eq!(pkt.lct.toi, 6034u32.to_be_bytes(), "{}", expect.fixture);
+        assert_eq!(
+            pkt.lct.tsi,
+            Tsi::new(u64::from(expect.tsi), ROUTE_TSI_LEN as u8).unwrap(),
+            "{}",
+            expect.fixture
+        );
+        assert_eq!(
+            pkt.lct.toi,
+            Toi::new(6034, ROUTE_TOI_LEN as u8).unwrap(),
+            "{}",
+            expect.fixture
+        );
         assert_eq!(pkt.lct.codepoint, 128, "{}", expect.fixture);
         assert!(matches!(pkt.codepoint(), Codepoint::Indirect(128)));
         assert!(pkt.spi(), "{}", expect.fixture);
@@ -189,8 +202,8 @@ fn media_fragment_tsi_matches_s_tsid_in_sls_package() {
     let audio_bytes = read_fixture(AUDIO_FIXTURE);
     let video = RoutePacket::parse(&video_bytes).unwrap();
     let audio = RoutePacket::parse(&audio_bytes).unwrap();
-    let video_tsi = u32::from_be_bytes(video.lct.tsi.try_into().unwrap());
-    let audio_tsi = u32::from_be_bytes(audio.lct.tsi.try_into().unwrap());
+    let video_tsi = video.lct.tsi.value();
+    let audio_tsi = audio.lct.tsi.value();
     assert_eq!(video_tsi, 3000);
     assert_eq!(audio_tsi, 3003);
 

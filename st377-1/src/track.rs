@@ -146,7 +146,12 @@ impl<'a> Parse<'a> for TimelineTrack {
                 tag: TAG_TRACK_NAME,
                 name: "Track Name",
             })?;
-        let sequence = get_required_fixed::<16>(items, TAG_SEQUENCE, "Sequence", "Timeline Track")?;
+        let sequence = StrongRef(get_required_fixed::<16>(
+            items,
+            TAG_SEQUENCE,
+            "Sequence",
+            "Timeline Track",
+        )?);
         let edit_rate = Rational::parse(get_required_raw(
             items,
             TAG_EDIT_RATE,
@@ -189,7 +194,7 @@ impl TimelineTrack {
         if let Some(n) = &self.track_name {
             out.push(LocalSetOwnedItem::owned(TAG_TRACK_NAME, encode_utf16_be(n)));
         }
-        out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence));
+        out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence.0));
         {
             let mut buf = [0u8; RATIONAL_LEN];
             // The buffer is exactly the type's serialized length, so the
@@ -265,7 +270,12 @@ impl<'a> Parse<'a> for EventTrack {
                 tag: TAG_TRACK_NAME,
                 name: "Track Name",
             })?;
-        let sequence = get_required_fixed::<16>(items, TAG_SEQUENCE, "Sequence", "Event Track")?;
+        let sequence = StrongRef(get_required_fixed::<16>(
+            items,
+            TAG_SEQUENCE,
+            "Sequence",
+            "Event Track",
+        )?);
         let event_edit_rate = Rational::parse(get_required_raw(
             items,
             TAG_EVENT_EDIT_RATE,
@@ -304,7 +314,7 @@ impl EventTrack {
         if let Some(n) = &self.track_name {
             out.push(LocalSetOwnedItem::owned(TAG_TRACK_NAME, encode_utf16_be(n)));
         }
-        out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence));
+        out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence.0));
         {
             let mut buf = [0u8; RATIONAL_LEN];
             // The buffer is exactly the type's serialized length, so the
@@ -375,7 +385,12 @@ impl<'a> Parse<'a> for StaticTrack {
                 tag: TAG_TRACK_NAME,
                 name: "Track Name",
             })?;
-        let sequence = get_required_fixed::<16>(items, TAG_SEQUENCE, "Sequence", "Static Track")?;
+        let sequence = StrongRef(get_required_fixed::<16>(
+            items,
+            TAG_SEQUENCE,
+            "Sequence",
+            "Static Track",
+        )?);
         let dark = collect_dark(items, &STATIC_KNOWN_TAGS);
 
         Ok(StaticTrack {
@@ -404,7 +419,7 @@ impl StaticTrack {
         if let Some(n) = &self.track_name {
             out.push(LocalSetOwnedItem::owned(TAG_TRACK_NAME, encode_utf16_be(n)));
         }
-        out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence));
+        out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence.0));
         out
     }
 }
@@ -414,19 +429,20 @@ crate::sets::declare_set_serialize!(StaticTrack, StaticTrackDm);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
     use broadcast_common::Serialize;
 
     fn sample_timeline_track() -> TimelineTrack {
         TimelineTrack {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x01; 16],
+                instance_uid: UlBytes([0x01; 16]),
                 generation_uid: None,
                 object_class: None,
             },
             track_id: 1,
             track_number: 0x15010100,
             track_name: Some(String::from("Video")),
-            sequence: [0x02; 16],
+            sequence: StrongRef([0x02; 16]),
             edit_rate: Rational {
                 numerator: 25,
                 denominator: 1,
@@ -439,14 +455,14 @@ mod tests {
     fn sample_event_track() -> EventTrack {
         EventTrack {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x10; 16],
+                instance_uid: UlBytes([0x10; 16]),
                 generation_uid: None,
                 object_class: None,
             },
             track_id: 3,
             track_number: 0,
             track_name: None,
-            sequence: [0x20; 16],
+            sequence: StrongRef([0x20; 16]),
             event_edit_rate: Rational {
                 numerator: 25,
                 denominator: 1,
@@ -459,14 +475,14 @@ mod tests {
     fn sample_static_track() -> StaticTrack {
         StaticTrack {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x30; 16],
+                instance_uid: UlBytes([0x30; 16]),
                 generation_uid: None,
                 object_class: None,
             },
             track_id: 4,
             track_number: 0,
             track_name: None,
-            sequence: [0x40; 16],
+            sequence: StrongRef([0x40; 16]),
             dark: Vec::new(),
         }
     }

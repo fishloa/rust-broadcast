@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::local_set::{ItemLengthMode, LocalSet, LocalSetItem, StructuralSetKind};
-use crate::types::{UidBatch, UlBytes, serialize_uid_batch_owned};
+use crate::types::{StrongRef, UidBatch, UlBytes, serialize_uid_batch_owned};
 
 /// The two Interchange Object (Annex A.1) properties with a static local
 /// tag, common to every Root Metadata Set.
@@ -43,10 +43,16 @@ impl InterchangeObjectFields {
     /// three tags it doesn't recognize is not this function's job — the
     /// caller removes the tags it consumes from its own dark-item pass.
     pub fn decode(items: &[LocalSetItem<'_>], set_name: &'static str) -> Result<Self> {
-        let instance_uid =
-            get_required_fixed::<16>(items, TAG_INSTANCE_UID, "Instance UID", set_name)?;
-        let generation_uid = get_optional_fixed::<16>(items, TAG_GENERATION_UID, "Generation UID")?;
-        let object_class = get_optional_fixed::<16>(items, TAG_OBJECT_CLASS, "Object Class")?;
+        let instance_uid = UlBytes(get_required_fixed::<16>(
+            items,
+            TAG_INSTANCE_UID,
+            "Instance UID",
+            set_name,
+        )?);
+        let generation_uid =
+            get_optional_fixed::<16>(items, TAG_GENERATION_UID, "Generation UID")?.map(UlBytes);
+        let object_class =
+            get_optional_fixed::<16>(items, TAG_OBJECT_CLASS, "Object Class")?.map(UlBytes);
         Ok(Self {
             instance_uid,
             generation_uid,
@@ -58,13 +64,13 @@ impl InterchangeObjectFields {
     pub fn encode_into(&self, out: &mut Vec<LocalSetOwnedItem>) {
         out.push(LocalSetOwnedItem::fixed(
             TAG_INSTANCE_UID,
-            self.instance_uid,
+            self.instance_uid.0,
         ));
         if let Some(g) = self.generation_uid {
-            out.push(LocalSetOwnedItem::fixed(TAG_GENERATION_UID, g));
+            out.push(LocalSetOwnedItem::fixed(TAG_GENERATION_UID, g.0));
         }
         if let Some(o) = self.object_class {
-            out.push(LocalSetOwnedItem::fixed(TAG_OBJECT_CLASS, o));
+            out.push(LocalSetOwnedItem::fixed(TAG_OBJECT_CLASS, o.0));
         }
     }
 }
@@ -188,6 +194,13 @@ pub fn batch_bytes(batch: Option<&UidBatch>, items: &[UlBytes]) -> Vec<u8> {
         .filter(|b| b.items() == items)
         .and_then(|b| b.serialize().ok())
         .unwrap_or_else(|| serialize_uid_batch_owned(items))
+}
+
+/// [`batch_bytes`] for a Strong Reference Batch/Array (§4.3) — the wire bytes
+/// are identical; the element type differs only in the typed API.
+pub fn strong_ref_batch_bytes(batch: Option<&UidBatch>, items: &[StrongRef]) -> Vec<u8> {
+    let as_uls: Vec<UlBytes> = items.iter().map(|r| UlBytes(r.0)).collect();
+    batch_bytes(batch, &as_uls)
 }
 
 /// Largest value a two-byte local length can carry (§9.3): 65535.

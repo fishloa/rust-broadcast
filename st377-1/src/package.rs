@@ -18,10 +18,9 @@ use broadcast_common::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
-use crate::sets::batch_bytes;
 use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_raw, get_required_fixed,
-    get_required_raw,
+    get_required_raw, strong_ref_batch_bytes,
 };
 use crate::types::{
     MxfTimestamp, PackageId, StrongRef, TIMESTAMP_LEN, UidBatch, decode_utf16_be, encode_utf16_be,
@@ -160,7 +159,12 @@ impl<'a> Parse<'a> for MaterialPackage {
             "Tracks",
             "Material Package",
         )?)?;
-        let tracks = tracks_batch.items().to_vec();
+        let tracks: Vec<StrongRef> = tracks_batch
+            .items()
+            .iter()
+            .copied()
+            .map(StrongRef::from)
+            .collect();
         let dark = collect_dark(items, &MATERIAL_KNOWN_TAGS);
 
         Ok(MaterialPackage {
@@ -191,7 +195,7 @@ impl MaterialPackage {
         encode_timestamp_item(&mut out, TAG_MODIFIED_DATE, &self.modified_date);
         out.push(LocalSetOwnedItem::owned(
             TAG_TRACKS,
-            batch_bytes(self.tracks_batch.as_ref(), &self.tracks),
+            strong_ref_batch_bytes(self.tracks_batch.as_ref(), &self.tracks),
         ));
         out
     }
@@ -298,9 +302,18 @@ impl<'a> Parse<'a> for SourcePackage {
             "Tracks",
             "Source Package",
         )?)?;
-        let tracks = tracks_batch.items().to_vec();
-        let descriptor =
-            get_required_fixed::<16>(items, TAG_DESCRIPTOR, "Descriptor", "Source Package")?;
+        let tracks: Vec<StrongRef> = tracks_batch
+            .items()
+            .iter()
+            .copied()
+            .map(StrongRef::from)
+            .collect();
+        let descriptor = StrongRef(get_required_fixed::<16>(
+            items,
+            TAG_DESCRIPTOR,
+            "Descriptor",
+            "Source Package",
+        )?);
         let dark = collect_dark(items, &SOURCE_KNOWN_TAGS);
 
         Ok(SourcePackage {
@@ -332,9 +345,9 @@ impl SourcePackage {
         encode_timestamp_item(&mut out, TAG_MODIFIED_DATE, &self.modified_date);
         out.push(LocalSetOwnedItem::owned(
             TAG_TRACKS,
-            batch_bytes(self.tracks_batch.as_ref(), &self.tracks),
+            strong_ref_batch_bytes(self.tracks_batch.as_ref(), &self.tracks),
         ));
-        out.push(LocalSetOwnedItem::fixed(TAG_DESCRIPTOR, self.descriptor));
+        out.push(LocalSetOwnedItem::fixed(TAG_DESCRIPTOR, self.descriptor.0));
         out
     }
 }
@@ -355,6 +368,7 @@ fn encode_timestamp_item(out: &mut Vec<LocalSetOwnedItem>, tag: u16, ts: &MxfTim
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UlBytes;
     use broadcast_common::Serialize;
 
     fn sample_timestamp() -> MxfTimestamp {
@@ -372,15 +386,15 @@ mod tests {
     fn sample_material_package() -> MaterialPackage {
         MaterialPackage {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x11; 16],
-                generation_uid: Some([0x22; 16]),
+                instance_uid: UlBytes([0x11; 16]),
+                generation_uid: Some(UlBytes([0x22; 16])),
                 object_class: None,
             },
             package_uid: PackageId([0x33; 32]),
             name: Some(String::from("Main Timeline")),
             creation_date: sample_timestamp(),
             modified_date: sample_timestamp(),
-            tracks: alloc::vec![[0x44; 16], [0x55; 16]],
+            tracks: alloc::vec![StrongRef([0x44; 16]), StrongRef([0x55; 16])],
             tracks_batch: None,
             dark: Vec::new(),
         }
@@ -389,7 +403,7 @@ mod tests {
     fn sample_source_package() -> SourcePackage {
         SourcePackage {
             interchange: InterchangeObjectFields {
-                instance_uid: [0xAA; 16],
+                instance_uid: UlBytes([0xAA; 16]),
                 generation_uid: None,
                 object_class: None,
             },
@@ -397,9 +411,9 @@ mod tests {
             name: None,
             creation_date: sample_timestamp(),
             modified_date: sample_timestamp(),
-            tracks: alloc::vec![[0xCC; 16]],
+            tracks: alloc::vec![StrongRef([0xCC; 16])],
             tracks_batch: None,
-            descriptor: [0xDD; 16],
+            descriptor: StrongRef([0xDD; 16]),
             dark: Vec::new(),
         }
     }
@@ -475,7 +489,7 @@ mod tests {
     fn mutation_changes_serialized_bytes() {
         let mut mp = sample_material_package();
         let before = mp.try_to_bytes().unwrap();
-        mp.tracks.push([0x66; 16]);
+        mp.tracks.push(StrongRef([0x66; 16]));
         let after = mp.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(MaterialPackage::parse(&after).unwrap().tracks.len(), 3);

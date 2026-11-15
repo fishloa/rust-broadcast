@@ -38,8 +38,16 @@ fn main() {
     );
     println!("HDR_LEN: {} words", pkt.lct.hdr_len());
     println!("CCI: {:02X?}", pkt.lct.cci);
-    println!("TSI: {:02X?}", pkt.lct.tsi);
-    println!("TOI: {:02X?}  (0 => FDT Instance)", pkt.lct.toi);
+    println!(
+        "TSI: {} in {} bytes",
+        pkt.lct.tsi.value(),
+        pkt.lct.tsi.len()
+    );
+    println!(
+        "TOI: {} in {} bytes  (0 => FDT Instance)",
+        pkt.lct.toi.value(),
+        pkt.lct.toi.len()
+    );
 
     for ext in &pkt.lct.extensions {
         if ext.het == HET_EXT_FDT {
@@ -53,7 +61,7 @@ fn main() {
         }
     }
 
-    let fpid = FecPayloadId128::parse(pkt.fec_payload_id).unwrap();
+    let fpid = FecPayloadId128::parse(pkt.fec_payload_id.as_bytes()).unwrap();
     println!(
         "FEC Payload ID: sbn={} sbl={} esi={}",
         fpid.source_block_number, fpid.source_block_length, fpid.encoding_symbol_id

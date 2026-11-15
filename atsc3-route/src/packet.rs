@@ -157,15 +157,15 @@ impl Serialize for RoutePacket<'_> {
 mod tests {
     use super::*;
     use alloc::vec;
-    use rmt_flute::{AlcPacket, HeaderExtension};
+    use rmt_flute::{AlcPacket, HeaderExtension, Toi, Tsi};
 
     use crate::fec::SourceFecPayloadId;
 
     #[test]
     fn source_packet_round_trip() {
         let cci = [0u8; 4];
-        let tsi = 3000u32.to_be_bytes();
-        let toi = 6034u32.to_be_bytes();
+        let tsi = Tsi::new(3000, ROUTE_TSI_LEN as u8).unwrap();
+        let toi = Toi::new(6034, ROUTE_TOI_LEN as u8).unwrap();
         let lct = LctHeader {
             reserved: 0,
             version: ROUTE_VERSION,
@@ -174,8 +174,8 @@ mod tests {
             close_object: false,
             codepoint: 128,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];
@@ -200,8 +200,8 @@ mod tests {
     fn rejects_non_route_cci_width() {
         // C=1 (8-byte CCI) violates ROUTE's mandated C=00.
         let cci = [0u8; 8];
-        let tsi = 0u32.to_be_bytes();
-        let toi = 0u32.to_be_bytes();
+        let tsi = Tsi::new(0, ROUTE_TSI_LEN as u8).unwrap();
+        let toi = Toi::new(0, ROUTE_TOI_LEN as u8).unwrap();
         let lct = LctHeader {
             reserved: 0,
             version: ROUTE_VERSION,
@@ -210,8 +210,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         let mut out = vec![0u8; lct.serialized_len() + ROUTE_FEC_PAYLOAD_ID_LEN];
@@ -234,8 +234,8 @@ mod tests {
         // SPI bit (high) set but low PSI bit also set (0b11): source packets
         // must be exactly 0b10.
         let cci = [0u8; 4];
-        let tsi = 0u32.to_be_bytes();
-        let toi = 0u32.to_be_bytes();
+        let tsi = Tsi::new(0, ROUTE_TSI_LEN as u8).unwrap();
+        let toi = Toi::new(0, ROUTE_TOI_LEN as u8).unwrap();
         let lct = LctHeader {
             reserved: 0,
             version: ROUTE_VERSION,
@@ -244,8 +244,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         let mut out = vec![0u8; lct.serialized_len() + ROUTE_FEC_PAYLOAD_ID_LEN];
@@ -268,8 +268,8 @@ mod tests {
         // SPI=0 (repair). Low PSI bit set (0b01) — allowed, A/331 does not
         // constrain it for repair packets.
         let cci = [0u8; 4];
-        let tsi = 9000u32.to_be_bytes();
-        let toi = 42u32.to_be_bytes();
+        let tsi = Tsi::new(9000, ROUTE_TSI_LEN as u8).unwrap();
+        let toi = Toi::new(42, ROUTE_TOI_LEN as u8).unwrap();
         let lct = LctHeader {
             reserved: 0,
             version: ROUTE_VERSION,
@@ -278,8 +278,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         use crate::fec::RepairFecPayloadId;
@@ -298,8 +298,8 @@ mod tests {
     #[test]
     fn extension_chain_survives_round_trip() {
         let cci = [0u8; 4];
-        let tsi = 3000u32.to_be_bytes();
-        let toi = 6034u32.to_be_bytes();
+        let tsi = Tsi::new(3000, ROUTE_TSI_LEN as u8).unwrap();
+        let toi = Toi::new(6034, ROUTE_TOI_LEN as u8).unwrap();
         let fti_content = [0u8; 14];
         let exts = vec![HeaderExtension::new(
             rmt_flute::ALC_HET_EXT_FTI,
@@ -313,8 +313,8 @@ mod tests {
             close_object: true,
             codepoint: 8,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: exts,
         };
         let payload = [1u8, 2, 3];
@@ -336,8 +336,8 @@ mod tests {
     #[test]
     fn agrees_with_rmt_flute_alc_packet_on_lct_bytes() {
         let cci = [0u8; 4];
-        let tsi = 3000u32.to_be_bytes();
-        let toi = 6034u32.to_be_bytes();
+        let tsi = Tsi::new(3000, ROUTE_TSI_LEN as u8).unwrap();
+        let toi = Toi::new(6034, ROUTE_TOI_LEN as u8).unwrap();
         let lct = LctHeader {
             reserved: 0,
             version: ROUTE_VERSION,
@@ -346,8 +346,8 @@ mod tests {
             close_object: false,
             codepoint: 128,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         let payload = [9u8, 9, 9, 9];
@@ -362,5 +362,18 @@ mod tests {
         let alc = AlcPacket::parse(&out, ROUTE_FEC_PAYLOAD_ID_LEN).unwrap();
         assert_eq!(alc.lct, lct);
         assert!(alc.spi());
+    }
+
+    /// A packet re-serialized from the typed identifiers is byte-identical to
+    /// the capture bytes: the identifier values travel back into the same
+    /// width the `S`/`O`/`H` flags give them.
+    #[test]
+    fn typed_identifiers_republish_the_capture_bytes_exactly() {
+        let bytes = test_fixtures::read("atsc3/route-media-video-fragment-2020-11-05.bin");
+        let pkt = RoutePacket::parse(&bytes).expect("parse real ROUTE media fragment");
+        assert_eq!(pkt.lct.tsi, Tsi::new(3000, ROUTE_TSI_LEN as u8).unwrap());
+        assert_eq!(pkt.lct.toi, Toi::new(6034, ROUTE_TOI_LEN as u8).unwrap());
+        let out = pkt.try_to_bytes().expect("serialize");
+        assert_eq!(out, bytes);
     }
 }

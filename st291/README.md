@@ -91,10 +91,10 @@ Build an ANC-over-RTP payload from typed fields and round-trip it (feature `rtp`
 # #[cfg(feature = "rtp")]
 # fn main() {
 use broadcast_common::{Parse, Serialize};
-use st291::{AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
+use st291::{AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense, RtpAncPacket};
 
 let payload = AncRtpPayload {
-    extended_sequence_number: 0,
+    extended_sequence_number: ExtendedSequenceNumber(0),
     field_sense: FieldSense::ProgressiveOrUnspecified,
     anc_packets: vec![RtpAncPacket {
         c: false,
@@ -128,7 +128,8 @@ More runnable programs: `cargo run -p st291 --example build_anc`,
 - **`ts` transport**: the PES header is parsed and written by the shared
   `mpeg-pes` codec (`mpeg_pes::PesPacket`), then ST 2038's pinned fields are
   validated. `AncDataDescriptor` (PMT ES-loop descriptor, tag
-  `0xC4`, with its `"VANC"` format identifier and `ANC_STREAM_TYPE` constants);
+  `0xC4`, with its `"VANC"` format identifier and `ANC_STREAM_TYPE` constants,
+  its undefined inner loop typed as a list of `Descriptor`);
   `AncDataPacket` (PES packet, `stream_id` `0xBD`, PTS,
   `PES_header_data_length == 5`) holding a list of `AncPacket` (adds
   `c_not_y_channel_flag`, `line_number`, `horizontal_offset`) plus trailing
