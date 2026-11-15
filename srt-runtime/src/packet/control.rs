@@ -181,7 +181,7 @@ pub enum ControlPacket<'a> {
     /// ACK (§3.2.4).
     Ack(AckPacket),
     /// NAK / Loss Report (§3.2.5).
-    Nak(NakPacket<'a>),
+    Nak(NakPacket),
     /// Congestion Warning (§3.2.6).
     CongestionWarning(CongestionWarningPacket),
     /// Shutdown (§3.2.7).
