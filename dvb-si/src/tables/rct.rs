@@ -10,6 +10,7 @@
 
 use crate::descriptors::DescriptorLoop;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 
 /// Identifier type — ETSI TS 102 323 v1.4.1 §7.3.2.3.3 Table 32
 /// (`private/specs-verified/dvb/dvb-si/`, Table 32 — Identifier type).
@@ -335,12 +336,12 @@ pub struct DvbBinaryLocator {
     pub windows: Option<DvbLocatorWindows>,
     /// `reserved(1)` in the first locator byte (`1`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: u8,
+    pub reserved: ReservedOnes<1>,
     /// `reserved(2)` that replaces the 10-bit triplet id when
     /// `inline_service == 1` (`11`); preserved from the wire, written only for
     /// [`DvbLocatorService::Full`].
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_inline_service: u8,
+    pub reserved_inline_service: ReservedOnes<2>,
 }
 
 impl DvbBinaryLocator {
@@ -363,8 +364,8 @@ impl DvbBinaryLocator {
             duration,
             identifier,
             windows,
-            reserved: 1,
-            reserved_inline_service: super::RESERVED_2,
+            reserved: ReservedOnes::FILL,
+            reserved_inline_service: ReservedOnes::FILL,
         }
     }
 
@@ -434,14 +435,14 @@ pub struct LinkInfo<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// `reserved_future_use(4)` before `link_info_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_link_info_length: u8,
+    pub reserved_link_info_length: ReservedOnes<4>,
     /// `reserved_future_use(2)` between `link_type` and
     /// `how_related_classification_scheme_id` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_link_type: u8,
+    pub reserved_link_type: ReservedOnes<2>,
     /// `reserved_future_use(2)` before `number_items` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_number_items: u8,
+    pub reserved_number_items: ReservedOnes<2>,
 }
 
 impl<'a> LinkInfo<'a> {
@@ -472,9 +473,9 @@ impl<'a> LinkInfo<'a> {
             default_icon_flag,
             icon_id,
             descriptors,
-            reserved_link_info_length: super::RESERVED_4,
-            reserved_link_type: super::RESERVED_2,
-            reserved_number_items: super::RESERVED_2,
+            reserved_link_info_length: ReservedOnes::FILL,
+            reserved_link_type: ReservedOnes::FILL,
+            reserved_number_items: ReservedOnes::FILL,
         }
     }
 }
@@ -531,7 +532,7 @@ pub struct RctSection<'a> {
     pub reserved_b5: u8,
     /// `reserved_future_use(4)` before `descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptor_loop_length: u8,
+    pub reserved_descriptor_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> RctSection<'a> {
@@ -558,7 +559,7 @@ impl<'a> RctSection<'a> {
             descriptors,
             reserved_b1: super::RESERVED_2,
             reserved_b5: super::RESERVED_2,
-            reserved_descriptor_loop_length: super::RESERVED_4,
+            reserved_descriptor_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -705,11 +706,13 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                 identifier,
                 windows,
             );
-            loc.reserved = (b0 & LOCATOR_RESERVED_BITS) >> LOCATOR_RESERVED_SHIFT;
+            loc.reserved = ReservedOnes::from_bits(u64::from(
+                (b0 & LOCATOR_RESERVED_BITS) >> LOCATOR_RESERVED_SHIFT,
+            ));
             loc.reserved_inline_service = if inline_service {
-                b1 & super::RESERVED_2
+                ReservedOnes::from_bits(u64::from(b1 & super::RESERVED_2))
             } else {
-                super::RESERVED_2
+                ReservedOnes::FILL
             };
             loc
         },
@@ -741,7 +744,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
     let b0 = (loc.identifier_type().to_u8() << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
         | (u8::from(loc.inline_service()) << 4)
-        | (broadcast_common::len::fit_mask(loc.reserved, 1, "reserved")? << LOCATOR_RESERVED_SHIFT)
+        | ((loc.reserved.get() as u8) << LOCATOR_RESERVED_SHIFT)
         | ((loc.start_date >> LOCATOR_START_DATE_HI_SHIFT) as u8 & LOCATOR_START_DATE_HI_MASK);
     buf[0] = b0;
 
@@ -766,12 +769,7 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
             service_id,
         } => {
             let sd_lo = (loc.start_date & 0x3F) as u8;
-            buf[1] = (sd_lo << 2)
-                | broadcast_common::len::fit_mask(
-                    loc.reserved_inline_service,
-                    super::RESERVED_2,
-                    "reserved_inline_service",
-                )?;
+            buf[1] = (sd_lo << 2) | (loc.reserved_inline_service.get() as u8);
             buf[2..4].copy_from_slice(&transport_stream_id.to_be_bytes());
             buf[4..6].copy_from_slice(&original_network_id.to_be_bytes());
             buf[6..8].copy_from_slice(&service_id.to_be_bytes());
@@ -965,8 +963,10 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
         icon_id,
         descriptors,
     );
-    li.reserved_link_type = (data[0] & LINK_INFO_HEADER_RFU) >> LINK_INFO_HEADER_RFU_SHIFT;
-    li.reserved_number_items = ni_byte >> ITEM_RFU_SHIFT;
+    li.reserved_link_type = ReservedOnes::from_bits(u64::from(
+        (data[0] & LINK_INFO_HEADER_RFU) >> LINK_INFO_HEADER_RFU_SHIFT,
+    ));
+    li.reserved_number_items = ReservedOnes::from_bits(u64::from(ni_byte >> ITEM_RFU_SHIFT));
     Ok(li)
 }
 
@@ -979,11 +979,7 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         "term_id",
     )?;
     buf[0] = (broadcast_common::len::fit_mask(lt, 0x0F, "lt")? << LINK_TYPE_SHIFT)
-        | (broadcast_common::len::fit_mask(
-            li.reserved_link_type,
-            super::RESERVED_2,
-            "reserved_link_type",
-        )? << LINK_INFO_HEADER_RFU_SHIFT)
+        | ((li.reserved_link_type.get() as u8) << LINK_INFO_HEADER_RFU_SHIFT)
         | ((hr >> 4) & HOW_RELATED_HI_MASK);
     buf[1] = ((hr & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
     buf[2] = li.term_id as u8;
@@ -1003,12 +999,7 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         pos += n;
     }
     let item_count = broadcast_common::len::fit_bits(li.items.len() as u64, 6, "number_items")?;
-    buf[pos] = (broadcast_common::len::fit_mask(
-        li.reserved_number_items,
-        super::RESERVED_2,
-        "reserved_number_items",
-    )? << ITEM_RFU_SHIFT)
-        | item_count as u8;
+    buf[pos] = ((li.reserved_number_items.get() as u8) << ITEM_RFU_SHIFT) | item_count as u8;
     pos += 1;
     for item in &li.items {
         let text_len =
@@ -1089,7 +1080,8 @@ impl<'a> Parse<'a> for RctSection<'a> {
             }
             let mut link_info =
                 parse_link_info(&bytes[link_data_start..link_data_end], link_info_length)?;
-            link_info.reserved_link_info_length = super::len_reserved_of(bytes[pos]);
+            link_info.reserved_link_info_length =
+                ReservedOnes::from_bits(u64::from(super::len_reserved_of(bytes[pos])));
             links.push(link_info);
             pos = link_data_end;
         }
@@ -1140,7 +1132,9 @@ impl<'a> Parse<'a> for RctSection<'a> {
             descriptors,
             reserved_b1: super::b1_reserved_of(bytes[1]),
             reserved_b5: super::b5_reserved_of(bytes[5]),
-            reserved_descriptor_loop_length: super::len_reserved_of(bytes[pos]),
+            reserved_descriptor_loop_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[pos]),
+            )),
         })
     }
 }
@@ -1196,7 +1190,7 @@ impl Serialize for RctSection<'_> {
             super::write_desc_loop_len_r(
                 &mut buf[pos..pos + 2],
                 li_body_len as usize,
-                li.reserved_link_info_length,
+                li.reserved_link_info_length.get() as u8,
             )?;
             pos += LINK_ENTRY_HEADER_LEN;
             pos += serialize_link_info(li, &mut buf[pos..])?;
@@ -1210,7 +1204,7 @@ impl Serialize for RctSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[pos..pos + 2],
             dll as usize,
-            self.reserved_descriptor_loop_length,
+            self.reserved_descriptor_loop_length.get() as u8,
         )?;
         pos += DESC_LOOP_LEN_FIELD;
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors.raw());
@@ -1819,5 +1813,28 @@ mod tests {
         assert_eq!(IdentifierType::None.name(), "none");
         assert_eq!(IdentifierType::EventId.name(), "event_id");
         assert_eq!(IdentifierType::TvaIdEit.name(), "TVA_id (EIT)");
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let loc = DvbBinaryLocator {
+            reserved: ReservedOnes::from_bits(0xFF),
+            reserved_inline_service: ReservedOnes::from_bits(0xFF),
+            ..DvbBinaryLocator::new(
+                false,
+                0,
+                DvbLocatorService::Triplet {
+                    dvb_service_triplet_id: 0,
+                },
+                0,
+                0,
+                DvbLocatorIdentifier::None,
+                None,
+            )
+        };
+        assert_eq!(loc.reserved.get(), 0x01);
+        assert_eq!(loc.reserved_inline_service.get(), 0x03);
     }
 }
