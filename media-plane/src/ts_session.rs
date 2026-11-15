@@ -865,7 +865,6 @@ mod tests {
         use crate::ingress::{IngestDriver, ProgramId};
         use crate::trunk::{PartEntry, SampleCursorItem, SegmentEntry};
         use broadcast_common::Timestamp;
-        use std::time::Duration as StdDuration;
         use transmux::ll_hls::LlHlsSegmenter;
         use transmux::segmenter::SegmentMeta;
 
@@ -909,8 +908,8 @@ mod tests {
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![track_spec(TrackId::new(1))],
             transmux::VIDEO_CLOCK_TIMESCALE,
-            1.0,
-            250,
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_millis(250),
         )
         .expect("segmenter builds from the resolved track spec");
 
@@ -936,7 +935,7 @@ mod tests {
                 part.bytes,
                 crate::ids::SegmentSeq::new(part.segment_seq),
                 crate::ids::PartIndex::new(part.part_index.value()),
-                StdDuration::from_secs_f64(part.duration),
+                part.duration,
                 part.independent,
             ));
             parts_published += 1;
@@ -947,7 +946,7 @@ mod tests {
                 .publish_segment(SegmentEntry::new(
                     segment.bytes,
                     crate::ids::SegmentSeq::new(segment.segment_seq),
-                    StdDuration::from_secs_f64(segment.duration),
+                    segment.duration,
                     Timestamp::ZERO,
                     SegmentMeta {
                         discontinuous: false,

@@ -6,6 +6,7 @@
 //! fails here.
 #![cfg(feature = "std")]
 
+use core::time::Duration;
 use transmux::TrackId;
 
 use broadcast_common::Unpackage;
@@ -459,7 +460,7 @@ fn fragment_writer_outputs_are_unchanged() {
         0xb843_b6bc_d7f7_ee94,
     );
     let specs: Vec<_> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    let mut ll = LlSegmenter::new(specs, timescale(1000), 2.0, 5).unwrap();
+    let mut ll = LlSegmenter::new(specs, timescale(1000), Duration::from_secs(2), 5).unwrap();
     let chunks = ll.package(&media).unwrap();
     check(
         &mut bad,

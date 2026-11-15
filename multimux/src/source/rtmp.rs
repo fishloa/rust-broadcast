@@ -753,7 +753,7 @@ pub async fn serve_for_test_with_read_load() -> (
     });
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(1.0)
+            .with_target_duration(std::time::Duration::from_secs(1))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(8),
     ));
@@ -1045,7 +1045,7 @@ mod tests {
 
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1253,7 +1253,7 @@ mod tests {
 
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1367,7 +1367,7 @@ mod tests {
 
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1500,7 +1500,7 @@ mod tests {
         let route = RtmpRoute::new("cam-rtmp-split", addr.to_string());
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1592,7 +1592,7 @@ mod tests {
             );
         let route_handle = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));

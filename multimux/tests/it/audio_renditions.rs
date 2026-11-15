@@ -4,6 +4,7 @@
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -63,7 +64,7 @@ async fn get_master(route: Arc<RouteHandle>) -> (StatusCode, String) {
 fn route(audio: Option<Vec<AudioRenditionDecl>>) -> Arc<RouteHandle> {
     let mut r = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(4.0)
+            .with_target_duration(Duration::from_secs(4))
             .with_part_target(std::time::Duration::from_millis(500))
             .with_window_segments(4),
     )

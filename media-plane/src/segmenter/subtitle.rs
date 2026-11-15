@@ -58,7 +58,19 @@ use crate::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk};
 use broadcast_hls::{MediaSequence, PartIndex as HlsPartIndex};
 
 const PTS_HZ_TICKS: i128 = clock33::PTS_HZ as i128;
-const NANOS_PER_SEC_F64: f64 = 1_000_000_000.0;
+
+/// Wall-clock nanoseconds to 90 kHz PTS ticks (the subtitle timeline unit).
+fn duration_ticks(duration: Duration) -> i64 {
+    let nanos = i128::try_from(duration.as_nanos()).unwrap_or(i128::MAX);
+    i64::try_from(nanos.saturating_mul(PTS_HZ_TICKS) / 1_000_000_000).unwrap_or(i64::MAX)
+}
+
+/// 90 kHz PTS ticks to a wall-clock [`Duration`].
+fn ticks_duration(ticks: i64) -> Duration {
+    let nanos = i128::from(ticks).saturating_mul(1_000_000_000) / PTS_HZ_TICKS;
+    let nanos = u64::try_from(nanos.max(0)).unwrap_or(u64::MAX);
+    Duration::from_nanos(nanos)
+}
 const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// `MPEGTS` of every segment's `X-TIMESTAMP-MAP`: the 90 kHz output time the
@@ -200,14 +212,14 @@ struct Span {
 
 struct ReadySegment {
     msn: MediaSequence,
-    duration_secs: f64,
+    duration: Duration,
     body: String,
 }
 
 struct ReadyPart {
     msn: MediaSequence,
     part_index: HlsPartIndex,
-    duration_secs: f64,
+    duration: Duration,
     body: String,
 }
 
@@ -219,7 +231,7 @@ enum Ready {
 /// A part the leader has cut, with the duration its own playlist lists.
 pub struct LeaderPart {
     pub cut: PartCutReady,
-    pub duration_secs: f64,
+    pub duration: Duration,
 }
 
 /// Cue bookkeeping and the part and segment ranges, in 90 kHz ticks relative
@@ -320,13 +332,13 @@ impl<D: CueDecoder> Core<D> {
             let start = self.note_cut(&part.cut);
             self.close_spans(leaders);
             self.publish_segments(Some(part.cut.msn), leaders, &mut ready);
-            let ticks = ((part.duration_secs * PTS_HZ_TICKS as f64).round() as i64).max(1);
+            let ticks = duration_ticks(part.duration).max(1);
             let end = start.saturating_add(ticks);
             self.edge = self.edge.max(end);
             ready.push(Ready::Part(ReadyPart {
                 msn: part.cut.msn,
                 part_index: part.cut.part_index,
-                duration_secs: part.duration_secs,
+                duration: part.duration,
                 body: self.render(start, end),
             }));
         }
@@ -340,7 +352,7 @@ impl<D: CueDecoder> Core<D> {
             if span.end.is_none()
                 && let Some(duration) = leaders.get(&u32::try_from(msn.value()).unwrap_or(u32::MAX))
             {
-                let ticks = (duration * PTS_HZ_TICKS as f64).round() as i64;
+                let ticks = duration_ticks(*duration);
                 span.end = Some(span.start + ticks);
             }
             if let Some(end) = span.end {
@@ -368,10 +380,10 @@ impl<D: CueDecoder> Core<D> {
         {
             ready.push(Ready::Segment(ReadySegment {
                 msn,
-                duration_secs: leaders
+                duration: leaders
                     .get(&u32::try_from(msn.value()).unwrap_or(u32::MAX))
                     .copied()
-                    .unwrap_or((end - span.start) as f64 / PTS_HZ_TICKS as f64),
+                    .unwrap_or_else(|| ticks_duration(end - span.start)),
                 body: self.render(span.start, end),
             }));
             self.spans.remove(&msn);
@@ -507,20 +519,20 @@ impl SubtitleFollower {
                         part.body.into_bytes(),
                         SegmentSeq::new(u32::try_from(part.msn.value()).unwrap_or(u32::MAX)),
                         PartIndex::new(part.part_index.value()),
-                        Duration::from_secs_f64(part.duration_secs),
+                        part.duration,
                         true,
                     )));
                 }
                 Ready::Segment(segment) => {
                     let start_ns = self.next_timeline_ns;
-                    self.next_timeline_ns = self
-                        .next_timeline_ns
-                        .saturating_add((segment.duration_secs * NANOS_PER_SEC_F64) as u64);
+                    self.next_timeline_ns = self.next_timeline_ns.saturating_add(
+                        u64::try_from(segment.duration.as_nanos()).unwrap_or(u64::MAX),
+                    );
                     self.pending
                         .push_back(PendingPublish::Segment(SegmentEntry::new(
                             segment.body.into_bytes(),
                             SegmentSeq::new(u32::try_from(segment.msn.value()).unwrap_or(u32::MAX)),
-                            Duration::from_secs_f64(segment.duration_secs),
+                            segment.duration,
                             Timestamp::from_nanos(start_ns),
                             SegmentMeta {
                                 discontinuous: std::mem::take(&mut self.first_discontinuous),
@@ -537,8 +549,8 @@ impl SubtitleFollower {
 mod tests {
     use super::*;
 
-    const TARGET_SECS: f64 = 2.0;
-    const PART_SECS: f64 = 0.5;
+    const TARGET_SECS: Duration = Duration::from_secs(2);
+    const PART_SECS: Duration = Duration::from_millis(500);
     const SEG_TICKS: i64 = 180_000;
     const PART_TICKS: i64 = 45_000;
 
@@ -567,7 +579,7 @@ mod tests {
                 start_dts,
                 timescale: Timescale::try_new(90_000).expect("non-zero timescale"),
             },
-            duration_secs: PART_SECS,
+            duration: PART_SECS,
         }
     }
 
@@ -687,7 +699,7 @@ mod tests {
             &LeaderDurations::new(),
         );
         assert_eq!(parts(&ready)[0].body, HEADER);
-        assert!((parts(&ready)[0].duration_secs - PART_SECS).abs() < 1e-9);
+        assert_eq!(parts(&ready)[0].duration, PART_SECS);
     }
 
     #[test]
@@ -700,7 +712,7 @@ mod tests {
         let ready = close_segment(&mut core, &mut leaders, MediaSequence::new(1));
         assert_eq!(msns(&ready), [MediaSequence::new(1)]);
         assert_eq!(segments(&ready)[0].body, HEADER);
-        assert!((segments(&ready)[0].duration_secs - TARGET_SECS).abs() < 1e-9);
+        assert_eq!(segments(&ready)[0].duration, TARGET_SECS);
     }
 
     #[test]

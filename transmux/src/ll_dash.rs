@@ -148,7 +148,7 @@ struct TrackState {
 /// #         .expect("valid timing")
 /// # }
 /// // 2 s target segments, one video frame per chunk (per-frame LL).
-/// let mut seg = LlSegmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), 2.0, 1).unwrap();
+/// let mut seg = LlSegmenter::new(vec![spec()], broadcast_common::timescale::Timescale::try_new(1000).expect("non-zero timescale"), core::time::Duration::from_secs(2), 1).unwrap();
 /// let init = seg.init_segment().unwrap();       // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
 /// seg.push(transmux::TrackId::new(1), au(true)).unwrap();               // keyframe
@@ -189,7 +189,7 @@ pub struct LlSegmenter {
 
 impl LlSegmenter {
     /// Create a chunked segmenter for `tracks`, cutting segments roughly every
-    /// `target_duration_secs` on the anchor track's keyframes, and subdividing
+    /// `target_duration` on the anchor track's keyframes, and subdividing
     /// each segment into chunks of `chunk_samples` anchor-track samples.
     ///
     /// The anchor is chosen by the shared
@@ -200,23 +200,22 @@ impl LlSegmenter {
     ///
     /// # Errors
     /// [`Error::InvalidInput`] if `tracks` is empty, has duplicate `track_id`s,
-    /// `target_duration_secs` is not positive and finite, `chunk_samples == 0`,
+    /// `target_duration` is zero, `chunk_samples == 0`,
     /// or no track is anchor-capable (every track is section-carried).
     pub fn new(
         tracks: Vec<TrackSpec>,
         movie_timescale: impl Into<broadcast_common::timescale::Timescale>,
-        target_duration_secs: f64,
+        target_duration: core::time::Duration,
         chunk_samples: usize,
     ) -> Result<Self> {
         let movie_timescale = movie_timescale.into();
         if tracks.is_empty() {
             return Err(Error::InvalidInput("ll segmenter needs at least one track"));
         }
-        if !(target_duration_secs.is_finite() && target_duration_secs > 0.0) {
-            return Err(Error::InvalidInput(
-                "target_duration_secs must be positive and finite",
-            ));
+        if target_duration.is_zero() {
+            return Err(Error::InvalidInput("target_duration must be positive"));
         }
+        let target_duration_secs = target_duration.as_secs_f64();
         if chunk_samples == 0 {
             return Err(Error::InvalidInput("chunk_samples must be >= 1"));
         }

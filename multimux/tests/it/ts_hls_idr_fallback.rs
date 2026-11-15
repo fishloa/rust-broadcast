@@ -27,11 +27,11 @@ use listener::bind_tcp;
 const ADMIN_TOKEN: &str = "ts-hls-idr-fallback-admin";
 const HANG_GUARD: Duration = Duration::from_secs(60);
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
-const TARGET_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const TS_PACKET: usize = 188;
 const HTTP_CHUNK_PACKETS: usize = 56;
 const HTTP_CHUNK_INTERVAL: Duration = Duration::from_millis(10);
-const AUTO_BOUND_SECS: f64 = 6.0;
+const AUTO_BOUND: Duration = Duration::from_secs(6);
 const SHORT_BOUND_TARGETS: u32 = 2;
 const PACED_BOUND_TARGETS: u32 = 5;
 const FRAME_SLACK_SECS: f64 = 0.2;
@@ -121,7 +121,7 @@ fn start(route: Route) -> Server {
     let (admin, admin_listener) = bind_tcp();
     let cfg = Config::default()
         .with_bind(media.to_string())
-        .with_target_duration_secs(TARGET_SECS)
+        .with_target_duration(TARGET_DURATION)
         .with_part_target(Duration::from_millis(200))
         .with_window_segments(64)
         .with_routes(vec![route])
@@ -289,7 +289,7 @@ async fn assert_falls_back(
     path: &Path,
     via: Via,
     fallback: TsHlsIdrFallback,
-    bound_secs: f64,
+    bound: Duration,
     want_segments: usize,
 ) {
     let source = std::fs::read(path).expect("fixture");
@@ -325,6 +325,7 @@ async fn assert_falls_back(
     );
     assert!(!access_unit_is_idr(NalCodec::Avc, &opening.data));
     let seen = started.elapsed().as_secs_f64();
+    let bound_secs = bound.as_secs_f64();
     if via == Via::File {
         assert!(
             seen + FRAME_SLACK_SECS >= bound_secs,
@@ -346,17 +347,17 @@ async fn assert_falls_back(
     );
 }
 
-fn short_bound() -> (TsHlsIdrFallback, f64) {
+fn short_bound() -> (TsHlsIdrFallback, Duration) {
     (
         TsHlsIdrFallback::Targets(SHORT_BOUND_TARGETS),
-        f64::from(SHORT_BOUND_TARGETS) * TARGET_SECS,
+        TARGET_DURATION * SHORT_BOUND_TARGETS,
     )
 }
 
 #[tokio::test]
 async fn open_gop_public_capture_falls_back_after_the_bound() {
     let fallback = TsHlsIdrFallback::Targets(PACED_BOUND_TARGETS);
-    let bound = f64::from(PACED_BOUND_TARGETS) * TARGET_SECS;
+    let bound = TARGET_DURATION * PACED_BOUND_TARGETS;
     assert_falls_back(
         "gulli",
         &test_fixtures::path("ts/gulli-opengop.ts"),
@@ -379,7 +380,7 @@ async fn zenith_arte_falls_back_by_default() {
         &path,
         Via::Http,
         TsHlsIdrFallback::Auto,
-        AUTO_BOUND_SECS,
+        AUTO_BOUND,
         1,
     )
     .await;
@@ -396,7 +397,7 @@ async fn zenith_tf1_falls_back_by_default() {
         &path,
         Via::Http,
         TsHlsIdrFallback::Auto,
-        AUTO_BOUND_SECS,
+        AUTO_BOUND,
         1,
     )
     .await;
@@ -534,15 +535,15 @@ fn config_option_parses_and_rejects_unknown_value() {
             .expect_err("unknown value must be rejected");
     }
     assert_eq!(
-        TsHlsIdrFallback::Auto.bound(4.0),
+        TsHlsIdrFallback::Auto.bound(Duration::from_secs(4)),
         Duration::from_secs_f64(12.0)
     );
     assert_eq!(
-        TsHlsIdrFallback::Auto.bound(1.0),
+        TsHlsIdrFallback::Auto.bound(Duration::from_secs(1)),
         Duration::from_secs_f64(6.0)
     );
     assert_eq!(
-        TsHlsIdrFallback::Targets(2).bound(1.0),
+        TsHlsIdrFallback::Targets(2).bound(Duration::from_secs(1)),
         Duration::from_secs_f64(2.0)
     );
 }

@@ -1,4 +1,5 @@
 use multimux::route::RouteHandle;
+use std::time::Duration;
 use transmux::TrackId;
 use transmux::avc_config_from_sprop;
 use transmux::ll_hls::LlHlsSegmenter;
@@ -8,7 +9,7 @@ pub const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 pub const VIDEO_TIMESCALE: broadcast_common::timescale::Timescale =
     broadcast_common::timescale!(90_000);
 pub const FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
-pub const TARGET_DURATION_SECS: f64 = 1.0;
+pub const TARGET_DURATION: Duration = Duration::from_secs(1);
 pub const PART_TARGET_MS: u32 = 500;
 
 pub fn video_track_spec_sized(width: u16, height: u16) -> TrackSpec {
@@ -56,8 +57,8 @@ pub fn feed_open_segment(
     let mut seg = LlHlsSegmenter::with_part_target(
         specs,
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init segment builds"));

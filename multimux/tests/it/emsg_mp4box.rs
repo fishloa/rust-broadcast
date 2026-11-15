@@ -34,7 +34,7 @@ use scte35_splice::SpliceInfoSection;
 use timed_metadata::MediaTime;
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
 
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const TRACK_ID: u32 = 1;
 const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
 const FRAME_DUR: u32 = TIMESCALE.get() / 30;
@@ -112,7 +112,7 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
 
     let route = RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(200))
             .with_window_segments(8),
     );

@@ -72,6 +72,7 @@ mod tests {
     use crate::output::dash::DASH_MANIFEST_CONTENT_TYPE;
     use crate::route::RouteConfig;
     use crate::testutil::video_spec;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn ll_dash_continues_across_a_source_reconnect() {
@@ -89,14 +90,14 @@ mod tests {
     fn part(seq: u32, idx: u32) -> PartInfo {
         PartInfo::new(
             vec![0x40 + idx as u8; 4],
-            0.5,
+            Duration::from_millis(500),
             seq,
             broadcast_hls::PartIndex::new(idx),
         )
         .with_independent(idx == 0)
     }
 
-    fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
+    fn seg(seq: u32, duration: Duration) -> transmux::ll_hls::SegmentInfo {
         transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], duration, seq).with_part_count(2)
     }
 
@@ -159,7 +160,7 @@ mod tests {
 
     /// A gap placeholder: the source had no muxable track while this segment
     /// was cut, so it carries no bytes.
-    fn gap_seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
+    fn gap_seg(seq: u32, duration: Duration) -> transmux::ll_hls::SegmentInfo {
         {
             let mut s = seg(seq, duration);
             s.bytes = Vec::new();
@@ -181,7 +182,7 @@ mod tests {
     fn publish_time_present_stable_when_unchanged_and_later_per_new_segment() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
@@ -192,7 +193,10 @@ mod tests {
         );
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         let first = publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"));
         assert_eq!(
@@ -200,7 +204,10 @@ mod tests {
             publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"))
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 0.5))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(2, Duration::from_millis(500)),
+            )
             .expect("add_segment");
         let second = publish_time_of(&render_ll_dash_mpd_at(&route, now).expect("renders"));
         let (t1, t2): (jiff::Timestamp, jiff::Timestamp) = (
@@ -216,7 +223,7 @@ mod tests {
     fn render_ll_dash_mpd_none_without_track_specs() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -230,7 +237,7 @@ mod tests {
     fn render_ll_dash_mpd_valid_before_any_segment_closes() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -248,7 +255,7 @@ mod tests {
     fn render_ll_dash_mpd_carries_required_ll_dash_elements() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -286,7 +293,7 @@ mod tests {
     fn render_ll_dash_mpd_addresses_whole_segments_not_parts() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -313,7 +320,7 @@ mod tests {
     fn render_ll_dash_mpd_start_number_is_fixed_at_first_segment() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
@@ -323,13 +330,22 @@ mod tests {
             vec![video_spec(TrackId::new(1))],
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(2, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(3, 4.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(3, Duration::from_secs(4)),
+            )
             .expect("add_segment"); // evicts seq 1 (window_segments == 2)
 
         let mpd = render_ll_dash_mpd(&route).unwrap();
@@ -347,7 +363,7 @@ mod tests {
         // the window -- a real DVR window can be advertised.
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(2.0)
+                .with_target_duration(std::time::Duration::from_secs(2))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -357,7 +373,10 @@ mod tests {
             vec![video_spec(TrackId::new(1))],
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(2)),
+            )
             .expect("add_segment");
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(mpd.contains("timeShiftBufferDepth=\"PT2S\""), "{mpd}");
@@ -369,7 +388,7 @@ mod tests {
     fn render_ll_dash_mpd_matches_frozen_now_golden() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(2),
         );
@@ -379,10 +398,16 @@ mod tests {
             vec![video_spec(TrackId::new(1))],
         );
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(1, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         route
-            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                seg(2, Duration::from_secs(4)),
+            )
             .expect("add_segment");
         let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
         let instance = route
@@ -409,7 +434,7 @@ mod tests {
     fn render_ll_dash_mpd_forces_representation_id_to_default_track() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -435,7 +460,7 @@ mod tests {
     async fn manifest_handler_503_before_track_specs_known() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -448,7 +473,7 @@ mod tests {
     async fn manifest_handler_200_with_dash_content_type() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -473,7 +498,7 @@ mod tests {
     async fn manifest_not_yet_announced_is_503_not_404() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -495,7 +520,7 @@ mod tests {
         let program = crate::route::SPTS_PROGRAM_ID;
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
@@ -504,21 +529,21 @@ mod tests {
         route.set_track_specs(program, vec![video_spec(TrackId::new(1))]);
         for seq in 1..=3 {
             route
-                .add_segment(program, seg(seq, 4.0))
+                .add_segment(program, seg(seq, Duration::from_secs(4)))
                 .expect("add_segment");
         }
         route.set_init(program, vec![0xBB; 8]);
         for seq in 4..=5 {
             route
-                .add_segment(program, seg(seq, 4.0))
+                .add_segment(program, seg(seq, Duration::from_secs(4)))
                 .expect("add_segment");
         }
         route
-            .add_segment(program, gap_seg(6, 4.0))
+            .add_segment(program, gap_seg(6, Duration::from_secs(4)))
             .expect("add_segment");
         for seq in 7..=8 {
             route
-                .add_segment(program, seg(seq, 4.0))
+                .add_segment(program, seg(seq, Duration::from_secs(4)))
                 .expect("add_segment");
         }
 

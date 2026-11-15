@@ -50,7 +50,7 @@ fn canned_playlist() -> String {
         .segment_writer()
         .expect("first (and only) segment writer");
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(std::sync::Arc::clone(&trunk), 1.0, nz(4))
+        HlsOriginConfig::new(std::sync::Arc::clone(&trunk), Duration::from_secs(1), nz(4))
             .with_low_latency(Duration::from_millis(500)),
     )
     .expect("valid configuration");
