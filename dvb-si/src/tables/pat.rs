@@ -7,6 +7,7 @@
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -35,7 +36,7 @@ pub struct PatEntry {
     /// `reserved(3)` before the PID (ISO/IEC 13818-1 §2.4.4.4, `111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved: u8,
+    pub reserved: ReservedOnes<3>,
 }
 
 impl PatEntry {
@@ -45,7 +46,7 @@ impl PatEntry {
         Self {
             program_number,
             pid,
-            reserved: super::RESERVED_3,
+            reserved: ReservedOnes::FILL,
         }
     }
 }
@@ -152,7 +153,7 @@ impl<'a> Parse<'a> for PatSection {
             entries.push(PatEntry {
                 program_number,
                 pid,
-                reserved: super::pid_reserved_of(chunk[2]),
+                reserved: ReservedOnes::from_bits(u64::from(super::pid_reserved_of(chunk[2]))),
             });
             pos += ENTRY_LEN;
         }
@@ -194,7 +195,11 @@ impl Serialize for PatSection {
         let mut pos = 8;
         for entry in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&entry.program_number.to_be_bytes());
-            super::write_pid_r(&mut buf[pos + 2..pos + 4], entry.pid, entry.reserved)?;
+            super::write_pid_r(
+                &mut buf[pos + 2..pos + 4],
+                entry.pid,
+                entry.reserved.get() as u8,
+            )?;
             pos += ENTRY_LEN;
         }
 
@@ -404,5 +409,21 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// The field is 3 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the 13-bit PID below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_three_bits() {
+        let e = PatEntry {
+            program_number: 1,
+            pid: Pid::from_const(0x01FF),
+            reserved: ReservedOnes::from_bits(0xFF),
+        };
+        assert_eq!(e.reserved.get(), 0x07);
+        let section = PatSection::new(1, 0, true, 0, 0, vec![e]);
+        let mut b = vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut b).unwrap();
+        assert_eq!(b[8..12], [0x00, 0x01, 0xE1, 0xFF]);
     }
 }
