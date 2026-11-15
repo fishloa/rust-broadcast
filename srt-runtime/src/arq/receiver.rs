@@ -27,7 +27,7 @@ use alloc::vec::Vec;
 use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
-use crate::packet::number::{SeqNo, SocketId, SrtTimestamp};
+use crate::packet::number::{AckNumber, SeqNo, SocketId, SrtTimestamp};
 use crate::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, LossListEntry, NakPacket};
 
 use super::rtt::RttEstimator;
@@ -420,16 +420,18 @@ impl Receiver {
         let ack_number = self.next_ack_number;
         self.next_ack_number = self.next_ack_number.wrapping_add(1);
         if self.outstanding_acks.len() >= MAX_OUTSTANDING_ACKS {
-            // Oldest first: Acknowledgement Numbers only ever increase.
+            // Oldest first: Acknowledgement Numbers only ever increase (the
+            // 32-bit `AckNumber` counter wraps only after ~2^32 Full ACKs at
+            // 100/s).
             self.outstanding_acks.pop_first();
         }
         self.outstanding_acks.insert(ack_number, now);
         let pkt = ControlPacket::Ack(AckPacket {
-            ack_number,
+            ack_number: AckNumber::from_wire(ack_number),
             timestamp: timestamp_to_wire_us(now),
             dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             cif: AckCif::Full {
-                last_ack_seq: self.next_expected,
+                last_ack_seq: SeqNo::from_wire_masked(self.next_expected),
                 rtt_us: self.rtt.rtt_us(),
                 rtt_var_us: self.rtt.rtt_var_us(),
                 avail_buf_size: self.avail_buf_size,
@@ -450,11 +452,11 @@ impl Receiver {
         // 0"; it carries no RTT/CIF payload beyond the sequence number
         // (rule 24).
         let pkt = ControlPacket::Ack(AckPacket {
-            ack_number: 0,
+            ack_number: AckNumber::ZERO,
             timestamp: SrtTimestamp::ZERO,
             dest_socket_id: SocketId::from_wire(self.dest_socket_id),
             cif: AckCif::Light {
-                last_ack_seq: self.next_expected,
+                last_ack_seq: SeqNo::from_wire_masked(self.next_expected),
             },
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
@@ -467,7 +469,7 @@ impl Receiver {
     /// (rules 26-30). An ACKACK for an unknown/already-matched
     /// Acknowledgement Number is ignored.
     pub fn on_ackack(&mut self, ackack: &AckAckPacket, now: Timestamp) {
-        if let Some(sent_at) = self.outstanding_acks.remove(&ackack.ack_number) {
+        if let Some(sent_at) = self.outstanding_acks.remove(&ackack.ack_number.value()) {
             self.rtt.update(elapsed(now, sent_at));
         }
     }
@@ -672,7 +674,7 @@ mod tests {
             panic!("expected ACK");
         };
         assert!(matches!(ack.cif, AckCif::Full { .. }));
-        assert_eq!(ack.ack_number, 1);
+        assert_eq!(ack.ack_number.value(), 1);
 
         // Under the Full ACK period, but past the light-ack packet count.
         for seq_number in 0..LIGHT_ACK_THRESHOLD {

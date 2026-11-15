@@ -12,7 +12,7 @@ use srt_runtime::packet::misc::{AckAckPacket, ShutdownPacket};
 
 use srt_runtime::packet::{
     ControlPacket, DataPacket, DropReqPacket, EncryptionField, EncryptionKeyField, LossListEntry,
-    PacketPosition, SocketId, SrtPacket, SrtTimestamp,
+    MessageNumber, PacketPosition, SeqNo, SocketId, SrtPacket, SrtTimestamp,
 };
 
 pub const PEER_SOCKET_ID: u32 = 0x1234_5678;
@@ -120,7 +120,7 @@ impl SrtPeer {
                 let acked = match ack.cif {
                     srt_runtime::packet::AckCif::Full { last_ack_seq, .. }
                     | srt_runtime::packet::AckCif::Small { last_ack_seq, .. }
-                    | srt_runtime::packet::AckCif::Light { last_ack_seq } => last_ack_seq,
+                    | srt_runtime::packet::AckCif::Light { last_ack_seq } => last_ack_seq.value(),
                     _ => 0,
                 };
                 if self
@@ -221,11 +221,11 @@ impl SrtPeer {
 
     pub fn drop_request(&self, first: u32, last: u32, now_us: u64) -> Vec<u8> {
         serialize(&ControlPacket::DropReq(DropReqPacket {
-            message_number: 0,
+            message_number: MessageNumber::try_new(0).expect("0 fits 26 bits"),
             timestamp: SrtTimestamp::from_wire(self.ts(now_us)),
             dest_socket_id: SocketId::from_wire(self.caller_socket_id),
-            first_seq: first,
-            last_seq: last,
+            first_seq: SeqNo::from_wire_masked(first),
+            last_seq: SeqNo::from_wire_masked(last),
         }))
     }
 

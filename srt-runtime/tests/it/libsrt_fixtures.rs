@@ -11,7 +11,7 @@
 //! and silently dropped by `io.rs`'s `let _ = self.ingress(...)`.
 
 use srt_runtime::packet::{
-    AckAckPacket, ControlPacket, KeepAlivePacket, SocketId, SrtPacket, SrtTimestamp,
+    AckAckPacket, AckNumber, ControlPacket, KeepAlivePacket, SocketId, SrtPacket, SrtTimestamp,
 };
 
 fn fixture(name: &str) -> Vec<u8> {
@@ -71,7 +71,7 @@ fn real_libsrt_ackack_parses_and_round_trips_byte_exact() {
     assert_eq!(
         ackack,
         AckAckPacket {
-            ack_number: 1,
+            ack_number: AckNumber::from_wire(1),
             timestamp: SrtTimestamp::from_wire(u32::from_be_bytes([0x00, 0x0f, 0xc0, 0xd5])),
             dest_socket_id: SocketId::from_wire(u32::from_be_bytes([0x1d, 0x50, 0x8c, 0x8a])),
             libsrt_pad: true,

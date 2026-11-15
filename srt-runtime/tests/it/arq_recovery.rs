@@ -8,7 +8,9 @@ use broadcast_common::stage::Timestamp;
 use core::time::Duration;
 
 use srt_runtime::arq::{FULL_ACK_PERIOD, Receiver, Sender};
-use srt_runtime::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, DataPacket, NakPacket};
+use srt_runtime::packet::{
+    AckAckPacket, AckCif, AckNumber, AckPacket, ControlPacket, DataPacket, NakPacket, SeqNo,
+};
 use srt_runtime::packet::{SocketId, SrtTimestamp};
 
 const SENDER_ID: u32 = 0x1111_1111;
@@ -166,7 +168,9 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
         .find_map(|b| as_ack(b))
         .expect("Full ACK due");
     match ack.cif {
-        AckCif::Full { last_ack_seq, .. } => assert_eq!(last_ack_seq, TOTAL),
+        AckCif::Full { last_ack_seq, .. } => {
+            assert_eq!(last_ack_seq, SeqNo::try_new(TOTAL).expect("fits 31 bits"));
+        }
         other => panic!("expected a Full ACK CIF, got {other:?}"),
     }
     let ackack_bytes = sender
@@ -261,10 +265,12 @@ fn sender_ignores_an_ack_beyond_the_highest_sent_sequence() {
         s.on_data(seq, seq, b"x", Timestamp::ZERO).unwrap();
     }
     let ack = AckPacket {
-        ack_number: 0,
+        ack_number: AckNumber::ZERO,
         timestamp: SrtTimestamp::ZERO,
         dest_socket_id: SocketId::from_wire(RECEIVER_ID),
-        cif: AckCif::Light { last_ack_seq: 1000 },
+        cif: AckCif::Light {
+            last_ack_seq: SeqNo::try_new(1000).expect("fits 31 bits"),
+        },
     };
     s.on_ack(&ack, Timestamp::ZERO);
     assert_eq!(

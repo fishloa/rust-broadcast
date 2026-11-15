@@ -2,9 +2,8 @@
 //! Congestion Warning (§3.2.6), Shutdown (§3.2.7), ACKACK (§3.2.8), Message
 //! Drop Request (§3.2.9), and Peer Error (§3.2.10).
 
-use super::data::MESSAGE_NUMBER_BITS;
-use super::number::{SocketId, SrtTimestamp};
-use super::{Error, Result, SEQ_NUMBER_MASK, be32, put_be32};
+use super::number::{AckNumber, MESSAGE_NUMBER_MASK, MessageNumber, SeqNo, SocketId, SrtTimestamp};
+use super::{Error, Result, be32, put_be32};
 use broadcast_common::error::BufferTooShort;
 
 /// Peer error code for a file-system error — the only value
@@ -55,8 +54,9 @@ pub struct ShutdownPacket {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AckAckPacket {
-    /// Acknowledgement Number of the Full ACK being acknowledged.
-    pub ack_number: u32,
+    /// Acknowledgement Number of the Full ACK being acknowledged (§3.2.8,
+    /// Figure 17).
+    pub ack_number: AckNumber,
     /// Timestamp (§3).
     pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
@@ -72,15 +72,19 @@ pub struct AckAckPacket {
 pub struct DropReqPacket {
     /// The message number requested to be dropped (`0` if the sender no
     /// longer has the packets and cannot restore it).
-    pub message_number: u32,
+    ///
+    /// §3.2.9 (Figure 18) calls this field 32 bits wide, but it names a
+    /// message, so it is bounded here by the 26-bit Message Number field of
+    /// §3.1 it refers to — the only values the sender can ever produce.
+    pub message_number: MessageNumber,
     /// Timestamp (§3).
     pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
     pub dest_socket_id: SocketId,
     /// First Packet Sequence Number of the range to drop.
-    pub first_seq: u32,
+    pub first_seq: SeqNo,
     /// Last Packet Sequence Number of the range to drop.
-    pub last_seq: u32,
+    pub last_seq: SeqNo,
 }
 
 impl DropReqPacket {
@@ -97,12 +101,19 @@ impl DropReqPacket {
                 what: "drop request CIF",
             }));
         }
+        let message_number = MessageNumber::try_new(message_number).map_err(|_| {
+            Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                field: "Message Number",
+                value: u64::from(message_number),
+                max: u64::from(MESSAGE_NUMBER_MASK),
+            })
+        })?;
         Ok(DropReqPacket {
             message_number,
             timestamp,
             dest_socket_id,
-            first_seq: be32(cif, 0),
-            last_seq: be32(cif, 4),
+            first_seq: SeqNo::from_wire_masked(be32(cif, 0)),
+            last_seq: SeqNo::from_wire_masked(be32(cif, 4)),
         })
     }
 
@@ -111,24 +122,8 @@ impl DropReqPacket {
     }
 
     pub(crate) fn write_cif(&self, buf: &mut [u8]) -> Result<()> {
-        let seq_bits = SEQ_NUMBER_MASK.count_ones();
-        broadcast_common::len::fit_bits(
-            u64::from(self.first_seq),
-            seq_bits,
-            "First Packet Sequence Number",
-        )?;
-        broadcast_common::len::fit_bits(
-            u64::from(self.last_seq),
-            seq_bits,
-            "Last Packet Sequence Number",
-        )?;
-        broadcast_common::len::fit_bits(
-            u64::from(self.message_number),
-            MESSAGE_NUMBER_BITS,
-            "Message Number",
-        )?;
-        put_be32(buf, 0, self.first_seq);
-        put_be32(buf, 4, self.last_seq);
+        put_be32(buf, 0, self.first_seq.value());
+        put_be32(buf, 4, self.last_seq.value());
         Ok(())
     }
 }
@@ -153,17 +148,25 @@ mod tests {
     use alloc::vec::Vec;
 
     use super::super::control::ControlPacket;
-    use super::super::data::MESSAGE_NUMBER_MASK;
+    use super::super::data::MESSAGE_NUMBER_MASK as MESSAGE_NUMBER_MAX;
     use super::*;
+
+    fn msg(n: u32) -> MessageNumber {
+        MessageNumber::try_new(n).expect("fits 26 bits")
+    }
+
+    fn sn(n: u32) -> SeqNo {
+        SeqNo::try_new(n).expect("fits 31 bits")
+    }
 
     #[test]
     fn drop_req_round_trips() {
         let d = DropReqPacket {
-            message_number: 7,
+            message_number: msg(7),
             timestamp: SrtTimestamp::from_wire(100),
             dest_socket_id: SocketId::from_wire(200),
-            first_seq: 10,
-            last_seq: 20,
+            first_seq: sn(10),
+            last_seq: sn(20),
         };
         let pkt = ControlPacket::DropReq(d);
         let mut buf = [0u8; 24];
@@ -176,40 +179,86 @@ mod tests {
         assert_eq!(parsed, pkt);
     }
 
+    /// §3.2.9's fields are 32-bit words on the wire, but the two sequence
+    /// numbers share the data packet's 31-bit space (§3.1) and the Message
+    /// Number is the 26-bit one: a peer's top-bit-set values are accepted
+    /// (masked for the sequence numbers, since the typed `SeqNo` cannot hold
+    /// them) and serialize back to the same masked bytes — never a
+    /// serialize-time refusal of a packet parse accepted.
     #[test]
-    fn drop_req_rejects_numbers_that_do_not_fit_their_wire_fields() {
-        let fits = DropReqPacket {
-            message_number: 7,
+    fn drop_req_wide_wire_numbers_still_serialize() {
+        let mut buf = alloc::vec![0u8; 24];
+        ControlPacket::DropReq(DropReqPacket {
+            message_number: msg(7),
             timestamp: SrtTimestamp::from_wire(100),
             dest_socket_id: SocketId::from_wire(200),
-            first_seq: SEQ_NUMBER_MASK,
-            last_seq: SEQ_NUMBER_MASK,
+            first_seq: sn(10),
+            last_seq: sn(20),
+        })
+        .serialize_into(&mut buf)
+        .unwrap();
+        buf[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_be_bytes());
+        buf[20..24].copy_from_slice(&0xFFFF_FFFEu32.to_be_bytes());
+        let parsed = ControlPacket::parse(&buf).unwrap();
+        let ControlPacket::DropReq(d) = parsed else {
+            panic!("a drop request");
         };
-        let mut buf = [0u8; 24];
-        assert!(
-            ControlPacket::DropReq(fits)
-                .serialize_into(&mut buf)
-                .is_ok()
-        );
+        assert_eq!(d.first_seq, SeqNo::MAX);
+        assert_eq!(d.last_seq, sn(0x7FFF_FFFE));
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[0..16], &buf[0..16]);
+        assert_eq!(&out[16..20], &SeqNo::MAX.value().to_be_bytes());
+        assert_eq!(&out[20..24], &0x7FFF_FFFEu32.to_be_bytes());
+        assert_eq!(ControlPacket::parse(&out).unwrap(), parsed);
+    }
 
-        for d in [
-            DropReqPacket {
-                first_seq: SEQ_NUMBER_MASK + 1,
-                ..fits
-            },
-            DropReqPacket {
-                last_seq: SEQ_NUMBER_MASK + 1,
-                ..fits
-            },
-            DropReqPacket {
-                message_number: MESSAGE_NUMBER_MASK + 1,
-                ..fits
-            },
-        ] {
-            assert!(matches!(
-                ControlPacket::DropReq(d).serialize_into(&mut buf),
-                Err(Error::FieldOverflow(_))
-            ));
+    /// A DROPREQ whose Message Number word is wider than the 26-bit Message
+    /// Number it names is rejected at parse, so `parse` never yields a packet
+    /// `serialize` would refuse (#2766's bound now sits at the parse edge).
+    #[test]
+    fn drop_req_rejects_an_over_wide_message_number_at_parse() {
+        let mut buf = alloc::vec![0u8; 24];
+        ControlPacket::DropReq(DropReqPacket {
+            message_number: msg(MESSAGE_NUMBER_MAX),
+            timestamp: SrtTimestamp::from_wire(100),
+            dest_socket_id: SocketId::from_wire(200),
+            first_seq: sn(10),
+            last_seq: sn(20),
+        })
+        .serialize_into(&mut buf)
+        .unwrap();
+        assert!(ControlPacket::parse(&buf).is_ok());
+
+        for wide in [MESSAGE_NUMBER_MAX + 1, 0x8E8E_8E8E, u32::MAX] {
+            buf[4..8].copy_from_slice(&wide.to_be_bytes());
+            assert_eq!(
+                ControlPacket::parse(&buf).unwrap_err(),
+                Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                    field: "Message Number",
+                    value: u64::from(wide),
+                    max: u64::from(MESSAGE_NUMBER_MAX),
+                })
+            );
+        }
+    }
+
+    /// An ACKACK echoes a Full ACK's Acknowledgement Number verbatim, and
+    /// that field is a whole 32-bit word (§3.2.8, Figure 17) — a value above
+    /// the 31-bit sequence space round-trips.
+    #[test]
+    fn ackack_carries_every_32_bit_ack_number() {
+        for ack_number in [0, 1, 0x8000_0000, 0x8E8E_8E8E, u32::MAX] {
+            let pkt = ControlPacket::AckAck(AckAckPacket {
+                ack_number: AckNumber::from_wire(ack_number),
+                timestamp: SrtTimestamp::from_wire(7),
+                dest_socket_id: SocketId::from_wire(8),
+                libsrt_pad: false,
+            });
+            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+            pkt.serialize_into(&mut buf).unwrap();
+            assert_eq!(&buf[4..8], &ack_number.to_be_bytes());
+            assert_eq!(ControlPacket::parse(&buf).unwrap(), pkt);
         }
     }
 
@@ -232,7 +281,7 @@ mod tests {
                 libsrt_pad: true,
             }),
             ControlPacket::AckAck(AckAckPacket {
-                ack_number: 9,
+                ack_number: AckNumber::from_wire(9),
                 timestamp: SrtTimestamp::from_wire(7),
                 dest_socket_id: SocketId::from_wire(8),
                 libsrt_pad: true,
@@ -278,7 +327,7 @@ mod tests {
                 libsrt_pad: false,
             }),
             ControlPacket::AckAck(AckAckPacket {
-                ack_number: 9,
+                ack_number: AckNumber::from_wire(9),
                 timestamp: SrtTimestamp::from_wire(7),
                 dest_socket_id: SocketId::from_wire(8),
                 libsrt_pad: false,

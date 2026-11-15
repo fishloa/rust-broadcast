@@ -1901,8 +1901,8 @@ impl Driver {
     /// drive one release pass so whatever the gap was blocking becomes
     /// deliverable immediately.
     fn handle_dropreq(&mut self, d: &DropReqPacket, now: Timestamp) {
-        let first = d.first_seq & SEQ_NUMBER_MASK;
-        let last = d.last_seq & SEQ_NUMBER_MASK;
+        let first = d.first_seq.value();
+        let last = d.last_seq.value();
         if seq_diff(last, first) < 0 {
             // `last` precedes `first` — malformed range; nothing sane to skip.
             return;
@@ -3464,11 +3464,11 @@ mod adapter_tests {
 
     fn dropreq_bytes(first: u32, last: u32) -> Vec<u8> {
         let pkt = ControlPacket::DropReq(DropReqPacket {
-            message_number: 0,
+            message_number: crate::packet::MessageNumber::try_new(0).expect("fits"),
             timestamp: crate::packet::SrtTimestamp::ZERO,
             dest_socket_id: crate::packet::SocketId::from_wire(1),
-            first_seq: first,
-            last_seq: last,
+            first_seq: crate::packet::SeqNo::from_wire_masked(first),
+            last_seq: crate::packet::SeqNo::from_wire_masked(last),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut buf).expect("serialize dropreq");
@@ -4002,11 +4002,11 @@ mod adapter_tests {
         );
 
         let ack = ControlPacket::Ack(AckPacket {
-            ack_number: 1,
+            ack_number: crate::packet::AckNumber::from_wire(1),
             timestamp: crate::packet::SrtTimestamp::ZERO,
             dest_socket_id: crate::packet::SocketId::from_wire(1),
             cif: AckCif::Full {
-                last_ack_seq: 0,
+                last_ack_seq: crate::packet::SeqNo::from_wire_masked(0),
                 rtt_us: 0,
                 rtt_var_us: 0,
                 avail_buf_size: 8192,
@@ -4765,11 +4765,11 @@ mod adapter_tests {
         assert!(!driver.send_window_open(), "a full window closes it");
 
         let ack = ControlPacket::Ack(AckPacket {
-            ack_number: 0,
+            ack_number: crate::packet::AckNumber::ZERO,
             timestamp: crate::packet::SrtTimestamp::ZERO,
             dest_socket_id: crate::packet::SocketId::from_wire(1),
             cif: AckCif::Light {
-                last_ack_seq: driver.next_send_seq,
+                last_ack_seq: crate::packet::SeqNo::from_wire_masked(driver.next_send_seq),
             },
         });
         let mut ack_bytes = alloc::vec![0u8; ack.serialized_len()];

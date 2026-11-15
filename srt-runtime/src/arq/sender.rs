@@ -335,7 +335,7 @@ impl Sender {
             | AckCif::Light { last_ack_seq } => last_ack_seq,
         };
         if let Some(back) = self.buffer.back()
-            && seq::seq_gt(last_ack_seq, seq::seq_next(back.seq))
+            && seq::seq_gt(last_ack_seq.value(), seq::seq_next(back.seq))
         {
             return None;
         }
@@ -343,7 +343,7 @@ impl Sender {
         while self
             .buffer
             .front()
-            .is_some_and(|front| seq::seq_lt(front.seq, last_ack_seq))
+            .is_some_and(|front| seq::seq_lt(front.seq, last_ack_seq.value()))
         {
             if let Some(freed) = self.buffer.pop_front() {
                 self.pending_retransmit.remove(&freed.seq); // rule 17
@@ -386,7 +386,7 @@ mod tests {
     use crate::error::Error;
     use crate::packet::SEQ_NUMBER_MASK;
     use crate::packet::data::MESSAGE_NUMBER_MASK;
-    use crate::packet::number::{SeqNo, SocketId, SrtTimestamp};
+    use crate::packet::number::{AckNumber, SeqNo, SocketId, SrtTimestamp};
 
     const PEER: u32 = 0xAAAA;
 
@@ -461,11 +461,11 @@ mod tests {
         s.on_data(2, 2, b"c", Timestamp::ZERO).unwrap();
 
         let ack = AckPacket {
-            ack_number: 1,
+            ack_number: AckNumber::from_wire(1),
             timestamp: SrtTimestamp::ZERO,
             dest_socket_id: SocketId::from_wire(PEER),
             cif: AckCif::Full {
-                last_ack_seq: 2,
+                last_ack_seq: sn(2),
                 rtt_us: 20_000,
                 rtt_var_us: 5_000,
                 avail_buf_size: 0,
@@ -481,7 +481,7 @@ mod tests {
         let ControlPacket::AckAck(ackack) = ControlPacket::parse(&reply).unwrap() else {
             panic!("expected ACKACK");
         };
-        assert_eq!(ackack.ack_number, 1);
+        assert_eq!(ackack.ack_number.value(), 1);
     }
 
     #[test]
@@ -489,10 +489,12 @@ mod tests {
         let mut s = Sender::new(PEER);
         s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
         let ack = AckPacket {
-            ack_number: 0,
+            ack_number: AckNumber::ZERO,
             timestamp: SrtTimestamp::ZERO,
             dest_socket_id: SocketId::from_wire(PEER),
-            cif: AckCif::Light { last_ack_seq: 1 },
+            cif: AckCif::Light {
+                last_ack_seq: sn(1),
+            },
         };
         assert!(s.on_ack(&ack, Timestamp::ZERO).is_none());
         assert_eq!(s.buffered_count(), 0);
@@ -605,10 +607,12 @@ mod tests {
         feed_nak(&mut s, &[LossListEntry::Range(sn(1), sn(4))]);
         assert_eq!(s.pending_retransmit_count(), 4);
         let ack = AckPacket {
-            ack_number: 0,
+            ack_number: AckNumber::ZERO,
             timestamp: SrtTimestamp::ZERO,
             dest_socket_id: SocketId::from_wire(PEER),
-            cif: AckCif::Light { last_ack_seq: 3 },
+            cif: AckCif::Light {
+                last_ack_seq: sn(3),
+            },
         };
         assert!(s.on_ack(&ack, Timestamp::ZERO).is_none());
         // seqs 1, 2 freed; 3, 4 still pending and still buffered.

@@ -7,7 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
-- `packet::number` defines the typed SRT wire numbers `SocketId` (32-bit Destination/Source Socket ID), `SeqNo` (31-bit Packet Sequence Number with `broadcast_common::seq` wrap arithmetic and the ACK/loss-list 31-bit space), `MessageNumber` (26-bit, wrapping to `1`) and `SrtTimestamp` (32-bit header Timestamp), so a sequence number, socket id and timestamp are no longer interchangeable bare `u32`s (part of #2768, #2772).
+- `packet::number` defines the typed SRT wire numbers `SocketId` (32-bit Destination/Source Socket ID), `SeqNo` (31-bit Packet Sequence Number with `broadcast_common::seq` wrap arithmetic and the ACK/loss-list 31-bit space), `MessageNumber` (26-bit, wrapping to `1`), `AckNumber` (32-bit ACK/ACKACK Acknowledgement Number) and `SrtTimestamp` (32-bit header Timestamp), so a sequence number, socket id and timestamp are no longer interchangeable bare `u32`s (part of #2768, #2772).
+
+### Fixed
+- An ACK or ACKACK whose Acknowledgement Number has bit 31 set no longer fails to serialize: the field is a whole 32-bit `Type-specific Information` word (`draft-sharabayko-srt-01` §3.2.4 Figure 13, §3.2.8 Figure 17), so every value a peer can put on the wire was accepted by `parse` but refused by `serialize_into` with `Error::FieldOverflow` (found by the `srt_packet` fuzz target). The bound added in #2766 is removed; `AckPacket::ack_number` and `AckAckPacket::ack_number` are now `packet::AckNumber`.
+- The remaining #2766 bounds sit at the parse edge instead of the serializer, so `parse` can never yield a packet `serialize` refuses: a DROPREQ whose Message Number word is wider than the 26-bit Message Number it names is rejected with `Error::FieldOverflow`, and the 31-bit sequence numbers (ACK `last_ack_seq`, DROPREQ `first_seq`/`last_seq`) are masked at parse — `AckCif::*::last_ack_seq`, `DropReqPacket::first_seq`/`last_seq` and `DropReqPacket::message_number` are now `SeqNo`/`MessageNumber`.
 
 ### Changed
 - BREAKING: `packet::HsExtMessage`'s `receiver_tsbpd_delay`/`sender_tsbpd_delay` are `core::time::Duration` (were `receiver_tsbpd_delay_ms`/`sender_tsbpd_delay_ms: u16`), converted to the wire's whole milliseconds at the edge with a sub-millisecond remainder dropped. Migration: `receiver_tsbpd_delay_ms: 120` -> `receiver_tsbpd_delay: Duration::from_millis(120)` (part of #2768).
@@ -28,7 +32,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - A truncated handshake extension block header now reports the bytes actually available in `BufferTooShort::have` instead of always `0` (#2752).
-- Control packets validate their numbers against their wire fields, as data packets already did: an ACK's `last_ack_seq` must fit 31 bits and its `ack_number` 31 bits, a DROPREQ's `first_seq`/`last_seq` 31 bits and `message_number` 26 bits. An out-of-range value returns `Error::FieldOverflow` instead of wrapping into a different packet (#2766).
 
 ### Changed
 - BREAKING: every TSBPD latency and handshake retransmit setting is a `core::time::Duration` instead of a bare integer: `HandshakeConfig::latency` (was `latency_ms: u16`), `HandshakeConfig::retransmit_after` (was `retransmit_after_ticks: u32`, now the caller-clock silence before a retransmit), their setters `with_latency`/`with_retransmit_after` (were `with_latency_ms`/`with_retransmit_after_ticks`), `NegotiatedParams::latency` (was `latency_ms`), `url::SrtUrl::latency` (was `latency_ms: Option<u16>`), and `CallerHandshake::tick`/`ListenerHandshake::tick`/`RendezvousHandshake::tick` take the caller-clock time advanced since the last call (`tick(elapsed: Duration)`) instead of counting fixed ticks. A latency still goes on the wire as whole milliseconds (rounded down, `DEFAULT_RETRANSMIT_AFTER` replaces the old three-tick default). Migration: `with_latency_ms(180)` -> `with_latency(Duration::from_millis(180))`, `with_retransmit_after_ticks(n)` -> `with_retransmit_after(period / n)`, and `tick()` -> `tick(period)` (#2693).
