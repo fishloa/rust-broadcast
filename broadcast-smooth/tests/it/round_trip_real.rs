@@ -62,12 +62,16 @@ fn every_real_manifest_reparses_equal_and_serializes_to_a_fixed_point() {
         let first =
             SmoothManifest::parse(&xml).unwrap_or_else(|e| panic!("{name}: parse failed: {e}"));
         checked += 1;
-        let rendered = first.to_xml();
+        let rendered = first
+            .to_xml()
+            .unwrap_or_else(|e| panic!("{name}: render failed: {e}"));
         let second = SmoothManifest::parse(&rendered)
             .unwrap_or_else(|e| panic!("{name}: re-parse failed: {e}\n{rendered}"));
         assert_eq!(second, first, "{name}: re-parsed model differs");
         assert_eq!(
-            second.to_xml(),
+            second
+                .to_xml()
+                .unwrap_or_else(|e| panic!("{name}: render failed: {e}")),
             rendered,
             "{name}: serialization is not a fixed point"
         );
@@ -85,10 +89,10 @@ fn mutating_a_parsed_manifest_changes_the_output() {
         let Ok(mut model) = SmoothManifest::parse(&xml) else {
             continue;
         };
-        let before = model.to_xml();
+        let before = model.to_xml().expect("renders");
         model.timescale = Timescale::try_new(model.timescale.get().saturating_add(1))
             .expect("a bumped timescale stays non-zero");
-        let after = model.to_xml();
+        let after = model.to_xml().expect("renders");
         assert_ne!(before, after, "{name}: a mutated TimeScale changed nothing");
     }
 }

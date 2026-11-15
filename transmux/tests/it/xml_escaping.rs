@@ -134,7 +134,7 @@ fn ll_dash_rewrite_preserves_base_mpd_attribute_escaping() {
 #[test]
 fn playready_wrmheader_escapes_la_url_text() {
     let kid = [0x11u8; 16];
-    let xml = playready_wrmheader(&[kid], Some(SPECIALS));
+    let xml = playready_wrmheader(&[kid], Some(SPECIALS)).expect("WRMHEADER renders");
     // Element content: `& < >` escaped, quotes left alone (not required in text).
     assert!(
         xml.contains("<LA_URL>a&amp;b&lt;c&gt;d\"e'f</LA_URL>"),

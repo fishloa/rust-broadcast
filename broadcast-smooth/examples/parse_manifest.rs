@@ -39,7 +39,7 @@ fn main() {
     }
 
     assert_eq!(
-        SmoothManifest::parse(&manifest.to_xml()).expect("re-parse"),
+        SmoothManifest::parse(&manifest.to_xml().expect("render")).expect("re-parse"),
         manifest,
         "the model round-trips through the serializer"
     );

@@ -43,7 +43,7 @@ fn main() {
     .live(DVR_WINDOW_TICKS, LOOK_AHEAD_FRAGMENTS)
     .with_protection(protection_header);
 
-    let xml = manifest.to_xml();
+    let xml = manifest.to_xml().expect("render");
     print!("{xml}");
     assert_eq!(
         SmoothManifest::parse(&xml).expect("re-parse"),

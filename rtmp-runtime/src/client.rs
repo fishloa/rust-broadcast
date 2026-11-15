@@ -222,10 +222,8 @@ impl ClientHandshake {
             random: self.local_random,
         };
         let mut out = vec![0u8; VERSION_LEN + HANDSHAKE_PACKET_LEN];
-        // The slices are exactly VERSION_LEN / HANDSHAKE_PACKET_LEN long, so
-        // the fixed-size serializers cannot fail.
-        let _ = c0.serialize_into(&mut out[..VERSION_LEN]);
-        let _ = c1.serialize_into(&mut out[VERSION_LEN..]);
+        out[..VERSION_LEN].copy_from_slice(&c0.to_bytes());
+        out[VERSION_LEN..].copy_from_slice(&c1.to_bytes());
         self.state = ClientHandshakeState::WaitS0S1S2;
         out
     }
@@ -593,7 +591,7 @@ impl ClientSession {
             stream_id: stream_id.get(),
             buffer: self.config.play_buffer,
         };
-        out.extend_from_slice(&self.writer.write(&buffer.to_message())?);
+        out.extend_from_slice(&self.writer.write(&buffer.to_message()?)?);
         let cmd = Command {
             name: "play".to_string(),
             transaction_id: 0.0,
@@ -718,7 +716,7 @@ impl ClientSession {
             match UserControl::parse(&msg.payload) {
                 Ok(UserControl::PingRequest(ts)) => {
                     let reply = UserControl::PingResponse(ts);
-                    out.extend_from_slice(&self.writer.write(&reply.to_message())?);
+                    out.extend_from_slice(&self.writer.write(&reply.to_message()?)?);
                 }
                 Ok(UserControl::StreamIsRecorded(_)) if self.receiving_media() => {
                     self.stream_is_recorded = true;
@@ -1003,7 +1001,9 @@ mod tests {
         let (_client_out, _) = client.handle_data(&s0_s1_s2).unwrap();
 
         let ping = UserControl::PingRequest(0xDEAD_BEEF);
-        let bytes = ChunkWriter::new().write(&ping.to_message()).unwrap();
+        let bytes = ChunkWriter::new()
+            .write(&ping.to_message().unwrap())
+            .unwrap();
 
         let (out, _events) = client.handle_data(&bytes).unwrap();
         let mut assembler = ChunkAssembler::new();

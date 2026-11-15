@@ -69,12 +69,12 @@ fn main() {
     body.divs.push(div);
     doc.tt.body = Some(body);
 
-    let xml = doc.to_xml();
+    let xml = doc.to_xml().expect("render");
     println!("{}", xml);
 
     // Prove it round-trips: serialize → re-parse → re-serialize → identical
     let mut doc2 = Document::parse_str(&xml).expect("re-parse from-scratch output");
-    let xml2 = doc2.to_xml();
+    let xml2 = doc2.to_xml().expect("render");
     assert_eq!(
         xml, xml2,
         "from-scratch document does not round-trip identically"

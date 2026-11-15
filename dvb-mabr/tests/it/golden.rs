@@ -31,7 +31,7 @@ fn server_fixture_matches_golden() {
     let parsed = MulticastServerConfiguration::parse_str(&fixture("annex-c1-server-config.xml"))
         .expect("parse");
     check("annex-c1.parse.txt", &format!("{parsed:#?}\n"));
-    check("annex-c1.xml", &parsed.to_xml());
+    check("annex-c1.xml", &parsed.to_xml().expect("render"));
 }
 
 #[test]
@@ -42,7 +42,7 @@ fn gateway_fixtures_match_golden() {
     ] {
         let parsed = MulticastGatewayConfiguration::parse_str(&fixture(file)).expect("parse");
         check(&format!("{stem}.parse.txt"), &format!("{parsed:#?}\n"));
-        check(&format!("{stem}.xml"), &parsed.to_xml());
+        check(&format!("{stem}.xml"), &parsed.to_xml().expect("render"));
     }
 }
 
@@ -57,5 +57,5 @@ fn specials_document_matches_golden() {
 </MulticastGatewayConfiguration>"#;
     let parsed = MulticastGatewayConfiguration::parse_str(xml).expect("parse");
     check("specials.parse.txt", &format!("{parsed:#?}\n"));
-    check("specials.xml", &parsed.to_xml());
+    check("specials.xml", &parsed.to_xml().expect("render"));
 }

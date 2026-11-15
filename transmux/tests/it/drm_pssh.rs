@@ -49,7 +49,7 @@ fn playready_kid_swap_matches_documented_vector() {
     );
 
     // The WRMHEADER <KID VALUE=...> base64 decodes to the swapped LE-GUID bytes.
-    let xml = playready_wrmheader(&[KID_A], None);
+    let xml = playready_wrmheader(&[KID_A], None).expect("WRMHEADER renders");
     let value = extract_attr(&xml, "VALUE");
     let decoded = base64_decode(&value).unwrap();
     assert_eq!(&decoded[..], &KID_A_PLAYREADY[..]);

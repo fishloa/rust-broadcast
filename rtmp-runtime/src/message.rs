@@ -19,6 +19,7 @@ use core::time::Duration;
 use crate::RtmpError;
 use crate::chunk::{MAX_CHUNK_SIZE, Message};
 use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
+use alloc::vec::Vec;
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -416,6 +417,35 @@ impl ProtocolControl {
         }
     }
 
+    /// The message payload, built without a fallible length check: the
+    /// result length is the type's own [`Serialize::serialized_len`].
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut buf = alloc::vec![0u8; self.serialized_len()];
+        match *self {
+            ProtocolControl::SetChunkSize(size) => {
+                buf[0..U32_LEN].copy_from_slice(&size.value().to_be_bytes());
+            }
+            ProtocolControl::Abort { chunk_stream_id } => {
+                buf[0..U32_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
+            }
+            ProtocolControl::Acknowledgement(sequence_number) => {
+                buf[0..U32_LEN].copy_from_slice(&sequence_number.get().to_be_bytes());
+            }
+            ProtocolControl::WindowAckSize(window) => {
+                buf[0..U32_LEN].copy_from_slice(&window.to_be_bytes());
+            }
+            ProtocolControl::SetPeerBandwidth {
+                ack_window_size,
+                limit_type,
+            } => {
+                buf[0..U32_LEN].copy_from_slice(&ack_window_size.to_be_bytes());
+                buf[U32_LEN] = limit_type.to_u8();
+            }
+        }
+        buf
+    }
+
     /// Wrap this protocol control message in a [`Message`] ready to hand to
     /// [`crate::chunk::ChunkWriter`] — chunk stream id
     /// [`CONTROL_CHUNK_STREAM_ID`], message stream id
@@ -423,8 +453,7 @@ impl ProtocolControl {
     /// messages take effect immediately; timestamps are not meaningful).
     #[must_use]
     pub fn to_message(&self) -> Message {
-        let mut payload = alloc::vec![0u8; self.serialized_len()];
-        let _ = self.serialize_into(&mut payload);
+        let payload = self.to_bytes();
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
             timestamp: Timestamp::ZERO,
@@ -565,24 +594,56 @@ impl UserControl {
         }
     }
 
+    /// The message payload, built without a fallible length check: the
+    /// result length is the type's own [`Serialize::serialized_len`].
+    ///
+    /// # Errors
+    /// [`RtmpError::FieldOverflow`] if a `SetBufferLength` span is longer
+    /// than the message's 32-bit millisecond field.
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut buf = alloc::vec![0u8; self.serialized_len()];
+        buf[0..EVENT_TYPE_LEN].copy_from_slice(&self.event_type().to_be_bytes());
+        let data = &mut buf[EVENT_TYPE_LEN..];
+        match *self {
+            UserControl::StreamBegin(stream_id)
+            | UserControl::StreamEof(stream_id)
+            | UserControl::StreamDry(stream_id)
+            | UserControl::StreamIsRecorded(stream_id)
+            | UserControl::PingRequest(stream_id)
+            | UserControl::PingResponse(stream_id) => {
+                data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
+            }
+            UserControl::SetBufferLength { stream_id, buffer } => {
+                data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
+                let millis = u32::try_from(buffer.as_millis()).map_err(|_| {
+                    RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                        field: "set_buffer_length.buffer",
+                        value: buffer.as_millis() as u64,
+                        max: u64::from(u32::MAX),
+                    })
+                })?;
+                data[U32_LEN..2 * U32_LEN].copy_from_slice(&millis.to_be_bytes());
+            }
+        }
+        Ok(buf)
+    }
+
     /// Wrap this user control event in a [`Message`] ready to hand to
     /// [`crate::chunk::ChunkWriter`] — chunk stream id
     /// [`CONTROL_CHUNK_STREAM_ID`], message stream id
     /// [`CONTROL_MESSAGE_STREAM_ID`], timestamp `0` (effective on receipt;
     /// timestamps are not meaningful).
-    #[must_use]
-    pub fn to_message(&self) -> Message {
-        // The payload buffer is sized exactly `serialized_len()`, so the
-        // fixed-size serializer cannot fail (mirrors `ProtocolControl`).
-        let mut payload = alloc::vec![0u8; self.serialized_len()];
-        let _ = self.serialize_into(&mut payload);
-        Message {
+    ///
+    /// # Errors
+    /// See [`UserControl::to_bytes`].
+    pub fn to_message(&self) -> Result<Message> {
+        Ok(Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
             timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::UserControl,
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
-            payload,
-        }
+            payload: self.to_bytes()?,
+        })
     }
 }
 
@@ -784,6 +845,31 @@ mod tests {
     }
 
     #[test]
+    fn protocol_control_to_bytes_matches_the_serializer() {
+        for pc in [
+            ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()),
+            ProtocolControl::Abort { chunk_stream_id: 7 },
+            ProtocolControl::Acknowledgement(SequenceNumber::new(1_048_576)),
+            ProtocolControl::WindowAckSize(2_500_000),
+            ProtocolControl::SetPeerBandwidth {
+                ack_window_size: 2_500_000,
+                limit_type: LimitType::Hard,
+            },
+            ProtocolControl::SetPeerBandwidth {
+                ack_window_size: 2_500_000,
+                limit_type: LimitType::Soft,
+            },
+            ProtocolControl::SetPeerBandwidth {
+                ack_window_size: 2_500_000,
+                limit_type: LimitType::Dynamic,
+            },
+        ] {
+            assert_eq!(pc.to_bytes(), pc.try_to_bytes().unwrap());
+            assert_eq!(pc.to_message().payload, pc.to_bytes());
+        }
+    }
+
+    #[test]
     fn set_chunk_size_reserved_top_bit_rejected_on_parse() {
         let bytes = 0x8000_1000u32.to_be_bytes().to_vec();
         assert!(matches!(
@@ -883,6 +969,25 @@ mod tests {
     }
 
     #[test]
+    fn user_control_to_bytes_matches_the_serializer() {
+        for uc in [
+            UserControl::StreamBegin(1),
+            UserControl::StreamEof(1),
+            UserControl::StreamDry(1),
+            UserControl::StreamIsRecorded(1),
+            UserControl::PingRequest(1),
+            UserControl::PingResponse(1),
+            UserControl::SetBufferLength {
+                stream_id: 1,
+                buffer: Duration::from_millis(3_000),
+            },
+        ] {
+            assert_eq!(uc.to_bytes().unwrap(), uc.try_to_bytes().unwrap());
+            assert_eq!(uc.to_message().unwrap().payload, uc.to_bytes().unwrap());
+        }
+    }
+
+    #[test]
     fn stream_eof_round_trips() {
         user_control_round_trip(UserControl::StreamEof(1));
     }
@@ -943,7 +1048,7 @@ mod tests {
 
     #[test]
     fn to_message_uses_control_csid_and_user_control_type_id() {
-        let msg = UserControl::StreamBegin(1).to_message();
+        let msg = UserControl::StreamBegin(1).to_message().unwrap();
         assert_eq!(msg.chunk_stream_id, CONTROL_CHUNK_STREAM_ID);
         assert_eq!(msg.message_stream_id, CONTROL_MESSAGE_STREAM_ID);
         assert_eq!(msg.message_type_id, MessageTypeId::UserControl);

@@ -269,7 +269,7 @@ impl MulticastServerConfiguration {
 
     /// Serialize back to a well-formed XML document (structural round-trip;
     /// see the crate root doc for what is and isn't preserved).
-    pub fn to_xml(&self) -> String {
+    pub fn to_xml(&self) -> crate::Result<String> {
         document(|w| {
             let mut t = tag(ROOT_SERVER);
             attr(&mut t, "xmlns", self.namespace.uri());
@@ -347,7 +347,7 @@ impl MulticastGatewayConfiguration {
 
     /// Serialize back to a well-formed XML document (structural round-trip;
     /// see the crate root doc for what is and isn't preserved).
-    pub fn to_xml(&self) -> String {
+    pub fn to_xml(&self) -> crate::Result<String> {
         document(|w| {
             let mut t = tag(ROOT_GATEWAY);
             attr(&mut t, "xmlns", self.namespace.uri());

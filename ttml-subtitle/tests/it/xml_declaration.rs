@@ -34,7 +34,7 @@ fn full_declaration_round_trips() {
     assert_eq!(d.version, "1.1");
     assert_eq!(d.encoding.as_deref(), Some("utf-8"));
     assert_eq!(d.standalone, Some(true));
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert!(
         out.starts_with(r#"<?xml version="1.1" encoding="utf-8" standalone="yes"?>"#),
         "{out}"
@@ -46,29 +46,33 @@ fn full_declaration_round_trips() {
 fn version_only_and_standalone_no() {
     let mut doc = Document::parse_str(&format!(r#"<?xml version="1.0"?>{TT}"#)).unwrap();
     assert_eq!(doc.xml_declaration.as_ref().unwrap().encoding, None);
-    assert!(doc.to_xml().starts_with(r#"<?xml version="1.0"?>"#));
+    assert!(
+        doc.to_xml()
+            .expect("render")
+            .starts_with(r#"<?xml version="1.0"?>"#)
+    );
     let mut doc =
         Document::parse_str(&format!(r#"<?xml version="1.0" standalone="no"?>{TT}"#)).unwrap();
     assert_eq!(
         doc.xml_declaration.as_ref().unwrap().standalone,
         Some(false)
     );
-    assert!(doc.to_xml().contains(r#"standalone="no""#));
+    assert!(doc.to_xml().expect("render").contains(r#"standalone="no""#));
 }
 
 #[test]
 fn no_declaration_parses_none_and_serializes_default() {
     let mut doc = Document::parse_str(TT).unwrap();
     assert_eq!(doc.xml_declaration, None);
-    assert!(doc.to_xml().starts_with(DEFAULT_DECL));
+    assert!(doc.to_xml().expect("render").starts_with(DEFAULT_DECL));
 }
 
 #[test]
 fn hand_built_document_defaults_and_overrides() {
     let mut doc = Document::new();
-    assert!(doc.to_xml().starts_with(DEFAULT_DECL));
+    assert!(doc.to_xml().expect("render").starts_with(DEFAULT_DECL));
     doc.xml_declaration = Some(XmlDeclaration::default());
-    assert!(doc.to_xml().starts_with(DEFAULT_DECL));
+    assert!(doc.to_xml().expect("render").starts_with(DEFAULT_DECL));
 }
 
 #[test]
@@ -81,7 +85,11 @@ fn non_utf8_encoding_is_not_echoed_into_utf8_output() {
         doc.xml_declaration.as_ref().unwrap().encoding.as_deref(),
         Some("ISO-8859-1")
     );
-    assert!(doc.to_xml().contains(r#"encoding="UTF-8""#));
+    assert!(
+        doc.to_xml()
+            .expect("render")
+            .contains(r#"encoding="UTF-8""#)
+    );
 }
 
 #[test]

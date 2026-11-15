@@ -6,10 +6,14 @@
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex, StreamType};
 
 fn round_trips(model: &SmoothManifest) {
-    let xml = model.to_xml();
+    let xml = model.to_xml().expect("renders");
     let reparsed = SmoothManifest::parse(&xml).unwrap_or_else(|e| panic!("re-parse: {e}\n{xml}"));
     assert_eq!(&reparsed, model, "model changed:\n{xml}");
-    assert_eq!(reparsed.to_xml(), xml, "serialization is not a fixed point");
+    assert_eq!(
+        reparsed.to_xml().expect("renders"),
+        xml,
+        "serialization is not a fixed point"
+    );
 }
 
 fn quality(four_cc: &str) -> QualityLevel {
@@ -38,7 +42,7 @@ fn chunks_without_n_stay_without_n() {
     ])])
     .with_duration(30_000_000);
     round_trips(&model);
-    let xml = model.to_xml();
+    let xml = model.to_xml().expect("renders");
     assert!(!xml.contains(" n=\""), "no c@n may be invented:\n{xml}");
 }
 
@@ -49,7 +53,7 @@ fn a_t_and_r_run_is_one_element() {
     ])])
     .with_duration(20_000_000);
     round_trips(&model);
-    let xml = model.to_xml();
+    let xml = model.to_xml().expect("renders");
     assert_eq!(
         xml.matches("<c ").count(),
         1,
@@ -65,7 +69,12 @@ fn a_t_and_r_run_is_one_element() {
 fn a_chunk_with_only_d_round_trips() {
     let model = SmoothManifest::new(vec![video_stream(vec![C::new(7_000_000)])]);
     round_trips(&model);
-    assert!(model.to_xml().contains(r#"<c d="7000000"/>"#));
+    assert!(
+        model
+            .to_xml()
+            .expect("renders")
+            .contains(r#"<c d="7000000"/>"#)
+    );
 }
 
 #[test]
@@ -77,7 +86,7 @@ fn a_live_manifest_keeps_its_live_attributes() {
     .with_duration(40_000_000)
     .live(120_000_000, 2);
     round_trips(&model);
-    let xml = model.to_xml();
+    let xml = model.to_xml().expect("renders");
     for attr in [
         r#"IsLive="TRUE""#,
         r#"LookAheadFragmentCount="2""#,
@@ -96,6 +105,7 @@ fn a_protection_header_round_trips() {
     assert!(
         model
             .to_xml()
+            .expect("renders")
             .contains("<ProtectionHeader>AAABAwBXAFcAVwAB//8A4wAA</ProtectionHeader>")
     );
 }
@@ -115,7 +125,7 @@ fn a_text_stream_round_trips() {
     ])
     .with_duration(20_000_000);
     round_trips(&model);
-    let xml = model.to_xml();
+    let xml = model.to_xml().expect("renders");
     assert!(xml.contains(r#"Type="text" Subtype="SUBT""#), "{xml}");
 }
 

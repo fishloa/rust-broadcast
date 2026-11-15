@@ -74,7 +74,7 @@ let config = MulticastGatewayConfiguration::parse_str(xml).unwrap();
 assert_eq!(config.sessions.len(), 1);
 assert_eq!(config.sessions[0].service_identifier, "urn:example:service:1");
 
-let round_tripped = MulticastGatewayConfiguration::parse_str(&config.to_xml()).unwrap();
+let round_tripped = MulticastGatewayConfiguration::parse_str(&config.to_xml().unwrap()).unwrap();
 assert_eq!(config, round_tripped);
 ```
 

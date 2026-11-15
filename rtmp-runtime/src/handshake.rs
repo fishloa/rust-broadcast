@@ -78,6 +78,14 @@ impl Serialize for Version {
     }
 }
 
+impl Version {
+    /// The C0/S0 byte, built without a fallible length check.
+    #[must_use]
+    pub const fn to_bytes(&self) -> [u8; VERSION_LEN] {
+        [self.0]
+    }
+}
+
 /// C1 (client→server) or S1 (server→client): the 1536-byte time/zero/random
 /// handshake packet (§5.2.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,6 +126,18 @@ impl Serialize for HandshakePacket {
         buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.zero.to_be_bytes());
         buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
         Ok(HANDSHAKE_PACKET_LEN)
+    }
+}
+
+impl HandshakePacket {
+    /// The 1536-byte C1/S1 packet, built without a fallible length check.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; HANDSHAKE_PACKET_LEN] {
+        let mut buf = [0u8; HANDSHAKE_PACKET_LEN];
+        buf[0..FIELD_LEN].copy_from_slice(&self.time.to_be_bytes());
+        buf[FIELD_LEN..2 * FIELD_LEN].copy_from_slice(&self.zero.to_be_bytes());
+        buf[2 * FIELD_LEN..HANDSHAKE_PACKET_LEN].copy_from_slice(&self.random);
+        buf
     }
 }
 
@@ -359,6 +379,16 @@ mod tests {
     }
 
     #[test]
+    fn version_to_bytes_matches_the_serializer() {
+        for byte in [RTMP_VERSION, 0, 0xFF] {
+            let v = Version(byte);
+            let mut buf = [0u8; VERSION_LEN];
+            v.serialize_into(&mut buf).unwrap();
+            assert_eq!(v.to_bytes(), buf);
+        }
+    }
+
+    #[test]
     fn version_short_input_is_buffer_too_short() {
         let bytes: [u8; 0] = [];
         assert!(matches!(
@@ -401,6 +431,18 @@ mod tests {
         let mut buf = [0u8; HANDSHAKE_PACKET_LEN];
         hp.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes, "C1/S1 byte-identical round trip");
+    }
+
+    #[test]
+    fn handshake_packet_to_bytes_matches_the_serializer() {
+        let hp = HandshakePacket {
+            time: 0x1122_3344,
+            zero: 0,
+            random: patterned_random(0x5C),
+        };
+        let mut buf = [0u8; HANDSHAKE_PACKET_LEN];
+        hp.serialize_into(&mut buf).unwrap();
+        assert_eq!(hp.to_bytes(), buf);
     }
 
     #[test]

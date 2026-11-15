@@ -42,7 +42,7 @@ fn hand_built_bad_version_never_corrupts_the_declaration() {
     let mut d = XmlDeclaration::default();
     d.version = r#"1.0" standalone="maybe"#.into();
     doc.xml_declaration = Some(d);
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     assert!(Document::parse_str(&out).is_ok(), "{out}");
 }
 

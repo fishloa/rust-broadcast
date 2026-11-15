@@ -5,13 +5,14 @@
 
 use std::fs;
 
+use broadcast_common::Serialize as _;
 use dvb_vbi::DataField;
 
 fn exercise(b: &[u8]) -> bool {
     match DataField::parse(b) {
         Ok(f) => {
-            let mut buf = vec![0u8; f.serialized_len()];
-            let _ = f.serialize_into(&mut buf);
+            let reserialized = f.try_to_bytes().expect("reserializes");
+            assert_eq!(reserialized.len(), f.serialized_len());
             true
         }
         Err(_) => false,

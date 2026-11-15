@@ -810,7 +810,7 @@ impl ServerSession {
             return Ok(());
         }
 
-        let stream_begin = UserControl::StreamBegin(stream_id).to_message();
+        let stream_begin = UserControl::StreamBegin(stream_id).to_message()?;
         out.extend_from_slice(&self.writer.write(&stream_begin)?);
 
         let on_status = Command {

@@ -57,10 +57,13 @@ use core::str::FromStr;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::xml::{Elem, Namespace, XmlError, read_tree};
 use broadcast_common::xml_chars::{
-    LimitExceeded, NO_ATTRS, XmlLimit, XmlLimits, XmlWriter, close_element as close,
+    LimitExceeded, NO_ATTRS, WriteRefusal, XmlLimit, XmlLimits, XmlWriter, close_element as close,
     empty_element as empty, finish_document, new_writer, open_element as open, text_element,
     write_declaration,
 };
+
+/// Why [`SmoothManifest::to_xml`] could not render the document.
+pub type ManifestWriteError = WriteRefusal;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -1105,20 +1108,23 @@ impl SmoothManifest {
     /// fragments), a duplicate attribute, an attribute or child element the
     /// model has no field for (dropped), foreign-namespace content (dropped),
     /// and `IsLive` spelled other than `"TRUE"`/`"FALSE"` (re-read `false`).
-    #[must_use]
-    pub fn to_xml(&self) -> String {
+    ///
+    /// # Errors
+    /// [`ManifestWriteError`] if the in-memory writer refuses an event or an
+    /// attribute value is not UTF-8 (neither occurs in practice).
+    pub fn to_xml(&self) -> core::result::Result<String, ManifestWriteError> {
         let mut writer = new_writer();
         let w = &mut writer;
-        write_declaration(w, XML_ENCODING);
-        open(w, ELEMENT_ROOT, &self.root_attributes());
+        write_declaration(w, XML_ENCODING)?;
+        open(w, ELEMENT_ROOT, &self.root_attributes())?;
         if let Some(protection) = &self.protection {
-            write_protection(w, protection);
+            write_protection(w, protection)?;
         }
         for stream in &self.streams {
-            write_stream_index(w, stream);
+            write_stream_index(w, stream)?;
         }
-        close(w, ELEMENT_ROOT);
-        finish_document(writer)
+        close(w, ELEMENT_ROOT)?;
+        Ok(finish_document(writer))
     }
 
     fn root_attributes(&self) -> Vec<Attribute<'_>> {
@@ -1223,26 +1229,32 @@ impl C {
     }
 }
 
-fn write_protection(w: &mut XmlWriter, protection: &Protection) {
+fn write_protection(
+    w: &mut XmlWriter,
+    protection: &Protection,
+) -> core::result::Result<(), ManifestWriteError> {
     match &protection.header {
         Some(header) => {
-            open(w, ELEMENT_PROTECTION, NO_ATTRS);
-            text_element(w, ELEMENT_PROTECTION_HEADER, header);
-            close(w, ELEMENT_PROTECTION);
+            open(w, ELEMENT_PROTECTION, NO_ATTRS)?;
+            text_element(w, ELEMENT_PROTECTION_HEADER, header)?;
+            close(w, ELEMENT_PROTECTION)
         }
         None => empty(w, ELEMENT_PROTECTION, NO_ATTRS),
     }
 }
 
-fn write_stream_index(w: &mut XmlWriter, stream: &StreamIndex) {
-    open(w, ELEMENT_STREAM_INDEX, &stream.attributes());
+fn write_stream_index(
+    w: &mut XmlWriter,
+    stream: &StreamIndex,
+) -> core::result::Result<(), ManifestWriteError> {
+    open(w, ELEMENT_STREAM_INDEX, &stream.attributes())?;
     for quality in &stream.qualities {
-        empty(w, ELEMENT_QUALITY_LEVEL, &quality.attributes());
+        empty(w, ELEMENT_QUALITY_LEVEL, &quality.attributes())?;
     }
     for chunk in &stream.chunks_list {
-        empty(w, ELEMENT_C, &chunk.attributes());
+        empty(w, ELEMENT_C, &chunk.attributes())?;
     }
-    close(w, ELEMENT_STREAM_INDEX);
+    close(w, ELEMENT_STREAM_INDEX)
 }
 
 #[cfg(test)]
@@ -1508,7 +1520,7 @@ mod tests {
             assert_eq!(m.protection.unwrap().header.unwrap(), expected);
         }
         let m = SmoothManifest::new(vec![]).with_protection("a&b\r\nc");
-        let xml = m.to_xml();
+        let xml = m.to_xml().unwrap();
         let m2 = SmoothManifest::parse(&xml).unwrap();
         assert_eq!(m2.protection.unwrap().header.unwrap(), "a&b\r\nc");
     }

@@ -19,7 +19,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::foreign::{ForeignAttribute, UnknownElement, UnknownNode};
-use broadcast_common::xml_chars::XmlLimits;
+use broadcast_common::xml_chars::{WriteOutcome, WriteRefusal, XmlLimits};
 use quick_xml::Writer;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
@@ -235,7 +235,11 @@ impl Document {
     /// in its old scope are re-pointed at the winning URI) so the output
     /// re-parses with exactly the namespaces the original resolved to
     /// (#1110/TT-W1). The document remains parseable/serializable afterwards.
-    pub fn to_xml(&mut self) -> String {
+    ///
+    /// # Errors
+    /// [`WriteRefusal`] if the writer refuses an event: an attribute value
+    /// that is not valid UTF-8 (a tree built through the struct API).
+    pub fn to_xml(&mut self) -> core::result::Result<String, WriteRefusal> {
         let mut w = W::new();
         let default_decl = XmlDeclaration::default();
         let decl = self.xml_declaration.as_ref().unwrap_or(&default_decl);
@@ -258,16 +262,16 @@ impl Document {
         emit(
             &mut w,
             Event::Decl(BytesDecl::new(version, encoding, standalone)),
-        );
-        put_nl(&mut w);
+        )?;
+        put_nl(&mut w)?;
         let mut ns = collect_namespaces(&mut self.tt);
-        serialize_tt_element(&self.tt, &mut w, 0, &mut ns);
+        serialize_tt_element(&self.tt, &mut w, 0, &mut ns)?;
         let mut buf = String::from_utf8_lossy(&w.into_inner()).into_owned();
         // Ensure trailing newline
         if !buf.ends_with('\n') {
             buf.push('\n');
         }
-        buf
+        Ok(buf)
     }
 
     /// Get the effective time context from the root `<tt>` element's parameter attributes.
@@ -3662,7 +3666,8 @@ impl NamespaceMap {
 // whitespace, so the layout whitespace between block elements is emitted
 // explicitly as text events. Every tag goes out as a `BytesStart`/`BytesEnd`
 // event and every attribute value and text node is escaped by quick-xml.
-// Writing to the in-memory `Vec` cannot fail, so write results are discarded.
+// Writing to the in-memory `Vec` has one failure to report: an attribute
+// value that is not valid UTF-8 (the writer refuses that event).
 
 /// The writer every serializer appends to: a `quick_xml::Writer` plus a
 /// "compact" depth. While it is non-zero (inside `<p>`/`<span>`, whose content
@@ -3687,70 +3692,72 @@ impl W {
     }
 }
 
-fn emit(w: &mut W, event: Event<'_>) {
-    let _ = w.inner.write_event(event);
+fn emit(w: &mut W, event: Event<'_>) -> WriteOutcome {
+    w.inner
+        .write_event(event)
+        .map_err(|e| WriteRefusal::Write(e.to_string()))
 }
 
 /// Layout whitespace (spaces/newlines) between block elements; dropped inside
 /// mixed content (see [`W`]).
-fn layout(w: &mut W, whitespace: &str) {
+fn layout(w: &mut W, whitespace: &str) -> WriteOutcome {
     if w.compact > 0 {
-        return;
+        return Ok(());
     }
-    emit(w, Event::Text(BytesText::from_escaped(whitespace)));
+    emit(w, Event::Text(BytesText::from_escaped(whitespace)))
 }
 
 /// Two spaces per nesting level.
-fn put_indent(w: &mut W, level: usize) {
-    layout(w, &"  ".repeat(level));
+fn put_indent(w: &mut W, level: usize) -> WriteOutcome {
+    layout(w, &"  ".repeat(level))
 }
 
-fn put_nl(w: &mut W) {
-    layout(w, "\n");
+fn put_nl(w: &mut W) -> WriteOutcome {
+    layout(w, "\n")
 }
 
 /// Character data, escaped by quick-xml.
-fn put_text(w: &mut W, content: &str) {
-    emit(w, Event::Text(BytesText::new(content)));
+fn put_text(w: &mut W, content: &str) -> WriteOutcome {
+    emit(w, Event::Text(BytesText::new(content)))
 }
 
 /// `<tag .../>` followed by a newline.
-fn empty_line(w: &mut W, t: BytesStart<'_>) {
-    emit(w, Event::Empty(t));
-    put_nl(w);
+fn empty_line(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
+    emit(w, Event::Empty(t))?;
+    put_nl(w)
 }
 
 /// `<tag .../>` with no layout whitespace (inline content).
-fn empty_inline(w: &mut W, t: BytesStart<'_>) {
-    emit(w, Event::Empty(t));
+fn empty_inline(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
+    emit(w, Event::Empty(t))
 }
 
 /// `<tag ...>` followed by a newline.
-fn start_line(w: &mut W, t: BytesStart<'_>) {
-    emit(w, Event::Start(t));
-    put_nl(w);
+fn start_line(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
+    emit(w, Event::Start(t))?;
+    put_nl(w)
 }
 
 /// `<tag ...>` with no layout whitespace (inline content or a text-only body).
-fn start_inline(w: &mut W, t: BytesStart<'_>) {
-    emit(w, Event::Start(t));
+fn start_inline(w: &mut W, t: BytesStart<'_>) -> WriteOutcome {
+    emit(w, Event::Start(t))
 }
 
 /// An indented `</tag>` followed by a newline.
-fn end_line(w: &mut W, level: usize, name: &str) {
-    put_indent(w, level);
-    end_inline_line(w, name);
+fn end_line(w: &mut W, level: usize, name: &str) -> WriteOutcome {
+    put_indent(w, level)?;
+    end_inline_line(w, name)
 }
 
 /// `</tag>` followed by a newline (the text body before it was written inline).
-fn end_inline_line(w: &mut W, name: &str) {
-    emit(w, Event::End(BytesEnd::new(name)));
-    put_nl(w);
+fn end_inline_line(w: &mut W, name: &str) -> WriteOutcome {
+    emit(w, Event::End(BytesEnd::new(name)))?;
+    put_nl(w)
 }
 
 /// `</tag>` with no layout whitespace.
-fn end_inline(w: &mut W, name: &str) {
-    emit(w, Event::End(BytesEnd::new(name)));
+fn end_inline(w: &mut W, name: &str) -> WriteOutcome {
+    emit(w, Event::End(BytesEnd::new(name)))
 }
 
 /// Add an attribute (value escaped by quick-xml).
@@ -3763,7 +3770,11 @@ fn push_attr(t: &mut BytesStart<'_>, name: &str, value: &str) {
 /// namespace is undeclared (only possible for trees built through the
 /// struct API without going through `to_xml`'s collection pass) still
 /// gets written under a fallback prefix.
-fn serialize_ns_attrs(t: &mut BytesStart<'_>, attrs: &[ForeignAttribute], ns: &mut NamespaceMap) {
+fn serialize_ns_attrs(
+    t: &mut BytesStart<'_>,
+    attrs: &[ForeignAttribute],
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
     for attr in attrs {
         match attr.namespace.as_deref() {
             // Unprefixed attribute in no namespace (struct-built trees only;
@@ -3776,20 +3787,22 @@ fn serialize_ns_attrs(t: &mut BytesStart<'_>, attrs: &[ForeignAttribute], ns: &m
             }
         }
     }
+    Ok(())
 }
 
 /// Write `xml:space` (§7.7): `Some(Default)` comes from an explicit
 /// `xml:space="default"`, `None` from its absence, so both spellings
 /// round-trip distinctly (#1110/TT-W1).
-fn serialize_xml_space(t: &mut BytesStart<'_>, space: &Option<XmlSpace>) {
+fn serialize_xml_space(t: &mut BytesStart<'_>, space: &Option<XmlSpace>) -> WriteOutcome {
     if let Some(space) = space {
         push_attr(t, "xml:space", space.name());
     }
+    Ok(())
 }
 
 /// Write `xml:base` (TTML2 §7.4, #1110/TT-W1).
-fn serialize_xml_base(t: &mut BytesStart<'_>, base: &Option<String>) {
-    serialize_opt_attr(t, "xml:base", base);
+fn serialize_xml_base(t: &mut BytesStart<'_>, base: &Option<String>) -> WriteOutcome {
+    serialize_opt_attr(t, "xml:base", base)
 }
 
 /// Walk the whole document once in document order and build the namespace
@@ -4615,8 +4628,13 @@ fn push_inlines<'a>(
 // (#1110/TT-W1).
 
 /// Serialize the root `<tt>` element — TTML2 §8.1.1.
-fn serialize_tt_element(tt: &TtElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_tt_element(
+    tt: &TtElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("tt");
     // The five core bindings, byte-identical to the pre-#1110 output.
     for (prefix, uri) in KEY_BINDINGS {
@@ -4641,89 +4659,89 @@ fn serialize_tt_element(tt: &TtElement, w: &mut W, indent: usize, ns: &mut Names
         push_attr(&mut t, &format!("xmlns:{prefix}"), uri);
     }
 
-    serialize_opt_attr(&mut t, "xml:lang", &tt.xml_lang);
-    serialize_opt_attr(&mut t, "xml:id", &tt.xml_id);
-    serialize_xml_space(&mut t, &tt.xml_space);
-    serialize_xml_base(&mut t, &tt.xml_base);
+    serialize_opt_attr(&mut t, "xml:lang", &tt.xml_lang)?;
+    serialize_opt_attr(&mut t, "xml:id", &tt.xml_id)?;
+    serialize_xml_space(&mut t, &tt.xml_space)?;
+    serialize_xml_base(&mut t, &tt.xml_base)?;
 
-    serialize_opt_attr(&mut t, "ttp:timeBase", &tt.ttp_time_base);
-    serialize_opt_attr(&mut t, "ttp:frameRate", &tt.ttp_frame_rate);
+    serialize_opt_attr(&mut t, "ttp:timeBase", &tt.ttp_time_base)?;
+    serialize_opt_attr(&mut t, "ttp:frameRate", &tt.ttp_frame_rate)?;
     serialize_opt_attr(
         &mut t,
         "ttp:frameRateMultiplier",
         &tt.ttp_frame_rate_multiplier,
-    );
-    serialize_opt_attr(&mut t, "ttp:tickRate", &tt.ttp_tick_rate);
-    serialize_opt_attr(&mut t, "ttp:subFrameRate", &tt.ttp_sub_frame_rate);
-    serialize_opt_attr(&mut t, "ttp:dropMode", &tt.ttp_drop_mode);
-    serialize_opt_attr(&mut t, "ttp:markerMode", &tt.ttp_marker_mode);
-    serialize_opt_attr(&mut t, "ttp:clockMode", &tt.ttp_clock_mode);
-    serialize_opt_attr(&mut t, "ttp:cellResolution", &tt.ttp_cell_resolution);
-    serialize_opt_attr(&mut t, "ttp:pixelAspectRatio", &tt.ttp_pixel_aspect_ratio);
+    )?;
+    serialize_opt_attr(&mut t, "ttp:tickRate", &tt.ttp_tick_rate)?;
+    serialize_opt_attr(&mut t, "ttp:subFrameRate", &tt.ttp_sub_frame_rate)?;
+    serialize_opt_attr(&mut t, "ttp:dropMode", &tt.ttp_drop_mode)?;
+    serialize_opt_attr(&mut t, "ttp:markerMode", &tt.ttp_marker_mode)?;
+    serialize_opt_attr(&mut t, "ttp:clockMode", &tt.ttp_clock_mode)?;
+    serialize_opt_attr(&mut t, "ttp:cellResolution", &tt.ttp_cell_resolution)?;
+    serialize_opt_attr(&mut t, "ttp:pixelAspectRatio", &tt.ttp_pixel_aspect_ratio)?;
     serialize_opt_attr(
         &mut t,
         "ttp:displayAspectRatio",
         &tt.ttp_display_aspect_ratio,
-    );
-    serialize_opt_attr(&mut t, "ttp:profile", &tt.ttp_profile);
-    serialize_opt_attr(&mut t, "ttp:contentProfiles", &tt.ttp_content_profiles);
+    )?;
+    serialize_opt_attr(&mut t, "ttp:profile", &tt.ttp_profile)?;
+    serialize_opt_attr(&mut t, "ttp:contentProfiles", &tt.ttp_content_profiles)?;
     serialize_opt_attr(
         &mut t,
         "ttp:contentProfileCombination",
         &tt.ttp_content_profile_combination,
-    );
-    serialize_opt_attr(&mut t, "ttp:processorProfiles", &tt.ttp_processor_profiles);
+    )?;
+    serialize_opt_attr(&mut t, "ttp:processorProfiles", &tt.ttp_processor_profiles)?;
     serialize_opt_attr(
         &mut t,
         "ttp:processorProfileCombination",
         &tt.ttp_processor_profile_combination,
-    );
+    )?;
     serialize_opt_attr(
         &mut t,
         "ttp:inferProcessorProfileMethod",
         &tt.ttp_infer_processor_profile_method,
-    );
+    )?;
     serialize_opt_attr(
         &mut t,
         "ttp:inferProcessorProfileSource",
         &tt.ttp_infer_processor_profile_source,
-    );
+    )?;
     serialize_opt_attr(
         &mut t,
         "ttp:permitFeatureNarrowing",
         &tt.ttp_permit_feature_narrowing,
-    );
+    )?;
     serialize_opt_attr(
         &mut t,
         "ttp:permitFeatureWidening",
         &tt.ttp_permit_feature_widening,
-    );
-    serialize_opt_attr(&mut t, "ttp:validation", &tt.ttp_validation);
-    serialize_opt_attr(&mut t, "ttp:validationAction", &tt.ttp_validation_action);
+    )?;
+    serialize_opt_attr(&mut t, "ttp:validation", &tt.ttp_validation)?;
+    serialize_opt_attr(&mut t, "ttp:validationAction", &tt.ttp_validation_action)?;
 
-    serialize_opt_attr(&mut t, "tts:extent", &tt.tts_extent);
-    serialize_opt_attr(&mut t, "ittp:activeArea", &tt.ittp_active_area);
-    serialize_opt_attr(&mut t, "ittp:aspectRatio", &tt.ittp_aspect_ratio);
+    serialize_opt_attr(&mut t, "tts:extent", &tt.tts_extent)?;
+    serialize_opt_attr(&mut t, "ittp:activeArea", &tt.ittp_active_area)?;
+    serialize_opt_attr(&mut t, "ittp:aspectRatio", &tt.ittp_aspect_ratio)?;
     serialize_opt_attr(
         &mut t,
         "ittp:progressivelyDecodable",
         &tt.ittp_progressively_decodable,
-    );
+    )?;
 
-    serialize_ns_attrs(&mut t, &tt.foreign_attributes, ns);
-    start_line(w, t);
+    serialize_ns_attrs(&mut t, &tt.foreign_attributes, ns)?;
+    start_line(w, t)?;
 
     if let Some(ref head) = tt.head {
-        serialize_head_element(head, w, indent + 1, ns);
+        serialize_head_element(head, w, indent + 1, ns)?;
     }
     if let Some(ref body) = tt.body {
-        serialize_body_element(body, w, indent + 1, ns);
+        serialize_body_element(body, w, indent + 1, ns)?;
     }
     for unknown in &tt.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
 
-    end_line(w, indent, "tt");
+    end_line(w, indent, "tt")
 }
 
 /// Serialize a preserved foreign subtree (§7.2/§7.3, #1110/TT-W1).
@@ -4732,7 +4750,7 @@ fn serialize_unknown_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
+) -> WriteOutcome {
     let name = match elem.prefix.as_deref() {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", elem.local_name),
         _ => elem.local_name.clone(),
@@ -4747,7 +4765,7 @@ fn serialize_unknown_element(
         ns.add_binding(prefix, uri);
     }
 
-    put_indent(w, indent);
+    put_indent(w, indent)?;
     let mut t = BytesStart::new(name.as_str());
     // An unprefixed element is in the *default* namespace; if that is not the
     // one currently in scope (`<tt>` declares the TT namespace) it needs its
@@ -4760,11 +4778,11 @@ fn serialize_unknown_element(
             ns.default_ns = String::from(want);
         }
     }
-    serialize_ns_attrs(&mut t, &elem.attributes, ns);
+    serialize_ns_attrs(&mut t, &elem.attributes, ns)?;
     if elem.children.is_empty() {
-        empty_line(w, t);
+        empty_line(w, t)?;
         ns.default_ns = saved_default;
-        return;
+        return Ok(());
     }
     let has_element_child = elem
         .children
@@ -4778,84 +4796,95 @@ fn serialize_unknown_element(
         // Mixed content: character data is significant, so write the children
         // verbatim with no layout whitespace around or between them (the
         // trimming/indenting form below would alter the text).
-        start_inline(w, t);
+        start_inline(w, t)?;
         w.compact += 1;
         for child in &elem.children {
             match child {
-                UnknownNode::Element(e) => serialize_unknown_element(e, w, 0, ns),
-                UnknownNode::Text(text) => put_text(w, text),
+                UnknownNode::Element(e) => serialize_unknown_element(e, w, 0, ns)?,
+                UnknownNode::Text(text) => put_text(w, text)?,
             }
         }
         w.compact -= 1;
-        end_inline_line(w, &name);
+        end_inline_line(w, &name)?;
         ns.default_ns = saved_default;
-        return;
+        return Ok(());
     }
     if !has_element_child {
         // Text-only subtree: keep it on one line so no spurious whitespace
         // text node is introduced.
-        start_inline(w, t);
+        start_inline(w, t)?;
         for child in &elem.children {
             if let UnknownNode::Text(t) = child {
-                put_text(w, t);
+                put_text(w, t)?;
             }
         }
-        end_inline_line(w, &name);
+        end_inline_line(w, &name)?;
         ns.default_ns = saved_default;
-        return;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for child in &elem.children {
         match child {
-            UnknownNode::Element(e) => serialize_unknown_element(e, w, indent + 1, ns),
+            UnknownNode::Element(e) => serialize_unknown_element(e, w, indent + 1, ns)?,
             UnknownNode::Text(t) => {
                 let text = t.trim();
                 if text.is_empty() {
                     continue;
                 }
-                put_indent(w, indent + 1);
-                put_text(w, text);
-                put_nl(w);
+                put_indent(w, indent + 1)?;
+                put_text(w, text)?;
+                put_nl(w)?;
             }
         }
     }
-    end_line(w, indent, &name);
+    end_line(w, indent, &name)?;
     ns.default_ns = saved_default;
+    Ok(())
 }
 
 /// Serialize `<head>` — TTML2 §8.1.2.
-fn serialize_head_element(head: &HeadElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_head_element(
+    head: &HeadElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("head");
-    serialize_opt_attr(&mut t, "xml:id", &head.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &head.xml_lang);
-    serialize_xml_space(&mut t, &head.xml_space);
-    serialize_xml_base(&mut t, &head.xml_base);
-    serialize_ns_attrs(&mut t, &head.foreign_attributes, ns);
-    start_line(w, t);
+    serialize_opt_attr(&mut t, "xml:id", &head.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &head.xml_lang)?;
+    serialize_xml_space(&mut t, &head.xml_space)?;
+    serialize_xml_base(&mut t, &head.xml_base)?;
+    serialize_ns_attrs(&mut t, &head.foreign_attributes, ns)?;
+    start_line(w, t)?;
 
     for meta in &head.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     if let Some(ref styling) = head.styling {
-        serialize_styling_element(styling, w, indent + 1, ns);
+        serialize_styling_element(styling, w, indent + 1, ns)?;
     }
     if let Some(ref layout) = head.layout {
-        serialize_layout_element(layout, w, indent + 1, ns);
+        serialize_layout_element(layout, w, indent + 1, ns)?;
     }
     if let Some(ref resources) = head.resources {
-        serialize_resources_element(resources, w, indent + 1, ns);
+        serialize_resources_element(resources, w, indent + 1, ns)?;
     }
     for unknown in &head.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
 
-    end_line(w, indent, "head");
+    end_line(w, indent, "head")
 }
 
 /// Serialize `<body>` — TTML2 §8.1.3.
-fn serialize_body_element(body: &BodyElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_body_element(
+    body: &BodyElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("body");
     serialize_common_timing_attrs(
         &mut t,
@@ -4863,45 +4892,50 @@ fn serialize_body_element(body: &BodyElement, w: &mut W, indent: usize, ns: &mut
         body.dur.as_deref(),
         body.end.as_deref(),
         body.time_container.as_deref(),
-    );
-    serialize_opt_attr(&mut t, "region", &body.region);
-    serialize_opt_attr(&mut t, "style", &body.style);
-    serialize_opt_attr(&mut t, "animate", &body.animate);
-    serialize_opt_attr(&mut t, "condition", &body.condition);
-    serialize_style_attrs(&body.style_attributes, &mut t);
-    serialize_opt_attr(&mut t, "xml:id", &body.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &body.xml_lang);
-    serialize_xml_space(&mut t, &body.xml_space);
-    serialize_xml_base(&mut t, &body.xml_base);
-    serialize_ns_attrs(&mut t, &body.foreign_attributes, ns);
+    )?;
+    serialize_opt_attr(&mut t, "region", &body.region)?;
+    serialize_opt_attr(&mut t, "style", &body.style)?;
+    serialize_opt_attr(&mut t, "animate", &body.animate)?;
+    serialize_opt_attr(&mut t, "condition", &body.condition)?;
+    serialize_style_attrs(&body.style_attributes, &mut t)?;
+    serialize_opt_attr(&mut t, "xml:id", &body.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &body.xml_lang)?;
+    serialize_xml_space(&mut t, &body.xml_space)?;
+    serialize_xml_base(&mut t, &body.xml_base)?;
+    serialize_ns_attrs(&mut t, &body.foreign_attributes, ns)?;
 
     let has_children = !body.divs.is_empty()
         || !body.metadata.is_empty()
         || !body.animations.is_empty()
         || !body.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for meta in &body.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for anim in &body.animations {
-        serialize_animation_child(anim, w, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns)?;
     }
     for div in &body.divs {
-        serialize_div_element(div, w, indent + 1, ns);
+        serialize_div_element(div, w, indent + 1, ns)?;
     }
     for unknown in &body.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "body");
+    end_line(w, indent, "body")
 }
 
 /// Serialize `<div>` — TTML2 §8.1.4.
-fn serialize_div_element(div: &DivElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_div_element(
+    div: &DivElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("div");
     serialize_common_timing_attrs(
         &mut t,
@@ -4909,18 +4943,18 @@ fn serialize_div_element(div: &DivElement, w: &mut W, indent: usize, ns: &mut Na
         div.dur.as_deref(),
         div.end.as_deref(),
         div.time_container.as_deref(),
-    );
-    serialize_opt_attr(&mut t, "region", &div.region);
-    serialize_opt_attr(&mut t, "style", &div.style);
-    serialize_opt_attr(&mut t, "animate", &div.animate);
-    serialize_opt_attr(&mut t, "condition", &div.condition);
-    serialize_style_attrs(&div.style_attributes, &mut t);
-    serialize_opt_attr(&mut t, "smpte:backgroundImage", &div.smpte_background_image);
-    serialize_opt_attr(&mut t, "xml:id", &div.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &div.xml_lang);
-    serialize_xml_space(&mut t, &div.xml_space);
-    serialize_xml_base(&mut t, &div.xml_base);
-    serialize_ns_attrs(&mut t, &div.foreign_attributes, ns);
+    )?;
+    serialize_opt_attr(&mut t, "region", &div.region)?;
+    serialize_opt_attr(&mut t, "style", &div.style)?;
+    serialize_opt_attr(&mut t, "animate", &div.animate)?;
+    serialize_opt_attr(&mut t, "condition", &div.condition)?;
+    serialize_style_attrs(&div.style_attributes, &mut t)?;
+    serialize_opt_attr(&mut t, "smpte:backgroundImage", &div.smpte_background_image)?;
+    serialize_opt_attr(&mut t, "xml:id", &div.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &div.xml_lang)?;
+    serialize_xml_space(&mut t, &div.xml_space)?;
+    serialize_xml_base(&mut t, &div.xml_base)?;
+    serialize_ns_attrs(&mut t, &div.foreign_attributes, ns)?;
 
     let has_children = !div.paragraphs.is_empty()
         || !div.images.is_empty()
@@ -4929,29 +4963,29 @@ fn serialize_div_element(div: &DivElement, w: &mut W, indent: usize, ns: &mut Na
         || !div.animations.is_empty()
         || !div.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for meta in &div.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for anim in &div.animations {
-        serialize_animation_child(anim, w, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns)?;
     }
     for p in &div.paragraphs {
-        serialize_p_element(p, w, indent + 1, ns);
+        serialize_p_element(p, w, indent + 1, ns)?;
     }
     for img in &div.images {
-        serialize_image_element(img, w, indent + 1, ns);
+        serialize_image_element(img, w, indent + 1, ns)?;
     }
     for audio in &div.audio {
-        serialize_audio_element(audio, w, indent + 1, ns);
+        serialize_audio_element(audio, w, indent + 1, ns)?;
     }
     for unknown in &div.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "div");
+    end_line(w, indent, "div")
 }
 
 /// Serialize `<p>` — TTML2 §8.1.5.
@@ -4961,8 +4995,13 @@ fn serialize_div_element(div: &DivElement, w: &mut W, indent: usize, ns: &mut Na
 /// API cannot overflow the stack; metadata/animation children are hoisted
 /// before the inline content, glued to the opening tag so no whitespace text
 /// node appears where the source had none.
-fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_p_element(
+    p: &PElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("p");
     serialize_common_timing_attrs(
         &mut t,
@@ -4970,45 +5009,45 @@ fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut Namespac
         p.dur.as_deref(),
         p.end.as_deref(),
         p.time_container.as_deref(),
-    );
-    serialize_opt_attr(&mut t, "region", &p.region);
-    serialize_opt_attr(&mut t, "style", &p.style);
-    serialize_opt_attr(&mut t, "animate", &p.animate);
-    serialize_opt_attr(&mut t, "condition", &p.condition);
-    serialize_style_attrs(&p.style_attributes, &mut t);
-    serialize_opt_attr(&mut t, "xml:id", &p.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &p.xml_lang);
-    serialize_xml_space(&mut t, &p.xml_space);
-    serialize_xml_base(&mut t, &p.xml_base);
-    serialize_ns_attrs(&mut t, &p.foreign_attributes, ns);
+    )?;
+    serialize_opt_attr(&mut t, "region", &p.region)?;
+    serialize_opt_attr(&mut t, "style", &p.style)?;
+    serialize_opt_attr(&mut t, "animate", &p.animate)?;
+    serialize_opt_attr(&mut t, "condition", &p.condition)?;
+    serialize_style_attrs(&p.style_attributes, &mut t)?;
+    serialize_opt_attr(&mut t, "xml:id", &p.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &p.xml_lang)?;
+    serialize_xml_space(&mut t, &p.xml_space)?;
+    serialize_xml_base(&mut t, &p.xml_base)?;
+    serialize_ns_attrs(&mut t, &p.foreign_attributes, ns)?;
 
     let has_children = !p.content.is_empty()
         || !p.metadata.is_empty()
         || !p.animations.is_empty()
         || !p.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_inline(w, t);
+    start_inline(w, t)?;
     // Inside `<p>` no layout whitespace may be written: the text nodes there
     // are significant (`xml:space`), so a hoisted `<metadata>` must not gain a
     // newline/indent text node (#1110/TT-W1).
     w.compact += 1;
     for meta in &p.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for anim in &p.animations {
-        serialize_animation_child(anim, w, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns)?;
     }
     for item in &p.content {
-        serialize_inline_content(item, w, ns);
+        serialize_inline_content(item, w, ns)?;
     }
     for unknown in &p.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
     w.compact -= 1;
-    end_inline_line(w, "p");
+    end_inline_line(w, "p")
 }
 
 /// Serialize inline content (text, `<span>`, `<br>`, `<image>`, `<audio>`).
@@ -5016,7 +5055,11 @@ fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut Namespac
 /// Iterative (explicit stack), not recursive: a `<span>` chain built via the
 /// struct API can nest far deeper than `MAX_NESTING_DEPTH` (which only bounds
 /// `Document::parse_str`), and a recursive walk would overflow the stack.
-fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut NamespaceMap) {
+fn serialize_inline_content(
+    content: &InlineContent,
+    w: &mut W,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
     enum Frame<'a> {
         Node(&'a InlineContent),
         Unknown(&'a UnknownElement),
@@ -5027,7 +5070,7 @@ fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut Namespa
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Node(InlineContent::Text(text)) => {
-                put_text(w, text);
+                put_text(w, text)?;
             }
             Frame::Node(InlineContent::Span(span)) => {
                 let mut t = BytesStart::new("span");
@@ -5037,26 +5080,26 @@ fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut Namespa
                     span.dur.as_deref(),
                     span.end.as_deref(),
                     span.time_container.as_deref(),
-                );
-                serialize_opt_attr(&mut t, "region", &span.region);
-                serialize_opt_attr(&mut t, "style", &span.style);
-                serialize_opt_attr(&mut t, "animate", &span.animate);
-                serialize_opt_attr(&mut t, "condition", &span.condition);
-                serialize_style_attrs(&span.style_attributes, &mut t);
-                serialize_opt_attr(&mut t, "xml:id", &span.xml_id);
-                serialize_opt_attr(&mut t, "xml:lang", &span.xml_lang);
-                serialize_xml_space(&mut t, &span.xml_space);
-                serialize_xml_base(&mut t, &span.xml_base);
-                serialize_ns_attrs(&mut t, &span.foreign_attributes, ns);
+                )?;
+                serialize_opt_attr(&mut t, "region", &span.region)?;
+                serialize_opt_attr(&mut t, "style", &span.style)?;
+                serialize_opt_attr(&mut t, "animate", &span.animate)?;
+                serialize_opt_attr(&mut t, "condition", &span.condition)?;
+                serialize_style_attrs(&span.style_attributes, &mut t)?;
+                serialize_opt_attr(&mut t, "xml:id", &span.xml_id)?;
+                serialize_opt_attr(&mut t, "xml:lang", &span.xml_lang)?;
+                serialize_xml_space(&mut t, &span.xml_space)?;
+                serialize_xml_base(&mut t, &span.xml_base)?;
+                serialize_ns_attrs(&mut t, &span.foreign_attributes, ns)?;
 
                 let has_children = !span.content.is_empty()
                     || !span.metadata.is_empty()
                     || !span.animations.is_empty()
                     || !span.unknown_children.is_empty();
                 if !has_children {
-                    empty_inline(w, t);
+                    empty_inline(w, t)?;
                 } else {
-                    start_inline(w, t);
+                    start_inline(w, t)?;
                     stack.push(Frame::Close("span"));
                     // `unknown_children` (struct-built trees; a parsed span keeps
                     // unmodeled children in `content`) follow the content.
@@ -5070,163 +5113,182 @@ fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut Namespa
                     // inline content, like `<p>`'s, and were previously dropped
                     // on serialize (#1110/TT-W2).
                     for meta in &span.metadata {
-                        serialize_metadata_child(meta, w, 0, ns);
+                        serialize_metadata_child(meta, w, 0, ns)?;
                     }
                     for anim in &span.animations {
-                        serialize_animation_child(anim, w, 0, ns);
+                        serialize_animation_child(anim, w, 0, ns)?;
                     }
                 }
             }
             Frame::Node(InlineContent::Br(br)) => {
                 let mut t = BytesStart::new("br");
-                serialize_opt_attr(&mut t, "style", &br.style);
-                serialize_opt_attr(&mut t, "condition", &br.condition);
-                serialize_opt_attr(&mut t, "ttm:role", &br.ttm_role);
-                serialize_opt_attr(&mut t, "ttm:roleSource", &br.ttm_role_source);
-                serialize_opt_attr(&mut t, "xml:id", &br.xml_id);
-                serialize_opt_attr(&mut t, "xml:lang", &br.xml_lang);
-                serialize_xml_space(&mut t, &br.xml_space);
-                serialize_xml_base(&mut t, &br.xml_base);
-                serialize_style_attrs(&br.style_attributes, &mut t);
-                serialize_ns_attrs(&mut t, &br.foreign_attributes, ns);
-                empty_inline(w, t);
+                serialize_opt_attr(&mut t, "style", &br.style)?;
+                serialize_opt_attr(&mut t, "condition", &br.condition)?;
+                serialize_opt_attr(&mut t, "ttm:role", &br.ttm_role)?;
+                serialize_opt_attr(&mut t, "ttm:roleSource", &br.ttm_role_source)?;
+                serialize_opt_attr(&mut t, "xml:id", &br.xml_id)?;
+                serialize_opt_attr(&mut t, "xml:lang", &br.xml_lang)?;
+                serialize_xml_space(&mut t, &br.xml_space)?;
+                serialize_xml_base(&mut t, &br.xml_base)?;
+                serialize_style_attrs(&br.style_attributes, &mut t)?;
+                serialize_ns_attrs(&mut t, &br.foreign_attributes, ns)?;
+                empty_inline(w, t)?;
             }
             Frame::Node(InlineContent::Image(img)) => {
-                serialize_inline_image(img, w, ns);
+                serialize_inline_image(img, w, ns)?;
             }
             Frame::Node(InlineContent::Audio(audio)) => {
-                serialize_inline_audio(audio, w, ns);
+                serialize_inline_audio(audio, w, ns)?;
             }
             Frame::Node(InlineContent::Unknown(unknown)) => {
-                serialize_unknown_element(unknown, w, 0, ns);
+                serialize_unknown_element(unknown, w, 0, ns)?;
             }
             Frame::Unknown(unknown) => {
-                serialize_unknown_element(unknown, w, 0, ns);
+                serialize_unknown_element(unknown, w, 0, ns)?;
             }
             Frame::Close(tag) => {
-                end_inline(w, tag);
+                end_inline(w, tag)?;
             }
         }
     }
+    Ok(())
 }
 
 /// Inline `<image>`: same attributes as the block form, written on one line
 /// (it is inline content of `<p>`/`<span>` — TTML2 §9.1.5).
-fn serialize_inline_image(image: &ImageElement, w: &mut W, ns: &mut NamespaceMap) {
+fn serialize_inline_image(image: &ImageElement, w: &mut W, ns: &mut NamespaceMap) -> WriteOutcome {
     let mut t = BytesStart::new("image");
-    serialize_image_attrs(image, &mut t, ns);
-    empty_inline(w, t);
+    serialize_image_attrs(image, &mut t, ns)?;
+    empty_inline(w, t)
 }
 
 /// Inline `<audio>`: attributes plus optional character data (§9.1.1).
-fn serialize_inline_audio(audio: &AudioElement, w: &mut W, ns: &mut NamespaceMap) {
+fn serialize_inline_audio(audio: &AudioElement, w: &mut W, ns: &mut NamespaceMap) -> WriteOutcome {
     let mut t = BytesStart::new("audio");
-    serialize_audio_attrs(audio, &mut t, ns);
+    serialize_audio_attrs(audio, &mut t, ns)?;
     match audio.text.as_deref() {
         Some(text) if !text.is_empty() => {
-            start_inline(w, t);
-            put_text(w, text);
-            end_inline(w, "audio");
+            start_inline(w, t)?;
+            put_text(w, text)?;
+            end_inline(w, "audio")
         }
         _ => empty_inline(w, t),
     }
 }
 
 /// The `<image>` attribute set, shared by the block and inline forms.
-fn serialize_image_attrs(image: &ImageElement, t: &mut BytesStart<'_>, ns: &mut NamespaceMap) {
+fn serialize_image_attrs(
+    image: &ImageElement,
+    t: &mut BytesStart<'_>,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
     serialize_common_timing_attrs(
         t,
         image.begin.as_deref(),
         image.dur.as_deref(),
         image.end.as_deref(),
         image.time_container.as_deref(),
-    );
-    serialize_opt_attr(t, "region", &image.region);
-    serialize_opt_attr(t, "style", &image.style);
-    serialize_opt_attr(t, "animate", &image.animate);
-    serialize_opt_attr(t, "condition", &image.condition);
-    serialize_opt_attr(t, "ttm:role", &image.ttm_role);
-    serialize_opt_attr(t, "ttm:roleSource", &image.ttm_role_source);
-    serialize_opt_attr(t, "src", &image.src);
-    serialize_opt_attr(t, "type", &image.type_);
+    )?;
+    serialize_opt_attr(t, "region", &image.region)?;
+    serialize_opt_attr(t, "style", &image.style)?;
+    serialize_opt_attr(t, "animate", &image.animate)?;
+    serialize_opt_attr(t, "condition", &image.condition)?;
+    serialize_opt_attr(t, "ttm:role", &image.ttm_role)?;
+    serialize_opt_attr(t, "ttm:roleSource", &image.ttm_role_source)?;
+    serialize_opt_attr(t, "src", &image.src)?;
+    serialize_opt_attr(t, "type", &image.type_)?;
     // `tts:extent` lives in its own field on ImageElement; skip the copy in
     // `style_attributes` so it is never written twice.
-    serialize_opt_attr(t, "tts:extent", &image.tts_extent);
-    serialize_style_attrs_skip_extent(&image.style_attributes, t);
-    serialize_opt_attr(t, "xlink:href", &image.xlink_href);
-    serialize_opt_attr(t, "xlink:role", &image.xlink_role);
-    serialize_opt_attr(t, "xlink:arcrole", &image.xlink_arcrole);
-    serialize_opt_attr(t, "xlink:title", &image.xlink_title);
-    serialize_opt_attr(t, "xlink:show", &image.xlink_show);
-    serialize_opt_attr(t, "xml:id", &image.xml_id);
-    serialize_opt_attr(t, "xml:lang", &image.xml_lang);
-    serialize_xml_space(t, &image.xml_space);
-    serialize_xml_base(t, &image.xml_base);
-    serialize_ns_attrs(t, &image.foreign_attributes, ns);
+    serialize_opt_attr(t, "tts:extent", &image.tts_extent)?;
+    serialize_style_attrs_skip_extent(&image.style_attributes, t)?;
+    serialize_opt_attr(t, "xlink:href", &image.xlink_href)?;
+    serialize_opt_attr(t, "xlink:role", &image.xlink_role)?;
+    serialize_opt_attr(t, "xlink:arcrole", &image.xlink_arcrole)?;
+    serialize_opt_attr(t, "xlink:title", &image.xlink_title)?;
+    serialize_opt_attr(t, "xlink:show", &image.xlink_show)?;
+    serialize_opt_attr(t, "xml:id", &image.xml_id)?;
+    serialize_opt_attr(t, "xml:lang", &image.xml_lang)?;
+    serialize_xml_space(t, &image.xml_space)?;
+    serialize_xml_base(t, &image.xml_base)?;
+    serialize_ns_attrs(t, &image.foreign_attributes, ns)
 }
 
 /// The `<audio>` attribute set, shared by the block and inline forms.
-fn serialize_audio_attrs(audio: &AudioElement, t: &mut BytesStart<'_>, ns: &mut NamespaceMap) {
+fn serialize_audio_attrs(
+    audio: &AudioElement,
+    t: &mut BytesStart<'_>,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
     serialize_common_timing_attrs(
         t,
         audio.begin.as_deref(),
         audio.dur.as_deref(),
         audio.end.as_deref(),
         audio.time_container.as_deref(),
-    );
-    serialize_opt_attr(t, "clipBegin", &audio.clip_begin);
-    serialize_opt_attr(t, "clipEnd", &audio.clip_end);
-    serialize_opt_attr(t, "region", &audio.region);
-    serialize_opt_attr(t, "style", &audio.style);
-    serialize_opt_attr(t, "animate", &audio.animate);
-    serialize_opt_attr(t, "condition", &audio.condition);
-    serialize_opt_attr(t, "ttm:role", &audio.ttm_role);
-    serialize_opt_attr(t, "ttm:roleSource", &audio.ttm_role_source);
-    serialize_opt_attr(t, "src", &audio.src);
-    serialize_opt_attr(t, "type", &audio.type_);
-    serialize_style_attrs(&audio.style_attributes, t);
-    serialize_opt_attr(t, "xml:id", &audio.xml_id);
-    serialize_opt_attr(t, "xml:lang", &audio.xml_lang);
-    serialize_xml_space(t, &audio.xml_space);
-    serialize_xml_base(t, &audio.xml_base);
-    serialize_ns_attrs(t, &audio.foreign_attributes, ns);
+    )?;
+    serialize_opt_attr(t, "clipBegin", &audio.clip_begin)?;
+    serialize_opt_attr(t, "clipEnd", &audio.clip_end)?;
+    serialize_opt_attr(t, "region", &audio.region)?;
+    serialize_opt_attr(t, "style", &audio.style)?;
+    serialize_opt_attr(t, "animate", &audio.animate)?;
+    serialize_opt_attr(t, "condition", &audio.condition)?;
+    serialize_opt_attr(t, "ttm:role", &audio.ttm_role)?;
+    serialize_opt_attr(t, "ttm:roleSource", &audio.ttm_role_source)?;
+    serialize_opt_attr(t, "src", &audio.src)?;
+    serialize_opt_attr(t, "type", &audio.type_)?;
+    serialize_style_attrs(&audio.style_attributes, t)?;
+    serialize_opt_attr(t, "xml:id", &audio.xml_id)?;
+    serialize_opt_attr(t, "xml:lang", &audio.xml_lang)?;
+    serialize_xml_space(t, &audio.xml_space)?;
+    serialize_xml_base(t, &audio.xml_base)?;
+    serialize_ns_attrs(t, &audio.foreign_attributes, ns)
 }
 
 /// Serialize an `<image>` child of `<div>`/`<resources>` (TTML2 §9.1.5).
-fn serialize_image_element(image: &ImageElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_image_element(
+    image: &ImageElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("image");
-    serialize_image_attrs(image, &mut t, ns);
+    serialize_image_attrs(image, &mut t, ns)?;
 
     let has_children = !image.metadata.is_empty()
         || !image.animations.is_empty()
         || !image.sources.is_empty()
         || !image.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for meta in &image.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for anim in &image.animations {
-        serialize_animation_child(anim, w, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns)?;
     }
     for src in &image.sources {
-        serialize_source_element(src, w, indent + 1, ns);
+        serialize_source_element(src, w, indent + 1, ns)?;
     }
     for unknown in &image.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "image");
+    end_line(w, indent, "image")
 }
 
 /// Serialize an `<audio>` child of `<div>`/`<resources>` (TTML2 §9.1.1).
-fn serialize_audio_element(audio: &AudioElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_audio_element(
+    audio: &AudioElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("audio");
-    serialize_audio_attrs(audio, &mut t, ns);
+    serialize_audio_attrs(audio, &mut t, ns)?;
 
     let has_element_children = !audio.metadata.is_empty()
         || !audio.animations.is_empty()
@@ -5236,46 +5298,46 @@ fn serialize_audio_element(audio: &AudioElement, w: &mut W, indent: usize, ns: &
         (None, false) => empty_line(w, t),
         (Some(""), false) => empty_line(w, t),
         (Some(text), false) => {
-            start_inline(w, t);
-            put_text(w, text);
-            end_inline_line(w, "audio");
+            start_inline(w, t)?;
+            put_text(w, text)?;
+            end_inline_line(w, "audio")
         }
         (None, true) => {
-            start_line(w, t);
+            start_line(w, t)?;
             for meta in &audio.metadata {
-                serialize_metadata_child(meta, w, indent + 1, ns);
+                serialize_metadata_child(meta, w, indent + 1, ns)?;
             }
             for anim in &audio.animations {
-                serialize_animation_child(anim, w, indent + 1, ns);
+                serialize_animation_child(anim, w, indent + 1, ns)?;
             }
             for src in &audio.sources {
-                serialize_source_element(src, w, indent + 1, ns);
+                serialize_source_element(src, w, indent + 1, ns)?;
             }
             for unknown in &audio.unknown_children {
-                serialize_unknown_element(unknown, w, indent + 1, ns);
+                serialize_unknown_element(unknown, w, indent + 1, ns)?;
             }
-            end_line(w, indent, "audio");
+            end_line(w, indent, "audio")
         }
         (Some(text), true) => {
-            start_line(w, t);
+            start_line(w, t)?;
             if !text.trim().is_empty() {
-                put_indent(w, indent + 1);
-                put_text(w, text.trim());
-                put_nl(w);
+                put_indent(w, indent + 1)?;
+                put_text(w, text.trim())?;
+                put_nl(w)?;
             }
             for meta in &audio.metadata {
-                serialize_metadata_child(meta, w, indent + 1, ns);
+                serialize_metadata_child(meta, w, indent + 1, ns)?;
             }
             for anim in &audio.animations {
-                serialize_animation_child(anim, w, indent + 1, ns);
+                serialize_animation_child(anim, w, indent + 1, ns)?;
             }
             for src in &audio.sources {
-                serialize_source_element(src, w, indent + 1, ns);
+                serialize_source_element(src, w, indent + 1, ns)?;
             }
             for unknown in &audio.unknown_children {
-                serialize_unknown_element(unknown, w, indent + 1, ns);
+                serialize_unknown_element(unknown, w, indent + 1, ns)?;
             }
-            end_line(w, indent, "audio");
+            end_line(w, indent, "audio")
         }
     }
 }
@@ -5286,53 +5348,58 @@ fn serialize_resources_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
-    put_indent(w, indent);
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("resources");
-    serialize_opt_attr(&mut t, "xml:id", &resources.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &resources.xml_lang);
-    serialize_xml_space(&mut t, &resources.xml_space);
-    serialize_xml_base(&mut t, &resources.xml_base);
-    serialize_ns_attrs(&mut t, &resources.foreign_attributes, ns);
-    start_line(w, t);
+    serialize_opt_attr(&mut t, "xml:id", &resources.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &resources.xml_lang)?;
+    serialize_xml_space(&mut t, &resources.xml_space)?;
+    serialize_xml_base(&mut t, &resources.xml_base)?;
+    serialize_ns_attrs(&mut t, &resources.foreign_attributes, ns)?;
+    start_line(w, t)?;
     for meta in &resources.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for data in &resources.data {
-        serialize_data_element(data, w, indent + 1, ns);
+        serialize_data_element(data, w, indent + 1, ns)?;
     }
     for img in &resources.images {
-        serialize_image_element(img, w, indent + 1, ns);
+        serialize_image_element(img, w, indent + 1, ns)?;
     }
     for audio in &resources.audio {
-        serialize_audio_element(audio, w, indent + 1, ns);
+        serialize_audio_element(audio, w, indent + 1, ns)?;
     }
     for font in &resources.fonts {
-        serialize_font_element(font, w, indent + 1, ns);
+        serialize_font_element(font, w, indent + 1, ns)?;
     }
     for unknown in &resources.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "resources");
+    end_line(w, indent, "resources")
 }
 
 /// Serialize `<data>` — TTML2 §9.1.3 (inline text, `chunk`+, or `source`+).
-fn serialize_data_element(data: &DataElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_data_element(
+    data: &DataElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("data");
-    serialize_opt_attr(&mut t, "xml:id", &data.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &data.xml_lang);
-    serialize_xml_space(&mut t, &data.xml_space);
-    serialize_xml_base(&mut t, &data.xml_base);
-    serialize_opt_attr(&mut t, "condition", &data.condition);
-    serialize_opt_attr(&mut t, "encoding", &data.encoding);
-    serialize_opt_attr(&mut t, "format", &data.format);
-    serialize_opt_attr(&mut t, "length", &data.length);
-    serialize_opt_attr(&mut t, "src", &data.src);
-    serialize_opt_attr(&mut t, "type", &data.type_);
-    serialize_opt_attr(&mut t, "ttm:role", &data.ttm_role);
-    serialize_opt_attr(&mut t, "ttm:roleSource", &data.ttm_role_source);
-    serialize_ns_attrs(&mut t, &data.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "xml:id", &data.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &data.xml_lang)?;
+    serialize_xml_space(&mut t, &data.xml_space)?;
+    serialize_xml_base(&mut t, &data.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &data.condition)?;
+    serialize_opt_attr(&mut t, "encoding", &data.encoding)?;
+    serialize_opt_attr(&mut t, "format", &data.format)?;
+    serialize_opt_attr(&mut t, "length", &data.length)?;
+    serialize_opt_attr(&mut t, "src", &data.src)?;
+    serialize_opt_attr(&mut t, "type", &data.type_)?;
+    serialize_opt_attr(&mut t, "ttm:role", &data.ttm_role)?;
+    serialize_opt_attr(&mut t, "ttm:roleSource", &data.ttm_role_source)?;
+    serialize_ns_attrs(&mut t, &data.foreign_attributes, ns)?;
 
     let has_element_children = !data.metadata.is_empty()
         || !data.chunks.is_empty()
@@ -5340,97 +5407,107 @@ fn serialize_data_element(data: &DataElement, w: &mut W, indent: usize, ns: &mut
         || !data.unknown_children.is_empty();
     let has_text = data.text.as_deref().is_some_and(|t| !t.is_empty());
     if !has_element_children && !has_text {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
     if !has_element_children {
-        start_inline(w, t);
-        put_text(w, data.text.as_deref().unwrap_or(""));
-        end_inline_line(w, "data");
-        return;
+        start_inline(w, t)?;
+        put_text(w, data.text.as_deref().unwrap_or(""))?;
+        end_inline_line(w, "data")?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     if let Some(text) = data.text.as_deref().filter(|t| !t.trim().is_empty()) {
-        put_indent(w, indent + 1);
-        put_text(w, text.trim());
-        put_nl(w);
+        put_indent(w, indent + 1)?;
+        put_text(w, text.trim())?;
+        put_nl(w)?;
     }
     for meta in &data.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for chunk in &data.chunks {
-        serialize_chunk_element(chunk, w, indent + 1, ns);
+        serialize_chunk_element(chunk, w, indent + 1, ns)?;
     }
     for src in &data.sources {
-        serialize_source_element(src, w, indent + 1, ns);
+        serialize_source_element(src, w, indent + 1, ns)?;
     }
     for unknown in &data.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "data");
+    end_line(w, indent, "data")
 }
 
 /// Serialize `<chunk>` — TTML2 §9.1.2.
-fn serialize_chunk_element(chunk: &ChunkElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_chunk_element(
+    chunk: &ChunkElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("chunk");
-    serialize_opt_attr(&mut t, "xml:id", &chunk.xml_id);
-    serialize_xml_base(&mut t, &chunk.xml_base);
-    serialize_opt_attr(&mut t, "condition", &chunk.condition);
-    serialize_opt_attr(&mut t, "encoding", &chunk.encoding);
-    serialize_opt_attr(&mut t, "length", &chunk.length);
-    serialize_ns_attrs(&mut t, &chunk.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "xml:id", &chunk.xml_id)?;
+    serialize_xml_base(&mut t, &chunk.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &chunk.condition)?;
+    serialize_opt_attr(&mut t, "encoding", &chunk.encoding)?;
+    serialize_opt_attr(&mut t, "length", &chunk.length)?;
+    serialize_ns_attrs(&mut t, &chunk.foreign_attributes, ns)?;
     match chunk.text.as_deref() {
         Some(text) if !text.is_empty() => {
-            start_inline(w, t);
-            put_text(w, text);
-            end_inline_line(w, "chunk");
+            start_inline(w, t)?;
+            put_text(w, text)?;
+            end_inline_line(w, "chunk")
         }
         _ => empty_line(w, t),
     }
 }
 
 /// Serialize `<font>` — TTML2 §9.1.4.
-fn serialize_font_element(font: &FontElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
-    put_indent(w, indent);
+fn serialize_font_element(
+    font: &FontElement,
+    w: &mut W,
+    indent: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("font");
-    serialize_opt_attr(&mut t, "xml:id", &font.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &font.xml_lang);
-    serialize_xml_space(&mut t, &font.xml_space);
-    serialize_xml_base(&mut t, &font.xml_base);
-    serialize_opt_attr(&mut t, "condition", &font.condition);
-    serialize_opt_attr(&mut t, "family", &font.family);
-    serialize_opt_attr(&mut t, "range", &font.range);
-    serialize_opt_attr(&mut t, "style", &font.style_);
-    serialize_opt_attr(&mut t, "src", &font.src);
-    serialize_opt_attr(&mut t, "type", &font.type_);
-    serialize_opt_attr(&mut t, "weight", &font.weight);
-    serialize_opt_attr(&mut t, "ttm:role", &font.ttm_role);
-    serialize_opt_attr(&mut t, "ttm:roleSource", &font.ttm_role_source);
-    serialize_ns_attrs(&mut t, &font.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "xml:id", &font.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &font.xml_lang)?;
+    serialize_xml_space(&mut t, &font.xml_space)?;
+    serialize_xml_base(&mut t, &font.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &font.condition)?;
+    serialize_opt_attr(&mut t, "family", &font.family)?;
+    serialize_opt_attr(&mut t, "range", &font.range)?;
+    serialize_opt_attr(&mut t, "style", &font.style_)?;
+    serialize_opt_attr(&mut t, "src", &font.src)?;
+    serialize_opt_attr(&mut t, "type", &font.type_)?;
+    serialize_opt_attr(&mut t, "weight", &font.weight)?;
+    serialize_opt_attr(&mut t, "ttm:role", &font.ttm_role)?;
+    serialize_opt_attr(&mut t, "ttm:roleSource", &font.ttm_role_source)?;
+    serialize_ns_attrs(&mut t, &font.foreign_attributes, ns)?;
 
     let has_children = !font.metadata.is_empty()
         || !font.animations.is_empty()
         || !font.sources.is_empty()
         || !font.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for meta in &font.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for anim in &font.animations {
-        serialize_animation_child(anim, w, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns)?;
     }
     for src in &font.sources {
-        serialize_source_element(src, w, indent + 1, ns);
+        serialize_source_element(src, w, indent + 1, ns)?;
     }
     for unknown in &font.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "font");
+    end_line(w, indent, "font")
 }
 
 /// Serialize `<source>` — TTML2 §9.1.7.
@@ -5439,38 +5516,38 @@ fn serialize_source_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
-    put_indent(w, indent);
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("source");
-    serialize_opt_attr(&mut t, "xml:id", &source.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &source.xml_lang);
-    serialize_xml_space(&mut t, &source.xml_space);
-    serialize_xml_base(&mut t, &source.xml_base);
-    serialize_opt_attr(&mut t, "condition", &source.condition);
-    serialize_opt_attr(&mut t, "format", &source.format);
-    serialize_opt_attr(&mut t, "src", &source.src);
-    serialize_opt_attr(&mut t, "type", &source.type_);
-    serialize_opt_attr(&mut t, "ttm:role", &source.ttm_role);
-    serialize_opt_attr(&mut t, "ttm:roleSource", &source.ttm_role_source);
-    serialize_ns_attrs(&mut t, &source.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "xml:id", &source.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &source.xml_lang)?;
+    serialize_xml_space(&mut t, &source.xml_space)?;
+    serialize_xml_base(&mut t, &source.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &source.condition)?;
+    serialize_opt_attr(&mut t, "format", &source.format)?;
+    serialize_opt_attr(&mut t, "src", &source.src)?;
+    serialize_opt_attr(&mut t, "type", &source.type_)?;
+    serialize_opt_attr(&mut t, "ttm:role", &source.ttm_role)?;
+    serialize_opt_attr(&mut t, "ttm:roleSource", &source.ttm_role_source)?;
+    serialize_ns_attrs(&mut t, &source.foreign_attributes, ns)?;
 
     let has_children =
         !source.metadata.is_empty() || source.data.is_some() || !source.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for meta in &source.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     if let Some(ref data) = source.data {
-        serialize_data_element(data, w, indent + 1, ns);
+        serialize_data_element(data, w, indent + 1, ns)?;
     }
     for unknown in &source.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "source");
+    end_line(w, indent, "source")
 }
 
 /// Serialize a metadata child — TTML2 §14.1.
@@ -5483,7 +5560,7 @@ fn serialize_metadata_child(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
+) -> WriteOutcome {
     enum Frame<'a> {
         Node(&'a MetadataChild, usize),
         Unknown(&'a UnknownElement, usize),
@@ -5494,22 +5571,22 @@ fn serialize_metadata_child(
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Node(MetadataChild::Metadata(m), depth) => {
-                put_indent(w, depth);
+                put_indent(w, depth)?;
                 let mut t = BytesStart::new("metadata");
-                serialize_opt_attr(&mut t, "xml:id", &m.xml_id);
-                serialize_opt_attr(&mut t, "xml:lang", &m.xml_lang);
-                serialize_xml_space(&mut t, &m.xml_space);
-                serialize_xml_base(&mut t, &m.xml_base);
-                serialize_opt_attr(&mut t, "condition", &m.condition);
-                serialize_ns_attrs(&mut t, &m.foreign_attributes, ns);
+                serialize_opt_attr(&mut t, "xml:id", &m.xml_id)?;
+                serialize_opt_attr(&mut t, "xml:lang", &m.xml_lang)?;
+                serialize_xml_space(&mut t, &m.xml_space)?;
+                serialize_xml_base(&mut t, &m.xml_base)?;
+                serialize_opt_attr(&mut t, "condition", &m.condition)?;
+                serialize_ns_attrs(&mut t, &m.foreign_attributes, ns)?;
                 let scoped = m.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
                 let has_children = !m.children.is_empty() || !m.unknown_children.is_empty();
                 if !has_children {
-                    empty_line(w, t);
+                    empty_line(w, t)?;
                     continue;
                 }
-                start_line(w, t);
+                start_line(w, t)?;
                 stack.push(Frame::Close("metadata", depth));
                 // Unmodelled children (e.g. `<smpte:image>`) follow the
                 // modelled ones; the stack is LIFO so push them first.
@@ -5521,48 +5598,48 @@ fn serialize_metadata_child(
                 }
             }
             Frame::Node(MetadataChild::TtmTitle(t), depth) => {
-                serialize_ttm_text_like("ttm:title", t, w, depth, ns);
+                serialize_ttm_text_like("ttm:title", t, w, depth, ns)?;
             }
             Frame::Node(MetadataChild::TtmDesc(t), depth) => {
-                serialize_ttm_text_like("ttm:desc", t, w, depth, ns);
+                serialize_ttm_text_like("ttm:desc", t, w, depth, ns)?;
             }
             Frame::Node(MetadataChild::TtmCopyright(t), depth) => {
-                serialize_ttm_text_like("ttm:copyright", t, w, depth, ns);
+                serialize_ttm_text_like("ttm:copyright", t, w, depth, ns)?;
             }
             Frame::Node(MetadataChild::TtmAgent(a), depth) => {
-                put_indent(w, depth);
+                put_indent(w, depth)?;
                 let mut t = BytesStart::new("ttm:agent");
-                serialize_opt_attr(&mut t, "type", &a.type_);
-                serialize_opt_attr(&mut t, "xml:id", &a.xml_id);
-                serialize_opt_attr(&mut t, "xml:lang", &a.xml_lang);
-                serialize_xml_space(&mut t, &a.xml_space);
-                serialize_xml_base(&mut t, &a.xml_base);
-                serialize_opt_attr(&mut t, "condition", &a.condition);
-                serialize_ns_attrs(&mut t, &a.foreign_attributes, ns);
+                serialize_opt_attr(&mut t, "type", &a.type_)?;
+                serialize_opt_attr(&mut t, "xml:id", &a.xml_id)?;
+                serialize_opt_attr(&mut t, "xml:lang", &a.xml_lang)?;
+                serialize_xml_space(&mut t, &a.xml_space)?;
+                serialize_xml_base(&mut t, &a.xml_base)?;
+                serialize_opt_attr(&mut t, "condition", &a.condition)?;
+                serialize_ns_attrs(&mut t, &a.foreign_attributes, ns)?;
                 let scoped = a.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                start_line(w, t);
+                start_line(w, t)?;
                 for name in &a.names {
-                    serialize_ttm_name(name, w, depth + 1, ns);
+                    serialize_ttm_name(name, w, depth + 1, ns)?;
                 }
                 for u in &a.unknown_children {
-                    serialize_unknown_element(u, w, depth + 1, ns);
+                    serialize_unknown_element(u, w, depth + 1, ns)?;
                 }
-                end_line(w, depth, "ttm:agent");
+                end_line(w, depth, "ttm:agent")?;
             }
             Frame::Node(MetadataChild::TtmName(n), depth) => {
-                serialize_ttm_name(n, w, depth, ns);
+                serialize_ttm_name(n, w, depth, ns)?;
             }
             Frame::Node(MetadataChild::TtmItem(item), depth) => {
-                serialize_ttm_item(item, w, depth, ns);
+                serialize_ttm_item(item, w, depth, ns)?;
             }
             Frame::Node(MetadataChild::EbuttmDocumentMetadata(eb), depth) => {
-                put_indent(w, depth);
+                put_indent(w, depth)?;
                 let mut t = BytesStart::new("ebuttm:documentMetadata");
-                serialize_ns_attrs(&mut t, &eb.foreign_attributes, ns);
+                serialize_ns_attrs(&mut t, &eb.foreign_attributes, ns)?;
                 let scoped = eb.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                start_line(w, t);
+                start_line(w, t)?;
                 stack.push(Frame::Close("ebuttm:documentMetadata", depth));
                 for u in eb.unknown_children.iter().rev() {
                     stack.push(Frame::Unknown(u, depth + 1));
@@ -5572,38 +5649,39 @@ fn serialize_metadata_child(
                 }
             }
             Frame::Node(MetadataChild::EbuttmConformsToStandard(cs), depth) => {
-                put_indent(w, depth);
+                put_indent(w, depth)?;
                 let mut t = BytesStart::new("ebuttm:conformsToStandard");
-                serialize_ns_attrs(&mut t, &cs.foreign_attributes, ns);
+                serialize_ns_attrs(&mut t, &cs.foreign_attributes, ns)?;
                 let scoped = cs.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                start_inline(w, t);
-                put_text(w, &cs.text);
-                end_inline_line(w, "ebuttm:conformsToStandard");
+                start_inline(w, t)?;
+                put_text(w, &cs.text)?;
+                end_inline_line(w, "ebuttm:conformsToStandard")?;
             }
             Frame::Node(MetadataChild::IttmAltText(alt), depth) => {
-                put_indent(w, depth);
+                put_indent(w, depth)?;
                 let mut t = BytesStart::new("ittm:altText");
-                serialize_opt_attr(&mut t, "xml:id", &alt.xml_id);
-                serialize_opt_attr(&mut t, "xml:lang", &alt.xml_lang);
-                serialize_xml_space(&mut t, &alt.xml_space);
-                serialize_xml_base(&mut t, &alt.xml_base);
-                serialize_ns_attrs(&mut t, &alt.foreign_attributes, ns);
+                serialize_opt_attr(&mut t, "xml:id", &alt.xml_id)?;
+                serialize_opt_attr(&mut t, "xml:lang", &alt.xml_lang)?;
+                serialize_xml_space(&mut t, &alt.xml_space)?;
+                serialize_xml_base(&mut t, &alt.xml_base)?;
+                serialize_ns_attrs(&mut t, &alt.foreign_attributes, ns)?;
                 let scoped = alt.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                write_text_body(w, t, &alt.text, &alt.unknown_children, "ittm:altText", ns);
+                write_text_body(w, t, &alt.text, &alt.unknown_children, "ittm:altText", ns)?;
             }
             Frame::Node(MetadataChild::Unknown(u), depth) => {
-                serialize_unknown_element(u, w, depth, ns);
+                serialize_unknown_element(u, w, depth, ns)?;
             }
             Frame::Unknown(u, depth) => {
-                serialize_unknown_element(u, w, depth, ns);
+                serialize_unknown_element(u, w, depth, ns)?;
             }
             Frame::Close(tag, depth) => {
-                end_line(w, depth, tag);
+                end_line(w, depth, tag)?;
             }
         }
     }
+    Ok(())
 }
 
 /// Write `<tag ...>text[unknown children]</tag>` on one line. Unmodelled child
@@ -5616,15 +5694,15 @@ fn write_text_body(
     unknown_children: &[UnknownElement],
     name: &str,
     ns: &mut NamespaceMap,
-) {
-    start_inline(w, t);
-    put_text(w, text);
+) -> WriteOutcome {
+    start_inline(w, t)?;
+    put_text(w, text)?;
     w.compact += 1;
     for u in unknown_children {
-        serialize_unknown_element(u, w, 0, ns);
+        serialize_unknown_element(u, w, 0, ns)?;
     }
     w.compact -= 1;
-    end_inline_line(w, name);
+    end_inline_line(w, name)
 }
 
 /// Close out a block element's opening tag `t`: `<x/>` when it has no
@@ -5636,16 +5714,15 @@ fn finish_with_unknowns(
     indent: usize,
     name: &str,
     ns: &mut NamespaceMap,
-) {
+) -> WriteOutcome {
     if unknown_children.is_empty() {
-        empty_line(w, t);
-        return;
+        return empty_line(w, t);
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for u in unknown_children {
-        serialize_unknown_element(u, w, indent + 1, ns);
+        serialize_unknown_element(u, w, indent + 1, ns)?;
     }
-    end_line(w, indent, name);
+    end_line(w, indent, name)
 }
 
 /// Serialize a text-only TT Metadata element (`ttm:title`/`ttm:desc`/
@@ -5656,47 +5733,57 @@ fn serialize_ttm_text_like(
     w: &mut W,
     depth: usize,
     ns: &mut NamespaceMap,
-) {
-    put_indent(w, depth);
+) -> WriteOutcome {
+    put_indent(w, depth)?;
     let mut t = BytesStart::new(tag);
-    serialize_opt_attr(&mut t, "xml:id", &elem.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &elem.xml_lang);
-    serialize_xml_space(&mut t, &elem.xml_space);
-    serialize_xml_base(&mut t, &elem.xml_base);
-    serialize_opt_attr(&mut t, "condition", &elem.condition);
-    serialize_ns_attrs(&mut t, &elem.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "xml:id", &elem.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &elem.xml_lang)?;
+    serialize_xml_space(&mut t, &elem.xml_space)?;
+    serialize_xml_base(&mut t, &elem.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &elem.condition)?;
+    serialize_ns_attrs(&mut t, &elem.foreign_attributes, ns)?;
     let scoped = elem.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
-    write_text_body(w, t, &elem.text, &elem.unknown_children, tag, ns);
+    write_text_body(w, t, &elem.text, &elem.unknown_children, tag, ns)
 }
 
 /// Serialize `<ttm:name>` — TTML2 §14.1.7.
-fn serialize_ttm_name(n: &TtmNameElement, w: &mut W, depth: usize, ns: &mut NamespaceMap) {
-    put_indent(w, depth);
+fn serialize_ttm_name(
+    n: &TtmNameElement,
+    w: &mut W,
+    depth: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, depth)?;
     let mut t = BytesStart::new("ttm:name");
-    serialize_opt_attr(&mut t, "type", &n.type_);
-    serialize_opt_attr(&mut t, "xml:id", &n.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &n.xml_lang);
-    serialize_xml_space(&mut t, &n.xml_space);
-    serialize_xml_base(&mut t, &n.xml_base);
-    serialize_opt_attr(&mut t, "condition", &n.condition);
-    serialize_ns_attrs(&mut t, &n.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "type", &n.type_)?;
+    serialize_opt_attr(&mut t, "xml:id", &n.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &n.xml_lang)?;
+    serialize_xml_space(&mut t, &n.xml_space)?;
+    serialize_xml_base(&mut t, &n.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &n.condition)?;
+    serialize_ns_attrs(&mut t, &n.foreign_attributes, ns)?;
     let scoped = n.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
-    write_text_body(w, t, &n.text, &n.unknown_children, "ttm:name", ns);
+    write_text_body(w, t, &n.text, &n.unknown_children, "ttm:name", ns)
 }
 
 /// Serialize `<ttm:item>` — TTML2 §14.1.6.
-fn serialize_ttm_item(item: &TtmItemElement, w: &mut W, depth: usize, ns: &mut NamespaceMap) {
-    put_indent(w, depth);
+fn serialize_ttm_item(
+    item: &TtmItemElement,
+    w: &mut W,
+    depth: usize,
+    ns: &mut NamespaceMap,
+) -> WriteOutcome {
+    put_indent(w, depth)?;
     let mut t = BytesStart::new("ttm:item");
-    serialize_opt_attr(&mut t, "name", &item.name);
-    serialize_opt_attr(&mut t, "xml:id", &item.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &item.xml_lang);
-    serialize_xml_space(&mut t, &item.xml_space);
-    serialize_xml_base(&mut t, &item.xml_base);
-    serialize_opt_attr(&mut t, "condition", &item.condition);
-    serialize_ns_attrs(&mut t, &item.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "name", &item.name)?;
+    serialize_opt_attr(&mut t, "xml:id", &item.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &item.xml_lang)?;
+    serialize_xml_space(&mut t, &item.xml_space)?;
+    serialize_xml_base(&mut t, &item.xml_base)?;
+    serialize_opt_attr(&mut t, "condition", &item.condition)?;
+    serialize_ns_attrs(&mut t, &item.foreign_attributes, ns)?;
     let scoped = item.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
 
@@ -5704,27 +5791,27 @@ fn serialize_ttm_item(item: &TtmItemElement, w: &mut W, depth: usize, ns: &mut N
     if !has_children {
         match item.text.as_deref() {
             Some(text) if !text.is_empty() => {
-                start_inline(w, t);
-                put_text(w, text);
-                end_inline_line(w, "ttm:item");
+                start_inline(w, t)?;
+                put_text(w, text)?;
+                end_inline_line(w, "ttm:item")
             }
             _ => empty_line(w, t),
-        }
-        return;
+        }?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     if let Some(text) = item.text.as_deref().filter(|t| !t.trim().is_empty()) {
-        put_indent(w, depth + 1);
-        put_text(w, text.trim());
-        put_nl(w);
+        put_indent(w, depth + 1)?;
+        put_text(w, text.trim())?;
+        put_nl(w)?;
     }
     for nested in &item.items {
-        serialize_ttm_item(nested, w, depth + 1, ns);
+        serialize_ttm_item(nested, w, depth + 1, ns)?;
     }
     for u in &item.unknown_children {
-        serialize_unknown_element(u, w, depth + 1, ns);
+        serialize_unknown_element(u, w, depth + 1, ns)?;
     }
-    end_line(w, depth, "ttm:item");
+    end_line(w, depth, "ttm:item")
 }
 
 /// Serialize `<styling>` — TTML2 §10.1.3.
@@ -5733,44 +5820,44 @@ fn serialize_styling_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
-    put_indent(w, indent);
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("styling");
-    serialize_opt_attr(&mut t, "xml:id", &styling.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &styling.xml_lang);
-    serialize_xml_space(&mut t, &styling.xml_space);
-    serialize_xml_base(&mut t, &styling.xml_base);
-    serialize_ns_attrs(&mut t, &styling.foreign_attributes, ns);
-    start_line(w, t);
+    serialize_opt_attr(&mut t, "xml:id", &styling.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &styling.xml_lang)?;
+    serialize_xml_space(&mut t, &styling.xml_space)?;
+    serialize_xml_base(&mut t, &styling.xml_base)?;
+    serialize_ns_attrs(&mut t, &styling.foreign_attributes, ns)?;
+    start_line(w, t)?;
     for init in &styling.initials {
-        put_indent(w, indent + 1);
+        put_indent(w, indent + 1)?;
         let mut t = BytesStart::new("initial");
-        serialize_opt_attr(&mut t, "xml:id", &init.xml_id);
-        serialize_opt_attr(&mut t, "xml:lang", &init.xml_lang);
-        serialize_xml_space(&mut t, &init.xml_space);
-        serialize_xml_base(&mut t, &init.xml_base);
-        serialize_opt_attr(&mut t, "condition", &init.condition);
-        serialize_style_attrs(&init.style_attributes, &mut t);
-        serialize_ns_attrs(&mut t, &init.foreign_attributes, ns);
-        finish_with_unknowns(w, t, &init.unknown_children, indent + 1, "initial", ns);
+        serialize_opt_attr(&mut t, "xml:id", &init.xml_id)?;
+        serialize_opt_attr(&mut t, "xml:lang", &init.xml_lang)?;
+        serialize_xml_space(&mut t, &init.xml_space)?;
+        serialize_xml_base(&mut t, &init.xml_base)?;
+        serialize_opt_attr(&mut t, "condition", &init.condition)?;
+        serialize_style_attrs(&init.style_attributes, &mut t)?;
+        serialize_ns_attrs(&mut t, &init.foreign_attributes, ns)?;
+        finish_with_unknowns(w, t, &init.unknown_children, indent + 1, "initial", ns)?;
     }
     for style in &styling.styles {
-        put_indent(w, indent + 1);
+        put_indent(w, indent + 1)?;
         let mut t = BytesStart::new("style");
-        serialize_opt_attr(&mut t, "xml:id", &style.xml_id);
-        serialize_opt_attr(&mut t, "xml:lang", &style.xml_lang);
-        serialize_xml_space(&mut t, &style.xml_space);
-        serialize_xml_base(&mut t, &style.xml_base);
-        serialize_opt_attr(&mut t, "condition", &style.condition);
-        serialize_opt_attr(&mut t, "style", &style.style);
-        serialize_style_attrs(&style.style_attributes, &mut t);
-        serialize_ns_attrs(&mut t, &style.foreign_attributes, ns);
-        finish_with_unknowns(w, t, &style.unknown_children, indent + 1, "style", ns);
+        serialize_opt_attr(&mut t, "xml:id", &style.xml_id)?;
+        serialize_opt_attr(&mut t, "xml:lang", &style.xml_lang)?;
+        serialize_xml_space(&mut t, &style.xml_space)?;
+        serialize_xml_base(&mut t, &style.xml_base)?;
+        serialize_opt_attr(&mut t, "condition", &style.condition)?;
+        serialize_opt_attr(&mut t, "style", &style.style)?;
+        serialize_style_attrs(&style.style_attributes, &mut t)?;
+        serialize_ns_attrs(&mut t, &style.foreign_attributes, ns)?;
+        finish_with_unknowns(w, t, &style.unknown_children, indent + 1, "style", ns)?;
     }
     for unknown in &styling.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "styling");
+    end_line(w, indent, "styling")
 }
 
 /// Serialize `<layout>` — TTML2 §11.1.1.
@@ -5779,22 +5866,22 @@ fn serialize_layout_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
-    put_indent(w, indent);
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("layout");
-    serialize_opt_attr(&mut t, "xml:id", &layout.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &layout.xml_lang);
-    serialize_xml_space(&mut t, &layout.xml_space);
-    serialize_xml_base(&mut t, &layout.xml_base);
-    serialize_ns_attrs(&mut t, &layout.foreign_attributes, ns);
-    start_line(w, t);
+    serialize_opt_attr(&mut t, "xml:id", &layout.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &layout.xml_lang)?;
+    serialize_xml_space(&mut t, &layout.xml_space)?;
+    serialize_xml_base(&mut t, &layout.xml_base)?;
+    serialize_ns_attrs(&mut t, &layout.foreign_attributes, ns)?;
+    start_line(w, t)?;
     for region in &layout.regions {
-        serialize_region_element(region, w, indent + 1, ns);
+        serialize_region_element(region, w, indent + 1, ns)?;
     }
     for unknown in &layout.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "layout");
+    end_line(w, indent, "layout")
 }
 
 /// Serialize `<region>` — TTML2 §11.1.2.
@@ -5803,8 +5890,8 @@ fn serialize_region_element(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
-    put_indent(w, indent);
+) -> WriteOutcome {
+    put_indent(w, indent)?;
     let mut t = BytesStart::new("region");
     serialize_common_timing_attrs(
         &mut t,
@@ -5812,51 +5899,51 @@ fn serialize_region_element(
         region.dur.as_deref(),
         region.end.as_deref(),
         region.time_container.as_deref(),
-    );
-    serialize_opt_attr(&mut t, "style", &region.style);
-    serialize_opt_attr(&mut t, "animate", &region.animate);
-    serialize_opt_attr(&mut t, "condition", &region.condition);
-    serialize_opt_attr(&mut t, "ttm:role", &region.ttm_role);
-    serialize_opt_attr(&mut t, "ttm:roleSource", &region.ttm_role_source);
-    serialize_style_attrs(&region.style_attributes, &mut t);
-    serialize_opt_attr(&mut t, "xml:id", &region.xml_id);
-    serialize_opt_attr(&mut t, "xml:lang", &region.xml_lang);
-    serialize_xml_space(&mut t, &region.xml_space);
-    serialize_xml_base(&mut t, &region.xml_base);
-    serialize_ns_attrs(&mut t, &region.foreign_attributes, ns);
+    )?;
+    serialize_opt_attr(&mut t, "style", &region.style)?;
+    serialize_opt_attr(&mut t, "animate", &region.animate)?;
+    serialize_opt_attr(&mut t, "condition", &region.condition)?;
+    serialize_opt_attr(&mut t, "ttm:role", &region.ttm_role)?;
+    serialize_opt_attr(&mut t, "ttm:roleSource", &region.ttm_role_source)?;
+    serialize_style_attrs(&region.style_attributes, &mut t)?;
+    serialize_opt_attr(&mut t, "xml:id", &region.xml_id)?;
+    serialize_opt_attr(&mut t, "xml:lang", &region.xml_lang)?;
+    serialize_xml_space(&mut t, &region.xml_space)?;
+    serialize_xml_base(&mut t, &region.xml_base)?;
+    serialize_ns_attrs(&mut t, &region.foreign_attributes, ns)?;
 
     let has_children = !region.metadata.is_empty()
         || !region.animations.is_empty()
         || !region.styles.is_empty()
         || !region.unknown_children.is_empty();
     if !has_children {
-        empty_line(w, t);
-        return;
+        empty_line(w, t)?;
+        return Ok(());
     }
-    start_line(w, t);
+    start_line(w, t)?;
     for meta in &region.metadata {
-        serialize_metadata_child(meta, w, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns)?;
     }
     for anim in &region.animations {
-        serialize_animation_child(anim, w, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns)?;
     }
     for style in &region.styles {
-        put_indent(w, indent + 1);
+        put_indent(w, indent + 1)?;
         let mut t = BytesStart::new("style");
-        serialize_opt_attr(&mut t, "xml:id", &style.xml_id);
-        serialize_opt_attr(&mut t, "xml:lang", &style.xml_lang);
-        serialize_xml_space(&mut t, &style.xml_space);
-        serialize_xml_base(&mut t, &style.xml_base);
-        serialize_opt_attr(&mut t, "condition", &style.condition);
-        serialize_opt_attr(&mut t, "style", &style.style);
-        serialize_style_attrs(&style.style_attributes, &mut t);
-        serialize_ns_attrs(&mut t, &style.foreign_attributes, ns);
-        empty_line(w, t);
+        serialize_opt_attr(&mut t, "xml:id", &style.xml_id)?;
+        serialize_opt_attr(&mut t, "xml:lang", &style.xml_lang)?;
+        serialize_xml_space(&mut t, &style.xml_space)?;
+        serialize_xml_base(&mut t, &style.xml_base)?;
+        serialize_opt_attr(&mut t, "condition", &style.condition)?;
+        serialize_opt_attr(&mut t, "style", &style.style)?;
+        serialize_style_attrs(&style.style_attributes, &mut t)?;
+        serialize_ns_attrs(&mut t, &style.foreign_attributes, ns)?;
+        empty_line(w, t)?;
     }
     for unknown in &region.unknown_children {
-        serialize_unknown_element(unknown, w, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns)?;
     }
-    end_line(w, indent, "region");
+    end_line(w, indent, "region")
 }
 
 /// Serialize an animation child — TTML2 §13.1.3.
@@ -5865,10 +5952,10 @@ fn serialize_animation_child(
     w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
-) {
+) -> WriteOutcome {
     match anim {
         AnimationChild::Set(set) => {
-            put_indent(w, indent);
+            put_indent(w, indent)?;
             let mut t = BytesStart::new("set");
             serialize_common_timing_attrs(
                 &mut t,
@@ -5876,32 +5963,32 @@ fn serialize_animation_child(
                 set.dur.as_deref(),
                 set.end.as_deref(),
                 None,
-            );
-            serialize_opt_attr(&mut t, "fill", &set.fill);
-            serialize_opt_attr(&mut t, "repeatCount", &set.repeat_count);
-            serialize_opt_attr(&mut t, "condition", &set.condition);
-            serialize_opt_attr(&mut t, "ttm:role", &set.ttm_role);
-            serialize_opt_attr(&mut t, "ttm:roleSource", &set.ttm_role_source);
-            serialize_style_attrs(&set.style_attributes, &mut t);
-            serialize_opt_attr(&mut t, "xml:id", &set.xml_id);
-            serialize_opt_attr(&mut t, "xml:lang", &set.xml_lang);
-            serialize_xml_space(&mut t, &set.xml_space);
-            serialize_xml_base(&mut t, &set.xml_base);
-            serialize_ns_attrs(&mut t, &set.foreign_attributes, ns);
+            )?;
+            serialize_opt_attr(&mut t, "fill", &set.fill)?;
+            serialize_opt_attr(&mut t, "repeatCount", &set.repeat_count)?;
+            serialize_opt_attr(&mut t, "condition", &set.condition)?;
+            serialize_opt_attr(&mut t, "ttm:role", &set.ttm_role)?;
+            serialize_opt_attr(&mut t, "ttm:roleSource", &set.ttm_role_source)?;
+            serialize_style_attrs(&set.style_attributes, &mut t)?;
+            serialize_opt_attr(&mut t, "xml:id", &set.xml_id)?;
+            serialize_opt_attr(&mut t, "xml:lang", &set.xml_lang)?;
+            serialize_xml_space(&mut t, &set.xml_space)?;
+            serialize_xml_base(&mut t, &set.xml_base)?;
+            serialize_ns_attrs(&mut t, &set.foreign_attributes, ns)?;
 
             let has_children = !set.metadata.is_empty() || !set.unknown_children.is_empty();
             if !has_children {
-                empty_line(w, t);
-                return;
+                empty_line(w, t)?;
+                return Ok(());
             }
-            start_line(w, t);
+            start_line(w, t)?;
             for meta in &set.metadata {
-                serialize_metadata_child(meta, w, indent + 1, ns);
+                serialize_metadata_child(meta, w, indent + 1, ns)?;
             }
             for unknown in &set.unknown_children {
-                serialize_unknown_element(unknown, w, indent + 1, ns);
+                serialize_unknown_element(unknown, w, indent + 1, ns)?;
             }
-            end_line(w, indent, "set");
+            end_line(w, indent, "set")
         }
     }
 }
@@ -5913,7 +6000,7 @@ fn serialize_common_timing_attrs(
     dur: Option<&str>,
     end: Option<&str>,
     time_container: Option<&str>,
-) {
+) -> WriteOutcome {
     if let Some(b) = begin {
         push_attr(t, "begin", b);
     }
@@ -5926,148 +6013,153 @@ fn serialize_common_timing_attrs(
     if let Some(tc) = time_container {
         push_attr(t, "timeContainer", tc);
     }
+    Ok(())
 }
 
 /// Write an optional attribute, skipping absent and empty values.
-fn serialize_opt_attr(t: &mut BytesStart<'_>, name: &str, value: &Option<String>) {
+fn serialize_opt_attr(t: &mut BytesStart<'_>, name: &str, value: &Option<String>) -> WriteOutcome {
     if let Some(v) = value
         && !v.is_empty()
     {
         push_attr(t, name, v);
     }
+    Ok(())
 }
 
 /// Like `serialize_style_attrs` but skips the tts:extent attribute
 /// (used when tts:extent is already output via an explicit field like on ImageElement).
-fn serialize_style_attrs_skip_extent(attrs: &StyleAttributes, t: &mut BytesStart<'_>) {
-    serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color);
-    serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip);
-    serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent);
-    serialize_opt_attr(t, "tts:backgroundImage", &attrs.tts_background_image);
-    serialize_opt_attr(t, "tts:backgroundOrigin", &attrs.tts_background_origin);
-    serialize_opt_attr(t, "tts:backgroundPosition", &attrs.tts_background_position);
-    serialize_opt_attr(t, "tts:backgroundRepeat", &attrs.tts_background_repeat);
-    serialize_opt_attr(t, "tts:border", &attrs.tts_border);
-    serialize_opt_attr(t, "tts:bpd", &attrs.tts_bpd);
-    serialize_opt_attr(t, "tts:color", &attrs.tts_color);
-    serialize_opt_attr(t, "tts:direction", &attrs.tts_direction);
-    serialize_opt_attr(t, "tts:disparity", &attrs.tts_disparity);
-    serialize_opt_attr(t, "tts:display", &attrs.tts_display);
-    serialize_opt_attr(t, "tts:displayAlign", &attrs.tts_display_align);
-    serialize_opt_attr(t, "tts:fontFamily", &attrs.tts_font_family);
-    serialize_opt_attr(t, "tts:fontKerning", &attrs.tts_font_kerning);
+fn serialize_style_attrs_skip_extent(
+    attrs: &StyleAttributes,
+    t: &mut BytesStart<'_>,
+) -> WriteOutcome {
+    serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color)?;
+    serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip)?;
+    serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent)?;
+    serialize_opt_attr(t, "tts:backgroundImage", &attrs.tts_background_image)?;
+    serialize_opt_attr(t, "tts:backgroundOrigin", &attrs.tts_background_origin)?;
+    serialize_opt_attr(t, "tts:backgroundPosition", &attrs.tts_background_position)?;
+    serialize_opt_attr(t, "tts:backgroundRepeat", &attrs.tts_background_repeat)?;
+    serialize_opt_attr(t, "tts:border", &attrs.tts_border)?;
+    serialize_opt_attr(t, "tts:bpd", &attrs.tts_bpd)?;
+    serialize_opt_attr(t, "tts:color", &attrs.tts_color)?;
+    serialize_opt_attr(t, "tts:direction", &attrs.tts_direction)?;
+    serialize_opt_attr(t, "tts:disparity", &attrs.tts_disparity)?;
+    serialize_opt_attr(t, "tts:display", &attrs.tts_display)?;
+    serialize_opt_attr(t, "tts:displayAlign", &attrs.tts_display_align)?;
+    serialize_opt_attr(t, "tts:fontFamily", &attrs.tts_font_family)?;
+    serialize_opt_attr(t, "tts:fontKerning", &attrs.tts_font_kerning)?;
     serialize_opt_attr(
         t,
         "tts:fontSelectionStrategy",
         &attrs.tts_font_selection_strategy,
-    );
-    serialize_opt_attr(t, "tts:fontShear", &attrs.tts_font_shear);
-    serialize_opt_attr(t, "tts:fontSize", &attrs.tts_font_size);
-    serialize_opt_attr(t, "tts:fontStyle", &attrs.tts_font_style);
-    serialize_opt_attr(t, "tts:fontVariant", &attrs.tts_font_variant);
-    serialize_opt_attr(t, "tts:fontWeight", &attrs.tts_font_weight);
-    serialize_opt_attr(t, "tts:ipd", &attrs.tts_ipd);
-    serialize_opt_attr(t, "tts:letterSpacing", &attrs.tts_letter_spacing);
-    serialize_opt_attr(t, "tts:lineHeight", &attrs.tts_line_height);
-    serialize_opt_attr(t, "tts:lineShear", &attrs.tts_line_shear);
-    serialize_opt_attr(t, "tts:luminanceGain", &attrs.tts_luminance_gain);
-    serialize_opt_attr(t, "tts:opacity", &attrs.tts_opacity);
-    serialize_opt_attr(t, "tts:origin", &attrs.tts_origin);
-    serialize_opt_attr(t, "tts:overflow", &attrs.tts_overflow);
-    serialize_opt_attr(t, "tts:padding", &attrs.tts_padding);
-    serialize_opt_attr(t, "tts:position", &attrs.tts_position);
-    serialize_opt_attr(t, "tts:ruby", &attrs.tts_ruby);
-    serialize_opt_attr(t, "tts:rubyAlign", &attrs.tts_ruby_align);
-    serialize_opt_attr(t, "tts:rubyPosition", &attrs.tts_ruby_position);
-    serialize_opt_attr(t, "tts:rubyReserve", &attrs.tts_ruby_reserve);
-    serialize_opt_attr(t, "tts:shear", &attrs.tts_shear);
-    serialize_opt_attr(t, "tts:showBackground", &attrs.tts_show_background);
-    serialize_opt_attr(t, "tts:textAlign", &attrs.tts_text_align);
-    serialize_opt_attr(t, "tts:textCombine", &attrs.tts_text_combine);
-    serialize_opt_attr(t, "tts:textDecoration", &attrs.tts_text_decoration);
-    serialize_opt_attr(t, "tts:textEmphasis", &attrs.tts_text_emphasis);
-    serialize_opt_attr(t, "tts:textOrientation", &attrs.tts_text_orientation);
-    serialize_opt_attr(t, "tts:textOutline", &attrs.tts_text_outline);
-    serialize_opt_attr(t, "tts:textShadow", &attrs.tts_text_shadow);
-    serialize_opt_attr(t, "tts:unicodeBidi", &attrs.tts_unicode_bidi);
-    serialize_opt_attr(t, "tts:visibility", &attrs.tts_visibility);
-    serialize_opt_attr(t, "tts:wrapOption", &attrs.tts_wrap_option);
-    serialize_opt_attr(t, "tts:writingMode", &attrs.tts_writing_mode);
-    serialize_opt_attr(t, "tts:zIndex", &attrs.tts_z_index);
-    serialize_opt_attr(t, "tta:gain", &attrs.tta_gain);
-    serialize_opt_attr(t, "tta:pan", &attrs.tta_pan);
-    serialize_opt_attr(t, "tta:pitch", &attrs.tta_pitch);
-    serialize_opt_attr(t, "tta:speak", &attrs.tta_speak);
-    serialize_opt_attr(t, "itts:forcedDisplay", &attrs.itts_forced_display);
-    serialize_opt_attr(t, "itts:fillLineGap", &attrs.itts_fill_line_gap);
-    serialize_opt_attr(t, "ebutts:linePadding", &attrs.ebutts_line_padding);
-    serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
+    )?;
+    serialize_opt_attr(t, "tts:fontShear", &attrs.tts_font_shear)?;
+    serialize_opt_attr(t, "tts:fontSize", &attrs.tts_font_size)?;
+    serialize_opt_attr(t, "tts:fontStyle", &attrs.tts_font_style)?;
+    serialize_opt_attr(t, "tts:fontVariant", &attrs.tts_font_variant)?;
+    serialize_opt_attr(t, "tts:fontWeight", &attrs.tts_font_weight)?;
+    serialize_opt_attr(t, "tts:ipd", &attrs.tts_ipd)?;
+    serialize_opt_attr(t, "tts:letterSpacing", &attrs.tts_letter_spacing)?;
+    serialize_opt_attr(t, "tts:lineHeight", &attrs.tts_line_height)?;
+    serialize_opt_attr(t, "tts:lineShear", &attrs.tts_line_shear)?;
+    serialize_opt_attr(t, "tts:luminanceGain", &attrs.tts_luminance_gain)?;
+    serialize_opt_attr(t, "tts:opacity", &attrs.tts_opacity)?;
+    serialize_opt_attr(t, "tts:origin", &attrs.tts_origin)?;
+    serialize_opt_attr(t, "tts:overflow", &attrs.tts_overflow)?;
+    serialize_opt_attr(t, "tts:padding", &attrs.tts_padding)?;
+    serialize_opt_attr(t, "tts:position", &attrs.tts_position)?;
+    serialize_opt_attr(t, "tts:ruby", &attrs.tts_ruby)?;
+    serialize_opt_attr(t, "tts:rubyAlign", &attrs.tts_ruby_align)?;
+    serialize_opt_attr(t, "tts:rubyPosition", &attrs.tts_ruby_position)?;
+    serialize_opt_attr(t, "tts:rubyReserve", &attrs.tts_ruby_reserve)?;
+    serialize_opt_attr(t, "tts:shear", &attrs.tts_shear)?;
+    serialize_opt_attr(t, "tts:showBackground", &attrs.tts_show_background)?;
+    serialize_opt_attr(t, "tts:textAlign", &attrs.tts_text_align)?;
+    serialize_opt_attr(t, "tts:textCombine", &attrs.tts_text_combine)?;
+    serialize_opt_attr(t, "tts:textDecoration", &attrs.tts_text_decoration)?;
+    serialize_opt_attr(t, "tts:textEmphasis", &attrs.tts_text_emphasis)?;
+    serialize_opt_attr(t, "tts:textOrientation", &attrs.tts_text_orientation)?;
+    serialize_opt_attr(t, "tts:textOutline", &attrs.tts_text_outline)?;
+    serialize_opt_attr(t, "tts:textShadow", &attrs.tts_text_shadow)?;
+    serialize_opt_attr(t, "tts:unicodeBidi", &attrs.tts_unicode_bidi)?;
+    serialize_opt_attr(t, "tts:visibility", &attrs.tts_visibility)?;
+    serialize_opt_attr(t, "tts:wrapOption", &attrs.tts_wrap_option)?;
+    serialize_opt_attr(t, "tts:writingMode", &attrs.tts_writing_mode)?;
+    serialize_opt_attr(t, "tts:zIndex", &attrs.tts_z_index)?;
+    serialize_opt_attr(t, "tta:gain", &attrs.tta_gain)?;
+    serialize_opt_attr(t, "tta:pan", &attrs.tta_pan)?;
+    serialize_opt_attr(t, "tta:pitch", &attrs.tta_pitch)?;
+    serialize_opt_attr(t, "tta:speak", &attrs.tta_speak)?;
+    serialize_opt_attr(t, "itts:forcedDisplay", &attrs.itts_forced_display)?;
+    serialize_opt_attr(t, "itts:fillLineGap", &attrs.itts_fill_line_gap)?;
+    serialize_opt_attr(t, "ebutts:linePadding", &attrs.ebutts_line_padding)?;
+    serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align)
 }
 
-fn serialize_style_attrs(attrs: &StyleAttributes, t: &mut BytesStart<'_>) {
-    serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color);
-    serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip);
-    serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent);
-    serialize_opt_attr(t, "tts:backgroundImage", &attrs.tts_background_image);
-    serialize_opt_attr(t, "tts:backgroundOrigin", &attrs.tts_background_origin);
-    serialize_opt_attr(t, "tts:backgroundPosition", &attrs.tts_background_position);
-    serialize_opt_attr(t, "tts:backgroundRepeat", &attrs.tts_background_repeat);
-    serialize_opt_attr(t, "tts:border", &attrs.tts_border);
-    serialize_opt_attr(t, "tts:bpd", &attrs.tts_bpd);
-    serialize_opt_attr(t, "tts:color", &attrs.tts_color);
-    serialize_opt_attr(t, "tts:direction", &attrs.tts_direction);
-    serialize_opt_attr(t, "tts:disparity", &attrs.tts_disparity);
-    serialize_opt_attr(t, "tts:display", &attrs.tts_display);
-    serialize_opt_attr(t, "tts:displayAlign", &attrs.tts_display_align);
-    serialize_opt_attr(t, "tts:extent", &attrs.tts_extent);
-    serialize_opt_attr(t, "tts:fontFamily", &attrs.tts_font_family);
-    serialize_opt_attr(t, "tts:fontKerning", &attrs.tts_font_kerning);
+fn serialize_style_attrs(attrs: &StyleAttributes, t: &mut BytesStart<'_>) -> WriteOutcome {
+    serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color)?;
+    serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip)?;
+    serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent)?;
+    serialize_opt_attr(t, "tts:backgroundImage", &attrs.tts_background_image)?;
+    serialize_opt_attr(t, "tts:backgroundOrigin", &attrs.tts_background_origin)?;
+    serialize_opt_attr(t, "tts:backgroundPosition", &attrs.tts_background_position)?;
+    serialize_opt_attr(t, "tts:backgroundRepeat", &attrs.tts_background_repeat)?;
+    serialize_opt_attr(t, "tts:border", &attrs.tts_border)?;
+    serialize_opt_attr(t, "tts:bpd", &attrs.tts_bpd)?;
+    serialize_opt_attr(t, "tts:color", &attrs.tts_color)?;
+    serialize_opt_attr(t, "tts:direction", &attrs.tts_direction)?;
+    serialize_opt_attr(t, "tts:disparity", &attrs.tts_disparity)?;
+    serialize_opt_attr(t, "tts:display", &attrs.tts_display)?;
+    serialize_opt_attr(t, "tts:displayAlign", &attrs.tts_display_align)?;
+    serialize_opt_attr(t, "tts:extent", &attrs.tts_extent)?;
+    serialize_opt_attr(t, "tts:fontFamily", &attrs.tts_font_family)?;
+    serialize_opt_attr(t, "tts:fontKerning", &attrs.tts_font_kerning)?;
     serialize_opt_attr(
         t,
         "tts:fontSelectionStrategy",
         &attrs.tts_font_selection_strategy,
-    );
-    serialize_opt_attr(t, "tts:fontShear", &attrs.tts_font_shear);
-    serialize_opt_attr(t, "tts:fontSize", &attrs.tts_font_size);
-    serialize_opt_attr(t, "tts:fontStyle", &attrs.tts_font_style);
-    serialize_opt_attr(t, "tts:fontVariant", &attrs.tts_font_variant);
-    serialize_opt_attr(t, "tts:fontWeight", &attrs.tts_font_weight);
-    serialize_opt_attr(t, "tts:ipd", &attrs.tts_ipd);
-    serialize_opt_attr(t, "tts:letterSpacing", &attrs.tts_letter_spacing);
-    serialize_opt_attr(t, "tts:lineHeight", &attrs.tts_line_height);
-    serialize_opt_attr(t, "tts:lineShear", &attrs.tts_line_shear);
-    serialize_opt_attr(t, "tts:luminanceGain", &attrs.tts_luminance_gain);
-    serialize_opt_attr(t, "tts:opacity", &attrs.tts_opacity);
-    serialize_opt_attr(t, "tts:origin", &attrs.tts_origin);
-    serialize_opt_attr(t, "tts:overflow", &attrs.tts_overflow);
-    serialize_opt_attr(t, "tts:padding", &attrs.tts_padding);
-    serialize_opt_attr(t, "tts:position", &attrs.tts_position);
-    serialize_opt_attr(t, "tts:ruby", &attrs.tts_ruby);
-    serialize_opt_attr(t, "tts:rubyAlign", &attrs.tts_ruby_align);
-    serialize_opt_attr(t, "tts:rubyPosition", &attrs.tts_ruby_position);
-    serialize_opt_attr(t, "tts:rubyReserve", &attrs.tts_ruby_reserve);
-    serialize_opt_attr(t, "tts:shear", &attrs.tts_shear);
-    serialize_opt_attr(t, "tts:showBackground", &attrs.tts_show_background);
-    serialize_opt_attr(t, "tts:textAlign", &attrs.tts_text_align);
-    serialize_opt_attr(t, "tts:textCombine", &attrs.tts_text_combine);
-    serialize_opt_attr(t, "tts:textDecoration", &attrs.tts_text_decoration);
-    serialize_opt_attr(t, "tts:textEmphasis", &attrs.tts_text_emphasis);
-    serialize_opt_attr(t, "tts:textOrientation", &attrs.tts_text_orientation);
-    serialize_opt_attr(t, "tts:textOutline", &attrs.tts_text_outline);
-    serialize_opt_attr(t, "tts:textShadow", &attrs.tts_text_shadow);
-    serialize_opt_attr(t, "tts:unicodeBidi", &attrs.tts_unicode_bidi);
-    serialize_opt_attr(t, "tts:visibility", &attrs.tts_visibility);
-    serialize_opt_attr(t, "tts:wrapOption", &attrs.tts_wrap_option);
-    serialize_opt_attr(t, "tts:writingMode", &attrs.tts_writing_mode);
-    serialize_opt_attr(t, "tts:zIndex", &attrs.tts_z_index);
-    serialize_opt_attr(t, "tta:gain", &attrs.tta_gain);
-    serialize_opt_attr(t, "tta:pan", &attrs.tta_pan);
-    serialize_opt_attr(t, "tta:pitch", &attrs.tta_pitch);
-    serialize_opt_attr(t, "tta:speak", &attrs.tta_speak);
-    serialize_opt_attr(t, "itts:forcedDisplay", &attrs.itts_forced_display);
-    serialize_opt_attr(t, "itts:fillLineGap", &attrs.itts_fill_line_gap);
-    serialize_opt_attr(t, "ebutts:linePadding", &attrs.ebutts_line_padding);
-    serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
+    )?;
+    serialize_opt_attr(t, "tts:fontShear", &attrs.tts_font_shear)?;
+    serialize_opt_attr(t, "tts:fontSize", &attrs.tts_font_size)?;
+    serialize_opt_attr(t, "tts:fontStyle", &attrs.tts_font_style)?;
+    serialize_opt_attr(t, "tts:fontVariant", &attrs.tts_font_variant)?;
+    serialize_opt_attr(t, "tts:fontWeight", &attrs.tts_font_weight)?;
+    serialize_opt_attr(t, "tts:ipd", &attrs.tts_ipd)?;
+    serialize_opt_attr(t, "tts:letterSpacing", &attrs.tts_letter_spacing)?;
+    serialize_opt_attr(t, "tts:lineHeight", &attrs.tts_line_height)?;
+    serialize_opt_attr(t, "tts:lineShear", &attrs.tts_line_shear)?;
+    serialize_opt_attr(t, "tts:luminanceGain", &attrs.tts_luminance_gain)?;
+    serialize_opt_attr(t, "tts:opacity", &attrs.tts_opacity)?;
+    serialize_opt_attr(t, "tts:origin", &attrs.tts_origin)?;
+    serialize_opt_attr(t, "tts:overflow", &attrs.tts_overflow)?;
+    serialize_opt_attr(t, "tts:padding", &attrs.tts_padding)?;
+    serialize_opt_attr(t, "tts:position", &attrs.tts_position)?;
+    serialize_opt_attr(t, "tts:ruby", &attrs.tts_ruby)?;
+    serialize_opt_attr(t, "tts:rubyAlign", &attrs.tts_ruby_align)?;
+    serialize_opt_attr(t, "tts:rubyPosition", &attrs.tts_ruby_position)?;
+    serialize_opt_attr(t, "tts:rubyReserve", &attrs.tts_ruby_reserve)?;
+    serialize_opt_attr(t, "tts:shear", &attrs.tts_shear)?;
+    serialize_opt_attr(t, "tts:showBackground", &attrs.tts_show_background)?;
+    serialize_opt_attr(t, "tts:textAlign", &attrs.tts_text_align)?;
+    serialize_opt_attr(t, "tts:textCombine", &attrs.tts_text_combine)?;
+    serialize_opt_attr(t, "tts:textDecoration", &attrs.tts_text_decoration)?;
+    serialize_opt_attr(t, "tts:textEmphasis", &attrs.tts_text_emphasis)?;
+    serialize_opt_attr(t, "tts:textOrientation", &attrs.tts_text_orientation)?;
+    serialize_opt_attr(t, "tts:textOutline", &attrs.tts_text_outline)?;
+    serialize_opt_attr(t, "tts:textShadow", &attrs.tts_text_shadow)?;
+    serialize_opt_attr(t, "tts:unicodeBidi", &attrs.tts_unicode_bidi)?;
+    serialize_opt_attr(t, "tts:visibility", &attrs.tts_visibility)?;
+    serialize_opt_attr(t, "tts:wrapOption", &attrs.tts_wrap_option)?;
+    serialize_opt_attr(t, "tts:writingMode", &attrs.tts_writing_mode)?;
+    serialize_opt_attr(t, "tts:zIndex", &attrs.tts_z_index)?;
+    serialize_opt_attr(t, "tta:gain", &attrs.tta_gain)?;
+    serialize_opt_attr(t, "tta:pan", &attrs.tta_pan)?;
+    serialize_opt_attr(t, "tta:pitch", &attrs.tta_pitch)?;
+    serialize_opt_attr(t, "tta:speak", &attrs.tta_speak)?;
+    serialize_opt_attr(t, "itts:forcedDisplay", &attrs.itts_forced_display)?;
+    serialize_opt_attr(t, "itts:fillLineGap", &attrs.itts_fill_line_gap)?;
+    serialize_opt_attr(t, "ebutts:linePadding", &attrs.ebutts_line_padding)?;
+    serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align)
 }
 
 fn parse_style_attributes(node: &StartTag) -> StyleAttributes {

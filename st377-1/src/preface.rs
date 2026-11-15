@@ -232,16 +232,10 @@ impl Preface {
     fn owned_items(&self) -> Vec<LocalSetOwnedItem> {
         let mut out = Vec::new();
         self.interchange.encode_into(&mut out);
-        {
-            let mut buf = [0u8; crate::types::TIMESTAMP_LEN];
-            // The buffer is exactly the type's serialized length, so the
-            // write cannot fail.
-            let _ = self.last_modified_date.serialize_into(&mut buf);
-            out.push(LocalSetOwnedItem::owned(
-                TAG_LAST_MODIFIED_DATE,
-                buf.to_vec(),
-            ));
-        }
+        out.push(LocalSetOwnedItem::owned(
+            TAG_LAST_MODIFIED_DATE,
+            self.last_modified_date.to_bytes().to_vec(),
+        ));
         out.push(LocalSetOwnedItem::fixed(
             TAG_VERSION,
             self.version.to_be_bytes(),

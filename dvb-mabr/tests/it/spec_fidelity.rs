@@ -74,7 +74,7 @@ fn schema_version_1_round_trips_with_the_2019_namespace() {
 "#
     );
     let parsed = MulticastGatewayConfiguration::parse_str(&xml).expect("parses");
-    let xml2 = parsed.to_xml();
+    let xml2 = parsed.to_xml().expect("render");
     assert!(
         xml2.contains(&format!("xmlns=\"{NS_2019}\"")),
         "schemaVersion=1 must re-emit the 2019 namespace, got: {xml2}"
@@ -88,7 +88,12 @@ fn schema_version_1_round_trips_with_the_2019_namespace() {
 "#
     ))
     .expect("parses");
-    assert!(parsed2.to_xml().contains(&format!("xmlns=\"{NS_2024}\"")));
+    assert!(
+        parsed2
+            .to_xml()
+            .expect("render")
+            .contains(&format!("xmlns=\"{NS_2024}\""))
+    );
 }
 
 /// MABR-W4 (audit issue #1121): element text is truncated at the first
@@ -175,7 +180,7 @@ fn schema_version_2_with_the_2019_namespace_is_byte_stable() {
     let xml = format!(r#"<MulticastGatewayConfiguration xmlns="{NS_2019}" schemaVersion="2"/>"#);
     let cfg = MulticastGatewayConfiguration::parse_str(&xml).unwrap();
     assert_eq!(cfg.namespace, dvb_mabr::BaselineNamespace::V2019);
-    let xml2 = cfg.to_xml();
+    let xml2 = cfg.to_xml().expect("render");
     assert!(
         xml2.contains(&format!("xmlns=\"{NS_2019}\"")),
         "2019 namespace must survive re-serialization, got: {xml2}"

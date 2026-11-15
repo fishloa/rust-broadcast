@@ -220,7 +220,12 @@ impl PlayPeer {
                 if let Some(n) = self.config.chunk_size_after_connect {
                     out.extend(self.set_chunk_size(n)?);
                 }
-                self.send_control(UserControl::StreamBegin(0).to_message(), out)?;
+                self.send_control(
+                    UserControl::StreamBegin(0)
+                        .to_message()
+                        .expect("control message"),
+                    out,
+                )?;
                 let props = Amf0Value::Object(vec![(
                     "fmsVer".to_string(),
                     Amf0Value::String("FMS/3,0,1,123".to_string()),
@@ -255,11 +260,18 @@ impl PlayPeer {
                 }
                 if self.config.recorded {
                     self.send_control(
-                        UserControl::StreamIsRecorded(PLAY_STREAM_ID).to_message(),
+                        UserControl::StreamIsRecorded(PLAY_STREAM_ID)
+                            .to_message()
+                            .expect("control message"),
                         out,
                     )?;
                 }
-                self.send_control(UserControl::StreamBegin(PLAY_STREAM_ID).to_message(), out)?;
+                self.send_control(
+                    UserControl::StreamBegin(PLAY_STREAM_ID)
+                        .to_message()
+                        .expect("control message"),
+                    out,
+                )?;
                 self.send_on_status("status", PLAY_RESET_CODE, out)?;
                 self.send_on_status("status", PLAY_START_CODE, out)?;
                 self.playing = true;
@@ -349,16 +361,20 @@ impl PlayPeer {
     }
 
     pub fn ping(&mut self, ts: u32) -> Result<Vec<u8>, RtmpError> {
-        let bytes = self
-            .writer
-            .write(&UserControl::PingRequest(ts).to_message())?;
+        let bytes = self.writer.write(
+            &UserControl::PingRequest(ts)
+                .to_message()
+                .expect("control message"),
+        )?;
         Ok(self.counted(bytes))
     }
 
     pub fn stream_eof(&mut self) -> Result<Vec<u8>, RtmpError> {
-        let bytes = self
-            .writer
-            .write(&UserControl::StreamEof(PLAY_STREAM_ID).to_message())?;
+        let bytes = self.writer.write(
+            &UserControl::StreamEof(PLAY_STREAM_ID)
+                .to_message()
+                .expect("control message"),
+        )?;
         Ok(self.counted(bytes))
     }
 

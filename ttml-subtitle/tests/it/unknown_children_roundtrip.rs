@@ -159,7 +159,7 @@ fn foreign_child_of_every_container_survives_to_xml() {
                 continue;
             }
         };
-        let out = doc.to_xml();
+        let out = doc.to_xml().expect("render");
         let marker = xml
             .split("MARK")
             .nth(1)
@@ -172,7 +172,7 @@ fn foreign_child_of_every_container_survives_to_xml() {
         match Document::parse_str(&out) {
             Ok(re) => {
                 let mut again = re.clone();
-                if again.to_xml() != out {
+                if again.to_xml().expect("render") != out {
                     failures.push(format!("{name}: to_xml not idempotent"));
                 }
             }
@@ -188,7 +188,7 @@ fn foreign_child_of_every_container_survives_to_xml() {
 fn smpte_image_in_metadata_keeps_attributes_and_text() {
     let xml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt"><head><metadata><smpte:image xml:id="img0" imagetype="PNG" encoding="Base64">iVBORw0KGgo=</smpte:image></metadata></head><body/></tt>"#;
     let mut doc = Document::parse_str(xml).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     let re = Document::parse_str(&out).unwrap();
     assert_eq!(re.tt.head, doc.tt.head, "{out}");
     assert!(out.contains("smpte:image"), "{out}");
@@ -206,7 +206,7 @@ fn multiple_foreign_children_keep_order() {
         "{HEAD}<head><metadata><x:foo>A</x:foo><x:foo>B</x:foo><x:foo>C</x:foo></metadata></head><body/></tt>"
     );
     let mut doc = Document::parse_str(&xml).unwrap();
-    let out = doc.to_xml();
+    let out = doc.to_xml().expect("render");
     let (a, b, c) = (
         out.find(">A<").unwrap(),
         out.find(">B<").unwrap(),
@@ -232,7 +232,7 @@ fn committed_fixtures_round_trip_through_to_xml() {
         }
         let src = fs::read_to_string(&path).unwrap();
         let mut doc = Document::parse_str(&src).unwrap();
-        let out = doc.to_xml();
+        let out = doc.to_xml().expect("render");
         let re = Document::parse_str(&out)
             .unwrap_or_else(|e| panic!("{}: re-parse failed: {e}\n{out}", path.display()));
         assert_eq!(re.tt, doc.tt, "{} changed through to_xml", path.display());
