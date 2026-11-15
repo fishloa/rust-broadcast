@@ -9,6 +9,7 @@
 //! walkers (no crate box/PES parsers) still assert the same values.
 #![cfg(feature = "std")]
 
+use core::time::Duration;
 use std::path::PathBuf;
 use std::process::Command;
 use test_fixtures::process::tool_available;
@@ -327,7 +328,7 @@ fn trim_keeps_audio_aligned_with_snapped_video() {
     let media = input_media();
     let start = movie_ticks(&media, 2.5);
     let end = movie_ticks(&media, 3.5);
-    let out = Repackage::new(1.0)
+    let out = Repackage::new(Duration::from_secs(1))
         .trim(start, end)
         .run_media(&media)
         .expect("repackage");

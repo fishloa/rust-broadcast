@@ -328,15 +328,14 @@ impl Package for TsHlsPackager {
             let ts_scale = media.tracks[anchor].spec.timescale;
             // #EXT-X-TARGETDURATION is an integer ≥ every #EXTINF (RFC 8216
             // §4.3.3.1: the rounded max segment duration).
-            let (duration, ceil_secs) = segment_duration_secs(anchor_ticks, ts_scale);
+            let (duration, ceil_secs) = segment_duration(anchor_ticks, ts_scale);
             if ceil_secs > target_duration {
                 target_duration = ceil_secs;
             }
             playlist_segments.push(MediaSegment {
                 uri: format!("{}{}.ts", self.uri_prefix, i),
-                // Same proof as the streaming path above: finite, >= 0.
-                duration: DecimalSeconds::new(duration)
-                    .expect("segment_duration_secs is finite, >= 0"),
+                // A `Duration` is always finite and non-negative.
+                duration: DecimalSeconds::from_duration(duration),
                 discontinuous: false,
                 parts: vec![],
                 ..Default::default()
@@ -433,11 +432,13 @@ fn target_ticks_for(target_secs: u32, ts_scale: u32) -> u64 {
     (target_secs.max(1) as u64) * (ts_scale.max(1) as u64)
 }
 
-/// Segment duration in seconds, plus the RFC 8216 `#EXT-X-TARGETDURATION`
-/// ceiling (whole seconds, rounded up) for `anchor_ticks` of buffered anchor
-/// media at `ts_scale` ticks/second.
-fn segment_duration_secs(anchor_ticks: u64, ts_scale: Timescale) -> (f64, u32) {
-    let duration = anchor_ticks as f64 / f64::from(ts_scale.get());
+/// Segment duration, plus the RFC 8216 `#EXT-X-TARGETDURATION` ceiling
+/// (whole seconds, rounded up) for `anchor_ticks` of buffered anchor media at
+/// `ts_scale` ticks/second.
+fn segment_duration(anchor_ticks: u64, ts_scale: Timescale) -> (Duration, u32) {
+    let nanos = u128::from(anchor_ticks) * u128::from(broadcast_common::units::NANOS_PER_SEC)
+        / u128::from(ts_scale.get());
+    let duration = Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX));
     let ceil_secs = anchor_ticks.div_ceil(ts_scale.as_u64()) as u32;
     (duration, ceil_secs)
 }
@@ -586,8 +587,8 @@ pub struct TsSegment {
     /// Byte-identical to the corresponding segment [`TsHlsPackager::package`]
     /// would produce from the same samples in one batch call.
     pub bytes: Vec<u8>,
-    /// Segment duration in seconds (the anchor track's buffered duration).
-    pub duration: f64,
+    /// Segment duration (the anchor track's buffered duration).
+    pub duration: Duration,
     /// `true` when this segment should be preceded by `#EXT-X-DISCONTINUITY`
     /// (RFC 8216 §4.3.2.3) — set via
     /// [`StreamingTsHlsSegmenter::mark_discontinuity`].
@@ -851,13 +852,6 @@ impl StreamingTsHlsSegmenter {
                 / 1_000_000_000;
             t.base_decode = u64::try_from(ticks).unwrap_or(u64::MAX);
         }
-    }
-
-    /// Start every track's decode clock at `start` nanoseconds into a run that
-    /// continues an earlier one; [`Self::set_start_time`] in the sub-second
-    /// unit a wire field may carry.
-    pub fn set_start_time_ns(&mut self, start_ns: u64) {
-        self.set_start_time(Duration::from_nanos(start_ns));
     }
 
     /// Create a streaming segmenter for `tracks`, cutting segments roughly
@@ -1503,7 +1497,7 @@ impl StreamingTsHlsSegmenter {
             mux_tracks_at_continuing(&mux_tracks, &sample_slices, &base_dts, &mut self.continuity)?;
 
         let (duration, ceil_secs) =
-            segment_duration_secs(closed_anchor_dur, self.tracks[anchor].spec.timescale);
+            segment_duration(closed_anchor_dur, self.tracks[anchor].spec.timescale);
         if ceil_secs > self.target_duration {
             self.target_duration = ceil_secs;
         }
@@ -1527,10 +1521,8 @@ impl StreamingTsHlsSegmenter {
         let uri = format!("{}{}.ts", self.uri_prefix, sequence);
         self.window_segments.push_back(WindowEntry {
             uri: uri.clone(),
-            // `segment_duration_secs` divides a `u64` tick count by a
-            // `u64.max(1)` timescale (issue #1140): always finite and
-            // non-negative.
-            duration: DecimalSeconds::new(duration).expect("segment_duration_secs is finite, >= 0"),
+            // A `Duration` is always finite and non-negative.
+            duration: DecimalSeconds::from_duration(duration),
             discontinuous,
         });
         self.total_segments += 1;
@@ -1770,7 +1762,7 @@ mod tests {
                 "cut segment {i} must carry real TS bytes"
             );
             assert!(
-                c.duration > 0.0,
+                !c.duration.is_zero(),
                 "cut segment {i} must have a positive duration"
             );
         }

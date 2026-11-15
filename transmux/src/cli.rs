@@ -599,7 +599,7 @@ fn filter_for_bmff_mux(media: &Media) -> CliResult<Media> {
 fn segment_media(media: &Media, target_secs: u32) -> CliResult<(Vec<u8>, Vec<Vec<u8>>)> {
     // At least one whole second: a sub-second target would cut a segment per
     // keyframe at best, and the CLI flag is documented in whole seconds.
-    let target = f64::from(target_secs.max(1));
+    let target = core::time::Duration::from_secs(u64::from(target_secs.max(1)));
     let specs: Vec<crate::pipeline::TrackSpec> =
         media.tracks.iter().map(|t| t.spec.clone()).collect();
     let mut seg = Segmenter::new(specs, media.movie_timescale, target)?;
@@ -1166,10 +1166,10 @@ fn package(media: &Media, opts: &Opts) -> CliResult<Output> {
             // artefact must not bake in a third-party time server.
             let text = if opts.low_latency {
                 // LL-DASH: chunk = half the segment.
-                let seg = opts.segment_duration.max(1) as f64;
+                let seg = core::time::Duration::from_secs(u64::from(opts.segment_duration.max(1)));
                 let mut pkg = crate::ll_dash::LlDashPackager::new(
                     seg,
-                    seg / 2.0,
+                    seg / 2,
                     LL_DASH_LATENCY_TARGET,
                     availability_start_time_now(),
                 )?;

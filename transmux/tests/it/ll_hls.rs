@@ -9,6 +9,7 @@
 //!    non-low-latency playlist is asserted to carry NONE of them (opt-in);
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
+use core::time::Duration;
 use crate::hub_fixtures::{audio_track, dummy_avc_config, video_track};
 use broadcast_common::timescale::Timescale;
 use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
@@ -31,6 +32,44 @@ fn vsample(is_sync: bool, byte: u8) -> Sample {
     // (media plane step 2c — never fabricate a timestamp); the timeline comes
     // from `duration`, exactly as before.
     Sample::new(vec![byte; 32], None, None, Some(VID_DUR), is_sync).expect("valid timing")
+}
+
+/// The part target is a `Duration`, and converting it to the wire
+/// `#EXT-X-PART-INF:PART-TARGET` value at the edition edge is exact: 334 ms of
+/// wall time renders as `0.334`, matching the whole-millisecond value the
+/// segmenter advertises. (Before the retype the accessor returned a bare
+/// `f64`/`u32`; this pins the typed conversion.)
+#[test]
+fn part_target_duration_renders_the_exact_wire_value() {
+    let seg = LlHlsSegmenter::with_part_target(
+        vec![video_track()],
+        timescale(1000),
+        Duration::from_secs(1),
+        Duration::from_millis(334),
+    )
+    .unwrap();
+    assert_eq!(seg.part_target(), Duration::from_millis(334));
+    let ll = LowLatencyConfig::default().with_part_target(DecimalSeconds::from_duration(
+        seg.part_target(),
+    ));
+    let pl = MediaPlaylist {
+        version: 9,
+        target_duration: 1,
+        msn: broadcast_hls::MediaSequence::new(0),
+        discontinuity_sequence: 0,
+        segments: vec![],
+        endlist: false,
+        extra_tags: vec![],
+        low_latency: Some(ll),
+        iframes_only: false,
+        open_segment: None,
+        ..Default::default()
+    };
+    let m3u8 = pl.to_m3u8().unwrap();
+    assert!(
+        m3u8.contains("#EXT-X-PART-INF:PART-TARGET=0.334\n"),
+        "PART-TARGET must render from the typed Duration:\n{m3u8}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +109,7 @@ fn find_box_body<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 fn parts_are_valid_fragments_and_sum_to_segment() {
     // segment target 1000 ms, part target 334 ms.
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 1.0, 334).unwrap();
+        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
 
     // ~1 s of 30 fps video: 30 AUs @ 3000 ticks. First AU is a keyframe.
     for i in 0..30u8 {
@@ -107,14 +146,17 @@ fn parts_are_valid_fragments_and_sum_to_segment() {
         .iter()
         .find(|s| s.segment_seq == 1)
         .expect("segment 1");
-    let parts_sum: f64 = seg1_parts.iter().map(|p| p.duration).sum();
+    let parts_sum: Duration = seg1_parts.iter().map(|p| p.duration).sum();
     assert!(
-        (parts_sum - seg1.duration).abs() < 1e-6,
-        "parts sum {parts_sum} != segment duration {}",
+        parts_sum.abs_diff(seg1.duration) < Duration::from_micros(1),
+        "parts sum {parts_sum:?} != segment duration {:?}",
         seg1.duration
     );
     // And the segment is a whole 30-AU segment = 1.0 s.
-    assert!((seg1.duration - 1.0).abs() < 1e-6, "segment ~1 s");
+    assert!(
+        seg1.duration.abs_diff(Duration::from_secs(1)) < Duration::from_micros(1),
+        "segment ~1 s"
+    );
     assert_eq!(seg1.part_count, 3, "segment records 3 parts");
 }
 
@@ -125,7 +167,7 @@ fn parts_are_valid_fragments_and_sum_to_segment() {
 #[test]
 fn independent_flag_tracks_sync_first_sample() {
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 1.0, 334).unwrap();
+        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
 
     // 30 AUs: keyframe only at index 0. Part 1 starts at a sync sample; parts 2
     // and 3 start mid-GOP (no sync).
@@ -161,7 +203,7 @@ fn independent_flag_tracks_sync_first_sample() {
                 format!("seg1.{i}.m4s"),
                 // The segmenter's own computed part duration (issue #1140):
                 // always finite and non-negative.
-                DecimalSeconds::new(p.duration).expect("segmenter part duration is finite, >= 0"),
+                DecimalSeconds::from_duration(p.duration),
             )
             .with_independent(p.independent)
         })
@@ -216,7 +258,7 @@ fn independent_flag_tracks_sync_first_sample() {
 #[test]
 fn part_with_a_mid_part_sync_sample_is_independent() {
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 1.0, 334).unwrap();
+        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
     for i in 0..30u8 {
         seg.push(TrackId::new(1), vsample(i == 0 || i == 15, i))
             .unwrap();
@@ -340,8 +382,8 @@ fn part_media_matches_whole_segment_build() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track(), audio_track()],
         timescale(1000),
-        1.0,
-        334,
+        Duration::from_secs(1),
+        Duration::from_millis(334),
     )
     .unwrap();
 
@@ -503,14 +545,15 @@ fn part_media_matches_whole_segment_build() {
 
 /// `timescale` is a wire `u32` (`mdhd.timescale`, ISO/IEC 14496-12:2026
 /// §8.4.2) that `LlHlsSegmenter::with_part_target` does not itself validate —
-/// only `target_duration_secs`/`part_target_ms` are checked at construction.
-/// `part_target_secs`/the part- and segment-duration computations divide by
-/// the anchor track's timescale directly; before the fix, a zero timescale
-/// turned every one of those into `f64::INFINITY`/`NaN`, rendered verbatim
-/// into `#EXT-X-PART-INF`/`#EXT-X-PART`/`#EXTINF` text (Rust's `Display` for
+/// only `target_duration`/`part_target` are checked at construction.
+/// The part- and segment-duration computations divide by the anchor track's
+/// timescale directly; before the fix, a zero timescale turned every one of
+/// those into `f64::INFINITY`/`NaN`, rendered verbatim into
+/// `#EXT-X-PART-INF`/`#EXT-X-PART`/`#EXTINF` text (Rust's `Display` for
 /// `f64` renders those as the literal substrings `"inf"`/`"NaN"`) — a wrong
-/// value shipped to every client with no panic to flag it. This asserts on
-/// the actual rendered playlist text, not on an intermediate float.
+/// value shipped to every client with no panic to flag it. The durations are
+/// now `Duration`s (finite and non-negative by type); this asserts on the
+/// actual rendered playlist text.
 #[test]
 fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
     assert!(
@@ -526,13 +569,8 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
             height: 240,
         },
     );
-    let mut seg = LlHlsSegmenter::with_part_target(vec![zero_ts_video], timescale(1000), 1.0, 334)
+    let mut seg = LlHlsSegmenter::with_part_target(vec![zero_ts_video], timescale(1000), Duration::from_secs(1), Duration::from_millis(334))
         .expect("construction does not itself validate per-track timescale");
-
-    assert!(
-        seg.part_target_secs().is_finite(),
-        "part_target_secs() must not be inf/NaN even with a zero timescale"
-    );
 
     for i in 0..10u8 {
         seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
@@ -543,21 +581,6 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
     let segments = seg.take_ready_segments();
     assert!(!parts.is_empty(), "some part must have been produced");
     assert!(!segments.is_empty(), "some segment must have been produced");
-    for p in &parts {
-        assert!(
-            p.duration.is_finite(),
-            "PartInfo::duration must be finite, got {}",
-            p.duration
-        );
-    }
-    for s in &segments {
-        assert!(
-            s.duration.is_finite(),
-            "SegmentInfo::duration must be finite, got {}",
-            s.duration
-        );
-    }
-
     // Render exactly as a real caller would, and assert on the TEXT.
     let parts_spec: Vec<PartSpec> = parts
         .iter()
@@ -566,12 +589,15 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
             PartSpec::new(
                 format!("seg1.{i}.m4s"),
                 // Same reasoning as above: segmenter-computed, finite, >= 0.
-                DecimalSeconds::new(p.duration).expect("segmenter part duration is finite, >= 0"),
+                DecimalSeconds::from_duration(p.duration),
             )
             .with_independent(p.independent)
         })
         .collect();
-    let seg1_duration = segments.first().map(|s| s.duration).unwrap_or(0.0);
+    let seg1_duration = segments
+        .first()
+        .map(|s| s.duration)
+        .unwrap_or(Duration::ZERO);
     let pl = MediaPlaylist {
         version: 9,
         target_duration: 1,
@@ -581,8 +607,7 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
             uri: "seg1.m4s".into(),
             // The segmenter's own computed segment duration (issue #1140):
             // always finite and non-negative.
-            duration: DecimalSeconds::new(seg1_duration)
-                .expect("segmenter duration is finite, >= 0"),
+            duration: DecimalSeconds::from_duration(seg1_duration),
             discontinuous: false,
             parts: parts_spec,
             ..Default::default()
@@ -590,18 +615,10 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
         endlist: false,
         extra_tags: vec![],
         low_latency: Some(
-            // `part_target_secs` divides a `u64` tick count by a
-            // `.max(1)`-guarded timescale (issue #1140): always finite
-            // and non-negative.
+            // `part_target` is a `Duration`: always finite and non-negative.
             LowLatencyConfig::default()
-                .with_part_target(
-                    DecimalSeconds::new(seg.part_target_secs())
-                        .expect("part_target_secs is finite, >= 0"),
-                )
-                .with_part_hold_back(
-                    DecimalSeconds::new(3.0 * seg.part_target_secs())
-                        .expect("part_target_secs is finite, >= 0"),
-                ),
+                .with_part_target(DecimalSeconds::from_duration(seg.part_target()))
+                .with_part_hold_back(DecimalSeconds::from_duration(seg.part_target() * 3)),
         ),
         iframes_only: false,
         open_segment: None,
@@ -704,8 +721,8 @@ fn every_part_carries_both_tracks() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track(), audio_track()],
         timescale(1000),
-        1.0,
-        334,
+        Duration::from_secs(1),
+        Duration::from_millis(334),
     )
     .unwrap();
 
@@ -734,7 +751,7 @@ fn every_part_carries_both_tracks() {
         assert_eq!(
             traf_count(&p.bytes),
             2,
-            "part {i} (dur {}) must carry both video (track 1) and audio (track 2)",
+            "part {i} (dur {:?}) must carry both video (track 1) and audio (track 2)",
             p.duration
         );
         assert!(part_tfdt_for(&p.bytes, 1).is_some(), "part {i}: video tfdt");
@@ -763,7 +780,7 @@ fn every_part_carries_both_tracks() {
 fn part_duration_never_exceeds_part_target() {
     // 334 ms part target, 33.3 ms AUs: the pre-fix code emitted 367 ms parts.
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 1.0, 334).unwrap();
+        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334)).unwrap();
     for i in 0..30u8 {
         seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
     }
@@ -774,8 +791,8 @@ fn part_duration_never_exceeds_part_target() {
     // the ceiling; the last part here is the segment tail, checked too.
     for (i, p) in parts.iter().enumerate() {
         assert!(
-            p.duration <= 0.334 + 1e-9,
-            "part {i} duration {} exceeds the 334 ms part target",
+            p.duration <= Duration::from_millis(334),
+            "part {i} duration {:?} exceeds the 334 ms part target",
             p.duration
         );
     }
@@ -799,8 +816,8 @@ fn long_segment_parts_stay_within_part_target() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track(), audio_track()],
         timescale(6000),
-        6.0,
-        334,
+        Duration::from_secs(6),
+        Duration::from_millis(334),
     )
     .unwrap();
 
@@ -844,14 +861,14 @@ fn long_segment_parts_stay_within_part_target() {
     // shorter, never longer), and carries both tracks.
     for (i, p) in parts.iter().enumerate() {
         assert!(
-            p.duration <= 0.334 + 1e-9,
-            "part {i} duration {} exceeds the 334 ms part target",
+            p.duration <= Duration::from_millis(334),
+            "part {i} duration {:?} exceeds the 334 ms part target",
             p.duration
         );
         assert_eq!(
             traf_count(&p.bytes),
             2,
-            "part {i} (duration {}) must carry both video and audio",
+            "part {i} (duration {:?}) must carry both video and audio",
             p.duration
         );
     }
@@ -885,8 +902,8 @@ fn a_segment_waiting_for_its_keyframe_keeps_cutting_parts() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track()],
         timescale(90_000),
-        1.0,
-        PART_TARGET_MS,
+        Duration::from_secs(1),
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .unwrap();
 
@@ -901,11 +918,11 @@ fn a_segment_waiting_for_its_keyframe_keeps_cutting_parts() {
 
     let parts = seg.take_ready_parts();
     assert!(!parts.is_empty());
-    let ceiling = f64::from(PART_TARGET_MS) / 1000.0 + 1e-9;
+    let ceiling = Duration::from_millis(u64::from(PART_TARGET_MS));
     for (i, p) in parts.iter().enumerate() {
         assert!(
             p.duration <= ceiling,
-            "part {i} duration {} exceeds the {PART_TARGET_MS} ms part target",
+            "part {i} duration {:?} exceeds the {PART_TARGET_MS} ms part target",
             p.duration
         );
     }
@@ -972,8 +989,8 @@ fn lagging_audio_never_makes_a_zero_duration_part() {
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track(), audio_track()],
         timescale(1000),
-        1.0,
-        200,
+        Duration::from_secs(1),
+        Duration::from_millis(200),
     )
     .unwrap();
     let audio = |n: usize| {
@@ -992,16 +1009,16 @@ fn lagging_audio_never_makes_a_zero_duration_part() {
     }
     seg.flush().unwrap();
 
-    let mut parts: std::collections::BTreeMap<u32, Vec<f64>> = std::collections::BTreeMap::new();
+    let mut parts: std::collections::BTreeMap<u32, Vec<Duration>> = std::collections::BTreeMap::new();
     for p in seg.take_ready_parts() {
         assert!(
-            p.duration > 0.0,
+            !p.duration.is_zero(),
             "part {}.{} has zero duration",
             p.segment_seq,
             p.part_index
         );
         assert!(
-            p.duration <= 0.2 + 1e-9,
+            p.duration <= Duration::from_millis(200),
             "part {}.{}",
             p.segment_seq,
             p.part_index
@@ -1011,10 +1028,10 @@ fn lagging_audio_never_makes_a_zero_duration_part() {
     let segments = seg.take_ready_segments();
     assert_eq!(segments.len(), FRAMES / GOP);
     for s in segments {
-        let sum: f64 = parts[&s.segment_seq].iter().sum();
+        let sum: Duration = parts[&s.segment_seq].iter().sum();
         assert!(
-            (sum - s.duration).abs() < 1e-6,
-            "segment {}: parts sum to {sum}, segment is {}",
+            sum.abs_diff(s.duration) < Duration::from_micros(1),
+            "segment {}: parts sum to {sum:?}, segment is {:?}",
             s.segment_seq,
             s.duration
         );
@@ -1039,17 +1056,17 @@ fn cut_parts(
     rate_den: u64,
     durations: Option<Vec<u32>>,
     seconds: u64,
-) -> (u32, Vec<transmux::ll_hls::PartInfo>) {
-    const TARGET_MS: u32 = 200;
-    const SEGMENT_SECS: f64 = 2.0;
+) -> (Duration, Vec<transmux::ll_hls::PartInfo>) {
+    const PART_TARGET: Duration = Duration::from_millis(200);
+    const SEGMENT_TARGET: Duration = Duration::from_secs(2);
     let frames = (seconds * rate_num / rate_den) as usize;
     let durations = durations.unwrap_or_else(|| frame_ticks(rate_num, rate_den, frames));
-    let gop = (SEGMENT_SECS * rate_num as f64 / rate_den as f64).round() as usize;
+    let gop = (SEGMENT_TARGET.as_secs_f64() * rate_num as f64 / rate_den as f64).round() as usize;
     let mut seg = LlHlsSegmenter::with_part_target(
         vec![video_track()],
         timescale(1000),
-        SEGMENT_SECS,
-        TARGET_MS,
+        SEGMENT_TARGET,
+        PART_TARGET,
     )
     .unwrap();
     for (i, d) in durations.iter().enumerate() {
@@ -1058,7 +1075,7 @@ fn cut_parts(
         seg.push(TrackId::new(1), sample).unwrap();
     }
     seg.flush().unwrap();
-    (seg.part_target_ms(), seg.take_ready_parts())
+    (seg.part_target(), seg.take_ready_parts())
 }
 
 fn non_terminal(parts: &[transmux::ll_hls::PartInfo]) -> Vec<&transmux::ll_hls::PartInfo> {
@@ -1087,14 +1104,18 @@ const FRAME_RATES: [(u64, u64, u32); 6] = [
 fn non_terminal_parts_are_within_85_to_100_percent_of_part_target() {
     for (num, den, expected_ms) in FRAME_RATES {
         let (target_ms, parts) = cut_parts(num, den, None, 12);
-        let target = f64::from(target_ms) / 1000.0;
-        assert_eq!(target_ms, expected_ms, "{num}/{den} part target");
+        let target = target_ms.as_secs_f64();
+        assert_eq!(
+            target_ms,
+            Duration::from_millis(u64::from(expected_ms)),
+            "{num}/{den} part target"
+        );
         let inner = non_terminal(&parts);
         assert!(inner.len() > 20, "{num}/{den}: too few parts");
         for p in &parts {
             assert!(
-                p.duration <= target + 1e-9,
-                "{num}/{den}: part {} of segment {} lasts {} > target {target}",
+                p.duration <= target_ms,
+                "{num}/{den}: part {} of segment {} lasts {:?} > target {target}",
                 p.part_index,
                 p.segment_seq,
                 p.duration
@@ -1102,8 +1123,8 @@ fn non_terminal_parts_are_within_85_to_100_percent_of_part_target() {
         }
         for p in inner {
             assert!(
-                p.duration >= 0.85 * target - 1e-9,
-                "{num}/{den}: non-terminal part {} of segment {} lasts {} < 85% of {target}",
+                p.duration.as_secs_f64() >= 0.85 * target - 1e-9,
+                "{num}/{den}: non-terminal part {} of segment {} lasts {:?} < 85% of {target}",
                 p.part_index,
                 p.segment_seq,
                 p.duration
@@ -1118,20 +1139,24 @@ fn variable_frame_duration_keeps_the_configured_part_target() {
         .map(|i| if i % 2 == 0 { 2000 } else { 4000 })
         .collect();
     let (target_ms, parts) = cut_parts(30, 1, Some(durations), 10);
-    assert_eq!(target_ms, 200);
-    assert!(parts.iter().all(|p| p.duration <= 0.2 + 1e-9));
+    assert_eq!(target_ms, Duration::from_millis(200));
+    assert!(
+        parts
+            .iter()
+            .all(|p| p.duration <= Duration::from_millis(200))
+    );
     assert!(parts.len() <= 100, "{} parts for 10 s", parts.len());
 }
 
 #[test]
 fn samples_without_durations_keep_the_configured_part_target() {
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 2.0, 200).unwrap();
+        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(2), Duration::from_millis(200)).unwrap();
     for i in 0..40u8 {
         let sample = Sample::new(vec![0u8; 16], None, None, None, i == 0).expect("valid timing");
         seg.push(TrackId::new(1), sample).unwrap();
     }
-    assert_eq!(seg.part_target_ms(), 200);
+    assert_eq!(seg.part_target(), Duration::from_millis(200));
 }
 
 #[test]
@@ -1140,20 +1165,20 @@ fn jittered_frame_timestamps_still_land_parts_within_the_band() {
         .map(|i| if matches!(i % 4, 0 | 3) { 3690 } else { 3780 })
         .collect();
     let (target_ms, parts) = cut_parts(24_000, 1001, Some(durations), 12);
-    let target = f64::from(target_ms) / 1000.0;
+    let target = target_ms.as_secs_f64();
     assert!(
-        target_ms > 200,
+        target_ms > Duration::from_millis(200),
         "the 200 ms target must be raised to whole frames"
     );
     let inner = non_terminal(&parts);
     assert!(inner.len() > 20);
     for p in &parts {
-        assert!(p.duration <= target + 1e-9, "{} > {target}", p.duration);
+        assert!(p.duration <= target_ms, "{:?} > {target}", p.duration);
     }
     for p in inner {
         assert!(
-            p.duration >= 0.85 * target - 1e-9,
-            "{} < 85% of {target}",
+            p.duration.as_secs_f64() >= 0.85 * target - 1e-9,
+            "{:?} < 85% of {target}",
             p.duration
         );
     }
@@ -1163,7 +1188,7 @@ fn jittered_frame_timestamps_still_land_parts_within_the_band() {
 fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
     let durations = frame_ticks(24_000, 1001, 120);
     let mut seg =
-        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 60.0, 200).unwrap();
+        LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(60), Duration::from_millis(200)).unwrap();
     let mut cut_at = Vec::new();
     for (i, d) in durations.iter().enumerate() {
         let sample =
@@ -1186,7 +1211,7 @@ fn a_part_is_cut_as_soon_as_its_last_frame_arrives() {
 fn start_time_moves_every_tfdt_and_nothing_else() {
     let tfdts = |start_ns: Option<u64>| {
         let mut seg =
-            LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), 1.0, 334)
+            LlHlsSegmenter::with_part_target(vec![video_track()], timescale(1000), Duration::from_secs(1), Duration::from_millis(334))
                 .unwrap();
         if let Some(ns) = start_ns {
             seg.set_start_time(std::time::Duration::from_nanos(ns));

@@ -251,14 +251,14 @@ pub struct SmoothOutput {
 /// (no live `tfrf` look-ahead).
 #[derive(Debug, Clone)]
 pub struct SmoothPackager {
-    /// Target fragment duration, in whole seconds (keyframe-aligned cut target).
-    pub target_duration_secs: u32,
+    /// Target fragment duration (keyframe-aligned cut target).
+    pub target_duration: core::time::Duration,
 }
 
 impl Default for SmoothPackager {
     fn default() -> Self {
         Self {
-            target_duration_secs: 2,
+            target_duration: core::time::Duration::from_secs(2),
         }
     }
 }
@@ -321,7 +321,7 @@ impl SmoothPackager {
         let timeline = smooth_timeline(track, origin, media_timescale)?;
 
         // Segment keyframe-aligned into groups of samples.
-        let groups = segment_samples(&track.samples, media_timescale, self.target_duration_secs);
+        let groups = segment_samples(&track.samples, media_timescale, self.target_duration);
 
         let mut fragment_timings = Vec::with_capacity(groups.len());
         let mut total_bytes = 0u64;
@@ -731,14 +731,16 @@ pub fn resolve_codec(config: &CodecConfig) -> Result<SmoothCodec> {
 fn segment_samples(
     samples: &[Sample],
     media_timescale: broadcast_common::timescale::Timescale,
-    target_secs: u32,
+    target_duration: core::time::Duration,
 ) -> Vec<core::ops::Range<usize>> {
     let mut groups = Vec::new();
     if samples.is_empty() {
         return groups;
     }
-    let target_ticks =
-        (u64::from(target_secs.max(1))).saturating_mul(u64::from(media_timescale.get()));
+    let target_ticks = target_duration
+        .as_secs()
+        .max(1)
+        .saturating_mul(u64::from(media_timescale.get()));
 
     let mut start = 0usize;
     let mut acc_dur = 0u64;
@@ -983,7 +985,7 @@ mod tests {
             display: None,
         };
         let samples = alloc::vec![mk(true), mk(false), mk(true), mk(false)];
-        let groups = segment_samples(&samples, timescale(1), 2);
+        let groups = segment_samples(&samples, timescale(1), core::time::Duration::from_secs(2));
         assert_eq!(groups.len(), 2);
         assert_eq!(groups[0].len(), 2);
         assert_eq!(groups[1].len(), 2);

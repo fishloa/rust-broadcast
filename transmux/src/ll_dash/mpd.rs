@@ -38,10 +38,10 @@ const SERVICE_DESCRIPTION_ID: u64 = 0;
 pub struct LlDashPackager {
     /// The underlying whole-segment packager (forced `dynamic` on package).
     pub base: DashPackager,
-    /// Nominal segment duration in seconds (the `availabilityTimeOffset` base).
-    pub segment_duration_secs: f64,
-    /// Chunk duration in seconds. `availabilityTimeOffset = segment − chunk`.
-    pub chunk_duration_secs: f64,
+    /// Nominal segment duration (the `availabilityTimeOffset` base).
+    pub segment_duration: Duration,
+    /// Chunk duration. `availabilityTimeOffset = segment − chunk`.
+    pub chunk_duration: Duration,
     /// Target end-to-end latency (`Latency@target`), written as whole
     /// milliseconds.
     pub latency_target: Duration,
@@ -75,33 +75,29 @@ pub const UTCTIMING_DIRECT_2014: &str = "urn:mpeg:dash:utc:direct:2014";
 impl LlDashPackager {
     /// Build an LL-DASH packager. `availability_start_time` is the wall-clock
     /// `MPD@availabilityStartTime` (ISO-8601 UTC). The `availabilityTimeOffset`
-    /// is derived as `segment_duration_secs − chunk_duration_secs`.
+    /// is derived as `segment_duration − chunk_duration`.
     /// `MPD@publishTime` (mandatory for a dynamic MPD, ISO/IEC 23009-1 §5.3.1.2
     /// Table 3) is not defaulted: set `base.publish_time`, and advance it on
     /// every updated MPD.
     ///
     /// # Errors
-    /// [`Error::InvalidInput`] if the durations are not positive/finite, or the
-    /// chunk duration exceeds the segment duration (no LL benefit / negative ATO).
+    /// [`Error::InvalidInput`] if either duration is zero, or the chunk
+    /// duration exceeds the segment duration (no LL benefit / negative ATO).
     pub fn new(
-        segment_duration_secs: f64,
-        chunk_duration_secs: f64,
+        segment_duration: Duration,
+        chunk_duration: Duration,
         latency_target: Duration,
         availability_start_time: impl Into<String>,
     ) -> Result<Self> {
-        if !(segment_duration_secs.is_finite() && segment_duration_secs > 0.0) {
-            return Err(Error::InvalidInput(
-                "segment_duration_secs must be positive and finite",
-            ));
+        if segment_duration.is_zero() {
+            return Err(Error::InvalidInput("segment_duration must be positive"));
         }
-        if !(chunk_duration_secs.is_finite() && chunk_duration_secs > 0.0) {
-            return Err(Error::InvalidInput(
-                "chunk_duration_secs must be positive and finite",
-            ));
+        if chunk_duration.is_zero() {
+            return Err(Error::InvalidInput("chunk_duration must be positive"));
         }
-        if chunk_duration_secs > segment_duration_secs {
+        if chunk_duration > segment_duration {
             return Err(Error::InvalidInput(
-                "chunk_duration_secs must not exceed segment_duration_secs",
+                "chunk_duration must not exceed segment_duration",
             ));
         }
         let base = DashPackager {
@@ -111,8 +107,8 @@ impl LlDashPackager {
         };
         Ok(Self {
             base,
-            segment_duration_secs,
-            chunk_duration_secs,
+            segment_duration,
+            chunk_duration,
             latency_target,
             playback_rate: None,
             utc_timing: None,
@@ -136,10 +132,10 @@ impl LlDashPackager {
         self
     }
 
-    /// The `availabilityTimeOffset` in seconds (`segment − chunk`, DASH-IF LL IOP
-    /// §4.3). Always `>= 0` by construction.
-    pub fn availability_time_offset(&self) -> f64 {
-        (self.segment_duration_secs - self.chunk_duration_secs).max(0.0)
+    /// The `availabilityTimeOffset` (`segment − chunk`, DASH-IF LL IOP §4.3).
+    /// Always `>= 0` by construction.
+    pub fn availability_time_offset(&self) -> Duration {
+        self.segment_duration.saturating_sub(self.chunk_duration)
     }
 }
 
@@ -166,7 +162,7 @@ impl LlDashPackager {
     /// `ServiceDescription` (and the optional `UTCTiming`) and the two LL
     /// availability attributes on every `SegmentTemplate`.
     fn apply_ll(&self, mpd: &mut Mpd) {
-        let ato = round_millis(self.availability_time_offset());
+        let ato = round_millis(self.availability_time_offset().as_secs_f64());
         for template in mpd
             .periods
             .iter_mut()
@@ -243,7 +239,7 @@ mod tests {
     #[test]
     fn apply_ll_sets_the_availability_fields_on_every_template() {
         let packager =
-            LlDashPackager::new(4.0, 1.0, Duration::from_secs(3), "2026-01-01T00:00:00Z").unwrap();
+            LlDashPackager::new(Duration::from_secs(4), Duration::from_secs(1), Duration::from_secs(3), "2026-01-01T00:00:00Z").unwrap();
         let mut mpd = mpd_with_one_template();
         packager.apply_ll(&mut mpd);
         let template = mpd.periods[0].adaptation_sets[0].representations[0]
@@ -264,7 +260,7 @@ mod tests {
     #[test]
     fn apply_ll_adds_utc_timing_and_playback_rate_when_configured() {
         let packager =
-            LlDashPackager::new(4.0, 1.0, Duration::from_secs(3), "2026-01-01T00:00:00Z")
+            LlDashPackager::new(Duration::from_secs(4), Duration::from_secs(1), Duration::from_secs(3), "2026-01-01T00:00:00Z")
                 .unwrap()
                 .with_playback_rate(0.96, 1.04)
                 .with_utc_timing(UTCTIMING_DIRECT_2014, "2026-01-01T00:00:00Z");

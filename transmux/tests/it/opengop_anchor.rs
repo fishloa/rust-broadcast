@@ -21,6 +21,7 @@
 //! actually cross-checks the implementation rather than exercising the same
 //! code path twice.
 
+use core::time::Duration;
 use std::path::PathBuf;
 
 use transmux::{CodecConfig, MovieFragmentBox, Segmenter, TsDemux};
@@ -263,7 +264,7 @@ fn open_gop_gulli_fixture_anchors_and_segments() {
 
     // Segment the demuxed track: a target duration far below the real ~2.3 s
     // GOP spacing forces a cut on every subsequent RAP.
-    let mut seg = Segmenter::new(vec![video.spec.clone()], video.spec.timescale, 0.05)
+    let mut seg = Segmenter::new(vec![video.spec.clone()], video.spec.timescale, Duration::from_millis(50))
         .expect("segmenter construction");
     let init = seg.init_segment().expect("init segment");
     assert!(!init.is_empty());

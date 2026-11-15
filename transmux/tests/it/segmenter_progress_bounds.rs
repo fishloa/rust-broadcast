@@ -27,6 +27,7 @@
 //! that the pre-fix behaviour (no output at all / unbounded growth /
 //! everything in segment 0) trips them.
 
+use core::time::Duration;
 use crate::hub_fixtures::{dummy_avc_config, dummy_esds};
 use transmux::TrackId;
 
@@ -197,7 +198,7 @@ const C1_CUTS_BEFORE_FLUSH: usize = 3;
 
 #[test]
 fn c1_zero_duration_anchor_still_cuts_segments_in_cmaf_segmenter() {
-    let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0).expect("construct");
+    let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1)).expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
         seg.push(TrackId::new(1), s).expect("push");
     }
@@ -218,7 +219,7 @@ fn c1_zero_duration_anchor_tfdt_advances_across_segments() {
     // The same stall also pinned every segment's `tfdt` at 0, because
     // `base_decode` was a plain duration sum. Each segment must open later on
     // the media timeline than the one before it.
-    let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0).expect("construct");
+    let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1)).expect("construct");
     let mut bases = Vec::new();
     for s in zero_duration_stream(C1_FRAMES) {
         seg.push(TrackId::new(1), s).expect("push");
@@ -243,7 +244,7 @@ fn c1_zero_duration_anchor_tfdt_advances_across_segments() {
 #[test]
 fn c1_zero_duration_anchor_still_cuts_segments_in_ll_dash() {
     // chunk_samples = 10 so chunking is exercised alongside the segment cuts.
-    let mut seg = LlSegmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0, 10).expect("construct");
+    let mut seg = LlSegmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1), 10).expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
         seg.push(TrackId::new(1), s).expect("push");
     }
@@ -264,7 +265,7 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_ll_dash() {
 #[test]
 fn c1_zero_duration_anchor_still_cuts_parts_and_segments_in_ll_hls() {
     // 1 s segments, 250 ms parts.
-    let mut seg = LlHlsSegmenter::with_part_target(vec![avc_track(1)], TS_TIMESCALE, 1.0, 250)
+    let mut seg = LlHlsSegmenter::with_part_target(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1), Duration::from_millis(250))
         .expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
         seg.push(TrackId::new(1), s).expect("push");
@@ -302,7 +303,7 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_streaming_ts_hls() {
         "before the fix this was 1 (the whole stream flushed as one segment)"
     );
     for c in &cuts {
-        assert!(c.duration > 0.0, "every cut segment must have a duration");
+        assert!(!c.duration.is_zero(), "every cut segment must have a duration");
         assert_eq!(c.bytes.len() % 188, 0, "whole TS packets");
     }
 }
@@ -315,21 +316,21 @@ fn section_only_track_set_is_rejected_by_every_segmenter() {
 
     assert!(
         matches!(
-            Segmenter::new(tracks(), TS_TIMESCALE, 1.0),
+            Segmenter::new(tracks(), TS_TIMESCALE, Duration::from_secs(1)),
             Err(transmux::error::Error::InvalidInput(..))
         ),
         "CMAF Segmenter must refuse a track set with no anchor-capable track"
     );
     assert!(
         matches!(
-            LlSegmenter::new(tracks(), TS_TIMESCALE, 1.0, 1),
+            LlSegmenter::new(tracks(), TS_TIMESCALE, Duration::from_secs(1), 1),
             Err(transmux::error::Error::InvalidInput(..))
         ),
         "LL-DASH LlSegmenter must refuse it too"
     );
     assert!(
         matches!(
-            LlHlsSegmenter::with_part_target(tracks(), TS_TIMESCALE, 1.0, 250),
+            LlHlsSegmenter::with_part_target(tracks(), TS_TIMESCALE, Duration::from_secs(1), Duration::from_millis(250)),
             Err(transmux::error::Error::InvalidInput(..))
         ),
         "LL-HLS LlHlsSegmenter must refuse it too"
@@ -385,7 +386,7 @@ where
 #[test]
 fn c2_infinite_gop_is_bounded_in_cmaf_segmenter() {
     let samples = infinite_gop_stream();
-    let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0).expect("construct");
+    let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1)).expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
         s.push(TrackId::new(1), samples[i].clone())
     });
@@ -419,7 +420,7 @@ fn c2_infinite_gop_is_bounded_in_ll_dash() {
     let mut seg = LlSegmenter::new(
         vec![avc_track(1)],
         TS_TIMESCALE,
-        1.0,
+        Duration::from_secs(1),
         MAX_PENDING_SAMPLES_PER_TRACK * 2,
     )
     .expect("construct");
@@ -433,7 +434,7 @@ fn c2_infinite_gop_is_bounded_in_ll_dash() {
 #[test]
 fn c2_infinite_gop_is_bounded_in_ll_hls() {
     let samples = infinite_gop_stream();
-    let mut seg = LlHlsSegmenter::with_part_target(vec![avc_track(1)], TS_TIMESCALE, 1.0, 250)
+    let mut seg = LlHlsSegmenter::with_part_target(vec![avc_track(1)], TS_TIMESCALE, Duration::from_secs(1), Duration::from_millis(250))
         .expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
         s.push(TrackId::new(1), samples[i].clone())
@@ -482,7 +483,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
 
     // 1 s segments, 250 ms parts → ~7.5 video frames per part, so parts land
     // mid-GOP and their independence flag is meaningful.
-    let mut seg = LlHlsSegmenter::with_part_target(tracks, TS_TIMESCALE, 1.0, 250)
+    let mut seg = LlHlsSegmenter::with_part_target(tracks, TS_TIMESCALE, Duration::from_secs(1), Duration::from_millis(250))
         .expect("construct with an HEVC anchor");
 
     // Two 1-second GOPs of video, IRAP only at the head of each.
@@ -530,7 +531,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
             ),
         ],
         TS_TIMESCALE,
-        1.0,
+        Duration::from_secs(1),
         4,
     )
     .expect("construct");

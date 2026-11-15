@@ -27,6 +27,7 @@
 //! chain with non-exact-dividing rescales, or an untimed section-carried
 //! track — each needs values chosen to make the property observable.
 
+use core::time::Duration;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
@@ -347,7 +348,7 @@ fn concat_muxed_tfdts_are_monotonic_across_join() {
 
     // Segment at ~0.1s (3 samples/GOP × 3000/90000 ≈ 0.1s) so several segments
     // straddle the join, anchored at the joined track's start_decode_time.
-    let mut seg = Segmenter::new(vec![joined.spec.clone()], timescale(1000), 0.1).unwrap();
+    let mut seg = Segmenter::new(vec![joined.spec.clone()], timescale(1000), Duration::from_millis(100)).unwrap();
     // The segmenter counts from 0; offset every emitted tfdt by the anchor.
     let anchor = joined.start_decode_time;
     for s in &joined.samples {
@@ -503,7 +504,7 @@ fn discontinuity_points_drive_segmenter() {
     // just before pushing the sample at index `(s + 1) * GOP` (the flush handles
     // the trailing segment). Map each join sample index → the segment it opens.
     const GOP: usize = 3;
-    let mut seg = Segmenter::new(vec![joined.spec.clone()], timescale(1000), 0.1).unwrap();
+    let mut seg = Segmenter::new(vec![joined.spec.clone()], timescale(1000), Duration::from_millis(100)).unwrap();
     let mut expected_disc_segments: Vec<usize> = disc_indices.iter().map(|i| i / GOP).collect();
     expected_disc_segments.sort_unstable();
     for (i, s) in joined.samples.iter().enumerate() {
