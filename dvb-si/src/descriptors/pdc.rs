@@ -8,6 +8,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for PDC_descriptor.
@@ -25,17 +26,21 @@ const RESERVED_MASK: u8 = 0x0F;
 /// Spec default of `reserved_future_use`(4): all ones (EN 300 468
 /// V1.4.1-V1.20.1 Table 84; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`
 /// §6.1, class A: stable in every edition).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x0F;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved_future_use` field (4 bits).
+const RESERVED_BITS: u32 = 4;
 
 /// PDC Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct PdcDescriptor {
-    /// `reserved_future_use`(4) ahead of the PIL (4 bits, right-aligned).
-    /// Captured on parse and re-emitted verbatim; [`PdcDescriptor::new`]
-    /// defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    /// `reserved_future_use`(4) ahead of the PIL (4 bits). Captured on parse and
+    /// re-emitted verbatim; [`PdcDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// 20-bit programme_identification_label (day/month/hour/minute packed).
     pub programme_identification_label: u32,
 }
@@ -114,7 +119,9 @@ impl<'a> Parse<'a> for PdcDescriptor {
         }
         let raw = (u32::from(body[0]) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
         Ok(Self {
-            reserved_future_use: ((raw >> RESERVED_SHIFT) as u8) & RESERVED_MASK,
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                ((raw >> RESERVED_SHIFT) as u8) & RESERVED_MASK,
+            )),
             programme_identification_label: raw & PIL_MASK,
         })
     }
@@ -137,11 +144,7 @@ impl Serialize for PdcDescriptor {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         // reserved_future_use(4) preserved from parse (default 1111).
-        let raw = (u32::from(broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_MASK,
-            "reserved_future_use",
-        )?) << RESERVED_SHIFT)
+        let raw = (u32::from(self.reserved_future_use.get() as u8) << RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.programme_identification_label,
                 PIL_MASK,
@@ -178,7 +181,7 @@ mod tests {
         let bytes = [TAG, 3, 0xFA, 0xBC, 0xDE];
         let d = PdcDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.programme_identification_label, 0x0A_BCDE);
-        assert_eq!(d.reserved_future_use, 0x0F);
+        assert_eq!(d.reserved_future_use, ReservedOnes::FILL);
     }
 
     /// All 16 reserved nibbles re-serialize byte-identically.
@@ -187,7 +190,7 @@ mod tests {
         for r in 0u8..=0x0F {
             let bytes = [TAG, 3, (r << 4) | 0x0A, 0xBC, 0xDE];
             let d = PdcDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_future_use, r);
+            assert_eq!(d.reserved_future_use, ReservedOnes::from_bits(u64::from(r)));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);
@@ -254,5 +257,19 @@ mod tests {
             d.serialize_into(&mut buf).unwrap_err(),
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
+    }
+
+    /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the 20-bit PIL below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_four_bits() {
+        let d = PdcDescriptor {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            programme_identification_label: 1,
+        };
+        assert_eq!(d.reserved_future_use.get(), 0x0F);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 3, 0xF0, 0x00, 0x01]);
     }
 }
