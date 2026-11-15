@@ -22,6 +22,7 @@ mod flute;
 mod lct;
 mod lct_ext;
 mod norm;
+mod tsi;
 
 pub use alc::{
     AlcPacket, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FTI as ALC_HET_EXT_FTI, PSI_SPI,
@@ -38,6 +39,7 @@ pub use lct_ext::{
     ExtTime, HET_EXT_AUTH as LCT_HET_EXT_AUTH, HET_EXT_NOP, HET_EXT_TIME, LctExtType, USE_ERT,
     USE_SCT_HIGH, USE_SCT_LOW, USE_SLC,
 };
+pub use tsi::{ID_MAX_LEN, Toi, Tsi};
 pub use norm::{
     COMMON_HEADER_LEN, FEEDBACK_FIXED_LEN, HET_EXT_AUTH as NORM_HET_EXT_AUTH, HET_EXT_CC,
     HET_EXT_FTI as NORM_HET_EXT_FTI, HET_EXT_RATE, NORM_FLAG_EXPLICIT, NORM_FLAG_FILE,

@@ -39,10 +39,10 @@ Use it to parse or build LCT/ALC packets, FLUTE extension headers and NORM messa
 ## Quick start
 
 ```rust
-use rmt_flute::{LctHeader, LCT_VERSION};
+use rmt_flute::{LctHeader, Toi, Tsi, LCT_VERSION};
 
 let cci = [0u8; 4]; // C = 0
-let tsi = [0u8; 4]; // S = 1, H = 0
+let tsi = Tsi::new(0, 4).unwrap(); // S = 1, H = 0
 let hdr = LctHeader {
     reserved: 0,
     version: LCT_VERSION,
@@ -51,8 +51,8 @@ let hdr = LctHeader {
     close_object: false,
     codepoint: 0,
     cci: &cci,
-    tsi: &tsi,
-    toi: &[],
+    tsi,
+    toi: Toi::new(0, 0).unwrap(),
     extensions: vec![],
 };
 let mut buf = vec![0u8; hdr.serialized_len()];

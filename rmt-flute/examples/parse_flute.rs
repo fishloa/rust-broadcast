@@ -38,8 +38,12 @@ fn main() {
     );
     println!("HDR_LEN: {} words", pkt.lct.hdr_len());
     println!("CCI: {:02X?}", pkt.lct.cci);
-    println!("TSI: {:02X?}", pkt.lct.tsi);
-    println!("TOI: {:02X?}  (0 => FDT Instance)", pkt.lct.toi);
+    println!("TSI: {} in {} bytes", pkt.lct.tsi.value(), pkt.lct.tsi.len());
+    println!(
+        "TOI: {} in {} bytes  (0 => FDT Instance)",
+        pkt.lct.toi.value(),
+        pkt.lct.toi.len()
+    );
 
     for ext in &pkt.lct.extensions {
         if ext.het == HET_EXT_FDT {

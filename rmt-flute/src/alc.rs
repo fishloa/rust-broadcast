@@ -179,11 +179,12 @@ impl broadcast_common::Serialize for FecPayloadId128 {
 mod tests {
     use super::*;
     use crate::lct::{LCT_VERSION, LctHeader};
+    use crate::tsi::{Toi, Tsi};
     use alloc::vec;
 
-    fn lct_with_tsi() -> ([u8; 4], [u8; 4]) {
+    fn lct_with_tsi() -> ([u8; 4], Tsi) {
         // CCI (4) + TSI (4, S=1) so the ALC TSI-non-zero rule holds.
-        ([0u8; 4], [0x00, 0x00, 0x00, 0x07])
+        ([0u8; 4], Tsi::new(7, 4).unwrap())
     }
 
     #[test]
@@ -197,8 +198,8 @@ mod tests {
             close_object: false,
             codepoint: 0x80,
             cci: &cci,
-            tsi: &tsi,
-            toi: &[],
+            tsi,
+            toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
         let fpid = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02];
@@ -227,8 +228,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &[],
+            tsi,
+            toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
         let pkt = AlcPacket::new(lct, &[], &[]);
@@ -265,8 +266,8 @@ mod tests {
                 close_object: false,
                 codepoint: 0,
                 cci: &cci,
-                tsi: &tsi,
-                toi: &[],
+                tsi,
+                toi: Toi::new(0, 0).unwrap(),
                 extensions: vec![],
             };
             let pkt = AlcPacket::new(lct, &[], p);

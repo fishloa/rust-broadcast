@@ -7,15 +7,15 @@
 /// cargo run -p rmt-flute --example build_lct
 /// ```
 use rmt_flute::{
-    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader,
+    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader, Toi, Tsi,
 };
 
 fn main() {
     // TOI = 0 (FDT Instance), so the TOI field is present and zero (O=0, H=1
     // gives a 2-byte TOI; we use O=1 here for a clean 4-byte zero TOI).
     let cci = [0u8, 0, 0, 1];
-    let tsi = [0u8, 0, 0, 0x2A]; // S=1, H=0 — non-zero TSI (required by ALC)
-    let toi = [0u8, 0, 0, 0]; // O=1, H=0 — TOI = 0 (FDT Instance)
+    let tsi = Tsi::new(0x2A, 4).unwrap(); // S=1, H=0 — non-zero TSI (required by ALC)
+    let toi = Toi::new(0, 4).unwrap(); // O=1, H=0 — TOI = 0 (FDT Instance)
 
     // EXT_FDT (HET 192, fixed): FLUTE v2, FDT Instance ID 5.
     let ext_fdt = ExtFdt {
@@ -33,8 +33,8 @@ fn main() {
         close_object: false,
         codepoint: 0, // Compact No-Code FEC (Encoding ID 0)
         cci: &cci,
-        tsi: &tsi,
-        toi: &toi,
+        tsi,
+        toi,
         extensions: vec![ext],
     };
 
@@ -66,7 +66,11 @@ fn main() {
         pkt.lct.h_flag()
     );
     println!("HDR_LEN: {} words", pkt.lct.hdr_len());
-    println!("TOI bytes: {:02X?} (0 => FDT Instance)", pkt.lct.toi);
+    println!(
+        "TOI: {} (0 => FDT Instance) in {} bytes",
+        pkt.lct.toi.value(),
+        pkt.lct.toi.len()
+    );
     println!("EXT_FDT instance_id: {}", ext_fdt.instance_id);
     println!("FEC Payload ID: {:02X?}", pkt.fec_payload_id);
     println!("payload (XML, opaque): {} bytes", pkt.payload.len());
