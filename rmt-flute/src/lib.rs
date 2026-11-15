@@ -19,10 +19,10 @@ mod error;
 mod ext;
 mod fec;
 mod flute;
+mod id;
 mod lct;
 mod lct_ext;
 mod norm;
-mod tsi;
 
 pub use alc::{
     AlcPacket, FEC_PAYLOAD_ID_128_LEN, FecPayloadId128, HET_EXT_FTI as ALC_HET_EXT_FTI, PSI_SPI,
@@ -34,6 +34,7 @@ pub use flute::{
     CencAlgorithm, ExtCenc, ExtFdt, FDT_INSTANCE_ID_MAX, FLUTE_VERSION, HET_EXT_CENC, HET_EXT_FDT,
     TOI_FDT,
 };
+pub use id::{FecPayloadId, ID_MAX_LEN, Toi, Tsi};
 pub use lct::{FIXED_HEADER_LEN, LCT_VERSION, LctHeader};
 pub use lct_ext::{
     ExtTime, HET_EXT_AUTH as LCT_HET_EXT_AUTH, HET_EXT_NOP, HET_EXT_TIME, LctExtType, USE_ERT,
@@ -47,4 +48,3 @@ pub use norm::{
     NormCommonHeader, NormData, NormFeedback, NormInfo, NormMessageType, SENDER_WORD_LEN,
     SenderWord,
 };
-pub use tsi::{ID_MAX_LEN, Toi, Tsi};

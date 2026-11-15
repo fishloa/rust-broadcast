@@ -6,15 +6,16 @@
 //! ⚠ The concrete FEC Payload ID bit layout is **not defined by RFC 5775** — it
 //! depends on the FEC Scheme / FEC Encoding ID in use (RFC 5052 and the FEC
 //! Scheme document). This crate therefore treats the FEC Payload ID as opaque
-//! bytes in [`AlcPacket::fec_payload_id`]; the caller, knowing the FEC scheme,
-//! slices it. One concrete layout (Small Block Systematic, `fec_id` = 129) is
-//! provided as [`FecPayloadId128`] for convenience.
+//! bytes in [`FecPayloadId`]; the caller, knowing the FEC scheme, decodes it.
+//! One concrete layout (Small Block Systematic, `fec_id` = 129) is provided as
+//! [`FecPayloadId128`] for convenience.
 //!
 //! A *data-less* ALC packet (RFC 5775 §4.1) carries the LCT header only — no FEC
 //! Payload ID and no payload; that maps to an [`AlcPacket`] with an empty
 //! `fec_payload_id` and empty `payload`.
 
 use crate::error::Result;
+use crate::id::FecPayloadId;
 use crate::lct::LctHeader;
 use broadcast_common::len::{need_in, need_out};
 
@@ -33,22 +34,22 @@ pub const PSI_SPI: u8 = 0b10;
 /// payload regions; the LCT header is fully typed and re-serialized from its
 /// fields. `fec_payload_id_len` must be supplied to [`AlcPacket::parse`]
 /// because RFC 5775 does not define the FEC Payload ID size (it is FEC-scheme
-/// dependent).
+/// dependent); the resulting [`FecPayloadId`] then carries its own length.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct AlcPacket<'a> {
     /// The LCT header (RFC 5651).
     pub lct: LctHeader<'a>,
-    /// The opaque FEC Payload ID bytes (FEC-scheme dependent; may be empty for
-    /// a data-less control packet).
-    pub fec_payload_id: &'a [u8],
+    /// The opaque FEC Payload ID (FEC-scheme dependent; empty for a data-less
+    /// control packet).
+    pub fec_payload_id: FecPayloadId,
     /// The encoding-symbol payload bytes (may be empty for a data-less packet).
     pub payload: &'a [u8],
 }
 
 impl<'a> AlcPacket<'a> {
     /// Construct an ALC packet from its parts.
-    pub fn new(lct: LctHeader<'a>, fec_payload_id: &'a [u8], payload: &'a [u8]) -> Self {
+    pub fn new(lct: LctHeader<'a>, fec_payload_id: FecPayloadId, payload: &'a [u8]) -> Self {
         AlcPacket {
             lct,
             fec_payload_id,
@@ -72,8 +73,7 @@ impl<'a> AlcPacket<'a> {
     pub fn parse(data: &'a [u8], fec_payload_id_len: usize) -> Result<Self> {
         let (lct, used) = LctHeader::parse(data)?;
         let rest = &data[used..];
-        need_in(rest, fec_payload_id_len, "ALC FEC Payload ID")?;
-        let fec_payload_id = &rest[..fec_payload_id_len];
+        let fec_payload_id = FecPayloadId::parse(rest, fec_payload_id_len)?;
         let payload = &rest[fec_payload_id_len..];
         Ok(AlcPacket {
             lct,
@@ -87,8 +87,7 @@ impl<'a> AlcPacket<'a> {
         let total = self.serialized_len();
         need_out(out, total)?;
         let mut off = self.lct.serialize_into(out)?;
-        out[off..off + self.fec_payload_id.len()].copy_from_slice(self.fec_payload_id);
-        off += self.fec_payload_id.len();
+        off += self.fec_payload_id.serialize_into(&mut out[off..])?;
         out[off..off + self.payload.len()].copy_from_slice(self.payload);
         off += self.payload.len();
         Ok(off)
@@ -178,8 +177,8 @@ impl broadcast_common::Serialize for FecPayloadId128 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::id::{FecPayloadId, Toi, Tsi};
     use crate::lct::{LCT_VERSION, LctHeader};
-    use crate::tsi::{Toi, Tsi};
     use alloc::vec;
 
     fn lct_with_tsi() -> ([u8; 4], Tsi) {
@@ -202,9 +201,9 @@ mod tests {
             toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
-        let fpid = [0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02];
+        let fpid = FecPayloadId::new(&[0x00u8, 0x00, 0x00, 0x01, 0x00, 0x05, 0x00, 0x02]);
         let payload = [0xDEu8, 0xAD, 0xBE, 0xEF];
-        let pkt = AlcPacket::new(lct, &fpid, &payload);
+        let pkt = AlcPacket::new(lct, fpid.clone(), &payload);
         assert!(pkt.spi());
 
         let mut out = vec![0u8; pkt.serialized_len()];
@@ -213,7 +212,8 @@ mod tests {
 
         let re = AlcPacket::parse(&out, FEC_PAYLOAD_ID_128_LEN).unwrap();
         assert_eq!(re, pkt);
-        assert_eq!(re.fec_payload_id, &fpid);
+        assert_eq!(re.fec_payload_id, fpid);
+        assert_eq!(re.fec_payload_id.len(), FEC_PAYLOAD_ID_128_LEN);
         assert_eq!(re.payload, &payload);
     }
 
@@ -232,13 +232,38 @@ mod tests {
             toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
-        let pkt = AlcPacket::new(lct, &[], &[]);
+        let pkt = AlcPacket::new(lct, FecPayloadId::new(&[]), &[]);
         let mut out = vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut out).unwrap();
         let re = AlcPacket::parse(&out, 0).unwrap();
         assert_eq!(re, pkt);
         assert!(re.fec_payload_id.is_empty());
         assert!(re.payload.is_empty());
+    }
+
+    /// A data-less packet is the one case where the FEC Payload ID is empty, and
+    /// serializing that empty id writes nothing: the packet is exactly the LCT
+    /// header. A stray byte would desynchronise every following packet.
+    #[test]
+    fn an_empty_fec_payload_id_writes_no_bytes() {
+        let (cci, tsi) = lct_with_tsi();
+        let lct = LctHeader {
+            reserved: 0,
+            version: LCT_VERSION,
+            psi: 0,
+            close_session: true,
+            close_object: false,
+            codepoint: 0,
+            cci: &cci,
+            tsi,
+            toi: Toi::new(0, 0).unwrap(),
+            extensions: vec![],
+        };
+        let hdr_len = lct.serialized_len();
+        let pkt = AlcPacket::new(lct, FecPayloadId::new(&[]), &[]);
+        let mut out = vec![0xFFu8; hdr_len + 4];
+        assert_eq!(pkt.serialize_into(&mut out).unwrap(), hdr_len);
+        assert_eq!(&out[hdr_len..], &[0xFF; 4]);
     }
 
     #[test]
@@ -270,7 +295,7 @@ mod tests {
                 toi: Toi::new(0, 0).unwrap(),
                 extensions: vec![],
             };
-            let pkt = AlcPacket::new(lct, &[], p);
+            let pkt = AlcPacket::new(lct, FecPayloadId::new(&[]), p);
             let mut out = vec![0u8; pkt.serialized_len()];
             pkt.serialize_into(&mut out).unwrap();
             out

@@ -22,7 +22,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
-use crate::tsi::{Toi, Tsi};
+use crate::id::{Toi, Tsi};
 
 /// LCT version number for RFC 5651.
 pub const LCT_VERSION: u8 = 1;

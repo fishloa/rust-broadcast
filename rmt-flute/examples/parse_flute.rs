@@ -61,7 +61,7 @@ fn main() {
         }
     }
 
-    let fpid = FecPayloadId128::parse(pkt.fec_payload_id).unwrap();
+    let fpid = FecPayloadId128::parse(pkt.fec_payload_id.as_bytes()).unwrap();
     println!(
         "FEC Payload ID: sbn={} sbl={} esi={}",
         fpid.source_block_number, fpid.source_block_length, fpid.encoding_symbol_id

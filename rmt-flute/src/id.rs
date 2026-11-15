@@ -1,4 +1,7 @@
-//! TSI and TOI — the LCT identifier fields (RFC 5651 §5.1).
+//! The LCT identifier fields (RFC 5651 §5.1) and the FEC Payload ID (RFC 5775
+//! §4.1, RFC 5740 §4.2.1).
+//!
+//! ## TSI and TOI
 //!
 //! TSI and TOI are numeric identifiers, but their wire byte-widths are driven
 //! by the `S`/`O`/`H` flags: the TSI is `32*S + 16*H` bits and the TOI is
@@ -9,6 +12,7 @@
 //! used, so the flags are a property of the value rather than something the
 //! caller retypes as bytes.
 
+use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
@@ -168,9 +172,78 @@ impl Toi {
     }
 }
 
+/// A FEC Payload ID: the FEC-scheme-defined coding-block and symbol
+/// identifier that follows the transport header (RFC 5775 §4.1 for ALC, RFC
+/// 5740 §4.2.1 for NORM_DATA; the FLUSH/SQUELCH commands carry one too).
+///
+/// Its bit layout depends on the FEC Encoding ID (RFC 5052 §3/§8), so the
+/// bytes stay opaque while their size does not: the value owns its bytes and
+/// reports its own length, so no caller passes a separate
+/// `fec_payload_id_len` and none can disagree with what is written.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct FecPayloadId {
+    bytes: Vec<u8>,
+}
+
+impl FecPayloadId {
+    /// A FEC Payload ID of `bytes`.
+    pub fn new(bytes: &[u8]) -> Self {
+        FecPayloadId {
+            bytes: bytes.to_vec(),
+        }
+    }
+
+    /// The FEC-scheme-defined bytes.
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    /// The field width in bytes on the wire.
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// `true` for a packet that carries no FEC Payload ID (a data-less ALC
+    /// packet, RFC 5775 §4.1).
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    /// Parse a FEC Payload ID from exactly `len` bytes of `data`.
+    pub fn parse(data: &[u8], len: usize) -> Result<Self> {
+        need_in(data, len, "FEC Payload ID")?;
+        Ok(FecPayloadId::new(&data[..len]))
+    }
+
+    /// Write the FEC Payload ID into `out`. Returns bytes written.
+    pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
+        need_out(out, self.len())?;
+        out[..self.len()].copy_from_slice(&self.bytes);
+        Ok(self.len())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The FEC Payload ID owns its bytes and reports their length, so parse and
+    /// serialize agree on the width without a caller-supplied argument.
+    #[test]
+    fn a_fec_payload_id_carries_its_own_width() {
+        let id = FecPayloadId::new(&[0x02, 0x03]);
+        assert_eq!(id.len(), 2);
+        let mut out = [0xFFu8; 4];
+        assert_eq!(id.serialize_into(&mut out).expect("4-byte buffer"), 2);
+        assert_eq!(out, [0x02, 0x03, 0xFF, 0xFF]);
+        assert_eq!(
+            FecPayloadId::parse(&[0x02, 0x03], 2).expect("two bytes"),
+            id
+        );
+        assert!(FecPayloadId::parse(&[0x02], 2).is_err());
+        assert!(FecPayloadId::new(&[]).is_empty());
+    }
 
     #[test]
     fn a_value_wider_than_its_field_is_refused() {

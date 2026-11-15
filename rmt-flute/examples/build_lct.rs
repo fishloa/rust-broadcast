@@ -7,8 +7,8 @@
 /// cargo run -p rmt-flute --example build_lct
 /// ```
 use rmt_flute::{
-    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId128, HET_EXT_FDT, LCT_VERSION, LctHeader, Toi,
-    Tsi,
+    AlcPacket, ExtFdt, FLUTE_VERSION, FecPayloadId, FecPayloadId128, HET_EXT_FDT, LCT_VERSION,
+    LctHeader, Toi, Tsi,
 };
 
 fn main() {
@@ -52,7 +52,7 @@ fn main() {
     // itself is out of scope of this crate — it rides as opaque payload.
     let xml = br#"<?xml version="1.0"?><FDT-Instance Expires="0"/>"#;
 
-    let pkt = AlcPacket::new(lct, &fpid_bytes, xml);
+    let pkt = AlcPacket::new(lct, FecPayloadId::new(&fpid_bytes), xml);
 
     let mut bytes = vec![0u8; pkt.serialized_len()];
     let n = pkt.serialize_into(&mut bytes).unwrap();
@@ -73,7 +73,7 @@ fn main() {
         pkt.lct.toi.len()
     );
     println!("EXT_FDT instance_id: {}", ext_fdt.instance_id);
-    println!("FEC Payload ID: {:02X?}", pkt.fec_payload_id);
+    println!("FEC Payload ID: {:02X?}", pkt.fec_payload_id.as_bytes());
     println!("payload (XML, opaque): {} bytes", pkt.payload.len());
     print!("wire bytes:");
     for b in &bytes {

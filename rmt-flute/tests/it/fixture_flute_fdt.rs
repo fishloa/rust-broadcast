@@ -61,7 +61,7 @@ fn parses_fec_payload_id_and_opaque_xml() {
     let data = fixture();
     let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
 
-    let fpid = FecPayloadId128::parse(pkt.fec_payload_id).unwrap();
+    let fpid = FecPayloadId128::parse(pkt.fec_payload_id.as_bytes()).unwrap();
     assert_eq!(pkt.fec_payload_id.len(), FEC_PAYLOAD_ID_128_LEN);
     assert_eq!(fpid.source_block_number, 0);
     assert_eq!(fpid.source_block_length, 1);
