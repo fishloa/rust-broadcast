@@ -14,9 +14,9 @@ fn main() {
     let pkt = RtpPacket::parse(&bytes).expect("parse RTP fixed header");
     println!("marker:          {}", pkt.marker);
     println!("payload_type:    {}", pkt.payload_type);
-    println!("sequence_number: {}", pkt.sequence_number);
+    println!("sequence_number: {}", pkt.sequence_number.get());
     println!("timestamp:       {}", pkt.timestamp);
-    println!("ssrc:            {:#010x}", pkt.ssrc);
+    println!("ssrc:            {}", pkt.ssrc);
     println!("csrc count:      {}", pkt.csrc_count());
     println!("extension:       {}", pkt.extension.is_some());
     println!("padding:         {}", pkt.padding.is_some());

@@ -740,9 +740,9 @@ mod tests {
         let rtp = RtpPacket {
             marker: true,
             payload_type: 112, // RFC 8331 §4 worked example
-            sequence_number: 1,
+            sequence_number: rtp_packet::SeqNo::new(1),
             timestamp: ANC_RTP_DEFAULT_CLOCK_RATE,
-            ssrc: 0xCAFE_BABE,
+            ssrc: rtp_packet::Ssrc::new(0xCAFE_BABE),
             csrc: Vec::new(),
             extension: None,
             padding: None,

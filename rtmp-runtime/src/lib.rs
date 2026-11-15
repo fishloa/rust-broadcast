@@ -14,6 +14,7 @@ mod codec;
 pub mod error;
 pub mod flv;
 pub mod handshake;
+pub mod ids;
 #[cfg(feature = "tokio")]
 #[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
 pub mod io;

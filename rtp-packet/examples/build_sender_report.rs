@@ -5,10 +5,11 @@
 
 use broadcast_common::Serialize;
 use rtp_packet::rtcp::{ReportBlock, SenderReport};
+use rtp_packet::{ExtendedSeqNo, Ssrc};
 
 fn main() {
     let sr = SenderReport::new(
-        0x1122_3344,
+        Ssrc::new(0x1122_3344),
         0xE0E1_E2E3,
         0x1020_3040,
         0x0009_0000,
@@ -16,19 +17,19 @@ fn main() {
         999_999,
         vec![
             ReportBlock {
-                ssrc: 0xAAAA_AAAA,
+                ssrc: Ssrc::new(0xAAAA_AAAA),
                 fraction_lost: 12,
                 cumulative_lost: 17,
-                ext_highest_seq: 0x0001_2345,
+                ext_highest_seq: ExtendedSeqNo::new(0x0001_2345),
                 jitter: 500,
                 lsr: 0xAABB_CCDD,
                 dlsr: 0x0000_1000,
             },
             ReportBlock {
-                ssrc: 0xBBBB_BBBB,
+                ssrc: Ssrc::new(0xBBBB_BBBB),
                 fraction_lost: 0,
                 cumulative_lost: -3, // negative: duplicates exceeded losses (§6.4.1)
-                ext_highest_seq: 0x0002_0000,
+                ext_highest_seq: ExtendedSeqNo::new(0x0002_0000),
                 jitter: 750,
                 lsr: 0,
                 dlsr: 0,

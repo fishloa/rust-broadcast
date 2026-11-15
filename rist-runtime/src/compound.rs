@@ -213,8 +213,8 @@ impl ReportPart {
     /// SSRC of the packet sender originating this report.
     pub fn ssrc(&self) -> u32 {
         match self {
-            ReportPart::Sr(sr) => sr.ssrc,
-            ReportPart::Rr(rr) => rr.ssrc,
+            ReportPart::Sr(sr) => sr.ssrc.get(),
+            ReportPart::Rr(rr) => rr.ssrc.get(),
         }
     }
 

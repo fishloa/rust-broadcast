@@ -68,6 +68,7 @@ use crate::amf0::{Amf0Value, Command};
 use crate::chunk::{ChunkAssembler, ChunkWriter, DEFAULT_MAX_IN_PROGRESS_BYTES, Message};
 use crate::flv::{FlvTagWriter, unpack_aggregate};
 use crate::handshake::Handshake;
+use crate::ids::{ChunkStreamId, SequenceNumber, Timestamp};
 use crate::message::{ChunkSize, LimitType, MessageTypeId, ProtocolControl, UserControl};
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -475,7 +476,7 @@ impl ServerSession {
         let threshold = u64::from(self.ack_threshold.max(1));
         if self.bytes_received.saturating_sub(self.bytes_acked) >= threshold {
             self.bytes_acked = self.bytes_received;
-            let seq = self.bytes_received as u32;
+            let seq = SequenceNumber::new(self.bytes_received as u32);
             let ack_msg = ProtocolControl::Acknowledgement(seq).to_message();
             out.extend_from_slice(&self.writer.write(&ack_msg)?);
         }
@@ -530,7 +531,12 @@ impl ServerSession {
                 self.handle_command(&command, msg, out, events)
             }
             MessageTypeId::Audio | MessageTypeId::Video | MessageTypeId::DataAmf0 => self
-                .emit_media_if_publishing(msg.message_type_id, msg.timestamp, &msg.payload, events),
+                .emit_media_if_publishing(
+                    msg.message_type_id,
+                    msg.timestamp.millis(),
+                    &msg.payload,
+                    events,
+                ),
             // #1108/RTMP-W6 (remainder): Aggregate(22) used to surface as
             // `Unsupported` — an encoder/relay that bundles media in
             // aggregates (FMS/Wowza-style relays, some hardware encoders)
@@ -566,7 +572,9 @@ impl ServerSession {
                 ack_window_size, ..
             } => self.peer_bandwidth = Some(ack_window_size),
             // #1108/RTMP-W2: was ignored — see `ChunkAssembler::abort`'s doc.
-            ProtocolControl::Abort { chunk_stream_id } => self.assembler.abort(chunk_stream_id),
+            ProtocolControl::Abort { chunk_stream_id } => {
+                self.assembler.abort(ChunkStreamId::new(chunk_stream_id))
+            }
             ProtocolControl::Acknowledgement(_) => {}
         }
     }
@@ -773,7 +781,7 @@ impl ServerSession {
                 });
             }
         };
-        let stream_id = msg.message_stream_id;
+        let stream_id = msg.message_stream_id.get();
 
         if let Some(expected) = &self.config.expected_stream_key
             && !constant_time_eq(expected.as_bytes(), stream_key.as_bytes())
@@ -858,8 +866,8 @@ impl ServerSession {
     /// same `NetConnection`/`NetStream` channel the request arrived on).
     fn command_message(&self, request: &Message, command: &Command) -> Result<Message> {
         Ok(Message {
-            chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
             message_stream_id: request.message_stream_id,
             payload: command.to_body()?,
@@ -908,6 +916,7 @@ mod tests {
     use crate::chunk::MAX_CHUNK_SIZE;
     use crate::flv::{FLV_HEADER_LEN, FLV_PREV_TAG_SIZE_LEN, FLV_TAG_HEADER_LEN, FlvHeader};
     use crate::handshake::{HANDSHAKE_PACKET_LEN, RTMP_VERSION};
+    use crate::ids::MessageStreamId;
     use crate::message::CONTROL_CHUNK_STREAM_ID as CTRL_CSID;
     use broadcast_common::Serialize;
 
@@ -940,10 +949,10 @@ mod tests {
         .to_body()
         .unwrap();
         Message {
-            chunk_stream_id: csid,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(csid),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: stream_id,
+            message_stream_id: MessageStreamId::new(stream_id),
             payload: body,
         }
     }
@@ -988,10 +997,10 @@ mod tests {
         payload: Vec<u8>,
     ) -> Vec<u8> {
         let msg = Message {
-            chunk_stream_id: csid,
-            timestamp,
+            chunk_stream_id: ChunkStreamId::new(csid),
+            timestamp: Timestamp::from_millis(timestamp),
             message_type_id,
-            message_stream_id: stream_id,
+            message_stream_id: MessageStreamId::new(stream_id),
             payload,
         };
         ChunkWriter::new().write(&msg).unwrap()
@@ -1183,10 +1192,10 @@ mod tests {
         let mut amf3_body = vec![0x00]; // AMF3 encoding marker byte
         amf3_body.extend(amf0_body);
         let msg = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf3,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload: amf3_body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
@@ -1220,10 +1229,10 @@ mod tests {
         session.handle_data(&connect_bytes("live")).unwrap();
 
         let msg = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::Aggregate,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload: vec![0xAA; 20], // opaque; not a valid aggregate body
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
@@ -1298,10 +1307,10 @@ mod tests {
             (MessageTypeId::Audio, 1005, &[0xAF, 0x01, 0xDD, 0xEE]),
         ]);
         let msg = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 1000, // == first sub-message ts, so offset is 0
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::from_millis(1000), // == first sub-message ts, so offset is 0
             message_type_id: MessageTypeId::Aggregate,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
@@ -1334,10 +1343,10 @@ mod tests {
             (MessageTypeId::Audio, 60, &[0xAF, 0x01]),
         ]);
         let msg = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 100,
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::from_millis(100),
             message_type_id: MessageTypeId::Aggregate,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
@@ -1367,10 +1376,10 @@ mod tests {
         // now claims 3 data bytes the body no longer has.
         body.truncate(body.len() - 5);
         let msg = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::Aggregate,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
@@ -1390,10 +1399,10 @@ mod tests {
         let back_at = body.len() - 4;
         body[back_at] = 0xFF; // corrupt the back pointer
         let msg = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::Aggregate,
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
             payload: body,
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
@@ -1994,10 +2003,10 @@ mod tests {
         // type id) whose payload is not valid AMF0 (0xFF is not a defined
         // AMF0 marker) — Command::parse must reject this, not panic.
         let bogus = Message {
-            chunk_stream_id: CLIENT_CSID,
-            timestamp: 0,
+            chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload: vec![0xFF, 0xFF, 0xFF, 0xFF],
         };
         let bytes = ChunkWriter::new().write(&bogus).unwrap();
@@ -2092,10 +2101,10 @@ mod tests {
         client_writer.set_chunk_size(new_chunk_size);
         let video_bytes = client_writer
             .write(&Message {
-                chunk_stream_id: 6,
-                timestamp: 0,
+                chunk_stream_id: ChunkStreamId::new(6),
+                timestamp: Timestamp::ZERO,
                 message_type_id: MessageTypeId::Video,
-                message_stream_id: 1,
+                message_stream_id: MessageStreamId::new(1),
                 payload: big_payload.clone(),
             })
             .unwrap();
@@ -2142,9 +2151,9 @@ mod tests {
         let payload = above_ceiling.to_be_bytes().to_vec();
         let announcement = Message {
             chunk_stream_id: CTRL_CSID,
-            timestamp: 0,
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::SetChunkSize,
-            message_stream_id: 0,
+            message_stream_id: MessageStreamId::new(0),
             payload,
         };
         let bytes = ChunkWriter::new().write(&announcement).unwrap();
@@ -2177,10 +2186,10 @@ mod tests {
         combined.extend_from_slice(
             &client_writer
                 .write(&Message {
-                    chunk_stream_id: 6,
-                    timestamp: 0,
+                    chunk_stream_id: ChunkStreamId::new(6),
+                    timestamp: Timestamp::ZERO,
                     message_type_id: MessageTypeId::Video,
-                    message_stream_id: 1,
+                    message_stream_id: MessageStreamId::new(1),
                     payload: payload.clone(),
                 })
                 .unwrap(),
@@ -2203,7 +2212,7 @@ mod tests {
     fn control_chunk_stream_id_constant_matches_message_module() {
         // Sanity: our reply csid choice for command messages must not
         // collide with the reserved control/user-control csid.
-        assert_ne!(COMMAND_CHUNK_STREAM_ID, CTRL_CSID);
+        assert_ne!(COMMAND_CHUNK_STREAM_ID, CTRL_CSID.get());
     }
 
     #[test]

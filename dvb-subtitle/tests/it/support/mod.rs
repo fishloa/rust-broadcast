@@ -7,7 +7,7 @@ use mpeg_pes::{PesAssembler, StreamId};
 
 const PKT: usize = 188;
 const SUBTITLE_PID: u16 = 0x008C;
-const PRIVATE_STREAM_1: StreamId = StreamId(0xBD);
+const PRIVATE_STREAM_1: StreamId = StreamId::new(0xBD);
 const DATA_IDENTIFIER_DVB_SUBTITLE: u8 = 0x20;
 
 /// The `private_stream_1` payload of a reassembled PES unit, or `None` for
@@ -15,7 +15,7 @@ const DATA_IDENTIFIER_DVB_SUBTITLE: u8 = 0x20;
 /// `PES_header_data_length` at offset 8, then the payload (ISO/IEC 13818-1
 /// Table 2-21), read directly because this capture's units are truncated.
 fn subtitle_payload(raw: &[u8]) -> Option<&[u8]> {
-    if raw.get(3) != Some(&PRIVATE_STREAM_1.0) {
+    if raw.get(3) != Some(&PRIVATE_STREAM_1.get()) {
         return None;
     }
     let hdl = usize::from(*raw.get(8)?);

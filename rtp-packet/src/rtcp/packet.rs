@@ -58,6 +58,7 @@ use broadcast_common::len::{need_in, need_out};
 use broadcast_common::{Parse, Serialize};
 
 use super::error::{Error, PaddingCountError, Result};
+use crate::ids::{ExtendedSeqNo, Ssrc};
 
 // ---------------------------------------------------------------------------
 // Named constants (no magic numbers — RFC 3550 §6)
@@ -394,13 +395,13 @@ fn length_words_minus_one(total_len: usize) -> Result<u16> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ReportBlock {
     /// SSRC of the source this block reports on.
-    pub ssrc: u32,
+    pub ssrc: Ssrc,
     /// Fraction of packets lost since the previous report (8.8 fixed-point num).
     pub fraction_lost: u8,
     /// Cumulative number of packets lost — a 24-bit **signed** value.
     pub cumulative_lost: i32,
     /// Extended highest sequence number received.
-    pub ext_highest_seq: u32,
+    pub ext_highest_seq: ExtendedSeqNo,
     /// Interarrival jitter estimate.
     pub jitter: u32,
     /// Last SR timestamp (middle 32 bits of the sender's NTP time), or 0.
@@ -445,14 +446,14 @@ impl<'a> Parse<'a> for ReportBlock {
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         need_in(bytes, REPORT_BLOCK_LEN, "RTCP report block")?;
-        let ssrc = be_u32(bytes, 0, "report block ssrc")?;
+        let ssrc = Ssrc::new(be_u32(bytes, 0, "report block ssrc")?);
         let fraction_lost = bytes[4];
         let cumulative_raw = u32::from_be_bytes([0, bytes[5], bytes[6], bytes[7]]);
         Ok(ReportBlock {
             ssrc,
             fraction_lost,
             cumulative_lost: ReportBlock::decode_cumulative_lost(cumulative_raw),
-            ext_highest_seq: be_u32(bytes, 8, "report block ext seq")?,
+            ext_highest_seq: ExtendedSeqNo::new(be_u32(bytes, 8, "report block ext seq")?),
             jitter: be_u32(bytes, 12, "report block jitter")?,
             lsr: be_u32(bytes, 16, "report block lsr")?,
             dlsr: be_u32(bytes, 20, "report block dlsr")?,
@@ -469,11 +470,11 @@ impl Serialize for ReportBlock {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         need_out(buf, REPORT_BLOCK_LEN)?;
-        buf[0..4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[0..4].copy_from_slice(&self.ssrc.get().to_be_bytes());
         buf[4] = self.fraction_lost;
         let cum = self.encode_cumulative_lost()?.to_be_bytes();
         buf[5..8].copy_from_slice(&cum[1..4]);
-        buf[8..12].copy_from_slice(&self.ext_highest_seq.to_be_bytes());
+        buf[8..12].copy_from_slice(&self.ext_highest_seq.get().to_be_bytes());
         buf[12..16].copy_from_slice(&self.jitter.to_be_bytes());
         buf[16..20].copy_from_slice(&self.lsr.to_be_bytes());
         buf[20..24].copy_from_slice(&self.dlsr.to_be_bytes());
@@ -529,7 +530,7 @@ fn check_report_count(blocks: &[ReportBlock]) -> Result<u8> {
 #[non_exhaustive]
 pub struct SenderReport {
     /// SSRC of the sender originating this report.
-    pub ssrc: u32,
+    pub ssrc: Ssrc,
     /// NTP timestamp, most significant word (integer seconds).
     pub ntp_msw: u32,
     /// NTP timestamp, least significant word (fractional seconds).
@@ -553,7 +554,7 @@ pub struct SenderReport {
 impl SenderReport {
     /// Build an SR with no profile-specific extensions and no padding.
     pub fn new(
-        ssrc: u32,
+        ssrc: Ssrc,
         ntp_msw: u32,
         ntp_lsw: u32,
         rtp_timestamp: u32,
@@ -614,7 +615,7 @@ impl<'a> Parse<'a> for SenderReport {
             "RTCP SR padding",
         )?;
         need_in(body, WORD_LEN + SR_SENDER_INFO_LEN, "RTCP SR sender info")?;
-        let ssrc = be_u32(body, 0, "SR ssrc")?;
+        let ssrc = Ssrc::new(be_u32(body, 0, "SR ssrc")?);
         let ntp_msw = be_u32(body, 4, "SR ntp msw")?;
         let ntp_lsw = be_u32(body, 8, "SR ntp lsw")?;
         let rtp_timestamp = be_u32(body, 12, "SR rtp ts")?;
@@ -662,7 +663,7 @@ impl Serialize for SenderReport {
         hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
-        buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[off..off + 4].copy_from_slice(&self.ssrc.get().to_be_bytes());
         buf[off + 4..off + 8].copy_from_slice(&self.ntp_msw.to_be_bytes());
         buf[off + 8..off + 12].copy_from_slice(&self.ntp_lsw.to_be_bytes());
         buf[off + 12..off + 16].copy_from_slice(&self.rtp_timestamp.to_be_bytes());
@@ -692,7 +693,7 @@ impl Serialize for SenderReport {
 #[non_exhaustive]
 pub struct ReceiverReport {
     /// SSRC of the packet sender originating this report.
-    pub ssrc: u32,
+    pub ssrc: Ssrc,
     /// Reception report blocks (`RC` of them).
     pub report_blocks: Vec<ReportBlock>,
     /// Profile-specific extensions (RFC 3550 §6.4.2): the bytes after the
@@ -705,7 +706,7 @@ pub struct ReceiverReport {
 
 impl ReceiverReport {
     /// Build an RR with no profile-specific extensions and no padding.
-    pub fn new(ssrc: u32, report_blocks: Vec<ReportBlock>) -> Self {
+    pub fn new(ssrc: Ssrc, report_blocks: Vec<ReportBlock>) -> Self {
         ReceiverReport {
             ssrc,
             report_blocks,
@@ -753,7 +754,7 @@ impl<'a> Parse<'a> for ReceiverReport {
             padding.as_ref(),
             "RTCP RR padding",
         )?;
-        let ssrc = be_u32(body, 0, "RR ssrc")?;
+        let ssrc = Ssrc::new(be_u32(body, 0, "RR ssrc")?);
         let report_blocks = parse_report_blocks(&body[WORD_LEN..], hdr.count as usize)?;
         let ext_off = WORD_LEN + report_blocks.len() * REPORT_BLOCK_LEN;
         let profile_extensions = body[ext_off..].to_vec();
@@ -789,7 +790,7 @@ impl Serialize for ReceiverReport {
         hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
-        buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[off..off + 4].copy_from_slice(&self.ssrc.get().to_be_bytes());
         off += WORD_LEN;
         for block in &self.report_blocks {
             block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
@@ -1281,7 +1282,7 @@ pub struct App {
     /// Application subtype (carried in the header's `RC` field, 5 bits).
     pub subtype: u8,
     /// SSRC/CSRC of the source.
-    pub ssrc: u32,
+    pub ssrc: Ssrc,
     /// The 4-byte ASCII application name.
     pub name: [u8; APP_NAME_LEN],
     /// Application-dependent data (must be a multiple of 4 bytes when the
@@ -1326,7 +1327,7 @@ impl<'a> Parse<'a> for App {
             "RTCP APP padding",
         )?;
         need_in(body, WORD_LEN + APP_NAME_LEN, "RTCP APP ssrc+name")?;
-        let ssrc = be_u32(body, 0, "APP ssrc")?;
+        let ssrc = Ssrc::new(be_u32(body, 0, "APP ssrc")?);
         let mut name = [0u8; APP_NAME_LEN];
         name.copy_from_slice(&body[WORD_LEN..WORD_LEN + APP_NAME_LEN]);
         let data = body[WORD_LEN + APP_NAME_LEN..].to_vec();
@@ -1372,7 +1373,7 @@ impl Serialize for App {
         hdr.padding = self.padding.is_some();
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
-        buf[off..off + 4].copy_from_slice(&self.ssrc.to_be_bytes());
+        buf[off..off + 4].copy_from_slice(&self.ssrc.get().to_be_bytes());
         off += WORD_LEN;
         buf[off..off + APP_NAME_LEN].copy_from_slice(&self.name);
         off += APP_NAME_LEN;
@@ -1670,10 +1671,10 @@ mod tests {
 
     fn sample_block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
         ReportBlock {
-            ssrc,
+            ssrc: Ssrc::new(ssrc),
             fraction_lost: 12,
             cumulative_lost: cumulative,
-            ext_highest_seq: 0x0001_2345,
+            ext_highest_seq: ExtendedSeqNo::new(0x0001_2345),
             jitter,
             lsr: 0xAABB_CCDD,
             dlsr: 0x0000_1000,
@@ -1682,7 +1683,7 @@ mod tests {
 
     fn sample_sr() -> SenderReport {
         SenderReport {
-            ssrc: 0x1122_3344,
+            ssrc: Ssrc::new(0x1122_3344),
             ntp_msw: 0xE0E1_E2E3,
             ntp_lsw: 0x1020_3040,
             rtp_timestamp: 0x0009_0000,
@@ -1783,7 +1784,7 @@ mod tests {
         assert_eq!(parsed, sr);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
-        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+        let rr = ReceiverReport::new(Ssrc::new(0x0102_0304), vec![sample_block(1, 2, 3)])
             .with_profile_extensions(ext.clone());
         let bytes = rr.try_to_bytes().unwrap();
         let parsed = ReceiverReport::parse(&bytes).unwrap();
@@ -1791,7 +1792,7 @@ mod tests {
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         // RR with zero blocks and only extensions (count 0).
-        let rr = ReceiverReport::new(9, vec![]).with_profile_extensions(vec![7; 4]);
+        let rr = ReceiverReport::new(Ssrc::new(9), vec![]).with_profile_extensions(vec![7; 4]);
         let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(ReceiverReport::parse(&bytes).unwrap(), rr);
     }
@@ -1807,7 +1808,7 @@ mod tests {
                 ..
             }))
         ));
-        let rr = ReceiverReport::new(1, vec![]).with_profile_extensions(vec![1; 5]);
+        let rr = ReceiverReport::new(Ssrc::new(1), vec![]).with_profile_extensions(vec![1; 5]);
         assert!(matches!(
             rr.serialize_into(&mut buf),
             Err(Error::InvalidValue(..))
@@ -1816,7 +1817,9 @@ mod tests {
         // Parse side: a well-formed packet whose trailing bytes are not a
         // multiple of 4 after padding strip (P=1, 4 trailing bytes with the
         // last = pad count 3 leaves 1 byte).
-        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
+        let mut bytes = ReceiverReport::new(Ssrc::new(1), vec![])
+            .try_to_bytes()
+            .unwrap();
         bytes.extend_from_slice(&[0xAA, 0, 0, 3]);
         bytes[0] |= 0x20; // P bit
         bytes[3] += 1; // length in words
@@ -1832,7 +1835,9 @@ mod tests {
     #[test]
     fn trailing_bytes_after_blocks_are_kept_not_dropped() {
         // RC=0 RR with 4 trailing "garbage" bytes: preserved verbatim.
-        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
+        let mut bytes = ReceiverReport::new(Ssrc::new(1), vec![])
+            .try_to_bytes()
+            .unwrap();
         bytes.extend_from_slice(&[0x13, 0x37, 0xC0, 0xDE]);
         bytes[3] += 1;
         let rr = ReceiverReport::parse(&bytes).unwrap();
@@ -1843,7 +1848,7 @@ mod tests {
     #[test]
     fn rr_round_trip() {
         let rr = ReceiverReport {
-            ssrc: 0x0102_0304,
+            ssrc: Ssrc::new(0x0102_0304),
             report_blocks: vec![sample_block(0xCAFE_BABE, 33, -7)],
             profile_extensions: Vec::new(),
             padding: None,
@@ -2052,7 +2057,7 @@ mod tests {
             0x04,
         ];
         let app = App::parse(&bytes).unwrap();
-        assert_eq!(app.ssrc, 0x1122_3344);
+        assert_eq!(app.ssrc.get(), 0x1122_3344);
         assert_eq!(&app.name, b"TEST");
         assert_eq!(
             app.data,
@@ -2065,7 +2070,7 @@ mod tests {
     fn app_round_trip() {
         let app = App {
             subtype: 3,
-            ssrc: 0x9988_7766,
+            ssrc: Ssrc::new(0x9988_7766),
             name: *b"TMUX",
             data: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04],
             padding: None,
@@ -2176,7 +2181,7 @@ mod tests {
         // wrapping via `as u16` truncation.
         let app = App {
             subtype: 0,
-            ssrc: 1,
+            ssrc: Ssrc::new(1),
             name: *b"BIGP",
             data: vec![0u8; 262_136],
             padding: None,
@@ -2267,7 +2272,7 @@ mod tests {
         assert_eq!(parsed, sr);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
-        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+        let rr = ReceiverReport::new(Ssrc::new(0x0102_0304), vec![sample_block(1, 2, 3)])
             .with_padding(RtcpPadding::new(8).unwrap());
         let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(bytes[bytes.len() - 1], 8);
@@ -2338,7 +2343,7 @@ mod tests {
     fn padded_app_unaligned_before_padding_is_rejected() {
         let app = App {
             subtype: 0,
-            ssrc: 1,
+            ssrc: Ssrc::new(1),
             name: *b"TEST",
             data: vec![1, 2, 3],
             padding: Some(RtcpPadding::new(4).unwrap()),

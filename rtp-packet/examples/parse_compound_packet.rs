@@ -9,20 +9,21 @@ use rtp_packet::rtcp::{
     CompoundPacket, ReportBlock, RtcpPacket, SdesChunk, SdesItem, SdesItemType, SenderReport,
     SourceDescription,
 };
+use rtp_packet::{ExtendedSeqNo, Ssrc};
 
 fn main() {
     let sr = SenderReport::new(
-        0x1122_3344,
+        Ssrc::new(0x1122_3344),
         0xE1E2_E3E4,
         0x5060_7080,
         0x000A_0000,
         12345,
         6_789_012,
         vec![ReportBlock {
-            ssrc: 0xAAAA_0001,
+            ssrc: Ssrc::new(0xAAAA_0001),
             fraction_lost: 0,
             cumulative_lost: 0,
-            ext_highest_seq: 0x0000_ABCD,
+            ext_highest_seq: ExtendedSeqNo::new(0x0000_ABCD),
             jitter: 111,
             lsr: 0x1234_5678,
             dlsr: 0x0000_0100,

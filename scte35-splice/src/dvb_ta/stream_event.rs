@@ -406,9 +406,12 @@ mod tests {
                 broadcast_common::clock33::Clock33::try_new(0x0012_3456).expect("in range"),
             ),
         };
-        SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[])
-            .try_to_bytes()
-            .unwrap()
+        SpliceInfoSection::new_clear(
+            AnyCommand::TimeSignal(ts),
+            crate::descriptor_loop::SpliceDescriptorLoop::new(&[]),
+        )
+        .try_to_bytes()
+        .unwrap()
     }
 
     #[test]

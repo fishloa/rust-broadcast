@@ -17,6 +17,7 @@ use core::time::Duration;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
 use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};
+use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::time::{BreakDuration, SpliceTime, duration_to_ticks};
 pub use ssai_runtime::splice::ConditionedSplicePoint;
 
@@ -112,7 +113,10 @@ pub fn build_splice_insert(
 /// stream/PID.
 #[must_use]
 pub fn to_section<'a>(insert: SpliceInsert) -> SpliceInfoSection<'a> {
-    SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(insert), &[])
+    SpliceInfoSection::new_clear(
+        AnyCommand::SpliceInsert(insert),
+        SpliceDescriptorLoop::new(&[]),
+    )
 }
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ use scte35_splice::commands::{
     AnyCommand, BandwidthReservation, PrivateCommand, ProgramSplice, SpliceInsert, SpliceMode,
     SpliceNull, SpliceSchedule, SpliceScheduleEvent, TimeSignal,
 };
+use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::descriptors::{
     AudioComponent, AudioDescriptor, AvailDescriptor, CUEI, DtmfDescriptor, SegmentationDescriptor,
     SegmentationTypeId, SegmentationUpidType, SubSegments, TimeDescriptor,
@@ -24,7 +25,7 @@ fn section_round_trip(section: &SpliceInfoSection) {
 }
 
 fn clear(command: AnyCommand<'static>) -> SpliceInfoSection<'static> {
-    let mut s = SpliceInfoSection::new_clear(command, &[]);
+    let mut s = SpliceInfoSection::new_clear(command, SpliceDescriptorLoop::new(&[]));
     s.pts_adjustment = 0x1_2345_6789 & ((1 << 33) - 1);
     s.tier = 0x123;
     s.sap_type = 0x1;
@@ -59,7 +60,10 @@ fn private_command_section() {
         identifier: 0x4F_4F_4F_4F,
         private_bytes: &[0x01, 0x02, 0x03],
     };
-    let mut s = SpliceInfoSection::new_clear(AnyCommand::PrivateCommand(cmd), &[]);
+    let mut s = SpliceInfoSection::new_clear(
+        AnyCommand::PrivateCommand(cmd),
+        SpliceDescriptorLoop::new(&[]),
+    );
     s.tier = 0xFFF;
     section_round_trip(&s);
 }
@@ -106,7 +110,7 @@ fn unknown_command_section_round_trips() {
             command_type: 0x03,
             body: &[0xDE, 0xAD, 0xBE, 0xEF],
         },
-        &[],
+        SpliceDescriptorLoop::new(&[]),
     );
     section_round_trip(&s);
 }
@@ -184,7 +188,7 @@ fn section_with_full_descriptor_loop() {
                 broadcast_common::clock33::Clock33::try_new(0x1000).expect("in range"),
             ),
         }),
-        &loop_bytes,
+        SpliceDescriptorLoop::new(&loop_bytes),
     );
     section_round_trip(&section);
 
@@ -255,12 +259,18 @@ fn pts_adjustment_33bit_wrap_boundary() {
     use scte35_splice::time::{PTS_MAX, PTS_MODULUS, pts_add_wrapping};
 
     // The maximum 33-bit pts_adjustment round-trips through the section.
-    let mut s = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);
+    let mut s = SpliceInfoSection::new_clear(
+        AnyCommand::SpliceNull(SpliceNull),
+        SpliceDescriptorLoop::new(&[]),
+    );
     s.pts_adjustment = PTS_MAX;
     section_round_trip(&s);
 
     // A pts_adjustment above the 33-bit range is rejected by serialize.
-    let mut bad = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);
+    let mut bad = SpliceInfoSection::new_clear(
+        AnyCommand::SpliceNull(SpliceNull),
+        SpliceDescriptorLoop::new(&[]),
+    );
     bad.pts_adjustment = PTS_MODULUS; // 2^33, one past the max
     let mut buf = vec![0u8; bad.serialized_len()];
     assert_eq!(
@@ -349,4 +359,48 @@ fn a_set_section_syntax_or_private_indicator_is_rejected_not_cleared() {
             "byte1 flags {flags:#04x}"
         );
     }
+}
+
+/// The section's descriptor loop is typed and keeps its bytes: a section
+/// carrying an avail descriptor and a tag this crate does not implement
+/// round-trips byte-exactly, walks both entries structurally, and dispatches
+/// the known one to a typed descriptor with the unknown one kept verbatim.
+#[test]
+fn descriptor_loop_is_typed_and_keeps_unknown_bytes() {
+    let loop_bytes = [
+        // avail_descriptor (tag 0x00): identifier CUEI + 4 provider bytes.
+        0x00u8, 0x08, 0x43, 0x55, 0x45, 0x49, 0x00, 0x00, 0x00, 0x01,
+        // a tag with no implementation, body left verbatim.
+        0xC0, 0x02, 0xCA, 0xFE,
+    ];
+    let section = SpliceInfoSection::new_clear(
+        AnyCommand::SpliceNull(SpliceNull),
+        SpliceDescriptorLoop::new(&loop_bytes),
+    );
+    let wire = section.try_to_bytes().expect("serialize");
+    let parsed = SpliceInfoSection::parse(&wire).expect("parse");
+    assert_eq!(parsed.try_to_bytes().expect("re-serialize"), wire);
+
+    let clear = parsed.clear.as_ref().expect("clear section");
+    assert_eq!(clear.descriptor_loop.raw(), &loop_bytes[..]);
+
+    let entries: Vec<_> = clear
+        .descriptor_loop
+        .entries()
+        .map(|e| e.expect("framed loop"))
+        .collect();
+    assert_eq!(entries.len(), 2);
+    assert_eq!((entries[0].tag, entries[0].body.len()), (0x00, 8));
+    assert_eq!((entries[1].tag, entries[1].body), (0xC0, &[0xCA, 0xFE][..]));
+
+    let typed: Vec<_> = parsed.descriptors().collect();
+    assert_eq!(typed.len(), 2);
+    assert!(matches!(
+        typed[0].as_ref().unwrap(),
+        scte35_splice::descriptors::AnySpliceDescriptor::Avail(_)
+    ));
+    assert!(matches!(
+        typed[1].as_ref().unwrap(),
+        scte35_splice::descriptors::AnySpliceDescriptor::Unknown { tag: 0xC0, .. }
+    ));
 }

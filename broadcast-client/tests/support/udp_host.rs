@@ -8,7 +8,7 @@ fn ts(us: u64) -> Timestamp {
     Timestamp::from_micros(us)
 }
 
-use rtp_packet::RtpPacket;
+use rtp_packet::{RtpPacket, Ssrc};
 
 use super::replay::{Replay, TimedEvent};
 
@@ -120,9 +120,9 @@ pub fn rtp_datagram(seq: u16, ssrc: u32, payload_type: u8, payload: &[u8]) -> Ve
     let pkt = RtpPacket {
         marker: false,
         payload_type,
-        sequence_number: seq,
+        sequence_number: seq.into(),
         timestamp: u32::from(seq) * RTP_TS_PER_PACKET,
-        ssrc,
+        ssrc: Ssrc::new(ssrc),
         csrc: Vec::new(),
         extension: None,
         padding: None,

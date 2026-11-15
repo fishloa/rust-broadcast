@@ -7,6 +7,7 @@
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
 
+use crate::descriptor_loop::DescriptorLoop;
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize, crc32_mpeg2};
 
@@ -65,9 +66,10 @@ pub struct EsMapEntry<'a> {
     /// `pseudo_descriptor_length` as carried; see
     /// [`pseudo_descriptor_tag`](Self::pseudo_descriptor_tag).
     pub pseudo_descriptor_length: Option<u8>,
-    /// Descriptor bytes for this elementary stream.
+    /// `ES_info` descriptor loop for this elementary stream (ISO/IEC 13818-1
+    /// §2.6, the same `descriptor()` sequence a PMT stream carries).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub descriptors: &'a [u8],
+    pub descriptors: DescriptorLoop<'a>,
 }
 
 /// A parsed Program Stream Map.
@@ -80,9 +82,9 @@ pub struct ProgramStreamMap<'a> {
     pub single_extension_stream_flag: bool,
     /// `program_stream_map_version` (5 bits).
     pub version: u8,
-    /// Descriptors for the program stream itself.
+    /// `program_stream_info` descriptor loop for the program stream itself.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub program_stream_info: &'a [u8],
+    pub program_stream_info: DescriptorLoop<'a>,
     /// Per-elementary-stream entries.
     pub elementary_stream_map: Vec<EsMapEntry<'a>>,
     /// The raw CRC-32 value in the trailer (validated on parse).
@@ -180,7 +182,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
             });
         }
 
-        let program_stream_info = &b[info_start..info_end];
+        let program_stream_info = DescriptorLoop::new(&b[info_start..info_end]);
 
         let es_data = &b[es_start..es_end];
         let elementary_stream_map = parse_es_loop(es_data, single_extension_stream_flag)?;
@@ -251,7 +253,7 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
             stream_id_extension,
             pseudo_descriptor_tag: pseudo_descriptor.map(|(tag, _)| tag),
             pseudo_descriptor_length: pseudo_descriptor.map(|(_, length)| length),
-            descriptors,
+            descriptors: DescriptorLoop::new(descriptors),
         });
 
         pos = entry_end;
@@ -310,7 +312,7 @@ fn write_es_loop(entries: &[EsMapEntry<'_>], out: &mut [u8]) -> Result<()> {
             dst[c + 2] = MARKER_BIT | (ext & EXTENSION_MASK);
             c += PSEUDO_DESCRIPTOR_LEN;
         }
-        dst[c..].copy_from_slice(e.descriptors);
+        dst[c..].copy_from_slice(e.descriptors.raw());
         at += entry_len;
     }
     Ok(())
@@ -394,7 +396,7 @@ impl Serialize for ProgramStreamMap<'_> {
         // program_stream_info descriptors (Table 2-41: the program descriptor
         // loop comes immediately after program_stream_info_length, at byte
         // 10, BEFORE elementary_stream_map_length — #1050)
-        buf[10..10 + prog_info_len].copy_from_slice(self.program_stream_info);
+        buf[10..10 + prog_info_len].copy_from_slice(self.program_stream_info.raw());
 
         // elementary_stream_map_length, then the elementary stream loop
         let es_len_start = 10 + prog_info_len;
@@ -425,7 +427,7 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0x20,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: vec![],
             crc: 0,
         };
@@ -445,14 +447,14 @@ mod tests {
             stream_id_extension: None,
             pseudo_descriptor_tag: None,
             pseudo_descriptor_length: None,
-            descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'], // registration descriptor
+            descriptors: DescriptorLoop::new(&[0x0A, 0x04, b'H', b'E', b'L', b'L']), // registration descriptor
         }];
 
         let psm = ProgramStreamMap {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 3,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: entries,
             crc: 0, // will be overwritten by serialize
         };
@@ -477,7 +479,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            parsed.elementary_stream_map[0].descriptors,
+            parsed.elementary_stream_map[0].descriptors.raw(),
             &[0x0A, 0x04, b'H', b'E', b'L', b'L']
         );
 
@@ -491,14 +493,14 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 7,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: vec![EsMapEntry {
                 stream_type: 0x02,
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
                 pseudo_descriptor_tag: None,
                 pseudo_descriptor_length: None,
-                descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'],
+                descriptors: DescriptorLoop::new(&[0x0A, 0x04, b'H', b'E', b'L', b'L']),
             }],
             crc: 0,
         };
@@ -515,14 +517,14 @@ mod tests {
             stream_id_extension: Some(0x0F),
             pseudo_descriptor_tag: Some(0x01),
             pseudo_descriptor_length: Some(0x01),
-            descriptors: &[0x59, 0x02, 0x01, 0x02], // subtitling descriptor
+            descriptors: DescriptorLoop::new(&[0x59, 0x02, 0x01, 0x02]), // subtitling descriptor
         }];
 
         let psm = ProgramStreamMap {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 1,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: entries,
             crc: 0,
         };
@@ -537,7 +539,7 @@ mod tests {
             Some(0x0F)
         );
         assert_eq!(
-            parsed.elementary_stream_map[0].descriptors,
+            parsed.elementary_stream_map[0].descriptors.raw(),
             &[0x59, 0x02, 0x01, 0x02]
         );
 
@@ -559,13 +561,13 @@ mod tests {
             stream_id_extension: Some(0x01),
             pseudo_descriptor_tag: Some(0x01),
             pseudo_descriptor_length: Some(0x01),
-            descriptors: &[0u8; 255],
+            descriptors: DescriptorLoop::new(&[0u8; 255]),
         }];
         let psm = ProgramStreamMap {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: entries,
             crc: 0,
         };
@@ -584,7 +586,7 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[0u8; 1009],
+            program_stream_info: DescriptorLoop::new(&[0u8; 1009]),
             elementary_stream_map: vec![],
             crc: 0,
         };
@@ -603,7 +605,7 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[0u8; 1008],
+            program_stream_info: DescriptorLoop::new(&[0u8; 1008]),
             elementary_stream_map: vec![],
             crc: 0,
         };
@@ -634,14 +636,14 @@ mod tests {
             stream_id_extension: None,
             pseudo_descriptor_tag: None,
             pseudo_descriptor_length: None,
-            descriptors: &[],
+            descriptors: DescriptorLoop::new(&[]),
         }];
 
         let psm = ProgramStreamMap {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 5,
-            program_stream_info: prog_descriptor,
+            program_stream_info: DescriptorLoop::new(prog_descriptor),
             elementary_stream_map: entries,
             crc: 0,
         };
@@ -657,7 +659,7 @@ mod tests {
         assert_eq!(es_map_len, 4, "one ES entry: stream_type+id+info_len(0)");
 
         let parsed = ProgramStreamMap::parse(&buf).unwrap();
-        assert_eq!(parsed.program_stream_info, prog_descriptor);
+        assert_eq!(parsed.program_stream_info.raw(), prog_descriptor);
         assert_eq!(parsed.elementary_stream_map.len(), 1);
         assert_eq!(parsed.elementary_stream_map[0].stream_type, 0x02);
         assert_eq!(parsed.elementary_stream_map[0].elementary_stream_id, 0xE0);
@@ -680,7 +682,7 @@ mod tests {
             current_next_indicator: false,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: vec![],
             crc: 0,
         };
@@ -699,7 +701,7 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 0,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: vec![],
             crc: 0,
         };
@@ -739,14 +741,14 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: true,
             version: 1,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: vec![EsMapEntry {
                 stream_type: 0x1B,
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
                 pseudo_descriptor_tag: None,
                 pseudo_descriptor_length: None,
-                descriptors: &[],
+                descriptors: DescriptorLoop::new(&[]),
             }],
             crc: 0,
         };

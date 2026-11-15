@@ -17,7 +17,7 @@
 //! each other but disagree with the spec would still be caught.
 
 use broadcast_common::{Parse, Serialize};
-use rtp_packet::{Error, RtpPacket};
+use rtp_packet::{Error, RtpPacket, SeqNo, Ssrc};
 
 // ── Padding (P=1) — RFC 3550 §5.1 ───────────────────────────────────────────
 //
@@ -39,9 +39,9 @@ fn padding_vector_parses_and_round_trips() {
     let pkt = RtpPacket::parse(&PADDING_VECTOR).expect("parse spec-derived padding vector");
     assert!(!pkt.marker);
     assert_eq!(pkt.payload_type, 96);
-    assert_eq!(pkt.sequence_number, 1);
+    assert_eq!(pkt.sequence_number.get(), 1);
     assert_eq!(pkt.timestamp, 0);
-    assert_eq!(pkt.ssrc, 1);
+    assert_eq!(pkt.ssrc.get(), 1);
     assert_eq!(pkt.csrc_count(), 0);
     assert!(pkt.extension.is_none());
     assert_eq!(pkt.payload, &[0xDE, 0xAD, 0xBE, 0xEF]);
@@ -77,9 +77,9 @@ const CSRC_VECTOR: [u8; 23] = [
 fn csrc_vector_parses_and_round_trips() {
     let pkt = RtpPacket::parse(&CSRC_VECTOR).expect("parse spec-derived CSRC vector");
     assert_eq!(pkt.payload_type, 3);
-    assert_eq!(pkt.sequence_number, 2);
+    assert_eq!(pkt.sequence_number.get(), 2);
     assert_eq!(pkt.timestamp, 0x10);
-    assert_eq!(pkt.ssrc, 0xAABB_CCDD);
+    assert_eq!(pkt.ssrc.get(), 0xAABB_CCDD);
     assert_eq!(pkt.csrc, vec![0x1111_1111, 0x2222_2222]);
     assert_eq!(pkt.payload, &[0x01, 0x02, 0x03]);
     assert!(pkt.padding.is_none());
@@ -100,9 +100,9 @@ fn csrc_count_is_always_derived_from_the_list() {
     let pkt = RtpPacket {
         marker: false,
         payload_type: 0,
-        sequence_number: 0,
+        sequence_number: SeqNo::new(0),
         timestamp: 0,
-        ssrc: 0,
+        ssrc: Ssrc::new(0),
         csrc: vec![0; 15],
         extension: None,
         padding: None,
@@ -134,9 +134,9 @@ fn extension_vector_parses_and_round_trips() {
     let pkt = RtpPacket::parse(&EXTENSION_VECTOR).expect("parse spec-derived extension vector");
     assert!(pkt.marker);
     assert_eq!(pkt.payload_type, 100);
-    assert_eq!(pkt.sequence_number, 3);
+    assert_eq!(pkt.sequence_number.get(), 3);
     assert_eq!(pkt.timestamp, 0x20);
-    assert_eq!(pkt.ssrc, 0x9999_9999);
+    assert_eq!(pkt.ssrc.get(), 0x9999_9999);
     let ext = pkt.extension.expect("X=1");
     assert_eq!(ext.profile_id, 0xBEDE);
     assert_eq!(ext.length_words(), 2);

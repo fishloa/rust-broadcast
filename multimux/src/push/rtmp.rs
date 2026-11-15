@@ -12,6 +12,7 @@
 //! — see `transmux::flv` for the tag-body layout this reuses.
 
 use crate::push::{MuxError, PushTransport, SendMediaError};
+use rtmp_runtime::ids::Timestamp;
 use rtmp_runtime::target::RtmpTarget;
 use tokio::net::TcpStream;
 use transmux::CodecConfig;
@@ -152,7 +153,10 @@ impl PushTransport for RtmpTransport {
             .client
             .as_mut()
             .ok_or_else(|| RtmpPushError::Connect(RtmpConnectError::NotConnected))?;
-        client.send_video(0, data).await.map_err(RtmpPushError::Io)
+        client
+            .send_video(Timestamp::ZERO, data)
+            .await
+            .map_err(RtmpPushError::Io)
     }
 
     /// Writes `message` to the socket verbatim (issue #942) — unlike
@@ -231,8 +235,12 @@ impl PushTransport for RtmpTransport {
                     .as_mut()
                     .ok_or_else(|| RtmpPushError::Connect(RtmpConnectError::NotConnected))?;
                 match header.kind {
-                    transmux::FlvPayloadKind::Video => client.encode_video(0, &header.body),
-                    transmux::FlvPayloadKind::Audio => client.encode_audio(0, &header.body),
+                    transmux::FlvPayloadKind::Video => {
+                        client.encode_video(Timestamp::from_millis(0), &header.body)
+                    }
+                    transmux::FlvPayloadKind::Audio => {
+                        client.encode_audio(Timestamp::from_millis(0), &header.body)
+                    }
                     _ => continue,
                 }
                 .map_err(|e| RtmpPushError::Protocol(e.into()))?
@@ -303,10 +311,10 @@ impl PushTransport for RtmpTransport {
             // than sent as neither.
             let bytes = match payload.kind {
                 transmux::FlvPayloadKind::Video => {
-                    client.encode_video(payload.timestamp_ms, &payload.body)
+                    client.encode_video(Timestamp::from_millis(payload.timestamp_ms), &payload.body)
                 }
                 transmux::FlvPayloadKind::Audio => {
-                    client.encode_audio(payload.timestamp_ms, &payload.body)
+                    client.encode_audio(Timestamp::from_millis(payload.timestamp_ms), &payload.body)
                 }
                 _ => continue,
             }

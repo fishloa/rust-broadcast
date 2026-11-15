@@ -42,10 +42,18 @@ fn client_publish_transcript_is_byte_identical() {
         to_server = next;
     }
     assert!(c.is_publishing(), "client must reach Publishing");
-    let a = c.send_audio(40, &[0xAF, 0x01, 0x11, 0x22]).unwrap();
+    let a = c
+        .send_audio(
+            rtmp_runtime::ids::Timestamp::from_millis(40),
+            &[0xAF, 0x01, 0x11, 0x22],
+        )
+        .unwrap();
     hex("audio", &a, &mut out);
     let v = c
-        .send_video(40, &[0x17, 0x01, 0, 0, 0, 0x33, 0x44])
+        .send_video(
+            rtmp_runtime::ids::Timestamp::from_millis(40),
+            &[0x17, 0x01, 0, 0, 0, 0x33, 0x44],
+        )
         .unwrap();
     hex("video", &v, &mut out);
     let m = c

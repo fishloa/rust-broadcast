@@ -5,6 +5,7 @@
 //! passthrough), and the RC boundary case.
 
 use broadcast_common::{Parse, Serialize};
+use rtp_packet::{ExtendedSeqNo, Ssrc};
 use transmux::rtcp::{
     App, Bye, CompoundPacket, PT_SENDER_REPORT, REPORT_BLOCK_LEN, ReceiverReport, ReportBlock,
     RtcpPacket, RtcpPacketType, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
@@ -12,10 +13,10 @@ use transmux::rtcp::{
 
 fn block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
     ReportBlock {
-        ssrc,
+        ssrc: Ssrc::new(ssrc),
         fraction_lost: 7,
         cumulative_lost: cumulative,
-        ext_highest_seq: 0x0000_ABCD,
+        ext_highest_seq: ExtendedSeqNo::new(0x0000_ABCD),
         jitter,
         lsr: 0x1234_5678,
         dlsr: 0x0000_0100,
@@ -24,7 +25,7 @@ fn block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
 
 fn sr_two_blocks() -> SenderReport {
     SenderReport::new(
-        0x1122_3344,
+        Ssrc::new(0x1122_3344),
         0xE1E2_E3E4,
         0x5060_7080,
         0x000A_0000,
@@ -51,7 +52,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
     );
 
     // RR.
-    let rr = ReceiverReport::new(0x0A0B_0C0D, vec![block(0xCCCC_0003, 33, -1)]);
+    let rr = ReceiverReport::new(Ssrc::new(0x0A0B_0C0D), vec![block(0xCCCC_0003, 33, -1)]);
     let rr_bytes = rr.try_to_bytes().unwrap();
     assert_eq!(ReceiverReport::parse(&rr_bytes).unwrap(), rr);
     assert_eq!(
@@ -105,7 +106,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
     // APP.
     let app = App {
         subtype: 5,
-        ssrc: 0xFEED_FACE,
+        ssrc: Ssrc::new(0xFEED_FACE),
         name: *b"TEST",
         data: vec![1, 2, 3, 4, 5, 6, 7, 8],
         padding: None,
@@ -192,7 +193,7 @@ fn compound_not_starting_with_report_rejected() {
     assert!(matches!(
         CompoundPacket::new(vec![RtcpPacket::App(App {
             subtype: 0,
-            ssrc: 1,
+            ssrc: Ssrc::new(1),
             name: *b"NOPE",
             data: vec![],
             padding: None,

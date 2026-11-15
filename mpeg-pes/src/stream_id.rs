@@ -1,10 +1,14 @@
 //! `stream_id` — identifies the elementary stream a PES packet belongs to
 //! (ISO/IEC 13818-1 Table 2-22). Certain values carry no optional PES header.
 
-/// 8-bit `stream_id` of a PES packet.
+/// 8-bit `stream_id` of a PES packet (ISO/IEC 13818-1 Table 2-22).
+///
+/// Build one from a wire byte with [`StreamId::new`] and read the byte back
+/// with [`StreamId::get`]; the named `program_stream_map`/`padding_stream`/...
+/// associated constants are the common values.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct StreamId(pub u8);
+pub struct StreamId(u8);
 
 // Special stream_ids that do NOT carry the optional PES header (the bytes after
 // PES_packet_length are the payload directly) — ISO/IEC 13818-1 §2.4.3.6.
@@ -29,15 +33,28 @@ pub const STREAM_ID_EXTENSION_AVS3_VIDEO: u8 = 0x41;
 pub const STREAM_ID_EXTENSION_AVS3_AUDIO: u8 = 0b100_1111;
 
 impl StreamId {
+    /// Wrap an 8-bit `stream_id` from the wire (any value is representable, as
+    /// the field has no invalid bit pattern).
+    #[must_use]
+    pub const fn new(raw: u8) -> Self {
+        Self(raw)
+    }
+
+    /// The raw 8-bit `stream_id`.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+
     /// `program_stream_map` (0xBC).
-    pub const PROGRAM_STREAM_MAP: StreamId = StreamId(PROGRAM_STREAM_MAP);
+    pub const PROGRAM_STREAM_MAP: StreamId = StreamId::new(PROGRAM_STREAM_MAP);
     /// `padding_stream` (0xBE).
-    pub const PADDING_STREAM: StreamId = StreamId(PADDING_STREAM);
+    pub const PADDING_STREAM: StreamId = StreamId::new(PADDING_STREAM);
     /// `private_stream_2` (0xBF).
-    pub const PRIVATE_STREAM_2: StreamId = StreamId(PRIVATE_STREAM_2);
+    pub const PRIVATE_STREAM_2: StreamId = StreamId::new(PRIVATE_STREAM_2);
     /// `extended_stream_id` (0xFD, ISO/IEC 13818-1 Table 2-22): the real stream
     /// is identified by the `stream_id_extension` in the PES extension field.
-    pub const EXTENDED_STREAM_ID: StreamId = StreamId(EXTENDED_STREAM_ID);
+    pub const EXTENDED_STREAM_ID: StreamId = StreamId::new(EXTENDED_STREAM_ID);
 
     /// True if this `stream_id` carries the optional PES header (flags +
     /// `PES_header_data_length` + PTS/DTS). False for the special streams whose
@@ -86,17 +103,25 @@ mod tests {
 
     #[test]
     fn classification() {
-        assert!(StreamId(0xC0).is_audio());
-        assert!(StreamId(0xE0).is_video());
-        assert!(StreamId(0xE0).has_optional_header());
-        assert!(StreamId(0xBD).has_optional_header()); // private_stream_1 does
+        assert!(StreamId::new(0xC0).is_audio());
+        assert!(StreamId::new(0xE0).is_video());
+        assert!(StreamId::new(0xE0).has_optional_header());
+        assert!(StreamId::new(0xBD).has_optional_header()); // private_stream_1 does
         assert!(!StreamId::PADDING_STREAM.has_optional_header());
         assert!(!StreamId::PROGRAM_STREAM_MAP.has_optional_header());
-        assert!(!StreamId(0xFF).has_optional_header());
+        assert!(!StreamId::new(0xFF).has_optional_header());
         // 0xFD extended_stream_id carries the optional header (and the extension).
         assert!(StreamId::EXTENDED_STREAM_ID.has_optional_header());
-        assert_eq!(StreamId::EXTENDED_STREAM_ID, StreamId(0xFD));
+        assert_eq!(StreamId::EXTENDED_STREAM_ID, StreamId::new(0xFD));
         assert_eq!(STREAM_ID_EXTENSION_AVS3_VIDEO, 0x41);
         assert_eq!(STREAM_ID_EXTENSION_AVS3_AUDIO, 0x4F);
+    }
+
+    #[test]
+    fn the_raw_id_is_only_reachable_through_new_and_get() {
+        assert_eq!(StreamId::new(0xE0).get(), 0xE0);
+        assert_eq!(StreamId::PROGRAM_STREAM_MAP.get(), 0xBC);
+        assert_eq!(StreamId::EXTENDED_STREAM_ID.get(), 0xFD);
+        assert_ne!(StreamId::new(0xE0), StreamId::new(0xC0));
     }
 }

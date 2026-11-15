@@ -135,6 +135,7 @@ mod tests {
     use broadcast_common::Serialize;
     use scte35_splice::commands::AnyCommand;
     use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceInsertComponent, SpliceMode};
+    use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
     use scte35_splice::time::{PTS_MODULUS, SpliceTime};
 
     fn splice_insert_section(
@@ -150,7 +151,10 @@ mod tests {
             },
             ..SpliceInsert::default()
         };
-        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            SpliceDescriptorLoop::new(&[]),
+        );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("serialize");
         buf
@@ -237,7 +241,10 @@ mod tests {
             ))),
             ..SpliceInsert::default()
         };
-        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let mut section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            SpliceDescriptorLoop::new(&[]),
+        );
         section.pts_adjustment = adjustment;
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("serialize");
@@ -263,7 +270,10 @@ mod tests {
             ))),
             ..SpliceInsert::default()
         };
-        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let mut section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            SpliceDescriptorLoop::new(&[]),
+        );
         section.pts_adjustment = adjustment;
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("serialize");
@@ -283,7 +293,10 @@ mod tests {
             ))),
             ..SpliceInsert::default()
         };
-        let mut section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
+        let mut section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(si),
+            SpliceDescriptorLoop::new(&[]),
+        );
         section.pts_adjustment = adjustment;
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("serialize");
@@ -293,7 +306,10 @@ mod tests {
     #[test]
     fn not_splice_insert_command_is_reported() {
         use scte35_splice::commands::SpliceNull;
-        let section = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(SpliceNull), &[]);
+        let section = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceNull(SpliceNull),
+            SpliceDescriptorLoop::new(&[]),
+        );
         let mut buf = alloc::vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("serialize");
         assert_eq!(check_section(&buf, 0), Scte35Sanity::NotSpliceInsert);
@@ -306,7 +322,7 @@ mod tests {
         };
         let b = bytes(&SpliceInfoSection::new_clear(
             AnyCommand::SpliceInsert(si),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         ));
         assert_eq!(check_section(&b, 90_000), Scte35Sanity::Cancelled);
     }
@@ -336,7 +352,7 @@ mod tests {
             };
             bytes(&SpliceInfoSection::new_clear(
                 AnyCommand::SpliceInsert(si),
-                &[],
+                SpliceDescriptorLoop::new(&[]),
             ))
         };
         let now = 90_000 * 10;
@@ -367,7 +383,7 @@ mod tests {
         };
         let b = bytes(&SpliceInfoSection::new_clear(
             AnyCommand::SpliceInsert(si),
-            &[],
+            SpliceDescriptorLoop::new(&[]),
         ));
         assert_eq!(check_section(&b, 0), Scte35Sanity::Immediate);
     }
@@ -375,8 +391,10 @@ mod tests {
     #[test]
     fn well_formed_encrypted_section_is_encrypted_not_malformed() {
         use broadcast_common::Parse;
-        let mut s =
-            SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(SpliceInsert::default()), &[]);
+        let mut s = SpliceInfoSection::new_clear(
+            AnyCommand::SpliceInsert(SpliceInsert::default()),
+            SpliceDescriptorLoop::new(&[]),
+        );
         s.encrypted_packet = true;
         s.clear = None;
         let payload = [0x5Au8; 24];

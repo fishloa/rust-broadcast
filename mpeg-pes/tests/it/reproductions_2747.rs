@@ -8,7 +8,7 @@ use broadcast_common::Serialize;
 use mpeg_pes::{Escr, PesHeader, PesPacket, StreamId, TrickMode};
 
 fn serialize_header<'a>(header: PesHeader<'a>) -> Result<(), mpeg_pes::Error> {
-    let mut pes = PesPacket::new(StreamId(0xE0), &[]);
+    let mut pes = PesPacket::new(StreamId::new(0xE0), &[]);
     pes.header = Some(header);
     let mut out = vec![0u8; pes.serialized_len()];
     pes.serialize_into(&mut out)?;

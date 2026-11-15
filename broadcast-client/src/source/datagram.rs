@@ -134,12 +134,12 @@ impl Ingest {
             self.stats.malformed = self.stats.malformed.saturating_add(1);
             return;
         }
-        let seq = packet.sequence_number;
-        if self.ssrc != Some(packet.ssrc) {
+        let seq = packet.sequence_number.get();
+        if self.ssrc != Some(packet.ssrc.get()) {
             if self.ssrc.is_some() {
                 self.resync();
             }
-            self.ssrc = Some(packet.ssrc);
+            self.ssrc = Some(packet.ssrc.get());
             self.next_seq = seq;
             self.validity.new_source(seq);
         }

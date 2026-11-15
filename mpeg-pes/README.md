@@ -55,7 +55,7 @@ let bytes = [
     0xAA, 0xBB,                   // ES payload
 ];
 let pkt = PesPacket::parse(&bytes)?;
-assert_eq!(pkt.stream_id, StreamId(0xE0));
+assert_eq!(pkt.stream_id, StreamId::new(0xE0));
 assert!(pkt.stream_id.is_video());
 assert_eq!(pkt.header.as_ref().unwrap().pts.unwrap().ticks(), 0);
 assert_eq!(pkt.payload, &[0xAA, 0xBB]);

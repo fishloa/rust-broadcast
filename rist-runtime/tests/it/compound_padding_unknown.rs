@@ -5,6 +5,7 @@
 
 use broadcast_common::{Parse, Serialize};
 use rist_runtime::{Error, ReportPart, RistReceiverCompound, RistSenderCompound, UnknownPacket};
+use rtp_packet::Ssrc;
 use rtp_packet::rtcp::{ReceiverReport, SenderReport};
 
 /// Common-header length in bytes (RFC 3550 §6.4.1).
@@ -44,8 +45,8 @@ fn rr_bytes(padded: bool) -> Vec<u8> {
 /// `ReportPart::name()`/`ssrc()` project the variant identity (RIST-W3).
 #[test]
 fn report_part_names_and_ssrc() {
-    let sr = SenderReport::new(SSRC, 0, 0, 0, 0, 0, vec![]);
-    let rr = ReceiverReport::new(SSRC | 1, vec![]);
+    let sr = SenderReport::new(Ssrc::new(SSRC), 0, 0, 0, 0, 0, vec![]);
+    let rr = ReceiverReport::new(Ssrc::new(SSRC | 1), vec![]);
     let part_sr = ReportPart::Sr(sr);
     let part_rr = ReportPart::Rr(rr);
     assert_eq!(part_sr.name(), "SR");
@@ -138,7 +139,7 @@ fn unknown_sub_packet_with_padding_round_trip() {
 #[test]
 fn hand_built_unknown_appends_last() {
     let compound = RistSenderCompound {
-        report: ReportPart::Rr(ReceiverReport::new(SSRC, vec![])),
+        report: ReportPart::Rr(ReceiverReport::new(Ssrc::new(SSRC), vec![])),
         report_padding: vec![],
         cname: String::from(CNAME),
         rtt_echo: None,

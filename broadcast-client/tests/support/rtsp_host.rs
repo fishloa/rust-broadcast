@@ -140,7 +140,15 @@ pub fn interleaved(channel: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 pub fn sender_report_frame(channel: u8, ssrc: u32, rtp_timestamp: u32) -> Vec<u8> {
-    let sr = SenderReport::new(ssrc, 3_900_000_000, 0, rtp_timestamp, 10, 1000, Vec::new());
+    let sr = SenderReport::new(
+        rtp_packet::Ssrc::new(ssrc),
+        3_900_000_000,
+        0,
+        rtp_timestamp,
+        10,
+        1000,
+        Vec::new(),
+    );
     let mut buf = vec![0u8; sr.serialized_len()];
     let n = sr.serialize_into(&mut buf).expect("serialize sr");
     buf.truncate(n);
@@ -154,7 +162,15 @@ pub fn sender_report_at(channel: u8, ssrc: u32, ntp_seconds: f64, rtp_timestamp:
     let whole = ntp_seconds.trunc();
     let msw = whole as u32;
     let lsw = ((ntp_seconds - whole) * NTP_FRACTION) as u32;
-    let sr = SenderReport::new(ssrc, msw, lsw, rtp_timestamp, 10, 1000, Vec::new());
+    let sr = SenderReport::new(
+        rtp_packet::Ssrc::new(ssrc),
+        msw,
+        lsw,
+        rtp_timestamp,
+        10,
+        1000,
+        Vec::new(),
+    );
     let mut buf = vec![0u8; sr.serialized_len()];
     let n = sr.serialize_into(&mut buf).expect("serialize sr");
     buf.truncate(n);

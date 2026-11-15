@@ -14,9 +14,11 @@
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::len::need_in;
 use broadcast_common::{Parse, Serialize};
+use core::time::Duration;
 
 use crate::RtmpError;
 use crate::chunk::{MAX_CHUNK_SIZE, Message};
+use crate::ids::{ChunkStreamId, MessageStreamId, SequenceNumber, Timestamp};
 
 type Result<T> = core::result::Result<T, RtmpError>;
 
@@ -144,10 +146,10 @@ broadcast_common::impl_spec_display!(MessageTypeId, Other);
 
 /// Chunk stream id protocol control messages and user control messages
 /// MUST/SHOULD be sent on (§4, §5.3).
-pub const CONTROL_CHUNK_STREAM_ID: u32 = 2;
+pub const CONTROL_CHUNK_STREAM_ID: ChunkStreamId = ChunkStreamId::new(2);
 /// Message stream id protocol control messages MUST use, and user control
 /// messages SHOULD use (§4, §5.3): the control stream.
-pub const CONTROL_MESSAGE_STREAM_ID: u32 = 0;
+pub const CONTROL_MESSAGE_STREAM_ID: MessageStreamId = MessageStreamId::new(0);
 
 /// Byte width of a `u32` protocol control field (chunk size, chunk stream
 /// id, sequence number, window ack size).
@@ -310,7 +312,7 @@ pub enum ProtocolControl {
         chunk_stream_id: u32,
     },
     /// Acknowledgement (§5.4.3): total bytes received so far.
-    Acknowledgement(u32),
+    Acknowledgement(SequenceNumber),
     /// Window Acknowledgement Size (§5.4.4): the sender's advertised
     /// window size.
     WindowAckSize(u32),
@@ -389,7 +391,9 @@ impl ProtocolControl {
             }
             MessageTypeId::Acknowledgement => {
                 let sequence_number = need_u32(payload, "acknowledgement payload")?;
-                Ok(Some(ProtocolControl::Acknowledgement(sequence_number)))
+                Ok(Some(ProtocolControl::Acknowledgement(SequenceNumber::new(
+                    sequence_number,
+                ))))
             }
             MessageTypeId::WindowAckSize => {
                 let window = need_u32(payload, "window acknowledgement size payload")?;
@@ -423,7 +427,7 @@ impl ProtocolControl {
         let _ = self.serialize_into(&mut payload);
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
-            timestamp: 0,
+            timestamp: Timestamp::ZERO,
             message_type_id: self.message_type_id(),
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
             payload,
@@ -457,7 +461,7 @@ impl Serialize for ProtocolControl {
                 buf[0..U32_LEN].copy_from_slice(&chunk_stream_id.to_be_bytes());
             }
             ProtocolControl::Acknowledgement(sequence_number) => {
-                buf[0..U32_LEN].copy_from_slice(&sequence_number.to_be_bytes());
+                buf[0..U32_LEN].copy_from_slice(&sequence_number.get().to_be_bytes());
             }
             ProtocolControl::WindowAckSize(window) => {
                 buf[0..U32_LEN].copy_from_slice(&window.to_be_bytes());
@@ -517,8 +521,9 @@ pub enum UserControl {
     SetBufferLength {
         /// The stream this buffer length applies to.
         stream_id: u32,
-        /// The client's buffer length, in milliseconds.
-        buffer_ms: u32,
+        /// The client's buffer length, a span carried on the wire as whole
+        /// milliseconds.
+        buffer: Duration,
     },
     /// StreamIsRecorded (event 4, server→client): the stream is a
     /// recorded (not live) stream.
@@ -573,7 +578,7 @@ impl UserControl {
         let _ = self.serialize_into(&mut payload);
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
-            timestamp: 0,
+            timestamp: Timestamp::ZERO,
             message_type_id: MessageTypeId::UserControl,
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
             payload,
@@ -607,7 +612,9 @@ impl<'a> Parse<'a> for UserControl {
                 need_in(data, 2 * U32_LEN, "set buffer length event data")?;
                 Ok(UserControl::SetBufferLength {
                     stream_id: read_u32_be(&data[0..U32_LEN]),
-                    buffer_ms: read_u32_be(&data[U32_LEN..2 * U32_LEN]),
+                    buffer: Duration::from_millis(u64::from(read_u32_be(
+                        &data[U32_LEN..2 * U32_LEN],
+                    ))),
                 })
             }
             event_type::STREAM_IS_RECORDED => Ok(UserControl::StreamIsRecorded(need_u32(
@@ -652,12 +659,16 @@ impl Serialize for UserControl {
             | UserControl::PingResponse(stream_id) => {
                 data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
             }
-            UserControl::SetBufferLength {
-                stream_id,
-                buffer_ms,
-            } => {
+            UserControl::SetBufferLength { stream_id, buffer } => {
+                let millis = u32::try_from(buffer.as_millis()).map_err(|_| {
+                    RtmpError::FieldOverflow(broadcast_common::len::FieldOverflow {
+                        field: "set_buffer_length.buffer",
+                        value: buffer.as_millis() as u64,
+                        max: u64::from(u32::MAX),
+                    })
+                })?;
                 data[0..U32_LEN].copy_from_slice(&stream_id.to_be_bytes());
-                data[U32_LEN..2 * U32_LEN].copy_from_slice(&buffer_ms.to_be_bytes());
+                data[U32_LEN..2 * U32_LEN].copy_from_slice(&millis.to_be_bytes());
             }
         }
         Ok(written)
@@ -671,7 +682,7 @@ mod tests {
     fn message(message_type_id: MessageTypeId, payload: Vec<u8>) -> Message {
         Message {
             chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
-            timestamp: 0,
+            timestamp: Timestamp::ZERO,
             message_type_id,
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
             payload,
@@ -752,7 +763,9 @@ mod tests {
 
     #[test]
     fn acknowledgement_round_trips() {
-        protocol_control_round_trip(ProtocolControl::Acknowledgement(1_048_576));
+        protocol_control_round_trip(ProtocolControl::Acknowledgement(SequenceNumber::new(
+            1_048_576,
+        )));
     }
 
     #[test]
@@ -843,8 +856,8 @@ mod tests {
     #[test]
     fn protocol_control_display_matches_name() {
         assert_eq!(
-            ProtocolControl::Acknowledgement(1).to_string(),
-            ProtocolControl::Acknowledgement(1).name()
+            ProtocolControl::Acknowledgement(SequenceNumber::new(1)).to_string(),
+            ProtocolControl::Acknowledgement(SequenceNumber::new(1)).name()
         );
     }
 
@@ -883,7 +896,7 @@ mod tests {
     fn set_buffer_length_round_trips() {
         user_control_round_trip(UserControl::SetBufferLength {
             stream_id: 1,
-            buffer_ms: 3000,
+            buffer: Duration::from_millis(3000),
         });
     }
 
@@ -979,10 +992,10 @@ mod tests {
         use crate::chunk::{ChunkWriter, MessageHeader};
 
         let header = MessageHeader::Type0 {
-            timestamp: 0,
+            timestamp: Timestamp::ZERO,
             message_length: 4,
             message_type_id: MessageTypeId::Other(99),
-            message_stream_id: 1,
+            message_stream_id: MessageStreamId::new(1),
         };
         let bytes = header.try_to_bytes().expect("header");
         let (back, consumed) =

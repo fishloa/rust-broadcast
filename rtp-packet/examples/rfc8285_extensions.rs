@@ -8,7 +8,7 @@ use broadcast_common::{Parse, Serialize};
 use rtp_packet::rfc8285::{
     ExtensionElements, OneByteElement, OneByteElements, OneByteId, parse_extensions,
 };
-use rtp_packet::{HeaderExtension, RtpPacket};
+use rtp_packet::{HeaderExtension, RtpPacket, SeqNo, Ssrc};
 
 fn main() {
     // Two named extension elements: a 1-byte "audio level" (id=1) and a
@@ -44,9 +44,9 @@ fn main() {
     let pkt = RtpPacket {
         marker: true,
         payload_type: 96,
-        sequence_number: 1,
+        sequence_number: SeqNo::new(1),
         timestamp: 3600,
-        ssrc: 0x1234_5678,
+        ssrc: Ssrc::new(0x1234_5678),
         csrc: vec![],
         extension: Some(HeaderExtension {
             profile_id: rtp_packet::rfc8285::ONE_BYTE_PROFILE_ID,

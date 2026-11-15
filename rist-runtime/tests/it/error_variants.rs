@@ -1,6 +1,7 @@
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
 use rist_runtime::{Error, GenericNack, ReportPart, RistSenderCompound, RttEcho, RttEchoKind};
+use rtp_packet::Ssrc;
 use rtp_packet::rtcp::SenderReport;
 
 fn echo() -> RttEcho {
@@ -16,7 +17,7 @@ fn echo() -> RttEcho {
 fn compound(rtt_echo: Option<RttEcho>, cname: &str) -> RistSenderCompound {
     RistSenderCompound {
         report: ReportPart::Sr(SenderReport::new(
-            0x1122_3344,
+            Ssrc::new(0x1122_3344),
             0xE0E1_E2E3,
             0x1020_3040,
             0x0009_0000,

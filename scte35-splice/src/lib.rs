@@ -16,6 +16,7 @@
 extern crate alloc;
 
 pub mod commands;
+pub mod descriptor_loop;
 pub mod descriptors;
 pub mod dvb_ta;
 pub mod error;

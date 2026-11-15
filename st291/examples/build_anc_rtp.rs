@@ -6,7 +6,7 @@
 /// cargo run -p st291 --example build_anc_rtp --features rtp
 /// ```
 use broadcast_common::Serialize;
-use rtp_packet::RtpPacket;
+use rtp_packet::{RtpPacket, SeqNo, Ssrc};
 use st291::{
     ANC_RTP_DEFAULT_CLOCK_RATE, AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense,
     RtpAncPacket,
@@ -46,9 +46,9 @@ fn main() {
     let rtp = RtpPacket {
         marker: true,
         payload_type: 112,
-        sequence_number: 1,
+        sequence_number: SeqNo::new(1),
         timestamp: ANC_RTP_DEFAULT_CLOCK_RATE, // 1.0 s at the default 90 kHz clock rate
-        ssrc: 0xCAFE_BABE,
+        ssrc: Ssrc::new(0xCAFE_BABE),
         csrc: vec![],
         extension: None,
         padding: None,

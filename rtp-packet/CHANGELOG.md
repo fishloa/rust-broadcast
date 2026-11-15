@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- BREAKING: the RTP/RTCP identities are typed instead of bare integers: `RtpPacket::sequence_number` is `SeqNo` (16-bit), `RtpPacket::ssrc`, `rtcp::ReportBlock::ssrc`, `rtcp::SenderReport::ssrc`, `rtcp::ReceiverReport::ssrc` and `rtcp::App::ssrc` are `Ssrc` (32-bit), and `rtcp::ReportBlock::ext_highest_seq` is `ExtendedSeqNo`. Each has `new`/`get` (plus `From`/`Into` for its raw integer), so an SSRC can no longer be passed where a sequence number belongs. `SenderReport::new` and `ReceiverReport::new` take an `Ssrc`. Wire bytes are unchanged. Migration: read `.get()` where a raw integer is needed, wrap with `Ssrc::new`/`SeqNo::new` when building a packet (`pkt.ssrc` -> `pkt.ssrc.get()`, `ssrc: 1` -> `ssrc: Ssrc::new(1)`) (#2768).
+- `SeqNo` carries the 16-bit wrap arithmetic: `wrapping_next()` and `forward_distance(earlier)`.
 - The `panic_idioms` workspace guard now covers this crate (already clear of panicking idioms in non-test code) (#2773).
 ### Added
 - BREAKING: each typed RTCP packet (`SenderReport`, `ReceiverReport`, `SourceDescription`, `Bye`, `App`) now carries its trailing `P` (padding) octets as a public `padding: Option<RtcpPadding>` field, so a padded packet re-serializes byte-identically with its padding and `P` bit intact (audit19b #2742). The unpadded body region is validated separately from the padding octets.

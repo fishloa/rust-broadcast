@@ -64,7 +64,7 @@ fn main() {
                 let pts_s = pts.seconds();
                 println!(
                     "         PES stream_id={:#04x} PTS={:.6}s payload={}B",
-                    pes.stream_id.0,
+                    pes.stream_id.get(),
                     pts_s,
                     pes.payload.len(),
                 );

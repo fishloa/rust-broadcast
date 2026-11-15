@@ -133,7 +133,7 @@ pub(crate) fn unpack_aggregate(
         let ts_offset = *first_ts.get_or_insert(raw_ts);
         // §7.1.6: offset = (aggregate ts − first sub-message ts), added
         // to each sub-message ts.
-        let adjusted = raw_ts.wrapping_add(msg.timestamp.wrapping_sub(ts_offset));
+        let adjusted = raw_ts.wrapping_add(msg.timestamp.millis().wrapping_sub(ts_offset));
         deliver(tag_type, adjusted, &body[data_start..data_end])?;
         offset = back_end;
     }

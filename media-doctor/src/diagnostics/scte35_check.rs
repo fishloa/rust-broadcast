@@ -176,6 +176,7 @@ mod tests {
         use broadcast_common::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::SpliceInsert;
+        use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
         use scte35_splice::time::BreakDuration;
 
         let si = SpliceInsert {
@@ -193,7 +194,7 @@ mod tests {
         };
 
         let command = scte35_splice::commands::AnyCommand::SpliceInsert(si);
-        let sis = SpliceInfoSection::new_clear(command, &[]);
+        let sis = SpliceInfoSection::new_clear(command, SpliceDescriptorLoop::new(&[]));
         let mut buf = vec![0u8; sis.serialized_len()];
         sis.serialize_into(&mut buf).unwrap();
         buf

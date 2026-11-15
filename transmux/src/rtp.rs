@@ -364,9 +364,9 @@ fn rtp_header(pt: u8, marker: bool, seq: u16, timestamp: u32, ssrc: u32) -> Byte
     let pkt = RtpPacketWire {
         marker,
         payload_type: pt & RTP_PT_MASK,
-        sequence_number: seq,
+        sequence_number: seq.into(),
         timestamp,
-        ssrc,
+        ssrc: ssrc.into(),
         csrc: Vec::new(),
         extension: None,
         padding: None,
@@ -2002,9 +2002,9 @@ pub(crate) fn parse_rtp_header(pkt: &[u8]) -> Result<RtpHeader<'_>> {
     let parsed = RtpPacketWire::parse(pkt).map_err(map_rtp_error)?;
     Ok(RtpHeader {
         marker: parsed.marker,
-        sequence: parsed.sequence_number,
+        sequence: parsed.sequence_number.get(),
         timestamp: parsed.timestamp,
-        ssrc: parsed.ssrc,
+        ssrc: parsed.ssrc.get(),
         payload: parsed.payload,
     })
 }
@@ -2181,9 +2181,9 @@ impl Mp2tPacketiser {
             let wire = RtpPacketWire {
                 marker: false,
                 payload_type: MP2T_PT,
-                sequence_number: self.seq,
+                sequence_number: self.seq.into(),
                 timestamp,
-                ssrc: self.ssrc,
+                ssrc: self.ssrc.into(),
                 csrc: Vec::new(),
                 extension: None,
                 padding: None,
@@ -2280,9 +2280,9 @@ mod tests {
         let packet = RtpPacketWire::parse(&packets[0]).expect("parse");
         assert_eq!(packet.payload_type, MP2T_PT);
         assert!(!packet.marker, "RFC 2250 §2 has no marker bit");
-        assert_eq!(packet.sequence_number, 0x1234);
+        assert_eq!(packet.sequence_number.get(), 0x1234);
         assert_eq!(packet.timestamp, 0x0100_0000);
-        assert_eq!(packet.ssrc, 0xDEAD_BEEF);
+        assert_eq!(packet.ssrc.get(), 0xDEAD_BEEF);
         assert_eq!(packet.payload, &ts[..]);
         assert_eq!(packetiser.next_seq(), 0x1235);
     }
@@ -2313,7 +2313,10 @@ mod tests {
         let mut reassembled = first.payload.to_vec();
         reassembled.extend_from_slice(second.payload);
         assert_eq!(reassembled, ts);
-        assert_eq!((first.sequence_number, second.sequence_number), (0, 1));
+        assert_eq!(
+            (first.sequence_number.get(), second.sequence_number.get()),
+            (0, 1)
+        );
         assert_eq!(first.timestamp, second.timestamp);
     }
 
@@ -2336,7 +2339,7 @@ mod tests {
         let first = RtpPacketWire::parse(&packets[0]).expect("parse");
         let second = RtpPacketWire::parse(&packets[1]).expect("parse");
         assert_eq!(
-            (first.sequence_number, second.sequence_number),
+            (first.sequence_number.get(), second.sequence_number.get()),
             (u16::MAX, 0)
         );
         assert_eq!(packetiser.next_seq(), 1, "wraps, never panics");
