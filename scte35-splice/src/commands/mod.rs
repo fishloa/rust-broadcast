@@ -17,7 +17,7 @@ pub mod time_signal;
 pub use any::AnyCommand;
 pub use bandwidth_reservation::BandwidthReservation;
 pub use private_command::PrivateCommand;
-pub use splice_insert::{SpliceInsert, SpliceInsertComponent};
+pub use splice_insert::{ProgramSplice, SpliceInsert, SpliceInsertComponent, SpliceMode};
 pub use splice_null::SpliceNull;
 pub use splice_schedule::{SpliceSchedule, SpliceScheduleComponent, SpliceScheduleEvent};
 pub use time_signal::TimeSignal;

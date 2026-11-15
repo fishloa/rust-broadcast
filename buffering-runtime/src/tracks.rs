@@ -67,7 +67,9 @@ use core::time::Duration;
 
 use crate::config::TICKS_PER_US;
 use crate::stall_memory::MaxHold;
-use crate::time::{Clock27, duration_add, duration_between, duration_micros, micros_as_duration};
+use crate::time::{
+    Clock27, duration_add, duration_between, instant_micros, micros_as_duration, window_micros,
+};
 use alloc::vec::Vec;
 use broadcast_common::clock33::pcr_signed_distance;
 
@@ -168,10 +170,10 @@ impl Track {
             return;
         }
         let step = u64::try_from(advance).unwrap_or(0) / TICKS_PER_US;
-        if step > duration_micros(interval).saturating_add(duration_micros(rules.max_excess)) {
+        if step > instant_micros(interval).saturating_add(instant_micros(rules.max_excess)) {
             return;
         }
-        self.gran.observe(duration_micros(cur_at), step);
+        self.gran.observe(instant_micros(cur_at), step);
     }
 
     /// Fold one delivery into its delivery window; a call that does not belong
@@ -258,8 +260,8 @@ impl TrackSet {
                     first_at: now,
                     windows: 0,
                     gran: MaxHold::new(
-                        duration_micros(self.gran_hold),
-                        duration_micros(self.gran_decay),
+                        window_micros(self.gran_hold),
+                        window_micros(self.gran_decay),
                     ),
                 });
                 self.v.len() - 1
@@ -323,7 +325,7 @@ impl TrackSet {
         let step = self
             .v
             .iter()
-            .map(|t| t.gran.value(duration_micros(now)))
+            .map(|t| t.gran.value(instant_micros(now)))
             .max()
             .unwrap_or(0);
         Some(last.max(now.min(duration_add(last, micros_as_duration(step)))))
@@ -354,7 +356,7 @@ impl TrackSet {
         self.v
             .iter()
             .filter(|t| !self.is_silent(t, &silence, clock))
-            .map(|t| micros_as_duration(t.gran.value(duration_micros(now))))
+            .map(|t| micros_as_duration(t.gran.value(instant_micros(now))))
             .max()
             .unwrap_or(Duration::ZERO)
     }

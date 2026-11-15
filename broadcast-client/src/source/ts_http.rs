@@ -16,7 +16,7 @@ use transmux::{DemuxEvent, TrackId, TrackSpec};
 
 use mpeg_ts::pid::Pid;
 
-use crate::source::fetch::retry::{RefusedCapture, retry_after_us};
+use crate::source::fetch::retry::{RefusedCapture, retry_after};
 use crate::source::ts_http_hold::{DeclaredStreams, HoldLimits, SETTLE_US, StreamKind};
 use crate::{Event, Status};
 use broadcast_common::stage::Timestamp;
@@ -126,9 +126,10 @@ impl TsHttpSource {
     pub(crate) fn next_deadline(&self) -> Option<Timestamp> {
         let ts = self.ts.next_deadline();
         let hold = self.hold.as_ref().and_then(|h| {
-            let wall = h
-                .started
-                .checked_add(Duration::from_micros(self.hold_limits.max_wall_us));
+            let wall = self
+                .hold_limits
+                .max_wall
+                .and_then(|max| h.started.checked_add(max));
             if !self.active_resolved() {
                 return wall;
             }
@@ -261,12 +262,7 @@ impl TsHttpSource {
             h.bytes,
             h.quiet_bytes,
             h.span_us,
-            u64::try_from(
-                Timestamp::from_micros(self.now_us)
-                    .saturating_sub(h.started)
-                    .as_micros(),
-            )
-            .unwrap_or(u64::MAX),
+            Timestamp::from_micros(self.now_us).saturating_sub(h.started),
         ) || self
             .declared
             .as_ref()
@@ -295,11 +291,11 @@ impl TsHttpSource {
     /// Response callback.
     pub fn on_response(&mut self, status: StatusCode, headers: &HeaderMap, now_us: u64) {
         self.now_us = now_us;
-        let retry_after = retry_after_us(status, headers, Timestamp::from_micros(now_us), None);
+        let retry_after = retry_after(status, headers, Timestamp::from_micros(now_us), None);
         self.refused = (status == StatusCode::TOO_MANY_REQUESTS
             || status == StatusCode::SERVICE_UNAVAILABLE)
             .then(|| RefusedCapture::new(status, retry_after, headers));
-        self.ts.set_retry_after(Duration::from_micros(retry_after));
+        self.ts.set_retry_after(retry_after.unwrap_or_default());
         self.ts
             .on_response(status, headers, Timestamp::from_micros(now_us));
         self.drain_ts_events();

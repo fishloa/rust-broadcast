@@ -4,55 +4,110 @@
 
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use transmux::{JoinDecision, Sample, TrackId, TrackSpec};
 
 use crate::buffer::{lowest_id_per_kind, negative_origin, pts_to_27mhz_from, raw_27mhz};
 use crate::events::{BufferEvent, Event, PauseReason};
+use broadcast_common::clock33::{Clock27, PCR_WRAP_27MHZ, pcr_forward_distance};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::units::MICROS_PER_SEC;
 
-/// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS), microseconds.
-pub const DEFAULT_VOD_START_LEAD_US: u64 = 1_000_000;
-/// Default start lead for live HLS, microseconds.
-pub const DEFAULT_LIVE_START_LEAD_US: u64 = 6_000_000;
-/// Default lead at or below which a started gate pauses, microseconds.
-pub const DEFAULT_PAUSE_LEAD_US: u64 = 0;
-const TICKS_PER_US: u64 = 27;
-const TARGET_DURATION_LEAD_FACTOR: u64 = 3;
+const HALF_CLOCK_27MHZ: u64 = PCR_WRAP_27MHZ / 2;
+const CLOCK_COVER_27MHZ: u64 = PCR_WRAP_27MHZ - 1;
+
+/// Default start lead for VOD sources (HLS with `EXT-X-ENDLIST`, finite TS).
+pub const DEFAULT_VOD_START_LEAD: Duration = Duration::from_secs(1);
+/// Default start lead for live HLS.
+pub const DEFAULT_LIVE_START_LEAD: Duration = Duration::from_secs(6);
+/// Default lead at or below which a started gate pauses.
+pub const DEFAULT_PAUSE_LEAD: Duration = Duration::ZERO;
+const TARGET_DURATION_LEAD_FACTOR: u32 = 3;
+/// A lead ([`PlayoutConfig::vod_start_lead`], [`PlayoutConfig::live_start_lead`],
+/// [`PlayoutConfig::resume_lead`], [`PlayoutConfig::pause_lead`]) on the 27 MHz playback clock.
+///
+/// A lead the stream cannot reach keeps the gate closed: a `vod_start_lead` of [`Duration::MAX`]
+/// never emits `Start` before the source ends, and a `pause_lead` at or above the lead the
+/// source sustains pauses on every update. `3 x EXT-X-TARGETDURATION` is a `u32` of seconds, so
+/// the live cap is floored to whole 27 MHz ticks, a sub-tick lead pausing or resuming at once.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeadTicks(Clock27);
+
+impl LeadTicks {
+    /// The lead as a playback position on the 27 MHz clock.
+    #[must_use]
+    pub const fn position(self) -> Clock27 {
+        self.0
+    }
+
+    /// The later of two leads.
+    #[must_use]
+    pub fn max(self, other: Self) -> Self {
+        if pcr_forward_distance(self.0.ticks(), other.0.ticks()) < HALF_CLOCK_27MHZ {
+            other
+        } else {
+            self
+        }
+    }
+
+    /// The earlier of two leads.
+    #[must_use]
+    pub fn min(self, other: Self) -> Self {
+        if pcr_forward_distance(self.0.ticks(), other.0.ticks()) < HALF_CLOCK_27MHZ {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// The next lead after this one; one tick past the far side of the wrap (only a lead taken
+    /// from [`Duration::MAX`] is there) stays where it is.
+    #[must_use]
+    pub fn next(self) -> Self {
+        let ticks = self.0.ticks().wrapping_add(1) % PCR_WRAP_27MHZ;
+        if ticks == 0 {
+            return self;
+        }
+        Self(Clock27::from_27mhz_wrapping(ticks))
+    }
+}
+
+impl From<Duration> for LeadTicks {
+    fn from(lead: Duration) -> Self {
+        let micros = lead.as_micros().min(u128::from(u64::MAX));
+        let ticks = u64::try_from(micros).map_or(u64::MAX, |micros| micros.saturating_mul(27));
+        Self(Clock27::from_27mhz_wrapping(ticks))
+    }
+}
 
 /// Leads of the playout gate (HLS live, HLS VOD, finite TS). Live TS-over-HTTP keeps using
-/// [`crate::Config::buffer`].
-///
-/// For live HLS the start lead is `min(3 x EXT-X-TARGETDURATION, live_start_lead_us)`.
-///
-/// A lead the stream cannot reach keeps the gate closed: a start lead of `u64::MAX` never emits
-/// `Start` before the source ends, and a `pause_lead_us` at or above the lead the source
-/// sustains pauses on every update.
+/// [`crate::Config::buffer`]. A lead longer than the 27 MHz clock the events carry is reduced
+/// onto it, as [`LeadTicks`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct PlayoutConfig {
     /// Media that must be buffered past the origin before `Start`, VOD sources.
-    pub vod_start_lead_us: u64,
+    pub vod_start_lead: Duration,
     /// Media that must be buffered past the origin before `Start`, live HLS.
-    pub live_start_lead_us: u64,
+    pub live_start_lead: Duration,
     /// Media that must be buffered past the held position before `Resume`; `None` uses the
-    /// start lead of the source kind. A value not above [`PlayoutConfig::pause_lead_us`] would
+    /// start lead of the source kind. A value not above [`PlayoutConfig::pause_lead`] would
     /// pause and resume on every update, so the effective resume lead is never less than
-    /// `pause_lead_us` plus one microsecond.
-    pub resume_lead_us: Option<u64>,
+    /// `pause_lead` plus one microsecond.
+    pub resume_lead: Option<Duration>,
     /// A started gate pauses when the lead (minimum rendered media end minus the playback
     /// position) is at or below this.
-    pub pause_lead_us: u64,
+    pub pause_lead: Duration,
 }
 
 impl Default for PlayoutConfig {
     fn default() -> Self {
         Self {
-            vod_start_lead_us: DEFAULT_VOD_START_LEAD_US,
-            live_start_lead_us: DEFAULT_LIVE_START_LEAD_US,
-            resume_lead_us: None,
-            pause_lead_us: DEFAULT_PAUSE_LEAD_US,
+            vod_start_lead: DEFAULT_VOD_START_LEAD,
+            live_start_lead: DEFAULT_LIVE_START_LEAD,
+            resume_lead: None,
+            pause_lead: DEFAULT_PAUSE_LEAD,
         }
     }
 }
@@ -60,29 +115,29 @@ impl Default for PlayoutConfig {
 impl PlayoutConfig {
     /// Set the VOD start lead (media buffered past the origin before `Start`).
     #[must_use]
-    pub fn with_vod_start_lead_us(mut self, vod_start_lead_us: u64) -> Self {
-        self.vod_start_lead_us = vod_start_lead_us;
+    pub fn with_vod_start_lead(mut self, vod_start_lead: Duration) -> Self {
+        self.vod_start_lead = vod_start_lead;
         self
     }
 
     /// Set the live start lead (media buffered past the origin before `Start`).
     #[must_use]
-    pub fn with_live_start_lead_us(mut self, live_start_lead_us: u64) -> Self {
-        self.live_start_lead_us = live_start_lead_us;
+    pub fn with_live_start_lead(mut self, live_start_lead: Duration) -> Self {
+        self.live_start_lead = live_start_lead;
         self
     }
 
     /// Set the resume lead; `None` falls back to the source kind's start lead.
     #[must_use]
-    pub fn with_resume_lead_us(mut self, resume_lead_us: u64) -> Self {
-        self.resume_lead_us = Some(resume_lead_us);
+    pub fn with_resume_lead(mut self, resume_lead: Duration) -> Self {
+        self.resume_lead = Some(resume_lead);
         self
     }
 
     /// Set the pause lead (a started gate pauses at or below this).
     #[must_use]
-    pub fn with_pause_lead_us(mut self, pause_lead_us: u64) -> Self {
-        self.pause_lead_us = pause_lead_us;
+    pub fn with_pause_lead(mut self, pause_lead: Duration) -> Self {
+        self.pause_lead = pause_lead;
         self
     }
 }
@@ -290,27 +345,27 @@ impl Playout {
         self.out.drain(..).map(Event::Buffer).collect()
     }
 
-    fn start_lead(&self) -> u64 {
-        let us = match self.source {
-            Source::Vod => self.config.vod_start_lead_us,
+    fn start_lead(&self) -> LeadTicks {
+        match self.source {
+            Source::Vod => LeadTicks::from(self.config.vod_start_lead),
             Source::Live {
                 target_duration_secs,
-            } => target_duration_secs.map_or(self.config.live_start_lead_us, |td| {
-                self.config.live_start_lead_us.min(
-                    u64::from(td)
-                        .saturating_mul(TARGET_DURATION_LEAD_FACTOR)
-                        .saturating_mul(MICROS_PER_SEC),
-                )
+            } => target_duration_secs.map_or(LeadTicks::from(self.config.live_start_lead), |td| {
+                let cap = u64::from(td)
+                    .saturating_mul(u64::from(TARGET_DURATION_LEAD_FACTOR))
+                    .saturating_mul(MICROS_PER_SEC);
+                LeadTicks::from(Duration::from_micros(cap))
+                    .min(LeadTicks::from(self.config.live_start_lead))
             }),
-        };
-        us.saturating_mul(TICKS_PER_US)
+        }
     }
 
-    fn resume_lead(&self) -> u64 {
-        let floor_us = self.config.pause_lead_us.saturating_add(1);
-        match self.config.resume_lead_us {
-            Some(us) => us.max(floor_us).saturating_mul(TICKS_PER_US),
-            None => self.start_lead().max(floor_us.saturating_mul(TICKS_PER_US)),
+    fn resume_lead(&self) -> LeadTicks {
+        let floor = LeadTicks::from(self.config.pause_lead);
+        let floor = LeadTicks::from(Duration::from_micros(1)).max(floor).next();
+        match self.config.resume_lead {
+            Some(lead) => LeadTicks::from(lead).max(floor),
+            None => self.start_lead().max(floor),
         }
     }
 
@@ -368,7 +423,8 @@ impl Playout {
         let (Some(origin), Some((_, end))) = (origin, self.limiting()) else {
             return;
         };
-        if self.ended || end.saturating_sub(origin) >= self.start_lead() {
+        let cover = end.saturating_sub(origin).min(CLOCK_COVER_27MHZ);
+        if self.ended || cover >= self.start_lead().position().ticks() {
             self.started = true;
             self.position = None;
             self.out.push_back(BufferEvent::Start { at_27mhz: origin });
@@ -379,7 +435,10 @@ impl Playout {
         let lead = self
             .limiting()
             .map(|(_, end)| end.saturating_sub(self.hold));
-        if self.ended || lead.is_some_and(|l| l >= self.resume_lead()) {
+        if self.ended
+            || lead
+                .is_some_and(|l| l.min(CLOCK_COVER_27MHZ) >= self.resume_lead().position().ticks())
+        {
             self.paused = false;
             self.out.push_back(BufferEvent::Resume {
                 at_27mhz: self.hold,
@@ -394,7 +453,8 @@ impl Playout {
         let (Some(position), Some((track, end))) = (self.position, self.limiting()) else {
             return;
         };
-        if end.saturating_sub(position) <= self.config.pause_lead_us.saturating_mul(TICKS_PER_US) {
+        let cover = end.saturating_sub(position).min(CLOCK_COVER_27MHZ);
+        if cover <= LeadTicks::from(self.config.pause_lead).position().ticks() {
             self.paused = true;
             self.hold = position;
             self.out.push_back(BufferEvent::Pause {
@@ -502,9 +562,9 @@ mod tests {
     fn a_resume_lead_not_above_the_pause_lead_does_not_toggle_pause_and_resume() {
         let (spec, samples) = audio_track();
         let mut p = Playout::new(PlayoutConfig {
-            vod_start_lead_us: 1,
-            pause_lead_us: 0,
-            resume_lead_us: Some(0),
+            vod_start_lead: Duration::from_micros(1),
+            pause_lead: Duration::ZERO,
+            resume_lead: Some(Duration::ZERO),
             ..PlayoutConfig::default()
         });
         p.engage(Source::Vod);
@@ -531,6 +591,37 @@ mod tests {
                 starving_track: Some(spec.track_id.value()),
             }],
             "pause once, never resume without new media"
+        );
+    }
+
+    #[test]
+    fn a_start_lead_beyond_the_clock_never_starts_and_zero_starts_at_once() {
+        let (spec, samples) = audio_track();
+        let mut never = Playout::new(PlayoutConfig::default().with_vod_start_lead(Duration::MAX));
+        never.engage(Source::Vod);
+        never.on_tracks(std::slice::from_ref(&spec));
+        never.on_sample(
+            spec.track_id,
+            &one_second_sample(&samples[0], &spec, 0),
+            None,
+        );
+        assert!(
+            never.start_lead().position().ticks() > ONE_SECOND_TICKS,
+            "a lead longer than the clock still holds the gate closed"
+        );
+        assert_eq!(buffer_events(&mut never), vec![]);
+        let mut at_once =
+            Playout::new(PlayoutConfig::default().with_vod_start_lead(Duration::ZERO));
+        at_once.engage(Source::Vod);
+        at_once.on_tracks(std::slice::from_ref(&spec));
+        at_once.on_sample(
+            spec.track_id,
+            &one_second_sample(&samples[0], &spec, 0),
+            None,
+        );
+        assert_eq!(
+            buffer_events(&mut at_once),
+            vec![BufferEvent::Start { at_27mhz: 0 }]
         );
     }
 
@@ -601,6 +692,31 @@ mod tests {
                 reason: PauseReason::DataArriving,
                 starving_track: Some(spec.track_id.value()),
             }]
+        );
+    }
+
+    #[test]
+    fn a_gate_whose_media_starts_inside_the_last_second_of_the_clock_still_opens() {
+        let mut spec = audio_track().0;
+        spec.timescale = Timescale::new(27_000).expect("a non-zero timescale");
+        let mut p = Playout::new(PlayoutConfig::default().with_vod_start_lead(Duration::ZERO));
+        p.engage(Source::Vod);
+        p.on_tracks(std::slice::from_ref(&spec));
+        let timescale = i64::from(spec.timescale.get());
+        let start = i64::try_from(PCR_WRAP_27MHZ / 27).expect("a 27 kHz PTS fits") - 4 * timescale;
+        let mut s = audio_track().1[0].clone();
+        s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+            start,
+            start,
+            spec.timescale.get(),
+        ));
+        p.on_sample(spec.track_id, &s, None);
+        let events = buffer_events(&mut p);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, BufferEvent::Start { .. })),
+            "the gate opens for media inside the last ticks of the clock: {events:?}"
         );
     }
 

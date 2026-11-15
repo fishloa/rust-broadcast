@@ -82,7 +82,7 @@ fn anchor_index(media: &Media) -> Result<usize> {
 /// Returned as `i64` because a composition offset is signed and may push an
 /// early sample's presentation time slightly negative.
 fn presentation_times(track: &Track, origin: &TimelineOrigin) -> Result<Vec<i64>> {
-    relative_decode_times(track, origin)
+    relative_decode_times(track, origin)?
         .into_iter()
         .zip(&track.samples)
         .map(|(dts, s)| Ok(dts + i64::from(s.composition_offset()?.unwrap_or(0))))
@@ -379,7 +379,7 @@ impl Repackage {
         let origin = TimelineOrigin::of(&media.tracks);
         let mut dts = alloc::vec![0u128; media.tracks.len()];
         for (ti, track) in media.tracks.iter().enumerate() {
-            let first = relative_decode_times(track, &origin)
+            let first = relative_decode_times(track, &origin)?
                 .first()
                 .map_or(0, |&t| t.max(0) as u64);
             seg.set_start_decode_time(track.spec.track_id, first)?;

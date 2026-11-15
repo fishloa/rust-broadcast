@@ -184,6 +184,12 @@ pub enum Notification {
         /// The `session_nb` that closed.
         session_nb: u16,
     },
+    /// The host clock read an instant the Date-Time resource's 5-byte
+    /// `UTC_time` field (EN 300 468 Annex C: 16-bit MJD + BCD `HHMMSS`)
+    /// cannot express: before 1970-01-01 or from MJD 65536 (2141-09-10) on.
+    /// The `date_time` resource then sends no reply for that enquiry (or
+    /// resend) rather than a wrong date, and reports it here.
+    ClockUnrepresentable,
     /// A protocol error surfaced by the stack (non-fatal; informational).
     Error {
         /// Human-readable detail.

@@ -17,7 +17,7 @@ use broadcast_client::{
 use broadcast_common::stage::Timestamp;
 use buffering_runtime::{
     BufferController, Clock27, ControllerConfig, Event as RtEvent, Reason as RtReason,
-    StallMemorySnapshot, duration_micros, micros_as_duration,
+    StallMemorySnapshot, instant_micros, micros_as_duration,
 };
 use transmux::{DemuxEvent, JoinDecision, LiveJoin, StreamingTsDemux, TrackSpec};
 
@@ -1162,7 +1162,7 @@ fn playback_position_none_until_started_then_some() {
         .iter()
         .filter_map(|l| match l {
             BufferInput::Tick { now_us, pts } => {
-                Some((duration_micros(*now_us), pts.map(|p| p.ticks())))
+                Some((instant_micros(*now_us), pts.map(|p| p.ticks())))
             }
             _ => None,
         })

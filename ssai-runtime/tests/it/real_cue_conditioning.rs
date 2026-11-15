@@ -16,10 +16,12 @@
 //! exact match (or silently accepts any drift) fails this test — the
 //! anti-cheat property "tests must bite" requires.
 use broadcast_common::Parse;
+use broadcast_common::clock33::Clock33;
 use mp4_emsg::{EmsgBox, PresentationTime};
 use scte35_splice::SpliceInfoSection;
 use ssai_runtime::error::Error;
 use ssai_runtime::splice::{SnapDirection, condition_splice_point};
+use std::time::Duration;
 
 /// The real nearest video keyframe's pts, in the same absolute 90 kHz
 /// representation clock as the emsg's `presentation_time` — measured
@@ -28,6 +30,23 @@ const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
 
 /// The measured real gap: `NEAREST_KEYFRAME_PTS - presentation_time`.
 const MEASURED_GAP_TICKS: u64 = 6_000;
+
+/// A tolerance of `ticks` 90 kHz ticks, exactly (each value used is a whole
+/// number of ticks).
+fn ticks(n: u64) -> Duration {
+    Duration::from_nanos(n * 1_000_000_000 / 90_000)
+}
+
+/// Reduce an absolute representation-clock instant onto the 33-bit PTS
+/// circle this module conditions on (ISO/IEC 13818-1 §2.4.3.7): the capture's
+/// `emsg` timestamps are unrolled, the PTS and SCTE-35 `pts_time` they are
+/// compared against are not.
+fn on_the_pts_circle(ticks: u64) -> Clock33 {
+    match Clock33::try_new(ticks % broadcast_common::clock33::WRAP_33BIT) {
+        Ok(clock) => clock,
+        Err(error) => panic!("{ticks} reduced modulo 2^33 is a valid Clock33: {error}"),
+    }
+}
 
 fn real_cue_presentation_time() -> u64 {
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
@@ -63,11 +82,18 @@ fn real_cue_is_genuinely_not_idr_aligned() {
 fn conditioning_reproduces_the_measured_real_gap() {
     let requested_pts = real_cue_presentation_time();
 
-    let conditioned = condition_splice_point(requested_pts, &[NEAREST_KEYFRAME_PTS], 10_000)
-        .expect("the real 67ms drift is within a 111ms tolerance");
+    let conditioned = condition_splice_point(
+        on_the_pts_circle(requested_pts),
+        &[on_the_pts_circle(NEAREST_KEYFRAME_PTS)],
+        ticks(10_000),
+    )
+    .expect("the real 67ms drift is within a 111ms tolerance");
 
-    assert_eq!(conditioned.requested_pts, requested_pts);
-    assert_eq!(conditioned.snapped_pts, NEAREST_KEYFRAME_PTS);
+    assert_eq!(conditioned.requested_pts, on_the_pts_circle(requested_pts));
+    assert_eq!(
+        conditioned.snapped_pts,
+        on_the_pts_circle(NEAREST_KEYFRAME_PTS)
+    );
     assert_eq!(
         conditioned.delta_ticks, MEASURED_GAP_TICKS,
         "must reproduce PROVENANCE.md's independently measured 67ms/6000-tick gap"
@@ -87,14 +113,19 @@ fn a_tolerance_tighter_than_the_real_gap_is_rejected() {
     // One video frame at 30fps/90kHz is 3000 ticks (33ms) — tighter than the
     // real 67ms gap, so a live low-latency caller with that bound must be
     // told "no", not silently handed a splice point 67ms off.
-    let err = condition_splice_point(requested_pts, &[NEAREST_KEYFRAME_PTS], 3_000).unwrap_err();
+    let err = condition_splice_point(
+        on_the_pts_circle(requested_pts),
+        &[on_the_pts_circle(NEAREST_KEYFRAME_PTS)],
+        ticks(3_000),
+    )
+    .unwrap_err();
     match err {
         Error::NoAlignedBoundary {
             requested_pts: rp,
             tolerance_ticks,
             nearest_delta_ticks,
         } => {
-            assert_eq!(rp, requested_pts);
+            assert_eq!(rp, on_the_pts_circle(requested_pts).ticks());
             assert_eq!(tolerance_ticks, 3_000);
             assert_eq!(nearest_delta_ticks, MEASURED_GAP_TICKS);
         }

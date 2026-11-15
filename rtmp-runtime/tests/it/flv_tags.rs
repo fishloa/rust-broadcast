@@ -142,7 +142,7 @@ fn header_round_trips_a_non_standard_data_offset() {
     bytes[FLV_SIGNATURE.len() + 1] = FLV_FLAG_AUDIO;
     bytes[5..FLV_HEADER_LEN].copy_from_slice(&offset.to_be_bytes());
     let header = FlvHeader::parse(&bytes).unwrap();
-    assert_eq!(header.data_offset, offset);
+    assert_eq!(header.data_offset(), usize::try_from(offset).unwrap());
     assert!(!header.has_video);
     assert_eq!(header.try_to_bytes().unwrap(), bytes);
 
@@ -159,6 +159,27 @@ fn header_round_trips_a_non_standard_data_offset() {
     let walked: Vec<_> = rtmp_runtime::flv::tags(&stream, &header).collect();
     assert_eq!(walked.len(), 1);
     assert_eq!(walked[0].as_ref().map(|t| t.body), Ok(&[0xAF][..]));
+}
+
+/// The `DataOffset` field is derived from `extra`, so a header can never
+/// declare an offset its bytes do not reach (the old public `data_offset`
+/// field could be set to anything, emitting an un-parseable header).
+#[test]
+fn the_declared_data_offset_always_matches_the_header_bytes() {
+    let mut header = FlvHeader::new(true, true);
+    let extra = [0xAAu8, 0xBB];
+    header.extra = &extra;
+    let bytes = header.try_to_bytes().unwrap();
+    assert_eq!(
+        <[u8; 4]>::try_from(&bytes[5..FLV_HEADER_LEN]).unwrap(),
+        u32::try_from(FLV_HEADER_LEN + extra.len())
+            .unwrap()
+            .to_be_bytes()
+    );
+    assert_eq!(
+        FlvHeader::parse(&bytes).unwrap().data_offset(),
+        FLV_HEADER_LEN + extra.len()
+    );
 }
 
 #[test]

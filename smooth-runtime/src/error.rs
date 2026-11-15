@@ -5,7 +5,7 @@ use thiserror::Error;
 use crate::client::ManifestFault;
 
 /// Why a [`crate::SmoothClient`] stopped for good.
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Error)]
 #[non_exhaustive]
 pub enum SmoothError {
     /// The manifest declares a `Protection` element (PlayReady/PIFF sample

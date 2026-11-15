@@ -12,6 +12,7 @@
 //! cargo run -p playout-runtime --example emit_splice_from_real_cue
 //! ```
 
+use broadcast_common::clock33::{self, Clock33};
 use broadcast_common::timescale::Timescale;
 use broadcast_common::{Parse, Serialize};
 use mp4_emsg::{EmsgBox, PresentationTime};
@@ -19,13 +20,34 @@ use playout_runtime::schedule::{CodecConfigId, EntryKind, Playhead, Schedule, Sc
 use playout_runtime::scte35::{BreakEdge, build_splice_insert, to_section};
 use playout_runtime::transition::next_transition;
 use scte35_splice::SpliceInfoSection;
-use scte35_splice::commands::AnyCommand;
+use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
+use scte35_splice::time::SpliceTime;
 use std::fs;
+use std::time::Duration;
 
 /// The real nearest video keyframe's PTS, independently measured from this
 /// same capture's `moof`/`traf`/`tfdt`/`trun` boxes — see
 /// `fixtures/scte35/PROVENANCE.md`, "Cue-to-IDR alignment".
 const NEAREST_KEYFRAME_PTS: u64 = 160_767_315_906_000;
+
+/// The one program-mode `splice_time()` the emitted cue carries.
+fn program_splice_time(insert: &SpliceInsert) -> SpliceTime {
+    match &insert.mode {
+        SpliceMode::Program(ProgramSplice::At(splice_time)) => *splice_time,
+        other => panic!("expected a scheduled program splice, got {other:?}"),
+    }
+}
+
+/// Reduce an absolute representation-clock instant onto the 33-bit PTS
+/// circle `splice_time().pts_time` lives on (ISO/IEC 13818-1 §2.4.3.7).
+fn on_the_pts_circle(ticks: u64) -> Clock33 {
+    Clock33::try_new(ticks % clock33::WRAP_33BIT).expect("reduced modulo 2^33")
+}
+
+/// A tolerance/duration of `n` 90 kHz ticks, exactly.
+fn ticks(n: u64) -> Duration {
+    Duration::from_nanos(n * 1_000_000_000 / 90_000)
+}
 
 fn main() {
     let path = test_fixtures::path("scte35/emsg-splice-insert.bin");
@@ -72,10 +94,10 @@ fn main() {
     let (conditioned, insert) = build_splice_insert(
         BreakEdge::Enter,
         0x6A78_D416, // the real fixture's own splice_event_id.
-        requested_pts,
-        &[NEAREST_KEYFRAME_PTS],
-        10_000,
-        Some(1_800_000), // the real fixture's own 20s break_duration.
+        on_the_pts_circle(requested_pts),
+        &[on_the_pts_circle(NEAREST_KEYFRAME_PTS)],
+        ticks(10_000),
+        Some(ticks(1_800_000)), // the real fixture's own 20s break_duration.
     )
     .expect("a real 67ms drift is within a 111ms (10_000-tick) tolerance");
     println!(
@@ -100,7 +122,9 @@ fn main() {
         AnyCommand::SpliceInsert(reparsed_insert) => {
             assert_eq!(reparsed_insert.splice_event_id, 0x6A78_D416);
             assert_eq!(
-                reparsed_insert.splice_time.unwrap().pts_time,
+                program_splice_time(&reparsed_insert)
+                    .pts_time
+                    .map(|c| c.ticks()),
                 Some(NEAREST_KEYFRAME_PTS % (1u64 << 33))
             );
         }

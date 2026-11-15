@@ -273,11 +273,18 @@ impl ReportPart {
         };
         match head.packet_type {
             PT_SENDER_REPORT => {
-                let sr = parse_body::<SenderReport>(parse_end)?;
+                let mut sr = parse_body::<SenderReport>(parse_end)?;
+                // The sub-packet's padding is owned here (in `tail`), not by the
+                // underlying SR; clear it so the report is re-serialized
+                // unpadded and the padding region is appended once by this crate.
+                sr.padding = None;
                 let tail = if head.padding == 0 {
                     Vec::new()
                 } else {
-                    bytes[sr.serialized_len()..head.total - 1].to_vec()
+                    // The padding region's zero-fill octets live between the end
+                    // of the report content (right before the padding) and the
+                    // trailing count byte.
+                    bytes[unpadded_end..head.total - 1].to_vec()
                 };
                 if head.padding != 0 && tail.iter().any(|&b| b != 0) {
                     return Err(Error::InvalidPaddingCount {
@@ -288,11 +295,12 @@ impl ReportPart {
                 Ok((ReportPart::Sr(sr), tail))
             }
             PT_RECEIVER_REPORT => {
-                let rr = parse_body::<ReceiverReport>(parse_end)?;
+                let mut rr = parse_body::<ReceiverReport>(parse_end)?;
+                rr.padding = None;
                 let tail = if head.padding == 0 {
                     Vec::new()
                 } else {
-                    bytes[rr.serialized_len()..head.total - 1].to_vec()
+                    bytes[unpadded_end..head.total - 1].to_vec()
                 };
                 if head.padding != 0 && tail.iter().any(|&b| b != 0) {
                     return Err(Error::InvalidPaddingCount {
@@ -439,6 +447,7 @@ fn build_sdes(ssrc: u32, cname: &str) -> SourceDescription {
                 text: String::from(cname),
             }],
         }],
+        padding: None,
     }
 }
 

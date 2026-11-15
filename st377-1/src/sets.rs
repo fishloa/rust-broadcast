@@ -16,7 +16,7 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::local_set::{ItemLengthMode, LocalSet, LocalSetItem, StructuralSetKind};
-use crate::types::UlBytes;
+use crate::types::{UidBatch, UlBytes, serialize_uid_batch_owned};
 
 /// The two Interchange Object (Annex A.1) properties with a static local
 /// tag, common to every Root Metadata Set.
@@ -175,6 +175,19 @@ pub fn collect_dark(items: &[LocalSetItem<'_>], known_tags: &[u16]) -> Vec<(u16,
         .filter(|i| !known_tags.contains(&i.tag))
         .map(|i| (i.tag, i.value.to_vec()))
         .collect()
+}
+
+/// The wire bytes of an owner's UL Batch property: the exact header the
+/// Batch was parsed with when [`UidBatch`] retains one (and it still agrees
+/// with `items`), else this crate's canonical header for `items`. The
+/// infallible `OwnedItems` contract leaves no error to report for a count
+/// over `u32::MAX`, so that case writes the canonical header, as a freshly
+/// built batch does.
+pub fn batch_bytes(batch: Option<&UidBatch>, items: &[UlBytes]) -> Vec<u8> {
+    batch
+        .filter(|b| b.items() == items)
+        .and_then(|b| b.serialize().ok())
+        .unwrap_or_else(|| serialize_uid_batch_owned(items))
 }
 
 /// Largest value a two-byte local length can carry (§9.3): 65535.

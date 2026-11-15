@@ -123,7 +123,7 @@ serde_json   = { workspace = true }
 # dependency (see `splice.rs`'s module docs, "Follow-up") — selecting splice
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
-scte35-splice  = { path = "../scte35-splice", version = "6.0.0", default-features = false, features = ["std"] }
+scte35-splice  = { path = "../scte35-splice", version = "7.0.0", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std", "cc-data", "teletext"] }
 # timed_metadata_sei_caption_fixture.rs / timed_metadata_teletext_tsduck_oracle.rs
 # feed timed-metadata's cue extractors from transmux's own SEI unwrap and TS

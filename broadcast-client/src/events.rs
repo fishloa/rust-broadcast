@@ -281,8 +281,8 @@ pub struct BufferStats {
     pub reprimes: u32,
     /// Baseline resets.
     pub discontinuities: u32,
-    /// Longest pause (Pause to Resume), microseconds.
-    pub longest_freeze_us: u64,
+    /// Longest pause (Pause to Resume).
+    pub longest_freeze: Duration,
 }
 
 /// Why a session reported [`Event::Error`].
@@ -1003,27 +1003,27 @@ pub const DEFAULT_MAX_INFLIGHT_SEGMENTS: usize = 4;
 /// Default cap on input bytes the initial-tracks hold may buffer, see
 /// [`Config::tracks_hold_max_input_bytes`].
 pub const DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES: usize = 4 * 1024 * 1024;
-/// Default cap on media time the initial-tracks hold may buffer, microseconds, see
-/// [`Config::tracks_hold_max_media_us`].
-pub const DEFAULT_TRACKS_HOLD_MAX_MEDIA_US: u64 = 1_000_000;
-/// Default cap on session-clock time the initial-tracks hold may last, microseconds, see
-/// [`Config::tracks_hold_max_wall_us`].
-pub const DEFAULT_TRACKS_HOLD_MAX_WALL_US: u64 = 1_000_000;
+/// Default cap on media time the initial-tracks hold may buffer, see
+/// [`Config::tracks_hold_max_media`].
+pub const DEFAULT_TRACKS_HOLD_MAX_MEDIA: Duration = Duration::from_secs(1);
+/// Default cap on session-clock time the initial-tracks hold may last, see
+/// [`Config::tracks_hold_max_wall`].
+pub const DEFAULT_TRACKS_HOLD_MAX_WALL: Duration = Duration::from_secs(1);
 /// Default input bytes without a stream resolving after which the initial-tracks hold gives up,
 /// see [`Config::tracks_hold_quiet_input_bytes`].
 pub const DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES: usize = 512 * 1024;
 /// Default longest a live TS `Start` waits, after the first media, for a PMT-declared audio or
-/// video stream that has no track yet, microseconds, see [`Config::start_pending_track_wait_us`].
+/// video stream that has no track yet, see [`Config::start_pending_track_wait`].
 /// A live mux sends audio up to about a second behind video and the audio codec config resolves
 /// only with its first frame: the zenith-tv trace (hold released on the wall backstop, audio
 /// announced about 1.3 s after the first media) started on video alone and paused 100 ms later.
 /// Measured resolution gaps on the committed captures are 0.16 s to 0.48 s of media, so 1.5 s
 /// covers a skew three times the worst measured and is shorter than the 1.8 s default start
 /// lead, which a declared but never delivering audio PID waits out anyway.
-pub const DEFAULT_START_PENDING_TRACK_WAIT_US: u64 = 1_500_000;
-/// Default cap on the wait above, microseconds, see
-/// [`Config::start_pending_track_hard_cap_us`].
-pub const DEFAULT_START_PENDING_TRACK_HARD_CAP_US: u64 = 4_000_000;
+pub const DEFAULT_START_PENDING_TRACK_WAIT: Duration = Duration::from_millis(1_500);
+/// Default cap on the wait above, see
+/// [`Config::start_pending_track_hard_cap`].
+pub const DEFAULT_START_PENDING_TRACK_HARD_CAP: Duration = Duration::from_secs(4);
 /// Default cap on events queued for the host, see [`Config::max_queued_events`].
 pub const DEFAULT_MAX_QUEUED_EVENTS: usize = 100_000;
 /// Default cap on the sample bytes queued for the host, see [`Config::max_queued_bytes`].
@@ -1155,33 +1155,33 @@ pub struct Config {
     /// Live TS-over-HTTP hold: input bytes without any further stream resolving after which the
     /// hold gives up on the streams still unresolved. Must be non-zero.
     pub tracks_hold_quiet_input_bytes: usize,
-    /// Live TS-over-HTTP hold: most media time held (the largest per-track pts span),
-    /// microseconds. `0` disables the hold: tracks are announced as each stream resolves.
-    pub tracks_hold_max_media_us: u64,
-    /// Live TS-over-HTTP hold: longest the hold may last on the caller's microsecond clock.
-    /// `0` disables the hold: tracks are announced as each stream resolves. A low-latency
-    /// host whose first frame must land early lowers this (a stream whose declared PID never
-    /// sends is released after this long at most).
-    pub tracks_hold_max_wall_us: u64,
+    /// Live TS-over-HTTP hold: most media time held (the largest per-track pts span), at least
+    /// one microsecond. `None` disables the hold: tracks are announced as each stream resolves.
+    pub tracks_hold_max_media: Option<Duration>,
+    /// Live TS-over-HTTP hold: longest the hold may last on the caller's clock, at least one
+    /// microsecond. `None` disables the hold: tracks are announced as each stream resolves. A
+    /// low-latency host whose first frame must land early lowers this (a stream whose declared
+    /// PID never sends is released after this long at most).
+    pub tracks_hold_max_wall: Option<Duration>,
     /// Live TS-over-HTTP: how long the first `Start` waits, counted from the first media, for an
     /// audio or video stream the PMT declares but that has no announced track yet (a live mux
-    /// sends audio up to about a second behind video). `0` does not wait: `Start` goes ahead on
-    /// the tracks announced so far, which can be followed by a `Pause` when the late track
-    /// arrives behind the playback position. A host with a short start lead and a tight
-    /// first-frame budget lowers this; any value is accepted and `u64::MAX` waits until the
-    /// first `Start`. It also bounds how long a track the host dropped with
+    /// sends audio up to about a second behind video). [`Duration::ZERO`] does not wait: `Start`
+    /// goes ahead on the tracks announced so far, which can be followed by a `Pause` when the
+    /// late track arrives behind the playback position. A host with a short start lead and a
+    /// tight first-frame budget lowers this; any value is accepted and [`Duration::MAX`] waits
+    /// until the first `Start`. It also bounds how long a track the host dropped with
     /// [`Session::set_rendered_tracks`](crate::Session::set_rendered_tracks) before the first
     /// `Start` keeps holding it, counted from the drop.
-    pub start_pending_track_wait_us: u64,
+    pub start_pending_track_wait: Duration,
     /// Live TS-over-HTTP: an extra cap on how long the first `Start` waits for an
     /// audio stream the PMT declares but that has no announced track yet, on top
-    /// of [`Config::start_pending_track_wait_us`]. The effective wait while such
+    /// of [`Config::start_pending_track_wait`]. The effective wait while such
     /// an audio stream is still unresolved is the larger of the two, so a
     /// declared audio track that resolves late (up to this cap) no longer makes
-    /// `Start` fire on video alone and pause shortly after. `0` adds no cap: only
-    /// [`Config::start_pending_track_wait_us`] applies. Any value is accepted and
-    /// `u64::MAX` waits until the first `Start`.
-    pub start_pending_track_hard_cap_us: u64,
+    /// `Start` fire on video alone and pause shortly after. [`Duration::ZERO`] adds no cap:
+    /// only [`Config::start_pending_track_wait`] applies. Any value is accepted and
+    /// [`Duration::MAX`] waits until the first `Start`.
+    pub start_pending_track_hard_cap: Duration,
     /// DASH-specific knobs (clock ladder, `UTCTiming` timeouts, early-request cadence, MPD refresh
     /// floor); the knobs every segment-pull source shares stay on this struct. A value
     /// [`DashConfig::validate`] rejects fails [`crate::Session::open`] with
@@ -1214,15 +1214,15 @@ impl Config {
     /// A relay configuration: the host forwards samples as they are demuxed and never plays
     /// them, so there is no start-pending wait and no timeline-jump screening that would drop
     /// samples. The initial-tracks hold stays: it is what coalesces a live multiplex's first
-    /// [`Event::Tracks`] into the whole track set (bounded by [`Config::tracks_hold_max_wall_us`]),
+    /// [`Event::Tracks`] into the whole track set (bounded by [`Config::tracks_hold_max_wall`]),
     /// which a relay needs to build one init segment. [`Event::Buffer`] events are advisory and a
     /// relay ignores them. Each [`TrackSpec`] keeps its `program_number`, so a multi-programme
     /// stream splits per programme.
     #[must_use]
     pub fn relay() -> Self {
         Self {
-            start_pending_track_wait_us: 0,
-            start_pending_track_hard_cap_us: 0,
+            start_pending_track_wait: Duration::ZERO,
+            start_pending_track_hard_cap: Duration::ZERO,
             timeline_jump: None,
             ..Self::default()
         }
@@ -1289,8 +1289,8 @@ impl Config {
     pub fn controller_config(&self) -> buffering_runtime::ControllerConfig {
         crate::buffer::effective_controller_config(
             self.buffer,
-            self.start_pending_track_wait_us,
-            self.start_pending_track_hard_cap_us,
+            self.start_pending_track_wait,
+            self.start_pending_track_hard_cap,
         )
     }
 
@@ -1409,10 +1409,10 @@ impl Default for Config {
             timeline_jump: Some(transmux::TimelineJumpConfig::default()),
             tracks_hold_max_input_bytes: DEFAULT_TRACKS_HOLD_MAX_INPUT_BYTES,
             tracks_hold_quiet_input_bytes: DEFAULT_TRACKS_HOLD_QUIET_INPUT_BYTES,
-            tracks_hold_max_media_us: DEFAULT_TRACKS_HOLD_MAX_MEDIA_US,
-            tracks_hold_max_wall_us: DEFAULT_TRACKS_HOLD_MAX_WALL_US,
-            start_pending_track_wait_us: DEFAULT_START_PENDING_TRACK_WAIT_US,
-            start_pending_track_hard_cap_us: DEFAULT_START_PENDING_TRACK_HARD_CAP_US,
+            tracks_hold_max_media: Some(DEFAULT_TRACKS_HOLD_MAX_MEDIA),
+            tracks_hold_max_wall: Some(DEFAULT_TRACKS_HOLD_MAX_WALL),
+            start_pending_track_wait: DEFAULT_START_PENDING_TRACK_WAIT,
+            start_pending_track_hard_cap: DEFAULT_START_PENDING_TRACK_HARD_CAP,
             dash: DashConfig::default(),
             udp: crate::udp::UdpConfig::default(),
             srt: crate::srt::SrtCallerConfig::default(),
@@ -1468,15 +1468,12 @@ impl core::fmt::Debug for Config {
                 "tracks_hold_quiet_input_bytes",
                 &self.tracks_hold_quiet_input_bytes,
             )
-            .field("tracks_hold_max_media_us", &self.tracks_hold_max_media_us)
-            .field("tracks_hold_max_wall_us", &self.tracks_hold_max_wall_us)
+            .field("tracks_hold_max_media", &self.tracks_hold_max_media)
+            .field("tracks_hold_max_wall", &self.tracks_hold_max_wall)
+            .field("start_pending_track_wait", &self.start_pending_track_wait)
             .field(
-                "start_pending_track_wait_us",
-                &self.start_pending_track_wait_us,
-            )
-            .field(
-                "start_pending_track_hard_cap_us",
-                &self.start_pending_track_hard_cap_us,
+                "start_pending_track_hard_cap",
+                &self.start_pending_track_hard_cap,
             )
             .field("dash", &self.dash)
             .field("udp", &self.udp)

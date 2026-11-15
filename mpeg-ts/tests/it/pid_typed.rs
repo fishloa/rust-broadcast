@@ -18,6 +18,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use broadcast_common::Timestamp;
 use mpeg_ts::mux::{SectionInterval, SectionPacketiser, SiMux};
 use mpeg_ts::pid::{Pid, PidOutOfRange, well_known};
 use mpeg_ts::pusi::PusiReassembler;
@@ -155,14 +156,11 @@ fn try_new_rejects_out_of_range_and_from_wire_masked_masks() {
 
 /// A minimal valid long-form section (table_id 0x42, empty body) with CRC.
 fn tiny_section() -> Vec<u8> {
-    let mut s = vec![
-        0x42, 0xF0, 0x09, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-    ];
-    // section_length counts the bytes after the 3-byte header, including CRC.
-    let crc = broadcast_common::crc32_mpeg2::compute(&s[..s.len() - 4]);
-    let n = s.len();
-    s[n - 4..].copy_from_slice(&crc.to_be_bytes());
-    s
+    test_fixtures::psi::long_section(0x42, 1, 0, 0, &[])
+}
+
+fn pmt_section() -> Vec<u8> {
+    test_fixtures::psi::pmt_section_empty(1, 0, 0x0100)
 }
 
 #[test]
@@ -192,14 +190,16 @@ fn si_mux_upsert_takes_typed_pids() {
         pid,
         section.clone(),
         SectionInterval::from_const(Duration::from_millis(100)),
-    );
-    let pkts = mux.poll(Duration::ZERO);
+    )
+    .expect("section is schedulable");
+    let pkts = mux.poll(Timestamp::ZERO);
     assert!(!pkts.is_empty());
     assert!(pkts.iter().all(|p| raw_pid(p) == 0x0123));
     // PMT PID goes through the same typed path.
     let mut mux = SiMux::new();
-    mux.upsert_pmt(Pid::try_new(0x1000).unwrap(), section);
-    let pkts = mux.poll(Duration::ZERO);
+    mux.upsert_pmt(Pid::try_new(0x1000).unwrap(), pmt_section())
+        .expect("PMT is schedulable");
+    let pkts = mux.poll(Timestamp::ZERO);
     assert!(pkts.iter().all(|p| raw_pid(p) == 0x1000));
 }
 

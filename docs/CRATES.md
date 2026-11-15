@@ -109,7 +109,7 @@ builds (see the table above against the in-tree versions below).
 | [`caption-convert`](#caption-convert) | Subtitles, captions, teletext, VBI and ancillary data | 0.6.0 | [![crates.io](https://img.shields.io/crates/v/caption-convert.svg)](https://crates.io/crates/caption-convert) | yes | 4 | on crates.io |
 | [`mp4-emsg`](#mp4-emsg) | Metadata and ad-insertion signalling | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/mp4-emsg.svg)](https://crates.io/crates/mp4-emsg) | yes | 1 | on crates.io |
 | [`scte104`](#scte104) | Metadata and ad-insertion signalling | 0.8.0 | [![crates.io](https://img.shields.io/crates/v/scte104.svg)](https://crates.io/crates/scte104) | yes | 1 | on crates.io |
-| [`scte35-splice`](#scte35-splice) | Metadata and ad-insertion signalling | 6.0.0 | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | yes | 2 | on crates.io |
+| [`scte35-splice`](#scte35-splice) | Metadata and ad-insertion signalling | 7.0.0 | [![crates.io](https://img.shields.io/crates/v/scte35-splice.svg)](https://crates.io/crates/scte35-splice) | yes | 2 | on crates.io |
 | [`timed-metadata`](#timed-metadata) | Metadata and ad-insertion signalling | 0.10.0 | [![crates.io](https://img.shields.io/crates/v/timed-metadata.svg)](https://crates.io/crates/timed-metadata) | yes | 3 | on crates.io |
 | [`broadcast-hls`](#broadcast-hls) | Containers and adaptive streaming | 0.7.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-hls.svg)](https://crates.io/crates/broadcast-hls) | yes | 1 | on crates.io |
 | [`broadcast-smooth`](#broadcast-smooth) | Containers and adaptive streaming | 0.1.0 | [![crates.io](https://img.shields.io/crates/v/broadcast-smooth.svg)](https://crates.io/crates/broadcast-smooth) | no | 1 | on crates.io |
@@ -190,7 +190,7 @@ The layer between TS packets and elementary streams: PES packet header parse/ser
 - **Cargo description:** PES (Packetized Elementary Stream) depacketization + PTS/DTS — ISO/IEC 13818-1 §2.4.3.
 - **Version (in-tree):** 0.8.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 1
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common)
-- **Used by (workspace):** [`media-doctor`](#media-doctor), [`mpeg-ps`](#mpeg-ps), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
+- **Used by (workspace):** [`media-doctor`](#media-doctor), [`mpeg-ps`](#mpeg-ps), [`st291`](#st291), [`transmux`](#transmux), [`ts-fix`](#ts-fix)
 - **Links:** [README](../mpeg-pes/README.md) · [CHANGELOG](../mpeg-pes/CHANGELOG.md) · [crates.io](https://crates.io/crates/mpeg-pes) · [docs.rs](https://docs.rs/mpeg-pes)
 
 #### mpeg-ts
@@ -377,7 +377,7 @@ Parses and builds ANC data packets (DID/SDID, user data words, parity and checks
 - **Standards:** SMPTE ST 291-1:2011; ST 2038:2021 (`ts` feature); RFC 8331 / ST 2110-40:2023 (`rtp` feature)
 - **Cargo description:** SMPTE ST 291-1 ancillary (ANC) data content — typed parse/serialize for its transports: ST 2038:2021 MPEG-2 TS carriage (anc_data_descriptor + ANC data PES packet) and RFC 8331 / ST 2110-40 RTP carriage.
 - **Version (in-tree):** 0.7.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
-- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`rtp-packet`](#rtp-packet)
+- **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-pes`](#mpeg-pes), [`rtp-packet`](#rtp-packet)
 - **Used by (workspace):** none
 - **Links:** [README](../st291/README.md) · [CHANGELOG](../st291/CHANGELOG.md) · [crates.io](https://crates.io/crates/st291) · [docs.rs](https://docs.rs/st291)
 
@@ -424,7 +424,7 @@ Parser and builder for the SCTE 35 cueing message (table_id 0xFC): all splice co
 
 - **Standards:** ANSI/SCTE 35 2023r1; ETSI TS 103 752-1 V1.2.1 (DVB targeted advertising profile)
 - **Cargo description:** ANSI/SCTE 35 splice information (DPI cueing) — parser + serializer, no_std.
-- **Version (in-tree):** 6.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
+- **Version (in-tree):** 7.0.0 · **Status:** on crates.io · **`no_std` proven in CI:** yes · **Layer:** 2
 - **Depends on (workspace):** [`broadcast-common`](#broadcast-common), [`mpeg-ts`](#mpeg-ts)
 - **Used by (workspace):** [`compliance-probe`](#compliance-probe), [`media-doctor`](#media-doctor), [`playout-runtime`](#playout-runtime), [`timed-metadata`](#timed-metadata)
 - **Links:** [README](../scte35-splice/README.md) · [CHANGELOG](../scte35-splice/CHANGELOG.md) · [crates.io](https://crates.io/crates/scte35-splice) · [docs.rs](https://docs.rs/scte35-splice)
@@ -1072,6 +1072,7 @@ flowchart BT
   ssai_runtime --> broadcast_hls
   st12_1 --> broadcast_common
   st2022 --> broadcast_common
+  st291 --> mpeg_pes
   st291 --> rtp_packet
   st337 --> broadcast_common
   st377_1 --> broadcast_common

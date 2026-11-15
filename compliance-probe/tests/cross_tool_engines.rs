@@ -164,7 +164,17 @@ fn both_tools_agree_on_the_canonical_cues_splice_state() {
     let mut observations = Vec::new();
     let mut payload = vec![0u8; POINTER_FIELD_LEN];
     payload.extend_from_slice(&section);
-    tracker.feed(&payload, true, |observation| observations.push(observation));
+    assert_eq!(
+        tracker.feed(
+            &payload,
+            true,
+            mpeg_ts::ts::ContinuityCounter::ZERO,
+            false,
+            |observation| observations.push(observation),
+        ),
+        Ok(()),
+        "the canonical cue is not a malformed or foreign section"
+    );
     assert_eq!(observations.len(), 1, "the fixture carries one cue");
     assert_eq!(observations[0].event_id, CANONICAL_EVENT_ID);
     assert!(!observations[0].duplicate_open);

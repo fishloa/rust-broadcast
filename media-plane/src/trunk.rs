@@ -1300,7 +1300,10 @@ impl EventLog {
 /// the caller leaves such an entry [`EventAnchor::Utc`].
 fn epoch_ms_to_media(anchor: &TimeAnchor, utc_epoch_ms: i64) -> Option<MediaTime> {
     let delta_ms = i128::from(utc_epoch_ms) - i128::from(anchor.utc_epoch_ms);
-    let delta_ticks = delta_ms * i128::from(PTS_HZ) / 1000;
+    // Floor, the mirror of `media_to_epoch_ms`'s floor: truncating here
+    // would map an instant up to 999 us before one the forward direction
+    // floors down to it onto the next whole tick.
+    let delta_ticks = (delta_ms * i128::from(PTS_HZ)).div_euclid(1000);
     let media = i128::from(anchor.pts_90k) + delta_ticks;
     u64::try_from(media).ok().map(MediaTime)
 }
@@ -4996,13 +4999,15 @@ mod tests {
         use broadcast_common::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::AnyCommand;
-        use scte35_splice::commands::splice_insert::SpliceInsert;
+        use scte35_splice::commands::{ProgramSplice, SpliceInsert, SpliceMode};
         use scte35_splice::time::SpliceTime;
 
         let si = SpliceInsert {
             splice_event_id: event_id,
             out_of_network_indicator: true,
-            splice_time: Some(SpliceTime::with_pts(pts_time)),
+            mode: SpliceMode::Program(ProgramSplice::At(SpliceTime::at(
+                broadcast_common::clock33::Clock33::try_new(pts_time).expect("in range"),
+            ))),
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
@@ -5480,8 +5485,8 @@ mod tests {
     /// **Derivation (not a tuned constant).**
     /// [`TimeAnchor::media_to_epoch_ms`] computes
     /// `delta_ticks * 1000 / PTS_HZ`, i.e. `delta_ticks / TICKS_PER_EPOCH_MS`,
-    /// in integer arithmetic — Rust integer division truncates toward zero,
-    /// so it discards a remainder `r` with `|r| <= TICKS_PER_EPOCH_MS - 1`.
+    /// in integer arithmetic — floored (`div_euclid`, issue #2724), so it
+    /// discards a non-negative remainder `r` with `r <= TICKS_PER_EPOCH_MS - 1`.
     /// `epoch_ms_to_media` then multiplies the surviving whole milliseconds
     /// back up by `TICKS_PER_EPOCH_MS`, reconstructing `delta_ticks - r`
     /// exactly. The round-trip error is therefore *precisely* that discarded

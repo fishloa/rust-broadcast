@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+- `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
+
 ### Changed
 - BREAKING: `DemuxEvent::ClockReference` carries the parsed `Pcr` itself (`pcr: Option<mpeg_ts::Pcr>`, and `clock_reference(ticks, pcr, ..)` takes it), so every observation keeps its 33-bit base and 9-bit extension (ISO/IEC 13818-1 §2.4.3.5) instead of only the first one. The side queue behind the batch fold grew by one entry per PCR for the life of a streaming demux and compared only its head against each event's 27 MHz `ticks`, so every later off-clock extension was lost and a failed rebuild dropped the sample silently; the queue is gone and `TsDemux` reads the wire value from the event (#2719).
 - BREAKING: `FlvError` gains `TimestampBackwards { previous, next }` and `SampleDurationTooLarge { ticks }`. `StreamingFlvDemux` now reports a publish whose tag timestamps step backwards on a track as `TimestampBackwards` (it used to emit the previous sample with a silently zero-length span) and a forward delta too large for a span as `SampleDurationTooLarge`, instead of an unchecked `i64` subtract that panicked a debug build (#2720).
@@ -88,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `InputDegradation::Scrambled` (on the `#[non_exhaustive]` enum, so not breaking): reported once per payload packet with `transport_scrambling_control != 0` on a PES-carried PID.
 
 ### Fixed
+- The HLS packager's `EXTINF` span no longer wraps an out-of-range `dts` plus composition offset into a negative presentation time, nor emits an infinite one: the sample sum is checked and a span whose extent is not finite is `Error::InvalidInput` instead of a panic in the `DecimalSeconds` constructor; a sample more than the whole `i64` tick range from the shared timeline origin is likewise refused rather than saturated into the wrong place on the timeline (issue #2722).
 - A short bit-level input is reported in bytes everywhere: the RBSP reader, the `&[u8]` cursor reader the AC-3/DTS headers share, and the shared `BitError` mapping (used by the HDR10+ reader) all go through `broadcast_common::bits::BitError`'s one `BufferTooShort` conversion instead of each computing its own count, in bits for some and bytes for others (issue #2461).
 - Emulation-prevention unescape/escape unified into `rbsp` module; Sample-AES round trip is now byte-identical for NALs ending in `00 00 03` (#2456).
 - EBML VINT readers unified in `webm_demux` (#2460).

@@ -751,7 +751,7 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
         MultimuxError::Sdp("whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into())
     })?;
     let clock_rate = transmux::rtpmap_clock_rate(rtpmap)
-        .and_then(Timescale::new)
+        .and_then(|rate| Timescale::try_new(rate).ok())
         .ok_or_else(|| MultimuxError::Sdp("whip: H.264 a=rtpmap has no valid clock rate".into()))?;
 
     Ok(ParsedOffer {

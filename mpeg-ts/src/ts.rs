@@ -555,9 +555,13 @@ pub(crate) const AF_TRANSPORT_PRIVATE_DATA_FLAG: u8 = 0x02;
 pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
 /// PCR field byte 4 bits 6-1: six reserved bits, all set to `1`
 /// (ISO/IEC 13818-1 §2.4.3.5).
-const PCR_RESERVED_BITS: u8 = 0x7E;
+pub(crate) const PCR_RESERVED_BITS: u8 = 0x7E;
+/// Number of reserved bits beside the PCR/OPCR base bits (six).
+const PCR_RESERVED_BITS_COUNT: u32 = 6;
 /// The 6 reserved bits sit at bits 6-1 of PCR byte 4.
-const PCR_RESERVED_SHIFT: u32 = 1;
+pub(crate) const PCR_RESERVED_SHIFT: u32 = 1;
+/// Byte offset of the reserved bits inside the 6-byte PCR/OPCR field.
+pub(crate) const PCR_RESERVED_BYTE_OFFSET: usize = 4;
 /// 6-bit value of those reserved bits per the spec convention (all `1`).
 const PCR_RESERVED_VALUE: u8 = 0x3F;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
@@ -661,6 +665,18 @@ impl Pcr {
         ]
     }
 
+    /// The 6-byte PCR/OPCR field, keeping the 6 `reserved` bits a captured
+    /// packet already carries in `reserved`.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::FieldOverflow`] when `reserved` is wider than the 6-bit field.
+    pub fn to_field_bytes_with_reserved(self, reserved: u8) -> Result<[u8; PCR_FIELD_LEN]> {
+        let mut field = self.to_field_bytes();
+        set_pcr_reserved(&mut field, reserved)?;
+        Ok(field)
+    }
+
     /// Decode six PCR/OPCR field bytes (`buf[from..from + 6]`).
     ///
     /// Lossless for every field the wire can carry: the 9-bit extension is kept
@@ -702,8 +718,62 @@ impl Pcr {
 pub struct Ltw {
     /// LTW offset valid flag.
     pub ltw_valid_flag: bool,
-    /// 15-bit `ltw_offset` (lower bound of the legal time window).
-    pub ltw_offset: u16,
+    pub ltw_offset: LtwOffset,
+}
+
+/// A 15-bit `ltw_offset` (ISO/IEC 13818-1 §2.4.3.5), the lower bound of the
+/// legal time window.
+///
+/// Construction checks the wire width, so a value that does not fit cannot
+/// reach the serializer and become a different valid offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct LtwOffset(u16);
+
+/// Number of bits in the `ltw_offset` wire field (ISO/IEC 13818-1 Table 2-6).
+const LTW_OFFSET_BITS: u32 = 15;
+
+impl LtwOffset {
+    /// The largest offset the 15-bit wire field carries.
+    pub const MAX: Self = Self((1 << LTW_OFFSET_BITS) - 1);
+
+    /// A zero offset.
+    pub const ZERO: Self = Self(0);
+
+    /// Wrap a value, or [`Error::FieldOverflow`] if it does not fit 15 bits.
+    pub fn new(value: u16) -> Result<Self> {
+        let fitted =
+            broadcast_common::len::fit_bits(u64::from(value), LTW_OFFSET_BITS, "ltw_offset")?;
+        Ok(Self(fitted as u16))
+    }
+
+    /// Parse the `ltw_offset` field as written on the wire.
+    ///
+    /// The masked value is at most 15 bits, so the narrowing conversion is
+    /// lossless.
+    #[must_use]
+    pub(crate) fn from_wire_masked(high: u8, low: u8) -> Self {
+        Self((u16::from(high & LTW_OFFSET_HI_MASK) << 8) | u16::from(low))
+    }
+
+    /// The offset value.
+    #[must_use]
+    pub fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl From<LtwOffset> for u16 {
+    fn from(value: LtwOffset) -> Self {
+        value.0
+    }
+}
+
+impl core::fmt::Display for LtwOffset {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
 
 /// `seamless_splice` field within the adaptation-field extension
@@ -729,6 +799,13 @@ pub struct SeamlessSplice {
     pub marker_bits: u8,
 }
 
+/// Bits in the `splice_type` nibble (`DTS_next_AU` field, Table 2-6).
+const SPLICE_TYPE_BITS: u32 = 4;
+/// Bits in `DTS_next_AU` (a 33-bit decoding time, as in a PES PTS/DTS field).
+const DTS_NEXT_AU_BITS: u32 = 33;
+/// Bits in the three `marker_bit`s of `DTS_next_AU`.
+const SPLICE_MARKER_BITS: u32 = 3;
+
 impl SeamlessSplice {
     /// A seamless-splice field with spec-conformant marker bits (all `1`).
     #[must_use]
@@ -738,6 +815,45 @@ impl SeamlessSplice {
             dts_next_au,
             marker_bits: SPLICE_MARKERS_VALUE,
         }
+    }
+
+    /// The number of bits the `DTS_next_AU` wire field carries.
+    pub const DTS_NEXT_AU_BITS: u32 = DTS_NEXT_AU_BITS;
+
+    /// Parse the 5-byte `DTS_next_AU` field as written on the wire.
+    #[must_use]
+    pub(crate) fn from_marked_field(field: &[u8; 5]) -> Self {
+        let m = broadcast_common::clock33::unpack_marked(field);
+        Self {
+            splice_type: m.prefix,
+            dts_next_au: m.timestamp,
+            marker_bits: m.markers,
+        }
+    }
+
+    /// The 5 `DTS_next_AU` field bytes, or [`Error::FieldOverflow`] when a
+    /// field does not fit its wire width.
+    pub fn to_marked_field(&self) -> Result<[u8; 5]> {
+        broadcast_common::len::fit_bits(
+            u64::from(self.splice_type),
+            SPLICE_TYPE_BITS,
+            "seamless_splice.splice_type",
+        )?;
+        broadcast_common::len::fit_bits(
+            self.dts_next_au,
+            DTS_NEXT_AU_BITS,
+            "seamless_splice.DTS_next_AU",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.marker_bits),
+            SPLICE_MARKER_BITS,
+            "seamless_splice.marker_bit",
+        )?;
+        Ok(broadcast_common::clock33::pack_marked_with(
+            self.dts_next_au,
+            self.splice_type,
+            self.marker_bits,
+        ))
     }
 }
 
@@ -762,6 +878,8 @@ const AFE_RESERVED_FLAGS_VALUE: u8 = 0x0F;
 const PIECEWISE_RATE_RESERVED_SHIFT: u32 = 6;
 /// Spec-convention value of the 2 `reserved` bits (`'11'`).
 const PIECEWISE_RATE_RESERVED_VALUE: u8 = 0x03;
+/// Number of bits in the `piecewise_rate` wire field (ISO/IEC 13818-1 Table 2-6).
+const PIECEWISE_RATE_BITS: u32 = 22;
 
 /// Adaptation-field extension (ISO/IEC 13818-1 Table 2-6 / §2.4.3.5,
 /// `adaptation_field_extension_flag == 1`).
@@ -789,7 +907,7 @@ pub struct AdaptationFieldExtension<'a> {
     /// LTW (legal time window), if `ltw_flag` is set.
     pub ltw: Option<Ltw>,
     /// 22-bit piecewise rate, if `piecewise_rate_flag` is set.
-    pub piecewise_rate: Option<u32>,
+    pub piecewise_rate: Option<PiecewiseRate>,
     /// The 2 `reserved` bits preceding `piecewise_rate` (spec convention
     /// `0b11`); only written when `piecewise_rate` is `Some`.
     pub piecewise_rate_reserved: u8,
@@ -810,6 +928,62 @@ pub struct AdaptationFieldExtension<'a> {
 impl Default for AdaptationFieldExtension<'_> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// A 22-bit `piecewise_rate` (ISO/IEC 13818-1 §2.4.3.5), the bit rate of the
+/// stream between two characters with a legal time window.
+///
+/// Construction checks the wire width, so a value that does not fit cannot
+/// reach the serializer and become a different valid rate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct PiecewiseRate(u32);
+
+impl PiecewiseRate {
+    /// The largest rate the 22-bit wire field carries.
+    pub const MAX: Self = Self((1 << PIECEWISE_RATE_BITS) - 1);
+
+    /// Wrap a value, or [`Error::FieldOverflow`] if it does not fit 22 bits.
+    pub fn new(value: u32) -> Result<Self> {
+        let fitted = broadcast_common::len::fit_bits(
+            u64::from(value),
+            PIECEWISE_RATE_BITS,
+            "piecewise_rate",
+        )?;
+        Ok(Self(fitted as u32))
+    }
+
+    /// Parse the `piecewise_rate` field as written on the wire.
+    ///
+    /// The masked value is at most 22 bits, so the narrowing conversion is
+    /// lossless.
+    #[must_use]
+    pub(crate) fn from_wire_masked(high: u8, mid: u8, low: u8) -> Self {
+        Self(
+            (u32::from(high & PIECEWISE_RATE_HI_MASK) << 16)
+                | (u32::from(mid) << 8)
+                | u32::from(low),
+        )
+    }
+
+    /// The rate value.
+    #[must_use]
+    pub fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<PiecewiseRate> for u32 {
+    fn from(value: PiecewiseRate) -> Self {
+        value.0
+    }
+}
+
+impl core::fmt::Display for PiecewiseRate {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -855,7 +1029,7 @@ impl<'a> AdaptationFieldExtension<'a> {
             cursor += 2;
             Some(Ltw {
                 ltw_valid_flag: (w0 & AFE_LTW_FLAG) != 0,
-                ltw_offset: (((w0 & LTW_OFFSET_HI_MASK) as u16) << 8) | (w1 as u16),
+                ltw_offset: LtwOffset::from_wire_masked(w0, w1),
             })
         } else {
             None
@@ -865,9 +1039,7 @@ impl<'a> AdaptationFieldExtension<'a> {
         let piecewise_rate = if flags & AFE_PIECEWISE_RATE_FLAG != 0 {
             need_in(ext, cursor + 3, "piecewise_rate")?;
             piecewise_rate_reserved = ext[cursor] >> PIECEWISE_RATE_RESERVED_SHIFT;
-            let r = (((ext[cursor] & PIECEWISE_RATE_HI_MASK) as u32) << 16)
-                | ((ext[cursor + 1] as u32) << 8)
-                | (ext[cursor + 2] as u32);
+            let r = PiecewiseRate::from_wire_masked(ext[cursor], ext[cursor + 1], ext[cursor + 2]);
             cursor += 3;
             Some(r)
         } else {
@@ -881,14 +1053,9 @@ impl<'a> AdaptationFieldExtension<'a> {
             // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS,
             // with `splice_type` in the prefix nibble.
             let field: &[u8; 5] = b.try_into().expect("slice is exactly 5 bytes");
-            let m = broadcast_common::clock33::unpack_marked(field);
-            let (splice_type, dts_next_au) = (m.prefix, m.timestamp);
+            let splice = SeamlessSplice::from_marked_field(field);
             cursor += 5;
-            Some(SeamlessSplice {
-                splice_type,
-                dts_next_au,
-                marker_bits: m.markers,
-            })
+            Some(splice)
         } else {
             None
         };
@@ -944,11 +1111,21 @@ impl<'a> AdaptationFieldExtension<'a> {
 
         if let Some(ltw) = self.ltw {
             let ltw_valid = if ltw.ltw_valid_flag { AFE_LTW_FLAG } else { 0 };
-            buf[cursor] = ltw_valid | ((ltw.ltw_offset >> 8) as u8 & LTW_OFFSET_HI_MASK);
-            buf[cursor + 1] = (ltw.ltw_offset & 0xFF) as u8;
+            let offset = broadcast_common::len::fit_bits(
+                u64::from(ltw.ltw_offset.get()),
+                LTW_OFFSET_BITS,
+                "ltw_offset",
+            )?;
+            buf[cursor] = ltw_valid | ((offset >> 8) as u8 & LTW_OFFSET_HI_MASK);
+            buf[cursor + 1] = (offset & 0xFF) as u8;
             cursor += 2;
         }
         if let Some(rate) = self.piecewise_rate {
+            let rate = broadcast_common::len::fit_bits(
+                u64::from(rate.get()),
+                PIECEWISE_RATE_BITS,
+                "piecewise_rate",
+            )?;
             // reserved(2) | 22-bit rate (ISO/IEC 13818-1 Table 2-6).
             buf[cursor] = (broadcast_common::len::fit_mask(
                 self.piecewise_rate_reserved,
@@ -962,11 +1139,7 @@ impl<'a> AdaptationFieldExtension<'a> {
         }
         if let Some(ss) = self.seamless_splice {
             // byte 0: splice_type(4) | DTS[32:30](3) | marker(1) ... (5 bytes)
-            buf[cursor..cursor + 5].copy_from_slice(&broadcast_common::clock33::pack_marked_with(
-                ss.dts_next_au,
-                ss.splice_type,
-                ss.marker_bits,
-            ));
+            buf[cursor..cursor + 5].copy_from_slice(&ss.to_marked_field()?);
             cursor += 5;
         }
         buf[cursor..cursor + self.trailing.len()].copy_from_slice(self.trailing);
@@ -1033,9 +1206,15 @@ impl Default for AdaptationField<'_> {
 }
 
 /// Overwrite the 6 reserved bits of an encoded PCR/OPCR field.
-fn set_pcr_reserved(field: &mut [u8], reserved: u8) {
-    field[4] =
-        (field[4] & !PCR_RESERVED_BITS) | ((reserved << PCR_RESERVED_SHIFT) & PCR_RESERVED_BITS);
+pub(crate) fn set_pcr_reserved(field: &mut [u8], reserved: u8) -> Result<()> {
+    let reserved = broadcast_common::len::fit_bits(
+        u64::from(reserved),
+        PCR_RESERVED_BITS_COUNT,
+        "pcr_reserved",
+    )?;
+    field[4] = (field[4] & !PCR_RESERVED_BITS)
+        | (((reserved as u8) << PCR_RESERVED_SHIFT) & PCR_RESERVED_BITS);
+    Ok(())
 }
 
 impl<'a> AdaptationField<'a> {
@@ -1244,12 +1423,12 @@ impl<'a> AdaptationField<'a> {
         let mut cursor = 1usize;
         if let Some(pcr) = self.pcr {
             buf[cursor..cursor + PCR_FIELD_LEN].copy_from_slice(&pcr.to_field_bytes());
-            set_pcr_reserved(&mut buf[cursor..cursor + PCR_FIELD_LEN], self.pcr_reserved);
+            set_pcr_reserved(&mut buf[cursor..cursor + PCR_FIELD_LEN], self.pcr_reserved)?;
             cursor += PCR_FIELD_LEN;
         }
         if let Some(opcr) = self.opcr {
             buf[cursor..cursor + PCR_FIELD_LEN].copy_from_slice(&opcr.to_field_bytes());
-            set_pcr_reserved(&mut buf[cursor..cursor + PCR_FIELD_LEN], self.opcr_reserved);
+            set_pcr_reserved(&mut buf[cursor..cursor + PCR_FIELD_LEN], self.opcr_reserved)?;
             cursor += PCR_FIELD_LEN;
         }
         if let Some(sc) = self.splice_countdown {
@@ -2529,7 +2708,7 @@ mod tests {
         let ext = AdaptationFieldExtension {
             ltw: Some(Ltw {
                 ltw_valid_flag: true,
-                ltw_offset: 0x1234,
+                ltw_offset: LtwOffset::new(0x1234).expect("in range"),
             }),
             piecewise_rate: None,
             seamless_splice: None,
@@ -2572,7 +2751,7 @@ mod tests {
             transport_private_data: None,
             extension: Some(AdaptationFieldExtension {
                 ltw: None,
-                piecewise_rate: Some(0x3FFFFF), // max 22-bit
+                piecewise_rate: Some(PiecewiseRate::MAX),
                 seamless_splice: None,
                 ..AdaptationFieldExtension::new()
             }),
@@ -2583,7 +2762,10 @@ mod tests {
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
         let decoded = AdaptationField::parse(&buf).unwrap();
-        assert_eq!(decoded.extension.unwrap().piecewise_rate, Some(0x3FFFFF));
+        assert_eq!(
+            decoded.extension.unwrap().piecewise_rate,
+            Some(PiecewiseRate::MAX)
+        );
     }
 
     /// Round-trip seamless_splice field.
@@ -2613,6 +2795,73 @@ mod tests {
         let ss = decoded.extension.unwrap().seamless_splice.unwrap();
         assert_eq!(ss.splice_type, 0xA);
         assert_eq!(ss.dts_next_au, 0x1_2345_6789);
+    }
+
+    /// A `DTS_next_AU` wider than 33 bits or a `splice_type` wider than the
+    /// nibble used to be reduced modulo the field width and written as a
+    /// different, valid-looking value.
+    #[test]
+    fn adaptation_field_extension_seamless_splice_rejects_over_range_fields() {
+        let mut ss = SeamlessSplice::new(0xA, 0x1_2345_6789);
+        ss.dts_next_au = 1 << SeamlessSplice::DTS_NEXT_AU_BITS;
+        assert!(matches!(ss.to_marked_field(), Err(Error::FieldOverflow(_))));
+        ss.dts_next_au = (1 << SeamlessSplice::DTS_NEXT_AU_BITS) - 1;
+        assert!(ss.to_marked_field().is_ok());
+
+        let mut ss = SeamlessSplice::new(0x10, 0x1_2345_6789);
+        assert!(matches!(ss.to_marked_field(), Err(Error::FieldOverflow(_))));
+        ss.splice_type = 0x0F;
+        ss.marker_bits = SPLICE_MARKERS_VALUE + 1;
+        assert!(matches!(ss.to_marked_field(), Err(Error::FieldOverflow(_))));
+        ss.marker_bits = SPLICE_MARKERS_VALUE;
+        assert!(ss.to_marked_field().is_ok());
+    }
+
+    /// `ltw_offset` and `piecewise_rate` used to be written with their wire
+    /// masks, so an over-range value became a different valid value; the
+    /// bounded newtypes refuse it at construction and the serializer rechecks.
+    #[test]
+    fn adaptation_field_extension_rejects_over_range_ltw_and_rate() {
+        assert!(matches!(
+            LtwOffset::new(0x8000),
+            Err(Error::FieldOverflow(_))
+        ));
+        assert_eq!(LtwOffset::new(LtwOffset::MAX.get()), Ok(LtwOffset::MAX));
+        assert!(matches!(
+            PiecewiseRate::new(0x40_0000),
+            Err(Error::FieldOverflow(_))
+        ));
+        assert_eq!(PiecewiseRate::new(0x3F_FFFF), Ok(PiecewiseRate::MAX));
+
+        let mut ext = AdaptationFieldExtension::new();
+        ext.ltw = Some(Ltw {
+            ltw_valid_flag: true,
+            ltw_offset: LtwOffset::MAX,
+        });
+        ext.piecewise_rate = Some(PiecewiseRate::MAX);
+        let mut buf = vec![0u8; ext.serialized_len()];
+        ext.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[1..3], [0xDF, 0xFF]);
+        assert_eq!(buf[3..6], [0xFF, 0xFF, 0xFF]);
+        assert_eq!(AdaptationFieldExtension::parse(&buf).unwrap(), ext);
+    }
+
+    /// An over-range `pcr_reserved` used to be shifted into the PCR base bits
+    /// (writing a different clock value) instead of being rejected.
+    #[test]
+    fn adaptation_field_serialize_rejects_over_range_reserved_bits() {
+        let mut af = AdaptationField::new();
+        af.pcr = Some(Pcr::from_parts(0, 0).expect("in range"));
+        let mut ok = [0u8; 7];
+        af.serialize_into(&mut ok).unwrap();
+        assert_eq!(&ok[1..6], &[0x00, 0x00, 0x00, 0x00, 0x7E]);
+
+        af.pcr_reserved = PCR_RESERVED_VALUE + 1;
+        let mut buf = [0u8; 7];
+        assert!(matches!(
+            af.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     /// Round-trip with transport_private_data.
@@ -2699,9 +2948,9 @@ mod tests {
             extension: Some(AdaptationFieldExtension {
                 ltw: Some(Ltw {
                     ltw_valid_flag: false,
-                    ltw_offset: 500,
+                    ltw_offset: LtwOffset::new(500).expect("in range"),
                 }),
-                piecewise_rate: Some(12345),
+                piecewise_rate: Some(PiecewiseRate::new(12345).expect("in range")),
                 seamless_splice: None,
                 ..AdaptationFieldExtension::new()
             }),

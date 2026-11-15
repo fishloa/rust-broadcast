@@ -5,7 +5,7 @@ extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
-use broadcast_common::len::need_out;
+use broadcast_common::len::{fit_u32, need_out};
 
 use crate::error::{Error, Result};
 
@@ -387,74 +387,161 @@ pub fn encode_utf16_be(s: &str) -> Vec<u8> {
     out
 }
 
-/// Parse a Batch/Array of 16-byte elements (§4.3): 8-byte header
-/// (`count: u32`, `item_len: u32`, both big-endian) followed by `count`
-/// 16-byte elements. Used for every UL/StrongRef Batch or Array in the
-/// Root Metadata Sets (`EssenceContainers`, `DMSchemes`, `Identifications`,
-/// `Packages`, `EssenceContainerData`).
-pub fn parse_uid_batch(bytes: &[u8]) -> Result<Vec<UlBytes>> {
-    if bytes.is_empty() {
-        // A zero-length property (no header at all) is treated as an empty
-        // batch — some encoders omit the property entirely rather than
-        // emit an empty 8-byte header; parse of an explicit empty header
-        // is handled by the `count == 0` branch below.
-        return Ok(Vec::new());
-    }
-    if bytes.len() < 8 {
-        return Err(Error::InvalidBatchHeader {
-            count: 0,
-            item_len: 0,
-            buffer_len: bytes.len(),
-        });
-    }
-    let count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-    let item_len = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-    let body = &bytes[8..];
-    // `item_len` only describes the size of an actual element, so it is only
-    // meaningful (and validated against 16) when `count > 0`. A real
-    // encoder-written empty Batch (`count == 0`) has been observed with
-    // `item_len == 0` rather than 16 (ffmpeg's OP1a Preface `DMSchemes`,
-    // `../fixtures/mxf/smpte-st377/op1a-mpeg2-pcm.mxf`) — this crate previously rejected
-    // that as `InvalidBatchHeader`, even though `count == 0` unambiguously
-    // means "no elements" regardless of the stated element size.
-    // #1108/MX-W1: `count as usize * 16` wraps on a 32-bit target for a
-    // large enough `count`, which could make an attacker-chosen count
-    // spuriously equal `body.len()` and then abort the process at
-    // `Vec::with_capacity(count as usize)`. `checked_mul` rejects the
-    // overflow instead, and the allocation below is sized from the
-    // already-bounded `body.len()`, never from the untrusted `count`.
-    let expected_len = (count as usize).checked_mul(16);
-    if (count > 0 && item_len != 16) || expected_len != Some(body.len()) {
-        return Err(Error::InvalidBatchHeader {
-            count,
-            item_len,
-            buffer_len: body.len(),
-        });
-    }
-    let mut out = Vec::with_capacity(body.len() / 16);
-    for chunk in body.chunks_exact(16) {
-        out.push(ul_bytes_from_prefix(chunk));
-    }
-    Ok(out)
+/// A Batch/Array of 16-byte ULs (§4.3) exactly as written on the wire.
+///
+/// Some encoders write a zero-length property (no header at all) for an
+/// empty Batch, and some write an explicit header with `item_len` other
+/// than 16; keeping the header bytes lets a parse → serialize → parse cycle
+/// reproduce them instead of silently replacing them with this crate's
+/// canonical 8-byte header ([`UidBatch::serialize`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct UidBatch {
+    /// The elements (`count` of them, each 16 bytes).
+    pub items: Vec<UlBytes>,
+    header: Option<[u8; UID_BATCH_HEADER_LEN]>,
 }
 
-/// Serialize a Batch/Array of 16-byte elements (§4.3) — see
-/// [`parse_uid_batch`]. Always writes `item_len = 16`: it names the size of
-/// each *element type* in the batch, not the instance count, so this crate
-/// keeps it constant even when `count == 0`. (Some real encoders write
-/// `item_len = 0` for an empty batch instead — e.g. `ffmpeg`'s OP1a Preface
-/// `DMSchemes` in `../fixtures/mxf/smpte-st377/op1a-mpeg2-pcm.mxf` — which
-/// [`parse_uid_batch`] tolerates on input; this crate's own output stays
-/// canonical.)
-#[must_use]
-pub fn serialize_uid_batch(items: &[UlBytes]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(8 + items.len() * 16);
-    out.extend_from_slice(&(items.len() as u32).to_be_bytes());
-    out.extend_from_slice(&16u32.to_be_bytes());
-    for item in items {
-        out.extend_from_slice(item);
+/// The 8-byte Batch/Array header (`count: u32`, `item_len: u32`).
+const UID_BATCH_HEADER_LEN: usize = 8;
+
+impl UidBatch {
+    /// The elements.
+    #[must_use]
+    pub fn items(&self) -> &[UlBytes] {
+        self.items.as_slice()
     }
-    out
+
+    /// The 8-byte header exactly as parsed, or `None` when the property was
+    /// zero-length (an absent header, i.e. an empty Batch with no elements).
+    #[must_use]
+    pub fn header(&self) -> Option<[u8; UID_BATCH_HEADER_LEN]> {
+        self.header
+    }
+
+    /// The elements, retaining an 8-byte header exactly as given (`None`
+    /// writes the canonical one).
+    #[must_use]
+    pub fn with_header(items: Vec<UlBytes>, header: Option<[u8; UID_BATCH_HEADER_LEN]>) -> Self {
+        Self { items, header }
+    }
+
+    /// Parse a Batch/Array of 16-byte elements (§4.3): 8-byte header
+    /// (`count: u32`, `item_len: u32`, both big-endian) followed by `count`
+    /// 16-byte elements. Used for every UL/StrongRef Batch or Array in the
+    /// Root Metadata Sets (`EssenceContainers`, `DMSchemes`, `Identifications`,
+    /// `Packages`, `EssenceContainerData`).
+    pub fn parse(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() {
+            // A zero-length property (no header at all) is treated as an empty
+            // batch — some encoders omit the property entirely rather than
+            // emit an empty 8-byte header; parse of an explicit empty header
+            // is handled by the `count == 0` branch below.
+            return Ok(Self::default());
+        }
+        if bytes.len() < UID_BATCH_HEADER_LEN {
+            return Err(Error::InvalidBatchHeader {
+                count: 0,
+                item_len: 0,
+                buffer_len: bytes.len(),
+            });
+        }
+        let count = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let item_len = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+        let header = [
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ];
+        let body = &bytes[8..];
+        // `item_len` only describes the size of an actual element, so it is only
+        // meaningful (and validated against 16) when `count > 0`. A real
+        // encoder-written empty Batch (`count == 0`) has been observed with
+        // `item_len == 0` rather than 16 (ffmpeg's OP1a Preface `DMSchemes`,
+        // `../fixtures/mxf/smpte-st377/op1a-mpeg2-pcm.mxf`) — this crate previously rejected
+        // that as `InvalidBatchHeader`, even though `count == 0` unambiguously
+        // means "no elements" regardless of the stated element size.
+        // #1108/MX-W1: `count as usize * 16` wraps on a 32-bit target for a
+        // large enough `count`, which could make an attacker-chosen count
+        // spuriously equal `body.len()` and then abort the process at
+        // `Vec::with_capacity(count as usize)`. `checked_mul` rejects the
+        // overflow instead, and the allocation below is sized from the
+        // already-bounded `body.len()`, never from the untrusted `count`.
+        let expected_len = (count as usize).checked_mul(16);
+        if (count > 0 && item_len != 16) || expected_len != Some(body.len()) {
+            return Err(Error::InvalidBatchHeader {
+                count,
+                item_len,
+                buffer_len: body.len(),
+            });
+        }
+        let mut out = Vec::with_capacity(body.len() / 16);
+        for chunk in body.chunks_exact(16) {
+            out.push(ul_bytes_from_prefix(chunk));
+        }
+        Ok(Self {
+            items: out,
+            header: Some(header),
+        })
+    }
+
+    /// Serialize this Batch/Array (§4.3) back to its wire form: the header
+    /// exactly as parsed when there is one, else the canonical 8-byte header
+    /// with `item_len = 16` (the size of each *element type*, kept constant
+    /// even when `count == 0`).
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if `items.len()` does not fit the 32-bit
+    /// count; [`Error::InvalidBatchHeader`] if the retained header's `count`
+    /// field disagrees with `items.len()`.
+    pub fn serialize(&self) -> Result<Vec<u8>> {
+        let count = fit_u32(self.items.len(), "batch count")?;
+        let mut out = Vec::with_capacity(UID_BATCH_HEADER_LEN + self.items.len() * 16);
+        match self.header {
+            None => {
+                out.extend_from_slice(&count.to_be_bytes());
+                out.extend_from_slice(&16u32.to_be_bytes());
+            }
+            Some(header) => {
+                let declared = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+                let item_len = u32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+                if declared != count {
+                    return Err(Error::InvalidBatchHeader {
+                        count: declared,
+                        item_len,
+                        buffer_len: self.items.len() * 16,
+                    });
+                }
+                out.extend_from_slice(&header);
+            }
+        }
+        for item in &self.items {
+            out.extend_from_slice(item);
+        }
+        Ok(out)
+    }
+}
+
+/// Serialize a freshly built Batch/Array of 16-byte elements (§4.3) — the
+/// canonical 8-byte header with `item_len = 16` (it names the size of each
+/// *element type* in the batch, not the instance count, so it stays constant
+/// even when `count == 0`). A Batch parsed from a real encoder keeps that
+/// encoder's own header through [`UidBatch::serialize`] instead.
+///
+/// # Errors
+/// [`Error::FieldOverflow`] if `items.len()` does not fit the 32-bit count.
+pub fn serialize_uid_batch(items: &[UlBytes]) -> Result<Vec<u8>> {
+    UidBatch {
+        items: items.to_vec(),
+        header: None,
+    }
+    .serialize()
+}
+
+/// [`serialize_uid_batch`] for callers whose infallible contract has already
+/// bounded the count: a batch is written as an empty one (`count = 0`) if
+/// `items.len()` does not fit the 32-bit count, which needs 4 294 967 296
+/// 16-byte ULs (a 64 GiB batch) to reach.
+pub(crate) fn serialize_uid_batch_owned(items: &[UlBytes]) -> Vec<u8> {
+    serialize_uid_batch(items).unwrap_or_else(|_| serialize_uid_batch(&[]).unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -557,22 +644,22 @@ mod tests {
     #[test]
     fn uid_batch_round_trip() {
         let items = alloc::vec![[1u8; 16], [2u8; 16], [3u8; 16]];
-        let bytes = serialize_uid_batch(&items);
-        assert_eq!(parse_uid_batch(&bytes).unwrap(), items);
+        let bytes = serialize_uid_batch(&items).unwrap();
+        assert_eq!(UidBatch::parse(&bytes).unwrap().items(), items);
     }
 
     #[test]
     fn empty_uid_batch_round_trip() {
         let items: Vec<UlBytes> = Vec::new();
-        let bytes = serialize_uid_batch(&items);
+        let bytes = serialize_uid_batch(&items).unwrap();
         assert_eq!(bytes.len(), 8);
-        assert_eq!(parse_uid_batch(&bytes).unwrap(), items);
+        assert_eq!(UidBatch::parse(&bytes).unwrap().items(), items);
     }
 
     #[test]
     fn a_short_uid_batch_has_an_invalid_header() {
         assert_eq!(
-            parse_uid_batch(&[0u8; 4]),
+            UidBatch::parse(&[0u8; 4]),
             Err(Error::InvalidBatchHeader {
                 count: 0,
                 item_len: 0,
@@ -581,19 +668,66 @@ mod tests {
         );
     }
 
+    /// The 32-bit count is range-checked rather than narrowed with `as u32`
+    /// (#2758): `u32::MAX + 1` items would otherwise be written with
+    /// `count = 0`, i.e. as an empty batch.
+    #[test]
+    fn a_uid_batch_count_beyond_u32_is_rejected_not_wrapped() {
+        let max = usize::try_from(u32::MAX).unwrap();
+        assert_eq!(fit_u32(max, "batch count"), Ok(u32::MAX));
+        assert!(matches!(
+            fit_u32(max + 1, "batch count"),
+            Err(broadcast_common::len::FieldOverflow {
+                field: "batch count",
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn a_uid_batch_with_a_wrong_item_length_is_rejected() {
         let mut bytes = alloc::vec![0u8; 8 + 16];
         bytes[3] = 1;
         bytes[7] = 8;
         assert_eq!(
-            parse_uid_batch(&bytes),
+            UidBatch::parse(&bytes),
             Err(Error::InvalidBatchHeader {
                 count: 1,
                 item_len: 8,
                 buffer_len: 16
             })
         );
+    }
+
+    /// #2759: an empty Batch written as its 8-byte header is reserialized to
+    /// those same bytes. Round-tripping only the elements would replace the
+    /// encoder's `item_len` with 16 (`..fixtures/mxf/smpte-st377/
+    /// op1a-mpeg2-pcm.mxf`'s `EssenceContainers` Batch has `item_len = 0`),
+    /// so parse -> serialize was not byte-identical.
+    #[test]
+    fn an_empty_uid_batch_round_trips_its_absent_header_byte_identically() {
+        let bytes = alloc::vec![0u8; 8];
+        assert_eq!(UidBatch::parse(&bytes).unwrap().serialize().unwrap(), bytes);
+    }
+
+    /// #2759: an explicit header with `item_len == 0` (ffmpeg's style) is
+    /// reproduced verbatim, not replaced by the canonical `item_len = 16`.
+    #[test]
+    fn an_uid_batch_keeps_the_encoders_item_len_byte_identically() {
+        let mut bytes = alloc::vec![0u8; 8];
+        bytes[4..8].copy_from_slice(&0u32.to_be_bytes());
+        let batch = UidBatch::parse(&bytes).unwrap();
+        assert!(batch.items().is_empty());
+        assert_eq!(
+            batch.header().map(|h| h[4..8].to_vec()),
+            Some(alloc::vec![0, 0, 0, 0])
+        );
+        assert_eq!(batch.serialize().unwrap(), bytes);
+
+        let mut one = alloc::vec![0u8; 8 + 16];
+        one[3] = 1; // count = 1
+        one[7] = 16; // item_len = 16
+        assert_eq!(UidBatch::parse(&one).unwrap().serialize().unwrap(), one);
     }
 
     #[test]

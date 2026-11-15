@@ -33,14 +33,13 @@ use crate::events::{Action, Config, ErrorKind, Event, Status};
 use crate::playout::Source;
 use crate::source::fetch::conn::ConnAlloc;
 use crate::source::fetch::deadline;
+use crate::source::fetch::duration_us;
 use crate::source::fetch::failures::{Attempts, Verdict, verdict};
 use crate::source::fetch::inflight::{
     self, HeadRoute, InFlight, Outbox, PurposeKind, ResponseHead, TimeoutClass, Timeouts,
 };
 use crate::source::fetch::resume::{HeadOutcome, Stash, accept_head};
-use crate::source::fetch::retry::{
-    Backoff, RefusedCapture, backoff_ms, duration_us, retry_after_us,
-};
+use crate::source::fetch::retry::{Backoff, RefusedCapture, retry_after};
 use crate::source::fetch::wall::WallClock;
 use broadcast_auth::AuthState;
 use broadcast_common::stage::Timestamp;
@@ -207,7 +206,7 @@ pub(crate) struct DashSource {
     utc_credentials: bool,
     mpd_failures: Attempts,
     mpd_accepted: bool,
-    retry_after_us: u64,
+    retry_after: Option<Duration>,
     refused_captures: BTreeMap<ConnId, RefusedCapture>,
     flight: InFlight<Purpose, DashExtra>,
     stash: Stash<Purpose>,
@@ -243,7 +242,16 @@ pub(crate) struct DashSource {
 }
 
 impl DashSource {
-    pub(crate) fn new(url: &Url, config: &Config, conn_alloc: ConnAlloc, seed: u64) -> Self {
+    /// # Errors
+    ///
+    /// [`crate::Error::InvalidConfig`] when the configured retry schedule is not one a
+    /// [`crate::source::fetch::retry::RetrySchedule`] can run with; reported, never repaired.
+    pub(crate) fn new(
+        url: &Url,
+        config: &Config,
+        conn_alloc: ConnAlloc,
+        seed: u64,
+    ) -> Result<Self, crate::Error> {
         let mut pull = PullLimits::default();
         pull.policy = Policy::default();
         pull.policy.max_bandwidth = config.variant_policy.max_bandwidth.map(u64::from);
@@ -265,7 +273,8 @@ impl DashSource {
                 .with_dash(config.dash)
                 .with_limits(pull.clone()),
         );
-        let (backoff_steps_ms, backoff_cap_ms) = backoff_ms(&config.backoff);
+        let backoff = Backoff::new(&config.backoff, seed)
+            .map_err(|_| crate::Error::InvalidConfig { field: "backoff" })?;
         let mut source = Self {
             client,
             mpd_url: url.clone(),
@@ -275,13 +284,13 @@ impl DashSource {
                 manifest: config.max_manifest_bytes,
                 segment: config.max_segment_bytes,
             },
-            backoff: Backoff::new(&backoff_steps_ms, backoff_cap_ms, seed),
+            backoff,
             max_redirects: config.max_redirects,
             max_key_failures: config.max_key_failures,
             utc_credentials: config.utc_timing_credentials,
             mpd_failures: Attempts::default(),
             mpd_accepted: false,
-            retry_after_us: 0,
+            retry_after: None,
             refused_captures: BTreeMap::new(),
             flight: InFlight::new(
                 Timeouts {
@@ -328,7 +337,7 @@ impl DashSource {
             events: VecDeque::new(),
         };
         source.drain_outputs();
-        source
+        Ok(source)
     }
 
     pub(crate) fn take_actions(&mut self) -> VecDeque<Action> {
@@ -568,8 +577,8 @@ impl DashSource {
             {
                 self.events.push_back(Event::Status(Status::NotFound));
             }
-            let ra = retry_after_us(status, headers, Timestamp::from_micros(now), wall);
-            self.retry_after_us = ra;
+            let ra = retry_after(status, headers, Timestamp::from_micros(now), wall);
+            self.retry_after = ra;
             inflight::record_refusal(
                 head,
                 ra,
@@ -580,7 +589,7 @@ impl DashSource {
                 },
             );
             self.fail(req, now, CoreFailure::Status(status.as_u16()));
-            self.retry_after_us = 0;
+            self.retry_after = None;
         }
     }
 
@@ -823,8 +832,10 @@ impl DashSource {
             self.stash.discard(&Purpose::Resource(id));
         }
         if let FailureClass::Retry { attempt, .. } = class {
-            let wait =
-                Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+            let wait = self
+                .backoff
+                .delay(attempt)
+                .max(self.retry_after.unwrap_or_default());
             // A deadline past the end of the clock can never be reached: the retry never fires.
             if let Some(at) = deadline(Timestamp::from_micros(now), wait) {
                 self.retries.insert(id, at.as_micros());
@@ -836,7 +847,10 @@ impl DashSource {
     }
 
     fn schedule_mpd_retry(&mut self, now: u64, attempt: u32) {
-        let wait = Duration::from_micros(self.backoff.delay_us(attempt).max(self.retry_after_us));
+        let wait = self
+            .backoff
+            .delay(attempt)
+            .max(self.retry_after.unwrap_or_default());
         // A deadline past the end of the clock can never be reached: the retry never fires.
         let Some(at) = deadline(Timestamp::from_micros(now), wait) else {
             return;

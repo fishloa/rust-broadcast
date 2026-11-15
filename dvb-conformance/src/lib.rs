@@ -856,7 +856,7 @@ pub struct ConformanceMonitor {
 }
 
 fn section_crc_valid(section_bytes: &[u8]) -> bool {
-    Section::parse(section_bytes).is_ok_and(|s| s.validate_crc(section_bytes).is_ok())
+    Section::parse(section_bytes).is_ok_and(|s| s.validate_crc().is_ok())
 }
 
 impl ConformanceMonitor {
@@ -1216,7 +1216,7 @@ impl ConformanceMonitor {
                 let Ok(section) = Section::parse(section_bytes) else {
                     continue;
                 };
-                if section.validate_crc(section_bytes).is_err() {
+                if section.validate_crc().is_err() {
                     continue;
                 }
                 self.update_si_repetition(&section, t);
@@ -1413,7 +1413,7 @@ impl ConformanceMonitor {
         // timer counting.
         if let Ok(section) = Section::parse(section_bytes)
             && section.table_id == PAT_TABLE_ID
-            && section.validate_crc(section_bytes).is_ok()
+            && section.validate_crc().is_ok()
         {
             self.pat_timer.refresh(t);
         }
@@ -1435,7 +1435,7 @@ impl ConformanceMonitor {
         // PMT no decoder can actually acquire.
         if let Ok(section) = Section::parse(section_bytes)
             && section.table_id == dvb_si::tables::pmt::TABLE_ID
-            && section.validate_crc(section_bytes).is_ok()
+            && section.validate_crc().is_ok()
             && let Some(tracking) = self.pmt_trackings.get_mut(&pid)
         {
             tracking.timer.refresh(t);
@@ -1459,7 +1459,7 @@ impl ConformanceMonitor {
         };
 
         // validate_crc returns Ok for short-form sections (no CRC to check).
-        if let Err(mpeg_ts::error::Error::CrcMismatch(..)) = section.validate_crc(section_bytes) {
+        if let Err(mpeg_ts::error::Error::CrcMismatch(..)) = section.validate_crc() {
             self.emit(
                 Indicator::CrcError,
                 Some(pid),

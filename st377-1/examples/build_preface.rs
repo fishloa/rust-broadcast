@@ -26,10 +26,13 @@ fn main() {
         object_model_version: Some(1),
         primary_package: None,
         identifications: Some(vec![[0x02; 16]]),
+        identifications_batch: None,
         content_storage: [0x03; 16],
         operational_pattern: [0x04; 16],
         essence_containers: vec![[0x05; 16]],
+        essence_containers_batch: None,
         dm_schemes: Vec::new(),
+        dm_schemes_batch: None,
         dark: Vec::new(),
     };
 

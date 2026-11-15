@@ -125,7 +125,8 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
                         if let Some(ProtocolControl::SetChunkSize(size)) =
                             ProtocolControl::from_message(&m).expect("valid set chunk size")
                         {
-                            assembler.set_chunk_size(size.value());
+                            assembler.compact();
+                            assembler.set_chunk_size(size);
                         }
                         continue;
                     }
@@ -160,7 +161,8 @@ fn the_rtmp_spoke_carries_the_same_media_as_the_flv_spoke() {
 fn the_default_chunk_size_is_the_rtmp_runtime_default() {
     assert_eq!(
         RtmpMux::default().chunk_size,
-        usize::try_from(rtmp_runtime::chunk::DEFAULT_CHUNK_SIZE).expect("default chunk size fits"),
+        usize::try_from(rtmp_runtime::chunk::DEFAULT_CHUNK_SIZE.value())
+            .expect("default chunk size fits"),
     );
 }
 /// The first message of a chunk stream, decoded incrementally (a Set Chunk
@@ -342,7 +344,8 @@ fn carried_messages(wire: &[u8]) -> Vec<(MessageTypeId, usize)> {
             if let Some(ProtocolControl::SetChunkSize(size)) =
                 ProtocolControl::from_message(&message).expect("valid set chunk size")
             {
-                assembler.set_chunk_size(size.value());
+                assembler.compact();
+                assembler.set_chunk_size(size);
             }
             continue;
         }
@@ -401,8 +404,8 @@ fn a_set_chunk_size_with_the_reserved_bit_set_is_rejected() {
     assert!(matches!(
         RtmpDemux::new().unpackage(&wire),
         Err(transmux::rtmp::RtmpFlvError::Rtmp(
-            rtmp_runtime::RtmpError::Malformed { .. }
-        ))
+            rtmp_runtime::RtmpError::ChunkSizeOutOfRange { value }
+        )) if value == RESERVED_BIT_CHUNK_SIZE
     ));
 }
 

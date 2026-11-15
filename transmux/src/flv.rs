@@ -431,10 +431,14 @@ struct TagWalk<'a> {
 fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     need_in(input, FLV_HEADER_LEN + PREV_TAG_SIZE_LEN, "FLV header")?;
     let header = FlvHeader::parse(input).map_err(|e| match e.clone() {
-        RtmpError::Malformed {
-            what: FLV_DATA_OFFSET,
-        } => Error::from(FlvErrorAsError(FlvError::Header(e))),
-        RtmpError::Malformed { what } => Error::InvalidInput(what),
+        RtmpError::Malformed { what } => {
+            if what == FLV_DATA_OFFSET {
+                Error::from(FlvErrorAsError(FlvError::Header(e)))
+            } else {
+                Error::InvalidInput(what)
+            }
+        }
+        RtmpError::FieldOverflow(overflow) => Error::InvalidInput(overflow.field),
         RtmpError::BufferTooShort(w) => Error::from(FlvErrorAsError(FlvError::TagOverrun {
             offset: 0,
             need: w.need,

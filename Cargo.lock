@@ -3735,7 +3735,7 @@ dependencies = [
 
 [[package]]
 name = "scte35-splice"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "base64 0.23.1",
  "broadcast-common",
@@ -4053,6 +4053,7 @@ name = "st291"
 version = "0.7.0"
 dependencies = [
  "broadcast-common",
+ "mpeg-pes",
  "rtp-packet",
  "serde",
  "test-fixtures",

@@ -23,3 +23,8 @@ use broadcast_common::stage::Timestamp;
 pub(crate) fn deadline(now: Timestamp, span: Duration) -> Option<Timestamp> {
     now.checked_add(span)
 }
+
+/// A span in whole microseconds, saturating instead of wrapping.
+pub(crate) fn duration_us(wait: Duration) -> u64 {
+    u64::try_from(wait.as_micros()).unwrap_or(u64::MAX)
+}

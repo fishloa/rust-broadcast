@@ -236,7 +236,10 @@ impl ClientHandshake {
                 let s0 = Version::parse(&input[..VERSION_LEN])?;
                 // #1108/RTMP-W11: see handshake.rs's identical C0 check.
                 if s0.0 != RTMP_VERSION {
-                    return Err(RtmpError::Malformed { what: "S0 version" });
+                    return Err(RtmpError::HandshakeVersion {
+                        value: s0.0,
+                        expected: RTMP_VERSION,
+                    });
                 }
                 let s1 = HandshakePacket::parse(
                     &input[VERSION_LEN..VERSION_LEN + HANDSHAKE_PACKET_LEN],
@@ -349,8 +352,8 @@ impl ClientSession {
     /// Encode an audio message (type 8). Only valid in `Publishing` state.
     pub fn send_audio(&mut self, timestamp: u32, data: &[u8]) -> Result<Vec<u8>> {
         if self.state != ClientState::Publishing {
-            return Err(RtmpError::Malformed {
-                what: "send_audio: not in Publishing state",
+            return Err(RtmpError::UnexpectedState {
+                what: "send_audio requires the Publishing state",
             });
         }
         let msg = Message {
@@ -366,8 +369,8 @@ impl ClientSession {
     /// Encode a video message (type 9). Only valid in `Publishing` state.
     pub fn send_video(&mut self, timestamp: u32, data: &[u8]) -> Result<Vec<u8>> {
         if self.state != ClientState::Publishing {
-            return Err(RtmpError::Malformed {
-                what: "send_video: not in Publishing state",
+            return Err(RtmpError::UnexpectedState {
+                what: "send_video requires the Publishing state",
             });
         }
         let msg = Message {
@@ -383,8 +386,8 @@ impl ClientSession {
     /// Encode a metadata message (`@setDataFrame`/`onMetaData`, type 18).
     pub fn send_metadata(&mut self, metadata: &[(String, Amf0Value)]) -> Result<Vec<u8>> {
         if self.state != ClientState::Publishing {
-            return Err(RtmpError::Malformed {
-                what: "send_metadata: not in Publishing state",
+            return Err(RtmpError::UnexpectedState {
+                what: "send_metadata requires the Publishing state",
             });
         }
         let mut payload = Amf0Value::String("@setDataFrame".to_string()).try_to_bytes()?;
@@ -484,7 +487,7 @@ impl ClientSession {
         let chunk_size = ChunkSize::try_new(self.config.chunk_size)?;
         let set_chunk_size = ProtocolControl::SetChunkSize(chunk_size);
         out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message())?);
-        self.writer.set_chunk_size(chunk_size.value());
+        self.writer.set_chunk_size(chunk_size);
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size);
         out.extend_from_slice(&self.writer.write(&window_ack.to_message())?);
@@ -627,7 +630,7 @@ impl ClientSession {
         if let Some(pc) = ProtocolControl::from_message(msg)? {
             match pc {
                 ProtocolControl::SetChunkSize(size) => {
-                    self.assembler.set_chunk_size(size.value());
+                    self.assembler.set_chunk_size(size);
                 }
                 ProtocolControl::WindowAckSize(size) => {
                     self.ack_threshold = size;
@@ -902,7 +905,13 @@ mod tests {
         let (mut s0_s1_s2, _consumed, _done) = server_hs.read(&c0_c1).unwrap();
         s0_s1_s2[0] = 6; // RTMPE, not plain RTMP
         let err = client_hs.read(&s0_s1_s2).unwrap_err();
-        assert!(matches!(err, RtmpError::Malformed { what: "S0 version" }));
+        assert!(matches!(
+            err,
+            RtmpError::HandshakeVersion {
+                value: 6,
+                expected: RTMP_VERSION
+            }
+        ));
     }
 
     /// RTMP-W9 (#1108): after `connect`'s `_result` the client must send
@@ -929,7 +938,10 @@ mod tests {
         for round in 0..4 {
             // Round 0's output starts with C2, which is not chunk data.
             let skip = if round == 0 { HANDSHAKE_PACKET_LEN } else { 0 };
-            sniff.set_chunk_size(client.config.chunk_size);
+            sniff.set_chunk_size(
+                crate::message::ChunkSize::new(client.config.chunk_size)
+                    .expect("the client's own configured size is validated before connect"),
+            );
             for m in sniff.push(&to_server[skip..]).unwrap() {
                 if m.message_type_id == MessageTypeId::CommandAmf0 {
                     let c = Command::parse(&m.payload).unwrap();
@@ -1048,7 +1060,10 @@ mod tests {
         let c0_c1 = client.start();
         let (s0_s1_s2, _) = server.handle_data(&c0_c1).unwrap();
         let err = client.handle_data(&s0_s1_s2).unwrap_err();
-        assert!(matches!(err, RtmpError::Malformed { .. }), "{err:?}");
+        assert!(
+            matches!(err, RtmpError::ChunkSizeOutOfRange { value: 0x8000_0000 }),
+            "{err:?}"
+        );
         assert!(!client.is_publishing());
     }
 
@@ -1249,7 +1264,10 @@ mod tests {
         client.stream_id = Some(1);
         let huge = "x".repeat(usize::from(u16::MAX) + 1);
         let r = client.send_metadata(&[("title".to_string(), Amf0Value::String(huge))]);
-        assert!(matches!(r, Err(RtmpError::Unsupported { .. })), "{r:?}");
+        assert!(
+            matches!(r, Err(RtmpError::Amf0StringTooLong { .. })),
+            "{r:?}"
+        );
     }
 
     #[test]
@@ -1262,7 +1280,7 @@ mod tests {
         let mut client = ClientSession::new(config);
         assert!(matches!(
             client.send_audio(0, &[0x00]),
-            Err(crate::error::RtmpError::Malformed { .. })
+            Err(crate::error::RtmpError::UnexpectedState { .. })
         ));
     }
 

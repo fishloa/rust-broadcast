@@ -308,7 +308,7 @@ fn live_playlist_reloads_are_not_starved_by_a_full_segment_window() {
 }
 
 #[test]
-fn zero_backoff_entries_and_cap_are_floored_at_one_millisecond() {
+fn zero_backoff_entries_and_cap_are_taken_as_configured() {
     let config = {
         let mut new_config = hls_config();
         new_config.backoff.steps = vec![std::time::Duration::ZERO];
@@ -317,19 +317,21 @@ fn zero_backoff_entries_and_cap_are_floored_at_one_millisecond() {
     };
     let mut h = Host::new(TS_PLAYLIST_URL, config);
     h.route(TS_PLAYLIST_URL, vec![Reply::Status(support::status(500))]);
-    for _ in 0..300 {
+    for _ in 0..500 {
         if !h.step() {
             break;
         }
     }
     h.collect();
-    let mut per_instant: HashMap<u64, usize> = HashMap::new();
-    for seen in &h.seen {
-        *per_instant.entry(seen.at_us).or_default() += 1;
-    }
-    let worst = per_instant.values().copied().max().unwrap_or(0);
-    assert!(worst <= 2, "{worst} requests at one instant");
-    assert!(h.now >= 100, "virtual time advanced: {}", h.now);
+    assert!(
+        h.seen.iter().all(|seen| seen.at_us == 0),
+        "a zero delay is taken as configured: no virtual time is waited"
+    );
+    assert!(
+        h.seen.len() > 1,
+        "a zero delay retries: {} requests",
+        h.seen.len()
+    );
 }
 
 fn ended_master_host() -> Host {

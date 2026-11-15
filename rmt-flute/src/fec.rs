@@ -20,7 +20,15 @@
 //! scheme's consumer — `dvb-mabr` and `atsc3-route` both need exactly this
 //! shape (issue #944).
 
+use broadcast_common::error::FieldOverflow;
+use broadcast_common::len::fit_bits;
+
 use crate::error::{Error, Result};
+
+/// Bit width of a [`crate::FecPayloadId128`] Source Block Number (`u32`).
+const SOURCE_BLOCK_NUMBER_BITS: u32 = 32;
+/// Bit width of a [`crate::FecPayloadId128`] Source Block Length (`u16`).
+const SOURCE_BLOCK_LENGTH_BITS: u32 = 16;
 
 /// The source-block structure of a transport object, per RFC 5052 §9.1's
 /// Block Partitioning Algorithm.
@@ -43,19 +51,19 @@ pub struct SourceBlockPartition {
     /// The transport object length in octets (`L`, Transfer-Length).
     pub transfer_length: u64,
     /// The encoding symbol length in octets (`E`, Encoding-Symbol-Length).
-    pub encoding_symbol_length: u32,
+    encoding_symbol_length: u32,
     /// Total source symbols in the object (`T = ceil(L / E)`).
-    pub source_symbols: u64,
+    source_symbols: u64,
     /// Number of source blocks (`N = ceil(T / B)`).
-    pub num_blocks: u64,
+    num_blocks: u64,
     /// Source symbols in each of the first `larger_blocks` blocks
     /// (`A_large = ceil(T / N)`).
-    pub larger_block_len: u64,
+    larger_block_len: u64,
     /// Source symbols in each of the remaining blocks
     /// (`A_small = floor(T / N)`).
-    pub smaller_block_len: u64,
+    smaller_block_len: u64,
     /// Number of "larger" blocks (`I = T - A_small * N`).
-    pub larger_blocks: u64,
+    larger_blocks: u64,
 }
 
 impl SourceBlockPartition {
@@ -72,7 +80,11 @@ impl SourceBlockPartition {
     ///
     /// Returns [`Error::InvalidField`] if `encoding_symbol_length` or
     /// `max_source_block_length` is `0` (both are divisors in the algorithm;
-    /// RFC 5052 gives no meaning to either being zero).
+    /// RFC 5052 gives no meaning to either being zero), and
+    /// [`Error::FieldOverflow`] if the block counts exceed the ranges a
+    /// [`crate::FecPayloadId128`] addresses: more than `u32::MAX` source
+    /// blocks, or more source symbols in one block than its `u16` Source
+    /// Block Length can name.
     pub fn new(
         transfer_length: u64,
         encoding_symbol_length: u32,
@@ -112,6 +124,30 @@ impl SourceBlockPartition {
             (a_large, a_small, i)
         };
 
+        let blocks_overflow = || {
+            Error::FieldOverflow(FieldOverflow {
+                field: "Source Block Number",
+                value: num_blocks,
+                max: u64::from(u32::MAX),
+            })
+        };
+        if fit_bits(num_blocks, SOURCE_BLOCK_NUMBER_BITS, "Source Block Number").is_err() {
+            return Err(blocks_overflow());
+        }
+        if fit_bits(
+            larger_block_len,
+            SOURCE_BLOCK_LENGTH_BITS,
+            "Source Block Length",
+        )
+        .is_err()
+        {
+            return Err(Error::FieldOverflow(FieldOverflow {
+                field: "Source Block Length",
+                value: larger_block_len,
+                max: u64::from(u16::MAX),
+            }));
+        }
+
         Ok(SourceBlockPartition {
             transfer_length,
             encoding_symbol_length,
@@ -121,6 +157,43 @@ impl SourceBlockPartition {
             smaller_block_len,
             larger_blocks,
         })
+    }
+
+    /// The transport object length in octets (`L`, Transfer-Length).
+    pub fn transfer_length(&self) -> u64 {
+        self.transfer_length
+    }
+
+    /// The encoding symbol length in octets (`E`).
+    pub fn encoding_symbol_length(&self) -> u32 {
+        self.encoding_symbol_length
+    }
+
+    /// Total source symbols in the object (`T = ceil(L / E)`).
+    pub fn source_symbols(&self) -> u64 {
+        self.source_symbols
+    }
+
+    /// Number of source blocks (`N = ceil(T / B)`).
+    pub fn num_blocks(&self) -> u64 {
+        self.num_blocks
+    }
+
+    /// Source symbols in each of the first [`Self::larger_blocks`] blocks
+    /// (`A_large = ceil(T / N)`).
+    pub fn larger_block_len(&self) -> u64 {
+        self.larger_block_len
+    }
+
+    /// Source symbols in each of the remaining blocks
+    /// (`A_small = floor(T / N)`).
+    pub fn smaller_block_len(&self) -> u64 {
+        self.smaller_block_len
+    }
+
+    /// Number of "larger" blocks (`I = T - A_small * N`).
+    pub fn larger_blocks(&self) -> u64 {
+        self.larger_blocks
     }
 
     /// Number of source symbols in source block `index` (0-based), or `None`
@@ -182,11 +255,11 @@ mod tests {
     fn zero_length_object_has_no_symbols_or_blocks() {
         // L=0: T = ceil(0/E) = 0, N = ceil(0/B) = 0 (RFC 5052 §9.1.1).
         let p = SourceBlockPartition::new(0, 1000, 10).unwrap();
-        assert_eq!(p.source_symbols, 0);
-        assert_eq!(p.num_blocks, 0);
-        assert_eq!(p.larger_block_len, 0);
-        assert_eq!(p.smaller_block_len, 0);
-        assert_eq!(p.larger_blocks, 0);
+        assert_eq!(p.source_symbols(), 0);
+        assert_eq!(p.num_blocks(), 0);
+        assert_eq!(p.larger_block_len(), 0);
+        assert_eq!(p.smaller_block_len(), 0);
+        assert_eq!(p.larger_blocks(), 0);
         assert_eq!(p.block_len(0), None);
         assert_eq!(p.last_symbol_len(), None);
     }
@@ -202,16 +275,18 @@ mod tests {
     #[test]
     fn exact_multiple_worked_example() {
         let p = SourceBlockPartition::new(10_000, 1000, 3).unwrap();
-        assert_eq!(p.source_symbols, 10);
-        assert_eq!(p.num_blocks, 4);
-        assert_eq!(p.larger_block_len, 3);
-        assert_eq!(p.smaller_block_len, 2);
-        assert_eq!(p.larger_blocks, 2);
+        assert_eq!(p.source_symbols(), 10);
+        assert_eq!(p.num_blocks(), 4);
+        assert_eq!(p.larger_block_len(), 3);
+        assert_eq!(p.smaller_block_len(), 2);
+        assert_eq!(p.larger_blocks(), 2);
 
-        let lens: Vec<u64> = (0..p.num_blocks).map(|i| p.block_len(i).unwrap()).collect();
+        let lens: Vec<u64> = (0..p.num_blocks())
+            .map(|i| p.block_len(i).unwrap())
+            .collect();
         assert_eq!(lens, [3, 3, 2, 2]);
-        assert_eq!(lens.iter().sum::<u64>(), p.source_symbols);
-        assert_eq!(p.block_len(p.num_blocks), None);
+        assert_eq!(lens.iter().sum::<u64>(), p.source_symbols());
+        assert_eq!(p.block_len(p.num_blocks()), None);
 
         // L is an exact multiple of E, so the trailing remainder is a full
         // symbol.
@@ -227,15 +302,17 @@ mod tests {
     #[test]
     fn non_exact_multiple_worked_example() {
         let p = SourceBlockPartition::new(10_005, 1000, 3).unwrap();
-        assert_eq!(p.source_symbols, 11);
-        assert_eq!(p.num_blocks, 4);
-        assert_eq!(p.larger_block_len, 3);
-        assert_eq!(p.smaller_block_len, 2);
-        assert_eq!(p.larger_blocks, 3);
+        assert_eq!(p.source_symbols(), 11);
+        assert_eq!(p.num_blocks(), 4);
+        assert_eq!(p.larger_block_len(), 3);
+        assert_eq!(p.smaller_block_len(), 2);
+        assert_eq!(p.larger_blocks(), 3);
 
-        let lens: Vec<u64> = (0..p.num_blocks).map(|i| p.block_len(i).unwrap()).collect();
+        let lens: Vec<u64> = (0..p.num_blocks())
+            .map(|i| p.block_len(i).unwrap())
+            .collect();
         assert_eq!(lens, [3, 3, 3, 2]);
-        assert_eq!(lens.iter().sum::<u64>(), p.source_symbols);
+        assert_eq!(lens.iter().sum::<u64>(), p.source_symbols());
 
         // 10005 = 10*1000 + 5, so the trailing remainder is 5 octets.
         assert_eq!(p.last_symbol_len(), Some(5));
@@ -246,11 +323,11 @@ mod tests {
     #[test]
     fn max_block_length_exceeding_total_symbols_yields_one_block() {
         let p = SourceBlockPartition::new(100, 10, 1000).unwrap();
-        assert_eq!(p.source_symbols, 10);
-        assert_eq!(p.num_blocks, 1);
-        assert_eq!(p.larger_block_len, 10);
-        assert_eq!(p.smaller_block_len, 10);
-        assert_eq!(p.larger_blocks, 0);
+        assert_eq!(p.source_symbols(), 10);
+        assert_eq!(p.num_blocks(), 1);
+        assert_eq!(p.larger_block_len(), 10);
+        assert_eq!(p.smaller_block_len(), 10);
+        assert_eq!(p.larger_blocks(), 0);
         assert_eq!(p.block_len(0), Some(10));
         assert_eq!(p.block_len(1), None);
     }
@@ -259,18 +336,46 @@ mod tests {
     #[test]
     fn sub_symbol_object_rounds_up_to_one_symbol() {
         let p = SourceBlockPartition::new(5, 1000, 10).unwrap();
-        assert_eq!(p.source_symbols, 1);
-        assert_eq!(p.num_blocks, 1);
+        assert_eq!(p.source_symbols(), 1);
+        assert_eq!(p.num_blocks(), 1);
         // The one and only symbol IS the last symbol: full L, not full E.
         assert_eq!(p.last_symbol_len(), Some(5));
+    }
+
+    #[test]
+    fn rejects_partitions_outside_the_payload_id_ranges() {
+        // One block per symbol: 2^32 blocks is the first Source Block Number
+        // a `FecPayloadId128` cannot address.
+        assert!(matches!(
+            SourceBlockPartition::new(1 << 32, 1, 1),
+            Err(Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                field: "Source Block Number",
+                max,
+                ..
+            })) if max == u64::from(u32::MAX)
+        ));
+        // A single block of 65536 symbols is one past the `u16` Source
+        // Block Length.
+        assert!(matches!(
+            SourceBlockPartition::new(65_536, 1, 65_536),
+            Err(Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                field: "Source Block Length",
+                max,
+                ..
+            })) if max == u64::from(u16::MAX)
+        ));
+        // The largest addressable partition still builds.
+        let p = SourceBlockPartition::new(65_535, 1, 65_535).unwrap();
+        assert_eq!(p.num_blocks(), 1);
+        assert_eq!(p.larger_block_len(), 65_535);
     }
 
     #[test]
     fn mutating_transfer_length_changes_partition() {
         let a = SourceBlockPartition::new(10_000, 1000, 3).unwrap();
         let b = SourceBlockPartition::new(10_005, 1000, 3).unwrap();
-        assert_ne!(a.source_symbols, b.source_symbols);
-        assert_ne!(a.larger_blocks, b.larger_blocks);
+        assert_ne!(a.source_symbols(), b.source_symbols());
+        assert_ne!(a.larger_blocks(), b.larger_blocks());
         assert_ne!(a.last_symbol_len(), b.last_symbol_len());
     }
 }

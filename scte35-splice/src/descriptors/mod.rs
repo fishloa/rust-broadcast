@@ -23,7 +23,7 @@ pub use avail::AvailDescriptor;
 pub use dtmf::DtmfDescriptor;
 pub use header::CUEI;
 pub use segmentation::{
-    DeliveryRestrictions, MidUpid, Mpu, SegmentationComponent, SegmentationDescriptor,
+    DeliveryRestrictions, MidUpid, Mpu, SegmentationComponent, SegmentationDescriptor, SubSegments,
 };
 pub use segmentation_enums::{DeviceRestrictions, SegmentationTypeId, SegmentationUpidType};
 pub use time::TimeDescriptor;

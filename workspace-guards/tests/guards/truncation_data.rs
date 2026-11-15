@@ -198,18 +198,7 @@ pub const TABLE: &[Crate] = &[
     },
     Crate {
         name: "st377-1",
-        allowlist: &[
-            (
-                "src/types.rs",
-                "out.extend_from_slice(&(items.len() as u32).to_be_bytes());",
-                "infallible serialize_uid_batch: wrapping needs >= 2^32 16-byte UL items (a 64 GiB batch); documented unreachable, not testable.",
-            ),
-            (
-                "src/primer.rs",
-                "buf[pos..pos + 4].copy_from_slice(&(self.entries.len() as u32).to_be_bytes());",
-                "wrapping needs >= 2^32 18-byte primer entries (a 72 GiB pack); serialized_len() could not be allocated first. Documented unreachable.",
-            ),
-        ],
+        allowlist: &[],
     },
     Crate {
         name: "ule",

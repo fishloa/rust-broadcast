@@ -12,7 +12,7 @@ use super::{Error, Result, SEQ_NUMBER_MASK, SRT_HEADER_LEN, be32, put_be32};
 use broadcast_common::len::{need_in, need_out};
 
 /// Bit width of the Message Number field (§3.1).
-const MESSAGE_NUMBER_BITS: u32 = 26;
+pub(crate) const MESSAGE_NUMBER_BITS: u32 = 26;
 /// Mask for the 26-bit Message Number field (§3.1). `pub(crate)` so
 /// `io::Driver` can wrap its own message-number counter at the same
 /// boundary [`next_message_number`] uses (issue #1062).

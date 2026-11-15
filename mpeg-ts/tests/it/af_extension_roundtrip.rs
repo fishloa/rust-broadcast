@@ -18,7 +18,10 @@
 //! is the real-data check: every adaptation field in every committed `.ts`
 //! fixture must re-serialize byte-identically from its parsed form.
 
-use mpeg_ts::ts::{AdaptationField, AdaptationFieldExtension, Ltw, Pcr, TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{
+    AdaptationField, AdaptationFieldExtension, Ltw, LtwOffset, Pcr, PiecewiseRate, TS_PACKET_SIZE,
+    TsPacket,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -124,7 +127,7 @@ fn extension_all_fields_with_reserved_and_stuffing_round_trip() {
         ext.ltw,
         Some(Ltw {
             ltw_valid_flag: true,
-            ltw_offset: 0x0123
+            ltw_offset: LtwOffset::new(0x0123).expect("15-bit offset")
         })
     );
     assert_eq!(ext.trailing, &[0xDE, 0xAD]);
@@ -137,7 +140,7 @@ fn extension_all_fields_with_reserved_and_stuffing_round_trip() {
 #[test]
 fn constructed_extension_uses_convention_reserved_bits() {
     let mut ext = AdaptationFieldExtension::new();
-    ext.piecewise_rate = Some(0x0A_BCDE);
+    ext.piecewise_rate = Some(PiecewiseRate::new(0x0A_BCDE).expect("22-bit rate"));
     let af_body = {
         let mut buf = vec![0u8; ext.serialized_len()];
         ext.serialize_into(&mut buf).unwrap();
@@ -149,6 +152,31 @@ fn constructed_extension_uses_convention_reserved_bits() {
     let pkt = packet_with_af(&body);
     let af = parse_af(&pkt);
     assert_eq!(af.extension.as_ref().unwrap(), &ext);
+}
+/// A real-fixture packet with a PCR re-serializes byte-identically, and the
+/// same packet over the bounded field types keeps the wire bytes unchanged.
+#[test]
+fn real_fixture_pcr_packet_round_trips_through_the_bounded_types() {
+    let buf = fs::read(test_fixtures::path("ts/af-pcr-stuffing.ts"))
+        .expect("af-pcr-stuffing.ts fixture must be present");
+    let mut with_pcr = 0usize;
+    for pkt in buf.chunks_exact(TS_PACKET_SIZE) {
+        let Ok(parsed) = TsPacket::parse(pkt) else {
+            continue;
+        };
+        let Some(Ok(af)) = parsed.adaptation_field() else {
+            continue;
+        };
+        if af.pcr.is_none() {
+            continue;
+        }
+        with_pcr += 1;
+        let mut out = vec![0u8; af.serialized_len()];
+        let n = af.serialize_into(&mut out).expect("AF serialize");
+        assert_eq!(n, out.len());
+        assert_eq!(out.as_slice(), &pkt[5..5 + out.len()]);
+    }
+    assert!(with_pcr > 0, "fixture must carry at least one PCR packet");
 }
 
 // ── exhaustive real-data gates ───────────────────────────────────────────────
