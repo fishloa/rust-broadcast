@@ -9,6 +9,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVC_timing_and_HRD_descriptor.
@@ -17,15 +18,18 @@ const HEADER_LEN: usize = 2;
 /// Default of the 6-bit `reserved` in byte 0 (H.222.0 Table 2-93): clause 2.1
 /// "reserved" = `1` (all editions 06/2012-08/2023, audit §5; confirmed by the
 /// TSDuck oracle PMT).
-pub const RESERVED_6_DEFAULT: u8 = 0b11_1111;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
 /// Default of the 7-bit `reserved` after `90kHz_flag` (same rule).
-pub const RESERVED_7_DEFAULT: u8 = 0x7F;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
 /// Default of the trailing 5-bit `reserved` after the frame-rate flags (same
 /// rule).
-pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
-const RESERVED_6_MASK: u8 = 0x3F;
-const RESERVED_7_MASK: u8 = 0x7F;
-const RESERVED_5_MASK: u8 = 0x1F;
+pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> = ReservedOnes::<RESERVED_5_BITS>::FILL;
+/// Width of the `reserved` in the first body byte (6 bits).
+const RESERVED_6_BITS: u32 = 6;
+/// Width of the `reserved` after `90kHz_flag` (7 bits).
+const RESERVED_7_BITS: u32 = 7;
+/// Width of the trailing `reserved` after the frame-rate flags (5 bits).
+const RESERVED_5_BITS: u32 = 5;
 const FIXED_BODY_LEN: u8 = 1; // first byte always present (hrd_management_valid_flag..picture_and_timing_info_present)
 
 /// Picture and timing info block — present when `picture_and_timing_info_present` is true.
@@ -44,7 +48,7 @@ pub struct AvcPictureTiming {
     /// `reserved(7)` after `90kHz_flag` (7 bits, right-aligned). Captured on
     /// parse, re-emitted verbatim; [`AvcPictureTiming::new`] uses
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_7: u8,
+    pub reserved_7: ReservedOnes<RESERVED_7_BITS>,
 }
 
 impl AvcPictureTiming {
@@ -85,11 +89,11 @@ pub struct AvcTimingAndHrdDescriptor {
     /// `reserved(6)` in byte 0 (6 bits, right-aligned). Captured on parse,
     /// re-emitted verbatim; [`AvcTimingAndHrdDescriptor::new`] uses
     /// [`RESERVED_6_DEFAULT`].
-    pub reserved_6: u8,
+    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
     /// Trailing `reserved(5)` after the flags (5 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_5_DEFAULT`].
-    pub reserved_5: u8,
+    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
 }
 
 impl AvcTimingAndHrdDescriptor {
@@ -179,7 +183,7 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
                 n,
                 k,
                 num_units_in_tick,
-                reserved_7: b1 & RESERVED_7_MASK,
+                reserved_7: ReservedOnes::from_bits(u64::from(b1)),
             };
             (Some(timing), num_units_offset + 4)
         } else {
@@ -206,8 +210,8 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
             fixed_frame_rate_flag,
             temporal_poc_flag,
             picture_to_display_conversion_flag,
-            reserved_6: (b0 >> 1) & RESERVED_6_MASK,
-            reserved_5: flags_byte & RESERVED_5_MASK,
+            reserved_6: ReservedOnes::from_bits(u64::from(b0 >> 1)),
+            reserved_5: ReservedOnes::from_bits(u64::from(flags_byte)),
         })
     }
 }
@@ -238,8 +242,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let picture_and_timing_info_present = self.picture_timing.is_some();
         buf[HEADER_LEN] = ((self.hrd_management_valid_flag as u8) << 7)
-            | (broadcast_common::len::fit_mask(self.reserved_6, RESERVED_6_MASK, "reserved_6")?
-                << 1)
+            | ((self.reserved_6.get() as u8) << 1)
             | (if picture_and_timing_info_present {
                 1
             } else {
@@ -248,8 +251,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let mut pos = HEADER_LEN + 1;
         if let Some(ref pt) = self.picture_timing {
-            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 }
-                | broadcast_common::len::fit_mask(pt.reserved_7, RESERVED_7_MASK, "reserved_7")?;
+            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 } | pt.reserved_7.get() as u8;
             pos += 1;
             if !pt._90khz_flag {
                 // N and K are both on the wire whenever the 90 kHz flag is
@@ -273,7 +275,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
         buf[pos] = ((self.fixed_frame_rate_flag as u8) << 7)
             | ((self.temporal_poc_flag as u8) << 6)
             | ((self.picture_to_display_conversion_flag as u8) << 5)
-            | broadcast_common::len::fit_mask(self.reserved_5, RESERVED_5_MASK, "reserved_5")?;
+            | self.reserved_5.get() as u8;
         Ok(len)
     }
 }
@@ -401,8 +403,14 @@ mod tests {
                         0xA0 | r5,
                     ];
                     let d = AvcTimingAndHrdDescriptor::parse(&bytes).unwrap();
-                    assert_eq!((d.reserved_6, d.reserved_5), (r6, r5));
-                    assert_eq!(d.picture_timing.as_ref().unwrap().reserved_7, r7);
+                    assert_eq!(
+                        (d.reserved_6.get(), d.reserved_5.get()),
+                        (u64::from(r6), u64::from(r5))
+                    );
+                    assert_eq!(
+                        d.picture_timing.as_ref().unwrap().reserved_7.get(),
+                        u64::from(r7)
+                    );
                     let mut out = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut out).unwrap();
                     assert_eq!(out, bytes);

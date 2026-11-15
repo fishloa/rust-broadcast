@@ -9,6 +9,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for FTA_content_management_descriptor.
@@ -21,11 +22,14 @@ pub const BODY_LEN: usize = 1;
 const USER_DEFINED_MASK: u8 = 0b1000_0000;
 const RESERVED_MASK: u8 = 0b0111_0000;
 const RESERVED_SHIFT: u8 = 4;
+/// Width of the `reserved_future_use` after `user_defined` (3 bits).
+const RESERVED_BITS: u32 = 3;
 /// Spec default of `reserved_future_use`(3): all ones (EN 300 468 V1.12.1-V1.20.1
 /// Table 57; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §4 row 3 / §6.1:
 /// `user_defined`(1) was carved out of the old `reserved_future_use`(4) in V1.12.1,
 /// the remaining 3 bits stay reserved = 1).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0b111;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 const DO_NOT_SCRAMBLE_MASK: u8 = 0b0000_1000;
 const CONTROL_REMOTE_ACCESS_MASK: u8 = 0b0000_0110;
 const CONTROL_REMOTE_ACCESS_SHIFT: u8 = 1;
@@ -103,7 +107,7 @@ pub struct FtaContentManagementDescriptor {
     /// [`FtaContentManagementDescriptor::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`]. (A pre-V1.12.1 all-ones sender reads as
     /// `user_defined = 1`; that bit is typed, the round-trip stays byte-exact.)
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// 1-bit user_defined flag.
     pub user_defined: bool,
     /// 1-bit do_not_scramble flag.
@@ -150,7 +154,9 @@ impl<'a> Parse<'a> for FtaContentManagementDescriptor {
         }
         let flags = body[0];
         Ok(Self {
-            reserved_future_use: (flags & RESERVED_MASK) >> RESERVED_SHIFT,
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                (flags & RESERVED_MASK) >> RESERVED_SHIFT,
+            )),
             user_defined: flags & USER_DEFINED_MASK != 0,
             do_not_scramble: flags & DO_NOT_SCRAMBLE_MASK != 0,
             control_remote_access_over_internet: ControlRemoteAccess::from_u8(
@@ -177,11 +183,7 @@ impl Serialize for FtaContentManagementDescriptor {
         let len = self.serialized_len();
         need_out(buf, len)?;
         // reserved_future_use(3) preserved from parse (default 111).
-        let mut flags = broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_MASK >> RESERVED_SHIFT,
-            "reserved_future_use",
-        )? << RESERVED_SHIFT;
+        let mut flags = (self.reserved_future_use.get() as u8) << RESERVED_SHIFT;
         if self.user_defined {
             flags |= USER_DEFINED_MASK;
         }
@@ -232,7 +234,7 @@ mod tests {
         for b in 0..=0xFFu8 {
             let bytes = [TAG, 1, b];
             let d = FtaContentManagementDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_future_use, (b >> 4) & 0x07);
+            assert_eq!(d.reserved_future_use.get(), u64::from((b >> 4) & 0x07));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);
@@ -253,7 +255,7 @@ mod tests {
         // reserved bits all set, everything else zero: 0 111 0 00 0 = 0x70.
         let bytes = [TAG, 1, 0x70];
         let d = FtaContentManagementDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.reserved_future_use, 0b111);
+        assert_eq!(d.reserved_future_use.get(), 0b111);
         assert!(!d.user_defined);
         assert!(!d.do_not_scramble);
         assert_eq!(

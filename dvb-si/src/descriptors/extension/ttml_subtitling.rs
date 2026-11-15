@@ -5,6 +5,7 @@
 use super::*;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
     const TAG_EXTENSION: u8 = 0x20;
@@ -15,10 +16,13 @@ impl<'a> ExtensionBodyDef<'a> for TtmlSubtitling<'a> {
 /// TTML_subtitling_descriptor (the 2-bit one in byte 4 and the 1-bit one in
 /// each font entry): 0 (EN 303 560 V1.1.1 Table 1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
-const RESERVED_ZERO_2_MASK: u8 = 0x03;
+pub const TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<FONT_RESERVED_BITS> =
+    ReservedZero::<FONT_RESERVED_BITS>::FILL;
+/// Width of the `reserved_zero_future_use` in byte 4 (2 bits).
+const RESERVED_ZERO_2_BITS: u32 = 2;
+/// Width of the per-font `reserved_zero_future_use` (1 bit).
+const FONT_RESERVED_BITS: u32 = 1;
 const FONT_ID_MASK: u8 = 0x7F;
-const FONT_RESERVED_MASK: u8 = 0x01;
 
 /// One `font_count` loop entry: `reserved_zero_future_use`(1) + `font_id`(7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,7 +32,7 @@ pub struct TtmlFont {
     /// `reserved_zero_future_use` (1 bit, right-aligned) — bit 7 of the entry
     /// byte. Preserved on parse; [`TtmlFont::new`] uses
     /// [`TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: u8,
+    pub reserved_zero_future_use: ReservedZero<FONT_RESERVED_BITS>,
     /// `font_id` (7 bits).
     pub font_id: u8,
 }
@@ -59,7 +63,7 @@ pub struct TtmlSubtitling<'a> {
     /// `reserved_zero_future_use` (2 bits, right-aligned) in byte 4, between
     /// `qualifier_present_flag` and `dvb_ttml_profile_count`. Preserved on
     /// parse; defaults to [`TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: u8,
+    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_2_BITS>,
     /// dvb_ttml_profile codes (one `Vec` entry per profile byte, EN 303 560).
     pub dvb_ttml_profiles: Vec<u8>,
     /// qualifier(32), present iff qualifier_present_flag.
@@ -90,7 +94,7 @@ impl<'a> TtmlSubtitling<'a> {
             iso_639_language_code,
             subtitle_purpose,
             tts_suitability,
-            reserved_zero_future_use: TTML_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use: ReservedZero::<RESERVED_ZERO_2_BITS>::FILL,
             dvb_ttml_profiles,
             qualifier,
             font_ids,
@@ -111,7 +115,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
         let b4 = sel[ISO_639_LEN + 1];
         let essential_font_usage_flag = (b4 >> 7) & 1;
         let qualifier_present_flag = (b4 >> 6) & 1;
-        let reserved_zero_future_use = (b4 >> 4) & RESERVED_ZERO_2_MASK;
+        let reserved_zero_future_use = ReservedZero::from_bits(u64::from(b4 >> 4));
         let dvb_ttml_profile_count = (b4 & 0x0F) as usize;
 
         let mut pos = TTML_FIXED_LEN;
@@ -157,7 +161,7 @@ impl<'a> Parse<'a> for TtmlSubtitling<'a> {
             let ids: Vec<TtmlFont> = sel[pos..pos + font_count]
                 .iter()
                 .map(|b| TtmlFont {
-                    reserved_zero_future_use: (b >> 7) & FONT_RESERVED_MASK,
+                    reserved_zero_future_use: ReservedZero::from_bits(u64::from(b >> 7)),
                     font_id: b & FONT_ID_MASK,
                 })
                 .collect();
@@ -229,11 +233,7 @@ impl Serialize for TtmlSubtitling<'_> {
         )? as u8;
         buf[ISO_639_LEN + 1] = (if self.font_ids.is_some() { 0x80 } else { 0 })
             | (if self.qualifier.is_some() { 0x40 } else { 0 })
-            | (broadcast_common::len::fit_mask(
-                self.reserved_zero_future_use,
-                RESERVED_ZERO_2_MASK,
-                "reserved_zero_future_use",
-            )? << 4)
+            | ((self.reserved_zero_future_use.get() as u8) << 4)
             | dvb_ttml_profile_count;
 
         let mut pos = TTML_FIXED_LEN;
@@ -253,11 +253,7 @@ impl Serialize for TtmlSubtitling<'_> {
             buf[pos] = broadcast_common::len::fit_u8(ids.len(), "font_id_count")?;
             pos += 1;
             for id in ids {
-                buf[pos] = (broadcast_common::len::fit_mask(
-                    id.reserved_zero_future_use,
-                    FONT_RESERVED_MASK,
-                    "reserved_zero_future_use",
-                )? << 7)
+                buf[pos] = ((id.reserved_zero_future_use.get() as u8) << 7)
                     | broadcast_common::len::fit_mask(id.font_id, FONT_ID_MASK, "font_id")?;
                 pos += 1;
             }
@@ -367,7 +363,7 @@ mod tests {
     /// re-serializes byte-identically (a V1.1.1 sender may write ones).
     #[test]
     fn ttml_reserved_preserved() {
-        for r2 in 0u8..=RESERVED_ZERO_2_MASK {
+        for r2 in 0u8..=0x03 {
             for r1 in 0u8..=1 {
                 let sel = [
                     b'e',

@@ -9,6 +9,7 @@ use super::descriptor_body;
 use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for HEVC_video_descriptor.
@@ -30,12 +31,15 @@ const TEMPORAL_ID_MASK: u8 = 0x07;
 /// `0x9F`/`0x7B`-style flag bytes with bits `[3:2]` = `11`. (An earlier
 /// reading cleared bit 3 on the strength of ISO/IEC 23001-2; that contradicted
 /// both the H.222.0 table and the data.) Parse preserves whatever is read.
-pub const RESERVED_DEFAULT: u8 = 0b11;
-const RESERVED_MASK: u8 = 0x03;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the byte-12 `reserved` (2 bits).
+const RESERVED_BITS: u32 = 2;
 /// Default of the 5-bit `reserved` in each temporal-sub-block byte (same
 /// rule): `11111`.
-pub const TEMPORAL_RESERVED_DEFAULT: u8 = 0b1_1111;
-const TEMPORAL_RESERVED_MASK: u8 = 0x1F;
+pub const TEMPORAL_RESERVED_DEFAULT: ReservedOnes<TEMPORAL_RESERVED_BITS> =
+    ReservedOnes::<TEMPORAL_RESERVED_BITS>::FILL;
+/// Width of the temporal-sub `reserved` (5 bits).
+const TEMPORAL_RESERVED_BITS: u32 = 5;
 /// Fixed body length without temporal_id sub-block.
 const FIXED_BODY_LEN: u8 = 12;
 /// Temporal sub-block length when present.
@@ -53,11 +57,11 @@ pub struct HevcTemporalSub {
     /// `reserved(5)` after `temporal_id_min` (5 bits, right-aligned). Captured
     /// on parse, re-emitted verbatim; defaults to
     /// [`TEMPORAL_RESERVED_DEFAULT`].
-    pub reserved_min: u8,
+    pub reserved_min: ReservedOnes<TEMPORAL_RESERVED_BITS>,
     /// `reserved(5)` after `temporal_id_max` (5 bits, right-aligned). Captured
     /// on parse, re-emitted verbatim; defaults to
     /// [`TEMPORAL_RESERVED_DEFAULT`].
-    pub reserved_max: u8,
+    pub reserved_max: ReservedOnes<TEMPORAL_RESERVED_BITS>,
 }
 
 impl HevcTemporalSub {
@@ -112,7 +116,7 @@ pub struct HevcVideoDescriptor {
     /// `reserved(2)` at bits `[3:2]` of byte 12 (2 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; [`HevcVideoDescriptor::new`] /
     /// [`Default`] use [`RESERVED_DEFAULT`] (`0b11`, the H.222.0 value).
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// Temporal layer sub-block, when present.
     pub temporal_sub: Option<HevcTemporalSub>,
 }
@@ -230,8 +234,8 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
             Some(HevcTemporalSub {
                 temporal_id_min: b13 >> 5,
                 temporal_id_max: b14 >> 5,
-                reserved_min: b13 & TEMPORAL_RESERVED_MASK,
-                reserved_max: b14 & TEMPORAL_RESERVED_MASK,
+                reserved_min: ReservedOnes::from_bits(u64::from(b13)),
+                reserved_max: ReservedOnes::from_bits(u64::from(b14)),
             })
         } else {
             if body.len() != (FIXED_BODY_LEN as usize) + 1 {
@@ -259,7 +263,7 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
             hevc_24hr_picture_present_flag,
             sub_pic_hrd_params_not_present_flag,
             hdr_wcg_idc,
-            reserved: (b12 >> 2) & RESERVED_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(b12 >> 2)),
             temporal_sub,
         })
     }
@@ -333,7 +337,7 @@ impl Serialize for HevcVideoDescriptor {
             | ((self.hevc_still_present_flag as u8) << 6)
             | ((self.hevc_24hr_picture_present_flag as u8) << 5)
             | ((self.sub_pic_hrd_params_not_present_flag as u8) << 4)
-            | (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 2)
+            | ((self.reserved.get() as u8) << 2)
             | broadcast_common::len::fit_mask(self.hdr_wcg_idc.to_u8(), 0x03, "hdr_wcg_idc")?;
 
         if self.temporal_layer_subset_flag != self.temporal_sub.is_some() {
@@ -359,21 +363,13 @@ impl Serialize for HevcVideoDescriptor {
                 TEMPORAL_ID_MASK,
                 "temporal_id_min",
             )? << 5)
-                | broadcast_common::len::fit_mask(
-                    ts.reserved_min,
-                    TEMPORAL_RESERVED_MASK,
-                    "reserved_min",
-                )?;
+                | ts.reserved_min.get() as u8;
             buf[HEADER_LEN + 14] = (broadcast_common::len::fit_mask(
                 ts.temporal_id_max,
                 TEMPORAL_ID_MASK,
                 "temporal_id_max",
             )? << 5)
-                | broadcast_common::len::fit_mask(
-                    ts.reserved_max,
-                    TEMPORAL_RESERVED_MASK,
-                    "reserved_max",
-                )?;
+                | ts.reserved_max.get() as u8;
         }
 
         Ok(len)
@@ -676,9 +672,12 @@ mod tests {
                     0x60 | rt,
                 ];
                 let d = HevcVideoDescriptor::parse(&bytes).unwrap();
-                assert_eq!(d.reserved, r);
+                assert_eq!(d.reserved.get(), u64::from(r));
                 let ts = d.temporal_sub.as_ref().unwrap();
-                assert_eq!((ts.reserved_min, ts.reserved_max), (rt, rt));
+                assert_eq!(
+                    (ts.reserved_min.get(), ts.reserved_max.get()),
+                    (u64::from(rt), u64::from(rt))
+                );
                 let mut out = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut out).unwrap();
                 assert_eq!(out, bytes);

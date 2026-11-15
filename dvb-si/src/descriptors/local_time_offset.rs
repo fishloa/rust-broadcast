@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for local_time_offset_descriptor.
@@ -20,10 +21,13 @@ const REGION_ID_MASK: u8 = 0xFC;
 const REGION_ID_BITS: u32 = 6;
 const RESERVED_BIT_MASK: u8 = 0x02;
 const RESERVED_BIT_SHIFT: u8 = 1;
+/// Width of the entry's `reserved_future_use` (1 bit).
+const RESERVED_BITS: u32 = 1;
 /// Spec default of the entry's 1-bit `reserved_future_use` (`reserved` before
 /// V1.17.1): `1` (EN 300 468 V1.3.1-V1.20.1 Table 29; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// One per-country offset entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +37,7 @@ pub struct LocalTimeOffsetEntry {
     /// `reserved_future_use`(1) between `country_region_id` and the polarity
     /// bit (1 bit, right-aligned). Captured on parse and re-emitted verbatim;
     /// [`LocalTimeOffsetEntry::new`] defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// ISO 3166 alpha country code.
     pub country_code: LangCode,
     /// 6-bit country_region_id for sub-national regions.
@@ -233,7 +237,9 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
             time_of_change_raw.copy_from_slice(&chunk[6..11]);
             let next_time_offset_bcd = crate::wire::be_u16(chunk, 11, "local_time_offset")?;
             entries.push(LocalTimeOffsetEntry {
-                reserved_future_use: (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
+                reserved_future_use: ReservedOnes::from_bits(u64::from(
+                    (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
+                )),
                 country_code,
                 country_region_id,
                 local_time_offset_negative,
@@ -267,11 +273,7 @@ impl Serialize for LocalTimeOffsetDescriptor {
             let flags =
                 (broadcast_common::len::fit_mask(region_id, REGION_ID_MASK >> 2, "region_id")?
                     << 2)
-                    | (broadcast_common::len::fit_mask(
-                        entry.reserved_future_use,
-                        RESERVED_BIT_MASK >> RESERVED_BIT_SHIFT,
-                        "reserved_future_use",
-                    )? << RESERVED_BIT_SHIFT)
+                    | ((entry.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
                     | if entry.local_time_offset_negative {
                         POLARITY_MASK
                     } else {
@@ -407,7 +409,7 @@ mod tests {
                 0x00,
             ];
             let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.entries[0].reserved_future_use, r);
+            assert_eq!(d.entries[0].reserved_future_use.get(), u64::from(r));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);

@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for cable_delivery_system_descriptor.
@@ -13,12 +14,13 @@ pub const TAG: u8 = 0x44;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
 
-/// Width mask of `reserved_future_use` (12 bits, top of body bytes 4-5).
-const RESERVED_FU_MASK: u16 = 0x0FFF;
+/// Width of `reserved_future_use` (12 bits, top of body bytes 4-5).
+const RESERVED_FU_BITS: u32 = 12;
 
 /// Spec default of the 12-bit `reserved_future_use` ahead of `FEC_outer`:
 /// all ones (EN 300 468 Table 33, V1.3.1-V1.20.1, audit §6.1 class A).
-pub const RESERVED_FUTURE_USE_DEFAULT: u16 = 0x0FFF;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FU_BITS> =
+    ReservedOnes::<RESERVED_FU_BITS>::FILL;
 
 /// FEC outer coding scheme — ETSI EN 300 468 Table 34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,7 +191,7 @@ pub struct CableDeliverySystemDescriptor {
     /// Captured on parse and re-emitted verbatim;
     /// [`CableDeliverySystemDescriptor::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0xFFF`).
-    pub reserved_future_use: u16,
+    pub reserved_future_use: ReservedOnes<RESERVED_FU_BITS>,
     /// FEC outer coding scheme.
     pub fec_outer: FecOuter,
     /// Modulation scheme.
@@ -350,7 +352,7 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
         let frequency_bcd = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
 
         let bytes_4_5 = u16::from_be_bytes([hdr[4], hdr[5]]);
-        let reserved_future_use = bytes_4_5 >> 4;
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(bytes_4_5 >> 4));
         let fec_outer_raw = (bytes_4_5 & 0x000F) as u8;
 
         let modulation_byte = hdr[6];
@@ -386,11 +388,7 @@ impl Serialize for CableDeliverySystemDescriptor {
 
         buf[2..6].copy_from_slice(&self.frequency_bcd.to_be_bytes());
 
-        let reserved_fu = broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_FU_MASK,
-            "reserved_future_use",
-        )? << 4;
+        let reserved_fu = (self.reserved_future_use.get() as u16) << 4;
         let fec_outer_byte = reserved_fu
             | (broadcast_common::len::fit_mask(
                 serialize_fec_outer(self.fec_outer),
@@ -635,7 +633,7 @@ mod tests {
                 0x03,
             ];
             let d = CableDeliverySystemDescriptor::parse(&raw).unwrap();
-            assert_eq!(d.reserved_future_use, r);
+            assert_eq!(d.reserved_future_use.get(), u64::from(r));
             assert_eq!(d.fec_outer, FecOuter::ReedSolomon204_188);
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();

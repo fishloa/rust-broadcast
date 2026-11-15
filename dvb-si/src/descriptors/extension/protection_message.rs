@@ -1,17 +1,20 @@
 //! Protection Message Descriptor — ETSI TS 102 809 §9.3.3, Table 40 (tag_extension 0x18).
 use super::*;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for ProtectionMessage<'a> {
     const TAG_EXTENSION: u8 = 0x18;
     const NAME: &'static str = "PROTECTION_MESSAGE";
 }
 
+/// Width of the `reserved` field (4 bits).
+const RESERVED_BITS: u32 = 4;
 /// Spec default of the 4-bit `reserved` field: all ones (ETSI TS 102 809
 /// Table 40, V1.3.1 and earlier editions;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const PROTECTION_MESSAGE_RESERVED_DEFAULT: u8 = 0x0F;
-const RESERVED_MASK: u8 = 0x0F;
+pub const PROTECTION_MESSAGE_RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// protection_message body (Table 40, §9.3.3): the list of protected
 /// `component_tag`s. `component_count` is a 4-bit field, so at most 15 tags.
@@ -22,7 +25,7 @@ const RESERVED_MASK: u8 = 0x0F;
 pub struct ProtectionMessage<'a> {
     /// `reserved` (4 bits, right-aligned) — preserved on parse;
     /// [`ProtectionMessage::new`] uses [`PROTECTION_MESSAGE_RESERVED_DEFAULT`] (all ones).
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// The `component_tag` list (one `u8` per protected component;
     /// `component_count` is its length).
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -57,7 +60,7 @@ impl<'a> Parse<'a> for ProtectionMessage<'a> {
                 what: "protection_message body",
             },
         ))?;
-        let reserved = (first >> 4) & RESERVED_MASK;
+        let reserved = ReservedOnes::from_bits(u64::from(first >> 4));
         let component_count = usize::from(first & 0x0F);
         let component_tags = sel
             .get(1..1 + component_count)
@@ -94,8 +97,7 @@ impl Serialize for ProtectionMessage<'_> {
             4,
             "component_count",
         )? as u8;
-        buf[0] = (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 4)
-            | component_count;
+        buf[0] = ((self.reserved.get() as u8) << 4) | component_count;
         let tags_end = 1 + self.component_tags.len();
         buf[1..tags_end].copy_from_slice(self.component_tags);
         buf[tags_end..len].copy_from_slice(self.trailing);
@@ -118,7 +120,7 @@ mod tests {
         let d = ExtensionDescriptor::parse(&bytes).unwrap();
         match &d.body {
             ExtensionBody::ProtectionMessage(b) => {
-                assert_eq!(b.reserved, 0x0F);
+                assert_eq!(b.reserved.get(), 0x0F);
                 assert_eq!(b.component_tags, &[0x10, 0x20, 0x30]);
             }
             other => panic!("expected ProtectionMessage, got {other:?}"),
@@ -160,7 +162,7 @@ mod tests {
     /// trailing run re-serialize byte-identically.
     #[test]
     fn protection_message_reserved_preserved() {
-        for r in 0u8..=RESERVED_MASK {
+        for r in 0u8..=0x0F {
             for tail in [&[][..], &[0xAA, 0xBB][..]] {
                 let mut sel = vec![(r << 4) | 2, 0x10, 0x20];
                 sel.extend_from_slice(tail);

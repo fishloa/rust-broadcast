@@ -16,6 +16,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for logical_channel_descriptor.
@@ -26,6 +27,8 @@ const VISIBLE_MASK: u8 = 0x80;
 const RESERVED_BITS_MASK: u8 = 0x7C;
 const RESERVED_SHIFT: u8 = 2;
 const LCN_HI_MASK: u8 = 0x03;
+/// Width of the per-entry `reserved` (5 bits).
+const RESERVED_BITS: u32 = 5;
 
 /// Default of the 5-bit per-entry `reserved` between `visible_service_flag`
 /// and the LCN: all ones (`0x1F`). EACEM/D-Book private layout (PDS 0x28; the
@@ -34,7 +37,7 @@ const LCN_HI_MASK: u8 = 0x03;
 /// of the PDS-0x28 captures in the private real-capture corpus (France TNT mux, TSDuck
 /// test-059/092/124/184; `tests/it/local_archive_reserved_defaults.rs`). The bits
 /// are preserved on parse.
-pub const RESERVED_DEFAULT: u8 = 0x1F;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 /// `logical_channel_number` is 10 bits (0..=1023).
 const LCN_BITS: u32 = 10;
 
@@ -50,7 +53,7 @@ pub struct LogicalChannelEntry {
     /// `reserved(5)` between the visible flag and the LCN (5 bits,
     /// right-aligned). Captured on parse and re-emitted verbatim;
     /// [`LogicalChannelEntry::new`] defaults to [`RESERVED_DEFAULT`] (`0x1F`).
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// 10-bit logical channel number (0..=1023).
     pub logical_channel_number: u16,
 }
@@ -96,7 +99,8 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
             let service_id = crate::wire::be_u16(chunk, 0, "logical_channel")?;
             let flags = chunk[2];
             let visible_service = flags & VISIBLE_MASK != 0;
-            let reserved = (flags & RESERVED_BITS_MASK) >> RESERVED_SHIFT;
+            let reserved =
+                ReservedOnes::from_bits(u64::from((flags & RESERVED_BITS_MASK) >> RESERVED_SHIFT));
             let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(chunk[3]);
             entries.push(LogicalChannelEntry {
                 service_id,
@@ -133,11 +137,7 @@ impl Serialize for LogicalChannelDescriptor {
                 "logical_channel_number",
             )? as u16;
             let flags = visible_byte
-                | (broadcast_common::len::fit_mask(
-                    entry.reserved,
-                    RESERVED_BITS_MASK >> RESERVED_SHIFT,
-                    "reserved",
-                )? << RESERVED_SHIFT)
+                | ((entry.reserved.get() as u8) << RESERVED_SHIFT)
                 | ((lcn >> 8) as u8 & LCN_HI_MASK);
             buf[offset + 2] = flags;
             buf[offset + 3] = (lcn & 0xFF) as u8;
@@ -273,7 +273,7 @@ mod tests {
             let flags = 0x80 | (r << 2) | 0x02;
             let bytes = [TAG, 4, 0x00, 0x01, flags, 0x05];
             let d = LogicalChannelDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.entries[0].reserved, r);
+            assert_eq!(d.entries[0].reserved.get(), u64::from(r));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes, "r {r:#x}");
