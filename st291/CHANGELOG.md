@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Changed
+- BREAKING: `AncDataDescriptor::inner_descriptors: &[u8]` is now `descriptors: Vec<Descriptor>` (#2770). The `descriptor_length` body is an ISO/IEC 13818-1 §2.6 `descriptor()` loop, so each entry is walked into a typed (borrowed) `Descriptor` with `tag()`/`body()` accessors instead of the caller re-parsing raw octets. ST 2038 §4.1.2.1 defines no descriptors for the loop, so every entry is `Descriptor::Other { tag, body }`, kept verbatim for a lossless round-trip; a truncated entry header or body is now reported as `Error::BufferTooShort` instead of being retained as opaque bytes.
 - The `panic_idioms` workspace guard now covers this crate; the `#[cfg(all(test, any(feature = "ts", feature = "rtp")))]` test module is gated as stacked `#[cfg(test)]` + `#[cfg(any(feature = "ts", feature = "rtp"))]` so the shared lexer recognises it as test-only (#2773).
 ### Fixed
 - `AncPacket` can no longer be serialized with a stale `Data_Count` or `Checksum_Word` (#2762): ST 291-1:2011 §6.5/§6.7 derive both from `DID`/`SDID`/`User_Data_Words`, so they are now computed on serialize instead of written from a stored field. Editing a user data word used to write bytes whose declared count/checksum contradicted the words themselves; the round-trip test `hand_computed_wire_bytes` still pins the canonical bytes (derived `Data_Count` `0x102`, checksum `0x134`).

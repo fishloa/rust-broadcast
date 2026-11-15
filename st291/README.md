@@ -128,7 +128,8 @@ More runnable programs: `cargo run -p st291 --example build_anc`,
 - **`ts` transport**: the PES header is parsed and written by the shared
   `mpeg-pes` codec (`mpeg_pes::PesPacket`), then ST 2038's pinned fields are
   validated. `AncDataDescriptor` (PMT ES-loop descriptor, tag
-  `0xC4`, with its `"VANC"` format identifier and `ANC_STREAM_TYPE` constants);
+  `0xC4`, with its `"VANC"` format identifier and `ANC_STREAM_TYPE` constants,
+  its undefined inner loop typed as a list of `Descriptor`);
   `AncDataPacket` (PES packet, `stream_id` `0xBD`, PTS,
   `PES_header_data_length == 5`) holding a list of `AncPacket` (adds
   `c_not_y_channel_flag`, `line_number`, `horizontal_offset`) plus trailing

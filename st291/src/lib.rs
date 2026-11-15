@@ -35,8 +35,8 @@ pub use anc::{
 pub use anc_content::{AncContent, ValidationReport};
 #[cfg(feature = "ts")]
 pub use descriptor::{
-    ANC_DATA_DESCRIPTOR_TAG, ANC_STREAM_TYPE, AncDataDescriptor, VANC_FORMAT_IDENTIFIER,
-    VANC_FORMAT_IDENTIFIER_BYTES,
+    ANC_DATA_DESCRIPTOR_TAG, ANC_STREAM_TYPE, AncDataDescriptor, Descriptor,
+    VANC_FORMAT_IDENTIFIER, VANC_FORMAT_IDENTIFIER_BYTES,
 };
 pub use error::{Error, Result};
 #[cfg(feature = "rtp")]
