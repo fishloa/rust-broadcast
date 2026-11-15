@@ -51,9 +51,26 @@ fn micros_to_duration(us: i128) -> Duration {
     Duration::from_micros(u64::try_from(us.max(0)).unwrap_or(u64::MAX))
 }
 
-fn micros_to_timestamp(us: i128) -> Option<Timestamp> {
-    let us = i64::try_from(us.clamp(i128::from(i64::MIN), i128::from(i64::MAX))).ok()?;
-    Timestamp::from_microsecond(us).ok()
+/// Unix microseconds as a `Timestamp`, saturated to the nearest representable
+/// instant.
+///
+/// Availability arithmetic runs in `i128` (no input can wrap) and can land
+/// past the `Timestamp` range (jiff's is roughly +/- 20 000 years from the
+/// Unix epoch) for a hostile or nonsensical `MPDstart + MPDduration`. Dropping
+/// such an instant to `None` would conflate "unrepresentably late" with
+/// "no availability information" and stop the live edge at that segment, so
+/// clamp instead: an instant past the range is "later than any clock we can
+/// see", an instant before it is "long past".
+fn micros_to_timestamp(us: i128) -> Timestamp {
+    let clamped = us.clamp(i128::from(i64::MIN), i128::from(i64::MAX));
+    let Ok(us) = i64::try_from(clamped) else {
+        return Timestamp::MAX;
+    };
+    Timestamp::from_microsecond(us).unwrap_or(if us < 0 {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    })
 }
 
 fn us_to_ticks_ceil(us: i128, timescale: Timescale) -> u64 {
@@ -665,8 +682,8 @@ impl SegmentPlan {
             duration: micros_to_duration(duration_us),
             reference,
             byte_range: range,
-            available_from: available_from.and_then(micros_to_timestamp),
-            available_until: available_until.and_then(micros_to_timestamp),
+            available_from: available_from.map(micros_to_timestamp),
+            available_until: available_until.map(micros_to_timestamp),
         }))
     }
 
@@ -705,7 +722,7 @@ impl SegmentPlan {
         let from = self
             .avail
             .as_ref()
-            .and_then(|a| micros_to_timestamp(init_available_from(a.ast_us, self.period_start_us)));
+            .map(|a| micros_to_timestamp(init_available_from(a.ast_us, self.period_start_us)));
         let until =
             self.len()
                 .and_then(|n| n.checked_sub(1))

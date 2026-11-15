@@ -57,8 +57,11 @@ fn build_pes(
         | (u8::from(escr.is_some()) << 5)
         | (u8::from(trick_mode.is_some()) << 3);
 
-    let pes_len = (6 + hdr_extra + opt_len + payload.len()) as u16;
-    let mut out = vec![0u8; 6 + hdr_extra + opt_len + payload.len()];
+    let total_len = 6 + hdr_extra + opt_len + payload.len();
+    // `PES_packet_length` (Table 2-21) counts every byte after the length
+    // field itself: the optional header plus the payload.
+    let pes_len = (total_len - 6) as u16;
+    let mut out = vec![0u8; total_len];
     let mut cursor = 0usize;
 
     // Fixed header

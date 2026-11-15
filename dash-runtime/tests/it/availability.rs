@@ -214,3 +214,46 @@ fn formulas_on_hand_computed_numbers() {
     let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
     assert_eq!(p.plan.get(2).unwrap().unwrap().available_until, None);
 }
+
+// Minimized from the `dash_address` fuzz target: a SegmentTimeline whose
+// second `S@t` puts the segment's availability start far past the `Timestamp`
+// range. The plan used to drop that instant to `None`, which reads as "no
+// availability information" -- so `newest_complete` stopped the live edge at
+// the previous segment while the client treated the same segment as
+// available now.
+const AVAILABILITY_PAST_TIMESTAMP_RANGE: &str = r#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2017-08-20T21:34:42Z" mediaPresentationDuration="PT8232096S">
+  <Period start="PT538853S"><AdaptationSet><Representation id="r" bandwidth="1">
+    <SegmentTemplate timescale="46095" startNumber="0" presentationTimeOffset="0" endNumber="499632401767" media="$Time$.m4s"><SegmentTimeline><S d="1013275421676" r="0"/><S t="16999940616948018155" d="1009861803077" r="360"/></SegmentTimeline></SegmentTemplate>
+  </Representation></AdaptationSet></Period></MPD>"#;
+
+#[test]
+fn availability_past_the_timestamp_range_saturates_instead_of_vanishing() {
+    let m = Mpd::parse(AVAILABILITY_PAST_TIMESTAMP_RANGE.as_bytes()).unwrap();
+    let p = plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default()).unwrap();
+    let first = p.plan.get(0).unwrap().unwrap();
+    let second = p.plan.get(1).unwrap().unwrap();
+    assert_eq!(
+        first.available_from,
+        Some(timestamp_from_micros(1_525_786_063_271_526)),
+        "the in-range segment keeps its exact availability start"
+    );
+    assert_eq!(
+        second.available_from,
+        Some(jiff::Timestamp::MAX),
+        "an instant past the Timestamp range saturates, it does not become None"
+    );
+    // At a now well before that instant the live edge is the first segment and
+    // the next one is not claimed complete.
+    let now = jiff::Timestamp::from_second(3_903_964_276).unwrap();
+    let newest = newest_complete(&p.plan, now).unwrap();
+    assert_eq!(newest, 0);
+    assert!(
+        p.plan
+            .get(newest + 1)
+            .unwrap()
+            .unwrap()
+            .available_from
+            .unwrap()
+            > now
+    );
+}
