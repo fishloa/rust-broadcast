@@ -65,18 +65,12 @@ fn no_panic_on_arbitrary_input() {
         let _ = HsExtMessage::parse(input);
         let _ = GroupMembershipExtension::parse(input);
 
-        // Lazily-walked loops must terminate and never panic on malformed
-        // input when constructed directly from raw bytes...
-        let nak = NakPacket {
-            timestamp: 0,
-            dest_socket_id: 0,
-            raw_loss_list: input,
-        };
-        for (i, entry) in nak.entries().enumerate() {
-            let _ = entry;
+        // A loss list decoded straight from raw bytes is bounded by the
+        // bytes it came from (four per entry) and never panics.
+        if let Ok(nak) = NakPacket::parse_cif(0, 0, input) {
             assert!(
-                i <= MAX_LOOP_ITEMS,
-                "NAK loss-list iterator did not terminate for {input:?}"
+                nak.entries.len() <= MAX_LOOP_ITEMS,
+                "NAK loss list is unbounded for {input:?}"
             );
         }
 
@@ -109,13 +103,10 @@ fn no_panic_on_arbitrary_input() {
                     }
                 }
                 ControlPacket::Nak(n) => {
-                    for (i, entry) in n.entries().enumerate() {
-                        let _ = entry;
-                        assert!(
-                            i <= MAX_LOOP_ITEMS,
-                            "NAK loop via dispatch did not terminate"
-                        );
-                    }
+                    assert!(
+                        n.entries.len() <= MAX_LOOP_ITEMS,
+                        "NAK loss list via dispatch is unbounded"
+                    );
                 }
                 ControlPacket::UserDefined(u) => {
                     let _ = u.as_key_material();
@@ -220,11 +211,9 @@ fn no_panic_and_bounded_state_on_hostile_engine_input() {
     for _ in 0..ITERATIONS {
         let len = (rng.next_u64() as usize) % (MAX_LEN + 1);
         rng.fill(&mut raw[..len]);
-        sender.on_nak(&NakPacket {
-            timestamp: 0,
-            dest_socket_id: 0,
-            raw_loss_list: &raw[..len],
-        });
+        if let Ok(nak) = NakPacket::parse_cif(0, 0, &raw[..len]) {
+            sender.on_nak(&nak);
+        }
         if rng.next_u64().is_multiple_of(16) {
             let _ = sender.tick(Timestamp::from_millis(1));
         }

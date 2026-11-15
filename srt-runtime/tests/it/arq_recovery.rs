@@ -31,7 +31,7 @@ fn as_ackack(bytes: &[u8]) -> Option<AckAckPacket> {
     }
 }
 
-fn as_nak(bytes: &[u8]) -> Option<NakPacket<'_>> {
+fn as_nak(bytes: &[u8]) -> Option<NakPacket> {
     match ControlPacket::parse(bytes).unwrap() {
         ControlPacket::Nak(n) => Some(n),
         _ => None,

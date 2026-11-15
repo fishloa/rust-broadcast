@@ -308,7 +308,7 @@ impl<'a> ControlPacket<'a> {
             ControlType::Nak => {
                 check_reserved_u16("Subtype", subtype)?;
                 check_reserved_u32("Type-specific Information", type_specific_info)?;
-                ControlPacket::Nak(NakPacket::parse_cif(timestamp, dest_socket_id, cif))
+                ControlPacket::Nak(NakPacket::parse_cif(timestamp, dest_socket_id, cif)?)
             }
             ControlType::CongestionWarning => {
                 check_reserved_u16("Subtype", subtype)?;

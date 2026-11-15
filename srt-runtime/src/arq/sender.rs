@@ -247,21 +247,22 @@ impl Sender {
     /// the work is bounded by the buffer and by `MAX_NAK_SEQS_PER_PACKET`
     /// no matter what range a (possibly spoofed) NAK declares. A range whose
     /// end precedes its start is malformed and ignored.
-    pub fn on_nak(&mut self, nak: &NakPacket<'_>) {
+    pub fn on_nak(&mut self, nak: &NakPacket) {
         let mut budget = MAX_NAK_SEQS_PER_PACKET;
-        for entry in nak.entries() {
+        for &entry in &nak.entries {
             if budget == 0 {
                 break;
             }
-            let Ok(entry) = entry else { continue };
             match entry {
                 LossListEntry::Single(s) => {
+                    let s = s.value();
                     if self.index_of(s).is_some() {
                         self.pending_retransmit.insert(s);
                     }
                     budget -= 1;
                 }
                 LossListEntry::Range(first, last) => {
+                    let (first, last) = (first.value(), last.value());
                     // A range whose `last` precedes `first` (malformed) yields
                     // nothing: its first candidate is already past `last`.
                     let mut i = self.first_at_or_after(first);
@@ -384,16 +385,20 @@ mod tests {
     use crate::error::Error;
     use crate::packet::SEQ_NUMBER_MASK;
     use crate::packet::data::MESSAGE_NUMBER_MASK;
-    use crate::packet::nak::build_loss_list;
+    use crate::packet::number::SeqNo;
 
     const PEER: u32 = 0xAAAA;
 
+    fn sn(v: u32) -> SeqNo {
+        assert!(v <= SEQ_NUMBER_MASK, "{v} is not a 31-bit sequence number");
+        SeqNo::from_wire_masked(v)
+    }
+
     fn nak_bytes(entries: &[LossListEntry]) -> Vec<u8> {
-        let raw = build_loss_list(entries).unwrap();
         let pkt = ControlPacket::Nak(NakPacket {
             timestamp: 0,
             dest_socket_id: PEER,
-            raw_loss_list: &raw,
+            entries: entries.to_vec(),
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut buf).unwrap();
@@ -419,7 +424,7 @@ mod tests {
         s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
         s.on_data(1, 1, b"b", Timestamp::ZERO).unwrap();
 
-        let raw = nak_bytes(&[LossListEntry::Single(1)]);
+        let raw = nak_bytes(&[LossListEntry::Single(sn(1))]);
         let ControlPacket::Nak(nak) = ControlPacket::parse(&raw).unwrap() else {
             panic!("expected NAK");
         };
@@ -438,7 +443,7 @@ mod tests {
     fn nak_for_unbuffered_seq_is_ignored() {
         let mut s = Sender::new(PEER);
         s.on_data(0, 0, b"a", Timestamp::ZERO).unwrap();
-        let raw = nak_bytes(&[LossListEntry::Single(99)]);
+        let raw = nak_bytes(&[LossListEntry::Single(sn(99))]);
         let ControlPacket::Nak(nak) = ControlPacket::parse(&raw).unwrap() else {
             panic!("expected NAK");
         };
@@ -518,7 +523,7 @@ mod tests {
         }
         // 180 entries each claiming [5 000, 0x3FFF_FFFF]; 180 x 8 B = 1 440 B
         // fits one datagram.
-        let entries = alloc::vec![LossListEntry::Range(5_000, 0x3FFF_FFFF); RANGES];
+        let entries = alloc::vec![LossListEntry::Range(sn(5_000), sn(0x3FFF_FFFF)); RANGES];
         feed_nak(&mut s, &entries);
         assert_eq!(s.pending_retransmit_count(), (BUFFERED - 5_000) as usize);
         // log2(10 000) < 14 probes to find each range start.
@@ -537,7 +542,7 @@ mod tests {
         for q in 0..8192u32 {
             s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
-        feed_nak(&mut s, &[LossListEntry::Single(8000)]);
+        feed_nak(&mut s, &[LossListEntry::Single(sn(8000))]);
         assert_eq!(s.pending_retransmit_count(), 1);
         assert!(
             s.lookup_steps <= 14,
@@ -563,7 +568,7 @@ mod tests {
         for q in [MAX - 2, MAX - 1, MAX, 0, 1, 2] {
             s.on_data(q, 1, b"x", Timestamp::ZERO).unwrap();
         }
-        feed_nak(&mut s, &[LossListEntry::Range(MAX - 1, 1)]);
+        feed_nak(&mut s, &[LossListEntry::Range(sn(MAX - 1), sn(1))]);
         assert_eq!(s.pending_retransmit_count(), 4);
         let seqs: Vec<u32> = s
             .tick(Timestamp::ZERO)
@@ -580,10 +585,10 @@ mod tests {
         for q in 0..20u32 {
             s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
-        feed_nak(&mut s, &[LossListEntry::Range(10, 5)]);
+        feed_nak(&mut s, &[LossListEntry::Range(sn(10), sn(5))]);
         assert_eq!(s.pending_retransmit_count(), 0);
         // Beyond half the sequence space is also "before" in circular order.
-        feed_nak(&mut s, &[LossListEntry::Range(0, 0x5000_0000)]);
+        feed_nak(&mut s, &[LossListEntry::Range(sn(0), sn(0x5000_0000))]);
         assert_eq!(s.pending_retransmit_count(), 0);
     }
 
@@ -596,7 +601,7 @@ mod tests {
         for q in 0..6u32 {
             s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
         }
-        feed_nak(&mut s, &[LossListEntry::Range(1, 4)]);
+        feed_nak(&mut s, &[LossListEntry::Range(sn(1), sn(4))]);
         assert_eq!(s.pending_retransmit_count(), 4);
         let ack = AckPacket {
             ack_number: 0,
@@ -635,7 +640,7 @@ mod tests {
         let dp = DataPacket::parse(&bytes).unwrap();
         assert_eq!(dp.seq_number, SEQ_NUMBER_MASK);
         assert_eq!(dp.message_number, MESSAGE_NUMBER_MASK);
-        feed_nak(&mut s, &[LossListEntry::Single(SEQ_NUMBER_MASK)]);
+        feed_nak(&mut s, &[LossListEntry::Single(sn(SEQ_NUMBER_MASK))]);
         assert_eq!(s.pending_retransmit_count(), 1);
     }
 }

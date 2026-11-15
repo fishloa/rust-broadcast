@@ -44,7 +44,13 @@ pub struct NakPacket {
 }
 
 impl NakPacket {
-    pub(crate) fn parse_cif(timestamp: u32, dest_socket_id: u32, cif: &[u8]) -> Result<Self> {
+    /// Parse the loss-list Control Information Field (Appendix A).
+    ///
+    /// # Errors
+    /// [`Error::InvalidLossList`] when the bytes are not a sequence of whole
+    /// entries, when a range start is not followed by its end, or when that
+    /// end has the range marker bit set.
+    pub fn parse_cif(timestamp: u32, dest_socket_id: u32, cif: &[u8]) -> Result<Self> {
         let mut entries = Vec::with_capacity(cif.len() / 4);
         let mut rest = cif;
         while !rest.is_empty() {
@@ -113,7 +119,8 @@ impl NakPacket {
 
 #[cfg(test)]
 mod tests {
-    use super::super::control::ControlPacket;
+    use super::super::SRT_HEADER_LEN;
+    use super::super::control::{CONTROL_TYPE_NAK, ControlPacket};
     use super::*;
 
     fn sn(v: u32) -> SeqNo {
@@ -168,6 +175,21 @@ mod tests {
         let err = NakPacket::parse_cif(0, 0, &[0, 0, 0])
             .expect_err("trailing bytes are not a whole entry");
         assert!(matches!(err, Error::InvalidLossList { .. }));
+    }
+
+    /// The malformed list is rejected by the packet dispatcher, not merely by
+    /// a loss-list walker a caller may never run: the old borrowed-list shape
+    /// parsed this control packet successfully and only failed when iterated.
+    #[test]
+    fn the_dispatcher_rejects_a_malformed_loss_list() {
+        let mut raw = alloc::vec![0u8; SRT_HEADER_LEN];
+        put_be32(&mut raw, 0, u32::from(CONTROL_TYPE_NAK) << 16 | F_BIT);
+        raw.extend_from_slice(&(1u32 | F_BIT).to_be_bytes());
+        raw.extend_from_slice(&(2u32 | F_BIT).to_be_bytes());
+        assert!(matches!(
+            ControlPacket::parse(&raw),
+            Err(Error::InvalidLossList { .. })
+        ));
     }
 
     #[test]

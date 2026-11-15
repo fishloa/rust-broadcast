@@ -694,7 +694,7 @@ async fn collect_naks(
         loop {
             let (datagram, _) = recv_from(raw).await;
             if let Ok(SrtPacket::Control(ControlPacket::Nak(n))) = SrtPacket::parse(&datagram) {
-                let entries = n.entries().map(|e| e.expect("well-formed")).collect();
+                let entries = n.entries.clone();
                 naks.push((datagram.len(), entries));
                 if done(&naks) {
                     break;
@@ -748,6 +748,9 @@ async fn nak_datagrams_fit_the_peers_smaller_mtu() {
 #[tokio::test]
 async fn the_peers_smaller_flow_window_bounds_what_is_tracked() {
     use srt_runtime::packet::LossListEntry;
+    fn sn(v: u32) -> srt_runtime::packet::SeqNo {
+        srt_runtime::packet::SeqNo::try_new(v).expect("fits 31 bits")
+    }
     const ISN: u32 = 2_000;
     let (raw, listener_addr, id, _keep) = raw_caller_connected(
         HandshakeConfig::default()
@@ -764,7 +767,7 @@ async fn the_peers_smaller_flow_window_bounds_what_is_tracked() {
     let naks = collect_naks(&raw, |seen| !seen.is_empty()).await;
     assert_eq!(
         naks[0].1,
-        vec![LossListEntry::Range(ISN, ISN + 49)],
+        vec![LossListEntry::Range(sn(ISN), sn(ISN + 49))],
         "the packet 100 ahead (outside the 64-packet window) must not have been tracked"
     );
 }

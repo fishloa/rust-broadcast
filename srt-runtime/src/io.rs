@@ -5028,15 +5028,16 @@ mod adapter_tests {
     /// does — read from the length instead of re-parsing the packet.
     #[tokio::test(start_paused = true)]
     async fn a_retransmission_is_accounted_by_its_payload_length() {
-        use crate::packet::nak::build_loss_list;
+        use crate::packet::number::SeqNo;
         use crate::packet::{LossListEntry, NakPacket};
         let (mut driver, _rx) = test_driver(8192).await;
         driver.send_one(&[0u8; 1000]); // seq 0
-        let raw = build_loss_list(&[LossListEntry::Single(0)]).expect("loss list");
         let nak = ControlPacket::Nak(NakPacket {
             timestamp: 0,
             dest_socket_id: 1,
-            raw_loss_list: &raw,
+            entries: alloc::vec![LossListEntry::Single(
+                SeqNo::try_new(0).expect("fits 31 bits")
+            )],
         });
         let mut bytes = alloc::vec![0u8; nak.serialized_len()];
         nak.serialize_into(&mut bytes).expect("serialize nak");
