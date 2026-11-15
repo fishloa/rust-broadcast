@@ -860,7 +860,7 @@ impl Session {
     /// edge) and ranks this one below a measured `UTCTiming` unless
     /// [`crate::DashConfig::clock_policy`] says otherwise.
     pub fn set_wall_clock(&mut self, now: Timestamp, unix: jiff::Timestamp) {
-        self.wall = Some(WallClock::new(now.as_micros(), unix.as_microsecond()));
+        self.wall = Some(WallClock::new(now, unix));
         if self.closed {
             return;
         }

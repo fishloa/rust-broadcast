@@ -16,23 +16,27 @@ pub enum HttpDateError {
     HttpDate,
 }
 
-/// A typed `Date` as Unix microseconds: the one conversion from the `headers` crate's already
-/// parsed value (what an HTTP client holds) to the numeric instant the rest of the workspace
-/// uses. It never reads a clock; the value is the server's. A `Date` before 1970 or outside the
-/// microsecond range is refused rather than wrapped.
+/// A typed `Date` as a [`jiff::Timestamp`]: the one conversion from the
+/// `headers` crate's already parsed value (what an HTTP client holds) to the
+/// wall-clock instant the rest of the workspace uses. It never reads a clock;
+/// the value is the server's. A `Date` before 1970 is refused rather than
+/// wrapped.
 ///
 /// # Errors
-/// [`HttpDateError::HttpDate`] when the instant cannot be expressed in microseconds.
-pub fn date_to_epoch_us(date: headers::Date) -> Result<i64, HttpDateError> {
+/// [`HttpDateError::HttpDate`] when the instant precedes the Unix epoch.
+pub fn date_to_epoch_us(date: headers::Date) -> Result<jiff::Timestamp, HttpDateError> {
     let at = std::time::UNIX_EPOCH;
     let since = std::time::SystemTime::from(date);
     let after = since
         .duration_since(at)
         .map_err(|_| HttpDateError::HttpDate)?;
-    i64::try_from(after.as_micros()).map_err(|_| HttpDateError::HttpDate)
+    let micros = i64::try_from(after.as_micros()).map_err(|_| HttpDateError::HttpDate)?;
+    // `after` is non-negative and fits in `i64`, so this saturates only past the
+    // jiff range, where the instant is out of scope.
+    jiff::Timestamp::from_microsecond(micros).map_err(|_| HttpDateError::HttpDate)
 }
 
-/// Parse an HTTP-date (RFC 9110 §5.6.7) to Unix microseconds: the preferred
+/// Parse an HTTP-date (RFC 9110 §5.6.7) to a [`jiff::Timestamp`]: the preferred
 /// IMF-fixdate and the two obsolete forms a recipient must still accept, the
 /// RFC 850 form (two-digit years follow jiff's POSIX window: 69-99 are 19xx,
 /// 00-68 are 20xx, so no clock is needed) and the asctime form (always UTC).
@@ -40,10 +44,10 @@ pub fn date_to_epoch_us(date: headers::Date) -> Result<i64, HttpDateError> {
 ///
 /// # Errors
 /// [`HttpDateError::HttpDate`] when `text` is not a date.
-pub fn parse_http_date(text: &str) -> Result<i64, HttpDateError> {
+pub fn parse_http_date(text: &str) -> Result<jiff::Timestamp, HttpDateError> {
     let text = text.trim();
     if let Ok(t) = jiff::fmt::rfc2822::DateTimeParser::new().parse_timestamp(text) {
-        return Ok(t.as_microsecond());
+        return Ok(t);
     }
     [HTTP_DATE_RFC850, HTTP_DATE_ASCTIME]
         .iter()
@@ -53,7 +57,7 @@ pub fn parse_http_date(text: &str) -> Result<i64, HttpDateError> {
                 .and_then(|datetime| datetime.to_zoned(jiff::tz::TimeZone::UTC))
                 .ok()
         })
-        .map(|zoned| zoned.timestamp().as_microsecond())
+        .map(|zoned| zoned.timestamp())
         .ok_or(HttpDateError::HttpDate)
 }
 
@@ -63,13 +67,13 @@ mod tests {
 
     #[test]
     fn the_three_forms_agree() {
-        let expected = 784_111_777 * 1_000_000;
+        let expected = jiff::Timestamp::from_second(784_111_777).unwrap();
         for text in [
             "Sun, 06 Nov 1994 08:49:37 GMT",
             "Sunday, 06-Nov-94 08:49:37 GMT",
             "Sun Nov  6 08:49:37 1994",
         ] {
-            assert_eq!(parse_http_date(text), Ok(expected), "{text}");
+            assert_eq!(parse_http_date(text).ok(), Some(expected), "{text}");
         }
     }
 

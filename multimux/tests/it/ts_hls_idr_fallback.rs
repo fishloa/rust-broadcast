@@ -585,7 +585,9 @@ async fn assert_validator_finds_no_duration_mismatch(tag: &str, input: InputSpec
     let url = format!("http://{}/{name}/media.m3u8", server.media);
     let report = tokio::task::spawn_blocking(move || {
         test_fixtures::process::msv::MsvRun::new(std::path::Path::new("/"), &url)
-            .timeout_secs(VALIDATOR_WINDOW_SECS.parse().unwrap_or(14))
+            .timeout(core::time::Duration::from_secs(
+                VALIDATOR_WINDOW_SECS.parse().unwrap_or(14),
+            ))
             .run()
     })
     .await

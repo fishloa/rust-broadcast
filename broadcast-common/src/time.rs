@@ -364,54 +364,57 @@ pub fn encode_seconds_since_2000_utc(ts: jiff::Timestamp, utco: u16) -> Option<(
 }
 
 /// A pure (no clock read) mapping between a monotonic microsecond counter and
-/// UTC microseconds, anchored by one observed pair: at monotonic `mono_us` the
-/// UTC clock read `utc_us`. Maps in both directions with wrap-safe `i128`
-/// arithmetic. The caller supplies the anchor (this type never reads a clock).
+/// UTC, anchored by one observed pair: at monotonic [`mono`](Self::mono) the
+/// UTC clock read [`utc`](Self::utc). Maps in both directions with wrap-safe
+/// `i128` arithmetic, saturating at the range of each output type. The caller
+/// supplies the anchor (this type never reads a clock).
+#[cfg(feature = "jiff")]
+#[cfg_attr(docsrs, doc(cfg(feature = "jiff")))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MonoUtc {
-    /// Monotonic microseconds at the anchor.
-    pub mono_us: u64,
-    /// UTC microseconds at the anchor (POSIX, no leap seconds).
-    pub utc_us: i128,
+    /// Monotonic instant at the anchor.
+    pub mono: crate::stage::Timestamp,
+    /// UTC instant at the anchor.
+    pub utc: jiff::Timestamp,
 }
 
+#[cfg(feature = "jiff")]
 impl MonoUtc {
     /// Build an anchor from a sampled pair.
-    pub fn new(mono_us: u64, utc_us: impl Into<i128>) -> Self {
-        Self {
-            mono_us,
-            utc_us: utc_us.into(),
-        }
+    pub fn new(mono: crate::stage::Timestamp, utc: jiff::Timestamp) -> Self {
+        Self { mono, utc }
     }
 
-    /// UTC microseconds at monotonic instant `now_us`.
+    /// UTC at monotonic instant `now`, saturating at the wall-clock range.
     #[must_use]
-    pub fn utc_at(&self, now_us: u64) -> i128 {
-        self.utc_us + i128::from(now_us) - i128::from(self.mono_us)
+    pub fn utc_at(&self, now: crate::stage::Timestamp) -> jiff::Timestamp {
+        let delta = i128::from(now.as_micros()) - i128::from(self.mono.as_micros());
+        let us = i128::from(self.utc.as_microsecond()) + delta;
+        let us = us.clamp(i128::from(i64::MIN), i128::from(i64::MAX));
+        let us = i64::try_from(us).unwrap_or(i64::MAX);
+        jiff::Timestamp::from_microsecond(us).unwrap_or(if us < 0 {
+            jiff::Timestamp::MIN
+        } else {
+            jiff::Timestamp::MAX
+        })
     }
 
-    /// Monotonic instant at which UTC reaches `utc_us`.
+    /// Monotonic instant at which UTC reaches `utc`, saturating at the
+    /// monotonic range.
     #[must_use]
-    pub fn mono_for_utc(&self, utc_us: i128) -> i128 {
-        i128::from(self.mono_us) + (utc_us - self.utc_us)
-    }
-
-    /// Alias for [`Self::utc_at`].
-    #[must_use]
-    pub fn unix_at(&self, now_us: u64) -> i128 {
-        self.utc_at(now_us)
-    }
-
-    /// Alias for [`Self::mono_for_utc`].
-    #[must_use]
-    pub fn mono_for_unix(&self, unix_us: i128) -> i128 {
-        self.mono_for_utc(unix_us)
+    pub fn mono_for_utc(&self, utc: jiff::Timestamp) -> crate::stage::Timestamp {
+        let delta = i128::from(utc.as_microsecond()) - i128::from(self.utc.as_microsecond());
+        let mono = i128::from(self.mono.as_micros()) + delta;
+        let mono = mono.clamp(0, i128::from(u64::MAX));
+        crate::stage::Timestamp::from_micros(u64::try_from(mono).unwrap_or(u64::MAX))
     }
 }
 
 /// Alias kept for callers that name the mapping a `WallClock`.
+#[cfg(feature = "jiff")]
 pub type WallClock = MonoUtc;
 /// Alias kept for callers that name the mapping an `Anchor`.
+#[cfg(feature = "jiff")]
 pub type Anchor = MonoUtc;
 
 #[cfg(test)]
@@ -651,20 +654,35 @@ mod tests {
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (0, 0, 0));
     }
 
+    #[cfg(feature = "jiff")]
     #[test]
     fn mono_utc_maps_both_directions() {
-        let m = MonoUtc::new(1_000u64, 5i128);
-        assert_eq!(m.utc_at(1_000), 5);
-        assert_eq!(m.utc_at(1_005), 10);
-        assert_eq!(m.mono_for_utc(5), 1_000);
-        assert_eq!(m.mono_for_utc(10), 1_005);
+        let mono = crate::stage::Timestamp::from_micros(1_000);
+        let utc = jiff::Timestamp::from_microsecond(5).unwrap();
+        let m = MonoUtc::new(mono, utc);
+        assert_eq!(m.utc_at(crate::stage::Timestamp::from_micros(1_000)), utc);
+        assert_eq!(
+            m.utc_at(crate::stage::Timestamp::from_micros(1_005)),
+            jiff::Timestamp::from_microsecond(10).unwrap()
+        );
+        assert_eq!(m.mono_for_utc(utc), mono);
+        assert_eq!(
+            m.mono_for_utc(jiff::Timestamp::from_microsecond(10).unwrap()),
+            crate::stage::Timestamp::from_micros(1_005)
+        );
     }
 
+    #[cfg(feature = "jiff")]
     #[test]
     fn mono_utc_before_anchor_is_negative() {
-        let m = MonoUtc::new(1_000u64, 5i128);
-        assert_eq!(m.utc_at(995), 0);
-        assert!(m.utc_at(995) < m.utc_us);
+        let mono = crate::stage::Timestamp::from_micros(1_000);
+        let utc = jiff::Timestamp::from_microsecond(5).unwrap();
+        let m = MonoUtc::new(mono, utc);
+        assert_eq!(
+            m.utc_at(crate::stage::Timestamp::from_micros(995)),
+            jiff::Timestamp::from_microsecond(0).unwrap()
+        );
+        assert!(m.utc_at(crate::stage::Timestamp::from_micros(995)) < m.utc);
     }
 
     #[cfg(feature = "jiff")]
