@@ -42,6 +42,7 @@ use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVS3_audio_descriptor (T/AI 109.7 Table 3: 210).
@@ -53,9 +54,9 @@ const HEADER_LEN: usize = 2;
 pub const SAMPLING_FREQUENCY_INDEX_EXPLICIT: u8 = 0xF;
 
 const NIBBLE: u32 = 4;
-const ALL_ONES_1: u8 = 0x1;
-const ALL_ONES_4: u8 = 0xF;
-const ALL_ONES_6: u8 = 0x3F;
+const ALL_ONES_1: ReservedOnes<1> = ReservedOnes::<1>::FILL;
+const ALL_ONES_4: ReservedOnes<4> = ReservedOnes::<4>::FILL;
+const ALL_ONES_6: ReservedOnes<6> = ReservedOnes::<6>::FILL;
 
 /// `audio_codec_id == 0` body: channel-based coding (Table 4).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +90,7 @@ pub struct Avs3AudioCodec1 {
     /// `coding_profile` (3 bits).
     pub coding_profile: u8,
     /// `reserved` (4 bits, right-aligned); captured on parse, default `0xF`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<4>,
     /// `channel_number` (8 bits).
     pub channel_number: u8,
 }
@@ -104,32 +105,32 @@ pub enum Avs3AudioContent {
         /// `channel_number_index` (7 bits).
         channel_number_index: u8,
         /// `reserved` (1 bit).
-        reserved: u8,
+        reserved: ReservedOnes<1>,
     },
     /// 1 — object signal.
     Object {
         /// `object_channel_number` (7 bits).
         object_channel_number: u8,
         /// `reserved` (1 bit).
-        reserved: u8,
+        reserved: ReservedOnes<1>,
     },
     /// 2 — mixed channel and object signal.
     ChannelAndObject {
         /// `channel_number_index` (7 bits).
         channel_number_index: u8,
         /// `reserved` (1 bit) after `channel_number_index`.
-        reserved_channel: u8,
+        reserved_channel: ReservedOnes<1>,
         /// `object_channel_number` (7 bits).
         object_channel_number: u8,
         /// `reserved` (1 bit) after `object_channel_number`.
-        reserved_object: u8,
+        reserved_object: ReservedOnes<1>,
     },
     /// 3 — HOA signal.
     Hoa {
         /// `hoa_order` (4 bits).
         hoa_order: u8,
         /// `reserved` (4 bits).
-        reserved: u8,
+        reserved: ReservedOnes<4>,
     },
     /// 4..=15 — reserved `content_type`, no dependent fields; carries the value.
     Reserved(u8),
@@ -170,7 +171,7 @@ pub struct Avs3AudioCodec2 {
     /// `nn_type` (3 bits).
     pub nn_type: u8,
     /// `reserved` (1 bit) between `nn_type` and `content_type`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<1>,
     /// `content_type` + dependent fields.
     pub content: Avs3AudioContent,
     /// `total_bitrate` (16 bits, kbps, Table 6).
@@ -229,7 +230,7 @@ pub struct Avs3AudioDescriptor {
     /// `resolution` (2 bits, T/AI 109.3 Annex A).
     pub resolution: u8,
     /// `reserved` (6 bits) after `resolution`; captured on parse, default `0x3F`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<6>,
     /// `addition_info[N]`: the optional trailing additional information (opaque
     /// per Table 4: "可选字段，附加信息").
     pub addition_info: Vec<u8>,
@@ -302,7 +303,7 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                     sampling_frequency,
                     anc_data_index: bit(b1, 7),
                     coding_profile: (b1 >> 4) & 0x07,
-                    reserved: b1 & 0x0F,
+                    reserved: ReservedOnes::from_bits(u64::from(b1)),
                     channel_number,
                 })
             }
@@ -314,14 +315,14 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                         let v = c.u8()?;
                         Avs3AudioContent::Channel {
                             channel_number_index: v >> 1,
-                            reserved: v & 1,
+                            reserved: ReservedOnes::from_bits(u64::from(v)),
                         }
                     }
                     1 => {
                         let v = c.u8()?;
                         Avs3AudioContent::Object {
                             object_channel_number: v >> 1,
-                            reserved: v & 1,
+                            reserved: ReservedOnes::from_bits(u64::from(v)),
                         }
                     }
                     2 => {
@@ -329,16 +330,16 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                         let w = c.u8()?;
                         Avs3AudioContent::ChannelAndObject {
                             channel_number_index: v >> 1,
-                            reserved_channel: v & 1,
+                            reserved_channel: ReservedOnes::from_bits(u64::from(v)),
                             object_channel_number: w >> 1,
-                            reserved_object: w & 1,
+                            reserved_object: ReservedOnes::from_bits(u64::from(w)),
                         }
                     }
                     3 => {
                         let v = c.u8()?;
                         Avs3AudioContent::Hoa {
                             hoa_order: v >> NIBBLE,
-                            reserved: v & 0x0F,
+                            reserved: ReservedOnes::from_bits(u64::from(v)),
                         }
                     }
                     other => Avs3AudioContent::Reserved(other),
@@ -347,7 +348,7 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
                 let lo = c.u8()?;
                 Avs3AudioBody::Codec2(Avs3AudioCodec2 {
                     nn_type: b1 >> 5,
-                    reserved: (b1 >> NIBBLE) & 1,
+                    reserved: ReservedOnes::from_bits(u64::from(b1 >> NIBBLE)),
                     content,
                     total_bitrate: u16::from_be_bytes([hi, lo]),
                 })
@@ -359,7 +360,7 @@ impl<'a> Parse<'a> for Avs3AudioDescriptor {
             sampling_frequency_index,
             body: parsed,
             resolution: r >> 6,
-            reserved: r & ALL_ONES_6,
+            reserved: ReservedOnes::from_bits(u64::from(r)),
             addition_info: body[c.pos..].to_vec(),
         })
     }
@@ -477,13 +478,13 @@ impl Avs3AudioDescriptor {
                     }
                 }
                 let prof = fit_bits(u64::from(b.coding_profile), 3, "coding_profile")? as u8;
-                let res = fit_bits(u64::from(b.reserved), 4, "reserved")? as u8;
+                let res = b.reserved.get() as u8;
                 out.push((u8::from(b.anc_data_index) << 7) | (prof << 4) | res);
                 out.push(b.channel_number);
             }
             Avs3AudioBody::Codec2(b) => {
                 let nn = fit_bits(u64::from(b.nn_type), 3, "nn_type")? as u8;
-                let res = fit_bits(u64::from(b.reserved), 1, "reserved")? as u8;
+                let res = b.reserved.get() as u8;
                 let ct = fit_bits(u64::from(b.content.content_type()), 4, "content_type")? as u8;
                 out.push((nn << 5) | (res << 4) | ct);
                 match &b.content {
@@ -493,7 +494,7 @@ impl Avs3AudioDescriptor {
                     } => out.push(pack(
                         *channel_number_index,
                         7,
-                        *reserved,
+                        reserved.get() as u8,
                         1,
                         "channel_number_index",
                     )?),
@@ -503,7 +504,7 @@ impl Avs3AudioDescriptor {
                     } => out.push(pack(
                         *object_channel_number,
                         7,
-                        *reserved,
+                        reserved.get() as u8,
                         1,
                         "object_channel_number",
                     )?),
@@ -516,14 +517,14 @@ impl Avs3AudioDescriptor {
                         out.push(pack(
                             *channel_number_index,
                             7,
-                            *reserved_channel,
+                            reserved_channel.get() as u8,
                             1,
                             "channel_number_index",
                         )?);
                         out.push(pack(
                             *object_channel_number,
                             7,
-                            *reserved_object,
+                            reserved_object.get() as u8,
                             1,
                             "object_channel_number",
                         )?);
@@ -532,7 +533,7 @@ impl Avs3AudioDescriptor {
                         hoa_order,
                         reserved,
                     } => {
-                        out.push(pack(*hoa_order, 4, *reserved, 4, "hoa_order")?);
+                        out.push(pack(*hoa_order, 4, reserved.get() as u8, 4, "hoa_order")?);
                     }
                     Avs3AudioContent::Reserved(_) => {}
                 }
@@ -540,7 +541,7 @@ impl Avs3AudioDescriptor {
             }
             Avs3AudioBody::Other(_) => {}
         }
-        out.push(pack(self.resolution, 2, self.reserved, 6, "resolution")?);
+        out.push(pack(self.resolution, 2, self.reserved.get() as u8, 6, "resolution")?);
         out.extend_from_slice(&self.addition_info);
         Ok(out)
     }
@@ -598,7 +599,7 @@ mod tests {
         assert!(b.anc_data_index && b.bitstream_type);
         assert_eq!((b.coding_profile, b.bitrate_index), (2, 0xA));
         assert_eq!((b.channel_number_index, b.raw_frame_length), (0x15, 0x0400));
-        assert_eq!((d.resolution, d.reserved), (1, 0b10_1010));
+        assert_eq!((d.resolution, d.reserved.get()), (1, 0b10_1010));
         assert!(d.addition_info.is_empty());
     }
 
@@ -614,7 +615,7 @@ mod tests {
         };
         assert_eq!(b.sampling_frequency, Some(48_000));
         assert_eq!(
-            (b.coding_profile, b.reserved, b.channel_number),
+            (b.coding_profile, b.reserved.get(), b.channel_number),
             (1, 0xF, 2)
         );
         assert_eq!(d.addition_info, [0xDE, 0xAD]);
@@ -642,30 +643,30 @@ mod tests {
                 &[head, 0x0B],
                 Avs3AudioContent::Channel {
                     channel_number_index: 5,
-                    reserved: 1,
+                    reserved: ReservedOnes::from_bits(1),
                 },
             ),
             (
                 &[head | 1, 0x06],
                 Avs3AudioContent::Object {
                     object_channel_number: 3,
-                    reserved: 0,
+                    reserved: ReservedOnes::from_bits(0),
                 },
             ),
             (
                 &[head | 2, 0x0B, 0x07],
                 Avs3AudioContent::ChannelAndObject {
                     channel_number_index: 5,
-                    reserved_channel: 1,
+                    reserved_channel: ReservedOnes::from_bits(1),
                     object_channel_number: 3,
-                    reserved_object: 1,
+                    reserved_object: ReservedOnes::from_bits(1),
                 },
             ),
             (
                 &[head | 3, 0x3F],
                 Avs3AudioContent::Hoa {
                     hoa_order: 3,
-                    reserved: 0xF,
+                    reserved: ReservedOnes::from_bits(0xF),
                 },
             ),
             (&[head | 9], Avs3AudioContent::Reserved(9)),
@@ -696,7 +697,7 @@ mod tests {
         let d = rt(&bytes);
         assert_eq!(d.body, Avs3AudioBody::Other(7));
         assert_eq!(d.body.audio_codec_id(), 7);
-        assert_eq!(d.reserved, 0b000101);
+        assert_eq!(d.reserved.get(), 0b000101);
     }
 
     #[test]
@@ -751,7 +752,7 @@ mod tests {
         assert_eq!(
             Avs3AudioContent::Hoa {
                 hoa_order: 1,
-                reserved: 0
+                reserved: ReservedOnes::from_bits(0)
             }
             .name(),
             "HOA signal"
@@ -770,12 +771,12 @@ mod tests {
             1,
             Avs3AudioContent::Channel {
                 channel_number_index: 2,
-                reserved: 1,
+                reserved: ReservedOnes::from_bits(1),
             },
             100,
         );
-        assert_eq!(c.reserved, 1);
+        assert_eq!(c.reserved.get(), 1);
         let d = Avs3AudioDescriptor::new(0, Avs3AudioBody::Codec2(c), 2);
-        assert_eq!(d.reserved, 0x3F);
+        assert_eq!(d.reserved.get(), 0x3F);
     }
 }
