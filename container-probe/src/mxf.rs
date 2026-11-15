@@ -173,7 +173,7 @@ mod drift {
         // The synthesized valid key.
         assert_eq!(
             super::is_partition_pack_key(&base),
-            st377_1::PartitionPack::is_partition_key(&base),
+            st377_1::PartitionPack::is_partition_key(&st377_1::UlBytes(base)),
         );
 
         // Real fixture key (extracted from the file).
@@ -181,7 +181,7 @@ mod drift {
         let real_key: [u8; 16] = real[..16].try_into().expect("16 bytes");
         assert_eq!(
             super::is_partition_pack_key(&real_key),
-            st377_1::PartitionPack::is_partition_key(&real_key),
+            st377_1::PartitionPack::is_partition_key(&st377_1::UlBytes(real_key)),
         );
         assert!(
             super::is_partition_pack_key(&real_key),
@@ -196,7 +196,7 @@ mod drift {
                 m[pos] = val;
                 assert_eq!(
                     super::is_partition_pack_key(&m),
-                    st377_1::PartitionPack::is_partition_key(&m),
+                    st377_1::PartitionPack::is_partition_key(&st377_1::UlBytes(m)),
                     "predicates disagree at byte {pos}={val:#x}"
                 );
             }
