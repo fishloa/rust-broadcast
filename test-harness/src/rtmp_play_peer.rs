@@ -176,7 +176,9 @@ impl PlayPeer {
                     self.chunk_size_to_adopt = Some(n);
                     self.seen.push(Seen::SetChunkSize(n.value()));
                 }
-                ProtocolControl::Acknowledgement(n) => self.seen.push(Seen::Acknowledgement(n)),
+                ProtocolControl::Acknowledgement(n) => {
+                    self.seen.push(Seen::Acknowledgement(n.get()));
+                }
                 ProtocolControl::WindowAckSize(n) => self.seen.push(Seen::WindowAckSize(n)),
                 _ => {}
             }
@@ -193,7 +195,7 @@ impl PlayPeer {
             self.seen.push(Seen::Command {
                 name: cmd.name.clone(),
                 args: cmd.arguments.clone(),
-                stream_id: msg.message_stream_id,
+                stream_id: msg.message_stream_id.get(),
             });
             self.on_command(&cmd, out)?;
         }
@@ -290,10 +292,10 @@ impl PlayPeer {
             arguments: args,
         };
         let msg = Message {
-            chunk_stream_id: COMMAND_CSID,
-            timestamp: 0,
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(COMMAND_CSID),
+            timestamp: rtmp_runtime::ids::Timestamp::ZERO,
             message_type_id: MessageTypeId::CommandAmf0,
-            message_stream_id: stream_id,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(stream_id),
             payload: cmd.to_body()?,
         };
         out.extend(self.writer.write(&msg)?);
@@ -372,10 +374,10 @@ impl PlayPeer {
             _ => DATA_CSID,
         };
         let bytes = self.writer.write(&Message {
-            chunk_stream_id: csid,
-            timestamp,
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(csid),
+            timestamp: rtmp_runtime::ids::Timestamp::from_millis(timestamp),
             message_type_id: tag_type,
-            message_stream_id: PLAY_STREAM_ID,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(PLAY_STREAM_ID),
             payload: payload.to_vec(),
         })?;
         Ok(self.counted(bytes))

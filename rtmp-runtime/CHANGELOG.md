@@ -6,6 +6,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: the wire identities are typed instead of bare integers (new module `ids`): `chunk::BasicHeader::chunk_stream_id`, `chunk::Message::chunk_stream_id` and `ProtocolControl::Abort`'s field are `ChunkStreamId` (2..=65599, `basic_header_encodable()`); `chunk::Message::message_stream_id` and `chunk::MessageHeader::Type0`'s field are `MessageStreamId`; `chunk::Message::timestamp` and `Type0`/`Type1`/`Type2`'s timestamp fields are `Timestamp` (a span carried as whole milliseconds) and their deltas are `core::time::Duration`; `ProtocolControl::Acknowledgement` wraps `SequenceNumber`; `chunk::ChunkAssembler::abort` takes a `ChunkStreamId`; `message::CONTROL_CHUNK_STREAM_ID`/`CONTROL_MESSAGE_STREAM_ID` are the typed constants. A chunk stream id can no longer be passed where a message stream id belongs. Wire bytes are unchanged. Migration: `Message { chunk_stream_id: 4, timestamp: 0, .. }` -> `Message { chunk_stream_id: ChunkStreamId::new(4), timestamp: Timestamp::ZERO, .. }`, `msg.timestamp` -> `msg.timestamp.millis()` where a raw count is wanted, `abort(4)` -> `abort(ChunkStreamId::new(4))` (#2768).
+- BREAKING: `UserControl::SetBufferLength`'s `buffer_ms: u32` is `buffer: core::time::Duration` (wire unchanged: whole milliseconds, a span the 32-bit field cannot hold is `RtmpError::FieldOverflow` instead of a clamped value) (#2768).
+- BREAKING: `ClientSession::send_audio`/`send_video` take the message `Timestamp` instead of a `u32` millisecond count; `io::AsyncRtmpClient::send_audio`/`send_video`/`encode_audio`/`encode_video` likewise (#2768).
+
 ### Fixed
 - `Command::parse` takes each argument's length from the parser that read it instead of re-serializing the parsed value and measuring that. The two agree only while every AMF0 encoding is canonical (any non-zero Boolean byte decodes to `true` but re-serializes to `0x01`), so a non-canonical argument could shift every following boundary and fail the command. `amf0_values` reports a real over-long sequence with its actual length and the addressable maximum instead of a fabricated `u64::MAX`/`u64::MAX` (#2761).
 

@@ -54,10 +54,10 @@ fn rtmp_demux_matches_flv_demux() {
             saw_multichunk_video = true;
         }
         messages.push(Message {
-            chunk_stream_id: csid,
-            timestamp: *ts,
+            chunk_stream_id: rtmp_runtime::ids::ChunkStreamId::new(csid),
+            timestamp: rtmp_runtime::ids::Timestamp::from_millis(*ts),
             message_type_id: mt,
-            message_stream_id: 1,
+            message_stream_id: rtmp_runtime::ids::MessageStreamId::new(1),
             payload: body.clone(),
         });
     }

@@ -41,7 +41,10 @@ fn steady_state_read_is_not_copied_before_buffering() {
     // A 100 000-byte video message, cut mid-message: the assembler can only
     // buffer it, so the only legitimate copies are its own.
     let wire = client
-        .send_video(0, &vec![0xAB; 100_000])
+        .send_video(
+            rtmp_runtime::ids::Timestamp::from_millis(0),
+            &vec![0xAB; 100_000],
+        )
         .expect("send_video");
     let cut = 60_000;
     let (res, snap) = ThreadCounting::measure(|| server.handle_data(&wire[..cut]));

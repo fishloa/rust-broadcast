@@ -6,6 +6,7 @@ use rtmp_runtime::chunk::{
     ChunkAssembler, ChunkWriter, DEFAULT_CHUNK_SIZE, MAX_CHUNK_SIZE, Message,
 };
 use rtmp_runtime::handshake::{HANDSHAKE_PACKET_LEN, RTMP_VERSION};
+use rtmp_runtime::ids::Timestamp;
 use rtmp_runtime::message::{
     CONTROL_CHUNK_STREAM_ID, CONTROL_MESSAGE_STREAM_ID, ChunkSize, MessageTypeId,
 };
@@ -36,7 +37,7 @@ fn a_peer_chunk_size_above_the_engine_ceiling_closes_the_session() {
 
     let announcement = Message {
         chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
-        timestamp: 0,
+        timestamp: Timestamp::from_millis(0),
         message_type_id: MessageTypeId::SetChunkSize,
         message_stream_id: CONTROL_MESSAGE_STREAM_ID,
         payload: above_ceiling.to_be_bytes().to_vec(),

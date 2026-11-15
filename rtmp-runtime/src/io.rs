@@ -29,6 +29,7 @@ use tokio_util::codec::Framed;
 use crate::amf0::Amf0Value;
 use crate::client::{ClientEvent, ClientSession, RtmpClientConfig as SessionClientConfig};
 use crate::codec::{ClientCodec, RtmpSession, ServerCodec, SessionCodec, io_err};
+use crate::ids::Timestamp;
 use crate::server::{ServerEvent, ServerSession};
 use crate::target::RtmpTarget;
 use broadcast_common::timeouts::Timeouts;
@@ -419,19 +420,21 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
         }
     }
 
-    /// Sends one audio message (FLV audio tag body) at `timestamp` ms.
+    /// Sends one audio message (FLV audio tag body) at `timestamp`, carried on
+    /// the wire as whole milliseconds.
     ///
     /// The adapter reads inbound traffic (server acks, pings, errors) only inside
     /// [`next_events`](Self::next_events); a caller that only sends must also drive
     /// `next_events` (e.g. in a `select!`) or the server's acknowledgement window
     /// is never serviced.
-    pub async fn send_audio(&mut self, timestamp: u32, data: &[u8]) -> io::Result<()> {
+    pub async fn send_audio(&mut self, timestamp: Timestamp, data: &[u8]) -> io::Result<()> {
         let bytes = self.encode_audio(timestamp, data)?;
         self.queue(bytes).await
     }
 
-    /// Sends one video message (FLV video tag body) at `timestamp` ms.
-    pub async fn send_video(&mut self, timestamp: u32, data: &[u8]) -> io::Result<()> {
+    /// Sends one video message (FLV video tag body) at `timestamp`, carried on
+    /// the wire as whole milliseconds.
+    pub async fn send_video(&mut self, timestamp: Timestamp, data: &[u8]) -> io::Result<()> {
         let bytes = self.encode_video(timestamp, data)?;
         self.queue(bytes).await
     }
@@ -447,7 +450,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// driving its own egress (e.g. `multimux`'s `PushTransportEgress`) frame a
     /// message now and write it verbatim later via
     /// [`write_frame`](Self::write_frame).
-    pub fn encode_audio(&mut self, timestamp: u32, data: &[u8]) -> io::Result<Vec<u8>> {
+    pub fn encode_audio(&mut self, timestamp: Timestamp, data: &[u8]) -> io::Result<Vec<u8>> {
         self.driver
             .framed
             .codec_mut()
@@ -458,7 +461,7 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
 
     /// Sans-IO half of [`send_video`](Self::send_video) — see
     /// [`encode_audio`](Self::encode_audio).
-    pub fn encode_video(&mut self, timestamp: u32, data: &[u8]) -> io::Result<Vec<u8>> {
+    pub fn encode_video(&mut self, timestamp: Timestamp, data: &[u8]) -> io::Result<Vec<u8>> {
         self.driver
             .framed
             .codec_mut()
@@ -644,10 +647,10 @@ mod tests {
         // encode half, then the write half — the shape `multimux`'s egress
         // uses.
         let frame_a = client
-            .encode_video(0, &[0x17, 0x01, 0, 0, 0, 0xAA])
+            .encode_video(Timestamp::from_millis(0), &[0x17, 0x01, 0, 0, 0, 0xAA])
             .expect("encode a");
         let frame_b = client
-            .encode_video(33, &[0x17, 0x01, 0, 0, 0, 0xBB])
+            .encode_video(Timestamp::from_millis(33), &[0x17, 0x01, 0, 0, 0, 0xBB])
             .expect("encode b");
         // A metadata message too.
         let meta = client
