@@ -41,8 +41,11 @@ fn fec_payload_id_and_ext_fdt_round_trip_through_the_traits() {
     let data = fixture();
     let pkt = AlcPacket::parse(&data, FEC_PAYLOAD_ID_128_LEN).unwrap();
 
-    let fpid = <FecPayloadId128 as Parse>::parse(pkt.fec_payload_id).unwrap();
-    assert_eq!(Serialize::try_to_bytes(&fpid).unwrap(), pkt.fec_payload_id);
+    let fpid = <FecPayloadId128 as Parse>::parse(pkt.fec_payload_id.as_bytes()).unwrap();
+    assert_eq!(
+        Serialize::try_to_bytes(&fpid).unwrap(),
+        pkt.fec_payload_id.as_bytes()
+    );
 
     let content = pkt.lct.extensions[0].content;
     let fdt = <ExtFdt as Parse>::parse(content).unwrap();

@@ -22,6 +22,7 @@ use broadcast_common::len::{need_in, need_out};
 
 use crate::error::{Error, Result};
 use crate::ext::{self, HeaderExtension, WORD};
+use crate::id::{Toi, Tsi};
 
 /// LCT version number for RFC 5651.
 pub const LCT_VERSION: u8 = 1;
@@ -62,10 +63,10 @@ pub struct LctHeader<'a> {
     /// Congestion Control Information. Length is `4*(C+1)` bytes; `C` is derived
     /// as `cci.len()/4 − 1`, so it must be 4, 8, 12 or 16 bytes.
     pub cci: &'a [u8],
-    /// Transport Session Identifier. Length `4*S + 2*H` bytes (0, 2, 4 or 6).
-    pub tsi: &'a [u8],
-    /// Transport Object Identifier. Length `4*O + 2*H` bytes (0, 2, 4, …, 14).
-    pub toi: &'a [u8],
+    /// Transport Session Identifier (`4*S + 2*H` bytes on the wire).
+    pub tsi: Tsi,
+    /// Transport Object Identifier (`4*O + 2*H` bytes on the wire).
+    pub toi: Toi,
     /// Header-extension chain occupying the header space up to `HDR_LEN`.
     pub extensions: Vec<HeaderExtension<'a>>,
 }
@@ -239,9 +240,9 @@ impl<'a> LctHeader<'a> {
         let mut off = FIXED_HEADER_LEN;
         let cci = &data[off..off + cci_len];
         off += cci_len;
-        let tsi = &data[off..off + tsi_len];
+        let tsi = Tsi::parse(&data[off..off + tsi_len], tsi_len)?;
         off += tsi_len;
-        let toi = &data[off..off + toi_len];
+        let toi = Toi::parse(&data[off..off + toi_len], toi_len)?;
         off += toi_len;
 
         let extensions = ext::parse_chain(&data[off..total])?;
@@ -312,10 +313,8 @@ impl<'a> LctHeader<'a> {
         let mut off = FIXED_HEADER_LEN;
         out[off..off + self.cci.len()].copy_from_slice(self.cci);
         off += self.cci.len();
-        out[off..off + self.tsi.len()].copy_from_slice(self.tsi);
-        off += self.tsi.len();
-        out[off..off + self.toi.len()].copy_from_slice(self.toi);
-        off += self.toi.len();
+        off += self.tsi.serialize_into(&mut out[off..])?;
+        off += self.toi.serialize_into(&mut out[off..])?;
 
         off += ext::serialize_chain(&self.extensions, &mut out[off..])?;
         Ok(off)
@@ -359,8 +358,8 @@ mod tests {
             close_object: false,
             codepoint: 0x00,
             cci: &cci,
-            tsi: &[],
-            toi: &[],
+            tsi: Tsi::new(0, 0).unwrap(),
+            toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
         // HDR_LEN = (4 fixed + 4 cci) / 4 = 2.
@@ -389,8 +388,17 @@ mod tests {
     /// perfectly well-behaved sender, since wide TOIs are legitimate in FLUTE.
     #[test]
     fn a_toi_too_wide_for_the_two_bit_o_field_is_rejected_not_truncated() {
+        // The raw-byte shape accepted any length; the typed value refuses it.
+        assert!(matches!(
+            Toi::new(0, 16),
+            Err(Error::InvalidField(broadcast_common::error::InvalidField {
+                field: "TOI",
+                ..
+            }))
+        ));
+
+        // The flag-driven widths inside the describable range still round-trip.
         let cci = [0u8; 4];
-        let toi = [0u8; 16]; // o = 4, which the 2-bit O field cannot express
         let hdr = LctHeader {
             reserved: 0,
             version: LCT_VERSION,
@@ -399,29 +407,24 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &[],
-            toi: &toi,
+            tsi: Tsi::new(0, 4).unwrap(),
+            toi: Toi::new(0x0102_0304, 4).unwrap(),
             extensions: vec![],
         };
-
-        let mut out = vec![0u8; 64];
-        let err = hdr
-            .serialize_into(&mut out)
-            .expect_err("a 16-byte TOI must be refused, not encoded as O=0");
-        assert!(
-            matches!(
-                err,
-                Error::InvalidField(broadcast_common::error::InvalidField { field: "O", .. })
-            ),
-            "the error must name the O field, got: {err:?}"
-        );
+        assert_eq!(hdr.o_flag(), 1);
+        let mut out = vec![0u8; hdr.serialized_len()];
+        hdr.serialize_into(&mut out).unwrap();
+        let (re, _) = LctHeader::parse(&out).unwrap();
+        assert_eq!(re, hdr);
+        assert_eq!(re.toi.len(), 4);
     }
 
     #[test]
     fn flag_dependent_widths_round_trip() {
         let cci = [0xAAu8, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11];
-        let tsi = [0x01u8, 0x02, 0x03, 0x04, 0x05, 0x06]; // 4*1 + 2*1 = 6 bytes
-        let toi = [0x10u8, 0x20, 0x30, 0x40, 0x50, 0x60]; // 4*1 + 2*1 = 6 bytes
+        // 4*1 + 2*1 = 6 bytes each.
+        let tsi = Tsi::new(0x0000_0102_0304_0506, 6).unwrap();
+        let toi = Toi::new(0x0000_1020_3040_5060, 6).unwrap();
         let hdr = LctHeader {
             reserved: 0,
             version: LCT_VERSION,
@@ -430,8 +433,8 @@ mod tests {
             close_object: false,
             codepoint: 0x42,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         assert_eq!(hdr.c_flag(), 1);
@@ -462,6 +465,8 @@ mod tests {
         assert_eq!(re.cci.len(), 8);
         assert_eq!(re.tsi.len(), 6);
         assert_eq!(re.toi.len(), 6);
+        assert_eq!(re.tsi.value(), 0x0000_0102_0304_0506);
+        assert_eq!(re.toi.value(), 0x0000_1020_3040_5060);
     }
 
     // H=0 vs H=1 must change BOTH TSI and TOI widths (the shared-half-word point).
@@ -469,8 +474,8 @@ mod tests {
     fn shared_h_bit_feeds_both_tsi_and_toi() {
         let cci = [0u8; 4];
         // H=1: TSI = 2 (S=0,H=1), TOI = 2 (O=0,H=1).
-        let tsi = [0xABu8, 0xCD];
-        let toi = [0x12u8, 0x34];
+        let tsi = Tsi::new(0xABCD, 2).unwrap();
+        let toi = Toi::new(0x1234, 2).unwrap();
         let hdr = LctHeader {
             reserved: 0,
             version: LCT_VERSION,
@@ -479,8 +484,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         assert_eq!(hdr.h_flag(), 1);
@@ -508,8 +513,8 @@ mod tests {
                 close_object: false,
                 codepoint: cp,
                 cci: &cci,
-                tsi: &[],
-                toi: &[],
+                tsi: Tsi::new(0, 0).unwrap(),
+                toi: Toi::new(0, 0).unwrap(),
                 extensions: vec![],
             }
             .serialize_into(&mut out)
@@ -560,8 +565,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &[],
-            toi: &[],
+            tsi: Tsi::new(0, 0).unwrap(),
+            toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
         let mut out = vec![0u8; hdr.serialized_len()];
@@ -578,7 +583,7 @@ mod tests {
     #[test]
     fn header_with_extension_chain() {
         let cci = [0u8; 4];
-        let tsi = [0x00u8, 0x00, 0x00, 0x05]; // S=1, H=0
+        let tsi = Tsi::new(5, 4).unwrap(); // S=1, H=0
         let nop = [0u8; 2]; // EXT_NOP HEL=1: HET+HEL+2 = 4
         let ext_content = [0xAAu8, 0xBB, 0xCC]; // fixed ext (HET 200)
         let exts = vec![
@@ -593,8 +598,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &[],
+            tsi,
+            toi: Toi::new(0, 0).unwrap(),
             extensions: exts,
         };
         // base = 4 + 4 + 4 + 0 = 12; ext = 4 + 4 = 8; total 20 → HDR_LEN 5.
@@ -619,8 +624,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &[],
-            toi: &[],
+            tsi: Tsi::new(0, 0).unwrap(),
+            toi: Toi::new(0, 0).unwrap(),
             extensions: vec![],
         };
         let mut out = vec![0u8; 32];
@@ -634,8 +639,10 @@ mod tests {
     fn rejects_mismatched_h() {
         // TSI has the half-word (odd 2-byte), TOI does not → H disagreement.
         let cci = [0u8; 4];
-        let tsi = [0u8; 2]; // H=1
-        let toi = [0u8; 4]; // H=0
+        // The old shape let a struct carry disagreeing TSI/TOI parities; the
+        // typed fields still do, because the width is per value.
+        let tsi = Tsi::new(0, 2).unwrap(); // H=1
+        let toi = Toi::new(0, 4).unwrap(); // H=0
         let hdr = LctHeader {
             reserved: 0,
             version: LCT_VERSION,
@@ -644,8 +651,8 @@ mod tests {
             close_object: false,
             codepoint: 0,
             cci: &cci,
-            tsi: &tsi,
-            toi: &toi,
+            tsi,
+            toi,
             extensions: vec![],
         };
         let mut out = vec![0u8; 32];
