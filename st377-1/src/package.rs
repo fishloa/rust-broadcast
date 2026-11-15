@@ -23,7 +23,7 @@ use crate::sets::{
     get_required_raw, strong_ref_batch_bytes,
 };
 use crate::types::{
-    MxfTimestamp, PackageId, StrongRef, TIMESTAMP_LEN, UidBatch, decode_utf16_be, encode_utf16_be,
+    MxfTimestamp, PackageId, StrongRef, UidBatch, decode_utf16_be, encode_utf16_be,
 };
 
 // ── Generic Package local tags (B.1) ────────────────────────────────────
@@ -358,11 +358,7 @@ crate::sets::declare_set_serialize!(SourcePackage, SourcePackage);
 
 /// Encode a [`MxfTimestamp`] into an owned local-set item.
 fn encode_timestamp_item(out: &mut Vec<LocalSetOwnedItem>, tag: u16, ts: &MxfTimestamp) {
-    let mut buf = [0u8; TIMESTAMP_LEN];
-    // The buffer is exactly the type's serialized length, so the write
-    // cannot fail.
-    let _ = ts.serialize_into(&mut buf);
-    out.push(LocalSetOwnedItem::owned(tag, buf.to_vec()));
+    out.push(LocalSetOwnedItem::owned(tag, ts.to_bytes().to_vec()));
 }
 
 #[cfg(test)]

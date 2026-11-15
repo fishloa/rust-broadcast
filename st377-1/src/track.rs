@@ -24,7 +24,7 @@ use crate::sets::{
     InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed, get_optional_raw,
     get_required_fixed, get_required_raw,
 };
-use crate::types::{RATIONAL_LEN, Rational, StrongRef, decode_utf16_be, encode_utf16_be};
+use crate::types::{Rational, StrongRef, decode_utf16_be, encode_utf16_be};
 
 // ── Generic Track local tags (B.6) ─────────────────────────────────────
 
@@ -195,13 +195,10 @@ impl TimelineTrack {
             out.push(LocalSetOwnedItem::owned(TAG_TRACK_NAME, encode_utf16_be(n)));
         }
         out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence.0));
-        {
-            let mut buf = [0u8; RATIONAL_LEN];
-            // The buffer is exactly the type's serialized length, so the
-            // write cannot fail.
-            let _ = self.edit_rate.serialize_into(&mut buf);
-            out.push(LocalSetOwnedItem::owned(TAG_EDIT_RATE, buf.to_vec()));
-        }
+        out.push(LocalSetOwnedItem::owned(
+            TAG_EDIT_RATE,
+            self.edit_rate.to_bytes().to_vec(),
+        ));
         out.push(LocalSetOwnedItem::fixed(
             TAG_ORIGIN,
             self.origin.to_be_bytes(),
@@ -315,13 +312,10 @@ impl EventTrack {
             out.push(LocalSetOwnedItem::owned(TAG_TRACK_NAME, encode_utf16_be(n)));
         }
         out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence.0));
-        {
-            let mut buf = [0u8; RATIONAL_LEN];
-            // The buffer is exactly the type's serialized length, so the
-            // write cannot fail.
-            let _ = self.event_edit_rate.serialize_into(&mut buf);
-            out.push(LocalSetOwnedItem::owned(TAG_EVENT_EDIT_RATE, buf.to_vec()));
-        }
+        out.push(LocalSetOwnedItem::owned(
+            TAG_EVENT_EDIT_RATE,
+            self.event_edit_rate.to_bytes().to_vec(),
+        ));
         if let Some(o) = self.event_origin {
             out.push(LocalSetOwnedItem::fixed(TAG_EVENT_ORIGIN, o.to_be_bytes()));
         }

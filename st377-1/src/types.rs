@@ -156,6 +156,15 @@ impl Rational {
         buf[4..8].copy_from_slice(&self.denominator.to_be_bytes());
         Ok(RATIONAL_LEN)
     }
+
+    /// The 8-byte wire form, with no fallible length check.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; RATIONAL_LEN] {
+        let mut buf = [0u8; RATIONAL_LEN];
+        buf[0..4].copy_from_slice(&self.numerator.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.denominator.to_be_bytes());
+        buf
+    }
 }
 
 /// Copy the first 16 bytes of `bytes` into an owned [`UlBytes`].
@@ -336,6 +345,22 @@ impl MxfTimestamp {
         buf[7] = self.msec_div4;
         Ok(TIMESTAMP_LEN)
     }
+
+    /// The 8-byte wire form, with no fallible length check.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; TIMESTAMP_LEN] {
+        let yb = self.year.to_be_bytes();
+        [
+            yb[0],
+            yb[1],
+            self.month,
+            self.day,
+            self.hour,
+            self.minute,
+            self.second,
+            self.msec_div4,
+        ]
+    }
 }
 
 /// ProductVersion's `release` field enumeration (§4.3).
@@ -456,6 +481,20 @@ impl ProductVersion {
         put(buf, 6, self.patch);
         put(buf, 8, self.release.to_u16());
         Ok(PRODUCT_VERSION_LEN)
+    }
+
+    /// The 10-byte wire form, with no fallible length check.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; PRODUCT_VERSION_LEN] {
+        let mut buf = [0u8; PRODUCT_VERSION_LEN];
+        let put =
+            |buf: &mut [u8], i: usize, v: u16| buf[i..i + 2].copy_from_slice(&v.to_be_bytes());
+        put(&mut buf, 0, self.major);
+        put(&mut buf, 2, self.minor);
+        put(&mut buf, 4, self.tertiary);
+        put(&mut buf, 6, self.patch);
+        put(&mut buf, 8, self.release.to_u16());
+        buf
     }
 }
 
@@ -725,6 +764,41 @@ mod tests {
         let mut buf = [0u8; PRODUCT_VERSION_LEN];
         pv.serialize_into(&mut buf).unwrap();
         assert_eq!(ProductVersion::parse(&buf).unwrap(), pv);
+    }
+
+    #[test]
+    fn to_bytes_matches_the_serializer() {
+        let ts = MxfTimestamp {
+            year: -7,
+            month: 12,
+            day: 31,
+            hour: 23,
+            minute: 59,
+            second: 58,
+            msec_div4: 249,
+        };
+        let mut ts_buf = [0u8; TIMESTAMP_LEN];
+        ts.serialize_into(&mut ts_buf).unwrap();
+        assert_eq!(ts.to_bytes(), ts_buf);
+
+        let pv = ProductVersion {
+            major: 1,
+            minor: 2,
+            tertiary: 3,
+            patch: 4,
+            release: ReleaseType::Reserved(9),
+        };
+        let mut pv_buf = [0u8; PRODUCT_VERSION_LEN];
+        pv.serialize_into(&mut pv_buf).unwrap();
+        assert_eq!(pv.to_bytes(), pv_buf);
+
+        let r = Rational {
+            numerator: -30000,
+            denominator: 1001,
+        };
+        let mut r_buf = [0u8; RATIONAL_LEN];
+        r.serialize_into(&mut r_buf).unwrap();
+        assert_eq!(r.to_bytes(), r_buf);
     }
 
     #[test]
