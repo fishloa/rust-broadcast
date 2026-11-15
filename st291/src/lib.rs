@@ -42,5 +42,5 @@ pub use error::{Error, Result};
 #[cfg(feature = "rtp")]
 pub use rtp::{
     ANC_RTP_DEFAULT_CLOCK_RATE, ANC_RTP_MEDIA_TYPE, ANC_RTP_PAYLOAD_HEADER_LEN, AncRtpPayload,
-    FieldSense, RtpAncPacket,
+    ExtendedSequenceNumber, FieldSense, RtpAncPacket,
 };

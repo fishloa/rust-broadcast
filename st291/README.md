@@ -91,10 +91,10 @@ Build an ANC-over-RTP payload from typed fields and round-trip it (feature `rtp`
 # #[cfg(feature = "rtp")]
 # fn main() {
 use broadcast_common::{Parse, Serialize};
-use st291::{AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
+use st291::{AncContent, AncRtpPayload, ExtendedSequenceNumber, FieldSense, RtpAncPacket};
 
 let payload = AncRtpPayload {
-    extended_sequence_number: 0,
+    extended_sequence_number: ExtendedSequenceNumber(0),
     field_sense: FieldSense::ProgressiveOrUnspecified,
     anc_packets: vec![RtpAncPacket {
         c: false,
