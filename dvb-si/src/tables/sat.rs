@@ -15,6 +15,7 @@ use crate::error::{Error, Result};
 use alloc::vec;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 
@@ -1949,10 +1950,10 @@ pub struct SatSection {
     pub body: SatBody,
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// `reserved(2)` in front of `version_number` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
     /// `reserved_zero_future_use(8)` at byte 8 (`0x00`, EN 300 468 Table 11a);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
@@ -1979,8 +1980,8 @@ impl SatSection {
             section_number: section.section_number,
             last_section_number: section.last_section_number,
             body,
-            reserved_b1: super::RESERVED_2,
-            reserved_b5: super::RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
             reserved_zero_future_use: ReservedZero::FILL,
         }
     }
@@ -2030,8 +2031,8 @@ impl<'a> Parse<'a> for SatSection {
             section_number,
             last_section_number,
             body,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
             reserved_zero_future_use: ReservedZero::from_bits(u64::from(bytes[8])),
         })
     }
@@ -2067,7 +2068,7 @@ impl Serialize for SatSection {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )? | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
         broadcast_common::len::fit_mask(
@@ -2081,7 +2082,7 @@ impl Serialize for SatSection {
                 | ((self.table_count >> 8) as u8 & TABLE_COUNT_HI_MASK);
         buf[4] = (self.table_count & 0xFF) as u8;
         buf[5] = super::b5_of(
-            self.reserved_b5,
+            self.reserved_b5.get() as u8,
             self.version_number,
             self.current_next_indicator,
         )?;
