@@ -637,8 +637,8 @@ pub fn secs_to_duration(value: f64) -> Result<Duration, FileReaderError> {
 /// [`Duration`] (`ticks / timescale`).
 fn ticks_to_duration(ticks: i64, timescale: Timescale) -> Duration {
     let ticks = u128::try_from(ticks).unwrap_or(0);
-    let nanos = ticks * u128::from(broadcast_common::units::NANOS_PER_SEC)
-        / u128::from(timescale.get());
+    let denom = u128::from(timescale.get());
+    let nanos = (ticks * u128::from(broadcast_common::units::NANOS_PER_SEC) + denom / 2) / denom;
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 

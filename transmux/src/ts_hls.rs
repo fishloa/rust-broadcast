@@ -436,8 +436,10 @@ fn target_ticks_for(target_secs: u32, ts_scale: u32) -> u64 {
 /// (whole seconds, rounded up) for `anchor_ticks` of buffered anchor media at
 /// `ts_scale` ticks/second.
 fn segment_duration(anchor_ticks: u64, ts_scale: Timescale) -> (Duration, u32) {
-    let nanos = u128::from(anchor_ticks) * u128::from(broadcast_common::units::NANOS_PER_SEC)
-        / u128::from(ts_scale.get());
+    let denom = u128::from(ts_scale.get());
+    let nanos = (u128::from(anchor_ticks) * u128::from(broadcast_common::units::NANOS_PER_SEC)
+        + denom / 2)
+        / denom;
     let duration = Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX));
     let ceil_secs = anchor_ticks.div_ceil(ts_scale.as_u64()) as u32;
     (duration, ceil_secs)

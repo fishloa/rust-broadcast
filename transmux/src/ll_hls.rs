@@ -1763,8 +1763,8 @@ fn follower_dts(sample: &Sample) -> i64 {
 
 /// Convert a media-timescale tick count to whole nanoseconds of wall-clock time.
 fn ticks_duration(ticks: u64, timescale: Timescale) -> Duration {
-    let nanos =
-        u128::from(ticks) * u128::from(NANOS_PER_SEC) / u128::from(timescale.get());
+    let denom = u128::from(timescale.get());
+    let nanos = (u128::from(ticks) * u128::from(NANOS_PER_SEC) + denom / 2) / denom;
     Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
