@@ -62,14 +62,14 @@ fn micros_to_duration(us: i128) -> Duration {
 /// clamp instead: an instant past the range is "later than any clock we can
 /// see", an instant before it is "long past".
 fn micros_to_timestamp(us: i128) -> Timestamp {
-    let us = i64::try_from(us.clamp(i128::from(i64::MIN), i128::from(i64::MAX)))
-        .unwrap_or_else(|_| if us < 0 { i64::MIN } else { i64::MAX });
-    Timestamp::from_microsecond(us).unwrap_or_else(|_| {
-        if us < 0 {
-            Timestamp::MIN
-        } else {
-            Timestamp::MAX
-        }
+    let clamped = us.clamp(i128::from(i64::MIN), i128::from(i64::MAX));
+    let Ok(us) = i64::try_from(clamped) else {
+        return Timestamp::MAX;
+    };
+    Timestamp::from_microsecond(us).unwrap_or(if us < 0 {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
     })
 }
 
