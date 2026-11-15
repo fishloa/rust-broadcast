@@ -454,22 +454,107 @@ impl broadcast_common::Serialize for TsHeader {
     }
 }
 
+/// Byte range of the adaptation field's **body** (flags byte through the end
+/// of the declared field) within a raw TS packet — ISO/IEC 13818-1 §2.4.3.4.
+///
+/// Returns `None` when `has_adaptation` is false, when the packet is too short
+/// to carry the length byte, when `adaptation_field_length` is zero, or when
+/// the declared field would run past the end of `pkt`. This is the single
+/// adaptation-field locator: `TsPacket::parse`, `extract_ts_payload`,
+/// `OwnedTsPacket::adaptation_field` and the clock-reference lookup all derive
+/// the field's position from it.
+pub(crate) fn adaptation_field_body_range(
+    pkt: &[u8],
+    has_adaptation: bool,
+) -> Option<core::ops::Range<usize>> {
+    if !has_adaptation || pkt.len() <= AF_LEN_BYTE {
+        return None;
+    }
+    let af_len = pkt[AF_LEN_BYTE] as usize;
+    if af_len == 0 {
+        return None;
+    }
+    let start = AF_FLAGS_BYTE;
+    let end = start + af_len;
+    if end > pkt.len() {
+        return None;
+    }
+    Some(start..end)
+}
+
 /// Bytes to skip from byte 4 (right after the 4-byte header) to reach the
 /// payload: `0` when there is no adaptation field, else
 /// `1 + adaptation_field_length` (the length byte itself, plus its declared
-/// body) — ISO/IEC 13818-1 §2.4.3.4. Does not itself validate that the
-/// declared length fits `pkt` (`TsPacket::parse` / `extract_ts_payload` do
-/// that with their own bounds checks on the resulting cursor).
-///
-/// W18 (#1074): shared by `TsPacket::parse` and `extract_ts_payload`, which
-/// used to walk this independently with its own `adaptation_field_control`
-/// bit-mask.
+/// body) — ISO/IEC 13818-1 §2.4.3.4. Derived from
+/// [`adaptation_field_body_range`], the one adaptation-field locator.
 fn adaptation_field_skip(pkt: &[u8], has_adaptation: bool) -> usize {
-    if !has_adaptation || pkt.len() <= 4 {
+    if !has_adaptation || pkt.len() <= AF_LEN_BYTE {
         return 0;
     }
-    let af_len = pkt[4] as usize;
-    1 + af_len
+    1 + pkt[AF_LEN_BYTE] as usize
+}
+
+/// Outcome of locating a clock-reference (PCR or OPCR) field within a raw TS
+/// packet — ISO/IEC 13818-1 §2.4.3.4. [`clock_reference_slot`] is the one
+/// locator `set_pcr`/`set_opcr` (`owned.rs`) and the duplicate-detection PCR
+/// exemption (`ts_dup.rs`) both use.
+pub(crate) enum ClockReferenceSlot {
+    /// The field's 6-byte byte range within the packet.
+    Field(core::ops::Range<usize>),
+    /// No adaptation field, or a zero-length one.
+    NoAdaptationField,
+    /// The adaptation field is shorter than the flags byte plus the field.
+    TooShort {
+        /// Bytes the field needs (`flags byte + fields before it + 6`).
+        need: usize,
+        /// `adaptation_field_length` the packet declares.
+        have: usize,
+    },
+    /// The adaptation field's flags byte does not set this field's flag.
+    FlagClear,
+    /// The declared field runs past the end of `pkt` (a truncated capture).
+    Truncated {
+        /// Bytes the field needs to reach its end.
+        need: usize,
+        /// Bytes actually available.
+        have: usize,
+    },
+}
+
+/// Locate the `PCR` (`flag == AF_PCR_FLAG`) or `OPCR` (`flag == AF_OPCR_FLAG`)
+/// field within `pkt`, accounting for the flags byte and the field order
+/// (PCR precedes OPCR, each 6 bytes) — ISO/IEC 13818-1 §2.4.3.4/§2.4.3.5.
+pub(crate) fn clock_reference_slot(pkt: &[u8], flag: u8) -> ClockReferenceSlot {
+    if pkt.len() <= AF_LEN_BYTE || pkt[3] & ADAPTATION_FLAG == 0 {
+        return ClockReferenceSlot::NoAdaptationField;
+    }
+    let af_len = pkt[AF_LEN_BYTE] as usize;
+    if af_len == 0 {
+        return ClockReferenceSlot::NoAdaptationField;
+    }
+    // Flags byte (1) + every clock-reference field preceding `flag` + the
+    // field itself. Only PCR and OPCR exist, PCR first.
+    let preceding = if flag == AF_OPCR_FLAG {
+        PCR_FIELD_LEN
+    } else {
+        0
+    };
+    let need = 1 + preceding + PCR_FIELD_LEN;
+    if af_len < need {
+        return ClockReferenceSlot::TooShort { need, have: af_len };
+    }
+    if pkt.len() <= AF_FLAGS_BYTE || pkt[AF_FLAGS_BYTE] & flag == 0 {
+        return ClockReferenceSlot::FlagClear;
+    }
+    let start = CLOCK_REFERENCE_START + preceding;
+    let end = start + PCR_FIELD_LEN;
+    if end > pkt.len() {
+        return ClockReferenceSlot::Truncated {
+            need: end,
+            have: pkt.len(),
+        };
+    }
+    ClockReferenceSlot::Field(start..end)
 }
 
 impl<'a> TsPacket<'a> {
@@ -500,7 +585,6 @@ impl<'a> TsPacket<'a> {
 
         let mut cursor = 4usize;
         let mut payload = None;
-        let mut adaptation = None;
 
         // Capture the adaptation field if present, then skip it (the section
         // path does not need it; decode lazily via `adaptation_field`).
@@ -514,13 +598,7 @@ impl<'a> TsPacket<'a> {
         // Reject (this crate's existing policy in `owned.rs`) rather than
         // truncate: leave `adaptation` as `None` for an over-long field, same
         // as `OwnedTsPacket`.
-        if header.has_adaptation() && cursor < TS_PACKET_SIZE {
-            let af_len = raw[cursor] as usize;
-            let af_start = cursor + 1;
-            if af_len > 0 && af_start < TS_PACKET_SIZE && af_start + af_len <= TS_PACKET_SIZE {
-                adaptation = Some(&raw[af_start..af_start + af_len]);
-            }
-        }
+        let adaptation = adaptation_field_body_range(raw, header.has_adaptation()).map(|r| &raw[r]);
         // W18 (#1074): shared with `extract_ts_payload`, which used to
         // re-derive this same "skip past the adaptation field" walk from
         // scratch (with its own `adaptation_field_control` bit-mask) instead
@@ -572,6 +650,16 @@ pub(crate) const PCR_RESERVED_BYTE_OFFSET: usize = 4;
 const PCR_RESERVED_VALUE: u8 = 0x3F;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
 pub(crate) const PCR_FIELD_LEN: usize = 6;
+
+/// Byte offset of `adaptation_field_length` within a raw TS packet —
+/// ISO/IEC 13818-1 §2.4.3.4.
+pub(crate) const AF_LEN_BYTE: usize = 4;
+/// Byte offset of the adaptation-field flags byte, immediately after
+/// `adaptation_field_length` — ISO/IEC 13818-1 §2.4.3.4 Table 2-6.
+pub(crate) const AF_FLAGS_BYTE: usize = 5;
+/// Byte offset of the first clock-reference (PCR/OPCR) byte, immediately
+/// after the flags byte — ISO/IEC 13818-1 §2.4.3.4.
+pub(crate) const CLOCK_REFERENCE_START: usize = AF_FLAGS_BYTE + 1;
 
 /// Program Clock Reference (ISO/IEC 13818-1:2007 §2.4.3.5): a 33-bit base on a
 /// 90 kHz clock plus a 9-bit extension on a 27 MHz clock.
@@ -2234,6 +2322,68 @@ mod tests {
         let payload = pkt.payload.expect("payload present");
         assert_eq!(payload.len(), TS_PACKET_SIZE - 12);
         assert_eq!(payload[0], 0xAA);
+    }
+
+    /// The one clock-reference locator agrees with the packet layout for both
+    /// PCR and OPCR, and never reports a field the adaptation field does not
+    /// actually reach. Pre-dedupe `ts_dup.rs` handled only PCR and `owned.rs`
+    /// walked flags with its own bit-walk; a shared locator must give both
+    /// callers the same answer for an OPCR that follows a PCR.
+    #[test]
+    fn clock_reference_slot_locates_pcr_then_opcr_and_rejects_unreached_fields() {
+        let mut raw = [0xAAu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[3] = ADAPTATION_FLAG | PAYLOAD_FLAG;
+        raw[4] = (1 + 2 * PCR_FIELD_LEN) as u8; // flags + PCR + OPCR
+        raw[5] = AF_PCR_FLAG | AF_OPCR_FLAG;
+
+        // PCR occupies the first 6 bytes after the flags byte, OPCR the next.
+        assert!(matches!(
+            clock_reference_slot(&raw, AF_PCR_FLAG),
+            ClockReferenceSlot::Field(r) if r == (CLOCK_REFERENCE_START..CLOCK_REFERENCE_START + PCR_FIELD_LEN)
+        ));
+        assert!(matches!(
+            clock_reference_slot(&raw, AF_OPCR_FLAG),
+            ClockReferenceSlot::Field(r) if r == (CLOCK_REFERENCE_START + PCR_FIELD_LEN..CLOCK_REFERENCE_START + 2 * PCR_FIELD_LEN)
+        ));
+
+        // A field-only adaptation field (af_len == 1 + 6) reaches PCR but not
+        // OPCR: the OPCR flag claims a field the declared length cannot hold.
+        raw[4] = (1 + PCR_FIELD_LEN) as u8;
+        assert!(matches!(
+            clock_reference_slot(&raw, AF_OPCR_FLAG),
+            ClockReferenceSlot::TooShort { need, have }
+                if need == 1 + 2 * PCR_FIELD_LEN && have == 1 + PCR_FIELD_LEN
+        ));
+
+        // No adaptation field at all.
+        let payload_only = {
+            let mut p = raw;
+            p[3] = PAYLOAD_FLAG;
+            p
+        };
+        assert!(matches!(
+            clock_reference_slot(&payload_only, AF_PCR_FLAG),
+            ClockReferenceSlot::NoAdaptationField
+        ));
+
+        // Flag clear on a packet with enough adaptation field to hold it.
+        raw[4] = (1 + PCR_FIELD_LEN) as u8;
+        raw[5] = AF_OPCR_FLAG;
+        assert!(matches!(
+            clock_reference_slot(&raw, AF_PCR_FLAG),
+            ClockReferenceSlot::FlagClear
+        ));
+
+        // A slice truncated before the declared field ends reports the field
+        // as unreachable, not a `Field` that runs past the buffer (the old
+        // `ts_dup` copy checked `end > pkt.len()`; the locator must too).
+        raw[5] = AF_PCR_FLAG;
+        let truncated = &raw[..8];
+        assert!(matches!(
+            clock_reference_slot(truncated, AF_PCR_FLAG),
+            ClockReferenceSlot::Truncated { need, have } if need == 12 && have == 8
+        ));
     }
 
     #[test]

@@ -11,22 +11,15 @@
 use crate::error::{Error, Result};
 use crate::pid::Pid;
 use crate::ts::{
-    ADAPTATION_FLAG, AF_OPCR_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK,
-    ContinuityCounter, PCR_FIELD_LEN, PCR_RESERVED_BITS, PCR_RESERVED_BYTE_OFFSET,
+    AF_OPCR_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK,
+    ClockReferenceSlot, ContinuityCounter, PCR_RESERVED_BITS, PCR_RESERVED_BYTE_OFFSET,
     PCR_RESERVED_SHIFT, Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
+    adaptation_field_body_range, clock_reference_slot,
 };
 
 /// The 13-bit PID value used for null packets — `0x1FFF`
 /// (ISO/IEC 13818-1 §2.4.3.3, Table 2-3).
 const NULL_PID: Pid = crate::pid::well_known::NULL;
-
-/// The PCR/OPCR field starts after the 4-byte header, the
-/// `adaptation_field_length` byte and the flags byte (ISO/IEC 13818-1:2007
-/// §2.4.3.4).
-const CLOCK_REFERENCE_START: usize = 6;
-/// `adaptation_field_length` a packet needs to carry the flags byte plus one
-/// 6-byte clock-reference field: 1 + 6.
-const CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN: usize = 1 + PCR_FIELD_LEN;
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
@@ -353,11 +346,12 @@ impl OwnedTsPacket {
     /// assert_eq!(af.pcr, Some(new_pcr));
     /// ```
     pub fn set_pcr(packet: &mut [u8; TS_PACKET_SIZE], pcr: Pcr) -> Result<()> {
-        let slot = clock_reference_slot(packet, AF_PCR_FLAG, "PCR")?;
-        let reserved = (packet[slot.start + PCR_RESERVED_BYTE_OFFSET] & PCR_RESERVED_BITS)
+        let slot = clock_reference_slot(packet, AF_PCR_FLAG);
+        let offset = clock_reference_offset(&slot, "PCR")?;
+        let reserved = (packet[offset.start + PCR_RESERVED_BYTE_OFFSET] & PCR_RESERVED_BITS)
             >> PCR_RESERVED_SHIFT;
         let field = pcr.to_field_bytes_with_reserved(reserved)?;
-        packet[slot].copy_from_slice(&field);
+        packet[offset].copy_from_slice(&field);
         Ok(())
     }
 
@@ -371,12 +365,12 @@ impl OwnedTsPacket {
     ///   than the flags byte plus the OPCR field.
     /// - [`Error::NoClockReference`] — the OPCR flag is not set.
     pub fn set_opcr(packet: &mut [u8; TS_PACKET_SIZE], opcr: Pcr) -> Result<()> {
-        let slot = clock_reference_slot(packet, AF_OPCR_FLAG, "OPCR")?;
-        let reserved = (packet[slot.start + PCR_FIELD_LEN + PCR_RESERVED_BYTE_OFFSET]
-            & PCR_RESERVED_BITS)
+        let slot = clock_reference_slot(packet, AF_OPCR_FLAG);
+        let offset = clock_reference_offset(&slot, "OPCR")?;
+        let reserved = (packet[offset.start + PCR_RESERVED_BYTE_OFFSET] & PCR_RESERVED_BITS)
             >> PCR_RESERVED_SHIFT;
         let field = opcr.to_field_bytes_with_reserved(reserved)?;
-        packet[slot].copy_from_slice(&field);
+        packet[offset].copy_from_slice(&field);
         Ok(())
     }
 
@@ -386,55 +380,38 @@ impl OwnedTsPacket {
     /// `Some(Err(..))` when the adaptation field bytes are malformed.
     /// The returned [`AdaptationField`] borrows from `self.raw`.
     pub fn adaptation_field(&self) -> Option<crate::Result<AdaptationField<'_>>> {
-        if self.raw[3] & ADAPTATION_FLAG == 0 {
-            return None;
-        }
-        let af_len = self.raw[4] as usize;
-        if af_len == 0 || 5 + af_len > TS_PACKET_SIZE {
-            return None;
-        }
-        Some(AdaptationField::parse(&self.raw[5..5 + af_len]))
+        let range = adaptation_field_body_range(&self.raw, self.has_adaptation)?;
+        Some(AdaptationField::parse(&self.raw[range]))
     }
 }
 
-/// The PCR/OPCR field is the first field after the adaptation-field flags
-/// byte (ISO/IEC 13818-1:2007 §2.4.3.4), so every referenced field starts at
-/// 6 and each is 6 bytes long.
-fn clock_reference_slot(
-    packet: &[u8; TS_PACKET_SIZE],
-    flag: u8,
+/// Map a [`ClockReferenceSlot`] lookup to the byte range `set_pcr`/`set_opcr`
+/// rewrite, distinguishing the three reasons a clock-reference field is absent.
+fn clock_reference_offset(
+    slot: &ClockReferenceSlot,
     which: &'static str,
 ) -> Result<core::ops::Range<usize>> {
-    if packet[3] & ADAPTATION_FLAG == 0 {
-        return Err(Error::NoAdaptationField);
+    match *slot {
+        ClockReferenceSlot::Field(ref range) => Ok(range.clone()),
+        ClockReferenceSlot::NoAdaptationField => Err(Error::NoAdaptationField),
+        ClockReferenceSlot::TooShort { need, have } => {
+            Err(Error::AdaptationFieldTooShort { need, have })
+        }
+        ClockReferenceSlot::FlagClear => Err(Error::NoClockReference { which }),
+        ClockReferenceSlot::Truncated { need, have } => Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need,
+                have,
+                what: which,
+            },
+        )),
     }
-    let af_len = packet[4] as usize;
-    if af_len == 0 {
-        return Err(Error::NoAdaptationField);
-    }
-    let mut offset = 0usize;
-    let mut bit = AF_PCR_FLAG;
-    while bit != flag {
-        offset += PCR_FIELD_LEN;
-        bit >>= 1;
-    }
-    let start = CLOCK_REFERENCE_START + offset;
-    let end = start + PCR_FIELD_LEN;
-    if af_len < CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN + offset {
-        return Err(Error::AdaptationFieldTooShort {
-            need: CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN + offset,
-            have: af_len,
-        });
-    }
-    if packet[5] & flag == 0 {
-        return Err(Error::NoClockReference { which });
-    }
-    Ok(start..end)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ts::{ADAPTATION_FLAG, PCR_FIELD_LEN};
 
     fn cc(v: u8) -> ContinuityCounter {
         ContinuityCounter::try_new(v).expect("4-bit counter")
@@ -659,7 +636,7 @@ mod tests {
         let mut raw = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
         raw[0] = TS_SYNC_BYTE;
         raw[3] = ADAPTATION_FLAG | crate::ts::PAYLOAD_FLAG;
-        raw[4] = CLOCK_REFERENCE_FLAGS_AND_FIELD_LEN as u8 + PCR_FIELD_LEN as u8;
+        raw[4] = (1 + 2 * PCR_FIELD_LEN) as u8;
         raw[5] = AF_PCR_FLAG | AF_OPCR_FLAG;
         raw[6..12].copy_from_slice(&pcr.to_field_bytes());
         raw[12..18].copy_from_slice(&opcr.to_field_bytes());
