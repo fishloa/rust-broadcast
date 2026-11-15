@@ -6,6 +6,7 @@
 
 use crate::error::{Error, Result};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the Discontinuity Information Table.
@@ -27,7 +28,7 @@ pub struct DitSection {
     /// `reserved_future_use(7)` after `transition_flag` (`1111111`);
     /// preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<7>,
     /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
     /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
     /// is unused (short-form section).
@@ -46,7 +47,7 @@ impl DitSection {
     pub const fn new(transition_flag: bool) -> Self {
         Self {
             transition_flag,
-            reserved_future_use: RESERVED_FUTURE_USE_7,
+            reserved_future_use: ReservedOnes::FILL,
             bits: super::SectionBits::dvb().short_form(),
         }
     }
@@ -76,7 +77,9 @@ impl<'a> Parse<'a> for DitSection {
         let transition_flag = bytes[3] & TRANSITION_FLAG != 0;
         Ok(DitSection {
             transition_flag,
-            reserved_future_use: bytes[3] & RESERVED_FUTURE_USE_7,
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                bytes[3] & RESERVED_FUTURE_USE_7,
+            )),
             bits: super::SectionBits::parse(bytes[1], None),
         })
     }
@@ -100,7 +103,7 @@ impl Serialize for DitSection {
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
         buf[3] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
             | broadcast_common::len::fit_mask(
-                self.reserved_future_use,
+                self.reserved_future_use.get() as u8,
                 RESERVED_FUTURE_USE_7,
                 "reserved_future_use",
             )?;
@@ -205,5 +208,17 @@ mod tests {
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7E);
         assert_eq!(PID.value(), 0x001E);
+    }
+
+    /// The field is 7 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into `transition_flag`.
+    #[test]
+    fn reserved_cannot_hold_more_than_seven_bits() {
+        let d = DitSection::new(true);
+        let d = DitSection {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            ..d
+        };
+        assert_eq!(d.reserved_future_use.get(), 0x7F);
     }
 }
