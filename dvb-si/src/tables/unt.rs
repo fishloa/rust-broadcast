@@ -16,6 +16,7 @@ use crate::descriptors::unt::UntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for the Update Notification Table.
@@ -337,7 +338,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         available: platform_end.saturating_sub(target_start),
                     });
                 }
-                let reserved_target_length = super::len_reserved_of(bytes[pos]);
+                let reserved_target_length =
+                    ReservedOnes::from_bits(u64::from(super::len_reserved_of(bytes[pos])));
                 let target_descriptors = UntDescriptorLoop::new(&bytes[target_start..target_end]);
                 pos = target_end;
 
@@ -359,7 +361,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         available: platform_end.saturating_sub(op_start),
                     });
                 }
-                let reserved_operational_length = super::len_reserved_of(bytes[pos]);
+                let reserved_operational_length =
+                    ReservedOnes::from_bits(u64::from(super::len_reserved_of(bytes[pos])));
                 let operational_descriptors = UntDescriptorLoop::new(&bytes[op_start..op_end]);
                 pos = op_end;
 
@@ -483,7 +486,7 @@ impl Serialize for UntSection<'_> {
                 super::write_desc_loop_len_r(
                     &mut buf[pos..pos + 2],
                     tl as usize,
-                    pair.reserved_target_length,
+                    pair.reserved_target_length.get() as u8,
                 )?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
@@ -497,7 +500,7 @@ impl Serialize for UntSection<'_> {
                 super::write_desc_loop_len_r(
                     &mut buf[pos..pos + 2],
                     ol as usize,
-                    pair.reserved_operational_length,
+                    pair.reserved_operational_length.get() as u8,
                 )?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + operational_descriptors.len()]
