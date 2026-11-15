@@ -1696,6 +1696,10 @@ pub const TABLE: &[Crate] = &[
             // parameter-set syntax a demuxer's tracker follows (AVC / HEVC), a
             // routing choice, not a wire label.
             "TrackCodec",
+            // `validate::SegmentOrigin` (#2721): where a segment's timing came
+            // from (this crate's IR or elsewhere), a provenance choice, not a
+            // wire label.
+            "SegmentOrigin",
             // `live_join::JoinDecision`/`JoinState` (issue #1162 R4): data-carrying
             // state ADTs (`Drop(DropReason)`, `JoinPoint(RapKind)`, `Joined { .. }`),
             // not spec-token labels; their leaf enums `DropReason`/`RapKind` carry

@@ -175,9 +175,7 @@ async fn whip_publish_event_sequence_matches_the_golden() {
             packet
                 .serialize_into(&mut sized)
                 .expect("the packet fits its own serialized_len");
-            driver
-                .feed(id, &sized, Timestamp::from_nanos(index as u64 + 1))
-                .expect("valid timing");
+            driver.feed(id, &sized, Timestamp::from_nanos(index as u64 + 1));
         }
     }
     if let Some(d) = driver.driver_mut(id) {

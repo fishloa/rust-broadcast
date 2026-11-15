@@ -2896,7 +2896,7 @@ fn push_live_au(
                 // immediately, no lookahead, and never fabricate a dts/pts/duration.
                 events.push_back(DemuxEvent::Sample {
                     track_id,
-                    sample: Sample::new(data.to_vec(), None, None, None, false)?,
+                    sample: Sample::new(data.to_vec(), None, None, None, true)?,
                 });
             }
         }
@@ -6580,9 +6580,8 @@ impl Stage for StreamingTsDemux {
     type Out = DemuxEvent;
     /// Malformed TS never errors (it resynchronises on `0x47` and skips what it
     /// cannot parse); the one error `feed`/`finish` can report is a sample
-    /// whose timing cannot be represented (see
-    /// [`Error::InvalidInput`](crate::Error::InvalidInput) on a PTS with no
-    /// DTS), carried out instead of a fabricated value.
+    /// whose timing cannot be represented ([`Error::InvalidInput`] on a PTS
+    /// with no DTS), carried out instead of a fabricated value.
     type Error = crate::Error;
 
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> core::result::Result<(), Self::Error> {

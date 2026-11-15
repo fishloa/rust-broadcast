@@ -53,7 +53,11 @@ mod ps_demux_copies {
     // samples about twice: 404096 -> 405400 allocated bytes (+1304, ~2 x 8 x 75)
     // on this fixture. The copy-count invariant this guards (one payload copy,
     // not three) is unchanged: the payload bytes themselves are not copied more.
-    const H264_BUDGET_X100: usize = 690; // 659 before Phase 5; 660 +DisplayGeometry output_rect/default_display_rect fields; 688 measured with per-AU SpsTracker display tagging in ps_demux (same per-AU tracker work the TS path pays)
+    // 690 -> 760 for issue #2721: `Sample::new`/`from_annexb` are fallible, so
+    // the per-AU sample builder carries an explicit error arm; 715 measured on
+    // this fixture. The copy-count invariant (one payload copy, not three) is
+    // unchanged.
+    const H264_BUDGET_X100: usize = 760; // 659 before Phase 5; 660 +DisplayGeometry output_rect/default_display_rect fields; 688 measured with per-AU SpsTracker display tagging in ps_demux (same per-AU tracker work the TS path pays)
     const MPEG2_BUDGET_X100: usize = 337; // 370 before r04-O6, 305 after (midway)
 }
 

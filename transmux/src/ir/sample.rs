@@ -365,7 +365,7 @@ impl Sample {
     /// timestamp-less (section-carried) sample. Never fabricate a value.
     ///
     /// # Errors
-    /// Whatever [`timing_of`] reports: a `pts` without a `dts`, or a zero span
+    /// Whatever the timing builder reports: a `pts` without a `dts`, or a zero span
     /// with no timestamps. A caller that has **both** timestamps uses
     /// [`Sample::timed`], which cannot fail: nothing it is told is
     /// unrepresentable.
@@ -390,7 +390,7 @@ impl Sample {
     /// the track's media timescale.
     ///
     /// # Errors
-    /// Whatever [`timing_of`] reports: a `pts` without a `dts`, or a zero span
+    /// Whatever the timing builder reports: a `pts` without a `dts`, or a zero span
     /// with no timestamps. With both timestamps given, use
     /// [`Sample::timed_annexb`], whose only failure is a NAL unit that cannot
     /// be length-prefixed (never a timestamp).
@@ -415,7 +415,7 @@ impl Sample {
     /// absolute, in the track's media timescale.
     ///
     /// # Errors
-    /// Whatever [`timing_of`] reports: a `pts` without a `dts`, or a zero span
+    /// Whatever the timing builder reports: a `pts` without a `dts`, or a zero span
     /// with no timestamps. With both timestamps given, use
     /// [`Sample::timed_raw`], which cannot fail.
     pub fn from_raw(

@@ -17,7 +17,7 @@ fuzz_target!(|data: &[u8]| {
         (NalCodec::Vvc, 1),
     ] {
         let mut j = LiveJoin::new(codec, length_size);
-        let s = Sample::new(data.to_vec(), Some(1), Some(1), None, false);
+        let s = Sample::new(data.to_vec(), Some(1), Some(1), None, false).expect("valid timing");
         let _ = j.push(&s);
         let _ = j.push(&s);
         j.rejoin();

@@ -696,6 +696,7 @@ struct StreamTrackState {
 /// #     static NEXT_DTS: AtomicI64 = AtomicI64::new(0);
 /// #     let dts = NEXT_DTS.fetch_add(1000, Ordering::Relaxed);
 /// #     Sample::new(vec![0u8; 4], Some(dts), Some(dts), Some(1000), sync)
+/// #         .expect("valid timing")
 /// # }
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();

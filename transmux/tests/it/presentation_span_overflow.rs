@@ -62,7 +62,9 @@ fn idr_bytes() -> Vec<u8> {
 fn skewed(dts: i64, duration: u32) -> Sample {
     let timing =
         SampleTiming::timed_with_duration(dts, dts.checked_sub(3).expect("in range"), duration);
-    Sample::new(idr_bytes(), Some(dts), Some(dts), Some(duration), true).with_timing(Some(timing))
+    Sample::new(idr_bytes(), Some(dts), Some(dts), Some(duration), true)
+        .expect("valid timing")
+        .with_timing(Some(timing))
 }
 
 #[test]
@@ -102,7 +104,8 @@ fn a_span_past_f64_max_is_an_error_not_an_infinite_extinf() {
         Some(i64::MAX - 1_001),
         Some(1_000),
         true,
-    );
+    )
+    .expect("valid timing");
     assert_eq!(high.composition_offset(), Ok(Some(0)));
     let media = Media::new(vec![Track::new(avc_spec(), vec![low, high])], timescale(1));
     let err = HlsPackager::default()
@@ -126,6 +129,7 @@ fn a_large_but_representable_span_still_packages() {
         Some(90_000 * 3_600),
         true,
     )
+    .expect("valid timing")
     .with_timing(Some(timing));
     let media = Media::new(
         vec![Track::new(avc_spec(), vec![sample])],
