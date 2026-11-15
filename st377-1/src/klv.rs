@@ -24,7 +24,8 @@ pub const FILL_ITEM_KEY_SUFFIX: [u8; 8] = [0x03, 0x01, 0x02, 0x10, 0x01, 0x00, 0
 /// version number) per the spec's own decoder rule.
 #[must_use]
 pub fn is_fill_item_key(key: &UlBytes) -> bool {
-    key[..7] == FILL_ITEM_KEY_PREFIX && key[8..] == FILL_ITEM_KEY_SUFFIX
+    let bytes = key.as_bytes();
+    bytes[..7] == FILL_ITEM_KEY_PREFIX && bytes[8..] == FILL_ITEM_KEY_SUFFIX
 }
 
 #[cfg(test)]

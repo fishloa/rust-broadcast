@@ -95,12 +95,13 @@ const SET_KEY_BYTE12: u8 = 0x01;
 /// (reserved) is not checked (some dark extensions may not zero it).
 #[must_use]
 pub fn is_local_set_key(key: &UlBytes) -> bool {
-    SET_KEY_FIXED.iter().all(|&(i, v)| key[i] == v)
-        && ItemLengthMode::from_registry_designator_byte(key[5]).is_some()
-        && key[8] == 0x0D
-        && key[9] == SET_KEY_BYTE10
-        && key[10] == 0x01
-        && key[12] == SET_KEY_BYTE12
+    let bytes = key.as_bytes();
+    SET_KEY_FIXED.iter().all(|&(i, v)| bytes[i] == v)
+        && ItemLengthMode::from_registry_designator_byte(bytes[5]).is_some()
+        && bytes[8] == 0x0D
+        && bytes[9] == SET_KEY_BYTE10
+        && bytes[10] == 0x01
+        && bytes[12] == SET_KEY_BYTE12
 }
 
 /// Set Kind (Table 17 — this crate's byte 14/15 identification list for
@@ -363,7 +364,7 @@ impl<'a> LocalSet<'a> {
     /// self-constructed `LocalSet` with an invalid key.
     #[must_use]
     pub fn item_length_mode(&self) -> ItemLengthMode {
-        ItemLengthMode::from_registry_designator_byte(self.key[5])
+        ItemLengthMode::from_registry_designator_byte(self.key.as_bytes()[5])
             .unwrap_or(ItemLengthMode::TwoByte)
     }
 
@@ -378,7 +379,7 @@ impl<'a> LocalSet<'a> {
     #[must_use]
     pub fn build_key(kind: StructuralSetKind, mode: ItemLengthMode) -> UlBytes {
         let [b14, b15] = kind.to_bytes();
-        [
+        UlBytes([
             0x06,
             0x0E,
             0x2B,
@@ -395,7 +396,7 @@ impl<'a> LocalSet<'a> {
             b14,
             b15,
             0x00,
-        ]
+        ])
     }
 
     /// Parse one Local Set (Key + BER Length + items) from the start of
@@ -412,7 +413,7 @@ impl<'a> LocalSet<'a> {
         // is_local_set_key already confirmed key[5] is a valid mode byte;
         // TwoByte is unreachable here but kept as the same documented
         // fallback item_length_mode() uses, rather than a second code path.
-        let mode = ItemLengthMode::from_registry_designator_byte(key[5])
+        let mode = ItemLengthMode::from_registry_designator_byte(key.as_bytes()[5])
             .unwrap_or(ItemLengthMode::TwoByte);
 
         let (len, len_token_size) = decode_ber_length(&bytes[16..])?;

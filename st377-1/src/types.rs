@@ -9,13 +9,101 @@ use broadcast_common::len::{fit_u32, need_out};
 
 use crate::error::{Error, Result};
 
-/// A 16-byte SMPTE Universal Label or UUID.
-pub type UlBytes = [u8; 16];
+/// A 16-byte SMPTE Universal Label (§4.2) — an object identification key,
+/// distinct by type from the [`StrongRef`] and [`Auid`] values that share its
+/// wire form.
+///
+/// The inner `[u8; 16]` is the wire octets in order. `From<[u8; 16]>`,
+/// `From<UlBytes> for [u8; 16]` and [`UlBytes::as_bytes`] convert.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct UlBytes(pub [u8; 16]);
+
+impl UlBytes {
+    /// The all-zero value (a 32-zero-byte `PackageId` chain terminator's
+    /// leading half, and the "unused" entry of an index table).
+    pub const NULL: Self = Self([0u8; 16]);
+
+    /// The wire octets, in order.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+impl From<[u8; 16]> for UlBytes {
+    fn from(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<UlBytes> for [u8; 16] {
+    fn from(ul: UlBytes) -> Self {
+        ul.0
+    }
+}
+
+impl AsRef<[u8]> for UlBytes {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl core::fmt::Display for UlBytes {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
 
 /// A Strong Reference (§5.4.4): a 16-byte UUID referencing another Set in the
-/// same file.  Identical on the wire to [`UlBytes`]; the alias documents the
-/// semantic role in property declarations.
-pub type StrongRef = UlBytes;
+/// same file. Identical on the wire to [`UlBytes`], but a distinct type so a
+/// reference target and a UL key cannot be swapped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
+pub struct StrongRef(pub [u8; 16]);
+
+impl StrongRef {
+    /// The all-zero UUID (references no Set).
+    pub const NULL: Self = Self([0u8; 16]);
+
+    /// The wire octets, in order.
+    #[must_use]
+    pub fn as_bytes(&self) -> &[u8; 16] {
+        &self.0
+    }
+}
+
+impl From<[u8; 16]> for StrongRef {
+    fn from(bytes: [u8; 16]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl From<StrongRef> for [u8; 16] {
+    fn from(reference: StrongRef) -> Self {
+        reference.0
+    }
+}
+
+impl AsRef<[u8]> for StrongRef {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl core::fmt::Display for StrongRef {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for byte in &self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
 
 /// A Rational number (§4.3) — two big-endian `Int32` values, 8 bytes total.
 /// Used for Edit Rate, Sample Rate, and similar time-base properties.
@@ -70,6 +158,19 @@ pub(crate) fn ul_bytes_from_prefix(bytes: &[u8]) -> UlBytes {
     let mut i = 0;
     while i < 16 {
         out[i] = bytes[i];
+        i += 1;
+    }
+    UlBytes(out)
+}
+
+/// [`ul_bytes_from_prefix`] for a Strong Reference (`count` 16-byte UUIDs).
+///
+/// Callers must have already verified `bytes.len() >= 16 * count`.
+pub(crate) fn strong_refs_from_prefix(bytes: &[u8], count: usize) -> Vec<StrongRef> {
+    let mut out = Vec::with_capacity(count);
+    let mut i = 0;
+    while i < count {
+        out.push(StrongRef(ul_bytes_from_prefix(&bytes[i * 16..]).0));
         i += 1;
     }
     out
@@ -128,13 +229,14 @@ mod serde_bytes32 {
 /// order).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Auid(pub UlBytes);
 
 impl Auid {
     /// True if this AUID holds a UL (byte 0's top bit clear).
     #[must_use]
     pub fn is_ul(&self) -> bool {
-        self.0[0] & 0x80 == 0
+        self.0.0[0] & 0x80 == 0
     }
 
     /// The UUID held in this AUID, in natural UUID storage order: the top and
@@ -156,9 +258,9 @@ impl Auid {
 
 fn swap_halves(bytes: UlBytes) -> UlBytes {
     let mut out = [0u8; 16];
-    out[..8].copy_from_slice(&bytes[8..]);
-    out[8..].copy_from_slice(&bytes[..8]);
-    out
+    out[..8].copy_from_slice(&bytes.0[8..]);
+    out[8..].copy_from_slice(&bytes.0[..8]);
+    UlBytes(out)
 }
 
 /// A Gregorian timestamp (§4.3): `year: Int16, month/day/hour/minute/second/
@@ -514,7 +616,7 @@ impl UidBatch {
             }
         }
         for item in &self.items {
-            out.extend_from_slice(item);
+            out.extend_from_slice(item.as_ref());
         }
         Ok(out)
     }

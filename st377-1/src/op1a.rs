@@ -123,7 +123,7 @@ impl Op1aQualifier {
 /// [`OP1A_UL_PREFIX`], byte 16 ignored).
 #[must_use]
 pub fn is_op1a(operational_pattern: &UlBytes) -> bool {
-    operational_pattern[..14] == OP1A_UL_PREFIX
+    operational_pattern.as_bytes()[..14] == OP1A_UL_PREFIX
 }
 
 /// Build a complete 16-byte OP1a UL with the given qualifier flags.
@@ -133,7 +133,7 @@ pub fn op1a_ul(qualifier: Op1aQualifier) -> UlBytes {
     ul[..14].copy_from_slice(&OP1A_UL_PREFIX);
     ul[14] = qualifier.to_byte();
     // byte 15 (index 15) is reserved, left as 0x00.
-    ul
+    UlBytes(ul)
 }
 
 #[cfg(test)]
