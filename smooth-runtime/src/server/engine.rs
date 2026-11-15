@@ -735,7 +735,12 @@ fn build_plan(
         manifest: String::new(),
         streams,
     };
-    plan.manifest = plan.manifest().to_xml();
+    plan.manifest = plan
+        .manifest()
+        .to_xml()
+        .map_err(|e| SmoothOriginError::Manifest {
+            reason: e.to_string(),
+        })?;
     Ok(plan)
 }
 
@@ -1448,7 +1453,7 @@ mod tests {
             ),
         ];
         for (name, layout) in layouts {
-            let actual = layout.manifest().to_xml();
+            let actual = layout.manifest().to_xml().expect("manifest renders");
             let file = format!("smooth-{name}.xml");
             let path = test_fixtures::path(&format!("golden/smooth/{file}"));
             let expected = std::fs::read_to_string(&path).expect("read golden");
@@ -1913,7 +1918,7 @@ mod tests {
             panic!("manifest renders");
         };
         let parsed = SmoothManifest::parse(&body).expect("manifest parses");
-        assert_eq!(parsed.to_xml(), body);
+        assert_eq!(parsed.to_xml().expect("manifest renders"), body);
     }
 
     /// A fragment path names its stream by the manifest's own `Name`

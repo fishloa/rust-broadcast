@@ -60,7 +60,7 @@ for stream in &manifest.streams {
         stream.qualities.len()
     );
 }
-assert_eq!(SmoothManifest::parse(&manifest.to_xml())?, manifest);
+assert_eq!(SmoothManifest::parse(&manifest.to_xml()?)?, manifest);
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
