@@ -380,10 +380,38 @@ pub fn new_writer() -> XmlWriter {
     Writer::new_with_indent(Vec::new(), b' ', 2)
 }
 
-/// `<?xml version="1.0" encoding="{encoding}"?>`. Writing to the in-memory
-/// `Vec` cannot fail, so the write result is discarded.
-pub fn write_declaration(w: &mut XmlWriter, encoding: &str) {
-    let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some(encoding), None)));
+/// One successful write into an [`XmlWriter`].
+pub type XmlWrite = core::result::Result<(), XmlWriteError>;
+
+/// Names what could not be written into an [`XmlWriter`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum XmlWriteError {
+    /// The writer refused the event; the string is the writer's message.
+    Write(String),
+    /// [`open_element`] or [`empty_element`] was given an attribute value
+    /// that is not valid UTF-8.
+    ValueNotUtf8,
+}
+
+impl fmt::Display for XmlWriteError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            XmlWriteError::Write(message) => write!(f, "XML write failed: {message}"),
+            XmlWriteError::ValueNotUtf8 => f.write_str("XML attribute value is not valid UTF-8"),
+        }
+    }
+}
+
+impl core::error::Error for XmlWriteError {}
+
+fn write_event(w: &mut XmlWriter, event: Event<'_>) -> XmlWrite {
+    w.write_event(event)
+        .map_err(|e| XmlWriteError::Write(e.to_string()))
+}
+
+/// `<?xml version="1.0" encoding="{encoding}"?>`.
+pub fn write_declaration(w: &mut XmlWriter, encoding: &str) -> XmlWrite {
+    write_event(w, Event::Decl(BytesDecl::new("1.0", Some(encoding), None)))
 }
 
 /// The attribute list of an element with none.
@@ -401,30 +429,65 @@ pub fn start_tag<'a, V: AsRef<str>>(name: &'a str, attrs: &'a [(&str, V)]) -> By
 }
 
 /// `<name a="b">`.
-pub fn open_element<V: AsRef<str>>(w: &mut XmlWriter, name: &str, attrs: &[(&str, V)]) {
-    let _ = w.write_event(Event::Start(start_tag(name, attrs)));
+///
+/// # Errors
+/// [`XmlWriteError::ValueNotUtf8`] if an attribute value is not UTF-8, or
+/// [`XmlWriteError::Write`] if the writer refuses the event.
+pub fn open_element<V: AsRef<str>>(w: &mut XmlWriter, name: &str, attrs: &[(&str, V)]) -> XmlWrite {
+    let start = start_tag(name, attrs);
+    check_values(&start)?;
+    write_event(w, Event::Start(start))
 }
 
 /// `<name a="b"/>`.
-pub fn empty_element<V: AsRef<str>>(w: &mut XmlWriter, name: &str, attrs: &[(&str, V)]) {
-    let _ = w.write_event(Event::Empty(start_tag(name, attrs)));
+///
+/// # Errors
+/// As [`open_element`].
+pub fn empty_element<V: AsRef<str>>(
+    w: &mut XmlWriter,
+    name: &str,
+    attrs: &[(&str, V)],
+) -> XmlWrite {
+    let start = start_tag(name, attrs);
+    check_values(&start)?;
+    write_event(w, Event::Empty(start))
+}
+
+/// Every attribute value of `start` is valid UTF-8.
+fn check_values(start: &BytesStart<'_>) -> XmlWrite {
+    for attribute in start.attributes() {
+        let attribute = attribute.map_err(|e| XmlWriteError::Write(e.to_string()))?;
+        attribute
+            .normalized_value(XmlVersion::Implicit1_0)
+            .map_err(|_| XmlWriteError::ValueNotUtf8)?;
+    }
+    Ok(())
 }
 
 /// `</name>`.
-pub fn close_element(w: &mut XmlWriter, name: &str) {
-    let _ = w.write_event(Event::End(BytesEnd::new(name)));
+///
+/// # Errors
+/// [`XmlWriteError::Write`] if the writer refuses the event.
+pub fn close_element(w: &mut XmlWriter, name: &str) -> XmlWrite {
+    write_event(w, Event::End(BytesEnd::new(name)))
 }
 
 /// Escaped character data.
-pub fn write_text(w: &mut XmlWriter, text: &str) {
-    let _ = w.write_event(Event::Text(BytesText::new(text)));
+///
+/// # Errors
+/// [`XmlWriteError::Write`] if the writer refuses the event.
+pub fn write_text(w: &mut XmlWriter, text: &str) -> XmlWrite {
+    write_event(w, Event::Text(BytesText::new(text)))
 }
 
 /// A leaf element with escaped text content on one line (`<name>text</name>`).
-pub fn text_element(w: &mut XmlWriter, name: &str, text: &str) {
-    open_element(w, name, NO_ATTRS);
-    write_text(w, text);
-    close_element(w, name);
+///
+/// # Errors
+/// As [`open_element`].
+pub fn text_element(w: &mut XmlWriter, name: &str, text: &str) -> XmlWrite {
+    open_element(w, name, NO_ATTRS)?;
+    write_text(w, text)?;
+    close_element(w, name)
 }
 
 /// The written document plus a trailing newline.
@@ -647,11 +710,11 @@ mod tests {
     #[test]
     fn writer_helpers_escape_and_indent() {
         let mut w = new_writer();
-        write_declaration(&mut w, "utf-8");
-        open_element(&mut w, "R", &[("k", "a&b\"c".to_string())]);
-        empty_element(&mut w, "E", &[("v", "<")]);
-        text_element(&mut w, "T", "x<y");
-        close_element(&mut w, "R");
+        write_declaration(&mut w, "utf-8").unwrap();
+        open_element(&mut w, "R", &[("k", "a&b\"c".to_string())]).unwrap();
+        empty_element(&mut w, "E", &[("v", "<")]).unwrap();
+        text_element(&mut w, "T", "x<y").unwrap();
+        close_element(&mut w, "R").unwrap();
         assert_eq!(
             finish_document(w),
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<R k=\"a&amp;b&quot;c\">\n  <E v=\"&lt;\"/>\n  <T>x&lt;y</T>\n</R>\n"

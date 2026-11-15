@@ -90,7 +90,8 @@ impl Mpd {
     /// formatted.
     pub fn to_xml(&self) -> Result<String, MpdError> {
         let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
-        let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
+        w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
+            .map_err(io_err)?;
         w.write_event(Event::Start(BytesStart::new(ROOT_NAME)))
             .map_err(io_err)?;
         let bare_len = w.get_ref().len();
