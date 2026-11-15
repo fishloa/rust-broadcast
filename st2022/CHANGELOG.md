@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- The `panic_idioms` workspace guard now covers this crate (already clear of panicking idioms in non-test code) (#2773).
 
 ## [0.4.0] - 2026-11-14
 ### Changed

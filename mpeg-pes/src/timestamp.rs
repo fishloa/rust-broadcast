@@ -148,8 +148,9 @@ pub(crate) fn read(b: &[u8], prefix: u8, what: &'static str) -> Result<u64> {
     if b[0] & 0x01 == 0 || b[2] & 0x01 == 0 || b[4] & 0x01 == 0 {
         return Err(crate::error::Error::BadTimestampMarker(what));
     }
-    let field: &[u8; 5] = b[..5].try_into().expect("length checked above");
-    Ok(broadcast_common::clock33::unpack_marked(field).timestamp)
+    // `b.len() < 5` was rejected above, so the first five bytes are present.
+    let field = [b[0], b[1], b[2], b[3], b[4]];
+    Ok(broadcast_common::clock33::unpack_marked(&field).timestamp)
 }
 
 /// Encode a 33-bit value into a 5-byte PTS/DTS field with the given 4-bit prefix.

@@ -253,9 +253,7 @@ impl OwnedTsPacket {
             adaptation_field_control: AdaptationFieldControl::PayloadOnly,
             continuity_counter: cc,
         };
-        // Cannot fail: buf is 188 bytes, need 4.
-        hdr.serialize_into(&mut pkt)
-            .expect("serialize TsHeader into 188-byte buf");
+        pkt[..4].copy_from_slice(&hdr.to_bytes());
         pkt[4..4 + payload.len()].copy_from_slice(payload);
         Ok(pkt)
     }
@@ -278,9 +276,17 @@ impl OwnedTsPacket {
     /// ```
     #[must_use]
     pub fn null_packet(cc: ContinuityCounter) -> [u8; TS_PACKET_SIZE] {
-        // Cannot fail: an empty payload never exceeds MAX_PAYLOAD_LEN.
-        Self::serialize_with_payload(NULL_PID, false, cc, &[])
-            .expect("empty payload always fits a TS packet")
+        let mut pkt = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
+        let hdr = TsHeader {
+            tei: false,
+            pusi: false,
+            pid: NULL_PID,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: cc,
+        };
+        pkt[..4].copy_from_slice(&hdr.to_bytes());
+        pkt
     }
 
     /// Overwrite the `continuity_counter` field in `packet` without re-parsing.

@@ -374,7 +374,8 @@ impl AncContent {
     }
 }
 
-#[cfg(all(test, any(feature = "ts", feature = "rtp")))]
+#[cfg(test)]
+#[cfg(any(feature = "ts", feature = "rtp"))]
 mod tests {
     use super::*;
     use alloc::vec;

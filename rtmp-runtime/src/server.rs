@@ -422,7 +422,7 @@ impl ServerSession {
             self.dispatch_message(&msg, &mut out, &mut events)?;
         }
 
-        self.maybe_ack(&mut out);
+        self.maybe_ack(&mut out)?;
 
         Ok((out, events))
     }
@@ -471,19 +471,15 @@ impl ServerSession {
     /// Send an Acknowledgement (§5.4.3) if `bytes_received` has crossed
     /// `ack_threshold` since the last one. Sequence number is a plain
     /// modular `u32` truncation of the running total (see the module doc).
-    fn maybe_ack(&mut self, out: &mut Vec<u8>) {
+    fn maybe_ack(&mut self, out: &mut Vec<u8>) -> Result<()> {
         let threshold = u64::from(self.ack_threshold.max(1));
         if self.bytes_received.saturating_sub(self.bytes_acked) >= threshold {
             self.bytes_acked = self.bytes_received;
             let seq = self.bytes_received as u32;
             let ack_msg = ProtocolControl::Acknowledgement(seq).to_message();
-            out.extend_from_slice(
-                &self
-                    .writer
-                    .write(&ack_msg)
-                    .expect("an Acknowledgement control message (4 bytes) never exceeds the 24-bit message_length field"),
-            );
+            out.extend_from_slice(&self.writer.write(&ack_msg)?);
         }
+        Ok(())
     }
 
     /// Dispatch one reassembled [`Message`] by `message_type_id`.
@@ -763,10 +759,11 @@ impl ServerSession {
                 what: "publish rejected too many times on this connection (stream key mismatch); session closed",
             });
         }
-        let app = self
-            .app
-            .clone()
-            .expect("state == Connected implies app was captured by connect");
+        let Some(app) = self.app.clone() else {
+            return Err(RtmpError::UnexpectedState {
+                what: "publish received in Connected state without a captured app",
+            });
+        };
 
         let stream_key = match command.arguments.get(1) {
             Some(Amf0Value::String(s)) => s.clone(),

@@ -303,8 +303,16 @@ impl<'a> Parse<'a> for Section<'a> {
         // Total section size is section_length + 3 (the 3-byte header itself
         // is not counted by section_length). W14 (#1074): shared with the
         // other three sites that used to decode this field separately.
-        let total = crate::ts::section_total_len(bytes)
-            .expect("bytes.len() >= MIN_HEADER_LEN checked above");
+        // `need_in(bytes, MIN_HEADER_LEN, ..)` passed above, so the header is
+        // present and `section_total_len` cannot return `None`.
+        let total = match crate::ts::section_total_len(bytes) {
+            Some(t) => t,
+            None => return Err(Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+                need: MIN_HEADER_LEN,
+                have: bytes.len(),
+                what: "section header",
+            })),
+        };
 
         if bytes.len() < total {
             return Err(Error::SectionLengthOverflow {

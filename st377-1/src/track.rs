@@ -192,9 +192,9 @@ impl TimelineTrack {
         out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence));
         {
             let mut buf = [0u8; RATIONAL_LEN];
-            self.edit_rate
-                .serialize_into(&mut buf)
-                .expect("fixed-size buffer");
+            // The buffer is exactly the type's serialized length, so the
+            // write cannot fail.
+            let _ = self.edit_rate.serialize_into(&mut buf);
             out.push(LocalSetOwnedItem::owned(TAG_EDIT_RATE, buf.to_vec()));
         }
         out.push(LocalSetOwnedItem::fixed(
@@ -307,9 +307,9 @@ impl EventTrack {
         out.push(LocalSetOwnedItem::fixed(TAG_SEQUENCE, self.sequence));
         {
             let mut buf = [0u8; RATIONAL_LEN];
-            self.event_edit_rate
-                .serialize_into(&mut buf)
-                .expect("fixed-size buffer");
+            // The buffer is exactly the type's serialized length, so the
+            // write cannot fail.
+            let _ = self.event_edit_rate.serialize_into(&mut buf);
             out.push(LocalSetOwnedItem::owned(TAG_EVENT_EDIT_RATE, buf.to_vec()));
         }
         if let Some(o) = self.event_origin {

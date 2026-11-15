@@ -88,8 +88,7 @@ impl ScramblingControl {
             0b00 => Self::NotScrambled,
             0b01 => Self::Reserved,
             0b10 => Self::EvenKey,
-            0b11 => Self::OddKey,
-            _ => unreachable!(),
+            _ => Self::OddKey,
         }
     }
 
@@ -394,24 +393,31 @@ impl TsHeader {
         4
     }
 
-    /// Serialize this header into the first 4 bytes of `buf`.
-    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        need_out(buf, 4)?;
-        buf[0] = TS_SYNC_BYTE;
-        buf[1] = 0;
+    /// The 4 header bytes, infallibly encoded.
+    #[must_use]
+    pub fn to_bytes(&self) -> [u8; 4] {
+        let mut b = [0u8; 4];
+        b[0] = TS_SYNC_BYTE;
         if self.tei {
-            buf[1] |= TEI_MASK;
+            b[1] |= TEI_MASK;
         }
         if self.pusi {
-            buf[1] |= PUSI_MASK;
+            b[1] |= PUSI_MASK;
         }
         let pid = self.pid.value();
-        buf[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
-        buf[2] = pid.to_be_bytes()[1];
-        buf[3] = (self.scrambling.to_bits() << SCRAMBLING_SHIFT)
+        b[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
+        b[2] = pid.to_be_bytes()[1];
+        b[3] = (self.scrambling.to_bits() << SCRAMBLING_SHIFT)
             | ((self.adaptation_field_control.to_bits() & ADAPTATION_CONTROL_MASK)
                 << ADAPTATION_SHIFT)
             | self.continuity_counter.value();
+        b
+    }
+
+    /// Serialize this header into the first 4 bytes of `buf`.
+    pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        need_out(buf, 4)?;
+        buf[..4].copy_from_slice(&self.to_bytes());
         Ok(4)
     }
 
@@ -1049,11 +1055,10 @@ impl<'a> AdaptationFieldExtension<'a> {
         // seamless_splice: 5 bytes with splice_type(4) + DTS_next_AU in PTS-field encoding
         let seamless_splice = if flags & AFE_SEAMLESS_SPLICE_FLAG != 0 {
             need_in(ext, cursor + 5, "seamless_splice DTS_next_AU")?;
-            let b = &ext[cursor..cursor + 5];
+            let field = [ext[cursor], ext[cursor + 1], ext[cursor + 2], ext[cursor + 3], ext[cursor + 4]];
             // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS,
             // with `splice_type` in the prefix nibble.
-            let field: &[u8; 5] = b.try_into().expect("slice is exactly 5 bytes");
-            let splice = SeamlessSplice::from_marked_field(field);
+            let splice = SeamlessSplice::from_marked_field(&field);
             cursor += 5;
             Some(splice)
         } else {
@@ -1601,8 +1606,11 @@ impl SectionReassembler {
                 self.buf.clear();
                 break;
             }
-            let exp =
-                section_total_len(&self.buf).expect("checked len >= SECTION_HEADER_LEN above");
+            // `self.buf.len() >= SECTION_HEADER_LEN` was just checked above,
+            // so `section_total_len` cannot return `None` here.
+            let Some(exp) = section_total_len(&self.buf) else {
+                break;
+            };
             if self.buf.len() >= exp {
                 let section = self.buf.split_to(exp).freeze();
                 self.ready.push_back(section);

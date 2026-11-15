@@ -922,10 +922,16 @@ impl ChunkAssembler {
                 ) {
                     Ok(Some(parsed)) => {
                         cursor += parsed.consumed;
-                        // Safe to unwrap: `try_parse_one` always commits
-                        // (inserts or updates) `parsed.csid`'s entry before
-                        // returning `Ok(Some(_))`.
-                        let state = self.csids.get(&parsed.csid).expect("just committed above");
+                        // `try_parse_one` commits (inserts or updates)
+                        // `parsed.csid`'s entry before returning `Ok(Some(_))`,
+                        // so the entry exists; guard the borrow the same way
+                        // the message-type-id field is below.
+                        let state = self.csids.get_mut(&parsed.csid).ok_or(
+                            RtmpError::ChunkStreamState {
+                                chunk_stream_id: parsed.csid,
+                                what: "chunk committed but its csid entry is missing",
+                            },
+                        )?;
                         if state.payload.len() as u32 != state.message_length {
                             // This chunk only partially filled its message
                             // (or belongs to a different, interleaved csid)
@@ -933,10 +939,6 @@ impl ChunkAssembler {
                             // in `pending`.
                             continue;
                         }
-                        let state = self
-                            .csids
-                            .get_mut(&parsed.csid)
-                            .expect("checked just above");
                         state.in_progress = false;
                         // #1108/RTMP-W1: a completed message's reservation
                         // (its declared length, charged when it opened)
@@ -1224,10 +1226,16 @@ impl ChunkAssembler {
                     )
                 }
             }
-            // `MessageHeader::parse` is always called with the `Fmt` that
-            // selects its own variant, so every other pairing is
-            // unreachable.
-            _ => unreachable!("MessageHeader::parse always returns the variant for its Fmt"),
+            // `MessageHeader::parse` is called with `bh.fmt` above, so it
+            // returns the variant that matches that `Fmt`; any other pairing
+            // is a programming error, surfaced as a typed state error rather
+            // than a panic.
+            _ => {
+                return Err(RtmpError::ChunkStreamState {
+                    chunk_stream_id: bh.chunk_stream_id,
+                    what: "message header variant does not match its fmt",
+                })
+            }
         };
 
         // Remote-DoS guard: `message_length` is a fully peer-supplied
