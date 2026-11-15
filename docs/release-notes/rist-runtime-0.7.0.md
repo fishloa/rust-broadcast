@@ -4,7 +4,7 @@ _Released 2026-11-15._
 
 Dependency/epoch bump only: the crate has no functional or API change of its own; it moves so that its published bucket names the sibling release it is known to build against.
 
-Version: 0.7.-1 -> 0.7.0.
+Version: 0.6.0 -> 0.7.0.
 
 ## Dependencies
 
