@@ -53,7 +53,7 @@ fn trunk_with(segment_cap: usize, part_cap: usize) -> (Arc<Trunk>, SegmentWriter
 }
 
 fn origin(trunk: &Arc<Trunk>, window: usize, low_latency: bool) -> HlsOrigin {
-    let mut b = HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(window));
+    let mut b = HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(4), nz(window));
     if low_latency {
         b = b.with_low_latency(Duration::from_millis(500));
     }
@@ -458,7 +458,7 @@ fn lag_after_a_populated_window_does_not_leave_a_numbering_hole() {
 fn media_sequence_offset_continues_the_numbering_everywhere() {
     let (trunk, w) = trunk_with(8, 64);
     let o = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
             .with_low_latency(Duration::from_millis(500))
             .with_media_sequence_offset(1000)
             .with_instance(7),
@@ -534,7 +534,7 @@ fn is_await_playlist(r: &EgressResponse<HlsBody>) -> bool {
 #[test]
 fn builder_rejects_hostile_configuration() {
     let (trunk, _w) = trunk_with(8, 64);
-    let base = || HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4));
+    let base = || HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4));
     assert_eq!(
         HlsOrigin::new(base().with_low_latency(Duration::from_millis(0))).err(),
         Some(HlsOriginBuildError::ZeroPartTarget)
@@ -661,7 +661,7 @@ media.m3u8
 fn a_new_unparseable_init_drops_the_previous_codecs() {
     let (trunk, _w) = trunk_with(8, 64);
     let o = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
             .with_declared_bandwidth_bps(5_000_000)
             .with_instance(7),
     )
@@ -679,7 +679,7 @@ fn a_new_unparseable_init_drops_the_previous_codecs() {
 fn next_media_sequence_continues_into_a_replacement_origin() {
     let (trunk, w) = trunk_with(8, 64);
     let first = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
             .with_media_sequence_offset(1000)
             .with_instance(7),
     )
@@ -698,7 +698,7 @@ fn next_media_sequence_continues_into_a_replacement_origin() {
     // A reconnect: a fresh Trunk restarts at 1, the offset carries on.
     let (trunk2, w2) = trunk_with(8, 64);
     let second = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk2), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(&trunk2), core::time::Duration::from_secs(4), nz(4))
             .with_media_sequence_offset(first.next_media_sequence().value().saturating_sub(1))
             .with_instance(7),
     )
@@ -1017,7 +1017,7 @@ fn a_replacement_origin_with_the_offset_reuses_no_segment_name() {
     let (trunk2, w2) = trunk_with(8, 64);
     let collide = origin(&trunk2, 6, false);
     let o2 = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk2), 4.0, nz(6))
+        HlsOriginConfig::new(Arc::clone(&trunk2), core::time::Duration::from_secs(4), nz(6))
             .with_media_sequence_offset(o1.next_media_sequence().value().saturating_sub(1))
             .with_instance(7),
     )
@@ -1043,14 +1043,15 @@ fn a_replacement_origin_with_the_offset_reuses_no_segment_name() {
 #[test]
 fn a_hostile_target_duration_is_a_build_error() {
     let (trunk, _w) = trunk_with(8, 64);
-    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -4.0] {
-        let result =
-            HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), bad, nz(4)).with_instance(7));
-        assert!(
-            matches!(result, Err(HlsOriginBuildError::InvalidTargetDuration)),
-            "{bad} must be rejected"
-        );
-    }
+    // A `Duration` cannot be NaN, infinite or negative (that is unreachable by
+    // type now); zero remains a build error.
+    let result = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&trunk), Duration::ZERO, nz(4)).with_instance(7),
+    );
+    assert!(
+        matches!(result, Err(HlsOriginBuildError::InvalidTargetDuration)),
+        "a zero target duration must be rejected"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1080,7 +1081,7 @@ fn named_uris(body: &str) -> Vec<String> {
 fn fresh_origin(offset: u64) -> (Arc<Trunk>, SegmentWriter, HlsOrigin) {
     let (trunk, w) = trunk_with(8, 64);
     let o = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(6))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(6))
             .with_low_latency(Duration::from_millis(500))
             .with_media_sequence_offset(offset),
     )
@@ -1202,7 +1203,7 @@ fn token_less_names_resolve_but_are_never_immutable() {
 fn a_segmenter_numbering_from_above_one_renders_the_open_segments_parts() {
     let (trunk, w) = trunk_with(8, 64);
     let o = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(6))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(6))
             .with_low_latency(Duration::from_millis(500))
             .with_hold_cold_playlist(false),
     )

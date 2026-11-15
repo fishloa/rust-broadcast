@@ -31,7 +31,7 @@ use transmux::{
     TrackId, TrackSpec,
 };
 
-const TARGET_SECS: f64 = 4.0;
+const TARGET_SECS: Duration = Duration::from_secs(4);
 const HEARING_IMPAIRED: &str = "CHARACTERISTICS=\"public.accessibility.transcribes-spoken-dialog,public.accessibility.describes-music-and-sound\"";
 
 fn nz(n: usize) -> NonZeroUsize {
@@ -103,9 +103,9 @@ fn media_lines(master: &str) -> Vec<&str> {
         .collect()
 }
 
-fn webvtt_origin(trunk: &Arc<Trunk>, target_secs: f64) -> HlsOrigin {
+fn webvtt_origin(trunk: &Arc<Trunk>, target: Duration) -> HlsOrigin {
     HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(trunk), target_secs, nz(4))
+        HlsOriginConfig::new(Arc::clone(trunk), target, nz(4))
             .with_container(Container::WebVtt)
             .with_instance(9),
     )
@@ -486,7 +486,7 @@ fn sibling_origins_must_be_webvtt_with_the_primary_target_duration() {
         .is_ok()
     );
 
-    let slow = Arc::new(webvtt_origin(&new_trunk(), 6.0));
+    let slow = Arc::new(webvtt_origin(&new_trunk(), Duration::from_secs(6)));
     assert_eq!(
         build_err(
             primary_builder()

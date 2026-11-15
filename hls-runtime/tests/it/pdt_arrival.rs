@@ -35,7 +35,7 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 
 fn origin_arrival(trunk: &Arc<Trunk>, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> HlsOrigin {
     HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(4), nz(4))
             .with_low_latency(Duration::from_millis(500))
             .with_instance(7)
             .with_program_date_time_arrival(clock),
@@ -45,7 +45,7 @@ fn origin_arrival(trunk: &Arc<Trunk>, clock: Arc<dyn Fn() -> i64 + Send + Sync>)
 
 fn origin_plain(trunk: &Arc<Trunk>) -> HlsOrigin {
     HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(4), nz(4))
             .with_low_latency(Duration::from_millis(500))
             .with_instance(7),
     )
@@ -277,7 +277,7 @@ fn iframe_pdt_equals_media_pdt() {
     let writer = trunk.segment_writer().expect("writer");
     let clock = Arc::new(|| NOW_MS) as Arc<dyn Fn() -> i64 + Send + Sync>;
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
             .with_low_latency(Duration::from_millis(500))
             .with_instance(7)
             .with_program_date_time_arrival(clock),

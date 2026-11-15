@@ -22,7 +22,7 @@ fn origin(overrides: Vec<ClosedCaptionDecl>, none: bool) -> HlsOrigin {
             .with_part_capacity(nz(64)),
     );
     HlsOrigin::new(
-        HlsOriginConfig::new(trunk, 4.0, nz(4))
+        HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
             .with_instance(7)
             .with_declared_bandwidth_bps(5_000_000)
             .with_closed_caption_overrides(overrides)

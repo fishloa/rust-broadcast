@@ -31,7 +31,7 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 }
 
 fn origin(trunk: &Arc<Trunk>) -> HlsOrigin {
-    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), 1.0, nz(8)).with_instance(7))
+    HlsOrigin::new(HlsOriginConfig::new(Arc::clone(trunk), core::time::Duration::from_secs(1), nz(8)).with_instance(7))
         .expect("origin builds")
 }
 

@@ -43,7 +43,7 @@ fn trunk_with() -> (Arc<Trunk>, SegmentWriter) {
 fn origin_fmp4() -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let (trunk, writer) = trunk_with();
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4))
             .with_low_latency(Duration::from_millis(500))
             .with_instance(7),
     )
@@ -611,7 +611,7 @@ fn iframe_ts_origin_not_found() {
     );
     let writer = trunk.segment_writer().expect("writer");
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(trunk, 4.0, nz(4))
+        HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
             .with_container(Container::MpegTs)
             .with_instance(7),
     )
@@ -635,7 +635,7 @@ fn iframe_ts_origin_not_found() {
 fn iframe_audio_only_not_found() {
     let (trunk, writer) = trunk_with();
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(trunk, 4.0, nz(4))
+        HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
             .with_low_latency(Duration::from_millis(500))
             .with_instance(7),
     )
@@ -755,7 +755,7 @@ fn a_bare_msn_iframe_reload_waits_for_a_segment_the_window_holds() {
     };
     publish(1);
     let origin =
-        HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4)).with_instance(7))
+        HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(4)).with_instance(7))
             .expect("origin");
     origin.set_init(Bytes::from(fixture_bytes("init.mp4")));
     let reload = |msn: u64| {

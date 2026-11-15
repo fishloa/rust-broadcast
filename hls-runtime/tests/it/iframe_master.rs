@@ -43,7 +43,7 @@ fn trunk_with(cap: usize) -> (Arc<Trunk>, SegmentWriter) {
 fn origin_fmp4(cap: usize) -> (Arc<Trunk>, HlsOrigin, SegmentWriter) {
     let (trunk, writer) = trunk_with(cap);
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(3))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(3))
             .with_low_latency(Duration::from_millis(500))
             .with_instance(7)
             .with_declared_bandwidth_bps(5_000_000),
@@ -168,7 +168,7 @@ fn iframe_master_omitted_before_first_segment() {
 fn iframe_master_audio_only_omitted() {
     let (trunk, writer) = trunk_with(64);
     let origin = HlsOrigin::new(
-        HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(3))
+        HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(4), nz(3))
             .with_instance(7)
             .with_declared_bandwidth_bps(5_000_000),
     )
