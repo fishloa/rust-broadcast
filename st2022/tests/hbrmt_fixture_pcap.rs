@@ -21,7 +21,7 @@
 use broadcast_common::{Parse, Serialize};
 use st2022::{
     ClockFrequency, FecUsage, FrameStructure, MapStructure, PayloadHeader, SampleStructure,
-    Scrambling, TimestampRef, VideoSourceFormat, VideoSourceId,
+    Scrambling, Timestamp, TimestampRef, VideoSourceFormat, VideoSourceId,
 };
 
 /// libpcap (classic, not pcapng) global header magic for little-endian,
@@ -151,7 +151,7 @@ fn first_packet_hbrmt_header_matches_documented_decode() {
             fmt_reserve: 0,
         })
     );
-    assert_eq!(header.video_timestamp, Some(0));
+    assert_eq!(header.video_timestamp, Some(Timestamp::ZERO));
     assert_eq!(header.extension, None);
 
     // 4 (fixed) + 4 (VSF) + 4 (timestamp) = 12-byte HBRMT header, then the

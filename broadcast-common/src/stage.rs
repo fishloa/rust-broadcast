@@ -87,6 +87,8 @@ use crate::units::{MICROS_PER_MILLI, NANOS_PER_MICRO};
 /// not crash because a driver's clock underflowed or overflowed. A deadline is
 /// [`checked_add`](Self::checked_add) instead, which reports "never fires".
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg_attr(feature = "serde", serde(transparent))]
 pub struct Timestamp(u64);
 
 impl Timestamp {
@@ -126,6 +128,14 @@ impl Timestamp {
 
     /// The raw microsecond count since the driver's chosen epoch.
     pub const fn as_micros(self) -> u64 {
+        self.0
+    }
+
+    /// The raw integer count this reading was constructed from, in its
+    /// constructor's own unit — the wire value of a field whose clock the
+    /// surrounding format defines (`ST 2022-6`'s 32-bit Video Timestamp).
+    /// Hosts that need a duration use [`saturating_sub`](Self::saturating_sub).
+    pub const fn ticks(self) -> u64 {
         self.0
     }
 

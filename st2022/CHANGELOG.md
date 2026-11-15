@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Changed
+### Changed
+- BREAKING: `PayloadHeader::video_timestamp` is an `Option<broadcast_common::Timestamp>` (re-exported as `st2022::Timestamp`) instead of a bare `u32` (#2768). The field is an instant on the sample clock `ClockFrequency` names, so it is the workspace clock value rather than a count whose unit lived only in a doc comment; `video_timestamp_ticks()` returns the 32-bit wire count unchanged, and the on-wire bytes are identical.
 - The `panic_idioms` workspace guard now covers this crate (already clear of panicking idioms in non-test code) (#2773).
 
 ## [0.4.0] - 2026-11-14

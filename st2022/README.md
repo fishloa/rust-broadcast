@@ -54,7 +54,7 @@ assert_eq!(header.try_to_bytes().unwrap(), bytes);
 
 ## What is implemented
 
-- `PayloadHeader`: the 4-byte fixed part plus optional 4-byte video source format, 4-byte video timestamp and header extension, with the `validate` rules the spec states.
+- `PayloadHeader`: the 4-byte fixed part plus optional 4-byte video source format, 4-byte video timestamp (a `broadcast_common::Timestamp` on the sample clock `ClockFrequency` names) and header extension, with the `validate` rules the spec states.
 - `VideoSourceFormat` with typed `MapStructure`, `FrameStructure`, `FrameRate`, `SampleStructure`.
 - Typed enums `VideoSourceId`, `TimestampRef`, `Scrambling`, `FecUsage`, `ClockFrequency`. Each has `name()` and `Display`, and a reserved catch-all that keeps the wire value so unknown codes round-trip.
 - `HeaderExtension` as a typed TLV view (`items()` yields `ExtensionItem::{Pad, Tlv}`). A malformed TLV chain still round-trips byte-identically and is reported by the item walk.
