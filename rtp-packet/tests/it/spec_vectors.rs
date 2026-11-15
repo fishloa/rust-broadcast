@@ -25,8 +25,8 @@
 use broadcast_common::{Parse, Serialize};
 use rtp_packet::rtcp::{
     App, Bye, CompoundPacket, Error, PT_APP, PT_BYE, PT_RECEIVER_REPORT, PT_SENDER_REPORT,
-    PT_SOURCE_DESCRIPTION, ReceiverReport, RtcpPacket, RtcpPacketType, SdesItemType, SenderReport,
-    SourceDescription,
+    PT_SOURCE_DESCRIPTION, ReceiverReport, ReportBlock, RtcpPacket, RtcpPacketType, SdesItemType,
+    SenderReport, SourceDescription,
 };
 
 // ── SR — one report block, cumulative_lost = -5 (§6.4.1) ───────────────────
@@ -57,7 +57,7 @@ const SR_VECTOR: [u8; 52] = [
 #[test]
 fn sr_vector_parses_and_round_trips() {
     let sr = SenderReport::parse(&SR_VECTOR).expect("parse spec-derived SR vector");
-    assert_eq!(sr.ssrc, 0x1122_3344);
+    assert_eq!(sr.ssrc.get(), 0x1122_3344);
     assert_eq!(sr.ntp_msw, 0xAABB_CCDD);
     assert_eq!(sr.ntp_lsw, 0x1020_3040);
     assert_eq!(sr.rtp_timestamp, 0x0005_0000);
@@ -65,10 +65,10 @@ fn sr_vector_parses_and_round_trips() {
     assert_eq!(sr.octet_count, 5000);
     assert_eq!(sr.report_blocks.len(), 1);
     let rb = &sr.report_blocks[0];
-    assert_eq!(rb.ssrc, 0xCAFE_BABE);
+    assert_eq!(rb.ssrc.get(), 0xCAFE_BABE);
     assert_eq!(rb.fraction_lost, 10);
     assert_eq!(rb.cumulative_lost, -5, "24-bit signed sign-extension");
-    assert_eq!(rb.ext_highest_seq, 0x0001_0005);
+    assert_eq!(rb.ext_highest_seq.get(), 0x0001_0005);
     assert_eq!(rb.jitter, 200);
     assert_eq!(rb.lsr, 0xB705_2000);
     assert_eq!(rb.dlsr, 0x0000_5400);
@@ -94,13 +94,13 @@ const RR_VECTOR: [u8; 32] = [
 #[test]
 fn rr_vector_parses_and_round_trips() {
     let rr = ReceiverReport::parse(&RR_VECTOR).expect("parse spec-derived RR vector");
-    assert_eq!(rr.ssrc, 0x0A0B_0C0D);
+    assert_eq!(rr.ssrc.get(), 0x0A0B_0C0D);
     assert_eq!(rr.report_blocks.len(), 1);
     let rb = &rr.report_blocks[0];
-    assert_eq!(rb.ssrc, 0xDDCC_BBAA);
+    assert_eq!(rb.ssrc.get(), 0xDDCC_BBAA);
     assert_eq!(rb.fraction_lost, 255);
     assert_eq!(rb.cumulative_lost, -1);
-    assert_eq!(rb.ext_highest_seq, 0xFFFF_0001);
+    assert_eq!(rb.ext_highest_seq.get(), 0xFFFF_0001);
     assert_eq!(rb.jitter, 0);
     assert_eq!(rb.lsr, 0);
     assert_eq!(rb.dlsr, 0);
@@ -174,7 +174,7 @@ const APP_VECTOR: [u8; 20] = [
 fn app_vector_parses_and_round_trips() {
     let app = App::parse(&APP_VECTOR).expect("parse spec-derived APP vector");
     assert_eq!(app.subtype, 5);
-    assert_eq!(app.ssrc, 0xFEED_FACE);
+    assert_eq!(app.ssrc.get(), 0xFEED_FACE);
     assert_eq!(&app.name, b"TEST");
     assert_eq!(app.data, vec![1, 2, 3, 4, 5, 6, 7, 8]);
 
@@ -296,4 +296,31 @@ fn sr_rr_vectors_with_profile_extensions_round_trip() {
             .profile_extensions
             .is_empty()
     );
+}
+
+#[test]
+fn typed_identities_survive_the_wire_unchanged() {
+    // The `SSRC`/`sequence number`/`ext_highest_seq` fields are typed; the
+    // wire bytes must be exactly the raw identifiers the vector carries.
+    use rtp_packet::{ExtendedSeqNo, SeqNo, Ssrc};
+
+    let ssrc = Ssrc::new(0x1122_3344);
+    let sr = SenderReport::new(ssrc, 1, 2, 3, 0, 0, Vec::new());
+    assert_eq!(sr.ssrc, ssrc);
+    assert_eq!(
+        Vec::<u8>::from(sr.try_to_bytes().unwrap())[4..8],
+        ssrc.get().to_be_bytes()
+    );
+
+    let block = ReportBlock {
+        ssrc,
+        fraction_lost: 0,
+        cumulative_lost: 0,
+        ext_highest_seq: ExtendedSeqNo::new(5146),
+        jitter: 0,
+        lsr: 0,
+        dlsr: 0,
+    };
+    assert_eq!(block.ext_highest_seq.forward_distance(SeqNo::new(5146)), 0);
+    assert_eq!(SeqNo::new(0xBEEF).get(), 0xBEEF);
 }

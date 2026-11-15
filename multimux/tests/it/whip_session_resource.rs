@@ -12,6 +12,8 @@
 use std::time::Duration;
 
 use crate::support::raw_http::{Resp, http};
+use rtp_packet::SeqNo;
+use rtp_packet::Ssrc;
 
 const OFFER: &str = "v=0\r\n\
 o=- 0 0 IN IP4 127.0.0.1\r\n\
@@ -373,9 +375,9 @@ async fn drive_client_until_srtp_ready(
     let probe = rtp_packet::RtpPacket {
         marker: false,
         payload_type: 96,
-        sequence_number: 0,
+        sequence_number: SeqNo::new(0),
         timestamp: 0,
-        ssrc: 0x1234,
+        ssrc: Ssrc::new(0x1234),
         csrc: vec![],
         extension: None,
         padding: None,
@@ -550,9 +552,9 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
         let rtp = rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
-            sequence_number: 10,
+            sequence_number: SeqNo::new(10),
             timestamp: 1000,
-            ssrc: 0x1234,
+            ssrc: Ssrc::new(0x1234),
             csrc: vec![],
             extension: None,
             padding: None,
@@ -647,9 +649,9 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
     let rtp = rtp_packet::RtpPacket {
         marker: false,
         payload_type: 96,
-        sequence_number: 11,
+        sequence_number: SeqNo::new(11),
         timestamp: 4000,
-        ssrc: 0x1234,
+        ssrc: Ssrc::new(0x1234),
         csrc: vec![],
         extension: None,
         padding: None,

@@ -478,7 +478,15 @@ mod tests {
     }
 
     fn sender_report_at(msw: u32, lsw: u32, rtp_timestamp: u32) -> Vec<u8> {
-        let sr = crate::rtcp::SenderReport::new(SR_SSRC, msw, lsw, rtp_timestamp, 0, 0, Vec::new());
+        let sr = crate::rtcp::SenderReport::new(
+            rtp_packet::Ssrc::new(SR_SSRC),
+            msw,
+            lsw,
+            rtp_timestamp,
+            0,
+            0,
+            Vec::new(),
+        );
         let mut buf = alloc::vec![0u8; sr.serialized_len()];
         let n = sr.serialize_into(&mut buf).expect("serialize sr");
         buf.truncate(n);

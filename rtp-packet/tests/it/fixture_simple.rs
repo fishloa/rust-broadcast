@@ -35,9 +35,9 @@ fn parses_real_simple_case_header() {
 
     assert!(pkt.marker, "AAC-hbr packetiser sets marker per AU");
     assert_eq!(pkt.payload_type, 97, "default audio payload type");
-    assert_eq!(pkt.sequence_number, 5);
+    assert_eq!(pkt.sequence_number.get(), 5);
     assert_eq!(pkt.timestamp, 0x0000_1400);
-    assert_eq!(pkt.ssrc, 0x1234_5678);
+    assert_eq!(pkt.ssrc.get(), 0x1234_5678);
     assert_eq!(pkt.csrc_count(), 0, "simple case: CC=0");
     assert!(pkt.extension.is_none(), "simple case: X=0");
     assert!(pkt.padding.is_none(), "simple case: P=0");
@@ -67,7 +67,7 @@ fn mutating_a_field_changes_the_wire_bytes() {
     // echoing a stored raw buffer.
     let bytes = fixture_bytes();
     let mut pkt = RtpPacket::parse(&bytes).unwrap();
-    pkt.sequence_number = pkt.sequence_number.wrapping_add(1);
+    pkt.sequence_number = pkt.sequence_number.wrapping_next();
 
     let mut out = vec![0u8; pkt.serialized_len()];
     pkt.serialize_into(&mut out).unwrap();

@@ -29,15 +29,15 @@ fn real_chrome_compound_parses_all_three_packets() {
     // 1) RR (RFC 3550 §6.4.2, PT 201): the packet this crate must not lose.
     match &compound.packets[0] {
         RtcpPacket::ReceiverReport(rr) => {
-            assert_eq!(rr.ssrc, 1);
+            assert_eq!(rr.ssrc.get(), 1);
             assert_eq!(rr.report_blocks.len(), 1);
             // The real RR carries no profile-specific extensions.
             assert!(rr.profile_extensions.is_empty());
             let rb = &rr.report_blocks[0];
-            assert_eq!(rb.ssrc, 0x407E_522F);
+            assert_eq!(rb.ssrc.get(), 0x407E_522F);
             assert_eq!(rb.fraction_lost, 0);
             assert_eq!(rb.cumulative_lost, 0);
-            assert_eq!(rb.ext_highest_seq, 5146);
+            assert_eq!(rb.ext_highest_seq.get(), 5146);
             assert_eq!(rb.jitter, 482);
             assert_eq!(rb.lsr, 0);
             assert_eq!(rb.dlsr, 0);

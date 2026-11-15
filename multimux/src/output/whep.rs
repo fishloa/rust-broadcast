@@ -1136,10 +1136,10 @@ fn patch_packet(
     v.extend_from_slice(header);
     v.extend_from_slice(payload);
     let mut pkt = rtp_packet::RtpPacket::parse(&v).ok()?;
-    pkt.sequence_number = seq;
+    pkt.sequence_number = seq.into();
     pkt.timestamp = timestamp;
     if let Some((ssrc, payload_type)) = identity {
-        pkt.ssrc = ssrc;
+        pkt.ssrc = ssrc.into();
         pkt.payload_type = payload_type;
     }
     let mut out = vec![0u8; pkt.serialized_len()];
@@ -2861,7 +2861,11 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 .expect("patches");
             let parsed = rtp_packet::RtpPacket::parse(&wire).expect("parses");
             assert_eq!(
-                (parsed.ssrc, parsed.payload_type, parsed.sequence_number),
+                (
+                    parsed.ssrc.get(),
+                    parsed.payload_type,
+                    parsed.sequence_number.get()
+                ),
                 (ssrc, pt, 7)
             );
             wires.push(wire);

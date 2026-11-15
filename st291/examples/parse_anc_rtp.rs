@@ -17,7 +17,7 @@ fn main() {
     println!("RTP marker:       {}", rtp.marker);
     println!("RTP payload_type: {}", rtp.payload_type);
     println!("RTP timestamp:    {}", rtp.timestamp);
-    println!("RTP ssrc:         {:#010x}", rtp.ssrc);
+    println!("RTP ssrc:         {}", rtp.ssrc);
     println!("Extended Sequence Number: {}", anc.extended_sequence_number);
     println!("F (field sense):  {}", anc.field_sense);
     println!("ANC_Count:        {}", anc.anc_count());

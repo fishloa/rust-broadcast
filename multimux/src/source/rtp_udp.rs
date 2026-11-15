@@ -211,9 +211,9 @@ mod tests {
         let wire = rtp_packet::RtpPacket {
             marker,
             payload_type: PT_H264_DYNAMIC,
-            sequence_number: seq,
+            sequence_number: seq.into(),
             timestamp,
-            ssrc: SSRC,
+            ssrc: SSRC.into(),
             csrc: Vec::new(),
             extension: None,
             padding: None,

@@ -1671,10 +1671,10 @@ mod tests {
 
     fn sample_block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
         ReportBlock {
-            ssrc,
+            ssrc: Ssrc::new(ssrc),
             fraction_lost: 12,
             cumulative_lost: cumulative,
-            ext_highest_seq: 0x0001_2345,
+            ext_highest_seq: ExtendedSeqNo::new(0x0001_2345),
             jitter,
             lsr: 0xAABB_CCDD,
             dlsr: 0x0000_1000,
@@ -1683,7 +1683,7 @@ mod tests {
 
     fn sample_sr() -> SenderReport {
         SenderReport {
-            ssrc: 0x1122_3344,
+            ssrc: Ssrc::new(0x1122_3344),
             ntp_msw: 0xE0E1_E2E3,
             ntp_lsw: 0x1020_3040,
             rtp_timestamp: 0x0009_0000,
@@ -1784,7 +1784,7 @@ mod tests {
         assert_eq!(parsed, sr);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
-        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+        let rr = ReceiverReport::new(Ssrc::new(0x0102_0304), vec![sample_block(1, 2, 3)])
             .with_profile_extensions(ext.clone());
         let bytes = rr.try_to_bytes().unwrap();
         let parsed = ReceiverReport::parse(&bytes).unwrap();
@@ -1792,7 +1792,7 @@ mod tests {
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         // RR with zero blocks and only extensions (count 0).
-        let rr = ReceiverReport::new(9, vec![]).with_profile_extensions(vec![7; 4]);
+        let rr = ReceiverReport::new(Ssrc::new(9), vec![]).with_profile_extensions(vec![7; 4]);
         let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(ReceiverReport::parse(&bytes).unwrap(), rr);
     }
@@ -1808,7 +1808,7 @@ mod tests {
                 ..
             }))
         ));
-        let rr = ReceiverReport::new(1, vec![]).with_profile_extensions(vec![1; 5]);
+        let rr = ReceiverReport::new(Ssrc::new(1), vec![]).with_profile_extensions(vec![1; 5]);
         assert!(matches!(
             rr.serialize_into(&mut buf),
             Err(Error::InvalidValue(..))
@@ -1817,7 +1817,9 @@ mod tests {
         // Parse side: a well-formed packet whose trailing bytes are not a
         // multiple of 4 after padding strip (P=1, 4 trailing bytes with the
         // last = pad count 3 leaves 1 byte).
-        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
+        let mut bytes = ReceiverReport::new(Ssrc::new(1), vec![])
+            .try_to_bytes()
+            .unwrap();
         bytes.extend_from_slice(&[0xAA, 0, 0, 3]);
         bytes[0] |= 0x20; // P bit
         bytes[3] += 1; // length in words
@@ -1833,7 +1835,9 @@ mod tests {
     #[test]
     fn trailing_bytes_after_blocks_are_kept_not_dropped() {
         // RC=0 RR with 4 trailing "garbage" bytes: preserved verbatim.
-        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
+        let mut bytes = ReceiverReport::new(Ssrc::new(1), vec![])
+            .try_to_bytes()
+            .unwrap();
         bytes.extend_from_slice(&[0x13, 0x37, 0xC0, 0xDE]);
         bytes[3] += 1;
         let rr = ReceiverReport::parse(&bytes).unwrap();
@@ -1844,7 +1848,7 @@ mod tests {
     #[test]
     fn rr_round_trip() {
         let rr = ReceiverReport {
-            ssrc: 0x0102_0304,
+            ssrc: Ssrc::new(0x0102_0304),
             report_blocks: vec![sample_block(0xCAFE_BABE, 33, -7)],
             profile_extensions: Vec::new(),
             padding: None,
@@ -2053,7 +2057,7 @@ mod tests {
             0x04,
         ];
         let app = App::parse(&bytes).unwrap();
-        assert_eq!(app.ssrc, 0x1122_3344);
+        assert_eq!(app.ssrc.get(), 0x1122_3344);
         assert_eq!(&app.name, b"TEST");
         assert_eq!(
             app.data,
@@ -2066,7 +2070,7 @@ mod tests {
     fn app_round_trip() {
         let app = App {
             subtype: 3,
-            ssrc: 0x9988_7766,
+            ssrc: Ssrc::new(0x9988_7766),
             name: *b"TMUX",
             data: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04],
             padding: None,
@@ -2177,7 +2181,7 @@ mod tests {
         // wrapping via `as u16` truncation.
         let app = App {
             subtype: 0,
-            ssrc: 1,
+            ssrc: Ssrc::new(1),
             name: *b"BIGP",
             data: vec![0u8; 262_136],
             padding: None,
@@ -2268,7 +2272,7 @@ mod tests {
         assert_eq!(parsed, sr);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
-        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+        let rr = ReceiverReport::new(Ssrc::new(0x0102_0304), vec![sample_block(1, 2, 3)])
             .with_padding(RtcpPadding::new(8).unwrap());
         let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(bytes[bytes.len() - 1], 8);
@@ -2339,7 +2343,7 @@ mod tests {
     fn padded_app_unaligned_before_padding_is_rejected() {
         let app = App {
             subtype: 0,
-            ssrc: 1,
+            ssrc: Ssrc::new(1),
             name: *b"TEST",
             data: vec![1, 2, 3],
             padding: Some(RtcpPadding::new(4).unwrap()),

@@ -6,6 +6,8 @@
 use std::time::Duration;
 
 use crate::support::raw_http::{EXCHANGE_DEADLINE, exchange};
+use rtp_packet::SeqNo;
+use rtp_packet::Ssrc;
 
 const OFFER: &str = "v=0\r\n\
 o=- 0 0 IN IP4 127.0.0.1\r\n\
@@ -182,9 +184,9 @@ async fn drive_client_until_srtp_ready(
     let probe = rtp_packet::RtpPacket {
         marker: false,
         payload_type: 96,
-        sequence_number: 0,
+        sequence_number: SeqNo::new(0),
         timestamp: 0,
-        ssrc: 0x1234,
+        ssrc: Ssrc::new(0x1234),
         csrc: vec![],
         extension: None,
         padding: None,
@@ -333,9 +335,9 @@ async fn a_reaped_session_drops_its_idle_clock_entry() {
     let rtp = rtp_packet::RtpPacket {
         marker: false,
         payload_type: 96,
-        sequence_number: 1,
+        sequence_number: SeqNo::new(1),
         timestamp: 3000,
-        ssrc: 0x1234,
+        ssrc: Ssrc::new(0x1234),
         csrc: vec![],
         extension: None,
         padding: None,

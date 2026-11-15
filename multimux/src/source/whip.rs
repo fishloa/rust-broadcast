@@ -1476,9 +1476,9 @@ fn rebuild_rtp_wire(
     let packet = rtp_packet::RtpPacket {
         marker: pkt.marker,
         payload_type: pkt.payload_type,
-        sequence_number: pkt.sequence_number,
+        sequence_number: pkt.sequence_number.into(),
         timestamp: pkt.timestamp,
-        ssrc: pkt.ssrc,
+        ssrc: pkt.ssrc.into(),
         csrc: pkt.csrc.clone(),
         extension: pkt
             .extension

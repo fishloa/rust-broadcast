@@ -44,22 +44,22 @@ Parse a real 324-byte packet (produced by `transmux`'s RTP packetiser over the c
 
 ```rust
 use broadcast_common::{Parse, Serialize};
-use rtp_packet::RtpPacket;
+use rtp_packet::{RtpPacket, SeqNo, Ssrc};
 
 let wire = std::fs::read("../fixtures/rtp/rtp-simple.bin").unwrap();
 let pkt = RtpPacket::parse(&wire).unwrap();
 assert!(pkt.extension.is_none() && pkt.csrc.is_empty());
-println!("pt={} seq={} ts={} ssrc={:#x}",
-    pkt.payload_type, pkt.sequence_number, pkt.timestamp, pkt.ssrc);
+println!("pt={} seq={} ts={} ssrc={}",
+    pkt.payload_type, pkt.sequence_number.get(), pkt.timestamp, pkt.ssrc);
 assert_eq!(pkt.try_to_bytes().unwrap(), wire);
 
 // Build one from fields.
 let out = RtpPacket {
     marker: true,
     payload_type: 96,
-    sequence_number: 1,
+    sequence_number: SeqNo::new(1),
     timestamp: 3600,
-    ssrc: 0x1234_5678,
+    ssrc: Ssrc::new(0x1234_5678),
     csrc: vec![],
     extension: None,
     padding: None,
@@ -83,7 +83,7 @@ assert_eq!(compound.packets.len(), 3);
 
 match &compound.packets[0] {
     RtcpPacket::ReceiverReport(rr) => {
-        assert_eq!(rr.report_blocks[0].ext_highest_seq, 5146);
+        assert_eq!(rr.report_blocks[0].ext_highest_seq.get(), 5146);
     }
     other => panic!("expected RR first, got {}", other.name()),
 }

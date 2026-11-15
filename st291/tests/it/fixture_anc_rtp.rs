@@ -20,9 +20,9 @@ fn parses_expected_fields() {
     // RTP fixed header expectations.
     assert!(rtp.marker);
     assert_eq!(rtp.payload_type, 112);
-    assert_eq!(rtp.sequence_number, 1);
+    assert_eq!(rtp.sequence_number.get(), 1);
     assert_eq!(rtp.timestamp, 90_000);
-    assert_eq!(rtp.ssrc, 0x5354_3239);
+    assert_eq!(rtp.ssrc.get(), 0x5354_3239);
     assert_eq!(rtp.csrc_count(), 0);
     assert!(rtp.extension.is_none());
     assert!(rtp.padding.is_none());

@@ -224,7 +224,7 @@ async fn push_wire_matches_the_recorded_golden() {
 
     let url = format!("rtsp://{addr}/live/key");
     let cfg = RtspTransportConfig::default().with_test_wire(RtpWireState {
-        ssrc: GOLDEN_SSRC,
+        ssrc: GOLDEN_SSRC.into(),
         started: Instant::now(),
     });
     let mut transport = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &cfg))

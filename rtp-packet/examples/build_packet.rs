@@ -4,16 +4,16 @@
 //! Run with `cargo run -p rtp-packet --example build_packet`.
 
 use broadcast_common::Serialize;
-use rtp_packet::{HeaderExtension, RtpPacket};
+use rtp_packet::{HeaderExtension, RtpPacket, SeqNo, Ssrc};
 
 fn main() {
     let extension_data = [0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x02];
     let pkt = RtpPacket {
         marker: true,
         payload_type: 96, // dynamic payload type, e.g. H.264 (RFC 6184)
-        sequence_number: 42,
+        sequence_number: SeqNo::new(42),
         timestamp: 90_000,
-        ssrc: 0xCAFEBABE,
+        ssrc: Ssrc::new(0xCAFEBABE),
         csrc: vec![0x1111_1111, 0x2222_2222],
         extension: Some(HeaderExtension {
             profile_id: 0xBEDE, // example one-byte header extension profile id

@@ -1805,9 +1805,9 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
         Ok(MediaEvent::Rtp(DecryptedRtp {
             marker: pkt.marker,
             payload_type: pkt.payload_type,
-            sequence_number: pkt.sequence_number,
+            sequence_number: pkt.sequence_number.get(),
             timestamp: pkt.timestamp,
-            ssrc: pkt.ssrc,
+            ssrc: pkt.ssrc.get(),
             csrc: pkt.csrc.clone(),
             extension: pkt.extension.map(|ext| DecryptedRtpExtension {
                 profile_id: ext.profile_id,
@@ -2398,9 +2398,9 @@ mod tests {
         let packet = rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
-            sequence_number: 0,
+            sequence_number: rtp_packet::SeqNo::new(0),
             timestamp: 0,
-            ssrc: 0,
+            ssrc: rtp_packet::Ssrc::new(0),
             csrc: Vec::new(),
             extension: None,
             padding: None,
@@ -2453,9 +2453,9 @@ mod tests {
         let packet = rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
-            sequence_number: 0,
+            sequence_number: rtp_packet::SeqNo::new(0),
             timestamp: 0,
-            ssrc: 0,
+            ssrc: rtp_packet::Ssrc::new(0),
             csrc: vec![0u32; 16],
             extension: None,
             padding: None,
@@ -2479,7 +2479,7 @@ mod tests {
         let mut mt = transport_with_appendix_b3_write_context();
         let compound = rtp_packet::rtcp::CompoundPacket::new(vec![
             rtp_packet::rtcp::RtcpPacket::SenderReport(rtp_packet::rtcp::SenderReport::new(
-                0,
+                rtp_packet::Ssrc::new(0),
                 0,
                 0,
                 0,
@@ -2513,9 +2513,9 @@ mod tests {
         let packet = rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
-            sequence_number: 0,
+            sequence_number: rtp_packet::SeqNo::new(0),
             timestamp: 0,
-            ssrc: 0,
+            ssrc: rtp_packet::Ssrc::new(0),
             csrc: Vec::new(),
             extension: None,
             padding: None,
@@ -2584,9 +2584,9 @@ mod tests {
         rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
-            sequence_number,
+            sequence_number: rtp_packet::SeqNo::new(sequence_number),
             timestamp: 0,
-            ssrc: 0,
+            ssrc: rtp_packet::Ssrc::new(0),
             csrc: Vec::new(),
             extension: None,
             padding: None,
@@ -2652,7 +2652,7 @@ mod tests {
 
         let compound = rtp_packet::rtcp::CompoundPacket::new(vec![
             rtp_packet::rtcp::RtcpPacket::SenderReport(rtp_packet::rtcp::SenderReport::new(
-                0,
+                rtp_packet::Ssrc::new(0),
                 0,
                 0,
                 0,
@@ -2813,7 +2813,9 @@ mod tests {
         };
         assert_eq!(compound.packets.len(), 2);
         match &compound.packets[0] {
-            rtp_packet::rtcp::RtcpPacket::SenderReport(sr) => assert_eq!(sr.ssrc, 0x1122_3344),
+            rtp_packet::rtcp::RtcpPacket::SenderReport(sr) => {
+                assert_eq!(sr.ssrc.get(), 0x1122_3344)
+            }
             other => panic!("expected the SR to survive, got {other:?}"),
         }
         match &compound.packets[1] {

@@ -2,7 +2,7 @@ use crate::support::udp_host::UdpHost;
 use broadcast_client::{Config, Error, Event, Session, SourceKind};
 use broadcast_common::Serialize;
 use broadcast_common::stage::Timestamp;
-use rtp_packet::RtpPacket;
+use rtp_packet::{RtpPacket, Ssrc};
 use url::Url;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -34,9 +34,9 @@ fn packet(seq: u16, timestamp: u32, payload_type: u8, marker: bool, nal: &[u8]) 
     let wire = RtpPacket {
         marker,
         payload_type,
-        sequence_number: seq,
+        sequence_number: seq.into(),
         timestamp,
-        ssrc: SSRC,
+        ssrc: Ssrc::new(SSRC),
         csrc: Vec::new(),
         extension: None,
         padding: None,
