@@ -4,7 +4,7 @@
 //! `main` (9fe7a022) and must pass once the defect is fixed. Inputs are real
 //! wire bytes built from the cited syntax tables.
 
-use broadcast_common::reserved::ReservedOnes;
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::extension::{
     Cp, ExtensionDescriptor, S2XSatelliteDeliverySystem, S2Xv2SatelliteDeliverySystem,
@@ -94,16 +94,14 @@ fn supplementary_audio_reserved_future_use_over_range_is_unrepresentable() {
 /// extension/s2x_satellite_delivery_system.rs:488
 /// `(reserved_zero_future_use_1 & 1) << PACKED_RZFU_1_SHIFT`.
 #[test]
-fn s2x_reserved_zero_future_use_1_over_range_is_rejected_not_masked() {
+fn s2x_reserved_zero_future_use_1_over_range_is_unrepresentable() {
     let ok = S2XSatelliteDeliverySystem::default();
     ser(&ok).expect("default must serialize");
-    let mut d = S2XSatelliteDeliverySystem::default();
-    d.reserved_zero_future_use_1 = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_zero_future_use_1=2 must be FieldOverflow, got {r:?}"
-    );
+    // reserved_zero_future_use_1 is a 1-bit `ReservedZero`; an over-range value
+    // is unrepresentable (`from_bits` masks at construction) so it can never be
+    // re-masked into a different wire byte.
+    assert_eq!(ok.reserved_zero_future_use_1.get(), 0);
+    assert_eq!(ReservedZero::<1>::from_bits(2).get(), 0);
 }
 
 /// extension/s2xv2_satellite_delivery_system.rs:619
