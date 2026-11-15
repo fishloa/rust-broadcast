@@ -39,6 +39,7 @@
 use crate::error::{Error, Result};
 use crate::tables::real_time_parameters::{RTP_LEN, RealTimeParametersBits};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the MPE-FEC section.
@@ -132,16 +133,16 @@ pub struct MpeFecSection<'a> {
     pub rs_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// `reserved_for_future_use(8)` at byte 4 (`0xFF`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_8: u8,
+    pub reserved_future_use_8: ReservedOnes<8>,
     /// `reserved(2)` in byte 5 bits `[7:6]` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
     /// `reserved_for_future_use(5)` in byte 5 bits `[5:1]` (`11111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use_5: u8,
+    pub reserved_future_use_5: ReservedOnes<5>,
 }
 
 /// All-ones `reserved_for_future_use(5)` in byte 5.
@@ -168,10 +169,10 @@ impl<'a> MpeFecSection<'a> {
             last_section_number,
             real_time_parameters,
             rs_data,
-            reserved_b1: super::RESERVED_2,
-            reserved_future_use_8: 0xFF,
-            reserved_b5: super::RESERVED_2,
-            reserved_future_use_5: RESERVED_FUTURE_USE_5,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_future_use_8: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
+            reserved_future_use_5: ReservedOnes::FILL,
         }
     }
 }
@@ -222,10 +223,12 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
             last_section_number,
             real_time_parameters,
             rs_data,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_future_use_8: bytes[4],
-            reserved_b5: super::b5_reserved_of(bytes[5]),
-            reserved_future_use_5: (bytes[5] >> 1) & RESERVED_FUTURE_USE_5,
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_future_use_8: ReservedOnes::from_bits(u64::from(bytes[4])),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
+            reserved_future_use_5: ReservedOnes::from_bits(u64::from(
+                (bytes[5] >> 1) & RESERVED_FUTURE_USE_5,
+            )),
         })
     }
 }
@@ -248,23 +251,17 @@ impl Serialize for MpeFecSection<'_> {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3] = self.padding_columns;
-        buf[4] = self.reserved_future_use_8;
+        buf[4] = self.reserved_future_use_8.get() as u8;
         // reserved(2)=11 | reserved_for_future_use(5)=11111 | current_next_indicator(1)
-        buf[5] =
-            (broadcast_common::len::fit_mask(self.reserved_b5, super::RESERVED_2, "reserved(2)")?
-                << 6)
-                | (broadcast_common::len::fit_mask(
-                    self.reserved_future_use_5,
-                    RESERVED_FUTURE_USE_5,
-                    "reserved_future_use_5",
-                )? << 1)
-                | u8::from(self.current_next_indicator);
+        buf[5] = ((self.reserved_b5.get() as u8) << 6)
+            | ((self.reserved_future_use_5.get() as u8) << 1)
+            | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
