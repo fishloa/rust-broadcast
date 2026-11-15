@@ -2466,6 +2466,7 @@ name = "mpeg-ps"
 version = "0.8.0"
 dependencies = [
  "broadcast-common",
+ "dvb-si",
  "mpeg-pes",
  "serde",
  "test-fixtures",

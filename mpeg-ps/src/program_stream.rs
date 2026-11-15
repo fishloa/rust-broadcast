@@ -289,6 +289,7 @@ fn find_pack_start(data: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::parse_pack;
+    use crate::DescriptorLoop;
     use crate::program_stream_map::{EsMapEntry, ProgramStreamMap};
     use alloc::{vec, vec::Vec};
     use broadcast_common::Serialize;
@@ -302,14 +303,14 @@ mod tests {
             current_next_indicator: true,
             single_extension_stream_flag: false,
             version: 1,
-            program_stream_info: &[],
+            program_stream_info: DescriptorLoop::new(&[]),
             elementary_stream_map: vec![EsMapEntry {
                 stream_type: 0x02, // MPEG-2 video
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
                 pseudo_descriptor_tag: None,
                 pseudo_descriptor_length: None,
-                descriptors: &[],
+                descriptors: DescriptorLoop::new(&[]),
             }],
             crc: 0,
         };

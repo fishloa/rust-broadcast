@@ -122,6 +122,7 @@ fn real_fixture_walk() {
 }
 
 use broadcast_common::Serialize;
+use mpeg_ps::DescriptorLoop;
 use mpeg_ps::ProgramStreamMap;
 
 /// Build a PSM per Table 2-41 and byte-exact round-trip.
@@ -135,14 +136,14 @@ fn psm_unit_round_trip() {
         stream_id_extension: None,
         pseudo_descriptor_tag: None,
         pseudo_descriptor_length: None,
-        descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'],
+        descriptors: DescriptorLoop::new(&[0x0A, 0x04, b'H', b'E', b'L', b'L']),
     }];
 
     let psm = ProgramStreamMap {
         current_next_indicator: true,
         single_extension_stream_flag: false,
         version: 3,
-        program_stream_info: &[],
+        program_stream_info: DescriptorLoop::new(&[]),
         elementary_stream_map: entries,
         crc: 0,
     };
@@ -155,7 +156,7 @@ fn psm_unit_round_trip() {
     assert_eq!(parsed.version, 3);
     assert_eq!(parsed.elementary_stream_map.len(), 1);
     assert_eq!(
-        parsed.elementary_stream_map[0].descriptors,
+        parsed.elementary_stream_map[0].descriptors.raw(),
         &[0x0A, 0x04, b'H', b'E', b'L', b'L'],
     );
 
@@ -231,4 +232,44 @@ fn scan_packs_resyncs_after_a_corrupt_pack_and_reports_it() {
     assert_eq!(scan.skipped.len(), 1);
     assert_eq!(scan.skipped[0].len, 64);
     assert!(scan.remaining.is_empty());
+}
+
+/// The real fixture's pack walk holds with the descriptor loops typed: no
+/// pack of this capture carries a PSM, so the scan must find none, and every
+/// pack still round-trips. (A PSM's loops walk as typed `descriptor()`
+/// entries per ISO/IEC 13818-1 §2.6 — covered by the PSM vectors.)
+#[test]
+fn real_fixture_psm_descriptor_loops_are_typed_and_verbatim() {
+    let data = fixture();
+    let scan = program_stream::scan_packs(&data);
+    let mut checked = 0usize;
+    let mut psms = 0usize;
+    for pack in &scan.packs {
+        let Some(psm) = &pack.psm else { continue };
+        psms += 1;
+        let loops = core::iter::once(&psm.program_stream_info)
+            .chain(psm.elementary_stream_map.iter().map(|e| &e.descriptors));
+        for loop_ in loops {
+            let raw = loop_.raw().to_vec();
+            let mut consumed = 0usize;
+            for entry in loop_.entries() {
+                let entry = entry.expect("a real PSM's descriptor loop frames cleanly");
+                assert_eq!(raw[consumed], entry.tag, "tag names the wire byte");
+                assert_eq!(raw[consumed + 1] as usize, entry.body.len());
+                consumed += 2 + entry.body.len();
+                checked += 1;
+            }
+            assert_eq!(
+                consumed,
+                raw.len(),
+                "the loop ends exactly at its last entry"
+            );
+        }
+    }
+    assert_eq!(
+        (psms, checked),
+        (0, 0),
+        "this VOB capture carries no PSM: the typed-loop walk is covered by the \
+         PSM vectors, and this test pins that the real pack walk still holds"
+    );
 }

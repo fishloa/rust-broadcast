@@ -91,6 +91,32 @@ pub enum Error {
         /// Bytes the parsed entries occupy.
         parsed: usize,
     },
+    /// A descriptor loop ends with fewer bytes than a `descriptor()` header
+    /// (ISO/IEC 13818-1 §2.6).
+    #[error("descriptor header at loop offset {offset} needs {need} bytes, {have} remain")]
+    DescriptorHeaderTruncated {
+        /// Offset of the truncated header inside the loop.
+        offset: usize,
+        /// Bytes the header needs.
+        need: usize,
+        /// Bytes left in the loop from that offset.
+        have: usize,
+    },
+    /// A descriptor declares a `descriptor_length` that runs past the end of
+    /// its loop (ISO/IEC 13818-1 §2.6).
+    #[error(
+        "descriptor {tag:#04X} at loop offset {offset} declares {declared} body bytes, {have} remain"
+    )]
+    DescriptorBodyTruncated {
+        /// Offset of the descriptor header inside the loop.
+        offset: usize,
+        /// Its `descriptor_tag`.
+        tag: u8,
+        /// Its declared `descriptor_length`.
+        declared: usize,
+        /// Body bytes actually left in the loop.
+        have: usize,
+    },
     /// PES packet parse error from `mpeg-pes`.
     #[error("PES parse error: {0}")]
     Pes(#[from] mpeg_pes::Error),

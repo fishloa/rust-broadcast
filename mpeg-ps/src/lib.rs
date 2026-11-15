@@ -14,6 +14,7 @@
 
 extern crate alloc;
 
+pub mod descriptor_loop;
 mod error;
 mod pack_header;
 pub mod program_stream;
@@ -21,6 +22,9 @@ pub mod program_stream_map;
 mod scr;
 mod system_header;
 
+pub use descriptor_loop::{
+    DESCRIPTOR_HEADER_LEN, DescriptorEntry, DescriptorEntryIter, DescriptorLoop,
+};
 pub use error::{Error, Result};
 pub use pack_header::PackHeader;
 pub use program_stream_map::{EsMapEntry, ProgramStreamMap};

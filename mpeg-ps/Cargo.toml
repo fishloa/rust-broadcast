@@ -21,6 +21,7 @@ broadcast-common = { path = "../broadcast-common", version = "12.0.0", default-f
 mpeg-pes   = { path = "../mpeg-pes",   version = "0.8.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
+dvb-si     = { path = "../dvb-si", version = "14.0.0", default-features = false, optional = true }
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
@@ -29,8 +30,12 @@ test-fixtures = { path = "../test-fixtures" }
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std = ["broadcast-common/std", "mpeg-pes/std", "thiserror/std", "serde?/std"]
+std = ["broadcast-common/std", "mpeg-pes/std", "thiserror/std", "serde?/std", "dvb-si?/std"]
 serde = ["dep:serde"]
+# `dvb-si` walks a `DescriptorLoop` through the typed descriptor registry
+# (note: `dvb-si` takes `mpeg-ts`, `mpeg-ts` takes `dvb-si`, so mpeg-ps must
+# stay away from it by default to keep the dependency graph acyclic).
+dvb-si = ["dep:dvb-si"]
 
 [lints]
 workspace = true
