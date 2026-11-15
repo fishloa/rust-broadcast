@@ -497,14 +497,16 @@ fn zero_duration_sample_bites() {
     let data = fixture();
     let mut samples = video_samples(&data);
     // positive path already covered by clean_media_has_no_errors.
-    // negative: force a zero-duration sample.
+    // negative: force a zero-duration sample, as a track the init segment does
+    // not type as video writes one: a video track's zero is an unstated span
+    // (issue #2788), any other track's zero states a zero length.
     samples[0].timing = Some(transmux::ir::SampleTiming::timed(0, 0));
-    let media = clean_media(1, 0, &samples);
-    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
+    let media = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(2), 0, &samples)])
+        .expect("build media");
+    let issues = validate_media_segment(&media, SegmentOrigin::External);
     assert!(
         has_code(&issues, "media.sample.zero-duration"),
-        "expected media.sample.zero-duration, got {:?}",
-        errors(&issues)
+        "expected media.sample.zero-duration, got {issues:?}"
     );
 }
 
@@ -744,9 +746,9 @@ fn unknown_track_id_bites() {
 fn unknown_span_is_reported_not_conflated_with_a_zero_one() {
     // A video IR sample whose span no source stated is written as a zero
     // `trun` duration. A video frame cannot have a zero length, so the
-    // validator reports an unstated span, not a declared zero length — which
-    // a track the init segment cannot type as video (any other) keeps as the
-    // declared-zero-class finding.
+    // validator reports an unstated span, not a declared zero length. With no
+    // init segment the track cannot be typed at all, and the span is still
+    // reported as unstated rather than as a declared zero (issue #2788).
     let samples = vec![
         Sample::from_raw(vec![0x65, 0x88], Some(0), Some(0), None).expect("timestamps, no span"),
     ];
@@ -754,7 +756,25 @@ fn unknown_span_is_reported_not_conflated_with_a_zero_one() {
     let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
     let codes: Vec<&str> = issues.iter().map(|i| i.code).collect();
     assert!(
-        codes.contains(&"media.sample.zero-duration"),
-        "an untyped track's zero duration stays the declared-zero report: {codes:?}"
+        codes.contains(&"media.sample.timing"),
+        "an untyped track's zero duration is an unstated span: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&"media.sample.zero-duration"),
+        "an unstated span is not a declared zero length: {codes:?}"
+    );
+}
+
+#[test]
+fn unknown_video_span_is_reported_without_the_init_segment() {
+    // TEMP probe
+    let samples = video_samples(&fixture());
+    let mut unstated = samples.clone();
+    unstated[1] = Sample::timed(unstated[1].data.clone(), 512, 512, None);
+    let media = clean_media(1, 0, &unstated);
+    let issues = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.sample.timing"),
+        "an unstated video span must be reported without the init segment: {issues:?}"
     );
 }

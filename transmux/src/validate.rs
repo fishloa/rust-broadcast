@@ -54,10 +54,14 @@
 //!   zero-tick span (`SampleTiming::timed_with_duration(.., 0)`) states one,
 //!   so it is judged here; a timed sample whose span is merely unknown
 //!   (`duration: None`) is reported by `media.sample.timing` below, not
-//!   conflated with a declared zero.
+//!   conflated with a declared zero. A track no init segment types is not
+//!   video, and its zero keeps this report.
 //! - **`media.sample.timing`** (WARNING) — a segment read without an IR
 //!   (`SegmentOrigin::External`) whose `trun` duration is 0: the span is
-//!   unknown, not zero.
+//!   unknown, not zero. A segment this crate wrote
+//!   (`SegmentOrigin::FromIr`) reports it too: for a track the init segment
+//!   types as video, and — with no init segment — for every `traf`, since a
+//!   segment does not say which of its tracks are video.
 //!
 //! ## Cross-segment ([`validate_cmaf_track`])
 //! - **`track.tfdt.discontinuity`** (ERROR) — across consecutive segments the
@@ -390,6 +394,11 @@ pub enum SegmentOrigin {
 /// [`SegmentOrigin`]), which decides whether a zero duration is a declared
 /// zero span or an unstated one.
 ///
+/// A zero `trun` duration on a track this crate wrote is reported as
+/// `media.sample.timing` whether or not the caller passed an initialization
+/// segment: the segment does not type its tracks, so every `traf` is treated
+/// as potentially video rather than judged as a declared zero-length sample.
+///
 /// Returns every structural [`ConformanceIssue`] found (empty ⇒ conformant).
 /// Malformed input is reported as issues, never a panic.
 pub fn validate_media_segment(bytes: &[u8], origin: SegmentOrigin) -> Vec<ConformanceIssue> {
@@ -490,6 +499,7 @@ fn validate_media_inner(
             mp + 1,
             origin,
             &|id: TrackId| video_tracks.contains(&id),
+            video_tracks,
             issues,
         );
         // The parsed `moof`, for the shared §8.8.7 offset resolver below.
@@ -646,6 +656,7 @@ fn validate_moof(
     moof_no: usize,
     origin: SegmentOrigin,
     video_track: &dyn Fn(TrackId) -> bool,
+    video_tracks: &[TrackId],
     issues: &mut Vec<ConformanceIssue>,
 ) -> (Option<u32>, Vec<TrafInfo>) {
     let mut sequence_number = None;
@@ -691,10 +702,17 @@ fn validate_moof(
     let mut traf_infos = Vec::with_capacity(trafs.len());
     for (idx, (_, traf)) in trafs.iter().enumerate() {
         // The traf's own track id, from its tfhd (§8.8.7), decides whether a
-        // zero span can be stated at all.
-        let is_video = child_body(traf.body, &TFHD)
+        // zero span can be stated at all. Called without an init segment no
+        // track id is typed as video: the segment does not say, so the traf
+        // stays untyped and its zero span is reported as unstated.
+        let is_video: Option<bool> = child_body(traf.body, &TFHD)
             .and_then(|b| TrackFragmentHeaderBox::parse_body(b).ok())
-            .is_some_and(|h| video_track(h.track_id));
+            .map(|h| video_track(h.track_id));
+        let is_video: Option<bool> = if video_tracks.is_empty() && origin == SegmentOrigin::FromIr {
+            None
+        } else {
+            is_video
+        };
         traf_infos.push(validate_traf(
             traf.body,
             moof_no,
@@ -713,7 +731,7 @@ fn validate_traf(
     moof_no: usize,
     traf_no: usize,
     origin: SegmentOrigin,
-    video_track: bool,
+    video_track: Option<bool>,
     issues: &mut Vec<ConformanceIssue>,
 ) -> TrafInfo {
     // tfhd (§8.8.7) — parse for default_sample_duration/size, tolerate absence.
@@ -791,6 +809,7 @@ fn validate_traf(
     // track a zero states a deliberately zero-length sample (a style cue, a
     // timestamp-less section). The two are not the same finding.
     let mut unstated_duration_samples: u64 = 0;
+    let mut untyped_zero_duration_samples: Option<u64> = None;
     for (_, trun_bx) in &truns {
         let Ok(run) = TrackFragmentRunBox::parse_body(trun_bx.body) else {
             continue;
@@ -799,8 +818,11 @@ fn validate_traf(
             let dur = s.sample_duration.or(default_duration).unwrap_or(0);
             total_duration += u64::from(dur);
             if dur == 0 {
-                match origin {
-                    SegmentOrigin::FromIr if video_track => unstated_duration_samples += 1,
+                match (origin, video_track) {
+                    (SegmentOrigin::FromIr, Some(true)) => unstated_duration_samples += 1,
+                    (SegmentOrigin::FromIr, None) => {
+                        *untyped_zero_duration_samples.get_or_insert(0) += 1;
+                    }
                     _ => zero_duration_samples += 1,
                 }
             }
@@ -821,6 +843,19 @@ fn validate_traf(
             format!(
                 "moof #{moof_no}, traf #{traf_no}: {unstated_duration_samples} sample(s) carry \
                  no stated span, written as a zero duration (ISO/IEC 14496-12:2026 §8.8.8)"
+            ),
+        ));
+    }
+    if let Some(untyped) = untyped_zero_duration_samples {
+        issues.push(ConformanceIssue::warning(
+            "media.sample.timing",
+            format!(
+                "moof #{moof_no}, traf #{traf_no}: {untyped} sample(s) carry no stated span, \
+                 written as a zero duration by this crate's fragment writer \
+                 (ISO/IEC 14496-12:2026 §8.8.8); without an initialization segment the track \
+                 cannot be typed, so a video track's unstated span and a declared zero-length \
+                 sample are indistinguishable here, and `validate_cmaf_track` with the init \
+                 segment resolves it"
             ),
         ));
     }
