@@ -159,7 +159,7 @@ mod tests {
         let route = RtspRoute::new("bad", "rtsp://user:secretpass@bad host/s");
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -263,7 +263,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -421,7 +421,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -470,7 +470,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -529,7 +529,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -620,7 +620,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -694,7 +694,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));
@@ -864,7 +864,7 @@ mod tests {
                 );
             let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(Duration::from_millis(250))
                     .with_window_segments(8),
             ));
@@ -955,7 +955,7 @@ mod tests {
             );
             let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(1.0)
+                    .with_target_duration(std::time::Duration::from_secs(1))
                     .with_part_target(Duration::from_millis(250))
                     .with_window_segments(8),
             ));
@@ -1031,7 +1031,7 @@ mod tests {
         );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ));

@@ -15,7 +15,7 @@ impl SiblingTrunks for RouteHandle {
         &self,
         trunk: &Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
-        target_duration_secs: f64,
+        target_duration: std::time::Duration,
         part_target: std::time::Duration,
     ) -> Vec<media_plane::segmenter::audio::AudioFollower> {
         // Delegate to split_audio's core builder (applies init to origin).
@@ -23,7 +23,7 @@ impl SiblingTrunks for RouteHandle {
             self,
             trunk,
             mapped,
-            target_duration_secs,
+            target_duration,
             part_target,
         )
     }
@@ -53,7 +53,7 @@ impl RouteHandle {
                     media_plane::segmenter::program::TsHlsIdrFallback::Never
                 }
             })
-            .with_target_duration_secs(self.target_duration_secs())
+            .with_target_duration(self.target_duration())
             .with_part_target(self.part_target())
             .with_window_segments_cap(self.window_segments_cap())
             .with_route_name(self.name().to_string())
@@ -125,10 +125,10 @@ impl SiblingTrunks for &RouteHandle {
         &self,
         trunk: &Trunk,
         mapped: &[(usize, transmux::pipeline::TrackSpec)],
-        target_duration_secs: f64,
+        target_duration: std::time::Duration,
         part_target: std::time::Duration,
     ) -> Vec<media_plane::segmenter::audio::AudioFollower> {
-        (**self).build_audio_followers(trunk, mapped, target_duration_secs, part_target)
+        (**self).build_audio_followers(trunk, mapped, target_duration, part_target)
     }
     fn build_subtitle_followers(
         &self,

@@ -63,9 +63,9 @@ pub struct InputCtx {
     /// [`crate::source::advance_route`], the same `RouteHandle` the origin
     /// serves reads from.
     pub store: Arc<crate::route::RouteHandle>,
-    /// `crate::config::Config::target_duration_secs`, forwarded unchanged —
+    /// `crate::config::Config::target_duration`, forwarded unchanged —
     /// pass straight through to the factory's own segmenter/segmenting loop.
-    pub target_duration_secs: f64,
+    pub target_duration: std::time::Duration,
     /// `crate::config::Config::part_target`, forwarded unchanged.
     pub part_target: Duration,
     /// The shared shutdown token every other route's supervisor task watches

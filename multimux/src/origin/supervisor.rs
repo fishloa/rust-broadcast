@@ -643,7 +643,7 @@ mod tests {
     async fn a_wrong_password_stops_retrying_after_the_bound_and_marks_the_route_failed() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -695,7 +695,7 @@ mod tests {
     async fn an_invalid_route_config_is_permanent_on_the_first_attempt() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -729,7 +729,7 @@ mod tests {
     async fn a_describe_404_is_permanent_only_after_the_bound() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -775,7 +775,7 @@ mod tests {
     async fn a_describe_404_that_recovers_within_the_bound_reaches_live() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -829,7 +829,7 @@ mod tests {
     async fn an_auth_failure_that_recovers_within_the_bound_still_reaches_live() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -885,7 +885,7 @@ mod tests {
     async fn a_non_auth_failure_keeps_retrying_past_the_auth_bound() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -984,7 +984,7 @@ mod tests {
     async fn reconnects_after_a_failing_attempt_reaches_live_and_retries_again_after_ending() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1071,7 +1071,7 @@ mod tests {
     async fn shutdown_stops_supervise_driver_promptly_mid_backoff() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1113,7 +1113,7 @@ mod tests {
     async fn shutdown_abandons_an_in_flight_attempt() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1170,7 +1170,7 @@ mod tests {
     async fn run_scripted(lives: Vec<Duration>, observe: Duration) -> Vec<(Duration, Duration)> {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1261,7 +1261,7 @@ mod tests {
     async fn a_finite_source_that_ended_is_not_reconnected() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));
@@ -1308,7 +1308,7 @@ mod tests {
         use media_plane::ingress::ProgramId;
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         ));

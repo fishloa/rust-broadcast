@@ -1,6 +1,7 @@
 //! AC-4 Descriptor — ETSI EN 300 468 V1.20.1 Annex D §D.7 (tag_extension 0x15).
 use super::*;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for Ac4<'a> {
     const TAG_EXTENSION: u8 = 0x15;
@@ -62,9 +63,12 @@ broadcast_common::impl_spec_display!(Ac4ChannelMode, Reserved);
 /// descriptor: EN 300 468 V1.15.1 (`reserved_future_use` + NOTE "all bits 0")
 /// and V1.16.1+ (`reserved_zero_future_use`) — 0 in every edition
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
-const AC4_FLAGS_RESERVED_MASK: u8 = 0x3F;
-const AC4_CONFIG_RESERVED_MASK: u8 = 0x1F;
+pub const AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<AC4_CONFIG_RESERVED_BITS> =
+    ReservedZero::<AC4_CONFIG_RESERVED_BITS>::FILL;
+/// Width of the first-byte `reserved_zero_future_use` (6 bits).
+const AC4_FLAGS_RESERVED_BITS: u32 = 6;
+/// Width of the config-byte `reserved_zero_future_use` (5 bits).
+const AC4_CONFIG_RESERVED_BITS: u32 = 5;
 
 /// AC-4 body (annex D). `toc` + `additional_info` are raw.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,11 +83,11 @@ pub struct Ac4<'a> {
     /// `reserved_zero_future_use` (6 bits, right-aligned) of the first byte.
     /// Preserved on parse; [`Ac4::new`] uses
     /// [`AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use_6: u8,
+    pub reserved_zero_future_use_6: ReservedZero<AC4_FLAGS_RESERVED_BITS>,
     /// `reserved_zero_future_use` (5 bits, right-aligned) of the config byte;
     /// `Some` iff `ac4_config_flag`. Preserved on parse; defaults to
     /// [`AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT`] when `None` but the flag is set.
-    pub reserved_zero_future_use_5: Option<u8>,
+    pub reserved_zero_future_use_5: Option<ReservedZero<AC4_CONFIG_RESERVED_BITS>>,
     /// ac4_dialog_enhancement_enabled(1), present iff `ac4_config_flag`.
     pub ac4_dialog_enhancement_enabled: Option<bool>,
     /// ac4_channel_mode(2) — Table D.12, present iff `ac4_config_flag`.
@@ -114,7 +118,7 @@ impl<'a> Ac4<'a> {
         Self {
             ac4_config_flag,
             ac4_toc_flag,
-            reserved_zero_future_use_6: AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use_6: ReservedZero::<AC4_FLAGS_RESERVED_BITS>::FILL,
             reserved_zero_future_use_5: if ac4_config_flag {
                 Some(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT)
             } else {
@@ -152,7 +156,7 @@ impl<'a> Parse<'a> for Ac4<'a> {
                 (
                     Some((c & 0x80) != 0),
                     Some(Ac4ChannelMode::from_u8((c >> 5) & 0x03)),
-                    Some(c & AC4_CONFIG_RESERVED_MASK),
+                    Some(ReservedZero::from_bits(u64::from(c))),
                 )
             } else {
                 (None, None, None)
@@ -171,7 +175,7 @@ impl<'a> Parse<'a> for Ac4<'a> {
         Ok(Ac4 {
             ac4_config_flag,
             ac4_toc_flag,
-            reserved_zero_future_use_6: flags & AC4_FLAGS_RESERVED_MASK,
+            reserved_zero_future_use_6: ReservedZero::from_bits(u64::from(flags)),
             reserved_zero_future_use_5,
             ac4_dialog_enhancement_enabled,
             ac4_channel_mode,
@@ -193,11 +197,7 @@ impl Serialize for Ac4<'_> {
         need_out(buf, len)?;
         buf[0] = (u8::from(self.ac4_config_flag) << 7)
             | (u8::from(self.ac4_toc_flag) << 6)
-            | broadcast_common::len::fit_mask(
-                self.reserved_zero_future_use_6,
-                AC4_FLAGS_RESERVED_MASK,
-                "reserved_zero_future_use_6",
-            )?;
+            | self.reserved_zero_future_use_6.get() as u8;
         let mut p = 1;
         if self.ac4_config_flag {
             // config_flag reserves the config byte; fabricating defaults for
@@ -219,12 +219,7 @@ impl Serialize for Ac4<'_> {
             let rz = self
                 .reserved_zero_future_use_5
                 .unwrap_or(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT);
-            let rz = broadcast_common::len::fit_mask(
-                rz,
-                AC4_CONFIG_RESERVED_MASK,
-                "reserved_zero_future_use_5",
-            )?;
-            buf[p] = (u8::from(de) << 7) | (cm << 5) | rz;
+            buf[p] = (u8::from(de) << 7) | (cm << 5) | rz.get() as u8;
             p += 1;
         }
         if let Some(t) = self.toc {
@@ -305,7 +300,7 @@ mod tests {
     /// exhaustively) re-serializes byte-identically.
     #[test]
     fn ac4_reserved_preserved() {
-        for r6 in 0u8..=AC4_FLAGS_RESERVED_MASK {
+        for r6 in 0u8..=0x3F {
             let sel = [0x80 | r6, 0x40 | 0x1F, 0x99];
             let bytes = wrap(0x15, &sel);
             let d = ExtensionDescriptor::parse(&bytes).unwrap();
@@ -314,7 +309,7 @@ mod tests {
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes, "r6={r6:#x}");
         }
-        for r5 in 0u8..=AC4_CONFIG_RESERVED_MASK {
+        for r5 in 0u8..=0x1F {
             let sel = [0x80, 0xA0 | r5];
             let bytes = wrap(0x15, &sel);
             let d = ExtensionDescriptor::parse(&bytes).unwrap();

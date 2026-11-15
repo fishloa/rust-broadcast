@@ -488,7 +488,8 @@ fn built_sections() -> Vec<(&'static str, Vec<u8>, bool)> {
                 extension_bytes: &[0xDE],
                 signature_key_identifier: &[0x11],
                 signature: &[0x90, 0x91],
-                reserved_section_hashes_loop_length: 0x0F,
+                reserved_section_hashes_loop_length:
+                    broadcast_common::reserved::ReservedOnes::from_bits(0x0F),
             },
         )),
         true,

@@ -5,6 +5,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for STD_descriptor.
@@ -13,8 +14,9 @@ const HEADER_LEN: usize = 2;
 /// Default of the 7-bit `reserved` ahead of `leak_valid_flag` (H.222.0 Table
 /// 2-70): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023, audit
 /// §5; confirmed by the TSDuck oracle PMT).
-pub const RESERVED_DEFAULT: u8 = 0x7F;
-const RESERVED_MASK: u8 = 0x7F;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Width of the `reserved` field ahead of `leak_valid_flag` (7 bits).
+const RESERVED_BITS: u32 = 7;
 const BODY_LEN: u8 = 1;
 
 /// STD Descriptor.
@@ -25,10 +27,10 @@ const BODY_LEN: u8 = 1;
 pub struct StdDescriptor {
     /// Leak valid flag — 1 means the leak method is applicable.
     pub leak_valid_flag: bool,
-    /// `reserved(7)` ahead of the flag (7 bits, right-aligned). Captured on
-    /// parse, re-emitted verbatim; [`StdDescriptor::new`] uses
-    /// [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    /// `reserved(7)` ahead of the flag (7 bits). Captured on parse,
+    /// re-emitted verbatim; [`StdDescriptor::new`] uses [`RESERVED_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl StdDescriptor {
@@ -61,7 +63,7 @@ impl<'a> Parse<'a> for StdDescriptor {
         let leak_valid_flag = (body[0] & 0x01) != 0;
         Ok(Self {
             leak_valid_flag,
-            reserved: body[0] >> 1,
+            reserved: ReservedOnes::from_bits(u64::from(body[0] >> 1)),
         })
     }
 }
@@ -78,9 +80,7 @@ impl Serialize for StdDescriptor {
         need_out(buf, len)?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] =
-            (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 1)
-                | self.leak_valid_flag as u8;
+        buf[HEADER_LEN] = ((self.reserved.get() as u8) << 1) | self.leak_valid_flag as u8;
         Ok(len)
     }
 }
@@ -145,7 +145,7 @@ mod tests {
             for flag in 0u8..=1 {
                 let bytes = [TAG, 1, (r << 1) | flag];
                 let d = StdDescriptor::parse(&bytes).unwrap();
-                assert_eq!(d.reserved, r);
+                assert_eq!(d.reserved, ReservedOnes::from_bits(u64::from(r)));
                 let mut out = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut out).unwrap();
                 assert_eq!(out, bytes);
@@ -159,5 +159,19 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 1, 0xFF]);
+    }
+
+    /// The field is 7 bits wide, so a wider value is unrepresentable and can
+    /// never leak into the flag bit below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_seven_bits() {
+        let d = StdDescriptor {
+            leak_valid_flag: false,
+            reserved: ReservedOnes::from_bits(0b1111_1111),
+        };
+        assert_eq!(d.reserved.get(), 0x7F);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 1, 0xFE]);
     }
 }

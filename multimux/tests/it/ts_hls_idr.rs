@@ -106,7 +106,7 @@ fn route(path: &std::path::Path, outputs: Vec<OutputKind>, cut: TsHlsCutPolicy) 
 fn config(bind: SocketAddr, route: Route) -> Config {
     Config::default()
         .with_bind(bind.to_string())
-        .with_target_duration_secs(1.0)
+        .with_target_duration(Duration::from_secs(1))
         .with_part_target(Duration::from_millis(200))
         .with_window_segments(32)
         .with_routes(vec![route])

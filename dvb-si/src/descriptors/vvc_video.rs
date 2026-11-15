@@ -15,11 +15,16 @@ use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter, impl_h222_descriptor};
 use alloc::vec::Vec;
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 
 /// Descriptor tag of `VVC_video_descriptor` (Table 2-45: 57).
 pub const TAG: u8 = 0x39;
-const RESERVED_5_DEFAULT: u8 = 0x1F;
-const RESERVED_2_DEFAULT: u8 = 0x03;
+/// Width of a `reserved(5)` field.
+const RESERVED_5_BITS: u32 = 5;
+/// Width of a `reserved(2)` field.
+const RESERVED_2_BITS: u32 = 2;
+/// Width of the `reserved_zero_4bits` field.
+const RESERVED_ZERO_4_BITS: u32 = 4;
 
 /// The `temporal_id_min` / `temporal_id_max` block (present iff
 /// `temporal_layer_subset_flag == '1'`), shared by the VVC and EVC descriptors.
@@ -28,11 +33,13 @@ const RESERVED_2_DEFAULT: u8 = 0x03;
 #[non_exhaustive]
 pub struct TemporalIdRange {
     /// `reserved(5)` before `temporal_id_min`, default `0x1F`.
-    pub reserved_min: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_min: ReservedOnes<RESERVED_5_BITS>,
     /// `temporal_id_min` (3 bits).
     pub temporal_id_min: u8,
     /// `reserved(5)` before `temporal_id_max`, default `0x1F`.
-    pub reserved_max: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_max: ReservedOnes<RESERVED_5_BITS>,
     /// `temporal_id_max` (3 bits).
     pub temporal_id_max: u8,
 }
@@ -42,26 +49,26 @@ impl TemporalIdRange {
     #[must_use]
     pub const fn new(temporal_id_min: u8, temporal_id_max: u8) -> Self {
         Self {
-            reserved_min: RESERVED_5_DEFAULT,
+            reserved_min: ReservedOnes::FILL,
             temporal_id_min,
-            reserved_max: RESERVED_5_DEFAULT,
+            reserved_max: ReservedOnes::FILL,
             temporal_id_max,
         }
     }
 
     pub(crate) fn read(r: &mut BitReader<'_>) -> Result<Self> {
         Ok(Self {
-            reserved_min: r.u8(5)?,
+            reserved_min: ReservedOnes::from_bits(u64::from(r.u8(5)?)),
             temporal_id_min: r.u8(3)?,
-            reserved_max: r.u8(5)?,
+            reserved_max: ReservedOnes::from_bits(u64::from(r.u8(5)?)),
             temporal_id_max: r.u8(3)?,
         })
     }
 
     pub(crate) fn write(&self, w: &mut BitWriter) -> Result<()> {
-        w.put(u64::from(self.reserved_min), 5, "reserved")?;
+        w.put(self.reserved_min.get(), 5, "reserved")?;
         w.put(u64::from(self.temporal_id_min), 3, "temporal_id_min")?;
-        w.put(u64::from(self.reserved_max), 5, "reserved")?;
+        w.put(self.reserved_max.get(), 5, "reserved")?;
         w.put(u64::from(self.temporal_id_max), 3, "temporal_id_max")
     }
 }
@@ -86,8 +93,10 @@ pub struct VvcVideoDescriptor {
     pub non_packed_constraint_flag: bool,
     /// `frame_only_constraint_flag`.
     pub frame_only_constraint_flag: bool,
-    /// `reserved_zero_4bits`: "shall be set to '0000'"; re-emitted verbatim, default 0.
-    pub reserved_zero_4bits: u8,
+    /// `reserved_zero_4bits`: "shall be set to '0000'"; re-emitted verbatim,
+    /// default 0.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_zero_4bits: ReservedZero<RESERVED_ZERO_4_BITS>,
     /// `level_idc` (H.266 `general_level_idc`, external code).
     pub level_idc: u8,
     /// `VVC_still_present_flag`.
@@ -95,11 +104,13 @@ pub struct VvcVideoDescriptor {
     /// `VVC_24hr_picture_present_flag`.
     pub picture_24hr_present_flag: bool,
     /// `reserved(5)` after the three flags, default `0x1F`.
-    pub reserved_5: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_5: ReservedOnes<RESERVED_5_BITS>,
     /// `HDR_WCG_idc` (Table 2-134).
     pub hdr_wcg_idc: HdrWcgIdc,
     /// `reserved(2)` before `video_properties_tag`, default 3.
-    pub reserved_2: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_2: ReservedOnes<RESERVED_2_BITS>,
     /// `video_properties_tag` (4 bits; Tables 2-135…2-138 select its meaning by
     /// `HDR_WCG_idc`).
     pub video_properties_tag: u8,
@@ -131,13 +142,13 @@ impl VvcVideoDescriptor {
             interlaced_source_flag: false,
             non_packed_constraint_flag: false,
             frame_only_constraint_flag: false,
-            reserved_zero_4bits: 0,
+            reserved_zero_4bits: ReservedZero::FILL,
             level_idc,
             still_present_flag: false,
             picture_24hr_present_flag: false,
-            reserved_5: RESERVED_5_DEFAULT,
+            reserved_5: ReservedOnes::FILL,
             hdr_wcg_idc,
-            reserved_2: RESERVED_2_DEFAULT,
+            reserved_2: ReservedOnes::FILL,
             video_properties_tag,
             temporal_layer_subset: None,
             trailing: Vec::new(),
@@ -157,14 +168,14 @@ impl VvcVideoDescriptor {
         let interlaced_source_flag = r.flag()?;
         let non_packed_constraint_flag = r.flag()?;
         let frame_only_constraint_flag = r.flag()?;
-        let reserved_zero_4bits = r.u8(4)?;
+        let reserved_zero_4bits = ReservedZero::from_bits(u64::from(r.u8(4)?));
         let level_idc = r.u8(8)?;
         let subset = r.flag()?;
         let still_present_flag = r.flag()?;
         let picture_24hr_present_flag = r.flag()?;
-        let reserved_5 = r.u8(5)?;
+        let reserved_5 = ReservedOnes::from_bits(u64::from(r.u8(5)?));
         let hdr_wcg_idc = HdrWcgIdc::from_u8(r.u8(2)?);
-        let reserved_2 = r.u8(2)?;
+        let reserved_2 = ReservedOnes::from_bits(u64::from(r.u8(2)?));
         let video_properties_tag = r.u8(4)?;
         let temporal_layer_subset = if subset {
             Some(TemporalIdRange::read(&mut r)?)
@@ -210,11 +221,7 @@ impl VvcVideoDescriptor {
             self.frame_only_constraint_flag,
             "frame_only_constraint_flag",
         )?;
-        w.put(
-            u64::from(self.reserved_zero_4bits),
-            4,
-            "reserved_zero_4bits",
-        )?;
+        w.put(self.reserved_zero_4bits.get(), 4, "reserved_zero_4bits")?;
         w.put(u64::from(self.level_idc), 8, "level_idc")?;
         w.flag(
             self.temporal_layer_subset.is_some(),
@@ -225,9 +232,9 @@ impl VvcVideoDescriptor {
             self.picture_24hr_present_flag,
             "VVC_24hr_picture_present_flag",
         )?;
-        w.put(u64::from(self.reserved_5), 5, "reserved")?;
+        w.put(self.reserved_5.get(), 5, "reserved")?;
         w.put(u64::from(self.hdr_wcg_idc.to_u8()), 2, "HDR_WCG_idc")?;
-        w.put(u64::from(self.reserved_2), 2, "reserved")?;
+        w.put(self.reserved_2.get(), 2, "reserved")?;
         w.put(
             u64::from(self.video_properties_tag),
             4,
@@ -241,9 +248,11 @@ impl VvcVideoDescriptor {
     }
 
     /// Default of `reserved(5)` (all ones).
-    pub const RESERVED_5_DEFAULT: u8 = RESERVED_5_DEFAULT;
+    pub const RESERVED_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> =
+        ReservedOnes::<RESERVED_5_BITS>::FILL;
     /// Default of `reserved(2)` (all ones).
-    pub const RESERVED_2_DEFAULT: u8 = RESERVED_2_DEFAULT;
+    pub const RESERVED_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> =
+        ReservedOnes::<RESERVED_2_BITS>::FILL;
 }
 
 impl_h222_descriptor!(VvcVideoDescriptor, TAG, "VvcVideoDescriptor", "VVC_VIDEO");
@@ -294,7 +303,7 @@ mod tests {
         full.extend_from_slice(&body);
         let d = VvcVideoDescriptor::parse(&full).unwrap();
         assert!(d.tier_flag);
-        assert_eq!(d.reserved_zero_4bits, 0b1010);
+        assert_eq!(d.reserved_zero_4bits, ReservedZero::from_bits(0b1010));
         assert!(d.temporal_layer_subset.is_none());
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
@@ -309,5 +318,26 @@ mod tests {
             &(VvcVideoDescriptor::parse(&full[..full.len() - 1])),
             Err(crate::error::Error::BufferTooShort(..))
         ));
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent syntax bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let range = TemporalIdRange {
+            reserved_min: ReservedOnes::from_bits(0xFF),
+            temporal_id_min: 0,
+            reserved_max: ReservedOnes::from_bits(0xFF),
+            temporal_id_max: 0,
+        };
+        assert_eq!(range.reserved_min.get(), 0x1F);
+        assert_eq!(range.reserved_max.get(), 0x1F);
+        let mut d = VvcVideoDescriptor::new(0, false, 0, HdrWcgIdc::Sdr, 0);
+        d.reserved_zero_4bits = ReservedZero::from_bits(0xFF);
+        d.reserved_5 = ReservedOnes::from_bits(0xFF);
+        d.reserved_2 = ReservedOnes::from_bits(0xFF);
+        assert_eq!(d.reserved_zero_4bits.get(), 0x0F);
+        assert_eq!(d.reserved_5.get(), 0x1F);
+        assert_eq!(d.reserved_2.get(), 0x03);
     }
 }

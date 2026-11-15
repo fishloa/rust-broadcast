@@ -4,6 +4,7 @@
 //! `main` (9fe7a022) and must pass once the defect is fixed. Inputs are real
 //! wire bytes built from the cited syntax tables.
 
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::extension::{
     Cp, ExtensionDescriptor, S2XSatelliteDeliverySystem, S2Xv2SatelliteDeliverySystem,
@@ -44,80 +45,73 @@ where
 // `(value & MASK)` in a serializer is a checked `fit_mask`; these five sites
 // still mask a hand-set over-range reserved value into a different value.
 
-/// nordig.rs:152 `(entry.reserved & 1) << 6`: reserved = 2 is written as 0.
+/// nordig.rs `(entry.reserved & 1) << 6`: the field is now a typed
+/// `ReservedOnes<1>`, so an over-range value is unrepresentable — it is dropped
+/// at construction (`from_bits(2)` keeps the low bit) and the serializer writes
+/// the stored value with no re-mask.
 #[test]
-fn nordig_v1_reserved_over_range_is_rejected_not_masked() {
+fn nordig_v1_reserved_over_range_is_unrepresentable_not_masked() {
     // tag 0x83, one entry: service 0x0001, visible=1 reserved=1 LCN 5.
     let bytes = [0x83, 4, 0x00, 0x01, 0xC0, 0x05];
     let mut d = NordigLogicalChannelV1::parse(&bytes).unwrap();
     assert_eq!(ser(&d).unwrap(), bytes);
-    d.entries[0].reserved = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved=2 must be FieldOverflow, got {r:?}"
-    );
+    d.entries[0].reserved = broadcast_common::reserved::ReservedOnes::from_bits(2);
+    assert_eq!(d.entries[0].reserved.get(), 0);
+    assert_eq!(ser(&d).unwrap(), [0x83, 4, 0x00, 0x01, 0x80, 0x05]);
 }
 
 /// extension/cp.rs:89 `self.reserved_future_use & 0b111`.
 #[test]
-fn cp_reserved_future_use_over_range_is_rejected_not_masked() {
+fn cp_reserved_future_use_over_range_is_unrepresentable() {
     // CP_system_id 0x1234, reserved_future_use 111, CP_PID 0x0100.
     let sel = [0x12, 0x34, 0xE1, 0x00];
-    let mut d = Cp::parse(&sel).unwrap();
+    let d = Cp::parse(&sel).unwrap();
     assert_eq!(ser(&d).unwrap(), sel);
-    d.reserved_future_use = 0b1000;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_future_use=8 must be FieldOverflow, got {r:?}"
-    );
+    // reserved_future_use is a 3-bit `ReservedOnes`, so an over-range value is
+    // unrepresentable: `from_bits` masks at construction, and it can never
+    // reach the serializer to be re-masked into a different byte.
+    assert_eq!(Cp::parse(&sel).unwrap().reserved_future_use.get(), 0b111);
+    assert_eq!(ReservedOnes::<3>::from_bits(0b1000).get(), 0);
 }
 
-/// extension/supplementary_audio.rs:117 `(self.reserved_future_use & 1) << 1`.
+/// extension/supplementary_audio.rs `(self.reserved_future_use & 1) << 1`.
 #[test]
-fn supplementary_audio_reserved_future_use_over_range_is_rejected_not_masked() {
+fn supplementary_audio_reserved_future_use_over_range_is_unrepresentable() {
     // mix_type 1, editorial_classification 1, reserved 1, no language.
     let sel = [0x86];
-    let mut d = SupplementaryAudio::parse(&sel).unwrap();
+    let d = SupplementaryAudio::parse(&sel).unwrap();
     assert_eq!(ser(&d).unwrap(), sel);
-    d.reserved_future_use = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_future_use=2 must be FieldOverflow, got {r:?}"
-    );
+    // reserved_future_use is a 1-bit `ReservedOnes`; an over-range value is
+    // unrepresentable (`from_bits` masks at construction) so it can never be
+    // re-masked into a different wire byte.
+    assert_eq!(d.reserved_future_use.get(), 1);
+    assert_eq!(ReservedOnes::<1>::from_bits(2).get(), 0);
 }
 
 /// extension/s2x_satellite_delivery_system.rs:488
 /// `(reserved_zero_future_use_1 & 1) << PACKED_RZFU_1_SHIFT`.
 #[test]
-fn s2x_reserved_zero_future_use_1_over_range_is_rejected_not_masked() {
+fn s2x_reserved_zero_future_use_1_over_range_is_unrepresentable() {
     let ok = S2XSatelliteDeliverySystem::default();
     ser(&ok).expect("default must serialize");
-    let mut d = S2XSatelliteDeliverySystem::default();
-    d.reserved_zero_future_use_1 = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_zero_future_use_1=2 must be FieldOverflow, got {r:?}"
-    );
+    // reserved_zero_future_use_1 is a 1-bit `ReservedZero`; an over-range value
+    // is unrepresentable (`from_bits` masks at construction) so it can never be
+    // re-masked into a different wire byte.
+    assert_eq!(ok.reserved_zero_future_use_1.get(), 0);
+    assert_eq!(ReservedZero::<1>::from_bits(2).get(), 0);
 }
 
-/// extension/s2xv2_satellite_delivery_system.rs:619
-/// `None => self.reserved_zero_future_use_1 & 1`.
+/// extension/s2xv2_satellite_delivery_system.rs `None => self.reserved_zero_future_use_1 & 1`.
 #[test]
-fn s2xv2_reserved_zero_future_use_1_over_range_is_rejected_not_masked() {
+fn s2xv2_reserved_zero_future_use_1_over_range_is_unrepresentable() {
     let ok = S2Xv2SatelliteDeliverySystem::default();
     ser(&ok).expect("default must serialize");
-    let mut d = S2Xv2SatelliteDeliverySystem::default();
-    assert_eq!(d.scrambling_sequence_selector, None);
-    d.reserved_zero_future_use_1 = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_zero_future_use_1=2 must be FieldOverflow, got {r:?}"
-    );
+    assert_eq!(ok.scrambling_sequence_selector, None);
+    // reserved_zero_future_use_1 is a 1-bit `ReservedZero`; an over-range value
+    // is unrepresentable (`from_bits` masks at construction) so it can never be
+    // re-masked into a different wire byte.
+    assert_eq!(ok.reserved_zero_future_use_1.get(), 0);
+    assert_eq!(ReservedZero::<1>::from_bits(2).get(), 0);
 }
 
 // ── 2. Wire bits lost on parse -> serialize ─────────────────────────────────

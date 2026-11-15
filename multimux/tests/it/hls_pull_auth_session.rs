@@ -59,7 +59,7 @@ const TIMED_RING: usize = 4096;
 const RING: usize = 16;
 /// The route's own segmenter: one-second segments, so the route closes the
 /// fixture's samples into segments of its own.
-const ROUTE_TARGET_DURATION_SECS: f64 = 1.0;
+const ROUTE_TARGET_DURATION: Duration = Duration::from_secs(1);
 const ROUTE_PART_TARGET_MS: u32 = 200;
 const ROUTE_WINDOW_SEGMENTS: usize = 4;
 
@@ -223,10 +223,8 @@ async fn played_samples(
     let route = HlsPullRoute::new(name, format!("{origin}{path}")).with_auth(auth);
     let route_handle = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(ROUTE_TARGET_DURATION_SECS)
-            .with_part_target(std::time::Duration::from_millis(u64::from(
-                ROUTE_PART_TARGET_MS,
-            )))
+            .with_target_duration(ROUTE_TARGET_DURATION)
+            .with_part_target(Duration::from_millis(u64::from(ROUTE_PART_TARGET_MS)))
             .with_window_segments(ROUTE_WINDOW_SEGMENTS),
     ));
     let config = TrunkConfig::default()

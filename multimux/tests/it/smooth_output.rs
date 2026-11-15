@@ -13,13 +13,14 @@
 
 use crate::support::origin::{body_bytes, body_string, get};
 use crate::support::segmenter_feed::{
-    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION_SECS, VIDEO_TIMESCALE,
+    FRAME_DUR, PART_TARGET_MS, TARGET_DURATION, VIDEO_TIMESCALE,
     feed_via_segmenter as feed_segments, video_track_spec_sized,
 };
 use broadcast_common::timescale::Timescale;
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use transmux::TrackId;
 
 fn timescale(value: u32) -> Timescale {
@@ -63,11 +64,11 @@ struct SlideRoute {
 }
 
 impl SlideRoute {
-    /// Build a route whose target is `W13_TARGET_SECS` (4 s) per segment.
+    /// Build a route whose target is `W13_TARGET` (4 s) per segment.
     fn new() -> Self {
         let store = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(W13_TARGET_SECS)
+                .with_target_duration(W13_TARGET)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(2),
         ));
@@ -77,8 +78,8 @@ impl SlideRoute {
         let seg = LlHlsSegmenter::with_part_target(
             specs.clone(),
             transmux::VIDEO_CLOCK_TIMESCALE,
-            W13_TARGET_SECS,
-            PART_TARGET_MS,
+            W13_TARGET,
+            Duration::from_millis(u64::from(PART_TARGET_MS)),
         )
         .expect("segmenter builds");
         store.set_init(program, seg.init_segment().expect("init"));
@@ -133,7 +134,7 @@ fn build_app(store: Arc<RouteHandle>, output: Arc<dyn Output>) -> axum::Router {
 async fn manifest_is_served_and_well_formed() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -203,7 +204,7 @@ async fn manifest_is_served_and_well_formed() {
 async fn advertised_equals_servable() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -280,7 +281,7 @@ async fn advertised_equals_servable() {
 async fn auth_is_enforced() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -377,7 +378,7 @@ async fn auth_is_enforced() {
 async fn llhls_and_smooth_serve_from_same_trunk() {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -461,7 +462,7 @@ async fn llhls_and_smooth_serve_from_same_trunk() {
 
 /// 4-second target so the segmenter produces the >= 4 s segments W13a is
 /// about; 12 s of video at 30 fps (sync every 120 frames = 4 s) → 3 segments.
-const W13_TARGET_SECS: f64 = 4.0;
+const W13_TARGET: Duration = Duration::from_secs(4);
 const W13_FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 const W13_SYNC_EVERY: u32 = 120;
 const W13_FRAMES: u32 = W13_SYNC_EVERY * 3 + 10;
@@ -475,12 +476,12 @@ fn have_oracle(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// A route with `W13_TARGET_SECS` segments: `W13_FRAMES` video frames through
+/// A route with `W13_TARGET` segments: `W13_FRAMES` video frames through
 /// a real `LlHlsSegmenter`.
 fn w13_route() -> Arc<RouteHandle> {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(W13_TARGET_SECS)
+            .with_target_duration(W13_TARGET)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(16),
     ));
@@ -604,7 +605,7 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
 
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(W13_TARGET_SECS)
+            .with_target_duration(W13_TARGET)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(16),
     ));
@@ -613,8 +614,8 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
         transmux::VIDEO_CLOCK_TIMESCALE,
-        W13_TARGET_SECS,
-        PART_TARGET_MS,
+        W13_TARGET,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter");
     store.set_init(program, seg.init_segment().expect("init"));
@@ -1070,7 +1071,7 @@ fn subtitle_spec(track_id: u32) -> TrackSpec {
 fn publish_route(specs: Vec<TrackSpec>) -> Arc<RouteHandle> {
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));
@@ -1261,7 +1262,7 @@ async fn smooth_responses_carry_no_cache() {
     const NO_CACHE: &str = "no-cache";
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(W13_TARGET_SECS)
+            .with_target_duration(W13_TARGET)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(2),
     ));
@@ -1271,8 +1272,8 @@ async fn smooth_responses_carry_no_cache() {
     let mut seg = LlHlsSegmenter::with_part_target(
         specs.clone(),
         transmux::VIDEO_CLOCK_TIMESCALE,
-        W13_TARGET_SECS,
-        PART_TARGET_MS,
+        W13_TARGET,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     store.set_init(program, seg.init_segment().expect("init"));
@@ -1405,7 +1406,7 @@ async fn concurrent_requests_all_succeed_and_agree() {
     const CLIENTS: usize = 32;
     let store = Arc::new(RouteHandle::new(
         RouteConfig::default()
-            .with_target_duration_secs(TARGET_DURATION_SECS)
+            .with_target_duration(TARGET_DURATION)
             .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
             .with_window_segments(8),
     ));

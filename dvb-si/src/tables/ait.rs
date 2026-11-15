@@ -7,6 +7,7 @@ use crate::descriptors::{AitDescriptorLoop, DescriptorLoop};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
@@ -204,7 +205,7 @@ pub struct AitApplication<'a> {
     /// `reserved_future_use(4)` before `application_descriptors_loop_length`
     /// (TS 102 809 §5.3.4, `1111`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<4>,
 }
 
 impl<'a> AitApplication<'a> {
@@ -219,7 +220,7 @@ impl<'a> AitApplication<'a> {
             identifier,
             control_code,
             descriptors,
-            reserved_future_use: super::RESERVED_4,
+            reserved_future_use: ReservedOnes::FILL,
         }
     }
 
@@ -263,10 +264,10 @@ pub struct AitSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved_future_use(4)` before `common_descriptors_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptors_length: u8,
+    pub reserved_common_descriptors_length: ReservedOnes<4>,
     /// `reserved_future_use(4)` before `application_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_application_loop_length: u8,
+    pub reserved_application_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> AitSection<'a> {
@@ -289,8 +290,8 @@ impl<'a> AitSection<'a> {
             common_descriptors,
             applications,
             bits: super::SectionBits::dvb(),
-            reserved_common_descriptors_length: super::RESERVED_4,
-            reserved_application_loop_length: super::RESERVED_4,
+            reserved_common_descriptors_length: ReservedOnes::FILL,
+            reserved_application_loop_length: ReservedOnes::FILL,
         }
     }
 
@@ -402,7 +403,9 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 },
                 control_code,
                 descriptors: DescriptorLoop::new(&bytes[app_desc_start..app_desc_end]),
-                reserved_future_use: super::len_reserved_of(bytes[pos + 7]),
+                reserved_future_use: ReservedOnes::from_bits(u64::from(super::len_reserved_of(
+                    bytes[pos + 7],
+                ))),
             });
             pos = app_desc_end;
         }
@@ -427,8 +430,12 @@ impl<'a> Parse<'a> for AitSection<'a> {
             common_descriptors,
             applications,
             bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
-            reserved_common_descriptors_length: super::len_reserved_of(bytes[8]),
-            reserved_application_loop_length: super::len_reserved_of(bytes[common_desc_end]),
+            reserved_common_descriptors_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[8]),
+            )),
+            reserved_application_loop_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[common_desc_end]),
+            )),
         })
     }
 }
@@ -482,7 +489,7 @@ impl Serialize for AitSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[8..10],
             cdl as usize,
-            self.reserved_common_descriptors_length,
+            self.reserved_common_descriptors_length.get() as u8,
         )?;
 
         let common_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + COMMON_DESC_LEN_BYTES;
@@ -499,7 +506,7 @@ impl Serialize for AitSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[app_loop_start..app_loop_start + 2],
             apl as usize,
-            self.reserved_application_loop_length,
+            self.reserved_application_loop_length.get() as u8,
         )?;
 
         let mut pos = app_loop_start + APP_LOOP_LEN_BYTES;
@@ -515,7 +522,7 @@ impl Serialize for AitSection<'_> {
             super::write_desc_loop_len_r(
                 &mut buf[pos + 7..pos + 9],
                 adl as usize,
-                app.reserved_future_use,
+                app.reserved_future_use.get() as u8,
             )?;
             let desc_start = pos + APP_HEADER_LEN;
             buf[desc_start..desc_start + app.descriptors.len()]
@@ -938,5 +945,25 @@ mod tests {
         );
         let ait = AitSection::parse(&bytes).unwrap();
         assert_eq!(ait.applications.len(), 2);
+    }
+
+    /// Each reserved field is 4 bits wide, so a wider value is unrepresentable
+    /// and cannot spill into the 12-bit length below it.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_four_bits() {
+        let section = AitSection::new(
+            ApplicationType::from_u16(0),
+            false,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            DescriptorLoop::new(&[]),
+            vec![],
+        );
+        let section = AitSection {
+            reserved_common_descriptors_length: ReservedOnes::from_bits(0xFF),
+            reserved_application_loop_length: ReservedOnes::from_bits(0xFF),
+            ..section
+        };
+        assert_eq!(section.reserved_common_descriptors_length.get(), 0x0F);
+        assert_eq!(section.reserved_application_loop_length.get(), 0x0F);
     }
 }

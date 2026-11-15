@@ -584,8 +584,6 @@ pub const RESERVED_3: u8 = 0x07;
 pub const RESERVED_4: u8 = 0x0F;
 /// All-ones `reserved_future_use(5)` fill (RST entry, MPE-FEC section).
 pub(crate) const RESERVED_5: u8 = 0x1F;
-/// All-ones `reserved_future_use(6)` fill (SDT service entry).
-pub(crate) const RESERVED_6: u8 = 0x3F;
 /// Shift of the `reserved(3)` above a 13-bit PID.
 const PID_RESERVED_SHIFT: u32 = 5;
 /// Shift of the `reserved(4)` above a 12-bit length.

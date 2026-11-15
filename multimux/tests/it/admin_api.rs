@@ -457,7 +457,7 @@ fn route_json(route: &Route) -> serde_json::Value {
 fn admin_config(media_bind: SocketAddr, admin_bind: SocketAddr, routes: Vec<Route>) -> Config {
     Config::default()
         .with_bind(media_bind.to_string())
-        .with_target_duration_secs(0.2)
+        .with_target_duration(Duration::from_millis(200))
         .with_part_target(Duration::from_millis(50))
         .with_window_segments(8)
         .with_routes(routes)
@@ -2281,7 +2281,7 @@ fn initial_as_json(config: &Config) -> serde_json::Value {
     });
     serde_json::json!({
         "bind": config.bind,
-        "target_duration_secs": config.target_duration_secs,
+        "target_duration_secs": config.target_duration.as_secs_f64(),
         "part_target_ms": u32::try_from(config.part_target.as_millis()).unwrap_or(u32::MAX),
         "window_segments": config.window_segments,
         "routes": routes,

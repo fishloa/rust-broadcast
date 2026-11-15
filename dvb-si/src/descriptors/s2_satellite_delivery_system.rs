@@ -27,6 +27,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for s2_satellite_delivery_system_descriptor.
@@ -50,19 +51,26 @@ const FLAG_RESERVED_FU_MASK: u8 = 0x0C;
 const FLAG_RESERVED_FU_SHIFT: u8 = 2;
 /// `reserved(6)` ahead of `scrambling_sequence_index`: top 6 bits of its first byte.
 const SCRAMBLING_RESERVED_SHIFT: u8 = 2;
-const SCRAMBLING_RESERVED_WIDTH_MASK: u8 = 0x3F;
 
 /// Spec default of the 1-bit `reserved_zero_future_use` (bit 5): `0`
 /// (EN 300 468 Table 42, V1.16.1-V1.20.1, audit §4 row 4). Editions
 /// V1.7.1-V1.15.1 defined this bit as `backwards_compatibility_indicator`
 /// (1 = low-priority stream of a backward-compatible carrier); it is kept
 /// verbatim on parse so such a sender round-trips.
-pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0;
+pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_BITS> =
+    ReservedZero::<RESERVED_ZERO_BITS>::FILL;
+/// Width of the `reserved_zero_future_use` bit (1 bit).
+const RESERVED_ZERO_BITS: u32 = 1;
 /// Spec default of `reserved_future_use(2)` (bits 3..2): `11` (all editions).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FU_2_BITS> =
+    ReservedOnes::<RESERVED_FU_2_BITS>::FILL;
+/// Width of the `reserved_future_use` field (2 bits).
+const RESERVED_FU_2_BITS: u32 = 2;
 /// Default of the 6-bit `reserved` ahead of `scrambling_sequence_index`:
 /// all ones (EN 300 468 Table 42, global "reserved = 1" rule).
-pub const RESERVED_6_DEFAULT: u8 = 0x3F;
+pub const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
+/// Width of the `reserved` ahead of `scrambling_sequence_index` (6 bits).
+const RESERVED_6_BITS: u32 = 6;
 
 const SCRAMBLING_INDEX_HI_MASK: u8 = 0x03;
 const SCRAMBLING_INDEX_MAX: u32 = 0x3FFFF;
@@ -123,17 +131,20 @@ broadcast_common::impl_spec_display!(TsGsMode, Reserved);
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct S2SatelliteDeliverySystemDescriptor {
-    /// `reserved_zero_future_use(1)` (flags bit 5, right-aligned 1 bit).
-    /// Parsed verbatim and re-emitted (an old `backwards_compatibility_indicator`
-    /// survives); `Default` is [`RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use: u8,
-    /// `reserved_future_use(2)` (flags bits 3..2, right-aligned). Parsed
-    /// verbatim; `Default` is [`RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
-    pub reserved_future_use: u8,
-    /// `reserved(6)` ahead of `scrambling_sequence_index` (6 bits,
-    /// right-aligned); only on the wire when `scrambling_sequence_selector`
-    /// is set. Parsed verbatim; `Default` is [`RESERVED_6_DEFAULT`] (`0x3F`).
-    pub reserved_6: u8,
+    /// `reserved_zero_future_use(1)` (flags bit 5). Parsed verbatim and
+    /// re-emitted (an old `backwards_compatibility_indicator` survives);
+    /// `Default` is [`RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_BITS>,
+    /// `reserved_future_use(2)` (flags bits 3..2). Parsed verbatim; `Default` is
+    /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<RESERVED_FU_2_BITS>,
+    /// `reserved(6)` ahead of `scrambling_sequence_index` (6 bits); only on the
+    /// wire when `scrambling_sequence_selector` is set. Parsed verbatim;
+    /// `Default` is [`RESERVED_6_DEFAULT`] (`0x3F`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_6: ReservedOnes<RESERVED_6_BITS>,
     /// Bytes after the last defined field inside the descriptor body
     /// (tolerated and previously dropped); re-emitted verbatim. Empty for a
     /// conformant descriptor.
@@ -197,8 +208,11 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         // Reserved bits are captured (EN 300 468 §5.1 tolerance) and re-emitted.
         let flags = body[0];
-        let reserved_zero_future_use = (flags & FLAG_RESERVED_ZERO) >> 5;
-        let reserved_future_use = (flags & FLAG_RESERVED_FU_MASK) >> FLAG_RESERVED_FU_SHIFT;
+        let reserved_zero_future_use =
+            ReservedZero::from_bits(u64::from((flags & FLAG_RESERVED_ZERO) >> 5));
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(
+            (flags & FLAG_RESERVED_FU_MASK) >> FLAG_RESERVED_FU_SHIFT,
+        ));
         let scrambling_sequence_selector = (flags & FLAG_SCRAMBLING_SELECTOR) != 0;
         let multiple_input_stream_flag = (flags & FLAG_MULTIPLE_INPUT_STREAM) != 0;
         let not_timeslice_flag = (flags & FLAG_NOT_TIMESLICE) != 0;
@@ -206,7 +220,7 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         let mut pos = FLAGS_LEN;
 
-        let mut reserved_6 = RESERVED_6_DEFAULT;
+        let mut reserved_6 = ReservedOnes::FILL;
         let scrambling_sequence_index = if scrambling_sequence_selector {
             need_in(
                 body,
@@ -214,7 +228,7 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
                 "S2SatelliteDeliverySystemDescriptor scrambling_sequence_index",
             )?;
             let b0 = body[pos];
-            reserved_6 = b0 >> SCRAMBLING_RESERVED_SHIFT;
+            reserved_6 = ReservedOnes::from_bits(u64::from(b0 >> SCRAMBLING_RESERVED_SHIFT));
             let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << 16)
                 | (u32::from(body[pos + 1]) << 8)
                 | u32::from(body[pos + 2]);
@@ -294,16 +308,8 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
         need_out(buf, len)?;
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        let mut flags = (broadcast_common::len::fit_mask(
-            self.reserved_zero_future_use,
-            1,
-            "reserved_zero_future_use",
-        )? << 5)
-            | (broadcast_common::len::fit_mask(
-                self.reserved_future_use,
-                0b11,
-                "reserved_future_use",
-            )? << FLAG_RESERVED_FU_SHIFT)
+        let mut flags = ((self.reserved_zero_future_use.get() as u8) << 5)
+            | ((self.reserved_future_use.get() as u8) << FLAG_RESERVED_FU_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.ts_gs_mode.to_u8(),
                 TS_GS_MODE_MASK,
@@ -335,11 +341,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                 SCRAMBLING_INDEX_MAX,
                 "scrambling_sequence_index",
             )?;
-            buf[pos] = (broadcast_common::len::fit_mask(
-                self.reserved_6,
-                SCRAMBLING_RESERVED_WIDTH_MASK,
-                "reserved_6",
-            )? << SCRAMBLING_RESERVED_SHIFT)
+            buf[pos] = ((self.reserved_6.get() as u8) << SCRAMBLING_RESERVED_SHIFT)
                 | ((index >> 16) as u8 & SCRAMBLING_INDEX_HI_MASK);
             buf[pos + 1] = (index >> 8) as u8;
             buf[pos + 2] = index as u8;
@@ -526,9 +528,15 @@ mod tests {
                     let flags = 0x80 | 0x10 | (rz << 5) | (rfu << 2) | 0x01;
                     let raw = [TAG, 4, flags, (r6 << 2) | 0x01, 0x23, 0x45];
                     let d = S2SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
-                    assert_eq!(d.reserved_zero_future_use, rz);
-                    assert_eq!(d.reserved_future_use, rfu);
-                    assert_eq!(d.reserved_6, r6);
+                    assert_eq!(
+                        d.reserved_zero_future_use,
+                        ReservedZero::from_bits(u64::from(rz))
+                    );
+                    assert_eq!(
+                        d.reserved_future_use,
+                        ReservedOnes::from_bits(u64::from(rfu))
+                    );
+                    assert_eq!(d.reserved_6, ReservedOnes::from_bits(u64::from(r6)));
                     let mut buf = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut buf).unwrap();
                     assert_eq!(buf, raw, "rz {rz} rfu {rfu} r6 {r6:#x}");
@@ -560,5 +568,20 @@ mod tests {
         d.serialize_into(&mut buf).unwrap();
         // flags: selector(0x80) | not_timeslice(0x10) | rfu(0x0C), bit5 = 0.
         assert_eq!(buf, [TAG, 4, 0x80 | 0x10 | 0x0C, 0xFD, 0x23, 0x45]);
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the flags or index bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let d = S2SatelliteDeliverySystemDescriptor {
+            reserved_zero_future_use: ReservedZero::from_bits(0xFF),
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            reserved_6: ReservedOnes::from_bits(0xFF),
+            ..S2SatelliteDeliverySystemDescriptor::default()
+        };
+        assert_eq!(d.reserved_zero_future_use.get(), 0x01);
+        assert_eq!(d.reserved_future_use.get(), 0x03);
+        assert_eq!(d.reserved_6.get(), 0x3F);
     }
 }

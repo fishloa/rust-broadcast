@@ -40,6 +40,7 @@
 use crate::error::{Error, Result};
 use crate::tables::real_time_parameters::{RTP_LEN, RealTimeParametersBits};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for the MPE-IFEC section.
@@ -138,10 +139,10 @@ pub struct MpeIfecSection<'a> {
     pub ifec_data: &'a [u8],
     /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b1: u8,
+    pub reserved_b1: ReservedOnes<2>,
     /// `reserved(2)` in front of `version` (`11`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_b5: u8,
+    pub reserved_b5: ReservedOnes<2>,
 }
 
 impl<'a> MpeIfecSection<'a> {
@@ -166,8 +167,8 @@ impl<'a> MpeIfecSection<'a> {
             last_section_number: section.last_section_number,
             real_time_parameters,
             ifec_data,
-            reserved_b1: super::RESERVED_2,
-            reserved_b5: super::RESERVED_2,
+            reserved_b1: ReservedOnes::FILL,
+            reserved_b5: ReservedOnes::FILL,
         }
     }
 }
@@ -221,8 +222,8 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
             last_section_number,
             real_time_parameters,
             ifec_data,
-            reserved_b1: super::b1_reserved_of(bytes[1]),
-            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_b1: ReservedOnes::from_bits(u64::from(super::b1_reserved_of(bytes[1]))),
+            reserved_b5: ReservedOnes::from_bits(u64::from(super::b5_reserved_of(bytes[5]))),
         })
     }
 }
@@ -245,7 +246,7 @@ impl Serialize for MpeIfecSection<'_> {
         buf[1] = super::b1_of(
             self.section_syntax_indicator,
             self.private_indicator,
-            self.reserved_b1,
+            self.reserved_b1.get() as u8,
         )?;
         super::write_section_length(buf, len - HEADER_LEN)?;
 
@@ -253,7 +254,11 @@ impl Serialize for MpeIfecSection<'_> {
         buf[3] = self.burst_number;
         buf[4] = self.ifec_burst_size;
         // reserved(2)=11 | version(5) | current_next_indicator(1)
-        buf[5] = super::b5_of(self.reserved_b5, self.version, self.current_next_indicator)?;
+        buf[5] = super::b5_of(
+            self.reserved_b5.get() as u8,
+            self.version,
+            self.current_next_indicator,
+        )?;
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

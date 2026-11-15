@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for maximum_bitrate_descriptor.
@@ -14,11 +15,12 @@ pub const TAG: u8 = 0x0E;
 const MAXIMUM_BITRATE_BITS: u32 = 22;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
+/// Width of the `reserved` field ahead of `maximum_bitrate` (2 bits).
+const RESERVED_BITS: u32 = 2;
 /// Default of the 2-bit `reserved` ahead of `maximum_bitrate` (H.222.0 Table
 /// 2-67): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023, audit
 /// §5; confirmed by the TSDuck-compiled oracle PMT).
-pub const RESERVED_DEFAULT: u8 = 0b11;
-const RESERVED_MASK: u8 = 0x03;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// Maximum Bitrate Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,10 +30,11 @@ const RESERVED_MASK: u8 = 0x03;
 pub struct MaximumBitrateDescriptor {
     /// Maximum bitrate in units of 50 bytes/second.
     pub maximum_bitrate: u32,
-    /// `reserved(2)` ahead of `maximum_bitrate` (2 bits, right-aligned).
+    /// `reserved(2)` ahead of `maximum_bitrate` (2 bits).
     /// Captured on parse, re-emitted verbatim;
     /// [`MaximumBitrateDescriptor::new`] uses [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 }
 
 impl MaximumBitrateDescriptor {
@@ -65,7 +68,7 @@ impl<'a> Parse<'a> for MaximumBitrateDescriptor {
             ((u32::from(body[0]) & 0x3F) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
         Ok(Self {
             maximum_bitrate,
-            reserved: body[0] >> 6,
+            reserved: ReservedOnes::from_bits(u64::from(body[0] >> 6)),
         })
     }
 }
@@ -88,9 +91,7 @@ impl Serialize for MaximumBitrateDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let mb = mb as u32;
-        buf[HEADER_LEN] =
-            (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 6)
-                | ((mb >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] = ((self.reserved.get() as u8) << 6) | ((mb >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((mb >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (mb & 0xFF) as u8;
         Ok(len)
@@ -175,7 +176,7 @@ mod tests {
         for r in 0u8..=3 {
             let bytes = [TAG, 3, (r << 6) | 0x3F, 0xAB, 0xCD];
             let d = MaximumBitrateDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved, ReservedOnes::from_bits(u64::from(r)));
             let mut out = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut out).unwrap();
             assert_eq!(out, bytes);
@@ -188,5 +189,20 @@ mod tests {
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 3, 0xFF, 0xAB, 0xCD]);
+    }
+
+    /// The field is 2 bits wide, so a wider value is unrepresentable: the
+    /// typed `ReservedOnes<2>` drops bits above the field instead of the
+    /// serializer silently re-masking a raw `u8`.
+    #[test]
+    fn reserved_cannot_hold_more_than_two_bits() {
+        let d = MaximumBitrateDescriptor {
+            maximum_bitrate: 0,
+            reserved: ReservedOnes::from_bits(0xFD),
+        };
+        assert_eq!(d.reserved.get(), 0b01);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[2] >> 6, 0b01);
     }
 }

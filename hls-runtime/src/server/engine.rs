@@ -1033,10 +1033,10 @@ fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum HlsOriginBuildError {
-    /// [`HlsOriginConfig::new`]'s `target_duration_secs` was NaN, infinite,
-    /// zero or negative: `EXT-X-TARGETDURATION` must be a positive integer
-    /// (RFC 8216bis §4.4.3.1).
-    #[error("HlsOriginConfig::new(.., target_duration_secs, ..) must be finite and positive")]
+    /// [`HlsOriginConfig::new`]'s `target_duration` was zero:
+    /// `EXT-X-TARGETDURATION` must be a positive integer (RFC 8216bis
+    /// §4.4.3.1). A `Duration` is finite and non-negative by construction.
+    #[error("HlsOriginConfig::new(.., target_duration, ..) must be positive")]
     InvalidTargetDuration,
     /// [`HlsOriginConfig::with_low_latency`] was given a part target of `0`:
     /// `#EXT-X-PART-INF`'s `PART-TARGET` must be a positive duration (RFC
@@ -1452,7 +1452,7 @@ pub struct RenditionSibling {
 /// # let nz = |n: usize| NonZeroUsize::new(n).unwrap();
 /// # let trunk = Arc::new(Trunk::new(TrunkConfig::default().with_timed_capacity(nz(16)).with_sparse_capacity(nz(4)).with_segment_capacity(nz(8)).with_event_capacity(nz(4)).with_part_capacity(nz(16))));
 /// let classic_ts = HlsOrigin::new(
-///     HlsOriginConfig::new(Arc::clone(&trunk), 6.0, nz(4))
+///     HlsOriginConfig::new(Arc::clone(&trunk), core::time::Duration::from_secs(6), nz(4))
 ///         .with_container(Container::MpegTs),
 ///     // `.with_low_latency(..)` omitted entirely -> classic HLS.
 /// )
@@ -1462,7 +1462,7 @@ pub struct RenditionSibling {
 #[non_exhaustive]
 pub struct HlsOriginConfig {
     trunk: Arc<Trunk>,
-    target_duration_secs: f64,
+    target_duration: Duration,
     window_segments: NonZeroUsize,
     container: Container,
     part_target: Option<Duration>,
@@ -1493,12 +1493,12 @@ impl HlsOriginConfig {
     #[must_use]
     pub fn new(
         trunk: Arc<Trunk>,
-        target_duration_secs: f64,
+        target_duration: Duration,
         window_segments: NonZeroUsize,
     ) -> Self {
         HlsOriginConfig {
             trunk,
-            target_duration_secs,
+            target_duration,
             window_segments,
             container: Container::default(),
             part_target: None,
@@ -1887,7 +1887,7 @@ impl HlsOrigin {
     ///
     /// # Errors
     /// [`HlsOriginBuildError`], never a silently-defaulted value, for a
-    /// non-finite/non-positive `target_duration_secs`, a zero
+    /// zero `target_duration`, a zero
     /// [`HlsOriginConfig::with_low_latency`] part target, an offset that cannot
     /// hold the `u32` sequence range, an out-of-range declared bandwidth, or an
     /// inconsistent rendition/sibling declaration.
@@ -1897,10 +1897,10 @@ impl HlsOrigin {
     /// advertises the parts of a closed segment while all of them are still
     /// resident.
     pub fn new(config: HlsOriginConfig) -> Result<HlsOrigin, HlsOriginBuildError> {
-        let target_duration_secs = config.target_duration_secs;
-        if !target_duration_secs.is_finite() || target_duration_secs <= 0.0 {
+        if config.target_duration.is_zero() {
             return Err(HlsOriginBuildError::InvalidTargetDuration);
         }
+        let target_duration_secs = config.target_duration.as_secs_f64();
         let window_segments = config.window_segments;
         if config.part_target.is_some_and(|p| p.is_zero()) {
             return Err(HlsOriginBuildError::ZeroPartTarget);
@@ -4258,9 +4258,13 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
-                .with_low_latency(Duration::from_millis(500))
-                .with_instance(7),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7),
         )
         .expect("valid configuration");
         origin.set_init(vec![0xAAu8; 8]);
@@ -4298,7 +4302,7 @@ mod tests {
                 .with_part_capacity(nz(64)),
         );
         let offset = HlsOrigin::new(
-            HlsOriginConfig::new(trunk, 4.0, nz(4))
+            HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
                 .with_instance(7)
                 .with_media_sequence_offset(100),
         )
@@ -4367,10 +4371,14 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
-                .with_low_latency(Duration::from_millis(500))
-                .with_instance(7)
-                .with_hold_cold_playlist(hold),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7)
+            .with_hold_cold_playlist(hold),
         )
         .expect("valid configuration");
         origin.set_init(vec![0xAAu8; 8]);
@@ -4418,8 +4426,12 @@ mod tests {
                 .with_event_capacity(nz(8))
                 .with_part_capacity(nz(64)),
         );
-        let origin =
-            HlsOrigin::new(HlsOriginConfig::new(trunk, 4.0, nz(4))).expect("valid configuration");
+        let origin = HlsOrigin::new(HlsOriginConfig::new(
+            trunk,
+            core::time::Duration::from_secs(4),
+            nz(4),
+        ))
+        .expect("valid configuration");
         assert!(origin.hold_cold_playlist);
     }
 
@@ -4489,10 +4501,14 @@ mod tests {
         );
         let writer = trunk.segment_writer().expect("first segment writer");
         let origin = HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4))
-                .with_low_latency(Duration::from_millis(500))
-                .with_instance(7)
-                .with_hold_cold_playlist(true),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::from_millis(500))
+            .with_instance(7)
+            .with_hold_cold_playlist(true),
         )
         .expect("valid configuration");
         let init = test_fixtures::read("hls/cmaf-fmp4/init.mp4");
@@ -5152,6 +5168,28 @@ mod tests {
         assert_eq!(origin.published_target_duration(), Duration::from_secs(8));
     }
 
+    /// The configured target is a `Duration`; `published_target_duration`
+    /// rounds it up to whole seconds (RFC 8216 §4.3.3.1), so 2.5 s is 3 s, not
+    /// a truncation to 2 s — the typed value survives the config edge (#2731).
+    #[test]
+    fn configured_target_duration_is_a_duration() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(64))
+                .with_sparse_capacity(nz(8))
+                .with_segment_capacity(nz(8))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(64)),
+        );
+        let origin = HlsOrigin::new(HlsOriginConfig::new(
+            trunk,
+            Duration::from_millis(2500),
+            nz(4),
+        ))
+        .expect("valid configuration");
+        assert_eq!(origin.published_target_duration(), Duration::from_secs(3));
+    }
+
     #[test]
     fn target_duration_is_max_of_configured_and_actual_segment_duration() {
         let (_trunk, origin, writer) = make_origin(); // configured target 4.0
@@ -5324,8 +5362,12 @@ mod tests {
                 .with_part_capacity(nz(64)),
         );
         let writer = trunk.segment_writer().expect("first segment writer");
-        let mut config =
-            HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4)).with_container(container);
+        let mut config = HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(4),
+            nz(4),
+        )
+        .with_container(container);
         if let Some(ms) = low_latency_ms {
             config = config.with_low_latency(Duration::from_millis(u64::from(ms)));
         }
@@ -5765,12 +5807,21 @@ mod tests {
                 .with_event_capacity(nz(8))
                 .with_part_capacity(nz(64)),
         );
-        match HlsOrigin::new(HlsOriginConfig::new(Arc::clone(&trunk), 0.0, nz(4))) {
+        match HlsOrigin::new(HlsOriginConfig::new(
+            Arc::clone(&trunk),
+            core::time::Duration::from_secs(0),
+            nz(4),
+        )) {
             Err(e) => assert_eq!(e, HlsOriginBuildError::InvalidTargetDuration),
             Ok(_) => panic!("expected an error: target_duration_secs must be positive"),
         }
         match HlsOrigin::new(
-            HlsOriginConfig::new(Arc::clone(&trunk), 4.0, nz(4)).with_low_latency(Duration::ZERO),
+            HlsOriginConfig::new(
+                Arc::clone(&trunk),
+                core::time::Duration::from_secs(4),
+                nz(4),
+            )
+            .with_low_latency(Duration::ZERO),
         ) {
             Err(e) => assert_eq!(e, HlsOriginBuildError::ZeroPartTarget),
             Ok(_) => panic!("expected an error: a zero part target is invalid"),

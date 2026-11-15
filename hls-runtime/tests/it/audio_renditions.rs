@@ -23,7 +23,7 @@ fn config() -> HlsOriginConfig {
             .with_event_capacity(nz(8))
             .with_part_capacity(nz(64)),
     );
-    HlsOriginConfig::new(trunk, 4.0, nz(4))
+    HlsOriginConfig::new(trunk, core::time::Duration::from_secs(4), nz(4))
         .with_instance(7)
         .with_declared_bandwidth_bps(5_000_000)
 }

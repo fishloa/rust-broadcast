@@ -2,17 +2,19 @@
 use super::*;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 
 /// Shift of `reserved_future_use(5)` in the per-entry flags byte.
 const ENTRY_RESERVED_SHIFT: u8 = 3;
-/// Width mask of the 5-bit `reserved_future_use`.
-const ENTRY_RESERVED_MASK: u8 = 0x1F;
+/// Width of the `reserved_future_use` in the per-entry flags byte (5 bits).
+const ENTRY_RESERVED_BITS: u32 = 5;
 
 /// Spec default of the per-entry `reserved_future_use(5)` ahead of
 /// `country_code_flag`: all ones (EN 300 468 Table 156; `reserved` in
 /// V1.14.1-V1.16.1, `reserved_future_use` in V1.17.1+, value 1 throughout;
 /// audit §6.1 class B).
-pub const TARGET_REGION_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x1F;
+pub const TARGET_REGION_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<ENTRY_RESERVED_BITS> =
+    ReservedOnes::<ENTRY_RESERVED_BITS>::FILL;
 
 impl ExtensionBodyDef<'_> for TargetRegion {
     const TAG_EXTENSION: u8 = 0x09;
@@ -37,7 +39,7 @@ pub struct TargetRegionEntry {
     /// right-aligned). Captured on parse, re-emitted verbatim;
     /// [`TargetRegionEntry::new`] defaults to [`TARGET_REGION_RESERVED_FUTURE_USE_DEFAULT`]
     /// (`0x1F`).
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<ENTRY_RESERVED_BITS>,
     /// Per-entry country_code(24), present iff country_code_flag==1.
     pub country_code: Option<LangCode>,
     /// region_depth and its region codes.
@@ -110,7 +112,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
     while pos < sel.len() {
         let flags = sel[pos];
         pos += 1;
-        let reserved_future_use = flags >> ENTRY_RESERVED_SHIFT;
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(flags >> ENTRY_RESERVED_SHIFT));
         let country_code_flag = (flags >> 2) & 1;
         let region_depth = flags & 0x03;
         let country_code = if country_code_flag == 1 {
@@ -233,11 +235,7 @@ pub(crate) fn write_region_entries(
             RegionCodes::PrimarySecondary { .. } => 2,
             RegionCodes::Full { .. } => 3,
         };
-        buf[pos] = (broadcast_common::len::fit_mask(
-            region.reserved_future_use,
-            ENTRY_RESERVED_MASK,
-            "reserved_future_use",
-        )? << ENTRY_RESERVED_SHIFT)
+        buf[pos] = ((region.reserved_future_use.get() as u8) << ENTRY_RESERVED_SHIFT)
             | ((region.country_code.is_some() as u8) << 2)
             | depth;
         pos += 1;
@@ -391,7 +389,9 @@ mod tests {
             let bytes = wrap(0x09, &sel);
             let d = ExtensionDescriptor::parse(&bytes).unwrap();
             match &d.body {
-                ExtensionBody::TargetRegion(b) => assert_eq!(b.regions[0].reserved_future_use, r),
+                ExtensionBody::TargetRegion(b) => {
+                    assert_eq!(b.regions[0].reserved_future_use.get(), u64::from(r))
+                }
                 other => panic!("expected TargetRegion, got {other:?}"),
             }
             let mut buf = vec![0u8; d.serialized_len()];

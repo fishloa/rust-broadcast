@@ -13,6 +13,7 @@ use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use crate::text::DvbText;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for RAR_over_IP_descriptor (RNT namespace).
@@ -26,7 +27,7 @@ const COMPLETE_FLAG: u8 = 0x02;
 const RESERVED_MASK: u8 = 0x01;
 /// Default of the 1-bit `reserved`: `1` (TS 102 323 §5.3.6 "Reserved bits shall
 /// be set to '1'").
-pub const RESERVED_DEFAULT: u8 = 1;
+pub const RESERVED_DEFAULT: ReservedOnes<1> = ReservedOnes::<1>::FILL;
 
 /// RAR over IP descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,7 +45,8 @@ pub struct RarOverIpDescriptor<'a> {
     pub complete_flag: bool,
     /// `reserved` (1 bit, right-aligned). Captured on parse and re-emitted
     /// verbatim; [`Self::new`] defaults to [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<1>,
     /// `url_char`s — where CRIDs of this authority can be resolved.
     pub url: DvbText<'a>,
     /// Bytes after the URL inside `descriptor_length`; the spec defines none
@@ -67,7 +69,7 @@ impl<'a> RarOverIpDescriptor<'a> {
             last_valid_date,
             weighting,
             complete_flag,
-            reserved: RESERVED_DEFAULT,
+            reserved: ReservedOnes::FILL,
             url,
             trailing: &[],
         }
@@ -103,7 +105,7 @@ impl<'a> Parse<'a> for RarOverIpDescriptor<'a> {
             last_valid_date: MjdBcdTime::read(body, MJD_BCD_LEN, "last_valid_date")?,
             weighting: flags >> WEIGHTING_SHIFT,
             complete_flag: flags & COMPLETE_FLAG != 0,
-            reserved: flags & RESERVED_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(flags & RESERVED_MASK)),
             url: DvbText::new(&body[FIXED_LEN..url_end]),
             trailing: &body[url_end..],
         })
@@ -120,7 +122,7 @@ impl Serialize for RarOverIpDescriptor<'_> {
         need_out(buf, len)?;
         let weighting =
             broadcast_common::len::fit_mask(self.weighting, WEIGHTING_MASK, "weighting")?;
-        let reserved = broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+        let reserved = self.reserved.get() as u8;
         let url_len = broadcast_common::len::fit_u8(self.url.len(), "url_length")?;
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b = &mut buf[HEADER_LEN..];
@@ -168,7 +170,7 @@ mod tests {
         let d = RarOverIpDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.weighting, 9);
         assert!(d.complete_flag);
-        assert_eq!(d.reserved, 1);
+        assert_eq!(d.reserved, ReservedOnes::from_bits(1));
         assert_eq!(d.url.raw(), b"http://crid.example/rar");
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
@@ -179,7 +181,7 @@ mod tests {
     fn off_spec_reserved_zero_is_preserved() {
         let bytes = sample(9 << 2);
         let d = RarOverIpDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.reserved, 0);
+        assert_eq!(d.reserved, ReservedOnes::from_bits(0));
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, bytes);
@@ -217,5 +219,15 @@ mod tests {
             &(RarOverIpDescriptor::parse(&[0x40, 0])),
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
+    }
+
+    /// The field is 1 bit wide, so a wider value is unrepresentable and cannot
+    /// spill into the weighting/flag bits below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_one_bit() {
+        let bytes = sample(0);
+        let mut d = RarOverIpDescriptor::parse(&bytes).unwrap();
+        d.reserved = ReservedOnes::from_bits(0xFF);
+        assert_eq!(d.reserved.get(), 0x01);
     }
 }

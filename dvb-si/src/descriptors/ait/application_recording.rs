@@ -13,6 +13,7 @@ use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_recording_descriptor (AIT namespace).
@@ -27,13 +28,18 @@ const AV_SYNCED_FLAG: u8 = 0x08;
 const INITIATING_REPLAY_FLAG: u8 = 0x04;
 const RESERVED_MASK: u8 = 0x03;
 const LABEL_RESERVED_MASK: u8 = 0x3F;
+/// Width of the 2-bit `reserved` after the flags.
+const RESERVED_BITS: u32 = 2;
+/// Width of the 6-bit per-label `reserved`.
+const LABEL_RESERVED_BITS: u32 = 6;
 const STORAGE_PROPERTIES_SHIFT: u32 = 6;
 
 /// Spec default of the 2-bit `reserved` after the flags (all ones, TS 102 809
 /// V1.3.1 NOTE: reserved bits are set to "1").
-pub const RESERVED_DEFAULT: u8 = 0x03;
-/// Spec default of the 6-bit `reserved` after `storage_properties` (all ones).
-pub const LABEL_RESERVED_DEFAULT: u8 = 0x3F;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+/// Spec default of the per-label 6-bit `reserved`: all ones (TS 102 809 Table C.4).
+pub const LABEL_RESERVED_DEFAULT: ReservedOnes<LABEL_RESERVED_BITS> =
+    ReservedOnes::<LABEL_RESERVED_BITS>::FILL;
 
 /// `storage_properties` (TS 102 809 §5.3.5.4 Table 22): importance of storing
 /// a labelled part of the application.
@@ -99,7 +105,7 @@ pub struct RecordingLabel<'a> {
     pub storage_properties: StorageProperties,
     /// `reserved`(6) after `storage_properties`; parsed value kept, default
     /// [`LABEL_RESERVED_DEFAULT`].
-    pub reserved: u8,
+    pub reserved: ReservedOnes<LABEL_RESERVED_BITS>,
 }
 
 impl<'a> RecordingLabel<'a> {
@@ -131,7 +137,7 @@ pub struct ApplicationRecordingDescriptor<'a> {
     /// `initiating_replay_flag` — the application (not the receiver) starts playback.
     pub initiating_replay_flag: bool,
     /// `reserved`(2) after the flags; parsed value kept, default [`RESERVED_DEFAULT`].
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// Labelled parts (`label_count` entries).
     pub labels: Vec<RecordingLabel<'a>>,
     /// `component_tag` list — service components to record with the application.
@@ -210,7 +216,7 @@ impl<'a> Parse<'a> for ApplicationRecordingDescriptor<'a> {
             labels.push(RecordingLabel {
                 label: LabelBytes::new(label),
                 storage_properties: StorageProperties::from_u8(props >> STORAGE_PROPERTIES_SHIFT),
-                reserved: props & LABEL_RESERVED_MASK,
+                reserved: ReservedOnes::from_bits(u64::from(props & LABEL_RESERVED_MASK)),
             });
             pos = next + 1;
         }
@@ -231,7 +237,7 @@ impl<'a> Parse<'a> for ApplicationRecordingDescriptor<'a> {
             dynamic_flag: flags & DYNAMIC_FLAG != 0,
             av_synced_flag: flags & AV_SYNCED_FLAG != 0,
             initiating_replay_flag: flags & INITIATING_REPLAY_FLAG != 0,
-            reserved: flags & RESERVED_MASK,
+            reserved: ReservedOnes::from_bits(u64::from(flags & RESERVED_MASK)),
             labels,
             component_tags: tags.to_vec(),
             private,
@@ -255,7 +261,7 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        let reserved = broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
+        let reserved = self.reserved.get() as u8;
         let label_count = broadcast_common::len::fit_u8(self.labels.len(), "label_count")?;
         let tag_list_len =
             broadcast_common::len::fit_u8(self.component_tags.len(), "component_tag_list_length")?;
@@ -281,7 +287,7 @@ impl Serialize for ApplicationRecordingDescriptor<'_> {
                 RESERVED_MASK,
                 "storage_properties",
             )?;
-            let res = broadcast_common::len::fit_mask(l.reserved, LABEL_RESERVED_MASK, "reserved")?;
+            let res = l.reserved.get() as u8;
             buf[pos] = (props << STORAGE_PROPERTIES_SHIFT) | res;
             pos += 1;
         }
@@ -321,14 +327,14 @@ mod tests {
         assert!(d.scheduled_recording_flag && d.dynamic_flag);
         assert!(!d.trick_mode_aware_flag && !d.time_shift_flag);
         assert!(!d.av_synced_flag && !d.initiating_replay_flag);
-        assert_eq!(d.reserved, 3);
+        assert_eq!(d.reserved.get(), 3);
         assert_eq!(d.labels.len(), 1);
         assert_eq!(d.labels[0].label.as_bytes(), b"ab");
         assert_eq!(
             d.labels[0].storage_properties,
             StorageProperties::CriticalToStore
         );
-        assert_eq!(d.labels[0].reserved, 0x3F);
+        assert_eq!(d.labels[0].reserved.get(), 0x3F);
         assert_eq!(d.component_tags, vec![0x10, 0x11]);
         assert_eq!(d.private, &[0xAA]);
         assert_eq!(d.reserved_future_use, &[0xFF]);
@@ -408,14 +414,9 @@ mod tests {
             d.serialize_into(&mut out),
             Err(Error::FieldOverflow(..))
         ));
-        let d = ApplicationRecordingDescriptor {
-            reserved: 4,
-            ..Default::default()
-        };
-        let mut out = vec![0u8; d.serialized_len()];
-        assert!(matches!(
-            d.serialize_into(&mut out),
-            Err(Error::FieldOverflow(..))
-        ));
+        // reserved is a 2-bit `ReservedOnes`; an over-range value is
+        // unrepresentable (`from_bits` masks at construction) so it can never be
+        // re-masked into a different wire byte.
+        assert_eq!(ReservedOnes::<RESERVED_BITS>::from_bits(4).get(), 0);
     }
 }

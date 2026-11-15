@@ -245,7 +245,7 @@ mod tests {
         let route = HlsPullRoute::new("pulled-403", format!("http://{addr}/media.m3u8"));
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -295,7 +295,7 @@ mod tests {
     const TRACK_ID: TrackId = TrackId::new(1);
     const VIDEO_TIMESCALE: u32 = 90_000;
     const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
-    const TARGET_DURATION_SECS: f64 = 1.0;
+    const TARGET_DURATION: Duration = Duration::from_secs(1);
     const FRAME_COUNT: u32 = 60;
 
     fn dummy_avc_config() -> AVCConfigurationBox {
@@ -340,8 +340,8 @@ mod tests {
         let mut seg = LlHlsSegmenter::with_part_target(
             vec![video_track_spec()],
             transmux::VIDEO_CLOCK_TIMESCALE,
-            TARGET_DURATION_SECS,
-            250,
+            TARGET_DURATION,
+            Duration::from_millis(250),
         )
         .expect("segmenter builds");
         let init = seg.init_segment().expect("init segment builds");
@@ -375,8 +375,7 @@ mod tests {
                 // Test fixture: `segment.timing.map(|t| t.duration)` is the segmenter's own
                 // computed duration over synthetic sample timestamps —
                 // always finite and non-negative (issue #1140).
-                duration: broadcast_hls::DecimalSeconds::new(segment.duration)
-                    .expect("segmenter duration is finite, >= 0"),
+                duration: broadcast_hls::DecimalSeconds::from_duration(segment.duration),
                 discontinuous: false,
                 parts: Vec::new(),
                 byte_range: None,
@@ -388,7 +387,7 @@ mod tests {
 
         let playlist = MediaPlaylist {
             version: 7,
-            target_duration: TARGET_DURATION_SECS.ceil() as u32,
+            target_duration: u32::try_from(TARGET_DURATION.as_secs()).unwrap_or(u32::MAX),
             msn: broadcast_hls::MediaSequence::new(0),
             discontinuity_sequence: 0,
             segments: media_segments,
@@ -490,7 +489,7 @@ mod tests {
     ) -> (Result<()>, Vec<TrackSpec>, HashMap<TrackId, usize>) {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -569,7 +568,7 @@ mod tests {
         let route = HlsPullRoute::new("pulled-cam", url);
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -610,7 +609,7 @@ mod tests {
         let route = Arc::new(HlsPullRoute::new("vod", url));
         let route_handle = Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -742,7 +741,7 @@ mod tests {
         let route = HlsPullRoute::new("pulled-retry", format!("http://{addr}/media.m3u8"));
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -860,7 +859,7 @@ mod tests {
         let route = HlsPullRoute::new("pulled-retry-after", format!("http://{addr}/media.m3u8"));
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -959,7 +958,7 @@ mod tests {
         let route = HlsPullRoute::new("pulled-playlist-wait", format!("http://{addr}/media.m3u8"));
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -1089,7 +1088,7 @@ mod tests {
     async fn drain_via_run_hls_pull(route: HlsPullRoute) -> Result<()> {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));
@@ -1219,7 +1218,7 @@ mod tests {
             );
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         ));

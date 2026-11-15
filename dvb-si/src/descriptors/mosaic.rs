@@ -22,6 +22,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for mosaic_descriptor.
@@ -45,11 +46,20 @@ const CELL_PRESENTATION_MASK: u8 = 0x07;
 /// Spec default of the grid header `reserved_future_use`(1): `1` (EN 300 468
 /// V1.3.1-V1.20.1 Table 71; audit `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md`
 /// §6.1, class A: stable in every edition).
-pub const GRID_RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
+pub const GRID_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<GRID_RESERVED_BITS> =
+    ReservedOnes::<GRID_RESERVED_BITS>::FILL;
+/// Width of the grid header `reserved_future_use` (1 bit).
+const GRID_RESERVED_BITS: u32 = 1;
 /// Spec default of the per-logical-cell `reserved_future_use`(7): all ones.
-pub const CELL_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
+pub const CELL_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<CELL_RESERVED_BITS> =
+    ReservedOnes::<CELL_RESERVED_BITS>::FILL;
+/// Width of the per-logical-cell `reserved_future_use` (7 bits).
+const CELL_RESERVED_BITS: u32 = 7;
 /// Spec default of the per-elementary-cell `reserved_future_use`(2): all ones.
-pub const ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
+pub const ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<ELEM_RESERVED_BITS> =
+    ReservedOnes::<ELEM_RESERVED_BITS>::FILL;
+/// Width of the per-elementary-cell `reserved_future_use` (2 bits).
+const ELEM_RESERVED_BITS: u32 = 2;
 
 /// Conditional linkage payload selected by `cell_linkage_info` (Table 75).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,10 +139,11 @@ impl CellLinkage {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct ElementaryCell {
-    /// `reserved_future_use`(2) ahead of the id (2 bits, right-aligned).
-    /// Captured on parse, re-emitted verbatim; [`ElementaryCell::new`] defaults
-    /// to [`ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    /// `reserved_future_use`(2) ahead of the id (2 bits). Captured on parse,
+    /// re-emitted verbatim; [`ElementaryCell::new`] defaults to
+    /// [`ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<ELEM_RESERVED_BITS>,
     /// 6-bit elementary_cell_id.
     pub elementary_cell_id: u8,
 }
@@ -154,10 +165,11 @@ impl ElementaryCell {
 #[non_exhaustive]
 pub struct MosaicLogicalCell {
     /// `reserved_future_use`(7) between `logical_cell_id` and
-    /// `logical_cell_presentation_info` (7 bits, right-aligned). Captured on
-    /// parse, re-emitted verbatim; [`MosaicLogicalCell::new`] defaults to
+    /// `logical_cell_presentation_info` (7 bits). Captured on parse, re-emitted
+    /// verbatim; [`MosaicLogicalCell::new`] defaults to
     /// [`CELL_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<CELL_RESERVED_BITS>,
     /// 6-bit logical_cell_id.
     pub logical_cell_id: u8,
     /// 3-bit logical_cell_presentation_info (Table 74): 1 = video,
@@ -198,7 +210,8 @@ pub struct MosaicDescriptor {
     /// counts (1 bit). Captured on parse, re-emitted verbatim;
     /// [`MosaicDescriptor::new`] defaults to
     /// [`GRID_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<GRID_RESERVED_BITS>,
     /// mosaic_entry_point: set when this mosaic is the top of a hierarchy.
     pub mosaic_entry_point: bool,
     /// 3-bit number_of_horizontal_elementary_cells (Table 72; 0 = one cell).
@@ -263,8 +276,10 @@ impl<'a> Parse<'a> for MosaicDescriptor {
             // logical_cell_id(6) | reserved(7) | presentation_info(3)
             let logical_cell_id = (body[pos] >> 2) & 0x3F;
             let presentation_info = body[pos + 1] & CELL_PRESENTATION_MASK;
-            let cell_reserved = ((body[pos] & CELL_RESERVED_HI_MASK) << CELL_RESERVED_HI_SHIFT)
-                | (body[pos + 1] >> CELL_RESERVED_LO_SHIFT);
+            let cell_reserved = ReservedOnes::from_bits(u64::from(
+                ((body[pos] & CELL_RESERVED_HI_MASK) << CELL_RESERVED_HI_SHIFT)
+                    | (body[pos + 1] >> CELL_RESERVED_LO_SHIFT),
+            ));
             let elem_field_len = body[pos + 2] as usize;
             pos += CELL_FIXED_LEN;
             if pos + elem_field_len > body.len() {
@@ -276,7 +291,9 @@ impl<'a> Parse<'a> for MosaicDescriptor {
             let mut elementary_cells = Vec::with_capacity(elem_field_len);
             for &b in &body[pos..pos + elem_field_len] {
                 elementary_cells.push(ElementaryCell {
-                    reserved_future_use: b >> ELEM_RESERVED_SHIFT,
+                    reserved_future_use: ReservedOnes::from_bits(u64::from(
+                        b >> ELEM_RESERVED_SHIFT,
+                    )),
                     elementary_cell_id: b & ELEM_CELL_ID_MASK,
                 });
             }
@@ -357,7 +374,9 @@ impl<'a> Parse<'a> for MosaicDescriptor {
             });
         }
         Ok(Self {
-            reserved_future_use: (body[0] & GRID_RESERVED_MASK) >> GRID_RESERVED_SHIFT,
+            reserved_future_use: ReservedOnes::from_bits(u64::from(
+                (body[0] & GRID_RESERVED_MASK) >> GRID_RESERVED_SHIFT,
+            )),
             mosaic_entry_point,
             num_horizontal_cells,
             num_vertical_cells,
@@ -399,23 +418,18 @@ impl Serialize for MosaicDescriptor {
             0x07,
             "num_horizontal_cells",
         )? << 4)
-            | (broadcast_common::len::fit_mask(
-                self.reserved_future_use,
-                GRID_RESERVED_MASK >> GRID_RESERVED_SHIFT,
-                "reserved_future_use",
-            )? << GRID_RESERVED_SHIFT)
+            | ((self.reserved_future_use.get() as u8) << GRID_RESERVED_SHIFT)
             | broadcast_common::len::fit_mask(self.num_vertical_cells, 0x07, "num_vertical_cells")?;
         let mut pos = HEADER_LEN + GRID_HEADER_LEN;
         for cell in &self.logical_cells {
-            broadcast_common::len::fit_mask(cell.reserved_future_use, 0x7F, "reserved_future_use")?;
             // byte0: logical_cell_id(6) | high 2 bits of reserved_future_use(7).
             buf[pos] =
                 (broadcast_common::len::fit_mask(cell.logical_cell_id, 0x3F, "logical_cell_id")?
                     << 2)
-                    | ((cell.reserved_future_use >> CELL_RESERVED_HI_SHIFT)
+                    | (((cell.reserved_future_use.get() as u8) >> CELL_RESERVED_HI_SHIFT)
                         & CELL_RESERVED_HI_MASK);
             // byte1: low 5 bits of reserved_future_use(7) | presentation_info(3).
-            buf[pos + 1] = (cell.reserved_future_use << CELL_RESERVED_LO_SHIFT)
+            buf[pos + 1] = ((cell.reserved_future_use.get() as u8) << CELL_RESERVED_LO_SHIFT)
                 | broadcast_common::len::fit_mask(
                     cell.presentation_info,
                     CELL_PRESENTATION_MASK,
@@ -428,11 +442,7 @@ impl Serialize for MosaicDescriptor {
             pos += CELL_FIXED_LEN;
             for ec in &cell.elementary_cells {
                 // reserved_future_use(2) preserved | elementary_cell_id(6).
-                buf[pos] = (broadcast_common::len::fit_mask(
-                    ec.reserved_future_use,
-                    !ELEM_CELL_ID_MASK >> ELEM_RESERVED_SHIFT,
-                    "reserved_future_use",
-                )? << ELEM_RESERVED_SHIFT)
+                buf[pos] = ((ec.reserved_future_use.get() as u8) << ELEM_RESERVED_SHIFT)
                     | broadcast_common::len::fit_mask(
                         ec.elementary_cell_id,
                         ELEM_CELL_ID_MASK,
@@ -695,11 +705,14 @@ mod tests {
                     let mut b = bytes.to_vec();
                     b[1] = 9;
                     let d = MosaicDescriptor::parse(&b).unwrap();
-                    assert_eq!(d.reserved_future_use, g);
-                    assert_eq!(d.logical_cells[0].reserved_future_use, c);
+                    assert_eq!(d.reserved_future_use, ReservedOnes::from_bits(u64::from(g)));
+                    assert_eq!(
+                        d.logical_cells[0].reserved_future_use,
+                        ReservedOnes::from_bits(u64::from(c))
+                    );
                     assert_eq!(
                         d.logical_cells[0].elementary_cells[0].reserved_future_use,
-                        e
+                        ReservedOnes::from_bits(u64::from(e))
                     );
                     let mut buf = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut buf).unwrap();
@@ -742,5 +755,37 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(MosaicDescriptor::parse(&buf).unwrap(), d);
+    }
+
+    /// Each reserved field is width-limited by its type, so a wider value is
+    /// unrepresentable and cannot spill into the adjacent id/flags bits.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let d = MosaicDescriptor::new(
+            false,
+            0,
+            0,
+            vec![MosaicLogicalCell {
+                reserved_future_use: ReservedOnes::from_bits(0xFF),
+                logical_cell_id: 1,
+                presentation_info: 1,
+                elementary_cells: vec![ElementaryCell {
+                    reserved_future_use: ReservedOnes::from_bits(0xFF),
+                    elementary_cell_id: 2,
+                }],
+                linkage: CellLinkage::Undefined,
+            }],
+        );
+        assert_eq!(d.reserved_future_use.get(), 1);
+        assert_eq!(d.logical_cells[0].reserved_future_use.get(), 0x7F);
+        assert_eq!(
+            d.logical_cells[0].elementary_cells[0]
+                .reserved_future_use
+                .get(),
+            0x03
+        );
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 6, 0x08, (1 << 2) | 0x03, 0xF9, 0x01, 0xC2, 0x00]);
     }
 }

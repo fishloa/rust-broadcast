@@ -14,6 +14,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for VBI_data_descriptor.
@@ -29,7 +30,10 @@ const LINE_OFFSET_MASK: u8 = 0x1F;
 /// Spec default of the per-line `reserved_future_use`(2) (`reserved` before
 /// V1.17.1): all ones (EN 300 468 V1.4.1-V1.20.1 Table 106; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
-pub const LINE_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
+pub const LINE_RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<LINE_RESERVED_BITS> =
+    ReservedOnes::<LINE_RESERVED_BITS>::FILL;
+/// Width of the per-line `reserved_future_use` (2 bits).
+const LINE_RESERVED_BITS: u32 = 2;
 
 /// Per-service-descriptor content, keyed by `data_service_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,10 +53,11 @@ pub enum VbiService<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub struct VbiLine {
-    /// `reserved_future_use`(2) at the top of the line byte (2 bits,
-    /// right-aligned). Captured on parse, re-emitted verbatim;
-    /// [`VbiLine::new`] defaults to [`LINE_RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    /// `reserved_future_use`(2) at the top of the line byte (2 bits). Captured
+    /// on parse, re-emitted verbatim; [`VbiLine::new`] defaults to
+    /// [`LINE_RESERVED_FUTURE_USE_DEFAULT`].
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: ReservedOnes<LINE_RESERVED_BITS>,
     /// `field_parity` (1 bit) — `[5]` of the service-descriptor byte.
     pub field_parity: bool,
     /// `line_offset` (5 bits) — `[4:0]` of the service-descriptor byte.
@@ -126,7 +131,9 @@ impl<'a> Parse<'a> for VbiDataDescriptor<'a> {
                 let lines = svc_bytes
                     .iter()
                     .map(|&b| VbiLine {
-                        reserved_future_use: (b & LINE_RESERVED_MASK) >> LINE_RESERVED_SHIFT,
+                        reserved_future_use: ReservedOnes::from_bits(u64::from(
+                            (b & LINE_RESERVED_MASK) >> LINE_RESERVED_SHIFT,
+                        )),
                         field_parity: (b & LINE_PARITY_MASK) != 0,
                         line_offset: b & LINE_OFFSET_MASK,
                     })
@@ -190,11 +197,7 @@ impl Serialize for VbiDataDescriptor<'_> {
             match &e.service_descriptor {
                 VbiService::Lines(lines) => {
                     for line in lines {
-                        buf[pos] = (broadcast_common::len::fit_mask(
-                            line.reserved_future_use,
-                            LINE_RESERVED_MASK >> LINE_RESERVED_SHIFT,
-                            "reserved_future_use",
-                        )? << LINE_RESERVED_SHIFT)
+                        buf[pos] = ((line.reserved_future_use.get() as u8) << LINE_RESERVED_SHIFT)
                             | (u8::from(line.field_parity) << 5)
                             | broadcast_common::len::fit_mask(
                                 line.line_offset,
@@ -383,7 +386,10 @@ mod tests {
             let bytes = [TAG, 3, 0x01, 0x01, b];
             let d = VbiDataDescriptor::parse(&bytes).unwrap();
             match &d.entries[0].service_descriptor {
-                VbiService::Lines(l) => assert_eq!(l[0].reserved_future_use, b >> 6),
+                VbiService::Lines(l) => assert_eq!(
+                    l[0].reserved_future_use,
+                    ReservedOnes::from_bits(u64::from(b >> 6))
+                ),
                 other => panic!("expected Lines, got {other:?}"),
             }
             let mut buf = vec![0u8; d.serialized_len()];
@@ -450,5 +456,16 @@ mod tests {
         let json = serde_json::to_string(&make()).unwrap();
         assert!(json.contains("data_service_id"));
         assert_eq!(json, serde_json::to_string(&make()).unwrap());
+    }
+
+    /// The field is 2 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the parity / offset bits below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_two_bits() {
+        let line = VbiLine {
+            reserved_future_use: ReservedOnes::from_bits(0xFF),
+            ..VbiLine::new(false, 0)
+        };
+        assert_eq!(line.reserved_future_use.get(), 0x03);
     }
 }

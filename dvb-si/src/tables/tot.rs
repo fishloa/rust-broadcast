@@ -12,6 +12,7 @@
 use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// table_id for Time Offset Table.
@@ -45,7 +46,7 @@ pub struct TotSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `descriptors_loop_length` (`1111`); preserved.
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_descriptors_loop_length: u8,
+    pub reserved_descriptors_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> TotSection<'a> {
@@ -89,7 +90,7 @@ impl<'a> TotSection<'a> {
             utc_time_raw,
             descriptors,
             bits: super::SectionBits::dvb().short_form(),
-            reserved_descriptors_loop_length: super::RESERVED_4,
+            reserved_descriptors_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -150,7 +151,9 @@ impl<'a> Parse<'a> for TotSection<'a> {
             utc_time_raw,
             descriptors: DescriptorLoop::new(&bytes[d_start..d_end]),
             bits: super::SectionBits::parse(bytes[1], None),
-            reserved_descriptors_loop_length: super::len_reserved_of(bytes[dl_pos]),
+            reserved_descriptors_loop_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[dl_pos]),
+            )),
         })
     }
 }
@@ -177,7 +180,7 @@ impl Serialize for TotSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[8..10],
             dl as usize,
-            self.reserved_descriptors_loop_length,
+            self.reserved_descriptors_loop_length.get() as u8,
         )?;
         let d_end = 10 + self.descriptors.len();
         buf[10..d_end].copy_from_slice(self.descriptors.raw());
@@ -289,5 +292,17 @@ mod tests {
         tot.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = TotSection::parse(&buf).expect("reparse");
         assert_eq!(tot.descriptors.raw(), reparsed.descriptors.raw());
+    }
+
+    /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the 12-bit descriptors_loop_length below it.
+    #[test]
+    fn reserved_cannot_hold_more_than_four_bits() {
+        let d = TotSection::new([0, 0, 0, 0, 0], DescriptorLoop::new(&[]));
+        let d = TotSection {
+            reserved_descriptors_loop_length: ReservedOnes::from_bits(0x1F),
+            ..d
+        };
+        assert_eq!(d.reserved_descriptors_loop_length.get(), 0x0F);
     }
 }

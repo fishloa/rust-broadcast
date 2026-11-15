@@ -14,7 +14,7 @@ fn make_state() -> Arc<AppState> {
     let store = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
@@ -26,8 +26,13 @@ fn make_state() -> Arc<AppState> {
     store.set_init(program, vec![0xAA; 4]);
     store.add_part(
         program,
-        transmux::PartInfo::new(vec![0x10; 4], 0.5, 1, broadcast_hls::PartIndex::new(0))
-            .with_independent(true),
+        transmux::PartInfo::new(
+            vec![0x10; 4],
+            Duration::from_millis(500),
+            1,
+            broadcast_hls::PartIndex::new(0),
+        )
+        .with_independent(true),
     );
     let mut streams = HashMap::new();
     streams.insert(

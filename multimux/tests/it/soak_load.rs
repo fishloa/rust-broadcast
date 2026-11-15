@@ -35,7 +35,7 @@ use transmux::{TrackId, avc_config_from_sprop};
 
 const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
 const FRAME_DUR: u32 = transmux::VIDEO_CLOCK_RATE / 30;
-const TARGET_DURATION_SECS: f64 = 2.0;
+const TARGET_DURATION: Duration = Duration::from_secs(2);
 const PART_TARGET_MS: u32 = 500;
 const FRAMES_PER_SEGMENT: u32 = 60;
 const TICK: Duration = Duration::from_millis(10);
@@ -88,7 +88,7 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(8),
         )
@@ -106,8 +106,8 @@ async fn soak_blocking_reload_viewers_and_sample_consumers() {
     let mut segmenter = LlHlsSegmenter::with_part_target(
         vec![spec],
         transmux::VIDEO_CLOCK_TIMESCALE,
-        TARGET_DURATION_SECS,
-        PART_TARGET_MS,
+        TARGET_DURATION,
+        Duration::from_millis(u64::from(PART_TARGET_MS)),
     )
     .expect("segmenter builds");
     let program = media_plane::ProgramId(0);

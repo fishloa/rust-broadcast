@@ -11,6 +11,7 @@
 //! 11d, 11e, 11g, 11h) and the byte check below is derived by hand from
 //! Table 11e, not from this crate's serializer.
 
+use broadcast_common::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::sat::*;
 
@@ -35,8 +36,8 @@ fn time_association(r4: u8, ncr_r6: u8) -> TimeAssociationBody {
         ncr_ext: 0,
         association_timestamp_seconds: 0,
         association_timestamp_nanoseconds: 0,
-        reserved_zero_future_use_4: r4,
-        ncr_reserved_zero_future_use: ncr_r6,
+        reserved_zero_future_use_4: ReservedZero::from_bits(u64::from(r4)),
+        ncr_reserved_zero_future_use: ReservedZero::from_bits(u64::from(ncr_r6)),
     }
 }
 
@@ -70,9 +71,9 @@ fn position_v2_orbital_reserved_runs() {
         position: PositionSystem::Orbital {
             orbital_position: 0x0192,
             west_east_flag: true,
-            reserved_zero_future_use: 0x7F,
+            reserved_zero_future_use: ReservedZero::from_bits(0x7F),
         },
-        reserved_zero_future_use: 0x7F,
+        reserved_zero_future_use: ReservedZero::from_bits(0x7F),
     };
     round_trip(
         0,
@@ -92,26 +93,26 @@ fn cell_fragment_reserved_runs() {
             centre_latitude: 5,
             centre_longitude: -7,
             max_distance: 9,
-            reserved_zero_future_use_4: 0xF,
-            reserved_zero_future_use_5: 0x1F,
-            reserved_zero_future_use_6: 0x3F,
+            reserved_zero_future_use_4: ReservedZero::from_bits(0xF),
+            reserved_zero_future_use_5: ReservedZero::from_bits(0x1F),
+            reserved_zero_future_use_6: ReservedZero::from_bits(0x3F),
         }),
         delivery_system_ids: vec![11, 12],
         new_delivery_systems: vec![NewDeliverySystem {
             new_delivery_system_id: 1,
             time_of_application_base: 2,
             time_of_application_ext: 3,
-            reserved_zero_future_use: 0x3F,
+            reserved_zero_future_use: ReservedZero::from_bits(0x3F),
         }],
         obsolescent_delivery_systems: vec![ObsolescentDeliverySystem {
             obsolescent_delivery_system_id: 4,
             time_of_obsolescence_base: 5,
             time_of_obsolescence_ext: 6,
-            reserved_zero_future_use: 0x3F,
+            reserved_zero_future_use: ReservedZero::from_bits(0x3F),
         }],
-        reserved_zero_future_use_4: 0,
-        reserved_zero_future_use_new: 0x3F,
-        reserved_zero_future_use_obsolescent: 0x3F,
+        reserved_zero_future_use_4: ReservedZero::from_bits(0),
+        reserved_zero_future_use_new: ReservedZero::from_bits(0x3F),
+        reserved_zero_future_use_obsolescent: ReservedZero::from_bits(0x3F),
     };
     // Not-first fragment: the 4-bit run in the else branch.
     let later = CellFragment {
@@ -122,9 +123,9 @@ fn cell_fragment_reserved_runs() {
         delivery_system_ids: vec![],
         new_delivery_systems: vec![],
         obsolescent_delivery_systems: vec![],
-        reserved_zero_future_use_4: 0xF,
-        reserved_zero_future_use_new: 0x3F,
-        reserved_zero_future_use_obsolescent: 0x3F,
+        reserved_zero_future_use_4: ReservedZero::from_bits(0xF),
+        reserved_zero_future_use_new: ReservedZero::from_bits(0x3F),
+        reserved_zero_future_use_obsolescent: ReservedZero::from_bits(0x3F),
     };
     round_trip(
         1,
@@ -142,15 +143,15 @@ fn beamhopping_reserved_runs_all_modes() {
             dwell_duration_ext: 2,
             on_time_base: 3,
             on_time_ext: 4,
-            dwell_duration_reserved_zero_future_use: 0x3F,
-            on_time_reserved_zero_future_use: 0x3F,
+            dwell_duration_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
+            on_time_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
         },
         BeamhoppingMode::Mode1 {
             bit_map_size: 5,
             current_slot: 1,
             slot_transmission_on: vec![true, false, true, true, false],
-            reserved_zero_future_use_size: 1,
-            reserved_zero_future_use_slot: 1,
+            reserved_zero_future_use_size: ReservedZero::from_bits(1),
+            reserved_zero_future_use_slot: ReservedZero::from_bits(1),
         },
         BeamhoppingMode::Mode2 {
             grid_size_base: 1,
@@ -161,10 +162,10 @@ fn beamhopping_reserved_runs_all_modes() {
             sleep_time_ext: 6,
             sleep_duration_base: 7,
             sleep_duration_ext: 8,
-            grid_size_reserved_zero_future_use: 0x3F,
-            revisit_duration_reserved_zero_future_use: 0x3F,
-            sleep_time_reserved_zero_future_use: 0x3F,
-            sleep_duration_reserved_zero_future_use: 0x3F,
+            grid_size_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
+            revisit_duration_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
+            sleep_time_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
+            sleep_duration_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
         },
     ] {
         let mode_num = match &mode {
@@ -180,10 +181,10 @@ fn beamhopping_reserved_runs_all_modes() {
             cycle_duration_base: 3,
             cycle_duration_ext: 4,
             mode,
-            reserved_zero_future_use_4: 0xF,
-            reserved_zero_future_use_mode: 0x3F,
-            time_of_application_reserved_zero_future_use: 0x3F,
-            cycle_duration_reserved_zero_future_use: 0x3F,
+            reserved_zero_future_use_4: ReservedZero::from_bits(0xF),
+            reserved_zero_future_use_mode: ReservedZero::from_bits(0x3F),
+            time_of_application_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
+            cycle_duration_reserved_zero_future_use: ReservedZero::from_bits(0x3F),
         };
         round_trip(
             3,
@@ -194,11 +195,11 @@ fn beamhopping_reserved_runs_all_modes() {
 
 #[test]
 fn position_v3_reserved_runs() {
-    let usable = |r| UsableTime {
+    let usable = |r: u64| UsableTime {
         year: 1,
         day: 2,
         day_fraction: 3,
-        reserved_zero_future_use: r,
+        reserved_zero_future_use: ReservedZero::from_bits(r),
     };
     let sat = PositionV3Satellite {
         satellite_id: 9,
@@ -218,9 +219,9 @@ fn position_v3_reserved_runs() {
             interpolation_degree: 1,
             usable_start_time: Some(usable(0x7F)),
             usable_stop_time: Some(usable(0x7F)),
-            total_start_time_reserved_zero_future_use: 0x7F,
-            total_stop_time_reserved_zero_future_use: 0x7F,
-            reserved_zero_future_use: 1,
+            total_start_time_reserved_zero_future_use: ReservedZero::from_bits(0x7F),
+            total_stop_time_reserved_zero_future_use: ReservedZero::from_bits(0x7F),
+            reserved_zero_future_use: ReservedZero::from_bits(1),
         }),
         ephemeris_data: vec![EphemerisData {
             epoch_year: 1,
@@ -233,16 +234,16 @@ fn position_v3_reserved_runs() {
             ephemeris_y_dot: 8,
             ephemeris_z_dot: 9,
             acceleration: None,
-            reserved_zero_future_use: 0x7F,
+            reserved_zero_future_use: ReservedZero::from_bits(0x7F),
         }],
         covariance: Some(CovarianceData {
             covariance_epoch_year: 1,
             covariance_epoch_day: 2,
             covariance_epoch_day_fraction: 3,
             covariance_elements: [0; 21],
-            covariance_epoch_reserved_zero_future_use: 0x7F,
+            covariance_epoch_reserved_zero_future_use: ReservedZero::from_bits(0x7F),
         }),
-        reserved_zero_future_use: 0x7,
+        reserved_zero_future_use: ReservedZero::from_bits(0x7),
     };
     round_trip(
         4,
@@ -253,14 +254,19 @@ fn position_v3_reserved_runs() {
             creation_date_day: 4,
             creation_date_day_fraction: 5,
             satellites: vec![sat],
-            creation_date_reserved_zero_future_use: 0x7F,
+            creation_date_reserved_zero_future_use: ReservedZero::from_bits(0x7F),
         }),
     );
 }
 
+/// The reserved runs are now typed `ReservedZero<BITS>`, so an over-range
+/// value is unrepresentable: `from_bits` keeps the low bits and the serializer
+/// writes the stored value with no separate over-range error path.
 #[test]
-fn over_range_reserved_run_is_an_error_not_a_wrap() {
-    let b = time_association(0xF, 0x40); // 6-bit run given 0x40
+fn over_range_reserved_run_is_masked_at_construction() {
+    let b = time_association(0x1F, 0x7F); // 4-bit run 0x1F, 6-bit run 0x7F
+    assert_eq!(b.reserved_zero_future_use_4.get(), 0x0F);
+    assert_eq!(b.ncr_reserved_zero_future_use.get(), 0x3F);
     let sat = SatSection::new(
         2,
         true,
@@ -269,8 +275,5 @@ fn over_range_reserved_run_is_an_error_not_a_wrap() {
         SatBody::TimeAssociation(b),
     );
     let mut buf = vec![0u8; sat.serialized_len()];
-    assert!(matches!(
-        &(sat.serialize_into(&mut buf)),
-        Err(dvb_si::error::Error::SectionLengthOverflow { .. })
-    ));
+    assert!(sat.serialize_into(&mut buf).is_ok());
 }

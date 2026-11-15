@@ -2,6 +2,7 @@
 use super::*;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedZero;
 
 impl<'a> ExtensionBodyDef<'a> for VvcSubpictures<'a> {
     const TAG_EXTENSION: u8 = 0x23;
@@ -21,8 +22,10 @@ pub struct VvcSubpicture {
 /// Spec default of the 5-bit `reserved_zero_future_use` before
 /// `processing_mode`: 0 (EN 300 468 Table 162a, V1.18.1-V1.20.1;
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
-const RESERVED_ZERO_MASK: u8 = 0x1F;
+pub const VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_BITS> =
+    ReservedZero::<RESERVED_ZERO_BITS>::FILL;
+/// Width of the `reserved_zero_future_use` before `processing_mode` (5 bits).
+const RESERVED_ZERO_BITS: u32 = 5;
 const PROCESSING_MODE_MASK: u8 = 0x07;
 
 /// vvc_subpictures body (Table 162a) — fully typed.
@@ -38,7 +41,7 @@ pub struct VvcSubpictures<'a> {
     /// `reserved_zero_future_use` (5 bits, right-aligned) — byte after the
     /// subpicture loop, bits `[7:3]`. Preserved on parse;
     /// [`VvcSubpictures::new`] uses [`VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
-    pub reserved_zero_future_use: u8,
+    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_BITS>,
     /// processing_mode(3) — byte after the subpicture loop, bits `[2:0]`.
     pub processing_mode: u8,
     /// Length-delimited service_description text, present iff
@@ -100,7 +103,7 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
         }
 
         let processing_mode = sel[pos] & PROCESSING_MODE_MASK;
-        let reserved_zero_future_use = (sel[pos] >> 3) & RESERVED_ZERO_MASK;
+        let reserved_zero_future_use = ReservedZero::from_bits(u64::from(sel[pos] >> 3));
         pos += 1;
 
         let service_description = if service_description_present {
@@ -159,11 +162,7 @@ impl Serialize for VvcSubpictures<'_> {
             buf[p + 1] = sp.vvc_subpicture_id;
             p += 2;
         }
-        buf[p] = (broadcast_common::len::fit_mask(
-            self.reserved_zero_future_use,
-            RESERVED_ZERO_MASK,
-            "reserved_zero_future_use",
-        )? << 3)
+        buf[p] = ((self.reserved_zero_future_use.get() as u8) << 3)
             | broadcast_common::len::fit_mask(
                 self.processing_mode,
                 PROCESSING_MODE_MASK,
@@ -290,7 +289,7 @@ mod tests {
     /// processing_mode, re-serializes byte-identically.
     #[test]
     fn vvc_subpictures_reserved_preserved() {
-        for r in 0u8..=RESERVED_ZERO_MASK {
+        for r in 0u8..=0x1F {
             for pm in 0u8..=PROCESSING_MODE_MASK {
                 let sel = [0x01, 0x20, 0x03, (r << 3) | pm];
                 let bytes = wrap(0x23, &sel);

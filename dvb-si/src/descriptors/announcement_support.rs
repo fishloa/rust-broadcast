@@ -27,6 +27,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for announcement_support_descriptor.
@@ -44,10 +45,13 @@ const ANNOUNCEMENT_TYPE_MASK: u8 = 0xF0;
 const ANNOUNCEMENT_TYPE_SHIFT: u8 = 4;
 const RESERVED_BIT_MASK: u8 = 0x08;
 const RESERVED_BIT_SHIFT: u8 = 3;
+/// Width of the entry's `reserved_future_use` (1 bit).
+const RESERVED_BITS: u32 = 1;
 /// Spec default of the entry's 1-bit `reserved_future_use`: `1` (EN 300 468
 /// V1.4.1-V1.20.1 Table 17, global convention; audit
 /// `private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6.1, class A, stable).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 const REFERENCE_TYPE_MASK: u8 = 0x07;
 /// Max value of the 4-bit announcement_type field.
 pub const ANNOUNCEMENT_TYPE_MAX: u8 = 0x0F;
@@ -218,7 +222,7 @@ pub struct AnnouncementEntry {
     /// `reserved_future_use`(1) between announcement_type and reference_type
     /// (1 bit, right-aligned). Captured on parse and re-emitted verbatim;
     /// [`AnnouncementEntry::new`] defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// 4-bit announcement_type (Table 19).
     pub announcement_type: AnnouncementType,
     /// 3-bit reference_type (Table 20).
@@ -308,7 +312,9 @@ impl<'a> Parse<'a> for AnnouncementSupportDescriptor {
             };
             rest = after_ref;
             entries.push(AnnouncementEntry {
-                reserved_future_use: (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
+                reserved_future_use: ReservedOnes::from_bits(u64::from(
+                    (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
+                )),
                 announcement_type,
                 reference_type,
                 reference,
@@ -387,11 +393,7 @@ impl Serialize for AnnouncementSupportDescriptor {
                 ANNOUNCEMENT_TYPE_MASK >> ANNOUNCEMENT_TYPE_SHIFT,
                 "announcement_type",
             )? << ANNOUNCEMENT_TYPE_SHIFT)
-                | (broadcast_common::len::fit_mask(
-                    e.reserved_future_use,
-                    RESERVED_BIT_MASK >> RESERVED_BIT_SHIFT,
-                    "reserved_future_use",
-                )? << RESERVED_BIT_SHIFT)
+                | ((e.reserved_future_use.get() as u8) << RESERVED_BIT_SHIFT)
                 | broadcast_common::len::fit_mask(
                     e.reference_type.to_u8(),
                     REFERENCE_TYPE_MASK,
@@ -505,8 +507,8 @@ mod tests {
                 TAG, 11, 0x00, 0x40, e0, e1, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x09,
             ];
             let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.entries[0].reserved_future_use, r);
-            assert_eq!(d.entries[1].reserved_future_use, r);
+            assert_eq!(d.entries[0].reserved_future_use.get(), u64::from(r));
+            assert_eq!(d.entries[1].reserved_future_use.get(), u64::from(r));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);

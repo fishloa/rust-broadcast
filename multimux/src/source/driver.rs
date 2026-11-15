@@ -395,7 +395,7 @@ mod tests {
     fn route() -> Arc<RouteHandle> {
         Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(Duration::from_millis(250))
                 .with_window_segments(8),
         ))

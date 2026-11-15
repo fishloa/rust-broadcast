@@ -14,10 +14,12 @@ use super::hdr_wcg_idc::HdrWcgIdc;
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter, invalid};
 use alloc::vec::Vec;
+use broadcast_common::reserved::{ReservedOnes, ReservedZero};
 
 const TAG: u8 = super::mpeg2_extension::TAG;
-const RES1: u8 = 0x01;
-const RES3: u8 = 0x07;
+const RESERVED_1_BITS: u32 = 1;
+const RESERVED_3_BITS: u32 = 3;
+const RESERVED_ZERO_2_BITS: u32 = 2;
 
 // ───────────────────────── 0x17 LCEVC_video_descriptor ──────────────────────
 
@@ -41,11 +43,13 @@ pub struct LcevcVideo {
     /// `field_type_bit_flag`.
     pub field_type_bit_flag: bool,
     /// `reserved(3)`, default 7.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_3_BITS>,
     /// `HDR_WCG_idc` (Table 2-114).
     pub hdr_wcg_idc: HdrWcgIdc,
     /// `reserved_zero_2bit`, default 0.
-    pub reserved_zero_2bit: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_zero_2bit: ReservedZero<RESERVED_ZERO_2_BITS>,
     /// `video_properties_tag` (4 bits; Tables 2-135…2-138 select its meaning by
     /// `HDR_WCG_idc`).
     pub video_properties_tag: u8,
@@ -74,9 +78,9 @@ impl LcevcVideo {
             processed_planes_type_flag: false,
             picture_type_bit_flag: false,
             field_type_bit_flag: false,
-            reserved: RES3,
+            reserved: ReservedOnes::FILL,
             hdr_wcg_idc,
-            reserved_zero_2bit: 0,
+            reserved_zero_2bit: ReservedZero::FILL,
             video_properties_tag,
             trailing: Vec::new(),
         }
@@ -92,9 +96,9 @@ impl LcevcVideo {
             processed_planes_type_flag: r.flag()?,
             picture_type_bit_flag: r.flag()?,
             field_type_bit_flag: r.flag()?,
-            reserved: r.u8(3)?,
+            reserved: ReservedOnes::from_bits(u64::from(r.u8(3)?)),
             hdr_wcg_idc: HdrWcgIdc::from_u8(r.u8(2)?),
-            reserved_zero_2bit: r.u8(2)?,
+            reserved_zero_2bit: ReservedZero::from_bits(u64::from(r.u8(2)?)),
             video_properties_tag: r.u8(4)?,
             trailing: r.rest()?.to_vec(),
         })
@@ -112,9 +116,9 @@ impl LcevcVideo {
         )?;
         w.flag(self.picture_type_bit_flag, "picture_type_bit_flag")?;
         w.flag(self.field_type_bit_flag, "field_type_bit_flag")?;
-        w.put(u64::from(self.reserved), 3, "reserved")?;
+        w.put(self.reserved.get(), 3, "reserved")?;
         w.put(u64::from(self.hdr_wcg_idc.to_u8()), 2, "HDR_WCG_idc")?;
-        w.put(u64::from(self.reserved_zero_2bit), 2, "reserved_zero_2bit")?;
+        w.put(self.reserved_zero_2bit.get(), 2, "reserved_zero_2bit")?;
         w.put(
             u64::from(self.video_properties_tag),
             4,
@@ -127,7 +131,8 @@ impl LcevcVideo {
 
 impl LcevcVideo {
     /// Default of `reserved(3)` (all ones).
-    pub const RESERVED_DEFAULT: u8 = RES3;
+    pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_3_BITS> =
+        ReservedOnes::<RESERVED_3_BITS>::FILL;
 }
 
 // ───────────────────────── 0x18 LCEVC_linkage_descriptor ────────────────────
@@ -333,7 +338,8 @@ pub struct MediaServiceLanguage {
     /// 2 → 3 bytes, 3 reserved); must agree with `language_code.len()` on serialize.
     pub lang_len_idc: u8,
     /// `reserved(1)` after `lang_len_idc`, default 1.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_1_BITS>,
     /// `IETF_BCP_47_language_code` (`lang_len` bytes, ISO 8859-1 characters).
     pub language_code: Vec<u8>,
     /// `media_service_type` values (`lang_purpose_cnt` of them, 3 bits; 8-bit
@@ -351,7 +357,8 @@ pub struct MediaServiceKindEntry {
     /// `media_type_idc` (Table 2-146).
     pub media_type_idc: MediaTypeIdc,
     /// `reserved(1)` after `media_type_idc`, default 1.
-    pub reserved: u8,
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: ReservedOnes<RESERVED_1_BITS>,
     /// The identifier, present iff `identifier_flag`.
     pub identifier: Option<MediaIdentifier>,
     /// The `lang_pairs` language entries (3-bit count).
@@ -370,7 +377,7 @@ impl MediaServiceKindEntry {
         Self {
             media_description_flag,
             media_type_idc,
-            reserved: RES1,
+            reserved: ReservedOnes::FILL,
             identifier,
             languages,
         }
@@ -394,7 +401,7 @@ impl MediaServiceLanguage {
         Self {
             configuration_type,
             lang_len_idc,
-            reserved: RES1,
+            reserved: ReservedOnes::FILL,
             language_code,
             media_service_types,
         }
@@ -425,7 +432,7 @@ impl MediaServiceKind {
             let identifier_flag = r.flag()?;
             let lang_pairs = r.bits(3)?;
             let media_type_idc = MediaTypeIdc::from_u8(r.u8(2)?);
-            let reserved = r.u8(1)?;
+            let reserved = ReservedOnes::from_bits(u64::from(r.u8(1)?));
             let identifier = if identifier_flag {
                 let id_length_code = r.u8(3)?;
                 let id_type = r.u16(13)?;
@@ -447,7 +454,7 @@ impl MediaServiceKind {
                 let configuration_type = ConfigurationType::from_u8(r.u8(2)?);
                 let purpose_cnt = r.bits(3)?;
                 let lang_len_idc = r.u8(2)?;
-                let reserved = r.u8(1)?;
+                let reserved = ReservedOnes::from_bits(u64::from(r.u8(1)?));
                 let len = match lang_len_idc {
                     0 => usize::from(r.u8(8)?),
                     1 => 2,
@@ -487,7 +494,7 @@ impl MediaServiceKind {
             w.flag(e.identifier.is_some(), "identifier_flag")?;
             w.put(e.languages.len() as u64, 3, "lang_pairs")?;
             w.put(u64::from(e.media_type_idc.to_u8()), 2, "media_type_idc")?;
-            w.put(u64::from(e.reserved), 1, "reserved")?;
+            w.put(e.reserved.get(), 1, "reserved")?;
             if let Some(id) = &e.identifier {
                 w.put(u64::from(id.id_length_code), 3, "ID_length_code")?;
                 w.put(u64::from(id.id_type), 13, "ID_type")?;
@@ -510,7 +517,7 @@ impl MediaServiceKind {
                 )?;
                 w.put(l.media_service_types.len() as u64, 3, "lang_purpose_cnt")?;
                 w.put(u64::from(l.lang_len_idc), 2, "lang_len_idc")?;
-                w.put(u64::from(l.reserved), 1, "reserved")?;
+                w.put(l.reserved.get(), 1, "reserved")?;
                 match (l.lang_len_idc, l.language_code.len()) {
                     (0, n) => w.put(n as u64, 8, "lang_len")?,
                     (1, 2) | (2, 3) => {}
@@ -555,6 +562,28 @@ mod tests {
             LcevcVideo::parse_body(&b[..3]),
             Err(crate::Error::BufferTooShort(..))
         ));
+    }
+
+    /// The reserved fields are width-limited by their type, so a wider value
+    /// is unrepresentable and cannot spill into adjacent syntax fields.
+    #[test]
+    fn reserved_fields_cannot_hold_more_than_their_width() {
+        let mut d = LcevcVideo::new(7, 3, 5, 1, HdrWcgIdc::HdrAndWcg, 2);
+        d.processed_planes_type_flag = true;
+        d.field_type_bit_flag = true;
+        assert_eq!(d.reserved, ReservedOnes::FILL);
+        assert_eq!(d.reserved_zero_2bit, ReservedZero::FILL);
+        d.reserved = ReservedOnes::from_bits(0xFF);
+        d.reserved_zero_2bit = ReservedZero::from_bits(0xFF);
+        assert_eq!(d.reserved.get(), 0x07);
+        assert_eq!(d.reserved_zero_2bit.get(), 0x03);
+
+        let mut entry = MediaServiceKindEntry::new(false, MediaTypeIdc::Audio, None, vec![]);
+        entry.reserved = ReservedOnes::from_bits(0xFF);
+        assert_eq!(entry.reserved.get(), 0x01);
+        let lang =
+            MediaServiceLanguage::new(ConfigurationType::from_u8(0), vec![b'q', b'q'], vec![]);
+        assert_eq!(lang.reserved, ReservedOnes::FILL);
     }
 
     #[test]

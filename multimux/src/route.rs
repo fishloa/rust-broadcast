@@ -803,7 +803,7 @@ pub(crate) struct ProgramServing {
 /// The primary origin's settings every sibling origin repeats.
 #[derive(Clone, Copy)]
 struct SiblingParams {
-    target_duration_secs: f64,
+    target_duration: Duration,
     part_target: Duration,
     window_segments: NonZeroUsize,
     media_sequence_offset: u64,
@@ -936,7 +936,7 @@ impl ProgramServing {
         epoch: ProgramEpoch,
         previous: Option<&ProgramContinuation>,
     ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
-        let target_duration_secs = route.target_duration_secs;
+        let target_duration = route.target_duration;
         let part_target = route.part_target;
         let window_segments = route.window_segments_cap;
         let container = route.container;
@@ -951,7 +951,7 @@ impl ProgramServing {
         let warms = Arc::clone(&route.warms);
         let media_sequence_offset = epoch.seq_offset;
         let mut builder =
-            HlsOriginConfig::new(Arc::clone(&trunk), target_duration_secs, window_segments)
+            HlsOriginConfig::new(Arc::clone(&trunk), target_duration, window_segments)
                 .with_container(container)
                 .with_media_sequence_offset(media_sequence_offset)
                 .with_discontinuity_sequence(epoch.discontinuity_sequence)
@@ -986,15 +986,12 @@ impl ProgramServing {
         for (idx, decl) in sibling_decls.iter().enumerate() {
             let sibling_trunk = Arc::new(Trunk::new(route.trunk_config));
             let track_id = transmux::TrackId::new(u32::try_from(idx + 2).unwrap_or(u32::MAX));
-            let mut ab = HlsOriginConfig::new(
-                Arc::clone(&sibling_trunk),
-                target_duration_secs,
-                window_segments,
-            )
-            .with_container(Container::Fmp4)
-            .with_media_sequence_offset(media_sequence_offset)
-            .with_discontinuity_sequence(epoch.discontinuity_sequence)
-            .with_hold_cold_playlist(hold_cold_playlist);
+            let mut ab =
+                HlsOriginConfig::new(Arc::clone(&sibling_trunk), target_duration, window_segments)
+                    .with_container(Container::Fmp4)
+                    .with_media_sequence_offset(media_sequence_offset)
+                    .with_discontinuity_sequence(epoch.discontinuity_sequence)
+                    .with_hold_cold_playlist(hold_cold_playlist);
             if program_date_time == crate::config::ProgramDateTimeSource::Arrival {
                 ab = ab.with_program_date_time_arrival(Arc::new(|| {
                     jiff::Timestamp::now().as_millisecond()
@@ -1092,7 +1089,7 @@ impl ProgramServing {
             audio_rendition_servings: audio_servings,
             subtitle_servings: Mutex::new(Vec::new()),
             sibling_params: SiblingParams {
-                target_duration_secs,
+                target_duration,
                 part_target,
                 window_segments,
                 media_sequence_offset,
@@ -1225,7 +1222,7 @@ impl ProgramServing {
             );
             let mut builder = HlsOriginConfig::new(
                 Arc::clone(&trunk),
-                params.target_duration_secs,
+                params.target_duration,
                 params.window_segments,
             )
             .with_container(Container::WebVtt)
@@ -1432,7 +1429,7 @@ impl ProgramServing {
                 info.bytes,
                 media_plane::ids::SegmentSeq::new(info.segment_seq),
                 media_plane::ids::PartIndex::new(info.part_index.value()),
-                Duration::from_secs_f64(info.duration),
+                info.duration,
                 info.independent,
             ));
         });
@@ -1458,7 +1455,7 @@ impl ProgramServing {
     /// preferable to adding queueing machinery a real caller never
     /// exercises.
     fn add_segment(&self, info: transmux::ll_hls::SegmentInfo) -> Result<(), AddSegmentError> {
-        let duration = Duration::from_secs_f64(info.duration);
+        let duration = info.duration;
         let start_ns = self.next_timeline_ns.fetch_add(
             u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX),
             Ordering::SeqCst,
@@ -1652,7 +1649,7 @@ impl ProgramServing {
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct RouteConfig {
-    pub target_duration_secs: f64,
+    pub target_duration: Duration,
     pub part_target: Duration,
     /// Advertised-window depth: the segment log's capacity, the playlist
     /// window's article, and the segment capacity of every program/trunk
@@ -1678,7 +1675,7 @@ pub struct RouteConfig {
 impl Default for RouteConfig {
     fn default() -> Self {
         RouteConfig {
-            target_duration_secs: 1.0,
+            target_duration: Duration::from_secs(1),
             part_target: Duration::from_millis(250),
             window_segments: DEFAULT_WINDOW_SEGMENTS,
             container: Container::default(),
@@ -1699,8 +1696,8 @@ impl Default for RouteConfig {
 
 impl RouteConfig {
     #[must_use]
-    pub fn with_target_duration_secs(mut self, v: f64) -> Self {
-        self.target_duration_secs = v;
+    pub fn with_target_duration(mut self, v: Duration) -> Self {
+        self.target_duration = v;
         self
     }
 
@@ -1817,7 +1814,7 @@ pub struct RouteHandle {
     /// Fires when this route is replaced or removed; see [`Self::retire`].
     retired: tokio_util::sync::CancellationToken,
     health: Mutex<HealthState>,
-    target_duration_secs: f64,
+    target_duration: Duration,
     part_target: Duration,
     /// Stored so [`Self::publish_program`]/[`Self::publish_new_program`] can
     /// build every program's [`ProgramServing`]/`Trunk` with the same
@@ -1949,7 +1946,7 @@ impl RouteHandle {
         let window_segments =
             NonZeroUsize::new(config.window_segments).unwrap_or(NonZeroUsize::MIN);
         let RouteConfig {
-            target_duration_secs,
+            target_duration,
             part_target,
             container,
             ts_cut_policy,
@@ -1970,7 +1967,7 @@ impl RouteHandle {
             warms,
             retired: tokio_util::sync::CancellationToken::new(),
             health: Mutex::new(HealthState::Connecting),
-            target_duration_secs,
+            target_duration,
             part_target,
             window_segments_cap: window_segments,
             container,
@@ -2428,7 +2425,8 @@ impl RouteHandle {
             seq_offset,
             media_start_ns: previous_epoch.map_or(0, |e| {
                 let slots = seq_offset.saturating_add(1).saturating_sub(e.first_number);
-                (slots as f64 * self.target_duration_secs * 1e9) as u64
+                u64::try_from(u128::from(slots).saturating_mul(self.target_duration.as_nanos()))
+                    .unwrap_or(u64::MAX)
             }),
             discontinuity_sequence: previous
                 .as_ref()
@@ -2905,12 +2903,12 @@ impl RouteHandle {
     /// Configured target full-segment duration, seconds — route-wide (every
     /// program on a route shares one segmenter configuration), so this needs
     /// no [`ProgramId`].
-    pub fn target_duration_secs(&self) -> f64 {
-        self.target_duration_secs
+    pub fn target_duration(&self) -> Duration {
+        self.target_duration
     }
 
     /// Configured LL-HLS part target — route-wide, see
-    /// [`Self::target_duration_secs`].
+    /// [`Self::target_duration`].
     pub fn part_target(&self) -> Duration {
         self.part_target
     }
@@ -3054,7 +3052,7 @@ mod program_registry_tests {
     fn publish_then_resolve_returns_same_trunk() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3085,7 +3083,7 @@ mod program_registry_tests {
     fn resolve_before_any_program_is_not_yet_announced() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3109,7 +3107,7 @@ mod program_registry_tests {
     fn resolve_unknown_program_among_others_is_not_found() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3136,7 +3134,7 @@ mod program_registry_tests {
     fn two_programs_resolve_independently_to_different_trunks() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3169,7 +3167,7 @@ mod program_registry_tests {
     fn publish_program_rejects_a_second_concurrent_publisher() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3194,10 +3192,10 @@ mod program_registry_tests {
     /// `Config::validate`) must refuse to publish — logging, not panicking
     /// in `ProgramServing::new` — and must give the publish slot back.
     #[test]
-    fn publish_program_with_nan_target_duration_does_not_panic() {
+    fn publish_program_with_a_zero_target_duration_does_not_panic() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(f64::NAN)
+                .with_target_duration(std::time::Duration::ZERO)
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3226,7 +3224,7 @@ mod program_registry_tests {
     fn release_program_then_publish_lets_a_new_publisher_take_over() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3258,10 +3256,12 @@ mod program_registry_tests {
         use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
         use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 
-        let info = |seq: u32| transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], 4.0, seq);
+        let info = |seq: u32| {
+            transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], Duration::from_secs(4), seq)
+        };
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3309,7 +3309,7 @@ mod program_registry_tests {
     fn a_replacing_route_continues_the_replaced_routes_numbering() {
         let old = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
@@ -3325,7 +3325,7 @@ mod program_registry_tests {
 
         let successor = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3347,7 +3347,7 @@ mod program_registry_tests {
 
         let unrelated = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3370,7 +3370,7 @@ mod program_registry_tests {
     fn archive_floor_lifts_the_first_media_sequence_number() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         )
@@ -3428,12 +3428,13 @@ mod program_registry_tests {
     #[test]
     fn a_replacement_starts_a_new_init_generation_only_when_its_init_differs() {
         let info = |seq: u32, byte: u8| {
-            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], 4.0, seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq)
+                .with_part_count(1)
         };
         let route = || {
             RouteHandle::new(
                 RouteConfig::default()
-                    .with_target_duration_secs(4.0)
+                    .with_target_duration(std::time::Duration::from_secs(4))
                     .with_part_target(std::time::Duration::from_millis(500))
                     .with_window_segments(8),
             )
@@ -3495,11 +3496,12 @@ mod program_registry_tests {
     #[test]
     fn set_init_from_starts_the_new_init_at_the_named_segment() {
         let info = |seq: u32, byte: u8| {
-            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], 4.0, seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq)
+                .with_part_count(1)
         };
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
@@ -3540,12 +3542,13 @@ mod program_registry_tests {
     #[test]
     fn a_restart_without_dvr_and_a_reconnect_never_reuse_an_immutable_name() {
         let info = |seq: u32, byte: u8| {
-            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], 4.0, seq).with_part_count(1)
+            transmux::ll_hls::SegmentInfo::new(vec![byte; 8], Duration::from_secs(4), seq)
+                .with_part_count(1)
         };
         // "Process" 1: segments 1..=2 served, part 0 of the open segment 3.
         let p1 = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3557,7 +3560,7 @@ mod program_registry_tests {
             ProgramId(1),
             transmux::ll_hls::PartInfo::new(
                 vec![0x13; 4],
-                0.5,
+                Duration::from_millis(500),
                 3,
                 broadcast_hls::PartIndex::new(0),
             )
@@ -3569,7 +3572,7 @@ mod program_registry_tests {
         // "Process" 2: same numbers from scratch, different init.
         let p2 = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3581,7 +3584,7 @@ mod program_registry_tests {
             ProgramId(1),
             transmux::ll_hls::PartInfo::new(
                 vec![0x23; 4],
-                0.5,
+                Duration::from_millis(500),
                 3,
                 broadcast_hls::PartIndex::new(0),
             )
@@ -3602,7 +3605,7 @@ mod program_registry_tests {
             ProgramId(1),
             transmux::ll_hls::PartInfo::new(
                 vec![0x32; 4],
-                0.5,
+                Duration::from_millis(500),
                 2,
                 broadcast_hls::PartIndex::new(0),
             )
@@ -3626,7 +3629,7 @@ mod program_registry_tests {
     fn release_program_is_a_noop_for_a_rejected_publisher() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3650,7 +3653,7 @@ mod program_registry_tests {
         }
     }
 
-    fn seg(seq: u32, duration: f64) -> transmux::ll_hls::SegmentInfo {
+    fn seg(seq: u32, duration: Duration) -> transmux::ll_hls::SegmentInfo {
         transmux::ll_hls::SegmentInfo::new(vec![seq as u8; 8], duration, seq).with_part_count(1)
     }
 
@@ -3682,7 +3685,7 @@ mod program_registry_tests {
     fn two_programs_serve_distinct_media() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(8),
         );
@@ -3697,13 +3700,13 @@ mod program_registry_tests {
         route.set_track_specs(program_a, vec![video_spec(TrackId::new(1))]);
         route.set_track_specs(program_b, vec![video_spec(TrackId::new(2))]);
         route
-            .add_segment(program_a, seg(10, 2.0))
+            .add_segment(program_a, seg(10, Duration::from_secs(2)))
             .expect("add_segment");
         route
-            .add_segment(program_b, seg(20, 2.0))
+            .add_segment(program_b, seg(20, Duration::from_secs(2)))
             .expect("add_segment");
         route
-            .add_segment(program_b, seg(21, 2.0))
+            .add_segment(program_b, seg(21, Duration::from_secs(2)))
             .expect("add_segment");
 
         assert_eq!(
@@ -3766,7 +3769,7 @@ mod program_registry_tests {
     fn unannounced_program_is_not_yet_announced_not_not_found() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3782,7 +3785,7 @@ mod program_registry_tests {
     fn name_defaults_then_reflects_with_name() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
@@ -3798,12 +3801,12 @@ mod program_registry_tests {
     fn add_segment_for_unpublished_program_returns_error() {
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(4.0)
+                .with_target_duration(std::time::Duration::from_secs(4))
                 .with_part_target(std::time::Duration::from_millis(500))
                 .with_window_segments(4),
         );
         let err = route
-            .add_segment(ProgramId(9), seg(1, 2.0))
+            .add_segment(ProgramId(9), seg(1, Duration::from_secs(2)))
             .expect_err("add_segment for a never-published program must return an error");
         assert!(matches!(err, AddSegmentError::ProgramNotPublished));
     }
@@ -3843,7 +3846,7 @@ mod program_registry_tests {
         };
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         )
@@ -3921,7 +3924,7 @@ mod program_registry_tests {
         };
         let route = RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(8),
         )
@@ -3929,7 +3932,9 @@ mod program_registry_tests {
         .with_dvr(dvr_cfg);
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
-        route.add_segment(SPTS_PROGRAM_ID, seg(1, 1.0)).unwrap();
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg(1, Duration::from_secs(1)))
+            .unwrap();
         let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
         serving.poll_dvr().await;
         assert_eq!(archived_periods(&tmp), 1);
@@ -3962,7 +3967,7 @@ mod program_registry_tests {
     async fn await_trunk_change_waits_for_a_different_trunk() {
         let route = Arc::new(RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(1.0)
+                .with_target_duration(std::time::Duration::from_secs(1))
                 .with_part_target(std::time::Duration::from_millis(250))
                 .with_window_segments(4),
         ));

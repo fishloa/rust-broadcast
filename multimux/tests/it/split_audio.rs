@@ -7,6 +7,7 @@
 use multimux::route::RouteConfig;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::Body;
@@ -32,7 +33,7 @@ use multimux::output::hls::HlsOutput;
 use multimux::route::RouteHandle;
 use transmux::audio_profile::AudioTrackSelector;
 
-const TARGET_DURATION_SECS: f64 = 1.0;
+const TARGET_DURATION: Duration = Duration::from_secs(1);
 const PART_TARGET_MS: u32 = 200;
 const WINDOW_SEGMENTS: usize = 64;
 const RING: usize = 1 << 16;
@@ -278,7 +279,7 @@ fn build_rig(
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
@@ -898,7 +899,7 @@ async fn split_audio_track_appearing_mid_stream_starts_at_next_cut() {
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
@@ -2189,7 +2190,7 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )
@@ -2214,7 +2215,7 @@ async fn split_audio_after_a_source_reconnect_starts_at_the_number_derived_time(
     assert!(number > 1, "the run continues the earlier numbering");
     let (_, video_tfdt) = first_tfdt(&rig.ok(video_uri).await);
     let video_ts = f64::from(sources[0].spec.timescale.get());
-    let derived = (number - 1) as f64 * TARGET_DURATION_SECS;
+    let derived = (number - 1) as f64 * TARGET_DURATION.as_secs_f64();
     assert!(
         (video_tfdt as f64 / video_ts - derived).abs() < 1.0 / video_ts,
         "video tfdt {video_tfdt} is not the derived {derived} s"
@@ -2267,7 +2268,7 @@ fn sibling_trunk_carries_trunk_config_capacities() {
     let route = Arc::new(
         RouteHandle::new(
             RouteConfig::default()
-                .with_target_duration_secs(TARGET_DURATION_SECS)
+                .with_target_duration(TARGET_DURATION)
                 .with_part_target(std::time::Duration::from_millis(u64::from(PART_TARGET_MS)))
                 .with_window_segments(WINDOW_SEGMENTS),
         )

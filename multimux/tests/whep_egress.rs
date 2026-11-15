@@ -184,7 +184,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
         .with_tcp(whep_addr.to_string(), whep_listener);
     let mut config = Config::default()
         .with_bind(bind_addr.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         .with_routes(vec![Route {
@@ -301,7 +301,7 @@ async fn admin_added_route_starts_its_whep_listener() {
 
     let config = Config::default()
         .with_bind(media_addr.to_string())
-        .with_target_duration_secs(0.5)
+        .with_target_duration(Duration::from_millis(500))
         .with_part_target(Duration::from_millis(100))
         .with_window_segments(8)
         // `/admin/routes` requires at least one route in the config's own

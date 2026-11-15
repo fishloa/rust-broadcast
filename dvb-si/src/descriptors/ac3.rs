@@ -7,6 +7,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedZero;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AC-3 audio.
@@ -243,7 +244,10 @@ impl Ac3ComponentType {
 /// (every edition V1.4.1-V1.20.1, and TS 102 366 V1.1.1/V1.2.1 A.3.3.2) says
 /// "should always be set to 0" — an explicit exception to the global
 /// "reserved = 1" rule (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §3.1).
-pub const RESERVED_FLAGS_DEFAULT: u8 = 0x0;
+pub const RESERVED_FLAGS_DEFAULT: ReservedZero<RESERVED_FLAGS_BITS> =
+    ReservedZero::<RESERVED_FLAGS_BITS>::FILL;
+/// Width of the `reserved_flags` field (4 bits).
+const RESERVED_FLAGS_BITS: u32 = 4;
 const RESERVED_FLAGS_MASK: u8 = 0x0F;
 
 /// AC-3 Descriptor.
@@ -255,7 +259,7 @@ pub struct Ac3Descriptor<'a> {
     /// `reserved_flags` (4 bits, right-aligned). Captured on parse and
     /// re-emitted verbatim (15 of 62 real descriptors carry `0b1111`);
     /// [`Ac3Descriptor::new`] defaults to [`RESERVED_FLAGS_DEFAULT`] (0).
-    pub reserved_flags: u8,
+    pub reserved_flags: ReservedZero<RESERVED_FLAGS_BITS>,
     /// AC-3 component_type (layout per Annex D).
     pub component_type: Option<u8>,
     /// Bit stream identification.
@@ -338,7 +342,7 @@ impl<'a> Parse<'a> for Ac3Descriptor<'a> {
         let asvc = read_one(flags & FLAG_ASVC != 0)?;
         let additional_info = &body[pos..];
         Ok(Self {
-            reserved_flags: flags & RESERVED_FLAGS_MASK,
+            reserved_flags: ReservedZero::from_bits(u64::from(flags & RESERVED_FLAGS_MASK)),
             component_type,
             bsid,
             mainid,
@@ -378,12 +382,7 @@ impl Serialize for Ac3Descriptor<'_> {
             flags |= FLAG_ASVC;
         }
         // reserved_flags: preserved from parse, spec default 0 when constructed.
-        buf[2] = flags
-            | broadcast_common::len::fit_mask(
-                self.reserved_flags,
-                RESERVED_FLAGS_MASK,
-                "reserved_flags",
-            )?;
+        buf[2] = flags | self.reserved_flags.get() as u8;
         let mut pos = 3;
         for b in [self.component_type, self.bsid, self.mainid, self.asvc]
             .into_iter()
@@ -591,7 +590,7 @@ mod tests {
         for r in 0u8..=0x0F {
             let bytes = [TAG, 3, FLAG_COMPONENT_TYPE | r, 0x42, 0xAB];
             let d = Ac3Descriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_flags, r);
+            assert_eq!(d.reserved_flags.get(), u64::from(r));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes, "reserved_flags={r:#x}");

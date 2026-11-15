@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -22,10 +23,12 @@ pub fn ca_system_name(ca_system_id: u16) -> Option<&'static str> {
     crate::registry_names::ca_system_name_generated(ca_system_id)
 }
 
+/// Width of the `reserved` field ahead of `CA_PID` (3 bits).
+const RESERVED_BITS: u32 = 3;
 /// Default of the 3-bit `reserved` ahead of `CA_PID`: H.222.0 clause 2.1
 /// "reserved" = `1` (all 9 editions 07/1995-08/2023, Table 2-46). Never given
 /// a meaning; 2/715 real descriptors (test-128) write `000`, so parse keeps it.
-pub const RESERVED_DEFAULT: u8 = 0b111;
+pub const RESERVED_DEFAULT: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// Conditional Access Descriptor.
 ///
@@ -40,7 +43,7 @@ pub struct CaDescriptor<'a> {
     /// `reserved(3)` ahead of `CA_PID` (3 bits, right-aligned). Captured on
     /// parse, re-emitted verbatim; [`CaDescriptor::new`] defaults to
     /// [`RESERVED_DEFAULT`] (`0b111`).
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
 
     /// Conditional Access System ID.
     ///
@@ -89,7 +92,7 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
         let ca_pid = Pid::from_wire_masked(u16::from_be_bytes([fixed[2], fixed[3]]));
         Ok(Self {
-            reserved: fixed[2] >> 5,
+            reserved: ReservedOnes::from_bits(u64::from(fixed[2] >> 5)),
             ca_system_id,
             ca_pid,
             private_data,
@@ -113,8 +116,7 @@ impl Serialize for CaDescriptor<'_> {
         // ca_pid is a 13-bit field (upper 3 bits reserved); `Pid` is 13-bit by
         // construction, so no out-of-range value can reach the wire.
         let ca_pid = self.ca_pid.value();
-        buf[4] = (broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")? << 5)
-            | ((ca_pid >> 8) as u8 & 0x1F);
+        buf[4] = ((self.reserved.get() as u8) << 5) | ((ca_pid >> 8) as u8 & 0x1F);
         buf[5] = (ca_pid & 0xFF) as u8;
         if !self.private_data.is_empty() {
             buf[HEADER_LEN + MIN_BODY_LEN..len].copy_from_slice(self.private_data);
@@ -262,7 +264,7 @@ mod tests {
         for r in 0u8..=7 {
             let bytes = [TAG, 6, 0x05, 0x00, (r << 5) | 0x01, 0x01, 0xAA, 0xBB];
             let d = CaDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved, r);
+            assert_eq!(d.reserved.get(), u64::from(r));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes);

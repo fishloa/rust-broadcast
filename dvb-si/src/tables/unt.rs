@@ -16,6 +16,7 @@ use crate::descriptors::unt::UntDescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// `table_id` for the Update Notification Table.
@@ -177,7 +178,7 @@ pub struct UntSection<'a> {
     pub bits: super::SectionBits,
     /// `reserved(4)` before `common_descriptor_loop_length` (`1111`).
     #[cfg_attr(feature = "serde", serde(skip))]
-    pub reserved_common_descriptor_loop_length: u8,
+    pub reserved_common_descriptor_loop_length: ReservedOnes<4>,
 }
 
 impl<'a> UntSection<'a> {
@@ -204,7 +205,7 @@ impl<'a> UntSection<'a> {
             common_descriptors,
             platforms,
             bits: super::SectionBits::dvb(),
-            reserved_common_descriptor_loop_length: super::RESERVED_4,
+            reserved_common_descriptor_loop_length: ReservedOnes::FILL,
         }
     }
 }
@@ -337,7 +338,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         available: platform_end.saturating_sub(target_start),
                     });
                 }
-                let reserved_target_length = super::len_reserved_of(bytes[pos]);
+                let reserved_target_length =
+                    ReservedOnes::from_bits(u64::from(super::len_reserved_of(bytes[pos])));
                 let target_descriptors = UntDescriptorLoop::new(&bytes[target_start..target_end]);
                 pos = target_end;
 
@@ -359,7 +361,8 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         available: platform_end.saturating_sub(op_start),
                     });
                 }
-                let reserved_operational_length = super::len_reserved_of(bytes[pos]);
+                let reserved_operational_length =
+                    ReservedOnes::from_bits(u64::from(super::len_reserved_of(bytes[pos])));
                 let operational_descriptors = UntDescriptorLoop::new(&bytes[op_start..op_end]);
                 pos = op_end;
 
@@ -395,9 +398,9 @@ impl<'a> Parse<'a> for UntSection<'a> {
             common_descriptors,
             platforms,
             bits: super::SectionBits::parse(bytes[1], Some(flags_byte)),
-            reserved_common_descriptor_loop_length: super::len_reserved_of(
-                bytes[OFFSET_COMMON_DESC_LEN],
-            ),
+            reserved_common_descriptor_loop_length: ReservedOnes::from_bits(u64::from(
+                super::len_reserved_of(bytes[OFFSET_COMMON_DESC_LEN]),
+            )),
         })
     }
 }
@@ -449,7 +452,7 @@ impl Serialize for UntSection<'_> {
         super::write_desc_loop_len_r(
             &mut buf[OFFSET_COMMON_DESC_LEN..OFFSET_COMMON_DESC_LEN + 2],
             cdl as usize,
-            self.reserved_common_descriptor_loop_length,
+            self.reserved_common_descriptor_loop_length.get() as u8,
         )?;
 
         let common_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
@@ -483,7 +486,7 @@ impl Serialize for UntSection<'_> {
                 super::write_desc_loop_len_r(
                     &mut buf[pos..pos + 2],
                     tl as usize,
-                    pair.reserved_target_length,
+                    pair.reserved_target_length.get() as u8,
                 )?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
@@ -497,7 +500,7 @@ impl Serialize for UntSection<'_> {
                 super::write_desc_loop_len_r(
                     &mut buf[pos..pos + 2],
                     ol as usize,
-                    pair.reserved_operational_length,
+                    pair.reserved_operational_length.get() as u8,
                 )?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + operational_descriptors.len()]
@@ -880,5 +883,25 @@ mod tests {
                 "UntActionType round-trip failed for {byte:#04x}"
             );
         }
+    }
+
+    /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
+    /// spill into the 12-bit common_descriptor_loop_length below it.
+    #[test]
+    fn reserved_common_length_cannot_hold_more_than_four_bits() {
+        let d = UntSection::new(
+            UntActionType::from_u8(0),
+            0,
+            crate::tables::SectionVersion::new(1, true, 0, 0),
+            0,
+            0,
+            UntDescriptorLoop::new(&[]),
+            vec![],
+        );
+        let d = UntSection {
+            reserved_common_descriptor_loop_length: ReservedOnes::from_bits(0xFF),
+            ..d
+        };
+        assert_eq!(d.reserved_common_descriptor_loop_length.get(), 0x0F);
     }
 }

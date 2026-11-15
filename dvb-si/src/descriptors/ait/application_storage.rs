@@ -11,6 +11,7 @@
 use crate::descriptors::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_storage_descriptor (AIT namespace).
@@ -22,12 +23,15 @@ const NOT_LAUNCHABLE_FROM_BROADCAST: u8 = 0x80;
 const LAUNCHABLE_COMPLETELY_FROM_CACHE: u8 = 0x40;
 const IS_LAUNCHABLE_WITH_OLDER_VERSION: u8 = 0x20;
 const RESERVED_FLAGS_MASK: u8 = 0x1F;
+/// Width of the `reserved_flags` field (5 bits).
+const RESERVED_FLAGS_BITS: u32 = 5;
 const RESERVED_BIT_AFTER_FLAGS: u8 = 0x80;
 const VERSION_MASK: u32 = 0x7FFF_FFFF;
 
 /// Spec default of the 5-bit `reserved` after the three flags (all ones,
 /// TS 102 809 V1.3.1 NOTE: reserved bits are set to "1").
-pub const RESERVED_FLAGS_DEFAULT: u8 = 0x1F;
+pub const RESERVED_FLAGS_DEFAULT: ReservedOnes<RESERVED_FLAGS_BITS> =
+    ReservedOnes::<RESERVED_FLAGS_BITS>::FILL;
 
 /// `storage_property` (TS 102 809 §5.2.11.2 Table 15).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,7 +93,7 @@ pub struct ApplicationStorageDescriptor {
     pub is_launchable_with_older_version: bool,
     /// `reserved`(5) after the flags (right-aligned). Parsed value is kept so
     /// re-serialization is byte-identical; default [`RESERVED_FLAGS_DEFAULT`].
-    pub reserved_flags: u8,
+    pub reserved_flags: ReservedOnes<RESERVED_FLAGS_BITS>,
     /// The 1-bit `reserved` before `version`. Parsed value is kept; default `true`.
     pub reserved_before_version: bool,
     /// `version`(31) — application version number (§5.2.11.1.2).
@@ -136,7 +140,7 @@ impl<'a> Parse<'a> for ApplicationStorageDescriptor {
             not_launchable_from_broadcast: flags & NOT_LAUNCHABLE_FROM_BROADCAST != 0,
             launchable_completely_from_cache: flags & LAUNCHABLE_COMPLETELY_FROM_CACHE != 0,
             is_launchable_with_older_version: flags & IS_LAUNCHABLE_WITH_OLDER_VERSION != 0,
-            reserved_flags: flags & RESERVED_FLAGS_MASK,
+            reserved_flags: ReservedOnes::from_bits(u64::from(flags & RESERVED_FLAGS_MASK)),
             reserved_before_version: ver & !VERSION_MASK != 0,
             version: ver & VERSION_MASK,
             priority: body[6],
@@ -152,8 +156,7 @@ impl Serialize for ApplicationStorageDescriptor {
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
-        let reserved =
-            broadcast_common::len::fit_mask(self.reserved_flags, RESERVED_FLAGS_MASK, "reserved")?;
+        let reserved = self.reserved_flags.get() as u8;
         let version = broadcast_common::len::fit_mask(self.version, VERSION_MASK, "version")?;
         need_out(buf, len)?;
         write_descriptor_header(buf, TAG, BODY_LEN)?;
@@ -192,7 +195,7 @@ mod tests {
         assert!(d.not_launchable_from_broadcast);
         assert!(!d.launchable_completely_from_cache);
         assert!(d.is_launchable_with_older_version);
-        assert_eq!(d.reserved_flags, 0x1F);
+        assert_eq!(d.reserved_flags.get(), 0x1F);
         assert!(d.reserved_before_version);
         assert_eq!(d.version, 0x102);
         assert_eq!(d.priority, 7);
@@ -235,14 +238,13 @@ mod tests {
             &(d.serialize_into(&mut out)),
             Err(crate::error::Error::FieldOverflow(_))
         ));
-        let d = ApplicationStorageDescriptor {
-            reserved_flags: 0x20,
-            ..Default::default()
-        };
-        assert!(matches!(
-            d.serialize_into(&mut out),
-            Err(Error::FieldOverflow(..))
-        ));
+        // reserved_flags is a 5-bit `ReservedOnes`; an over-range value is
+        // unrepresentable (`from_bits` masks at construction) so it can never be
+        // re-masked into a different wire byte.
+        assert_eq!(
+            ReservedOnes::<RESERVED_FLAGS_BITS>::from_bits(0x20).get(),
+            0
+        );
     }
 
     #[test]
