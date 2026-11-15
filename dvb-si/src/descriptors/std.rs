@@ -167,7 +167,7 @@ mod tests {
     fn reserved_cannot_hold_more_than_seven_bits() {
         let d = StdDescriptor {
             leak_valid_flag: false,
-            reserved: ReservedOnes::from_bits(0b1_1111_111),
+            reserved: ReservedOnes::from_bits(0b1111_1111),
         };
         assert_eq!(d.reserved.get(), 0x7F);
         let mut out = vec![0u8; d.serialized_len()];
