@@ -5902,7 +5902,8 @@ mod tests {
         match err {
             MultimuxError::ConfigInvalid { field, .. } => {
                 assert_eq!(
-                    field, ConfigField::RoutesInputRemote,
+                    field,
+                    ConfigField::RoutesInputRemote,
                     "field must name remote, got {err:?}"
                 );
             }

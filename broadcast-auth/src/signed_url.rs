@@ -156,7 +156,9 @@ impl SignedUrlKeySet {
     pub fn sign(&self, kid: &str, path: &str, exp: u64, ip: Option<IpAddr>) -> Result<String> {
         let secret = self
             .secret_for(kid)
-            .ok_or_else(|| Error::UnknownSignedUrlKeyId { kid: kid.to_string() })?;
+            .ok_or_else(|| Error::UnknownSignedUrlKeyId {
+                kid: kid.to_string(),
+            })?;
         let sig = URL_SAFE_NO_PAD.encode(hmac_sha256(secret, &canonical_string(path, exp, ip)));
         let mut query = form_urlencoded::Serializer::new(String::new());
         query.append_pair("exp", &exp.to_string());

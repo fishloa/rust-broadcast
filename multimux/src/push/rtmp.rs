@@ -310,9 +310,7 @@ impl PushTransport for RtmpTransport {
                 }
                 _ => continue,
             }
-            .map_err(|e| {
-                SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.into())))
-            })?;
+            .map_err(|e| SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.into()))))?;
             messages.push(bytes::Bytes::from(bytes));
         }
         Ok(messages)
@@ -449,10 +447,7 @@ mod tests {
         server.abort();
         let err = result.expect_err("black-hole handshake must fail");
         assert!(
-            matches!(
-                &err,
-                RtmpPushError::Connect(RtmpConnectError::Handshake(_))
-            ),
+            matches!(&err, RtmpPushError::Connect(RtmpConnectError::Handshake(_))),
             "the failure must be the connect timeout: {err:?}"
         );
         assert!(

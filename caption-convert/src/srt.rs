@@ -47,7 +47,9 @@ fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
             }
         })
         .map(|t| t.0)
-        .map_err(|_| Error::InvalidTimestamp { timestamp: s.to_string() })
+        .map_err(|_| Error::InvalidTimestamp {
+            timestamp: s.to_string(),
+        })
 }
 
 /// Render cues as an SRT document: `<index>\n<timings>\n<payload>\n\n` per
@@ -118,7 +120,7 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
         let mut lines = block.lines();
         let first = lines
             .next()
-            .ok_or_else(|| Error::InvalidSrt(SrtError::EmptyBlock))?;
+            .ok_or(Error::InvalidSrt(SrtError::EmptyBlock))?;
 
         let timing_line = if first.contains("-->") {
             first
@@ -131,9 +133,9 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
                     line: first.to_string(),
                 }));
             }
-            lines.next().ok_or_else(|| {
-                Error::InvalidSrt(SrtError::SequenceWithoutTiming)
-            })?
+            lines
+                .next()
+                .ok_or(Error::InvalidSrt(SrtError::SequenceWithoutTiming))?
         };
 
         let (start_str, after_arrow) = timing_line.split_once("-->").ok_or_else(|| {

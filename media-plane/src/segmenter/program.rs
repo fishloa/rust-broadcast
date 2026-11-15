@@ -313,12 +313,22 @@ impl TsHlsRejection {
         }
     }
 
-    /// The full human-readable refusal, for the route's user-facing output error.
+    /// The refusal reason (the codec is forbidden); the route's full
+    /// user-facing message adds the `ts_hls output cannot carry <codec>:` prefix.
     pub fn reason(&self) -> &'static str {
         match self {
             TsHlsRejection::Hevc => "HEVC is not allowed in MPEG-TS HLS segments",
             TsHlsRejection::Av1 => "AV1 is not allowed in MPEG-TS HLS segments",
         }
+    }
+
+    /// The full user-facing message a route reports as its `output_error`.
+    pub fn message(&self) -> String {
+        format!(
+            "ts_hls output cannot carry {}: {}",
+            self.name(),
+            self.reason()
+        )
     }
 }
 

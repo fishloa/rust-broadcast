@@ -206,8 +206,7 @@ impl PushTransport for RtspTransport {
 
         // The push's publish flow derives its control URL, so a host-less URL
         // is rejected here, before dialing.
-        rtsp_runtime::sdp::control_url(&parsed)
-            .map_err(|e| RtspPushError::Connect(e.into()))?;
+        rtsp_runtime::sdp::control_url(&parsed).map_err(|e| RtspPushError::Connect(e.into()))?;
 
         // Every IO the adapter performs is bounded by `config.timeouts`
         // (SP6.1, defect 4): the OPTIONS exchange below and every later

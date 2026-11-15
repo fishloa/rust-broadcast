@@ -56,7 +56,9 @@ pub struct ParsedWebVtt {
 fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
     parse_cue_timestamp(s, sep)
         .map(|t| t.0)
-        .map_err(|_| Error::InvalidTimestamp { timestamp: s.to_string() })
+        .map_err(|_| Error::InvalidTimestamp {
+            timestamp: s.to_string(),
+        })
 }
 
 /// Parse a WebVTT document (W3C WebVTT SS4) into [`ParsedWebVtt`].
@@ -180,19 +182,17 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
     } else {
         // An identifier line precedes the timing line.
         lossy = true;
-        let t = *lines.get(1).ok_or_else(|| {
-            Error::InvalidWebVtt(WebVttError::IdentifierWithoutTiming)
-        })?;
+        let t = *lines
+            .get(1)
+            .ok_or(Error::InvalidWebVtt(WebVttError::IdentifierWithoutTiming))?;
         (2, t)
     };
 
-    let (start_str, after_arrow) = timing_line
-        .split_once("-->")
-        .ok_or_else(|| {
-            Error::InvalidWebVtt(WebVttError::MalformedTiming {
-                line: format_timing(timing_line),
-            })
-        })?;
+    let (start_str, after_arrow) = timing_line.split_once("-->").ok_or_else(|| {
+        Error::InvalidWebVtt(WebVttError::MalformedTiming {
+            line: format_timing(timing_line),
+        })
+    })?;
     let after_arrow = after_arrow.trim_start();
     let (end_str, settings) = match after_arrow.split_once(char::is_whitespace) {
         Some((e, s)) if !s.trim().is_empty() => (e, Some(s)),

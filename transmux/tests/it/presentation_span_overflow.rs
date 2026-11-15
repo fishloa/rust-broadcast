@@ -92,8 +92,8 @@ fn the_presentation_time_sum_does_not_fit_i64() {
 /// error, not a formatted `InvalidInput` message.
 #[test]
 fn a_composition_offset_that_overflows_i64_is_a_typed_span_overflow() {
-    let sample = Sample::new(idr_bytes(), Some(i64::MIN), Some(i64::MAX), None, true)
-        .with_timing(Some(SampleTiming::timed(i64::MIN, i64::MAX)));
+    let sample =
+        Sample::new(idr_bytes(), Some(i64::MIN), Some(i64::MAX), None, true).expect("valid sample");
     assert!(matches!(
         sample.composition_offset(),
         Err(transmux::Error::TimestampSpanOverflow)
@@ -104,8 +104,14 @@ fn a_composition_offset_that_overflows_i64_is_a_typed_span_overflow() {
 /// field reports the over-range offset, not a formatted message.
 #[test]
 fn a_composition_offset_past_i32_is_a_typed_range_error_naming_the_offset() {
-    let sample = Sample::new(idr_bytes(), Some(0), Some(i64::from(i32::MAX) + 1), None, true)
-        .with_timing(Some(SampleTiming::timed(0, i64::from(i32::MAX) + 1)));
+    let sample = Sample::new(
+        idr_bytes(),
+        Some(0),
+        Some(i64::from(i32::MAX) + 1),
+        None,
+        true,
+    )
+    .expect("valid sample");
     assert!(matches!(
         sample.composition_offset(),
         Err(transmux::Error::CompositionOffsetRange { offset }) if offset == i64::from(i32::MAX) + 1

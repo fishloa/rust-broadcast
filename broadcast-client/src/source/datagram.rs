@@ -307,11 +307,13 @@ impl Datagram {
         } else if options.join.is_some() {
             return Err(Error::InvalidConfig(crate::error::ConfigField::UdpJoin));
         }
-        options.validate().map_err(|error| Error::InvalidConfig(match error {
-            JoinMismatch::Family => crate::error::ConfigField::UdpJoinInterface,
-            JoinMismatch::SourceFamily => crate::error::ConfigField::UdpJoinSource,
-            _ => crate::error::ConfigField::UdpJoinGroup,
-        }))?;
+        options.validate().map_err(|error| {
+            Error::InvalidConfig(match error {
+                JoinMismatch::Family => crate::error::ConfigField::UdpJoinInterface,
+                JoinMismatch::SourceFamily => crate::error::ConfigField::UdpJoinSource,
+                _ => crate::error::ConfigField::UdpJoinGroup,
+            })
+        })?;
         let kind = match config.sdp.as_deref() {
             Some(sdp) if rtp => Kind::Sdp(Box::new(crate::source::rtp_sdp::SdpRtp::new(sdp)?)),
             Some(_) => return Err(Error::InvalidConfig(crate::error::ConfigField::UdpSdp)),

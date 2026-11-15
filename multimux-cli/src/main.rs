@@ -343,7 +343,7 @@ mod tests {
         assert!(matches!(
             build_config(cli),
             Err(MultimuxError::ConfigInvalid {
-                field: "outputs",
+                field: ConfigField::Outputs,
                 ..
             })
         ));

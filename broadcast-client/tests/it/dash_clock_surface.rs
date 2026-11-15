@@ -416,7 +416,9 @@ fn an_invalid_dash_config_fails_a_session_that_does_not_play_dash() {
     config.kind = broadcast_client::SourceKind::TsHttp;
     assert!(matches!(
         Session::open(Url::parse("http://h/live.ts").unwrap(), config, ts(0)),
-        Err(Error::InvalidConfig(broadcast_client::error::ConfigField::DashEarlyRetry))
+        Err(Error::InvalidConfig(
+            broadcast_client::error::ConfigField::DashEarlyRetry
+        ))
     ));
 }
 

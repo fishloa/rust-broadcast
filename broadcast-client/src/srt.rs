@@ -222,13 +222,17 @@ mod timeouts_tests {
             .with_timeouts(Timeouts::default().with_handshake(Duration::ZERO));
         assert!(matches!(
             config.validate(),
-            Err(crate::Error::InvalidConfig(crate::error::ConfigField::SrtHandshakeTimeout))
+            Err(crate::Error::InvalidConfig(
+                crate::error::ConfigField::SrtHandshakeTimeout
+            ))
         ));
         let config = SrtCallerConfig::default()
             .with_timeouts(Timeouts::default().with_read_idle(Duration::ZERO));
         assert!(matches!(
             config.validate(),
-            Err(crate::Error::InvalidConfig(crate::error::ConfigField::SrtReadIdleTimeout))
+            Err(crate::Error::InvalidConfig(
+                crate::error::ConfigField::SrtReadIdleTimeout
+            ))
         ));
     }
 }

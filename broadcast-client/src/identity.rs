@@ -102,7 +102,9 @@ impl ClientIdentity {
 
     pub(crate) fn validate(&self) -> Result<(), crate::Error> {
         let invalid = || {
-            Err(crate::Error::InvalidConfig(crate::error::ConfigField::ClientIdentity))
+            Err(crate::Error::InvalidConfig(
+                crate::error::ConfigField::ClientIdentity,
+            ))
         };
         match &self.material {
             Material::Handle(_) => Ok(()),

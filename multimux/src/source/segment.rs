@@ -113,7 +113,7 @@ pub fn apply_segmenter_events(
                 }
             }
             SegmenterEvent::OutputFailed(rejection) => {
-                let _ = route.fail_output_message(rejection.reason().to_string());
+                let _ = route.fail_output_message(rejection.message());
             }
             _ => {}
         }

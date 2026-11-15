@@ -83,9 +83,7 @@ fn twenty_thousand_entities_decode() {
 
 fn assert_xml_parse_error(xml: &str, what: &str) {
     match MulticastGatewayConfiguration::parse_str(xml) {
-        Err(
-            Error::XmlParse(_) | Error::XmlInvalid(_) | Error::InvalidStructure(_),
-        ) => {}
+        Err(Error::XmlParse(_) | Error::XmlInvalid(_) | Error::InvalidStructure(_)) => {}
         other => panic!("{what}: expected a typed XML error, got {other:?}"),
     }
 }

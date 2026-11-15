@@ -178,7 +178,11 @@ impl<'a> Events<'a> {
         let attributes = broadcast_common::xml_chars::read_attributes_checked(
             &self.reader,
             e,
-            |m| Error::XmlInvalid(XmlCharError::Reader { message: m.to_string() }),
+            |m| {
+                Error::XmlInvalid(XmlCharError::Reader {
+                    message: m.to_string(),
+                })
+            },
             |count, value| self.budget.admit_attribute(count, value).map_err(exceeded),
         )?;
         Ok(StartTag {
@@ -196,8 +200,8 @@ impl<'a> Events<'a> {
         core::result::Result<Option<String>, XmlCharError>,
         Event<'a>,
     )> {
-        let (ns, event) = broadcast_common::xml_chars::read_event(&mut self.reader)
-            .map_err(Error::XmlInvalid)?;
+        let (ns, event) =
+            broadcast_common::xml_chars::read_event(&mut self.reader).map_err(Error::XmlInvalid)?;
         self.account(&event)?;
         Ok((ns, event))
     }
