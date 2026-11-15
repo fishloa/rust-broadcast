@@ -1055,17 +1055,9 @@ pub(crate) fn verify_km_echo(crypto: &CryptoConfig, echoed: &KeyMaterial<'_>) ->
 /// The greater-of-both-parties TSBPD latency rule (§4.3.1.2), rounded down to
 /// the whole milliseconds the wire carries.
 pub(crate) fn negotiate_latency(local: Duration, peer_msg: &HsExtMessage) -> Duration {
-    let local_ms = u64::try_from(local.as_millis()).unwrap_or(u64::MAX);
-    let ms = local_ms
-        .max(u64::from(peer_msg.receiver_tsbpd_delay_ms))
-        .max(u64::from(peer_msg.sender_tsbpd_delay_ms));
-    Duration::from_millis(ms)
-}
-
-/// A latency as the whole milliseconds the wire carries (a sub-millisecond
-/// remainder is dropped, and a value past `u16::MAX` ms saturates).
-pub(crate) fn wire_latency_ms(latency: Duration) -> u16 {
-    u16::try_from(latency.as_millis()).unwrap_or(u16::MAX)
+    local
+        .max(peer_msg.receiver_tsbpd_delay)
+        .max(peer_msg.sender_tsbpd_delay)
 }
 
 /// SipHash-2-4 (Aumasson & Bernstein, "SipHash: a fast short-input PRF",

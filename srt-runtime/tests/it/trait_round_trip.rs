@@ -3,6 +3,7 @@
 use broadcast_common::error::OutputBufferTooSmall;
 use broadcast_common::{Parse, Serialize};
 use core::fmt::Debug;
+use core::time::Duration;
 use srt_runtime::Error;
 use srt_runtime::packet::misc::KeepAlivePacket;
 use srt_runtime::packet::{
@@ -88,8 +89,8 @@ fn hs_ext_message_round_trips() {
     let m = HsExtMessage {
         srt_version: 0x0001_0500,
         srt_flags: HandshakeExtensionMessageFlags(0x0000_00BF),
-        receiver_tsbpd_delay_ms: 120,
-        sender_tsbpd_delay_ms: 80,
+        receiver_tsbpd_delay: Duration::from_millis(120),
+        sender_tsbpd_delay: Duration::from_millis(80),
     };
     let mut wire = Vec::new();
     through_traits(&m, &mut wire);
@@ -113,8 +114,8 @@ fn serialize_into_short_buffer_is_output_buffer_too_small() {
     let m = HsExtMessage {
         srt_version: 1,
         srt_flags: HandshakeExtensionMessageFlags(0),
-        receiver_tsbpd_delay_ms: 0,
-        sender_tsbpd_delay_ms: 0,
+        receiver_tsbpd_delay: Duration::from_millis(0),
+        sender_tsbpd_delay: Duration::from_millis(0),
     };
     assert_eq!(
         Serialize::serialize_into(&m, &mut [0u8; 11]),

@@ -245,8 +245,8 @@ impl CallerHandshake {
         let hs_msg = HsExtMessage {
             srt_version: self.config.srt_version,
             srt_flags: self.config.flags,
-            receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
-            sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
+            receiver_tsbpd_delay: self.config.latency,
+            sender_tsbpd_delay: self.config.latency,
         };
         let ext_contents = handshake_sm::ConclusionExtensionContents::new(
             hs_msg,
@@ -414,8 +414,8 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: HandshakeConfig::default().flags,
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let conclusion_response = ControlPacket::Handshake(HandshakePacket {
@@ -649,8 +649,8 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: HandshakeConfig::default().flags,
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let response = ControlPacket::Handshake(HandshakePacket {
@@ -681,8 +681,8 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: HandshakeConfig::default().flags,
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
         let pkt = ControlPacket::Handshake(HandshakePacket {

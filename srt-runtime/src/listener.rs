@@ -319,8 +319,8 @@ impl ListenerHandshake {
         let hs_msg = HsExtMessage {
             srt_version: self.config.srt_version,
             srt_flags: self.config.flags,
-            receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
-            sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
+            receiver_tsbpd_delay: self.config.latency,
+            sender_tsbpd_delay: self.config.latency,
         };
         // §4.3.1.2: the Listener's CONCLUSION response carries the HSv5
         // extensions "without the cookie" — no Stream ID is echoed back
@@ -454,8 +454,8 @@ mod tests {
         let hs_msg = HsExtMessage {
             srt_version: 0x0105_0000,
             srt_flags: crate::packet::HandshakeExtensionMessageFlags(0x6F),
-            receiver_tsbpd_delay_ms: latency_ms,
-            sender_tsbpd_delay_ms: latency_ms,
+            receiver_tsbpd_delay: Duration::from_millis(u64::from(latency_ms)),
+            sender_tsbpd_delay: Duration::from_millis(u64::from(latency_ms)),
         };
         let ext = crate::packet::handshake::build_extension_block(
             ExtensionType::HsReq,

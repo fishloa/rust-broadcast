@@ -808,8 +808,8 @@ impl RendezvousHandshake {
                 let hs_msg = HsExtMessage {
                     srt_version: self.config.srt_version,
                     srt_flags: self.config.flags,
-                    receiver_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
-                    sender_tsbpd_delay_ms: handshake_sm::wire_latency_ms(self.config.latency),
+                    receiver_tsbpd_delay: self.config.latency,
+                    sender_tsbpd_delay: self.config.latency,
                 };
                 Some(handshake_sm::ConclusionExtensionContents::new(
                     hs_msg, None, None,

@@ -32,6 +32,7 @@ use broadcast_common::len::need_in;
 use super::key_material::KeyMaterial;
 use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, be16, be32, put_be16, put_be32};
+use core::time::Duration;
 
 /// Length in bytes of the fixed Handshake CIF core (Version through Peer IP
 /// Address, §3.2.1 Figure 5) — 12 header words.
@@ -372,14 +373,21 @@ pub struct HsExtMessage {
     pub srt_version: u32,
     /// SRT configuration flags.
     pub srt_flags: HandshakeExtensionMessageFlags,
-    /// Receiver TSBPD Delay, in milliseconds.
-    pub receiver_tsbpd_delay_ms: u16,
-    /// Sender TSBPD Delay, in milliseconds.
-    pub sender_tsbpd_delay_ms: u16,
+    /// Receiver TSBPD Delay (the wire field is whole milliseconds).
+    pub receiver_tsbpd_delay: Duration,
+    /// Sender TSBPD Delay (the wire field is whole milliseconds).
+    pub sender_tsbpd_delay: Duration,
 }
 
 /// Wire length of a Handshake Extension Message (Figure 6).
 pub const HS_EXT_MESSAGE_LEN: usize = 12;
+
+/// A TSBPD delay as the whole milliseconds its `u16` wire field carries; a
+/// sub-millisecond remainder is dropped and anything past `u16::MAX` ms
+/// saturates.
+fn wire_delay_ms(delay: Duration) -> u16 {
+    u16::try_from(delay.as_millis()).unwrap_or(u16::MAX)
+}
 
 impl HsExtMessage {
     /// Parse a Handshake Extension Message from an extension block's
@@ -395,8 +403,8 @@ impl HsExtMessage {
         Ok(HsExtMessage {
             srt_version: be32(bytes, 0),
             srt_flags: HandshakeExtensionMessageFlags(be32(bytes, 4)),
-            receiver_tsbpd_delay_ms: be16(bytes, 8),
-            sender_tsbpd_delay_ms: be16(bytes, 10),
+            receiver_tsbpd_delay: Duration::from_millis(u64::from(be16(bytes, 8))),
+            sender_tsbpd_delay: Duration::from_millis(u64::from(be16(bytes, 10))),
         })
     }
 
@@ -405,8 +413,8 @@ impl HsExtMessage {
         let mut buf = [0u8; HS_EXT_MESSAGE_LEN];
         put_be32(&mut buf, 0, self.srt_version);
         put_be32(&mut buf, 4, self.srt_flags.0);
-        put_be16(&mut buf, 8, self.receiver_tsbpd_delay_ms);
-        put_be16(&mut buf, 10, self.sender_tsbpd_delay_ms);
+        put_be16(&mut buf, 8, wire_delay_ms(self.receiver_tsbpd_delay));
+        put_be16(&mut buf, 10, wire_delay_ms(self.sender_tsbpd_delay));
         buf
     }
 }
@@ -905,6 +913,25 @@ mod tests {
         assert_eq!(ControlPacket::parse(&buf).unwrap(), pkt);
     }
 
+    /// The TSBPD delays travel as whole milliseconds in their `u16` wire
+    /// field: a sub-millisecond remainder is dropped, never rounded up into a
+    /// longer peer-side buffer.
+    #[test]
+    fn the_tsbpd_delays_are_whole_wire_milliseconds() {
+        let msg = HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: HandshakeExtensionMessageFlags(0),
+            receiver_tsbpd_delay: Duration::from_micros(120_999),
+            sender_tsbpd_delay: Duration::from_millis(250),
+        };
+        let bytes = msg.to_bytes();
+        assert_eq!(&bytes[8..10], &120u16.to_be_bytes());
+        assert_eq!(&bytes[10..12], &250u16.to_be_bytes());
+        let parsed = HsExtMessage::parse(&bytes).unwrap();
+        assert_eq!(parsed.receiver_tsbpd_delay, Duration::from_millis(120));
+        assert_eq!(parsed.sender_tsbpd_delay, Duration::from_millis(250));
+    }
+
     #[test]
     fn round_trips_with_hsreq_and_sid_extensions() {
         let hs_msg = HsExtMessage {
@@ -912,8 +939,8 @@ mod tests {
             srt_flags: HandshakeExtensionMessageFlags(
                 HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TSBPDRCV | HS_MSG_FLAG_CRYPT,
             ),
-            receiver_tsbpd_delay_ms: 120,
-            sender_tsbpd_delay_ms: 120,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
         };
         let hsreq_block = build_extension_block(ExtensionType::HsReq, &hs_msg.to_bytes()).unwrap();
 

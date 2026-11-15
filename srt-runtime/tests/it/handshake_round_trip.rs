@@ -173,8 +173,8 @@ fn listener_rejects_a_caller_with_the_wrong_cookie() {
     let hs_msg = HsExtMessage {
         srt_version: 0x0105_0000,
         srt_flags: HandshakeConfig::default().flags,
-        receiver_tsbpd_delay_ms: 120,
-        sender_tsbpd_delay_ms: 120,
+        receiver_tsbpd_delay: Duration::from_millis(120),
+        sender_tsbpd_delay: Duration::from_millis(120),
     };
     let ext = build_extension_block(ExtensionType::HsReq, &hs_msg.to_bytes()).unwrap();
     let conclusion = ControlPacket::Handshake(HandshakePacket {
