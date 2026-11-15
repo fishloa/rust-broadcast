@@ -307,10 +307,7 @@ fn typed_identities_survive_the_wire_unchanged() {
     let ssrc = Ssrc::new(0x1122_3344);
     let sr = SenderReport::new(ssrc, 1, 2, 3, 0, 0, Vec::new());
     assert_eq!(sr.ssrc, ssrc);
-    assert_eq!(
-        sr.try_to_bytes().unwrap()[4..8],
-        ssrc.get().to_be_bytes()
-    );
+    assert_eq!(sr.try_to_bytes().unwrap()[4..8], ssrc.get().to_be_bytes());
 
     let block = ReportBlock {
         ssrc,

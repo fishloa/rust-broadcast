@@ -41,7 +41,7 @@ fn transmux_rtp_medias_match_golden() {
         .expect("demux fixture");
     let mut packetiser = transmux::RtpPacketiser {
         mtu: MTU,
-        ssrc: SSRC.into(),
+        ssrc: SSRC,
         ..transmux::RtpPacketiser::default()
     };
     let out = packetiser.package(&media).expect("packetise fixture");

@@ -137,6 +137,8 @@ impl From<u32> for ExtendedSeqNo {
 
 #[cfg(test)]
 mod tests {
+    extern crate alloc;
+
     use super::*;
 
     #[test]
@@ -164,6 +166,6 @@ mod tests {
         assert_eq!(u32::from(Ssrc::from(0xDEAD_BEEF)), 0xDEAD_BEEF);
         assert_eq!(u16::from(SeqNo::from(4321)), 4321);
         assert_eq!(ExtendedSeqNo::new(7).get(), 7);
-        assert_eq!(Ssrc::new(1).to_string(), "0x00000001");
+        assert_eq!(alloc::format!("{}", Ssrc::new(1)), "0x00000001");
     }
 }
