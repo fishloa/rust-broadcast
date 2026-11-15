@@ -13,9 +13,10 @@
 
 use core::time::Duration;
 
-use srt_runtime::handshake_sm::{HandshakeOutput, RejectionReason};
+use srt_runtime::handshake_sm::HandshakeOutput;
 use srt_runtime::packet::{
     ControlPacket, EncryptionField, HandshakeExtensionFlags, HandshakePacket, HandshakeType,
+    SocketId, SrtTimestamp,
 };
 use srt_runtime::rendezvous::{RendezvousHandshake, RendezvousHandshakeState};
 use srt_runtime::{HandshakeConfig, RendezvousRole};
@@ -146,8 +147,8 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
 
     // Get `a` into Attention (Initiator) first.
     let peer_wave = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 0,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::CONNECTION_REQUEST,
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(0),
@@ -158,17 +159,16 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
         srt_socket_id: 2,
         syn_cookie: PEER_B_COOKIE,
         peer_ip: [0; 4],
-        extensions: srt_runtime::packet::HandshakeExtensions(&[]),
+        extensions: srt_runtime::packet::HandshakeExtensions(Vec::new()),
     });
     a.feed(&peer_wave).unwrap();
     assert_eq!(a.state(), RendezvousHandshakeState::Attention);
 
-    // A CONCLUSION carrying a declared extension length that overruns the
-    // bytes actually present — must be rejected cleanly, never panic.
-    let bad_ext: &'static [u8] = &[0x00, 0x01, 0xFF, 0xFF];
+    // A CONCLUSION carrying an extension section that overruns the bytes
+    // actually present — must be rejected cleanly, never panic.
     let bad = ControlPacket::Handshake(HandshakePacket {
-        timestamp: 0,
-        dest_socket_id: 1,
+        timestamp: SrtTimestamp::ZERO,
+        dest_socket_id: SocketId::from_wire(1),
         version: 5,
         encryption_field: EncryptionField::NoEncryption,
         extension_field: HandshakeExtensionFlags(1),
@@ -179,23 +179,18 @@ fn malformed_packet_fed_mid_flow_yields_structured_error_not_panic() {
         srt_socket_id: 2,
         syn_cookie: PEER_B_COOKIE,
         peer_ip: [0; 4],
-        extensions: srt_runtime::packet::HandshakeExtensions(bad_ext),
+        extensions: srt_runtime::packet::HandshakeExtensions(Vec::new()),
     });
+    let mut bad_bytes = vec![0u8; bad.serialized_len()];
+    bad.serialize_into(&mut bad_bytes).unwrap();
+    bad_bytes.extend_from_slice(&[0x00, 0x01, 0xFF, 0xFF]);
 
-    let outputs = a.feed(&bad).expect("feed must not panic or hard-error");
-    assert_eq!(
-        outputs,
-        vec![HandshakeOutput::Rejected(RejectionReason::Rogue)]
-    );
-    assert_eq!(a.state(), RendezvousHandshakeState::Rejected);
-
-    // Once rejected, further feeds are a structured out-of-sequence error,
-    // not a panic.
-    let err = a.feed(&bad);
+    let err = a.feed_bytes(&bad_bytes);
     assert!(matches!(
         err,
-        Err(srt_runtime::error::Error::HandshakeOutOfSequence { .. })
+        Err(srt_runtime::error::Error::ExtensionOverrun { .. })
     ));
+    assert_eq!(a.state(), RendezvousHandshakeState::Attention);
 }
 
 /// Runs the Rendezvous exchange between a default peer and one built from

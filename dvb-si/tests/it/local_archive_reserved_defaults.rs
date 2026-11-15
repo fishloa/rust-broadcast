@@ -103,7 +103,7 @@ fn ssu_selector_reserved_runs_are_preserved_from_a_real_pmt() {
                     sel.serialize_into(&mut sel_bytes).unwrap();
                     assert_eq!(sel_bytes, d.id_selector);
                     for e in &sel.oui_entries {
-                        if e.reserved_4 == 0 && e.reserved_2 == 0 {
+                        if e.reserved_4.get() == 0 && e.reserved_2.get() == 0 {
                             zero_runs += 1;
                         }
                     }

@@ -18,12 +18,17 @@
 use crate::error::Result;
 use crate::h222_bits::{BitReader, BitWriter};
 use alloc::vec::Vec;
+use broadcast_common::reserved::ReservedOnes;
 
 /// Default of every `reserved` field of these descriptors (H.222.0 clause 2.1:
 /// "reserved" bits are `1`).
-const RESERVED_7_DEFAULT: u8 = 0x7F;
-const RESERVED_6_DEFAULT: u8 = 0x3F;
+const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
+const RESERVED_6_DEFAULT: ReservedOnes<RESERVED_6_BITS> = ReservedOnes::<RESERVED_6_BITS>::FILL;
 const RESERVED_IDX_DEFAULT: u8 = 0x1F;
+/// Width of the `reserved(7)` after `90kHz_flag`.
+const RESERVED_7_BITS: u32 = 7;
+/// Width of the `reserved(6)` after `hrd_management_valid_flag`.
+const RESERVED_6_BITS: u32 = 6;
 const TARGET_SCHEDULE_IDX_BITS: usize = 5;
 
 /// `N` / `K` of the time-base mapping `time_scale = N × system_clock_frequency / K`,
@@ -57,7 +62,7 @@ pub struct PictureAndTimingInfo {
     pub num_units_in_tick: u32,
     /// `reserved(7)` after `90kHz_flag`, right-aligned; re-emitted verbatim,
     /// default `0x7F`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_7_BITS>,
 }
 
 impl PictureAndTimingInfo {
@@ -73,7 +78,7 @@ impl PictureAndTimingInfo {
 
     fn read(r: &mut BitReader<'_>) -> Result<Self> {
         let is_90khz = r.flag()?;
-        let reserved = r.u8(7)?;
+        let reserved = ReservedOnes::from_bits(u64::from(r.u8(7)?));
         let nk = if is_90khz {
             None
         } else {
@@ -91,7 +96,7 @@ impl PictureAndTimingInfo {
 
     fn write(&self, w: &mut BitWriter) -> Result<()> {
         w.flag(self.nk.is_none(), "90kHz_flag")?;
-        w.put(u64::from(self.reserved), 7, "reserved")?;
+        w.put(self.reserved.get(), 7, "reserved")?;
         if let Some(nk) = &self.nk {
             w.put(u64::from(nk.n), 32, "N")?;
             w.put(u64::from(nk.k), 32, "K")?;
@@ -189,9 +194,15 @@ impl HevcTimingAndHrd {
 
 /// `hrd_management_valid_flag(1) reserved(6) picture_and_timing_info_present_flag(1)
 /// [picture_and_timing_info]` — identical in Tables 2-139 and 2-141.
-fn read_flag_block(r: &mut BitReader<'_>) -> Result<(bool, u8, Option<PictureAndTimingInfo>)> {
+fn read_flag_block(
+    r: &mut BitReader<'_>,
+) -> Result<(
+    bool,
+    ReservedOnes<RESERVED_6_BITS>,
+    Option<PictureAndTimingInfo>,
+)> {
     let hrd_management_valid_flag = r.flag()?;
-    let reserved = r.u8(6)?;
+    let reserved = ReservedOnes::from_bits(u64::from(r.u8(6)?));
     let picture_timing = if r.flag()? {
         Some(PictureAndTimingInfo::read(r)?)
     } else {
@@ -203,11 +214,11 @@ fn read_flag_block(r: &mut BitReader<'_>) -> Result<(bool, u8, Option<PictureAnd
 fn write_flag_block(
     w: &mut BitWriter,
     hrd_management_valid_flag: bool,
-    reserved: u8,
+    reserved: ReservedOnes<RESERVED_6_BITS>,
     picture_timing: Option<&PictureAndTimingInfo>,
 ) -> Result<()> {
     w.flag(hrd_management_valid_flag, "hrd_management_valid_flag")?;
-    w.put(u64::from(reserved), 6, "reserved")?;
+    w.put(reserved.get(), 6, "reserved")?;
     w.flag(
         picture_timing.is_some(),
         "picture_and_timing_info_present_flag",
@@ -227,7 +238,7 @@ pub struct VvcTimingAndHrd {
     pub hrd_management_valid_flag: bool,
     /// `reserved(6)` after the flag, right-aligned; re-emitted verbatim,
     /// default `0x3F`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_6_BITS>,
     /// `picture_and_timing_info`, present iff `picture_and_timing_info_present_flag`.
     pub picture_timing: Option<PictureAndTimingInfo>,
     /// Bytes after the syntax, preserved verbatim.
@@ -282,7 +293,7 @@ pub struct EvcTimingAndHrd {
     pub hrd_management_valid_flag: bool,
     /// `reserved(6)` after the flag, right-aligned; re-emitted verbatim,
     /// default `0x3F`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_6_BITS>,
     /// `picture_and_timing_info`, present iff `picture_and_timing_info_present_flag`.
     pub picture_timing: Option<PictureAndTimingInfo>,
     /// Bytes after the syntax, preserved verbatim.
@@ -377,8 +388,8 @@ mod tests {
         // non-default reserved bits survive
         let b = [0b1000_0001, 0x80, 0, 0, 0, 7];
         let e = EvcTimingAndHrd::parse_body(&b).unwrap();
-        assert_eq!(e.reserved, 0);
-        assert_eq!(e.picture_timing.as_ref().unwrap().reserved, 0);
+        assert_eq!(e.reserved.get(), 0);
+        assert_eq!(e.picture_timing.as_ref().unwrap().reserved.get(), 0);
         assert_eq!(e.write_body().unwrap(), b);
     }
 }

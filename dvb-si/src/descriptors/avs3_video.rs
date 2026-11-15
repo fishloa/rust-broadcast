@@ -35,6 +35,7 @@
 use super::{descriptor_body, write_descriptor_header};
 use crate::error::{Error, Result};
 use broadcast_common::len::{fit_bits, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for AVS3_video_descriptor (T/AI 109.6 Table 8: 209).
@@ -42,8 +43,12 @@ pub const TAG: u8 = 0xD1;
 const HEADER_LEN: usize = 2;
 const BODY_LEN_NO_COLOUR_PRIMARIES: usize = 7;
 const BODY_LEN_WITH_COLOUR_PRIMARIES: usize = 8;
-const RESERVED2_ONES: u8 = 0b11;
-const RESERVED8_ONES: u8 = 0xFF;
+/// Width of the `reserved` tail of body byte 3 (2 bits).
+const RESERVED_BITS: u32 = 2;
+/// Width of the final `reserved` byte (8 bits).
+const RESERVED_TAIL_BITS: u32 = 8;
+const RESERVED2_ONES: ReservedOnes<RESERVED_BITS> = ReservedOnes::<RESERVED_BITS>::FILL;
+const RESERVED8_ONES: ReservedOnes<RESERVED_TAIL_BITS> = ReservedOnes::<RESERVED_TAIL_BITS>::FILL;
 
 /// `frame_rate_code` (4 bits, GY/T 420 Table 7 / T/AI 109.6 Table 10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -189,7 +194,7 @@ pub struct Avs3VideoDescriptor {
     /// `library_picture_enable_flag` (1 bit).
     pub library_picture_enable_flag: bool,
     /// `reserved` (2 bits, right-aligned) after `library_picture_enable_flag`.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_BITS>,
     /// `colour_primaries` (8 bits); `Some` iff the descriptor body is 8 bytes.
     pub colour_primaries: Option<u8>,
     /// `transfer_characteristics` (8 bits).
@@ -197,7 +202,7 @@ pub struct Avs3VideoDescriptor {
     /// `matrix_coefficients` (8 bits).
     pub matrix_coefficients: u8,
     /// Final `reserved` byte (8 bits).
-    pub reserved_tail: u8,
+    pub reserved_tail: ReservedOnes<RESERVED_TAIL_BITS>,
 }
 
 impl Avs3VideoDescriptor {
@@ -285,11 +290,11 @@ impl<'a> Parse<'a> for Avs3VideoDescriptor {
             td_mode_flag: bit(b3, 4),
             library_stream_flag: bit(b3, 3),
             library_picture_enable_flag: bit(b3, 2),
-            reserved: b3 & 0x03,
+            reserved: ReservedOnes::from_bits(u64::from(b3)),
             colour_primaries,
             transfer_characteristics: rest[0],
             matrix_coefficients: rest[1],
-            reserved_tail: rest[2],
+            reserved_tail: ReservedOnes::from_bits(u64::from(rest[2])),
         })
     }
 }
@@ -310,7 +315,7 @@ impl Serialize for Avs3VideoDescriptor {
         )? as u8;
         let sp = fit_bits(u64::from(self.sample_precision), 3, "sample_precision")? as u8;
         let cf = fit_bits(u64::from(self.chroma_format), 2, "chroma_format")? as u8;
-        let rsv = fit_bits(u64::from(self.reserved), 2, "reserved")? as u8;
+        let rsv = self.reserved.get() as u8;
         let b2 = (u8::from(self.multiple_frame_rate_flag) << 7) | (frc << 3) | sp;
         let b3 = (cf << 6)
             | (u8::from(self.temporal_id_flag) << 5)
@@ -331,7 +336,7 @@ impl Serialize for Avs3VideoDescriptor {
         for b in [
             self.transfer_characteristics,
             self.matrix_coefficients,
-            self.reserved_tail,
+            self.reserved_tail.get() as u8,
         ] {
             buf[i] = b;
             i += 1;
@@ -375,7 +380,7 @@ mod tests {
         assert!(d.library_stream_flag && !d.library_picture_enable_flag);
         assert_eq!(d.colour_primaries, Some(9));
         assert_eq!((d.transfer_characteristics, d.matrix_coefficients), (14, 9));
-        assert_eq!((d.reserved, d.reserved_tail), (3, 0xFF));
+        assert_eq!((d.reserved.get(), d.reserved_tail.get()), (3, 0xFF));
     }
 
     /// T/AI 109.6-2022 Table 9 (7-byte body, no colour_primaries).
@@ -387,7 +392,7 @@ mod tests {
         assert_eq!(d.frame_rate_code, Avs3FrameRateCode::Fps25);
         assert!(d.temporal_id_flag && d.td_mode_flag);
         assert!(!d.library_stream_flag && d.library_picture_enable_flag);
-        assert_eq!((d.reserved, d.reserved_tail), (0, 0));
+        assert_eq!((d.reserved.get(), d.reserved_tail.get()), (0, 0));
     }
 
     #[test]
@@ -458,7 +463,21 @@ mod tests {
     #[test]
     fn built_defaults_are_all_ones() {
         let d = Avs3VideoDescriptor::new(1, 2, true, Avs3FrameRateCode::Fps50, 2, 1, 9, 14, 9);
-        assert_eq!((d.reserved, d.reserved_tail), (0b11, 0xFF));
+        assert_eq!((d.reserved.get(), d.reserved_tail.get()), (0b11, 0xFF));
         assert_eq!(d.serialized_len(), 10);
+    }
+
+    /// Both `reserved` runs are typed wide enough to hold their wire field but
+    /// no wider, so an over-wide value cannot be stored.
+    #[test]
+    fn reserved_fields_cannot_overflow() {
+        assert_eq!(
+            ReservedOnes::<RESERVED_BITS>::from_bits(u64::MAX).get(),
+            0b11
+        );
+        assert_eq!(
+            ReservedOnes::<RESERVED_TAIL_BITS>::from_bits(u64::MAX).get(),
+            0xFF
+        );
     }
 }

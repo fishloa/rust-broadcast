@@ -2,11 +2,17 @@
 use super::*;
 use alloc::vec::Vec;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for DtsHd<'a> {
     const TAG_EXTENSION: u8 = 0x0E;
     const NAME: &'static str = "DTS_HD";
 }
+
+/// Width of the `reserved_future_use` in the DTS-HD flags byte (3 bits).
+const FLAGS_RESERVED_BITS: u32 = 3;
+/// Width of the `reserved_future_use` in a substream / asset block (2 bits).
+const SUBSTREAM_RESERVED_BITS: u32 = 2;
 
 /// DTS-HD descriptor body (Table G.6, Annex G.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,7 +30,7 @@ pub struct DtsHd<'a> {
     /// `substream_3_flag`(1).
     pub substream_3_flag: bool,
     /// `reserved_future_use`(3) — preserved for byte-exact round-trip.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<FLAGS_RESERVED_BITS>,
     /// Substream info blocks, one per set flag (core first, then 0..3 in order).
     pub substreams: Vec<SubstreamInfo>,
     /// Optional `additional_info_byte` run.
@@ -45,7 +51,7 @@ pub struct SubstreamInfo {
     /// `sample_resolution`(1) — '1' if decoded resolution > 16 bit.
     pub sample_resolution: bool,
     /// `reserved_future_use`(2) — preserved for byte-exact round-trip.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<SUBSTREAM_RESERVED_BITS>,
     /// `asset_info()` entries (num_assets + 1).
     pub assets: Vec<AssetInfo>,
 }
@@ -67,7 +73,7 @@ pub struct AssetInfo {
     /// `bit_rate`(13) or `bit_rate_scaled`(13), selected by `post_encode_br_scaling_flag`.
     pub bit_rate_or_scaled: u16,
     /// `reserved_future_use`(2) — preserved for byte-exact round-trip.
-    pub reserved: u8,
+    pub reserved: ReservedOnes<SUBSTREAM_RESERVED_BITS>,
     /// `component_type`(8) — present iff `component_type_flag`.
     pub component_type: Option<u8>,
     /// `ISO_639_language_code`(24) — present iff `language_code_flag`.
@@ -249,7 +255,7 @@ impl Serialize for SubstreamInfo {
                 "sampling_frequency",
             )? << 3)
             | ((u8::from(self.sample_resolution)) << 2)
-            | broadcast_common::len::fit_mask(self.reserved, 0x03, "reserved")?;
+            | self.reserved.get() as u8;
         let mut pos = SUBSTREAM_HEADER_LEN;
         for a in &self.assets {
             if a.bit_rate_or_scaled > MAX_BIT_RATE {
@@ -270,8 +276,7 @@ impl Serialize for SubstreamInfo {
                 | u8::from(a.component_type_flag);
             buf[pos + 1] =
                 (u8::from(a.language_code_flag) << 7) | ((a.bit_rate_or_scaled >> 6) as u8 & 0x7F);
-            buf[pos + 2] = ((a.bit_rate_or_scaled as u8 & 0x3F) << 2)
-                | broadcast_common::len::fit_mask(a.reserved, 0x03, "reserved")?;
+            buf[pos + 2] = ((a.bit_rate_or_scaled as u8 & 0x3F) << 2) | a.reserved.get() as u8;
             pos += ASSET_FIXED_LEN;
             if a.component_type_flag {
                 // The flag promises a wire byte; inventing `0` would emit a
@@ -310,7 +315,7 @@ impl<'a> Parse<'a> for DtsHd<'a> {
         let substream_1_flag = (first & 0x20) != 0;
         let substream_2_flag = (first & 0x10) != 0;
         let substream_3_flag = (first & 0x08) != 0;
-        let reserved = first & 0x07;
+        let reserved = ReservedOnes::from_bits(u64::from(first));
         let flags = [
             substream_core_flag,
             substream_0_flag,
@@ -356,7 +361,7 @@ fn parse_substream_info(sel: &[u8], pos: &mut usize) -> Result<SubstreamInfo> {
     let lfe_flag = (sel[*pos] & 0x80) != 0;
     let sampling_frequency = SamplingFrequency::from_u8((sel[*pos] >> 3) & 0x0F);
     let sample_resolution = (sel[*pos] & 0x04) != 0;
-    let s_reserved = sel[*pos] & 0x03;
+    let s_reserved = ReservedOnes::from_bits(u64::from(sel[*pos]));
     *pos += 1;
 
     let mut assets = Vec::with_capacity(num_assets);
@@ -396,7 +401,7 @@ fn parse_asset_info(sel: &[u8], pos: &mut usize) -> Result<AssetInfo> {
     let language_code_flag = (sel[*pos] & 0x80) != 0;
     let bit_rate_or_scaled = ((u16::from(sel[*pos] & 0x7F)) << 6) | (u16::from(sel[*pos + 1]) >> 2);
     *pos += 1;
-    let a_reserved = sel[*pos] & 0x03;
+    let a_reserved = ReservedOnes::from_bits(u64::from(sel[*pos]));
     *pos += 1;
 
     let component_type = if component_type_flag {
@@ -459,7 +464,7 @@ impl Serialize for DtsHd<'_> {
             | ((u8::from(self.substream_1_flag)) << 5)
             | ((u8::from(self.substream_2_flag)) << 4)
             | ((u8::from(self.substream_3_flag)) << 3)
-            | broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")?;
+            | self.reserved.get() as u8;
 
         let flags = [
             self.substream_core_flag,
@@ -512,7 +517,7 @@ mod tests {
             lfe_flag: false,
             sampling_frequency: SamplingFrequency::from_u8(12),
             sample_resolution: false,
-            reserved: 0,
+            reserved: ReservedOnes::from_bits(0),
             assets: vec![AssetInfo {
                 asset_construction: 1,
                 vbr_flag: false,
@@ -520,7 +525,7 @@ mod tests {
                 component_type_flag: false,
                 language_code_flag: false,
                 bit_rate_or_scaled: 0,
-                reserved: 0,
+                reserved: ReservedOnes::from_bits(0),
                 component_type: None,
                 iso_639_language_code: None,
             }],
@@ -565,14 +570,14 @@ mod tests {
                 assert!(!b.substream_1_flag);
                 assert!(!b.substream_2_flag);
                 assert!(!b.substream_3_flag);
-                assert_eq!(b.reserved, 7);
+                assert_eq!(b.reserved.get(), 7);
                 assert_eq!(b.substreams.len(), 1);
                 let s = &b.substreams[0];
                 assert_eq!(s.channel_count, 6);
                 assert!(s.lfe_flag);
                 assert_eq!(s.sampling_frequency, SamplingFrequency::Khz48);
                 assert!(s.sample_resolution);
-                assert_eq!(s.reserved, 3);
+                assert_eq!(s.reserved.get(), 3);
                 assert_eq!(s.assets.len(), 1);
                 let a = &s.assets[0];
                 assert_eq!(a.asset_construction, 1);
@@ -581,7 +586,7 @@ mod tests {
                 assert!(a.component_type_flag);
                 assert!(a.language_code_flag);
                 assert_eq!(a.bit_rate_or_scaled, 755);
-                assert_eq!(a.reserved, 3);
+                assert_eq!(a.reserved.get(), 3);
                 assert_eq!(a.component_type, Some(0x42));
                 assert_eq!(a.iso_639_language_code, Some(LangCode(*b"eng")));
                 assert!(b.additional_info.is_empty());
@@ -647,7 +652,7 @@ mod tests {
             component_type_flag: false,
             language_code_flag: false,
             bit_rate_or_scaled: 0,
-            reserved: 0,
+            reserved: ReservedOnes::from_bits(0),
             component_type: None,
             iso_639_language_code: None,
         };
@@ -656,7 +661,7 @@ mod tests {
             lfe_flag: false,
             sampling_frequency: SamplingFrequency::from_u8(12),
             sample_resolution: false,
-            reserved: 0,
+            reserved: ReservedOnes::from_bits(0),
             assets: alloc::vec![asset; 9],
         };
         let mut buf = vec![0u8; s.serialized_len()];
@@ -720,7 +725,7 @@ mod tests {
             component_type_flag: true,
             language_code_flag: false,
             bit_rate_or_scaled: 0,
-            reserved: 0,
+            reserved: ReservedOnes::from_bits(0),
             component_type: None,
             iso_639_language_code: None,
         };
@@ -738,7 +743,7 @@ mod tests {
                 lfe_flag: false,
                 sampling_frequency: SamplingFrequency::from_u8(12),
                 sample_resolution: false,
-                reserved: 0,
+                reserved: ReservedOnes::from_bits(0),
                 assets: alloc::vec![asset],
             };
             let mut buf = vec![0u8; s.serialized_len()];

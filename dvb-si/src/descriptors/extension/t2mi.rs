@@ -4,17 +4,20 @@
 //! verbatim; future spec growth is surfaced via additive typed accessors.
 use super::*;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedZero;
 
 /// Spec default of every `reserved_zero_future_use` region of the T2-MI
 /// descriptor (Table 158; V1.16.1-V1.20.1 `reserved_zero_future_use`, and the
 /// V1.13.1-V1.15.1 `reserved_future_use (see note)` with the NOTE "set to 0"):
 /// all zeros.
-pub const T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0;
-/// Width mask of the two 5-bit regions (before `t2mi_stream_id` and before
-/// `num_t2mi_streams_minus_one`).
-const RZFU_5_MASK: u8 = 0x1F;
-/// Width mask of the 7-bit region before `pcr_iscr_common_clock_flag`.
-const RZFU_7_MASK: u8 = 0x7F;
+pub const T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RZFU_5_BITS> =
+    ReservedZero::<RZFU_5_BITS>::FILL;
+/// Width of the two `reserved_zero_future_use` regions that precede the 3-bit
+/// ids (5 bits).
+const RZFU_5_BITS: u32 = 5;
+/// Width of the `reserved_zero_future_use` region before
+/// `pcr_iscr_common_clock_flag` (7 bits).
+const RZFU_7_BITS: u32 = 7;
 /// Bit position of the 5-bit regions (above the 3-bit ids).
 const RZFU_5_SHIFT: u8 = 3;
 /// Bit position of the 7-bit region (above the 1-bit flag).
@@ -33,17 +36,17 @@ pub struct T2mi<'a> {
     /// `reserved_zero_future_use(5)` ahead of `t2mi_stream_id` (byte 0 high
     /// bits, right-aligned 5 bits). Captured on parse, re-emitted verbatim;
     /// [`T2mi::new`] defaults to [`T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use_stream: u8,
+    pub reserved_zero_future_use_stream: ReservedZero<RZFU_5_BITS>,
     /// t2mi_stream_id(3) — byte 0 low bits.
     pub t2mi_stream_id: u8,
     /// `reserved_zero_future_use(5)` ahead of `num_t2mi_streams_minus_one`
     /// (byte 1 high bits, 5 bits). Same policy as above.
-    pub reserved_zero_future_use_num: u8,
+    pub reserved_zero_future_use_num: ReservedZero<RZFU_5_BITS>,
     /// num_t2mi_streams_minus_one(3) — byte 1 low bits.
     pub num_t2mi_streams_minus_one: u8,
     /// `reserved_zero_future_use(7)` ahead of `pcr_iscr_common_clock_flag`
     /// (byte 2 high bits, 7 bits). Same policy as above.
-    pub reserved_zero_future_use_flag: u8,
+    pub reserved_zero_future_use_flag: ReservedZero<RZFU_7_BITS>,
     /// pcr_iscr_common_clock_flag(1) — byte 2 low bit.
     pub pcr_iscr_common_clock_flag: bool,
     /// Trailing reserved_zero_future_use byte loop (Table 158 inner `for`).
@@ -64,7 +67,7 @@ impl<'a> T2mi<'a> {
             t2mi_stream_id,
             reserved_zero_future_use_num: T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT,
             num_t2mi_streams_minus_one,
-            reserved_zero_future_use_flag: T2MI_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use_flag: ReservedZero::<RZFU_7_BITS>::FILL,
             pcr_iscr_common_clock_flag,
             reserved_tail,
         }
@@ -80,11 +83,17 @@ impl<'a> Parse<'a> for T2mi<'a> {
             //   byte 0: reserved_zero_future_use(5) | t2mi_stream_id(3)
             //   byte 1: reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
             //   byte 2: reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
-            reserved_zero_future_use_stream: sel[0] >> RZFU_5_SHIFT,
+            reserved_zero_future_use_stream: ReservedZero::from_bits(u64::from(
+                sel[0] >> RZFU_5_SHIFT,
+            )),
             t2mi_stream_id: sel[0] & 0x07,
-            reserved_zero_future_use_num: sel[1] >> RZFU_5_SHIFT,
+            reserved_zero_future_use_num: ReservedZero::from_bits(u64::from(
+                sel[1] >> RZFU_5_SHIFT,
+            )),
             num_t2mi_streams_minus_one: sel[1] & 0x07,
-            reserved_zero_future_use_flag: sel[2] >> RZFU_7_SHIFT,
+            reserved_zero_future_use_flag: ReservedZero::from_bits(u64::from(
+                sel[2] >> RZFU_7_SHIFT,
+            )),
             pcr_iscr_common_clock_flag: (sel[2] & 0x01) != 0,
             reserved_tail: &sel[T2MI_MIN_LEN..],
         })
@@ -101,29 +110,17 @@ impl Serialize for T2mi<'_> {
         need_out(buf, len)?;
         // Table 158 bytes 0-2:
         // reserved_zero_future_use(5) | t2mi_stream_id(3)
-        buf[0] = (broadcast_common::len::fit_mask(
-            self.reserved_zero_future_use_stream,
-            RZFU_5_MASK,
-            "reserved_zero_future_use_stream",
-        )? << RZFU_5_SHIFT)
+        buf[0] = ((self.reserved_zero_future_use_stream.get() as u8) << RZFU_5_SHIFT)
             | broadcast_common::len::fit_mask(self.t2mi_stream_id, 0x07, "t2mi_stream_id")?;
         // reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
-        buf[1] = (broadcast_common::len::fit_mask(
-            self.reserved_zero_future_use_num,
-            RZFU_5_MASK,
-            "reserved_zero_future_use_num",
-        )? << RZFU_5_SHIFT)
+        buf[1] = ((self.reserved_zero_future_use_num.get() as u8) << RZFU_5_SHIFT)
             | broadcast_common::len::fit_mask(
                 self.num_t2mi_streams_minus_one,
                 0x07,
                 "num_t2mi_streams_minus_one",
             )?;
         // reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
-        buf[2] = (broadcast_common::len::fit_mask(
-            self.reserved_zero_future_use_flag,
-            RZFU_7_MASK,
-            "reserved_zero_future_use_flag",
-        )? << RZFU_7_SHIFT)
+        buf[2] = ((self.reserved_zero_future_use_flag.get() as u8) << RZFU_7_SHIFT)
             | u8::from(self.pcr_iscr_common_clock_flag);
         buf[T2MI_MIN_LEN..len].copy_from_slice(self.reserved_tail);
         Ok(len)
@@ -206,9 +203,9 @@ mod tests {
             let d = ExtensionDescriptor::parse(&bytes).unwrap();
             match &d.body {
                 ExtensionBody::T2mi(t) => {
-                    assert_eq!(t.reserved_zero_future_use_stream, a);
-                    assert_eq!(t.reserved_zero_future_use_num, b);
-                    assert_eq!(t.reserved_zero_future_use_flag, c);
+                    assert_eq!(t.reserved_zero_future_use_stream.get(), u64::from(a));
+                    assert_eq!(t.reserved_zero_future_use_num.get(), u64::from(b));
+                    assert_eq!(t.reserved_zero_future_use_flag.get(), u64::from(c));
                 }
                 other => panic!("expected T2mi, got {other:?}"),
             }

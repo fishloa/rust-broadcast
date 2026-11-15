@@ -1,6 +1,7 @@
 //! Image Icon Descriptor — ETSI EN 300 468 §6.4.7 (tag_extension 0x00).
 use super::*;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 
 /// `descriptor_number(4)`/`last_descriptor_number(4)` raw field mask —
 /// masked at the shift so a wide value cannot bleed across the nibble
@@ -17,12 +18,16 @@ const COORDINATE_SYSTEM_MASK: u8 = 0x07;
 /// and the one that follows `position_flag == 0`): all ones, EN 300 468 Table
 /// 145 in every edition V1.9.1-V1.20.1
 /// (`private/specs-verified/dvb/dvb-si/reserved-bits-edition-audit.md` §6).
-pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: u8 = 0x1F;
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: ReservedOnes<RESERVED_5_BITS> =
+    ReservedOnes::<RESERVED_5_BITS>::FILL;
 /// Spec default of the 2-bit `reserved_future_use` after `coordinate_system`:
 /// all ones (same source as [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`]).
-pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: u8 = 0x03;
-const RESERVED_5_MASK: u8 = 0x1F;
-const RESERVED_2_MASK: u8 = 0x03;
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: ReservedOnes<RESERVED_2_BITS> =
+    ReservedOnes::<RESERVED_2_BITS>::FILL;
+/// Width of the 5-bit `reserved_future_use` regions.
+const RESERVED_5_BITS: u32 = 5;
+/// Width of the 2-bit `reserved_future_use` region.
+const RESERVED_2_BITS: u32 = 2;
 
 /// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
 /// (`private/specs-verified/dvb/dvb-si/enums/en_300_468/146-icon-transport-mode-coding.md`).
@@ -101,7 +106,7 @@ pub struct ImageIcon<'a> {
     /// `reserved_future_use` (5 bits, right-aligned) — `[7:3]` of byte 1.
     /// Preserved on parse; [`ImageIcon::new`] uses
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`] (all ones).
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_5_BITS>,
     /// `icon_id` (3 bits) — `[2:0]` of byte 1.
     pub icon_id: u8,
     /// First-segment metadata vs. continuation payload (keyed by `descriptor_number == 0`).
@@ -156,7 +161,7 @@ pub struct ImageIconFirst<'a> {
     /// `position_flag == 0`; `Some` iff `position` is `None`. Preserved on
     /// parse; a hand-built `None` serializes as
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`].
-    pub reserved_future_use: Option<u8>,
+    pub reserved_future_use: Option<ReservedOnes<RESERVED_5_BITS>>,
     /// `icon_type_char` text run (length-delimited in the wire).
     pub icon_type: crate::text::DvbText<'a>,
     /// Transport-mode-dependent payload (Table 146):
@@ -214,7 +219,7 @@ pub struct IconPosition {
     /// `reserved_future_use` (2 bits, right-aligned) after `coordinate_system`.
     /// Preserved on parse; [`IconPosition::new`] uses
     /// [`IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT`] (all ones).
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_2_BITS>,
     /// `icon_horizontal_origin` (12 bits).
     pub icon_horizontal_origin: u16,
     /// `icon_vertical_origin` (12 bits).
@@ -247,7 +252,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         let descriptor_number = sel[0] >> 4;
         let last_descriptor_number = sel[0] & 0x0F;
         let icon_id = sel[1] & ICON_ID_MASK;
-        let reserved_future_use = (sel[1] >> 3) & RESERVED_5_MASK;
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(sel[1] >> 3));
 
         let body = if descriptor_number == 0x00 {
             need_in(sel, 3, "image_icon body")?;
@@ -259,7 +264,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             let mut no_position_reserved = None;
             let position = if position_flag == 1 {
                 let coordinate_system = (packed >> 2) & 0x07;
-                let position_reserved = packed & RESERVED_2_MASK;
+                let position_reserved = ReservedOnes::from_bits(u64::from(packed));
                 need_in(sel, pos + 3, "image_icon body")?;
                 let b0 = sel[pos];
                 let b1 = sel[pos + 1];
@@ -274,7 +279,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
                     icon_vertical_origin,
                 })
             } else {
-                no_position_reserved = Some(packed & RESERVED_5_MASK);
+                no_position_reserved = Some(ReservedOnes::from_bits(u64::from(packed)));
                 None
             };
 
@@ -375,11 +380,7 @@ impl Serialize for ImageIcon<'_> {
                 "last_descriptor_number",
             )?;
         // byte1: reserved_future_use(5) (preserved) | icon_id(3)
-        buf[1] = (broadcast_common::len::fit_mask(
-            self.reserved_future_use,
-            RESERVED_5_MASK,
-            "reserved_future_use",
-        )? << 3)
+        buf[1] = ((self.reserved_future_use.get() as u8) << 3)
             | broadcast_common::len::fit_mask(self.icon_id, ICON_ID_MASK, "icon_id")?;
         let mut p = 2;
         match &self.body {
@@ -400,11 +401,7 @@ impl Serialize for ImageIcon<'_> {
                             COORDINATE_SYSTEM_MASK,
                             "coordinate_system",
                         )? << 2)
-                        | broadcast_common::len::fit_mask(
-                            pos.reserved_future_use,
-                            RESERVED_2_MASK,
-                            "reserved_future_use",
-                        )?;
+                        | pos.reserved_future_use.get() as u8;
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed
                     let h = broadcast_common::len::fit_mask(
@@ -425,12 +422,9 @@ impl Serialize for ImageIcon<'_> {
                     // ... | position_flag(1) | reserved_future_use(5) (preserved)
                     buf[p] = (itm << 6)
                         | (position_flag << 5)
-                        | broadcast_common::len::fit_mask(
-                            f.reserved_future_use
-                                .unwrap_or(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT),
-                            RESERVED_5_MASK,
-                            "reserved_future_use",
-                        )?;
+                        | f.reserved_future_use
+                            .unwrap_or(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT)
+                            .get() as u8;
                     p += 1;
                 }
                 // icon_type_length + run
@@ -600,13 +594,13 @@ mod tests {
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes, "{what} r={r:#x}");
         };
-        for r in 0u8..=RESERVED_5_MASK {
+        for r in 0u8..=0x1F {
             // continuation, byte1 reserved
             check(&[0x23, (r << 3) | 0x01, 0x01, 0xAA], "byte1", r);
             // first, no position: packed reserved(5)
             check(&[0x00, 0xF8, 0x40 | r, 0x00, 0x00], "no-position", r);
         }
-        for r in 0u8..=RESERVED_2_MASK {
+        for r in 0u8..=0x03 {
             // first, position (cs=1), mode 0, icon_type 0 bytes, data 0 bytes
             check(
                 &[

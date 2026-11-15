@@ -2,6 +2,7 @@
 use super::*;
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedZero;
 
 use super::c2_delivery_system::{ActiveOfdmSymbolDuration, C2GuardInterval, C2TuningFrequencyType};
 
@@ -9,13 +10,14 @@ impl ExtensionBodyDef<'_> for C2BundleDeliverySystem {
     const TAG_EXTENSION: u8 = 0x16;
     const NAME: &'static str = "C2_BUNDLE_DELIVERY_SYSTEM";
 }
-/// Width mask of the 7-bit `reserved_zero_future_use` after `primary_channel`.
-const RESERVED_ZERO_FUTURE_USE_MASK: u8 = 0x7F;
+/// Width of the `reserved_zero_future_use` after `primary_channel` (7 bits).
+const RESERVED_ZERO_FUTURE_USE_BITS: u32 = 7;
 
 /// Spec default of `reserved_zero_future_use(7)` after `primary_channel`: all
 /// zeros (EN 300 468 V1.16.1-V1.20.1 Table 139, audit §6.1 class B; V1.15.1
 /// printed it as `reserved_0_future_use`(7) with the same value 0).
-pub const C2_BUNDLE_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0;
+pub const C2_BUNDLE_RESERVED_ZERO_FUTURE_USE_DEFAULT: ReservedZero<RESERVED_ZERO_FUTURE_USE_BITS> =
+    ReservedZero::<RESERVED_ZERO_FUTURE_USE_BITS>::FILL;
 
 /// One C2 bundle entry (Table 139 inner loop).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,7 +42,7 @@ pub struct C2BundleEntry {
     /// right-aligned). Captured on parse and re-emitted verbatim;
     /// [`C2BundleEntry::new`] defaults to
     /// [`C2_BUNDLE_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
-    pub reserved_zero_future_use: u8,
+    pub reserved_zero_future_use: ReservedZero<RESERVED_ZERO_FUTURE_USE_BITS>,
 }
 
 impl C2BundleEntry {
@@ -98,7 +100,7 @@ impl<'a> Parse<'a> for C2BundleDeliverySystem {
                 ),
                 guard_interval: C2GuardInterval::from_u8(packed & 0x07),
                 primary_channel: (chunk[7] & 0x80) != 0,
-                reserved_zero_future_use: chunk[7] & RESERVED_ZERO_FUTURE_USE_MASK,
+                reserved_zero_future_use: ReservedZero::from_bits(u64::from(chunk[7])),
             });
         }
         Ok(C2BundleDeliverySystem { entries })
@@ -133,12 +135,8 @@ impl Serialize for C2BundleDeliverySystem {
                     0x07,
                     "guard_interval",
                 )?;
-            buf[p + 7] = (u8::from(e.primary_channel) << 7)
-                | broadcast_common::len::fit_mask(
-                    e.reserved_zero_future_use,
-                    RESERVED_ZERO_FUTURE_USE_MASK,
-                    "reserved_zero_future_use",
-                )?;
+            buf[p + 7] =
+                (u8::from(e.primary_channel) << 7) | e.reserved_zero_future_use.get() as u8;
             p += C2_BUNDLE_ENTRY_LEN;
         }
         Ok(len)
@@ -203,7 +201,7 @@ mod tests {
             let d = ExtensionDescriptor::parse(&bytes).unwrap();
             match &d.body {
                 ExtensionBody::C2BundleDeliverySystem(b) => {
-                    assert_eq!(b.entries[0].reserved_zero_future_use, r);
+                    assert_eq!(b.entries[0].reserved_zero_future_use.get(), u64::from(r));
                 }
                 other => panic!("expected C2BundleDeliverySystem, got {other:?}"),
             }

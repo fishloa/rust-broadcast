@@ -8,6 +8,7 @@
 //! rest                              Data
 //! ```
 
+use super::number::{SocketId, SrtTimestamp};
 use super::{Error, Result, SEQ_NUMBER_MASK, SRT_HEADER_LEN, be32, put_be32};
 use broadcast_common::len::{need_in, need_out};
 
@@ -186,9 +187,9 @@ pub struct DataPacket<'a> {
     /// Message Number — 26 bits.
     pub message_number: u32,
     /// Timestamp, in microseconds relative to connection establishment (§3).
-    pub timestamp: u32,
+    pub timestamp: SrtTimestamp,
     /// Destination Socket ID (§3).
-    pub dest_socket_id: u32,
+    pub dest_socket_id: SocketId,
     /// The payload. Length is whatever remains of the UDP datagram.
     pub data: &'a [u8],
 }
@@ -220,8 +221,8 @@ impl<'a> DataPacket<'a> {
         let key_flag = EncryptionKeyField::from_bits((word1 >> KK_SHIFT) as u8);
         let retransmitted = (word1 >> R_SHIFT) & 1 != 0;
         let message_number = word1 & MESSAGE_NUMBER_MASK;
-        let timestamp = be32(bytes, 8);
-        let dest_socket_id = be32(bytes, 12);
+        let timestamp = SrtTimestamp::from_wire(be32(bytes, 8));
+        let dest_socket_id = SocketId::from_wire(be32(bytes, 12));
         let data = &bytes[SRT_HEADER_LEN..];
         Ok(DataPacket {
             seq_number,
@@ -259,8 +260,8 @@ impl<'a> DataPacket<'a> {
             | self.message_number;
         put_be32(buf, 0, word0);
         put_be32(buf, 4, word1);
-        put_be32(buf, 8, self.timestamp);
-        put_be32(buf, 12, self.dest_socket_id);
+        put_be32(buf, 8, self.timestamp.value());
+        put_be32(buf, 12, self.dest_socket_id.value());
         buf[SRT_HEADER_LEN..len].copy_from_slice(self.data);
         Ok(len)
     }
@@ -327,8 +328,8 @@ mod tests {
             key_flag: EncryptionKeyField::Even,
             retransmitted: false,
             message_number: 0x0155_5555, // fits 26 bits
-            timestamp: 0xAABB_CCDD,
-            dest_socket_id: 0x1122_3344,
+            timestamp: SrtTimestamp::from_wire(0xAABB_CCDD),
+            dest_socket_id: SocketId::from_wire(0x1122_3344),
             data: &[0x47, 0x00, 0x01, 0x02],
         }
     }
@@ -352,6 +353,20 @@ mod tests {
 
         let parsed = DataPacket::parse(&buf).unwrap();
         assert_eq!(parsed, pkt);
+    }
+
+    /// The header words are typed values that serialize to exactly their own
+    /// wire value: the old `u32` fields let a socket id be read as a
+    /// timestamp (or passed where the other belonged).
+    #[test]
+    fn the_header_words_serialize_as_their_own_values() {
+        assert_eq!(SrtTimestamp::from_wire(0xAABB_CCDD).value(), 0xAABB_CCDDu32);
+        assert_eq!(SocketId::from_wire(0x1122_3344).value(), 0x1122_3344u32);
+        let mut buf = [0u8; 20];
+        sample().serialize_into(&mut buf).unwrap();
+        let pkt = DataPacket::parse(&buf).unwrap();
+        assert_eq!(pkt.timestamp, SrtTimestamp::from_wire(0xAABB_CCDD));
+        assert_eq!(pkt.dest_socket_id, SocketId::from_wire(0x1122_3344));
     }
 
     #[test]

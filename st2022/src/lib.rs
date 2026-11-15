@@ -9,5 +9,6 @@ extern crate alloc;
 mod error;
 mod header;
 
+pub use broadcast_common::Timestamp;
 pub use error::*;
 pub use header::*;

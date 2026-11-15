@@ -15,6 +15,7 @@ use super::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// SSU `update_type` — ETSI TS 102 006 §7.1 Table 5
@@ -103,12 +104,16 @@ const SSU_UPDATE_TYPE_MASK: u8 = 0x0F;
 /// states a value for the selector's `reserved` rows (audit §2/§5), so the
 /// current emitted default (all ones, the H.222.0/DVB convention) is kept;
 /// no fixture carries an SSU selector. Parse preserves whatever is read.
-pub const SSU_RESERVED_4_DEFAULT: u8 = 0b1111;
+pub const SSU_RESERVED_4_DEFAULT: ReservedOnes<SSU_RESERVED_4_BITS> =
+    ReservedOnes::<SSU_RESERVED_4_BITS>::FILL;
+/// Width of the 4-bit `reserved` in an OUI entry.
+const SSU_RESERVED_4_BITS: u32 = 4;
+/// Width of the 2-bit `reserved` in an OUI entry.
+const SSU_RESERVED_2_BITS: u32 = 2;
 /// Default of the 2-bit `reserved` ahead of `update_versioning_flag` (same
 /// provenance and caveat as [`SSU_RESERVED_4_DEFAULT`]): `11`.
-pub const SSU_RESERVED_2_DEFAULT: u8 = 0b11;
-const SSU_RESERVED_4_MASK: u8 = 0x0F;
-const SSU_RESERVED_2_MASK: u8 = 0x03;
+pub const SSU_RESERVED_2_DEFAULT: ReservedOnes<SSU_RESERVED_2_BITS> =
+    ReservedOnes::<SSU_RESERVED_2_BITS>::FILL;
 const SSU_UPDATE_VERSIONING_FLAG_MASK: u8 = 0x20;
 const SSU_UPDATE_VERSION_MASK: u8 = 0x1F;
 
@@ -163,11 +168,11 @@ pub struct SsuOuiEntry<'a> {
     /// `reserved(4)` ahead of `update_type` (4 bits, right-aligned). Captured
     /// on parse, re-emitted verbatim; [`SsuOuiEntry::new`] uses
     /// [`SSU_RESERVED_4_DEFAULT`] (value unverified, see there).
-    pub reserved_4: u8,
+    pub reserved_4: ReservedOnes<SSU_RESERVED_4_BITS>,
     /// `reserved(2)` ahead of `update_versioning_flag` (2 bits, right-aligned).
     /// Captured on parse, re-emitted verbatim; [`SsuOuiEntry::new`] uses
     /// [`SSU_RESERVED_2_DEFAULT`] (value unverified, see there).
-    pub reserved_2: u8,
+    pub reserved_2: ReservedOnes<SSU_RESERVED_2_BITS>,
 }
 
 impl<'a> SsuOuiEntry<'a> {
@@ -301,8 +306,8 @@ impl<'a> Parse<'a> for SsuIdSelector<'a> {
                 update_versioning_flag: (byte4 & SSU_UPDATE_VERSIONING_FLAG_MASK) != 0,
                 update_version: byte4 & SSU_UPDATE_VERSION_MASK,
                 selector,
-                reserved_4: byte3 >> 4,
-                reserved_2: byte4 >> 6,
+                reserved_4: ReservedOnes::from_bits(u64::from(byte3 >> 4)),
+                reserved_2: ReservedOnes::from_bits(u64::from(byte4 >> 6)),
             });
         }
         let private_data = &bytes[oui_loop_end..];
@@ -337,28 +342,24 @@ impl Serialize for SsuIdSelector<'_> {
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
             buf[pos..pos + 3].copy_from_slice(&e.oui);
-            buf[pos + 3] =
-                (broadcast_common::len::fit_mask(e.reserved_4, SSU_RESERVED_4_MASK, "reserved_4")?
-                    << 4)
-                    | broadcast_common::len::fit_mask(
-                        e.update_type.to_u8(),
-                        SSU_UPDATE_TYPE_MASK,
-                        "update_type",
-                    )?;
+            buf[pos + 3] = ((e.reserved_4.get() as u8) << 4)
+                | broadcast_common::len::fit_mask(
+                    e.update_type.to_u8(),
+                    SSU_UPDATE_TYPE_MASK,
+                    "update_type",
+                )?;
             let uvf_bit: u8 = if e.update_versioning_flag {
                 SSU_UPDATE_VERSIONING_FLAG_MASK
             } else {
                 0
             };
-            buf[pos + 4] =
-                (broadcast_common::len::fit_mask(e.reserved_2, SSU_RESERVED_2_MASK, "reserved_2")?
-                    << 6)
-                    | uvf_bit
-                    | broadcast_common::len::fit_mask(
-                        e.update_version,
-                        SSU_UPDATE_VERSION_MASK,
-                        "update_version",
-                    )?;
+            buf[pos + 4] = ((e.reserved_2.get() as u8) << 6)
+                | uvf_bit
+                | broadcast_common::len::fit_mask(
+                    e.update_version,
+                    SSU_UPDATE_VERSION_MASK,
+                    "update_version",
+                )?;
             buf[pos + 5] = broadcast_common::len::fit_u8(e.selector.len(), "selector_length")?;
             pos += SSU_OUI_FIXED_LEN;
             buf[pos..pos + e.selector.len()].copy_from_slice(e.selector);
@@ -820,8 +821,11 @@ mod tests {
                 ];
                 let d = SsuIdSelector::parse(&bytes).unwrap();
                 assert_eq!(
-                    (d.oui_entries[0].reserved_4, d.oui_entries[0].reserved_2),
-                    (r4, r2)
+                    (
+                        d.oui_entries[0].reserved_4.get(),
+                        d.oui_entries[0].reserved_2.get()
+                    ),
+                    (u64::from(r4), u64::from(r2))
                 );
                 let mut out = vec![0u8; d.serialized_len()];
                 d.serialize_into(&mut out).unwrap();

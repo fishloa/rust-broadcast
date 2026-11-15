@@ -10,6 +10,7 @@ use super::descriptor_body;
 use crate::descriptors::content_time_base_indicator::ContentTimeBaseIndicator;
 use crate::error::{Error, Result};
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for content_labeling_descriptor.
@@ -21,16 +22,19 @@ const HEADER_LEN: usize = 2;
 /// "reserved" = `1` (all editions 2006-08/2023, audit §5). The
 /// `time_base_association_data` bytes are `reserved(8)` per entry and are
 /// carried verbatim in [`ContentTimeBaseAssociation::data`].
-pub const RESERVED_3_DEFAULT: u8 = 0b111;
+pub const RESERVED_3_DEFAULT: ReservedOnes<RESERVED_3_BITS> = ReservedOnes::<RESERVED_3_BITS>::FILL;
+/// Width of the 3-bit `reserved` after `content_time_base_indicator`.
+const RESERVED_3_BITS: u32 = 3;
+/// Width of the 7-bit `reserved` ahead of each 33-bit time-base value.
+const RESERVED_7_BITS: u32 = 7;
+/// Width of the 1-bit `reserved` ahead of `contentId`.
+const RESERVED_1_BITS: u32 = 1;
 /// Default of each 7-bit `reserved` ahead of a 33-bit time-base value (see
 /// [`RESERVED_3_DEFAULT`]).
-pub const RESERVED_7_DEFAULT: u8 = 0x7F;
+pub const RESERVED_7_DEFAULT: ReservedOnes<RESERVED_7_BITS> = ReservedOnes::<RESERVED_7_BITS>::FILL;
 /// Default of the 1-bit `reserved` ahead of `contentId` (see
 /// [`RESERVED_3_DEFAULT`]).
-pub const RESERVED_1_DEFAULT: u8 = 0b1;
-const RESERVED_3_MASK: u8 = 0x07;
-const RESERVED_7_MASK: u8 = 0x7F;
-const RESERVED_1_MASK: u8 = 0x01;
+pub const RESERVED_1_DEFAULT: ReservedOnes<RESERVED_1_BITS> = ReservedOnes::<RESERVED_1_BITS>::FILL;
 
 /// Time-base block — present when content_time_base_indicator is 1 or 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,11 +48,11 @@ pub struct ContentTimeBase {
     /// `reserved(7)` ahead of `content_time_base_value` (7 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_content: u8,
+    pub reserved_content: ReservedOnes<RESERVED_7_BITS>,
     /// `reserved(7)` ahead of `metadata_time_base_value` (7 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_7_DEFAULT`].
-    pub reserved_metadata: u8,
+    pub reserved_metadata: ReservedOnes<RESERVED_7_BITS>,
 }
 
 impl ContentTimeBase {
@@ -106,11 +110,11 @@ pub struct ContentLabelingDescriptor<'a> {
     /// `reserved(3)` after `content_time_base_indicator` (3 bits,
     /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
     /// [`RESERVED_3_DEFAULT`].
-    pub reserved: u8,
+    pub reserved: ReservedOnes<RESERVED_3_BITS>,
     /// `reserved(1)` ahead of `contentId` (1 bit, right-aligned); on the wire
     /// only when `content_id` is present. Captured on parse, re-emitted
     /// verbatim; defaults to [`RESERVED_1_DEFAULT`].
-    pub content_id_reserved: u8,
+    pub content_id_reserved: ReservedOnes<RESERVED_1_BITS>,
 }
 
 impl<'a> ContentLabelingDescriptor<'a> {
@@ -145,8 +149,11 @@ impl Default for ContentLabelingDescriptor<'_> {
 // TOP 7 bits of the first byte, and the 33-bit value's MSB is bit 0 of that
 // same byte, followed by 4 full bytes (32 more bits). Returns
 // `(reserved(7), value(33))`.
-fn read_33bit(bytes: &[u8], pos: usize) -> (u8, u64) {
-    (bytes[pos] >> 1, read_33bit_value(bytes, pos))
+fn read_33bit(bytes: &[u8], pos: usize) -> (ReservedOnes<RESERVED_7_BITS>, u64) {
+    (
+        ReservedOnes::from_bits(u64::from(bytes[pos] >> 1)),
+        read_33bit_value(bytes, pos),
+    )
 }
 
 fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
@@ -159,12 +166,16 @@ fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
         ]))
 }
 
-fn write_33bit(buf: &mut [u8], pos: usize, reserved: u8, value: u64) -> Result<()> {
+fn write_33bit(
+    buf: &mut [u8],
+    pos: usize,
+    reserved: ReservedOnes<RESERVED_7_BITS>,
+    value: u64,
+) -> Result<()> {
     // A value wider than 33 bits used to be masked down silently (audit
     // r03-W3 class).
     let v = broadcast_common::len::fit_bits(value, 33, "time_base_value")?;
-    buf[pos] = (broadcast_common::len::fit_mask(reserved, RESERVED_7_MASK, "reserved")? << 1)
-        | ((v >> 32) as u8 & 0x01);
+    buf[pos] = ((reserved.get() as u8) << 1) | ((v >> 32) as u8 & 0x01);
     buf[pos + 1..pos + 5].copy_from_slice(&(v as u32).to_be_bytes());
     Ok(())
 }
@@ -215,7 +226,7 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         let content_reference_id_record_flag = (flags & 0x80) != 0;
         let indicator_raw = (flags >> 3) & 0x0F;
         let content_time_base_indicator = ContentTimeBaseIndicator::from_u8(indicator_raw);
-        let reserved = flags & RESERVED_3_MASK;
+        let reserved = ReservedOnes::from_bits(u64::from(flags));
         pos += 1;
 
         let (content_reference_id_record, _) = if content_reference_id_record_flag {
@@ -280,7 +291,7 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
                 });
             }
             let id = body[pos] & 0x7F;
-            content_id_reserved = (body[pos] >> 7) & RESERVED_1_MASK;
+            content_id_reserved = ReservedOnes::from_bits(u64::from(body[pos] >> 7));
             pos += 1;
             Some(id)
         } else {
@@ -396,7 +407,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
             0x0F,
             "content_time_base_indicator",
         )? << 3)
-            | broadcast_common::len::fit_mask(self.reserved, RESERVED_3_MASK, "reserved")?;
+            | self.reserved.get() as u8;
         // Derived from the Option, never the stored flag (r03-W5).
         if self.content_reference_id_record.is_some() {
             flags |= 0x80;
@@ -422,11 +433,7 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         if let Some(cid) = self.content_id {
-            buf[pos] = (broadcast_common::len::fit_mask(
-                self.content_id_reserved,
-                RESERVED_1_MASK,
-                "content_id_reserved",
-            )? << 7)
+            buf[pos] = ((self.content_id_reserved.get() as u8) << 7)
                 | broadcast_common::len::fit_mask(cid, 0x7F, "cid")?;
             pos += 1;
         }
@@ -692,11 +699,11 @@ mod tests {
                         (r1 << 7) | 42,
                     ];
                     let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
-                    assert_eq!(d.reserved, r3);
-                    assert_eq!(d.content_id_reserved, r1);
+                    assert_eq!(d.reserved.get(), u64::from(r3));
+                    assert_eq!(d.content_id_reserved.get(), u64::from(r1));
                     let tb = d.time_base.as_ref().unwrap();
-                    assert_eq!(tb.reserved_content, r7);
-                    assert_eq!(tb.reserved_metadata, r7 ^ 0x7F);
+                    assert_eq!(tb.reserved_content.get(), u64::from(r7));
+                    assert_eq!(tb.reserved_metadata.get(), u64::from(r7 ^ 0x7F));
                     let mut out = vec![0u8; d.serialized_len()];
                     d.serialize_into(&mut out).unwrap();
                     assert_eq!(out, bytes);

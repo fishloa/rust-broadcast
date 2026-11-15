@@ -11,7 +11,7 @@ use srt_runtime::rendezvous::RendezvousHandshake;
 
 fn timestamp(bytes: &[u8]) -> u32 {
     match ControlPacket::parse(bytes).expect("control packet") {
-        ControlPacket::Handshake(hp) => hp.timestamp,
+        ControlPacket::Handshake(hp) => hp.timestamp.value(),
         _ => panic!("not a handshake"),
     }
 }

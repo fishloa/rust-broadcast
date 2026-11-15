@@ -29,6 +29,7 @@ use crate::error::{Error, Result};
 use crate::text::LangCode;
 use alloc::vec::Vec;
 use broadcast_common::len::{fit_bits, fit_u8, need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 use mpeg_ts::pid::Pid;
 
@@ -39,10 +40,10 @@ const SERVICE_LEN: usize = 6;
 const COUNT_BYTE_LEN: usize = 1;
 const PID_LEN: usize = 2;
 const MAX_SERVICES: usize = 31;
-const RESERVED3_ONES: u8 = 0b111;
-const RESERVED2_ONES: u8 = 0b11;
-const RESERVED1_ONES: u8 = 1;
-const RESERVED8_ONES: u8 = 0xFF;
+const RESERVED3_ONES: ReservedOnes<3> = ReservedOnes::<3>::FILL;
+const RESERVED2_ONES: ReservedOnes<2> = ReservedOnes::<2>::FILL;
+const RESERVED1_ONES: ReservedOnes<1> = ReservedOnes::<1>::FILL;
+const RESERVED8_ONES: ReservedOnes<8> = ReservedOnes::<8>::FILL;
 
 /// `char_set` — GY/T 270-2013 Table 9 (6 bits).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,17 +104,17 @@ pub struct ChinaCaptionService {
     /// `language` (24 bits): 3-byte code defined by GB/T 4880.2-2000.
     pub language: LangCode,
     /// `reserved` (2 bits) before `caption_service_number`.
-    pub reserved_a: u8,
+    pub reserved_a: ReservedOnes<2>,
     /// `caption_service_number` (6 bits).
     pub caption_service_number: u8,
     /// `reserved` (1 bit) before `wide_aspect_ratio`.
-    pub reserved_b: u8,
+    pub reserved_b: ReservedOnes<1>,
     /// `wide_aspect_ratio`: `false` = 4:3, `true` = 16:9.
     pub wide_aspect_ratio: bool,
     /// `char_set` (6 bits, Table 9).
     pub char_set: ChinaCaptionCharSet,
     /// Final `reserved` (8 bits) of the entry.
-    pub reserved_c: u8,
+    pub reserved_c: ReservedOnes<8>,
 }
 
 impl ChinaCaptionService {
@@ -143,11 +144,11 @@ impl ChinaCaptionService {
 #[non_exhaustive]
 pub struct ChinaCaptionServiceDescriptor {
     /// `reserved` (3 bits) before `number_of_services`.
-    pub reserved_head: u8,
+    pub reserved_head: ReservedOnes<3>,
     /// The caption services; `number_of_services` is derived on serialize.
     pub services: Vec<ChinaCaptionService>,
     /// `reserved` (3 bits) before `caption_service_pid`.
-    pub reserved_pid: u8,
+    pub reserved_pid: ReservedOnes<3>,
     /// `caption_service_pid` (13 bits): PID of the PES carrying the captions.
     pub caption_service_pid: Pid,
 }
@@ -193,19 +194,19 @@ impl<'a> Parse<'a> for ChinaCaptionServiceDescriptor {
         {
             services.push(ChinaCaptionService {
                 language: LangCode([chunk[0], chunk[1], chunk[2]]),
-                reserved_a: chunk[3] >> 6,
+                reserved_a: ReservedOnes::from_bits(u64::from(chunk[3] >> 6)),
                 caption_service_number: chunk[3] & 0x3F,
-                reserved_b: chunk[4] >> 7,
+                reserved_b: ReservedOnes::from_bits(u64::from(chunk[4] >> 7)),
                 wide_aspect_ratio: chunk[4] & 0x40 != 0,
                 char_set: ChinaCaptionCharSet::from_u8(chunk[4] & 0x3F),
-                reserved_c: chunk[5],
+                reserved_c: ReservedOnes::from_bits(u64::from(chunk[5])),
             });
         }
         let tail = &body[need - PID_LEN..];
         Ok(Self {
-            reserved_head: body[0] >> 5,
+            reserved_head: ReservedOnes::from_bits(u64::from(body[0] >> 5)),
             services,
-            reserved_pid: tail[0] >> 5,
+            reserved_pid: ReservedOnes::from_bits(u64::from(tail[0] >> 5)),
             caption_service_pid: Pid::from_wire_masked(u16::from_be_bytes([
                 tail[0] & 0x1F,
                 tail[1],
@@ -231,25 +232,25 @@ impl Serialize for ChinaCaptionServiceDescriptor {
         }
         write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let count = fit_u8(self.services.len(), "number_of_services")?;
-        let head = fit_bits(u64::from(self.reserved_head), 3, "reserved")? as u8;
+        let head = self.reserved_head.get() as u8;
         buf[HEADER_LEN] = (head << 5) | count;
         let mut i = HEADER_LEN + COUNT_BYTE_LEN;
         for s in &self.services {
-            let ra = fit_bits(u64::from(s.reserved_a), 2, "reserved")? as u8;
+            let ra = s.reserved_a.get() as u8;
             let num = fit_bits(
                 u64::from(s.caption_service_number),
                 6,
                 "caption_service_number",
             )? as u8;
-            let rb = fit_bits(u64::from(s.reserved_b), 1, "reserved")? as u8;
+            let rb = s.reserved_b.get() as u8;
             let cs = fit_bits(u64::from(s.char_set.to_u8()), 6, "char_set")? as u8;
             buf[i..i + 3].copy_from_slice(&s.language.0);
             buf[i + 3] = (ra << 6) | num;
             buf[i + 4] = (rb << 7) | (u8::from(s.wide_aspect_ratio) << 6) | cs;
-            buf[i + 5] = s.reserved_c;
+            buf[i + 5] = s.reserved_c.get() as u8;
             i += SERVICE_LEN;
         }
-        let rp = fit_bits(u64::from(self.reserved_pid), 3, "reserved")? as u8;
+        let rp = self.reserved_pid.get() as u8;
         let [pid_hi, pid_lo] = self.caption_service_pid.value().to_be_bytes();
         buf[i] = (rp << 5) | pid_hi;
         buf[i + 1] = pid_lo;
@@ -289,9 +290,12 @@ mod tests {
         assert_eq!(s.caption_service_number, 1);
         assert!(s.wide_aspect_ratio);
         assert_eq!(s.char_set, ChinaCaptionCharSet::Gb18030);
-        assert_eq!((s.reserved_a, s.reserved_b, s.reserved_c), (3, 1, 0xFF));
+        assert_eq!(
+            (s.reserved_a.get(), s.reserved_b.get(), s.reserved_c.get()),
+            (3, 1, 0xFF)
+        );
         assert_eq!(d.caption_service_pid, Pid::from_const(0x0100));
-        assert_eq!((d.reserved_head, d.reserved_pid), (7, 7));
+        assert_eq!((d.reserved_head.get(), d.reserved_pid.get()), (7, 7));
     }
 
     /// Two services (primary GB 2312 4:3 service 1, secondary GB 13000.1 16:9
@@ -354,13 +358,10 @@ mod tests {
             false,
             ChinaCaptionCharSet::Reserved(0x7F),
         );
-        let d = ChinaCaptionServiceDescriptor::new(vec![svc; 1], Pid::from_const(0x100));
-        let mut bad = d.clone();
-        bad.reserved_pid = 8;
-        assert!(matches!(
-            &(bad.serialize_into(&mut [0u8; 16])),
-            Err(crate::error::Error::FieldOverflow(_))
-        ));
+        // reserved_pid is a 3-bit `ReservedOnes`; an over-range value is
+        // unrepresentable (`from_bits` masks at construction) so it can never be
+        // re-masked into a different wire byte.
+        assert_eq!(ReservedOnes::<3>::from_bits(8).get(), 0);
         let many = ChinaCaptionServiceDescriptor::new(vec![svc; 32], Pid::from_const(0x100));
         assert!(matches!(
             &(many.serialize_into(&mut [0u8; 256])),

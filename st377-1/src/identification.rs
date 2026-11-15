@@ -100,12 +100,12 @@ impl<'a> Parse<'a> for Identification {
         }
         let items = &set.items;
         let interchange = InterchangeObjectFields::decode(items, "Identification")?;
-        let this_generation_uid = get_required_fixed::<16>(
+        let this_generation_uid = UlBytes(get_required_fixed::<16>(
             items,
             TAG_THIS_GENERATION_UID,
             "This Generation UID",
             "Identification",
-        )?;
+        )?);
         let company_name = decode_utf16_be(get_required_raw(
             items,
             TAG_COMPANY_NAME,
@@ -139,8 +139,12 @@ impl<'a> Parse<'a> for Identification {
             tag: TAG_VERSION_STRING,
             name: "Version String",
         })?;
-        let product_uid =
-            get_required_fixed::<16>(items, TAG_PRODUCT_UID, "Product UID", "Identification")?;
+        let product_uid = UlBytes(get_required_fixed::<16>(
+            items,
+            TAG_PRODUCT_UID,
+            "Product UID",
+            "Identification",
+        )?);
         let modification_date = MxfTimestamp::parse(get_required_raw(
             items,
             TAG_MODIFICATION_DATE,
@@ -181,7 +185,7 @@ impl Identification {
         self.interchange.encode_into(&mut out);
         out.push(LocalSetOwnedItem::fixed(
             TAG_THIS_GENERATION_UID,
-            self.this_generation_uid,
+            self.this_generation_uid.0,
         ));
         out.push(LocalSetOwnedItem::owned(
             TAG_COMPANY_NAME,
@@ -202,7 +206,10 @@ impl Identification {
             TAG_VERSION_STRING,
             encode_utf16_be(&self.version_string),
         ));
-        out.push(LocalSetOwnedItem::fixed(TAG_PRODUCT_UID, self.product_uid));
+        out.push(LocalSetOwnedItem::fixed(
+            TAG_PRODUCT_UID,
+            self.product_uid.0,
+        ));
         {
             let mut buf = [0u8; crate::types::TIMESTAMP_LEN];
             // The buffer is exactly the type's serialized length, so the
@@ -241,11 +248,11 @@ mod tests {
     fn sample() -> Identification {
         Identification {
             interchange: InterchangeObjectFields {
-                instance_uid: [0x11; 16],
+                instance_uid: UlBytes([0x11; 16]),
                 generation_uid: None,
                 object_class: None,
             },
-            this_generation_uid: [0x22; 16],
+            this_generation_uid: UlBytes([0x22; 16]),
             company_name: String::from("Acme Broadcast"),
             product_name: String::from("st377-1"),
             product_version: Some(ProductVersion {
@@ -256,7 +263,7 @@ mod tests {
                 release: ReleaseType::Development,
             }),
             version_string: String::from("0.1.0-dev"),
-            product_uid: [0x33; 16],
+            product_uid: UlBytes([0x33; 16]),
             modification_date: MxfTimestamp {
                 year: 2019,
                 month: 11,
