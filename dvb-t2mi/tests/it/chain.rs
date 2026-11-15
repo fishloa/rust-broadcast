@@ -30,7 +30,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::crc32_mpeg2;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::T2miPump;
@@ -281,7 +281,7 @@ fn chain_t2mi_bbframe_si_pat() {
     assert_eq!(inner_pkts[0][0], TS_SYNC, "inner TS sync byte restored");
 
     // ── Step E: SiDemux → AnyTableSection::PatSection ─────────────────────────────────────
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let events: Vec<_> = demux.feed(&inner_pkts[0]).collect();
     assert_eq!(events.len(), 1, "SiDemux must emit one section event");
 

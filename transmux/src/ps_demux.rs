@@ -473,7 +473,7 @@ impl<'a> PsDemux<'a> {
                 let (pts, dts) = pes
                     .header
                     .as_ref()
-                    .map(|h| (h.pts.map(|p| p.0), h.dts.map(|d| d.0)))
+                    .map(|h| (h.pts.map(|p| p.ticks()), h.dts.map(|d| d.ticks())))
                     .unwrap_or((None, None));
 
                 let key = StreamKey {

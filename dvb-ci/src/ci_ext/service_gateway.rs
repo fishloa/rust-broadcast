@@ -413,7 +413,7 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
             running_status,
             free_ca_mode,
             descriptors: &body[desc_start..desc_end],
-            reserved: ReservedOnes::from_bits(flags >> 2),
+            reserved: ReservedOnes::from_bits(u64::from(flags >> 2)),
         })
     }
 }
@@ -443,7 +443,7 @@ impl Serialize for ServiceDescAck<'_> {
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
         // reserved_future_use(6), EIT_schedule(1), EIT_present_following(1).
-        buf[pos + 4] = (self.reserved.get() << 2)
+        buf[pos + 4] = ((self.reserved.get() << 2) as u8)
             | (u8::from(self.eit_schedule_flag) << 1)
             | u8::from(self.eit_present_following_flag);
         let loop_len = self.descriptors.len() as u16;
@@ -536,7 +536,7 @@ impl<'a> Parse<'a> for GetServiceAck {
             service_not_available: (flags & 0x02) != 0,
             ca_service_flag: (flags & 0x01) != 0,
             actual_service: u16::from_be_bytes([body[5], body[6]]),
-            reserved: ReservedZero::from_bits(flags >> 3),
+            reserved: ReservedZero::from_bits(u64::from(flags >> 3)),
         })
     }
 }
@@ -555,7 +555,7 @@ impl Serialize for GetServiceAck {
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
         // Reserved(5), then the three flag bits.
-        buf[pos + 4] = (self.reserved.get() << 3)
+        buf[pos + 4] = ((self.reserved.get() << 3) as u8)
             | (u8::from(self.service_terminated) << 2)
             | (u8::from(self.service_not_available) << 1)
             | u8::from(self.ca_service_flag);

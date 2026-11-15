@@ -249,8 +249,8 @@ impl<'a> Parse<'a> for CommsInfoReply {
             source_ip_address,
             source_port,
             input_delivery_pid,
-            reserved_status: ReservedZero::from_bits(body[1] >> 1),
-            reserved_pid: ReservedZero::from_bits(body[p + 2] >> 5),
+            reserved_status: ReservedZero::from_bits(u64::from(body[1] >> 1)),
+            reserved_pid: ReservedZero::from_bits(u64::from(body[p + 2] >> 5)),
         })
     }
 }
@@ -268,13 +268,13 @@ impl Serialize for CommsInfoReply {
         )?;
         buf[pos] = self.lts_id;
         // reserved(7) + status(1).
-        buf[pos + 1] = (self.reserved_status.get() << 1) | u8::from(self.status);
+        buf[pos + 1] = ((self.reserved_status.get() << 1) as u8) | u8::from(self.status);
         buf[pos + 2..pos + 2 + IP_ADDR_LEN].copy_from_slice(&self.source_ip_address);
         let p = pos + 2 + IP_ADDR_LEN;
         buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
         // reserved(3) + inputDeliveryPID(13). Range-checked above.
         buf[p + 2..p + 4].copy_from_slice(
-            &(((u16::from(self.reserved_pid.get())) << 13) | self.input_delivery_pid.value())
+            &(((self.reserved_pid.get() << 13) as u16) | self.input_delivery_pid.value())
                 .to_be_bytes(),
         );
         Ok(pos + INFO_REPLY_BODY)
@@ -320,8 +320,12 @@ impl Serialize for CommsIpConfigReq {
 
 /// The connected-state IP configuration carried when `connection_state == 0x01`
 /// (Table 79).
+///
+/// `DNS_server_address` is a loop, so a future Table 79 field is additive for
+/// a consumer: build it with [`IpConfig::new`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct IpConfig {
     /// `IP_address` (128) — IPv6 format.
     pub ip_address: [u8; IP_ADDR_LEN],
@@ -333,6 +337,39 @@ pub struct IpConfig {
     pub dhcp_server_address: [u8; IP_ADDR_LEN],
     /// `DNS_server_address` list (loop count `num_DNS_servers`).
     pub dns_server_addresses: Vec<[u8; IP_ADDR_LEN]>,
+}
+
+impl IpConfig {
+    /// The Table 79 fields, with the DHCP server and the DNS server list left
+    /// to [`Self::with_dhcp_server`] / [`Self::with_dns_servers`].
+    #[must_use]
+    pub fn new(
+        ip_address: [u8; IP_ADDR_LEN],
+        network_mask: [u8; IP_ADDR_LEN],
+        default_gateway: [u8; IP_ADDR_LEN],
+    ) -> Self {
+        Self {
+            ip_address,
+            network_mask,
+            default_gateway,
+            dhcp_server_address: [0; IP_ADDR_LEN],
+            dns_server_addresses: Vec::new(),
+        }
+    }
+
+    /// Set `DHCP_server_address` (all-zero means no DHCP server).
+    #[must_use]
+    pub fn with_dhcp_server(mut self, dhcp_server_address: [u8; IP_ADDR_LEN]) -> Self {
+        self.dhcp_server_address = dhcp_server_address;
+        self
+    }
+
+    /// Set the `DNS_server_address` list.
+    #[must_use]
+    pub fn with_dns_servers(mut self, dns_server_addresses: Vec<[u8; IP_ADDR_LEN]>) -> Self {
+        self.dns_server_addresses = dns_server_addresses;
+        self
+    }
 }
 
 /// `comms_IP_config_reply()` (Table 79): Host → CICAM.
@@ -417,13 +454,11 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
                 p += IP_ADDR_LEN;
             }
             objects::reject_trailing_body(body, p, "comms_IP_config_reply")?;
-            Some(IpConfig {
-                ip_address,
-                network_mask,
-                default_gateway,
-                dhcp_server_address,
-                dns_server_addresses,
-            })
+            Some(
+                IpConfig::new(ip_address, network_mask, default_gateway)
+                    .with_dhcp_server(dhcp_server_address)
+                    .with_dns_servers(dns_server_addresses),
+            )
         } else {
             // Table 79: no fields follow `physical_address` unless connected.
             objects::reject_trailing_body(body, IP_CONFIG_PREFIX, "comms_IP_config_reply")?;
@@ -434,7 +469,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
             connection_state,
             physical_address,
             ip_config,
-            reserved: ReservedZero::from_bits(body[0]),
+            reserved: ReservedZero::from_bits(u64::from(body[0])),
         })
     }
 }
@@ -472,7 +507,7 @@ impl Serialize for CommsIpConfigReply {
             buf,
         )?;
         // connection_state(2) << 6 + reserved(6).
-        buf[pos] = (self.connection_state.to_u8() << 6) | self.reserved.get();
+        buf[pos] = (self.connection_state.to_u8() << 6) | self.reserved.get() as u8;
         buf[pos + 1..pos + 1 + MAC_LEN].copy_from_slice(&self.physical_address);
         pos += IP_CONFIG_PREFIX;
         if let Some(c) = &self.ip_config {
@@ -867,13 +902,11 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
-            ip_config: Some(IpConfig {
-                ip_address: IP_A,
-                network_mask: IP_B,
-                default_gateway: IP_A,
-                dhcp_server_address: IP_B,
-                dns_server_addresses: alloc::vec![IP_A, IP_B],
-            }),
+            ip_config: Some(
+                IpConfig::new(IP_A, IP_B, IP_A)
+                    .with_dhcp_server(IP_B)
+                    .with_dns_servers(alloc::vec![IP_A, IP_B]),
+            ),
         };
         let bytes = r.try_to_bytes().unwrap();
         // connection_state Connected(01) in high 2 bits => 0x40.
@@ -903,13 +936,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0; MAC_LEN],
-            ip_config: Some(IpConfig {
-                ip_address: IP_A,
-                network_mask: IP_B,
-                default_gateway: IP_A,
-                dhcp_server_address: IP_B,
-                dns_server_addresses: Vec::new(),
-            }),
+            ip_config: Some(IpConfig::new(IP_A, IP_B, IP_A).with_dhcp_server(IP_B)),
         };
         assert!(matches!(
             r.serialize_into(&mut alloc::vec![0u8; 128]),
@@ -1057,13 +1084,11 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0; MAC_LEN],
-            ip_config: Some(IpConfig {
-                ip_address: IP_A,
-                network_mask: IP_A,
-                default_gateway: IP_A,
-                dhcp_server_address: IP_A,
-                dns_server_addresses: (0..256).map(|_| IP_A).collect(),
-            }),
+            ip_config: Some(
+                IpConfig::new(IP_A, IP_A, IP_A)
+                    .with_dhcp_server(IP_A)
+                    .with_dns_servers((0..256).map(|_| IP_A).collect()),
+            ),
         };
         let mut buf = alloc::vec![0u8; 8192];
         assert!(matches!(
@@ -1078,5 +1103,33 @@ mod tests {
         // to be rejected at serialize time cannot be constructed at all.
         assert_eq!(Pid::try_new(0x2064).unwrap_err().value, 0x2064);
         assert!(Pid::try_new(0x1FFF).is_ok());
+    }
+
+    /// `IpConfig` is `#[non_exhaustive]`, so `IpConfig::new` must produce the
+    /// same wire bytes this module parsed before the constructor existed: the
+    /// DHCP server and DNS list default to the Table 79 "absent" encoding.
+    #[test]
+    fn ip_config_constructor_matches_the_parsed_encoding() {
+        let r = CommsIpConfigReply {
+            reserved: Default::default(),
+            length_form: crate::length::LengthForm::Minimal,
+            connection_state: ConnectionState::Connected,
+            physical_address: [0; MAC_LEN],
+            ip_config: Some(IpConfig::new(IP_A, IP_B, IP_B)),
+        };
+        let encoded = r.try_to_bytes().unwrap();
+        let ip = encoded
+            .windows(IP_ADDR_LEN)
+            .position(|w| w == IP_A)
+            .expect("ip_address is on the wire");
+        let mut want = alloc::vec![0u8; IP_CONFIG_FIXED];
+        want[..IP_ADDR_LEN].copy_from_slice(&IP_A);
+        want[IP_ADDR_LEN..2 * IP_ADDR_LEN].copy_from_slice(&IP_B);
+        want[2 * IP_ADDR_LEN..3 * IP_ADDR_LEN].copy_from_slice(&IP_B);
+        assert_eq!(
+            &encoded[ip..ip + IP_CONFIG_FIXED],
+            want,
+            "DHCP server and DNS list travel as their Table 79 absent encoding"
+        );
     }
 }

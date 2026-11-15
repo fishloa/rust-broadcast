@@ -157,7 +157,7 @@ impl<'a> Parse<'a> for PidSelectReq {
             pids.push(PidSelectRequest {
                 critical_for_descrambling: critical,
                 pid,
-                reserved: ReservedZero::from_bits(chunk[0] >> 6),
+                reserved: ReservedZero::from_bits(u64::from(chunk[0] >> 6)),
             });
         }
         objects::reject_trailing_body(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_req")?;
@@ -182,7 +182,7 @@ impl Serialize for PidSelectReq {
         buf[pos + 1] = self.pids.len() as u8;
         pos += 2;
         for entry in &self.pids {
-            let mut hi = (entry.reserved.get() << 6) | (entry.pid.value() >> 8) as u8;
+            let mut hi = ((entry.reserved.get() << 6) as u8) | (entry.pid.value() >> 8) as u8;
             if entry.critical_for_descrambling {
                 hi |= CRITICAL_FLAG_BIT;
             }
@@ -258,7 +258,7 @@ impl<'a> Parse<'a> for PidSelectReply {
             pids.push(PidSelectedEntry {
                 pid_selected: selected,
                 pid,
-                reserved: ReservedZero::from_bits(chunk[0] >> 6),
+                reserved: ReservedZero::from_bits(u64::from(chunk[0] >> 6)),
             });
         }
         objects::reject_trailing_body(loop_bytes, num_pid * PID_ENTRY_LEN, "PID_select_reply")?;
@@ -267,7 +267,7 @@ impl<'a> Parse<'a> for PidSelectReply {
             lts_id,
             pid_selection,
             pids,
-            reserved: ReservedZero::from_bits(body[1] >> 1),
+            reserved: ReservedZero::from_bits(u64::from(body[1] >> 1)),
         })
     }
 }
@@ -282,7 +282,7 @@ impl Serialize for PidSelectReply {
         let mut pos =
             objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
-        buf[pos + 1] = (self.reserved.get() << 1)
+        buf[pos + 1] = ((self.reserved.get() << 1) as u8)
             | if self.pid_selection {
                 PID_SELECTION_FLAG_BIT
             } else {
@@ -291,7 +291,7 @@ impl Serialize for PidSelectReply {
         buf[pos + 2] = self.pids.len() as u8;
         pos += 3;
         for entry in &self.pids {
-            let mut hi = (entry.reserved.get() << 6) | (entry.pid.value() >> 8) as u8;
+            let mut hi = ((entry.reserved.get() << 6) as u8) | (entry.pid.value() >> 8) as u8;
             if entry.pid_selected {
                 hi |= PID_SELECTED_FLAG_BIT;
             }

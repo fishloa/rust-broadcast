@@ -13,7 +13,7 @@
 #![cfg(feature = "ts")]
 
 use broadcast_common::Serialize;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::parse_loop;
 use dvb_si::tables::RunningStatus;
 use dvb_si::tables::sdt::{SdtKind, SdtSection};
@@ -69,7 +69,7 @@ fn build_sdt_bytes() -> Vec<u8> {
 /// `sections_completed` > 0 (i.e. some counter moved, proving the code ran).
 #[test]
 fn hostility_garbage_ts_packets_no_panic() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut lcg = Lcg::new(0xDEAD_CAFE_1234_5678u64);
     const N: usize = 10_000;
 

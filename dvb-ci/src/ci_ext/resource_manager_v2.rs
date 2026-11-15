@@ -252,7 +252,7 @@ impl<'a> Parse<'a> for ModuleIdSend {
         Ok(Self {
             length_form,
             module_id: body[0] & 0x3F,
-            reserved: ReservedZero::from_bits(body[0] >> 6),
+            reserved: ReservedZero::from_bits(u64::from(body[0] >> 6)),
         })
     }
 }
@@ -270,7 +270,7 @@ impl Serialize for ModuleIdSend {
             buf,
         )?;
         // reserved(2), module_id(6). Range-checked above.
-        buf[pos] = (self.reserved.get() << 6) | self.module_id;
+        buf[pos] = ((self.reserved.get() << 6) as u8) | self.module_id;
         Ok(pos + MODULE_ID_SEND_BODY)
     }
 }
@@ -291,7 +291,7 @@ impl<'a> Parse<'a> for ModuleIdCommand {
             length_form,
             command: ModuleIdCommandKind::from_u8(body[0]),
             module_id: body[1] & 0x3F,
-            reserved: ReservedZero::from_bits(body[1] >> 6),
+            reserved: ReservedZero::from_bits(u64::from(body[1] >> 6)),
         })
     }
 }
@@ -310,7 +310,7 @@ impl Serialize for ModuleIdCommand {
         )?;
         buf[pos] = self.command.to_u8();
         // reserved(2), module_id(6). Range-checked above.
-        buf[pos + 1] = (self.reserved.get() << 6) | self.module_id;
+        buf[pos + 1] = ((self.reserved.get() << 6) as u8) | self.module_id;
         Ok(pos + MODULE_ID_COMMAND_BODY)
     }
 }

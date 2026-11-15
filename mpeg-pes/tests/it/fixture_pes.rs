@@ -54,6 +54,18 @@ fn extracts_video_pts_from_m6_fixture() {
 
     let mut pts_list = Vec::new();
     for raw in &pes_bytes {
+        if raw.len() < 6 {
+            continue;
+        }
+        // This capture joins mid-PES and interleaves several subtitle
+        // `private_stream_1` substreams, so the assembler splits units whose
+        // declared `PES_packet_length` runs past the captured bytes — a
+        // truncated packet, which `parse` reports (#2746). Only complete
+        // units are asserted here.
+        let declared = usize::from(u16::from_be_bytes([raw[4], raw[5]]));
+        if declared != 0 && raw.len() < 6 + declared {
+            continue;
+        }
         let pkt = PesPacket::parse(raw).expect("PES must parse without error");
         if let Some(h) = &pkt.header
             && let Some(pts) = h.pts

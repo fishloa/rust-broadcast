@@ -11,7 +11,7 @@ use std::convert::Infallible;
 use std::time::Duration;
 
 use broadcast_common::{Demand, Stage, Timestamp};
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
@@ -563,7 +563,7 @@ const PMT_SECTION_SCAN_PASSES: usize = 2;
 /// MPEG-2 TS byte buffer through `dvb_si::demux::SiDemux` — a genuine parse
 /// of the wire bytes, not an assumption about which PID the PMT uses.
 fn count_pmt_sections(ts_bytes: &[u8]) -> usize {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut pmt_count = 0usize;
     for _ in 0..PMT_SECTION_SCAN_PASSES {
         for packet in ts_bytes.chunks_exact(mpeg_ts::ts::TS_PACKET_SIZE) {

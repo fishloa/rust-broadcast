@@ -10,7 +10,7 @@ use std::fs;
 
 use broadcast_common::{Parse, Serialize};
 use dvb_subtitle::{AnySegment, PesDataField};
-use mpeg_pes::{PesAssembler, PesPacket, StreamId};
+use mpeg_pes::{PesAssembler, StreamId};
 
 fn m6_bytes() -> Vec<u8> {
     let path = test_fixtures::path("ts/m6-single.ts");
@@ -57,6 +57,23 @@ fn subtitle_pes(ts: &[u8], pid: u16) -> Vec<Vec<u8>> {
     out
 }
 
+/// The `private_stream_1` payload of a reassembled PES unit, or `None` for
+/// another `stream_id`.
+///
+/// This capture joins the stream mid-PES, so its units are truncated: the
+/// declared `PES_packet_length` runs past the captured bytes, which the parser
+/// reports (#2746). The subtitle data field is still the bytes after the
+/// header — the 3 fixed header bytes at offset 6, `PES_header_data_length`
+/// at offset 8, then the payload (ISO/IEC 13818-1 Table 2-21) — so that
+/// payload is read directly here rather than from a packet the parser refuses.
+fn subtitle_payload(raw: &[u8]) -> Option<&[u8]> {
+    if raw.get(3) != Some(&PRIVATE_STREAM_1.0) {
+        return None;
+    }
+    let hdl = usize::from(*raw.get(8)?);
+    raw.get(9 + hdl..)
+}
+
 #[test]
 fn parses_real_subtitle_pes_from_m6() {
     let pes = subtitle_pes(&m6_bytes(), SUBTITLE_PID);
@@ -69,16 +86,16 @@ fn parses_real_subtitle_pes_from_m6() {
     let mut malformed_segments = 0;
 
     for raw in &pes {
-        let pkt = PesPacket::parse(raw).expect("subtitle PES parses");
         // Only private_stream_1 PES carrying data_identifier 0x20 are DVB
         // subtitle; skip the padding_stream PES multiplexed on the same PID.
-        if pkt.stream_id != PRIVATE_STREAM_1
-            || pkt.payload.first() != Some(&DATA_IDENTIFIER_DVB_SUBTITLE)
-        {
+        let Some(payload) = subtitle_payload(raw) else {
+            continue;
+        };
+        if payload.first() != Some(&DATA_IDENTIFIER_DVB_SUBTITLE) {
             continue;
         }
         // The PES payload IS the subtitling PES_data_field.
-        let field = PesDataField::parse(pkt.payload).expect("PES_data_field parses");
+        let field = PesDataField::parse(payload).expect("PES_data_field parses");
         fields += 1;
         total_segments += field.segments.len();
         for seg in &field.segments {
@@ -96,7 +113,7 @@ fn parses_real_subtitle_pes_from_m6() {
         // bites: serialize must reconstruct the field from the parsed segments.
         assert_eq!(
             field.try_to_bytes().unwrap(),
-            pkt.payload,
+            payload,
             "subtitle PES_data_field must round-trip byte-identically"
         );
     }

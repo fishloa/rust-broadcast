@@ -356,20 +356,26 @@ impl AncDataPacket {
     /// This packet's header as the shared [`mpeg_pes::PesHeader`] (ST 2038
     /// Table 2 pins every other field of it: `PES_scrambling_control` `'00'`,
     /// `data_alignment_indicator` `'1'`, PTS-only, no other optional fields).
-    fn pes_header(&self) -> mpeg_pes::PesHeader<'static> {
+    fn pes_header(&self) -> Result<mpeg_pes::PesHeader<'static>> {
+        let pts = mpeg_pes::Pts::try_new(self.pts).map_err(|c| {
+            Error::FieldOverflow(broadcast_common::error::FieldOverflow {
+                field: "PTS",
+                value: c.value,
+                max: broadcast_common::clock33::WRAP_33BIT - 1,
+            })
+        })?;
         let mut header = mpeg_pes::PesHeader::new();
         header.data_alignment_indicator = true;
-        header.pts = Some(mpeg_pes::Pts(self.pts));
+        header.pts = Some(pts);
         header.pes_priority = self.pes_priority;
         header.original_or_copy = self.original_or_copy;
-        header
+        Ok(header)
     }
 
     /// The whole PES optional header — the two flag bytes,
     /// `PES_header_data_length` and its fields — from the shared codec.
     fn optional_header(&self) -> Result<Vec<u8>> {
-        broadcast_common::len::fit_bits(self.pts, 33, "PTS")?;
-        let header = self.pes_header();
+        let header = self.pes_header()?;
         let mut buf = alloc::vec![0u8; PES_OPTIONAL_HEADER_LEN];
         buf[0..2].copy_from_slice(&header.flag_bytes());
         buf[2] = ANC_PES_HEADER_DATA_LENGTH;
@@ -382,11 +388,11 @@ impl AncDataPacket {
     /// # Errors
     /// [`Error::ReservedBits`] naming the field that differed.
     fn check_pinned_header(h: &mpeg_pes::PesHeader<'_>) -> Result<()> {
-        if h.scrambling_control != 0 {
+        if h.scrambling_control != mpeg_pes::ScramblingControl::NotScrambled {
             return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
                 field: "PES_scrambling_control",
                 expected: 0,
-                found: u64::from(h.scrambling_control),
+                found: u64::from(h.scrambling_control.to_bits()),
             }));
         }
         if !h.data_alignment_indicator {
@@ -447,15 +453,6 @@ impl AncDataPacket {
                 found: 0,
             }))?;
         let payload = packet.payload;
-        let pes_packet_length = usize::from(packet.pes_packet_length);
-        let pes_length_end = PES_PREFIX_LEN.saturating_add(pes_packet_length);
-        if pes_length_end > b.len() {
-            return Err(Error::PesLengthOverflow {
-                len: pes_packet_length,
-                available: b.len().saturating_sub(PES_PREFIX_LEN),
-            });
-        }
-
         let mut anc_packets = Vec::new();
         let mut pos = 0usize;
         while pos < payload.len() {
@@ -489,7 +486,7 @@ impl AncDataPacket {
             pes_priority: header.pes_priority,
             copyright: header.copyright,
             original_or_copy: header.original_or_copy,
-            pts: pts.0,
+            pts: pts.ticks(),
             anc_packets,
             stuffing_bytes,
         })

@@ -25,8 +25,9 @@ mod timestamp;
 pub use assembler::PesAssembler;
 pub use error::{Error, Result};
 pub use packet::{
-    AdditionalCopyInfo, Escr, FREEZE_FRAME_RESERVED_VALUE, PStdBuffer, PesExtension,
-    PesExtensionField, PesHeader, PesPacket, ProgramPacketSequenceCounter, TrickMode,
+    AdditionalCopyInfo, EsRate, Escr, FREEZE_FRAME_RESERVED_VALUE, PStdBuffer, PesExtension,
+    PesExtensionField, PesHeader, PesPacket, ProgramPacketSequenceCounter, ScramblingControl,
+    TrickMode, Truncation,
 };
 pub use stream_id::{STREAM_ID_EXTENSION_AVS3_AUDIO, STREAM_ID_EXTENSION_AVS3_VIDEO, StreamId};
 pub use timestamp::{Dts, Pts};

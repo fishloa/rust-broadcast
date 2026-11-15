@@ -4,6 +4,7 @@ use crate::PACKET_START_CODE_PREFIX;
 use crate::error::{Error, Result};
 use crate::stream_id::StreamId;
 use crate::timestamp::{self, Dts, Pts};
+use broadcast_common::clock33::{Clock27, ClockOutOfRange};
 use broadcast_common::len::{need_in, need_out};
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
@@ -53,6 +54,81 @@ const ES_RATE_TRAILING_MARKER: u8 = 0x01;
 /// Mask of those low 7 bits (`PES_extension_field_length`, `stream_id_extension`).
 const LOW7_MASK: u8 = 0x7F;
 
+// ── PES_scrambling_control (ISO/IEC 13818-1 §2.4.3.7, Table 2-21) ──────────
+
+/// 2-bit `PES_scrambling_control` field. Table 2-21 defines only `00` (not
+/// scrambled); `01`/`10`/`11` are reserved/user-defined and are carried as a
+/// [`ScramblingControl::Reserved`] value so a real stream round-trips.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub enum ScramblingControl {
+    /// `00` — not scrambled.
+    NotScrambled,
+    /// `01`/`10`/`11` — reserved/user-defined; carries the 2-bit value.
+    Reserved(u8),
+}
+
+impl ScramblingControl {
+    /// Decode from the 2-bit `PES_scrambling_control` value (masked to `[1:0]`).
+    pub fn from_bits(bits: u8) -> Self {
+        match bits & 0b11 {
+            0b00 => Self::NotScrambled,
+            v => Self::Reserved(v),
+        }
+    }
+
+    /// Encode as the 2-bit field value (`[1:0]`); the caller shifts it into
+    /// place within the header flag byte.
+    pub fn to_bits(self) -> u8 {
+        match self {
+            Self::NotScrambled => 0b00,
+            Self::Reserved(v) => v & 0b11,
+        }
+    }
+
+    /// Short label for this value, per the #204 convention.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::NotScrambled => "not_scrambled",
+            Self::Reserved(_) => "reserved",
+        }
+    }
+}
+
+broadcast_common::impl_spec_display!(ScramblingControl, Reserved);
+
+// ── ES_rate (ISO/IEC 13818-1 §2.4.3.7 Table 2-21) ──────────────────────────
+
+/// `ES_rate` — the 22-bit elementary-stream rate (bytes/second × 50), carried
+/// between two `marker_bit`s (Table 2-21).
+///
+/// A typed, bounded field: an out-of-range rate cannot be constructed, so a
+/// serializer never masks it to a different value (#2747).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct EsRate(u32);
+
+impl EsRate {
+    /// Construct from a rate value, rejecting one wider than the 22-bit wire
+    /// field.
+    ///
+    /// # Errors
+    /// [`broadcast_common::error::FieldOverflow`] when `rate >= 2^22`.
+    pub fn try_new(
+        rate: u32,
+    ) -> core::result::Result<Self, broadcast_common::error::FieldOverflow> {
+        let fitted = broadcast_common::len::fit_bits(u64::from(rate), 22, "ES_rate")?;
+        Ok(Self(fitted as u32))
+    }
+
+    /// The 22-bit rate (bytes/second × 50), always in `[0, 2^22)`.
+    #[must_use]
+    pub const fn rate(self) -> u32 {
+        self.0
+    }
+}
+
 // ── ESCR (ISO/IEC 13818-1 §2.4.3.7 Table 2-21) ──────────────────────────────
 
 /// Elementary Stream Clock Reference: 33-bit base (90 kHz) + 9-bit extension
@@ -61,12 +137,19 @@ const LOW7_MASK: u8 = 0x7F;
 /// Wire layout (6 bytes, 48 bits):
 /// `2×reserved(1) | ESCR_base[32:30](3) | marker(1) | ESCR_base[29:15](15) |
 ///  marker(1) | ESCR_base[14:0](15) | marker(1) | ESCR_ext(9) | marker(1)`.
+///
+/// Constructing is strict ([`Escr::from_clock27`] takes the validated
+/// [`Clock27`]). Parsing is lossless: the 9-bit wire extension can be
+/// `300..=511`, which is off the 27 MHz clock, so a parsed value keeps the
+/// parts exactly as read and re-serializes byte-identically;
+/// [`Escr::to_clock27`] is the checked view that reports such a value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Escr {
     /// 33-bit base (90 kHz units).
     pub base: u64,
-    /// 9-bit extension (27 MHz units, 0..=299).
+    /// 9-bit extension (27 MHz units); a parsed value may carry `300..=511`
+    /// (see [`Escr::to_clock27`]).
     pub extension: u16,
     /// The leading `reserved(2)` of the field (Table 2-21; spec convention
     /// `0b11`), kept so a real stream's value round-trips. Held here, in the
@@ -85,12 +168,12 @@ const ESCR_RESERVED_VALUE: u8 = 0b11;
 /// Bit position of the ESCR leading `reserved(2)` in the field's first byte.
 const ESCR_RESERVED_SHIFT: u32 = 6;
 
-/// ESCR 33-bit base mask (ISO/IEC 13818-1 §2.4.3.7 `ESCR_base`).
-const ESCR_BASE_MASK: u64 = (1 << 33) - 1;
 /// ESCR 9-bit extension mask (`ESCR_extension`).
 const ESCR_EXT_MASK: u16 = (1 << 9) - 1;
 /// `marker_bit` leading each byte of `program_packet_sequence_counter`.
 const PPSC_MARKER: u8 = 0x80;
+/// Mask of the 6-bit `original_stuff_length` (ISO/IEC 13818-1 Table 2-21).
+const ORIGINAL_STUFF_LENGTH_MASK: u8 = 0x3F;
 /// The `'01'` prefix of `P-STD_buffer` and the mask selecting it.
 const P_STD_PREFIX: u8 = 0x40;
 const P_STD_PREFIX_MASK: u8 = 0xC0;
@@ -100,21 +183,42 @@ const ESCR_MARKER_MID: u8 = 0x04;
 const ESCR_MARKER_LAST: u8 = 0x01;
 
 impl Escr {
+    /// Construct from a validated 27 MHz clock value (spec-convention reserved
+    /// bits).
+    #[must_use]
+    pub fn from_clock27(clock: Clock27) -> Self {
+        Self {
+            base: clock.base.ticks(),
+            extension: clock.ext,
+            reserved: ESCR_RESERVED_VALUE,
+        }
+    }
+
+    /// Construct from an absolute 27 MHz clock value.
+    ///
+    /// # Errors
+    /// [`ClockOutOfRange`] when `ticks >= 2^33 * 300`.
+    pub fn from_27mhz(ticks: u64) -> core::result::Result<Self, ClockOutOfRange> {
+        Clock27::from_27mhz(ticks).map(Self::from_clock27)
+    }
+
     /// Full ESCR value on the 27 MHz clock: `base * 300 + extension`.
+    ///
+    /// For a parsed value whose extension is at or above 300 this is not a time
+    /// on the clock; check [`to_clock27`](Self::to_clock27) first.
     #[must_use]
     pub fn as_27mhz(self) -> u64 {
         broadcast_common::clock33::pcr_from_parts(self.base, self.extension)
     }
 
-    /// Construct from an absolute 27 MHz clock value.
-    #[must_use]
-    pub fn from_27mhz(ticks: u64) -> Self {
-        let (base, extension) = broadcast_common::clock33::pcr_split(ticks);
-        Self {
-            base,
-            extension,
-            reserved: ESCR_RESERVED_VALUE,
-        }
+    /// The checked 27 MHz clock value.
+    ///
+    /// # Errors
+    /// [`ClockOutOfRange`] when the extension is at or above 300 (off the
+    /// 27 MHz clock), or an over-wide `base` (only constructible by hand, never
+    /// by parsing).
+    pub fn to_clock27(self) -> core::result::Result<Clock27, ClockOutOfRange> {
+        Clock27::from_wire_parts(self.base, self.extension).to_clock27()
     }
 
     /// Decode from the 6-byte ESCR field.
@@ -153,13 +257,18 @@ impl Escr {
     ///
     /// Reserved bits are set to `1` per the spec convention.
     /// Exact inverse of [`from_field_bytes`](Self::from_field_bytes).
-    #[must_use]
-    pub fn to_field_bytes(self) -> [u8; 6] {
-        let b = self.base & ESCR_BASE_MASK;
-        let e = (self.extension & ESCR_EXT_MASK) as u64;
-        [
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if `base` is wider than 33 bits, `extension`
+    /// wider than 9 bits, or `reserved` wider than 2 bits — never silently
+    /// masks (#1129 class, #2747).
+    pub fn to_field_bytes(self) -> Result<[u8; 6]> {
+        let b = broadcast_common::len::fit_bits(self.base, 33, "ESCR_base")?;
+        let e = broadcast_common::len::fit_bits(u64::from(self.extension), 9, "ESCR_ext")?;
+        broadcast_common::len::fit_mask(self.reserved, ESCR_RESERVED_VALUE, "ESCR reserved")?;
+        Ok([
             // B0: reserved(2)='11' | base[32:30](3) | marker(1)='1' | base[29:28](2)
-            ((self.reserved & ESCR_RESERVED_VALUE) << ESCR_RESERVED_SHIFT)
+            (self.reserved << ESCR_RESERVED_SHIFT)
                 | (((b >> 30) & 0x07) as u8) << 3
                 | ESCR_MARKER_MID
                 | ((b >> 28) & 0x03) as u8,
@@ -173,7 +282,7 @@ impl Escr {
             (((b & 0x1F) as u8) << 3) | ESCR_MARKER_MID | ((e >> 7) & 0x03) as u8,
             // B5: ext[6:0](7) | marker(1)='1'
             (((e & 0x7F) as u8) << 1) | ESCR_MARKER_LAST,
-        ]
+        ])
     }
 }
 
@@ -261,36 +370,72 @@ impl TrickMode {
     }
 
     /// Encode as the 1-byte trick-mode field.
-    pub fn to_byte(self) -> u8 {
+    ///
+    /// # Errors
+    /// [`Error::FieldOverflow`] if a sub-field exceeds its wire width
+    /// (`field_id` 2 bits, `frequency_truncation` 2 bits, `rep_cntrl` 5 bits,
+    /// `reserved` 3 bits) — never silently masks (#2747).
+    pub fn to_byte(self) -> Result<u8> {
+        use broadcast_common::len::fit_bits;
+        use broadcast_common::len::fit_mask;
         match self {
             TrickMode::FastForward {
                 field_id,
                 intra_slice_refresh,
                 frequency_truncation,
             } => {
-                ((field_id & 0x03) << 3)
+                let field_id = fit_bits(u64::from(field_id), 2, "trick_mode.field_id")?;
+                let frequency_truncation = fit_bits(
+                    u64::from(frequency_truncation),
+                    2,
+                    "trick_mode.frequency_truncation",
+                )?;
+                Ok(((field_id as u8) << 3)
                     | ((intra_slice_refresh as u8) << 2)
-                    | (frequency_truncation & 0x03)
+                    | (frequency_truncation as u8))
             }
-            TrickMode::SlowMotion { rep_cntrl } => (0b001 << 5) | (rep_cntrl & 0x1F),
+            TrickMode::SlowMotion { rep_cntrl } => {
+                let rep_cntrl = fit_bits(u64::from(rep_cntrl), 5, "trick_mode.rep_cntrl")?;
+                Ok((0b001 << 5) | (rep_cntrl as u8))
+            }
             TrickMode::FreezeFrame { field_id, reserved } => {
-                (0b010 << 5) | ((field_id & 0x03) << 3) | (reserved & 0x07)
+                let field_id = fit_bits(u64::from(field_id), 2, "trick_mode.field_id")?;
+                let reserved =
+                    fit_mask(reserved, FREEZE_FRAME_RESERVED_VALUE, "trick_mode.reserved")?;
+                Ok((0b010 << 5) | ((field_id as u8) << 3) | reserved)
             }
             TrickMode::FastReverse {
                 field_id,
                 intra_slice_refresh,
                 frequency_truncation,
             } => {
-                (0b011 << 5)
-                    | ((field_id & 0x03) << 3)
+                let field_id = fit_bits(u64::from(field_id), 2, "trick_mode.field_id")?;
+                let frequency_truncation = fit_bits(
+                    u64::from(frequency_truncation),
+                    2,
+                    "trick_mode.frequency_truncation",
+                )?;
+                Ok((0b011 << 5)
+                    | ((field_id as u8) << 3)
                     | ((intra_slice_refresh as u8) << 2)
-                    | (frequency_truncation & 0x03)
+                    | (frequency_truncation as u8))
             }
-            TrickMode::SlowReverse { rep_cntrl } => (0b100 << 5) | (rep_cntrl & 0x1F),
+            TrickMode::SlowReverse { rep_cntrl } => {
+                let rep_cntrl = fit_bits(u64::from(rep_cntrl), 5, "trick_mode.rep_cntrl")?;
+                Ok((0b100 << 5) | (rep_cntrl as u8))
+            }
             TrickMode::Reserved {
                 trick_mode_control,
                 data,
-            } => ((trick_mode_control & 0x07) << 5) | (data & 0x1F),
+            } => {
+                let trick_mode_control = fit_bits(
+                    u64::from(trick_mode_control),
+                    3,
+                    "trick_mode.trick_mode_control",
+                )?;
+                let data = fit_bits(u64::from(data), 5, "trick_mode.data")?;
+                Ok(((trick_mode_control as u8) << 5) | (data as u8))
+            }
         }
     }
 }
@@ -612,11 +757,20 @@ impl<'a> PesExtension<'a> {
         }
         if let Some(ppsc) = self.program_packet_sequence_counter {
             // byte 0: marker(1) | counter(7)
-            buf[cursor] = PPSC_MARKER | (ppsc.counter & 0x7F);
+            let counter = broadcast_common::len::fit_mask(
+                ppsc.counter,
+                LOW7_MASK,
+                "program_packet_sequence_counter.counter",
+            )?;
+            let original_stuff_length = broadcast_common::len::fit_mask(
+                ppsc.original_stuff_length,
+                ORIGINAL_STUFF_LENGTH_MASK,
+                "program_packet_sequence_counter.original_stuff_length",
+            )?;
+            buf[cursor] = PPSC_MARKER | counter;
             // byte 1: marker(1) | mpeg1_mpeg2_id(1) | original_stuff_length(6)
-            buf[cursor + 1] = PPSC_MARKER
-                | ((ppsc.mpeg1_mpeg2_identifier as u8) << 6)
-                | (ppsc.original_stuff_length & 0x3F);
+            buf[cursor + 1] =
+                PPSC_MARKER | ((ppsc.mpeg1_mpeg2_identifier as u8) << 6) | original_stuff_length;
             cursor += 2;
         }
         if let Some(ps) = self.p_std_buffer {
@@ -662,7 +816,7 @@ impl<'a> PesExtension<'a> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PesHeader<'a> {
     /// PES_scrambling_control (2 bits).
-    pub scrambling_control: u8,
+    pub scrambling_control: ScramblingControl,
     /// PES_priority.
     pub pes_priority: bool,
     /// data_alignment_indicator.
@@ -678,7 +832,7 @@ pub struct PesHeader<'a> {
     /// Elementary stream clock reference (6 bytes), if `ESCR_flag` is set.
     pub escr: Option<Escr>,
     /// 22-bit ES rate (bytes/second × 50), if `ES_rate_flag` is set.
-    pub es_rate: Option<u32>,
+    pub es_rate: Option<EsRate>,
     /// The two `marker_bit`s around `ES_rate` (Table 2-21), packed as
     /// `0b<leading><trailing>`; the spec fixes both to `1` (`0b11`) but a real
     /// stream (TSDuck `test-002.ts`) carries a `0` leading marker, so they are
@@ -713,7 +867,7 @@ impl<'a> PesHeader<'a> {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            scrambling_control: 0,
+            scrambling_control: ScramblingControl::NotScrambled,
             pes_priority: false,
             data_alignment_indicator: false,
             copyright: false,
@@ -747,7 +901,7 @@ impl PesHeader<'_> {
     pub fn flag_bytes(&self) -> [u8; 2] {
         // f1: marker '10' | scrambling(2) | priority(1) | align(1) | copyright(1) | orig(1)
         let f1 = 0x80
-            | ((self.scrambling_control & 0x03) << 4)
+            | (self.scrambling_control.to_bits() << 4)
             | (u8::from(self.pes_priority) << 3)
             | (u8::from(self.data_alignment_indicator) << 2)
             | (u8::from(self.copyright) << 1)
@@ -789,21 +943,29 @@ impl PesHeader<'_> {
             } else {
                 0b0010u8
             };
-            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(pts.0, prefix));
+            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(pts.ticks(), prefix));
             cursor += 5;
         }
         if let Some(dts) = self.dts {
-            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(dts.0, 0b0001));
+            buf[cursor..cursor + 5].copy_from_slice(&timestamp::write(dts.ticks(), 0b0001));
             cursor += 5;
         }
         // ESCR.
         if let Some(escr) = self.escr {
-            buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes());
+            buf[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes()?);
             cursor += 6;
         }
         // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
         if let Some(rate) = self.es_rate {
-            let leading = if self.es_rate_marker_bits & 0b10 != 0 {
+            // The two marker bits are 2 low bits of `es_rate_marker_bits`; reject
+            // a value wider than that rather than silently dropping its high bits.
+            let marker_bits = broadcast_common::len::fit_mask(
+                self.es_rate_marker_bits,
+                ES_RATE_MARKERS_VALUE,
+                "ES_rate marker bits",
+            )?;
+            let rate = rate.rate();
+            let leading = if marker_bits & 0b10 != 0 {
                 ES_RATE_LEADING_MARKER
             } else {
                 0
@@ -811,22 +973,24 @@ impl PesHeader<'_> {
             buf[cursor] = leading | ((rate >> 15) as u8 & 0x7F);
             buf[cursor + 1] = ((rate >> 7) & 0xFF) as u8;
             buf[cursor + 2] =
-                (((rate & 0x7F) as u8) << 1) | (self.es_rate_marker_bits & ES_RATE_TRAILING_MARKER);
+                (((rate & 0x7F) as u8) << 1) | (marker_bits & ES_RATE_TRAILING_MARKER);
             cursor += 3;
         }
         // DSM trick mode.
         if let Some(tm) = self.dsm_trick_mode {
-            buf[cursor] = tm.to_byte();
+            buf[cursor] = tm.to_byte()?;
             cursor += 1;
         }
         // additional_copy_info: marker(1) | info(7).
         if let Some(aci) = self.additional_copy_info {
+            let info =
+                broadcast_common::len::fit_mask(aci.info, LOW7_MASK, "additional_copy_info")?;
             let marker = if aci.marker {
                 ADDITIONAL_COPY_INFO_MARKER
             } else {
                 0
             };
-            buf[cursor] = marker | (aci.info & 0x7F);
+            buf[cursor] = marker | info;
             cursor += 1;
         }
         // PES_CRC (2 bytes, big-endian).
@@ -882,13 +1046,15 @@ impl PesHeader<'_> {
 }
 
 /// A parsed PES packet.
+///
+/// `#[non_exhaustive]`: build with [`PesPacket::new`] and set fields, so
+/// further additions are not a breaking change.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PesPacket<'a> {
     /// stream_id (Table 2-22).
     pub stream_id: StreamId,
-    /// PES_packet_length as carried; `0` means unbounded (video).
-    pub pes_packet_length: u16,
     /// Optional PES header (absent for the special `stream_id`s).
     pub header: Option<PesHeader<'a>>,
     /// The elementary-stream bytes (`PES_packet_data_byte`s).
@@ -896,9 +1062,63 @@ pub struct PesPacket<'a> {
     pub payload: &'a [u8],
 }
 
+/// A PES unit that ended before its declared `PES_packet_length`
+/// (ISO/IEC 13818-1 Table 2-21), as reported by
+/// [`PesPacket::parse_unit`](PesPacket::parse_unit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct Truncation {
+    /// The `PES_packet_length` the unit declared (bytes after that field).
+    pub declared: usize,
+    /// The bytes that actually followed the length field, fewer than
+    /// `declared`.
+    pub available: usize,
+}
+
 impl<'a> PesPacket<'a> {
+    /// A packet with no optional header and an empty payload.
+    ///
+    /// `PES_packet_length` is not a field: [`serialize_into`](Self::serialize_into)
+    /// derives it from the header and payload.
+    #[must_use]
+    pub const fn new(stream_id: StreamId, payload: &'a [u8]) -> Self {
+        Self {
+            stream_id,
+            header: None,
+            payload,
+        }
+    }
+
     /// Parse a PES packet from the bytes starting at its `packet_start_code_prefix`.
+    ///
+    /// `PES_packet_length` bounds everything after it (ISO/IEC 13818-1
+    /// Table 2-21): a buffer shorter than the declared length is a truncated
+    /// packet, reported as `BufferTooShort` instead of a silent short read.
+    /// Use [`parse_unit`](Self::parse_unit) for a unit that may arrive before
+    /// its next start indicator, where the trailing bytes are simply absent.
     pub fn parse(b: &'a [u8]) -> Result<Self> {
+        Self::parse_select(b, false).map(|(packet, _)| packet)
+    }
+
+    /// Parse a PES unit from the bytes starting at its
+    /// `packet_start_code_prefix`, accepting one that ends before its declared
+    /// `PES_packet_length`.
+    ///
+    /// A transport stream hands a PES packet its bytes up to the next
+    /// `payload_unit_start_indicator`; a broadcast encoder may declare a
+    /// `PES_packet_length` longer than the bytes that arrived. [`parse`](Self::parse)
+    /// reports that as `BufferTooShort`; this entry returns the packet's bytes
+    /// as received together with a [`Truncation`] naming what was declared and
+    /// what arrived (or `None` when the unit is complete). The payload is
+    /// exactly the bytes present, never padded.
+    pub fn parse_unit(b: &'a [u8]) -> Result<(Self, Option<Truncation>)> {
+        Self::parse_select(b, true)
+    }
+
+    /// Shared parse body. `lenient` accepts a buffer shorter than the declared
+    /// `PES_packet_length` and reports the shortfall as [`Truncation`]; the
+    /// strict path returns [`Error::BufferTooShort`] instead.
+    fn parse_select(b: &'a [u8], lenient: bool) -> Result<(Self, Option<Truncation>)> {
         need_in(b, MIN_LEN, "PES packet header")?;
         if b[0..3] != PACKET_START_CODE_PREFIX {
             return Err(Error::InvalidSync(broadcast_common::error::InvalidSync {
@@ -909,20 +1129,41 @@ impl<'a> PesPacket<'a> {
         }
         let stream_id = StreamId(b[3]);
         let pes_packet_length = u16::from_be_bytes([b[4], b[5]]);
-        // Where the payload ends: bounded by PES_packet_length unless 0 (unbounded).
+        // Where the payload ends: bounded by PES_packet_length unless 0
+        // (unbounded: the packet runs to the end of the buffer).
         let payload_end = if pes_packet_length == 0 {
             b.len()
         } else {
-            (MIN_LEN + pes_packet_length as usize).min(b.len())
+            let end = MIN_LEN + usize::from(pes_packet_length);
+            if end > b.len() {
+                if lenient {
+                    b.len()
+                } else {
+                    need_in(b, end, "PES_packet_length")?;
+                    end
+                }
+            } else {
+                end
+            }
         };
+        // Only a bounded packet that ran out of bytes is a truncation; the
+        // unbounded `0` form is a whole packet by definition.
+        let truncation = (pes_packet_length != 0
+            && payload_end < MIN_LEN + usize::from(pes_packet_length))
+        .then(|| Truncation {
+            declared: usize::from(pes_packet_length),
+            available: payload_end.saturating_sub(MIN_LEN),
+        });
 
         if !stream_id.has_optional_header() {
-            return Ok(PesPacket {
-                stream_id,
-                pes_packet_length,
-                header: None,
-                payload: &b[MIN_LEN..payload_end],
-            });
+            return Ok((
+                PesPacket {
+                    stream_id,
+                    header: None,
+                    payload: &b[MIN_LEN..payload_end],
+                },
+                truncation,
+            ));
         }
 
         need_in(b, MIN_LEN + HEADER_FIXED, "PES optional header")?;
@@ -959,15 +1200,27 @@ impl<'a> PesPacket<'a> {
         let (pts, dts) = match pts_dts_flags {
             0b10 => {
                 need_in(opt, cursor + 5, "PTS")?;
-                let pts = Pts(timestamp::read(&opt[cursor..], 0b0010, "PTS")?);
+                let pts = Pts::from_field_bytes(
+                    opt[cursor..cursor + 5]
+                        .try_into()
+                        .expect("length checked above"),
+                )?;
                 cursor += 5;
                 (Some(pts), None)
             }
             0b11 => {
                 need_in(opt, cursor + 10, "PTS+DTS")?;
-                let pts = Pts(timestamp::read(&opt[cursor..], 0b0011, "PTS")?);
+                let pts = Pts::from_field_bytes_with_dts(
+                    opt[cursor..cursor + 5]
+                        .try_into()
+                        .expect("length checked above"),
+                )?;
                 cursor += 5;
-                let dts = Dts(timestamp::read(&opt[cursor..], 0b0001, "DTS")?);
+                let dts = Dts::from_field_bytes(
+                    opt[cursor..cursor + 5]
+                        .try_into()
+                        .expect("length checked above"),
+                )?;
                 cursor += 5;
                 (Some(pts), Some(dts))
             }
@@ -1000,7 +1253,9 @@ impl<'a> PesPacket<'a> {
                 | ((opt[cursor + 1] as u32) << 7)
                 | ((opt[cursor + 2] >> 1) as u32);
             cursor += 3;
-            Some(rate)
+            // The 22-bit field is always in range; the check is a reminder that
+            // `EsRate` is bounded and reports a (here-unreachable) overflow.
+            Some(EsRate::try_new(rate)?)
         } else {
             None
         };
@@ -1053,7 +1308,7 @@ impl<'a> PesPacket<'a> {
         let header_stuffing = opt.get(cursor..).unwrap_or(&[]);
 
         let header = PesHeader {
-            scrambling_control: (f1 >> 4) & 0x03,
+            scrambling_control: ScramblingControl::from_bits(f1 >> 4),
             pes_priority: f1 & F1_PRIORITY != 0,
             data_alignment_indicator: f1 & F1_DATA_ALIGNMENT != 0,
             copyright: f1 & F1_COPYRIGHT != 0,
@@ -1070,12 +1325,14 @@ impl<'a> PesPacket<'a> {
             header_stuffing,
         };
 
-        Ok(PesPacket {
-            stream_id,
-            pes_packet_length,
-            header: Some(header),
-            payload: &b[hdr_end.min(payload_end)..payload_end],
-        })
+        Ok((
+            PesPacket {
+                stream_id,
+                header: Some(header),
+                payload: &b[hdr_end..payload_end],
+            },
+            truncation,
+        ))
     }
 
     /// Serialized length in bytes.
@@ -1094,7 +1351,23 @@ impl<'a> PesPacket<'a> {
         need_out(buf, len)?;
         buf[0..3].copy_from_slice(&PACKET_START_CODE_PREFIX);
         buf[3] = self.stream_id.0;
-        buf[4..6].copy_from_slice(&self.pes_packet_length.to_be_bytes());
+        // PES_packet_length (ISO/IEC 13818-1 Table 2-21): every byte after the
+        // field. `0` is the unbounded form — legal only where the MPEG-2
+        // systems layer allows it (video in a transport stream), so a packet
+        // with a payload that fills the field range must fail, never wrap.
+        let body_len = len - MIN_LEN;
+        let packet_length = match u16::try_from(body_len) {
+            Ok(n) if n != 0 => n,
+            _ if self.stream_id.unbounded_length_allowed() => 0,
+            _ => {
+                return Err(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                    field: "PES_packet_length",
+                    value: body_len as u64,
+                    max: u64::from(u16::MAX),
+                }));
+            }
+        };
+        buf[4..6].copy_from_slice(&packet_length.to_be_bytes());
         let payload_at = match &self.header {
             None => MIN_LEN,
             Some(h) => {
@@ -1195,7 +1468,7 @@ mod tests {
         let pkt = PesPacket::parse(&b).unwrap();
         assert_eq!(pkt.stream_id, StreamId(0xE0));
         let h = pkt.header.as_ref().unwrap();
-        assert_eq!(h.pts, Some(Pts(0)));
+        assert_eq!(h.pts, Some(Pts::try_new(0).unwrap()));
         assert!(h.dts.is_none());
         assert_eq!(pkt.payload, &[0xAA, 0xBB]);
         round_trip(&b);
@@ -1204,8 +1477,9 @@ mod tests {
     #[test]
     fn pts_and_dts() {
         // PTS_DTS_flags=11, hdl=10. PTS prefix 0011, DTS prefix 0001.
+        // PES_packet_length covers 13 bytes (3 header + 10 optional region).
         let b = [
-            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0F, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0E, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
             0x11, 0x00, 0x05, 0x00, 0x01, 0xCC,
         ];
         let pkt = PesPacket::parse(&b).unwrap();
@@ -1223,7 +1497,7 @@ mod tests {
     #[test]
     fn forbidden_pts_dts_flags_01_is_rejected() {
         let mut b = [
-            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0F, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
+            0x00, 0x00, 0x01, 0xE0, 0x00, 0x0E, 0x80, 0xC0, 0x0A, 0x31, 0x00, 0x03, 0x00, 0x01,
             0x11, 0x20, 0x05, 0x20, 0x01, 0xCC,
         ];
         b[7] = 0x40; // pts_dts_flags = 01 (top two bits of f2)
@@ -1241,13 +1515,13 @@ mod tests {
     #[test]
     fn serialize_rejects_dts_without_pts() {
         let header = PesHeader {
-            scrambling_control: 0,
+            scrambling_control: ScramblingControl::NotScrambled,
             pes_priority: false,
             data_alignment_indicator: false,
             copyright: false,
             original_or_copy: false,
             pts: None,
-            dts: Some(Dts(0)),
+            dts: Some(Dts::try_new(0).unwrap()),
             escr: None,
             es_rate: None,
             es_rate_marker_bits: 0b11,
@@ -1257,12 +1531,8 @@ mod tests {
             pes_extension: None,
             header_stuffing: &[],
         };
-        let pkt = PesPacket {
-            stream_id: StreamId(0xE0),
-            pes_packet_length: 0,
-            header: Some(header),
-            payload: &[0xAA],
-        };
+        let mut pkt = PesPacket::new(StreamId(0xE0), &[0xAA]);
+        pkt.header = Some(header);
         let mut buf = vec![0u8; pkt.serialized_len()];
         assert!(matches!(
             pkt.serialize_into(&mut buf),
@@ -1311,9 +1581,15 @@ mod tests {
             0x01, 0x02, 0x03,
         ];
         let pkt = PesPacket::parse(&b).unwrap();
-        assert_eq!(pkt.pes_packet_length, 0);
+        assert_eq!(&b[4..6], &[0x00, 0x00], "unbounded length on the wire");
         assert_eq!(pkt.payload, &[0x01, 0x02, 0x03]);
-        round_trip(&b);
+        // A video packet whose content fits is written with its real length;
+        // the unbounded form is used only past the length ceiling.
+        let mut out = vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut out).unwrap();
+        assert_eq!(u16::from_be_bytes([out[4], out[5]]), 11);
+        assert_eq!(&out[6..], &b[6..]);
+        assert_eq!(PesPacket::parse(&out).unwrap().payload, pkt.payload);
     }
 
     #[test]
@@ -1338,12 +1614,8 @@ mod tests {
             }),
             ..empty_header()
         };
-        let pkt = PesPacket {
-            stream_id: StreamId(0xE0),
-            pes_packet_length: 0,
-            header: Some(h),
-            payload: &[],
-        };
+        let mut pkt = PesPacket::new(StreamId(0xE0), &[]);
+        pkt.header = Some(h);
         let mut out = vec![0u8; pkt.serialized_len()];
         let err = pkt.serialize_into(&mut out).unwrap_err();
         assert!(matches!(err, Error::OptionalFieldsTooLarge(n) if n > 255));
@@ -1351,13 +1623,9 @@ mod tests {
 
     // ── Typed optional fields round-trips ──────────────────────────────────
 
-    fn build_pes(h: PesHeader<'_>, payload: &[u8]) -> alloc::vec::Vec<u8> {
-        let pkt = PesPacket {
-            stream_id: StreamId(0xE0),
-            pes_packet_length: 0, // unbounded
-            header: Some(h),
-            payload,
-        };
+    fn build_pes<'a>(h: PesHeader<'a>, payload: &'a [u8]) -> alloc::vec::Vec<u8> {
+        let mut pkt = PesPacket::new(StreamId(0xE0), payload);
+        pkt.header = Some(h);
         let mut out = vec![0u8; pkt.serialized_len()];
         pkt.serialize_into(&mut out).unwrap();
         out
@@ -1365,7 +1633,7 @@ mod tests {
 
     fn empty_header<'a>() -> PesHeader<'a> {
         PesHeader {
-            scrambling_control: 0,
+            scrambling_control: ScramblingControl::NotScrambled,
             pes_priority: false,
             data_alignment_indicator: false,
             copyright: false,
@@ -1386,11 +1654,9 @@ mod tests {
     /// Construct PES with ESCR set, serialize, parse, assert field preserved.
     #[test]
     fn pes_header_escr_round_trip() {
-        let escr = Escr {
-            base: 90_000,
-            extension: 150,
-            reserved: 0b11,
-        };
+        let escr = Escr::from_clock27(
+            broadcast_common::clock33::Clock27::from_parts(90_000, 150).unwrap(),
+        );
         let h = PesHeader {
             escr: Some(escr),
             ..empty_header()
@@ -1404,7 +1670,7 @@ mod tests {
     #[test]
     fn escr_27mhz_round_trip() {
         for ticks in [0u64, 1, 300, 27_000_000, 8_589_934_591] {
-            let e = Escr::from_27mhz(ticks);
+            let e = Escr::from_27mhz(ticks).unwrap();
             assert_eq!(e.as_27mhz(), ticks, "ticks={ticks}");
         }
     }
@@ -1423,7 +1689,7 @@ mod tests {
                 extension: ext,
                 reserved: 0b11,
             };
-            let bytes = e.to_field_bytes();
+            let bytes = e.to_field_bytes().unwrap();
             let decoded = Escr::from_field_bytes(&bytes).unwrap();
             assert_eq!(decoded, e, "base={base} ext={ext}");
         }
@@ -1432,14 +1698,15 @@ mod tests {
     /// ES_rate round-trip.
     #[test]
     fn pes_header_es_rate_round_trip() {
+        let rate = EsRate::try_new(0x3FFFFF).unwrap();
         let h = PesHeader {
-            es_rate: Some(0x3FFFFF),
+            es_rate: Some(rate),
             es_rate_marker_bits: 0b11,
             ..empty_header()
         };
         let bytes = build_pes(h, &[]);
         let pkt = PesPacket::parse(&bytes).unwrap();
-        assert_eq!(pkt.header.unwrap().es_rate, Some(0x3FFFFF));
+        assert_eq!(pkt.header.unwrap().es_rate, Some(rate));
     }
 
     /// TrickMode round-trip (all variants).
@@ -1468,7 +1735,7 @@ mod tests {
             },
         ];
         for tm in cases {
-            let b = tm.to_byte();
+            let b = tm.to_byte().unwrap();
             let decoded = TrickMode::from_byte(b);
             assert_eq!(decoded, tm, "tm={tm:?}");
         }
@@ -1720,19 +1987,17 @@ mod tests {
             ..PesExtension::new()
         };
         let h = PesHeader {
-            scrambling_control: 0,
+            scrambling_control: ScramblingControl::NotScrambled,
             pes_priority: true,
             data_alignment_indicator: false,
             copyright: false,
             original_or_copy: true,
-            pts: Some(Pts(90_000)),
-            dts: Some(Dts(85_000)),
-            escr: Some(Escr {
-                base: 1000,
-                extension: 0,
-                reserved: 0b11,
-            }),
-            es_rate: Some(50_000),
+            pts: Some(Pts::try_new(90_000).unwrap()),
+            dts: Some(Dts::try_new(85_000).unwrap()),
+            escr: Some(Escr::from_clock27(
+                broadcast_common::clock33::Clock27::from_parts(1000, 0).unwrap(),
+            )),
+            es_rate: Some(EsRate::try_new(50_000).unwrap()),
             es_rate_marker_bits: 0b11,
             dsm_trick_mode: Some(TrickMode::SlowMotion { rep_cntrl: 3 }),
             additional_copy_info: Some(AdditionalCopyInfo::new(5)),
@@ -1743,10 +2008,10 @@ mod tests {
         let bytes = build_pes(h, &[0xFF]);
         let pkt = PesPacket::parse(&bytes).unwrap();
         let dh = pkt.header.unwrap();
-        assert_eq!(dh.pts, Some(Pts(90_000)));
-        assert_eq!(dh.dts, Some(Dts(85_000)));
+        assert_eq!(dh.pts, Some(Pts::try_new(90_000).unwrap()));
+        assert_eq!(dh.dts, Some(Dts::try_new(85_000).unwrap()));
         assert!(dh.escr.is_some());
-        assert_eq!(dh.es_rate, Some(50_000));
+        assert_eq!(dh.es_rate, Some(EsRate::try_new(50_000).unwrap()));
         assert_eq!(
             dh.dsm_trick_mode,
             Some(TrickMode::SlowMotion { rep_cntrl: 3 })

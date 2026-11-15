@@ -120,8 +120,8 @@ impl<'a> Parse<'a> for Replace {
             replacement_ref,
             replaced_pid,
             replacement_pid,
-            replaced_reserved: ReservedOnes::from_bits(body[1] >> 5),
-            replacement_reserved: ReservedOnes::from_bits(body[3] >> 5),
+            replaced_reserved: ReservedOnes::from_bits(u64::from(body[1] >> 5)),
+            replacement_reserved: ReservedOnes::from_bits(u64::from(body[3] >> 5)),
         })
     }
 }
@@ -135,12 +135,14 @@ impl Serialize for Replace {
         let mut pos = super::write_apdu_header(tag::REPLACE, REPLACE_BODY, self.length_form, buf)?;
         buf[pos] = self.replacement_ref;
         // reserved(3), replaced_PID(13).
-        buf[pos + 1] =
-            (self.replaced_reserved.get() << 5) | ((self.replaced_pid.value() >> 8) as u8 & 0x1F);
+        buf[pos + 1] = ((self.replaced_reserved.get() << 5)
+            | u64::from((self.replaced_pid.value() >> 8) as u8 & 0x1F))
+            as u8;
         buf[pos + 2] = self.replaced_pid.value() as u8;
         // reserved(3), replacement_PID(13).
-        buf[pos + 3] = (self.replacement_reserved.get() << 5)
-            | ((self.replacement_pid.value() >> 8) as u8 & 0x1F);
+        buf[pos + 3] = ((self.replacement_reserved.get() << 5)
+            | u64::from((self.replacement_pid.value() >> 8) as u8 & 0x1F))
+            as u8;
         buf[pos + 4] = self.replacement_pid.value() as u8;
         pos += REPLACE_BODY;
         Ok(pos)

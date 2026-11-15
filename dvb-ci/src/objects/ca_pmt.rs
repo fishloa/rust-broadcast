@@ -236,8 +236,8 @@ impl<'a> Parse<'a> for CaPmt<'a> {
             cmd_id,
             program_ca_descriptors,
             streams,
-            reserved_version: ReservedOnes::from_bits(body[3] >> 6),
-            reserved_program_info: ReservedOnes::from_bits(body[4] >> 4),
+            reserved_version: ReservedOnes::from_bits(u64::from(body[3] >> 6)),
+            reserved_program_info: ReservedOnes::from_bits(u64::from(body[4] >> 4)),
         })
     }
 }
@@ -291,8 +291,8 @@ pub(crate) fn parse_streams<'a>(
     while pos < body.len() {
         need_in(body, pos + ES_PREFIX, prefix_what)?;
         let stream_type = body[pos];
-        let reserved_pid = ReservedOnes::from_bits(body[pos + 1] >> 5);
-        let reserved_es_info = ReservedOnes::from_bits(body[pos + 3] >> 4);
+        let reserved_pid = ReservedOnes::from_bits(u64::from(body[pos + 1] >> 5));
+        let reserved_es_info = ReservedOnes::from_bits(u64::from(body[pos + 3] >> 4));
         let elementary_pid =
             Pid::from_wire_masked((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
         let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
@@ -343,9 +343,9 @@ pub(crate) fn write_streams(
     for s in streams {
         let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
         buf[pos] = s.stream_type;
-        buf[pos + 1] = (s.reserved_pid.get() << 5) | (s.elementary_pid.value() >> 8) as u8;
+        buf[pos + 1] = ((s.reserved_pid.get() << 5) as u8) | (s.elementary_pid.value() >> 8) as u8;
         buf[pos + 2] = s.elementary_pid.value() as u8;
-        buf[pos + 3] = (s.reserved_es_info.get() << 4) | (es_info_length >> 8) as u8;
+        buf[pos + 3] = ((s.reserved_es_info.get() << 4) as u8) | (es_info_length >> 8) as u8;
         buf[pos + 4] = es_info_length as u8;
         pos += ES_PREFIX;
         pos += write_info_block(s.cmd_id, s.ca_descriptors, &mut buf[pos..])?;
@@ -375,11 +375,12 @@ impl Serialize for CaPmt<'_> {
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). version_number was
         // range-checked above, so no mask is needed to fit the field.
-        buf[pos + 3] = (self.reserved_version.get() << 6)
+        buf[pos + 3] = ((self.reserved_version.get() << 6) as u8)
             | (self.version_number << 1)
             | u8::from(self.current_next_indicator);
         // reserved(4)='1111', program_info_length(12). Range-checked above.
-        buf[pos + 4] = (self.reserved_program_info.get() << 4) | (program_info_length >> 8) as u8;
+        buf[pos + 4] =
+            ((self.reserved_program_info.get() << 4) as u8) | (program_info_length >> 8) as u8;
         buf[pos + 5] = program_info_length as u8;
         pos += CA_PMT_PREFIX;
         pos += write_info_block(self.cmd_id, self.program_ca_descriptors, &mut buf[pos..])?;

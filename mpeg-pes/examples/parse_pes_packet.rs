@@ -19,7 +19,10 @@ fn main() {
 
     println!("stream_id      : {:#04X}", pkt.stream_id.0);
     println!("is_video       : {}", pkt.stream_id == StreamId(0xE0));
-    println!("packet_length  : {}", pkt.pes_packet_length);
+    println!(
+        "packet_length  : {}",
+        u16::from_be_bytes([bytes[4], bytes[5]])
+    );
 
     let header = pkt
         .header

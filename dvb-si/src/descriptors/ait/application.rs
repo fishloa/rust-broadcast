@@ -9,6 +9,7 @@ use crate::descriptors::descriptor_body;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::len::need_out;
+use broadcast_common::reserved::ReservedOnes;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for application_descriptor (AIT namespace).
@@ -18,11 +19,12 @@ const PROFILE_ENTRY_LEN: usize = 5;
 const FLAGS_LEN: usize = 1;
 const PRIORITY_LEN: usize = 1;
 /// Width mask of the 5-bit `reserved_future_use` in the flags byte.
-const RESERVED_FU_MASK: u8 = 0x1F;
+const RESERVED_FU_BITS: u32 = 5;
 
 /// Spec default of `reserved_future_use(5)` in the flags byte: all ones
 /// (TS 102 809 V1.1.1-V1.3.1 Table 20, clause 5.3.3.2; audit §6.3 class A).
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x1F;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_FU_BITS> =
+    ReservedOnes::<RESERVED_FU_BITS>::FILL;
 
 /// 2-bit visibility field — ETSI TS 102 809 §5.2.6.1 Table 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -109,7 +111,7 @@ pub struct ApplicationDescriptor {
     /// Captured on parse and re-emitted verbatim;
     /// [`ApplicationDescriptor::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0x1F`).
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_FU_BITS>,
     /// Application priority.
     pub application_priority: u8,
     /// Transport protocol labels (one per transport protocol descriptor).
@@ -190,7 +192,7 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
         let flags_byte = body[profiles_end];
         let service_bound_flag = (flags_byte & 0x80) != 0;
         let visibility = Visibility::from_u8((flags_byte >> 5) & 0x03);
-        let reserved_future_use = flags_byte & RESERVED_FU_MASK;
+        let reserved_future_use = ReservedOnes::from_bits(u64::from(flags_byte));
         let application_priority = body[profiles_end + FLAGS_LEN];
         let labels_start = profiles_end + FLAGS_LEN + PRIORITY_LEN;
         let transport_protocol_labels = body[labels_start..].to_vec();
@@ -245,11 +247,7 @@ impl Serialize for ApplicationDescriptor {
         }
         let flags_byte = (u8::from(self.service_bound_flag) << 7)
             | (broadcast_common::len::fit_mask(self.visibility.to_u8(), 0x03, "visibility")? << 5)
-            | broadcast_common::len::fit_mask(
-                self.reserved_future_use,
-                RESERVED_FU_MASK,
-                "reserved_future_use",
-            )?;
+            | self.reserved_future_use.get() as u8;
         buf[pos] = flags_byte;
         buf[pos + 1] = self.application_priority;
         pos += FLAGS_LEN + PRIORITY_LEN;
@@ -367,7 +365,10 @@ mod tests {
         for r in 0u8..=0x1F {
             let bytes = [TAG, 9, 5, 0x00, 0x10, 1, 0, 0, 0x60 | r, 0x07, 0x42];
             let d = ApplicationDescriptor::parse(&bytes).unwrap();
-            assert_eq!(d.reserved_future_use, r);
+            assert_eq!(
+                d.reserved_future_use,
+                ReservedOnes::<RESERVED_FU_BITS>::from_bits(u64::from(r))
+            );
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, bytes, "r {r:#x}");

@@ -91,13 +91,17 @@ fn pes_pts_dts_and_stuffing_byte_identical() {
         }
 
         // Byte-identical over the entire PES header block (incl. stuffing).
+        // `PES_packet_length` is derived from the content (#2746), so the
+        // field is compared by value rather than taken from the capture.
         let block = header_block_len(payload);
         let mut out = vec![0u8; pes.serialized_len()];
         let n = pes.serialize_into(&mut out).expect("serialize");
         assert!(n >= block);
+        let mut want = payload[..block].to_vec();
+        want[4..6].copy_from_slice(&out[4..6]);
         assert_eq!(
             &out[..block],
-            &payload[..block],
+            &want[..],
             "pkt {i}: PES header block NOT byte-identical\n  orig: {}\n  out:  {}",
             payload[..block]
                 .iter()

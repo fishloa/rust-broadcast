@@ -56,18 +56,19 @@ assert_eq!(h.scr.ticks(), 0);
 
 // Walk a real capture (committed fixture; path is relative to the crate root).
 let data = std::fs::read("../fixtures/ps/ffmpeg-mpeg2-ps.mpg").unwrap();
-let (packs, _trailing) = program_stream::parse_all_packs(&data)?;
-assert!(!packs.is_empty());
-for pack in &packs {
+let scan = program_stream::scan_packs(&data);
+assert!(!scan.packs.is_empty());
+assert!(scan.skipped.is_empty());
+for pack in &scan.packs {
     let _ = (pack.pack_header.scr.ticks(), pack.pes_packets.len());
 }
 # Ok::<(), mpeg_ps::Error>(())
 ```
 
-For damaged streams, `program_stream::scan_packs` returns a `PackScan`: every
-pack that parsed (`packs`), every span it had to skip together with the error
-(`skipped`, resynchronising on the next `pack_start_code`), and the `remaining`
-tail, instead of abandoning the stream at the first bad pack.
+`program_stream::scan_packs` is the one walker. It returns a `PackScan`:
+every pack that parsed (`packs`), every span it had to skip together with the
+error (`skipped`, resynchronising on the next `pack_start_code`), and the
+`remaining` tail; a damaged pack never discards the packs parsed before it.
 
 Examples: `cargo run -p mpeg-ps --example parse_pack_header` and
 `--example walk_ps`.
@@ -79,7 +80,7 @@ Examples: `cargo run -p mpeg-ps --example parse_pack_header` and
 | Pack header | `PackHeader<'a>` (`Parse`/`Serialize`; `header_len`), `Scr` (42-bit @ 27 MHz; `ticks`, `seconds`), `PACK_START_CODE` |
 | System header | `SystemHeader` (`rate_bound`, `audio_bound`, `video_bound`, lock/CSPS/fixed flags, `reserved_bits`; `Parse`/`Serialize`), `StdBufferBound`, `SYSTEM_HEADER_START_CODE` |
 | Program stream map | `ProgramStreamMap<'a>` (`version`, `current_next_indicator`, `program_stream_info`, `elementary_stream_map: Vec<EsMapEntry>`, `crc`), `EsMapEntry<'a>`, `MAP_STREAM_ID` |
-| Stream walking | `program_stream::{Pack, parse_pack, parse_all_packs, scan_packs, PackScan, SkippedRegion}`; `Pack` holds the pack header, optional system header, optional PSM and `pes_packets: Vec<mpeg_pes::PesPacket>` |
+| Stream walking | `program_stream::{Pack, parse_pack, scan_packs, PackScan, SkippedRegion}` (one walker: `scan_packs` keeps every pack that parsed and reports each span it had to skip); `Pack` holds the pack header, optional system header, optional PSM and `pes_packets: Vec<mpeg_pes::PesPacket>` |
 | Constants / errors | `PROGRAM_END_CODE`, `PACKET_START_CODE_PREFIX` (re-exported from `mpeg-pes`), `Error`, `Result` |
 
 ## Design notes
@@ -92,8 +93,8 @@ Examples: `cargo run -p mpeg-ps --example parse_pack_header` and
   `audio_bound`, `video_bound`, P-STD buffer size, `stream_id_extension`) is
   written with a checked `fit_bits` and returns `FieldOverflow` rather than
   masking.
-- **Resynchronising scan.** `scan_packs` is the tolerant counterpart of the
-  strict `parse_all_packs`.
+- **Resynchronising scan.** `scan_packs` walks the whole stream and reports a
+  skipped region instead of failing, so one damaged pack costs one span.
 - `no_std` + `alloc`, `#![warn(missing_docs)]`.
 
 ## Related crates

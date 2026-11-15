@@ -285,13 +285,12 @@ fn push_display_boxes(
     if let Some(vs) = display.video_signal
         && let Some(colour) = vs.colour
     {
-        let nclx = NclxColourInfo {
-            colour_primaries: u16::from(colour.primaries.code()),
-            transfer_characteristics: u16::from(colour.transfer.code()),
-            matrix_coefficients: u16::from(colour.matrix.code()),
-            full_range_flag: vs.full_range,
-            reserved: 0,
-        };
+        let nclx = NclxColourInfo::new(
+            u16::from(colour.primaries.code()),
+            u16::from(colour.transfer.code()),
+            u16::from(colour.matrix.code()),
+            vs.full_range,
+        );
         let colr = ColourInformationBox {
             colour_type: *b"nclx",
             nclx: Some(nclx),

@@ -10,6 +10,15 @@
 //! must reject it, as it does for a cleared PTS marker bit).
 use mpeg_pes::PesPacket;
 
+/// `raw` with its `PES_packet_length` rewritten to cover every byte after
+/// the field — the length `serialize_into` derives from the content (#2746).
+fn covered(raw: &[u8]) -> Vec<u8> {
+    let mut v = raw.to_vec();
+    let len = u16::try_from(v.len() - 6).expect("vector fits");
+    v[4..6].copy_from_slice(&len.to_be_bytes());
+    v
+}
+
 fn round_trip(b: &[u8]) -> Vec<u8> {
     let p = PesPacket::parse(b).expect("vector parses");
     let mut out = vec![0u8; p.serialized_len()];
@@ -23,7 +32,7 @@ fn round_trip(b: &[u8]) -> Vec<u8> {
 /// `0x8A`.
 #[test]
 fn additional_copy_info_marker_bit_round_trips() {
-    let b = [0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x04, 0x01, 0x0A];
+    let b = covered(&[0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x04, 0x01, 0x0A]);
     assert_eq!(round_trip(&b), b);
 }
 
@@ -32,7 +41,7 @@ fn additional_copy_info_marker_bit_round_trips() {
 /// re-emitted as `000` (`0x50`).
 #[test]
 fn dsm_trick_mode_reserved_bits_round_trip() {
-    let b = [0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x08, 0x01, 0x52];
+    let b = covered(&[0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x08, 0x01, 0x52]);
     assert_eq!(round_trip(&b), b);
 }
 
@@ -41,8 +50,8 @@ fn dsm_trick_mode_reserved_bits_round_trip() {
 /// with `11`.
 #[test]
 fn escr_reserved_bits_round_trip() {
-    let b = [
+    let b = covered(&[
         0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x20, 0x06, 0x04, 0x00, 0x04, 0x00, 0x04, 0x01,
-    ];
+    ]);
     assert_eq!(round_trip(&b), b);
 }

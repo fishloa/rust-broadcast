@@ -93,12 +93,12 @@ fn build_pes(
     }
     // ESCR
     if let Some(escr) = escr {
-        out[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes());
+        out[cursor..cursor + 6].copy_from_slice(&escr.to_field_bytes().expect("ESCR in range"));
         cursor += 6;
     }
     // DSM trick mode
     if let Some(tm) = trick_mode {
-        out[cursor] = tm.to_byte();
+        out[cursor] = tm.to_byte().expect("trick mode in range");
         cursor += 1;
     }
 
@@ -148,7 +148,7 @@ fn main() {
     println!("  round-trip    : PTS+DTS preserved after serialize ✓");
 
     // ── 3) Build with ESCR ──────────────────────────────────────────────────
-    let escr = Escr::from_27mhz(27_000_000); // 1 second @ 27 MHz
+    let escr = Escr::from_27mhz(27_000_000).expect("ESCR in range"); // 1 second @ 27 MHz
     let bytes2 = build_pes(
         0xE0,
         Some((pts_val, false)),

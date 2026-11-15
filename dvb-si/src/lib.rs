@@ -102,11 +102,11 @@
 //! [`text::DvbText::decode`]:
 //!
 //! ```
-//! use dvb_si::demux::SiDemux;
+//! use dvb_si::demux::{SiDemux, SiDemuxConfig};
 //! use dvb_si::descriptors::AnyDescriptor;
 //! use dvb_si::tables::AnyTableSection;
 //!
-//! let mut demux = SiDemux::builder().build();
+//! let mut demux = SiDemux::new(SiDemuxConfig::default());
 //!
 //! // In real code, `packet` is each aligned 188-byte packet from your TS source
 //! // (file, UDP, tuner). Here we hand-build one PAT packet to keep the doctest

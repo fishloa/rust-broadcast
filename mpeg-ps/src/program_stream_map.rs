@@ -33,8 +33,8 @@ const ES_ENTRY_HEADER_LEN: usize = 4;
 /// Pseudo descriptor carrying `elementary_stream_id_extension` (Table 2-41):
 /// tag(1) + length(1) + marker+extension(1).
 const PSEUDO_DESCRIPTOR_LEN: usize = 3;
-/// `pseudo_descriptor_tag` — Table 2-41 allows any value.
-const PSEUDO_DESCRIPTOR_TAG: u8 = 0x00;
+/// `pseudo_descriptor_tag` — fixed `0x01` by ISO/IEC 13818-1 §2.5.4.2.
+const PSEUDO_DESCRIPTOR_TAG: u8 = 0x01;
 /// Marker bit in the `elementary_stream_id_extension` byte (Table 2-41).
 const MARKER_BIT: u8 = 0x80;
 /// 7-bit `elementary_stream_id_extension`.
@@ -57,6 +57,14 @@ pub struct EsMapEntry<'a> {
     /// If `elementary_stream_id == 0xFD` and `single_extension_stream_flag == 0`,
     /// this holds the `elementary_stream_id_extension`. Otherwise `None`.
     pub stream_id_extension: Option<u8>,
+    /// `pseudo_descriptor_tag` as carried (present exactly when
+    /// `stream_id_extension` is `Some`). ISO/IEC 13818-1 §2.5.4.2 fixes it at
+    /// `0x01`; a rebuilt entry leaves it `None` and the serializer writes
+    /// `0x01`, so a non-conforming stream's own value round-trips (#2744).
+    pub pseudo_descriptor_tag: Option<u8>,
+    /// `pseudo_descriptor_length` as carried; see
+    /// [`pseudo_descriptor_tag`](Self::pseudo_descriptor_tag).
+    pub pseudo_descriptor_length: Option<u8>,
     /// Descriptor bytes for this elementary stream.
     #[cfg_attr(feature = "serde", serde(skip))]
     pub descriptors: &'a [u8],
@@ -107,7 +115,10 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         let map_length = u16::from_be_bytes([b[4], b[5]]) as usize;
         let crc_end = PREFIX_LEN + map_length;
-        if map_length < FIXED_BODY_LEN + CRC_LEN || b.len() < crc_end {
+        // `program_stream_map_length` max 1018 (Table 2-41), the same ceiling
+        // the serializer enforces, so every accepted PSM can be written back
+        // (#2744).
+        if !(FIXED_BODY_LEN + CRC_LEN..=MAP_LENGTH_MAX).contains(&map_length) || b.len() < crc_end {
             return Err(Error::MapLengthOverflow {
                 map_length,
                 available: b.len().saturating_sub(PREFIX_LEN),
@@ -173,6 +184,18 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
 
         let es_data = &b[es_start..es_end];
         let elementary_stream_map = parse_es_loop(es_data, single_extension_stream_flag)?;
+        // Entry boundaries that do not land on the declared
+        // `elementary_stream_map_length` leave bytes no entry claims. The
+        // parsed struct cannot carry them, so accepting them would make the
+        // re-serialized PSM shorter than the wire one and desynchronise every
+        // caller that advances by `serialized_len()` (#2743).
+        let parsed_es_len: usize = elementary_stream_map.iter().map(es_entry_len).sum();
+        if parsed_es_len != es_data.len() {
+            return Err(Error::ElementaryStreamMapTrailingBytes {
+                declared: es_data.len(),
+                parsed: parsed_es_len,
+            });
+        }
 
         Ok(ProgramStreamMap {
             current_next_indicator,
@@ -196,33 +219,38 @@ fn parse_es_loop(data: &[u8], single_flag: bool) -> Result<Vec<EsMapEntry<'_>>> 
         let entry_end = entry_hdr_end + es_info_length;
         need_in(data, entry_end, "elementary_stream_map entry descriptors")?;
 
-        let (stream_id_extension, descriptors) = if elementary_stream_id == 0xFD && !single_flag {
-            // Extension form with pseudo descriptor
-            if es_info_length < 3 {
-                return Err(Error::BufferTooShort(
-                    broadcast_common::error::BufferTooShort {
-                        need: 3,
-                        have: es_info_length,
-                        what: "pseudo descriptor for stream_id_extension",
-                    },
-                ));
-            }
-            // pseudo_descriptor_tag + pseudo_descriptor_length + marker+extension
-            if data[entry_hdr_end + 2] & 0x80 == 0 {
-                return Err(Error::BadMarker("elementary_stream_id_extension marker"));
-            }
-            let ext = data[entry_hdr_end + 2] & 0x7F;
-            let desc = &data[entry_hdr_end + 3..entry_end];
-            (Some(ext), desc)
-        } else {
-            let desc = &data[entry_hdr_end..entry_end];
-            (None, desc)
-        };
+        let (pseudo_descriptor, stream_id_extension, descriptors) =
+            if elementary_stream_id == 0xFD && !single_flag {
+                // Extension form with pseudo descriptor
+                if es_info_length < 3 {
+                    return Err(Error::BufferTooShort(
+                        broadcast_common::error::BufferTooShort {
+                            need: 3,
+                            have: es_info_length,
+                            what: "pseudo descriptor for stream_id_extension",
+                        },
+                    ));
+                }
+                // pseudo_descriptor_tag + pseudo_descriptor_length + marker+extension
+                if data[entry_hdr_end + 2] & 0x80 == 0 {
+                    return Err(Error::BadMarker("elementary_stream_id_extension marker"));
+                }
+                let ext = data[entry_hdr_end + 2] & 0x7F;
+                let desc = &data[entry_hdr_end + 3..entry_end];
+                let tag = data[entry_hdr_end];
+                let length = data[entry_hdr_end + 1];
+                (Some((tag, length)), Some(ext), desc)
+            } else {
+                let desc = &data[entry_hdr_end..entry_end];
+                (None, None, desc)
+            };
 
         entries.push(EsMapEntry {
             stream_type,
             elementary_stream_id,
             stream_id_extension,
+            pseudo_descriptor_tag: pseudo_descriptor.map(|(tag, _)| tag),
+            pseudo_descriptor_length: pseudo_descriptor.map(|(_, length)| length),
             descriptors,
         });
 
@@ -244,6 +272,15 @@ fn es_entry_len(e: &EsMapEntry<'_>) -> usize {
         + e.descriptors.len()
 }
 
+/// Wire length of a PSM packet at the start of `data`: the 6-byte prefix
+/// (`packet_start_code_prefix`, `map_stream_id`, `program_stream_map_length`)
+/// plus `program_stream_map_length` (ISO/IEC 13818-1 Table 2-41).
+pub(crate) fn program_stream_map_wire_len(data: &[u8]) -> Result<usize> {
+    need_in(data, PREFIX_LEN, "program_stream_map prefix")?;
+    let map_length = u16::from_be_bytes([data[4], data[5]]) as usize;
+    Ok(PREFIX_LEN + map_length)
+}
+
 /// Write the elementary-stream loop straight into `out` (exactly the sum of
 /// [`es_entry_len`], checked by the caller), no intermediate owned copies
 /// (audit r14-MPS-O1).
@@ -260,7 +297,9 @@ fn write_es_loop(entries: &[EsMapEntry<'_>], out: &mut [u8]) -> Result<()> {
         dst[2..4].copy_from_slice(&info_len.to_be_bytes());
         let mut c = ES_ENTRY_HEADER_LEN;
         if let Some(ext) = e.stream_id_extension {
-            dst[c] = PSEUDO_DESCRIPTOR_TAG;
+            // Written back as carried (§2.5.4.2 fixes a rebuilt one to tag
+            // 0x01), so a non-conforming stream is not rewritten (#2744).
+            dst[c] = e.pseudo_descriptor_tag.unwrap_or(PSEUDO_DESCRIPTOR_TAG);
             // pseudo_descriptor_length: 8-bit field covering the marker+
             // extension byte plus the descriptors. Checked in usize before
             // narrowing — `1 + len as u8` used to overflow at 255 (#1129).
@@ -404,6 +443,8 @@ mod tests {
             stream_type: 0x02, // MPEG-2 video
             elementary_stream_id: 0xE0,
             stream_id_extension: None,
+            pseudo_descriptor_tag: None,
+            pseudo_descriptor_length: None,
             descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'], // registration descriptor
         }];
 
@@ -455,6 +496,8 @@ mod tests {
                 stream_type: 0x02,
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
+                pseudo_descriptor_tag: None,
+                pseudo_descriptor_length: None,
                 descriptors: &[0x0A, 0x04, b'H', b'E', b'L', b'L'],
             }],
             crc: 0,
@@ -470,6 +513,8 @@ mod tests {
             stream_type: 0x06, // subtitles
             elementary_stream_id: 0xFD,
             stream_id_extension: Some(0x0F),
+            pseudo_descriptor_tag: Some(0x01),
+            pseudo_descriptor_length: Some(0x01),
             descriptors: &[0x59, 0x02, 0x01, 0x02], // subtitling descriptor
         }];
 
@@ -512,6 +557,8 @@ mod tests {
             stream_type: 0x06,
             elementary_stream_id: 0xFD,
             stream_id_extension: Some(0x01),
+            pseudo_descriptor_tag: Some(0x01),
+            pseudo_descriptor_length: Some(0x01),
             descriptors: &[0u8; 255],
         }];
         let psm = ProgramStreamMap {
@@ -585,6 +632,8 @@ mod tests {
             stream_type: 0x02, // MPEG-2 video
             elementary_stream_id: 0xE0,
             stream_id_extension: None,
+            pseudo_descriptor_tag: None,
+            pseudo_descriptor_length: None,
             descriptors: &[],
         }];
 
@@ -695,6 +744,8 @@ mod tests {
                 stream_type: 0x1B,
                 elementary_stream_id: 0xE0,
                 stream_id_extension: None,
+                pseudo_descriptor_tag: None,
+                pseudo_descriptor_length: None,
                 descriptors: &[],
             }],
             crc: 0,

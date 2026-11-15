@@ -16,7 +16,7 @@ use mpeg_ts::pid::Pid;
 use std::fs;
 
 use dvb_si::collect::SectionSetCollector;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
@@ -35,7 +35,7 @@ fn france_tnt_lcn_descriptors_parse() {
         .with_logical_channel_for_pds(PDS_EACEM)
         .with_logical_channel_for_pds(PDS_NORDIG);
 
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut collector = SectionSetCollector::new();
 
     let mut nit_sets = 0usize;

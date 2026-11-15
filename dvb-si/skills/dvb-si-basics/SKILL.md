@@ -29,11 +29,11 @@ CRC-checked before they are gated; failures are dropped and counted in
 `demux.stats()`.
 
 ```rust
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::AnyTableSection;
 
-let mut demux = SiDemux::builder().build();
+let mut demux = SiDemux::new(SiDemuxConfig::default());
 
 // In real code `packet` is each aligned 188-byte packet from your TS source
 // (file, UDP, tuner).

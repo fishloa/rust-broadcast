@@ -74,7 +74,7 @@ use mpeg_ts::pid::Pid;
 use broadcast_common::crc32_mpeg2;
 use broadcast_common::timescale::{Rounding, Timescale, rescale_u64};
 use broadcast_common::{Package, Serialize};
-use mpeg_pes::{Pts as PesPts, StreamId};
+use mpeg_pes::StreamId;
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{
     AdaptationFieldControl, ContinuityCounter, Pcr, ScramblingControl, TS_PACKET_SIZE, TsHeader,
@@ -252,6 +252,8 @@ const PTS_DTS_FLAGS_PTS_ONLY: u8 = 0x80;
 const PTS_DTS_FLAGS_BOTH: u8 = 0xC0;
 /// 4-bit prefix on the PTS field of a PTS+DTS pair (`0011`). §2.4.3.7.
 const TS_PREFIX_PTS_WITH_DTS: u8 = 0b0011;
+/// 4-bit prefix on a standalone PTS field (`0010`). §2.4.3.7.
+const TS_PREFIX_PTS_ONLY: u8 = 0b0010;
 /// 4-bit prefix on the DTS field of a PTS+DTS pair (`0001`). §2.4.3.7.
 const TS_PREFIX_DTS: u8 = 0b0001;
 
@@ -1956,7 +1958,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
         out.extend_from_slice(&encode_timestamp(dts90, TS_PREFIX_DTS));
     } else {
         // PTS-only field carries prefix '0010'.
-        out.extend_from_slice(&PesPts(pts90).to_field_bytes());
+        out.extend_from_slice(&encode_timestamp(pts90, TS_PREFIX_PTS_ONLY));
     }
     out.extend_from_slice(es_payload);
     Ok(out)

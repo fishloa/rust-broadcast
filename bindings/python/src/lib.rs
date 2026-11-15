@@ -5,7 +5,7 @@
 //! are converted Rust → `serde_json::Value` → Python objects, so the binding is
 //! read-only by design (mirrors the crate's Serialize-only serde posture).
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use dvb_t2mi::pump::T2miPump;
 use mpeg_ts::pid::Pid;
@@ -38,7 +38,7 @@ impl Demux {
     #[new]
     fn new() -> Self {
         Demux {
-            inner: SiDemux::builder().build(),
+            inner: SiDemux::new(SiDemuxConfig::default()),
         }
     }
 

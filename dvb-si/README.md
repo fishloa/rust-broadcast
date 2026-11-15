@@ -147,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ### Pump a whole capture: services, PMT streams, descriptors
 
 ```rust
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::AnyTableSection;
 
@@ -159,7 +159,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ))?;
 
     // Follows the PAT to every PMT PID; emits each *changed* CRC-valid section once.
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut services = Vec::new();
     for packet in ts.chunks_exact(188) {
         for event in demux.feed(packet) {

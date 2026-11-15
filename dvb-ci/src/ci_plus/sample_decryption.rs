@@ -285,7 +285,7 @@ impl<'a> SamplePayload<'a> {
                 tracks.push(SampleTrack {
                     track_pid,
                     records,
-                    reserved: ReservedZero::from_bits((pid_word >> 13) as u8),
+                    reserved: ReservedZero::from_bits(u64::from(pid_word >> 13)),
                 });
             }
             Ok(Self::Tracks(tracks))
@@ -364,7 +364,7 @@ impl<'a> SamplePayload<'a> {
                 for track in tracks {
                     // reserved(3) + track_PID(13). Range-checked by
                     // validate(), so no mask is needed to fit the field.
-                    w.u16((u16::from(track.reserved.get()) << 13) | track.track_pid.value());
+                    w.u16(((track.reserved.get() << 13) as u16) | track.track_pid.value());
                     w.u8(track.records.len() as u8);
                     for rec in &track.records {
                         rec.write_into(w);
@@ -421,7 +421,7 @@ impl<'a> Parse<'a> for SdStart<'a> {
             lts_id,
             program_number,
             payload,
-            reserved: ReservedZero::from_bits(flags >> 1),
+            reserved: ReservedZero::from_bits(u64::from(flags >> 1)),
         })
     }
 }
@@ -437,7 +437,7 @@ impl Serialize for SdStart<'_> {
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
         w.u16(self.program_number);
-        w.u8((self.reserved.get() << 1) | u8::from(self.payload.ts_flag()));
+        w.u8(((self.reserved.get() << 1) as u8) | u8::from(self.payload.ts_flag()));
         self.payload.write_into(&mut w);
         Ok(pos + body_len)
     }
@@ -656,7 +656,7 @@ impl<'a> Parse<'a> for SdUpdate<'a> {
             length_form,
             lts_id,
             payload,
-            reserved: ReservedZero::from_bits(flags >> 1),
+            reserved: ReservedZero::from_bits(u64::from(flags >> 1)),
         })
     }
 }
@@ -671,7 +671,7 @@ impl Serialize for SdUpdate<'_> {
         let pos = objects::write_apdu_header(tag::SD_UPDATE, body_len, self.length_form, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
-        w.u8((self.reserved.get() << 1) | u8::from(self.payload.ts_flag()));
+        w.u8(((self.reserved.get() << 1) as u8) | u8::from(self.payload.ts_flag()));
         self.payload.write_into(&mut w);
         Ok(pos + body_len)
     }

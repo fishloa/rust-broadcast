@@ -297,7 +297,7 @@ pub fn transmux_run(fx: &Fixture, _: &Cfg) -> Option<Value> {
 // ---------------------------------------------------------------------------
 
 use broadcast_common::Serialize;
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::descriptors::{AnyDescriptor, DescriptorLoop, parse_loop};
 use dvb_si::tables::AnyTableSection;
 
@@ -459,7 +459,7 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
     // Pass 1: PIDs that carry sections outside the well-known SI set.
     let mut extra: BTreeSet<u16> = BTreeSet::new();
     {
-        let mut d = SiDemux::builder().build();
+        let mut d = SiDemux::new(SiDemuxConfig::default());
         for pkt in &packets {
             for ev in d.feed(pkt) {
                 if let Ok(AnyTableSection::PmtSection(pmt)) = ev.table_section() {
@@ -474,11 +474,11 @@ pub fn dvb_si_sections(fx: &Fixture, _: &Cfg) -> Option<Value> {
     }
     let mut out = Map::new();
     for (label, repeats) in [("gated", false), ("all", true)] {
-        let mut b = SiDemux::builder().emit_repeats(repeats);
+        let mut b = SiDemuxConfig::default().with_emit_repeats(repeats);
         for pid in &extra {
-            b = b.pid(mpeg_ts::pid::Pid::from_wire_masked(*pid));
+            b = b.with_pid(mpeg_ts::pid::Pid::from_wire_masked(*pid));
         }
-        let mut demux = b.build();
+        let mut demux = SiDemux::new(b);
         let mut secs: BTreeMap<String, SecStat> = BTreeMap::new();
         let mut descs: BTreeMap<String, DescStat> = BTreeMap::new();
         for pkt in &packets {
@@ -754,7 +754,7 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
         let packets = ts_packets(&fx.data)?;
         let mut pids: BTreeSet<u16> = BTreeSet::new();
         {
-            let mut d = SiDemux::builder().build();
+            let mut d = SiDemux::new(SiDemuxConfig::default());
             for pkt in &packets {
                 for ev in d.feed(pkt) {
                     if let Ok(AnyTableSection::PmtSection(pmt)) = ev.table_section() {
@@ -770,11 +770,11 @@ pub fn scte35(fx: &Fixture, _: &Cfg) -> Option<Value> {
         if pids.is_empty() {
             return None;
         }
-        let mut b = SiDemux::builder().emit_repeats(true);
+        let mut b = SiDemuxConfig::default().with_emit_repeats(true);
         for p in &pids {
-            b = b.pid(mpeg_ts::pid::Pid::try_new(*p).expect("pid fits the 13-bit field"));
+            b = b.with_pid(mpeg_ts::pid::Pid::try_new(*p).expect("pid fits the 13-bit field"));
         }
-        let mut d = b.build();
+        let mut d = SiDemux::new(b);
         for pkt in &packets {
             for ev in d.feed(pkt) {
                 if ev.table_id() == 0xFC {

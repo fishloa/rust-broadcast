@@ -2,7 +2,7 @@
 //! exercised through the public crate surface (no `super::` internals).
 #![cfg(feature = "ts")]
 
-use dvb_si::demux::SiDemux;
+use dvb_si::demux::{SiDemux, SiDemuxConfig};
 use dvb_si::tables::AnyTableSection;
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
@@ -10,7 +10,7 @@ use test_fixtures::psi::{crc32_mpeg2, long_section, pat_section, pmt_section, ts
 
 #[test]
 fn scenario1_pat_version_gate() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let v0 = ts_packet(0x0000, &pat_section(0x0001, 0, &[(1, 0x0100)]));
     let v1 = ts_packet(0x0000, &pat_section(0x0001, 1, &[(1, 0x0100)]));
 
@@ -31,7 +31,7 @@ fn scenario1_pat_version_gate() {
 
 #[test]
 fn scenario2_follow_pat_to_typed_pmt() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     demux
         .feed(&ts_packet(0x0000, &pat_section(0x0001, 0, &[(1, 0x0100)])))
         .for_each(drop);
@@ -48,7 +48,7 @@ fn scenario2_follow_pat_to_typed_pmt() {
 
 #[test]
 fn scenario3_corrupted_crc_dropped() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut sdt = long_section(0x42, 0x0001, 0, 0, &[0xDE, 0xAD, 0xBE, 0xEF]);
     sdt[8] ^= 0xFF;
     assert_eq!(demux.feed(&ts_packet(0x0011, &sdt)).count(), 0);
@@ -57,7 +57,7 @@ fn scenario3_corrupted_crc_dropped() {
 
 #[test]
 fn scenario5_garbage_packet_no_panic() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     assert_eq!(demux.feed(&[0u8; TS_PACKET_SIZE]).count(), 0);
     assert_eq!(demux.stats().malformed_packets, 1);
 }
@@ -81,7 +81,7 @@ fn tot_section() -> Vec<u8> {
 
 #[test]
 fn tot_crc_validated_emitted_and_corrupted_dropped() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
 
     // Valid TOT with canonical CRC → emitted.
     let valid = tot_section();
@@ -94,7 +94,9 @@ fn tot_crc_validated_emitted_and_corrupted_dropped() {
 
     // Verify the emitted event is a TotSection with correct UTC time.
     let valid_pkt = ts_packet(0x0014, &valid);
-    let events: Vec<_> = SiDemux::builder().build().feed(&valid_pkt).collect();
+    let events: Vec<_> = SiDemux::new(SiDemuxConfig::default())
+        .feed(&valid_pkt)
+        .collect();
     assert_eq!(events.len(), 1);
     match events[0].table_section().unwrap() {
         AnyTableSection::TotSection(tot) => {
@@ -154,7 +156,7 @@ fn pat_payload(entries: &[(u16, u16)]) -> Vec<u8> {
 
 #[test]
 fn multi_section_pat_watches_the_pmt_pids_of_every_section() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let s0 = flagged_section(0, 1, 0, true, 0, 1, &pat_payload(&[(1, 0x100)]));
     let s1 = flagged_section(0, 1, 0, true, 1, 1, &pat_payload(&[(2, 0x200)]));
     assert_eq!(demux.feed(&ts_packet(0, &s0)).count(), 1);
@@ -172,7 +174,7 @@ fn multi_section_pat_watches_the_pmt_pids_of_every_section() {
 
 #[test]
 fn alternating_current_and_next_versions_are_each_emitted_once() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let cur = flagged_section(0x40, 1, 3, true, 0, 0, &[0xAA]);
     let next = flagged_section(0x40, 1, 4, false, 0, 0, &[0xBB]);
     let pid = 0x10;
@@ -189,7 +191,7 @@ fn alternating_current_and_next_versions_are_each_emitted_once() {
 
 #[test]
 fn a_next_pat_does_not_change_the_followed_pmt_pids() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let cur = flagged_section(0, 1, 0, true, 0, 0, &pat_payload(&[(1, 0x100)]));
     let next = flagged_section(0, 1, 1, false, 0, 0, &pat_payload(&[(1, 0x300)]));
     demux.feed(&ts_packet(0, &cur)).count();
@@ -223,7 +225,7 @@ fn a_retransmitted_continuation_packet_does_not_drop_the_section() {
     let first = &sec[..183];
     let second = &sec[183..183 + 184];
     let third = &sec[183 + 184..];
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let mut n = 0;
     n += demux.feed(&raw_packet(0x12, true, 0, first)).count();
     n += demux.feed(&raw_packet(0x12, false, 1, second)).count();
@@ -237,7 +239,7 @@ fn a_retransmitted_continuation_packet_does_not_drop_the_section() {
 
 #[test]
 fn a_table_id_zero_section_on_another_pid_does_not_change_the_followed_pmt_pids() {
-    let mut demux = SiDemux::builder().build();
+    let mut demux = SiDemux::new(SiDemuxConfig::default());
     let stray = flagged_section(0, 1, 0, true, 0, 0, &pat_payload(&[(1, 0x300)]));
     demux.feed(&ts_packet(0x12, &stray)).count();
     let pmt = flagged_section(2, 1, 0, true, 0, 0, &[0xE3, 0x01, 0xF0, 0x00]);
@@ -275,7 +277,7 @@ fn a_next_pat_does_not_unwatch_a_multi_section_current_pat() {
         p[5..5 + section.len()].copy_from_slice(section);
         p
     }
-    let mut d = SiDemux::builder().build();
+    let mut d = SiDemux::new(SiDemuxConfig::default());
     d.feed(&ts_packet(0, &pat_bytes(0, true, 0, 1, 0x0100)))
         .for_each(drop);
     d.feed(&ts_packet(0, &pat_bytes(0, true, 1, 1, 0x0101)))
