@@ -71,6 +71,7 @@ erased-serde = { version = "0.4", default-features = false, features = ["alloc"]
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
+jiff = { version = "0.2", default-features = false, features = ["std"] }
 
 [[bench]]
 name    = "crc32"
