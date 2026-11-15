@@ -37,6 +37,10 @@ pub enum Error {
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    /// A 33-bit or 27 MHz clock value out of its wire range (see
+    /// `broadcast_common::clock33`).
+    #[error(transparent)]
+    Clock(#[from] broadcast_common::clock33::ClockOutOfRange),
     /// The two fixed marker bits of the first PES header flag byte were not
     /// `'10'` (ISO/IEC 13818-1 Table 2-21): not an MPEG-2 PES header.
     #[error("PES header marker bits are not '10'")]

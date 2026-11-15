@@ -265,7 +265,7 @@ mod tests {
     /// Build a complete PES packet with PTS (PTS_DTS_flags = 0b10).
     /// Returns the PES bytes (not wrapped in TS).
     fn build_pes_with_pts(stream_id: u8, pts_raw: u64, payload: &[u8]) -> Vec<u8> {
-        let pts_bytes = mpeg_pes::Pts(pts_raw).to_field_bytes();
+        let pts_bytes = mpeg_pes::Pts::try_new(pts_raw).unwrap().to_field_bytes();
         let _hdr_data_len = 5 + payload.len(); // 5-byte PTS + ... well, the hdr data
         // Minimal PES: no header_stuffing, no other flags.
         // flags1 = 0x80 (marker bit, no scrambling, no flags)

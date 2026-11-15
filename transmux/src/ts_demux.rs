@@ -4436,8 +4436,8 @@ fn on_completed_pes(
     // wire — the only values that may update the measured frame period.
     let (pts, dts, stamped) = match pes.header.as_ref() {
         Some(h) => {
-            let hp = h.pts.map(|p| p.0);
-            let hd = h.dts.map(|d| d.0);
+            let hp = h.pts.map(|p| p.ticks());
+            let hd = h.dts.map(|d| d.ticks());
             match (hp, hd) {
                 // Both present (PTS_DTS_flags '11').
                 (Some(p), Some(d)) => (p, d, true),

@@ -130,8 +130,8 @@ fn push_pes(out: &mut Vec<PesAu>, bytes: &[u8]) {
     if pes.payload.is_empty() {
         return;
     }
-    let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.0));
-    let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.0));
+    let pts = pes.header.as_ref().and_then(|h| h.pts.map(|p| p.ticks()));
+    let dts = pes.header.as_ref().and_then(|h| h.dts.map(|d| d.ticks()));
     // `PES_packet_length` counts the bytes after its own two-byte field: three
     // fixed optional-header bytes, `PES_header_data_length` optional bytes,
     // then the payload. Both are read from the raw header (offsets 4-5 and 8,
