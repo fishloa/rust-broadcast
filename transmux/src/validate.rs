@@ -54,13 +54,14 @@
 //!   zero-tick span (`SampleTiming::timed_with_duration(.., 0)`) states one,
 //!   so it is judged here; a timed sample whose span is merely unknown
 //!   (`duration: None`) is reported by `media.sample.timing` below, not
-//!   conflated with a declared zero.
+//!   conflated with a declared zero. A track no init segment types is not
+//!   video, and its zero keeps this report.
 //! - **`media.sample.timing`** (WARNING) — a segment read without an IR
 //!   (`SegmentOrigin::External`) whose `trun` duration is 0: the span is
 //!   unknown, not zero. A segment this crate wrote
 //!   (`SegmentOrigin::FromIr`) reports it too: for a track the init segment
 //!   types as video, and — with no init segment — for every `traf`, since a
-//!   `traf` whose track the caller did not type may be video.
+//!   segment does not say which of its tracks are video.
 //!
 //! ## Cross-segment ([`validate_cmaf_track`])
 //! - **`track.tfdt.discontinuity`** (ERROR) — across consecutive segments the
@@ -701,13 +702,17 @@ fn validate_moof(
     let mut traf_infos = Vec::with_capacity(trafs.len());
     for (idx, (_, traf)) in trafs.iter().enumerate() {
         // The traf's own track id, from its tfhd (§8.8.7), decides whether a
-        // zero span can be stated at all. A caller that typed no track at all
-        // leaves it untyped: a segment this crate wrote may be video, so its
-        // zero span is reported rather than assumed to be a zero length.
+        // zero span can be stated at all. Called without an init segment no
+        // track id is typed as video: the segment does not say, so the traf
+        // stays untyped and its zero span is reported as unstated.
         let is_video: Option<bool> = child_body(traf.body, &TFHD)
             .and_then(|b| TrackFragmentHeaderBox::parse_body(b).ok())
-            .map(|h| video_track(h.track_id))
-            .or_else(|| (origin == SegmentOrigin::FromIr && video_tracks.is_empty()).then_some(true));
+            .map(|h| video_track(h.track_id));
+        let is_video: Option<bool> = if video_tracks.is_empty() && origin == SegmentOrigin::FromIr {
+            None
+        } else {
+            is_video
+        };
         traf_infos.push(validate_traf(
             traf.body,
             moof_no,
