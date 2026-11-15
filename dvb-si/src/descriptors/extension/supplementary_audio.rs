@@ -1,15 +1,19 @@
 //! Supplementary Audio Descriptor — ETSI EN 300 468 §6.4.11 (tag_extension 0x06).
 use super::*;
 use broadcast_common::len::{need_in, need_out};
+use broadcast_common::reserved::ReservedOnes;
 
 impl<'a> ExtensionBodyDef<'a> for SupplementaryAudio<'a> {
     const TAG_EXTENSION: u8 = 0x06;
     const NAME: &'static str = "SUPPLEMENTARY_AUDIO";
 }
+/// Width of the `reserved_future_use` bit (1 bit).
+const RESERVED_BITS: u32 = 1;
 /// Default of the 1-bit `reserved_future_use` (Table 153 bit 1): `1` in every
 /// edition (V1.13.1 `reserved` ... V1.20.1 `reserved_future_use`, audit §3.3).
 /// 37 of 47 real descriptors write `0` (cause unexplained), so parse keeps it.
-pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
+pub const RESERVED_FUTURE_USE_DEFAULT: ReservedOnes<RESERVED_BITS> =
+    ReservedOnes::<RESERVED_BITS>::FILL;
 
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,7 +25,7 @@ pub struct SupplementaryAudio<'a> {
     /// `language_code_present` (1 bit, right-aligned): captured on parse and
     /// re-emitted verbatim; [`SupplementaryAudio::new`] defaults to
     /// [`RESERVED_FUTURE_USE_DEFAULT`] (1).
-    pub reserved_future_use: u8,
+    pub reserved_future_use: ReservedOnes<RESERVED_BITS>,
     /// mix_type(1) — Table 154.
     pub mix_type: bool,
     /// editorial_classification(5) — Table 155.
@@ -81,7 +85,7 @@ impl<'a> Parse<'a> for SupplementaryAudio<'a> {
             None
         };
         Ok(SupplementaryAudio {
-            reserved_future_use: (flags >> 1) & 1,
+            reserved_future_use: ReservedOnes::from_bits(u64::from((flags >> 1) & 1)),
             mix_type,
             editorial_classification,
             language_code_present,
@@ -106,11 +110,7 @@ impl Serialize for SupplementaryAudio<'_> {
                 0x1F,
                 "editorial_classification",
             )? << 2)
-            | (broadcast_common::len::fit_mask(
-                self.reserved_future_use,
-                1,
-                "reserved_future_use",
-            )? << 1)
+            | ((self.reserved_future_use.get() as u8) << 1)
             | u8::from(self.iso_639_language_code.is_some());
         let mut p = 1;
         if let Some(lc) = self.iso_639_language_code {
@@ -199,7 +199,7 @@ mod tests {
             let flags = (0x05 << 2) | (r << 1) | 0x01;
             let sel = [flags, b'f', b'r', b'e'];
             let d = SupplementaryAudio::parse(&sel).unwrap();
-            assert_eq!(d.reserved_future_use, r);
+            assert_eq!(d.reserved_future_use.get(), u64::from(r));
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             assert_eq!(buf, sel);

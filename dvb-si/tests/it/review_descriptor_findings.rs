@@ -77,19 +77,18 @@ fn cp_reserved_future_use_over_range_is_unrepresentable() {
     assert_eq!(ReservedOnes::<3>::from_bits(0b1000).get(), 0);
 }
 
-/// extension/supplementary_audio.rs:117 `(self.reserved_future_use & 1) << 1`.
+/// extension/supplementary_audio.rs `(self.reserved_future_use & 1) << 1`.
 #[test]
-fn supplementary_audio_reserved_future_use_over_range_is_rejected_not_masked() {
+fn supplementary_audio_reserved_future_use_over_range_is_unrepresentable() {
     // mix_type 1, editorial_classification 1, reserved 1, no language.
     let sel = [0x86];
-    let mut d = SupplementaryAudio::parse(&sel).unwrap();
+    let d = SupplementaryAudio::parse(&sel).unwrap();
     assert_eq!(ser(&d).unwrap(), sel);
-    d.reserved_future_use = 2;
-    let r = ser(&d);
-    assert!(
-        matches!(r, Err(Error::FieldOverflow(_))),
-        "reserved_future_use=2 must be FieldOverflow, got {r:?}"
-    );
+    // reserved_future_use is a 1-bit `ReservedOnes`; an over-range value is
+    // unrepresentable (`from_bits` masks at construction) so it can never be
+    // re-masked into a different wire byte.
+    assert_eq!(d.reserved_future_use.get(), 1);
+    assert_eq!(ReservedOnes::<1>::from_bits(2).get(), 0);
 }
 
 /// extension/s2x_satellite_delivery_system.rs:488
