@@ -2365,14 +2365,13 @@ struct ListenerCore {
     last_pending_tick: Instant,
 }
 
-/// The listener's SYN-cookie key and when it was drawn. Each pending
-/// handshake keeps the cookie it was *issued* (the engine compares the
-/// CONCLUSION's cookie with it), so a handshake that began under the previous
-/// key still completes after a rotation — the "previous key stays acceptable"
-/// window is exactly one handshake's lifetime; only cookies issued from then
-/// on use the new key.
+/// The listener's SYN-cookie key and when it was drawn. A stateless INDUCTION
+/// answer stores no per-peer cookie, so the CONCLUSION is validated against
+/// the current key and the one it replaced: a handshake that began just
+/// before a rotation still completes.
 struct CookieKeys {
     current: u128,
+    previous: Option<u128>,
     drawn_at: Instant,
 }
 
@@ -2380,12 +2379,19 @@ impl CookieKeys {
     fn new(now: Instant) -> Result<Self> {
         Ok(CookieKeys {
             current: random_u128()?,
+            previous: None,
             drawn_at: now,
         })
     }
 
     fn current(&self) -> u128 {
         self.current
+    }
+
+    /// Every key a CONCLUSION-phase cookie may have been issued under: the
+    /// current one and the one it replaced on the last rotation.
+    fn acceptable(&self) -> impl Iterator<Item = u128> + '_ {
+        core::iter::once(self.current).chain(self.previous)
     }
 
     /// Replace the key once it is [`COOKIE_KEY_ROTATION`] old. Returns whether
@@ -2397,6 +2403,7 @@ impl CookieKeys {
         }
         match random_u128() {
             Ok(key) => {
+                self.previous = Some(self.current);
                 self.current = key;
                 self.drawn_at = now;
                 true
@@ -2710,6 +2717,9 @@ impl ListenerCore {
                 }
                 HandshakeType::Induction => {
                     self.recent_accepts.remove(&src);
+                    // §4.3.1.1's SYN Cookie exists so an unverified Caller
+                    // allocates nothing: answer, and keep no state (#2820).
+                    return self.answer_induction(src, hp);
                 }
                 _ => {}
             }
@@ -2745,55 +2755,41 @@ impl ListenerCore {
         let is_new = !self.pending.contains_key(&src);
 
         if is_new {
-            // Pending state is bounded: a new source can only be admitted
-            // after expired entries have been reaped, and even then only if
-            // room remains — otherwise the source is ignored (§4.3.1.1's SYN
-            // Cookie keeps unverified callers from allocating resources in
-            // the first place; this caps what a verified-looking flood can
-            // hold).
-            if self.pending.len() >= MAX_PENDING {
-                self.tick_pending();
-                if self.pending.len() >= MAX_PENDING {
-                    return Ok(());
-                }
-            }
-
-            let peer_isn = match &ctrl {
-                ControlPacket::Handshake(hp) => hp.initial_seq_number,
-                _ => return Ok(()),
+            // Only a CONCLUSION that echoes a cookie this listener issued may
+            // allocate anything: an INDUCTION was answered statelessly above,
+            // so a flood of guessed or spoofed ones holds no slots (#2820).
+            let ControlPacket::Handshake(hp) = &ctrl else {
+                return Ok(());
             };
-
-            // Both this connection's own Socket ID and its ISN must be
-            // freshly generated, not a predictable incrementing counter
-            // (Socket ID) or the listener-wide `config.initial_seq_number`
-            // reused for every accepted peer (ISN) — `draft-sharabayko-srt-01`
-            // §3/§4.3.1.1 expects both random per connection, and either a
-            // fixed or a sequential value lets an off-path party that
-            // observed one accepted connection predict the next one's wire
-            // identifiers.
-            let own_socket_id = random_socket_id()?;
-            let our_initial_seq = random_isn()?;
+            if hp.handshake_type != HandshakeType::Conclusion {
+                return Ok(());
+            }
+            let Some((own_socket_id, our_initial_seq)) =
+                self.validated_conclusion_ids(src, hp.srt_socket_id, hp.syn_cookie)
+            else {
+                return Ok(());
+            };
+            // The cookie proves the round trip but the table is still bounded
+            // against a flood of genuinely answered Callers.
+            if self.pending.len() >= MAX_PENDING {
+                return Ok(());
+            }
             let mut per_conn_config = self.config.clone();
             per_conn_config.initial_seq_number = our_initial_seq;
-            // §4.3.1.1: "a cookie that is crafted based on host, port and
-            // current time with 1 minute accuracy" — `derive_cookie` mixes
-            // exactly those inputs (`crate::handshake_sm`'s existing,
-            // documented derivation), keyed by this listener's own secret so
-            // two listeners never hand out the same cookie for the same
-            // peer/time bucket.
-            let peer_key = addr_to_u64(&src);
-            let time_bucket = unix_time_bucket();
-            let syn_cookie = derive_cookie(peer_key, time_bucket, self.cookie_keys.current());
-            let hs = ListenerHandshake::new(own_socket_id, syn_cookie, per_conn_config);
+            let created_at = Instant::now();
             self.pending.insert(
                 src,
                 PendingListener {
-                    handshake: hs,
+                    handshake: ListenerHandshake::awaiting_conclusion(
+                        own_socket_id,
+                        hp.syn_cookie,
+                        per_conn_config,
+                    ),
                     params: None,
-                    peer_initial_seq: peer_isn,
+                    peer_initial_seq: hp.initial_seq_number,
                     peer_timestamp_us: 0,
                     concluded_at: None,
-                    created_at: Instant::now(),
+                    created_at,
                     last_response: None,
                     our_initial_seq,
                 },
@@ -2852,12 +2848,72 @@ impl ListenerCore {
         Ok(())
     }
 
+    /// Answer an INDUCTION without retaining any per-peer state
+    /// (`draft-sharabayko-srt-01` §4.3.1.1). The response is built by the same
+    /// sans-IO machine the stateful path used, then dropped: the connection's
+    /// Socket ID and ISN are re-derived from the same keyed inputs when a
+    /// CONCLUSION proves the Caller received this answer (#2820).
+    fn answer_induction(
+        &mut self,
+        src: std::net::SocketAddr,
+        hp: &HandshakePacket<'_>,
+    ) -> Result<()> {
+        let peer_key = cookie_peer_key(&src, hp.srt_socket_id);
+        let time_bucket = unix_time_bucket();
+        let secret = self.cookie_keys.current();
+        let syn_cookie = derive_cookie(peer_key, time_bucket, secret);
+        let (own_socket_id, our_initial_seq) = self.connection_ids(peer_key, time_bucket, secret);
+        let mut per_conn_config = self.config.clone();
+        per_conn_config.initial_seq_number = our_initial_seq;
+        let mut handshake = ListenerHandshake::new(own_socket_id, syn_cookie, per_conn_config);
+        for outcome in handshake.feed(&ControlPacket::Handshake(hp.clone()))? {
+            if let HandshakeOutput::Send(bytes) = outcome {
+                self.outbound_queue.entry(src).or_default().push_back(bytes);
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a CONCLUSION's SYN Cookie against this listener's current and
+    /// previous key, across the current and previous one-minute bucket, and
+    /// return the `(own socket id, our ISN)` the stateless INDUCTION answer
+    /// carried for that `(peer, bucket, key)`. `None` means no state may be
+    /// allocated (§4.3.1.1).
+    fn validated_conclusion_ids(
+        &self,
+        src: std::net::SocketAddr,
+        caller_socket_id: u32,
+        syn_cookie: u32,
+    ) -> Option<(u32, u32)> {
+        if syn_cookie == 0 {
+            return None;
+        }
+        let peer_key = cookie_peer_key(&src, caller_socket_id);
+        let now = unix_time_bucket();
+        for time_bucket in [now, now.wrapping_sub(1)] {
+            for secret in self.cookie_keys.acceptable() {
+                if derive_cookie(peer_key, time_bucket, secret) == syn_cookie {
+                    return Some(self.connection_ids(peer_key, time_bucket, secret));
+                }
+            }
+        }
+        None
+    }
+
+    /// This listener's per-connection Socket ID and ISN for a cookie issued
+    /// over `(peer_key, time_bucket, secret)`, kept in libsrt's allocation
+    /// range for the Socket ID (see [`MAX_SRT_SOCKET_ID`]).
+    fn connection_ids(&self, peer_key: u64, time_bucket: u32, secret: u128) -> (u32, u32) {
+        let (socket_id, initial_seq) =
+            handshake_sm::derive_listener_ids(peer_key, time_bucket, secret);
+        (socket_id % MAX_SRT_SOCKET_ID + 1, initial_seq)
+    }
+
     fn tick_pending(&mut self) {
-        self.cookie_keys.rotate_if_due(Instant::now());
         let mut to_remove = Vec::new();
         for (addr, entry) in self.pending.iter_mut() {
             entry.handshake.set_elapsed(entry.created_at.elapsed());
-            for outcome in entry.handshake.tick(HANDSHAKE_RETRANSMIT_PERIOD) {
+            for outcome in entry.handshake.tick(PENDING_TICK_INTERVAL) {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
                         self.outbound_queue
@@ -3187,6 +3243,16 @@ fn addr_to_u64(addr: &std::net::SocketAddr) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     addr.hash(&mut hasher);
     hasher.finish()
+}
+
+/// The `peer_key` a listener binds a SYN cookie to: the source address and the
+/// Caller's own SRT Socket ID. §4.3.1.1's cookie is "crafted based on host,
+/// port and current time"; binding the ID as well means a captured
+/// CONCLUSION replayed with a rewritten Socket ID no longer validates, while
+/// the same host may still reconnect from the same port under a fresh ID
+/// (its INDUCTION issues a cookie for that ID).
+fn cookie_peer_key(addr: &std::net::SocketAddr, caller_socket_id: u32) -> u64 {
+    addr_to_u64(addr) ^ (u64::from(caller_socket_id) << 32)
 }
 
 /// The current UNIX time, bucketed to 1-minute accuracy — the `time_bucket`
@@ -3568,6 +3634,59 @@ mod adapter_tests {
         buf
     }
 
+    /// A CONCLUSION with no extensions and `cookie` — either a stray (cookie
+    /// 0 never validates) or a probe with a chosen cookie.
+    fn conclusion_bytes(socket_id: u32, cookie: u32) -> Vec<u8> {
+        let hp = HandshakePacket {
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
+            version: crate::handshake_sm::HANDSHAKE_VERSION_5,
+            encryption_field: crate::packet::EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: crate::packet::HandshakeType::Conclusion,
+            srt_socket_id: socket_id,
+            syn_cookie: cookie,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(Vec::new()),
+        };
+        let pkt = ControlPacket::Handshake(hp);
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).expect("serialize conclusion");
+        buf
+    }
+
+    /// Drives a real [`CallerHandshake`] through its INDUCTION against `core`
+    /// and returns the CONCLUSION bytes it produces, leaving `core` with no
+    /// queued handshake datagram for `src`.
+    fn listener_conclusion(
+        core: &mut ListenerCore,
+        src: std::net::SocketAddr,
+        caller_socket_id: u32,
+    ) -> Vec<u8> {
+        let mut caller = CallerHandshake::new(caller_socket_id, HandshakeConfig::default());
+        let induction = caller.start().expect("caller induction");
+        core.handle_datagram(src, &induction)
+            .expect("the listener answers an induction");
+        let answer = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .expect("an INDUCTION response")
+            .clone();
+        core.outbound_queue.remove(&src);
+        let parsed = ControlPacket::parse(&answer).expect("parse induction response");
+        let mut conclusion = None;
+        for outcome in caller.feed(&parsed).expect("caller feed") {
+            if let HandshakeOutput::Send(bytes) = outcome {
+                conclusion = Some(bytes);
+            }
+        }
+        conclusion.expect("the caller sends a conclusion")
+    }
+
     /// Review-focus 2. UDP truncates a datagram larger than the receive buffer
     /// without telling the reader; a truncated DATA packet then parses as a
     /// shorter, valid packet and its payload is delivered corrupted. The
@@ -3909,6 +4028,16 @@ mod adapter_tests {
             .expect("induction");
         assert_eq!(
             core.poll_timeout(),
+            None,
+            "an INDUCTION allocates no pending handshake (#2820)"
+        );
+        let src = peer_addr();
+        let conclusion = listener_conclusion(&mut core, src, 7);
+        core.handle_datagram(src, &conclusion)
+            .expect("cookie-validated conclusion");
+        assert!(core.pending.contains_key(&src));
+        assert_eq!(
+            core.poll_timeout(),
             Some(core.last_pending_tick + PENDING_TICK_INTERVAL)
         );
         core.accepting = false;
@@ -3919,32 +4048,72 @@ mod adapter_tests {
         );
     }
 
-    /// The run loop actually ticks a pending handshake on that deadline: with no
-    /// further inbound traffic the INDUCTION response is retransmitted.
+    /// A lost INDUCTION response is recovered by the Caller re-sending its
+    /// INDUCTION, which the stateless listener answers identically — not by a
+    /// listener-side retransmit tick (#2820). No pending state is created.
     #[tokio::test]
-    async fn a_pending_handshake_is_retransmitted_by_the_listener_tick_alone() {
+    async fn a_repeated_induction_is_answered_again_without_state() {
         let config = HandshakeConfig {
             retransmit_after: Duration::from_millis(1),
             max_retries: 5,
             ..HandshakeConfig::default()
         };
-        let (core, unrouted_tx, _accepted) = test_core_with_channels(config).await;
-        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let cancel = CancellationToken::new();
-        let task = tokio::spawn(core.run(cancel.clone()));
-        unrouted_tx
-            .send((peer.local_addr().unwrap(), Bytes::from(induction_bytes(7))))
-            .await
-            .unwrap();
-        let mut buf = [0u8; 2048];
-        for n in 1..=2 {
-            tokio::time::timeout(Duration::from_secs(5), peer.recv_from(&mut buf))
-                .await
-                .unwrap_or_else(|_| panic!("datagram {n} never arrived: the tick is not wired"))
-                .unwrap();
-        }
-        cancel.cancel();
-        let _ = task.await;
+        let mut core = test_core(config).await;
+        let src = peer_addr();
+        let induction = induction_bytes(7);
+
+        core.handle_datagram(src, &induction).expect("induction");
+        let first = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .cloned()
+            .expect("an INDUCTION response");
+        core.handle_datagram(src, &induction).expect("repeat");
+        let second = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .cloned()
+            .expect("the repeat is answered too");
+        assert_eq!(first, second, "the stateless answer is identical");
+        assert!(core.pending.is_empty(), "neither answer allocated state");
+    }
+
+    /// #2820: a CONCLUSION is validated against the key that issued its
+    /// cookie even after that key has rotated, and against the previous
+    /// one-minute bucket.
+    #[tokio::test(start_paused = true)]
+    async fn a_conclusion_cookie_survives_a_key_rotation_and_a_bucket_boundary() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let src = peer_addr();
+        let peer_key = cookie_peer_key(&src, 5);
+        let bucket = unix_time_bucket();
+        let old_secret = core.cookie_keys.current();
+        let old_key_cookie = derive_cookie(peer_key, bucket, old_secret);
+
+        core.cookie_keys.drawn_at = Instant::now() - COOKIE_KEY_ROTATION;
+        assert!(core.cookie_keys.rotate_if_due(Instant::now()));
+        assert_ne!(core.cookie_keys.current(), old_secret);
+
+        assert!(
+            core.validated_conclusion_ids(src, 5, old_key_cookie)
+                .is_some(),
+            "the previous key must still validate a cookie it issued"
+        );
+
+        let previous_bucket_cookie =
+            derive_cookie(peer_key, bucket.wrapping_sub(1), core.cookie_keys.current());
+        assert!(
+            core.validated_conclusion_ids(src, 5, previous_bucket_cookie)
+                .is_some(),
+            "a cookie issued a minute ago is still within its window"
+        );
+
+        let truncated = conclusion_bytes(5, 0);
+        core.handle_datagram(src, &truncated)
+            .expect("an unvalidated conclusion is ignored");
+        assert!(core.pending.is_empty());
     }
 
     /// Send errors are counted, never queued: a flood of them must not touch
@@ -4640,32 +4809,19 @@ mod adapter_tests {
             "pending grew to {} — must be capped at MAX_PENDING",
             listener.pending.len()
         );
+        assert_eq!(
+            listener.pending.len(),
+            0,
+            "a spoofed INDUCTION flood must allocate no handshake state (#2820)"
+        );
     }
 
     #[tokio::test]
     async fn stray_conclusions_do_not_hold_listener_handshake_slots() {
         let mut listener = test_core(HandshakeConfig::default()).await;
-        let stray = {
-            let hp = HandshakePacket {
-                timestamp: crate::packet::SrtTimestamp::ZERO,
-                dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
-                version: crate::handshake_sm::HANDSHAKE_VERSION_5,
-                encryption_field: crate::packet::EncryptionField::NoEncryption,
-                extension_field: HandshakeExtensionFlags(0),
-                initial_seq_number: 0,
-                mtu: 1500,
-                max_flow_window_size: 8192,
-                handshake_type: crate::packet::HandshakeType::Conclusion,
-                srt_socket_id: 5,
-                syn_cookie: 0,
-                peer_ip: [0; 4],
-                extensions: HandshakeExtensions(Vec::new()),
-            };
-            let pkt = ControlPacket::Handshake(hp);
-            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-            pkt.serialize_into(&mut buf).unwrap();
-            buf
-        };
+        // Cookie 0 is never issued (`derive_cookie` forces the low bit), so a
+        // CONCLUSION carrying it must allocate nothing.
+        let stray = conclusion_bytes(5, 0);
         for i in 0..2000u32 {
             let src = std::net::SocketAddr::from(([198, 18, (i >> 8) as u8, i as u8], 40_000));
             let _ = listener.handle_datagram(src, &stray);
@@ -4680,13 +4836,14 @@ mod adapter_tests {
             listener.pending.len()
         );
         let honest = std::net::SocketAddr::from(([203, 0, 113, 9], 4000));
+        let conclusion = listener_conclusion(&mut listener, honest, 7);
         listener
-            .handle_datagram(honest, &induction_bytes(7))
+            .handle_datagram(honest, &conclusion)
             .expect("an honest caller");
         assert!(listener.pending.contains_key(&honest));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pending_entries_expire_while_other_sources_keep_sending() {
         let config = HandshakeConfig {
             retransmit_after: Duration::from_millis(1),
@@ -4695,16 +4852,41 @@ mod adapter_tests {
         };
         let mut listener = test_core(config).await;
 
+        // A handshake left awaiting its CONCLUSION — the same state a
+        // validated CONCLUSION's allocation passes through — stalled by
+        // inserting it directly (no public path leaves it there).
         let stalling_src = std::net::SocketAddr::from(([203, 0, 113, 1], 1234));
-        listener
-            .handle_datagram(stalling_src, &induction_bytes(7))
-            .expect("first induction");
+        let peer_key = addr_to_u64(&stalling_src);
+        let bucket = unix_time_bucket();
+        let secret = listener.cookie_keys.current();
+        let cookie = derive_cookie(peer_key, bucket, secret);
+        let (own_socket_id, our_initial_seq) = listener.connection_ids(peer_key, bucket, secret);
+        let mut stalled_config = listener.config.clone();
+        stalled_config.initial_seq_number = our_initial_seq;
+        listener.pending.insert(
+            stalling_src,
+            PendingListener {
+                handshake: ListenerHandshake::awaiting_conclusion(
+                    own_socket_id,
+                    cookie,
+                    stalled_config,
+                ),
+                params: None,
+                peer_initial_seq: 0,
+                peer_timestamp_us: 0,
+                concluded_at: None,
+                created_at: Instant::now(),
+                last_response: None,
+                our_initial_seq,
+            },
+        );
 
         // Continuous traffic from *other* sources must not keep the stalling
         // entry alive: the timer-driven tick expires it.
         for i in 0..10u32 {
             let src = std::net::SocketAddr::from(([198, 51, (i >> 8) as u8, i as u8], 40_000));
             let _ = listener.handle_datagram(src, &induction_bytes(100 + i));
+            tokio::time::advance(Duration::from_millis(10)).await;
             listener.tick_pending();
         }
 
@@ -4997,32 +5179,16 @@ mod adapter_tests {
     #[tokio::test]
     async fn listener_feed_failure_is_wrapped_with_the_engine_error() {
         let mut listener = test_core(HandshakeConfig::default()).await;
-        // A CONCLUSION as the very first packet from a source: the fresh
-        // engine expects an INDUCTION.
-        let conclusion = {
-            let hp = HandshakePacket {
-                timestamp: crate::packet::SrtTimestamp::ZERO,
-                dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
-                version: crate::handshake_sm::HANDSHAKE_VERSION_5,
-                encryption_field: crate::packet::EncryptionField::NoEncryption,
-                extension_field: HandshakeExtensionFlags(0),
-                initial_seq_number: 0,
-                mtu: 1500,
-                max_flow_window_size: 8192,
-                handshake_type: crate::packet::HandshakeType::Conclusion,
-                srt_socket_id: 5,
-                syn_cookie: 0,
-                peer_ip: [0; 4],
-                extensions: HandshakeExtensions(Vec::new()),
-            };
-            let pkt = ControlPacket::Handshake(hp);
-            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-            pkt.serialize_into(&mut buf).unwrap();
-            buf
-        };
+        let src = peer_addr();
+        let conclusion = listener_conclusion(&mut listener, src, 7);
+        listener
+            .handle_datagram(src, &conclusion)
+            .expect("a cookie-validated conclusion completes the handshake");
+        // A CONCLUSION from a different Caller Socket ID after this one
+        // connected is out of sequence for the engine.
         let err = listener
-            .handle_datagram(peer_addr(), &conclusion)
-            .expect_err("a CONCLUSION before an INDUCTION");
+            .handle_datagram(src, &conclusion_bytes(9, 0))
+            .expect_err("a stray CONCLUSION on a connected entry");
         let Error::Handshake { stage, source } = err else {
             panic!("expected Error::Handshake, got {err:?}");
         };

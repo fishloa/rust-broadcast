@@ -1164,6 +1164,39 @@ pub fn derive_cookie(peer_key: u64, time_bucket: u32, secret: u128) -> u32 {
     u32::try_from(digest & u64::from(u32::MAX)).unwrap_or(0) | 1
 }
 
+/// Domain separators for [`derive_listener_ids`], distinct from
+/// [`derive_cookie`]'s input so a Caller that has seen its cookie cannot
+/// compute the Listener's identifiers from it.
+const SOCKET_ID_DOMAIN: u8 = 1;
+const ISN_DOMAIN: u8 = 2;
+
+/// The Listener's per-connection Socket ID and Initial Sequence Number for a
+/// `(peer, time_bucket, secret)` whose cookie is [`derive_cookie`]'s output
+/// for the same inputs: low 32 bits of the same keyed SipHash-2-4, over a
+/// domain-separated input. A Listener that answers INDUCTION statelessly has
+/// nowhere to store these, so the CONCLUSION-phase recomputation gets exactly
+/// the values the INDUCTION response carried (#2820).
+///
+/// Like [`derive_cookie`], an implementation policy rather than a
+/// transcription: `draft-sharabayko-srt-01` §4.3.1.1 states the cookie's
+/// semantic inputs, not an algorithm, and does not say where a stateless
+/// Listener should keep the identifiers it issued.
+pub fn derive_listener_ids(peer_key: u64, time_bucket: u32, secret: u128) -> (u32, u32) {
+    let k0 = u64::try_from(secret & u128::from(u64::MAX)).unwrap_or(0);
+    let k1 = u64::try_from(secret >> 64).unwrap_or(0);
+    let keyed = |domain: u8| {
+        let mut input = [0u8; 13];
+        input[0] = domain;
+        input[1..9].copy_from_slice(&peer_key.to_le_bytes());
+        input[9..].copy_from_slice(&time_bucket.to_le_bytes());
+        u32::try_from(siphash24(k0, k1, &input) & u64::from(u32::MAX)).unwrap_or(0)
+    };
+    // Never 0: that value marks "no socket assigned" in this adapter.
+    let socket_id = keyed(SOCKET_ID_DOMAIN) | 1;
+    let initial_seq = keyed(ISN_DOMAIN) & crate::packet::SEQ_NUMBER_MASK;
+    (socket_id, initial_seq)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1219,6 +1252,38 @@ mod tests {
         assert_ne!(a, 0);
         let c = derive_cookie(0x1234_5678_9ABC_DEF1, 12345, 0xDEAD_BEEF);
         assert_ne!(a, c);
+    }
+
+    /// #2820: the stateless INDUCTION's identifiers are stable for one
+    /// `(peer, bucket, secret)`, in range, and neither one is the cookie a
+    /// Caller has already seen.
+    #[test]
+    fn derive_listener_ids_is_stable_in_range_and_distinct_from_the_cookie() {
+        let first = derive_listener_ids(0x1234_5678_9ABC_DEF0, 12345, 0xDEAD_BEEF);
+        let again = derive_listener_ids(0x1234_5678_9ABC_DEF0, 12345, 0xDEAD_BEEF);
+        assert_eq!(first, again);
+        let (socket_id, initial_seq) = first;
+        assert_ne!(socket_id, 0);
+        assert!(initial_seq <= crate::packet::SEQ_NUMBER_MASK);
+        assert_ne!(
+            socket_id,
+            derive_cookie(0x1234_5678_9ABC_DEF0, 12345, 0xDEAD_BEEF)
+        );
+        assert_ne!(
+            first,
+            derive_listener_ids(0x1234_5678_9ABC_DEF1, 12345, 0xDEAD_BEEF),
+            "peer"
+        );
+        assert_ne!(
+            first,
+            derive_listener_ids(0x1234_5678_9ABC_DEF0, 12346, 0xDEAD_BEEF),
+            "time bucket"
+        );
+        assert_ne!(
+            first,
+            derive_listener_ids(0x1234_5678_9ABC_DEF0, 12345, 0xDEAD_BEE0),
+            "secret"
+        );
     }
 
     /// r08-SRT-W14: only `1000..2^31` is a rejection. `0xFFFF_FFFC` (libsrt's

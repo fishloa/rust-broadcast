@@ -7,6 +7,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- A listener no longer allocates handshake state for an INDUCTION: it answers statelessly from the SYN cookie, and a `PendingListener` is created only when a CONCLUSION proves the Caller received that answer and echoes a cookie this listener issued (under the current or previous key, across the current or previous one-minute bucket). A spoofed INDUCTION flood therefore holds no slots and locks no legitimate caller out, and no datagram path drives pending retransmits any more. The cookie is also bound to the Caller's own SRT Socket ID, so a captured CONCLUSION replayed with a rewritten ID does not validate (#2820).
+
+### Fixed
 - A peer re-sending a NAK can no longer grow the driver's outbound DATA queue without bound: a retransmission already queued in it is not queued again, one sequence number is retransmitted at most once per `MIN_RETRANSMIT_INTERVAL` (20 ms), and the queue is capped at the negotiated maximum flow window (a retransmission dropped at the cap stays in the sender's pending set and is offered again). Previously one 28-byte NAK naming the whole send buffer, repeated faster than the paced drain, queued tens of megabytes (#2819).
 
 ### Changed
