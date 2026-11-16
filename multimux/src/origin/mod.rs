@@ -413,8 +413,10 @@ pub const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 pub const DRAIN_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Back-off between `accept()` attempts after a transient error (EMFILE,
-/// ECONNABORTED, ENFILE). An accept error must never end the listener.
-const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+/// ECONNABORTED, ENFILE). An accept error must never end the listener. Shared
+/// with the RTMP accept pump (`crate::source::rtmp::accept_pump`), which has
+/// the same rule.
+pub(crate) const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// Serve `app` on `listener` through hyper-util's auto builder with a Tokio
 /// timer, [`HEADER_READ_TIMEOUT`], a [`MAX_CONNECTIONS`] connection cap

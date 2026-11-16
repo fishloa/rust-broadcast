@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- The RTMP accept pump backs off 100 ms through a transient listen-socket error (a connection flood's `EMFILE`, a peer's pre-accept `ECONNABORTED`) instead of ending the route, and a pump that does end is marked dead so the next attempt rebinds rather than reusing a receiver nothing feeds (#2812).
+
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
 
