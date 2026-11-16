@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `url_ref::resolve_http`: RFC 3986 §5 resolution restricted to `http`/`https`, refusing any other scheme (`url_ref::Error::Scheme`) and an `https` -> `http` downgrade (`Error::SchemeDowngrade`), so a manifest reader that forwards resolver output never fetches `file:`/`ftp:`/`data:` or drops TLS silently (#2853).
+
 ## [13.0.0] - 2026-11-15
 ### Changed
 - BREAKING: `http_date::parse_http_date` and `http_date::date_to_epoch_us` return a `jiff::Timestamp` (the workspace wall-clock instant) instead of Unix microseconds as a raw `i64`; `date_to_epoch_us` still refuses a `Date` before 1970 and now reports a value outside the `jiff` range as `HttpDateError::HttpDate`. Migration: `parse_http_date(t)?.as_microsecond()` for a numeric count, or drop the conversion where a wall-clock instant was wanted (#2731).

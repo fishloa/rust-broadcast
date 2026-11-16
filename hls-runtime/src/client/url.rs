@@ -12,11 +12,12 @@ use url::Url;
 use broadcast_common::url_ref;
 
 /// Resolve `uri` (as it appears in a playlist) against `base` (the URL the
-/// playlist itself was fetched from), per RFC 3986 §5.
+/// playlist itself was fetched from), per RFC 3986 §5, requiring the result
+/// to be `http`/`https` (no `https` -> `http` downgrade).
 ///
 /// An unresolvable pair returns `uri` unchanged.
 pub(crate) fn resolve(base: &Url, uri: &str) -> String {
-    match url_ref::resolve(base, uri) {
+    match url_ref::resolve_http(base, uri) {
         Ok(joined) => joined.to_string(),
         Err(_) => uri.to_string(),
     }

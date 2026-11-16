@@ -32,4 +32,5 @@ mod target_duration_freeze;
 mod tracks_display;
 mod ts_hls_ingest;
 mod url_control_chars;
+mod url_scheme;
 mod video_range;
