@@ -113,7 +113,7 @@ follow-up if fMP4-sourced ML pipelines need it.
 
 ## Changes
 
-### Unreleased
+### 0.7.0
 
 - Rebuilt against `transmux` 0.32.0 and `broadcast-common` 13. Sample timing is
   the `SampleTiming` enum there, so `sample["duration"]` and

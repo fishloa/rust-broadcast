@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-16
+
 ### Dependencies
 - `broadcast-common` 12 -> 13 and `transmux` 0.31 -> 0.32 (the 2026-11-15 wave, live on crates.io). The lockfile was refreshed for those two crates and their transitive tree (`broadcast-hls` 0.8, `broadcast-dash` 0.2, `broadcast-smooth` 0.2, `dvb-si` 15, `cc-data` 0.10, `jiff` in place of `chrono`, ...); the `pyo3` pin is unchanged.
 
