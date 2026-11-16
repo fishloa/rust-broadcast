@@ -107,19 +107,17 @@ pub struct SmoothClientConfig {
     /// announced their local track id. Past it the streams that have not announced one
     /// are abandoned ([`Dropped::StreamLost`](super::Dropped::StreamLost)), so an origin
     /// that serves one stream nothing usable cannot make the healthy streams' fragments
-    /// accumulate without bound; default 32 MiB ([`DEFAULT_MAX_HELD_BYTES`]).
+    /// accumulate without bound; default 32 MiB.
     pub max_held_bytes: usize,
     /// Longest client Manifest body accepted; a longer one is a
-    /// [`ManifestFault::TooLarge`](super::ManifestFault::TooLarge) manifest failure; default 4 MiB
-    /// ([`DEFAULT_MAX_MANIFEST_BYTES`]).
+    /// [`ManifestFault::TooLarge`](super::ManifestFault::TooLarge) manifest failure; default 4 MiB.
     pub max_manifest_bytes: usize,
     /// Longest fragment body accepted; a longer one ends the session with
-    /// [`SmoothError::FragmentTooLarge`](crate::SmoothError::FragmentTooLarge); default 16 MiB
-    /// ([`DEFAULT_MAX_FRAGMENT_BYTES`]).
+    /// [`SmoothError::FragmentTooLarge`](crate::SmoothError::FragmentTooLarge); default 16 MiB.
     pub max_fragment_bytes: usize,
     /// Most chunks one stream's plan may hold: a live refresh that appends more drops the
     /// oldest of them and the session reports [`Output::Discontinuity`](super::Output::Discontinuity);
-    /// default 10 000 ([`DEFAULT_MAX_PLAN_LEN`]).
+    /// default 10 000.
     pub max_plan_len: usize,
     /// Retry delays by attempt, then the cap.
     pub backoff: BackoffSteps,

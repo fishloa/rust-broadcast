@@ -274,11 +274,10 @@ struct ColdEntry {
 pub const MAX_COLD_WINDOW: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
 /// Why a [`Retention`] cannot be driven.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum RetentionConfigError {
     /// `cold_window` is longer than [`MAX_COLD_WINDOW`].
-    #[error("cold_window {cold_window:?} is past the {max:?} cap")]
     ColdWindowTooLong {
         /// The configured window.
         cold_window: Duration,
@@ -286,6 +285,29 @@ pub enum RetentionConfigError {
         max: Duration,
     },
 }
+
+impl RetentionConfigError {
+    /// Stable label, for a metric or a log field.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::ColdWindowTooLong { .. } => "cold window too long",
+        }
+    }
+}
+
+impl core::fmt::Display for RetentionConfigError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::ColdWindowTooLong { cold_window, max } => write!(
+                f,
+                "retention cold_window {cold_window:?} is past the {max:?} cap"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for RetentionConfigError {}
 
 /// Drains a pinning [`SegmentCursor`] into a [`SegmentSink`] — the
 /// `Retention::Tiered` engine. Sans-IO, `Timestamp`-driven, no sleeping:
