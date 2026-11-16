@@ -76,6 +76,11 @@ thread_local! {
     /// Number of whole-file `mdat` scans on this thread (work-counter for the
     /// "scan once per file, not once per `traf`" guarantee).
     pub(crate) static MDAT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+
+    /// Number of `mdat` ranges [`inside_mdat`]'s search compared on this thread
+    /// (work-counter for the "log mdats per sample, not mdats x samples"
+    /// guarantee).
+    static MDAT_PROBES: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
 }
 
 /// Collect every top-level `mdat`'s payload range from `file`.
@@ -100,8 +105,20 @@ pub fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
 }
 
 /// Whether `[start, end)` lies inside at least one `mdat` payload.
+///
+/// [`mdat_ranges`] is file-ordered and its ranges are disjoint, so at most the
+/// **first** range whose end reaches `end` can contain the sample: a binary
+/// search makes the check O(log mdats) instead of a scan of every payload for
+/// every sample. A file of 8-byte empty `mdat`s with a `trun` of zero-size
+/// samples made the scan O(samples x mdats) — 2e11 comparisons for 1.6 MB
+/// (audit 20 finding 39).
 fn inside_mdat(mdats: &[MdatRange], start: usize, end: usize) -> bool {
-    mdats.iter().any(|m| start >= m.start && end <= m.end)
+    let i = mdats.partition_point(|m| {
+        #[cfg(test)]
+        MDAT_PROBES.with(|c| c.set(c.get() + 1));
+        m.end < end
+    });
+    mdats.get(i).is_some_and(|m| start >= m.start)
 }
 
 /// How many times the input's own length one demux run may resolve as sample
@@ -453,6 +470,98 @@ mod tests {
             sample_ranges(&file, moof_off, &moof, TrackId::new(1)),
             Err(Error::InvalidInput(_))
         ));
+    }
+
+    const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
+
+    /// The search keeps the containment rule exact: a sample must fit inside
+    /// ONE payload, so one that straddles two adjacent ranges — or ends in a
+    /// gap between them — is not contained.
+    #[test]
+    fn mdat_lookup_rejects_ranges_straddling_payloads() {
+        let mdats = [
+            MdatRange {
+                start: 100,
+                end: 200,
+            },
+            MdatRange {
+                start: 300,
+                end: 400,
+            },
+            MdatRange {
+                start: 500,
+                end: 600,
+            },
+        ];
+        assert!(inside_mdat(&mdats, 100, 200));
+        assert!(inside_mdat(&mdats, 300, 301));
+        assert!(inside_mdat(&mdats, 500, 501));
+        assert!(!inside_mdat(&mdats, 150, 250), "straddles a gap");
+        assert!(!inside_mdat(&mdats, 250, 350), "starts in a gap");
+        assert!(!inside_mdat(&mdats, 450, 550), "spans two payloads");
+        assert!(!inside_mdat(&mdats, 0, 0), "before the first payload");
+        assert!(!inside_mdat(&mdats, 700, 700), "after the last payload");
+    }
+
+    /// Locating a sample in its `mdat` is a binary search: with R payloads and
+    /// S samples that all land in the last one, the comparisons stay O(S log R)
+    /// instead of O(S x R) — the linear scan made a file of 8-byte empty
+    /// `mdat`s quadratic in `samples x mdats` (audit 20 finding 39).
+    #[test]
+    fn mdat_lookup_work_is_logarithmic_in_payloads() {
+        const MDATS: usize = 4096;
+        const SAMPLES: usize = 512;
+        const BOX_HEADER: usize = 8;
+        let mut file = Vec::new();
+        for _ in 0..MDATS {
+            file.extend_from_slice(&box_bytes(b"mdat", &[]));
+        }
+        let moof_off = file.len();
+        // Zero-size samples that all land in the trailing payload: every one of
+        // them is still located in an `mdat`, and none advances the cursor, so
+        // the count (not the byte total) drives the lookups.
+        let sizes = alloc::vec![0u32; SAMPLES];
+        let moof_len = container(
+            b"moof",
+            &[
+                mfhd(),
+                container(
+                    b"traf",
+                    &[
+                        tfhd(TFHD_BASE_DATA_OFFSET_PRESENT, TrackId::new(1), Some(0)),
+                        trun(&sizes, Some(0)),
+                    ],
+                ),
+            ],
+        )
+        .len();
+        // The trailing `mdat` carries no payload, so its payload range is the
+        // single position one past its header: the explicit base points there.
+        let payload = (moof_off + moof_len + BOX_HEADER) as u64;
+        let traf = container(
+            b"traf",
+            &[
+                tfhd(
+                    TFHD_BASE_DATA_OFFSET_PRESENT,
+                    TrackId::new(1),
+                    Some(payload),
+                ),
+                trun(&sizes, Some(0)),
+            ],
+        );
+        file.extend_from_slice(&container(b"moof", &[mfhd(), traf]));
+        file.extend_from_slice(&box_bytes(b"mdat", &[]));
+
+        let moof = parse_moof(&file, moof_off);
+        MDAT_PROBES.with(|c| c.set(0));
+        let ranges = sample_ranges_in(&file, &mdat_ranges(&file), moof_off, &moof, TrackId::new(1))
+            .expect("zero-size samples in the trailing payload resolve");
+        let probes = MDAT_PROBES.with(core::cell::Cell::get);
+        assert_eq!(ranges.len(), SAMPLES);
+        assert!(
+            probes <= SAMPLES * 16,
+            "expected ~log2({MDATS}) probes per sample, got {probes} for {SAMPLES} samples"
+        );
     }
 
     /// Total handed-out bytes are capped: 10k overlapping runs cannot amplify.
