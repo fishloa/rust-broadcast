@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Dependencies
+- `dvb-si` 14 -> 15, `dvb-t2mi` 14 -> 15 and `mpeg-ts` 0.8 -> 0.9 (the 2026-11-15 wave, live on crates.io). The lockfile was refreshed for those three crates only (plus their transitive `broadcast-common` 12 -> 13, the new `jiff`/`jiff-static`/`jiff-core` tree, and the removal of `chrono`); the `pyo3` / `pythonize` pins are unchanged.
+- `dvb-si` 15 replaced its `chrono` feature with `jiff`, so the binding now requests `features = ["ts", "serde", "jiff"]`. Nothing in the binding ever named `chrono` or read a decoded instant (`EitEvent::start_time_chrono`, now `start_time_utc`, TOT/TDT `utc_time`), so no Rust code change was needed.
+
+### Changed
+- No Python-visible change. The dict schema is the one `serde` emits, which serializes those instants through `jiff::Timestamp` exactly as `chrono` did (RFC 3339 with a `Z` suffix, e.g. `"2023-01-01T12:34:56Z"`), and they were never reachable through `parse_section` / `Demux` / `T2miDemux` output anyway (an EIT event dict still carries the raw `start_time_raw` MJD/BCD bytes). Output verified unchanged on `fixtures/ts/tnt-5w-12732v-isi6-10s.ts` (PAT/PMT/SDT/NIT and 229 EIT sections decoding 984 events); the 5 Python tests pass.
+
 ## [0.4.0] - 2026-11-08
 
 ### Dependencies

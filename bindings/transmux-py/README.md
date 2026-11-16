@@ -67,9 +67,9 @@ for track in media["tracks"]:
       "samples": [
         {
           "data": bytes,              # opaque coded access unit
-          "duration": int,            # in `timescale` ticks
+          "duration": int | None,     # in `timescale` ticks; None when the source stated no span
           "is_sync": bool,            # keyframe / random-access point
-          "composition_offset": int,  # pts - dts, in `timescale` ticks
+          "composition_offset": int | None,  # pts - dts, in `timescale` ticks; None without both timestamps
           "display": dict | None,     # same shape as track["display"], or None
         },
         ...
@@ -112,6 +112,13 @@ understanding transmux's incremental/streaming APIs. `transmux::media::Fmp4Demux
 follow-up if fMP4-sourced ML pipelines need it.
 
 ## Changes
+
+### Unreleased
+
+- Rebuilt against `transmux` 0.32.0 and `broadcast-common` 13. Sample timing is
+  the `SampleTiming` enum there, so `sample["duration"]` and
+  `sample["composition_offset"]` are `int | None`: a sample whose source stated
+  no span, or which has no timestamps, reports `None` rather than a number.
 
 ### 0.5.0
 

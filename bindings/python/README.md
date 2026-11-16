@@ -44,6 +44,15 @@ not build/serialize wire bytes — use the Rust crates for that.
 
 ## Changes
 
+### Unreleased
+
+- Rebuilt against `dvb-si` 15 / `dvb-t2mi` 15 (`mpeg-ts` 0.9,
+  `broadcast-common` 13). `dvb-si` 15 replaced its `chrono` feature with
+  `jiff`, so its decoded instants are `jiff::Timestamp`; where a dict surfaces
+  one it renders as RFC 3339 with a `Z` suffix, the same text `chrono`
+  produced, so the Python output is unchanged. The EIT event dict still carries
+  the raw MJD/BCD `start_time_raw` bytes and no decoded start-time key.
+
 ### 0.3.0
 
 - Rebuilt against `dvb-si` 12 / `dvb-t2mi` 12 (typed `mpeg_ts::pid::Pid`,

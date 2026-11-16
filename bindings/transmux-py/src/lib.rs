@@ -61,9 +61,10 @@ use transmux::{EsdsBox, TsDemux};
 ///       "samples": [
 ///         {
 ///           "data": bytes,              # opaque coded access unit (length-prefixed NAL for AVC/HEVC, raw frame for audio)
-///           "duration": int,            # in `timescale` ticks
+///           "duration": int | None,     # in `timescale` ticks; None when the source stated no span
 ///           "is_sync": bool,            # keyframe / random-access point
-///           "composition_offset": int,  # pts - dts, in `timescale` ticks
+///           "composition_offset": int | None,  # pts - dts, in `timescale` ticks; None without both timestamps
+///           "display": dict | None,     # per-sample display state, or None
 ///         },
 ///         ...
 ///       ],
@@ -83,7 +84,9 @@ fn demux_ts(py: Python<'_>, data: &[u8]) -> PyResult<Py<PyAny>> {
 
 fn media_to_py(py: Python<'_>, media: &Media) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
-    dict.set_item("movie_timescale", media.movie_timescale)?;
+    // Timescales are the non-zero `broadcast_common::timescale::Timescale`
+    // (transmux 0.32); the Python dict keeps exposing the plain ticks/sec int.
+    dict.set_item("movie_timescale", media.movie_timescale.get())?;
     let tracks = PyList::empty(py);
     for track in &media.tracks {
         tracks.append(track_to_py(py, track)?)?;
@@ -98,7 +101,7 @@ fn track_to_py(py: Python<'_>, track: &Track) -> PyResult<Py<PyAny>> {
     // `TrackId` / `Pid` are typed newtypes (transmux 0.27 / mpeg-ts 0.6); the
     // Python dict keeps exposing plain ints.
     dict.set_item("track_id", spec.track_id.value())?;
-    dict.set_item("timescale", spec.timescale)?;
+    dict.set_item("timescale", spec.timescale.get())?;
     dict.set_item("start_decode_time", track.start_decode_time)?;
     dict.set_item("source_pid", spec.source_pid.map(|p| p.value()))?;
 
@@ -133,12 +136,21 @@ fn sample_to_py(
 ) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("data", PyBytes::new(py, &sample.data))?;
-    dict.set_item("duration", sample.duration)?;
+    // transmux 0.32 made timing a `SampleTiming` enum: a `Timed` sample states
+    // its span where the source had one, a `DurationOnly` one states a span
+    // and no timestamps, and `None` is a section-carried track. Each value is
+    // `None` in Python when the sample does not carry it.
+    dict.set_item("duration", sample.timing.and_then(|t| t.duration()))?;
     // transmux 0.20 moved the sync flag onto `SampleFlags` and made the
     // composition offset a derived accessor (it is computed from pts/dts
     // rather than stored), so both are read through the new shape.
     dict.set_item("is_sync", sample.flags.is_sync)?;
-    dict.set_item("composition_offset", sample.composition_offset())?;
+    dict.set_item(
+        "composition_offset",
+        sample
+            .composition_offset()
+            .map_err(|e| PyValueError::new_err(e.to_string()))?,
+    )?;
     dict.set_item(
         "display",
         display_info_to_py(py, sample.display.as_ref(), display_cache)?,
