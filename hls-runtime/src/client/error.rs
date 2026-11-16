@@ -212,6 +212,15 @@ pub enum Error {
         dropped: super::action::ResourceId,
     },
 
+    /// Part/Segment bodies waiting for their init segment exceeded the
+    /// buffering cap; the oldest was dropped and will be requested again by a
+    /// later reload (audit 20 finding 3, issue #2814).
+    #[error("segments waiting for an init segment exceed the buffer cap; dropped {dropped:?}")]
+    PendingDemuxOverflow {
+        /// The body that was dropped.
+        dropped: super::action::ResourceId,
+    },
+
     /// A delta playlist (`EXT-X-SKIP`) could not be merged into a full view,
     /// so none of its segments was processed; a full playlist has been
     /// requested instead.

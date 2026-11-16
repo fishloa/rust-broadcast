@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Fixed
+- Client: Part/Segment bodies held until their init segment is ready are capped at `MAX_PENDING_DEMUX_BYTES` (64 MiB), dropping the oldest with `Error::PendingDemuxOverflow`, and `prune` drops them below the window. A playlist whose `EXT-X-MAP` never becomes ready while media keeps arriving can no longer grow the queue for the life of the pull (audit 20 finding 3, #2814).
 - Client: `prune_inits` drops a non-`Ready` init slot that neither a segment nor the current playlist's maps refer to, and the slot map is capped at `MAX_INIT_SLOTS` (64), so a playlist naming a new failing `EXT-X-MAP` on every reload can no longer grow the map without bound or slow the per-map scan (audit 20 finding 4, #2815).
 
 ### Added

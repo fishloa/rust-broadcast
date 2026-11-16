@@ -43,6 +43,14 @@ const LIVE_EDGE_TARGET_DURATIONS: f64 = 3.0;
 /// Ceiling on ciphertext held while its key is still missing (total bytes).
 const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
 
+/// Ceiling on Part/Segment bodies held until their init segment is ready
+/// (total bytes). A playlist whose `EXT-X-MAP` never becomes ready while media
+/// keeps arriving would otherwise copy every segment into
+/// [`HlsClient::pending_demux`] for the life of the pull (audit 20 finding 3,
+/// issue #2814), so the oldest waiting body is dropped past this cap and
+/// reported as [`Error::PendingDemuxOverflow`].
+const MAX_PENDING_DEMUX_BYTES: usize = 64 * 1024 * 1024;
+
 /// Ceiling on errors queued for [`HlsClient::next_error`]. The final slot
 /// coalesces any further report into one counted
 /// [`Error::UnresolvableReferences`], so a playlist naming an unbounded number
@@ -1329,7 +1337,8 @@ impl HlsClient {
                 let processed = self.accept_media_resource(id, bytes);
                 match processed {
                     Ok(()) => {}
-                    Err(e @ Error::PendingKeyedOverflow { .. }) => return Err(e),
+                    Err(e @ Error::PendingKeyedOverflow { .. })
+                    | Err(e @ Error::PendingDemuxOverflow { .. }) => return Err(e),
                     Err(e) => {
                         self.fulfilled.remove(&id);
                         self.requested.remove(&id);
@@ -1499,10 +1508,37 @@ impl HlsClient {
             // than buffering it forever waiting for one.
             self.finish_ts_resource(id, bytes)
         } else if !self.init_ready(self.init_of(&id)) {
-            self.pending_demux.push_back((id, bytes.to_vec()));
-            Ok(())
+            self.buffer_until_init(id, bytes)
         } else {
             self.finish_media_resource(id, bytes)
+        }
+    }
+
+    /// Hold a Part/Segment body until its init becomes ready, within
+    /// [`MAX_PENDING_DEMUX_BYTES`]: the oldest waiting bodies are dropped (and
+    /// become requestable again) to make room, reported as
+    /// [`Error::PendingDemuxOverflow`].
+    fn buffer_until_init(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > MAX_PENDING_DEMUX_BYTES {
+            self.fulfilled.remove(&id);
+            self.requested.remove(&id);
+            return Err(Error::PendingDemuxOverflow { dropped: id });
+        }
+        let mut held: usize = self.pending_demux.iter().map(|(_, b)| b.len()).sum();
+        let mut dropped: Option<ResourceId> = None;
+        while held.saturating_add(bytes.len()) > MAX_PENDING_DEMUX_BYTES {
+            let Some((old_id, old)) = self.pending_demux.pop_front() else {
+                break;
+            };
+            held = held.saturating_sub(old.len());
+            self.fulfilled.remove(&old_id);
+            self.requested.remove(&old_id);
+            dropped.get_or_insert(old_id);
+        }
+        self.pending_demux.push_back((id, bytes.to_vec()));
+        match dropped {
+            Some(dropped) => Err(Error::PendingDemuxOverflow { dropped }),
+            None => Ok(()),
         }
     }
 
@@ -2508,6 +2544,7 @@ impl HlsClient {
         self.resource_requests.retain(|id, _| !below(id));
         self.fulfilled.retain(|id| !below(id));
         self.pending_keyed.retain(|(id, _)| !below(id));
+        self.pending_demux.retain(|(id, _)| !below(id));
         self.segment_crypto.retain(|&m, _| m >= first);
         self.delivered_parts.retain(|&(m, _)| m >= first);
         self.delivered_segments.retain(|&m| m >= first);
@@ -3163,6 +3200,100 @@ mod tests {
 
     fn pending_keyed_bytes(client: &HlsClient) -> usize {
         client.pending_keyed.iter().map(|(_, b)| b.len()).sum()
+    }
+
+    fn pending_demux_bytes(client: &HlsClient) -> usize {
+        client.pending_demux.iter().map(|(_, b)| b.len()).sum()
+    }
+
+    fn map_playlist(first_msn: u64, count: u64) -> String {
+        let mut text = format!(
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n\
+             #EXT-X-MEDIA-SEQUENCE:{first_msn}\n\
+             #EXT-X-MAP:URI=\"init.mp4\"\n"
+        );
+        for msn in first_msn..first_msn + count {
+            text.push_str(&format!("#EXTINF:2.0,\nseg{msn}.m4s\n"));
+        }
+        text
+    }
+
+    fn media_fragment_of_len(len: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; len];
+        bytes[..EMPTY_FRAGMENT.len()].copy_from_slice(EMPTY_FRAGMENT);
+        bytes
+    }
+
+    // Audit 20 finding 3 (#2814): a media segment that arrives before its
+    // init is buffered, and the queue was never bounded while the init never
+    // became ready. Past the cap the oldest waiting body is dropped with a
+    // typed error and the queue stays bounded.
+    #[test]
+    fn pending_demux_is_capped_and_drops_the_oldest_with_a_typed_error() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(map_playlist(0, 2).as_bytes())
+            .expect("playlist parses");
+        let big = media_fragment_of_len(40 * 1024 * 1024);
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                &big,
+            )
+            .expect("first body is buffered");
+        let err = client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(1),
+                },
+                &big,
+            )
+            .expect_err("the second 40 MiB body exceeds the 64 MiB cap");
+        assert!(
+            matches!(err, Error::PendingDemuxOverflow { dropped } if dropped == ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            }),
+            "{err:?}"
+        );
+        assert!(
+            pending_demux_bytes(&client) <= MAX_PENDING_DEMUX_BYTES,
+            "{} bytes held",
+            pending_demux_bytes(&client)
+        );
+        assert_eq!(client.pending_demux.len(), 1);
+    }
+
+    // ...and a body below the current window can never be played, so prune
+    // must drop it with the other MSN-keyed records.
+    #[test]
+    fn pending_demux_is_pruned_with_the_window() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(map_playlist(0, 2).as_bytes())
+            .expect("playlist parses");
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                EMPTY_FRAGMENT,
+            )
+            .expect("body is buffered pending the init");
+        assert_eq!(client.pending_demux.len(), 1);
+        client
+            .on_playlist(map_playlist(1, 2).as_bytes())
+            .expect("playlist parses");
+        assert!(
+            client.pending_demux.is_empty(),
+            "a body below the window must be pruned: {:?}",
+            client
+                .pending_demux
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        );
     }
 
     // Audit 20 finding 18 (#2829): the overflow check must run before any
