@@ -14,6 +14,7 @@ use broadcast_common::Unpackage;
 use broadcast_common::range::ByteSpan;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
+use broadcast_hls::limits::Limits;
 use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
     OpenSegment, PreloadHintType,
@@ -390,6 +391,7 @@ pub struct HlsClient {
     playlist_url: Url,
     base_override: Option<Url>,
     variant_policy: VariantPolicy,
+    limits: Limits,
     master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
@@ -552,6 +554,10 @@ pub struct HlsClientConfig {
     /// The URL relative playlist URIs resolve against until the first playlist
     /// response says otherwise; `None` resolves against `playlist_url`.
     pub playlist_base: Option<Url>,
+    /// Hostile-input bounds: the playlist byte size and segment count the
+    /// parser accepts, and the largest resource body [`HlsClient::on_resource`]
+    /// accepts (audit 20 finding 41, issue #2852).
+    pub limits: Limits,
 }
 
 impl HlsClientConfig {
@@ -561,7 +567,15 @@ impl HlsClientConfig {
             playlist_url,
             variant_policy: VariantPolicy::default(),
             playlist_base: None,
+            limits: Limits::default(),
         }
+    }
+
+    /// Replace [`HlsClientConfig::limits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Replace [`HlsClientConfig::variant_policy`].
@@ -595,6 +609,7 @@ impl HlsClient {
             playlist_url,
             base_override: config.playlist_base,
             variant_policy: config.variant_policy,
+            limits: config.limits,
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
@@ -746,7 +761,7 @@ impl HlsClient {
     pub fn on_playlist(&mut self, bytes: &[u8]) -> Result<()> {
         let text = core::str::from_utf8(bytes)?;
         if text.contains("#EXT-X-STREAM-INF") {
-            let master = MasterPlaylist::parse(text)?;
+            let master = MasterPlaylist::parse_with(text, &self.limits)?;
             if !master.defines.is_empty() {
                 return Err(Error::UnsupportedDefine);
             }
@@ -809,7 +824,7 @@ impl HlsClient {
                 }));
             return Ok(());
         }
-        let playlist = MediaPlaylist::parse(text)?;
+        let playlist = MediaPlaylist::parse_with(text, &self.limits)?;
         if !playlist.defines.is_empty() {
             return Err(Error::UnsupportedDefine);
         }
@@ -1328,6 +1343,17 @@ impl HlsClient {
             return Err(Error::DuplicateResource { id });
         }
         self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+        if bytes.len() > self.limits.max_segment_bytes {
+            self.requested.remove(&id);
+            if let Some(slot) = self.init_target.and_then(|t| self.inits.get_mut(&t)) {
+                slot.fetch = InitFetch::Failed;
+            }
+            return Err(Error::ResourceTooLarge {
+                id,
+                len: bytes.len(),
+                max: self.limits.max_segment_bytes,
+            });
+        }
         if id != ResourceId::Init {
             self.fulfilled.insert(id);
         }
@@ -3419,6 +3445,63 @@ mod tests {
         assert!(
             client.key_urls.is_empty(),
             "no key URL may be retained for a downgraded fetch"
+        );
+    }
+
+    // Audit 20 finding 41 (#2852): the sans-IO client has no own playlist or
+    // resource bound, so `HlsClientConfig::limits` is enforced here.
+    #[test]
+    fn client_limits_bound_playlist_and_resource_bodies() {
+        let text = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg.ts\n\
+                    #EXT-X-ENDLIST\n";
+        let mut limits = Limits::default();
+        limits.max_playlist_bytes = 16;
+        let mut client =
+            HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        assert!(matches!(
+            client.on_playlist(text.as_bytes()),
+            Err(Error::PlaylistParse(broadcast_hls::Error::TooLarge {
+                what: "playlist bytes",
+                ..
+            }))
+        ));
+
+        let two = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n\
+                   #EXTINF:2.0,\nseg1.ts\n#EXT-X-ENDLIST\n";
+        let mut limits = Limits::default();
+        limits.max_segments = 1;
+        let mut client =
+            HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        assert!(matches!(
+            client.on_playlist(two.as_bytes()),
+            Err(Error::PlaylistParse(broadcast_hls::Error::TooLarge {
+                what: "media segments",
+                ..
+            }))
+        ));
+
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = 4;
+        let mut client =
+            HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(map_playlist(0, 1).as_bytes())
+            .expect("playlist parses");
+        let err = client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                EMPTY_FRAGMENT,
+            )
+            .expect_err("a 16-byte body exceeds the 4-byte cap");
+        assert!(
+            matches!(err, Error::ResourceTooLarge { id: ResourceId::Segment { msn }, .. } if msn == broadcast_hls::MediaSequence::new(0)),
+            "{err:?}"
+        );
+        assert!(
+            client.pending_demux.is_empty(),
+            "an over-size body must be refused before it is buffered"
         );
     }
 

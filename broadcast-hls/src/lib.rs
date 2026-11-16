@@ -15,6 +15,7 @@
 extern crate alloc;
 
 mod error;
+pub mod limits;
 pub mod seq;
 
 pub use error::{Error, Result};
@@ -2027,6 +2028,22 @@ impl MediaPlaylist {
     /// tag with a missing required attribute or an unparsable value returns
     /// [`crate::Error::HlsParse`].
     pub fn parse(input: &str) -> Result<Self> {
+        Self::parse_with(input, &crate::limits::Limits::default())
+    }
+
+    /// Parse a Media Playlist under `limits`.
+    ///
+    /// # Errors
+    /// As [`Self::parse`], plus [`crate::Error::TooLarge`] when the input or
+    /// its segment count exceeds a bound.
+    pub fn parse_with(input: &str, limits: &crate::limits::Limits) -> Result<Self> {
+        if input.len() > limits.max_playlist_bytes {
+            return Err(Error::TooLarge {
+                what: "playlist bytes",
+                len: input.len(),
+                max: limits.max_playlist_bytes,
+            });
+        }
         // `0` (not `1`): distinguishes "no #EXT-X-VERSION line was present
         // on the wire at all" from "the wire explicitly said version 1",
         // so a fully-untagged input round-trips back to no tag rather than
@@ -2364,6 +2381,13 @@ impl MediaPlaylist {
                     line: line.to_string(),
                     reason: "media segment URI with no preceding #EXTINF".to_string(),
                 })?;
+                if segments.len() >= limits.max_segments {
+                    return Err(Error::TooLarge {
+                        what: "media segments",
+                        len: segments.len() + 1,
+                        max: limits.max_segments,
+                    });
+                }
                 segments.push(MediaSegment {
                     uri: line.to_string(),
                     duration,
@@ -4394,6 +4418,22 @@ impl MasterPlaylist {
     /// attribute, unparsable value) or a variant URI with no preceding
     /// `#EXT-X-STREAM-INF` returns [`crate::Error::HlsParse`].
     pub fn parse(input: &str) -> Result<Self> {
+        Self::parse_with(input, &crate::limits::Limits::default())
+    }
+
+    /// Parse a Master Playlist under `limits`.
+    ///
+    /// # Errors
+    /// As [`Self::parse`], plus [`crate::Error::TooLarge`] when the input
+    /// exceeds `limits.max_playlist_bytes`.
+    pub fn parse_with(input: &str, limits: &crate::limits::Limits) -> Result<Self> {
+        if input.len() > limits.max_playlist_bytes {
+            return Err(Error::TooLarge {
+                what: "playlist bytes",
+                len: input.len(),
+                max: limits.max_playlist_bytes,
+            });
+        }
         // `0` (not `1`): see the identical comment in `MediaPlaylist::parse`.
         let mut version: u8 = 0;
         let mut variants: Vec<Variant> = Vec::new();

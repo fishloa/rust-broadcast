@@ -73,6 +73,20 @@ pub enum Error {
         id: super::action::ResourceId,
     },
 
+    /// A resource body exceeded
+    /// [`HlsClientConfig::limits`](crate::client::HlsClientConfig::limits)'s
+    /// `max_segment_bytes`. The body is refused before it is buffered or
+    /// demuxed, and is not requested again (audit 20 finding 41, issue #2852).
+    #[error("resource {id:?} is {len} bytes, over the limit of {max}")]
+    ResourceTooLarge {
+        /// The resource whose body was too large.
+        id: super::action::ResourceId,
+        /// The body size received.
+        len: usize,
+        /// The configured maximum.
+        max: usize,
+    },
+
     /// A fetched Media Initialization Section holds no `moov` box (it is not an
     /// ISO BMFF init at all, or it is truncated). The init is marked failed, so
     /// [`crate::client::HlsClient::retry_init`] fetches it again.

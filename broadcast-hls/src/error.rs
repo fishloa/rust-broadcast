@@ -15,6 +15,18 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Error, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum Error {
+    /// A playlist exceeded a [`crate::limits::Limits`] bound (audit 20
+    /// finding 41, issue #2852).
+    #[error("{what} is {len}, over the limit of {max}")]
+    TooLarge {
+        /// What exceeded the bound (e.g. `"playlist bytes"`).
+        what: &'static str,
+        /// The observed size.
+        len: usize,
+        /// The bound it exceeded.
+        max: usize,
+    },
+
     /// An HLS playlist (`.m3u8`, RFC 8216bis) tag could not be parsed —
     /// [`crate::MediaPlaylist::parse`]/[`crate::MasterPlaylist::parse`]'s
     /// `to_m3u8()` renderers' symmetric inverse. Unrecognized tags are

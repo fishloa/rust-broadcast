@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- `limits` module: `Limits` with `MAX_PLAYLIST_BYTES` (4 MiB), `MAX_SEGMENTS` (65 536) and `MAX_SEGMENT_BYTES` (64 MiB) defaults; `MediaPlaylist::parse_with` / `MasterPlaylist::parse_with` take them, `parse` delegates to the defaults, and `Error::TooLarge` reports an over-limit document or segment count (audit 20 finding 41, #2852).
 - `Error::InvalidTagLine`: a verbatim `extra_tags`/`pre_tags` line must be non-empty and start with `#EXT`, so it can no longer render as a URI line or a bare terminator (audit 20 finding 51, #2862).
 
 ## [0.8.0] - 2026-11-15
