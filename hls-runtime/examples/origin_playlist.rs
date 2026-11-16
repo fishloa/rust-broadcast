@@ -111,7 +111,10 @@ fn main() {
     ));
 
     println!("--- master.m3u8 ---");
-    println!("{}", master_playlist_m3u8("media.m3u8", 5_000_000));
+    match master_playlist_m3u8("media.m3u8", 5_000_000) {
+        Ok(master) => println!("{master}"),
+        Err(e) => println!("master playlist render failed: {e}"),
+    }
 
     println!("--- media.m3u8 ---");
     match resolve(
