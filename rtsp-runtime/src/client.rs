@@ -280,9 +280,13 @@ impl ClientSession {
     }
 
     /// Overrides the `User-Agent` header value sent on requests.
-    pub fn with_user_agent(mut self, ua: impl Into<String>) -> Self {
-        self.user_agent = ua.into();
-        self
+    ///
+    /// # Errors
+    /// [`Error::HeaderSerialize`] when `ua` holds a control character, which
+    /// would inject a header (or end the header block) on the wire.
+    pub fn with_user_agent(mut self, ua: impl Into<String>) -> Result<Self> {
+        self.user_agent = crate::error::header_value(&ua.into(), "User-Agent")?;
+        Ok(self)
     }
 
     /// The current session state.
@@ -1471,6 +1475,21 @@ mod tests {
                 .is_none(),
             "no keepalive is emitted for a deadline that cannot exist"
         );
+    }
+
+    #[test]
+    fn a_user_agent_with_a_control_character_is_rejected() {
+        // #2859: rtsp-types stores a header value as a bare `String` and the
+        // serializer writes it raw, so a CR/LF in config injected a header.
+        let err = ClientSession::default()
+            .with_user_agent("cam\r\nX-Injected: 1")
+            .expect_err("a control character must be rejected");
+        assert!(matches!(err, Error::HeaderSerialize(_)), "got {err:?}");
+
+        let err = crate::config::RtspClientConfig::default()
+            .with_user_agent("cam\r\nX-Injected: 1")
+            .expect_err("a control character must be rejected");
+        assert!(matches!(err, Error::HeaderSerialize(_)), "got {err:?}");
     }
 
     #[test]

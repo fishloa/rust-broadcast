@@ -15,6 +15,18 @@ use crate::state::SessionState;
 /// Result alias for the engine's fallible operations.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// A caller-supplied header value, rejected when it holds a control character
+/// that would forge a header or a header terminator once serialized
+/// (RFC 2326 §15.1 `qdtext` excludes CTLs). `header` names the field.
+pub(crate) fn header_value(value: &str, header: &'static str) -> Result<String> {
+    if crate::rfc2326_lex::has_ctl(value) {
+        return Err(Error::HeaderSerialize(HeaderSerializeError::ControlChar(
+            format!("{header} header value contains a control character"),
+        )));
+    }
+    Ok(value.to_string())
+}
+
 /// Errors produced by the RTSP session engine.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]

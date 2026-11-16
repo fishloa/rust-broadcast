@@ -4,6 +4,12 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `ice::format_ice_server_links` returns `Result<String, Error>`, rejecting a `url` that would end the `<...>` value or forge the next link (a control character, `<`, `>` or `"`) and a `username`/`credential` holding a control character, as `Error::InvalidHeader { header: "Link" }`. Migration: `format_ice_server_links(&servers)` -> `format_ice_server_links(&servers)?` (#2859).
+
+### Fixed
+- `WhepSession::counter_offer` rejects a `valid_until` holding a control character, `"` or `>` with the documented `500` and unchanged state, instead of interpolating it between the `Content-Type` parameter quotes (#2859).
+
 ## [0.8.0] - 2026-11-15
 ### Changed
 - BREAKING: `WebRtcClientConfig`'s `bearer_token: Option<String>`/`with_bearer_token` are `credentials: Option<broadcast_auth::Credentials>`/`with_credentials(Credentials)`, the rtsp-runtime shape: one auth vocabulary across the runtimes. Bearer is applied as before; Basic is applied pre-emptively (a WHIP endpoint behind a proxy); the redacting `Debug` now hides `credentials`. Migration: `.with_bearer_token(t)` -> `.with_credentials(broadcast_auth::Credentials::Bearer { token: t })` (#2661 2.2).
