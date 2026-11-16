@@ -105,6 +105,18 @@ const COMMAND_CHUNK_STREAM_ID: u32 = 3;
 /// `publish` with a new guess indefinitely; this bounds the guesses.
 const MAX_FAILED_PUBLISH_ATTEMPTS: u32 = 3;
 
+/// Largest inbound Command Message body this session will parse: 64 KiB.
+/// Reassembly already bounds a message at
+/// [`MAX_MESSAGE_LEN`](crate::chunk::MAX_MESSAGE_LEN) (8 MiB), but a command
+/// body is decoded into a full AMF0 value tree before any state-machine
+/// check (including the `connect` stream-key gate), so an 8 MiB body of
+/// one-byte nulls or three-byte empty-key pairs would expand into millions
+/// of allocations from one message on one connection. Real `connect` /
+/// `createStream` / `publish` commands are a few hundred bytes, so this
+/// ceiling does not threaten interoperability. A longer body is rejected
+/// with [`RtmpError::CommandTooLong`] before any AMF0 parsing.
+pub const MAX_COMMAND_LEN: usize = 64 * 1024;
+
 /// `fmsVer` value advertised in the `connect` `_result` Properties object
 /// (§7.2.1). Not spec-mandated — a conventional placeholder value (the
 /// pattern used by reference server implementations), since real clients
@@ -493,6 +505,17 @@ impl ServerSession {
         if let Some(pc) = ProtocolControl::from_message(msg)? {
             self.handle_protocol_control(pc);
             return Ok(());
+        }
+
+        if matches!(
+            msg.message_type_id,
+            MessageTypeId::CommandAmf0 | MessageTypeId::CommandAmf3
+        ) && msg.payload.len() > MAX_COMMAND_LEN
+        {
+            return Err(RtmpError::CommandTooLong {
+                len: msg.payload.len(),
+                max: MAX_COMMAND_LEN,
+            });
         }
 
         match msg.message_type_id {
@@ -1514,6 +1537,9 @@ mod tests {
     /// bytes fits the request's AMF0 u16 string prefix but, echoed into the
     /// `"<key> is now published."` onStatus description, overflows it. That
     /// used to hit `to_bytes().expect(..)` and panic the server remotely.
+    /// Such a `publish` body is now longer than [`MAX_COMMAND_LEN`] and is
+    /// rejected before parsing (#2813), so the remote path ends in a typed
+    /// error even earlier.
     #[test]
     fn oversized_publish_name_errors_instead_of_panicking() {
         for len in [65_518usize, 65_530, 65_535] {
@@ -1525,9 +1551,9 @@ mod tests {
             let key = "k".repeat(len);
             let err = session
                 .handle_data(&publish_bytes(1, &key))
-                .expect_err("overflowing onStatus description must be an Err");
+                .expect_err("an oversized publish command must be an Err");
             assert!(
-                matches!(err, RtmpError::Amf0StringTooLong { .. }),
+                matches!(err, RtmpError::CommandTooLong { .. }),
                 "len {len}: {err:?}"
             );
         }
@@ -2017,6 +2043,34 @@ mod tests {
                 | RtmpError::Malformed { .. }
                 | RtmpError::BufferTooShort(..)
         ));
+    }
+
+    /// #2813: a Command Message body is decoded into a full AMF0 value tree
+    /// before any state-machine check (including the `connect` stream-key
+    /// gate), on any connection, before authentication. A body over
+    /// [`MAX_COMMAND_LEN`] is now rejected before that parse.
+    #[test]
+    fn command_body_over_the_length_cap_is_rejected_before_amf0_parsing() {
+        for message_type_id in [MessageTypeId::CommandAmf0, MessageTypeId::CommandAmf3] {
+            let mut session = ServerSession::with_defaults();
+            session.handle_data(&build_c0_c1()).unwrap();
+            session.handle_data(&build_c2()).unwrap();
+
+            let oversized = Message {
+                chunk_stream_id: ChunkStreamId::new(CLIENT_CSID),
+                timestamp: Timestamp::ZERO,
+                message_type_id,
+                message_stream_id: MessageStreamId::new(0),
+                payload: vec![crate::amf0::marker::NULL; MAX_COMMAND_LEN + 1],
+            };
+            let bytes = ChunkWriter::new().write(&oversized).unwrap();
+            let err = session.handle_data(&bytes).unwrap_err();
+            assert!(matches!(
+                err,
+                RtmpError::CommandTooLong { len, max }
+                    if len == MAX_COMMAND_LEN + 1 && max == MAX_COMMAND_LEN
+            ));
+        }
     }
 
     #[test]
