@@ -6,6 +6,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use crate::error::Error;
+
 /// A STUN or TURN server discovered via a `Link` header.
 ///
 /// Corresponds to the `rel="ice-server"` link relation defined in RFC 9725 section 4.4:
@@ -85,6 +87,13 @@ pub fn parse_ice_server_links(link_header: &str) -> Vec<IceServer> {
 ///
 /// Each server produces one link-value; they are joined by `, `.
 ///
+/// # Errors
+///
+/// [`Error::InvalidHeader`] (`"Link"`) when a `url` would end the `<...>`
+/// value or start a new link (a control character, `<`, `>` or `"`), or when
+/// a `username`/`credential` holds a control character, which cannot appear in
+/// an RFC 8288 quoted-string.
+///
 /// # Example
 ///
 /// ```
@@ -102,25 +111,51 @@ pub fn parse_ice_server_links(link_header: &str) -> Vec<IceServer> {
 ///         credential: Some("pass".into()),
 ///     },
 /// ];
-/// let header = format_ice_server_links(&servers);
+/// let header = format_ice_server_links(&servers).expect("safe link values");
 /// assert!(header.contains("stun:stun.example.com"));
 /// assert!(header.contains(r#"username="user""#));
 /// ```
-pub fn format_ice_server_links(servers: &[IceServer]) -> String {
+pub fn format_ice_server_links(servers: &[IceServer]) -> Result<String, Error> {
     let mut parts: Vec<String> = Vec::with_capacity(servers.len());
     for s in servers {
+        checked_uri(&s.url)?;
         let mut link = alloc::format!("<{}>; rel=\"{}\"", s.url, ICE_SERVER_REL);
         if let Some(ref u) = s.username {
+            checked_quoted(u)?;
             link.push_str("; username=");
             link.push_str(&quote_escape(u));
         }
         if let Some(ref c) = s.credential {
+            checked_quoted(c)?;
             link.push_str("; credential=");
             link.push_str(&quote_escape(c));
         }
         parts.push(link);
     }
-    parts.join(", ")
+    Ok(parts.join(", "))
+}
+
+/// A `Link` URI-reference: no control character, and none of `<`, `>` or `"`
+/// that would end the `<...>` value or forge the next link.
+fn checked_uri(url: &str) -> Result<(), Error> {
+    if url.is_empty()
+        || url
+            .chars()
+            .any(|c| c.is_ascii_control() || matches!(c, '<' | '>' | '"'))
+    {
+        return Err(Error::InvalidHeader { header: "Link" });
+    }
+    Ok(())
+}
+
+/// A quoted `Link` parameter value: a control character is not a
+/// `quoted-string` character (RFC 8288 §3); `"` and `\` are escaped by
+/// [`quote_escape`].
+fn checked_quoted(value: &str) -> Result<(), Error> {
+    if value.chars().any(|c| c.is_ascii_control()) {
+        return Err(Error::InvalidHeader { header: "Link" });
+    }
+    Ok(())
 }
 
 /// Quotes `value` as an RFC 8288 `quoted-string`, backslash-escaping any `"`
@@ -334,7 +369,7 @@ mod tests {
             },
         ];
 
-        let header = format_ice_server_links(&servers);
+        let header = format_ice_server_links(&servers).expect("safe link values");
         let parsed = parse_ice_server_links(&header);
 
         assert_eq!(parsed.len(), 2);
@@ -344,7 +379,7 @@ mod tests {
 
     #[test]
     fn format_empty() {
-        assert_eq!(format_ice_server_links(&[]), "");
+        assert_eq!(format_ice_server_links(&[]).expect("no servers"), "");
     }
 
     #[test]
@@ -354,7 +389,7 @@ mod tests {
             username: None,
             credential: None,
         }];
-        let header = format_ice_server_links(&servers);
+        let header = format_ice_server_links(&servers).expect("safe link values");
         assert_eq!(header, r#"<stun:s.example.com>; rel="ice-server""#);
     }
 
@@ -370,7 +405,7 @@ mod tests {
             username: Some("user".into()),
             credential: Some(r#"pa;ss,word"with\backslash"#.into()),
         }];
-        let header = format_ice_server_links(&servers);
+        let header = format_ice_server_links(&servers).expect("safe link values");
         let parsed = parse_ice_server_links(&header);
         assert_eq!(
             parsed.len(),
@@ -398,10 +433,41 @@ mod tests {
             username: Some("u".into()),
             credential: Some("c".into()),
         }];
-        let header = format_ice_server_links(&servers);
+        let header = format_ice_server_links(&servers).expect("safe link values");
         assert_eq!(
             header,
             r#"<turn:t.example.com>; rel="ice-server"; username="u"; credential="c""#
         );
+    }
+
+    /// #2859: a `url` was written inside `<...>` raw, so `>` or a CR/LF in a
+    /// configured server forged the rest of the `Link` header.
+    #[test]
+    fn formatting_rejects_link_breaking_values() {
+        for url in [
+            "stun:s.example.com>\r\nX-Injected: 1",
+            "stun:<s>.example.com",
+            "stun:s.example.com\"",
+        ] {
+            let servers = vec![IceServer {
+                url: url.into(),
+                username: None,
+                credential: None,
+            }];
+            let err =
+                format_ice_server_links(&servers).expect_err("a link-breaking URL must be refused");
+            assert!(
+                matches!(err, Error::InvalidHeader { header: "Link" }),
+                "url {url:?}: {err:?}"
+            );
+        }
+        let servers = vec![IceServer {
+            url: "turn:t.example.com".into(),
+            username: Some("user\r\nX-Injected: 1".into()),
+            credential: None,
+        }];
+        let err = format_ice_server_links(&servers)
+            .expect_err("a control character in a credential must be refused");
+        assert!(matches!(err, Error::InvalidHeader { header: "Link" }));
     }
 }
