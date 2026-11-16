@@ -10,6 +10,7 @@
 - A failed DVR archive scan now fails the route's start or reload through `DvrError::ArchiveScan` (`MultimuxError::Dvr`) instead of reading as sequence floor `0`, so a restart cannot renumber over archived segments and collide with them (#2827).
 - A `Range: bytes=-N` suffix longer than the representation answers `206` with `Content-Range: bytes 0-(n-1)/n` instead of a full `200` (RFC 9110 §14.1.2); `bytes=-0` remains `416` (#2828).
 - The file source opens the path once and checks that handle's metadata, reading through a `max_file_bytes + 1` window, so a path swapped for a FIFO or a file grown after the check cannot block the read or exceed the cap (#2837).
+- `redact::redact_url` renders a query string as `?<redacted>` and drops the fragment, and its unparseable-URL fallback finds the credential `@` past a `/` inside a password, so a `?token=…` or a `rtsp://u:pa/ss@host/s` URL can no longer reach a log line (#2858).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
