@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - The session layer keeps at most 32 sessions and one per resource: a duplicate `open_session_request` for a resource that already has a session, or a request past the bound, is answered `resource_busy` instead of growing the table (previously up to 65 535 sessions, each duplicating that resource's per-tick work). Each resource handler is ticked once per tick regardless of how many sessions reach it.
 - `Driver`'s read buffer is `MAX_CA_FRAME` instead of a 4096-byte buffer, so a legal TPDU larger than ~4094 bytes (a `Tdata_last` block) is no longer consumed by the device and then surfaced as an `InvalidData` read error, losing the frame.
+- The MMI `menu`/`list` chain cap (`MAX_MMI_CHAIN_LEN`) now has a test that drives a chain one byte past it and asserts the `LengthTooLarge` error; removing the bound no longer passes the suite.
 - The pending notification queue is bounded at 1024 entries (oldest discarded, counted); a host that only calls `pump` against a module sending one notification per malformed frame no longer grows it for the life of the process.
 
 ## [0.21.0] - 2026-11-15

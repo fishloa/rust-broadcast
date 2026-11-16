@@ -901,6 +901,34 @@ mod tests {
         );
     }
 
+    /// A module that keeps sending `menu_more` blocks past the chain cap must
+    /// be refused with the typed length error, not accumulate host memory
+    /// without bound (audit a20-55).
+    #[test]
+    fn mmi_chain_past_the_cap_is_refused_with_length_too_large() {
+        fn menu_more(data_len: usize) -> Vec<u8> {
+            let mut apdu = tag::MENU_MORE.to_bytes().to_vec();
+            let mut len = [0u8; 3];
+            let coded = dvb_ci::length::encode_into(data_len, &mut len).unwrap();
+            apdu.extend_from_slice(&len[..coded]);
+            apdu.extend(std::iter::repeat_n(0x00, data_len));
+            apdu
+        }
+
+        let mut h = Mmi::default();
+        assert!(
+            h.on_apdu(&menu_more(MAX_MMI_CHAIN_LEN))
+                .unwrap()
+                .notify
+                .is_empty(),
+            "a chain exactly at the cap is still accepted"
+        );
+        let err = h
+            .on_apdu(&menu_more(1))
+            .expect_err("one byte past the chain cap must be refused");
+        assert_eq!(err, dvb_ci::Error::LengthTooLarge(MAX_MMI_CHAIN_LEN + 1));
+    }
+
     #[test]
     fn mmi_discards_a_partial_chain_on_reset() {
         let mut h = Mmi::default();
