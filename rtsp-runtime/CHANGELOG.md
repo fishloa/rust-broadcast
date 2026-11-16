@@ -6,8 +6,16 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Tests
+### Added
 - `ServerCodec::decode` is pinned at its message-size cap: a `Content-Length` of 3 000 000 bytes is refused with `MessageParseError::TooLarge`, a message of exactly `MAX_MESSAGE_BYTES` is still a body wait, and one byte over is refused (#2860).
+
+### Changed
+- `bytes` no longer turns on its own `serde` feature unconditionally: only this crate's opt-in `serde` feature forwards `bytes/serde`, so a build without it no longer links `serde` (#2872).
+- BREAKING: `ClientSession::with_user_agent`, `RtspClientConfig::with_user_agent` and `RtspServerConfig::with_server_header` return `Result<Self>`, rejecting a value with a control character as `Error::HeaderSerialize`. `rtsp-types` stores a header value as a bare `String` and the serializer writes it raw, so a CR/LF in config forged a header or ended the header block. Migration: `.with_user_agent(ua)` -> `.with_user_agent(ua)?` (likewise `with_server_header`) (#2859).
+
+### Fixed
+- The async client keeps one read deadline for the whole inbound read and pushes it back only when a frame is decoded, instead of restarting `Timeouts::read_idle` on every call. A keepalive wake in `recv_interleaved` at half the session timeout (always shorter than `read_idle` by default) used to cancel and restart the read timer, so a server that answered nothing was never detected (#2838).
+- `ClientSession` remembers at most `MAX_PENDING_REQUESTS` (64) unanswered requests, evicting the oldest `CSeq`. A server withholding replies used to leak one full request copy per keepalive interval and per abandoned exchange, without bound (#2839).
 
 ## [0.12.0] - 2026-11-15
 ### Changed

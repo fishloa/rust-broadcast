@@ -117,6 +117,32 @@ fn ack_answer_outside_a_counter_offer_is_refused() {
     assert_eq!(*s.state(), server::State::Closed);
 }
 
+/// #2859: `valid_until` was interpolated between `Content-Type` parameter
+/// quotes with no validation, so a quote or CR/LF in it forged the rest of the
+/// header block.
+#[test]
+fn counter_offer_rejects_a_valid_until_that_cannot_be_a_parameter() {
+    let mut s = WhepSession::new(session_url());
+    s.on_post(b"v=0\r\n".to_vec()).unwrap();
+    for bad in [
+        "2026-08-01T00:00:00Z\"",
+        "2026-08-01T00:00:00Z\r\nX-Injected: 1",
+        "2026-08-01T00:00:00Z>",
+    ] {
+        let resp = s.counter_offer(b"v=0\r\n".to_vec(), Some(bad.into()));
+        assert_eq!(resp.status, StatusCode::INTERNAL_SERVER_ERROR, "{bad:?}");
+        assert_eq!(
+            *s.state(),
+            server::State::AwaitingOffer,
+            "state changes only on a sendable value: {bad:?}"
+        );
+    }
+
+    let resp = s.counter_offer(b"v=0\r\n".to_vec(), Some("2026-08-01T00:00:00Z".into()));
+    assert_eq!(resp.status, StatusCode::NOT_ACCEPTABLE);
+    assert!(matches!(s.state(), server::State::CounterOffered { .. }));
+}
+
 #[test]
 fn ack_answer_validates_the_etag_and_sends_it() {
     let mut s = WhepSession::new(session_url());

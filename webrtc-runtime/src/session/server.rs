@@ -248,9 +248,10 @@ impl Session<Whep> {
         valid_until: Option<String>,
     ) -> HttpResponse {
         let ct = match valid_until {
-            Some(ref date) => {
+            Some(ref date) if valid_until_is_sendable(date) => {
                 alloc::format!("{}; valid-until=\"{date}\"", content_type::SDP)
             }
+            Some(_) => return HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
             None => content_type::SDP.into(),
         };
         let built = HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
@@ -293,6 +294,15 @@ impl Session<Whep> {
         }
         resp
     }
+}
+
+/// Whether `valid_until` can be the value of a `Content-Type` parameter: no
+/// control character, and none of `"` (the parameter's delimiter) or `>` (which
+/// would forge the rest of a `Link` header).
+fn valid_until_is_sendable(value: &str) -> bool {
+    !value
+        .chars()
+        .any(|c| c.is_ascii_control() || matches!(c, '"' | '>'))
 }
 
 fn server_state_name(s: &State) -> &'static str {
