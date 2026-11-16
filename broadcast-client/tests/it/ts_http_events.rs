@@ -190,6 +190,60 @@ fn server_close_reconnects_with_discontinuity_before_first_sample() {
 }
 
 #[test]
+fn a_url_that_never_plays_is_given_up_on_at_the_configured_attempts() {
+    const MAX_RECONNECTS: u32 = 2;
+    const BACKOFF_STEP_US: u64 = 20_000_000;
+    let mut config = Config::default();
+    config.ts_http.max_reconnect_attempts = Some(MAX_RECONNECTS);
+    let mut session =
+        Session::open(Url::parse("http://example/live.ts").unwrap(), config, ts(0)).unwrap();
+    let mut now = 0u64;
+    let mut conn = request_at(&mut session, now).expect("a first request");
+    for attempts in 1..=MAX_RECONNECTS + 1 {
+        session.on_response(conn, support::status(503), &support::headers(&[]), ts(now));
+        let errors: Vec<(broadcast_client::ErrorKind, bool)> =
+            std::iter::from_fn(|| session.next_event())
+                .filter_map(|e| match e {
+                    Event::Error { kind, fatal } => Some((kind, fatal)),
+                    _ => None,
+                })
+                .collect();
+        if attempts <= MAX_RECONNECTS {
+            assert!(errors.is_empty(), "gave up after {attempts} attempts");
+            now += BACKOFF_STEP_US;
+            conn = request_at(&mut session, now)
+                .unwrap_or_else(|| panic!("no reconnect after attempt {attempts}"));
+        } else {
+            assert_eq!(
+                errors,
+                vec![(
+                    broadcast_client::ErrorKind::ReconnectAttemptsExhausted { attempts },
+                    true
+                )],
+                "the session gives up once an attempt is past the ceiling"
+            );
+        }
+    }
+    for _ in 0..8 {
+        now += BACKOFF_STEP_US;
+        assert!(
+            request_at(&mut session, now).is_none(),
+            "a given-up session issues no further request"
+        );
+    }
+}
+
+fn request_at(session: &mut Session, now: u64) -> Option<ConnId> {
+    let mut found = None;
+    while let Some(a) = session.poll(ts(now)) {
+        if let Action::HttpRequest { conn, .. } = a {
+            found = Some(conn);
+        }
+    }
+    found
+}
+
+#[test]
 fn not_found_status_and_keeps_retrying_at_cap() {
     let (status, headers) = missing_headers!();
     let mut session = Session::open(

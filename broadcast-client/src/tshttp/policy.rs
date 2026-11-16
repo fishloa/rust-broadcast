@@ -533,6 +533,17 @@ impl TsHttpPolicy {
 
     fn fail_before_playing(&mut self, now: Timestamp) {
         self.attempt = self.attempt.saturating_add(1);
+        if self
+            .config
+            .max_reconnect_attempts
+            .is_some_and(|max| self.attempt > max)
+        {
+            self.phase = Phase::Ended;
+            self.events.push_back(Event::GaveUp {
+                attempts: self.attempt,
+            });
+            return;
+        }
         let wait = self.retry.on_disconnected(now);
         let after = wait.max(self.retry_after);
         self.retry_after = Duration::ZERO;

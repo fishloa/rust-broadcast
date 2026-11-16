@@ -5,13 +5,19 @@
 //! per burst of drops so the player re-syncs; every other event (tracks, errors, buffer events,
 //! terminal statuses, ...) is kept, so the queue is bounded by the cap plus the undroppable
 //! events a stalled host leaves unread. A byte budget on the queued sample payloads sheds the
-//! oldest samples the same way, so a few very large samples cannot outgrow the event count.
+//! oldest samples the same way, so a few very large samples cannot outgrow the event count. The
+//! droppable kept events (a discontinuity, an A/V sync announcement) have a ceiling of their own,
+//! and a discontinuity queued right behind another coalesces into it, so a stream that keeps
+//! resetting cannot grow them without bound either.
 
 use alloc::collections::VecDeque;
 
 use crate::events::{Event, Status};
 
 const MIN_TOMBSTONES_BEFORE_COMPACTION: usize = 64;
+/// Most [`Event::Discontinuity`] and [`Event::AvSync`] values the queue holds at once; past it the
+/// oldest is dropped.
+const KEEP_LANE_CEILING: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -33,11 +39,18 @@ fn kind_of(e: &Event) -> Kind {
     }
 }
 
+/// `true` for a kept event that may still go once the keep lane is over its ceiling: a
+/// discontinuity a player can recover from by the next one, and an A/V sync announcement.
+fn is_droppable_keep(e: &Event) -> bool {
+    matches!(e, Event::Discontinuity | Event::AvSync(_))
+}
+
 #[derive(Default)]
 struct Lanes {
     samples: VecDeque<u64>,
     statuses: VecDeque<u64>,
     starved: VecDeque<u64>,
+    keeps: VecDeque<u64>,
 }
 
 impl Lanes {
@@ -64,6 +77,7 @@ impl Lanes {
         self.samples.clear();
         self.statuses.clear();
         self.starved.clear();
+        self.keeps.clear();
     }
 }
 
@@ -115,7 +129,13 @@ impl EventQueue {
     }
 
     pub(crate) fn push_back(&mut self, e: Event) {
+        if matches!(e, Event::Discontinuity) && self.newest_is_discontinuity() {
+            return;
+        }
         let seq = self.next_seq();
+        if is_droppable_keep(&e) {
+            self.lanes.keeps.push_back(seq);
+        }
         if let Some(lane) = self.lanes.lane(kind_of(&e)) {
             lane.push_back(seq);
         }
@@ -131,6 +151,22 @@ impl EventQueue {
             };
             self.drop_event(victim);
         }
+        while self.lanes.keeps.len() > KEEP_LANE_CEILING {
+            let Some(victim) = self.lanes.keeps.pop_front() else {
+                break;
+            };
+            self.drop_event(victim);
+        }
+    }
+
+    /// `true` when the newest live slot is a [`Event::Discontinuity`], so one queued now would
+    /// only repeat it.
+    fn newest_is_discontinuity(&self) -> bool {
+        self.slots
+            .iter()
+            .rev()
+            .find_map(Option::as_ref)
+            .is_some_and(|e| matches!(e, Event::Discontinuity))
     }
 
     pub(crate) fn extend(&mut self, events: impl IntoIterator<Item = Event>) {
@@ -152,6 +188,9 @@ impl EventQueue {
                         && lane.front() == Some(&seq)
                     {
                         lane.pop_front();
+                    }
+                    if is_droppable_keep(&e) && self.lanes.keeps.front() == Some(&seq) {
+                        self.lanes.keeps.pop_front();
                     }
                     return Some(e);
                 }
@@ -219,6 +258,9 @@ impl EventQueue {
         if contiguous || is_sample {
             self.gap_end = Some(seq);
         }
+        if matches!(event, Event::Discontinuity) {
+            self.refresh_discontinuity();
+        }
         self.trim_front();
         if self.tombstones > self.live.max(MIN_TOMBSTONES_BEFORE_COMPACTION) {
             self.compact();
@@ -248,10 +290,28 @@ impl EventQueue {
             if matches!(e, Event::Discontinuity) {
                 self.last_discontinuity = Some(seq);
             }
+            if is_droppable_keep(e) {
+                self.lanes.keeps.push_back(seq);
+            }
             if let Some(lane) = self.lanes.lane(kind_of(e)) {
                 lane.push_back(seq);
             }
         }
+    }
+
+    /// Points `last_discontinuity` at the newest live discontinuity, or clears it when the one it
+    /// named has just been dropped.
+    fn refresh_discontinuity(&mut self) {
+        let base = self.base;
+        self.last_discontinuity = self
+            .slots
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(offset, slot)| match slot {
+                Some(Event::Discontinuity) => Some(base.saturating_add(offset as u64)),
+                _ => None,
+            });
     }
 }
 
@@ -375,6 +435,40 @@ mod tests {
         let events = drain(&mut q);
         assert_eq!(events.first(), Some(&Event::Discontinuity), "{events:?}");
         assert_eq!(discontinuities(&events), 1);
+    }
+
+    #[test]
+    fn a_discontinuity_queued_behind_another_coalesces_into_it() {
+        let mut q = EventQueue::new(16);
+        q.push_back(Event::Status(Status::Live));
+        for _ in 0..5 {
+            q.push_back(Event::Discontinuity);
+        }
+        let events = drain(&mut q);
+        assert_eq!(discontinuities(&events), 1, "{events:?}");
+        assert_eq!(events.len(), 2, "one marker after the live status");
+    }
+
+    #[test]
+    fn the_keep_lane_stops_at_its_ceiling_dropping_the_oldest() {
+        let mut q = EventQueue::new(4 * KEEP_LANE_CEILING);
+        q.push_back(Event::Tracks(Vec::new()));
+        q.push_back(Event::Status(Status::Ended));
+        for _ in 0..=KEEP_LANE_CEILING {
+            q.push_back(Event::Discontinuity);
+            q.push_back(Event::AvSync(transmux::AvSync::Provisional));
+        }
+        let events = drain(&mut q);
+        let kept = events.iter().filter(|e| is_droppable_keep(e)).count();
+        assert_eq!(
+            kept, KEEP_LANE_CEILING,
+            "the oldest discontinuity and A/V sync announcements were dropped"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, Event::Tracks(_))),
+            "an undroppable kept event survives the ceiling"
+        );
+        assert!(events.contains(&Event::Status(Status::Ended)));
     }
 
     #[test]

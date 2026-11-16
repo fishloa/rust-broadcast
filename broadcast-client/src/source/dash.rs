@@ -301,7 +301,7 @@ impl DashSource {
                 duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
             ),
-            stash: Stash::new(),
+            stash: Stash::with_segment_budget(config.max_segment_bytes),
             parked: Vec::new(),
             retries: BTreeMap::new(),
             mpd_retry_at: None,
@@ -546,6 +546,18 @@ impl DashSource {
                 HeadOutcome::Fallback => {
                     self.actions.push_back(Action::Close { conn });
                     self.send(req, auth, now);
+                }
+                HeadOutcome::Oversize => {
+                    self.actions.push_back(Action::Close { conn });
+                    if let Some(field) = req.purpose.oversize_field()
+                        && self.oversize_reported.insert(field)
+                    {
+                        self.events.push_back(Event::Error {
+                            kind: ErrorKind::BodyTooLarge { field },
+                            fatal: false,
+                        });
+                    }
+                    self.fail(req, now, CoreFailure::TooLarge);
                 }
                 HeadOutcome::Accepted => {
                     req.responded_ok = true;

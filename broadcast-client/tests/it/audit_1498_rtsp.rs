@@ -301,6 +301,64 @@ fn a_connection_that_never_produced_media_is_not_a_discontinuity() {
 }
 
 #[test]
+fn a_server_that_always_refuses_describe_is_given_up_on_at_the_configured_attempts() {
+    const MAX_RECONNECTS: u32 = 2;
+    let mut config = quiet_config();
+    config.ts_http.max_reconnect_attempts = Some(MAX_RECONNECTS);
+    let mut server = Server::new(&fixture().sdp);
+    server.describe_status = Some(503);
+    let mut host = Host::new(BASE_URL, config, server);
+    host.connect();
+    for _ in 2..=MAX_RECONNECTS {
+        host.advance_to(host.now + 11 * SEC);
+        finish_connect(&mut host);
+        assert!(
+            !gave_up(&host.events()),
+            "gave up before the ceiling was reached"
+        );
+    }
+    host.advance_to(host.now + 11 * SEC);
+    finish_connect(&mut host);
+    let events = host.events();
+    assert_eq!(
+        exhausted_attempts(&events),
+        Some(MAX_RECONNECTS + 1),
+        "{events:?}"
+    );
+    let connections = connects(&host.actions).len();
+    for _ in 0..4 {
+        host.advance_to(host.now + 11 * SEC);
+    }
+    assert_eq!(
+        connects(&host.actions).len(),
+        connections,
+        "a given-up session opens no further connection"
+    );
+}
+
+fn gave_up(events: &[Event]) -> bool {
+    events.iter().any(|e| {
+        matches!(
+            e,
+            Event::Error {
+                kind: broadcast_client::ErrorKind::ReconnectAttemptsExhausted { .. },
+                ..
+            }
+        )
+    })
+}
+
+fn exhausted_attempts(events: &[Event]) -> Option<u32> {
+    events.iter().find_map(|e| match e {
+        Event::Error {
+            kind: broadcast_client::ErrorKind::ReconnectAttemptsExhausted { attempts },
+            fatal: true,
+        } => Some(*attempts),
+        _ => None,
+    })
+}
+
+#[test]
 fn the_discontinuity_follows_a_connection_that_played_and_precedes_the_first_new_sample() {
     let mut host = Host::new(BASE_URL, Config::default(), Server::new(&fixture().sdp));
     host.connect();
