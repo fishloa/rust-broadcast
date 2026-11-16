@@ -135,8 +135,17 @@ impl CiStack {
             Event::Tick { elapsed } => {
                 let out = self.transport.tick(elapsed);
                 let mut actions = self.emit_transport(out);
+                // One tick per resource handler, not per open session: a
+                // resource reached over several sessions would otherwise have
+                // its own timer run once per session (audit a20-44; the
+                // session layer now also keeps one session per resource).
+                let mut ticked: Vec<usize> = Vec::new();
                 for (session_nb, resource) in self.session.sessions() {
                     if let Some(i) = self.handler_index(resource) {
+                        if ticked.contains(&i) {
+                            continue;
+                        }
+                        ticked.push(i);
                         match self.resources[i].tick(elapsed) {
                             Ok(out) => actions.extend(self.process_resource_out(session_nb, out)),
                             Err(e) => actions.push(err_action(e)),
@@ -447,6 +456,7 @@ mod tests {
     use dvb_ci::resource::RESOURCE_MANAGER;
     use dvb_ci::spdu::{OpenSessionRequest, tags as spdu_tags};
     use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
+    use std::time::Duration;
 
     fn ser<S: Serialize>(s: &S) -> Vec<u8> {
         let mut b = vec![0u8; s.serialized_len()];
@@ -968,5 +978,47 @@ mod tests {
         let r = first_ca_pmt(&rm).expect("remove ca_pmt");
         assert_eq!(r.list_management, CaPmtListManagement::Update);
         assert_eq!(r.cmd_id, CaPmtCmdId::NotSelected);
+    }
+
+    /// A resource reached through several sessions must be ticked once per
+    /// tick, not once per session — otherwise a resource's own timer (the
+    /// `date_time` resend, say) runs N times as fast as it should (audit
+    /// a20-44). The session layer refuses the second session for one resource
+    /// through its open-request path, so the state is bound directly here.
+    #[test]
+    fn a_resource_is_ticked_once_however_many_sessions_reach_it() {
+        struct TickCounter(ResourceId);
+
+        impl Resource for TickCounter {
+            fn id(&self) -> ResourceId {
+                self.0
+            }
+            fn on_apdu(&mut self, _apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
+                Ok(ResourceOut::default())
+            }
+            fn tick(&mut self, _elapsed: Duration) -> dvb_ci::Result<ResourceOut> {
+                let mut out = ResourceOut::default();
+                out.notify.push(Notification::CamReady);
+                Ok(out)
+            }
+        }
+
+        let resource = ResourceId(0x0BAD_0001);
+        let mut s = CiStack::new();
+        s.register(Box::new(TickCounter(resource)));
+        s.session.bind_for_test(10, resource);
+        s.session.bind_for_test(11, resource);
+
+        let actions = s.handle(Event::Tick {
+            elapsed: Duration::from_millis(10),
+        });
+        let ticks = actions
+            .iter()
+            .filter(|a| matches!(a, Action::Notify(Notification::CamReady)))
+            .count();
+        assert_eq!(
+            ticks, 1,
+            "the resource was ticked {ticks} times for two sessions"
+        );
     }
 }

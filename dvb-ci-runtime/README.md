@@ -95,7 +95,10 @@ Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
   (one `T_Data_Last` per module `T_SB`, half-duplex), `T_SB` data-available to
   `T_RCV`, `T_Data_More/Last` reassembly, reply timeout.
 - **Session** (SPDU): session table, `open_session`/`create_session`/`close`,
-  `session_number` APDU routing.
+  `session_number` APDU routing. At most 32 sessions, one per resource: a
+  duplicate `open_session_request` for a resource that already has one, or one
+  past the bound, is answered `resource_busy`, and each resource handler is
+  ticked once per tick however many sessions reach it.
 - **Resources**, all host-provided (the module opens the session; the host
   advertises them in its Resource Manager `profile`): Resource Manager
   (handshake to `CamReady`), Application Information, Conditional Access
