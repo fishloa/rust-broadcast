@@ -4183,7 +4183,6 @@ dependencies = [
  "broadcast-common",
  "dash-runtime",
  "headers",
- "http",
  "jiff",
  "rtmp-runtime",
  "test-fixtures",
