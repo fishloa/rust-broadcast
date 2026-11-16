@@ -6,6 +6,7 @@
 - DASH-IF ingest: a publisher disconnect mid-PUT now releases the open segment handle through an RAII guard, and every pump reply is bounded by the route body deadline, so a later segment is no longer refused with `SegmentInProgress`, and a stalled pump no longer parks the handler (#2825).
 - Removing or reloading a route lets each push task close its transport gracefully under the shutdown grace period, aborting only when it overruns, so downstream RTMP/RTSP/SRT servers see a normal close instead of an abrupt drop (#2826).
 - A failed DVR archive scan now fails the route's start or reload through `DvrError::ArchiveScan` (`MultimuxError::Dvr`) instead of reading as sequence floor `0`, so a restart cannot renumber over archived segments and collide with them (#2827).
+- A `Range: bytes=-N` suffix longer than the representation answers `206` with `Content-Range: bytes 0-(n-1)/n` instead of a full `200` (RFC 9110 §14.1.2); `bytes=-0` remains `416` (#2828).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

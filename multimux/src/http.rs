@@ -415,6 +415,17 @@ use std::ops::Bound;
 /// `If-Range` is honoured in the safe, spec-correct way for these
 /// immutable-by-name resources, which carry no validator: the `Range` is
 /// ignored and a `200` with the full body is returned (§13.1.5).
+/// `bytes=-N` with `N` larger than the representation selects all of it
+/// (RFC 9110 §14.1.2), which `headers`'s `satisfiable_ranges` drops instead.
+fn over_long_suffix(value: &str, total: u64) -> Option<(Bound<u64>, Bound<u64>)> {
+    let spec = value.strip_prefix("bytes=")?.trim();
+    if spec.contains(',') {
+        return None;
+    }
+    let suffix: u64 = spec.strip_prefix('-')?.parse().ok()?;
+    (suffix > total).then_some((Bound::Included(0), Bound::Unbounded))
+}
+
 pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &str) -> Response {
     use headers::HeaderMapExt as _;
 
@@ -447,7 +458,17 @@ pub(crate) fn range_response(headers: &HeaderMap, bytes: Bytes, content_type: &s
         return full_response(bytes);
     };
 
-    let collected: Vec<(Bound<u64>, Bound<u64>)> = range.satisfiable_ranges(total).collect();
+    // A suffix longer than the representation selects the whole
+    // representation (RFC 9110 §14.1.2), but `headers`'s
+    // `satisfiable_ranges` drops such a spec, which would answer 200.
+    let raw_range = headers
+        .get(axum::http::header::RANGE)
+        .and_then(|v| v.to_str().ok());
+    let collected: Vec<(Bound<u64>, Bound<u64>)> =
+        match raw_range.and_then(|value| over_long_suffix(value, total)) {
+            Some(bounds) => vec![bounds],
+            None => range.satisfiable_ranges(total).collect(),
+        };
 
     // Syntactically invalid / non-bytes unit already filtered by typed_get;
     // an empty satisfiable set means the Range could not be parsed into a
@@ -789,5 +810,23 @@ mod tests {
         assert_eq!(status_for("bytes=3-5"), StatusCode::PARTIAL_CONTENT);
         assert_eq!(status_for("bytes=-3"), StatusCode::PARTIAL_CONTENT);
         assert_eq!(status_for("bytes=20-30"), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(status_for("bytes=-0"), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
+
+    /// A suffix range longer than the representation selects all of it: 206
+    /// with `Content-Range: bytes 0-(n-1)/n`, not a full 200 (RFC 9110
+    /// §14.1.2).
+    #[test]
+    fn a_suffix_longer_than_the_representation_selects_all_of_it() {
+        let mut h = HeaderMap::new();
+        h.insert(axum::http::header::RANGE, "bytes=-100".parse().unwrap());
+        let resp = range_response(&h, Bytes::from_static(b"0123456789"), "video/mp4");
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(
+            resp.headers()
+                .get(axum::http::header::CONTENT_RANGE)
+                .unwrap(),
+            "bytes 0-9/10"
+        );
     }
 }
