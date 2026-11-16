@@ -85,6 +85,8 @@ pub struct SmoothClient {
     ended: bool,
     fatal: bool,
     video_quality_count: usize,
+    /// Sum of `body.len()` over every stream's held fragments.
+    held_bytes: usize,
     manifest: ManifestCursor,
     manifest_at: Option<u64>,
     manifest_failures: u32,
@@ -121,6 +123,7 @@ impl SmoothClient {
             ended: false,
             fatal: false,
             video_quality_count: 0,
+            held_bytes: 0,
             manifest: ManifestCursor::Idle,
             manifest_at: Some(0),
             manifest_failures: 0,
@@ -293,6 +296,10 @@ impl SmoothClient {
                 body: bytes.to_vec(),
                 quality,
             });
+            self.held_bytes = self.held_bytes.saturating_add(bytes.len());
+            if self.held_bytes > self.config.max_held_bytes {
+                self.abandon_unannounced();
+            }
             self.try_announce();
         }
         self.advance(now);
@@ -624,9 +631,40 @@ impl SmoothClient {
         self.outputs.push_back(Output::Tracks(specs));
         for &si in &live {
             for held in std::mem::take(&mut self.streams[si].held) {
+                self.held_bytes = self.held_bytes.saturating_sub(held.body.len());
                 self.emit_fragment(si, held.start, &held.body, &held.quality);
             }
         }
+    }
+
+    /// `max_held_bytes` is spent while at least one stream has not announced its local
+    /// track id: abandon every such stream, so the announcement of the rest can proceed
+    /// and their held fragments are released, or fail when there is none left to hold
+    /// the session back.
+    fn abandon_unannounced(&mut self) {
+        let mut abandoned = false;
+        for si in 0..self.streams.len() {
+            if self.streams[si].abandoned || self.streams[si].local_track_id.is_some() {
+                continue;
+            }
+            self.streams[si].abandoned = true;
+            self.streams[si].plan.clear();
+            self.streams[si].held.clear();
+            abandoned = true;
+            self.outputs.push_back(Output::Dropped(Dropped::StreamLost {
+                stream: StreamId(si),
+            }));
+        }
+        if !abandoned || !self.streams.iter().any(|s| !s.abandoned) {
+            return self.fail(SmoothError::AnnounceStalled {
+                max: self.config.max_held_bytes,
+            });
+        }
+        self.held_bytes = self
+            .streams
+            .iter()
+            .map(|s| s.held.iter().map(|h| h.body.len()).sum::<usize>())
+            .sum();
     }
 
     fn setup_track(

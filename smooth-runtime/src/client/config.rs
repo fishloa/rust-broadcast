@@ -20,6 +20,9 @@ pub const DEFAULT_MAX_FRAGMENT_FAILURES: u32 = 5;
 pub const DEFAULT_MAX_MANIFEST_FAILURES: u32 = 5;
 /// Consecutive refreshes lacking a stream before that stream is abandoned.
 pub const DEFAULT_MAX_REFRESH_MISSES: u32 = 5;
+/// Fragment body bytes held back, across every stream, until all of them have
+/// announced their local track id.
+pub const DEFAULT_MAX_HELD_BYTES: usize = 32 * 1024 * 1024;
 /// Backoff after the first failures.
 pub const DEFAULT_BACKOFF_STEPS: [Duration; 4] = [
     Duration::from_millis(250),
@@ -92,6 +95,12 @@ pub struct SmoothClientConfig {
     pub max_manifest_failures: u32,
     /// Consecutive refreshes lacking a stream before that stream is abandoned; default 5.
     pub max_refresh_misses: u32,
+    /// Fragment body bytes held back, across every stream, until all of them have
+    /// announced their local track id. Past it the streams that have not announced one
+    /// are abandoned ([`Dropped::StreamLost`](super::Dropped::StreamLost)), so an origin
+    /// that serves one stream nothing usable cannot make the healthy streams' fragments
+    /// accumulate without bound; default 32 MiB ([`DEFAULT_MAX_HELD_BYTES`]).
+    pub max_held_bytes: usize,
     /// Retry delays by attempt, then the cap.
     pub backoff: BackoffSteps,
     /// Seed of the retry jitter ([`broadcast_common::backoff::RetrySchedule`]): the first retry of
@@ -140,6 +149,7 @@ impl Default for SmoothClientConfig {
             max_fragment_failures: DEFAULT_MAX_FRAGMENT_FAILURES,
             max_manifest_failures: DEFAULT_MAX_MANIFEST_FAILURES,
             max_refresh_misses: DEFAULT_MAX_REFRESH_MISSES,
+            max_held_bytes: DEFAULT_MAX_HELD_BYTES,
             backoff: BackoffSteps {
                 steps: DEFAULT_BACKOFF_STEPS.to_vec(),
                 cap: DEFAULT_BACKOFF_CAP,
@@ -178,6 +188,13 @@ impl SmoothClientConfig {
     #[must_use]
     pub fn with_max_refresh_misses(mut self, max_refresh_misses: u32) -> Self {
         self.max_refresh_misses = max_refresh_misses;
+        self
+    }
+
+    /// Set [`Self::max_held_bytes`].
+    #[must_use]
+    pub fn with_max_held_bytes(mut self, max_held_bytes: usize) -> Self {
+        self.max_held_bytes = max_held_bytes;
         self
     }
 

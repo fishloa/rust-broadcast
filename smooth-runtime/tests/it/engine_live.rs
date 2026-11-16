@@ -120,6 +120,31 @@ fn a_live_window_that_moves_past_the_last_fragment_is_a_discontinuity() {
 }
 
 #[test]
+fn held_fragments_are_bounded_by_abandoning_a_stream_that_never_announces() {
+    let held =
+        |start: &str| fixture(&format!("av/QualityLevels(64528)/Fragments(video={start})")).len();
+    let cap = held("0") + held("10000000");
+    let mut host = Host::new(SmoothClientConfig::default().with_max_held_bytes(cap));
+    host.serve_dir("av");
+    host.route("Manifest", vec![Reply::Body(live_manifest(""))]);
+    for start in ["0", "10214580", "20199161"] {
+        host.route(
+            &format!("QualityLevels(98429)/Fragments(audio={start})"),
+            vec![Reply::Status(404)],
+        );
+    }
+    host.run_until(|o| o.iter().any(|o| matches!(o, Output::Tracks(_))));
+    assert!(
+        host.has(|o| matches!(o, Output::Dropped(Dropped::StreamLost { stream }) if stream.0 == 1)),
+        "the stream that never announced its track id is abandoned"
+    );
+    assert!(
+        sample_count(&host.outputs) > 0,
+        "the held fragments of the announced streams are released"
+    );
+}
+
+#[test]
 fn a_live_fragment_that_keeps_failing_is_skipped_with_a_discontinuity() {
     let mut host = live_host("");
     host.route(

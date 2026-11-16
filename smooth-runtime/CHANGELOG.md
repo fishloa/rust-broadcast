@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `SmoothClientConfig::max_held_bytes` (default `DEFAULT_MAX_HELD_BYTES`, 32 MiB, set with `with_max_held_bytes`): fragment bodies are held, across every stream, until all of them have announced their local track id, and an origin that serves one stream nothing usable could make the healthy streams' fragments accumulate without bound. Past the bound the streams that have not announced are abandoned (`Dropped::StreamLost`) so the rest are announced and their held fragments released, and `SmoothError::AnnounceStalled { max }` ends the session when nothing is left to abandon (#2816).
+
 
 ## [0.2.0] - 2026-11-15
 ### Changed
