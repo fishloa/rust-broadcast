@@ -7,6 +7,7 @@
 - The media listener caps concurrent connections per peer IP at `MAX_CONNECTIONS_PER_IP` (64) alongside the global cap, and fails a response body that produces no frame for `limit::IDLE_WRITE_TIMEOUT` (30 s), so one host cannot hold every connection slot and pool permit by never reading what it requested (#2818).
 - The Prometheus recorder runs `run_upkeep` every `prometheus::UPKEEP_INTERVAL` (5 s) on the caller's Tokio runtime, so histogram samples no longer accumulate until `/metrics` is scraped (#2833).
 - A WHEP media socket's receive loop backs off 10 ms on a failed `recv_from` and, after `RECV_ERRORS_BEFORE_DEAD` consecutive errors, ends and marks the socket dead; the next `socket_for` rebinds it, so a persistent receive error no longer busy-loops the task and starves every viewer on that socket (#2834).
+- A removed or replaced route's catch-up index cache is dropped (`catchup::drop_route_cache`, called from the admin drain) instead of staying resident for the process lifetime, and the cache is bounded by total cached segments (`INDEX_CACHE_MAX_SEGMENTS`), not just period-file count (#2835).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

@@ -1042,6 +1042,14 @@ async fn drain_route(runtime: RouteRuntime) {
     for h in runtime.push_handles {
         h.abort();
     }
+    // Release the route's catch-up index cache: nothing reads it any more,
+    // and each entry owns its whole parsed segment vector (audit 20 finding
+    // 24). A reload that keeps the route re-scans on the next request, which
+    // is what a missing cache already means.
+    if let Some(dvr) = runtime.store.dvr_config() {
+        let dir = crate::catchup::archive_dir(dvr, runtime.store.name());
+        crate::catchup::drop_route_cache(&dir);
+    }
 }
 
 /// One route's admin-visible status — `GET /admin/routes`/`GET
@@ -1630,6 +1638,44 @@ mod tests {
             audio_profiles: Vec::new(),
             subtitles: true,
         }
+    }
+
+    /// Removing a route releases its catch-up index cache, whose entries hold
+    /// whole parsed segment vectors (audit 20 finding 24). MUTATION VERIFIED:
+    /// a no-op `drop_route_cache` leaves the entry resident and this fails.
+    #[tokio::test]
+    async fn removing_a_route_releases_its_catchup_index_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-catchup-cache-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("cam");
+        std::fs::create_dir_all(&dir).expect("archive dir");
+        std::fs::write(dir.join("p0.idx"), b"[]").expect("period index");
+
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        let mut route = rtsp_route("cam", "rtsp://host/cam");
+        route.dvr = DvrConfig {
+            enabled: true,
+            archive_root: root.to_string_lossy().into_owned(),
+            ..DvrConfig::default()
+        };
+        registry.add_route(route).await.expect("add");
+        let _ = crate::catchup::read_period_segments(&dir, 0);
+        assert_eq!(
+            crate::catchup::cached_index_entries(&dir),
+            1,
+            "the read populated the route's index cache"
+        );
+
+        registry.remove_route("cam").await.expect("remove");
+        assert_eq!(
+            crate::catchup::cached_index_entries(&dir),
+            0,
+            "a removed route's cache must not stay resident"
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A slow archive scan for route `a` holds only `a`'s name lock: an admin
