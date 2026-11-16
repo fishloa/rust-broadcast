@@ -725,6 +725,9 @@ impl HlsClient {
         let text = core::str::from_utf8(bytes)?;
         if text.contains("#EXT-X-STREAM-INF") {
             let master = MasterPlaylist::parse(text)?;
+            if !master.defines.is_empty() {
+                return Err(Error::UnsupportedDefine);
+            }
             let base = self.base().clone();
             let mut variants: Vec<VariantInfo> = Vec::new();
             for v in &master.variants {
@@ -785,6 +788,9 @@ impl HlsClient {
             return Ok(());
         }
         let playlist = MediaPlaylist::parse(text)?;
+        if !playlist.defines.is_empty() {
+            return Err(Error::UnsupportedDefine);
+        }
         let playlist = self.merge_delta(playlist);
         if playlist.skip.is_some() {
             return Err(self.request_full_playlist(&playlist));
@@ -3139,6 +3145,44 @@ mod tests {
             client.key_urls.len(),
             keys,
             "a rejected playlist must not drop key material"
+        );
+    }
+
+    // Audit 20 finding 19 (#2830): a URI containing `{$name}` must never be
+    // fetched literally. The client refuses a playlist that declares
+    // `EXT-X-DEFINE` variables instead of resolving them.
+    #[test]
+    fn playlist_with_ext_x_define_is_refused_not_fetched_literally() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let text = "#EXTM3U\n#EXT-X-VERSION:8\n#EXT-X-TARGETDURATION:2\n\
+                    #EXT-X-DEFINE:NAME=\"host\",VALUE=\"cdn.example\"\n\
+                    #EXTINF:2.0,\nhttps://{$host}/seg0.m4s\n";
+        assert_eq!(
+            client
+                .on_playlist(text.as_bytes())
+                .expect_err("EXT-X-DEFINE is refused"),
+            Error::UnsupportedDefine
+        );
+        for _ in 0..16 {
+            match client.poll() {
+                Some(Action::FetchResource { id, .. }) => {
+                    panic!("a refused playlist must not request {id:?}")
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+
+        let mut master_client = HlsClient::new(config("http://example.com/master.m3u8"));
+        let master = "#EXTM3U\n\
+                      #EXT-X-DEFINE:IMPORT=\"host\"\n\
+                      #EXT-X-STREAM-INF:BANDWIDTH=1000\n\
+                      https://{$host}/v.m3u8\n";
+        assert_eq!(
+            master_client
+                .on_playlist(master.as_bytes())
+                .expect_err("a master EXT-X-DEFINE is refused"),
+            Error::UnsupportedDefine
         );
     }
 

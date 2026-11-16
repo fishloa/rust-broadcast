@@ -6,6 +6,9 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `client::Error::UnsupportedDefine`: a playlist declaring `EXT-X-DEFINE` variables (RFC 8216bis §4.4.2.3) is refused rather than fetched with `{$name}` left literally in the URI, which produced wrong requests and 404 storms (audit 20 finding 19, #2830).
+
 ### Changed
 - BREAKING: `server::master_playlist_m3u8` returns `Result<String, broadcast_hls::Error>` and renders through `broadcast_hls::MasterPlaylist`, so a caller-supplied media-playlist name carrying a newline or `"` is refused instead of injecting playlist lines (audit 20 finding 31, #2842). Migration: `?`/`expect` the result; the rendered text is unchanged for a valid name.
 - Client: a fragment's track specs are compared with `TrackSpec`'s `PartialEq` instead of formatting and comparing two `Debug` strings per fragment, so the per-fragment cost no longer scales with the codec-config size (audit 20 finding 50, #2861).

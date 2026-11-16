@@ -126,6 +126,13 @@ pub enum Error {
         segments: usize,
     },
 
+    /// The playlist declares `#EXT-X-DEFINE` variables (RFC 8216bis §4.4.2.3).
+    /// This client does not expand `{$name}` substitution, so a URI naming a
+    /// variable would be fetched literally; the playlist is refused instead
+    /// (audit 20 finding 19, issue #2830).
+    #[error("EXT-X-DEFINE variable substitution is not supported")]
+    UnsupportedDefine,
+
     /// A playlist reference (a segment, Part, init, key or variant URI) could
     /// not be resolved against the playlist URL: it carried an ASCII control
     /// character, or the two did not form a URL (issue #2458). The reference is
