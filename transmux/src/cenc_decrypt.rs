@@ -1188,6 +1188,31 @@ mod tests {
         ));
     }
 
+    /// The protected-progressive path expands through the same layout, so it
+    /// inherits the byte budget: `stco` entries all pointing at one region
+    /// with a uniform `stsz` claim `sample_count x sample_size` bytes from a
+    /// far smaller file (audit 20 findings 6 / 57).
+    #[test]
+    fn stbl_layout_rejects_overlapping_chunks_past_the_input_length() {
+        let mut stsc = Vec::new();
+        stsc.extend_from_slice(&1u32.to_be_bytes()); // first_chunk
+        stsc.extend_from_slice(&1u32.to_be_bytes()); // samples_per_chunk
+        stsc.extend_from_slice(&1u32.to_be_bytes()); // sample_description_index
+        let mut stco = Vec::new();
+        for _ in 0..4 {
+            stco.extend_from_slice(&0u32.to_be_bytes());
+        }
+        let stbl = stbl_with(&[
+            stsz_box(64, 4),
+            full_box(b"stsc", &stsc, 1),
+            full_box(b"stco", &stco, 4),
+        ]);
+        assert!(matches!(
+            progressive_sample_layout(&stbl, 100),
+            Err(crate::error::Error::SampleDataBudgetExceeded { limit: 100 })
+        ));
+    }
+
     use crate::media::Track;
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
     use broadcast_common::Unpackage;

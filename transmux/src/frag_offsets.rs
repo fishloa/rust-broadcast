@@ -102,6 +102,26 @@ fn inside_mdat(mdats: &[MdatRange], start: usize, end: usize) -> bool {
     mdats.iter().any(|m| start >= m.start && end <= m.end)
 }
 
+/// How many times the input's own length one demux run may resolve as sample
+/// bytes.
+///
+/// Sample data that does not overlap cannot total more than the container
+/// holds, so the honest allowance is exactly one input length. A larger total
+/// is the same bytes handed out again — an overlapping `stco`/`stsc` chunk
+/// layout, overlapping `trun` runs, or several `moof`s each claiming one
+/// `mdat` — and every claimant copies them, turning a linear input into
+/// quadratic memory (audit 20 findings 6 and 13).
+pub const MAX_SAMPLE_BYTES_PER_INPUT_LENGTH: usize = 1;
+
+/// The aggregate sample-byte allowance for one demux run over an
+/// `input_len`-byte input: [`MAX_SAMPLE_BYTES_PER_INPUT_LENGTH`] times its
+/// length, which is what [`Error::SampleDataBudgetExceeded`] reports as its
+/// `limit`.
+#[must_use]
+pub fn sample_bytes_budget(input_len: usize) -> usize {
+    input_len.saturating_mul(MAX_SAMPLE_BYTES_PER_INPUT_LENGTH)
+}
+
 /// Resolve a `moof`'s sample ranges for one track, in (traf, trun, sample)
 /// order, applying §8.8.7/§8.8.8 and the bounds above.
 ///

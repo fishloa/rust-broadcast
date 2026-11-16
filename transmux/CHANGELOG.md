@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **Overlapping samples can no longer each copy the same bytes (quadratic memory).** `progressive_demux::sample_layout` bounded only `stsz.sample_count` against the file length, so `stco` entries all pointing at one region with a uniform `stsz` made `sample_count x sample_size` samples — `file_len^2` bytes from a `file_len` input — and every one of them copied those same bytes again. The expander now accumulates the resolved sample bytes and refuses a total past `frag_offsets::MAX_SAMPLE_BYTES_PER_INPUT_LENGTH` times the input length (samples that do not overlap can never total more) with the typed `Error::SampleDataBudgetExceeded { limit }`; the protected-progressive path of `CencDecryptor` expands through the same function and inherits the bound (audit 20 finding 6, #2817).
 
 ## [0.32.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
