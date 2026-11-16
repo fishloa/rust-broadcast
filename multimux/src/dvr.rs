@@ -231,6 +231,10 @@ pub enum DvrError {
     /// A DVB-SI section could not be parsed.
     #[error("dvb-si: {0}")]
     Si(#[from] dvb_si::Error),
+    /// The archive scan task did not run to completion (runtime shutdown, or
+    /// the scan itself panicked).
+    #[error("archive scan: {0}")]
+    ArchiveScan(#[source] tokio::task::JoinError),
 }
 
 /// Per-route DVR configuration.
@@ -709,10 +713,16 @@ pub struct DvrRecorder {
 /// every period index via the catch-up reader (cached per sidecar), on the
 /// blocking pool.
 ///
-/// Returns `0` if the blocking task could not run (runtime shutting down).
-pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> SegmentSeq {
+/// # Errors
+/// [`DvrError::ArchiveScan`] when the blocking scan task did not run to
+/// completion. Callers must fail the route rather than number it from `0`
+/// over an archive that may already hold higher sequences.
+pub(crate) async fn archive_seq_floor(
+    config: &DvrConfig,
+    route_name: &str,
+) -> Result<SegmentSeq, DvrError> {
     let dir = crate::catchup::archive_dir(config, route_name);
-    tokio::task::spawn_blocking(move || {
+    floor_from_scan(move || {
         crate::catchup::scan_archive(&dir)
             .iter()
             .map(|s| s.seq)
@@ -720,7 +730,17 @@ pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> S
             .unwrap_or(SegmentSeq::new(0))
     })
     .await
-    .unwrap_or(SegmentSeq::new(0))
+}
+
+/// Run the archive scan on the blocking pool, keeping a failed task a typed
+/// error instead of a sequence floor.
+async fn floor_from_scan<F>(scan: F) -> Result<SegmentSeq, DvrError>
+where
+    F: FnOnce() -> SegmentSeq + Send + 'static,
+{
+    tokio::task::spawn_blocking(scan)
+        .await
+        .map_err(DvrError::ArchiveScan)
 }
 
 /// Reject a route name that is not a safe single directory component: one
@@ -2044,14 +2064,32 @@ mod tests {
         let tmp = temp_dir();
         let cfg = dvr_config(&tmp, 10);
         assert_eq!(
-            archive_seq_floor(&cfg, "floor").await.value(),
+            archive_seq_floor(&cfg, "floor")
+                .await
+                .expect("floor")
+                .value(),
             0,
             "no archive yet"
         );
         record_run("floor", &cfg, 0, &[(1, 1), (2, 2), (3, 3)]);
         record_run("floor", &cfg, 3, &[(1, 4), (2, 5)]);
-        assert_eq!(archive_seq_floor(&cfg, "floor").await.value(), 5);
+        assert_eq!(
+            archive_seq_floor(&cfg, "floor")
+                .await
+                .expect("floor")
+                .value(),
+            5
+        );
         cleanup_temp(&tmp);
+    }
+
+    /// A scan that cannot run must fail the floor rather than read as sequence
+    /// `0`: a route restarted over an existing archive would otherwise
+    /// renumber from `0` and collide with archived segments.
+    #[tokio::test]
+    async fn a_failed_scan_is_an_error_not_a_zero_floor() {
+        let result = floor_from_scan(|| panic!("scan failed")).await;
+        assert!(matches!(result, Err(DvrError::ArchiveScan(_))));
     }
 
     /// An offset that pushes a segment past `u32` is refused before anything

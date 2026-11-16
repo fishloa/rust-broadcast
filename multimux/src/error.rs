@@ -189,6 +189,14 @@ pub enum MultimuxError {
         /// The output kind's name.
         kind: String,
     },
+    /// A route's DVR archive could not be read or scanned, so its segment
+    /// numbering cannot continue above what the archive already holds.
+    #[error("dvr: {0}")]
+    Dvr(
+        /// Why the archive read failed.
+        #[source]
+        crate::dvr::DvrError,
+    ),
 }
 
 /// Which config field failed validation.

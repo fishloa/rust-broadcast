@@ -339,14 +339,18 @@ impl RouteRegistry {
     }
 
     /// The highest sequence number `route`'s DVR archive already holds. Callers
-    /// hold the route's name lock, not [`Self::mutation_lock`].
-    async fn archive_floor(&self, route: &Route) -> u32 {
+    /// hold the route's name lock, not [`Self::mutation_lock`]. A failed scan is
+    /// an error: numbering from `0` over an archive that may hold higher
+    /// sequences would collide with archived segments.
+    async fn archive_floor(&self, route: &Route) -> crate::Result<u32> {
         #[cfg(test)]
         self.hooks.wait_floor_gate(&route.name).await;
-        let floor = archive_floor_of(route).await;
+        let floor = archive_floor_of(route)
+            .await
+            .map_err(crate::MultimuxError::Dvr)?;
         #[cfg(test)]
         self.hooks.log(format!("floor:{}", route.name));
-        floor
+        Ok(floor)
     }
 
     fn check_name_free(&self, route: &Route) -> crate::Result<()> {
@@ -536,7 +540,7 @@ impl RouteRegistry {
         route.validate_standalone(&self.ctx.base_config.playlist_name)?;
         let _name = self.lock_names([route.name.as_str()]).await;
         self.check_name_free(&route)?;
-        let archive_floor = self.archive_floor(&route).await;
+        let archive_floor = self.archive_floor(&route).await?;
         let _guard = self.mutation_lock.lock().await;
         self.check_name_free(&route)?;
         let runtime = self.spawn_route(&route, archive_floor, None)?;
@@ -703,7 +707,7 @@ impl RouteRegistry {
                 .await;
             let mut added_floors = Vec::with_capacity(plan.added.len());
             for route in &plan.added {
-                added_floors.push(self.archive_floor(route).await);
+                added_floors.push(self.archive_floor(route).await?);
             }
             let global = self.mutation_lock.lock().await;
             // The registry may have changed while the locks were being taken: a route this
@@ -756,7 +760,7 @@ impl RouteRegistry {
             // `_HLS_msn` for this route keeps its meaning on the replacement.
             floors.push(
                 self.archive_floor(route)
-                    .await
+                    .await?
                     .max(old_store.media_sequence_floor()),
             );
         }
@@ -918,9 +922,18 @@ impl RouteRegistry {
     /// logged and left out of the registry.
     async fn restore_retired(&self, routes: &[Route], stores: &[Arc<RouteHandle>]) {
         for (route, store) in routes.iter().zip(stores) {
-            let floor = archive_floor_of(route)
-                .await
-                .max(store.media_sequence_floor());
+            let floor = match archive_floor_of(route).await {
+                Ok(floor) => floor.max(store.media_sequence_floor()),
+                Err(e) => {
+                    tracing::error!(
+                        route = %route.name,
+                        error = %e,
+                        "admin: a failed reload could not read a stopped route's archive floor; \
+                         it was not started again"
+                    );
+                    continue;
+                }
+            };
             match self.spawn_route(route, floor, Some(store)) {
                 Ok(runtime) => {
                     self.inner.write().insert(
@@ -1561,13 +1574,16 @@ pub(crate) async fn serve_with_admin(
 
 /// The highest sequence number `route`'s DVR archive already holds, or `0`
 /// when DVR is off (see `crate::dvr::archive_seq_floor`).
-pub(super) async fn archive_floor_of(route: &Route) -> u32 {
+///
+/// # Errors
+/// [`crate::dvr::DvrError::ArchiveScan`] when the archive scan could not run.
+pub(super) async fn archive_floor_of(route: &Route) -> Result<u32, crate::dvr::DvrError> {
     if route.dvr.enabled {
-        crate::dvr::archive_seq_floor(&route.dvr, &route.name)
-            .await
-            .value()
+        Ok(crate::dvr::archive_seq_floor(&route.dvr, &route.name)
+            .await?
+            .value())
     } else {
-        0
+        Ok(0)
     }
 }
 
