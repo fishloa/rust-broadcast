@@ -2,7 +2,7 @@ use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
-use broadcast_client::udp::SSRC_PROBATION;
+use broadcast_client::udp::{MAX_REORDER_PACKETS, SSRC_PROBATION};
 use broadcast_client::{
     Action, Config, ConnId, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig,
     UdpMode,
@@ -220,6 +220,11 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
         (
             GROUP,
             udp_cfg(|c| c.reorder_packets = 0),
+            "udp.reorder_packets",
+        ),
+        (
+            GROUP,
+            udp_cfg(|c| c.reorder_packets = MAX_REORDER_PACKETS + 1),
             "udp.reorder_packets",
         ),
         (GROUP, udp_cfg(|c| c.reorder_bytes = 0), "udp.reorder_bytes"),
