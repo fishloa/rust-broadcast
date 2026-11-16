@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `UdpConfig::reorder_bytes` (default `DEFAULT_REORDER_BYTES`, 4 MiB) bounds the RTP reorder buffer in bytes next to `reorder_packets`. The sender chooses a payload's size, so the packet window alone let it hold `reorder_packets` payloads of 64 KiB; reaching the byte budget gives up on every held packet, counts the gaps lost and delivers the packet that would have overrun it. `UdpConfig::validate` rejects a zero budget as `ConfigField::UdpReorderBytes` (#2846).
+- `TsHttpConfig::max_reconnect_attempts` (`Option<u32>`, default `None`) ends the session with one fatal `Event::Error` (`ErrorKind::ReconnectAttemptsExhausted`) once that many reconnects in a row failed without media in between, instead of retrying a dead URL forever; it applies to TS-over-HTTP, RTMP and RTSP. `TsHttpConfig::with_max_reconnect_attempts` sets it (#2864).
 
 ### Fixed
 - A response whose declared `Content-Length` (or the length its `Content-Range` names) is already past `max_segment_bytes`/`max_manifest_bytes` is closed at the head, with one non-fatal `ErrorKind::BodyTooLarge`, instead of being downloaded until the cap trips. The parked-prefix stash also holds at most two segment bodies together, evicting the oldest, so a host that stalls every request in flight keeps `max_segment_bytes` x 2 parked rather than x 8 (#2847).
