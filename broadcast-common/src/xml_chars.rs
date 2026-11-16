@@ -393,6 +393,10 @@ pub enum WriteRefusal {
     /// [`open_element`] or [`empty_element`] was given an attribute value
     /// that is not valid UTF-8.
     ValueNotUtf8,
+    /// An attribute value or a text node holds a character outside the XML 1.0
+    /// §2.2 `Char` production, which `quick-xml` escapes neither (it escapes
+    /// only `<`, `>`, `&`, `'` and `"`) and no reader accepts.
+    InvalidChar,
 }
 
 impl WriteRefusal {
@@ -403,6 +407,7 @@ impl WriteRefusal {
         match self {
             WriteRefusal::Write(_) => "write",
             WriteRefusal::ValueNotUtf8 => "value not UTF-8",
+            WriteRefusal::InvalidChar => BAD_CHAR,
         }
     }
 }
@@ -464,13 +469,17 @@ pub fn empty_element<V: AsRef<str>>(
     write_event(w, Event::Empty(start))
 }
 
-/// Every attribute value of `start` is valid UTF-8.
+/// Every attribute value of `start` is valid UTF-8 and inside the XML 1.0
+/// §2.2 `Char` production.
 fn check_values(start: &BytesStart<'_>) -> WriteOutcome {
     for attribute in start.attributes() {
         let attribute = attribute.map_err(|e| WriteRefusal::Write(e.to_string()))?;
-        attribute
+        let value = attribute
             .normalized_value(XmlVersion::Implicit1_0)
             .map_err(|_| WriteRefusal::ValueNotUtf8)?;
+        if !value.chars().all(is_xml_char) {
+            return Err(WriteRefusal::InvalidChar);
+        }
     }
     Ok(())
 }
@@ -486,8 +495,13 @@ pub fn close_element(w: &mut XmlWriter, name: &str) -> WriteOutcome {
 /// Escaped character data.
 ///
 /// # Errors
-/// [`WriteRefusal::Write`] if the writer refuses the event.
+/// [`WriteRefusal::InvalidChar`] if `text` holds a character outside the XML 1.0
+/// §2.2 `Char` production, or [`WriteRefusal::Write`] if the writer refuses the
+/// event.
 pub fn write_text(w: &mut XmlWriter, text: &str) -> WriteOutcome {
+    if !text.chars().all(is_xml_char) {
+        return Err(WriteRefusal::InvalidChar);
+    }
     write_event(w, Event::Text(BytesText::new(text)))
 }
 
@@ -730,5 +744,54 @@ mod tests {
             finish_document(w),
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<R k=\"a&amp;b&quot;c\">\n  <E v=\"&lt;\"/>\n  <T>x&lt;y</T>\n</R>\n"
         );
+    }
+
+    #[test]
+    fn writer_helpers_refuse_a_character_outside_the_char_production() {
+        for illegal in [
+            "\u{0}", "\u{1}", "\u{8}", "\u{B}", "\u{C}", "\u{1F}", "\u{FFFE}",
+        ] {
+            let mut w = new_writer();
+            assert_eq!(
+                open_element(&mut w, "R", &[("k", format!("a{illegal}b"))]),
+                Err(WriteRefusal::InvalidChar),
+                "attribute value {illegal:?}"
+            );
+            assert!(w.get_ref().is_empty(), "a refused start tag writes nothing");
+            assert_eq!(
+                empty_element(&mut w, "E", &[("k", format!("a{illegal}b"))]),
+                Err(WriteRefusal::InvalidChar),
+                "empty element attribute value {illegal:?}"
+            );
+            let mut text = new_writer();
+            assert_eq!(
+                write_text(&mut text, &format!("a{illegal}b")),
+                Err(WriteRefusal::InvalidChar),
+                "text {illegal:?}"
+            );
+            assert!(
+                text.get_ref().is_empty(),
+                "a refused text node writes nothing"
+            );
+        }
+    }
+
+    #[test]
+    fn writer_helpers_accept_the_char_production_edges() {
+        let mut w = new_writer();
+        open_element(&mut w, "R", &[("k", "a\tb\nc\rd\u{FFFD}")]).unwrap();
+        text_element(&mut w, "T", "\u{10FFFF}").unwrap();
+        close_element(&mut w, "R").unwrap();
+        let doc = finish_document(w);
+        assert!(
+            doc.contains("\u{FFFD}") && doc.contains("\u{10FFFF}"),
+            "{doc}"
+        );
+    }
+
+    #[test]
+    fn the_refusal_names_the_char_production() {
+        assert_eq!(WriteRefusal::InvalidChar.name(), BAD_CHAR);
+        assert_eq!(WriteRefusal::InvalidChar.to_string(), BAD_CHAR);
     }
 }

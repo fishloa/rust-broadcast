@@ -455,6 +455,29 @@ fn an_event_with_an_xml_payload_is_flagged_and_refused_on_write() {
 }
 
 #[test]
+fn a_control_character_in_a_stored_string_is_refused_on_write() {
+    let mut text = Mpd::default();
+    text.locations = vec!["http://cdn.example/\u{1}".to_string()];
+    let err = text.to_xml().expect_err("a text node outside Char");
+    assert!(
+        matches!(&err, MpdError::Invalid { detail, .. } if detail.contains("U+0001")),
+        "{err}"
+    );
+
+    let mut attribute = Mpd::default();
+    let mut period = Period::default();
+    period.id = Some("p\u{0}".to_string());
+    attribute.periods = vec![period];
+    let err = attribute
+        .to_xml()
+        .expect_err("an attribute value outside Char");
+    assert!(
+        matches!(&err, MpdError::Invalid { detail, .. } if detail.contains("U+0000")),
+        "{err}"
+    );
+}
+
+#[test]
 fn text_events_parse_with_their_body() {
     let xml = br#"<MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static" minBufferTime="PT1S"><Period id="0"><EventStream schemeIdUri="urn:e" timescale="1000" presentationTimeOffset="4"><Event presentationTime="5" duration="2" id="9">  hello  </Event></EventStream></Period></MPD>"#;
     let mpd = Mpd::parse(xml).unwrap();
