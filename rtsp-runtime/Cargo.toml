@@ -46,12 +46,12 @@ http-auth     = { version = "0.1", default-features = false }
 # Framed adapters (SP1.1). `codec` = Decoder/Encoder/Framed.
 tokio-util    = { version = "0.7", optional = true, default-features = false, features = ["codec"] }
 futures-util  = { workspace = true, optional = true, features = ["sink", "std"] }
-bytes         = { version = "1", features = ["serde"] }
+bytes         = { version = "1", default-features = false, features = ["std"] }
 
 [features]
 default = []
 # Derive serde on the public wire/event types.
-serde = ["dep:serde"]
+serde = ["dep:serde", "bytes/serde"]
 # Real-socket client + server IO over the sans-IO core (pulls tokio).
 tokio = ["dep:tokio", "dep:tokio-util", "dep:futures-util"]
 # `rtsps://` (RTSP over TLS) on top of the tokio adapter.

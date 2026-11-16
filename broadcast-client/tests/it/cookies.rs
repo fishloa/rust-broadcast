@@ -14,6 +14,7 @@ fn ts(us: u64) -> Timestamp {
 const CDN_SEG_URL: &str = "http://cdn.test/seg/index1.ts";
 const MAX_JAR: usize = 50;
 const MAX_COOKIE_BYTES: usize = 4096;
+const MAX_COOKIE_HEADER: usize = 16 * 1024;
 const MAX_POLL_SECS: u64 = 120;
 
 fn cookie_of(url: &str, lines: &[&str], target: &str) -> Option<String> {
@@ -477,6 +478,40 @@ fn replacing_a_cookie_at_the_limit_evicts_nothing() {
     let jar = s.cookies();
     assert_eq!(jar.len(), MAX_JAR);
     assert_eq!(jar.first(), Some(&pair("c0", "new")));
+}
+
+/// A jar of 50 near-cap cookies is ~200 KiB, so the emitted `Cookie` header, not the jar, is the
+/// bound that keeps a request within an origin's header budget: it stops at 16 KiB, and because
+/// the longest paths sort first it is the longest-path cookies that survive.
+#[test]
+fn the_cookie_header_stops_at_its_byte_cap_keeping_the_longest_paths() {
+    let url = format!("http://example/{}live.ts", "a/".repeat(MAX_JAR - 1));
+    let value = "v".repeat(MAX_COOKIE_BYTES - "c00".len());
+    let lines: Vec<String> = (0..MAX_JAR)
+        .map(|i| {
+            let path = if i == 0 {
+                "/".to_string()
+            } else {
+                "/a".repeat(i)
+            };
+            format!("c{i:02}={value}; Path={path}")
+        })
+        .collect();
+    let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+    let mut s = session_with_cookies(&url, &refs);
+    assert_eq!(s.cookies().len(), MAX_JAR);
+    let next = reconnect(&mut s, SEC);
+    let header = next.cookie().expect("cookie header");
+    assert!(
+        header.len() <= MAX_COOKIE_HEADER,
+        "header of {} bytes",
+        header.len()
+    );
+    assert!(!header.contains("c00="), "the shortest path went first");
+    for kept in ["c49=", "c48=", "c47="] {
+        assert!(header.contains(kept), "{kept} not in the header");
+    }
+    assert!(header.starts_with("c49="), "the longest path sorts first");
 }
 
 #[test]

@@ -91,6 +91,8 @@ pub enum ConfigField {
     UdpSdp,
     /// `udp.reorder_packets` is zero or above the cap.
     UdpReorderPackets,
+    /// `udp.reorder_bytes` is zero.
+    UdpReorderBytes,
     /// `udp.reorder_wait` is zero.
     UdpReorderWait,
     /// `max_queued_events` is zero.
@@ -154,6 +156,7 @@ impl ConfigField {
             Self::UdpJoinGroup => "udp.options.join.group",
             Self::UdpSdp => "udp.sdp",
             Self::UdpReorderPackets => "udp.reorder_packets",
+            Self::UdpReorderBytes => "udp.reorder_bytes",
             Self::UdpReorderWait => "udp.reorder_wait",
             Self::MaxQueuedEvents => "max_queued_events",
             Self::MaxQueuedBytes => "max_queued_bytes",

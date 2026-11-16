@@ -24,6 +24,8 @@ use super::body::BodyAcc;
 
 const MIN_STRONG_LAST_MODIFIED_AGE_US: i64 = 1_000_000;
 const MAX_PARKED: usize = 8;
+/// Parked prefixes kept per [`crate::Config::max_segment_bytes`]: two stalled segment bodies.
+const PARKED_SEGMENTS: usize = 2;
 
 #[derive(Debug, Clone, PartialEq)]
 enum Validator {
@@ -172,12 +174,14 @@ pub(crate) enum HeadOutcome {
     Accepted,
     Refused,
     Fallback,
+    Oversize,
 }
 
 /// Takes the 2xx response head of a request: a fresh request or the resumed one when
 /// `resume_from` names the bytes already kept in `body`. `Refused` is a ranged request the
 /// answer does not honour; `Fallback` is a resumed request the answer does not continue, with
-/// `body` emptied so the caller asks for the whole resource again.
+/// `body` emptied so the caller asks for the whole resource again; `Oversize` is an answer whose
+/// declared length is already past the cap.
 pub(crate) fn accept_head(
     body: &mut BodyAcc,
     basis: &mut Option<Basis>,
@@ -210,12 +214,19 @@ pub(crate) fn accept_head(
             }
         }
     }
-    if body.accept(status, headers, byte_range) {
-        *basis = Basis::of(status, headers);
-        HeadOutcome::Accepted
-    } else {
-        *basis = None;
-        HeadOutcome::Refused
+    match body.accept(status, headers, byte_range) {
+        super::body::HeadVerdict::Accepted => {
+            *basis = Basis::of(status, headers);
+            HeadOutcome::Accepted
+        }
+        super::body::HeadVerdict::Refused => {
+            *basis = None;
+            HeadOutcome::Refused
+        }
+        super::body::HeadVerdict::Oversize => {
+            *basis = None;
+            HeadOutcome::Oversize
+        }
     }
 }
 
@@ -228,21 +239,45 @@ pub(crate) struct Parked {
     pub(crate) basis: Basis,
 }
 
+/// Parked prefixes kept for later resumes, bounded by count and by the bytes they hold together:
+/// a host that stalls every request in flight would otherwise keep [`MAX_PARKED`] full segment
+/// bodies alive next to the ones being downloaded.
 #[derive(Debug)]
 pub(crate) struct Stash<K> {
     items: Vec<(K, Parked)>,
+    bytes: usize,
+    budget: usize,
 }
 
 impl<K: PartialEq> Stash<K> {
-    pub(crate) fn new() -> Self {
-        Self { items: Vec::new() }
+    pub(crate) fn new(budget: usize) -> Self {
+        Self {
+            items: Vec::new(),
+            bytes: 0,
+            budget,
+        }
+    }
+
+    /// A stash whose parked prefixes may hold [`PARKED_SEGMENTS`] bodies of at most
+    /// `max_segment_bytes` together.
+    pub(crate) fn with_segment_budget(max_segment_bytes: usize) -> Self {
+        Self::new(max_segment_bytes.saturating_mul(PARKED_SEGMENTS))
     }
 
     pub(crate) fn put(&mut self, key: K, parked: Parked) {
-        self.items.retain(|(k, _)| *k != key);
-        if self.items.len() >= MAX_PARKED {
-            self.items.remove(0);
+        if let Some(at) = self.items.iter().position(|(k, _)| *k == key) {
+            self.take_at(at);
         }
+        let len = parked.body.len();
+        if len > self.budget {
+            return;
+        }
+        while !self.items.is_empty()
+            && (self.items.len() >= MAX_PARKED || self.bytes.saturating_add(len) > self.budget)
+        {
+            self.take_at(0);
+        }
+        self.bytes = self.bytes.saturating_add(len);
         self.items.push((key, parked));
     }
 
@@ -254,16 +289,31 @@ impl<K: PartialEq> Stash<K> {
         byte_range: Option<broadcast_common::range::ByteSpan>,
     ) -> Option<Parked> {
         let at = self.items.iter().position(|(k, _)| k == key)?;
-        let (_, parked) = self.items.remove(at);
+        let parked = self.take_at(at);
         (parked.url == url && parked.byte_range == byte_range).then_some(parked)
     }
 
     pub(crate) fn discard(&mut self, key: &K) {
-        self.items.retain(|(k, _)| k != key);
+        let mut kept = Vec::new();
+        for (k, parked) in self.items.drain(..) {
+            if &k == key {
+                self.bytes = self.bytes.saturating_sub(parked.body.len());
+            } else {
+                kept.push((k, parked));
+            }
+        }
+        self.items = kept;
     }
 
     pub(crate) fn clear(&mut self) {
         self.items.clear();
+        self.bytes = 0;
+    }
+
+    fn take_at(&mut self, at: usize) -> Parked {
+        let (_, parked) = self.items.remove(at);
+        self.bytes = self.bytes.saturating_sub(parked.body.len());
+        parked
     }
 
     #[cfg(test)]
@@ -518,7 +568,7 @@ mod tests {
 
     #[test]
     fn a_parked_prefix_is_taken_once_and_only_for_the_same_request() {
-        let mut stash = Stash::new();
+        let mut stash = Stash::new(1024);
         stash.put(1u8, parked("http://a/x"));
         assert!(stash.take(&1, "http://a/y", None).is_none());
         stash.put(1u8, parked("http://a/x"));
@@ -541,7 +591,7 @@ mod tests {
 
     #[test]
     fn a_discarded_prefix_is_gone_and_others_stay() {
-        let mut stash = Stash::new();
+        let mut stash = Stash::new(1024);
         stash.put(1u8, parked("http://a/x"));
         stash.put(2u8, parked("http://a/y"));
         stash.discard(&1);
@@ -552,7 +602,7 @@ mod tests {
 
     #[test]
     fn the_stash_keeps_at_most_a_bounded_number_of_prefixes() {
-        let mut stash = Stash::new();
+        let mut stash = Stash::new(1024);
         for key in 0..u32::try_from(MAX_PARKED + 5).unwrap() {
             stash.put(key, parked("http://a/x"));
         }
@@ -560,6 +610,36 @@ mod tests {
         assert!(
             stash.take(&0, "http://a/x", None).is_none(),
             "oldest evicted"
+        );
+    }
+
+    fn parked_holding(url: &str, bytes: usize) -> Parked {
+        let mut body = BodyAcc::new(bytes);
+        body.push(&vec![0u8; bytes])
+            .expect("fills the body exactly");
+        Parked {
+            url: url.into(),
+            byte_range: None,
+            body,
+            basis: Basis::of(StatusCode::OK, &etag_200()).unwrap(),
+        }
+    }
+
+    #[test]
+    fn the_stash_evicts_the_oldest_prefix_that_would_outgrow_its_byte_budget() {
+        let mut stash = Stash::new(20);
+        stash.put(1u8, parked_holding("http://a/x", 12));
+        stash.put(2u8, parked_holding("http://a/y", 12));
+        assert_eq!(stash.len(), 1, "the oldest made room for the newest");
+        assert!(stash.take(&1, "http://a/x", None).is_none());
+        assert!(stash.take(&2, "http://a/y", None).is_some());
+
+        let mut stash = Stash::new(10);
+        stash.put(3u8, parked_holding("http://a/x", 11));
+        assert_eq!(
+            stash.len(),
+            0,
+            "one prefix past the whole budget is never parked"
         );
     }
 }

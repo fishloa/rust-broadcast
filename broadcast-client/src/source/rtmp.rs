@@ -501,6 +501,12 @@ impl RtmpSource {
             crate::tshttp::Event::Starved(kind) => {
                 self.events.push_back(Event::Starved(kind));
             }
+            crate::tshttp::Event::GaveUp { attempts } => {
+                self.events.push_back(Event::Error {
+                    kind: crate::ErrorKind::ReconnectAttemptsExhausted { attempts },
+                    fatal: true,
+                });
+            }
             _ => {}
         }
     }
