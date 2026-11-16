@@ -2842,13 +2842,22 @@ fn validate_quoted_string(value: &str, what: &str) -> Result<()> {
 /// A tag line this crate re-emits verbatim (an opaque `extra_tags`/
 /// `pre_tags` entry) is not a quoted-string, but it is one line: a CR or LF
 /// inside it would split it into two lines and inject a tag (audit BH-W7,
-/// issue #1111).
+/// issue #1111). It must also actually be a tag — non-empty and starting
+/// `#EXT` — or it would render as a URI line (a segment reference) or as a
+/// bare terminator instead of the tag the caller meant (audit 20 finding 51,
+/// issue #2862).
 fn validate_tag_body(what: &str, tags: &[String]) -> Result<()> {
     for tag in tags {
         if let Some(bad) = tag.chars().find(|c| *c == '\r' || *c == '\n') {
             return Err(Error::InvalidQuotedString {
                 what: what.to_string(),
                 bad_char: bad,
+                value: tag.clone(),
+            });
+        }
+        if !tag.starts_with("#EXT") {
+            return Err(Error::InvalidTagLine {
+                what: what.to_string(),
                 value: tag.clone(),
             });
         }

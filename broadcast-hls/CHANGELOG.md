@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `Error::InvalidTagLine`: a verbatim `extra_tags`/`pre_tags` line must be non-empty and start with `#EXT`, so it can no longer render as a URI line or a bare terminator (audit 20 finding 51, #2862).
 
 ## [0.8.0] - 2026-11-15
 ### Added

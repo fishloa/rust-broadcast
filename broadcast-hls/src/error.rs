@@ -92,6 +92,17 @@ pub enum Error {
         value: String,
     },
 
+    /// A verbatim tag line (`extra_tags`/`pre_tags`) is empty or does not
+    /// start with `#EXT`, so it would render as a URI line or a terminator
+    /// instead of a tag (audit 20 finding 51, issue #2862).
+    #[error("{what} {value:?} is not an #EXT tag line")]
+    InvalidTagLine {
+        /// Which field rejected the value (e.g. `"segment pre-tag"`).
+        what: String,
+        /// The offending line.
+        value: String,
+    },
+
     /// An `#EXT-X-KEY` whose `METHOD` is not `NONE` carries no `URI`
     /// (RFC 8216 §4.3.2.4: `URI` is REQUIRED unless `METHOD` is `NONE`).
     #[error("EXT-X-KEY with METHOD={method} has no URI")]
