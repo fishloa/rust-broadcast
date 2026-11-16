@@ -81,7 +81,7 @@ let servers = parse_ice_server_links(
     r#"<stun:stun.example.com>; rel="ice-server", <turn:turn.example.com>; rel="ice-server"; username="u"; credential="c""#,
 );
 assert_eq!(servers.len(), 2);
-let header = format_ice_server_links(&servers);
+let header = format_ice_server_links(&servers).expect("safe link values");
 assert!(header.contains("turn.example.com"));
 ```
 

@@ -711,7 +711,7 @@ async fn whep_post_inner(
         reason: format!("whep: build media transport: {e}"),
     })?;
 
-    let Some((attachment, inbound)) = shared.attach(&local_ice_ufrag) else {
+    let Some((attachment, inbound)) = shared.attach(&local_ice_ufrag, &local_ice_pwd) else {
         return Ok(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response());
     };
 
@@ -1428,8 +1428,8 @@ async fn run_whep_session_with_silence_timeout(
         ice.candidates
             .fetch_add(applied.candidates, Ordering::Relaxed);
         ice.restarts.fetch_add(applied.restarts, Ordering::Relaxed);
-        for ufrag in &applied.restart_ufrags {
-            attachment.register_ufrag(ufrag);
+        for (ufrag, pwd) in &applied.restart_credentials {
+            attachment.register_ufrag(ufrag, pwd);
         }
         // The transport's own next ICE/DTLS deadline (defect 1, WHEP): drive
         // it directly instead of only on the fixed poll tick so retransmits
@@ -2201,12 +2201,13 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             .socket_for("127.0.0.1".parse().unwrap())
             .unwrap();
         let ufrag = crate::secure_random::token(8);
-        let (attachment, inbound) = shared.attach(&ufrag).unwrap();
+        let pwd = crate::secure_random::token(24);
+        let (attachment, inbound) = shared.attach(&ufrag, &pwd).unwrap();
         let media = MediaTransport::new(
             MediaTransportConfig::new(
                 shared.local_addr(),
                 ufrag,
-                crate::secure_random::token(24),
+                pwd,
                 crate::secure_random::token(8),
                 crate::secure_random::token(24),
                 SetupRole::Passive,

@@ -81,6 +81,29 @@ pub mod marker {
 /// attacker-chosen depth, only this constant.
 pub const MAX_AMF0_DEPTH: usize = 32;
 
+/// Maximum number of AMF0 values one byte sequence may decode into, counting
+/// every value read at any nesting level (containers included). Bounds
+/// *width* the way [`MAX_AMF0_DEPTH`] bounds depth: millions of one-byte
+/// nulls inside a Strict Array, or three-byte empty-key pairs inside an
+/// Object, otherwise expand into millions of `Amf0Value`s (plus a `String`
+/// per key) from a single message. A decode past the limit returns
+/// [`RtmpError::Amf0TooManyValues`].
+pub const MAX_AMF0_VALUES: usize = 4096;
+
+/// Count one more decoded value against `values`, rejecting the sequence once
+/// it passes [`MAX_AMF0_VALUES`].
+fn count_value(values: &mut usize) -> Result<()> {
+    *values = values.checked_add(1).ok_or(RtmpError::Amf0TooManyValues {
+        max: MAX_AMF0_VALUES,
+    })?;
+    if *values > MAX_AMF0_VALUES {
+        return Err(RtmpError::Amf0TooManyValues {
+            max: MAX_AMF0_VALUES,
+        });
+    }
+    Ok(())
+}
+
 const MARKER_LEN: usize = 1;
 const NUMBER_LEN: usize = 8;
 const BOOLEAN_LEN: usize = 1;
@@ -197,8 +220,13 @@ fn read_utf8_long(bytes: &[u8]) -> Result<(String, usize)> {
 /// starting right after any leading count field. Terminates on an empty key
 /// followed by [`marker::OBJECT_END`] (§2.11). `depth` is the nesting depth
 /// of the *values* in this container (already incremented past the
-/// container itself by the caller).
-fn parse_pairs(bytes: &[u8], depth: usize) -> Result<(Vec<(String, Amf0Value)>, usize)> {
+/// container itself by the caller). `values` counts every value decoded so
+/// far, shared across the whole top-level sequence.
+fn parse_pairs(
+    bytes: &[u8],
+    depth: usize,
+    values: &mut usize,
+) -> Result<(Vec<(String, Amf0Value)>, usize)> {
     let mut consumed = 0;
     let mut pairs = Vec::new();
     loop {
@@ -216,7 +244,7 @@ fn parse_pairs(bytes: &[u8], depth: usize) -> Result<(Vec<(String, Amf0Value)>, 
                 return Ok((pairs, after_key + MARKER_LEN));
             }
         }
-        let (value, value_len) = parse_value(&bytes[after_key..], depth)?;
+        let (value, value_len) = parse_value(&bytes[after_key..], depth, values)?;
         pairs.push((key, value));
         consumed = after_key
             .checked_add(value_len)
@@ -240,11 +268,13 @@ fn parse_pairs(bytes: &[u8], depth: usize) -> Result<(Vec<(String, Amf0Value)>, 
 /// entered (0 at the top level); checked *before* descending into a nested
 /// Object/ECMA-Array/Strict-Array so recursion is bounded by
 /// [`MAX_AMF0_DEPTH`] regardless of how deeply the input is (adversarially)
-/// nested.
-fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
+/// nested. `values` counts every value decoded across the whole top-level
+/// sequence, bounded by [`MAX_AMF0_VALUES`].
+fn parse_value(bytes: &[u8], depth: usize, values: &mut usize) -> Result<(Amf0Value, usize)> {
     if bytes.is_empty() {
         return Err(buffer_too_short(MARKER_LEN, 0, "amf0 value marker"));
     }
+    count_value(values)?;
     let body = &bytes[MARKER_LEN..];
     match bytes[0] {
         marker::NUMBER => {
@@ -274,7 +304,7 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
                     max: MAX_AMF0_DEPTH,
                 });
             }
-            let (pairs, len) = parse_pairs(body, depth + 1)?;
+            let (pairs, len) = parse_pairs(body, depth + 1, values)?;
             Ok((Amf0Value::Object(pairs), MARKER_LEN + len))
         }
         marker::NULL => Ok((Amf0Value::Null, MARKER_LEN)),
@@ -296,7 +326,7 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             // object-end terminator is authoritative, so it is read and
             // discarded rather than cross-checked against the parsed pair
             // count.
-            let (pairs, len) = parse_pairs(&body[U32_LEN..], depth + 1)?;
+            let (pairs, len) = parse_pairs(&body[U32_LEN..], depth + 1, values)?;
             Ok((Amf0Value::EcmaArray(pairs), MARKER_LEN + U32_LEN + len))
         }
         marker::STRICT_ARRAY => {
@@ -314,10 +344,10 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
             }
             let count = u32::from_be_bytes([body[0], body[1], body[2], body[3]]);
             let mut rest = &body[U32_LEN..];
-            let mut values = Vec::new();
+            let mut elements = Vec::new();
             for _ in 0..count {
-                let (value, consumed) = parse_value(rest, depth + 1)?;
-                values.push(value);
+                let (value, consumed) = parse_value(rest, depth + 1, values)?;
+                elements.push(value);
                 rest = rest.get(consumed..).ok_or(RtmpError::FieldOverflow(
                     broadcast_common::len::FieldOverflow {
                         field: "AMF0 strict array element length",
@@ -334,7 +364,7 @@ fn parse_value(bytes: &[u8], depth: usize) -> Result<(Amf0Value, usize)> {
                         what: "AMF0 strict array body",
                     })?;
             Ok((
-                Amf0Value::StrictArray(values),
+                Amf0Value::StrictArray(elements),
                 MARKER_LEN + U32_LEN + elements_len,
             ))
         }
@@ -418,7 +448,8 @@ impl<'a> Parse<'a> for Amf0Value {
     type Error = RtmpError;
 
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let (value, _) = parse_value(bytes, 0)?;
+        let mut values = 0usize;
+        let (value, _) = parse_value(bytes, 0, &mut values)?;
         Ok(value)
     }
 }
@@ -540,14 +571,16 @@ impl Command {
     /// not a Number; the remaining variants are propagated from
     /// [`Amf0Value::parse`].
     pub fn parse(payload: &[u8]) -> Result<Self> {
-        let (name_value, name_len) = parse_value(payload, 0)?;
+        let mut values = 0usize;
+        let (name_value, name_len) = parse_value(payload, 0, &mut values)?;
         let mut offset = name_len;
         let name = match name_value {
             Amf0Value::String(s) => s,
             value => return Err(RtmpError::CommandNameNotString { value }),
         };
 
-        let (txn_value, txn_len) = parse_value(payload.get(offset..).unwrap_or_default(), 0)?;
+        let (txn_value, txn_len) =
+            parse_value(payload.get(offset..).unwrap_or_default(), 0, &mut values)?;
         offset = offset.checked_add(txn_len).ok_or(RtmpError::FieldOverflow(
             broadcast_common::len::FieldOverflow {
                 field: "RTMP command transaction id offset",
@@ -562,7 +595,7 @@ impl Command {
 
         let mut arguments = Vec::new();
         while offset < payload.len() {
-            let (value, len) = parse_value(&payload[offset..], 0)?;
+            let (value, len) = parse_value(&payload[offset..], 0, &mut values)?;
             offset = offset.checked_add(len).ok_or(RtmpError::FieldOverflow(
                 broadcast_common::len::FieldOverflow {
                     field: "RTMP command argument offset",
@@ -852,6 +885,62 @@ mod tests {
             inner = wrapped;
         }
         assert!(Amf0Value::parse(&inner).is_ok());
+    }
+
+    /// #2813: width was unbounded — an 8 MiB Strict Array of one-byte nulls
+    /// decoded into millions of `Amf0Value`s, and an Object of three-byte
+    /// empty-key pairs into millions of `(String, Amf0Value)` pairs. The
+    /// value counter now rejects the element that crosses
+    /// [`MAX_AMF0_VALUES`].
+    #[test]
+    fn value_count_guard_rejects_wide_containers() {
+        let count = u32::try_from(MAX_AMF0_VALUES + 1).expect("limit fits u32");
+        let mut bytes = vec![marker::STRICT_ARRAY];
+        bytes.extend_from_slice(&count.to_be_bytes());
+        bytes.extend(core::iter::repeat_n(marker::NULL, MAX_AMF0_VALUES + 1));
+
+        let result = Amf0Value::parse(&bytes);
+        assert!(matches!(
+            result,
+            Err(RtmpError::Amf0TooManyValues { max }) if max == MAX_AMF0_VALUES
+        ));
+    }
+
+    #[test]
+    fn value_count_guard_allows_a_container_at_the_limit() {
+        let count = u32::try_from(MAX_AMF0_VALUES - 1).expect("limit fits u32");
+        let mut bytes = vec![marker::STRICT_ARRAY];
+        bytes.extend_from_slice(&count.to_be_bytes());
+        bytes.extend(core::iter::repeat_n(marker::NULL, MAX_AMF0_VALUES - 1));
+
+        let parsed =
+            Amf0Value::parse(&bytes).expect("the array itself plus its elements is the limit");
+        assert_eq!(
+            parsed,
+            Amf0Value::StrictArray(vec![Amf0Value::Null; MAX_AMF0_VALUES - 1])
+        );
+    }
+
+    /// #2813: the counter spans the whole top-level value sequence, so a
+    /// Command Message cannot dodge it by spreading its values over several
+    /// arguments.
+    #[test]
+    fn command_parse_counts_values_across_every_argument() {
+        let mut payload = Amf0Value::String("connect".to_string())
+            .try_to_bytes()
+            .expect("encode name");
+        payload.extend(
+            Amf0Value::Number(1.0)
+                .try_to_bytes()
+                .expect("encode transaction id"),
+        );
+        payload.extend(core::iter::repeat_n(marker::NULL, MAX_AMF0_VALUES));
+
+        let result = Command::parse(&payload);
+        assert!(matches!(
+            result,
+            Err(RtmpError::Amf0TooManyValues { max }) if max == MAX_AMF0_VALUES
+        ));
     }
 
     #[test]
