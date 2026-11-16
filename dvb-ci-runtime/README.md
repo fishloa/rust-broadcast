@@ -126,6 +126,10 @@ Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
   and tears down on remove) and `CardInserted` / `CardRemoved` / `CardChanged`
   (best-effort EN 50221 app-layer inference; CI slots have no card-detect line).
   React with `Driver::pump_hotplug(dt, |hp| ...)` or `pump_with`.
+- **Bounded notifications**: at most 1024 notifications are buffered; past that
+  the oldest is discarded and `Driver::notifications_dropped` counts it, so a
+  host that only calls `pump` (never `take_notifications`/`pump_with`) against a
+  module producing one per malformed frame does not grow the queue forever.
 - **Devices**: in-memory `MockCaDevice` + `MockCiDataDevice`; Linux
   `LinuxCaDevice` (control plane) and `LinuxCiDataDevice` (TS data plane, whole
   packets only, `WouldBlock` + `PartialWrite` on backpressure) behind `linux`.
