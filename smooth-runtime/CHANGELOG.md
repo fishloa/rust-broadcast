@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - a stream's plan past `max_plan_len` after a refresh drops its oldest chunks and reports `Output::Discontinuity`.
   `broadcast-client` reports `SmoothError::FragmentTooLarge` as `ErrorKind::SegmentFetchFailed { status: None }`.
 
+### Fixed
+- A fragment URL resolved from the manifest's `Url` template must now be an `http`/`https` URL reached without an `https`-to-`http` downgrade (`broadcast_common::url_ref::resolve_http`): a template naming `file:`, `ftp:` or downgrading the connection is `Dropped::FragmentUrl` and is never requested, instead of becoming a fetch the host performs (#2853).
+
 
 ## [0.2.0] - 2026-11-15
 ### Changed

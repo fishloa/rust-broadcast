@@ -412,12 +412,16 @@ impl SmoothClient {
         }
     }
 
+    /// Resolve and issue one fragment fetch. The reference is remote input, so it
+    /// must resolve to an `http`/`https` URL reached without an `https`->`http`
+    /// downgrade ([`url_ref::resolve_http`]); anything else is
+    /// [`Dropped::FragmentUrl`] and is never requested.
     fn issue_fragment(&mut self, si: usize, chunk: Chunk) {
         let stream = &self.streams[si];
         let relative = stream
             .index
             .resolve_fragment_url(stream.quality.bitrate, chunk.0);
-        let Ok(url) = url_ref::resolve(&self.config.manifest_url, &relative) else {
+        let Ok(url) = url_ref::resolve_http(&self.config.manifest_url, &relative) else {
             self.streams[si].cursor = Cursor::Idle;
             self.outputs
                 .push_back(Output::Dropped(Dropped::FragmentUrl {
