@@ -435,6 +435,25 @@ const MAX_RECENT_ACCEPTS: usize = MAX_PENDING;
 // queues make that structurally impossible: control is always drained in
 // full before data pacing is even considered.
 
+/// One queued outbound DATA datagram. `retransmit` names the sequence number
+/// when the datagram is a retransmission, so the sender's "already queued"
+/// mark is cleared when the datagram leaves this queue (#2819).
+#[derive(Debug)]
+struct OutboundData {
+    bytes: Vec<u8>,
+    retransmit: Option<u32>,
+}
+
+impl OutboundData {
+    /// A first transmission (never a retransmission).
+    fn first_transmission(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            retransmit: None,
+        }
+    }
+}
+
 /// Per-connection counters for datagrams a bounded internal channel dropped
 /// because it was full (item 4) — this adapter's own internal backpressure,
 /// distinct from wire-level loss ARQ/TLPKTDROP already account for. Shared
@@ -1305,7 +1324,7 @@ struct Driver {
 
     // Outbound datagram queues — separate so control can never queue behind
     // a not-yet-due paced DATA packet (see the module doc above).
-    outbound_data: VecDeque<Vec<u8>>,
+    outbound_data: VecDeque<OutboundData>,
     outbound_control: VecDeque<Vec<u8>>,
 
     // Token-bucket pacing schedule (issue #1061): the earliest time the next
@@ -1779,7 +1798,8 @@ impl Driver {
         // Wrap at the wire field's own bit width ...
         self.next_send_seq = seq_next(self.next_send_seq);
         self.next_message_number = next_message_number(self.next_message_number);
-        self.outbound_data.push_back(bytes);
+        self.outbound_data
+            .push_back(OutboundData::first_transmission(bytes));
     }
 
     /// Process one datagram from the peer. Takes the datagram by value so a
@@ -2002,11 +2022,23 @@ impl Driver {
         // "original or retransmitted") and tag them `is_data` so pacing
         // applies. The payload length is the datagram less its fixed header —
         // no need to re-parse the packet just to learn it.
-        for bytes in self.sender.tick(now) {
+        let queue_cap = usize::try_from(self.max_flow_window).unwrap_or(usize::MAX);
+        for (seq, bytes) in self.sender.tick(now) {
             self.livecc.on_data_packet(
                 u64::try_from(bytes.len().saturating_sub(SRT_HEADER_LEN)).unwrap_or(u64::MAX),
             );
-            self.outbound_data.push_back(bytes);
+            // Retransmissions are capped at the negotiated flow window: a
+            // NAK naming the whole send buffer must not turn into an
+            // unbounded queue (#2819). A dropped retransmission stays in the
+            // sender's loss list and is offered again by a later tick.
+            if self.outbound_data.len() < queue_cap {
+                self.outbound_data.push_back(OutboundData {
+                    bytes,
+                    retransmit: Some(seq),
+                });
+            } else {
+                self.sender.on_retransmit_dropped(seq);
+            }
         }
 
         // Keep-Alive (§3.2.3): a connection that has sent nothing for a
@@ -2131,9 +2163,12 @@ impl Driver {
                 // preserve send order) queued for a later pass.
                 break;
             }
-            let Some(bytes) = self.outbound_data.pop_front() else {
+            let Some(datagram) = self.outbound_data.pop_front() else {
                 break;
             };
+            if let Some(seq) = datagram.retransmit {
+                self.sender.on_retransmit_sent(seq);
+            }
             let period = self.livecc.on_ack_received();
             // Catch-up: a wake that arrives late (the timer has ~1 ms
             // granularity, `MIN_WAKE`) still owes the packets whose slots
@@ -2149,7 +2184,7 @@ impl Driver {
             sent += 1;
             send_bounded(
                 &self.udp,
-                &bytes,
+                &datagram.bytes,
                 self.peer_addr,
                 self.write_timeout,
                 "send",
@@ -3768,7 +3803,9 @@ mod adapter_tests {
     async fn the_deadline_is_the_pacing_slot_when_it_is_the_earliest_term() {
         let mut driver = quiet_driver().await;
         let now = Instant::now();
-        driver.outbound_data.push_back(alloc::vec![0u8; 100]);
+        driver
+            .outbound_data
+            .push_back(OutboundData::first_transmission(alloc::vec![0u8; 100]));
         driver.next_data_send_at = Some(now + Duration::from_millis(3));
         assert_eq!(
             driver.poll_timeout().unwrap(),
@@ -4011,8 +4048,8 @@ mod adapter_tests {
 
         // Every enqueued DATA packet must itself carry a legal (in-range)
         // seq/message number — not just the counter that produced it.
-        for bytes in &driver.outbound_data {
-            let dp = DataPacket::parse(bytes).expect("parse enqueued data packet");
+        for datagram in &driver.outbound_data {
+            let dp = DataPacket::parse(&datagram.bytes).expect("parse enqueued data packet");
             assert!(dp.seq_number <= SEQ_NUMBER_MASK);
             assert!(dp.message_number <= crate::packet::data::MESSAGE_NUMBER_MASK);
         }
@@ -4455,7 +4492,7 @@ mod adapter_tests {
         let datagrams: Vec<Vec<u8>> = from
             .outbound_control
             .drain(..)
-            .chain(from.outbound_data.drain(..))
+            .chain(from.outbound_data.drain(..).map(|d| d.bytes))
             .collect();
         for datagram in datagrams {
             if is_kmreq(&datagram) && *kmreqs_to_drop > 0 {
@@ -5190,6 +5227,77 @@ mod adapter_tests {
         assert_eq!(
             driver.livecc.avg_payload_size(),
             reference.avg_payload_size()
+        );
+    }
+
+    /// #2819: one NAK naming the whole send buffer cannot queue more
+    /// retransmissions than the negotiated flow window, and a second NAK
+    /// before the queue drains adds no duplicates.
+    #[tokio::test(start_paused = true)]
+    async fn a_nak_naming_the_whole_buffer_is_capped_at_the_flow_window() {
+        use crate::packet::number::SeqNo;
+        use crate::packet::{LossListEntry, NakPacket};
+        const WINDOW: u32 = 4;
+        const BUFFERED: u32 = 8;
+        let (mut driver, _rx) = test_driver(WINDOW).await;
+        driver.peer_addr = "127.0.0.1:1".parse().unwrap();
+        for _ in 0..BUFFERED {
+            driver.send_one(&[0u8; 100]);
+        }
+        driver.outbound_data.clear(); // the first transmissions are on the wire
+
+        let nak = || {
+            let nak = ControlPacket::Nak(NakPacket {
+                timestamp: crate::packet::SrtTimestamp::ZERO,
+                dest_socket_id: crate::packet::SocketId::from_wire(1),
+                entries: alloc::vec![LossListEntry::Range(
+                    SeqNo::try_new(0).expect("fits 31 bits"),
+                    SeqNo::try_new(BUFFERED - 1).expect("fits 31 bits"),
+                )],
+            });
+            let mut bytes = alloc::vec![0u8; nak.serialized_len()];
+            nak.serialize_into(&mut bytes).expect("serialize nak");
+            bytes
+        };
+
+        driver.ingress(Bytes::from(nak())).expect("ingress nak");
+        driver.tick_engines();
+        assert_eq!(
+            driver.outbound_data.len(),
+            WINDOW as usize,
+            "the outbound queue is capped at the flow window"
+        );
+        assert_eq!(
+            driver.sender.pending_retransmit_count(),
+            (BUFFERED - WINDOW) as usize
+        );
+
+        driver.ingress(Bytes::from(nak())).expect("ingress nak");
+        driver.tick_engines();
+        assert_eq!(
+            driver.outbound_data.len(),
+            WINDOW as usize,
+            "a repeated NAK must not queue a second copy"
+        );
+
+        for _ in 0..WINDOW {
+            driver.flush_outbound().await.expect("flush");
+            if let Some(wait) = driver.next_paced_send_wait() {
+                tokio::time::advance(wait).await;
+            }
+        }
+        assert!(driver.outbound_data.is_empty());
+        driver.tick_engines();
+        assert!(
+            driver.outbound_data.is_empty(),
+            "the dropped retransmissions are still inside MIN_RETRANSMIT_INTERVAL"
+        );
+        tokio::time::advance(Duration::from_millis(20)).await;
+        driver.tick_engines();
+        assert_eq!(
+            driver.outbound_data.len(),
+            (BUFFERED - WINDOW) as usize,
+            "the remainder is offered once the interval has passed"
         );
     }
 

@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- A peer re-sending a NAK can no longer grow the driver's outbound DATA queue without bound: a retransmission already queued in it is not queued again, one sequence number is retransmitted at most once per `MIN_RETRANSMIT_INTERVAL` (20 ms), and the queue is capped at the negotiated maximum flow window (a retransmission dropped at the cap stays in the sender's pending set and is offered again). Previously one 28-byte NAK naming the whole send buffer, repeated faster than the paced drain, queued tens of megabytes (#2819).
+
+### Changed
+- BREAKING: `arq::Sender::tick` returns `Vec<(u32, Vec<u8>)>` — each retransmission's sequence number alongside its wire bytes — and gains `on_retransmit_sent`/`on_retransmit_dropped`, the caller's signal that a queued retransmission left the outbound queue or was dropped. Migration: `for bytes in sender.tick(now)` -> `for (seq, bytes) in sender.tick(now)`, and call `on_retransmit_sent(seq)` once the datagram is sent (#2819).
+
 ### Tests
 - Over-limit tests for the protocol caps: a DROPREQ flood stops at `arq::Receiver`'s `MAX_PENDING_SKIPS` and `TsbpdScheduler`'s `MAX_SKIPS`, `MAX_RECENT_ACCEPTS` holds under a CONCLUSION flood, and the negotiated flow window clamps to `MAX_TRACKED_WINDOW` with a packet one past it rejected (#2860).
 
