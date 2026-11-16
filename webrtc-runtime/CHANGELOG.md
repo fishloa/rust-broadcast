@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- `media::MediaTransport` admits a new STUN source address to its remote-candidate budget only after the check's `USERNAME` and `MESSAGE-INTEGRITY` verify (the same RFC 8445 §6.1.3 checks the ICE agent applies), so junk or spoofed STUN datagrams can no longer exhaust `max_remote_candidates` before the peer's peer-reflexive address arrives (audit 20 finding 11).
 
 ## [0.8.0] - 2026-11-15
 ### Changed

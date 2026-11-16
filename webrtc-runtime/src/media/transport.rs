@@ -23,6 +23,10 @@ use rtc_shared::error::Error as SharedError;
 use rtc_shared::{EcnCodepoint, TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc_srtp::context::Context as SrtpContext;
 use rtc_srtp::protection_profile::ProtectionProfile;
+use rtc_stun::attributes::ATTR_USERNAME;
+use rtc_stun::integrity::MessageIntegrity;
+use rtc_stun::message::{CLASS_REQUEST, METHOD_BINDING, Message};
+use rtc_stun::textattrs::TextAttribute;
 use sansio::Protocol;
 use sdp_types::{Attribute, Fingerprint, HashFunc, Session, TypedAttribute};
 use sha2::{Digest, Sha256};
@@ -677,9 +681,10 @@ pub struct MediaTransport {
     max_remote_candidates: usize,
     /// Every distinct remote `SocketAddr` already counted toward
     /// [`Self::max_remote_candidates`]: the address of each explicitly added
-    /// remote candidate ([`Self::add_remote_candidate`]) plus every new STUN
-    /// source address [`Self::handle_stun_datagram`] has let through to the
-    /// ICE agent.
+    /// remote candidate ([`Self::add_remote_candidate`]) plus every new source
+    /// address whose STUN check proved it came from the peer (see
+    /// [`Self::check_is_authenticated`]) and that [`Self::handle_stun_datagram`]
+    /// let through to the ICE agent.
     ///
     /// `rtc-ice` 0.20.0 creates its own peer-reflexive remote candidate (and
     /// a new candidate pair) for *every* authenticated STUN Binding Request
@@ -693,6 +698,12 @@ pub struct MediaTransport {
     /// likes. Since `rtc-ice` keeps its remote-candidate list private (no
     /// public getter), gating new source addresses here, before they ever
     /// reach the agent, is the only enforcement point available.
+    ///
+    /// Only a check the agent itself would accept consumes a slot: any host
+    /// able to reach the media port can send a STUN-shaped datagram naming no
+    /// credentials, and admitting those first would let a few dozen of them
+    /// exhaust the budget before the real peer's peer-reflexive address ever
+    /// arrives (audit 20 finding 11).
     known_remote_addrs: HashSet<SocketAddr>,
     /// Test-only injection: if `Some`, the next [`Self::handle_timeout`] emits
     /// this as a [`MediaEvent::TimerError`] (instead of any real timer drive).
@@ -1258,6 +1269,38 @@ impl MediaTransport {
         Ok(events)
     }
 
+    /// Whether `data` is a STUN Binding Request the ICE agent would accept as
+    /// coming from the peer: `USERNAME` `"{local ufrag}:{remote ufrag}"`
+    /// (RFC 8445 §7.2.2) and `MESSAGE-INTEGRITY` keyed with this side's ICE
+    /// password (RFC 8445 §6.1.3), the same two checks `rtc-ice`'s own
+    /// `agent::mod::handle_inbound` applies before it creates a peer-reflexive
+    /// candidate. Exactly the checks that pass here can take a
+    /// [`Self::known_remote_addrs`] slot, so a datagram from anyone who does
+    /// not hold the negotiated password cannot consume the peer's budget.
+    fn check_is_authenticated(&self, data: &[u8]) -> bool {
+        let Some(remote) = self.ice.get_remote_credentials() else {
+            return false;
+        };
+        let local = self.ice.get_local_credentials();
+        let mut message = Message::new();
+        if message.unmarshal_binary(data).is_err()
+            || message.typ.method != METHOD_BINDING
+            || message.typ.class != CLASS_REQUEST
+        {
+            return false;
+        }
+        let Ok(username) = TextAttribute::get_from_as(&message, ATTR_USERNAME) else {
+            return false;
+        };
+        username.text == format!("{}:{}", local.ufrag, remote.ufrag)
+            && MessageIntegrity::check(
+                &mut message,
+                local.pwd.as_bytes(),
+                self.crypto_provider.crypto(),
+            )
+            .is_ok()
+    }
+
     fn handle_stun_datagram(
         &mut self,
         now: Instant,
@@ -1285,12 +1328,15 @@ impl MediaTransport {
         // why this is the only place that can be done. An address already
         // admitted (an explicit candidate or a previously admitted STUN
         // source) keeps working unconditionally; only a *new* source
-        // address is subject to the cap.
+        // address is subject to the cap, and only a check the agent would
+        // accept may consume a slot.
         if !self.known_remote_addrs.contains(&peer) {
             if self.known_remote_addrs.len() >= self.max_remote_candidates {
                 return Ok(());
             }
-            self.known_remote_addrs.insert(peer);
+            if self.check_is_authenticated(data) {
+                self.known_remote_addrs.insert(peer);
+            }
         }
 
         let tagged = TaggedBytesMut {
@@ -3562,6 +3608,73 @@ mod tests {
         assert!(
             matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 42),
             "original peer's media must still flow after the flood of new-source requests: {events:?}"
+        );
+    }
+
+    /// A STUN Binding Request with neither `USERNAME` nor `MESSAGE-INTEGRITY`:
+    /// the "first byte 0/1 suffices" datagram any host able to reach the media
+    /// port can send.
+    fn unauthenticated_binding_request() -> Vec<u8> {
+        use rtc_stun::fingerprint::FINGERPRINT;
+        use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+
+        let mut msg = Message::new();
+        msg.build(&[
+            Box::new(BINDING_REQUEST),
+            Box::new(TransactionId::new()),
+            Box::new(FINGERPRINT),
+        ])
+        .expect("build unauthenticated stun binding request");
+        msg.raw
+    }
+
+    /// Audit 20 finding 11: a source address may only consume the
+    /// [`MAX_REMOTE_CANDIDATES`] budget once its check is authenticated, so
+    /// junk or spoofed STUN cannot crowd out the peer's own peer-reflexive
+    /// address. Bite test: pre-fix the insert preceded the ICE agent's
+    /// USERNAME + MESSAGE-INTEGRITY checks, so the flood exhausted the cap and
+    /// the peer's genuine check from a new address was dropped.
+    #[test]
+    fn unauthenticated_stun_from_new_addresses_does_not_consume_the_cap() {
+        let small_cap = 3;
+        let mut pair = loopback_pair_with_max_remote(small_cap);
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+        assert_eq!(pair.b.known_remote_addrs.len(), 1);
+
+        // A bare check names no session, and one naming B's real ufrags still
+        // cannot carry a MESSAGE-INTEGRITY the peer alone can compute.
+        let bare = unauthenticated_binding_request();
+        let spoofed = authenticated_binding_request(
+            "loopb0ufrag",
+            "loopa0ufrag",
+            "wrong-ice-password-00000000",
+        );
+        for _ in 0..small_cap {
+            let _ = pair
+                .b
+                .handle_datagram(test_now(), reserve_loopback_addr(), &bare);
+            let _ = pair
+                .b
+                .handle_datagram(test_now(), reserve_loopback_addr(), &spoofed);
+        }
+        assert_eq!(
+            pair.b.known_remote_addrs.len(),
+            1,
+            "an unauthenticated check must not consume a remote-address slot"
+        );
+
+        let genuine = authenticated_binding_request(
+            "loopb0ufrag",
+            "loopa0ufrag",
+            "loopb-ice-password-0000000",
+        );
+        let new_peer_addr = reserve_loopback_addr();
+        pair.b
+            .handle_datagram(test_now(), new_peer_addr, &genuine)
+            .expect("the peer's authenticated check must be accepted");
+        assert!(
+            pair.b.known_remote_addrs.contains(&new_peer_addr),
+            "the peer's genuine check from a new address must still be admitted"
         );
     }
 }
