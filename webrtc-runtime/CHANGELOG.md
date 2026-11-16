@@ -3,6 +3,11 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Changed
+- BREAKING: `media::SocketDemux::register` takes the session's local `ice-pwd` as well as its local `ice-ufrag`, and `classify` maps a source address only when the check's `MESSAGE-INTEGRITY` verifies under that password (RFC 8445 §6.1.3). A check naming a known ufrag without the password maps nothing, so a sender who knows only the ufrag (not secret) can neither fill a session's tuple budget nor steal a mapped source address; the type's `Debug` names the registered ufrags but never a password (audit 20 finding 40). Migration: `register(ufrag, session)` -> `register(ufrag, pwd, session)`.
+
+### Fixed
+- `media::MediaTransport` admits a new STUN source address to its remote-candidate budget only after the check's `USERNAME` and `MESSAGE-INTEGRITY` verify (the same RFC 8445 §6.1.3 checks the ICE agent applies), so junk or spoofed STUN datagrams can no longer exhaust `max_remote_candidates` before the peer's peer-reflexive address arrives (audit 20 finding 11).
 
 ## [0.8.0] - 2026-11-15
 ### Changed
