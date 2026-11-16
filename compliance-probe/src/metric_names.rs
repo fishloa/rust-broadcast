@@ -72,7 +72,21 @@ pub const PCR_DRIFT_PPM: &str = "compliance_probe_pcr_drift_ppm";
 /// Gauge: instantaneous deviation of the latest PCR interval error from the
 /// smoothed drift above, in parts-per-million — a live jitter signal,
 /// labelled `pid`.
+///
+/// Both PCR gauges are exported only for PIDs a PMT in the fed stream
+/// currently declares as its `PCR_PID`; see [`PCR_UNDECLARED_PID_TOTAL`].
 pub const PCR_JITTER_PPM: &str = "compliance_probe_pcr_jitter_ppm";
+
+/// Counter: a PCR was observed on a PID no PMT has declared as a `PCR_PID`,
+/// so the drift/jitter gauges were not exported for it. The estimate itself
+/// was still computed (and is available to a caller that tracks PCR directly
+/// through [`crate::conformance`]); this counts only the suppression, which
+/// keeps the exporter's labelled series bounded by the stream's declared PCR
+/// PIDs instead of every PID that happens to carry a PCR field. A host whose
+/// lineup changes over a long run should also expire idle series via
+/// `metrics_exporter_prometheus::Builder::idle_timeout` — the facade offers no
+/// way to remove a series, and this crate never installs a recorder.
+pub const PCR_UNDECLARED_PID_TOTAL: &str = "compliance_probe_pcr_undeclared_pid_total";
 
 /// Counter: [`media_plane::ByteTap`] items lost to producer-side eviction
 /// before this probe could poll them

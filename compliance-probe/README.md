@@ -116,7 +116,7 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
 | `conformance::PcrSample { pid, drift_ppm, jitter_ppm }` | Per-PID PCR estimate; baseline resets on `discontinuity_indicator` |
 | `scte35::{Scte35Sanity, check_section}` | `Malformed`, `NotSpliceInsert`, `Immediate`, `InFuture`, `InPast`, `Cancelled`, `Encrypted` (a well-formed encrypted section counts `metric_names::SCTE35_ENCRYPTED_TOTAL` = `compliance_probe_scte35_encrypted_total`); the cue semantics behind the verdict are `scte35_splice::{splice_event, judge_splice_time}` |
 | `structural::run_structural_checks(ts) -> media_doctor::Report` | `media-doctor`'s diagnostics, findings counted |
-| `metric_names::*` | `compliance_probe_ts_packets_total`, `_tr101290_events_total{indicator,priority}`, `_tr101290_in_sync`, `_pcr_drift_ppm{pid}`, `_pcr_jitter_ppm{pid}`, `_tap_lagged_total`, `_event_cursor_lagged_total`, `_scte35_cues_total`, `_scte35_malformed_total`, `_scte35_immediate_total`, `_scte35_pts_in_past_total`, `_scte35_unresolved_anchor_total`, `_scte35_no_reference_total`, `_structural_findings_total` |
+| `metric_names::*` | `compliance_probe_ts_packets_total`, `_tr101290_events_total{indicator,priority}`, `_tr101290_in_sync`, `_pcr_drift_ppm{pid}`, `_pcr_jitter_ppm{pid}`, `_pcr_undeclared_pid_total`, `_tap_lagged_total`, `_event_cursor_lagged_total`, `_scte35_cues_total`, `_scte35_malformed_total`, `_scte35_immediate_total`, `_scte35_pts_in_past_total`, `_scte35_unresolved_anchor_total`, `_scte35_no_reference_total`, `_structural_findings_total` |
 
 ## Design notes
 
@@ -130,6 +130,13 @@ Runnable examples: `cargo run -p compliance-probe --example fixture_report`
   (`tests/cross_tool_engines.rs`) — structural checks are `media-doctor`,
   SCTE-35 parsing is `scte35-splice` / `timed-metadata`, PCR wrap arithmetic is
   `clock33` (`workspace-guards/tests/guards/clock33.rs`).
+- **Bounded series.** The per-PID PCR gauges are exported only for PIDs a PMT
+  in the fed stream declares as its `PCR_PID`; a PCR on any other PID is
+  counted as `_pcr_undeclared_pid_total` instead, so the host's exporter holds
+  one series per declared PCR PID rather than one per PID that happens to
+  carry a PCR field. The facade cannot remove a series, so a host whose lineup
+  changes over a long run should also set `Builder::idle_timeout` on its
+  `metrics-exporter-prometheus` recorder.
 - **Honest gaps.** Every limitation above is stated rather than left as an
   always-zero metric.
 - Public enums carry `name()` and `Display` (`workspace-guards/tests/guards/label.rs`).

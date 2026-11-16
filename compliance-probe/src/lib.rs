@@ -68,7 +68,11 @@ impl Probe {
     /// Records `compliance_probe_ts_packets_total`,
     /// `compliance_probe_tr101290_events_total`,
     /// `compliance_probe_tr101290_in_sync`, and — when this packet carries a
-    /// PCR — `compliance_probe_pcr_drift_ppm`/`_jitter_ppm` for its PID.
+    /// PCR on a PID a PMT has declared as its `PCR_PID` —
+    /// `compliance_probe_pcr_drift_ppm`/`_jitter_ppm` for that PID. A PCR on
+    /// any other PID is counted as
+    /// `compliance_probe_pcr_undeclared_pid_total` instead; see
+    /// [`crate::metric_names::PCR_UNDECLARED_PID_TOTAL`].
     pub fn feed_ts_packet(&mut self, packet: &[u8; mpeg_ts::ts::TS_PACKET_SIZE], t: Duration) {
         record_counter!(crate::metric_names::TS_PACKETS_TOTAL);
 
@@ -110,6 +114,16 @@ impl Probe {
             self.pcr.reset(ts_packet.header.pid);
         }
         if let Some(sample) = self.pcr.observe(ts_packet.header.pid, clock.ticks(), t) {
+            // A stream can carry a PCR on any PID, and every distinct `pid`
+            // label becomes a series the host's exporter keeps and renders
+            // until it expires — so only the PIDs a PMT currently designates
+            // as `PCR_PID` are exported (audit a20-37). The drift estimate
+            // itself is still available for any PID through
+            // `conformance::PcrSample`.
+            if !self.conformance.declares_pcr_pid(sample.pid) {
+                record_counter!(crate::metric_names::PCR_UNDECLARED_PID_TOTAL);
+                return;
+            }
             let pid_label = alloc::format!("0x{:04X}", sample.pid);
             record_gauge!(
                 crate::metric_names::PCR_DRIFT_PPM,

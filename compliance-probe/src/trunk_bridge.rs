@@ -299,8 +299,8 @@ mod tests {
         let data = std::fs::read(path).expect("committed fixture must be readable");
         let after_twenty = TS_PACKET_SIZE * 20;
 
-        let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 2)
-            .expect("a non-zero tap capacity is built");
+        let mut tap =
+            ByteTap::new(media_plane::TapPoint::Wire, 2).expect("a non-zero tap capacity is built");
         tap.record(
             bytes::Bytes::copy_from_slice(&data[..after_twenty]),
             Timestamp::ZERO,

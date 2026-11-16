@@ -827,6 +827,10 @@ pub struct ConformanceMonitor {
     // Per-PID PCR tracking (2.3a, 2.3b)
     pcr_states: BTreeMap<Pid, PcrState>,
 
+    // PCR_PID each currently referenced program_map_PID's latest PMT declares.
+    // Keyed by program_map_PID so the PAT rebuild prunes a departed program.
+    declared_pcr_pids: BTreeMap<Pid, Pid>,
+
     // Per-PID PTS tracking (2.5)
     pts_states: BTreeMap<Pid, PtsState>,
 
@@ -895,6 +899,7 @@ impl ConformanceMonitor {
             es_trackings: BTreeMap::new(),
             si_reassemblies,
             pcr_states: BTreeMap::new(),
+            declared_pcr_pids: BTreeMap::new(),
             pts_states: BTreeMap::new(),
             cat_seen: false,
             scrambled_without_cat_reported: false,
@@ -1239,6 +1244,22 @@ impl ConformanceMonitor {
     #[must_use]
     pub fn indicator_counts(&self) -> alloc::vec::Vec<IndicatorCount> {
         self.indicator_counts.values().cloned().collect()
+    }
+
+    /// Whether `pid` is the `PCR_PID` the latest PMT of any currently
+    /// PAT-referenced program declares (ISO/IEC 13818-1 §2.4.4.9). Empty
+    /// until a PMT has been parsed; a program whose PMT signals the null PID,
+    /// or whose program disappears from the PAT, declares nothing.
+    ///
+    /// Lets a consumer of this monitor that exports per-PCR-PID derived
+    /// series (a drift gauge, say) restrict them to the PIDs the stream
+    /// actually designates, rather than every PID that happens to carry a
+    /// PCR field.
+    #[must_use]
+    pub fn declares_pcr_pid(&self, pid: Pid) -> bool {
+        self.declared_pcr_pids
+            .values()
+            .any(|&declared| declared == pid)
     }
 
     // ── Internal helpers ──────────────────────────────────────────────────
@@ -1822,6 +1843,7 @@ impl ConformanceMonitor {
             .collect();
         for pmt_pid in stale {
             self.pmt_trackings.remove(&pmt_pid);
+            self.declared_pcr_pids.remove(&pmt_pid);
             // The PID is no longer referenced, so it becomes a candidate for
             // 3.4 Unreferenced_PID again if it keeps arriving.
             self.unreferenced_pid_timers
@@ -1853,7 +1875,7 @@ impl ConformanceMonitor {
     }
 
     /// Process a completed section on a program_map_PID.
-    fn process_pmt_section(&mut self, section_bytes: &[u8], _pid: Pid, t: Duration) {
+    fn process_pmt_section(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         let section = match Section::parse(section_bytes) {
             Ok(s) => s,
             Err(_) => return,
@@ -1882,6 +1904,9 @@ impl ConformanceMonitor {
         let mut referenced: BTreeSet<Pid> = BTreeSet::new();
         if pmt.pcr_pid != PID_NULL {
             referenced.insert(pmt.pcr_pid);
+            self.declared_pcr_pids.insert(pid, pmt.pcr_pid);
+        } else {
+            self.declared_pcr_pids.remove(&pid);
         }
         for stream in &pmt.streams {
             referenced.insert(stream.elementary_pid);
