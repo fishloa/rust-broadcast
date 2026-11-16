@@ -13,9 +13,9 @@ use dash_runtime::address::template::{
 };
 use dash_runtime::address::timeline::TimelineIndex;
 use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
+use dash_runtime::limits::MAX_BASE_CANDIDATES;
 use dash_runtime::mpd::base_url::{ResolveError, ResolvedRef};
 use dash_runtime::mpd::inherit::InheritError;
-use dash_runtime::limits::MAX_BASE_CANDIDATES;
 use dash_runtime::mpd::urls::{
     append_query, base_candidates, representation_candidates, segment_url_query,
 };
@@ -655,7 +655,10 @@ fn base_candidates_are_capped() {
         MAX_BASE_CANDIDATES,
         "the (MAX + 1)th alternate is dropped"
     );
-    assert_eq!(candidates[0].chain, vec!["http://cdn0.example/".to_string()]);
+    assert_eq!(
+        candidates[0].chain,
+        vec!["http://cdn0.example/".to_string()]
+    );
 }
 
 #[test]

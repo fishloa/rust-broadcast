@@ -3421,7 +3421,9 @@ mod tests {
         let text = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
                     #EXT-X-MEDIA-SEQUENCE:0\n\
                     #EXTINF:2.0,\nftp://cdn/seg0.ts\n#EXT-X-ENDLIST\n";
-        client.on_playlist(text.as_bytes()).expect("playlist parses");
+        client
+            .on_playlist(text.as_bytes())
+            .expect("playlist parses");
         match client.next_error() {
             Some(Error::UnresolvableReference { source, .. }) => {
                 assert_eq!(source, broadcast_common::url_ref::Error::Scheme)
@@ -3468,8 +3470,7 @@ mod tests {
                     #EXT-X-ENDLIST\n";
         let mut limits = Limits::default();
         limits.max_playlist_bytes = 16;
-        let mut client =
-            HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
         assert!(matches!(
             client.on_playlist(text.as_bytes()),
             Err(Error::PlaylistParse(broadcast_hls::Error::TooLarge {
@@ -3482,8 +3483,7 @@ mod tests {
                    #EXTINF:2.0,\nseg1.ts\n#EXT-X-ENDLIST\n";
         let mut limits = Limits::default();
         limits.max_segments = 1;
-        let mut client =
-            HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
         assert!(matches!(
             client.on_playlist(two.as_bytes()),
             Err(Error::PlaylistParse(broadcast_hls::Error::TooLarge {
@@ -3494,8 +3494,7 @@ mod tests {
 
         let mut limits = Limits::default();
         limits.max_segment_bytes = 4;
-        let mut client =
-            HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
         client
             .on_playlist(map_playlist(0, 1).as_bytes())
             .expect("playlist parses");
@@ -3525,8 +3524,9 @@ mod tests {
     fn pending_errors_are_capped_and_coalesced() {
         let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
         let total = MAX_PENDING_ERRORS + 44;
-        let mut text =
-            String::from("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n");
+        let mut text = String::from(
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n",
+        );
         for i in 0..total {
             text.push_str(&format!("#EXTINF:2.0,\nbad seg{i}.ts\n"));
         }
