@@ -34,8 +34,8 @@
 //! sample data; and the bytes handed out over a whole demux run are capped at
 //! [`sample_bytes_budget`] (one input length), so neither many runs pointing at
 //! the same offset nor many `moof`s each claiming one `mdat` can amplify the
-//! work: every claimant would copy those bytes again (audit 20 findings 13 and
-//! 39). Both are checked before a byte is sliced.
+//! work: every claimant would copy those bytes again (audit 20 findings 6 and
+//! 13). Both are checked before a byte is sliced.
 
 use crate::TrackId;
 use alloc::vec::Vec;
