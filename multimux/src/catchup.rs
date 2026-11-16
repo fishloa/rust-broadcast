@@ -226,19 +226,23 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         );
         // LRU eviction (issue #1083, F): drop the least-recently-used entry
         // rather than clearing the whole cache.
-        while guard.entries.len() > INDEX_CACHE_MAX_ENTRIES {
-            let Some(oldest) = guard
-                .entries
-                .iter()
-                .min_by_key(|(_, e)| e.last_used)
-                .map(|(k, _)| k.clone())
-            else {
-                break;
-            };
-            guard.entries.remove(&oldest);
-        }
+        evict_lru(&mut guard.entries, INDEX_CACHE_MAX_ENTRIES);
     }
     segments
+}
+
+/// Drop the least-recently-used entries until the cache fits `max`.
+fn evict_lru(entries: &mut std::collections::HashMap<PathBuf, CacheEntry>, max: usize) {
+    while entries.len() > max {
+        let Some(oldest) = entries
+            .iter()
+            .min_by_key(|(_, e)| e.last_used)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        entries.remove(&oldest);
+    }
 }
 
 /// A file's inode number on Unix, or `0` elsewhere — part of the cache stamp
@@ -642,6 +646,32 @@ mod tests {
 
     fn cleanup(dir: &Path) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// The index cache is bounded: one entry past the cap evicts exactly the
+    /// least-recently-used one, never the whole cache.
+    #[test]
+    fn the_index_cache_evicts_only_the_least_recently_used_entry() {
+        let stamp = PeriodStamp {
+            mtime_ns: None,
+            len: 0,
+            inode: 0,
+        };
+        let mut entries = std::collections::HashMap::new();
+        for tick in 0..=INDEX_CACHE_MAX_ENTRIES as u64 {
+            entries.insert(
+                PathBuf::from(format!("p{tick}.idx")),
+                CacheEntry {
+                    stamp,
+                    segments: Arc::new(Vec::new()),
+                    last_used: tick,
+                },
+            );
+        }
+        evict_lru(&mut entries, INDEX_CACHE_MAX_ENTRIES);
+        assert_eq!(entries.len(), INDEX_CACHE_MAX_ENTRIES);
+        assert!(!entries.contains_key(&PathBuf::from("p0.idx")));
+        assert!(entries.contains_key(&PathBuf::from(format!("p{INDEX_CACHE_MAX_ENTRIES}.idx"))));
     }
 
     fn closed(seq: u32, start_ns: u64, duration_secs: f64, discontinuous: bool) -> ClosedSegment {

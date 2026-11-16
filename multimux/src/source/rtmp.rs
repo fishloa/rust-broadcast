@@ -172,6 +172,59 @@ const ACCEPT_QUEUE_CAPACITY: usize = 32;
 /// its read task waits.
 const OUTCOMES_PER_SESSION: usize = 4;
 
+/// The one accept operation the pump drains — the bound server in
+/// production, a scripted error in tests.
+trait AcceptSource {
+    fn accept(
+        &self,
+    ) -> impl std::future::Future<Output = std::io::Result<AcceptedRtmpConnection>> + Send;
+}
+
+impl AcceptSource for Arc<AsyncRtmpServer> {
+    fn accept(
+        &self,
+    ) -> impl std::future::Future<Output = std::io::Result<AcceptedRtmpConnection>> + Send {
+        (**self).accept()
+    }
+}
+
+/// Queue accepted connections for the drive loop until cancelled, the queue's
+/// receiver goes away, or the listen socket reports an error.
+async fn accept_pump<S: AcceptSource>(
+    server: S,
+    tx: mpsc::Sender<AcceptedRtmpConnection>,
+    admit_notify: Arc<tokio::sync::Notify>,
+    cancel: tokio_util::sync::CancellationToken,
+) {
+    loop {
+        let accepted = tokio::select! {
+            () = cancel.cancelled() => break,
+            accepted = server.accept() => accepted,
+        };
+        match accepted {
+            Ok(conn) => {
+                if tx.send(conn).await.is_err() {
+                    // No `RtmpListener` is receiving any more (every
+                    // `run_rtmp` attempt using this route has ended) —
+                    // nothing left to pump for.
+                    break;
+                }
+                // Wake the drive loop so it admits this connection at once
+                // (defect 2), rather than waiting out a fixed poll interval
+                // that a steady read load can starve.
+                admit_notify.notify_one();
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "rtmp: accept-pump ending after a listen-socket error"
+                );
+                break;
+            }
+        }
+    }
+}
+
 /// The bind-once, reuse-forever infrastructure [`RtmpRoute::ensure_infra`]
 /// builds exactly once and every [`run_rtmp`] attempt shares — see the
 /// module doc's "Bind once" note.
@@ -318,37 +371,7 @@ impl RtmpRoute {
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let pump_cancel = cancel.clone();
                 let tracker = tokio_util::task::TaskTracker::new();
-                tracker.spawn(async move {
-                    loop {
-                        let accepted = tokio::select! {
-                            () = pump_cancel.cancelled() => break,
-                            accepted = server.accept() => accepted,
-                        };
-                        match accepted {
-                            Ok(conn) => {
-                                if tx.send(conn).await.is_err() {
-                                    // No `RtmpListener` is receiving any more
-                                    // (every `run_rtmp` attempt using this
-                                    // route has ended) — nothing left to pump
-                                    // for.
-                                    break;
-                                }
-                                // Wake the drive loop so it admits this
-                                // connection at once (defect 2), rather than
-                                // waiting out a fixed poll interval that a
-                                // steady read load can starve.
-                                pump_notify.notify_one();
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "rtmp: accept-pump ending after a listen-socket error"
-                                );
-                                break;
-                            }
-                        }
-                    }
-                });
+                tracker.spawn(accept_pump(server, tx, pump_notify, pump_cancel));
                 Ok::<Arc<RtmpInfra>, MultimuxError>(Arc::new(RtmpInfra {
                     accept_rx: Arc::new(StdMutex::new(rx)),
                     admit_notify,
@@ -1701,5 +1724,35 @@ mod tests {
                 .expect("read S0+S1+S2");
             assert_eq!(reply[0], RTMP_VERSION);
         }
+    }
+
+    struct FailingAccept;
+
+    impl AcceptSource for FailingAccept {
+        fn accept(
+            &self,
+        ) -> impl std::future::Future<Output = std::io::Result<AcceptedRtmpConnection>> + Send
+        {
+            std::future::ready(Err(std::io::Error::other("EMFILE")))
+        }
+    }
+
+    /// A listen-socket accept error ends the pump and closes the connection
+    /// queue, rather than spinning on a socket that cannot accept or leaving a
+    /// queue nobody will ever fill.
+    #[tokio::test]
+    async fn an_accept_error_ends_the_pump_and_closes_the_queue() {
+        let (tx, mut rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
+        accept_pump(
+            FailingAccept,
+            tx,
+            Arc::new(tokio::sync::Notify::new()),
+            tokio_util::sync::CancellationToken::new(),
+        )
+        .await;
+        let next = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("the pump returns instead of spinning");
+        assert!(next.is_none(), "the pump must close the queue: {next:?}");
     }
 }

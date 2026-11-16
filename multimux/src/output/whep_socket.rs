@@ -140,8 +140,26 @@ impl SharedSocket {
     }
 }
 
-async fn receive_loop(
-    socket: Arc<UdpSocket>,
+/// The one receive operation [`receive_loop`] drains — the shared socket in
+/// production, a scripted error in tests.
+trait RecvSource {
+    fn recv_from<'a>(
+        &'a self,
+        buf: &'a mut [u8],
+    ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a;
+}
+
+impl RecvSource for Arc<UdpSocket> {
+    fn recv_from<'a>(
+        &'a self,
+        buf: &'a mut [u8],
+    ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a {
+        async move { (**self).recv_from(buf).await }
+    }
+}
+
+async fn receive_loop<S: RecvSource>(
+    socket: S,
     router: Arc<Mutex<Router>>,
     dropped: Arc<AtomicU64>,
     handled: Arc<AtomicU64>,
@@ -415,5 +433,57 @@ mod tests {
         assert!(shared.attach("aaaaaaaa").is_none());
         drop(first);
         assert!(shared.attach("aaaaaaaa").is_some());
+    }
+
+    /// One failing receive does not end the loop: the next datagram is still
+    /// classified and counted, so a transient socket error cannot silently
+    /// take a route's WHEP media socket out of service.
+    #[tokio::test]
+    async fn a_recv_error_does_not_stop_the_receive_loop() {
+        struct ErrorThenDatagram {
+            calls: AtomicU64,
+        }
+        impl RecvSource for ErrorThenDatagram {
+            fn recv_from<'a>(
+                &'a self,
+                buf: &'a mut [u8],
+            ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a
+            {
+                async move {
+                    match self.calls.fetch_add(1, Ordering::SeqCst) {
+                        0 => Err(io::Error::other("recv failed")),
+                        1 => {
+                            buf[0] = DTLS_RECORD[0];
+                            Ok((1, SocketAddr::from(([127, 0, 0, 1], 9))))
+                        }
+                        _ => std::future::pending().await,
+                    }
+                }
+            }
+        }
+
+        let router = Arc::new(Mutex::new(Router {
+            demux: SocketDemux::new(MAX_REMOTE_CANDIDATES),
+            queues: HashMap::new(),
+        }));
+        let handled = Arc::new(AtomicU64::new(0));
+        let task = tokio::spawn(receive_loop(
+            ErrorThenDatagram {
+                calls: AtomicU64::new(0),
+            },
+            router,
+            Arc::new(AtomicU64::new(0)),
+            Arc::clone(&handled),
+        ));
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while handled.load(Ordering::Acquire) == 0 && tokio::time::Instant::now() < deadline {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(
+            handled.load(Ordering::Acquire),
+            1,
+            "the datagram after the failed receive must still be handled"
+        );
+        task.abort();
     }
 }
