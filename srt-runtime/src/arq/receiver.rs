@@ -1065,6 +1065,38 @@ mod tests {
         assert_eq!(r.loss_list_len(), 5);
     }
 
+    /// #2860: the tracked window is clamped to `MAX_TRACKED_WINDOW` no matter
+    /// how large a flow window was negotiated, and a packet beyond the clamp
+    /// is rejected even though the advertised window would allow it.
+    #[test]
+    fn tracked_window_is_clamped_and_a_packet_beyond_it_is_out_of_window() {
+        let mut r = Receiver::new(PEER, 0, u32::MAX);
+        assert_eq!(r.window(), MAX_TRACKED_WINDOW);
+        r.feed_data(0, Timestamp::ZERO);
+        let beyond = r.feed_data(MAX_TRACKED_WINDOW + 2, Timestamp::ZERO);
+        assert!(beyond.out_of_window);
+        assert_eq!(r.loss_list_len(), 0);
+        let at_limit = r.feed_data(MAX_TRACKED_WINDOW + 1, Timestamp::ZERO);
+        assert!(!at_limit.out_of_window);
+        assert_eq!(
+            r.loss_list_len(),
+            usize::try_from(MAX_TRACKED_WINDOW).unwrap()
+        );
+    }
+
+    /// #2860: a DROPREQ flood cannot grow the pending-skip set past
+    /// `MAX_PENDING_SKIPS`.
+    #[test]
+    fn a_dropreq_flood_stops_at_the_pending_skip_cap() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        let flood = u32::try_from(MAX_PENDING_SKIPS).unwrap() + 48;
+        for i in 0..flood {
+            let s = 1000 + 2 * i;
+            r.skip_range(s, s);
+        }
+        assert_eq!(r.pending_skips.len(), MAX_PENDING_SKIPS);
+    }
+
     /// #2821: an in-order arrival that only advances `highest_received` must
     /// not rescan the loss list against every pending DROPREQ skip. The old
     /// `retain(.. any ..)` ran on every new-highest packet — including a

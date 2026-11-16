@@ -3652,6 +3652,25 @@ mod adapter_tests {
         (core, unrouted_tx, accepted)
     }
 
+    /// #2860: remembered CONCLUSION responses stay at `MAX_RECENT_ACCEPTS`
+    /// under a flood of accepted addresses.
+    #[tokio::test(start_paused = true)]
+    async fn recent_accepts_stop_at_the_cap_under_a_flood() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        for i in 0..u32::try_from(MAX_RECENT_ACCEPTS).unwrap() + 64 {
+            let addr = format!("127.0.0.1:{}", 10_000 + i).parse().unwrap();
+            core.remember_accept(
+                addr,
+                RecentAccept {
+                    peer_socket_id: 1,
+                    response: alloc::vec![0u8; 4],
+                    accepted_at: Instant::now(),
+                },
+            );
+        }
+        assert_eq!(core.recent_accepts.len(), MAX_RECENT_ACCEPTS);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn bounded_turns_a_stuck_future_into_a_timed_out_io_error() {
         let r: Result<()> = bounded(
