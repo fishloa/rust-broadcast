@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `arq::Receiver` no longer rescans the whole loss list against every pending DROPREQ skip each time a packet advances the highest sequence number: the newly opened gap is filtered against at most `MAX_PENDING_SKIPS` coalesced ranges (a `BTreeMap`, not a `Vec`), and a DROPREQ ahead of the tracked data or already recorded costs no scan of the loss/out-of-order sets. A peer could previously pin a core at roughly 8 million comparisons per packet with the default window and pending-skip cap (#2821).
+
 ## [0.10.0] - 2026-11-15
 ### Added
 - `packet::number` defines the typed SRT wire numbers `SocketId` (32-bit Destination/Source Socket ID), `SeqNo` (31-bit Packet Sequence Number with `broadcast_common::seq` wrap arithmetic and the ACK/loss-list 31-bit space), `MessageNumber` (26-bit, wrapping to `1`), `AckNumber` (32-bit ACK/ACKACK Acknowledgement Number) and `SrtTimestamp` (32-bit header Timestamp), so a sequence number, socket id and timestamp are no longer interchangeable bare `u32`s (part of #2768, #2772).

@@ -106,9 +106,12 @@ pub struct Receiver {
     out_of_order: BTreeSet<u32>,
     /// Sequence numbers currently believed lost (rules 4, 14, 21).
     loss_list: BTreeSet<u32>,
-    /// DROPREQ ranges (§3.2.9) still ahead of the ack point, as inclusive
-    /// `(first, last)` pairs; the ack point jumps each one on arrival.
-    pending_skips: Vec<(u32, u32)>,
+    /// DROPREQ ranges (§3.2.9) still ahead of the ack point, keyed by their
+    /// inclusive `first` sequence number with the inclusive `last` as the
+    /// value. Coalesced on insert and queried by range, so a repeated or
+    /// overlapping DROPREQ costs at most [`MAX_PENDING_SKIPS`] comparisons
+    /// rather than a rescan of the tracking sets.
+    pending_skips: BTreeMap<u32, u32>,
     /// The highest sequence number ever received, to detect newly-opened
     /// gaps (bookkeeping, not itself a spec-named field).
     highest_received: Option<u32>,
@@ -142,6 +145,10 @@ pub struct Receiver {
     /// The MTU the periodic NAK is sized against (`IP_UDP_HEADER_LEN` and the
     /// SRT header come off it, see [`Self::with_mtu`]).
     mtu: u32,
+    /// Pending-skip comparison work, counted so a test can prove a new-highest
+    /// packet does not rescan the loss list against every skip (#2821).
+    #[cfg(test)]
+    skip_scan_steps: u64,
 }
 
 impl Receiver {
@@ -154,7 +161,7 @@ impl Receiver {
             next_expected: initial_seq,
             out_of_order: BTreeSet::new(),
             loss_list: BTreeSet::new(),
-            pending_skips: Vec::new(),
+            pending_skips: BTreeMap::new(),
             highest_received: None,
             packets_since_ack: 0,
             last_full_ack_at: Timestamp::ZERO,
@@ -164,6 +171,8 @@ impl Receiver {
             rtt: RttEstimator::new(),
             avail_buf_size: max_flow_window,
             mtu: DEFAULT_MTU,
+            #[cfg(test)]
+            skip_scan_steps: 0,
         }
     }
 
@@ -255,31 +264,33 @@ impl Receiver {
             if first_lost != seq_number && seq::seq_lt(first_lost, seq_number) {
                 // `+ (2^31 - 1)` is `- 1` in the 31-bit sequence space.
                 let last_lost = seq::seq_add(seq_number, crate::packet::SEQ_NUMBER_MASK);
-                let mut s = first_lost;
-                loop {
-                    self.loss_list.insert(s);
-                    if s == last_lost {
-                        break;
+                // Only this newly opened gap is filtered against the pending
+                // DROPREQ skips: every sequence number already in the loss
+                // list was filtered when *it* was inserted (and `skip_range`
+                // clears what a later DROPREQ names), so an in-order packet
+                // that merely advances `highest_received` does no skip work
+                // at all (#2821).
+                for (run_first, run_last) in self.uncovered_runs(first_lost, last_lost) {
+                    let mut s = run_first;
+                    loop {
+                        self.loss_list.insert(s);
+                        if s == run_last {
+                            break;
+                        }
+                        s = seq::seq_next(s);
                     }
-                    s = seq::seq_next(s);
+                    let (run_first, run_last) = (
+                        SeqNo::from_wire_masked(run_first),
+                        SeqNo::from_wire_masked(run_last),
+                    );
+                    nak_entries.push(if run_first == run_last {
+                        LossListEntry::Single(run_first)
+                    } else {
+                        LossListEntry::Range(run_first, run_last)
+                    });
                 }
-                let (first_lost, last_lost) = (
-                    SeqNo::from_wire_masked(first_lost),
-                    SeqNo::from_wire_masked(last_lost),
-                );
-                nak_entries.push(if first_lost == last_lost {
-                    LossListEntry::Single(first_lost)
-                } else {
-                    LossListEntry::Range(first_lost, last_lost)
-                });
             }
             self.highest_received = Some(seq_number);
-            let pending = &self.pending_skips;
-            self.loss_list.retain(|&s| {
-                !pending
-                    .iter()
-                    .any(|&(f, l)| seq::seq_in_closed_range(s, f, l))
-            });
         }
 
         self.loss_list.remove(&seq_number);
@@ -497,18 +508,115 @@ impl Receiver {
         if reach < 0 || !u32::try_from(reach).is_ok_and(|ahead| ahead <= self.window()) {
             return;
         }
-        self.loss_list
-            .retain(|s| !seq::seq_in_closed_range(*s, first, last));
-        self.out_of_order
-            .retain(|s| !seq::seq_in_closed_range(*s, first, last));
+        // A repeat of a range already recorded is a no-op beyond crossing the
+        // cursor: it has already been removed from the tracking sets, so the
+        // two O(n) retains below are skipped (a peer flooding the same
+        // DROPREQ repeatedly costs O(MAX_PENDING_SKIPS) per datagram, #2821).
+        let covered = self
+            .pending_skips
+            .iter()
+            .any(|(&f, &l)| seq::seq_leq(f, first) && seq::seq_leq(last, l));
+        if covered {
+            self.cross_pending_skips(&mut Vec::new());
+            return;
+        }
+        // Both sets only ever hold sequence numbers at or below the highest
+        // received, so a range that starts beyond it cannot overlap either
+        // one — the DROPREQ-ahead-of-data shape does no scanning at all.
+        if self
+            .highest_received
+            .is_none_or(|highest| seq::seq_leq(first, highest))
+        {
+            self.loss_list
+                .retain(|s| !seq::seq_in_closed_range(*s, first, last));
+            self.out_of_order
+                .retain(|s| !seq::seq_in_closed_range(*s, first, last));
+        }
         if seq::seq_lt(self.next_expected, first) {
-            if self.pending_skips.len() < MAX_PENDING_SKIPS {
-                self.pending_skips.push((first, last));
-            }
+            self.remember_skip(first, last);
         } else {
             self.next_expected = seq::seq_next(last);
         }
         self.cross_pending_skips(&mut Vec::new());
+    }
+
+    /// Record one not-yet-reached DROPREQ range, coalescing it with every
+    /// overlapping or adjacent range already held so the map stays a set of
+    /// disjoint runs (`MAX_PENDING_SKIPS` bounds the scan).
+    fn remember_skip(&mut self, mut first: u32, mut last: u32) {
+        let overlapping: Vec<u32> = self
+            .pending_skips
+            .iter()
+            .filter(|&(&f, &l)| {
+                seq::seq_in_closed_range(f, first, last)
+                    || seq::seq_in_closed_range(l, first, last)
+                    || seq::seq_in_closed_range(first, f, l)
+                    || seq::seq_next(l) == first
+                    || seq::seq_next(last) == f
+            })
+            .map(|(&f, _)| f)
+            .collect();
+        for key in overlapping {
+            let Some(entry_last) = self.pending_skips.remove(&key) else {
+                continue;
+            };
+            if seq::seq_lt(key, first) {
+                first = key;
+            }
+            if seq::seq_gt(entry_last, last) {
+                last = entry_last;
+            }
+        }
+        if self.pending_skips.len() < MAX_PENDING_SKIPS {
+            self.pending_skips.insert(first, last);
+        }
+    }
+
+    /// The parts of the inclusive circular range `first..=last` not covered
+    /// by a pending DROPREQ skip, in circular order. `first..=last` spans at
+    /// most the flow window, so treating each endpoint's forward distance
+    /// from `first` as a plain offset is exact.
+    fn uncovered_runs(&mut self, first: u32, last: u32) -> Vec<(u32, u32)> {
+        if self.pending_skips.is_empty() {
+            return alloc::vec![(first, last)];
+        }
+        let span = seq::seq_diff(last, first);
+        let mut _steps = 0u64;
+        let mut cuts: Vec<(u32, u32)> = self
+            .pending_skips
+            .iter()
+            .filter_map(|(&f, &l)| {
+                _steps = _steps.saturating_add(1);
+                let start = seq::seq_diff(f, first);
+                let end = seq::seq_diff(l, first);
+                if end < 0 || start > span {
+                    return None;
+                }
+                let start = u32::try_from(start.max(0)).ok()?;
+                let end = u32::try_from(end.min(span)).ok()?;
+                (start <= end).then_some((start, end))
+            })
+            .collect();
+        #[cfg(test)]
+        {
+            self.skip_scan_steps = self.skip_scan_steps.saturating_add(_steps);
+        }
+        if cuts.is_empty() {
+            return alloc::vec![(first, last)];
+        }
+        cuts.sort_unstable_by_key(|&(start, _)| start);
+        let mut out = Vec::new();
+        let mut next = 0u32;
+        for (start, end) in cuts {
+            if start > next {
+                out.push((seq::seq_add(first, next), seq::seq_add(first, start - 1)));
+            }
+            next = next.max(end.saturating_add(1));
+        }
+        if next <= u32::try_from(span).unwrap_or(0) {
+            out.push((seq::seq_add(first, next), last));
+        }
+        out
     }
 
     /// Advance the ack point over every packet already received and every
@@ -521,15 +629,16 @@ impl Receiver {
                 self.next_expected = seq::seq_next(self.next_expected);
             }
             let next = self.next_expected;
-            self.pending_skips.retain(|&(_, l)| !seq::seq_lt(l, next));
-            let Some(pos) = self
+            self.pending_skips.retain(|_, l| !seq::seq_lt(*l, next));
+            let covering = self
                 .pending_skips
                 .iter()
-                .position(|&(f, l)| seq::seq_in_closed_range(next, f, l))
-            else {
+                .find(|(f, l)| seq::seq_in_closed_range(next, **f, **l))
+                .map(|(&f, &l)| (f, l));
+            let Some((first, last)) = covering else {
                 return;
             };
-            let (_, last) = self.pending_skips.swap_remove(pos);
+            self.pending_skips.remove(&first);
             self.next_expected = seq::seq_next(last);
         }
     }
@@ -954,5 +1063,37 @@ mod tests {
             alloc::vec![LossListEntry::Range(sn(100), sn(104))]
         );
         assert_eq!(r.loss_list_len(), 5);
+    }
+
+    /// #2821: an in-order arrival that only advances `highest_received` must
+    /// not rescan the loss list against every pending DROPREQ skip. The old
+    /// `retain(.. any ..)` ran on every new-highest packet — including a
+    /// fully in-order one — at `loss_list × skips` comparisons per packet.
+    #[test]
+    fn in_order_arrivals_do_no_skip_scan_work() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        r.feed_data(0, Timestamp::ZERO);
+        r.feed_data(4000, Timestamp::ZERO); // 1..=3999 lost
+        for s in 1..3000 {
+            r.feed_data(s, Timestamp::ZERO); // ack point advances to 3000
+        }
+        assert_eq!(r.ack_point(), 3000);
+        assert_eq!(r.loss_list_len(), 1000); // 3000..=3999 still lost
+        for i in 0..64u32 {
+            r.skip_range(5000 + 2 * i, 5000 + 2 * i);
+        }
+        assert_eq!(r.pending_skips.len(), 64);
+        assert_eq!(r.loss_list_len(), 1000);
+
+        let before = r.skip_scan_steps;
+        for i in 1..=100u32 {
+            let out = r.feed_data(4000 + i, Timestamp::ZERO);
+            assert!(!out.out_of_window);
+        }
+        assert_eq!(r.loss_list_len(), 1000);
+        assert_eq!(
+            r.skip_scan_steps, before,
+            "100 in-order arrivals must do no skip-map work"
+        );
     }
 }
