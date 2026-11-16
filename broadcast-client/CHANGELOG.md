@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `UdpConfig::reorder_bytes` (default `DEFAULT_REORDER_BYTES`, 4 MiB) bounds the RTP reorder buffer in bytes next to `reorder_packets`. The sender chooses a payload's size, so the packet window alone let it hold `reorder_packets` payloads of 64 KiB; reaching the byte budget gives up on every held packet, counts the gaps lost and delivers the packet that would have overrun it. `UdpConfig::validate` rejects a zero budget as `ConfigField::UdpReorderBytes` (#2846).
+
 ## [0.6.0] - 2026-11-15
 ### Changed
 - BREAKING: `Error::InvalidConfig { field: &'static str }` is `Error::InvalidConfig(ConfigField)` — a typed `ConfigField` enum (`Backoff`/`ClientIdentity`/`SrtEntropySeed`/`SrtHandshakeTimeout`/`SrtReadIdleTimeout`/`SrtPassphrase`/`TracksHold*`/`Udp*`/`Max*`/`RequestTimeout`/`SegmentTimeout`/`SegmentInactivityTimeout`/`HlsKeyTimeout`/`Buffer`/`TimelineJump*`/`Dash*`) with `name()` returning the dotted field path, re-exported at the crate root. A caller matches the field by variant rather than the message text (#2739).

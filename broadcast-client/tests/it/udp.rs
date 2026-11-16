@@ -221,6 +221,7 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
             udp_cfg(|c| c.reorder_packets = 0),
             "udp.reorder_packets",
         ),
+        (GROUP, udp_cfg(|c| c.reorder_bytes = 0), "udp.reorder_bytes"),
         (
             GROUP,
             udp_cfg(|c| c.reorder_wait = Duration::ZERO),
@@ -454,6 +455,39 @@ fn a_packet_beyond_the_window_gives_up_everything_held() {
     assert_eq!(host.session.datagram_stats().lost, 1);
     host.datagram(&rtp[window]);
     assert_eq!(host.session.datagram_stats().late, 1);
+}
+
+#[test]
+fn a_reorder_buffer_that_would_outgrow_its_byte_budget_gives_up_what_it_holds() {
+    const PAYLOAD: usize = 7 * TS_PACKET;
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
+    let mut host = UdpHost::open(
+        "rtp://239.1.1.1:5000",
+        config_with(|c| {
+            c.udp.reorder_wait = LONG_WAIT;
+            c.udp.reorder_bytes = 2 * PAYLOAD;
+        }),
+    );
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[2]);
+    host.datagram(&rtp[3]);
+    assert_eq!(
+        host.session.datagram_stats().lost,
+        0,
+        "a full byte budget is still waiting for the missing packet"
+    );
+    host.datagram(&rtp[4]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        stats.lost, 1,
+        "the held payloads would have overrun the budget, so they were given up"
+    );
+    assert_eq!(
+        host.session.payload_bytes(),
+        (4 * PAYLOAD) as u64,
+        "every payload was delivered in order, none dropped"
+    );
 }
 
 #[test]

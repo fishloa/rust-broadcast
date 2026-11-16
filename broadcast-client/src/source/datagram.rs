@@ -44,11 +44,13 @@ struct Held {
 pub(crate) struct Ingest {
     rtp: bool,
     window: usize,
+    window_bytes: usize,
     wait: Duration,
     ssrc: Option<u32>,
     next_seq: u16,
     next_ext: u64,
     held: BTreeMap<u64, Held>,
+    held_bytes: usize,
     validity: SeqValidity,
     stats: DatagramStats,
     discontinuity: bool,
@@ -65,11 +67,13 @@ impl Ingest {
         Self {
             rtp,
             window: config.reorder_packets,
+            window_bytes: config.reorder_bytes,
             wait: config.reorder_wait,
             ssrc: None,
             next_seq: 0,
             next_ext: 0,
             held: BTreeMap::new(),
+            held_bytes: 0,
             validity: SeqValidity::default(),
             stats: DatagramStats::default(),
             discontinuity: false,
@@ -83,6 +87,7 @@ impl Ingest {
     pub(crate) fn reset(&mut self) {
         self.ssrc = None;
         self.held.clear();
+        self.held_bytes = 0;
         self.validity = SeqValidity::default();
         self.discontinuity = false;
     }
@@ -194,6 +199,14 @@ impl Ingest {
             self.stats.duplicates = self.stats.duplicates.saturating_add(1);
             return;
         }
+        if self.held_bytes.saturating_add(packet.payload.len()) > self.window_bytes {
+            self.give_up_all(out);
+            self.skip_to(ext);
+            self.next_seq = seq;
+            self.deliver(packet.payload, out);
+            return;
+        }
+        self.held_bytes = self.held_bytes.saturating_add(packet.payload.len());
         self.held.insert(
             ext,
             Held {
@@ -215,6 +228,7 @@ impl Ingest {
                 break;
             }
             let held = entry.remove();
+            self.held_bytes = self.held_bytes.saturating_sub(held.payload.len());
             out.push(held.payload);
             self.next_ext = self.next_ext.saturating_add(1);
             self.next_seq = self.next_seq.wrapping_add(1);
@@ -239,6 +253,7 @@ impl Ingest {
 
     fn resync(&mut self) {
         self.held.clear();
+        self.held_bytes = 0;
         self.next_ext = 0;
         self.stats.resyncs = self.stats.resyncs.saturating_add(1);
         self.discontinuity = true;

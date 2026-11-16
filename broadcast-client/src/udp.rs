@@ -26,6 +26,12 @@ pub struct UdpConfig {
     pub sdp: Option<String>,
     /// RTP only: most packets the reorder buffer holds while it waits for a missing one.
     pub reorder_packets: usize,
+    /// RTP only: most bytes the reorder buffer holds while it waits for a missing one, whatever
+    /// [`UdpConfig::reorder_packets`] allows. The sender chooses a payload's size (any multiple
+    /// of a TS packet), so the packet window alone bounds the buffer only in packets: reaching
+    /// this many bytes gives up on every held packet, counts the gaps lost and delivers the
+    /// packet that would have overrun the budget.
+    pub reorder_bytes: usize,
     /// RTP only: longest a held packet waits for the missing one before the gap is counted lost.
     pub reorder_wait: Duration,
 }
@@ -33,6 +39,9 @@ pub struct UdpConfig {
 /// Default [`UdpConfig::reorder_packets`]: about 190 ms of a 10 Mbit/s stream (7 TS packets per
 /// RTP packet), more than the reordering ordinary IP paths produce.
 pub const DEFAULT_REORDER_PACKETS: usize = 128;
+/// Default [`UdpConfig::reorder_bytes`]: 4 MiB, about 3 000 whole 1 316-byte RTP payloads, far
+/// past any window a 16-bit sequence space can hold.
+pub const DEFAULT_REORDER_BYTES: usize = 4 * 1024 * 1024;
 /// Default [`UdpConfig::reorder_wait`]: 100 ms.
 pub const DEFAULT_REORDER_WAIT: Duration = Duration::from_millis(100);
 /// Largest [`UdpConfig::reorder_packets`]: the window must stay well inside the signed half of
@@ -45,6 +54,7 @@ impl Default for UdpConfig {
             options: UdpOptions::default(),
             sdp: None,
             reorder_packets: DEFAULT_REORDER_PACKETS,
+            reorder_bytes: DEFAULT_REORDER_BYTES,
             reorder_wait: DEFAULT_REORDER_WAIT,
         }
     }
@@ -56,6 +66,9 @@ impl UdpConfig {
         let invalid = |field| Err(crate::Error::InvalidConfig(field));
         if self.reorder_packets == 0 || self.reorder_packets > MAX_REORDER_PACKETS {
             return invalid(ConfigField::UdpReorderPackets);
+        }
+        if self.reorder_bytes == 0 {
+            return invalid(ConfigField::UdpReorderBytes);
         }
         if self.reorder_wait.is_zero() {
             return invalid(ConfigField::UdpReorderWait);
