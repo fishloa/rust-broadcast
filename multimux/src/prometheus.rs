@@ -165,7 +165,7 @@ static UPKEEP_STARTED: AtomicBool = AtomicBool::new(false);
 /// alive and makes `cargo nextest` (one process per test) time out on *every*
 /// test in this binary — including the pure-sync store tests. `build_recorder`
 /// installs no thread. Periodic upkeep instead runs on the caller's Tokio
-/// runtime ([`spawn_upkeep`]), so it dies with that runtime.
+/// runtime, so it dies with that runtime.
 pub fn install() -> PrometheusHandle {
     let handle = HANDLE
         .get_or_init(|| {

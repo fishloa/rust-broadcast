@@ -269,7 +269,8 @@ impl AppState {
 /// - `GET /metrics`, `GET /healthz`, `GET /readyz` are mounted at the root
 ///   (never under `/{stream}/`) — see `metrics_handler`, `healthz`,
 ///   `readyz` (all crate-private handlers, below). `/metrics` sits behind
-///   `output_auth_gate` when [`AppState::output_auth`] is configured.
+///   `output_auth_gate` when the app state carries an `output_auth`
+///   verifier.
 ///
 /// Every request — matched or not, root or per-stream — passes through, in
 /// order (outermost to innermost): `track_http` (HTTP request/duration/byte
