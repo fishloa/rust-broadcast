@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 ### Fixed
+- `watch --metrics-max-conns` must be at least 1 and `--metrics-io-timeout-ms` must be non-zero; both are rejected at parse time with the flag named, instead of starting a server that refuses every scrape or drops every connection.
+- The metrics server publishes the exposition as shared `Bytes` and serves the published buffer itself, instead of re-rendering to `Arc<str>` and copying the body into a fresh `Vec` on every scrape.
 - `WatchState`'s PAT/PMT reconciliation indexes each elementary PID's declaring programs (`pid -> program -> stream_type`), so a PAT cycle costs O(programs + PIDs) instead of scanning every program per released PID and every program per PAT entry; a forged fast-cycling PAT can no longer stall ingest quadratically (#2856).
 
 ## [0.16.0] - 2026-11-15

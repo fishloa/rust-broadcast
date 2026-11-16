@@ -54,10 +54,15 @@ pub struct WatchArgs {
     #[arg(long = "metrics-addr", default_value = "127.0.0.1:9090")]
     pub metrics_addr: String,
 
-    /// Maximum metrics connections served concurrently. A connection beyond
-    /// this is closed immediately at accept, so a flood of idle clients
-    /// cannot exhaust the process's tasks or file descriptors.
-    #[arg(long = "metrics-max-conns", default_value_t = DEFAULT_METRICS_MAX_CONNS)]
+    /// Maximum metrics connections served concurrently, at least 1. A
+    /// connection beyond this is closed immediately at accept, so a flood of
+    /// idle clients cannot exhaust the process's tasks or file descriptors;
+    /// 0 (which would refuse every scrape while the server runs) is rejected.
+    #[arg(
+        long = "metrics-max-conns",
+        value_parser = clap::builder::RangedU64ValueParser::<usize>::new().range(1..),
+        default_value_t = DEFAULT_METRICS_MAX_CONNS
+    )]
     pub metrics_max_conns: usize,
 
     /// Total time a metrics connection may take, from accept to response
@@ -119,10 +124,17 @@ impl WatchArgs {
 pub const DEFAULT_METRICS_MAX_CONNS: usize = 32;
 
 /// Parse a `--metrics-io-timeout-ms` value as a whole number of milliseconds.
+///
+/// Zero is rejected: it would drop every metrics connection the moment it is
+/// accepted, leaving the endpoint up and permanently unusable.
 fn parse_timeout_ms(text: &str) -> Result<Duration, String> {
-    text.parse::<u64>()
-        .map(Duration::from_millis)
-        .map_err(|_| format!("`{text}` is not a whole number of milliseconds"))
+    let millis = text
+        .parse::<u64>()
+        .map_err(|_| format!("`{text}` is not a whole number of milliseconds"))?;
+    if millis == 0 {
+        return Err("`0` is not a usable timeout; use at least 1 ms".to_string());
+    }
+    Ok(Duration::from_millis(millis))
 }
 
 /// Top-level CLI.
