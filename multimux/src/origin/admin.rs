@@ -1040,7 +1040,16 @@ async fn drain_route(runtime: RouteRuntime) {
         abort_handle.abort();
     }
     for h in runtime.push_handles {
-        h.abort();
+        let abort_handle = h.abort_handle();
+        if tokio::time::timeout(SUPERVISOR_SHUTDOWN_GRACE, h)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "admin: push task did not exit within the shutdown grace period; aborting"
+            );
+            abort_handle.abort();
+        }
     }
 }
 
@@ -1610,6 +1619,36 @@ mod tests {
         for _ in 0..32 {
             tokio::task::yield_now().await;
         }
+    }
+
+    /// Removing a route cancels its push tasks and waits for them to close
+    /// their transport; an abort would skip that close, so the downstream
+    /// server would see an abrupt drop instead of a graceful shutdown.
+    #[tokio::test]
+    async fn drain_route_lets_push_tasks_close_before_aborting_them() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_cancel = cancel.clone();
+        let task_closed = Arc::clone(&closed);
+        let push = tokio::spawn(async move {
+            task_cancel.cancelled().await;
+            tokio::task::yield_now().await;
+            task_closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let runtime = RouteRuntime {
+            generation: 0,
+            route: rtsp_route("x", "rtsp://host/x"),
+            store: Arc::new(RouteHandle::new(RouteConfig::default())),
+            outputs: Vec::new(),
+            cancel,
+            handle: tokio::spawn(async {}),
+            push_handles: vec![push],
+        };
+        drain_route(runtime).await;
+        assert!(
+            closed.load(std::sync::atomic::Ordering::SeqCst),
+            "the push task must run its close, not be aborted"
+        );
     }
 
     fn rtsp_route(name: &str, url: &str) -> Route {

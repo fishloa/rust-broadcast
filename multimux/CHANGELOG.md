@@ -4,6 +4,7 @@
 
 ### Fixed
 - DASH-IF ingest: a publisher disconnect mid-PUT now releases the open segment handle through an RAII guard, and every pump reply is bounded by the route body deadline, so a later segment is no longer refused with `SegmentInProgress`, and a stalled pump no longer parks the handler (#2825).
+- Removing or reloading a route lets each push task close its transport gracefully under the shutdown grace period, aborting only when it overruns, so downstream RTMP/RTSP/SRT servers see a normal close instead of an abrupt drop (#2826).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
