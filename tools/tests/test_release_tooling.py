@@ -263,9 +263,9 @@ def test_demo_lock_is_refreshed_with_the_guard(pr, capsys):
     (root / "lib" / "Cargo.toml").write_text((root / "lib" / "Cargo.toml").read_text().replace("0.25.0", "0.26.0"))
     (demo / "Cargo.toml").write_text((demo / "Cargo.toml").read_text().replace('version = "0.25"', 'version = "0.26"'))
 
-    assert pr.refresh_demo_lock(False) == 0 and "would run: cargo metadata" in capsys.readouterr().out
+    assert pr.refresh_side_lock("demo", False, False) == 0 and "would run: cargo metadata" in capsys.readouterr().out
     assert 'name = "lib"\nversion = "0.25.0"' in (demo / "Cargo.lock").read_text(), "dry run wrote the lock"
-    assert pr.refresh_demo_lock(True) == 0
+    assert pr.refresh_side_lock("demo", True, False) == 0
     assert 'name = "lib"\nversion = "0.26.0"' in (demo / "Cargo.lock").read_text()
     assert "demo/Cargo.lock refreshed" in capsys.readouterr().out
     locked = subprocess.run(["cargo", "metadata", "--locked", "--offline", "--format-version", "1", "--manifest-path", "demo/Cargo.toml"], cwd=root, capture_output=True)
@@ -273,8 +273,30 @@ def test_demo_lock_is_refreshed_with_the_guard(pr, capsys):
 
 
 def test_demo_lock_absent_is_a_noop(pr, capsys):
-    assert pr.refresh_demo_lock(True) == 0
+    assert pr.refresh_side_lock("demo", True, False) == 0
     assert "absent" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("manifest_dir,fatal_offline,expected", [("demo", False, 0), ("tools/differential-sweep", True, 1)])
+def test_side_lock_offline_failure_is_fatal_only_where_ci_builds_locked(
+    pr, capsys, monkeypatch, manifest_dir, fatal_offline, expected
+):
+    """the sweep lane runs `cargo build --locked`, so a lock it cannot resolve is a
+    release blocker there; pages.yml does not, so demo/ stays a warning."""
+    d = pr.ROOT / manifest_dir
+    d.mkdir(parents=True)
+    (d / "Cargo.toml").write_text('[package]\nname = "x"\nversion = "0.1.0"\n')
+    (d / "Cargo.lock").write_text(LOCK_OLD)
+    monkeypatch.setattr(
+        pr.subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a[0], 101, "", "error: package `x` not found")
+    )
+    assert pr.refresh_side_lock(manifest_dir, True, fatal_offline) == expected
+    assert (d / "Cargo.lock").read_text() == LOCK_OLD, "the lock was not restored"
+    cap = capsys.readouterr()
+    if expected == 0:
+        assert "WARNING" in cap.out and f"{manifest_dir}/Cargo.lock NOT refreshed" in cap.out
+    else:
+        assert "ERROR" in cap.err and f"{manifest_dir}/Cargo.lock NOT refreshed" in cap.err
 
 
 REAL_ROOT = pathlib.Path(__file__).parents[2]

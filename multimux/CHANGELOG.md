@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The WHEP shared media socket registers each viewer's local `ice-pwd` with `webrtc_runtime::media::SocketDemux` (including after an ICE restart), so a STUN check that names a viewer's ufrag but does not carry the password no longer maps its source address to that viewer: unauthenticated traffic can neither fill a viewer's tuple budget nor steal an already-mapped address (audit 20 finding 40).
 
 ### Fixed
 - The RTMP accept pump backs off 100 ms through a transient listen-socket error (a connection flood's `EMFILE`, a peer's pre-accept `ECONNABORTED`) instead of ending the route, and a pump that does end is marked dead so the next attempt rebinds rather than reusing a receiver nothing feeds (#2812).
