@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- The async client keeps one read deadline for the whole inbound read and pushes it back only when a frame is decoded, instead of restarting `Timeouts::read_idle` on every call. A keepalive wake in `recv_interleaved` at half the session timeout (always shorter than `read_idle` by default) used to cancel and restart the read timer, so a server that answered nothing was never detected (#2838).
+
 ## [0.12.0] - 2026-11-15
 ### Changed
 - BREAKING: `Error::MessageParse { what, source }` carries `source: MessageParseError`, a new typed enum (`Codec(rtsp_types::ParseError)`, `TooLarge { at_least, limit }`, `Buffered { buffered, limit }`, `HeaderUnterminated { at_least, limit }`, `NotARequest`) instead of a boxed any-error, so a caller matches the failure instead of reading its text. `Error::Tls { source }` is a `rustls::pki_types::InvalidDnsNameError` and `Error::TlsConfig` wraps `rustls::Error`, both named types the `tls` feature already depends on (#2695).
