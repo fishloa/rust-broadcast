@@ -202,6 +202,12 @@ impl BudgetLimitLayer {
         self.reload = Arc::new(ReloadPools::new(self.reload_permits, routes));
         self
     }
+
+    /// Free ordinary permits (test-only diagnostic).
+    #[cfg(test)]
+    pub(crate) fn ordinary_available(&self) -> usize {
+        self.ordinary.available_permits()
+    }
 }
 
 impl<S> tower::Layer<S> for BudgetLimitLayer {

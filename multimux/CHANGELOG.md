@@ -8,6 +8,7 @@
 - The Prometheus recorder runs `run_upkeep` every `prometheus::UPKEEP_INTERVAL` (5 s) on the caller's Tokio runtime, so histogram samples no longer accumulate until `/metrics` is scraped (#2833).
 - A WHEP media socket's receive loop backs off 10 ms on a failed `recv_from` and, after `RECV_ERRORS_BEFORE_DEAD` consecutive errors, ends and marks the socket dead; the next `socket_for` rebinds it, so a persistent receive error no longer busy-loops the task and starves every viewer on that socket (#2834).
 - A removed or replaced route's catch-up index cache is dropped (`catchup::drop_route_cache`, called from the admin drain) instead of staying resident for the process lifetime, and the cache is bounded by total cached segments (`INDEX_CACHE_MAX_SEGMENTS`), not just period-file count (#2835).
+- The admin registry keeps one `limit::BudgetLimitLayer` and passes it to every router rebuild, so the ordinary concurrency pool and its in-flight permits survive a route add/remove; only the per-route blocking-reload pools are rebuilt, instead of the effective bound doubling after each rebuild (#2874).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

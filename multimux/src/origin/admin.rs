@@ -98,7 +98,7 @@ use crate::output::{Output, OutputKind};
 use crate::registry::SchemeRegistry;
 use crate::route::RouteHandle;
 
-use super::{AppState, HttpLimits, SUPERVISOR_SHUTDOWN_GRACE, StreamRoute, build_output, router};
+use super::{AppState, HttpLimits, SUPERVISOR_SHUTDOWN_GRACE, StreamRoute, build_output};
 
 /// Realm the admin API's mandatory `Verifier` challenges with — distinct
 /// from [`super::OUTPUT_AUTH_REALM`] (which names the media output-auth
@@ -236,6 +236,11 @@ struct RegistryContext {
     scheme_registry: SchemeRegistry,
     http_limits: HttpLimits,
     output_auth: Option<Arc<Verifier>>,
+    /// The one concurrency budget every router rebuild layers: its ordinary
+    /// pool is shared across rebuilds (a new one per rebuild would double the
+    /// effective bound while in-flight permits from the old pool drain), while
+    /// [`super::router_with_budget`] re-keys only the per-route reload pools.
+    budget: super::limit::BudgetLimitLayer,
 }
 
 /// A media [`Router`] and, for each route it serves, the token that fires when that route is
@@ -388,9 +393,10 @@ impl RouteRegistry {
             app_state = app_state.with_output_auth(Arc::clone(verifier));
         }
         // The concurrency bound (and the ops/reload budgets) is applied
-        // inside `router()` itself, so it is present here too.
+        // inside `router_with_budget` itself, over this registry's one shared
+        // budget, so the ordinary pool survives the rebuild.
         LiveRouter {
-            router: router(Arc::new(app_state)),
+            router: super::router_with_budget(Arc::new(app_state), self.ctx.budget.clone()),
             retire,
         }
     }
@@ -1458,6 +1464,11 @@ pub(crate) async fn serve_with_admin(
     };
 
     let http_limits = HttpLimits::from(&config);
+    let budget = super::limit::BudgetLimitLayer::new(
+        http_limits.max_concurrent_requests,
+        http_limits.max_blocking_reloads_per_route,
+        http_limits.queue_timeout,
+    );
     let base_config = Config {
         routes: Vec::new(),
         admin: None,
@@ -1468,6 +1479,7 @@ pub(crate) async fn serve_with_admin(
         scheme_registry: scheme_registry.clone(),
         http_limits,
         output_auth,
+        budget,
     };
 
     let registry = RouteRegistry::new(ctx, config_path);
@@ -1577,11 +1589,17 @@ mod tests {
     use crate::dvr::DvrConfig;
 
     fn ctx_for_tests() -> RegistryContext {
+        let http_limits = HttpLimits::default();
         RegistryContext {
             base_config: Config::default(),
             scheme_registry: SchemeRegistry::new(),
-            http_limits: HttpLimits::default(),
+            http_limits,
             output_auth: None,
+            budget: crate::origin::limit::BudgetLimitLayer::new(
+                http_limits.max_concurrent_requests,
+                http_limits.max_blocking_reloads_per_route,
+                http_limits.queue_timeout,
+            ),
         }
     }
 
@@ -1676,6 +1694,78 @@ mod tests {
             "a removed route's cache must not stay resident"
         );
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A router rebuild keeps the same ordinary concurrency pool: a permit an
+    /// in-flight request still holds after a route add still bounds the new
+    /// router, so the effective limit does not double (audit 20 finding 63).
+    /// MUTATION VERIFIED: building a fresh `BudgetLimitLayer` per rebuild lets
+    /// the second request through with `200` and this fails.
+    #[tokio::test]
+    async fn a_router_rebuild_keeps_the_shared_concurrency_pool() {
+        use tower::ServiceExt as _;
+
+        const QUEUE: std::time::Duration = std::time::Duration::from_millis(20);
+        let limits = HttpLimits {
+            max_concurrent_requests: 1,
+            queue_timeout: QUEUE,
+            ..HttpLimits::default()
+        };
+        let budget = crate::origin::limit::BudgetLimitLayer::new(
+            limits.max_concurrent_requests,
+            limits.max_blocking_reloads_per_route,
+            limits.queue_timeout,
+        );
+        let watch = budget.clone();
+        let ctx = RegistryContext {
+            base_config: Config::default(),
+            scheme_registry: SchemeRegistry::new(),
+            http_limits: limits,
+            output_auth: None,
+            budget,
+        };
+        let registry = RouteRegistry::new(ctx, None);
+        registry
+            .add_route(rtsp_route("a", "rtsp://host/a"))
+            .await
+            .expect("add a");
+        let req = || {
+            axum::http::Request::builder()
+                .uri("/zzz/not-a-route")
+                .body(axum::body::Body::empty())
+                .expect("request")
+        };
+        // Hold the only ordinary permit: the response body is never polled.
+        let held = registry
+            .live_router()
+            .router
+            .clone()
+            .oneshot(req())
+            .await
+            .expect("infallible");
+        assert_eq!(
+            watch.ordinary_available(),
+            0,
+            "the first request acquired the only permit"
+        );
+
+        registry
+            .add_route(rtsp_route("b", "rtsp://host/b"))
+            .await
+            .expect("add b rebuilds the router");
+        let shed = registry
+            .live_router()
+            .router
+            .clone()
+            .oneshot(req())
+            .await
+            .expect("infallible");
+        assert_eq!(
+            shed.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "the permit held across the rebuild still bounds the new router"
+        );
+        drop(held);
     }
 
     /// A slow archive scan for route `a` holds only `a`'s name lock: an admin

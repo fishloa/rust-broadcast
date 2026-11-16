@@ -288,6 +288,21 @@ impl AppState {
 /// drives `router()` directly — a test, or an embedder's own server — gets
 /// the same bound a `serve*` entry point does.
 pub fn router(state: Arc<AppState>) -> Router {
+    let budget = limit::BudgetLimitLayer::new(
+        state.limits.max_concurrent_requests,
+        state.limits.max_blocking_reloads_per_route,
+        state.limits.queue_timeout,
+    );
+    router_with_budget(state, budget)
+}
+
+/// [`router`] over a caller-owned concurrency budget. The admin registry
+/// keeps one [`limit::BudgetLimitLayer`] for the process and passes a clone on
+/// every rebuild, so the ordinary pool (and its in-flight permits) survives a
+/// route add/remove; only the per-route blocking-reload pools are rebuilt.
+/// Building a fresh layer per rebuild would give each router its own pool and
+/// double the effective bound.
+pub(crate) fn router_with_budget(state: Arc<AppState>, budget: limit::BudgetLimitLayer) -> Router {
     let limits = state.limits;
     let mut router = Router::new();
     for (name, (store, outputs)) in &state.streams {
@@ -335,17 +350,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         // including its own `503` (which `track_http` never observes, being
         // layered inside it), and it must be *outside* the timeout layer so
         // the queue wait is bounded by the limit's own timeout, not the
-        // request timeout. The layer is built ONCE here, because the pools
-        // live in the layer value: building it per route would give one pool
-        // per route.
-        .layer(
-            limit::BudgetLimitLayer::new(
-                limits.max_concurrent_requests,
-                limits.max_blocking_reloads_per_route,
-                limits.queue_timeout,
-            )
-            .with_routes(state.streams.keys().map(String::as_str)),
-        )
+        // request timeout. `budget`'s ordinary pool is shared across every
+        // rebuild; only the blocking-reload pools are re-keyed per route set.
+        .layer(budget.with_routes(state.streams.keys().map(String::as_str)))
 }
 
 /// A real [`router`] over a one-stream (`cam1`) state with `ordinary`
