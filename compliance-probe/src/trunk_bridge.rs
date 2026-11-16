@@ -71,13 +71,15 @@ impl Probe {
     /// contract holds across calls.
     ///
     /// [`TapItem::Lagged`] is recorded as
-    /// `compliance_probe_tap_lagged_total` and otherwise ignored — per
-    /// `ByteTap`'s own docs, a lagged stretch invalidates counter-based
-    /// analysis (continuity count, PCR interval) across the gap; this crate
-    /// does not attempt to reset `ConformanceMonitor`'s internal state (it
-    /// exposes no such reset), so a rate of TR 101 290 events immediately
-    /// following a nonzero `TAP_LAGGED_TOTAL` delta should be read with that
-    /// caveat, exactly as a real gap in delivery would be.
+    /// `compliance_probe_tap_lagged_total` and resets the byte
+    /// re-aligner, so a partial packet buffered before the gap is discarded
+    /// rather than completed with post-gap bytes. Per `ByteTap`'s own docs a
+    /// lagged stretch still invalidates counter-based analysis (continuity
+    /// count, PCR interval) across the gap; this crate does not attempt to
+    /// reset `ConformanceMonitor`'s internal state (it exposes no such reset),
+    /// so a rate of TR 101 290 events immediately following a nonzero
+    /// `TAP_LAGGED_TOTAL` delta should be read with that caveat, exactly as a
+    /// real gap in delivery would be.
     ///
     /// Every packet of one [`TapItem::Data`] chunk gets that chunk's arrival
     /// time, so a large chunk makes the PCR drift estimate skip samples and
@@ -92,6 +94,11 @@ impl Probe {
             match item {
                 TapItem::Lagged { skipped } => {
                     record_counter_by!(crate::metric_names::TAP_LAGGED_TOTAL, skipped);
+                    // A partial packet buffered before the gap must not be
+                    // completed with bytes that follow it: the stitched
+                    // result would carry a real sync byte and header and be
+                    // fed to the monitor as a packet that never existed.
+                    bridge.resync = TsResync::new();
                 }
                 TapItem::Data(bytes, at) => {
                     let t: Duration = at.saturating_sub(epoch);
@@ -280,6 +287,49 @@ mod tests {
         probe.drain_byte_tap(&mut bridge, &mut tap, Timestamp::ZERO);
 
         assert_eq!(probe.conformance_stats().packets, 20);
+    }
+
+    /// A gap that lands mid-packet must not stitch the pre-gap partial tail
+    /// onto post-gap bytes: the pre-gap tail starts with a sync byte, so a
+    /// stitched 188-byte "packet" passes `feed_ts_packet`'s framing and
+    /// fabricates a packet that was never on the wire (audit a20-20).
+    #[test]
+    fn lagged_gap_mid_packet_does_not_stitch_the_partial_tail() {
+        let path = test_fixtures::path("ts/m6-single.ts");
+        let data = std::fs::read(path).expect("committed fixture must be readable");
+        let after_twenty = TS_PACKET_SIZE * 20;
+
+        let mut tap = ByteTap::new(media_plane::TapPoint::Wire, 2)
+            .expect("a non-zero tap capacity is built");
+        tap.record(
+            bytes::Bytes::copy_from_slice(&data[..after_twenty]),
+            Timestamp::ZERO,
+        );
+        tap.record(
+            bytes::Bytes::copy_from_slice(&data[after_twenty..after_twenty + 100]),
+            Timestamp::ZERO,
+        );
+
+        let mut probe = Probe::new();
+        let mut bridge = TrunkBridge::default();
+        probe.drain_byte_tap(&mut bridge, &mut tap, Timestamp::ZERO);
+        assert_eq!(probe.conformance_stats().packets, 20);
+
+        for _ in 0..3 {
+            tap.record(bytes::Bytes::from_static(b"x"), Timestamp::ZERO);
+        }
+        tap.record(
+            bytes::Bytes::copy_from_slice(&data[after_twenty + 100..after_twenty + TS_PACKET_SIZE]),
+            Timestamp::ZERO,
+        );
+        probe.drain_byte_tap(&mut bridge, &mut tap, Timestamp::ZERO);
+
+        assert_eq!(
+            probe.conformance_stats().packets,
+            20,
+            "the 100-byte pre-gap tail plus the 88 post-gap bytes must not \
+             form a packet across the reported gap"
+        );
     }
 
     /// A tap that lagged before this probe polled it must be counted, not
