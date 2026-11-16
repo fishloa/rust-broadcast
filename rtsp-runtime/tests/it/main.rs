@@ -1,4 +1,5 @@
 mod client_push_methods;
+mod dependency_features;
 mod golden_wire;
 mod integration;
 mod io_loopback;
