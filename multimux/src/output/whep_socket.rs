@@ -115,17 +115,19 @@ impl SharedSocket {
         self.handled.load(Ordering::Acquire)
     }
 
-    /// Route datagrams naming `local_ufrag` to a new viewer. `None` when
-    /// another viewer already owns that ufrag.
+    /// Route datagrams naming `local_ufrag` to a new viewer, authenticating
+    /// its connectivity checks with `local_pwd`. `None` when another viewer
+    /// already owns that ufrag.
     pub(crate) fn attach(
         self: &Arc<Self>,
         local_ufrag: &str,
+        local_pwd: &str,
     ) -> Option<(Attachment, mpsc::Receiver<Inbound>)> {
         let key = self.next_key.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel(SESSION_INBOUND_QUEUE);
         {
             let mut router = self.router.lock();
-            if !router.demux.register(local_ufrag, key) {
+            if !router.demux.register(local_ufrag, local_pwd, key) {
                 return None;
             }
             router.queues.insert(key, tx);
@@ -199,14 +201,14 @@ pub(crate) struct Attachment {
 
 impl Attachment {
     /// Also route datagrams naming `local_ufrag` (the one an ICE restart
-    /// introduces) to this viewer.
-    pub(crate) fn register_ufrag(&self, local_ufrag: &str) {
+    /// introduces) to this viewer, authenticating its checks with `local_pwd`.
+    pub(crate) fn register_ufrag(&self, local_ufrag: &str, local_pwd: &str) {
         if !self
             .shared
             .router
             .lock()
             .demux
-            .register(local_ufrag, self.key)
+            .register(local_ufrag, local_pwd, self.key)
         {
             tracing::warn!("whep: restart ufrag already belongs to another viewer");
         }
@@ -277,6 +279,7 @@ mod tests {
     use super::*;
     use rtc_stun::attributes::ATTR_USERNAME;
     use rtc_stun::fingerprint::FINGERPRINT;
+    use rtc_stun::integrity::MessageIntegrity;
     use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
     use rtc_stun::textattrs::TextAttribute;
     use std::net::Ipv4Addr;
@@ -285,8 +288,31 @@ mod tests {
     const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const DTLS_RECORD: [u8; 4] = [22, 254, 253, 0];
     const HANDLED_DEADLINE: Duration = Duration::from_secs(60);
+    /// The ice-pwd every viewer in these tests is attached with, so a check
+    /// naming any of them can carry a verifiable `MESSAGE-INTEGRITY`.
+    const PWD: &str = "whep-socket-ice-password-0";
 
     fn check(username: &str) -> Vec<u8> {
+        let crypto = rtc_stun::crypto::default_provider().expect("default crypto provider");
+        let mut message = Message::new();
+        message
+            .build(&[
+                Box::new(BINDING_REQUEST),
+                Box::new(TransactionId::new()),
+                Box::new(TextAttribute::new(ATTR_USERNAME, username.to_string())),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                    PWD.to_string(),
+                    crypto.crypto(),
+                )),
+                Box::new(FINGERPRINT),
+            ])
+            .expect("build a binding request");
+        message.raw
+    }
+
+    /// A check with no `MESSAGE-INTEGRITY`: any sender who knows a ufrag can
+    /// produce one, but only the peer knows the password.
+    fn bare_check(username: &str) -> Vec<u8> {
         let mut message = Message::new();
         message
             .build(&[
@@ -295,7 +321,7 @@ mod tests {
                 Box::new(TextAttribute::new(ATTR_USERNAME, username.to_string())),
                 Box::new(FINGERPRINT),
             ])
-            .expect("build a binding request");
+            .expect("build a bare binding request");
         message.raw
     }
 
@@ -330,7 +356,7 @@ mod tests {
             for i in 0..per_ip * ROUNDS {
                 let socket = sockets.socket_for(LOCALHOST).expect("socket");
                 *per_address.entry(socket.local_addr()).or_default() += 1;
-                attached.push(socket.attach(&format!("ufrag{i:04}")).expect("attach"));
+                attached.push(socket.attach(&format!("ufrag{i:04}"), PWD).expect("attach"));
             }
             assert_eq!(sockets.len(), per_ip, "bound sockets");
             assert_eq!(per_address.len(), per_ip, "distinct addresses");
@@ -349,8 +375,8 @@ mod tests {
     async fn datagrams_reach_only_the_viewer_that_owns_the_sender() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let (_a, mut a_rx) = shared.attach("aaaaaaaa").expect("attach a");
-        let (_b, mut b_rx) = shared.attach("bbbbbbbb").expect("attach b");
+        let (_a, mut a_rx) = shared.attach("aaaaaaaa", PWD).expect("attach a");
+        let (_b, mut b_rx) = shared.attach("bbbbbbbb", PWD).expect("attach b");
         let peer = client().await;
         peer.send_to(&check("bbbbbbbb:peer"), shared.local_addr())
             .await
@@ -373,7 +399,7 @@ mod tests {
     async fn a_spoofed_check_reaches_nobody() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let (_a, mut a_rx) = shared.attach("aaaaaaaa").expect("attach");
+        let (_a, mut a_rx) = shared.attach("aaaaaaaa", PWD).expect("attach");
         let peer = client().await;
         peer.send_to(&check("zzzzzzzz:peer"), shared.local_addr())
             .await
@@ -398,8 +424,8 @@ mod tests {
     async fn a_full_viewer_queue_drops_without_blocking_the_others() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let (_slow, _slow_rx) = shared.attach("aaaaaaaa").expect("attach slow");
-        let (_fast, mut fast_rx) = shared.attach("bbbbbbbb").expect("attach fast");
+        let (_slow, _slow_rx) = shared.attach("aaaaaaaa", PWD).expect("attach slow");
+        let (_fast, mut fast_rx) = shared.attach("bbbbbbbb", PWD).expect("attach fast");
         let slow_peer = client().await;
         let fast_peer = client().await;
         slow_peer
@@ -429,10 +455,36 @@ mod tests {
     async fn a_dropped_attachment_frees_its_ufrag() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let first = shared.attach("aaaaaaaa").expect("attach");
-        assert!(shared.attach("aaaaaaaa").is_none());
+        let first = shared.attach("aaaaaaaa", PWD).expect("attach");
+        assert!(shared.attach("aaaaaaaa", PWD).is_none());
         drop(first);
-        assert!(shared.attach("aaaaaaaa").is_some());
+        assert!(shared.attach("aaaaaaaa", PWD).is_some());
+    }
+
+    /// Audit 20 finding 40: a check naming a viewer's real ufrag reaches it
+    /// only when its `MESSAGE-INTEGRITY` verifies under that viewer's
+    /// password, so a ufrag-knowing sender cannot map an address to it.
+    #[tokio::test]
+    async fn a_check_without_the_password_reaches_nobody() {
+        let sockets = SharedSockets::default();
+        let shared = sockets.socket_for(LOCALHOST).expect("socket");
+        let (_a, mut a_rx) = shared.attach("aaaaaaaa", PWD).expect("attach a");
+        let spoof = client().await;
+        spoof
+            .send_to(&bare_check("aaaaaaaa:peer"), shared.local_addr())
+            .await
+            .expect("send bare check");
+        let peer = client().await;
+        peer.send_to(&check("aaaaaaaa:peer"), shared.local_addr())
+            .await
+            .expect("send authenticated check");
+        wait_handled(&shared, 2).await;
+        let got = a_rx.try_recv().expect("a has the authenticated check");
+        assert_eq!(got.peer, peer.local_addr().expect("addr"));
+        assert!(
+            a_rx.try_recv().is_err(),
+            "only the authenticated check arrived"
+        );
     }
 
     /// One failing receive does not end the loop: the next datagram is still

@@ -37,6 +37,34 @@ def _pr():
     return mod
 
 
+def test_side_workspaces_cover_every_committed_side_lock():
+    """A side workspace's committed lock records the path members' versions, so a bump
+    leaves it stale. The sweep lane builds its lock with --locked, so a stale one fails
+    the release outright (issue #2809). Every committed side lock that path-depends on
+    members must be driven by SIDE_WORKSPACES; bindings/ and spikes/ consume published
+    crates and have nothing to bump."""
+    tracked = subprocess.run(
+        ["git", "ls-files", "*Cargo.lock"], cwd=REPO, capture_output=True, text=True, check=True
+    ).stdout.split()
+    side = {
+        path.rsplit("/", 1)[0]
+        for path in tracked
+        if path != "Cargo.lock" and not path.startswith(("bindings/", "spikes/"))
+    }
+    assert side, "no side lock found outside bindings/ and spikes/ - the filter is wrong"
+    assert {d for d, _ in _pr().SIDE_WORKSPACES} == side
+
+
+def test_side_workspace_dry_run_names_the_manifest(capsys):
+    mod = _pr()
+    for manifest_dir, fatal_offline in mod.SIDE_WORKSPACES:
+        assert mod.refresh_side_lock(manifest_dir, False, fatal_offline) == 0
+        out = capsys.readouterr().out
+        assert "would run: cargo metadata" in out
+        assert f"--manifest-path {manifest_dir}/Cargo.toml" in out
+        assert f"refreshes {manifest_dir}/Cargo.lock" in out
+
+
 def _glob(path):
     doc = yaml.safe_load(path.read_text())
     on = doc.get("on", doc.get(True))

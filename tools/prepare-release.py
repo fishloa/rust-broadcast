@@ -42,7 +42,10 @@ retyped by hand each time:
    lock (every third-party pin, which is MSRV-compatible by policy, is kept),
    then verifies the lock diff touches nothing else (restoring the old lock if
    it does) and that `cargo metadata --locked --offline` passes. The committed
-   `demo/Cargo.lock` (its own workspace) gets the same guarded refresh. Skip
+   side-workspace locks -- `demo/Cargo.lock` (its own workspace, not built with
+   `--locked`) and `tools/differential-sweep/Cargo.lock` (its own workspace,
+   built with `--locked` by the sweep lane) -- get the same guarded refresh;
+   they path-depend on workspace members, so a bump leaves them stale. Skip
    with `--no-lock`.
 5. **Tag order** — prints the dependency-correct tag order (normal, build AND
    versioned dev-dependency edges; the lockstep five collapse into one
@@ -530,41 +533,55 @@ def refresh_lock(apply: bool) -> int:
     return 0
 
 
-def refresh_demo_lock(apply: bool) -> int:
-    """demo/ is its own (excluded) workspace with a COMMITTED Cargo.lock that
-    records the path members' versions; a bump leaves it stale. pages.yml does not
-    build with --locked, so a stale lock self-heals there (cargo rewrites it) and
-    never fails a lane, but a committed lock that lags the manifests is exactly
-    the rot this tool exists to remove. Same guard as the root lock: only
-    member versions (or a path member appearing) may change, else restore.
+SIDE_WORKSPACES = (("demo", False), ("tools/differential-sweep", True))
+
+
+def refresh_side_lock(manifest_dir: str, apply: bool, fatal_offline: bool) -> int:
+    """A side workspace is its own (excluded) workspace with a COMMITTED
+    Cargo.lock that records the path members' versions; a bump leaves it stale.
+
+    demo/ is not built with --locked by pages.yml, so a stale lock self-heals
+    there (cargo rewrites it) and never fails a lane, but a committed lock that
+    lags the manifests is exactly the rot this tool exists to remove.
+    tools/differential-sweep/ IS built with --locked by the sweep lane, so its
+    stale lock failed that lane outright in the 2026-11-15 wave. Same guard as
+    the root lock: only member versions (or a path member appearing) may
+    change, else restore.
 
     A failure to resolve offline (a wasm dependency missing from the local
-    cargo cache) is a WARNING, not an error: it cannot affect any release."""
-    lock = ROOT / "demo" / "Cargo.lock"
-    manifest = ROOT / "demo" / "Cargo.toml"
+    cargo cache) is a WARNING for demo/, not an error: it cannot affect any
+    release. For a side workspace CI builds with --locked it is an ERROR."""
+    manifest = ROOT / manifest_dir / "Cargo.toml"
+    lock = ROOT / manifest_dir / "Cargo.lock"
     if not (lock.is_file() and manifest.is_file()):
-        print("  demo/Cargo.lock: absent, nothing to refresh")
+        print(f"  {manifest_dir}/Cargo.lock: absent, nothing to refresh")
         return 0
-    cmd = ["cargo", "metadata", "--format-version", "1", "--offline", "--manifest-path", "demo/Cargo.toml"]
+    rel = f"{manifest_dir}/Cargo.toml"
+    cmd = ["cargo", "metadata", "--format-version", "1", "--offline", "--manifest-path", rel]
     if not apply:
-        print(f"  would run: {' '.join(cmd)} > /dev/null (refreshes demo/Cargo.lock member versions only)")
+        print(f"  would run: {' '.join(cmd)} > /dev/null (refreshes {manifest_dir}/Cargo.lock member versions only)")
         return 0
     old = lock.read_text()
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     if r.returncode != 0:
         lock.write_text(old)
-        print(f"  WARNING: demo/Cargo.lock NOT refreshed (`{' '.join(cmd)}` failed offline; pages.yml is not --locked so this is harmless):")
-        print("  " + " | ".join(l for l in r.stderr.strip().splitlines()[-2:]))
+        detail = " | ".join(l for l in r.stderr.strip().splitlines()[-2:])
+        if fatal_offline:
+            print(f"ERROR: {manifest_dir}/Cargo.lock NOT refreshed (`{' '.join(cmd)}` failed offline; the release lane builds it with --locked):", file=sys.stderr)
+            print("  " + detail, file=sys.stderr)
+            return 1
+        print(f"  WARNING: {manifest_dir}/Cargo.lock NOT refreshed (`{' '.join(cmd)}` failed offline; pages.yml is not --locked so this is harmless):")
+        print("  " + detail)
         return 0
     new = lock.read_text()
     bad = lock_violations(old, new, allow_member_set_change=True)
     if bad:
         lock.write_text(old)
-        print("ERROR: the demo lock refresh changed more than workspace-member versions; demo/Cargo.lock RESTORED:", file=sys.stderr)
+        print(f"ERROR: the {manifest_dir} lock refresh changed more than workspace-member versions; {manifest_dir}/Cargo.lock RESTORED:", file=sys.stderr)
         print("\n".join(bad), file=sys.stderr)
         return 1
     n = sum(1 for a, b in zip(old.splitlines(), new.splitlines()) if a != b) if old != new else 0
-    print(f"  demo/Cargo.lock refreshed: {n} line(s) changed, all workspace-member entries")
+    print(f"  {manifest_dir}/Cargo.lock refreshed: {n} line(s) changed, all workspace-member entries")
     return 0
 
 
@@ -800,8 +817,9 @@ def main(argv: list[str]) -> int:
             return 1
         if apply and verify_resolution() != 0:
             return 1
-        if refresh_demo_lock(apply) != 0:
-            return 1
+        for manifest_dir, fatal_offline in SIDE_WORKSPACES:
+            if refresh_side_lock(manifest_dir, apply, fatal_offline) != 0:
+                return 1
     else:
         print("  skipped (--no-lock): refresh and commit Cargo.lock yourself, or every release lane's --locked build fails")
 

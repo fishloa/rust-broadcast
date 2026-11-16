@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The WHEP shared media socket registers each viewer's local `ice-pwd` with `webrtc_runtime::media::SocketDemux` (including after an ICE restart), so a STUN check that names a viewer's ufrag but does not carry the password no longer maps its source address to that viewer: unauthenticated traffic can neither fill a viewer's tuple budget nor steal an already-mapped address (audit 20 finding 40).
 
 ### Changed
 - BREAKING: `source::sdp::load_sdp` is async (it reads an on-disk `@path` with `tokio::fs`), and an SDP file is capped at `source::sdp::MAX_SDP_FILE_BYTES` (64 KiB) and must be a regular file, so `@/dev/zero` or a FIFO can no longer stall a runtime worker or grow the process. Migration: `.await` the call (#2836).
