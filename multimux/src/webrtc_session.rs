@@ -641,13 +641,31 @@ pub(crate) fn commit_restart<M>(resource: &Resource<M>, plan: RestartPlan) -> bo
     true
 }
 
-/// What [`apply_ice_ops`] did.
-#[derive(Debug, Default, PartialEq, Eq)]
+/// What [`apply_ice_ops`] did. `Debug` names the new ufrags but never a
+/// password.
+#[derive(Default, PartialEq, Eq)]
 pub(crate) struct AppliedOps {
     pub candidates: u64,
     pub restarts: u64,
     /// The new local `(ice-ufrag, ice-pwd)` of every restart that was applied.
     pub restart_credentials: Vec<(String, String)>,
+}
+
+impl std::fmt::Debug for AppliedOps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppliedOps")
+            .field("candidates", &self.candidates)
+            .field("restarts", &self.restarts)
+            .field(
+                "restart_ufrags",
+                &self
+                    .restart_credentials
+                    .iter()
+                    .map(|(ufrag, _)| ufrag)
+                    .collect::<Vec<_>>(),
+            )
+            .finish()
+    }
 }
 
 /// Applies the queued ICE changes to the transport the calling task owns, in
@@ -995,6 +1013,22 @@ mod tests {
         };
         let text = format!("{fragment:?}");
         assert!(!text.contains("pwd-secret"), "{text}");
+    }
+
+    /// The applied-restart record names the new ufrags but never a password.
+    #[test]
+    fn applied_ops_debug_hides_restart_passwords() {
+        let ops = AppliedOps {
+            candidates: 0,
+            restarts: 1,
+            restart_credentials: vec![(
+                "new-ufrag".to_string(),
+                "new-pwd-secret-0123456789".to_string(),
+            )],
+        };
+        let text = format!("{ops:?}");
+        assert!(!text.contains("pwd-secret"), "{text}");
+        assert!(text.contains("new-ufrag"), "{text}");
     }
 
     /// Resource ids are unguessable: long, drawn from the OS CSPRNG, and
