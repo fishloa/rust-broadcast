@@ -284,7 +284,8 @@ impl ListenerHandshake {
         let (crypto_result, km_echo_ext): CryptoConclusionResult<'_> =
             match (&crypto_cfg, &parsed.km) {
                 (Some(crypto), Some(km_req)) => {
-                    match handshake_sm::recover_sek(&crypto.passphrase, km_req) {
+                    let mut kek_cache = crate::crypto::KekCache::new();
+                    match handshake_sm::recover_sek(&crypto.passphrase, km_req, &mut kek_cache) {
                         Ok((sek, salt)) => (Some((sek, salt)), Some(km_req)),
                         Err(_) => return self.reject(RejectionReason::BadSecret, hp),
                     }

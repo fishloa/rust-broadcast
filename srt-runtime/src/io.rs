@@ -388,6 +388,14 @@ const KEEPALIVE_PERIOD: Duration = Duration::from_secs(1);
 /// §6.1.6; the interval is this crate's choice).
 #[cfg(feature = "crypto")]
 const KM_RESEND_INTERVAL: Duration = Duration::from_millis(500);
+/// Shortest interval between two peer Key Material messages this driver
+/// processes. Recovering the SEK runs a 2048-iteration PBKDF2; a peer that
+/// re-sends KMREQ back to back would otherwise spend a core on it (#2840).
+/// The interval is this crate's choice — `private/specs-verified/rules/srt-crypto.md`
+/// §6.1.6 fixes the KM Refresh *packet-count* periods, not a time limit on
+/// inbound requests.
+#[cfg(feature = "crypto")]
+const KMREQ_MIN_INTERVAL: Duration = Duration::from_millis(100);
 /// SEK length used when the connection's own key length is unknown: AES-128.
 #[cfg(feature = "crypto")]
 const DEFAULT_SEK_LEN: usize = 16;
@@ -1286,6 +1294,14 @@ struct Driver {
     crypto_key_len: usize,
     #[cfg(feature = "crypto")]
     km_refresh: crate::km_refresh::KmRefreshDriver,
+    /// The last KEK derived from a peer Key Material message, so a repeated
+    /// KMREQ with the same `(Salt, KLen)` does not rerun PBKDF2 (#2840).
+    #[cfg(feature = "crypto")]
+    kek_cache: crate::crypto::KekCache,
+    /// When the peer's most recent KMREQ was processed, so a peer cannot burn
+    /// a core by re-sending Key Material (#2840, `KMREQ_MIN_INTERVAL`).
+    #[cfg(feature = "crypto")]
+    last_peer_kmreq_at: Option<Instant>,
 
     // Outbound datagram queues — separate so control can never queue behind
     // a not-yet-due paced DATA packet (see the module doc above).
@@ -1383,6 +1399,10 @@ impl Driver {
                 p.crypto_thresholds,
                 crate::km_refresh::KeyParity::Even,
             ),
+            #[cfg(feature = "crypto")]
+            kek_cache: crate::crypto::KekCache::new(),
+            #[cfg(feature = "crypto")]
+            last_peer_kmreq_at: None,
             outbound_data: VecDeque::new(),
             outbound_control: VecDeque::new(),
             next_data_send_at: None,
@@ -1673,22 +1693,36 @@ impl Driver {
         if subtype != crate::packet::handshake::EXT_TYPE_KMREQ {
             return;
         }
+        // Recovering the SEK runs PBKDF2; a peer re-sending Key Material
+        // back to back is refused beyond one message per
+        // `KMREQ_MIN_INTERVAL` (#2840). A legitimate refresh that lands
+        // inside the window is retransmitted by the peer.
+        let now = Instant::now();
+        if self
+            .last_peer_kmreq_at
+            .is_some_and(|last| now.saturating_duration_since(last) < KMREQ_MIN_INTERVAL)
+        {
+            return;
+        }
+        self.last_peer_kmreq_at = Some(now);
         let installed = match km.kk {
-            crate::packet::KmKeyFlag::Both => {
-                crate::handshake_sm::recover_both_seks(&self.crypto_passphrase, km)
-                    .map(|(even, odd, salt)| {
-                        self.rx_keys.install(KeyParity::Even, even.to_vec(), salt);
-                        self.rx_keys.install(KeyParity::Odd, odd.to_vec(), salt);
-                    })
-                    .is_ok()
-            }
+            crate::packet::KmKeyFlag::Both => crate::handshake_sm::recover_both_seks(
+                &self.crypto_passphrase,
+                km,
+                &mut self.kek_cache,
+            )
+            .map(|(even, odd, salt)| {
+                self.rx_keys.install(KeyParity::Even, even.to_vec(), salt);
+                self.rx_keys.install(KeyParity::Odd, odd.to_vec(), salt);
+            })
+            .is_ok(),
             kk => {
                 let parity = if kk == crate::packet::KmKeyFlag::Odd {
                     KeyParity::Odd
                 } else {
                     KeyParity::Even
                 };
-                crate::handshake_sm::recover_sek(&self.crypto_passphrase, km)
+                crate::handshake_sm::recover_sek(&self.crypto_passphrase, km, &mut self.kek_cache)
                     .map(|(sek, salt)| self.rx_keys.install(parity, sek.to_vec(), salt))
                     .is_ok()
             }
@@ -4302,6 +4336,73 @@ mod adapter_tests {
     #[cfg(feature = "crypto")]
     fn refresh_test_thresholds() -> crate::km_refresh::KmRefreshThresholds {
         crate::km_refresh::KmRefreshThresholds::new(20, 5).unwrap()
+    }
+
+    /// #2840: a peer re-sending the same Key Material message back to back
+    /// gets one answer, not one PBKDF2 run per datagram; a repeat after the
+    /// interval is answered from the KEK cache instead of deriving again.
+    #[cfg(feature = "crypto")]
+    #[tokio::test(start_paused = true)]
+    async fn repeat_kmreq_is_rate_limited_and_reuses_the_kek() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.crypto_passphrase = b"rate-limit-passphrase".to_vec().into();
+        let salt = [0x6Bu8; crate::crypto::SALT_LEN];
+        let sek = [0x5Au8; 16];
+        let kek = crate::crypto::derive_kek(&driver.crypto_passphrase, &salt, sek.len()).unwrap();
+        let (icv, wrapped) = crate::crypto::wrap_sek(&kek, &sek).unwrap();
+        let km = crate::packet::KeyMaterial {
+            kk: crate::packet::KmKeyFlag::Even,
+            keki: 0,
+            cipher: crate::packet::Cipher::AesCtr,
+            auth: crate::packet::KmAuth::None,
+            se: crate::packet::StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv,
+            x_sek: &wrapped,
+            o_sek: None,
+        };
+        let mut km_buf = vec![0u8; km.serialized_len()];
+        km.serialize_into(&mut km_buf).unwrap();
+        let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
+            control_type: crate::packet::ControlType::UserDefined.to_bits(),
+            subtype: crate::packet::handshake::EXT_TYPE_KMREQ,
+            type_specific_info: 0,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
+            cif: &km_buf,
+        });
+        let mut request = vec![0u8; ud.serialized_len()];
+        ud.serialize_into(&mut request).unwrap();
+
+        driver
+            .ingress(Bytes::from(request.clone()))
+            .expect("ingress");
+        assert_eq!(driver.outbound_control.len(), 1, "first KMREQ answered");
+        assert_eq!(driver.kek_cache.derivations(), 1);
+        assert!(driver.rx_keys.even.is_some());
+
+        driver.outbound_control.clear();
+        driver
+            .ingress(Bytes::from(request.clone()))
+            .expect("ingress");
+        assert!(
+            driver.outbound_control.is_empty(),
+            "a repeat inside KMREQ_MIN_INTERVAL must be dropped"
+        );
+        assert_eq!(driver.kek_cache.derivations(), 1, "no derivation on a drop");
+
+        tokio::time::advance(KMREQ_MIN_INTERVAL).await;
+        driver.ingress(Bytes::from(request)).expect("ingress");
+        assert_eq!(
+            driver.outbound_control.len(),
+            1,
+            "after the interval: answered"
+        );
+        assert_eq!(
+            driver.kek_cache.derivations(),
+            1,
+            "the same Salt and KLen must reuse the derived KEK"
+        );
     }
 
     #[cfg(feature = "crypto")]

@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- A peer re-sending Key Material messages no longer costs one 2048-iteration PBKDF2 run per datagram: the derived KEK is cached by `(Salt, KLen)`, and at most one peer KMREQ per `KMREQ_MIN_INTERVAL` (100 ms) is processed (#2840).
 - `arq::Receiver` no longer rescans the whole loss list against every pending DROPREQ skip each time a packet advances the highest sequence number: the newly opened gap is filtered against at most `MAX_PENDING_SKIPS` coalesced ranges (a `BTreeMap`, not a `Vec`), and a DROPREQ ahead of the tracked data or already recorded costs no scan of the loss/out-of-order sets. A peer could previously pin a core at roughly 8 million comparisons per packet with the default window and pending-skip cap (#2821).
 
 ## [0.10.0] - 2026-11-15

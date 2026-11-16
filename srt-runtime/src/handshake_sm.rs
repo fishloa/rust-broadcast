@@ -978,7 +978,11 @@ pub(crate) type RecoveredSek = (SecretBytes, [u8; crate::crypto::SALT_LEN]);
 /// [`crate::crypto::unwrap_sek`]'s error (RFC 3394 wrap-integrity failure —
 /// wrong passphrase, §6.1.5's "it does not have the SEK" case).
 #[cfg(feature = "crypto")]
-pub(crate) fn recover_sek(passphrase: &[u8], km: &KeyMaterial<'_>) -> Result<RecoveredSek> {
+pub(crate) fn recover_sek(
+    passphrase: &[u8],
+    km: &KeyMaterial<'_>,
+    kek_cache: &mut crate::crypto::KekCache,
+) -> Result<RecoveredSek> {
     if km.salt.len() != crate::crypto::SALT_LEN {
         return Err(Error::InvalidField(InvalidField {
             field: "Key Material Salt",
@@ -987,7 +991,7 @@ pub(crate) fn recover_sek(passphrase: &[u8], km: &KeyMaterial<'_>) -> Result<Rec
     }
     let mut salt = [0u8; crate::crypto::SALT_LEN];
     salt.copy_from_slice(km.salt);
-    let kek = crate::crypto::derive_kek(passphrase, &salt, km.x_sek.len())?;
+    let kek = kek_cache.derive(passphrase, &salt, km.x_sek.len())?;
     let sek = SecretBytes::new(crate::crypto::unwrap_sek(&kek, &km.icv, km.x_sek)?.to_vec());
     Ok((sek, salt))
 }
@@ -1003,6 +1007,7 @@ pub(crate) fn recover_sek(passphrase: &[u8], km: &KeyMaterial<'_>) -> Result<Rec
 pub(crate) fn recover_both_seks(
     passphrase: &[u8],
     km: &KeyMaterial<'_>,
+    kek_cache: &mut crate::crypto::KekCache,
 ) -> Result<(SecretBytes, SecretBytes, [u8; crate::crypto::SALT_LEN])> {
     let Some(o_sek) = km.o_sek.filter(|_| km.kk == KmKeyFlag::Both) else {
         return Err(Error::InvalidField(InvalidField {
@@ -1018,7 +1023,7 @@ pub(crate) fn recover_both_seks(
     }
     let mut salt = [0u8; crate::crypto::SALT_LEN];
     salt.copy_from_slice(km.salt);
-    let kek = crate::crypto::derive_kek(passphrase, &salt, km.x_sek.len())?;
+    let kek = kek_cache.derive(passphrase, &salt, km.x_sek.len())?;
     let mut wrapped = Vec::with_capacity(km.x_sek.len() + o_sek.len());
     wrapped.extend_from_slice(km.x_sek);
     wrapped.extend_from_slice(o_sek);
