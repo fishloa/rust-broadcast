@@ -16,7 +16,7 @@ use dvb_si::tables::pmt::PmtSection;
 
 use broadcast_common::Parse;
 
-use crate::device::{CaDevice, SlotInfo};
+use crate::device::{CaDevice, MAX_CA_FRAME, SlotInfo};
 use crate::event::{Action, Event, HostRequest, HotPlug, MmiEvent, Notification};
 use crate::managed::{self, CaError, ManagedCa};
 use crate::stack::CiStack;
@@ -125,7 +125,7 @@ impl<D: CaDevice> Driver<D> {
             stack: CiStack::new(),
             notifications: Vec::new(),
             next_timer: None,
-            buf: vec![0u8; 4096],
+            buf: vec![0u8; MAX_CA_FRAME],
             last_slot: None,
             last_caids: None,
             last_descrambling_ok: None,
@@ -3773,6 +3773,109 @@ pub(crate) mod tests {
         assert!(
             ca_pmt_writes(&d) > before,
             "4 s passed with a 1 s requery interval but no re-query was sent"
+        );
+    }
+
+    /// A CAM can deliver a legal link-layer frame far larger than 4094 bytes
+    /// of TPDU (a `Tdata_last` block carries up to 65534 bytes); the driver
+    /// must hand the device a buffer sized for the largest one, not a
+    /// 4096-byte scratch buffer (audit a20-21).
+    #[test]
+    fn read_buffer_covers_the_largest_legal_device_frame() {
+        struct BufferProbe(Option<usize>);
+
+        impl CaDevice for BufferProbe {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.0 = Some(buf.len());
+                Ok(0)
+            }
+            fn write(&mut self, _buf: &[u8]) -> io::Result<()> {
+                Ok(())
+            }
+            fn reset(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+            fn slot_info(&mut self) -> io::Result<SlotInfo> {
+                Ok(SlotInfo {
+                    num: 0,
+                    module_ready: true,
+                    module_present: true,
+                })
+            }
+            fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+                Ok(true)
+            }
+        }
+
+        let mut d = Driver::new(BufferProbe(None));
+        d.pump(Duration::from_millis(1))
+            .expect("a readable device with no frame is not an error");
+        assert_eq!(
+            d.device().0,
+            Some(MAX_CA_FRAME),
+            "the read buffer must cover the largest legal device frame"
+        );
+    }
+
+    /// The behavioural half of a20-21: a device that refuses a frame which
+    /// does not fit the caller's buffer (exactly `LinuxCaDevice`'s contract)
+    /// must not fail the pump for a legal `Tdata_last` block larger than the
+    /// old 4096-byte buffer.
+    #[test]
+    fn a_legal_oversized_tpdu_is_read_without_an_io_error() {
+        const DATA_LEN: usize = 5000;
+
+        struct OversizedFrameDevice(Option<Vec<u8>>);
+
+        impl CaDevice for OversizedFrameDevice {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let Some(frame) = self.0.take() else {
+                    return Ok(0);
+                };
+                if frame.len() > buf.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "TPDU larger than the read buffer; dropped, not truncated",
+                    ));
+                }
+                let n = frame.len();
+                buf[..n].copy_from_slice(&frame);
+                Ok(n)
+            }
+            fn write(&mut self, _buf: &[u8]) -> io::Result<()> {
+                Ok(())
+            }
+            fn reset(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+            fn slot_info(&mut self) -> io::Result<SlotInfo> {
+                Ok(SlotInfo {
+                    num: 0,
+                    module_ready: true,
+                    module_present: true,
+                })
+            }
+            fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+                Ok(self.0.is_some())
+            }
+        }
+
+        let mut frame = vec![tags::DATA_LAST];
+        let mut length = [0u8; 4];
+        let coded = dvb_ci::length::encode_into(1 + DATA_LEN, &mut length)
+            .expect("a legal EN 50221 length");
+        frame.extend_from_slice(&length[..coded]);
+        frame.push(0x01);
+        frame.extend(std::iter::repeat_n(0xAB, DATA_LEN));
+
+        let mut d = Driver::new(OversizedFrameDevice(Some(frame)));
+        assert!(
+            d.pump(Duration::from_millis(1)).is_ok(),
+            "a legal {DATA_LEN}-byte TPDU must not fail the read"
+        );
+        assert!(
+            d.device().0.is_none(),
+            "the frame must have been taken off the device, not refused"
         );
     }
 }

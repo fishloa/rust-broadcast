@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `MAX_CA_FRAME` is public (re-exported from `device`): the largest legal link-layer frame a `CaDevice` can deliver.
+
+### Fixed
+- `Driver`'s read buffer is `MAX_CA_FRAME` instead of a 4096-byte buffer, so a legal TPDU larger than ~4094 bytes (a `Tdata_last` block) is no longer consumed by the device and then surfaced as an `InvalidData` read error, losing the frame.
 
 ## [0.21.0] - 2026-11-15
 ### Changed

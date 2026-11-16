@@ -26,7 +26,8 @@ pub use dataplane::{
 };
 pub use descrambler::CaDescrambler;
 pub use device::{
-    CaDevice, DeviceOp, DeviceOpError, LinkEvent, MockCaDevice, RecordingCaDevice, SlotInfo,
+    CaDevice, DeviceOp, DeviceOpError, LinkEvent, MAX_CA_FRAME, MockCaDevice, RecordingCaDevice,
+    SlotInfo,
 };
 pub use driver::Driver;
 pub use event::{Action, Event, HostRequest, HotPlug, Notification};

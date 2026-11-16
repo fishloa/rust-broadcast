@@ -131,7 +131,9 @@ Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
   packets only, `WouldBlock` + `PartialWrite` on backpressure) behind `linux`.
   `LinuxCiDataDevice::open` tries `O_RDWR` and falls back to a split
   `O_WRONLY` / `O_RDONLY | O_NONBLOCK` open on `EINVAL` (`open_split` /
-  `from_split` are public).
+  `from_split` are public). The driver's read buffer is `MAX_CA_FRAME` (the
+  largest legal `[slot, connection_id, <TPDU>]` frame), so a large
+  `Tdata_last` block is never refused for not fitting it.
 - **Named device errors**: every failing Linux device operation returns a
   `DeviceOpError` naming the operation, device path and errno
   (`DeviceOpError::errno_of(&err)`); the `io::ErrorKind` is unchanged. A first
