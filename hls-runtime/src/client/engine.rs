@@ -801,6 +801,18 @@ impl HlsClient {
         } else {
             None
         };
+        // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
+        // derived below is `media_sequence + index` with `index <
+        // segments.len()`, so proving the end fits proves them all. Computed
+        // before any state is mutated, so a hostile sequence number cannot
+        // poison the high-water mark or drop key material before rejection.
+        let next_msn = playlist
+            .msn
+            .checked_add(index_u64(playlist.segments.len()))
+            .ok_or(Error::MediaSequenceOverflow {
+                msn: playlist.msn,
+                segments: playlist.segments.len(),
+            })?;
         let mut first_error: Option<Error> = None;
         // An older view of the same stream must never make the client deliver
         // backwards: its segments below the previous window are skipped.
@@ -820,17 +832,6 @@ impl HlsClient {
                 .map_or(playlist.msn, |p| p.max(playlist.msn)),
         );
         self.forget_keys_below(playlist.msn);
-
-        // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
-        // derived below is `media_sequence + index` with `index <
-        // segments.len()`, so proving the end fits proves them all.
-        let next_msn = playlist
-            .msn
-            .checked_add(index_u64(playlist.segments.len()))
-            .ok_or(Error::MediaSequenceOverflow {
-                msn: playlist.msn,
-                segments: playlist.segments.len(),
-            })?;
 
         if !self.joined {
             self.joined = true;
@@ -3100,6 +3101,46 @@ mod tests {
 
     fn pending_keyed_bytes(client: &HlsClient) -> usize {
         client.pending_keyed.iter().map(|(_, b)| b.len()).sum()
+    }
+
+    // Audit 20 finding 18 (#2829): the overflow check must run before any
+    // state mutation, or one hostile `EXT-X-MEDIA-SEQUENCE` sets the
+    // high-water mark to ~u64::MAX and drops every key, so the very next
+    // legitimate playlist looks regressed and the session wedges.
+    #[test]
+    fn media_sequence_overflow_is_rejected_before_it_poisons_state() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(keyed_playlist(0, 2, "key.bin").as_bytes())
+            .unwrap();
+        let high_water = client.last_media_sequence;
+        let keys = client.key_urls.len();
+        assert_eq!(high_water, Some(broadcast_hls::MediaSequence::new(0)));
+        assert_eq!(keys, 1, "the playlist's key must be tracked");
+
+        let hostile = format!(
+            "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
+             #EXT-X-MEDIA-SEQUENCE:{}\n\
+             #EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n\
+             #EXTINF:2.0,\nseg.ts\n",
+            u64::MAX
+        );
+        let err = client
+            .on_playlist(hostile.as_bytes())
+            .expect_err("u64::MAX + one segment overflows");
+        assert!(
+            matches!(err, Error::MediaSequenceOverflow { .. }),
+            "{err:?}"
+        );
+        assert_eq!(
+            client.last_media_sequence, high_water,
+            "a rejected playlist must not move the high-water mark"
+        );
+        assert_eq!(
+            client.key_urls.len(),
+            keys,
+            "a rejected playlist must not drop key material"
+        );
     }
 
     #[test]

@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Client: an `EXT-X-MEDIA-SEQUENCE` that overflows `u64` is rejected before any client state is mutated, so one hostile reload can no longer move the high-water mark to `u64::MAX` and drop every key, wedging the session for every later playlist (audit 20 finding 18, #2829).
 
 ## [0.14.0] - 2026-11-15
 ### Changed
