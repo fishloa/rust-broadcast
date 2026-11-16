@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- The WHEP shared media socket registers each viewer's local `ice-pwd` with `webrtc_runtime::media::SocketDemux` (including after an ICE restart), so a STUN check that names a viewer's ufrag but does not carry the password no longer maps its source address to that viewer: unauthenticated traffic can neither fill a viewer's tuple budget nor steal an already-mapped address (audit 20 finding 40).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

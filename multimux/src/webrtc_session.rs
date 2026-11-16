@@ -646,8 +646,8 @@ pub(crate) fn commit_restart<M>(resource: &Resource<M>, plan: RestartPlan) -> bo
 pub(crate) struct AppliedOps {
     pub candidates: u64,
     pub restarts: u64,
-    /// The new local `ice-ufrag` of every restart that was applied.
-    pub restart_ufrags: Vec<String>,
+    /// The new local `(ice-ufrag, ice-pwd)` of every restart that was applied.
+    pub restart_credentials: Vec<(String, String)>,
 }
 
 /// Applies the queued ICE changes to the transport the calling task owns, in
@@ -685,7 +685,7 @@ pub(crate) fn apply_ice_ops(
             ) {
                 Ok(()) => {
                     done.restarts += 1;
-                    done.restart_ufrags.push(r.local_ufrag);
+                    done.restart_credentials.push((r.local_ufrag, r.local_pwd));
                 }
                 Err(e) => tracing::warn!(error = %e, "webrtc: ICE restart refused"),
             },
