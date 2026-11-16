@@ -11,11 +11,13 @@
 //!
 //! A single pool cannot serve an HTTP origin with long-polls in it:
 //!
-//! - **Ops routes** (`/healthz`, `/readyz`, `/metrics`) are *exempt*: they
+//! - **Liveness/readiness routes** (`/healthz`, `/readyz`) are *exempt*: they
 //!   must answer `200` even while the pool is saturated, or an orchestrator's
 //!   liveness probe fails and the process is restarted — turning a load spike
-//!   into an outage. The admin API is a separate listener with its own router
-//!   and never passes through here at all.
+//!   into an outage. `/metrics` is NOT exempt: a scrape is an ordinary request
+//!   that can be made as often as a client likes, so it draws from the same
+//!   ordinary pool as media requests. The admin API is a separate listener
+//!   with its own router and never passes through here at all.
 //! - **Blocking-reload** requests (LL-HLS `_HLS_msn`/`_HLS_part`,
 //!   RFC 8216bis §6.2.5.2) get their own pools, one per route. A blocking
 //!   reload legitimately holds its connection up to the LL-HLS cap, so a few
@@ -71,10 +73,12 @@ pub const DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE: usize = 1024;
 /// The `Retry-After` value as a static header value.
 const RETRY_AFTER: axum::http::HeaderValue = axum::http::HeaderValue::from_static("1");
 
-/// The ops/supervision endpoints an orchestrator probes. These answer even
+/// The liveness/readiness endpoints an orchestrator probes. These answer even
 /// while every data permit is held — a `503` here means a container restart,
-/// which turns a load spike into an outage.
-const OPS_PATHS: [&str; 3] = ["/healthz", "/readyz", "/metrics"];
+/// which turns a load spike into an outage. `/metrics` is deliberately not
+/// here: an unauthenticated, locally-unbounded scrape target was audit 20
+/// finding 64, so it takes an ordinary permit.
+const OPS_PATHS: [&str; 2] = ["/healthz", "/readyz"];
 
 /// Which pool a request draws from.
 #[doc(hidden)]
@@ -399,12 +403,13 @@ mod tests {
         s.parse().expect("uri")
     }
 
-    /// Ops routes classify as `Exempt`; a stream named `healthz` is not.
+    /// Liveness/readiness routes classify as `Exempt`; a stream named `healthz`
+    /// is not, and `/metrics` is an ordinary (bounded) request.
     #[test]
     fn ops_paths_are_exempt_from_the_bound() {
         assert_eq!(classify(&uri("/healthz")), Budget::Exempt);
         assert_eq!(classify(&uri("/readyz")), Budget::Exempt);
-        assert_eq!(classify(&uri("/metrics")), Budget::Exempt);
+        assert_eq!(classify(&uri("/metrics")), Budget::Ordinary);
         assert_eq!(classify(&uri("/cam1/healthz")), Budget::Ordinary);
     }
 

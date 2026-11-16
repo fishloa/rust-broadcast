@@ -17,6 +17,12 @@
 //! - **Opt-in.** [`crate::config::Config::admin`] defaults to `None`: no
 //!   admin field configured means no admin listener, no admin routes, at
 //!   all — `serve_with_admin` is only ever reached when it is `Some`.
+//! - **Filesystem confinement.** An admin add would otherwise let an
+//!   authenticated caller read any local file (`File` input, `@path` SDP) or
+//!   write anywhere (DVR `archive_root`). [`crate::config::AdminSpec::allowed_roots`]
+//!   confines all three when configured; empty leaves the admin caller's
+//!   filesystem access unconfined, which is the documented (not accidental)
+//!   default for a trusted operator.
 //!
 //! # Endpoints
 //!
@@ -241,6 +247,11 @@ struct RegistryContext {
     /// effective bound while in-flight permits from the old pool drain), while
     /// [`super::router_with_budget`] re-keys only the per-route reload pools.
     budget: super::limit::BudgetLimitLayer,
+    /// [`crate::config::AdminSpec::allowed_roots`], canonicalised once at
+    /// startup: every route this registry spawns (an admin add, a reload, or
+    /// a startup route) must keep its local paths inside these. Empty means
+    /// unconfined.
+    allowed_roots: Vec<std::path::PathBuf>,
 }
 
 /// A media [`Router`] and, for each route it serves, the token that fires when that route is
@@ -433,6 +444,7 @@ impl RouteRegistry {
         archive_floor: u32,
         continues: Option<&RouteHandle>,
     ) -> crate::Result<RouteRuntime> {
+        crate::config::check_route_paths(&self.ctx.allowed_roots, route)?;
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -1464,6 +1476,10 @@ pub(crate) async fn serve_with_admin(
     };
 
     let http_limits = HttpLimits::from(&config);
+    let allowed_roots = match &config.admin {
+        Some(admin) => admin.resolved_allowed_roots()?,
+        None => Vec::new(),
+    };
     let budget = super::limit::BudgetLimitLayer::new(
         http_limits.max_concurrent_requests,
         http_limits.max_blocking_reloads_per_route,
@@ -1480,6 +1496,7 @@ pub(crate) async fn serve_with_admin(
         http_limits,
         output_auth,
         budget,
+        allowed_roots,
     };
 
     let registry = RouteRegistry::new(ctx, config_path);
@@ -1600,6 +1617,7 @@ mod tests {
                 http_limits.max_blocking_reloads_per_route,
                 http_limits.queue_timeout,
             ),
+            allowed_roots: Vec::new(),
         }
     }
 
@@ -1656,6 +1674,52 @@ mod tests {
             audio_profiles: Vec::new(),
             subtitles: true,
         }
+    }
+
+    /// The admin API rejects a route whose local paths leave
+    /// `admin.allowed_roots` (audit 20 finding 64: an authenticated admin
+    /// could otherwise point a `File` input at any local file). MUTATION
+    /// VERIFIED: without `spawn_route`'s check the outside path is accepted.
+    #[tokio::test]
+    async fn add_route_rejects_a_path_outside_the_allowed_roots() {
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-allowed-roots-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("allowed root");
+        let mut ctx = ctx_for_tests();
+        ctx.allowed_roots = vec![root.canonicalize().expect("canonical root")];
+        let registry = RouteRegistry::new(ctx, None);
+
+        let mut outside = rtsp_route("cam", "rtsp://host/cam");
+        outside.input = InputSpec::File {
+            path: root.join("..").join("outside.ts").display().to_string(),
+            loop_file: true,
+        };
+        let err = registry
+            .add_route(outside)
+            .await
+            .expect_err("a path outside the allowed roots is rejected");
+        match err {
+            crate::MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, crate::ConfigField::RoutesInputPath);
+            }
+            other => panic!("not a ConfigInvalid: {other}"),
+        }
+
+        let clip = root.join("clip.ts");
+        std::fs::write(&clip, b"x").expect("clip inside the root");
+        let mut inside = rtsp_route("cam2", "rtsp://host/cam2");
+        inside.input = InputSpec::File {
+            path: clip.display().to_string(),
+            loop_file: true,
+        };
+        registry
+            .add_route(inside)
+            .await
+            .expect("a path inside the allowed roots is accepted");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Removing a route releases its catch-up index cache, whose entries hold
@@ -1723,6 +1787,7 @@ mod tests {
             http_limits: limits,
             output_auth: None,
             budget,
+            allowed_roots: Vec::new(),
         };
         let registry = RouteRegistry::new(ctx, None);
         registry

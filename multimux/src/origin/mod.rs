@@ -30,9 +30,11 @@
 //! [`broadcast_auth::Verifier`] gates **every** media output route
 //! (`/{stream}/…` — manifests and the shared resource route alike, across
 //! every configured stream) via `output_auth_gate`, mounted on the
-//! per-stream nests *before* they are merged with the root ops endpoints —
-//! so `/metrics`/`/healthz`/`/readyz` are never behind it (load balancer
-//! probes and metrics scraping must stay open regardless of output auth).
+//! per-stream nests *before* they are merged with the root endpoints. The
+//! liveness/readiness probes (`/healthz`/`/readyz`) stay open — an
+//! orchestrator must be able to probe the process regardless of output auth
+//! — while `/metrics`, which renders every route name and counter, is gated
+//! by the same verifier (audit 20 finding 64).
 //! This is intentionally independent of any route's own ingest auth
 //! (`crate::config::AuthSpec`/URL userinfo): one output credential guards
 //! every stream this origin serves (e.g. 40 cameras under
@@ -266,7 +268,8 @@ impl AppState {
 ///   merged router's own fallback.
 /// - `GET /metrics`, `GET /healthz`, `GET /readyz` are mounted at the root
 ///   (never under `/{stream}/`) — see `metrics_handler`, `healthz`,
-///   `readyz` (all crate-private handlers, below).
+///   `readyz` (all crate-private handlers, below). `/metrics` sits behind
+///   `output_auth_gate` when [`AppState::output_auth`] is configured.
 ///
 /// Every request — matched or not, root or per-stream — passes through, in
 /// order (outermost to innermost): `track_http` (HTTP request/duration/byte
@@ -332,11 +335,18 @@ pub(crate) fn router_with_budget(state: Arc<AppState>, budget: limit::BudgetLimi
         router = router.nest(&format!("/{name}"), stream_router);
     }
 
-    let root = Router::new()
-        .route("/metrics", get(metrics_handler))
+    // Liveness/readiness stay open — an orchestrator's probe must answer even
+    // while output auth is on. `/metrics` renders every route name and
+    // counter, so it is behind the same `output_auth` gate as the media
+    // routes when one is configured (audit 20 finding 64); with no
+    // `output_auth` it stays open, exactly as before.
+    let ops = Router::new()
         .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .with_state(state.clone());
+        .route("/readyz", get(readyz));
+    let metrics = Router::new().route("/metrics", get(metrics_handler)).layer(
+        middleware::from_fn_with_state(state.clone(), output_auth_gate),
+    );
+    let root = ops.merge(metrics).with_state(state.clone());
 
     router
         .merge(root)
@@ -3985,16 +3995,37 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
 
-    /// Biting test: `/metrics` must also stay open with `output_auth`
-    /// configured.
+    /// With `output_auth` configured, `/metrics` is gated by it (audit 20
+    /// finding 64: it renders every route name and counter) while the
+    /// liveness probe stays open. MUTATION VERIFIED: mounting `/metrics`
+    /// outside the gate serves the unauthenticated request `200`.
     #[tokio::test]
-    async fn output_auth_configured_metrics_still_open() {
+    async fn output_auth_configured_metrics_is_gated() {
         let app = app_with_output_auth(
             Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
                 .expect("OS random source"),
         );
-        let resp = app.oneshot(get("/metrics")).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let unauthenticated = app.clone().oneshot(get("/metrics")).await.unwrap();
+        assert_eq!(
+            unauthenticated.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "an unauthenticated scrape must not see the metrics"
+        );
+        let authenticated = app
+            .clone()
+            .oneshot(get_with_auth("/metrics", "Bearer secrettoken"))
+            .await
+            .unwrap();
+        assert_eq!(authenticated.status(), axum::http::StatusCode::OK);
+        let body = body_string(authenticated).await;
+        assert!(body.contains("multimux_"), "metrics body: {body}");
+
+        let probe = app.oneshot(get("/healthz")).await.unwrap();
+        assert_eq!(
+            probe.status(),
+            axum::http::StatusCode::OK,
+            "liveness stays open regardless of output auth"
+        );
     }
 
     /// `output_auth: None` (the default, via [`make_state_streams`]/`AppState::new`
