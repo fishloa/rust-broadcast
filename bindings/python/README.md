@@ -44,7 +44,7 @@ not build/serialize wire bytes — use the Rust crates for that.
 
 ## Changes
 
-### Unreleased
+### 0.5.0
 
 - Rebuilt against `dvb-si` 15 / `dvb-t2mi` 15 (`mpeg-ts` 0.9,
   `broadcast-common` 13). `dvb-si` 15 replaced its `chrono` feature with
