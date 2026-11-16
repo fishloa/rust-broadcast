@@ -2848,6 +2848,18 @@ mod tests {
         HlsClientConfig::new(Url::parse(url).expect("test URL"))
     }
 
+    // Audit 20 finding 52 (#2863): the reload cadence is derived from the
+    // untrusted EXT-X-TARGETDURATION, so `MAX_RELOAD_WAIT_MS` clamps it.
+    #[test]
+    fn reload_wait_is_clamped_for_a_hostile_target_duration() {
+        assert_eq!(
+            reload_wait(u32::MAX),
+            Duration::from_millis(MAX_RELOAD_WAIT_MS)
+        );
+        assert_eq!(reload_wait(4), Duration::from_millis(2_000));
+        assert_eq!(reload_wait(0), Duration::from_millis(500));
+    }
+
     const EMPTY_FRAGMENT: &[u8] = &[
         0, 0, 0, 8, b'm', b'o', b'o', b'f', 0, 0, 0, 8, b'm', b'd', b'a', b't',
     ];

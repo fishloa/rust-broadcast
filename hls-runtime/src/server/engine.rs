@@ -4375,6 +4375,91 @@ mod tests {
         )
     }
 
+    // Audit 20 finding 52 (#2863): `MAX_CACHED_RENDERS` bounds the per-stamp
+    // render cache; the one past the bound is rendered but not retained.
+    #[test]
+    fn render_cache_does_not_grow_past_max_cached_renders() {
+        let (_trunk, origin, _writer) = make_origin();
+        for i in 0..=MAX_CACHED_RENDERS {
+            let key = RenderKey::Media {
+                track_id: TrackId::new(i as u32 + 1),
+                skip: None,
+            };
+            let rendered = origin
+                .cached_render(key, || Ok(format!("playlist-{i}")))
+                .expect("render");
+            assert_eq!(rendered, format!("playlist-{i}"));
+        }
+        assert_eq!(
+            locked(&origin.render_cache).entries.len(),
+            MAX_CACHED_RENDERS,
+            "the first {MAX_CACHED_RENDERS} renders are cached, the rest are not"
+        );
+    }
+
+    // Audit 20 finding 52 (#2863): `FUTURE_PART_SEGMENT_BOUND` is the deepest
+    // segment a part fetch may name; one past it is `NotFound` promptly
+    // rather than parked.
+    #[test]
+    fn part_request_beyond_the_future_segment_bound_is_not_found() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
+        let at_bound = resolve_with_deadline(
+            &origin,
+            HlsRequest::Resource {
+                name: origin.part_name(
+                    DEFAULT_TRACK_ID,
+                    SegmentSeq::new(1 + FUTURE_PART_SEGMENT_BOUND),
+                    PartIndex::new(0),
+                    "m4s",
+                ),
+            },
+            0,
+            1_000_000_000,
+        );
+        assert!(
+            matches!(at_bound, EgressResponse::Await { .. }),
+            "a part at the bound is held open, got {at_bound:?}"
+        );
+
+        let beyond = resolve_with_deadline(
+            &origin,
+            HlsRequest::Resource {
+                name: origin.part_name(
+                    DEFAULT_TRACK_ID,
+                    SegmentSeq::new(2 + FUTURE_PART_SEGMENT_BOUND),
+                    PartIndex::new(0),
+                    "m4s",
+                ),
+            },
+            0,
+            1_000_000_000,
+        );
+        assert!(
+            matches!(beyond, EgressResponse::NotFound),
+            "a part past the bound must be NotFound, got {beyond:?}"
+        );
+    }
+
+    // Audit 20 finding 52 (#2863): the I-frame playlist enforces the same
+    // `ABUSE_MSN_FUTURE_BOUND` as the Media Playlist.
+    #[test]
+    fn iframe_far_future_msn_rejected() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
+        let outcome = resolve_now(
+            &origin,
+            iframe_playlist_request(BlockingQuery {
+                hls_msn: Some(1002),
+                ..Default::default()
+            }),
+        );
+        assert!(
+            matches!(outcome, EgressResponse::BadRequest { .. }),
+            "got {outcome:?}"
+        );
+    }
+
     // --- cold Media Playlist hold ---------------------------------------
 
     fn make_cold_origin(hold: bool) -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
