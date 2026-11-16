@@ -31,9 +31,11 @@
 //! Each resolved sample range must lie inside an `mdat` payload of the file
 //! (§8.8.7's data-reference / "the data must be in the same file"), so a
 //! hostile `trun` cannot make the demuxer hand back `moov`/`moof` bytes as
-//! sample data; and the total bytes handed out is capped at the file length, so
-//! many runs pointing at the same offset cannot amplify work. Both are checked
-//! before a byte is sliced.
+//! sample data; and the bytes handed out over a whole demux run are capped at
+//! [`sample_bytes_budget`] (one input length), so neither many runs pointing at
+//! the same offset nor many `moof`s each claiming one `mdat` can amplify the
+//! work: every claimant would copy those bytes again (audit 20 findings 13 and
+//! 39). Both are checked before a byte is sliced.
 
 use crate::TrackId;
 use alloc::vec::Vec;
@@ -128,9 +130,10 @@ pub fn sample_bytes_budget(input_len: usize) -> usize {
 /// `file` is the whole MP4; `moof_off` is the byte offset of the `moof` box
 /// itself (its 8-byte header included).
 ///
-/// Errors are [`Error::InvalidInput`] or [`Error::BufferTooShort`] — never a
-/// panic — for a `trun` sample with no size, an offset/length that overflows,
-/// a range outside every `mdat` payload, or a total exceeding the file length.
+/// Errors are [`Error::InvalidInput`], [`Error::BufferTooShort`] or
+/// [`Error::SampleDataBudgetExceeded`] — never a panic — for a `trun` sample
+/// with no size, an offset/length that overflows, a range outside every `mdat`
+/// payload, or a total exceeding the run's sample-byte allowance.
 pub fn sample_ranges(
     file: &[u8],
     moof_off: usize,
@@ -150,12 +153,31 @@ pub fn sample_ranges_in(
     moof: &MovieFragmentBox,
     track_id: TrackId,
 ) -> Result<Vec<FragmentSampleRange>> {
+    let mut copied_bytes = 0usize;
+    sample_ranges_in_run(file, mdats, moof_off, moof, track_id, &mut copied_bytes)
+}
+
+/// [`sample_ranges_in`] with the caller's run-wide sample-byte counter.
+///
+/// `copied_bytes` is the running total for **one demux run** and is never
+/// refilled: pass the same counter to every `moof` of a file, so many fragments
+/// that each claim the same `mdat` cannot copy it again per fragment. It is
+/// bounded by [`sample_bytes_budget`], which non-overlapping fragments can
+/// never exceed — one `mdat` read once, however it is split into fragments
+/// (audit 20 finding 13).
+pub(crate) fn sample_ranges_in_run(
+    file: &[u8],
+    mdats: &[MdatRange],
+    moof_off: usize,
+    moof: &MovieFragmentBox,
+    track_id: TrackId,
+    copied_bytes: &mut usize,
+) -> Result<Vec<FragmentSampleRange>> {
     let mut out = Vec::new();
     // Running end of the data consumed so far in this moof, used for a trun
     // without a `data_offset` and for the next traf with no explicit base.
     let mut data_end: i64 = moof_off as i64;
-    // Total bytes handed out, so many runs aimed at one offset cannot amplify.
-    let mut total: usize = 0;
+    let budget = sample_bytes_budget(file.len());
 
     for traf in &moof.traf {
         let tfhd = &traf.tfhd;
@@ -208,13 +230,11 @@ pub fn sample_ranges_in(
                     .checked_add(size)
                     .ok_or(Error::InvalidInput("sample offset + size overflow"))?;
                 if tfhd.track_id == track_id {
-                    total = total
+                    *copied_bytes = copied_bytes
                         .checked_add(size)
-                        .ok_or(Error::InvalidInput("fragment sample bytes overflow"))?;
-                    if total > file.len() {
-                        return Err(Error::InvalidInput(
-                            "fragment sample data exceeds the file length (overlapping runs?)",
-                        ));
+                        .ok_or(Error::SampleDataBudgetExceeded { limit: budget })?;
+                    if *copied_bytes > budget {
+                        return Err(Error::SampleDataBudgetExceeded { limit: budget });
                     }
                     need_in(file, end, "fragment sample data")?;
                     if !inside_mdat(mdats, start, end) {
@@ -450,6 +470,66 @@ mod tests {
         assert!(
             matches!(err, Error::InvalidInput(_)),
             "10k overlapping runs must be capped, got {err:?}"
+        );
+    }
+
+    /// One run's byte budget is never refilled: fragments that each claim the
+    /// same `mdat` are refused once their total passes the input's length, so
+    /// N `moof`s over one `mdat` cannot copy it N times (audit 20 findings
+    /// 13 / 57).
+    #[test]
+    fn repeated_moofs_share_one_sample_byte_budget() {
+        let mdat_body: Vec<u8> = (0u8..8).collect();
+        let probe = container(
+            b"traf",
+            &[
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
+                trun(&[2, 2], Some(0)),
+            ],
+        );
+        let (pf, moof_off) = file_with(&[probe], &mdat_body);
+        let off = mdat_rel(&pf, moof_off, mdat_body.len());
+        let traf = container(
+            b"traf",
+            &[
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
+                trun(&[2, 2], Some(off)),
+            ],
+        );
+        let (file, moof_off) = file_with(&[traf], &mdat_body);
+        let moof = parse_moof(&file, moof_off);
+        let mdats = mdat_ranges(&file);
+        let budget = sample_bytes_budget(file.len());
+        let mut copied_bytes = 0usize;
+        let mut handed_out = 0usize;
+        let mut refused = None;
+        // Bounded: each round claims 4 bytes, so the budget is crossed well
+        // before this loop ends.
+        for _ in 0..64 {
+            match sample_ranges_in_run(
+                &file,
+                &mdats,
+                moof_off,
+                &moof,
+                TrackId::new(1),
+                &mut copied_bytes,
+            ) {
+                Ok(ranges) => {
+                    handed_out += ranges.iter().map(|r| r.end - r.start).sum::<usize>();
+                }
+                Err(err) => {
+                    refused = Some(err);
+                    break;
+                }
+            }
+        }
+        assert!(
+            matches!(refused, Some(Error::SampleDataBudgetExceeded { limit }) if limit == budget),
+            "fragments claiming one mdat must be refused past the input length, got {refused:?}"
+        );
+        assert!(
+            handed_out <= budget,
+            "handed out {handed_out} bytes of a {budget}-byte budget"
         );
     }
 

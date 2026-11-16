@@ -883,6 +883,10 @@ fn collect_fragment_samples(
     let mut offset = 0usize;
     // One `mdat` scan for the whole file, shared by every fragment.
     let mdats = crate::frag_offsets::mdat_ranges(file);
+    // Sample bytes copied so far, for the whole file and never refilled: many
+    // `moof`s each claiming one `mdat` would otherwise copy it once per
+    // fragment (audit 20 finding 13).
+    let mut copied_bytes: usize = 0;
     let mut pending_moof: Option<(usize, MovieFragmentBox)> = None;
     // Running absolute decode-time cursor (media plane step 2c), seeded from
     // the first fragment's `tfdt` for this track (mirrors
@@ -920,6 +924,7 @@ fn collect_fragment_samples(
                 &moof,
                 target_track_id,
                 &mut next_dts,
+                &mut copied_bytes,
                 &mut out,
             )?;
         }
@@ -965,13 +970,21 @@ fn absorb_protected_fragment(
     moof: &MovieFragmentBox,
     target_track_id: TrackId,
     next_dts: &mut i64,
+    copied_bytes: &mut usize,
     out: &mut Vec<crate::pipeline::Sample>,
 ) -> Result<()> {
     use crate::pipeline::Sample;
 
     // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
     // with `Fmp4Demux` so the two cannot drift (audit r05-W7).
-    for r in crate::frag_offsets::sample_ranges_in(file, mdats, moof_off, moof, target_track_id)? {
+    for r in crate::frag_offsets::sample_ranges_in_run(
+        file,
+        mdats,
+        moof_off,
+        moof,
+        target_track_id,
+        copied_bytes,
+    )? {
         let dts = *next_dts;
         let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
@@ -1211,6 +1224,77 @@ mod tests {
             progressive_sample_layout(&stbl, 100),
             Err(crate::error::Error::SampleDataBudgetExceeded { limit: 100 })
         ));
+    }
+
+    /// The fragmented protected path threads ONE sample-byte counter through
+    /// every `moof`, so a run of fragments that each claim the same `mdat` is
+    /// refused past the input length instead of slicing that payload once per
+    /// fragment (audit 20 findings 13 / 57).
+    #[test]
+    fn collect_fragment_samples_shares_one_sample_byte_budget() {
+        const MOOFS: usize = 100;
+        const MDAT_PAYLOAD: usize = 1000;
+        const SAMPLES_PER_MOOF: u32 = 2;
+        const SAMPLE_SIZE: u32 = 500;
+        /// `tfhd.base_data_offset` present, `trun` data offset + per-sample size.
+        const TFHD_BASE_DATA_OFFSET_PRESENT: u32 = 0x000001;
+        const TRUN_DATA_OFFSET_AND_SIZE: u32 = 0x000001 | 0x000200;
+
+        fn bx(ty: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+            let mut out = Vec::with_capacity(8 + payload.len());
+            out.extend_from_slice(&((8 + payload.len()) as u32).to_be_bytes());
+            out.extend_from_slice(ty);
+            out.extend_from_slice(payload);
+            out
+        }
+
+        fn kids(ty: &[u8; 4], parts: &[Vec<u8>]) -> Vec<u8> {
+            let mut payload = Vec::new();
+            for p in parts {
+                payload.extend_from_slice(p);
+            }
+            bx(ty, &payload)
+        }
+
+        let moof_at = |base: u64| {
+            let mut tfhd = Vec::new();
+            tfhd.extend_from_slice(&TFHD_BASE_DATA_OFFSET_PRESENT.to_be_bytes());
+            tfhd.extend_from_slice(&1u32.to_be_bytes());
+            tfhd.extend_from_slice(&base.to_be_bytes());
+            let mut trun = Vec::new();
+            trun.extend_from_slice(&TRUN_DATA_OFFSET_AND_SIZE.to_be_bytes());
+            trun.extend_from_slice(&SAMPLES_PER_MOOF.to_be_bytes());
+            trun.extend_from_slice(&0i32.to_be_bytes());
+            for _ in 0..SAMPLES_PER_MOOF {
+                trun.extend_from_slice(&SAMPLE_SIZE.to_be_bytes());
+            }
+            let mut mfhd = Vec::new();
+            mfhd.extend_from_slice(&[0u8; FULL_HDR]);
+            mfhd.extend_from_slice(&1u32.to_be_bytes());
+            kids(
+                b"moof",
+                &[
+                    bx(b"mfhd", &mfhd),
+                    kids(b"traf", &[bx(b"tfhd", &tfhd), bx(b"trun", &trun)]),
+                ],
+            )
+        };
+
+        let mdat_payload = moof_at(0).len() + BOX_HEADER_MIN_SIZE;
+        let mut file = moof_at(mdat_payload as u64);
+        file.extend_from_slice(&bx(b"mdat", &vec![0xAA; MDAT_PAYLOAD]));
+        for _ in 1..MOOFS {
+            // Each fragment names the FIRST `mdat` in its base data offset; the
+            // empty `mdat` after it only resolves the fragment.
+            file.extend_from_slice(&moof_at(mdat_payload as u64));
+            file.extend_from_slice(&bx(b"mdat", &[]));
+        }
+
+        let err = collect_fragment_samples(&bytes::Bytes::from(file), TrackId::new(1)).unwrap_err();
+        assert!(
+            matches!(err, Error::SampleDataBudgetExceeded { .. }),
+            "fragments claiming one mdat must be capped by the run, got {err:?}"
+        );
     }
 
     use crate::media::Track;

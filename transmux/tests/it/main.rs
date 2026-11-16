@@ -74,6 +74,7 @@ mod ffmpeg_oracle;
 mod flv;
 mod flv_stream;
 mod fmp4_frag_layouts;
+mod fmp4_shared_mdat_budget;
 mod fmp4_trex_defaults;
 mod follower_cut;
 mod frame_rate;
