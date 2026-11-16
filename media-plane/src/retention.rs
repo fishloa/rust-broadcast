@@ -266,6 +266,27 @@ struct ColdEntry {
     handed_off_at: Timestamp,
 }
 
+/// Longest `cold_window` a [`RetentionDriver`] accepts: 30 days. A longer window
+/// is refused, because the ledger cannot be held to any practical footprint and
+/// an entry whose expiry instant `handed_off_at.checked_add(cold_window)` cannot
+/// represent is never expired at all — with `Duration::MAX` nothing would ever
+/// age out, and the ledger would grow without bound.
+pub const MAX_COLD_WINDOW: Duration = Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Why a [`Retention`] cannot be driven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum RetentionConfigError {
+    /// `cold_window` is longer than [`MAX_COLD_WINDOW`].
+    #[error("cold_window {cold_window:?} is past the {max:?} cap")]
+    ColdWindowTooLong {
+        /// The configured window.
+        cold_window: Duration,
+        /// [`MAX_COLD_WINDOW`].
+        max: Duration,
+    },
+}
+
 /// Drains a pinning [`SegmentCursor`] into a [`SegmentSink`] — the
 /// `Retention::Tiered` engine. Sans-IO, `Timestamp`-driven, no sleeping:
 /// [`RetentionDriver::drive`] is a plain synchronous call a caller invokes
@@ -279,8 +300,10 @@ pub struct RetentionDriver<S> {
     /// [the module docs](self#a-failing-or-slow-sink-cannot-stall-ingest--and-the-pending-hand-off-queue-has-a-hard-structural-bound-of-one).
     in_flight: Option<SegmentEntry>,
     /// Ledger of handed-off, still-`cold_window`-fresh segments, oldest
-    /// first (hand-offs happen in the pin's, and therefore the trunk's,
-    /// publish order, so a plain front-to-back purge is correct).
+    /// first and ascending by `sequence_number` (hand-offs happen in the
+    /// pin's, and therefore the trunk's, publish order, which is strictly
+    /// increasing, so a plain front-to-back purge is correct and
+    /// [`RetentionDriver::locate`] can binary-search it).
     cold: VecDeque<ColdEntry>,
     /// Set once the pin's [`ArchiveOverrun::Terminate`] has fired — see
     /// [`RetentionDriver::locate`] for what this changes.
@@ -299,24 +322,41 @@ pub struct RetentionDriver<S> {
 }
 
 impl<S: SegmentSink> RetentionDriver<S> {
-    /// Build the driver `retention` implies. `None` for
+    /// Build the driver `retention` implies. `Ok(None)` for
     /// [`Retention::HotOnly`] — there is no cold tier to drive, so no
-    /// [`SegmentSink`] is required and none is constructed.
-    pub fn new(trunk: &Arc<Trunk>, retention: Retention, sink: S) -> Option<Self> {
+    /// [`SegmentSink`] is required and none is constructed. A `cold_window`
+    /// past [`MAX_COLD_WINDOW`] is
+    /// [`RetentionConfigError::ColdWindowTooLong`].
+    ///
+    /// # Errors
+    /// [`RetentionConfigError::ColdWindowTooLong`].
+    pub fn new(
+        trunk: &Arc<Trunk>,
+        retention: Retention,
+        sink: S,
+    ) -> Result<Option<Self>, RetentionConfigError> {
         match retention {
-            Retention::HotOnly => None,
+            Retention::HotOnly => Ok(None),
             Retention::Tiered {
                 on_overrun,
                 cold_window,
-            } => Some(RetentionDriver {
-                cursor: trunk.pin_segments(on_overrun),
-                sink,
-                cold_window,
-                in_flight: None,
-                cold: VecDeque::new(),
-                terminated: false,
-                drained_up_to: None,
-            }),
+            } => {
+                if cold_window > MAX_COLD_WINDOW {
+                    return Err(RetentionConfigError::ColdWindowTooLong {
+                        cold_window,
+                        max: MAX_COLD_WINDOW,
+                    });
+                }
+                Ok(Some(RetentionDriver {
+                    cursor: trunk.pin_segments(on_overrun),
+                    sink,
+                    cold_window,
+                    in_flight: None,
+                    cold: VecDeque::new(),
+                    terminated: false,
+                    drained_up_to: None,
+                }))
+            }
         }
     }
 
@@ -432,8 +472,8 @@ impl<S: SegmentSink> RetentionDriver<S> {
         self.expire_cold(now);
         if self
             .cold
-            .iter()
-            .any(|c| c.sequence_number == sequence_number)
+            .binary_search_by_key(&sequence_number, |c| c.sequence_number)
+            .is_ok()
         {
             return SegmentLocation::Cold;
         }
@@ -562,7 +602,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         let handed_off_at = Timestamp::from_nanos(1_000_000_000);
         writer.publish_segment(segment_entry(1)).unwrap();
@@ -619,7 +660,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(true))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         // Every one of these calls returns (does not block) even though the
         // sink attached via `driver` never accepts anything.
@@ -667,7 +709,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(true))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         // Flood: 10 segments, always-Busy sink.
         for seq in 1..=10u32 {
@@ -735,7 +778,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         // Segment log capacity 2: publishing 3 before the driver ever
         // drives evicts seq 1 out from under the pin.
@@ -794,7 +838,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         // Capacity 1: publishing the first segment fills the log; a second
         // publish would need to evict it, which StallIngest refuses to do
@@ -891,7 +936,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         writer.publish_segment(segment_entry(1)).unwrap();
         writer.publish_segment(segment_entry(2)).unwrap(); // evicts seq 1's pin -> Terminate fires
@@ -942,7 +988,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         writer.publish_segment(segment_entry(1)).unwrap();
 
@@ -983,7 +1030,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(true))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
         for seq in 1..=3u32 {
             writer.publish_segment(segment_entry(seq)).unwrap();
         }
@@ -1025,7 +1073,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
 
         writer.publish_segment(segment_entry(1)).unwrap();
         writer.publish_segment(segment_entry(2)).unwrap(); // evicts seq 1's pin -> Gap fires
@@ -1072,7 +1121,9 @@ mod tests {
             on_overrun: ArchiveOverrun::Gap,
             cold_window: Duration::from_secs(10),
         };
-        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false)).unwrap();
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .unwrap()
+            .unwrap();
         {
             let w = trunk.segment_writer().unwrap();
             for s in 1..=5u32 {
@@ -1123,7 +1174,8 @@ mod tests {
             cold_window: Duration::from_secs(10),
         };
         let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
-            .expect("Tiered must build a driver");
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
         assert_eq!(driver.cold_len(), 0);
         for seq in 1..=2u32 {
             writer.publish_segment(segment_entry(seq)).unwrap();
@@ -1132,5 +1184,107 @@ mod tests {
         assert_eq!(driver.cold_len(), 2);
         driver.drive(Timestamp::from_nanos(11_000_000_000));
         assert_eq!(driver.cold_len(), 0);
+    }
+
+    // --- 11. A cold window past the ceiling is refused, and the ceiling's
+    //         own window still expires --------------------------------------
+
+    /// MUTATION VERIFIED: dropping the `cold_window > MAX_COLD_WINDOW` check
+    /// from `RetentionDriver::new` (accepting `Duration::MAX`) makes
+    /// `a_cold_window_past_the_cap_is_refused` panic on `expect("refused")`
+    /// — the constructor returned `Ok`. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn a_cold_window_past_the_cap_is_refused() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let too_long = MAX_COLD_WINDOW + Duration::from_nanos(1);
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: too_long,
+        };
+        let err = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .err()
+            .expect("a window past the cap is refused");
+        assert_eq!(
+            err,
+            RetentionConfigError::ColdWindowTooLong {
+                cold_window: too_long,
+                max: MAX_COLD_WINDOW,
+            }
+        );
+    }
+
+    #[test]
+    fn a_cold_window_at_the_cap_still_expires() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.segment_writer().unwrap();
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: MAX_COLD_WINDOW,
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .expect("the cap's own window is accepted")
+            .expect("Tiered has a driver");
+        writer.publish_segment(segment_entry(1)).unwrap();
+        driver.drive(Timestamp::from_nanos(0));
+        assert_eq!(driver.cold_len(), 1);
+        driver.drive(Timestamp::from_nanos(u64::MAX));
+        assert_eq!(
+            driver.cold_len(),
+            0,
+            "an entry whose expiry fits the clock is purged"
+        );
+    }
+
+    #[test]
+    fn every_ledger_entry_resolves_through_the_sorted_cold_ledger() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(10))
+                .with_sparse_capacity(nz(10))
+                .with_segment_capacity(nz(64))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.segment_writer().unwrap();
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(false))
+            .expect("Tiered must build a driver")
+            .expect("Tiered has a driver");
+        for seq in 1..=64u32 {
+            writer.publish_segment(segment_entry(seq)).unwrap();
+        }
+        let at = Timestamp::from_nanos(0);
+        driver.drive(at);
+        assert_eq!(driver.cold_len(), 64);
+        for seq in 1..=64u32 {
+            assert_eq!(
+                driver.locate(SegmentSeq::new(seq), at),
+                SegmentLocation::Cold,
+                "segment {seq} is in the ledger"
+            );
+        }
+        assert_eq!(
+            driver.locate(SegmentSeq::new(65), at),
+            SegmentLocation::Hot,
+            "a segment the driver never drained is Hot"
+        );
     }
 }
