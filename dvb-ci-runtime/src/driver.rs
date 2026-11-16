@@ -49,7 +49,7 @@ const MMI_CARD_PRESENT_KEYWORDS: &[&str] = &["entitlement", "card valid", "subsc
 /// needs), and every drop is counted in
 /// [`Driver::notifications_dropped`] so a host can tell it fell behind rather
 /// than silently losing the record.
-const MAX_PENDING_NOTIFICATIONS: usize = 1024;
+pub const MAX_PENDING_NOTIFICATIONS: usize = 1024;
 
 /// Clock source for [`Driver::pump`]'s elapsed-time measurement (r10-W-21).
 /// A boxed closure (not a bare `fn` pointer) so a test's [`Driver::with_clock`]

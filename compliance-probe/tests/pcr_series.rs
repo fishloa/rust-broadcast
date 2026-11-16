@@ -1,3 +1,4 @@
+#![cfg(feature = "std")]
 //! The per-PID PCR gauges must be exported only for PIDs the stream's own
 //! PMT designates as its `PCR_PID`, not for every PID that happens to carry a
 //! PCR field (audit a20-37). Every distinct `pid` label becomes a series the
