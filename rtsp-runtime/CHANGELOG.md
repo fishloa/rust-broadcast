@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 - The async client keeps one read deadline for the whole inbound read and pushes it back only when a frame is decoded, instead of restarting `Timeouts::read_idle` on every call. A keepalive wake in `recv_interleaved` at half the session timeout (always shorter than `read_idle` by default) used to cancel and restart the read timer, so a server that answered nothing was never detected (#2838).
+- `ClientSession` remembers at most `MAX_PENDING_REQUESTS` (64) unanswered requests, evicting the oldest `CSeq`. A server withholding replies used to leak one full request copy per keepalive interval and per abandoned exchange, without bound (#2839).
 
 ## [0.12.0] - 2026-11-15
 ### Changed

@@ -69,6 +69,14 @@ const MAX_INBOUND_BYTES: usize = 1024 * 1024;
 /// reaches the caller.
 const MAX_AUTH_RETRIES: u8 = 3;
 
+/// Most unanswered requests [`ClientSession`] remembers at once. Every request
+/// sent inserts a [`Pending`] (a full copy of the request) and only a matching
+/// response or a 401 replay removes it, so a server that withholds replies
+/// would otherwise leak one entry per keepalive interval and per abandoned
+/// exchange. Once full, the oldest `CSeq` is evicted; a late response for it is
+/// then dropped as the stray it is.
+pub const MAX_PENDING_REQUESTS: usize = 64;
+
 /// Record of a request the client has sent and is awaiting a response for.
 #[derive(Debug, Clone)]
 struct Pending {
@@ -524,7 +532,7 @@ impl ClientSession {
         let bytes = serialize(&Message::from(request.clone()))?;
         self.next_cseq += 1;
         self.last_uri = Some(uri.to_string());
-        self.pending.insert(
+        self.remember_pending(
             cseq,
             Pending {
                 method,
@@ -534,6 +542,17 @@ impl ClientSession {
             },
         );
         Ok(bytes)
+    }
+
+    /// Records an awaited request, evicting the oldest `CSeq` once
+    /// [`MAX_PENDING_REQUESTS`] are already outstanding.
+    fn remember_pending(&mut self, cseq: u32, pending: Pending) {
+        if self.pending.len() >= MAX_PENDING_REQUESTS {
+            if let Some(oldest) = self.pending.keys().copied().min() {
+                self.pending.remove(&oldest);
+            }
+        }
+        self.pending.insert(cseq, pending);
     }
 
     /// Assembles a `Request` with CSeq, User-Agent, Session (if known),
@@ -904,7 +923,7 @@ impl ClientSession {
         let request = self.assemble(method.clone(), &uri, new_cseq, &body, &extra)?;
         let bytes = serialize(&Message::from(request.clone()))?;
         self.next_cseq += 1;
-        self.pending.insert(
+        self.remember_pending(
             new_cseq,
             Pending {
                 method: method.clone(),
@@ -1452,6 +1471,25 @@ mod tests {
                 .is_none(),
             "no keepalive is emitted for a deadline that cannot exist"
         );
+    }
+
+    #[test]
+    fn unanswered_requests_are_bounded_and_evict_the_oldest() {
+        // #2839: a server withholding replies used to leave one full request
+        // copy per request sent (each keepalive interval, each abandoned
+        // exchange) in `pending`, without bound.
+        let mut c = ClientSession::default();
+        for _ in 0..=MAX_PENDING_REQUESTS {
+            let _ = c.options("rtsp://h/s").unwrap();
+        }
+        assert_eq!(c.pending.len(), MAX_PENDING_REQUESTS);
+        let first = crate::config::FIRST_CSEQ;
+        let newest = first + u32::try_from(MAX_PENDING_REQUESTS).expect("limit fits u32");
+        assert!(
+            !c.pending.contains_key(&first),
+            "the oldest CSeq is evicted"
+        );
+        assert!(c.pending.contains_key(&newest), "the newest is retained");
     }
 
     #[test]
