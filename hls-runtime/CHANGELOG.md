@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 ### Added
+- `client::Error::UnresolvableReferences { count }`: the `next_error` queue is capped at 256 reports and coalesces the excess into one counted error, so a playlist naming many bad references cannot grow the queue without bound when the host does not drain it (audit 20 finding 33, #2844).
 - `client::Error::UnsupportedDefine`: a playlist declaring `EXT-X-DEFINE` variables (RFC 8216bis §4.4.2.3) is refused rather than fetched with `{$name}` left literally in the URI, which produced wrong requests and 404 storms (audit 20 finding 19, #2830).
 
 ### Changed

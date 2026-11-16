@@ -147,6 +147,17 @@ pub enum Error {
         source: broadcast_common::url_ref::Error,
     },
 
+    /// More playlist references were refused than the client reports one by
+    /// one: the queue keeps the first `MAX_PENDING_ERRORS` reports and
+    /// coalesces the rest into this count, so a playlist naming an unbounded
+    /// number of bad references cannot grow the queue without bound (audit 20
+    /// finding 33, issue #2844).
+    #[error("{count} further unresolvable playlist references")]
+    UnresolvableReferences {
+        /// How many further references were refused.
+        count: usize,
+    },
+
     /// [`crate::client::HlsClient::select_variant`] named a variant index that
     /// does not exist, or was called before any master playlist had been seen.
     #[error("no such variant: {index}")]

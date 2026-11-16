@@ -43,6 +43,13 @@ const LIVE_EDGE_TARGET_DURATIONS: f64 = 3.0;
 /// Ceiling on ciphertext held while its key is still missing (total bytes).
 const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
 
+/// Ceiling on errors queued for [`HlsClient::next_error`]. The final slot
+/// coalesces any further report into one counted
+/// [`Error::UnresolvableReferences`], so a playlist naming an unbounded number
+/// of bad references cannot grow the queue without bound even when the host
+/// never drains it.
+const MAX_PENDING_ERRORS: usize = 256;
+
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
 const MAX_RELOAD_WAIT_MS: u64 = 60_000;
@@ -1960,7 +1967,7 @@ impl HlsClient {
         match self.resolved_url(base, uri) {
             Ok(url) => Some(url.to_string()),
             Err(report) => {
-                self.pending_errors.push_back(report);
+                self.push_pending_error(report);
                 None
             }
         }
@@ -2000,10 +2007,27 @@ impl HlsClient {
         source: broadcast_common::url_ref::Error,
     ) {
         self.segment_crypto.remove(&msn);
-        self.pending_errors.push_back(Error::UnresolvableReference {
+        self.push_pending_error(Error::UnresolvableReference {
             uri: uri.to_string(),
             source,
         });
+    }
+
+    /// Queue an error for [`Self::next_error`] within [`MAX_PENDING_ERRORS`].
+    /// Once the real slots are full the last one becomes a counted
+    /// [`Error::UnresolvableReferences`] and every further report increments
+    /// it, so the queue is bounded whether or not the host drains it.
+    fn push_pending_error(&mut self, error: Error) {
+        if self.pending_errors.len() < MAX_PENDING_ERRORS - 1 {
+            self.pending_errors.push_back(error);
+            return;
+        }
+        match self.pending_errors.back_mut() {
+            Some(Error::UnresolvableReferences { count }) => *count += 1,
+            _ => self
+                .pending_errors
+                .push_back(Error::UnresolvableReferences { count: 1 }),
+        }
     }
 
     /// The errors [`Self::poll`] and [`Self::next_output`] raise on the
@@ -3184,6 +3208,44 @@ mod tests {
                 .expect_err("a master EXT-X-DEFINE is refused"),
             Error::UnsupportedDefine
         );
+    }
+
+    // Audit 20 finding 33 (#2844): `pending_errors` is drained by a separate
+    // API a host can skip, so a playlist naming many bad references must not
+    // grow the queue without bound. The excess coalesces into one counted
+    // error.
+    #[test]
+    fn pending_errors_are_capped_and_coalesced() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let total = MAX_PENDING_ERRORS + 44;
+        let mut text =
+            String::from("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n");
+        for i in 0..total {
+            text.push_str(&format!("#EXTINF:2.0,\nbad seg{i}.ts\n"));
+        }
+        text.push_str("#EXT-X-ENDLIST\n");
+        client
+            .on_playlist(text.as_bytes())
+            .expect("an unresolvable-segment playlist still parses");
+        assert_eq!(
+            client.pending_errors.len(),
+            MAX_PENDING_ERRORS,
+            "the report queue is capped at MAX_PENDING_ERRORS"
+        );
+
+        let mut real = 0usize;
+        let mut coalesced = 0usize;
+        for _ in 0..MAX_PENDING_ERRORS + 2 {
+            match client.next_error() {
+                Some(Error::UnresolvableReferences { count }) => coalesced += count,
+                Some(Error::UnresolvableReference { .. }) => real += 1,
+                Some(other) => panic!("unexpected error: {other:?}"),
+                None => break,
+            }
+        }
+        assert_eq!(real, MAX_PENDING_ERRORS - 1);
+        assert_eq!(real + coalesced, total);
+        assert!(client.next_error().is_none());
     }
 
     #[test]
