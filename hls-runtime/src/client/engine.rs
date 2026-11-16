@@ -2136,8 +2136,7 @@ impl HlsClient {
         let specs_changed = self
             .last_fmp4_specs
             .as_ref()
-            .map(|prev| format!("{:?}", prev) != format!("{:?}", specs))
-            .unwrap_or(true);
+            .is_none_or(|prev| *prev != specs);
         if specs_changed {
             self.pending_outputs
                 .push_back(Output::Tracks(specs.clone()));

@@ -6,6 +6,9 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Client: a fragment's track specs are compared with `TrackSpec`'s `PartialEq` instead of formatting and comparing two `Debug` strings per fragment, so the per-fragment cost no longer scales with the codec-config size (audit 20 finding 50, #2861).
+
 ### Fixed
 - Client: an `EXT-X-MEDIA-SEQUENCE` that overflows `u64` is rejected before any client state is mutated, so one hostile reload can no longer move the high-water mark to `u64::MAX` and drop every key, wedging the session for every later playlist (audit 20 finding 18, #2829).
 
