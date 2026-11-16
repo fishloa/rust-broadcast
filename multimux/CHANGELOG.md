@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+### Changed
+- BREAKING: `source::sdp::load_sdp` is async (it reads an on-disk `@path` with `tokio::fs`), and an SDP file is capped at `source::sdp::MAX_SDP_FILE_BYTES` (64 KiB) and must be a regular file, so `@/dev/zero` or a FIFO can no longer stall a runtime worker or grow the process. Migration: `.await` the call (#2836).
 ### Fixed
 - DASH-IF ingest: a publisher disconnect mid-PUT now releases the open segment handle through an RAII guard, and every pump reply is bounded by the route body deadline, so a later segment is no longer refused with `SegmentInProgress`, and a stalled pump no longer parks the handler (#2825).
 - Removing or reloading a route lets each push task close its transport gracefully under the shutdown grace period, aborting only when it overruns, so downstream RTMP/RTSP/SRT servers see a normal close instead of an abrupt drop (#2826).
