@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- `url_ref::resolve_http` and `url_ref::Error::Scheme`: resolve a manifest reference and require the result to stay on `http`/`https`, refusing a non-web scheme and an `https`→`http` downgrade, so a manifest reader can never turn a `file:`/`ftp:`/`data:` reference (or a key-URI downgrade into cleartext) into a fetch (audit 20 finding 42, #2853).
 
 ## [13.0.0] - 2026-11-15
 ### Changed

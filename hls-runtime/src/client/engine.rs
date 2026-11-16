@@ -934,7 +934,7 @@ impl HlsClient {
                     };
                     if !self.requested.contains(&id)
                         && !self.delivered_parts.contains(&(next_msn, part_index))
-                        && let Ok(url) = Url::parse(&url::resolve(self.base(), hint_uri))
+                        && let Ok(url) = url_ref::resolve_http(self.base(), hint_uri)
                     {
                         let byte_range = self.resolve_hint_byte_range(url.as_str(), ll)?;
                         self.request_resource(id, url, byte_range);
@@ -2020,7 +2020,7 @@ impl HlsClient {
     /// it — without reporting it, so a caller that fails the whole playlist
     /// (an unusable init) can return the error directly.
     fn resolved_url(&self, base: &Url, uri: &str) -> core::result::Result<Url, Error> {
-        url_ref::resolve(base, uri).map_err(|source| Error::UnresolvableReference {
+        url_ref::resolve_http(base, uri).map_err(|source| Error::UnresolvableReference {
             uri: uri.to_string(),
             source,
         })
@@ -2031,7 +2031,7 @@ impl HlsClient {
     /// resolver refuses it: the segment stays unrequested instead of being
     /// silently renamed (issue #2458).
     fn segment_url(&mut self, msn: broadcast_hls::MediaSequence, uri: &str) -> Option<Url> {
-        match url_ref::resolve(self.base(), uri) {
+        match url_ref::resolve_http(self.base(), uri) {
             Ok(url) => Some(url),
             Err(source) => {
                 self.report_unresolvable(msn, uri, source);
@@ -3371,6 +3371,54 @@ mod tests {
                 .on_playlist(master.as_bytes())
                 .expect_err("a master EXT-X-DEFINE is refused"),
             Error::UnsupportedDefine
+        );
+    }
+
+    // Audit 20 finding 42 (#2853): a reference to a non-web scheme must never
+    // become a fetch. Before the fix `ftp:` was resolved and requested like
+    // any other URI.
+    #[test]
+    fn non_web_fetch_schemes_are_refused() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let text = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
+                    #EXT-X-MEDIA-SEQUENCE:0\n\
+                    #EXTINF:2.0,\nftp://cdn/seg0.ts\n#EXT-X-ENDLIST\n";
+        client.on_playlist(text.as_bytes()).expect("playlist parses");
+        match client.next_error() {
+            Some(Error::UnresolvableReference { source, .. }) => {
+                assert_eq!(source, broadcast_common::url_ref::Error::Scheme)
+            }
+            other => panic!("expected a scheme refusal, got {other:?}"),
+        }
+        for _ in 0..16 {
+            match client.poll() {
+                Some(Action::FetchResource { id, .. }) => {
+                    panic!("a non-web reference must not be requested: {id:?}")
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+    }
+
+    // ...and an `https` stream must not have a key fetch downgraded into the
+    // clear.
+    #[test]
+    fn an_https_stream_refuses_an_http_key_uri() {
+        let mut client = HlsClient::new(config("https://example.com/p.m3u8"));
+        let text = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
+                    #EXT-X-MEDIA-SEQUENCE:0\n\
+                    #EXT-X-KEY:METHOD=AES-128,URI=\"http://cdn/key.bin\"\n\
+                    #EXTINF:2.0,\nseg0.ts\n#EXT-X-ENDLIST\n";
+        match client.on_playlist(text.as_bytes()) {
+            Err(Error::UnresolvableReference { source, .. }) => {
+                assert_eq!(source, broadcast_common::url_ref::Error::Scheme)
+            }
+            other => panic!("expected an https->http downgrade refusal, got {other:?}"),
+        }
+        assert!(
+            client.key_urls.is_empty(),
+            "no key URL may be retained for a downgraded fetch"
         );
     }
 

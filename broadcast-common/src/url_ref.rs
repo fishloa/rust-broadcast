@@ -24,6 +24,9 @@ pub enum Error {
     ForbiddenChar(char),
     /// The base or the joined reference did not parse as a URL.
     Parse,
+    /// The resolved URL's scheme is not `http`/`https`, or it downgrades an
+    /// `https` base to `http` (audit 20 finding 42, issue #2853).
+    Scheme,
 }
 
 impl Error {
@@ -32,6 +35,7 @@ impl Error {
         match self {
             Self::ForbiddenChar(_) => "forbidden char",
             Self::Parse => "parse",
+            Self::Scheme => "scheme",
         }
     }
 }
@@ -80,6 +84,29 @@ pub fn resolve(base: &Url, reference: &str) -> Result<Url> {
 pub fn resolve_str(base: &str, reference: &str) -> Result<alloc::string::String> {
     let base = Url::parse(base).map_err(|_| Error::Parse)?;
     resolve(&base, reference).map(|joined| joined.to_string())
+}
+
+/// Resolve `reference` against `base` and require the result to stay on the
+/// web (`http`/`https`), without an `https`→`http` downgrade.
+///
+/// A manifest is fetched from an origin the player does not control, so a
+/// reference to `file:`, `data:`, `ftp:` or any other scheme must not become a
+/// request, and an `https` stream must not have a key or segment fetch
+/// downgraded into the clear (audit 20 finding 42, issue #2853). Cross-origin
+/// `http`/`https` stays allowed — a CDN is normal.
+///
+/// # Errors
+/// As [`resolve`], plus [`Error::Scheme`] when the result is not `http`/
+/// `https` or downgrades an `https` base to `http`.
+pub fn resolve_http(base: &Url, reference: &str) -> Result<Url> {
+    let joined = resolve(base, reference)?;
+    if !matches!(joined.scheme(), "http" | "https") {
+        return Err(Error::Scheme);
+    }
+    if base.scheme() == "https" && joined.scheme() == "http" {
+        return Err(Error::Scheme);
+    }
+    Ok(joined)
 }
 
 #[cfg(test)]
@@ -197,9 +224,53 @@ mod tests {
     }
 
     #[test]
+    fn resolve_http_refuses_non_web_schemes() {
+        let base = base();
+        for evil in [
+            "file:///etc/passwd",
+            "ftp://cdn/seg1.m4s",
+            "data:text/plain,hello",
+            "javascript:alert(1)",
+            "ws://cdn/sock",
+        ] {
+            assert_eq!(resolve_http(&base, evil), Err(Error::Scheme), "{evil:?}");
+        }
+        assert_eq!(
+            resolve_http(&Url::parse("file:///a/p.m3u8").expect("base"), "seg1.m4s"),
+            Err(Error::Scheme),
+            "a relative reference inherits a non-web base scheme"
+        );
+    }
+
+    #[test]
+    fn resolve_http_refuses_an_https_to_http_downgrade() {
+        let https = Url::parse("https://h/a/p.m3u8").expect("base");
+        assert_eq!(
+            resolve_http(&https, "http://cdn/key.bin"),
+            Err(Error::Scheme),
+            "a key fetch must not drop to cleartext"
+        );
+        assert_eq!(
+            resolve_http(&https, "//cdn/seg1.m4s").expect("protocol-relative inherits https"),
+            Url::parse("https://cdn/seg1.m4s").expect("url")
+        );
+        assert_eq!(
+            resolve_http(&https, "seg1.m4s").expect("relative keeps https"),
+            Url::parse("https://h/a/seg1.m4s").expect("url")
+        );
+        let http = base();
+        assert_eq!(
+            resolve_http(&http, "https://cdn/seg1.m4s").expect("http may upgrade"),
+            Url::parse("https://cdn/seg1.m4s").expect("url")
+        );
+    }
+
+    #[test]
     fn labels() {
         assert_eq!(Error::ForbiddenChar('\r').name(), "forbidden char");
         assert_eq!(Error::ForbiddenChar('\r').to_string(), "forbidden char");
         assert_eq!(Error::Parse.name(), "parse");
+        assert_eq!(Error::Scheme.name(), "scheme");
+        assert_eq!(Error::Scheme.to_string(), "scheme");
     }
 }
