@@ -102,6 +102,58 @@ fn a_refresh_that_adds_a_chunk_fetches_exactly_that_chunk() {
 }
 
 #[test]
+fn a_refresh_past_the_plan_cap_drops_the_oldest_chunks_with_a_discontinuity() {
+    let mut grown = String::from("<c n=\"2\" d=\"10000000\" />");
+    for n in 3..=10 {
+        grown.push_str(&format!("\n<c n=\"{n}\" d=\"10000000\" />"));
+    }
+    let refreshed = String::from_utf8(live_manifest(""))
+        .expect("utf8")
+        .replacen("<c n=\"2\" d=\"10000000\" />", &grown, 1);
+    let mut host = Host::new(SmoothClientConfig::default().with_max_plan_len(3));
+    host.serve_dir("av");
+    host.route(
+        "Manifest",
+        vec![
+            Reply::Body(live_manifest("")),
+            Reply::Body(refreshed.into_bytes()),
+        ],
+    );
+    for start in [30_000_000, 40_000_000, 50_000_000, 60_000_000, 70_000_000] {
+        host.route(
+            &format!("QualityLevels(64528)/Fragments(video={start})"),
+            vec![Reply::Body(fixture(
+                "av/QualityLevels(64528)/Fragments(video=20000000)",
+            ))],
+        );
+    }
+    for start in [80_000_000, 90_000_000, 100_000_000] {
+        host.route(
+            &format!("QualityLevels(64528)/Fragments(video={start})"),
+            vec![Reply::Body(fixture(
+                "av/QualityLevels(64528)/Fragments(video=20000000)",
+            ))],
+        );
+    }
+    host.run_until(|o| o.iter().any(|o| matches!(o, Output::Discontinuity)));
+    assert!(host.has(|o| matches!(o, Output::Discontinuity)));
+    for start in [30_000_000, 40_000_000, 50_000_000, 60_000_000, 70_000_000] {
+        assert_eq!(
+            host.count_requests(&format!("{VIDEO_URL}{start})")),
+            0,
+            "the plan dropped chunk {start}"
+        );
+    }
+    for start in [80_000_000, 90_000_000, 100_000_000] {
+        assert_eq!(
+            host.count_requests(&format!("{VIDEO_URL}{start})")),
+            1,
+            "the plan kept chunk {start}"
+        );
+    }
+}
+
+#[test]
 fn a_live_window_that_moves_past_the_last_fragment_is_a_discontinuity() {
     let moved = String::from_utf8(live_manifest("")).expect("utf8").replace(
         "<c n=\"0\" d=\"10000000\" />",

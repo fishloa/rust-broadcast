@@ -23,6 +23,14 @@ pub const DEFAULT_MAX_REFRESH_MISSES: u32 = 5;
 /// Fragment body bytes held back, across every stream, until all of them have
 /// announced their local track id.
 pub const DEFAULT_MAX_HELD_BYTES: usize = 32 * 1024 * 1024;
+/// Longest client Manifest body the session accepts, in bytes: the shared XML
+/// reader's own document bound, which the manifest parser is given.
+pub const DEFAULT_MAX_MANIFEST_BYTES: usize = broadcast_common::xml_chars::MAX_XML_BYTES;
+/// Longest fragment body the session accepts, in bytes.
+pub const DEFAULT_MAX_FRAGMENT_BYTES: usize = 16 * 1024 * 1024;
+/// Most chunks one stream's plan may hold after a live refresh merges the
+/// manifest's new ones.
+pub const DEFAULT_MAX_PLAN_LEN: usize = 10_000;
 /// Backoff after the first failures.
 pub const DEFAULT_BACKOFF_STEPS: [Duration; 4] = [
     Duration::from_millis(250),
@@ -101,6 +109,18 @@ pub struct SmoothClientConfig {
     /// that serves one stream nothing usable cannot make the healthy streams' fragments
     /// accumulate without bound; default 32 MiB ([`DEFAULT_MAX_HELD_BYTES`]).
     pub max_held_bytes: usize,
+    /// Longest client Manifest body accepted; a longer one is a
+    /// [`ManifestFault::TooLarge`](super::ManifestFault::TooLarge) manifest failure; default 4 MiB
+    /// ([`DEFAULT_MAX_MANIFEST_BYTES`]).
+    pub max_manifest_bytes: usize,
+    /// Longest fragment body accepted; a longer one ends the session with
+    /// [`SmoothError::FragmentTooLarge`](crate::SmoothError::FragmentTooLarge); default 16 MiB
+    /// ([`DEFAULT_MAX_FRAGMENT_BYTES`]).
+    pub max_fragment_bytes: usize,
+    /// Most chunks one stream's plan may hold: a live refresh that appends more drops the
+    /// oldest of them and the session reports [`Output::Discontinuity`](super::Output::Discontinuity);
+    /// default 10 000 ([`DEFAULT_MAX_PLAN_LEN`]).
+    pub max_plan_len: usize,
     /// Retry delays by attempt, then the cap.
     pub backoff: BackoffSteps,
     /// Seed of the retry jitter ([`broadcast_common::backoff::RetrySchedule`]): the first retry of
@@ -150,6 +170,9 @@ impl Default for SmoothClientConfig {
             max_manifest_failures: DEFAULT_MAX_MANIFEST_FAILURES,
             max_refresh_misses: DEFAULT_MAX_REFRESH_MISSES,
             max_held_bytes: DEFAULT_MAX_HELD_BYTES,
+            max_manifest_bytes: DEFAULT_MAX_MANIFEST_BYTES,
+            max_fragment_bytes: DEFAULT_MAX_FRAGMENT_BYTES,
+            max_plan_len: DEFAULT_MAX_PLAN_LEN,
             backoff: BackoffSteps {
                 steps: DEFAULT_BACKOFF_STEPS.to_vec(),
                 cap: DEFAULT_BACKOFF_CAP,
@@ -195,6 +218,27 @@ impl SmoothClientConfig {
     #[must_use]
     pub fn with_max_held_bytes(mut self, max_held_bytes: usize) -> Self {
         self.max_held_bytes = max_held_bytes;
+        self
+    }
+
+    /// Set [`Self::max_manifest_bytes`].
+    #[must_use]
+    pub fn with_max_manifest_bytes(mut self, max_manifest_bytes: usize) -> Self {
+        self.max_manifest_bytes = max_manifest_bytes;
+        self
+    }
+
+    /// Set [`Self::max_fragment_bytes`].
+    #[must_use]
+    pub fn with_max_fragment_bytes(mut self, max_fragment_bytes: usize) -> Self {
+        self.max_fragment_bytes = max_fragment_bytes;
+        self
+    }
+
+    /// Set [`Self::max_plan_len`].
+    #[must_use]
+    pub fn with_max_plan_len(mut self, max_plan_len: usize) -> Self {
+        self.max_plan_len = max_plan_len;
         self
     }
 

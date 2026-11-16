@@ -307,3 +307,40 @@ fn a_zero_timescale_is_never_delivered() {
         Output::Fatal(SmoothError::Manifest(ManifestFault::Parse))
     )));
 }
+
+#[test]
+fn a_manifest_body_one_byte_past_the_cap_is_a_too_large_fault() {
+    let body = fixture("av/Manifest");
+    let mut refused = av_host(
+        SmoothClientConfig::default()
+            .with_max_manifest_bytes(body.len() - 1)
+            .with_max_manifest_failures(1),
+    );
+    refused.route("Manifest", vec![Reply::Body(body.clone())]);
+    refused.run_until(|o| o.iter().any(is_fatal));
+    assert!(refused.has(|o| matches!(
+        o,
+        Output::Fatal(SmoothError::Manifest(ManifestFault::TooLarge))
+    )));
+    assert_eq!(refused.count_requests(FIRST_VIDEO), 0, "nothing is fetched");
+
+    let mut accepted = av_host(SmoothClientConfig::default().with_max_manifest_bytes(body.len()));
+    accepted.route("Manifest", vec![Reply::Body(body)]);
+    accepted.run_until(|o| o.iter().any(is_ended));
+    assert!(accepted.has(is_ended), "a manifest at the cap is accepted");
+}
+
+#[test]
+fn a_fragment_body_one_byte_past_the_cap_ends_the_session() {
+    let cap = fixture("av/QualityLevels(98429)/Fragments(audio=0)").len() - 1;
+    let mut host = av_host(SmoothClientConfig::default().with_max_fragment_bytes(cap));
+    host.run_until(|o| o.iter().any(is_fatal));
+    assert!(host.has(|o| matches!(
+        o,
+        Output::Fatal(SmoothError::FragmentTooLarge { stream, .. }) if stream.0 == 1
+    )));
+    assert!(
+        host.samples().iter().all(|(track, _)| track.value() != 2),
+        "the refused fragment produces no samples"
+    );
+}

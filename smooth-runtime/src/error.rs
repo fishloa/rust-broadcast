@@ -51,4 +51,14 @@ pub enum SmoothError {
         /// The configured `max_held_bytes`.
         max: usize,
     },
+    /// A fragment body was longer than `max_fragment_bytes`.
+    #[error("fragment of stream {stream:?} is {bytes} bytes, past the {max}-byte cap")]
+    FragmentTooLarge {
+        /// The stream it belonged to.
+        stream: crate::client::StreamId,
+        /// The body's length.
+        bytes: usize,
+        /// The configured `max_fragment_bytes`.
+        max: usize,
+    },
 }

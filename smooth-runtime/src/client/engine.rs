@@ -255,13 +255,18 @@ impl SmoothClient {
         if !self.take_manifest(id) {
             return;
         }
+        if bytes.len() > self.config.max_manifest_bytes {
+            return self.manifest_failed(now, ManifestFault::TooLarge, 0);
+        }
         let Ok(text) = std::str::from_utf8(bytes) else {
             return self.manifest_failed(now, ManifestFault::Utf8, 0);
         };
         if manifest_declares_protection(text) {
             return self.fail(SmoothError::ManifestProtected);
         }
-        match SmoothManifest::parse(text) {
+        let mut limits = broadcast_smooth::default_limits();
+        limits.max_bytes = self.config.max_manifest_bytes;
+        match SmoothManifest::parse_with_limits(text, limits) {
             Ok(manifest) => self.accept_manifest(&manifest),
             Err(_) => self.manifest_failed(now, ManifestFault::Parse, 0),
         }
@@ -274,6 +279,13 @@ impl SmoothClient {
         let Some((si, chunk)) = self.take_fragment(id) else {
             return;
         };
+        if bytes.len() > self.config.max_fragment_bytes {
+            return self.fail(SmoothError::FragmentTooLarge {
+                stream: StreamId(si),
+                bytes: bytes.len(),
+                max: self.config.max_fragment_bytes,
+            });
+        }
         match fragment_state(bytes) {
             FragmentState::Clear => {}
             FragmentState::Encrypted => return self.fail(SmoothError::FragmentEncrypted),
@@ -580,7 +592,10 @@ impl SmoothClient {
             };
             self.streams[si].refresh_misses = 0;
             match found.enumerate_chunks() {
-                Ok(chunks) => discontinuity |= self.streams[si].merge_refresh(chunks),
+                Ok(chunks) => {
+                    discontinuity |=
+                        self.streams[si].merge_refresh(chunks, self.config.max_plan_len);
+                }
                 Err(_) => {
                     self.outputs
                         .push_back(Output::Dropped(Dropped::Manifest(ManifestFault::Timeline)));
