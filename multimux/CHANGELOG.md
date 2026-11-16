@@ -4,6 +4,7 @@
 
 ### Fixed
 - The RTMP accept pump backs off 100 ms through a transient listen-socket error (a connection flood's `EMFILE`, a peer's pre-accept `ECONNABORTED`) instead of ending the route, and a pump that does end is marked dead so the next attempt rebinds rather than reusing a receiver nothing feeds (#2812).
+- The media listener caps concurrent connections per peer IP at `MAX_CONNECTIONS_PER_IP` (64) alongside the global cap, and fails a response body that produces no frame for `limit::IDLE_WRITE_TIMEOUT` (30 s), so one host cannot hold every connection slot and pool permit by never reading what it requested (#2818).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

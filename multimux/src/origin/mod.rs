@@ -395,6 +395,13 @@ pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// rather than parked in the kernel backlog.
 pub const MAX_CONNECTIONS: usize = 1024;
 
+/// Hard cap on concurrent live connections from one peer IP. A single host
+/// otherwise holds every [`MAX_CONNECTIONS`] slot (and every pool permit the
+/// bodies they never read) and stops every route; a connection past this cap
+/// is closed at `accept`, like the global one. The per-IP table is pruned as
+/// connections close, so it is bounded by the IPs actually connected.
+pub const MAX_CONNECTIONS_PER_IP: usize = 64;
+
 /// HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS advertised to clients on every h2
 /// connection (hyper's own default). Named constant rather than pulled from
 /// `Config`: multimux has no per-stream h2 knob today.
@@ -446,6 +453,7 @@ pub(crate) async fn serve_hyper_util(
         HEADER_READ_TIMEOUT,
         DRAIN_DEADLINE,
         MAX_CONNECTIONS,
+        MAX_CONNECTIONS_PER_IP,
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
     )
     .await
@@ -484,6 +492,35 @@ pub async fn serve_hyper_util_with_limits(
         header_read,
         drain,
         max_connections,
+        MAX_CONNECTIONS_PER_IP,
+        |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
+    )
+    .await
+}
+
+/// [`serve_hyper_util`] with explicit header-read + drain timeouts, a
+/// connection cap AND a per-IP cap (test-only): the per-IP cap is what the
+/// per-peer connection-cap test dials low to observe the second connection
+/// from one address being closed at `accept`.
+#[doc(hidden)]
+#[cfg(feature = "test-seams")]
+pub async fn serve_hyper_util_with_per_ip_limit(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    max_connections: usize,
+    max_connections_per_ip: usize,
+) -> std::io::Result<()> {
+    serve_impl(
+        listener,
+        app,
+        token,
+        header_read,
+        drain,
+        max_connections,
+        max_connections_per_ip,
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
     )
     .await
@@ -516,6 +553,7 @@ where
         header_read,
         drain,
         MAX_CONNECTIONS,
+        MAX_CONNECTIONS_PER_IP,
         accept_source,
     )
     .await
@@ -544,6 +582,7 @@ pub async fn serve_hyper_util_with_task_gauge(
             .with_read_idle(header_read)
             .with_write(drain),
         max_connections,
+        MAX_CONNECTIONS_PER_IP,
         Some(live_tasks),
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
     )
@@ -561,6 +600,7 @@ async fn serve_impl<A, Fut>(
     header_read: Duration,
     drain: Duration,
     max_connections: usize,
+    max_connections_per_ip: usize,
     accept_source: A,
 ) -> std::io::Result<()>
 where
@@ -577,6 +617,7 @@ where
             .with_read_idle(header_read)
             .with_write(drain),
         max_connections,
+        max_connections_per_ip,
         None,
         accept_source,
     )
@@ -593,6 +634,7 @@ async fn serve_impl_with_task_gauge<A, Fut>(
     token: tokio_util::sync::CancellationToken,
     timeouts: broadcast_common::timeouts::Timeouts,
     max_connections: usize,
+    max_connections_per_ip: usize,
     live_tasks: Option<Arc<std::sync::atomic::AtomicUsize>>,
     accept_source: A,
 ) -> std::io::Result<()>
@@ -613,6 +655,10 @@ where
 
     let listener = Arc::new(listener);
     let conns = Arc::new(tokio::sync::Semaphore::new(max_connections));
+    let per_ip_conns = parking_lot::Mutex::new(std::collections::HashMap::<
+        std::net::IpAddr,
+        Arc<tokio::sync::Semaphore>,
+    >::new());
     let graceful = GracefulShutdown::new();
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -631,6 +677,11 @@ where
         } else {
             while tasks.try_join_next().is_some() {}
         }
+        // A peer's entry is dropped once it holds no permit, so the table is
+        // bounded by the IPs connected right now, not every IP ever seen.
+        per_ip_conns
+            .lock()
+            .retain(|_, sem| sem.available_permits() < max_connections_per_ip);
 
         let accepted = tokio::select! {
             () = token.cancelled() => break,
@@ -661,6 +712,28 @@ where
             }
         };
 
+        // The same rule per peer: one host cannot take every slot. The
+        // semaphore lives in the table (and the permit in the connection
+        // task), so it is released exactly when that connection closes.
+        let ip_permit = {
+            let mut table = per_ip_conns.lock();
+            let sem =
+                Arc::clone(table.entry(remote_addr.ip()).or_insert_with(|| {
+                    Arc::new(tokio::sync::Semaphore::new(max_connections_per_ip))
+                }));
+            match sem.try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!(
+                        peer = %remote_addr.ip(),
+                        "origin: per-IP connection cap reached; closing the accepted socket"
+                    );
+                    drop(stream);
+                    continue;
+                }
+            }
+        };
+
         let app = app.clone();
         let watcher = graceful.watcher();
         if let Some(gauge) = &live_tasks {
@@ -668,6 +741,7 @@ where
         }
         tasks.spawn(async move {
             let _permit = permit;
+            let _ip_permit = ip_permit;
             use axum::extract::connect_info::ConnectInfo;
             use tower::Layer as _;
             let local_addr = stream.local_addr().ok();
