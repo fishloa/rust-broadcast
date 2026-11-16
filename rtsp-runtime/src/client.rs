@@ -70,11 +70,11 @@ const MAX_INBOUND_BYTES: usize = 1024 * 1024;
 const MAX_AUTH_RETRIES: u8 = 3;
 
 /// Most unanswered requests [`ClientSession`] remembers at once. Every request
-/// sent inserts a [`Pending`] (a full copy of the request) and only a matching
-/// response or a 401 replay removes it, so a server that withholds replies
-/// would otherwise leak one entry per keepalive interval and per abandoned
-/// exchange. Once full, the oldest `CSeq` is evicted; a late response for it is
-/// then dropped as the stray it is.
+/// sent inserts a `Pending` record (a full copy of the request) and only a
+/// matching response or a 401 replay removes it, so a server that withholds
+/// replies would otherwise leak one entry per keepalive interval and per
+/// abandoned exchange. Once full, the oldest `CSeq` is evicted; a late
+/// response for it is then dropped as the stray it is.
 pub const MAX_PENDING_REQUESTS: usize = 64;
 
 /// Record of a request the client has sent and is awaiting a response for.
@@ -551,10 +551,10 @@ impl ClientSession {
     /// Records an awaited request, evicting the oldest `CSeq` once
     /// [`MAX_PENDING_REQUESTS`] are already outstanding.
     fn remember_pending(&mut self, cseq: u32, pending: Pending) {
-        if self.pending.len() >= MAX_PENDING_REQUESTS {
-            if let Some(oldest) = self.pending.keys().copied().min() {
-                self.pending.remove(&oldest);
-            }
+        if self.pending.len() >= MAX_PENDING_REQUESTS
+            && let Some(oldest) = self.pending.keys().copied().min()
+        {
+            self.pending.remove(&oldest);
         }
         self.pending.insert(cseq, pending);
     }

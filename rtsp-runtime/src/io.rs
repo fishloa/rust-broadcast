@@ -485,9 +485,11 @@ where
                     self.idle_deadline =
                         tokio::time::Instant::now().checked_add(self.timeouts.read_idle);
                     match event {
-                        ClientEvent::Response { method, status, .. }
-                            if status == rtsp_types::StatusCode::SessionNotFound =>
-                        {
+                        ClientEvent::Response {
+                            method,
+                            status: rtsp_types::StatusCode::SessionNotFound,
+                            ..
+                        } => {
                             return Err(Error::SessionNotFound { method });
                         }
                         event @ ClientEvent::MediaData { .. } => {
