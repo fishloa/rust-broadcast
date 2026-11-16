@@ -73,6 +73,7 @@
 //! "no sync byte at all in this file" respectively) and are left as
 //! one-shot `check` diagnostics for v1.
 
+use alloc::collections::BTreeSet;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use core::time::Duration;
@@ -252,9 +253,12 @@ pub struct WatchState {
     /// `version_number` means the program's stream set may have changed, so
     /// its tracks are reconciled against the new PMT (audit MD-W8).
     pmt_generations: BTreeMap<u16, (u8, BTreeMap<Pid, StreamType>)>,
-    /// How many programs currently declare each elementary PID. A PID shared
-    /// by two programs must stay tracked while either still declares it.
-    pid_refs: BTreeMap<Pid, usize>,
+    /// Which programs currently declare each elementary PID, and with which
+    /// `stream_type`. A PID shared by two programs must stay tracked while
+    /// either still declares it, and when one leaves its *kind* is restored
+    /// from the remaining declarers — both answerable from this one map, where
+    /// the count alone needed a scan of every program per PID (audit a20-45).
+    pid_declarers: BTreeMap<Pid, BTreeMap<u16, StreamType>>,
     datagrams_total: u64,
     scte35_events_total: u64,
     scte35_in_future_total: u64,
@@ -281,7 +285,7 @@ impl WatchState {
             es_tracks: BTreeMap::new(),
             scte35_tracks: BTreeMap::new(),
             pmt_generations: BTreeMap::new(),
-            pid_refs: BTreeMap::new(),
+            pid_declarers: BTreeMap::new(),
             datagrams_total: 0,
             scte35_events_total: 0,
             scte35_in_future_total: 0,
@@ -343,8 +347,8 @@ impl WatchState {
         //   timestamp state belonged to the old codec);
         // - a PID no longer declared by ANY program stops being tracked.
         //
-        // `pid_refs` is what makes the last rule safe for a PID two programs
-        // share: it is dropped only when the count reaches zero.
+        // `pid_declarers` is what makes the last rule safe for a PID two
+        // programs share: it is dropped only when no program declares it.
         let events: Vec<_> = self.demux.feed(packet).collect();
         for ev in events {
             match ev.table_section() {
@@ -360,7 +364,7 @@ impl WatchState {
                 // exist: a program that disappears from it must release its
                 // PIDs, or its tracks are held for the life of the process.
                 Ok(AnyTableSection::PatSection(pat)) => {
-                    let present: alloc::vec::Vec<u16> = pat
+                    let present: BTreeSet<u16> = pat
                         .entries
                         .iter()
                         .map(|e| e.program_number)
@@ -404,16 +408,14 @@ impl WatchState {
         let old_declared = previous.map(|(_, old)| old).unwrap_or_default();
         for old_pid in old_declared.keys() {
             if !declared.contains_key(old_pid) {
-                self.release_pid(*old_pid);
+                self.release_pid(program_number, *old_pid);
             }
         }
         for (&elem_pid, &stream_type) in &declared {
-            if !old_declared.contains_key(&elem_pid) {
-                self.pid_refs
-                    .entry(elem_pid)
-                    .and_modify(|n| *n += 1)
-                    .or_insert(1);
-            }
+            self.pid_declarers
+                .entry(elem_pid)
+                .or_default()
+                .insert(program_number, stream_type);
             if old_declared.get(&elem_pid) == Some(&stream_type) {
                 continue;
             }
@@ -452,8 +454,8 @@ impl WatchState {
     /// re-appearance of the same `program_number` be treated as a fresh
     /// declaration (and so be re-tracked) rather than compared against a
     /// stale generation.
-    fn retain_programs(&mut self, present: &[u16]) {
-        let gone: alloc::vec::Vec<u16> = self
+    fn retain_programs(&mut self, present: &BTreeSet<u16>) {
+        let gone: Vec<u16> = self
             .pmt_generations
             .keys()
             .copied()
@@ -464,7 +466,7 @@ impl WatchState {
                 continue;
             };
             for elem_pid in declared.keys() {
-                self.release_pid(*elem_pid);
+                self.release_pid(program_number, *elem_pid);
             }
         }
     }
@@ -477,30 +479,20 @@ impl WatchState {
     /// different `stream_type`s: `retrack` is last-declarer-wins, so when that
     /// declarer leaves, the PID would otherwise keep a codec nothing declares
     /// any more.
-    fn release_pid(&mut self, pid: Pid) {
-        let Some(count) = self.pid_refs.get_mut(&pid) else {
+    fn release_pid(&mut self, program_number: u16, pid: Pid) {
+        let Some(declarers) = self.pid_declarers.get_mut(&pid) else {
             return;
         };
-        *count = count.saturating_sub(1);
-        if *count > 0 {
-            if let Some(stream_type) = self.remaining_declared_type(pid) {
-                self.retrack(pid, stream_type);
-            }
+        declarers.remove(&program_number);
+        // Keyed by program number, so the first remaining declarer is the
+        // lowest-numbered one, exactly the choice the per-program scan made.
+        if let Some(&stream_type) = declarers.values().next() {
+            self.retrack(pid, stream_type);
             return;
         }
-        self.pid_refs.remove(&pid);
+        self.pid_declarers.remove(&pid);
         self.es_tracks.remove(&pid.value());
         self.scte35_tracks.remove(&pid.value());
-    }
-
-    /// The `stream_type` some still-registered program declares for `pid`.
-    /// `pmt_generations` is a `BTreeMap` keyed by program number, so this
-    /// takes the lowest-numbered declarer and is deterministic.
-    fn remaining_declared_type(&self, pid: Pid) -> Option<StreamType> {
-        self.pmt_generations
-            .values()
-            .filter_map(|(_, declared)| declared.get(&pid).copied())
-            .next()
     }
 
     /// Reassemble + parse `splice_info_section`s on a PMT-declared SCTE-35
@@ -1849,7 +1841,7 @@ pub(crate) mod tests {
         );
 
         // The PAT no longer lists program 1.
-        state.retain_programs(&[]);
+        state.retain_programs(&BTreeSet::new());
         assert!(
             !state.es_tracks.contains_key(&SHARED_PID.value()),
             "a program that left the PAT must stop being tracked",
@@ -1863,7 +1855,7 @@ pub(crate) mod tests {
             "its generation entry must be cleared",
         );
         assert!(
-            !state.pid_refs.contains_key(&SHARED_PID),
+            !state.pid_declarers.contains_key(&SHARED_PID),
             "and its reference count released",
         );
     }
@@ -1880,7 +1872,7 @@ pub(crate) mod tests {
         state.apply_pmt_declaration(1, 0, &[(SHARED_PID, StreamType::AacAdts)]);
         state.apply_pmt_declaration(2, 0, &[(SHARED_PID, StreamType::H264)]);
         // Program 2 leaves the PAT.
-        state.retain_programs(&[1]);
+        state.retain_programs(&BTreeSet::from([1]));
         assert!(
             state.es_tracks.contains_key(&SHARED_PID.value()),
             "program 1 still declares the PID, so it stays tracked",
@@ -1889,6 +1881,63 @@ pub(crate) mod tests {
             state.es_tracks.get(&SHARED_PID.value()).map(|t| t.kind),
             Some(EsKind::AudioAdts),
             "the PID must be restored to the type program 1 declares",
+        );
+    }
+
+    /// The per-PID declarer index is maintained incrementally (audit a20-45):
+    /// every program that declares a PID is recorded with its own
+    /// `stream_type`, so releasing one program answers "what do the others
+    /// declare?" from that PID's own entry instead of scanning every program.
+    #[test]
+    fn pid_declarers_are_indexed_per_program() {
+        let mut state = WatchState::new();
+        state.apply_pmt_declaration(1, 0, &[(SHARED_PID, StreamType::AacAdts)]);
+        state.apply_pmt_declaration(2, 0, &[(SHARED_PID, StreamType::H264)]);
+        assert_eq!(
+            state.pid_declarers.get(&SHARED_PID).cloned(),
+            Some(BTreeMap::from([
+                (1, StreamType::AacAdts),
+                (2, StreamType::H264)
+            ]))
+        );
+
+        state.retain_programs(&BTreeSet::from([2]));
+        assert_eq!(
+            state.pid_declarers.get(&SHARED_PID).cloned(),
+            Some(BTreeMap::from([(2, StreamType::H264)])),
+            "the departed program's declaration must be gone from the index"
+        );
+    }
+
+    /// A full PAT section's worth of programs sharing one PID: reconciling the
+    /// PAT must leave exactly the surviving declarers recorded for that PID,
+    /// and keep it tracked while any of them is present (audit a20-45).
+    #[test]
+    fn many_programs_sharing_one_pid_reconcile_to_exactly_the_survivors() {
+        const PROGRAMS: u16 = 253;
+
+        let mut state = WatchState::new();
+        for program in 1..=PROGRAMS {
+            state.apply_pmt_declaration(program, 0, &[(SHARED_PID, StreamType::H264)]);
+        }
+        assert_eq!(
+            state.pid_declarers.get(&SHARED_PID).map(BTreeMap::len),
+            Some(usize::from(PROGRAMS)),
+            "every declaring program must be recorded"
+        );
+
+        let survivors: BTreeSet<u16> = (1..=PROGRAMS).filter(|program| program % 2 == 0).collect();
+        state.retain_programs(&survivors);
+
+        let declarers = state
+            .pid_declarers
+            .get(&SHARED_PID)
+            .expect("one program still declares the PID");
+        assert_eq!(declarers.len(), survivors.len());
+        assert!(declarers.keys().all(|program| survivors.contains(program)));
+        assert!(
+            state.es_tracks.contains_key(&SHARED_PID.value()),
+            "the PID stays tracked while a surviving program declares it"
         );
     }
 

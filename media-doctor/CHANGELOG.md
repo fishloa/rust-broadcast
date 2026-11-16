@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `WatchState`'s PAT/PMT reconciliation indexes each elementary PID's declaring programs (`pid -> program -> stream_type`), so a PAT cycle costs O(programs + PIDs) instead of scanning every program per released PID and every program per PAT entry; a forged fast-cycling PAT can no longer stall ingest quadratically (#2856).
 
 ## [0.16.0] - 2026-11-15
 ### Added
