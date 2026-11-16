@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - A response whose declared `Content-Length` (or the length its `Content-Range` names) is already past `max_segment_bytes`/`max_manifest_bytes` is closed at the head, with one non-fatal `ErrorKind::BodyTooLarge`, instead of being downloaded until the cap trips. The parked-prefix stash also holds at most two segment bodies together, evicting the oldest, so a host that stalls every request in flight keeps `max_segment_bytes` x 2 parked rather than x 8 (#2847).
+- A host that can send UDP to the bound port can no longer reset playback with one datagram: a new SSRC is adopted only after `SSRC_PROBATION` consecutive in-order packets (until then its packets are dropped and counted `DatagramStats::late`), a `Event::Discontinuity` queued right behind another coalesces into it, and the kept events a player can resync past (`Event::Discontinuity`, `Event::AvSync`) are capped at 1024, so a stalled host's queue no longer grows without bound and a draining host's playout is no longer reset per spoofed packet (#2854).
 
 ## [0.6.0] - 2026-11-15
 ### Changed

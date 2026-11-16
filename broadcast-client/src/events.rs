@@ -1120,7 +1120,10 @@ pub struct Config {
     /// always survives). One [`Event::Discontinuity`] takes the place of each burst of dropped samples
     /// so the player re-syncs. Every other event (tracks, errors, buffer events, terminal
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
-    /// stalled host leaves unread. Must be non-zero (a zero cap would drop every sample).
+    /// stalled host leaves unread. The kept events that a player can also resync past
+    /// ([`Event::Discontinuity`], [`Event::AvSync`]) have a ceiling of their own, and a
+    /// [`Event::Discontinuity`] queued right behind another coalesces into it. Must be non-zero (a
+    /// zero cap would drop every sample).
     pub max_queued_events: usize,
     /// Bytes of [`Event::Sample`] payload the session keeps queued for the host, next to
     /// [`Config::max_queued_events`]: when a host does not drain and the queued sample bytes exceed

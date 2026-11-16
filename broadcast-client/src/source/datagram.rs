@@ -19,7 +19,7 @@ use url::{Host, Url};
 
 use crate::source::srt::{Notice, SrtCaller};
 use crate::srt::SrtCallerConfig;
-use crate::udp::{DatagramStats, UdpConfig};
+use crate::udp::{DatagramStats, SSRC_PROBATION, UdpConfig};
 use crate::{Action, Error};
 use broadcast_common::net::{JoinMismatch, MulticastJoin, UdpOptions};
 
@@ -41,12 +41,20 @@ struct Held {
     payload: Vec<u8>,
 }
 
+/// A new SSRC working through [`SSRC_PROBATION`] packets before it is adopted.
+struct Candidate {
+    ssrc: u32,
+    last_seq: u16,
+    seen: u8,
+}
+
 pub(crate) struct Ingest {
     rtp: bool,
     window: usize,
     window_bytes: usize,
     wait: Duration,
     ssrc: Option<u32>,
+    candidate: Option<Candidate>,
     next_seq: u16,
     next_ext: u64,
     held: BTreeMap<u64, Held>,
@@ -70,6 +78,7 @@ impl Ingest {
             window_bytes: config.reorder_bytes,
             wait: config.reorder_wait,
             ssrc: None,
+            candidate: None,
             next_seq: 0,
             next_ext: 0,
             held: BTreeMap::new(),
@@ -86,6 +95,7 @@ impl Ingest {
 
     pub(crate) fn reset(&mut self) {
         self.ssrc = None;
+        self.candidate = None;
         self.held.clear();
         self.held_bytes = 0;
         self.validity = SeqValidity::default();
@@ -140,13 +150,21 @@ impl Ingest {
             return;
         }
         let seq = packet.sequence_number.get();
-        if self.ssrc != Some(packet.ssrc.get()) {
-            if self.ssrc.is_some() {
-                self.resync();
-            }
-            self.ssrc = Some(packet.ssrc.get());
+        let ssrc = packet.ssrc.get();
+        if self.ssrc.is_none() {
+            self.ssrc = Some(ssrc);
             self.next_seq = seq;
             self.validity.new_source(seq);
+        } else if self.ssrc == Some(ssrc) {
+            self.candidate = None;
+        } else if self.adopt(ssrc, seq) {
+            self.resync();
+            self.ssrc = Some(ssrc);
+            self.next_seq = seq;
+            self.validity.new_source(seq);
+        } else {
+            self.stats.late = self.stats.late.saturating_add(1);
+            return;
         }
         match self.validity.update_seq(seq) {
             SeqVerdict::WildJumpArmed => {
@@ -249,6 +267,28 @@ impl Ingest {
             self.skip_to(first);
             self.drain(out);
         }
+    }
+
+    /// Whether a packet from another SSRC completes that source's [`SSRC_PROBATION`].
+    fn adopt(&mut self, ssrc: u32, seq: u16) -> bool {
+        let seen = match self.candidate.as_ref() {
+            Some(candidate)
+                if candidate.ssrc == ssrc && candidate.last_seq.wrapping_add(1) == seq =>
+            {
+                candidate.seen.saturating_add(1)
+            }
+            _ => 1,
+        };
+        if seen < SSRC_PROBATION {
+            self.candidate = Some(Candidate {
+                ssrc,
+                last_seq: seq,
+                seen,
+            });
+            return false;
+        }
+        self.candidate = None;
+        true
     }
 
     fn resync(&mut self) {

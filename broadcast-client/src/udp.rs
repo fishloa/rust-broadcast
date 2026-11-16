@@ -47,6 +47,11 @@ pub const DEFAULT_REORDER_WAIT: Duration = Duration::from_millis(100);
 /// Largest [`UdpConfig::reorder_packets`]: the window must stay well inside the signed half of
 /// the 16-bit RTP sequence space so "ahead" and "behind" are never ambiguous.
 pub const MAX_REORDER_PACKETS: usize = 8_192;
+/// Consecutive in-order RTP packets a new SSRC sends before the session adopts it. Until then its
+/// packets are dropped and counted [`DatagramStats::late`], so one datagram from a host that
+/// guessed a sequence number cannot clear the reorder buffer, reset the playout timeline and
+/// queue an [`crate::Event::Discontinuity`].
+pub const SSRC_PROBATION: u8 = 3;
 
 impl Default for UdpConfig {
     fn default() -> Self {
@@ -120,7 +125,8 @@ pub struct DatagramStats {
     pub reordered: u64,
     /// Duplicate packets dropped.
     pub duplicates: u64,
-    /// Packets that arrived after their slot had been given up on, or behind the delivery point.
+    /// Packets that arrived after their slot had been given up on, behind the delivery point, or
+    /// from a new SSRC still on probation.
     pub late: u64,
     /// SRT packets dropped because they were encrypted under a key the session does not hold.
     pub undecryptable: u64,

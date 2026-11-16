@@ -2,6 +2,7 @@ use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
+use broadcast_client::udp::SSRC_PROBATION;
 use broadcast_client::{
     Action, Config, ConnId, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig,
     UdpMode,
@@ -523,6 +524,51 @@ fn a_new_ssrc_restarts_the_sequence_space_with_a_discontinuity() {
     let stats = host.session.datagram_stats();
     assert_eq!((stats.resyncs, stats.lost), (1, 0));
     assert!(host.count(|e| matches!(e, Event::Discontinuity)) >= 1);
+}
+
+#[test]
+fn a_single_datagram_from_another_ssrc_is_not_adopted() {
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[1]);
+    let spoof = rtp_datagrams(&media, 7, 0, SSRC_B);
+    host.datagram(&spoof[0]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(stats.resyncs, 0, "one datagram is not a new source");
+    assert_eq!(stats.late, 1);
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 0);
+    host.datagram(&rtp[2]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        (stats.resyncs, stats.late),
+        (0, 1),
+        "the real source's packets clear the candidate and keep playing"
+    );
+}
+
+#[test]
+fn a_new_ssrc_is_adopted_after_its_probation_worth_of_consecutive_packets() {
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
+    let next = rtp_datagrams(&media, 7, 0, SSRC_B);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    for d in &next[..usize::from(SSRC_PROBATION) - 1] {
+        host.datagram(d);
+    }
+    let stats = host.session.datagram_stats();
+    assert_eq!(stats.resyncs, 0, "probation is not served yet");
+    assert_eq!(stats.late, u64::from(SSRC_PROBATION) - 1);
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 0);
+    host.datagram(&next[usize::from(SSRC_PROBATION) - 1]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        stats.resyncs, 1,
+        "the last probation packet adopts the source"
+    );
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 1);
 }
 
 #[test]
