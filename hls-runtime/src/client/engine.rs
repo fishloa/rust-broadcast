@@ -50,6 +50,13 @@ const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
 /// never drains it.
 const MAX_PENDING_ERRORS: usize = 256;
 
+/// Ceiling on held Media Initialization Section slots. A playlist may name a
+/// new `EXT-X-MAP` per segment (and a failing fetch leaves a slot stuck
+/// non-`Ready`), so without a bound the map grows for the life of the pull and
+/// `init_slot_for`'s linear scan gets slower with it (audit 20 finding 4,
+/// issue #2815).
+const MAX_INIT_SLOTS: usize = 64;
+
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
 const MAX_RELOAD_WAIT_MS: u64 = 60_000;
@@ -2540,14 +2547,40 @@ impl HlsClient {
         }
     }
 
-    /// Drop every held init no segment still being fetched refers to, keeping
-    /// the newest.
+    /// Drop every held init no segment still being fetched refers to and no
+    /// map of the current playlist names, keeping the newest; then enforce
+    /// [`MAX_INIT_SLOTS`], evicting the oldest slot no segment refers to (and,
+    /// if every remaining slot is referred to, the oldest one anyway, so the
+    /// bound always holds).
     fn prune_inits(&mut self) {
         let newest = self.inits.keys().next_back().copied();
         let bound: BTreeSet<InitId> = self.msn_init.values().copied().collect();
+        let live: Vec<&MapTag> = self.playlist_maps.iter().map(|e| &e.map).collect();
         self.inits.retain(|id, slot| {
-            Some(*id) == newest || bound.contains(id) || slot.fetch != InitFetch::Ready
+            Some(*id) == newest
+                || bound.contains(id)
+                || live.contains(&&slot.map)
+                || slot.fetch == InitFetch::Ready
         });
+        while self.inits.len() > MAX_INIT_SLOTS {
+            let unreferenced = self
+                .inits
+                .iter()
+                .find(|(id, _)| Some(**id) != newest && !bound.contains(id))
+                .map(|(id, _)| *id);
+            let victim = match unreferenced {
+                Some(id) => id,
+                None => match self.inits.keys().find(|id| Some(**id) != newest) {
+                    Some(id) => *id,
+                    None => break,
+                },
+            };
+            self.inits.remove(&victim);
+            self.msn_init.retain(|_, id| *id != victim);
+            if self.init_target == Some(victim) {
+                self.init_target = None;
+            }
+        }
     }
 
     /// Decide whether `new` continues the stream the previous full playlist
@@ -3246,6 +3279,68 @@ mod tests {
         assert_eq!(real, MAX_PENDING_ERRORS - 1);
         assert_eq!(real + coalesced, total);
         assert!(client.next_error().is_none());
+    }
+
+    fn insert_init_slot(client: &mut HlsClient, id: InitId, fetch: InitFetch) {
+        client.inits.insert(
+            id,
+            InitSlot {
+                map: MapTag {
+                    uri: format!("init{id}.mp4"),
+                    ..Default::default()
+                },
+                url: Url::parse(&format!("http://example.com/init{id}.mp4")).expect("test URL"),
+                byte_range: None,
+                encryption: None,
+                crypto: None,
+                fetch,
+                cipher: None,
+                bytes: None,
+                skipped_reported: BTreeSet::new(),
+            },
+        );
+    }
+
+    // Audit 20 finding 4 (#2815): a failing or never-completing EXT-X-MAP
+    // fetch leaves a non-Ready slot, and the old retain kept every one of
+    // them. A slot no segment and no current map refers to must be dropped.
+    #[test]
+    fn prune_inits_drops_unreferenced_non_ready_slots() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        for id in 0..10 {
+            insert_init_slot(&mut client, id, InitFetch::Failed);
+        }
+        client.prune_inits();
+        assert_eq!(
+            client.inits.len(),
+            1,
+            "only the newest unreferenced slot may survive, not every Failed one"
+        );
+        assert!(client.inits.contains_key(&9));
+    }
+
+    // ...and a playlist naming more maps than MAX_INIT_SLOTS must not grow
+    // the slot map past the cap.
+    #[test]
+    fn init_slots_are_capped() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let total = MAX_INIT_SLOTS + 36;
+        for id in 0..total as u32 {
+            insert_init_slot(&mut client, id, InitFetch::Wanted);
+            client
+                .msn_init
+                .insert(broadcast_hls::MediaSequence::new(u64::from(id)), id);
+        }
+        client.prune_inits();
+        assert_eq!(client.inits.len(), MAX_INIT_SLOTS);
+        assert!(
+            client
+                .msn_init
+                .values()
+                .all(|id| client.inits.contains_key(id)),
+            "no segment may stay bound to an evicted slot"
+        );
+        assert!(client.inits.contains_key(&(total as u32 - 1)));
     }
 
     #[test]
