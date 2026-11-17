@@ -41,7 +41,7 @@ fn a_buffered_tail_at_the_cap_is_accepted_and_one_more_byte_is_refused() {
     assert!(c.has_buffered_input());
 
     let err = c
-        .handle_data_strict(&[b'x'])
+        .handle_data_strict(b"x")
         .expect_err("one byte past the cap is refused");
     match err {
         Error::MessageParse {
