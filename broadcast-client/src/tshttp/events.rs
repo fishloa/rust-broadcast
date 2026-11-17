@@ -85,6 +85,12 @@ pub enum Event {
         /// Attempt number.
         attempt: u32,
     },
+    /// The session gave up after [`Config::max_reconnect_attempts`](crate::TsHttpConfig::max_reconnect_attempts)
+    /// failed attempts in a row, none of which played media (T9).
+    GaveUp {
+        /// The failed attempts that led here.
+        attempts: u32,
+    },
 }
 
 #[cfg(feature = "serde")]
@@ -97,6 +103,7 @@ enum EventSerde {
     Finite { expected_bytes: u64 },
     Ended,
     Reconnecting { attempt: u32 },
+    GaveUp { attempts: u32 },
     DemuxError { reason: String },
 }
 
@@ -123,6 +130,10 @@ impl serde::Serialize for Event {
             Self::Reconnecting { attempt } => {
                 EventSerde::Reconnecting { attempt: *attempt }.serialize(serializer)
             }
+            Self::GaveUp { attempts } => EventSerde::GaveUp {
+                attempts: *attempts,
+            }
+            .serialize(serializer),
             Self::DemuxError(error) => EventSerde::DemuxError {
                 reason: error.to_string(),
             }

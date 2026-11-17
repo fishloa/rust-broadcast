@@ -1948,8 +1948,7 @@ impl HlsClient {
     /// [`Error::UnresolvableReference`] pushed as this client's pending error)
     /// when the guarded resolver in `broadcast_common::url_ref` refuses it:
     /// a reference carrying an ASCII control character is never sanitised into
-    /// a different URL, and only `http`/`https` (with no `https` -> `http`
-    /// downgrade) is ever requested.
+    /// a different URL and never requested (issue #2458).
     fn fetch_url(&mut self, base: &Url, uri: &str) -> Option<String> {
         match self.resolved_url(base, uri) {
             Ok(url) => Some(url.to_string()),
@@ -1964,7 +1963,7 @@ impl HlsClient {
     /// it — without reporting it, so a caller that fails the whole playlist
     /// (an unusable init) can return the error directly.
     fn resolved_url(&self, base: &Url, uri: &str) -> core::result::Result<Url, Error> {
-        url_ref::resolve_http(base, uri).map_err(|source| Error::UnresolvableReference {
+        url_ref::resolve(base, uri).map_err(|source| Error::UnresolvableReference {
             uri: uri.to_string(),
             source,
         })
@@ -1973,9 +1972,9 @@ impl HlsClient {
     /// The URL segment URI `uri` (with its query, which the byte-range cursor
     /// keeps) resolves to, or `None` (with the report queued) when the guarded
     /// resolver refuses it: the segment stays unrequested instead of being
-    /// silently renamed or fetched over a non-HTTP scheme.
+    /// silently renamed (issue #2458).
     fn segment_url(&mut self, msn: broadcast_hls::MediaSequence, uri: &str) -> Option<Url> {
-        match url_ref::resolve_http(self.base(), uri) {
+        match url_ref::resolve(self.base(), uri) {
             Ok(url) => Some(url),
             Err(source) => {
                 self.report_unresolvable(msn, uri, source);

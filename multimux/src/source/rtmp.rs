@@ -93,12 +93,14 @@
 //!
 //! # Preserved behaviours (unchanged by this port)
 //!
-//! - **Bind once, reuse forever.** `RtmpRoute::ensure_infra` binds the
-//!   listen socket lazily via a [`tokio::sync::OnceCell`] and spawns the
-//!   accept-pump task exactly once; every subsequent [`run_rtmp`] call (a new
-//!   attempt from `crate::origin::supervisor::supervise_driver`, e.g. after a
-//!   listen-socket-level failure) reuses the same bound socket and pump —
-//!   never a `:1935` re-bind race against the supervisor's backoff loop.
+//! - **Bind once, reuse until the pump ends.** `RtmpRoute::ensure_infra`
+//!   binds the listen socket lazily and spawns the accept-pump task once;
+//!   every subsequent [`run_rtmp`] call (a new attempt from
+//!   `crate::origin::supervisor::supervise_driver`) reuses the same bound
+//!   socket and pump — never a `:1935` re-bind race against the supervisor's
+//!   backoff loop. A transient `accept()` error never ends the pump; if the
+//!   pump does end, the next call rebinds rather than reusing a receiver
+//!   nothing feeds.
 //! - **`Established` gates on the first `Sample`, not the first
 //!   `TrackAdded`.** FLV carries no PMT-style "this many tracks are coming"
 //!   declaration (see [`transmux::flv_stream`]'s module doc, "No
@@ -129,7 +131,7 @@
 use crate::route::RouteConfig;
 use std::collections::{BTreeSet, VecDeque};
 use std::convert::Infallible;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 use transmux::TrackId;
@@ -137,7 +139,7 @@ use transmux::TrackId;
 use broadcast_common::{Demand, Stage, Timestamp};
 use rtmp_runtime::io::{AcceptedRtmpConnection, AsyncRtmpServer, RtmpConnection, RtmpServerConfig};
 use rtmp_runtime::server::{RtmpServerConfig as SessionServerConfig, ServerEvent};
-use tokio::sync::{OnceCell, mpsc};
+use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio::task::JoinSet;
 use transmux::pipeline::{Sample, TrackSpec};
 use transmux::{DemuxEvent, StreamingFlvDemux};
@@ -172,59 +174,6 @@ const ACCEPT_QUEUE_CAPACITY: usize = 32;
 /// its read task waits.
 const OUTCOMES_PER_SESSION: usize = 4;
 
-/// The one accept operation the pump drains — the bound server in
-/// production, a scripted error in tests.
-trait AcceptSource {
-    fn accept(
-        &self,
-    ) -> impl std::future::Future<Output = std::io::Result<AcceptedRtmpConnection>> + Send;
-}
-
-impl AcceptSource for Arc<AsyncRtmpServer> {
-    fn accept(
-        &self,
-    ) -> impl std::future::Future<Output = std::io::Result<AcceptedRtmpConnection>> + Send {
-        (**self).accept()
-    }
-}
-
-/// Queue accepted connections for the drive loop until cancelled, the queue's
-/// receiver goes away, or the listen socket reports an error.
-async fn accept_pump<S: AcceptSource>(
-    server: S,
-    tx: mpsc::Sender<AcceptedRtmpConnection>,
-    admit_notify: Arc<tokio::sync::Notify>,
-    cancel: tokio_util::sync::CancellationToken,
-) {
-    loop {
-        let accepted = tokio::select! {
-            () = cancel.cancelled() => break,
-            accepted = server.accept() => accepted,
-        };
-        match accepted {
-            Ok(conn) => {
-                if tx.send(conn).await.is_err() {
-                    // No `RtmpListener` is receiving any more (every
-                    // `run_rtmp` attempt using this route has ended) —
-                    // nothing left to pump for.
-                    break;
-                }
-                // Wake the drive loop so it admits this connection at once
-                // (defect 2), rather than waiting out a fixed poll interval
-                // that a steady read load can starve.
-                admit_notify.notify_one();
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "rtmp: accept-pump ending after a listen-socket error"
-                );
-                break;
-            }
-        }
-    }
-}
-
 /// The bind-once, reuse-forever infrastructure [`RtmpRoute::ensure_infra`]
 /// builds exactly once and every [`run_rtmp`] attempt shares — see the
 /// module doc's "Bind once" note.
@@ -252,6 +201,9 @@ struct RtmpInfra {
     /// (defect 3: an untracked pump leaked a bound listen socket).
     tracker: tokio_util::task::TaskTracker,
     cancel: tokio_util::sync::CancellationToken,
+    /// Set by the accept pump as it ends, so the next [`RtmpRoute::ensure_infra`]
+    /// rebinds instead of reusing a listener whose pump is gone.
+    dead: Arc<AtomicBool>,
 }
 
 impl Drop for RtmpInfra {
@@ -272,8 +224,9 @@ pub struct RtmpRoute {
     stream_key: Option<String>,
     timeouts: Timeouts,
     max_sessions: usize,
-    /// Bind-once, reuse-forever — see the module doc.
-    infra: OnceCell<Arc<RtmpInfra>>,
+    /// Bind-once, reuse-forever until the accept pump ends — see the module
+    /// doc.
+    infra: AsyncMutex<Option<Arc<RtmpInfra>>>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`), mirroring
@@ -303,7 +256,7 @@ impl RtmpRoute {
             stream_key: None,
             timeouts: Timeouts::default(),
             max_sessions: DEFAULT_RTMP_MAX_SESSIONS,
-            infra: OnceCell::new(),
+            infra: AsyncMutex::new(None),
         }
     }
 
@@ -346,45 +299,117 @@ impl RtmpRoute {
     }
 
     /// Binds the listen socket and spawns the accept-pump task on the first
-    /// call only (`OnceCell`); every later call — a fresh [`run_rtmp`]
-    /// attempt — is handed a clone of the same shared receiver, never
-    /// re-binding. See the module doc's "Bind once" note.
+    /// call only; every later call — a fresh [`run_rtmp`] attempt — is handed
+    /// a clone of the same shared receiver, never re-binding, until that pump
+    /// ends on a listen-socket error. A later call then binds afresh instead
+    /// of reusing a receiver whose pump is gone (which would fail every
+    /// attempt at once on `Disconnected`). See the module doc's "Bind once"
+    /// note.
     async fn ensure_infra(&self) -> Result<Arc<RtmpInfra>> {
-        let infra = self
-            .infra
-            .get_or_try_init(|| async {
-                let config = RtmpServerConfig::default().with_session(
-                    SessionServerConfig::default()
-                        .with_expected_stream_key(self.stream_key.clone()),
-                );
-                let server = AsyncRtmpServer::bind(self.listen.as_str(), config)
-                    .await
-                    .map(Arc::new)
-                    .map_err(|e| MultimuxError::Connect {
-                        reason: format!("rtmp: bind {}: {e}", self.listen),
-                    })?;
-                let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
-                // Defect 3: the accept pump is TRACKED and cancel-aware, so
-                // dropping the route stops it and releases the listen socket.
-                let admit_notify = Arc::new(tokio::sync::Notify::new());
-                let pump_notify = Arc::clone(&admit_notify);
-                let cancel = tokio_util::sync::CancellationToken::new();
-                let pump_cancel = cancel.clone();
-                let tracker = tokio_util::task::TaskTracker::new();
-                tracker.spawn(accept_pump(server, tx, pump_notify, pump_cancel));
-                Ok::<Arc<RtmpInfra>, MultimuxError>(Arc::new(RtmpInfra {
-                    accept_rx: Arc::new(StdMutex::new(rx)),
-                    admit_notify,
-                    session_count: Arc::new(AtomicUsize::new(0)),
-                    admitted_total: Arc::new(AtomicUsize::new(0)),
-                    admit_count_notify: Arc::new(tokio::sync::Notify::new()),
-                    tracker,
-                    cancel,
-                }))
-            })
-            .await?;
-        Ok(Arc::clone(infra))
+        let mut slot = self.infra.lock().await;
+        if let Some(infra) = slot
+            .as_ref()
+            .filter(|infra| !infra.dead.load(Ordering::SeqCst))
+            .cloned()
+        {
+            return Ok(infra);
+        }
+        let config = RtmpServerConfig::default().with_session(
+            SessionServerConfig::default().with_expected_stream_key(self.stream_key.clone()),
+        );
+        let server = Arc::new(
+            AsyncRtmpServer::bind(self.listen.as_str(), config)
+                .await
+                .map_err(|e| MultimuxError::Connect {
+                    reason: format!("rtmp: bind {}: {e}", self.listen),
+                })?,
+        );
+        let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
+        // Defect 3: the accept pump is TRACKED and cancel-aware, so dropping
+        // the route stops it and releases the listen socket.
+        let admit_notify = Arc::new(tokio::sync::Notify::new());
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let dead = Arc::new(AtomicBool::new(false));
+        let tracker = tokio_util::task::TaskTracker::new();
+        let accept_source = {
+            let server = Arc::clone(&server);
+            move || {
+                let server = Arc::clone(&server);
+                async move { server.accept().await }
+            }
+        };
+        tracker.spawn(accept_pump(
+            accept_source,
+            tx,
+            Arc::clone(&admit_notify),
+            cancel.clone(),
+            Arc::clone(&dead),
+        ));
+        let infra = Arc::new(RtmpInfra {
+            accept_rx: Arc::new(StdMutex::new(rx)),
+            admit_notify,
+            session_count: Arc::new(AtomicUsize::new(0)),
+            admitted_total: Arc::new(AtomicUsize::new(0)),
+            admit_count_notify: Arc::new(tokio::sync::Notify::new()),
+            tracker,
+            cancel,
+            dead,
+        });
+        *slot = Some(Arc::clone(&infra));
+        Ok(infra)
     }
+}
+
+/// The accept pump: forwards every accepted connection to `tx`, waking the
+/// drive loop through `admit_notify`. A listen-socket error is transient
+/// (`EMFILE`/`ENFILE` under a connection flood, `ECONNABORTED` when a queued
+/// peer resets first), so it backs off and keeps accepting rather than
+/// ending the route for good; only cancel (or a drive loop that stopped
+/// receiving) ends the pump. `dead` is set on every exit so
+/// [`RtmpRoute::ensure_infra`] rebinds on the next attempt.
+async fn accept_pump<C, F, Fut>(
+    mut accept: F,
+    tx: mpsc::Sender<C>,
+    admit_notify: Arc<tokio::sync::Notify>,
+    cancel: tokio_util::sync::CancellationToken,
+    dead: Arc<AtomicBool>,
+) where
+    C: Send + 'static,
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = std::io::Result<C>> + Send,
+{
+    loop {
+        let accepted = tokio::select! {
+            () = cancel.cancelled() => break,
+            accepted = accept() => accepted,
+        };
+        match accepted {
+            Ok(conn) => {
+                let sent = tokio::select! {
+                    () = cancel.cancelled() => break,
+                    sent = tx.send(conn) => sent,
+                };
+                if sent.is_err() {
+                    // No `RtmpListener` is receiving any more (every
+                    // `run_rtmp` attempt using this route has ended) —
+                    // nothing left to pump for.
+                    break;
+                }
+                // Wake the drive loop so it admits this connection at once
+                // (defect 2), rather than waiting out a fixed poll interval
+                // that a steady read load can starve.
+                admit_notify.notify_one();
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "rtmp: accept error; backing off and continuing");
+                tokio::select! {
+                    () = cancel.cancelled() => break,
+                    () = tokio::time::sleep(crate::origin::ACCEPT_BACKOFF) => {}
+                }
+            }
+        }
+    }
+    dead.store(true, Ordering::SeqCst);
 }
 
 impl Source for RtmpRoute {
@@ -1726,33 +1751,70 @@ mod tests {
         }
     }
 
-    struct FailingAccept;
-
-    impl AcceptSource for FailingAccept {
-        fn accept(
-            &self,
-        ) -> impl std::future::Future<Output = std::io::Result<AcceptedRtmpConnection>> + Send
-        {
-            std::future::ready(Err(std::io::Error::other("EMFILE")))
-        }
+    /// A persistent `accept()` error must not end the pump: it backs off and
+    /// keeps accepting, so the connection after the errors is still delivered
+    /// and the route never goes permanently dead (audit 20 finding 1 — the
+    /// old `Err` arm broke the loop on the first error). MUTATION VERIFIED:
+    /// restoring `break` in the `Err` arm makes this test time out waiting
+    /// for the third accepted connection.
+    #[tokio::test]
+    async fn the_accept_pump_backs_off_through_errors_and_keeps_accepting() {
+        let (tx, mut rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let dead = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let source_calls = Arc::clone(&calls);
+        let accept = move || {
+            let n = source_calls.fetch_add(1, Ordering::SeqCst);
+            async move {
+                if n < 2 {
+                    Err(std::io::Error::from_raw_os_error(24 /* EMFILE */))
+                } else {
+                    Ok(n as u8)
+                }
+            }
+        };
+        let pump = tokio::spawn(accept_pump(
+            accept,
+            tx,
+            notify,
+            cancel.clone(),
+            Arc::clone(&dead),
+        ));
+        let got = tokio::time::timeout(Duration::from_secs(10), rx.recv())
+            .await
+            .expect("the pump still accepts after two listen-socket errors")
+            .expect("the accepted connection is delivered");
+        assert_eq!(got, 2);
+        assert!(!dead.load(Ordering::SeqCst), "the pump is still running");
+        cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(10), pump)
+            .await
+            .expect("cancel ends the pump")
+            .expect("pump task");
+        assert!(dead.load(Ordering::SeqCst), "an ended pump is marked dead");
     }
 
-    /// A listen-socket accept error ends the pump and closes the connection
-    /// queue, rather than spinning on a socket that cannot accept or leaving a
-    /// queue nobody will ever fill.
+    /// Once the pump has ended, the next `ensure_infra` binds afresh instead
+    /// of handing back the cached receiver whose pump is gone (audit 20
+    /// finding 1). On the old `OnceCell` shape this returns the same `Arc`
+    /// forever, so every later attempt fails at once on `Disconnected`.
     #[tokio::test]
-    async fn an_accept_error_ends_the_pump_and_closes_the_queue() {
-        let (tx, mut rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
-        accept_pump(
-            FailingAccept,
-            tx,
-            Arc::new(tokio::sync::Notify::new()),
-            tokio_util::sync::CancellationToken::new(),
-        )
-        .await;
-        let next = tokio::time::timeout(Duration::from_secs(5), rx.recv())
-            .await
-            .expect("the pump returns instead of spinning");
-        assert!(next.is_none(), "the pump must close the queue: {next:?}");
+    async fn a_dead_accept_pump_is_rebound_by_the_next_ensure_infra() {
+        let route = RtmpRoute::new("cam-rtmp", "127.0.0.1:0");
+        let first = route.ensure_infra().await.expect("first bind");
+        first.cancel.cancel();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !first.dead.load(Ordering::SeqCst) {
+            assert!(Instant::now() < deadline, "the accept pump did not end");
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        let second = route.ensure_infra().await.expect("rebind");
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "a dead pump's infrastructure must not be reused"
+        );
+        second.cancel.cancel();
     }
 }

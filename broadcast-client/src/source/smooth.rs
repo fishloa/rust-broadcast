@@ -90,6 +90,7 @@ fn fatal_error_kind(error: &SmoothError) -> (ErrorKind, bool) {
             method: "fragment".to_string(),
         },
         SmoothError::Fragment { status } => ErrorKind::SegmentFetchFailed { status: *status },
+        SmoothError::FragmentTooLarge { .. } => ErrorKind::SegmentFetchFailed { status: None },
         _ => ErrorKind::SmoothManifest {
             reason: SMOOTH_MANIFEST_REASON,
         },

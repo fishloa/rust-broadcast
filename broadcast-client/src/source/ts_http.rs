@@ -500,6 +500,13 @@ impl TsHttpSource {
                     reason: error.to_string(),
                 }));
             }
+            crate::tshttp::Event::GaveUp { attempts } => {
+                self.release_hold();
+                self.push(Event::Error {
+                    kind: crate::ErrorKind::ReconnectAttemptsExhausted { attempts },
+                    fatal: true,
+                });
+            }
         }
     }
 }

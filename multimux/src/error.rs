@@ -204,6 +204,7 @@ pub enum MultimuxError {
 #[non_exhaustive]
 pub enum ConfigField {
     AdminBind,
+    AdminAllowedRoots,
     AdminReload,
     AudioProfiles,
     AudioRenditionSources,
@@ -269,6 +270,7 @@ impl ConfigField {
     pub fn name(&self) -> &'static str {
         match self {
             Self::AdminBind => "admin.bind",
+            Self::AdminAllowedRoots => "admin.allowed_roots",
             Self::AdminReload => "admin.reload",
             Self::AudioProfiles => "audio_profiles",
             Self::AudioRenditionSources => "audio_rendition_sources",

@@ -225,23 +225,28 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
             },
         );
         // LRU eviction (issue #1083, F): drop the least-recently-used entry
-        // rather than clearing the whole cache.
-        evict_lru(&mut guard.entries, INDEX_CACHE_MAX_ENTRIES);
+        // rather than clearing the whole cache, once either bound is passed.
+        enforce_cache_bounds(&mut guard);
     }
     segments
 }
 
-/// Drop the least-recently-used entries until the cache fits `max`.
-fn evict_lru(entries: &mut std::collections::HashMap<PathBuf, CacheEntry>, max: usize) {
-    while entries.len() > max {
-        let Some(oldest) = entries
+/// Evict least-recently-used entries until the cache is within both its
+/// entry-count and its total-segment bounds.
+fn enforce_cache_bounds(cache: &mut IndexCache) {
+    let mut segments: usize = cache.entries.values().map(|e| e.segments.len()).sum();
+    while cache.entries.len() > INDEX_CACHE_MAX_ENTRIES || segments > INDEX_CACHE_MAX_SEGMENTS {
+        let Some(oldest) = cache
+            .entries
             .iter()
             .min_by_key(|(_, e)| e.last_used)
             .map(|(k, _)| k.clone())
         else {
             break;
         };
-        entries.remove(&oldest);
+        if let Some(removed) = cache.entries.remove(&oldest) {
+            segments = segments.saturating_sub(removed.segments.len());
+        }
     }
 }
 
@@ -284,6 +289,18 @@ struct CacheEntry {
 /// without limit; on overflow the least-recently-used entry is evicted.
 const INDEX_CACHE_MAX_ENTRIES: usize = 4096;
 
+/// Bound on the TOTAL segments every cached index holds, not just the number
+/// of period files: each entry owns its whole `Vec<ArchivedSegment>`, so the
+/// entry count alone is not a memory bound.
+const INDEX_CACHE_MAX_SEGMENTS: usize = 65_536;
+
+/// The per-route index caches, keyed by archive directory. Removed by
+/// [`drop_route_cache`] when the route goes away, so a removed route's parsed
+/// indexes (and their segment vectors) do not stay resident for the process
+/// lifetime.
+static INDEX_CACHES: OnceLock<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<IndexCache>>>>> =
+    OnceLock::new();
+
 #[derive(Default)]
 struct IndexCache {
     entries: std::collections::HashMap<PathBuf, CacheEntry>,
@@ -315,10 +332,34 @@ pub(crate) fn parse_index(data: &[u8]) -> Result<Vec<IndexEntry>, serde_json::Er
 /// scans never contend with another's; the registry lock is held only to find
 /// or create the entry.
 fn index_cache(dir: &Path) -> Arc<Mutex<IndexCache>> {
-    static CACHES: OnceLock<Mutex<std::collections::HashMap<PathBuf, Arc<Mutex<IndexCache>>>>> =
-        OnceLock::new();
-    let mut caches = CACHES.get_or_init(Default::default).lock();
+    let mut caches = INDEX_CACHES.get_or_init(Default::default).lock();
     Arc::clone(caches.entry(dir.to_path_buf()).or_default())
+}
+
+/// Forget `dir`'s index cache — called when its route is removed or replaced,
+/// so the parsed indexes (and every segment vector they hold) are released
+/// instead of staying resident for the process lifetime.
+pub(crate) fn drop_route_cache(dir: &Path) {
+    let dropped = INDEX_CACHES
+        .get_or_init(Default::default)
+        .lock()
+        .remove(dir);
+    drop(dropped);
+}
+
+/// How many period files `dir`'s index cache holds (test-only) — the
+/// route-removal test's observable.
+#[cfg(test)]
+pub(crate) fn cached_index_entries(dir: &Path) -> usize {
+    INDEX_CACHES
+        .get()
+        .and_then(|caches| {
+            caches
+                .lock()
+                .get(dir)
+                .map(|cache| cache.lock().entries.len())
+        })
+        .unwrap_or(0)
 }
 
 /// Drop cached indices whose sidecar no longer exists under `dir` — called
@@ -646,32 +687,6 @@ mod tests {
 
     fn cleanup(dir: &Path) {
         let _ = std::fs::remove_dir_all(dir);
-    }
-
-    /// The index cache is bounded: one entry past the cap evicts exactly the
-    /// least-recently-used one, never the whole cache.
-    #[test]
-    fn the_index_cache_evicts_only_the_least_recently_used_entry() {
-        let stamp = PeriodStamp {
-            mtime_ns: None,
-            len: 0,
-            inode: 0,
-        };
-        let mut entries = std::collections::HashMap::new();
-        for tick in 0..=INDEX_CACHE_MAX_ENTRIES as u64 {
-            entries.insert(
-                PathBuf::from(format!("p{tick}.idx")),
-                CacheEntry {
-                    stamp,
-                    segments: Arc::new(Vec::new()),
-                    last_used: tick,
-                },
-            );
-        }
-        evict_lru(&mut entries, INDEX_CACHE_MAX_ENTRIES);
-        assert_eq!(entries.len(), INDEX_CACHE_MAX_ENTRIES);
-        assert!(!entries.contains_key(&PathBuf::from("p0.idx")));
-        assert!(entries.contains_key(&PathBuf::from(format!("p{INDEX_CACHE_MAX_ENTRIES}.idx"))));
     }
 
     fn closed(seq: u32, start_ns: u64, duration_secs: f64, discontinuous: bool) -> ClosedSegment {
@@ -1453,5 +1468,104 @@ mod tests {
             .expect("another route's read is not blocked by this route's cache lock");
         reader.join().expect("reader thread");
         cleanup(&first);
+    }
+
+    /// A removed route's index cache is released rather than staying
+    /// resident with every parsed segment vector for the life of the process
+    /// (audit 20 finding 24). MUTATION VERIFIED: a no-op `drop_route_cache`
+    /// leaves `index_cache` returning the same `Arc`, and this fails.
+    #[test]
+    fn dropping_a_route_cache_releases_its_indices() {
+        let dir = temp_dir();
+        let first = index_cache(&dir);
+        drop_route_cache(&dir);
+        let second = index_cache(&dir);
+        assert!(
+            !Arc::ptr_eq(&first, &second),
+            "a dropped cache must not be handed back"
+        );
+        assert!(second.lock().entries.is_empty(), "the replacement is empty");
+        cleanup(&dir);
+    }
+
+    /// The cache is bounded by TOTAL segments, not just the entry count: one
+    /// oversized index must not stay resident merely because the cache holds
+    /// few entries. MUTATION VERIFIED: dropping the segment term from
+    /// `enforce_cache_bounds` leaves every entry in place and this fails.
+    #[test]
+    fn the_index_cache_is_bounded_by_total_segments() {
+        fn placeholder_segment() -> ArchivedSegment {
+            ArchivedSegment {
+                seq: SegmentSeq::new(0),
+                start: Timestamp::from_nanos(0),
+                duration: std::time::Duration::ZERO,
+                discontinuous: false,
+                period_num: 0,
+                byte_offset: 0,
+                byte_len: 0,
+            }
+        }
+
+        let per_entry = INDEX_CACHE_MAX_SEGMENTS / 4 + 1;
+        let mut cache = IndexCache::default();
+        for i in 0..4u64 {
+            cache.entries.insert(
+                PathBuf::from(format!("p{i}.idx")),
+                CacheEntry {
+                    stamp: PeriodStamp {
+                        mtime_ns: None,
+                        len: 0,
+                        inode: 0,
+                    },
+                    segments: Arc::new(vec![placeholder_segment(); per_entry]),
+                    last_used: i,
+                },
+            );
+        }
+        cache.tick = 4;
+        enforce_cache_bounds(&mut cache);
+
+        let total: usize = cache.entries.values().map(|e| e.segments.len()).sum();
+        assert!(
+            total <= INDEX_CACHE_MAX_SEGMENTS,
+            "the cache is bounded by total segments: {total}"
+        );
+        assert!(cache.entries.len() < 4, "the oldest entries were evicted");
+        assert!(
+            cache.entries.contains_key(Path::new("p3.idx")),
+            "the most recently used entry survives"
+        );
+    }
+
+    /// The entry-count bound evicts exactly the least-recently-used entries,
+    /// never the whole cache. MUTATION VERIFIED: dropping the entry-count term
+    /// from `enforce_cache_bounds` leaves all 4097 entries resident.
+    #[test]
+    fn the_index_cache_evicts_only_the_least_recently_used_entry() {
+        let stamp = PeriodStamp {
+            mtime_ns: None,
+            len: 0,
+            inode: 0,
+        };
+        let mut cache = IndexCache::default();
+        for tick in 0..=INDEX_CACHE_MAX_ENTRIES as u64 {
+            cache.entries.insert(
+                PathBuf::from(format!("p{tick}.idx")),
+                CacheEntry {
+                    stamp,
+                    segments: Arc::new(Vec::new()),
+                    last_used: tick,
+                },
+            );
+        }
+        cache.tick = INDEX_CACHE_MAX_ENTRIES as u64 + 1;
+        enforce_cache_bounds(&mut cache);
+        assert_eq!(cache.entries.len(), INDEX_CACHE_MAX_ENTRIES);
+        assert!(!cache.entries.contains_key(Path::new("p0.idx")));
+        assert!(
+            cache
+                .entries
+                .contains_key(&PathBuf::from(format!("p{INDEX_CACHE_MAX_ENTRIES}.idx")))
+        );
     }
 }

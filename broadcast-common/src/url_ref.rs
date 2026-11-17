@@ -24,12 +24,9 @@ pub enum Error {
     ForbiddenChar(char),
     /// The base or the joined reference did not parse as a URL.
     Parse,
-    /// The joined URL's scheme is not `http`/`https`, so a fetch would go to a
-    /// transport the manifest reader never speaks (`file:`, `ftp:`, `data:`).
-    Scheme,
-    /// The joined URL would fetch `http` over an `https` base's connection
-    /// identity, downgrading the reference's transport.
-    SchemeDowngrade,
+    /// The joined reference is not an `http`/`https` URL, or it drops from
+    /// `https` to `http`: [`resolve_http`] refuses both.
+    ForbiddenScheme,
 }
 
 impl Error {
@@ -38,8 +35,7 @@ impl Error {
         match self {
             Self::ForbiddenChar(_) => "forbidden char",
             Self::Parse => "parse",
-            Self::Scheme => "scheme",
-            Self::SchemeDowngrade => "scheme downgrade",
+            Self::ForbiddenScheme => "forbidden scheme",
         }
     }
 }
@@ -90,29 +86,31 @@ pub fn resolve_str(base: &str, reference: &str) -> Result<alloc::string::String>
     resolve(&base, reference).map(|joined| joined.to_string())
 }
 
-/// Resolve `reference` against `base`, requiring the result to be an
-/// `http`/`https` URL and refusing an `https` -> `http` downgrade.
+/// `http`, the only scheme a manifest reference may resolve to over a plain
+/// connection.
+const HTTP: &str = "http";
+/// `https`.
+const HTTPS: &str = "https";
+
+/// [`resolve`], then require the joined URL to be an `http`/`https` one reached
+/// without downgrading `https` to `http`.
 ///
-/// A manifest reference can name any scheme (`file:`, `ftp:`, `data:`), and a
-/// client that forwards whatever the resolver produced would fetch it over a
-/// transport it never intended; an `https` playlist naming an absolute `http:`
-/// resource would also drop the confidentiality the playlist was fetched with.
-/// A relative reference keeps the base's scheme by RFC 3986 §5.2.2.
+/// A manifest is remote input: a playlist, `EXT-X-KEY`, `EXT-X-MAP` or Smooth
+/// `Url` template naming `file:`, `ftp:` or an `https`->`http` downgrade must
+/// not become a fetch the caller performs — a key reference downgraded to
+/// `http` would leak the key fetch in clear. Cross-origin `http(s)` itself is
+/// ordinary, so only the scheme is restricted.
 ///
 /// # Errors
-/// As [`resolve`], plus [`Error::Scheme`] when the joined URL is not
-/// `http`/`https`, or [`Error::SchemeDowngrade`] when an `https` base resolves
-/// to `http`.
+/// As [`resolve`], plus [`Error::ForbiddenScheme`] when the joined URL's scheme
+/// is neither `http` nor `https`, or when it is `http` and `base` is `https`.
 pub fn resolve_http(base: &Url, reference: &str) -> Result<Url> {
     let joined = resolve(base, reference)?;
-    match joined.scheme() {
-        "http" | "https" => {}
-        _ => return Err(Error::Scheme),
+    let scheme = joined.scheme();
+    if scheme == HTTPS || (scheme == HTTP && base.scheme() != HTTPS) {
+        return Ok(joined);
     }
-    if base.scheme() == "https" && joined.scheme() == "http" {
-        return Err(Error::SchemeDowngrade);
-    }
-    Ok(joined)
+    Err(Error::ForbiddenScheme)
 }
 
 #[cfg(test)]
@@ -230,84 +228,76 @@ mod tests {
     }
 
     #[test]
-    fn labels() {
-        assert_eq!(Error::ForbiddenChar('\r').name(), "forbidden char");
-        assert_eq!(Error::ForbiddenChar('\r').to_string(), "forbidden char");
-        assert_eq!(Error::Parse.name(), "parse");
-        assert_eq!(Error::Scheme.name(), "scheme");
-        assert_eq!(Error::SchemeDowngrade.name(), "scheme downgrade");
-        assert_eq!(Error::Scheme.to_string(), "scheme");
-    }
-
-    #[test]
-    fn resolve_http_accepts_http_https_and_relative_references() {
-        let http = base();
-        for r in ["seg1.m4s", "/other.m4s", "https://cdn.example/a.m4s"] {
+    fn resolve_http_refuses_a_scheme_the_caller_cannot_fetch() {
+        let plain = Url::parse("http://h/a/b/playlist.mpd").expect("base parses");
+        for evil in [
+            "file:///etc/passwd",
+            "ftp://h/seg1.m4s",
+            "data:text/plain,seg",
+            "javascript:alert(1)",
+            "rtsp://h/seg1.m4s",
+        ] {
             assert_eq!(
-                resolve_http(&http, r),
-                resolve(&http, r),
-                "http base accepts {r:?}"
-            );
-        }
-        let https = Url::parse("https://h/a/b/playlist.m3u8").expect("base parses");
-        for r in ["seg1.m4s", "/other.m4s", "https://cdn.example/a.m4s"] {
-            assert_eq!(
-                resolve_http(&https, r),
-                resolve(&https, r),
-                "https base accepts {r:?}"
+                resolve_http(&plain, evil),
+                Err(Error::ForbiddenScheme),
+                "{evil:?}"
             );
         }
         assert_eq!(
-            resolve_http(&http, "http://cdn.example/a.m4s")
-                .expect("http base accepts http")
-                .as_str(),
-            "http://cdn.example/a.m4s"
+            resolve_http(&plain, "seg1.m4s"),
+            Ok(plain.join("seg1.m4s").expect("joins"))
+        );
+        assert_eq!(
+            resolve_http(&plain, "https://cdn.example/seg1.m4s")
+                .expect("an upgrade is ordinary")
+                .scheme(),
+            "https"
         );
     }
 
-    /// A manifest naming a non-HTTP transport is refused rather than fetched:
-    /// `file:`/`ftp:`/`data:` never reach a client.
-    #[test]
-    fn resolve_http_refuses_a_non_http_scheme() {
-        for r in [
-            "file:///etc/passwd",
-            "ftp://cdn.example/a.m4s",
-            "data:text/plain,secret",
-            "srt://host:9000?streamid=x",
-        ] {
-            assert_eq!(resolve_http(&base(), r), Err(Error::Scheme), "{r:?}");
-        }
-    }
-
-    /// An `https` playlist may not name an absolute `http:` resource (a
-    /// relative reference keeps `https`; an explicit upgrade is fine).
     #[test]
     fn resolve_http_refuses_an_https_to_http_downgrade() {
-        let https = Url::parse("https://h/a/b/playlist.m3u8").expect("base parses");
+        let secure = Url::parse("https://h/a/b/playlist.mpd").expect("base parses");
+        for downgrade in ["http://h/seg1.m4s", "http://other.example/seg1.m4s"] {
+            assert_eq!(
+                resolve_http(&secure, downgrade),
+                Err(Error::ForbiddenScheme),
+                "{downgrade:?}"
+            );
+        }
         assert_eq!(
-            resolve_http(&https, "http://cdn.example/a.m4s"),
-            Err(Error::SchemeDowngrade)
-        );
-        assert_eq!(
-            resolve_http(&https, "seg1.m4s")
-                .expect("relative keeps https")
+            resolve_http(&secure, "//h/seg1.m4s")
+                .expect("a scheme-relative reference inherits https")
                 .scheme(),
             "https"
         );
         assert_eq!(
-            resolve_http(&base(), "https://cdn.example/a.m4s")
-                .expect("an upgrade is allowed")
+            resolve_http(&secure, "seg1.m4s")
+                .expect("a relative reference stays secure")
                 .scheme(),
             "https"
+        );
+        assert_eq!(
+            resolve_http(&secure, "https://cdn.example/seg1.m4s")
+                .expect("staying on https")
+                .host_str(),
+            Some("cdn.example")
         );
     }
 
-    /// The control-character guard still runs first.
     #[test]
-    fn resolve_http_keeps_the_control_character_guard() {
+    fn resolve_http_keeps_the_control_character_rule() {
         assert_eq!(
             resolve_http(&base(), "seg\r\n1.m4s"),
             Err(Error::ForbiddenChar('\r'))
         );
+    }
+
+    #[test]
+    fn labels() {
+        assert_eq!(Error::ForbiddenChar('\r').name(), "forbidden char");
+        assert_eq!(Error::ForbiddenChar('\r').to_string(), "forbidden char");
+        assert_eq!(Error::Parse.name(), "parse");
+        assert_eq!(Error::ForbiddenScheme.name(), "forbidden scheme");
     }
 }

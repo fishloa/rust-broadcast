@@ -30,9 +30,11 @@
 //! [`broadcast_auth::Verifier`] gates **every** media output route
 //! (`/{stream}/…` — manifests and the shared resource route alike, across
 //! every configured stream) via `output_auth_gate`, mounted on the
-//! per-stream nests *before* they are merged with the root ops endpoints —
-//! so `/metrics`/`/healthz`/`/readyz` are never behind it (load balancer
-//! probes and metrics scraping must stay open regardless of output auth).
+//! per-stream nests *before* they are merged with the root endpoints. The
+//! liveness/readiness probes (`/healthz`/`/readyz`) stay open — an
+//! orchestrator must be able to probe the process regardless of output auth
+//! — while `/metrics`, which renders every route name and counter, is gated
+//! by the same verifier (audit 20 finding 64).
 //! This is intentionally independent of any route's own ingest auth
 //! (`crate::config::AuthSpec`/URL userinfo): one output credential guards
 //! every stream this origin serves (e.g. 40 cameras under
@@ -266,7 +268,9 @@ impl AppState {
 ///   merged router's own fallback.
 /// - `GET /metrics`, `GET /healthz`, `GET /readyz` are mounted at the root
 ///   (never under `/{stream}/`) — see `metrics_handler`, `healthz`,
-///   `readyz` (all crate-private handlers, below).
+///   `readyz` (all crate-private handlers, below). `/metrics` sits behind
+///   `output_auth_gate` when the app state carries an `output_auth`
+///   verifier.
 ///
 /// Every request — matched or not, root or per-stream — passes through, in
 /// order (outermost to innermost): `track_http` (HTTP request/duration/byte
@@ -288,6 +292,21 @@ impl AppState {
 /// drives `router()` directly — a test, or an embedder's own server — gets
 /// the same bound a `serve*` entry point does.
 pub fn router(state: Arc<AppState>) -> Router {
+    let budget = limit::BudgetLimitLayer::new(
+        state.limits.max_concurrent_requests,
+        state.limits.max_blocking_reloads_per_route,
+        state.limits.queue_timeout,
+    );
+    router_with_budget(state, budget)
+}
+
+/// [`router`] over a caller-owned concurrency budget. The admin registry
+/// keeps one [`limit::BudgetLimitLayer`] for the process and passes a clone on
+/// every rebuild, so the ordinary pool (and its in-flight permits) survives a
+/// route add/remove; only the per-route blocking-reload pools are rebuilt.
+/// Building a fresh layer per rebuild would give each router its own pool and
+/// double the effective bound.
+pub(crate) fn router_with_budget(state: Arc<AppState>, budget: limit::BudgetLimitLayer) -> Router {
     let limits = state.limits;
     let mut router = Router::new();
     for (name, (store, outputs)) in &state.streams {
@@ -317,11 +336,18 @@ pub fn router(state: Arc<AppState>) -> Router {
         router = router.nest(&format!("/{name}"), stream_router);
     }
 
-    let root = Router::new()
-        .route("/metrics", get(metrics_handler))
+    // Liveness/readiness stay open — an orchestrator's probe must answer even
+    // while output auth is on. `/metrics` renders every route name and
+    // counter, so it is behind the same `output_auth` gate as the media
+    // routes when one is configured (audit 20 finding 64); with no
+    // `output_auth` it stays open, exactly as before.
+    let ops = Router::new()
         .route("/healthz", get(healthz))
-        .route("/readyz", get(readyz))
-        .with_state(state.clone());
+        .route("/readyz", get(readyz));
+    let metrics = Router::new().route("/metrics", get(metrics_handler)).layer(
+        middleware::from_fn_with_state(state.clone(), output_auth_gate),
+    );
+    let root = ops.merge(metrics).with_state(state.clone());
 
     router
         .merge(root)
@@ -335,17 +361,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         // including its own `503` (which `track_http` never observes, being
         // layered inside it), and it must be *outside* the timeout layer so
         // the queue wait is bounded by the limit's own timeout, not the
-        // request timeout. The layer is built ONCE here, because the pools
-        // live in the layer value: building it per route would give one pool
-        // per route.
-        .layer(
-            limit::BudgetLimitLayer::new(
-                limits.max_concurrent_requests,
-                limits.max_blocking_reloads_per_route,
-                limits.queue_timeout,
-            )
-            .with_routes(state.streams.keys().map(String::as_str)),
-        )
+        // request timeout. `budget`'s ordinary pool is shared across every
+        // rebuild; only the blocking-reload pools are re-keyed per route set.
+        .layer(budget.with_routes(state.streams.keys().map(String::as_str)))
 }
 
 /// A real [`router`] over a one-stream (`cam1`) state with `ordinary`
@@ -395,6 +413,13 @@ pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
 /// rather than parked in the kernel backlog.
 pub const MAX_CONNECTIONS: usize = 1024;
 
+/// Hard cap on concurrent live connections from one peer IP. A single host
+/// otherwise holds every [`MAX_CONNECTIONS`] slot (and every pool permit the
+/// bodies they never read) and stops every route; a connection past this cap
+/// is closed at `accept`, like the global one. The per-IP table is pruned as
+/// connections close, so it is bounded by the IPs actually connected.
+pub const MAX_CONNECTIONS_PER_IP: usize = 64;
+
 /// HTTP/2 SETTINGS_MAX_CONCURRENT_STREAMS advertised to clients on every h2
 /// connection (hyper's own default). Named constant rather than pulled from
 /// `Config`: multimux has no per-stream h2 knob today.
@@ -413,8 +438,10 @@ pub const H2_KEEP_ALIVE_TIMEOUT: Duration = Duration::from_secs(20);
 pub const DRAIN_DEADLINE: Duration = Duration::from_secs(30);
 
 /// Back-off between `accept()` attempts after a transient error (EMFILE,
-/// ECONNABORTED, ENFILE). An accept error must never end the listener.
-const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+/// ECONNABORTED, ENFILE). An accept error must never end the listener. Shared
+/// with the RTMP accept pump (`crate::source::rtmp::accept_pump`), which has
+/// the same rule.
+pub(crate) const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
 
 /// Serve `app` on `listener` through hyper-util's auto builder with a Tokio
 /// timer, [`HEADER_READ_TIMEOUT`], a [`MAX_CONNECTIONS`] connection cap
@@ -444,6 +471,7 @@ pub(crate) async fn serve_hyper_util(
         HEADER_READ_TIMEOUT,
         DRAIN_DEADLINE,
         MAX_CONNECTIONS,
+        MAX_CONNECTIONS_PER_IP,
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
     )
     .await
@@ -482,6 +510,35 @@ pub async fn serve_hyper_util_with_limits(
         header_read,
         drain,
         max_connections,
+        MAX_CONNECTIONS_PER_IP,
+        |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
+    )
+    .await
+}
+
+/// [`serve_hyper_util`] with explicit header-read + drain timeouts, a
+/// connection cap AND a per-IP cap (test-only): the per-IP cap is what the
+/// per-peer connection-cap test dials low to observe the second connection
+/// from one address being closed at `accept`.
+#[doc(hidden)]
+#[cfg(feature = "test-seams")]
+pub async fn serve_hyper_util_with_per_ip_limit(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    max_connections: usize,
+    max_connections_per_ip: usize,
+) -> std::io::Result<()> {
+    serve_impl(
+        listener,
+        app,
+        token,
+        header_read,
+        drain,
+        max_connections,
+        max_connections_per_ip,
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
     )
     .await
@@ -514,6 +571,7 @@ where
         header_read,
         drain,
         MAX_CONNECTIONS,
+        MAX_CONNECTIONS_PER_IP,
         accept_source,
     )
     .await
@@ -542,6 +600,7 @@ pub async fn serve_hyper_util_with_task_gauge(
             .with_read_idle(header_read)
             .with_write(drain),
         max_connections,
+        MAX_CONNECTIONS_PER_IP,
         Some(live_tasks),
         |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
     )
@@ -559,6 +618,7 @@ async fn serve_impl<A, Fut>(
     header_read: Duration,
     drain: Duration,
     max_connections: usize,
+    max_connections_per_ip: usize,
     accept_source: A,
 ) -> std::io::Result<()>
 where
@@ -575,6 +635,7 @@ where
             .with_read_idle(header_read)
             .with_write(drain),
         max_connections,
+        max_connections_per_ip,
         None,
         accept_source,
     )
@@ -591,6 +652,7 @@ async fn serve_impl_with_task_gauge<A, Fut>(
     token: tokio_util::sync::CancellationToken,
     timeouts: broadcast_common::timeouts::Timeouts,
     max_connections: usize,
+    max_connections_per_ip: usize,
     live_tasks: Option<Arc<std::sync::atomic::AtomicUsize>>,
     accept_source: A,
 ) -> std::io::Result<()>
@@ -611,6 +673,10 @@ where
 
     let listener = Arc::new(listener);
     let conns = Arc::new(tokio::sync::Semaphore::new(max_connections));
+    let per_ip_conns = parking_lot::Mutex::new(std::collections::HashMap::<
+        std::net::IpAddr,
+        Arc<tokio::sync::Semaphore>,
+    >::new());
     let graceful = GracefulShutdown::new();
     let mut tasks = tokio::task::JoinSet::new();
 
@@ -629,6 +695,11 @@ where
         } else {
             while tasks.try_join_next().is_some() {}
         }
+        // A peer's entry is dropped once it holds no permit, so the table is
+        // bounded by the IPs connected right now, not every IP ever seen.
+        per_ip_conns
+            .lock()
+            .retain(|_, sem| sem.available_permits() < max_connections_per_ip);
 
         let accepted = tokio::select! {
             () = token.cancelled() => break,
@@ -659,6 +730,28 @@ where
             }
         };
 
+        // The same rule per peer: one host cannot take every slot. The
+        // semaphore lives in the table (and the permit in the connection
+        // task), so it is released exactly when that connection closes.
+        let ip_permit = {
+            let mut table = per_ip_conns.lock();
+            let sem =
+                Arc::clone(table.entry(remote_addr.ip()).or_insert_with(|| {
+                    Arc::new(tokio::sync::Semaphore::new(max_connections_per_ip))
+                }));
+            match sem.try_acquire_owned() {
+                Ok(p) => p,
+                Err(_) => {
+                    tracing::warn!(
+                        peer = %remote_addr.ip(),
+                        "origin: per-IP connection cap reached; closing the accepted socket"
+                    );
+                    drop(stream);
+                    continue;
+                }
+            }
+        };
+
         let app = app.clone();
         let watcher = graceful.watcher();
         if let Some(gauge) = &live_tasks {
@@ -666,6 +759,7 @@ where
         }
         tasks.spawn(async move {
             let _permit = permit;
+            let _ip_permit = ip_permit;
             use axum::extract::connect_info::ConnectInfo;
             use tower::Layer as _;
             let local_addr = stream.local_addr().ok();
@@ -3904,16 +3998,37 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
     }
 
-    /// Biting test: `/metrics` must also stay open with `output_auth`
-    /// configured.
+    /// With `output_auth` configured, `/metrics` is gated by it (audit 20
+    /// finding 64: it renders every route name and counter) while the
+    /// liveness probe stays open. MUTATION VERIFIED: mounting `/metrics`
+    /// outside the gate serves the unauthenticated request `200`.
     #[tokio::test]
-    async fn output_auth_configured_metrics_still_open() {
+    async fn output_auth_configured_metrics_is_gated() {
         let app = app_with_output_auth(
             Verifier::new(Credentials::bearer("secrettoken"), OUTPUT_AUTH_REALM)
                 .expect("OS random source"),
         );
-        let resp = app.oneshot(get("/metrics")).await.unwrap();
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let unauthenticated = app.clone().oneshot(get("/metrics")).await.unwrap();
+        assert_eq!(
+            unauthenticated.status(),
+            axum::http::StatusCode::UNAUTHORIZED,
+            "an unauthenticated scrape must not see the metrics"
+        );
+        let authenticated = app
+            .clone()
+            .oneshot(get_with_auth("/metrics", "Bearer secrettoken"))
+            .await
+            .unwrap();
+        assert_eq!(authenticated.status(), axum::http::StatusCode::OK);
+        let body = body_string(authenticated).await;
+        assert!(body.contains("multimux_"), "metrics body: {body}");
+
+        let probe = app.oneshot(get("/healthz")).await.unwrap();
+        assert_eq!(
+            probe.status(),
+            axum::http::StatusCode::OK,
+            "liveness stays open regardless of output auth"
+        );
     }
 
     /// `output_auth: None` (the default, via [`make_state_streams`]/`AppState::new`

@@ -7,9 +7,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Fixed
-- A playlist, key, init or segment reference is only fetched over `http`/`https`, and an `https` playlist no longer fetches an absolute `http:` resource: the client resolves through `broadcast_common::url_ref::resolve_http` and reports a non-HTTP scheme or a downgrade as its existing `Error::UnresolvableReference` (the URL is never requested) (#2853).
-
 ## [0.14.0] - 2026-11-15
 ### Changed
 - BREAKING: `client::VariantInfo::url: String` is `uri: Option<url::Url>`: the absolute URL the manifest declares (`Some` for an HLS master's media playlist or a DASH Representation's Initialization Segment), and `None` for a protocol whose variant has none of its own (Smooth, whose fragments live under the manifest's URL). No empty string stands in for "no URI". `client::VariantInfo::new` takes the `Option<url::Url>`, and `HlsClient::select_variant` reads the stored URL instead of re-resolving text. Also `bandwidth: u32` is `bandwidth: u64`, so a DASH `@bandwidth` above the `u32` range is carried as parsed rather than saturated to `u32::MAX`. Migration: read `v.uri` as an `Option<&Url>` (`v.uri.as_ref().map(Url::as_str)` for the text), pass `Some(url)`/`None` to `VariantInfo::new`, and compare or collect `v.bandwidth` as a `u64` (`u64::from(..)` where a `u32` is wanted) (#2702).

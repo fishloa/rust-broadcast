@@ -20,6 +20,12 @@ use std::path::Path;
 /// spawns inside that fn in that file, owner + cancellation-path reason)`.
 const DISPOSITION: &[(&str, &str, u32, &str)] = &[
     (
+        "prometheus.rs",
+        "spawn_upkeep_with",
+        1,
+        "the process-wide metrics upkeep task; ends with the Tokio runtime that installed the recorder",
+    ),
+    (
         "source/file_reader.rs",
         "spawn",
         1,

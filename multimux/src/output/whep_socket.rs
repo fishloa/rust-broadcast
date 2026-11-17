@@ -14,7 +14,8 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use bytes::Bytes;
 use parking_lot::Mutex;
@@ -29,6 +30,16 @@ const RECV_BUFFER_BYTES: usize = 1500;
 
 /// Datagrams one viewer may have queued before further ones are dropped.
 const SESSION_INBOUND_QUEUE: usize = 64;
+
+/// Wait before retrying `recv_from` after a failed receive. A persistent
+/// error (a closed descriptor, `ENOBUFS`) would otherwise busy-loop the task
+/// and starve every viewer on the same socket.
+const RECV_ERROR_BACKOFF: Duration = Duration::from_millis(10);
+
+/// Consecutive receive errors after which the loop gives the socket up and
+/// marks it dead, so the next `socket_for` binds a replacement rather than
+/// handing out a socket nothing reads.
+const RECV_ERRORS_BEFORE_DEAD: u32 = 10;
 
 type SessionKey = u64;
 
@@ -49,6 +60,8 @@ pub(crate) struct SharedSocket {
     local_addr: SocketAddr,
     router: Arc<Mutex<Router>>,
     next_key: AtomicU64,
+    /// Set when the receive loop ends; the next `socket_for` rebinds.
+    dead: Arc<AtomicBool>,
     #[cfg(test)]
     dropped: Arc<AtomicU64>,
     #[cfg(test)]
@@ -74,17 +87,20 @@ impl SharedSocket {
         }));
         let dropped = Arc::new(AtomicU64::new(0));
         let handled = Arc::new(AtomicU64::new(0));
+        let dead = Arc::new(AtomicBool::new(false));
         let task = tokio::spawn(receive_loop(
             Arc::clone(&socket),
             Arc::clone(&router),
             Arc::clone(&dropped),
             Arc::clone(&handled),
+            Arc::clone(&dead),
         ));
         Ok(Self {
             socket,
             local_addr,
             router,
             next_key: AtomicU64::new(0),
+            dead,
             #[cfg(test)]
             dropped,
             #[cfg(test)]
@@ -142,35 +158,49 @@ impl SharedSocket {
     }
 }
 
-/// The one receive operation [`receive_loop`] drains — the shared socket in
-/// production, a scripted error in tests.
-trait RecvSource {
-    fn recv_from<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a;
+/// A datagram source: the real [`UdpSocket`], or a test's injected
+/// (always-failing) receiver.
+trait RecvFrom {
+    async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
 }
 
-impl RecvSource for Arc<UdpSocket> {
-    fn recv_from<'a>(
-        &'a self,
-        buf: &'a mut [u8],
-    ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a {
-        let socket = Arc::clone(self);
-        async move { UdpSocket::recv_from(socket.as_ref(), buf).await }
+impl RecvFrom for Arc<UdpSocket> {
+    async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        (**self).recv_from(buf).await
     }
 }
 
-async fn receive_loop<S: RecvSource>(
-    socket: S,
+async fn receive_loop<S: RecvFrom>(
+    source: S,
     router: Arc<Mutex<Router>>,
     dropped: Arc<AtomicU64>,
     handled: Arc<AtomicU64>,
+    dead: Arc<AtomicBool>,
 ) {
     let mut buf = [0u8; RECV_BUFFER_BYTES];
+    let mut consecutive_errors = 0u32;
     loop {
-        let Ok((len, peer)) = socket.recv_from(&mut buf).await else {
-            continue;
+        let (len, peer) = match source.recv_from(&mut buf).await {
+            Ok(ok) => {
+                consecutive_errors = 0;
+                ok
+            }
+            Err(e) => {
+                consecutive_errors = consecutive_errors.saturating_add(1);
+                if consecutive_errors == 1 {
+                    tracing::warn!(error = %e, "whep: media socket receive failed; backing off");
+                }
+                if consecutive_errors >= RECV_ERRORS_BEFORE_DEAD {
+                    tracing::warn!(
+                        error = %e,
+                        errors = consecutive_errors,
+                        "whep: media socket receive keeps failing; closing it"
+                    );
+                    break;
+                }
+                tokio::time::sleep(RECV_ERROR_BACKOFF).await;
+                continue;
+            }
         };
         let data = &buf[..len];
         let queue = {
@@ -191,6 +221,7 @@ async fn receive_loop<S: RecvSource>(
         }
         handled.fetch_add(1, Ordering::Release);
     }
+    dead.store(true, Ordering::SeqCst);
 }
 
 /// A viewer's registration on a [`SharedSocket`]; dropping it unregisters the
@@ -254,7 +285,8 @@ impl SharedSockets {
     }
 
     /// A socket for `ip`: a newly bound one while the IP has fewer than the configured count,
-    /// otherwise the next in rotation.
+    /// otherwise the next in rotation. A rotation slot whose socket died (its
+    /// receive loop ended) is rebound here rather than handed out.
     pub(crate) fn socket_for(&self, ip: IpAddr) -> io::Result<Arc<SharedSocket>> {
         let mut sockets = self.sockets.lock();
         let entry = sockets.entry(ip).or_default();
@@ -263,9 +295,14 @@ impl SharedSockets {
             entry.shards.push(Arc::clone(&socket));
             return Ok(socket);
         }
-        let socket = Arc::clone(&entry.shards[entry.next % entry.shards.len()]);
+        let index = entry.next % entry.shards.len();
         entry.next = entry.next.wrapping_add(1);
-        Ok(socket)
+        if entry.shards[index].dead.load(Ordering::SeqCst) {
+            let socket = Arc::new(SharedSocket::bind(ip)?);
+            entry.shards[index] = Arc::clone(&socket);
+            return Ok(socket);
+        }
+        Ok(Arc::clone(&entry.shards[index]))
     }
 
     /// How many sockets are bound.
@@ -284,6 +321,7 @@ mod tests {
     use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
     use rtc_stun::textattrs::TextAttribute;
     use std::net::Ipv4Addr;
+    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
     const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -488,30 +526,79 @@ mod tests {
         );
     }
 
-    /// One failing receive does not end the loop: the next datagram is still
-    /// classified and counted, so a transient socket error cannot silently
-    /// take a route's WHEP media socket out of service.
+    /// A receive error that never clears backs off rather than spinning, and
+    /// after the consecutive-error limit the loop ends and marks the socket
+    /// dead (audit 20 finding 23 — the old loop `continue`d with no bound).
+    /// MUTATION VERIFIED: restoring a bare `continue` makes this test's outer
+    /// timeout expire instead of the loop ending.
     #[tokio::test]
-    async fn a_recv_error_does_not_stop_the_receive_loop() {
-        struct ErrorThenDatagram {
-            calls: AtomicU64,
+    async fn a_persistent_receive_error_backs_off_then_ends_the_loop() {
+        struct FailingSource;
+        impl RecvFrom for FailingSource {
+            async fn recv_from(&self, _buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+                Err(io::Error::from_raw_os_error(105 /* ENOBUFS */))
+            }
         }
-        impl RecvSource for ErrorThenDatagram {
-            fn recv_from<'a>(
-                &'a self,
-                buf: &'a mut [u8],
-            ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a
-            {
-                let calls = &self.calls;
-                async move {
-                    match calls.fetch_add(1, Ordering::SeqCst) {
-                        0 => Err(io::Error::other("recv failed")),
-                        1 => {
-                            buf[0] = DTLS_RECORD[0];
-                            Ok((1, SocketAddr::from(([127, 0, 0, 1], 9))))
-                        }
-                        _ => std::future::pending().await,
-                    }
+
+        let router = Arc::new(Mutex::new(Router {
+            demux: SocketDemux::new(MAX_REMOTE_CANDIDATES),
+            queues: HashMap::new(),
+        }));
+        let dead = Arc::new(AtomicBool::new(false));
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            receive_loop(
+                FailingSource,
+                router,
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::clone(&dead),
+            ),
+        )
+        .await
+        .expect("the loop ends after the consecutive-error limit");
+        assert!(
+            dead.load(Ordering::SeqCst),
+            "an ended loop marks the socket dead"
+        );
+        assert!(
+            started.elapsed() >= RECV_ERROR_BACKOFF * (RECV_ERRORS_BEFORE_DEAD - 1),
+            "it backed off between retries rather than spinning: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A socket whose receive loop ended is rebound by `socket_for`, so a new
+    /// viewer never attaches to a socket nothing reads.
+    #[tokio::test]
+    async fn a_dead_socket_is_rebound_on_the_next_socket_for() {
+        let sockets = SharedSockets::with_sockets_per_ip(1);
+        let first = sockets.socket_for(LOCALHOST).expect("socket");
+        first.dead.store(true, Ordering::SeqCst);
+        let second = sockets.socket_for(LOCALHOST).expect("rebound");
+        assert!(!Arc::ptr_eq(&first, &second), "the dead socket is replaced");
+        assert_ne!(first.local_addr(), second.local_addr());
+        assert_eq!(sockets.len(), 1, "the dead socket is replaced in place");
+    }
+
+    /// A success between errors resets the consecutive-error count: ten
+    /// alternating failures and datagrams must not end the loop, or one
+    /// sporadic error every retry would retire a healthy socket.
+    /// MUTATION VERIFIED: removing `consecutive_errors = 0` from the `Ok` arm
+    /// ends the loop after the tenth error and marks the socket dead.
+    #[tokio::test]
+    async fn a_successful_receive_resets_the_consecutive_error_count() {
+        struct AlternatingSource {
+            calls: AtomicUsize,
+        }
+        impl RecvFrom for AlternatingSource {
+            async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+                if self.calls.fetch_add(1, Ordering::SeqCst).is_multiple_of(2) {
+                    Err(io::Error::from_raw_os_error(105 /* ENOBUFS */))
+                } else {
+                    buf[0] = 1;
+                    Ok((1, SocketAddr::from(([127, 0, 0, 1], 9))))
                 }
             }
         }
@@ -521,22 +608,28 @@ mod tests {
             queues: HashMap::new(),
         }));
         let handled = Arc::new(AtomicU64::new(0));
+        let dead = Arc::new(AtomicBool::new(false));
         let task = tokio::spawn(receive_loop(
-            ErrorThenDatagram {
-                calls: AtomicU64::new(0),
+            AlternatingSource {
+                calls: AtomicUsize::new(0),
             },
             router,
             Arc::new(AtomicU64::new(0)),
             Arc::clone(&handled),
+            Arc::clone(&dead),
         ));
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
-        while handled.load(Ordering::Acquire) == 0 && tokio::time::Instant::now() < deadline {
-            tokio::task::yield_now().await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while handled.load(Ordering::Acquire) < RECV_ERRORS_BEFORE_DEAD as u64 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the loop handled {} of {RECV_ERRORS_BEFORE_DEAD} datagrams",
+                handled.load(Ordering::Acquire)
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        assert_eq!(
-            handled.load(Ordering::Acquire),
-            1,
-            "the datagram after the failed receive must still be handled"
+        assert!(
+            !dead.load(Ordering::SeqCst),
+            "a success between errors must keep the socket alive"
         );
         task.abort();
     }

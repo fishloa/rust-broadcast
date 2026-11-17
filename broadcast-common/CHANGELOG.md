@@ -1,9 +1,9 @@
 # Changelog
 
 ## [Unreleased]
-
 ### Added
-- `url_ref::resolve_http`: RFC 3986 §5 resolution restricted to `http`/`https`, refusing any other scheme (`url_ref::Error::Scheme`) and an `https` -> `http` downgrade (`Error::SchemeDowngrade`), so a manifest reader that forwards resolver output never fetches `file:`/`ftp:`/`data:` or drops TLS silently (#2853).
+- `xml_chars::WriteRefusal::InvalidChar`, and `xml_chars::{open_element, empty_element, write_text, text_element}` refuse an attribute value or a text node holding a character outside the XML 1.0 §2.2 `Char` production. `quick-xml` escapes only the markup characters, so U+0000-U+0008, U+000B, U+000C, U+000E-U+001F, U+FFFE and U+FFFF used to reach the document verbatim and every reader rejects it; every writer built on these helpers now fails with `InvalidChar` instead (#2843).
+- `url_ref::resolve_http`: [`resolve`](url_ref::resolve) followed by a scheme requirement, `http` or `https`, with an `https`-to-`http` downgrade refused as the new `url_ref::Error::ForbiddenScheme`. A manifest is remote input, so a playlist, key, init or Smooth fragment reference naming `file:`, `ftp:` or downgrading the connection must not become a fetch the caller performs (#2853).
 
 ## [13.0.0] - 2026-11-15
 ### Changed
