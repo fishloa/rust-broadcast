@@ -2,7 +2,10 @@
 
 _Released 2026-11-17._
 
-### Changed
+Lockstep minor release (15.0 -> 15.1) following `broadcast-common`, `dvb-si` and `dvb-t2mi`. There is no functional change; the version and the dependency requirements move with the family.
+
+## Changed
+
 - Dependency/epoch bump only (follows broadcast-common, dvb-si, dvb-t2mi); no functional change.
 
 ---
