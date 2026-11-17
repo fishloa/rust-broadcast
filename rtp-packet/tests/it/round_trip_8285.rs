@@ -268,3 +268,88 @@ fn one_byte_stop_marker_mid_stream_keeps_only_prior_elements() {
     assert_eq!(one_byte.elements()[0].id.get(), 5);
     assert_eq!(one_byte.elements()[0].data, &[0xAB]);
 }
+
+// ── Idiomatic iterator consumption + multi-element length offsets ──────────
+
+#[test]
+fn two_byte_elements_keep_their_length_prefixes_across_three_elements() {
+    let third = vec![0xC3u8; 255];
+    let elements = TwoByteElements(vec![
+        TwoByteElement {
+            id: TwoByteId::new(1).unwrap(),
+            data: &[],
+        },
+        TwoByteElement {
+            id: TwoByteId::new(2).unwrap(),
+            data: &[0x0A, 0x0B, 0x0C],
+        },
+        TwoByteElement {
+            id: TwoByteId::new(3).unwrap(),
+            data: &third,
+        },
+    ]);
+    let mut out = vec![0u8; elements.serialized_len()];
+    elements.serialize_into(&mut out).unwrap();
+    assert_eq!(out.len(), 264, "2 + 5 + 257, already word aligned");
+    assert_eq!(&out[0..2], &[0x01, 0x00]);
+    assert_eq!(&out[2..7], &[0x02, 0x03, 0x0A, 0x0B, 0x0C]);
+    assert_eq!(&out[7..9], &[0x03, 0xFF]);
+    assert!(out[9..264].iter().all(|&b| b == 0xC3));
+
+    let parsed = TwoByteElements::parse(&out).unwrap();
+    let mut ids = Vec::new();
+    let mut lens = Vec::new();
+    for element in parsed {
+        ids.push(element.id.get());
+        lens.push(element.data.len());
+    }
+    assert_eq!(ids, vec![1, 2, 3]);
+    assert_eq!(lens, vec![0, 3, 255]);
+}
+
+#[test]
+fn one_byte_elements_keep_their_length_nibbles_across_fourteen_elements() {
+    let storage: Vec<Vec<u8>> = (0..14u8)
+        .map(|i| vec![0x40 + i; if i % 2 == 0 { 1 } else { 16 }])
+        .collect();
+    let elements = OneByteElements(
+        (0..14usize)
+            .map(|i| OneByteElement {
+                id: OneByteId::new(i as u8 + 1).unwrap(),
+                data: &storage[i],
+            })
+            .collect(),
+    );
+    let mut out = vec![0u8; elements.serialized_len()];
+    elements.serialize_into(&mut out).unwrap();
+    assert_eq!(out.len(), 136, "133 raw bytes padded to 32 bits");
+
+    let parsed = OneByteElements::parse(&out).unwrap();
+    let mut ids = Vec::new();
+    let mut lens = Vec::new();
+    for element in parsed {
+        ids.push(element.id.get());
+        lens.push(element.data.len());
+    }
+    assert_eq!(ids, (1..=14).collect::<Vec<u8>>());
+    assert_eq!(
+        lens,
+        (0..14)
+            .map(|i| if i % 2 == 0 { 1 } else { 16 })
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn two_byte_element_missing_its_length_byte_reports_the_exact_need() {
+    assert_eq!(
+        TwoByteElements::parse(&[0x01]),
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 2,
+                have: 1,
+                what: "RFC 8285 two-byte extension element length byte",
+            }
+        ))
+    );
+}

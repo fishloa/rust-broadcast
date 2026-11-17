@@ -1133,4 +1133,230 @@ mod tests {
         let back: Command = serde_json::from_str(&json).expect("deserialize Command");
         assert_eq!(back, cmd);
     }
+
+    /// Offsets through nested containers (an object holding an ECMA array
+    /// holding a >65535-byte Long String, then a Date) are exact in both
+    /// directions.
+    #[test]
+    fn nested_container_offsets_pin_parse_and_serialize() {
+        let long = "L".repeat(70_000);
+        let nested = Amf0Value::StrictArray(vec![
+            Amf0Value::Object(vec![
+                ("a".to_string(), Amf0Value::Number(1.5)),
+                (
+                    "b".to_string(),
+                    Amf0Value::EcmaArray(vec![
+                        ("x".to_string(), Amf0Value::LongString(long)),
+                        ("y".to_string(), Amf0Value::Null),
+                    ]),
+                ),
+            ]),
+            Amf0Value::Date(1.0e12),
+            Amf0Value::Boolean(true),
+            Amf0Value::Undefined,
+        ]);
+        let bytes = nested.try_to_bytes().expect("serialize");
+        assert_eq!(bytes.len(), nested.serialized_len());
+
+        assert_eq!(
+            &bytes[..10],
+            &[
+                marker::STRICT_ARRAY,
+                0,
+                0,
+                0,
+                4,
+                marker::OBJECT,
+                0,
+                1,
+                b'a',
+                marker::NUMBER
+            ]
+        );
+        assert_eq!(&bytes[10..18], &1.5f64.to_be_bytes());
+        assert_eq!(
+            &bytes[18..26],
+            &[0, 1, b'b', marker::ECMA_ARRAY, 0, 0, 0, 2]
+        );
+        assert_eq!(&bytes[26..30], &[0, 1, b'x', marker::LONG_STRING]);
+        assert_eq!(&bytes[30..34], &70_000u32.to_be_bytes());
+        assert_eq!(&bytes[34..36], b"LL");
+
+        let long_end = 34 + 70_000;
+        assert_eq!(&bytes[long_end..long_end + 4], &[0, 1, b'y', marker::NULL]);
+        assert_eq!(
+            &bytes[long_end + 4..long_end + 10],
+            &[0, 0, marker::OBJECT_END, 0, 0, marker::OBJECT_END]
+        );
+        assert_eq!(bytes[long_end + 10], marker::DATE);
+        assert_eq!(
+            &bytes[long_end + 11..long_end + 19],
+            &1.0e12f64.to_be_bytes()
+        );
+        assert_eq!(&bytes[long_end + 19..long_end + 21], &[0, 0]);
+        assert_eq!(
+            &bytes[long_end + 21..long_end + 24],
+            &[marker::BOOLEAN, 1, marker::UNDEFINED]
+        );
+        assert_eq!(bytes.len(), long_end + 24);
+
+        let mut values = 0usize;
+        let (parsed, consumed) = parse_value(&bytes, 0, &mut values).expect("parse");
+        assert_eq!(parsed, nested);
+        assert_eq!(consumed, bytes.len());
+    }
+
+    /// Every AMF0 variant writes exactly the byte count it declares.
+    #[test]
+    fn every_variant_writes_its_declared_length() {
+        let variants = vec![
+            Amf0Value::Number(-1.5),
+            Amf0Value::Boolean(false),
+            Amf0Value::String("hello".to_string()),
+            Amf0Value::Object(vec![("k".to_string(), Amf0Value::Null)]),
+            Amf0Value::Null,
+            Amf0Value::Undefined,
+            Amf0Value::EcmaArray(vec![("k".to_string(), Amf0Value::Date(0.0))]),
+            Amf0Value::StrictArray(vec![Amf0Value::Boolean(true), Amf0Value::Null]),
+            Amf0Value::Date(1.0e12),
+            Amf0Value::LongString("x".repeat(70_000)),
+        ];
+        for value in variants {
+            let mut buf = vec![0u8; value.serialized_len()];
+            assert_eq!(
+                value.serialize_into(&mut buf).unwrap(),
+                value.serialized_len()
+            );
+            let mut values = 0usize;
+            let (parsed, consumed) = parse_value(&buf, 0, &mut values).unwrap();
+            assert_eq!(consumed, buf.len());
+            assert_eq!(parsed, value);
+        }
+    }
+
+    /// The Long String length prefix accepts exactly that many bytes, rejects
+    /// one fewer, and an empty long string is valid.
+    #[test]
+    fn long_string_length_prefix_boundaries() {
+        assert_eq!(
+            Amf0Value::parse(&[marker::LONG_STRING, 0, 0, 0, 0]).unwrap(),
+            Amf0Value::LongString(String::new())
+        );
+        let mut ok = vec![marker::LONG_STRING, 0, 0, 0, 3];
+        ok.extend_from_slice(b"abc");
+        assert_eq!(
+            Amf0Value::parse(&ok).unwrap(),
+            Amf0Value::LongString("abc".to_string())
+        );
+        assert!(matches!(
+            Amf0Value::parse(&ok[..ok.len() - 1]),
+            Err(RtmpError::BufferTooShort(_))
+        ));
+    }
+
+    /// Truncating the encoding at any point inside a nested value is a
+    /// BufferTooShort, never a mis-framed shorter value.
+    #[test]
+    fn truncating_a_nested_encoding_is_always_buffer_too_short() {
+        let value = Amf0Value::StrictArray(vec![
+            Amf0Value::Object(vec![("k".to_string(), Amf0Value::Date(1.0e12))]),
+            Amf0Value::EcmaArray(vec![("s".to_string(), Amf0Value::String("v".to_string()))]),
+        ]);
+        let bytes = value.try_to_bytes().unwrap();
+        for cut in 1..bytes.len() {
+            assert!(
+                matches!(
+                    Amf0Value::parse(&bytes[..cut]),
+                    Err(RtmpError::BufferTooShort(_))
+                ),
+                "cut at {cut} must be BufferTooShort"
+            );
+        }
+    }
+
+    /// A truncated container reports the exact byte count its next field
+    /// needs.
+    #[test]
+    fn truncated_containers_report_the_exact_need() {
+        let bytes = [marker::ECMA_ARRAY, 0, 0, 0, 0];
+        match Amf0Value::parse(&bytes) {
+            Err(RtmpError::BufferTooShort(b)) => {
+                assert_eq!(b.need, 2);
+                assert_eq!(b.have, 0);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let bytes = [marker::DATE, 0, 0, 0, 0, 0, 0];
+        match Amf0Value::parse(&bytes) {
+            Err(RtmpError::BufferTooShort(b)) => {
+                assert_eq!(b.need, 10);
+                assert_eq!(b.have, 6);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let bytes = [marker::OBJECT, 0, 0];
+        match Amf0Value::parse(&bytes) {
+            Err(RtmpError::BufferTooShort(b)) => {
+                assert_eq!(b.need, 3);
+                assert_eq!(b.have, 2);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// Serializing an object into a pre-filled buffer writes every byte of
+    /// its range, including both object-end zeroes.
+    #[test]
+    fn object_serialize_overwrites_every_byte_of_its_range() {
+        let value = Amf0Value::Object(vec![("k".to_string(), Amf0Value::Null)]);
+        let mut buf = vec![0xFFu8; value.serialized_len()];
+        assert_eq!(
+            value.serialize_into(&mut buf).unwrap(),
+            value.serialized_len()
+        );
+        assert_eq!(
+            buf,
+            vec![
+                marker::OBJECT,
+                0,
+                1,
+                b'k',
+                marker::NULL,
+                0,
+                0,
+                marker::OBJECT_END
+            ]
+        );
+    }
+
+    /// The depth guard counts ECMA-array and strict-array nesting too.
+    #[test]
+    fn depth_guard_counts_every_container_kind() {
+        let mut inner = vec![marker::NULL];
+        for _ in 0..(MAX_AMF0_DEPTH + 1) {
+            let mut wrapped = vec![marker::ECMA_ARRAY, 0, 0, 0, 1];
+            wrapped.extend_from_slice(&1u16.to_be_bytes());
+            wrapped.push(b'a');
+            wrapped.extend_from_slice(&inner);
+            wrapped.extend_from_slice(&[0, 0, marker::OBJECT_END]);
+            inner = wrapped;
+        }
+        assert!(matches!(
+            Amf0Value::parse(&inner),
+            Err(RtmpError::Amf0DepthExceeded { .. })
+        ));
+
+        let mut inner = vec![marker::NULL];
+        for _ in 0..(MAX_AMF0_DEPTH + 1) {
+            let mut wrapped = vec![marker::STRICT_ARRAY, 0, 0, 0, 1];
+            wrapped.extend_from_slice(&inner);
+            inner = wrapped;
+        }
+        assert!(matches!(
+            Amf0Value::parse(&inner),
+            Err(RtmpError::Amf0DepthExceeded { .. })
+        ));
+    }
 }

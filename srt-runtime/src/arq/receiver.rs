@@ -1128,4 +1128,345 @@ mod tests {
             "100 in-order arrivals must do no skip-map work"
         );
     }
+
+    /// The Full ACK's ACKACK round trip pins both EWMAs to their hand-computed
+    /// rule 29/30 values (10 ms then 50 ms samples).
+    #[test]
+    fn ackack_round_trips_pin_rtt_and_rtt_var() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        let out = r.tick(ts(FULL_ACK_PERIOD));
+        let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
+            panic!("expected ACK");
+        };
+        let ackack = AckAckPacket {
+            ack_number: ack.ack_number,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
+            libsrt_pad: false,
+        };
+        r.on_ackack(&ackack, ts(FULL_ACK_PERIOD + Duration::from_millis(10)));
+        // RTT = (7*100 000 + 10 000) / 8 = 88 750 us.
+        assert_eq!(r.rtt(), Duration::from_micros(88_750));
+        // RTTVar = (3*50 000 + |100 000 - 10 000|) / 4 = 60 000 us.
+        assert_eq!(r.rtt_var(), Duration::from_micros(60_000));
+
+        let out = r.tick(ts(FULL_ACK_PERIOD * 2));
+        let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
+            panic!("expected ACK");
+        };
+        let ackack = AckAckPacket {
+            ack_number: ack.ack_number,
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
+            libsrt_pad: false,
+        };
+        r.on_ackack(&ackack, ts(Duration::from_millis(70))); // 50 ms after the second ACK
+        // RTT = (7*88 750 + 50 000) / 8 = 83 906 us.
+        assert_eq!(r.rtt(), Duration::from_micros(83_906));
+        // RTTVar = (3*60 000 + |88 750 - 50 000|) / 4 = 54 687 us.
+        assert_eq!(r.rtt_var(), Duration::from_micros(54_687));
+    }
+
+    /// A Full ACK awaiting its ACKACK is retained for
+    /// `ACK_RETENTION_RTTS * RTT` (5.35 s at a 1.3375 s estimate, well above
+    /// the 1 s floor) and forgotten one tick past it.
+    #[test]
+    fn ack_retention_scales_with_the_rtt_estimate() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        r.rtt.update(Duration::from_secs(10));
+        assert_eq!(r.rtt(), Duration::from_micros(1_337_500));
+        let retention = Duration::from_micros(5_350_000);
+        assert_eq!(retention, Duration::from_micros(1_337_500 * 4));
+
+        let _ = r.build_full_ack(ts(Duration::from_secs(1)));
+        assert_eq!(r.outstanding_acks.len(), 1);
+        r.expire_outstanding_acks(ts(
+            Duration::from_secs(1) + retention - Duration::from_millis(1)
+        ));
+        assert_eq!(r.outstanding_acks.len(), 1, "still inside the window");
+        r.expire_outstanding_acks(ts(Duration::from_secs(1)
+            + retention
+            + Duration::from_millis(1)));
+        assert_eq!(r.outstanding_acks.len(), 0, "one tick past the window");
+    }
+
+    fn periodic_nak_bytes(r: &mut Receiver, now: Timestamp) -> Vec<Vec<u8>> {
+        r.tick(now)
+            .into_iter()
+            .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
+            .collect()
+    }
+
+    /// 400 isolated losses (4-byte Single entries) fill a 1500-byte MTU
+    /// exactly 364 entries per NAK datagram, so exactly two datagrams carry
+    /// them, neither past the MTU.
+    #[test]
+    fn periodic_nak_splits_singles_at_the_exact_mtu_fill() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in (0..800u32).step_by(2) {
+            r.loss_list.insert(q);
+        }
+        let naks = periodic_nak_bytes(&mut r, ts(Duration::from_secs(1)));
+        assert_eq!(naks.len(), 2);
+        assert_eq!(naks[0].len() + IP_UDP_HEADER_LEN, DEFAULT_MTU as usize);
+        assert_eq!(naks[1].len(), crate::packet::SRT_HEADER_LEN + 36 * 4);
+        assert_eq!(nak_entries(&naks[0]).len(), 364);
+        assert_eq!(nak_entries(&naks[1]).len(), 36);
+    }
+
+    /// A Range entry is 8 wire bytes: 300 two-packet ranges split 182/118
+    /// across two MTU-sized NAK datagrams.
+    #[test]
+    fn periodic_nak_splits_ranges_at_the_exact_mtu_fill() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for i in 0..300u32 {
+            r.loss_list.insert(4 * i);
+            r.loss_list.insert(4 * i + 1);
+        }
+        let naks = periodic_nak_bytes(&mut r, ts(Duration::from_secs(1)));
+        assert_eq!(naks.len(), 2);
+        for nak in &naks {
+            assert!(nak.len() + IP_UDP_HEADER_LEN <= DEFAULT_MTU as usize);
+        }
+        let first = nak_entries(&naks[0]);
+        assert_eq!(first.len(), 182);
+        assert!(first.iter().all(|e| matches!(e, LossListEntry::Range(..))));
+        assert_eq!(nak_entries(&naks[1]).len(), 118);
+    }
+
+    /// The largest valid 31-bit sequence number is a real packet; one past it
+    /// is not.
+    #[test]
+    fn the_largest_31_bit_sequence_number_is_in_window() {
+        const MAX: u32 = crate::packet::SEQ_NUMBER_MASK;
+        let mut r = Receiver::new(PEER, MAX - 2, MAX_FLOW_WINDOW);
+        assert_eq!(
+            r.feed_data(MAX - 2, Timestamp::ZERO).delivered,
+            alloc::vec![MAX - 2]
+        );
+        assert_eq!(
+            r.feed_data(MAX - 1, Timestamp::ZERO).delivered,
+            alloc::vec![MAX - 1]
+        );
+        let out = r.feed_data(MAX, Timestamp::ZERO);
+        assert!(!out.out_of_window);
+        assert_eq!(out.delivered, alloc::vec![MAX]);
+        assert_eq!(r.ack_point(), 0);
+        assert!(r.feed_data(MAX + 1, Timestamp::ZERO).out_of_window);
+    }
+
+    /// A DROPREQ removes its inclusive range from the loss list, and
+    /// overlapping plus adjacent DROPREQs coalesce into one skip run: the next
+    /// periodic NAK never re-asks for data the sender already dropped.
+    #[test]
+    fn dropreq_ranges_merge_and_are_subtracted_from_the_loss_list() {
+        let mut r = Receiver::new(PEER, 10, MAX_FLOW_WINDOW);
+        r.feed_data(10, Timestamp::ZERO);
+        let gap = r.feed_data(20, Timestamp::ZERO); // 11..=19 lost
+        assert_eq!(
+            nak_entries(&gap.nak.expect("gap NAK")),
+            alloc::vec![LossListEntry::Range(sn(11), sn(19))]
+        );
+        assert_eq!(r.loss_list_len(), 9);
+
+        r.skip_range(12, 14);
+        let naks = periodic_nak_bytes(&mut r, ts(Duration::from_secs(1)));
+        assert_eq!(naks.len(), 1);
+        assert_eq!(
+            nak_entries(&naks[0]),
+            alloc::vec![
+                LossListEntry::Single(sn(11)),
+                LossListEntry::Range(sn(15), sn(19))
+            ]
+        );
+        assert_eq!(r.loss_list_len(), 6);
+        assert_eq!(r.pending_skips.get(&12), Some(&14));
+
+        // Overlapping (13..=16) then adjacent-after (17..=17) merge into one
+        // 12..=17 skip.
+        r.skip_range(13, 16);
+        r.skip_range(17, 17);
+        assert_eq!(r.pending_skips.len(), 1);
+        assert_eq!(r.pending_skips.get(&12), Some(&17));
+        let naks = periodic_nak_bytes(&mut r, ts(Duration::from_secs(2)));
+        assert_eq!(naks.len(), 1);
+        assert_eq!(
+            nak_entries(&naks[0]),
+            alloc::vec![
+                LossListEntry::Single(sn(11)),
+                LossListEntry::Range(sn(18), sn(19))
+            ]
+        );
+        assert_eq!(r.loss_list_len(), 3);
+    }
+
+    /// Overlapping skips inserted in either order coalesce into one disjoint
+    /// run (the four overlap/adjacency predicates each contribute).
+    #[test]
+    fn remember_skip_coalesces_every_overlap_and_adjacency_shape() {
+        let mut r = Receiver::new(PEER, 100, MAX_FLOW_WINDOW);
+        r.skip_range(112, 120);
+        // Overlaps the existing run at its front and contains its start.
+        r.skip_range(111, 114);
+        assert_eq!(r.pending_skips.len(), 1);
+        assert_eq!(r.pending_skips.get(&111), Some(&120));
+
+        // Adjacent-before: 108..=111 abuts 112 from below.
+        let mut r = Receiver::new(PEER, 100, MAX_FLOW_WINDOW);
+        r.skip_range(112, 120);
+        r.skip_range(108, 111);
+        assert_eq!(r.pending_skips.len(), 1);
+        assert_eq!(r.pending_skips.get(&108), Some(&120));
+
+        // Adjacent-after: 121..=125 abuts 120 from above.
+        let mut r = Receiver::new(PEER, 100, MAX_FLOW_WINDOW);
+        r.skip_range(112, 120);
+        r.skip_range(121, 125);
+        assert_eq!(r.pending_skips.len(), 1);
+        assert_eq!(r.pending_skips.get(&112), Some(&125));
+    }
+
+    /// A DROPREQ outside the loss list records only a skip: the loss list and
+    /// ack point are untouched, and a DROPREQ wholly behind the ack point is
+    /// ignored.
+    #[test]
+    fn a_dropreq_outside_the_loss_list_changes_nothing() {
+        let mut r = Receiver::new(PEER, 10, MAX_FLOW_WINDOW);
+        r.feed_data(10, Timestamp::ZERO);
+        r.feed_data(20, Timestamp::ZERO); // 11..=19 lost
+        r.skip_range(30, 35); // ahead of the highest received
+        assert_eq!(r.loss_list_len(), 9);
+        assert_eq!(r.ack_point(), 11);
+        assert_eq!(r.pending_skips.get(&30), Some(&35));
+
+        r.skip_range(5, 8); // wholly behind the ack point
+        assert_eq!(r.loss_list_len(), 9);
+        assert_eq!(r.ack_point(), 11);
+
+        let naks = periodic_nak_bytes(&mut r, ts(Duration::from_secs(1)));
+        assert_eq!(naks.len(), 1);
+        assert_eq!(
+            nak_entries(&naks[0]),
+            alloc::vec![LossListEntry::Range(sn(11), sn(19))]
+        );
+    }
+
+    /// A skip covering the whole loss list suppresses every NAK for it.
+    #[test]
+    fn a_skip_over_the_whole_loss_list_suppresses_the_nak() {
+        let mut r = Receiver::new(PEER, 10, MAX_FLOW_WINDOW);
+        r.feed_data(10, Timestamp::ZERO);
+        r.feed_data(20, Timestamp::ZERO); // 11..=19 lost
+        r.skip_range(11, 19);
+        assert_eq!(r.loss_list_len(), 0);
+        assert_eq!(r.ack_point(), 21);
+        assert!(periodic_nak_bytes(&mut r, ts(Duration::from_secs(1))).is_empty());
+    }
+
+    /// A gap opened while a DROPREQ skip is pending omits the skipped run
+    /// (the skip's interior is cut out, the tail after it kept).
+    #[test]
+    fn a_gap_opened_after_a_pending_skip_omits_the_skipped_run() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in 0..6u32 {
+            r.feed_data(q, Timestamp::ZERO);
+        }
+        r.skip_range(10, 12);
+        let out = r.feed_data(16, Timestamp::ZERO); // gap 6..=15
+        assert_eq!(
+            nak_entries(&out.nak.expect("gap NAK")),
+            alloc::vec![
+                LossListEntry::Range(sn(6), sn(9)),
+                LossListEntry::Range(sn(13), sn(15))
+            ]
+        );
+    }
+
+    /// A skip ending one before the gap's last packet keeps that last packet
+    /// (the uncovered tail is still a loss).
+    #[test]
+    fn a_skip_ending_before_the_last_lost_packet_keeps_the_tail() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in 0..6u32 {
+            r.feed_data(q, Timestamp::ZERO);
+        }
+        r.skip_range(10, 14);
+        let out = r.feed_data(16, Timestamp::ZERO); // gap 6..=15
+        assert_eq!(
+            nak_entries(&out.nak.expect("gap NAK")),
+            alloc::vec![
+                LossListEntry::Range(sn(6), sn(9)),
+                LossListEntry::Single(sn(15))
+            ]
+        );
+    }
+
+    /// A skip whose last packet is exactly the gap's first packet hides it
+    /// (a cut at offset 0 is still a cut).
+    #[test]
+    fn a_skip_ending_at_the_gap_start_hides_it() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in 0..5u32 {
+            r.feed_data(q, Timestamp::ZERO);
+        }
+        r.skip_range(12, 15);
+        r.feed_data(14, Timestamp::ZERO); // gap 5..=13, 12..=13 skipped
+        assert_eq!(r.loss_list_len(), 7); // 5..=11
+        let out = r.feed_data(16, Timestamp::ZERO); // gap is exactly 15, skipped
+        assert!(out.nak.is_none());
+        assert_eq!(r.loss_list_len(), 7);
+    }
+
+    /// A skip starting exactly at the gap's last packet leaves the rest of the
+    /// gap uncovered.
+    #[test]
+    fn a_skip_starting_at_the_last_lost_packet_is_still_a_cut() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in 0..6u32 {
+            r.feed_data(q, Timestamp::ZERO);
+        }
+        r.skip_range(15, 20);
+        let out = r.feed_data(16, Timestamp::ZERO); // gap 6..=15
+        assert_eq!(
+            nak_entries(&out.nak.expect("gap NAK")),
+            alloc::vec![LossListEntry::Range(sn(6), sn(14))]
+        );
+    }
+
+    /// A packet the ack point has already passed (a DROPREQ jumped
+    /// `next_expected` past `highest_received`) is a duplicate: it opens no
+    /// gap, NAKs nothing and grows no loss list.
+    #[test]
+    fn a_packet_behind_the_ack_point_after_a_skip_opens_no_gap() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in 0..6u32 {
+            r.feed_data(q, Timestamp::ZERO);
+        }
+        r.skip_range(6, 20);
+        assert_eq!(r.ack_point(), 21);
+        let out = r.feed_data(10, Timestamp::ZERO);
+        assert!(!out.out_of_window);
+        assert!(out.delivered.is_empty());
+        assert!(out.nak.is_none());
+        assert_eq!(r.loss_list_len(), 0);
+    }
+
+    /// A DROPREQ whose `last` is exactly the ack point still advances it, and
+    /// one reaching past the flow window is ignored entirely.
+    #[test]
+    fn dropreq_reach_boundaries_are_exact() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for q in 0..6u32 {
+            r.feed_data(q, Timestamp::ZERO);
+        }
+        assert_eq!(r.ack_point(), 6);
+        r.skip_range(4, 6);
+        assert_eq!(r.ack_point(), 7);
+
+        let mut r = Receiver::new(PEER, 0, 1000);
+        r.skip_range(5000, 7000);
+        assert_eq!(r.ack_point(), 0);
+        assert!(r.pending_skips.is_empty());
+        assert_eq!(r.loss_list_len(), 0);
+    }
 }

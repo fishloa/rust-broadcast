@@ -133,6 +133,9 @@ mod tests {
         assert!(seq_geq(20, 10));
         assert!(!seq_lt(20, 10));
         assert!(!seq_gt(10, 20));
+        assert!(!seq_geq(10, 20));
+        assert!(seq_geq(0, SEQ_NUMBER_MASK));
+        assert!(!seq_geq(SEQ_NUMBER_MASK, 0));
     }
 
     #[test]
