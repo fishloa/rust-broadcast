@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Test-only: the RFC 3550 §A.1 cycle counter increments on the wrapping packet only (never on a duplicate), `ExtendedSeqNo::forward_distance` across a cycle boundary, and the `RTP_SEQ_MOD_PLUS_ONE` `bad_seq` sentinel are pinned (audit 21 finding 13, #2908).
 
 ## [0.8.0] - 2026-11-15
 ### Changed
