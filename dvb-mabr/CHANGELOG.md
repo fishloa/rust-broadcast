@@ -3,6 +3,8 @@
 All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
+### Tests
+- The golden's `GOLDEN_BLESS` switch refuses to write when `CI` is set, with a regression test, and `fixtures/golden/mabr/PROVENANCE.md` records that no third-party validator exists for these documents, so the golden pins stability while `spec_fidelity` and `round_trip` carry correctness (audit 21 finding 62).
 
 ## [0.6.0] - 2026-11-15
 ### Changed

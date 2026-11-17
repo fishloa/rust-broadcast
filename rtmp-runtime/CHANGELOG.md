@@ -10,6 +10,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Tests
 - Pin the chunk layer's numeric ceilings by value, the receive-buffer backstop, `compact`/`swap_pending`/`pending_len`, the three-byte basic header, Type 1/2/3 extended-timestamp framing and the exact error sums, AMF0 nested-container offsets/depth/truncation, and the FLV aggregate sub-message arithmetic plus the tolerant resync chain heuristics (#2932, #2933, #2934).
+- `ffmpeg_publish` requires its oracle through `test_fixtures::process::require_tool`, so `REQUIRE_EXTERNAL_TOOLS=1` turns the missing-ffmpeg skip into a failure instead of a green run that never published (audit 21 finding 60).
 
 ## [0.11.1] - 2026-11-17
 ### Fixed
