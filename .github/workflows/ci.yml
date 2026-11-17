@@ -255,6 +255,55 @@ jobs:
         timeout-minutes: 15
         run: cargo test -p broadcast-client --all-features --locked --test e2e_mediamtx_rtsp -- --nocapture
 
+  # The external-oracle lane (audit 21 finding 60). These tests are the ONLY
+  # independent check of the Dolby Vision / HDR10 boxes, the Smooth fragments
+  # and the served TS-HLS segments: our own code and our own checker share any
+  # misreading of the spec, so a silently skipped oracle is no coverage at all.
+  # This job installs the third-party tools and sets REQUIRE_EXTERNAL_TOOLS=1,
+  # which makes a missing tool a HARD FAILURE (test_fixtures::process::
+  # require_tool) instead of a silent skip — drop an install and the job goes
+  # red. Bento4 is built from source at a pinned commit because Ubuntu ships no
+  # package for it; `mp4dump` is what reads the Smooth fragments.
+  oracles:
+    name: external oracles (gpac, ffmpeg, Bento4)
+    runs-on: ubuntu-24.04
+    needs: [private-fixtures, changes]
+    if: needs.changes.outputs.rust == 'true'
+    env:
+      REQUIRE_EXTERNAL_TOOLS: "1"
+      BENTO4_SHA: b98c928eaf3d63b29d59d1d7aa90e60c8c210fb2
+    steps:
+      - uses: actions/checkout@v5
+      - name: Private fixtures (Dolby Vision / HDR10 captures)
+        uses: ./.github/actions/private-fixtures
+        with:
+          mode: use
+          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
+          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install gpac (MP4Box), ffmpeg (ffprobe) and Bento4 (mp4dump)
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gpac ffmpeg cmake
+          git init "${RUNNER_TEMP}/bento4"
+          git -C "${RUNNER_TEMP}/bento4" remote add origin https://github.com/axiomatic-systems/Bento4
+          git -C "${RUNNER_TEMP}/bento4" fetch --depth 1 origin "${BENTO4_SHA}"
+          git -C "${RUNNER_TEMP}/bento4" checkout --detach "${BENTO4_SHA}"
+          test "$(git -C "${RUNNER_TEMP}/bento4" rev-parse HEAD)" = "${BENTO4_SHA}"
+          cmake -S "${RUNNER_TEMP}/bento4" -B "${RUNNER_TEMP}/bento4-build" -DCMAKE_BUILD_TYPE=Release
+          cmake --build "${RUNNER_TEMP}/bento4-build" --target mp4dump -j 4
+          echo "${RUNNER_TEMP}/bento4-build" >> "$GITHUB_PATH"
+      - name: Dolby Vision and HDR10 boxes through ffprobe and MP4Box
+        timeout-minutes: 20
+        run: "cargo test -p multimux --all-features --locked --test it -- dovi_route:: hdr10_route::"
+      - name: Smooth fragments (MP4Box, mp4dump) and TS-HLS (ffprobe, ffmpeg)
+        timeout-minutes: 30
+        run: "cargo test -p multimux --all-features --locked --test it -- smooth_oracle:: smooth_output:: ts_hls_oracle:: cold_playlist_hold::"
+      - name: A real ffmpeg publishes H.264 + AAC over RTMP
+        timeout-minutes: 10
+        run: "cargo test -p rtmp-runtime --all-features --locked --test it -- ffmpeg_publish::"
+
   lint:
     name: clippy
     runs-on: ubuntu-24.04

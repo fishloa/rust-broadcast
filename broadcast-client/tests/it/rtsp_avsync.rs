@@ -526,11 +526,11 @@ fn three_b_frame_fixture() -> Option<(MediaFixture, transmux::Media)> {
 #[test]
 fn a_three_b_frame_two_second_gop_source_lands_on_the_sender_report_timeline() {
     let Some((fixture, media)) = three_b_frame_fixture() else {
-        assert!(
-            std::env::var_os("REQUIRE_MEDIAMTX_E2E").is_none(),
-            "ffmpeg with libx264 is required"
+        test_fixtures::process::require_tool_probed(
+            false,
+            "ffmpeg with libx264",
+            "REQUIRE_MEDIAMTX_E2E",
         );
-        eprintln!("SKIP: ffmpeg with libx264 not available");
         return;
     };
     let truth = Truth::from_media(&media);

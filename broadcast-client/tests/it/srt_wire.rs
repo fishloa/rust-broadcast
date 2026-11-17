@@ -31,17 +31,11 @@ const SYNC_INTERVAL: Duration = Duration::from_millis(50);
 const LOCAL_SRT_LATENCY_MS: u16 = 3_000;
 const DRAIN: Duration = Duration::from_millis(LOCAL_SRT_LATENCY_MS as u64 + DRAIN_MARGIN_MS);
 
-fn libsrt_available(test: &str) -> bool {
+fn libsrt_available() -> bool {
     let found = std::env::var_os("PATH").is_some_and(|paths| {
         std::env::split_paths(&paths).any(|dir| dir.join("srt-live-transmit").is_file())
     });
-    if !found {
-        assert!(
-            std::env::var_os("SRT_REQUIRE_LIBSRT").is_none(),
-            "{test}: srt-live-transmit is required (SRT_REQUIRE_LIBSRT) but not on PATH"
-        );
-        eprintln!("SKIPPED {test}: srt-live-transmit (libsrt) is not on PATH");
-    }
+    test_fixtures::process::require_tool_probed(found, "srt-live-transmit", "SRT_REQUIRE_LIBSRT");
     found
 }
 
@@ -93,7 +87,7 @@ fn the_caller_plays_a_srt_runtime_listener_stream_exactly() {
 }
 
 fn libsrt_stream_is_intact(passphrase: Option<&str>, key_length: SrtKeyLength, test: &str) {
-    if !libsrt_available(test) {
+    if !libsrt_available() {
         return;
     }
     let Some(ts) = test_fixtures::require_bytes(LIVE_CAPTURE, test) else {
@@ -200,7 +194,7 @@ fn the_caller_decrypts_a_libsrt_listener_stream_for_every_key_length() {
 
 #[test]
 fn a_wrong_passphrase_is_refused_by_libsrt() {
-    if !libsrt_available("libsrt wrong passphrase") {
+    if !libsrt_available() {
         return;
     }
     let srt_port = free_udp_port();
@@ -313,7 +307,7 @@ impl Drop for LossyProxy {
 #[test]
 fn libsrt_retransmissions_repair_a_lossy_link() {
     let test = "libsrt lossy link";
-    if !libsrt_available(test) {
+    if !libsrt_available() {
         return;
     }
     let Some(ts) = test_fixtures::require_bytes(LIVE_CAPTURE, test) else {
