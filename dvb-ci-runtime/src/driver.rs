@@ -4,7 +4,7 @@
 //! [`Notification`]s for the host application.
 
 use mpeg_ts::pid::Pid;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::io;
 use std::time::{Duration, Instant};
 
@@ -16,7 +16,7 @@ use dvb_si::tables::pmt::PmtSection;
 
 use broadcast_common::Parse;
 
-use crate::device::{CaDevice, SlotInfo};
+use crate::device::{CaDevice, MAX_CA_FRAME, SlotInfo};
 use crate::event::{Action, Event, HostRequest, HotPlug, MmiEvent, Notification};
 use crate::managed::{self, CaError, ManagedCa};
 use crate::stack::CiStack;
@@ -39,6 +39,18 @@ const MMI_CARD_ABSENT_KEYWORDS: &[&str] = &[
 /// [`MMI_CARD_ABSENT_KEYWORDS`].
 const MMI_CARD_PRESENT_KEYWORDS: &[&str] = &["entitlement", "card valid", "subscription active"];
 
+/// Most [`Notification`]s buffered before the driver discards the oldest.
+///
+/// A CAM that keeps sending malformed frames produces one notification per
+/// frame (for example the stack's `Notification::Error`), and a host that only
+/// ever calls [`Driver::pump`] never drains the queue — so it needs a bound, or
+/// a misbehaving module grows it for the life of the process. The oldest entry
+/// is dropped first (the newest failure is what a host acting on the queue
+/// needs), and every drop is counted in
+/// [`Driver::notifications_dropped`] so a host can tell it fell behind rather
+/// than silently losing the record.
+pub const MAX_PENDING_NOTIFICATIONS: usize = 1024;
+
 /// Clock source for [`Driver::pump`]'s elapsed-time measurement (r10-W-21).
 /// A boxed closure (not a bare `fn` pointer) so a test's [`Driver::with_clock`]
 /// can capture mutable state to simulate a jump of arbitrary size in one call,
@@ -53,7 +65,9 @@ fn default_clock() -> Clock {
 pub struct Driver<D: CaDevice> {
     device: D,
     stack: CiStack,
-    notifications: Vec<Notification>,
+    notifications: VecDeque<Notification>,
+    /// Notifications discarded by the [`MAX_PENDING_NOTIFICATIONS`] bound.
+    notifications_dropped: u64,
     /// Delay the stack last asked to be polled after (`None` = none pending).
     next_timer: Option<Duration>,
     /// Read buffer for one link-layer frame.
@@ -123,9 +137,10 @@ impl<D: CaDevice> Driver<D> {
         Self {
             device,
             stack: CiStack::new(),
-            notifications: Vec::new(),
+            notifications: VecDeque::new(),
+            notifications_dropped: 0,
             next_timer: None,
-            buf: vec![0u8; 4096],
+            buf: vec![0u8; MAX_CA_FRAME],
             last_slot: None,
             last_caids: None,
             last_descrambling_ok: None,
@@ -173,7 +188,26 @@ impl<D: CaDevice> Driver<D> {
 
     /// Drain the notifications collected so far.
     pub fn take_notifications(&mut self) -> Vec<Notification> {
-        core::mem::take(&mut self.notifications)
+        self.notifications.drain(..).collect()
+    }
+
+    /// How many notifications have been discarded by the
+    /// [`MAX_PENDING_NOTIFICATIONS`] bound over this driver's lifetime — a
+    /// non-zero value means a host that does not drain
+    /// [`take_notifications`](Self::take_notifications) (or use
+    /// [`pump_with`](Self::pump_with)) missed that many of the oldest ones.
+    pub fn notifications_dropped(&self) -> u64 {
+        self.notifications_dropped
+    }
+
+    /// Queue one notification, discarding the oldest buffered one when the
+    /// [`MAX_PENDING_NOTIFICATIONS`] bound is reached.
+    fn push_notification(&mut self, n: Notification) {
+        if self.notifications.len() == MAX_PENDING_NOTIFICATIONS {
+            self.notifications.pop_front();
+            self.notifications_dropped += 1;
+        }
+        self.notifications.push_back(n);
     }
 
     /// Bring the interface up (reset + open the transport connection).
@@ -193,8 +227,10 @@ impl<D: CaDevice> Driver<D> {
 
     fn send_ca_pmt_checked(&mut self, ca_pmt: &[u8]) -> Result<(), CaError> {
         let before = self.notifications.len();
+        let dropped_before = self.notifications_dropped;
         self.send_ca_pmt(ca_pmt)?;
-        let refusal = self.notifications[before..].iter().find_map(|n| match n {
+        let start = before.saturating_sub((self.notifications_dropped - dropped_before) as usize);
+        let refusal = self.notifications.range(start..).find_map(|n| match n {
             Notification::Error { detail } => Some(detail.clone()),
             _ => None,
         });
@@ -739,8 +775,10 @@ impl<D: CaDevice> Driver<D> {
                 Action::SetTimer { after } => self.next_timer = Some(after),
                 Action::Notify(n) => {
                     let inferred = self.infer_card(&n);
-                    self.notifications.push(n);
-                    self.notifications.extend(inferred);
+                    self.push_notification(n);
+                    for note in inferred {
+                        self.push_notification(note);
+                    }
                 }
             }
         }
@@ -757,8 +795,7 @@ impl<D: CaDevice> Driver<D> {
         let prev = self.last_slot.replace(info);
         match prev {
             Some(prev) if !prev.module_present && info.module_present => {
-                self.notifications
-                    .push(Notification::HotPlug(HotPlug::CamPresent));
+                self.push_notification(Notification::HotPlug(HotPlug::CamPresent));
                 self.reset_module_state();
                 // Re-drive the same reset/init path `Driver::init` uses, so
                 // the newly-inserted module gets a clean resource-manager
@@ -767,8 +804,7 @@ impl<D: CaDevice> Driver<D> {
                 self.run(actions)?;
             }
             Some(prev) if prev.module_present && !info.module_present => {
-                self.notifications
-                    .push(Notification::HotPlug(HotPlug::CamRemoved));
+                self.push_notification(Notification::HotPlug(HotPlug::CamRemoved));
                 self.reset_module_state();
             }
             _ => {}
@@ -3773,6 +3809,147 @@ pub(crate) mod tests {
         assert!(
             ca_pmt_writes(&d) > before,
             "4 s passed with a 1 s requery interval but no re-query was sent"
+        );
+    }
+
+    /// A CAM can deliver a legal link-layer frame far larger than 4094 bytes
+    /// of TPDU (a `Tdata_last` block carries up to 65534 bytes); the driver
+    /// must hand the device a buffer sized for the largest one, not a
+    /// 4096-byte scratch buffer (audit a20-21).
+    /// A host that only ever calls `pump` never drains the queue, so a CAM
+    /// sending one notification per malformed frame must not grow it without
+    /// bound (audit a20-38): the oldest are discarded past the cap, and every
+    /// discard is counted.
+    #[test]
+    fn pending_notifications_are_bounded_and_the_overflow_counted() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        d.pump(Duration::from_millis(1)).unwrap();
+        d.take_notifications();
+
+        d.device_mut().slot.module_present = false;
+        d.pump(Duration::from_millis(1)).unwrap();
+
+        let overflow = 16;
+        for _ in 0..(MAX_PENDING_NOTIFICATIONS + overflow) {
+            d.device_mut().inbound.push_back(vec![0xFF, 0x00]);
+            d.pump(Duration::from_millis(1)).unwrap();
+        }
+
+        let notes = d.take_notifications();
+        assert_eq!(
+            notes.len(),
+            MAX_PENDING_NOTIFICATIONS,
+            "the pending queue must stay at its cap under a notification flood"
+        );
+        assert_eq!(
+            d.notifications_dropped(),
+            (overflow + 1) as u64,
+            "the CAM-removed notification and the oldest errors are the ones discarded"
+        );
+        assert!(
+            notes
+                .iter()
+                .all(|n| matches!(n, Notification::Error { .. })),
+            "the discarded entries must be the oldest ones, not the newest"
+        );
+    }
+
+    #[test]
+    fn read_buffer_covers_the_largest_legal_device_frame() {
+        struct BufferProbe(Option<usize>);
+
+        impl CaDevice for BufferProbe {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.0 = Some(buf.len());
+                Ok(0)
+            }
+            fn write(&mut self, _buf: &[u8]) -> io::Result<()> {
+                Ok(())
+            }
+            fn reset(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+            fn slot_info(&mut self) -> io::Result<SlotInfo> {
+                Ok(SlotInfo {
+                    num: 0,
+                    module_ready: true,
+                    module_present: true,
+                })
+            }
+            fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+                Ok(true)
+            }
+        }
+
+        let mut d = Driver::new(BufferProbe(None));
+        d.pump(Duration::from_millis(1))
+            .expect("a readable device with no frame is not an error");
+        assert_eq!(
+            d.device().0,
+            Some(MAX_CA_FRAME),
+            "the read buffer must cover the largest legal device frame"
+        );
+    }
+
+    /// The behavioural half of a20-21: a device that refuses a frame which
+    /// does not fit the caller's buffer (exactly `LinuxCaDevice`'s contract)
+    /// must not fail the pump for a legal `Tdata_last` block larger than the
+    /// old 4096-byte buffer.
+    #[test]
+    fn a_legal_oversized_tpdu_is_read_without_an_io_error() {
+        const DATA_LEN: usize = 5000;
+
+        struct OversizedFrameDevice(Option<Vec<u8>>);
+
+        impl CaDevice for OversizedFrameDevice {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                let Some(frame) = self.0.take() else {
+                    return Ok(0);
+                };
+                if frame.len() > buf.len() {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "TPDU larger than the read buffer; dropped, not truncated",
+                    ));
+                }
+                let n = frame.len();
+                buf[..n].copy_from_slice(&frame);
+                Ok(n)
+            }
+            fn write(&mut self, _buf: &[u8]) -> io::Result<()> {
+                Ok(())
+            }
+            fn reset(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+            fn slot_info(&mut self) -> io::Result<SlotInfo> {
+                Ok(SlotInfo {
+                    num: 0,
+                    module_ready: true,
+                    module_present: true,
+                })
+            }
+            fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+                Ok(self.0.is_some())
+            }
+        }
+
+        let mut frame = vec![tags::DATA_LAST];
+        let mut length = [0u8; 4];
+        let coded = dvb_ci::length::encode_into(1 + DATA_LEN, &mut length)
+            .expect("a legal EN 50221 length");
+        frame.extend_from_slice(&length[..coded]);
+        frame.push(0x01);
+        frame.extend(std::iter::repeat_n(0xAB, DATA_LEN));
+
+        let mut d = Driver::new(OversizedFrameDevice(Some(frame)));
+        assert!(
+            d.pump(Duration::from_millis(1)).is_ok(),
+            "a legal {DATA_LEN}-byte TPDU must not fail the read"
+        );
+        assert!(
+            d.device().0.is_none(),
+            "the frame must have been taken off the device, not refused"
         );
     }
 }

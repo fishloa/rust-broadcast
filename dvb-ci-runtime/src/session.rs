@@ -18,6 +18,18 @@ use dvb_ci::spdu::{
     OpenSessionResponse, SessionNumber, SessionStatus, tags,
 };
 
+/// Most sessions this layer keeps open at once.
+///
+/// One CI slot's resources are a handful — the host advertises six, plus
+/// whatever the module opens — and nothing here needs anywhere near the 65 535
+/// representable `session_nb`s. Unbounded, a module repeating
+/// `open_session_request` for one resource grew the table to that size and had
+/// its resource handler ticked once per duplicate, running (for example) the
+/// `date_time` resend timer N times as fast (audit a20-44). A request past
+/// this bound, and a request for a resource that already has an open session,
+/// are answered `session_status = resource_busy` (EN 50221 Table 7).
+const MAX_SESSIONS: usize = 32;
+
 /// What the session layer wants done after handling one SPDU.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct SessionOut {
@@ -90,22 +102,34 @@ impl SessionLayer {
     /// enough session churn, e.g. repeated MMI dialogues, can reach this),
     /// and without the probe a wrapped-around number could alias a session
     /// that is still open, silently corrupting its `resource_of` mapping.
-    fn alloc(&mut self) -> u16 {
+    fn alloc(&mut self) -> Option<u16> {
         let start = self.next;
         loop {
             let nb = self.next;
             self.next = self.next.checked_add(1).filter(|&n| n != 0).unwrap_or(1);
             if !self.sessions.contains_key(&nb) {
-                return nb;
+                return Some(nb);
             }
-            // Every one of the 65535 representable numbers is in use — an
-            // exhaustion this extreme is not realistic for one CI slot's
-            // handful of concurrent resource sessions, but return the
-            // original candidate rather than loop forever.
+            // Every one of the 65535 representable numbers is in use. Callers
+            // hold `MAX_SESSIONS`, so this is unreachable in practice; report
+            // the exhaustion instead of aliasing a live session.
             if self.next == start {
-                return nb;
+                return None;
             }
         }
+    }
+
+    /// Bind `session_nb` to `resource` directly, bypassing the open-request
+    /// policy — a test needs the several-sessions-for-one-resource state that
+    /// policy now refuses, to show the resource layer still ticks it once.
+    #[cfg(test)]
+    pub(crate) fn bind_for_test(&mut self, session_nb: u16, resource: ResourceId) {
+        self.sessions.insert(session_nb, resource);
+    }
+
+    /// Whether `resource` already has an open session.
+    fn resource_is_open(&self, resource: ResourceId) -> bool {
+        self.sessions.values().any(|&r| r == resource)
     }
 
     /// Open a session to a **module-provided** resource (host-initiated):
@@ -161,6 +185,9 @@ impl SessionLayer {
         match self.sessions.get(&session_nb) {
             Some(&existing) => existing == resource,
             None => {
+                if self.resource_is_open(resource) || self.sessions.len() >= MAX_SESSIONS {
+                    return false;
+                }
                 self.sessions.insert(session_nb, resource);
                 true
             }
@@ -181,24 +208,31 @@ impl SessionLayer {
                 // A malformed CAM SPDU is surfaced (`?` -> Notification::Error),
                 // never dropped silently.
                 let req = OpenSessionRequest::parse(spdu)?;
-                if provides(req.resource) {
-                    let session_nb = self.alloc();
-                    self.sessions.insert(session_nb, req.resource);
+                let granted = provides(req.resource)
+                    && !self.resource_is_open(req.resource)
+                    && self.sessions.len() < MAX_SESSIONS;
+                let session_nb = if granted { self.alloc() } else { None };
+                let Some(session_nb) = session_nb else {
                     out.spdus.push(ser(&OpenSessionResponse {
                         length_form: dvb_ci::length::LengthForm::Minimal,
-                        status: SessionStatus::Ok,
-                        resource: req.resource,
-                        session_nb,
-                    })?);
-                    out.opened.push((session_nb, req.resource));
-                } else {
-                    out.spdus.push(ser(&OpenSessionResponse {
-                        length_form: dvb_ci::length::LengthForm::Minimal,
-                        status: SessionStatus::ResourceNonExistent,
+                        status: if provides(req.resource) {
+                            SessionStatus::ResourceBusy
+                        } else {
+                            SessionStatus::ResourceNonExistent
+                        },
                         resource: req.resource,
                         session_nb: 0,
                     })?);
-                }
+                    return Ok(out);
+                };
+                self.sessions.insert(session_nb, req.resource);
+                out.spdus.push(ser(&OpenSessionResponse {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
+                    status: SessionStatus::Ok,
+                    resource: req.resource,
+                    session_nb,
+                })?);
+                out.opened.push((session_nb, req.resource));
             }
             // Module's reply to our open_session_request (host opened a
             // module-provided resource); the module assigns the session_nb.
@@ -316,6 +350,69 @@ mod tests {
         assert_eq!(resp.session_nb, nb);
     }
 
+    /// A module repeating `open_session_request` for one resource must not
+    /// grow the session table (audit a20-44): the resource already has its
+    /// session, so the repeat is refused `resource_busy` and nothing new is
+    /// opened.
+    #[test]
+    fn repeated_open_session_request_for_one_resource_is_refused_as_busy() {
+        let mut s = SessionLayer::new();
+        let req = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resource: RESOURCE_MANAGER,
+        })
+        .unwrap();
+        let first = s.on_spdu(&req, provides_rm).unwrap();
+        assert_eq!(first.opened.len(), 1);
+
+        for _ in 0..16 {
+            let out = s.on_spdu(&req, provides_rm).unwrap();
+            assert!(
+                out.opened.is_empty(),
+                "a duplicate open_session_request must not open another session"
+            );
+            let resp = OpenSessionResponse::parse(&out.spdus[0]).unwrap();
+            assert_eq!(resp.status, SessionStatus::ResourceBusy);
+        }
+        assert_eq!(s.len(), 1, "the table must still hold exactly one session");
+    }
+
+    /// The table is bounded: past `MAX_SESSIONS` distinct resources every
+    /// further request is refused `resource_busy` instead of being granted a
+    /// 65 535th session (audit a20-44).
+    #[test]
+    fn session_table_is_capped_at_max_sessions() {
+        let mut s = SessionLayer::new();
+        let open = |resource: ResourceId| {
+            ser(&OpenSessionRequest {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resource,
+            })
+            .unwrap()
+        };
+
+        for resource in 0..MAX_SESSIONS as u32 {
+            let out = s
+                .on_spdu(&open(ResourceId(0x0100_0000 + resource)), |_| true)
+                .unwrap();
+            assert_eq!(out.opened.len(), 1, "session {resource} must be granted");
+        }
+        assert_eq!(s.len(), MAX_SESSIONS);
+
+        let out = s
+            .on_spdu(&open(ResourceId(0x0100_0000 + MAX_SESSIONS as u32)), |_| {
+                true
+            })
+            .unwrap();
+        assert!(
+            out.opened.is_empty(),
+            "the cap must refuse the next session"
+        );
+        let resp = OpenSessionResponse::parse(&out.spdus[0]).unwrap();
+        assert_eq!(resp.status, SessionStatus::ResourceBusy);
+        assert_eq!(s.len(), MAX_SESSIONS);
+    }
+
     #[test]
     fn open_request_for_absent_resource_denied() {
         let mut s = SessionLayer::new();
@@ -412,13 +509,13 @@ mod tests {
         let mut s = SessionLayer::new();
         // Force the allocator right up to the wraparound boundary.
         s.next = 65535;
-        let first = s.alloc();
+        let first = s.alloc().expect("65535 is free");
         assert_eq!(first, 65535);
         s.sessions.insert(first, APPLICATION_INFORMATION);
         // Next candidate would be `65535 -> checked_add overflows -> 1`.
         // Occupy 1 directly (as if it were opened earlier and never closed).
         s.sessions.insert(1, RESOURCE_MANAGER);
-        let second = s.alloc();
+        let second = s.alloc().expect("65535 and 1 are the only sessions open");
         assert_ne!(
             second, 1,
             "alloc must not hand out a session_nb that is still open"

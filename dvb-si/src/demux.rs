@@ -68,6 +68,15 @@
 //!   change hash. `table_id_extension` and `section_number` collapse to 0 in
 //!   the key.
 //!
+//! The gate is bounded (see [`SiDemuxConfig::with_gate_capacity`]) and its
+//! eviction is **per PID**: when a new key needs room, the oldest key of the
+//! PID occupying the most of the gate goes first, and a PID that is already
+//! over its equal share pays for its own keys. A single PID flooding distinct
+//! `(table_id_extension, section_number)` keys therefore cannot evict a
+//! legitimate PID's entries and make its unchanged repeats look changed —
+//! which is what the old single global FIFO did, charging every victim to
+//! whichever PID had been admitted first.
+//!
 //! # CRC policy
 //!
 //! CRC-bearing sections (every long-form section, plus the short-form TOT
@@ -226,7 +235,9 @@ pub struct Stats {
     pub crc_failures: u64,
     /// TS packets that failed to parse (bad sync byte, too short).
     pub malformed_packets: u64,
-    /// Gate entries evicted because the gate was at capacity.
+    /// Gate entries evicted because the gate was at capacity (charged to the
+    /// PID occupying the most of the gate — see
+    /// [`SiDemuxConfig::with_gate_capacity`]).
     pub gate_evictions: u64,
 }
 
@@ -306,8 +317,10 @@ impl SiDemuxConfig {
         self
     }
 
-    /// Maximum number of distinct gate keys retained. At capacity the gate
-    /// FIFO-evicts the oldest key. Default 65 536.
+    /// Maximum number of distinct gate keys retained. At capacity the oldest
+    /// key of the PID occupying the most of the gate is evicted, and a PID
+    /// already over its equal share (`capacity / PIDs with entries`) pays
+    /// first. Default 65 536.
     ///
     /// The capacity is a [`NonZeroUsize`], so a gate that retains nothing is
     /// unrepresentable.
@@ -327,7 +340,10 @@ pub struct SiDemux {
     // dependency): the gate costs ~20-110 ns per section for 200..65k keys,
     // against microseconds of CRC-32 + reassembly per section (#1189).
     gate: BTreeMap<u64, GateEntry>,
-    gate_order: VecDeque<u64>,
+    // FIFO admission order per PID, so an eviction can be charged to the PID
+    // that is occupying the most of the gate rather than to whichever
+    // legitimate PID happened to be admitted first.
+    gate_order: BTreeMap<Pid, VecDeque<u64>>,
     cfg: Config,
     stats: Stats,
     scratch: Vec<SectionEvent>,
@@ -377,7 +393,7 @@ impl SiDemux {
         SiDemux {
             pids,
             gate: BTreeMap::new(),
-            gate_order: VecDeque::new(),
+            gate_order: BTreeMap::new(),
             cfg: Config {
                 follow_pat: config.follow_pat,
                 emit_repeats: config.emit_repeats,
@@ -517,17 +533,14 @@ impl SiDemux {
             None => true,
         };
 
-        // Update the gate (FIFO-evict at capacity for newly-seen keys).
+        // Update the gate (per-PID FIFO eviction at capacity for newly-seen
+        // keys).
         let is_new = !self.gate.contains_key(&key);
-        if is_new
-            && self.gate.len() >= self.cfg.gate_capacity
-            && let Some(old) = self.gate_order.pop_front()
-        {
-            self.gate.remove(&old);
-            self.stats.gate_evictions += 1;
-        }
         if is_new {
-            self.gate_order.push_back(key);
+            if self.gate.len() >= self.cfg.gate_capacity {
+                self.evict_one(pid);
+            }
+            self.gate_order.entry(pid).or_default().push_back(key);
         }
         match self.gate.entry(key) {
             alloc::collections::btree_map::Entry::Occupied(mut oe) => {
@@ -557,6 +570,49 @@ impl SiDemux {
         } else {
             self.stats.suppressed += 1;
         }
+    }
+
+    /// Evict one gate entry to make room for a new key from `pid`.
+    ///
+    /// The victim is the oldest key of the PID occupying the most of the gate,
+    /// preferring `pid` itself when it already holds more than its equal share
+    /// (`capacity / PIDs with entries`). A source flooding distinct section
+    /// keys on one PID therefore evicts its own entries once it is over its
+    /// share, instead of the global-FIFO behaviour where the flood's *newest*
+    /// keys pushed out a legitimate PID's older entries and made unchanged
+    /// repeats re-emit as "changed".
+    fn evict_one(&mut self, pid: Pid) {
+        let pids = self.gate_order.len().max(1);
+        let share = self.cfg.gate_capacity / pids;
+        let incoming = self.gate_order.get(&pid).map_or(0, VecDeque::len);
+        let victim = self
+            .gate_order
+            .iter()
+            .map(|(&candidate, queue)| (candidate, queue.len()))
+            .filter(|(candidate, _)| *candidate != pid || incoming > share)
+            .max_by_key(|&(candidate, len)| (len, candidate == pid))
+            .or_else(|| {
+                // One PID with no one to charge but itself: it still pays.
+                self.gate_order
+                    .iter()
+                    .map(|(&candidate, queue)| (candidate, queue.len()))
+                    .max_by_key(|&(candidate, len)| (len, candidate == pid))
+            })
+            .map(|(candidate, _)| candidate);
+        let Some(victim) = victim else {
+            return;
+        };
+        let Some(queue) = self.gate_order.get_mut(&victim) else {
+            return;
+        };
+        let Some(old) = queue.pop_front() else {
+            return;
+        };
+        if queue.is_empty() {
+            self.gate_order.remove(&victim);
+        }
+        self.gate.remove(&old);
+        self.stats.gate_evictions += 1;
     }
 
     /// Parse a *current* PAT section on PID 0 and register each programme's
@@ -639,6 +695,57 @@ mod tests {
         let pat = pat_section(0x0001, 0, &[(1, 0x0100)]);
         assert_eq!(demux.feed(&ts_packet(0x0000, &pat)).count(), 1);
         assert_eq!(demux.stats().gate_evictions, 0);
+    }
+
+    /// A PID flooding distinct section keys must not churn a legitimate
+    /// PID's gate entries out: while the flood keeps exceeding its share,
+    /// an unchanged repeat on the other PID stays suppressed (audit a20-46).
+    /// The old single global FIFO evicted the legitimate entry first — it was
+    /// the oldest — so its repeat re-emitted as "changed".
+    #[test]
+    fn a_flooding_pid_evicts_its_own_keys_before_another_pids() {
+        const CAPACITY: usize = 8;
+        const LEGIT_PID: u16 = 0x0100;
+        const FLOOD_PID: u16 = 0x0200;
+        let mut demux = SiDemux::new(
+            SiDemuxConfig::default()
+                .with_dvb_si_pids(false)
+                .with_pid(Pid::from_const(LEGIT_PID))
+                .with_pid(Pid::from_const(FLOOD_PID))
+                .with_gate_capacity(NonZeroUsize::new(CAPACITY).expect("a non-zero gate capacity")),
+        );
+        let legit = long_section(
+            crate::tables::eit::TABLE_ID_PF_ACTUAL,
+            0x0001,
+            0,
+            0,
+            &[0xAA],
+        );
+        assert_eq!(
+            demux.feed(&ts_packet(LEGIT_PID, &legit)).count(),
+            1,
+            "the legitimate section emits the first time"
+        );
+
+        for ext in 0..(CAPACITY as u16 * 3) {
+            let flood = long_section(crate::tables::eit::TABLE_ID_PF_ACTUAL, ext, 0, 0, &[0xAA]);
+            demux.feed(&ts_packet(FLOOD_PID, &flood)).for_each(drop);
+        }
+        assert!(
+            demux.stats().gate_evictions > 0,
+            "the flood must have pushed the gate to capacity"
+        );
+
+        assert_eq!(
+            demux.feed(&ts_packet(LEGIT_PID, &legit)).count(),
+            0,
+            "the legitimate PID's unchanged repeat must still be suppressed"
+        );
+        assert!(
+            demux.gate.len() <= CAPACITY,
+            "the gate must stay bounded under the flood, holds {}",
+            demux.gate.len()
+        );
     }
 
     /// The `with_*` setters carry through to the created demux: a config with

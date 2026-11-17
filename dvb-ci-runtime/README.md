@@ -95,7 +95,10 @@ Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
   (one `T_Data_Last` per module `T_SB`, half-duplex), `T_SB` data-available to
   `T_RCV`, `T_Data_More/Last` reassembly, reply timeout.
 - **Session** (SPDU): session table, `open_session`/`create_session`/`close`,
-  `session_number` APDU routing.
+  `session_number` APDU routing. At most 32 sessions, one per resource: a
+  duplicate `open_session_request` for a resource that already has one, or one
+  past the bound, is answered `resource_busy`, and each resource handler is
+  ticked once per tick however many sessions reach it.
 - **Resources**, all host-provided (the module opens the session; the host
   advertises them in its Resource Manager `profile`): Resource Manager
   (handshake to `CamReady`), Application Information, Conditional Access
@@ -126,12 +129,18 @@ Runnable versions: `examples/mock_cam_session.rs`, `examples/sans_io_core.rs`.
   and tears down on remove) and `CardInserted` / `CardRemoved` / `CardChanged`
   (best-effort EN 50221 app-layer inference; CI slots have no card-detect line).
   React with `Driver::pump_hotplug(dt, |hp| ...)` or `pump_with`.
+- **Bounded notifications**: at most 1024 notifications are buffered; past that
+  the oldest is discarded and `Driver::notifications_dropped` counts it, so a
+  host that only calls `pump` (never `take_notifications`/`pump_with`) against a
+  module producing one per malformed frame does not grow the queue forever.
 - **Devices**: in-memory `MockCaDevice` + `MockCiDataDevice`; Linux
   `LinuxCaDevice` (control plane) and `LinuxCiDataDevice` (TS data plane, whole
   packets only, `WouldBlock` + `PartialWrite` on backpressure) behind `linux`.
   `LinuxCiDataDevice::open` tries `O_RDWR` and falls back to a split
   `O_WRONLY` / `O_RDONLY | O_NONBLOCK` open on `EINVAL` (`open_split` /
-  `from_split` are public).
+  `from_split` are public). The driver's read buffer is `MAX_CA_FRAME` (the
+  largest legal `[slot, connection_id, <TPDU>]` frame), so a large
+  `Tdata_last` block is never refused for not fitting it.
 - **Named device errors**: every failing Linux device operation returns a
   `DeviceOpError` naming the operation, device path and errno
   (`DeviceOpError::errno_of(&err)`); the `io::ErrorKind` is unchanged. A first

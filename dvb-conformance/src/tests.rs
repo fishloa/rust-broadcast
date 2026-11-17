@@ -3089,3 +3089,43 @@ fn indicator_counts_agree_with_the_events_raised() {
     );
     assert_eq!(nit_other.clause, Indicator::NitOtherError.clause());
 }
+
+/// `declares_pcr_pid` must follow the PMT's own `PCR_PID` for each
+/// PAT-referenced program: a PCR PID a PMT declares is reported, one it does
+/// not is not, a later PMT version that moves the PCR PID stops reporting the
+/// old one, and a program dropped from the PAT stops reporting its PCR PID
+/// altogether.
+#[test]
+fn declares_pcr_pid_follows_the_pmt_and_the_pat() {
+    let mut rig = Rig::new();
+    let mut pat_pz = SectionPacketiser::new(Pid::from_const(0));
+    rig_send(&mut rig, &mut pat_pz, &rig_pat_bytes(&[(1, 0x100)]), 10);
+    let mut pmt_pz = SectionPacketiser::new(Pid::from_const(0x100));
+    rig_send(
+        &mut rig,
+        &mut pmt_pz,
+        &build_pmt_section(1, 0x200, &[0x201]),
+        20,
+    );
+
+    assert!(rig.m.declares_pcr_pid(Pid::from_const(0x200)));
+    assert!(!rig.m.declares_pcr_pid(Pid::from_const(0x201)));
+
+    rig_send(
+        &mut rig,
+        &mut pmt_pz,
+        &build_pmt_section_versioned(1, 0x300, &[0x201], 1),
+        40,
+    );
+    assert!(
+        !rig.m.declares_pcr_pid(Pid::from_const(0x200)),
+        "the previous PMT version's PCR PID must stop being declared"
+    );
+    assert!(rig.m.declares_pcr_pid(Pid::from_const(0x300)));
+
+    rig_send(&mut rig, &mut pat_pz, &rig_pat_bytes(&[(2, 0x400)]), 60);
+    assert!(
+        !rig.m.declares_pcr_pid(Pid::from_const(0x300)),
+        "a program dropped from the PAT must not keep declaring a PCR PID"
+    );
+}

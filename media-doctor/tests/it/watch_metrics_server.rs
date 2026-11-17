@@ -157,6 +157,54 @@ fn udp_interface_flag_is_validated() {
 
 const REQUEST: &[u8] = b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n";
 
+/// `--metrics-max-conns 0` would refuse every scrape while the endpoint runs,
+/// so it must be rejected at parse time with the flag named (audit a20-56).
+#[test]
+fn zero_metrics_max_conns_is_rejected() {
+    let out = test_fixtures::process::output_bounded(
+        Command::new(env!("CARGO_BIN_EXE_media-doctor")).args([
+            "watch",
+            "--udp",
+            "127.0.0.1:0",
+            "--metrics-addr",
+            "127.0.0.1:0",
+            "--metrics-max-conns",
+            "0",
+        ]),
+        Duration::from_secs(10),
+    )
+    .expect("a rejected flag must exit, not start the server");
+    assert!(!out.status.success(), "0 connections must not be accepted");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--metrics-max-conns"), "{stderr}");
+}
+
+/// A zero `--metrics-io-timeout-ms` would drop every connection the moment it
+/// is accepted, so it must be rejected at parse time with the flag named
+/// (audit a20-56).
+#[test]
+fn zero_metrics_io_timeout_is_rejected() {
+    let out = test_fixtures::process::output_bounded(
+        Command::new(env!("CARGO_BIN_EXE_media-doctor")).args([
+            "watch",
+            "--udp",
+            "127.0.0.1:0",
+            "--metrics-addr",
+            "127.0.0.1:0",
+            "--metrics-io-timeout-ms",
+            "0",
+        ]),
+        Duration::from_secs(10),
+    )
+    .expect("a rejected flag must exit, not start the server");
+    assert!(
+        !out.status.success(),
+        "a zero deadline must not be accepted"
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--metrics-io-timeout-ms"), "{stderr}");
+}
+
 /// `--metrics-max-conns` is the CAP and nothing else: with a cap of 1 and a
 /// long deadline, a held first connection keeps its slot while the second is
 /// closed at accept, and the first then still gets a full response. (Swapping

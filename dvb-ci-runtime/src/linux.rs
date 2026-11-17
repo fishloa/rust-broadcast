@@ -20,7 +20,7 @@ use std::time::{Duration, Instant};
 use rustix::event::{Nsecs, PollFd, PollFlags, Timespec};
 
 use crate::dataplane::{CiDataDevice, PartialWrite, TS_PACKET_LEN};
-use crate::device::{CaDevice, DeviceOpError, SlotInfo};
+use crate::device::{CaDevice, DeviceOpError, MAX_CA_FRAME, SlotInfo};
 
 /// Poll a file descriptor for readability up to `timeout`.
 ///
@@ -235,17 +235,6 @@ impl LinuxCaDevice {
             .unwrap_or(1)
     }
 }
-
-/// Largest legal kernel frame `[slot, connection_id, <TPDU>]` this device can
-/// deliver: the 2-byte link header, plus the largest TPDU EN 50221 Table 1
-/// can encode: `tpdu_tag`(1), `length_field`(up to 3 bytes total, its
-/// maximum-value long form: size_indicator plus 2 length bytes), and the
-/// `length_field`'s own max value, 65535, of `t_c_id` plus data (§7
-/// semantics: "length_field codes the length of all following fields", i.e.
-/// t_c_id + data — see `private/specs-verified/dvb/dvb-ci/en_50221/apdu-coding.md`). r10-W-2: a
-/// 4096-byte scratch buffer silently truncated any larger TPDU and returned
-/// `Ok` with the truncated bytes as if they were the whole thing.
-const MAX_CA_FRAME: usize = 2 + 1 + 3 + 65_535;
 
 impl CaDevice for LinuxCaDevice {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -969,8 +958,8 @@ mod tests {
 
     /// REVIEW (failing): r10-W-2 sized the scratch frame so no legal TPDU is
     /// truncated, but `read` then copies `min(tpdu.len(), buf.len())` into
-    /// the caller's buffer and returns `Ok` — `Driver` passes a 4096-byte
-    /// buffer, so a 5000-byte TPDU reaches the stack silently truncated, the
+    /// the caller's buffer and returns `Ok` — a caller supplying a 4096-byte
+    /// buffer would then receive a 5000-byte TPDU silently truncated, the
     /// exact failure r10-W-2 set out to remove.
     #[test]
     fn read_does_not_silently_truncate_a_tpdu_larger_than_the_callers_buffer() {
@@ -991,7 +980,7 @@ mod tests {
             .open(&path)
             .expect("open the staged file");
         let mut dev = LinuxCaDevice::from_file(file, 0);
-        let mut buf = [0u8; 4096]; // Driver's buffer size
+        let mut buf = [0u8; 4096]; // a caller buffer smaller than the TPDU
         let r = dev.read(&mut buf);
         let _ = std::fs::remove_file(&path);
         assert!(

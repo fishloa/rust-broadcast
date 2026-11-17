@@ -75,7 +75,7 @@ impl Default for MetricsServerConfig {
 /// the caller's clock, so the ingest loop pays for exposition at the scrape
 /// scale, not the datagram scale.
 pub struct MetricsPublisher {
-    tx: watch::Sender<Arc<str>>,
+    tx: watch::Sender<Bytes>,
     interval: Duration,
     last: Option<Duration>,
 }
@@ -86,8 +86,8 @@ pub struct MetricsPublisher {
 pub fn channel(
     initial: &WatchState,
     interval: Duration,
-) -> (MetricsPublisher, watch::Receiver<Arc<str>>) {
-    let (tx, rx) = watch::channel(Arc::<str>::from(crate::render_metrics(initial)));
+) -> (MetricsPublisher, watch::Receiver<Bytes>) {
+    let (tx, rx) = watch::channel(Bytes::from(crate::render_metrics(initial)));
     (
         MetricsPublisher {
             tx,
@@ -114,13 +114,13 @@ impl MetricsPublisher {
     /// figures become visible).
     pub fn publish_now(&mut self, state: &WatchState, clock: Duration) {
         self.tx
-            .send_replace(Arc::<str>::from(crate::render_metrics(state)));
+            .send_replace(Bytes::from(crate::render_metrics(state)));
         self.last = Some(clock);
     }
 }
 
-fn respond(text: Arc<str>) -> Response<Full<Bytes>> {
-    let mut r = Response::new(Full::new(Bytes::from(text.as_bytes().to_vec())));
+fn respond(body: Bytes) -> Response<Full<Bytes>> {
+    let mut r = Response::new(Full::new(body));
     r.headers_mut().insert(
         CONTENT_TYPE,
         HeaderValue::from_static(EXPOSITION_CONTENT_TYPE),
@@ -132,7 +132,7 @@ fn respond(text: Arc<str>) -> Response<Full<Bytes>> {
 /// request) until `shutdown` is cancelled. See the module docs for the limits.
 pub async fn serve(
     listener: TcpListener,
-    metrics: watch::Receiver<Arc<str>>,
+    metrics: watch::Receiver<Bytes>,
     config: MetricsServerConfig,
     shutdown: CancellationToken,
 ) {
@@ -162,7 +162,7 @@ pub async fn serve(
         let token = shutdown.clone();
         tracker.spawn(async move {
             let service = service_fn(move |_req: Request<Incoming>| {
-                let body = Arc::clone(&metrics.borrow());
+                let body = metrics.borrow().clone();
                 async move { Ok::<_, Infallible>(respond(body)) }
             });
             let mut http = http1::Builder::new();
@@ -194,7 +194,6 @@ pub async fn serve(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::{TcpListener, TcpStream};
 
@@ -207,10 +206,10 @@ mod tests {
         task: tokio::task::JoinHandle<()>,
     }
 
-    async fn start(cfg: MetricsServerConfig) -> (Server, tokio::sync::watch::Sender<Arc<str>>) {
+    async fn start(cfg: MetricsServerConfig) -> (Server, tokio::sync::watch::Sender<Bytes>) {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let (tx, rx) = tokio::sync::watch::channel(Arc::<str>::from(BODY));
+        let (tx, rx) = tokio::sync::watch::channel(Bytes::from_static(BODY.as_bytes()));
         let token = CancellationToken::new();
         let task = tokio::spawn(serve(listener, rx, cfg, token.clone()));
         (Server { addr, token, task }, tx)
@@ -238,6 +237,32 @@ mod tests {
             max_conns,
             io_timeout: std::time::Duration::from_millis(io_timeout_ms),
         }
+    }
+
+    /// The exposition is published once as a shared `Bytes`, so a response
+    /// clones it (a refcount bump) instead of re-copying the text per scrape
+    /// (audit a20-56).
+    #[test]
+    fn responses_share_the_published_body_allocation() {
+        let state = WatchState::new();
+        let (_publisher, rx) = channel(&state, Duration::from_millis(100));
+        let response = respond(rx.borrow().clone());
+        assert_eq!(
+            response
+                .headers()
+                .get(CONTENT_TYPE)
+                .expect("a content type is set"),
+            EXPOSITION_CONTENT_TYPE
+        );
+        let served = response
+            .into_body()
+            .into_inner()
+            .expect("a full body is present");
+        assert_eq!(
+            served.as_ptr(),
+            rx.borrow().as_ptr(),
+            "a response must serve the published exposition, not a copy of it"
+        );
     }
 
     /// Re-expresses `idle_client_does_not_block_a_second_scraper`.
@@ -417,7 +442,7 @@ mod tests {
         const BODY_LEN: usize = 32 * 1024 * 1024;
         let (srv, tx) = start(cfg(8, 60_000)).await;
         let big: String = "x".repeat(BODY_LEN);
-        tx.send_replace(Arc::<str>::from(big));
+        tx.send_replace(Bytes::from(big));
         let mut s = TcpStream::connect(srv.addr).await.unwrap();
         s.write_all(REQ).await.unwrap();
         // Read just the start of the response: the server is now blocked
@@ -449,7 +474,7 @@ mod tests {
     #[tokio::test]
     async fn scrape_serves_the_latest_published_body() {
         let (srv, tx) = start(cfg(8, 3_000)).await;
-        tx.send_replace(Arc::<str>::from("# TYPE x gauge\nx 42\n"));
+        tx.send_replace(Bytes::from_static(b"# TYPE x gauge\nx 42\n"));
         assert!(scrape(srv.addr).await.contains("\nx 42\n"));
         srv.token.cancel();
         srv.task.await.unwrap();
@@ -505,7 +530,9 @@ mod tests {
         );
         p.publish_now(&state, t(251));
         assert!(
-            rx.borrow().contains("media_doctor_packets_total 0"),
+            rx.borrow()
+                .windows(b"media_doctor_packets_total 0".len())
+                .any(|w| w == b"media_doctor_packets_total 0"),
             "fresh state exposes every family"
         );
     }

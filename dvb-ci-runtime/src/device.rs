@@ -11,6 +11,19 @@
 
 use std::io;
 
+/// Largest legal link-layer frame `[slot, connection_id, <TPDU>]` a
+/// [`CaDevice`] can deliver: the 2-byte link header, plus the largest TPDU
+/// EN 50221 Table 1 can encode — `tpdu_tag`(1), `length_field` (up to 3 bytes
+/// total, its maximum-value long form: size indicator plus 2 length bytes),
+/// and the `length_field`'s own max value, 65535, of `t_c_id` plus data (§7
+/// semantics: "length_field codes the length of all following fields", i.e.
+/// t_c_id + data).
+///
+/// A [`Driver`](crate::Driver)'s read buffer is sized to this, so no frame a
+/// device accepts is handed back as an error purely for not fitting it
+/// (audit a20-21).
+pub const MAX_CA_FRAME: usize = 2 + 1 + 3 + 65_535;
+
 /// CA-device slot status (subset of the Linux `ca_slot_info` the runtime needs).
 ///
 /// The DVB-CA slot reports two independent bits (uapi `linux/dvb/ca.h`

@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- `feed_ts_packet` exports the per-PID `compliance_probe_pcr_drift_ppm`/`_jitter_ppm` gauges only for PIDs a PMT has declared as its `PCR_PID`; a PCR on any other PID counts `compliance_probe_pcr_undeclared_pid_total` instead of creating a labelled series. The estimate itself is unchanged and still available through `conformance::PcrSample`.
+
+### Fixed
+- `Probe::drain_byte_tap` resets its byte re-aligner on `TapItem::Lagged`, so a partial packet buffered before a tap gap is discarded instead of being completed with post-gap bytes (a stitched packet reached the conformance monitor and fabricated TR 101 290 / PCR-drift readings).
 
 ## [0.9.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
