@@ -145,6 +145,7 @@ mod rtp_stream_paff;
 mod rtp_stream_reorder;
 mod sample_aes;
 mod sample_aes_h264_oracle;
+mod sample_bytes_budget;
 #[cfg(feature = "std")]
 #[path = "support/sdp_session.rs"]
 mod sdp_session;

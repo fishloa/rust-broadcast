@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `frag_offsets::MAX_SAMPLE_BYTES_PER_INPUT_LENGTH` and `sample_bytes_budget`'s literal values are asserted, so the sample-byte allowance cannot change silently (audit 21 finding 49, #2944).
 
 ## [0.32.1] - 2026-11-17
 ### Fixed

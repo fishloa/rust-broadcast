@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `server::MAX_COMMAND_LEN` and `amf0::MAX_AMF0_VALUES` are pinned literally, with an exactly-64 KiB command body dispatched and 65 537 rejected; `RtmpServerConfig::with_max_in_progress_bytes` is exercised end to end (audit 21 findings 49 and 50, #2944/#2945).
 
 ## [0.11.1] - 2026-11-17
 ### Fixed
