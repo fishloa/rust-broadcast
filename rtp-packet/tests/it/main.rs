@@ -1,6 +1,9 @@
+mod av3a_edges;
 mod fixture_simple;
+mod limits;
 mod real_browser_fixture;
 mod round_trip;
 mod round_trip_8285;
+mod seq_validity;
 mod short_buffers;
 mod spec_vectors;
