@@ -403,6 +403,13 @@ pub enum ErrorKind {
         /// The stable reason token.
         reason: &'static str,
     },
+    /// An HLS playlist exceeded a `broadcast_hls::limits` bound (`reason` is a
+    /// stable token; [`Config::hls_limits`]). The same response always exceeds
+    /// it, so this is fatal at once and never retried.
+    PlaylistParse {
+        /// The stable reason token.
+        reason: &'static str,
+    },
     /// An MPD parsed but cannot be played: no Period, no playable AdaptationSet, or an
     /// essential descriptor group none of whose members is understood. Fatal when nothing is
     /// left to play.
@@ -557,6 +564,7 @@ impl ErrorKind {
             Self::UnsupportedContainer { .. } => "unsupported_container",
             Self::BodyTooLarge { .. } => "body_too_large",
             Self::MpdParse { .. } => "mpd_parse",
+            Self::PlaylistParse { .. } => "playlist_parse",
             Self::MpdInvalid { .. } => "mpd_invalid",
             Self::UnsupportedAddressing { .. } => "unsupported_addressing",
             Self::UnsupportedFeature { .. } => "unsupported_feature",
@@ -1074,6 +1082,12 @@ pub struct Config {
     /// Segment-pull sources: maximum media resource body bytes (HLS segment or part, DASH init,
     /// index or segment); must be non-zero.
     pub max_segment_bytes: usize,
+    /// HLS: the playlist parse bounds the sans-IO engine enforces (playlist
+    /// byte size and segment count; `broadcast_hls::limits::Limits`). A
+    /// playlist over one is a permanent failure and ends the session, never
+    /// retried. [`Config::max_manifest_bytes`] still bounds the response body
+    /// before it reaches the parser.
+    pub hls_limits: broadcast_hls::limits::Limits,
     /// Segment-pull sources: manifest request timeout; must be non-zero.
     pub request_timeout: Duration,
     /// Segment-pull sources: media resource request timeout; must be non-zero.
@@ -1404,6 +1418,7 @@ impl Default for Config {
             variant_policy: hls_runtime::client::VariantPolicy::default(),
             max_manifest_bytes: DEFAULT_MAX_MANIFEST_BYTES,
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
+            hls_limits: broadcast_hls::limits::Limits::default(),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             segment_timeout: DEFAULT_SEGMENT_TIMEOUT,
             segment_inactivity_timeout: DEFAULT_SEGMENT_INACTIVITY_TIMEOUT,
@@ -1454,6 +1469,7 @@ impl core::fmt::Debug for Config {
             .field("variant_policy", &self.variant_policy)
             .field("max_manifest_bytes", &self.max_manifest_bytes)
             .field("max_segment_bytes", &self.max_segment_bytes)
+            .field("hls_limits", &self.hls_limits)
             .field("request_timeout", &self.request_timeout)
             .field("segment_timeout", &self.segment_timeout)
             .field(

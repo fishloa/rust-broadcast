@@ -20,6 +20,20 @@ pub enum Error {
     #[error("playlist parse: {0}")]
     PlaylistParse(#[from] broadcast_hls::Error),
 
+    /// The playlist exceeded a [`broadcast_hls::limits::Limits`] bound. The
+    /// same response will exceed it however often it is fetched, so this is a
+    /// permanent failure: a caller must not retry it (audit 20 finding 41,
+    /// #2852).
+    #[error("playlist {what} is {len}, over the limit of {max}")]
+    PlaylistTooLarge {
+        /// What exceeded the bound (e.g. `"playlist bytes"`).
+        what: &'static str,
+        /// The observed size.
+        len: usize,
+        /// The bound it exceeded.
+        max: usize,
+    },
+
     /// [`crate::client::HlsClient::on_resource`] was fed bytes for a
     /// [`crate::client::ResourceId`] the client never requested (a
     /// caller/driver bug, or a stale/duplicate delivery after the client

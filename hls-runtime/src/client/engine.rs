@@ -761,7 +761,8 @@ impl HlsClient {
     pub fn on_playlist(&mut self, bytes: &[u8]) -> Result<()> {
         let text = core::str::from_utf8(bytes)?;
         if text.contains("#EXT-X-STREAM-INF") {
-            let master = MasterPlaylist::parse_with(text, &self.limits)?;
+            let master =
+                MasterPlaylist::parse_with(text, &self.limits).map_err(Self::playlist_error)?;
             if !master.defines.is_empty() {
                 return Err(Error::UnsupportedDefine);
             }
@@ -824,7 +825,8 @@ impl HlsClient {
                 }));
             return Ok(());
         }
-        let playlist = MediaPlaylist::parse_with(text, &self.limits)?;
+        let playlist =
+            MediaPlaylist::parse_with(text, &self.limits).map_err(Self::playlist_error)?;
         if !playlist.defines.is_empty() {
             return Err(Error::UnsupportedDefine);
         }
@@ -1821,6 +1823,17 @@ impl HlsClient {
     }
 
     // -- internals ------------------------------------------------------
+
+    /// Classify a `broadcast_hls` parse failure: a bound the playlist broke is
+    /// permanent ([`Error::PlaylistTooLarge`]), never a retryable parse error.
+    fn playlist_error(error: broadcast_hls::Error) -> Error {
+        match error {
+            broadcast_hls::Error::TooLarge { what, len, max } => {
+                Error::PlaylistTooLarge { what, len, max }
+            }
+            other => Error::PlaylistParse(other),
+        }
+    }
 
     /// Reconstruct a full playlist view from an `EXT-X-SKIP` delta update
     /// (RFC 8216bis §4.4.5.2), by splicing the skipped prefix back in from
@@ -3473,10 +3486,10 @@ mod tests {
         let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
         assert!(matches!(
             client.on_playlist(text.as_bytes()),
-            Err(Error::PlaylistParse(broadcast_hls::Error::TooLarge {
+            Err(Error::PlaylistTooLarge {
                 what: "playlist bytes",
                 ..
-            }))
+            })
         ));
 
         let two = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n\
@@ -3486,10 +3499,20 @@ mod tests {
         let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
         assert!(matches!(
             client.on_playlist(two.as_bytes()),
-            Err(Error::PlaylistParse(broadcast_hls::Error::TooLarge {
+            Err(Error::PlaylistTooLarge {
                 what: "media segments",
                 ..
-            }))
+            })
+        ));
+
+        let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n";
+        let mut limits = Limits::default();
+        limits.max_playlist_bytes = 16;
+        let mut client =
+            HlsClient::new(config("http://example.com/master.m3u8").with_limits(limits));
+        assert!(matches!(
+            client.on_playlist(master.as_bytes()),
+            Err(Error::PlaylistTooLarge { .. })
         ));
 
         let mut limits = Limits::default();
