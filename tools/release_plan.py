@@ -237,9 +237,30 @@ def last_tags() -> tuple[dict[str, tuple[str, str]], tuple[str, str] | None]:
     return best, lock
 
 
+SIBLING_REQ = re.compile(r'(path\s*=\s*"\.\./[^"]+"\s*,\s*version\s*=\s*)"[^"]*"')
+
+
+def only_sibling_requirements_moved(diff: str) -> bool:
+    """True when every changed line of a manifest diff differs only in the
+    `version` requirement of a path (workspace sibling) dependency: the floor
+    raise prepare-release writes into crates it does not release."""
+    removed = [l[1:] for l in diff.splitlines() if l.startswith("-") and not l.startswith("---")]
+    added = [l[1:] for l in diff.splitlines() if l.startswith("+") and not l.startswith("+++")]
+    if not removed and not added:
+        return True
+    norm = lambda lines: sorted(SIBLING_REQ.sub(r'\1""', l) for l in lines)
+    return all(SIBLING_REQ.search(l) for l in removed + added) and norm(removed) == norm(added)
+
+
 def source_changed(tag: str, dirs: list[str]) -> bool:
     out = git("diff", "--name-only", f"{tag}..HEAD", "--", *dirs)
-    return any(Path(f).name != "CHANGELOG.md" for f in out.split())
+    for f in out.split():
+        if Path(f).name == "CHANGELOG.md":
+            continue
+        if Path(f).name == "Cargo.toml" and only_sibling_requirements_moved(git("diff", "-U0", f"{tag}..HEAD", "--", f)):
+            continue
+        return True
+    return False
 
 
 def live_versions(names: list[str], lookup=None, sleep=time.sleep, tries: int = 4) -> dict[str, str | None]:
