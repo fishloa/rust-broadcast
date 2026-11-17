@@ -1019,3 +1019,272 @@ v.m3u8\n";
         vec![(broadcast_hls::MediaType::Audio, "aud".to_string())]
     );
 }
+
+/// Audit 21 finding 43 (issue #2938): a group reference is only satisfied by
+/// an `#EXT-X-MEDIA` of the SAME TYPE with the SAME GROUP-ID, and
+/// `CLOSED-CAPTIONS=NONE` is not a group at all.
+#[test]
+fn dangling_group_references_require_a_matching_type_and_group_id() {
+    use broadcast_hls::MediaType;
+
+    let wrong_type = "#EXTM3U\n\
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"a\",NAME=\"s\",URI=\"s.m3u8\"\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1000,AUDIO=\"a\"\n\
+v.m3u8\n";
+    assert_eq!(
+        MasterPlaylist::parse(wrong_type)
+            .unwrap()
+            .dangling_group_references(),
+        vec![(MediaType::Audio, "a".to_string())],
+        "a SUBTITLES group named \"a\" must not satisfy an AUDIO reference"
+    );
+
+    let closed_captions = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1000,CLOSED-CAPTIONS=\"cc\"\n\
+v.m3u8\n";
+    assert_eq!(
+        MasterPlaylist::parse(closed_captions)
+            .unwrap()
+            .dangling_group_references(),
+        vec![(MediaType::ClosedCaptions, "cc".to_string())]
+    );
+
+    let matching = "#EXTM3U\n\
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"a\",NAME=\"n\"\n\
+#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID=\"cc\",NAME=\"cc1\",INSTREAM-ID=\"CC1\"\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1000,AUDIO=\"a\",CLOSED-CAPTIONS=\"cc\"\n\
+v.m3u8\n";
+    assert_eq!(
+        MasterPlaylist::parse(matching)
+            .unwrap()
+            .dangling_group_references(),
+        Vec::new(),
+        "matching TYPE+GROUP-ID references are not dangling"
+    );
+
+    let none = "#EXTM3U\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1000,CLOSED-CAPTIONS=NONE\n\
+v.m3u8\n";
+    assert_eq!(
+        MasterPlaylist::parse(none)
+            .unwrap()
+            .dangling_group_references(),
+        Vec::new(),
+        "CLOSED-CAPTIONS=NONE names no group"
+    );
+}
+
+fn segment(uri: &str) -> MediaSegment {
+    MediaSegment {
+        uri: uri.to_string(),
+        duration: DecimalSeconds::new(4.0).unwrap(),
+        ..Default::default()
+    }
+}
+
+/// Audit 21 finding 43 (issue #2938): the init-change detector needs a
+/// preceding entry to compare against, so a two-entry list where the init
+/// changes is still marked, and a one-entry list is a no-op.
+#[test]
+fn mark_init_discontinuities_marks_every_init_change_including_a_two_entry_list() {
+    use broadcast_hls::mark_init_discontinuities;
+
+    let a = b"moov_a" as &[u8];
+    let b = b"moov_b" as &[u8];
+
+    let mut s0 = segment("s0.m4s");
+    let mut s1 = segment("s1.m4s");
+    let mut entries: Vec<(&[u8], &mut MediaSegment)> = vec![(a, &mut s0), (b, &mut s1)];
+    mark_init_discontinuities(&mut entries);
+    assert!(
+        !entries[0].1.discontinuous,
+        "the first entry has no context"
+    );
+    assert!(
+        entries[1].1.discontinuous,
+        "the init changed, so the second entry starts a new discontinuity sequence"
+    );
+
+    let mut s0 = segment("s0.m4s");
+    let mut s1 = segment("s1.m4s");
+    let mut s2 = segment("s2.m4s");
+    let mut s3 = segment("s3.m4s");
+    let mut entries: Vec<(&[u8], &mut MediaSegment)> =
+        vec![(a, &mut s0), (a, &mut s1), (b, &mut s2), (b, &mut s3)];
+    mark_init_discontinuities(&mut entries);
+    let marks: Vec<bool> = entries.iter().map(|(_, s)| s.discontinuous).collect();
+    assert_eq!(marks, [false, false, true, false]);
+
+    let mut only = segment("s0.m4s");
+    let mut entries: Vec<(&[u8], &mut MediaSegment)> = vec![(a, &mut only)];
+    mark_init_discontinuities(&mut entries);
+    assert!(!entries[0].1.discontinuous);
+
+    let mut entries: Vec<(&[u8], &mut MediaSegment)> = Vec::new();
+    mark_init_discontinuities(&mut entries);
+}
+
+/// Audit 21 finding 43 (issue #2938): a UTF-8 BOM is stripped on the FIRST
+/// line only (RFC 8216 §4.1 assumes UTF-8 without a BOM anywhere; a BOM on
+/// any later line makes that line a URI, not a tag).
+#[test]
+fn a_utf8_bom_is_stripped_only_at_the_start_of_the_playlist() {
+    let media = "\u{feff}#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nseg0.ts\n";
+    let pl = MediaPlaylist::parse(media).expect("a leading BOM is tolerated");
+    assert_eq!(pl.segments.len(), 1);
+    assert_eq!(pl.segments[0].uri, "seg0.ts");
+
+    let media_late = "#EXTM3U\n\u{feff}#EXTINF:4,\nseg0.ts\n";
+    assert!(
+        MediaPlaylist::parse(media_late).is_err(),
+        "a BOM on line 2 must not be stripped"
+    );
+
+    let master = "\u{feff}#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nv.m3u8\n";
+    let pl = MasterPlaylist::parse(master).expect("a leading BOM is tolerated");
+    assert_eq!(pl.variants.len(), 1);
+    assert_eq!(pl.variants[0].uri, "v.m3u8");
+
+    let master_late = "#EXTM3U\n\u{feff}#EXT-X-STREAM-INF:BANDWIDTH=1000\nv.m3u8\n";
+    assert!(
+        MasterPlaylist::parse(master_late).is_err(),
+        "a BOM on line 2 must not be stripped"
+    );
+}
+
+/// Audit 21 finding 43 (issue #2938): the attribute-list tokenizer's
+/// end-of-input boundaries — a trailing comma, a trailing space and a
+/// value-less name at EOF — are pinned to their exact result.
+#[test]
+fn attribute_list_end_of_input_boundaries() {
+    use broadcast_hls::parse_attribute_list;
+
+    let (map, quoted) = parse_attribute_list("A=1,B=\"x\",C=3");
+    let pairs: Vec<(String, String)> = map.into_iter().collect();
+    assert_eq!(
+        pairs,
+        vec![
+            ("A".to_string(), "1".to_string()),
+            ("B".to_string(), "x".to_string()),
+            ("C".to_string(), "3".to_string()),
+        ]
+    );
+    let quoted: Vec<String> = quoted.into_iter().collect();
+    assert_eq!(quoted, vec!["B".to_string()]);
+
+    let (map, quoted) = parse_attribute_list("A=1,");
+    assert_eq!(
+        map.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("A", "1")]
+    );
+    assert!(quoted.is_empty());
+
+    let (map, _) = parse_attribute_list("A=1 ");
+    assert_eq!(
+        map.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("A", "1 ")],
+        "a bare value runs to the next comma (or end of input)"
+    );
+
+    let (map, quoted) = parse_attribute_list("A=");
+    assert_eq!(
+        map.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("A", "")]
+    );
+    assert!(quoted.is_empty());
+
+    let (map, _) = parse_attribute_list("");
+    assert!(map.is_empty());
+
+    let (map, _) = parse_attribute_list("A=1,B");
+    assert_eq!(
+        map.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("A", "1")],
+        "a trailing name with no '=' is not an attribute"
+    );
+
+    let (map, _) = parse_attribute_list(" , A=1 , ");
+    assert_eq!(
+        map.iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect::<Vec<_>>(),
+        vec![("A", "1 ")],
+        "leading/separator commas and spaces are skipped"
+    );
+}
+
+/// Audit 21 finding 43 (issue #2938): a negative zero offset renders
+/// unsigned (`0`, not `-0`), while a genuinely negative offset keeps its
+/// sign and value.
+#[test]
+fn signed_seconds_render_without_a_negative_zero() {
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-START:TIME-OFFSET=-0\n\
+#EXTINF:4,\nseg0.ts\n";
+    let pl = MediaPlaylist::parse(text).unwrap();
+    let out = pl.to_m3u8().unwrap();
+    assert!(
+        out.contains("#EXT-X-START:TIME-OFFSET=0\n"),
+        "negative zero must render as 0, got:\n{out}"
+    );
+
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-START:TIME-OFFSET=-0.5\n\
+#EXTINF:4,\nseg0.ts\n";
+    let pl = MediaPlaylist::parse(text).unwrap();
+    let out = pl.to_m3u8().unwrap();
+    assert!(
+        out.contains("#EXT-X-START:TIME-OFFSET=-0.5\n"),
+        "got:\n{out}"
+    );
+}
+
+/// Audit 21 finding 43 (issue #2938): every character a bare attribute value
+/// may not contain is rejected on its own, and an unrecognized attribute
+/// whose value needs quoting is quoted.
+#[test]
+fn attr_value_rejects_each_forbidden_character_and_for_attr_quotes_them() {
+    use broadcast_hls::AttrValue;
+
+    for bad in ["a,b", "a\"b", "a\rb", "a\nb", "a b"] {
+        assert!(
+            matches!(
+                AttrValue::bare(bad),
+                Err(Error::InvalidAttrValue { kind, .. }) if kind == "a bare value"
+            ),
+            "{bad:?} must not be accepted as a bare value"
+        );
+    }
+    for quoted_char in ["a,b", "a b"] {
+        assert!(
+            AttrValue::for_attr("X-UNRECOGNIZED", quoted_char)
+                .unwrap()
+                .is_quoted(),
+            "{quoted_char:?} needs quoting"
+        );
+    }
+    for unrepresentable in ["a\"b", "a\rb", "a\nb"] {
+        assert!(
+            AttrValue::for_attr("X-UNRECOGNIZED", unrepresentable).is_err(),
+            "{unrepresentable:?} cannot be a quoted-string (RFC 8216bis §4.2)"
+        );
+    }
+    assert!(!AttrValue::bare("identity").unwrap().is_quoted());
+    assert!(
+        AttrValue::for_attr("X-UNRECOGNIZED", "")
+            .unwrap()
+            .is_quoted(),
+        "an empty value renders quoted"
+    );
+    assert!(
+        !AttrValue::for_attr("X-UNRECOGNIZED", "plain")
+            .unwrap()
+            .is_quoted()
+    );
+}
