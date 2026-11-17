@@ -14116,4 +14116,930 @@ pub(crate) mod tests {
             "the IR keeps every observation's own wire parts, not just the first"
         );
     }
+
+    // === Audit 21 finding 57: MPEG-2 random-access detection, PSI CRC gate,
+    // === and the two DoS caps, pinned at their boundaries.
+
+    /// A `picture_header()`'s `picture_coding_type` byte: `temporal_reference`
+    /// takes the high 10 bits, the type the next 3 (ISO/IEC 13818-2 §6.2.3).
+    const fn picture_header(coding_type: u8) -> [u8; 6] {
+        [
+            0x00,
+            0x00,
+            0x01,
+            MPEG2_PICTURE_START_CODE,
+            0x00,
+            coding_type << 3,
+        ]
+    }
+
+    #[test]
+    fn mpeg2_random_access_needs_a_sequence_header_or_an_i_picture() {
+        // sequence_header() 0x000001B3 is a random-access point (§6.2.2.1).
+        assert!(mpeg2_is_sync(&[0x00, 0x00, 0x01, 0xB3, 0x2D, 0x02]));
+        // picture_coding_type 1 = I (Table 6-12), the other cut-in point.
+        assert!(mpeg2_is_sync(&picture_header(1)));
+        // 2 = P and 3 = B are not: a decoder joining there cannot start.
+        assert!(!mpeg2_is_sync(&picture_header(2)));
+        assert!(!mpeg2_is_sync(&picture_header(3)));
+        // A start code buried in slice data is still found.
+        let mut au = alloc::vec![0x00, 0x00, 0x01, 0x01, 0xFF];
+        au.extend_from_slice(&picture_header(1));
+        assert!(mpeg2_is_sync(&au));
+        // No start code, a truncated picture header, and an empty AU are not.
+        assert!(!mpeg2_is_sync(&[0x00, 0x00, 0x02, 0x00]));
+        assert!(!mpeg2_is_sync(&[0x00, 0x00, 0x01, 0x00, 0x00]));
+        assert!(!mpeg2_is_sync(&[]));
+
+        // A start code is exactly three contiguous bytes (0x00 0x00 0x01): a
+        // byte that is 0x00 or 0x01 out of place is not one, and a sequence
+        // header code two bytes past a stray 0x01 is not a sequence header.
+        assert!(!mpeg2_is_sync(&[0x01, 0x00, 0x00, 0xB3]));
+        assert!(!mpeg2_is_sync(&[0x00, 0xFF, 0x01, 0xB3, 0x00, 0x00, 0x00]));
+        assert!(!mpeg2_is_sync(&[
+            0xAA, 0xAA, 0xAA, 0xAA, 0x00, 0x00, 0xFF, 0xB3, 0x01
+        ]));
+    }
+
+    /// An E-AC-3 header whose `frmsiz` is 0 announces a two-byte "frame", below
+    /// [`Eac3Sync`]'s eight-byte minimum: the split stops rather than emitting
+    /// it as a sample (ETSI TS 102 366 §E.1.2.2 `frmsiz` is words minus one).
+    #[test]
+    fn split_stops_at_a_degenerate_frame_length() {
+        let mut buf = alloc::vec![0x0B, 0x77, 0x00, 0x00, 0x00, 0x80];
+        buf.extend_from_slice(&[0u8; 32]);
+        assert!(
+            matches!(Eac3Sync::parse(&buf), SyncParse::Frame(_, 2)),
+            "the header parses and announces (frmsiz 0 + 1) * 2 bytes"
+        );
+        let split = split_frames_with_tail::<Eac3Sync>(&buf);
+        assert!(
+            split.frames.is_empty(),
+            "a frame shorter than the minimum is not emitted"
+        );
+        assert_eq!(split.tail_start, buf.len(), "and it is not carried either");
+    }
+
+    /// A frame of exactly [`Eac3Sync`]'s minimum length is a frame, not a
+    /// degenerate header: `frmsiz` 3 is (3 + 1) * 2 = 8 bytes.
+    #[test]
+    fn a_frame_of_exactly_the_minimum_length_is_split() {
+        let mut buf = alloc::vec![0x0B, 0x77, 0x00, 0x03, 0x00, 0x80];
+        buf.extend_from_slice(&[0u8; 18]);
+        let split = split_frames_with_tail::<Eac3Sync>(&buf);
+        assert_eq!(split.frames.len(), 1, "one whole frame");
+        assert_eq!(split.frames[0].1.len(), Eac3Sync::MIN_FRAME_LEN);
+        assert_eq!(split.frames[0].0, 0);
+        assert_eq!(split.tail_start, buf.len(), "nothing carried");
+    }
+
+    /// `picture_coding_type` and the audio re-anchor threshold are literal
+    /// spec/latency numbers: the threshold is 20 ms of 90 kHz (1 800 ticks)
+    /// unless twice a sample period is wider.
+    #[test]
+    fn audio_reanchor_threshold_is_twenty_ms_or_two_sample_periods() {
+        assert_eq!(AUDIO_REANCHOR_THRESHOLD_MS, 20);
+        // 48 kHz: one sample period is ceil(90 000 / 48 000) = 2 ticks, so the
+        // 20 ms bound stands.
+        assert_eq!(audio_discontinuity_threshold_90k(timescale(48_000)), 1_800);
+        // A 50 Hz frame rate has a 1 800-tick period: twice that is wider.
+        assert_eq!(audio_discontinuity_threshold_90k(timescale(50)), 3_600);
+    }
+
+    /// ADTS frames of the committed `fixtures/audio/aac.adts` fixture (48 kHz,
+    /// the frame length taken from each frame's own header).
+    fn adts_frames() -> Vec<Vec<u8>> {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("../fixtures/audio/aac.adts");
+        let es = std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+        let mut frames = Vec::new();
+        let mut at = 0usize;
+        while at + 7 <= es.len() {
+            assert_eq!((es[at], es[at + 1] & 0xF0), (0xFF, 0xF0), "ADTS syncword");
+            let len = (usize::from(es[at + 3] & 0x03) << 11)
+                | (usize::from(es[at + 4]) << 3)
+                | (usize::from(es[at + 5]) >> 5);
+            assert!(len >= 7 && at + len <= es.len());
+            frames.push(es[at..at + len].to_vec());
+            at += len;
+        }
+        frames
+    }
+
+    /// The audio re-anchor boundary: a wire stamp exactly one threshold away
+    /// from the predicted position is still the same timeline (the cursor
+    /// continues), one tick past it is a new one (the stamp wins).
+    #[test]
+    fn audio_reanchor_needs_more_than_a_threshold_step() {
+        const SAMPLE_RATE: u32 = 48_000;
+        /// One 1024-sample AAC frame on the 90 kHz PES clock.
+        const FRAME_TICKS: i64 = 1_920;
+        let frames = adts_frames();
+        assert!(
+            frames.len() >= 5,
+            "the fixture carries at least five frames"
+        );
+
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, frame: &[u8]| {
+            let pes = pes_packet(0xC0, dts, None, frame);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        let base = 90_000i64;
+        push(&mut input, &mut cc, base, &frames[0]);
+        push(&mut input, &mut cc, base + FRAME_TICKS, &frames[1]);
+        push(&mut input, &mut cc, base + 2 * FRAME_TICKS, &frames[2]);
+        // Exactly one threshold (20 ms = 1 800 ticks) ahead of the predicted
+        // position: still the same timeline, so the cursor continues and the
+        // wire stamp is not adopted.
+        let threshold = audio_discontinuity_threshold_90k(timescale(SAMPLE_RATE));
+        assert_eq!(threshold, 1_800);
+        let expected = base + 3 * FRAME_TICKS;
+        push(&mut input, &mut cc, expected + 1_800, &frames[3]);
+        // One tick further is a new time base: the wire stamp is adopted.
+        push(
+            &mut input,
+            &mut cc,
+            expected + FRAME_TICKS + 1_801,
+            &frames[4],
+        );
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        // The track clock is the 48 kHz sample rate, so a 90 kHz frame period
+        // of 1 920 ticks is 1 024 samples. The fourth stamp (one threshold
+        // ahead of the predicted position) leaves the cursor where it was; the
+        // fifth, one tick further, re-anchors on the wire stamp (52 032
+        // samples) and continues one frame from there.
+        assert_eq!(
+            dts,
+            alloc::vec![48_000, 49_024, 50_048, 51_072, 53_056],
+            "within the threshold the cursor continues; past it the wire stamp wins"
+        );
+    }
+
+    /// A restart drops an audio track's frame anchor: the first access unit of
+    /// the new timeline is stamped from the wire, not continued from the old
+    /// cursor.
+    #[test]
+    fn restart_timeline_drops_the_audio_anchor_seed() {
+        const FRAME_TICKS: i64 = 1_920;
+        let frames = adts_frames();
+        let base = 90_000i64;
+
+        // The same three access units, demuxed with and without a restart
+        // between the second and the third. The third stamp is 1 000 ticks
+        // (533 samples) past the cursor: within the re-anchor threshold, so
+        // only a dropped seed makes the demuxer adopt it.
+        let run = |restart: bool| -> Vec<i64> {
+            let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+            input.extend_from_slice(&psi_section_packets(
+                PMT_PID_UNDER_TEST,
+                0,
+                0x02,
+                &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS, ES_PID_UNDER_TEST),
+            ));
+            let mut cc = 0u8;
+            let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, frame: &[u8]| {
+                let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, frame);
+                let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+                *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+                input.extend_from_slice(&packets);
+            };
+            let mut demux = StreamingTsDemux::new();
+            let mut dts = Vec::new();
+            let drain = |demux: &mut StreamingTsDemux, dts: &mut Vec<i64>| {
+                while let Some(e) = demux.poll_event() {
+                    if let DemuxEvent::Sample { sample, .. } = e
+                        && let Some(d) = sample.timing.and_then(|t| t.dts())
+                    {
+                        dts.push(d);
+                    }
+                }
+            };
+            push(&mut input, &mut cc, base, &frames[0]);
+            push(&mut input, &mut cc, base + FRAME_TICKS, &frames[1]);
+            demux.feed(&input).expect("valid timing");
+            drain(&mut demux, &mut dts);
+            if restart {
+                demux.restart_timeline().expect("restart");
+            }
+            let mut after = Vec::new();
+            let mut cc2 = 0u8;
+            push(
+                &mut after,
+                &mut cc2,
+                base + 2 * FRAME_TICKS + 1_000,
+                &frames[2],
+            );
+            demux.feed(&after).expect("valid timing");
+            demux.finish().expect("valid timing");
+            drain(&mut demux, &mut dts);
+            dts
+        };
+
+        assert_eq!(
+            run(false),
+            alloc::vec![48_000, 49_024, 50_048],
+            "without a restart the cursor continues, one frame later"
+        );
+        assert_eq!(
+            run(true),
+            alloc::vec![48_000, 49_024, 50_581],
+            "with a restart the new timeline's stamp comes from the wire"
+        );
+    }
+
+    /// Every parameter-set kind counts: a truncated PPS and an undecodable
+    /// HEVC SPS must each register, not be skipped by their match arm.
+    #[test]
+    fn invalid_parameter_sets_are_counted_per_nal_type() {
+        let (sps, pps, _width) = real_avc_parameter_sets();
+        let annexb = |nals: &[&[u8]]| {
+            let mut out = Vec::new();
+            for nal in nals {
+                out.extend_from_slice(&[0, 0, 0, 1]);
+                out.extend_from_slice(nal);
+            }
+            out
+        };
+        assert_eq!(
+            count_invalid_parameter_sets(Codec::H264, &annexb(&[&sps, &pps])),
+            0,
+            "the fixture's real SPS + PPS are valid"
+        );
+        // A PPS with the forbidden_zero_bit set (§7.3.1) is not a valid one.
+        let broken_pps = [0xE8u8, 0xCE, 0x3C, 0x80];
+        assert_eq!(
+            count_invalid_parameter_sets(Codec::H264, &annexb(&[&sps, &broken_pps])),
+            1,
+            "an invalid PPS is counted"
+        );
+        // HEVC: SPS (33) with nuh_temporal_id_plus1 = 0 is invalid.
+        let broken_hevc_sps = [0x42u8, 0x00, 0x01, 0x01];
+        assert_eq!(
+            count_invalid_parameter_sets(Codec::Hevc, &annexb(&[&broken_hevc_sps])),
+            1,
+            "an invalid HEVC SPS is counted"
+        );
+        assert_eq!(
+            count_invalid_parameter_sets(Codec::Data(0x06), &annexb(&[&pps])),
+            0,
+            "an opaque codec has no parameter sets to judge"
+        );
+    }
+
+    /// A re-anchoring payload that finishes a carried frame records the anchor
+    /// `lead` *before* the wire stamp, so the following access unit is still
+    /// predicted at the media cadence and continues the cursor.
+    #[test]
+    fn a_reanchor_past_a_carried_frame_keeps_the_prediction_on_cadence() {
+        const FRAME_TICKS: i64 = 1_920;
+        let frames = adts_frames();
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, payload: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, payload);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        let base = 90_000i64;
+        // A whole frame, a partial one (carried), then the carried frame's rest
+        // plus another whole frame — stamped a full second later, so it
+        // re-anchors with `lead` = one carried frame.
+        push(&mut input, &mut cc, base, &frames[0]);
+        push(&mut input, &mut cc, base + FRAME_TICKS, &frames[1][..10]);
+        let far = base + 1_000_000;
+        let mut rest = frames[1][10..].to_vec();
+        rest.extend_from_slice(&frames[2]);
+        push(&mut input, &mut cc, far, &rest);
+        // The next access unit sits 1 000 ticks past the on-cadence prediction
+        // (within the 1 800-tick threshold), so it must continue the cursor
+        // rather than re-anchor.
+        push(&mut input, &mut cc, far + FRAME_TICKS + 1_000, &frames[3]);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dts.len(), 4, "one sample per frame: {dts:?}");
+        assert_eq!(
+            dts[3] - dts[2],
+            1_024,
+            "the last access unit continues the cursor by one frame ({dts:?})"
+        );
+    }
+
+    /// The payload that merely finishes a frame held in the carry is mid-frame:
+    /// its bytes are not scanned for a new AudioSpecificConfig, even though a
+    /// header-looking sequence sits inside the frame body.
+    #[test]
+    fn a_carried_frames_body_is_not_reprobed_as_a_new_config() {
+        // A 44.1 kHz ADTS header to plant inside a body (ISO/IEC 14496-3
+        // §1.6.2.2: AOT 2, sf index 4, 2 channels = 0x12 0x10).
+        let asc44 = AudioSpecificConfig::parse(&[0x12, 0x10]).expect("a 44.1 kHz ASC");
+        const FRAME_LEN: usize = 207;
+        /// Bytes of the frame carried across the boundary (its header included).
+        const CARRY: usize = 50;
+        /// Where inside the body the header-looking sequence sits.
+        const PLANT_AT: usize = 60;
+        let planted_header = asc44.to_adts_header(17).expect("44.1 kHz ADTS header");
+        let mut carried = asc44
+            .to_adts_header(u16::try_from(FRAME_LEN).unwrap())
+            .expect("48 kHz-sized ADTS header for the carried frame")
+            .to_vec();
+        carried.resize(FRAME_LEN, 0x5A);
+        carried[PLANT_AT..PLANT_AT + ADTS_HEADER_SIZE].copy_from_slice(&planted_header);
+        // The planted header must sit in the payload, not in the carry.
+        const { assert!(PLANT_AT > CARRY) };
+        let parsed = match AdtsSync::parse(&carried[PLANT_AT..]) {
+            SyncParse::Frame(h, 17) => AudioSpecificConfig::from_adts_header(&h),
+            _ => panic!("the planted header must parse as a 17-byte frame"),
+        };
+        assert_eq!(
+            parsed.effective_sampling_frequency(),
+            Some(44_100),
+            "a probe that reached it would report a config change"
+        );
+
+        let frames = adts_frames();
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, payload: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, payload);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        // A whole 48 kHz frame resolves the track, then the carried frame
+        // straddles: `CARRY` bytes in the first PES, the rest (with the planted
+        // header) opening the second.
+        let mut first = frames[0].clone();
+        first.extend_from_slice(&carried[..CARRY]);
+        push(&mut input, &mut cc, 90_000, &first);
+        let mut rest = carried[CARRY..].to_vec();
+        rest.extend_from_slice(&frames[1]);
+        push(&mut input, &mut cc, 90_000 + 1_920, &rest);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let mut rates: Vec<u32> = Vec::new();
+        let mut samples = 0;
+        while let Some(e) = demux.poll_event() {
+            match e {
+                DemuxEvent::Sample { .. } => samples += 1,
+                DemuxEvent::TrackUpdated(spec) => {
+                    if let CodecConfig::Aac { sample_rate: r, .. } = spec.config {
+                        rates.push(r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(samples >= 2, "both whole frames are emitted, got {samples}");
+        assert!(
+            rates.iter().all(|&r| r == 48_000),
+            "the planted header is mid-frame, so it cannot re-label the track: {rates:?}"
+        );
+    }
+
+    /// A mid-stream flush emits the carried access unit at the seed cursor and
+    /// advances all three seed fields by that access unit's span, so the next
+    /// access unit continues instead of repeating it.
+    #[test]
+    fn flush_audio_carry_emits_at_the_cursor_and_advances_the_seed() {
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_dependent_frame(0));
+        let mut anchor = AudioAnchor {
+            seed: Some(AudioAnchorSeed {
+                next_dts: 1_000,
+                next_pts: 2_000,
+                anchor_dts_uw: 90_000,
+                anchor_pts_uw: 90_000,
+                ticks_since_anchor: 0,
+            }),
+            duration_scale: 0,
+            carry: au.clone(),
+            hold_final_au: true,
+            carry_provenance: None,
+        };
+        let mut events = VecDeque::new();
+        flush_audio_carry(&AudioKind::Eac3, &mut anchor, TrackId::new(1), &mut events)
+            .expect("the held access unit flushes");
+        assert_eq!(events.len(), 1, "one whole access unit is emitted");
+        let sample = match events.pop_front() {
+            Some(DemuxEvent::Sample { sample, .. }) => sample,
+            other => panic!("expected a Sample, got {other:?}"),
+        };
+        let timing = sample.timing.expect("stamped");
+        assert_eq!((timing.dts(), timing.pts()), (Some(1_000), Some(2_000)));
+        assert_eq!(timing.duration(), Some(1_536));
+        let seed = anchor.seed.expect("the seed stays set");
+        assert_eq!(
+            (seed.next_dts, seed.next_pts, seed.ticks_since_anchor),
+            (1_000 + 1_536, 2_000 + 1_536, 1_536),
+            "every cursor advances by the flushed access unit's span"
+        );
+        assert_eq!(
+            (seed.anchor_dts_uw, seed.anchor_pts_uw),
+            (90_000, 90_000),
+            "the drift-prediction anchor is left where it was established"
+        );
+        assert!(anchor.carry.is_empty(), "the carry is consumed");
+    }
+
+    /// Each flushed E-AC-3 access unit advances the seed cursor by its own
+    /// duration, so the next flush continues one frame later on both clocks.
+    #[test]
+    fn a_flushed_access_unit_advances_the_seed_cursor() {
+        /// 1 536 samples per E-AC-3 syncframe at 48 kHz, and its 90 kHz span.
+        const FRAME_SAMPLES: i64 = 1_536;
+        const FRAME_TICKS: i64 = 2_880;
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_dependent_frame(0));
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, au: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        let base = 90_000i64;
+        // A whole access unit first, so the track resolves and the dependent
+        // substream turns the hold-back on; then three held ones, each split
+        // from the next by a continuity gap (which flushes the held one).
+        push(&mut input, &mut cc, base, &au);
+        push(&mut input, &mut cc, base + FRAME_TICKS, &au);
+        for k in 2..=3i64 {
+            // Skip a continuity counter: the gap flushes what was held.
+            cc = cc.wrapping_add(2);
+            push(&mut input, &mut cc, base + k * FRAME_TICKS, &au);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let mut dts = Vec::new();
+        let mut pts = Vec::new();
+        while let Some(e) = demux.poll_event() {
+            if let DemuxEvent::Sample { sample, .. } = e
+                && let Some(t) = sample.timing
+            {
+                dts.push(t.dts());
+                pts.push(t.pts());
+            }
+        }
+        let start = 48_000i64;
+        let want: Vec<Option<i64>> = (0..dts.len() as i64)
+            .map(|k| Some(start + k * FRAME_SAMPLES))
+            .collect();
+        assert_eq!(dts, want, "every flush continues one frame later");
+        assert_eq!(pts, want, "and so does the presentation cursor");
+    }
+
+    /// A held-back E-AC-3 access unit flushed by a continuity gap advances the
+    /// frame cursor by its own duration, so the next access unit continues one
+    /// frame later instead of repeating it.
+    #[test]
+    fn a_flushed_held_access_unit_advances_the_cursor() {
+        const FRAME_TICKS: i64 = 2_880;
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_dependent_frame(0));
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: u8, dts: i64, au: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, au);
+            input.extend_from_slice(&pes_packets(ES_PID_UNDER_TEST, cc, &pes));
+        };
+        let base = 90_000i64;
+        push(&mut input, cc, base, &au);
+        let packets = {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, base + FRAME_TICKS, None, &au);
+            pes_packets(ES_PID_UNDER_TEST, cc, &pes)
+        };
+        cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+        input.extend_from_slice(&packets);
+        // A continuity gap: the held access unit is flushed at the cursor and
+        // the carry is dropped.
+        push(&mut input, cc.wrapping_add(2), base + 2 * FRAME_TICKS, &au);
+        // A further access unit on the same timeline continues from the cursor.
+        push(&mut input, cc.wrapping_add(3), base + 3 * FRAME_TICKS, &au);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            dts,
+            alloc::vec![48_000, 49_536, 51_072, 52_608],
+            "each one-frame access unit advances the 48 kHz cursor by 1 536"
+        );
+    }
+
+    /// An E-AC-3 access unit held back for a possible dependent substream is
+    /// flushed at the old cursor when the next PES re-anchors, and the cursor
+    /// then moves past it by exactly what was flushed.
+    #[test]
+    fn a_held_access_unit_is_flushed_at_the_old_cursor_on_a_reanchor() {
+        /// 1 536 samples per E-AC-3 syncframe at 48 kHz.
+        const FRAME_TICKS: i64 = 2_880;
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_dependent_frame(0));
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, au: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        let base = 90_000i64;
+        push(&mut input, &mut cc, base, &au);
+        push(&mut input, &mut cc, base + FRAME_TICKS, &au);
+        // One second later: a new time base, so the held AU is flushed first.
+        push(&mut input, &mut cc, base + 2 * FRAME_TICKS + 90_000, &au);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            dts,
+            alloc::vec![48_000, 49_536, 99_072],
+            "the held AU continues the old cursor; the re-anchored one follows it"
+        );
+    }
+
+    /// `advance_one_behind` takes a sample's span from the DTS delta to the
+    /// next access unit, never from their sum.
+    #[test]
+    fn one_behind_duration_is_the_delta_not_the_sum() {
+        let mut events = VecDeque::new();
+        let mut pending = None;
+        let mut last_duration = 0u32;
+        // Three access units 3 000 ticks apart, starting at 9 000 (a non-zero
+        // base: `dts + prev` would read 21 000 rather than 3 000).
+        for dts in [9_000i128, 12_000, 15_000] {
+            advance_one_behind(
+                &mut pending,
+                &mut last_duration,
+                alloc::vec![0u8; 4],
+                false,
+                dts,
+                dts,
+                false,
+                TrackId::new(1),
+                EventProvenance::default(),
+                None,
+                PendingDisplayEvents::default(),
+                &mut events,
+            );
+        }
+        let durations: Vec<Option<u32>> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.timing.and_then(|t| t.duration())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(durations, alloc::vec![Some(3_000), Some(3_000)]);
+
+        // A data track takes its span from the PTS delta instead.
+        let mut events = VecDeque::new();
+        let mut pending = None;
+        let mut last_duration = 0u32;
+        for pts in [9_000i128, 12_000, 15_000] {
+            advance_one_behind(
+                &mut pending,
+                &mut last_duration,
+                alloc::vec![0u8; 4],
+                false,
+                pts,
+                pts,
+                true,
+                TrackId::new(2),
+                EventProvenance::default(),
+                None,
+                PendingDisplayEvents::default(),
+                &mut events,
+            );
+        }
+        let durations: Vec<Option<u32>> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some(sample.timing.and_then(|t| t.duration())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(durations, alloc::vec![Some(3_000), Some(3_000)]);
+
+        // A restart forgets the old timeline: a `Probing` PID drops the
+        // backlog it accumulated and a `Live` audio track drops its anchor
+        // seed, so the first access unit of the new timeline is stamped from
+        // the wire exactly as a fresh demuxer would.
+        let mut demux = StreamingTsDemux::new();
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+        // Two access units that carry no SPS/PPS: the PID stays `Probing` and
+        // buffers both in its backlog.
+        let mut cc = 0u8;
+        for i in 0..2i64 {
+            let au = alloc::vec![0x00, 0x00, 0x00, 0x01, 0x41, 0x9A, i as u8];
+            let pes = pes_packet(
+                ES_STREAM_ID_VIDEO,
+                9_000 + i * 3_600,
+                Some(9_000 + i * 3_600),
+                &au,
+            );
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc, &pes);
+            cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        }
+        demux.feed(&input).expect("valid timing");
+        demux.restart_timeline().expect("restart");
+        // The resolving access unit carries an SPS (a real one from the
+        // fixture) plus a slice; only it and the following slice may surface.
+        let (sps, slice, _width) = real_avc_parameter_sets();
+        let mut after = Vec::new();
+        let mut cc2 = 0u8;
+        for (i, nal) in [sps, slice.clone(), slice].into_iter().enumerate() {
+            let mut au = alloc::vec![0x00, 0x00, 0x00, 0x01];
+            au.extend_from_slice(&nal);
+            let dts = 90_000 + i as i64 * 3_600;
+            let pes = pes_packet(ES_STREAM_ID_VIDEO, dts, Some(dts), &au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, cc2, &pes);
+            cc2 = cc2.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            after.extend_from_slice(&packets);
+        }
+        demux.feed(&after).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let samples = std::iter::from_fn(|| demux.poll_event())
+            .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
+            .count();
+        assert_eq!(
+            samples, 3,
+            "the pre-restart backlog must not be replayed after the restart"
+        );
+    }
+
+    /// A signalled discontinuity lifts the offset so the new time base
+    /// continues past the last stamp emitted, and a program-wide shared offset
+    /// is adopted only when it lands **strictly** after that stamp.
+    #[test]
+    fn discontinuity_rebase_lifts_and_only_adopts_a_strictly_later_shared_offset() {
+        let mut epoch = ProgramEpoch {
+            last: None,
+            splice_offset: None,
+        };
+        let mut state = WrapState::default();
+        // Seed at 90 000 ticks (one second of the 90 kHz clock).
+        assert_eq!(state.push(0, 0, &mut epoch), (0, 0));
+        assert_eq!(state.push(90_000, 90_000, &mut epoch), (90_000, 90_000));
+
+        // A stamp exactly one nominal period (step) behind the last emitted one
+        // is the new time base, not the old one's cadence: it is lifted to one
+        // period past the last stamp (90 000 - 81 000 + 9 000 = 18 000).
+        assert_eq!(
+            state.rebase_at_discontinuity(81_000, 9_000, &mut epoch),
+            DiscontinuityVerdict::Lifted
+        );
+        assert_eq!(state.discontinuity_offset, 18_000);
+
+        // A move back by less than a period is the old base's own cadence.
+        assert_eq!(
+            state.rebase_at_discontinuity(99_000, 9_000, &mut epoch),
+            DiscontinuityVerdict::Forward
+        );
+
+        // A second stream reaches the same new base. Its own lift would put the
+        // first stamp at 99 000; a shared offset that lands exactly on the last
+        // stamp emitted (90 000, a zero-length step) is refused in favour of
+        // that own lift.
+        let mut other = WrapState::default();
+        assert_eq!(other.push(0, 0, &mut epoch), (0, 0));
+        assert_eq!(other.push(90_000, 90_000, &mut epoch), (90_000, 90_000));
+        epoch.splice_offset = Some(90_000);
+        assert_eq!(
+            other.rebase_at_discontinuity(0, 9_000, &mut epoch),
+            DiscontinuityVerdict::Lifted
+        );
+        assert_eq!(
+            other.discontinuity_offset, 99_000,
+            "the own lift (90 000 - 0 + 9 000) is used, not the level shared offset"
+        );
+
+        // A shared offset landing exactly half the 33-bit range past the last
+        // stamp is ambiguous (the unroll cannot tell it from a wrap), so it is
+        // refused too: the own lift stands.
+        let mut third = WrapState::default();
+        assert_eq!(third.push(0, 0, &mut epoch), (0, 0));
+        assert_eq!(third.push(90_000, 90_000, &mut epoch), (90_000, 90_000));
+        epoch.splice_offset = Some(90_000 + broadcast_common::clock33::WRAP_33BIT_HALF as i128);
+        assert_eq!(
+            third.rebase_at_discontinuity(0, 9_000, &mut epoch),
+            DiscontinuityVerdict::Lifted
+        );
+        assert_eq!(
+            third.discontinuity_offset, 99_000,
+            "half the range past the last stamp is not the same clock, so never shared"
+        );
+    }
+
+    #[test]
+    fn eac3_tail_starts_a_new_unit_only_for_an_independent_substream() {
+        // `bsid` (byte 5, ETSI TS 102 366 §4.4.1.1) up to 8 marks an AC-3
+        // syncframe standing as independent substream 0: it begins an access
+        // unit even though its `crc1` looks dependent.
+        // `bsid` 1: an AC-3 syncframe. Its `crc1` (byte 2) looks dependent,
+        // but the `bsid` check decides before the `strmtyp` one.
+        assert!(Eac3Sync::tail_starts_new_unit(&[
+            0x0B, 0x77, 0x40, 0x00, 0x00, 0x08
+        ]));
+        assert!(Eac3Sync::tail_starts_new_unit(&[
+            0x0B, 0x77, 0x40, 0x00, 0x00, 0x40
+        ]));
+        // With `bsid` out of AC-3 range the `strmtyp` in the second syncword
+        // byte decides: 0 independent (new unit), 1 dependent (continuation).
+        assert!(Eac3Sync::tail_starts_new_unit(&[
+            0x0B, 0x77, 0x00, 0x00, 0x00, 0x50
+        ]));
+        assert!(!Eac3Sync::tail_starts_new_unit(&[
+            0x0B, 0x77, 0x40, 0x00, 0x00, 0x50
+        ]));
+        // Too short to judge: not counted as a new unit (the conservative
+        // reading that keeps a dependent frame from moving the anchor).
+        assert!(!Eac3Sync::tail_starts_new_unit(&[0x0B, 0x77]));
+    }
+
+    /// The two pre-PMT / in-progress-PES caps are 4 MiB exactly (issue #663
+    /// P5.2): a `4 * 1024 * 1024` -> `4 + 1024 * 1024` slip would shrink them
+    /// by 3 MiB silently.
+    #[test]
+    fn dos_caps_are_four_mebibytes() {
+        assert_eq!(MAX_UNATTRIBUTED_BYTES, 4_194_304);
+        assert_eq!(MAX_PES_BUFFER_BYTES, 4_194_304);
+    }
+
+    /// A long-form PSI section is trusted only when its CRC covers it exactly:
+    /// a length that runs past the slice, one shorter than the header plus CRC,
+    /// a short/`section_syntax_indicator = 0` section, and a single flipped CRC
+    /// byte are all refused, and the correctly covered section is accepted.
+    #[test]
+    fn psi_crc_gate_accepts_only_an_exactly_covered_section() {
+        // A minimal long-form section: table_id 0x00, syntax 1, reserved 11,
+        // section_length 9 (program_number, version/current_next, section
+        // numbers, then the 4-byte CRC) = 12 bytes total.
+        let mut section = alloc::vec![0x00, 0xB0, 0x09, 0x00, 0x01, 0xC1, 0x00, 0x00];
+        let crc = broadcast_common::crc32_mpeg2::compute(&section);
+        section.extend_from_slice(&crc.to_be_bytes());
+        assert_eq!(section.len(), 12);
+        assert!(
+            psi_section_crc_ok(&section),
+            "a correct section is accepted"
+        );
+
+        let mut flipped = section.clone();
+        flipped[8] ^= 0xFF;
+        assert!(
+            !psi_section_crc_ok(&flipped),
+            "one flipped CRC byte is refused"
+        );
+
+        assert!(
+            !psi_section_crc_ok(&section[..11]),
+            "one byte short is refused"
+        );
+        assert!(
+            !psi_section_crc_ok(&section[..7]),
+            "shorter than the header + CRC is refused"
+        );
+
+        let mut no_syntax = section.clone();
+        no_syntax[1] &= 0x7F;
+        assert!(
+            !psi_section_crc_ok(&no_syntax),
+            "section_syntax_indicator 0 has no CRC to check"
+        );
+
+        let mut long_declared = section.clone();
+        long_declared[2] = 0x0A; // one byte more than the slice carries
+        assert!(
+            !psi_section_crc_ok(&long_declared),
+            "a declared length past the slice is refused"
+        );
+
+        let mut short_declared = section.clone();
+        short_declared[1] = 0xB0;
+        short_declared[2] = 0x04; // header + CRC minimum is 8
+        assert!(
+            !psi_section_crc_ok(&short_declared),
+            "a section shorter than the header + CRC is refused"
+        );
+
+        // section_length is 12 bits: 259 is 0x103, so byte 1 carries
+        // syntax(1) + reserved(0x30) + length_hi(0x01) = 0xB1. Taking the high
+        // nibble whole (or ORing it) would read a different length.
+        let mut long = alloc::vec![0x00, 0xB1, 0x03, 0x00, 0x01, 0xC1, 0x00, 0x00];
+        long.extend(core::iter::repeat_n(0x00u8, 250));
+        let crc = broadcast_common::crc32_mpeg2::compute(&long);
+        long.extend_from_slice(&crc.to_be_bytes());
+        assert_eq!(long.len(), 262, "8-byte header + 250 bytes + CRC");
+        assert_eq!(
+            (((long[1] & SECTION_LENGTH_HI_MASK) as usize) << 8) | long[2] as usize,
+            259
+        );
+        assert!(psi_section_crc_ok(&long), "a 259-byte section is accepted");
+
+        // A section declaring only 5 bytes after the header (8 total, below the
+        // 8-byte header + 4-byte CRC minimum) is refused even when the trailer
+        // that length would cover happens to match.
+        let mut tiny = alloc::vec![0x00, 0xB0, 0x05, 0x00];
+        let crc = broadcast_common::crc32_mpeg2::compute(&tiny);
+        tiny.extend_from_slice(&crc.to_be_bytes());
+        assert_eq!(tiny.len(), 8);
+        assert!(
+            !psi_section_crc_ok(&tiny),
+            "a section shorter than header + CRC is refused, not CRC-checked"
+        );
+
+        // section_syntax_indicator 0 means there is no CRC at all: a matching
+        // trailer must not make such a section acceptable.
+        let mut no_syntax_with_crc = alloc::vec![0x00, 0x00, 0x09, 0x00, 0x01, 0xC1, 0x00, 0x00];
+        let crc = broadcast_common::crc32_mpeg2::compute(&no_syntax_with_crc);
+        no_syntax_with_crc.extend_from_slice(&crc.to_be_bytes());
+        assert_eq!(no_syntax_with_crc.len(), 12);
+        assert!(
+            !psi_section_crc_ok(&no_syntax_with_crc),
+            "no section_syntax_indicator, no CRC to accept"
+        );
+    }
 }

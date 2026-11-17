@@ -189,29 +189,34 @@ fn display_none_with_pasp_creates_display() {
     assert_eq!(got.sample_aspect_ratio(), Some((64u16, 45u16)));
 }
 
-#[test]
-fn ffmpeg_melodie_pasp_colr() {
-    let fixture = "/Volumes/External/Projects/rust-broadcast/private/fixtures/ts/melodie-anamorphic-sar-64-45-zenith-tv.ts";
-    if !std::path::Path::new(fixture).exists() {
-        println!("SKIP: private fixture missing");
-        return;
+/// Environment variable CI sets in the job that installs `ffmpeg`: a missing
+/// ffmpeg is then a hard failure, never a skip.
+const REQUIRE_FFMPEG_ENV: &str = "REQUIRE_FFMPEG";
+
+/// ffmpeg's OWN remux of a private capture (its anamorphic SAR and colour land
+/// in `pasp`/`colr`) demuxed back through our fMP4 reader.
+///
+/// `None` on a loud skip: no private checkout, or no ffmpeg outside the job
+/// that installs it.
+fn ffmpeg_remux_display(fixture_rel: &str, tag: &str) -> Option<DisplayGeometry> {
+    let fixture = test_fixtures::require(fixture_rel, "display_demux")?;
+    if !test_fixtures::process::tool_available("ffmpeg", "-version") {
+        assert!(
+            std::env::var(REQUIRE_FFMPEG_ENV).is_err(),
+            "{REQUIRE_FFMPEG_ENV}=1 and ffmpeg is not on PATH: a missing ffmpeg is a failure \
+             here, not a skip"
+        );
+        eprintln!(
+            "SKIP display_demux: ffmpeg is not on PATH (set {REQUIRE_FFMPEG_ENV}=1 to make this \
+             a failure)"
+        );
+        return None;
     }
-    if std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .is_err()
-    {
-        println!("SKIP: ffmpeg absent");
-        return;
-    }
-    let tmp = std::env::temp_dir().join(format!("phase4a2_m_{}.mp4", std::process::id()));
+    let tmp = std::env::temp_dir().join(format!("display_demux_{tag}_{}.mp4", std::process::id()));
     let status = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-y", "-i"])
+        .arg(&fixture)
         .args([
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            fixture,
             "-t",
             "3",
             "-map",
@@ -224,12 +229,21 @@ fn ffmpeg_melodie_pasp_colr() {
         .arg(&tmp)
         .status()
         .expect("ffmpeg");
-    if !status.success() {
-        println!("SKIP: ffmpeg failed");
-        return;
-    }
+    assert!(
+        status.success(),
+        "{fixture_rel}: ffmpeg could not remux the capture"
+    );
     let bytes = std::fs::read(&tmp).expect("read mp4");
-    let got = demux_display(&bytes).expect("display");
+    let _ = std::fs::remove_file(&tmp);
+    Some(demux_display(&bytes).expect("display"))
+}
+
+#[test]
+fn ffmpeg_melodie_pasp_colr() {
+    let Some(got) = ffmpeg_remux_display("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts", "melodie")
+    else {
+        return;
+    };
     assert_eq!(got.sample_aspect_ratio(), Some((64u16, 45u16)));
     let vs = got.video_signal.expect("video_signal");
     assert!(!vs.full_range);
@@ -241,44 +255,9 @@ fn ffmpeg_melodie_pasp_colr() {
 
 #[test]
 fn ffmpeg_krone_pasp() {
-    let fixture = "/Volumes/External/Projects/rust-broadcast/private/fixtures/ts/krone-anamorphic-sar-16-11-zenith-tv.ts";
-    if !std::path::Path::new(fixture).exists() {
-        println!("SKIP: private fixture missing");
+    let Some(got) = ffmpeg_remux_display("ts/krone-anamorphic-sar-16-11-zenith-tv.ts", "krone")
+    else {
         return;
-    }
-    if std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .output()
-        .is_err()
-    {
-        println!("SKIP: ffmpeg absent");
-        return;
-    }
-    let tmp = std::env::temp_dir().join(format!("phase4a2_k_{}.mp4", std::process::id()));
-    let status = std::process::Command::new("ffmpeg")
-        .args([
-            "-v",
-            "error",
-            "-y",
-            "-i",
-            fixture,
-            "-t",
-            "3",
-            "-map",
-            "0:v:0",
-            "-c:v",
-            "copy",
-            "-movflags",
-            "frag_keyframe+empty_moov+default_base_moof+write_colr",
-        ])
-        .arg(&tmp)
-        .status()
-        .expect("ffmpeg");
-    if !status.success() {
-        println!("SKIP: private fixture missing");
-        return;
-    }
-    let bytes = std::fs::read(&tmp).expect("read mp4");
-    let got = demux_display(&bytes).expect("display");
+    };
     assert_eq!(got.sample_aspect_ratio(), Some((16u16, 11u16)));
 }

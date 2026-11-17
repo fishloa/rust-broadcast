@@ -134,6 +134,13 @@ dvb-vbi        = { path = "../dvb-vbi", default-features = false }
 # TR 101 290 monitor (PAT/PMT repetition, continuity). Dev-dependency only;
 # dvb-conformance does not depend on transmux, so there is no cycle.
 dvb-conformance = { path = "../dvb-conformance", default-features = false, features = ["std"] }
+# The PAFF fixtures are pinned by the SHA-256 recorded in
+# `fixtures/video/paff/PROVENANCE.md` (a plain-image byte stream is not something
+# our own parsers can check for identity), and `examples/regen_paff_fixtures.rs`
+# prints the digests it would write. Dev-dependency only: the crate itself
+# never hashes. Already in the workspace lock (broadcast-auth, broadcast-client,
+# webrtc-runtime), so this adds no crate to the tree.
+sha2         = { version = "0.11", default-features = false }
 criterion    = { version = "0.8", features = ["html_reports"] }
 
 [[bench]]
