@@ -5,6 +5,7 @@ mod hex_parity;
 mod http_date;
 mod no_panicking_to_bytes_guard;
 mod ordering_guard;
+mod pusi_accumulator;
 mod review_mjd_after_2100;
 mod seq_space;
 mod time_edges;
