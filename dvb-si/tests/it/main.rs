@@ -8,6 +8,7 @@ mod content_genre_table;
 mod convention_audit;
 mod demux;
 mod demux_e2e;
+mod demux_gate;
 mod descriptor_length_overflow;
 mod descriptor_loop;
 mod descriptor_loop_helpers;
