@@ -13,6 +13,16 @@
 - The admin registry keeps one `limit::BudgetLimitLayer` and passes it to every router rebuild, so the ordinary concurrency pool and its in-flight permits survive a route add/remove; only the per-route blocking-reload pools are rebuilt, instead of the effective bound doubling after each rebuild (#2874).
 - `GET /metrics` is behind `output_auth` when it is configured (the liveness/readiness probes stay open) and draws from the ordinary concurrency pool instead of being exempt, so an unauthenticated scrape can no longer read every route name and counter or bypass the limit (#2875).
 - `AdminSpec` gains `allowed_roots` (`with_allowed_roots`), confining a route's `File` path, `@path` SDP reference and DVR `archive_root` to those directories (canonicalised, existing roots); empty keeps the documented unrestricted default. Enforced for startup configs, `POST /admin/routes` and `POST /admin/reload` (#2875).
+- DASH-IF ingest: a publisher disconnect mid-PUT now releases the open segment handle through an RAII guard, and every pump reply is bounded by the route body deadline, so a later segment is no longer refused with `SegmentInProgress`, and a stalled pump no longer parks the handler (#2825).
+- Removing or reloading a route lets each push task close its transport gracefully under the shutdown grace period, aborting only when it overruns, so downstream RTMP/RTSP/SRT servers see a normal close instead of an abrupt drop (#2826).
+- A failed DVR archive scan now fails the route's start or reload through `DvrError::ArchiveScan` (`MultimuxError::Dvr`) instead of reading as sequence floor `0`, so a restart cannot renumber over archived segments and collide with them (#2827).
+- A `Range: bytes=-N` suffix longer than the representation answers `206` with `Content-Range: bytes 0-(n-1)/n` instead of a full `200` (RFC 9110 §14.1.2); `bytes=-0` remains `416` (#2828).
+- The file source opens the path once and checks that handle's metadata, reading through a `max_file_bytes + 1` window, so a path swapped for a FIFO or a file grown after the check cannot block the read or exceed the cap (#2837).
+- `redact::redact_url` renders a query string as `?<redacted>` and drops the fragment, and its unparseable-URL fallback finds the credential `@` past a `/` inside a password, so a `?token=…` or a `rtsp://u:pa/ss@host/s` URL can no longer reach a log line (#2858).
+### Changed
+- BREAKING: `source::sdp::load_sdp` is async (it reads an on-disk `@path` with `tokio::fs`), and an SDP file is capped at `source::sdp::MAX_SDP_FILE_BYTES` (64 KiB) and must be a regular file, so `@/dev/zero` or a FIFO can no longer stall a runtime worker or grow the process. Migration: `.await` the call (#2836).
+### Tests
+- The DASH-IF handler-drop abort and the over-long `Range` suffix each have a regression test (#2876).
 
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

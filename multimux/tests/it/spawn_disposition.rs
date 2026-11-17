@@ -51,7 +51,7 @@ const DISPOSITION: &[(&str, &str, u32, &str)] = &[
     ),
     (
         "dvr.rs",
-        "archive_seq_floor",
+        "floor_from_scan",
         1,
         "spawn_blocking DVR write; awaited inline",
     ),

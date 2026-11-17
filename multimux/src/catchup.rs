@@ -1536,4 +1536,36 @@ mod tests {
             "the most recently used entry survives"
         );
     }
+
+    /// The entry-count bound evicts exactly the least-recently-used entries,
+    /// never the whole cache. MUTATION VERIFIED: dropping the entry-count term
+    /// from `enforce_cache_bounds` leaves all 4097 entries resident.
+    #[test]
+    fn the_index_cache_evicts_only_the_least_recently_used_entry() {
+        let stamp = PeriodStamp {
+            mtime_ns: None,
+            len: 0,
+            inode: 0,
+        };
+        let mut cache = IndexCache::default();
+        for tick in 0..=INDEX_CACHE_MAX_ENTRIES as u64 {
+            cache.entries.insert(
+                PathBuf::from(format!("p{tick}.idx")),
+                CacheEntry {
+                    stamp,
+                    segments: Arc::new(Vec::new()),
+                    last_used: tick,
+                },
+            );
+        }
+        cache.tick = INDEX_CACHE_MAX_ENTRIES as u64 + 1;
+        enforce_cache_bounds(&mut cache);
+        assert_eq!(cache.entries.len(), INDEX_CACHE_MAX_ENTRIES);
+        assert!(!cache.entries.contains_key(Path::new("p0.idx")));
+        assert!(
+            cache
+                .entries
+                .contains_key(&PathBuf::from(format!("p{INDEX_CACHE_MAX_ENTRIES}.idx")))
+        );
+    }
 }

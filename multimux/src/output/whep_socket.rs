@@ -321,6 +321,7 @@ mod tests {
     use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
     use rtc_stun::textattrs::TextAttribute;
     use std::net::Ipv4Addr;
+    use std::sync::atomic::AtomicUsize;
     use std::time::Duration;
 
     const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
@@ -579,5 +580,57 @@ mod tests {
         assert!(!Arc::ptr_eq(&first, &second), "the dead socket is replaced");
         assert_ne!(first.local_addr(), second.local_addr());
         assert_eq!(sockets.len(), 1, "the dead socket is replaced in place");
+    }
+
+    /// A success between errors resets the consecutive-error count: ten
+    /// alternating failures and datagrams must not end the loop, or one
+    /// sporadic error every retry would retire a healthy socket.
+    /// MUTATION VERIFIED: removing `consecutive_errors = 0` from the `Ok` arm
+    /// ends the loop after the tenth error and marks the socket dead.
+    #[tokio::test]
+    async fn a_successful_receive_resets_the_consecutive_error_count() {
+        struct AlternatingSource {
+            calls: AtomicUsize,
+        }
+        impl RecvFrom for AlternatingSource {
+            async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+                if self.calls.fetch_add(1, Ordering::SeqCst).is_multiple_of(2) {
+                    Err(io::Error::from_raw_os_error(105 /* ENOBUFS */))
+                } else {
+                    buf[0] = 1;
+                    Ok((1, SocketAddr::from(([127, 0, 0, 1], 9))))
+                }
+            }
+        }
+
+        let router = Arc::new(Mutex::new(Router {
+            demux: SocketDemux::new(MAX_REMOTE_CANDIDATES),
+            queues: HashMap::new(),
+        }));
+        let handled = Arc::new(AtomicU64::new(0));
+        let dead = Arc::new(AtomicBool::new(false));
+        let task = tokio::spawn(receive_loop(
+            AlternatingSource {
+                calls: AtomicUsize::new(0),
+            },
+            router,
+            Arc::new(AtomicU64::new(0)),
+            Arc::clone(&handled),
+            Arc::clone(&dead),
+        ));
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        while handled.load(Ordering::Acquire) < RECV_ERRORS_BEFORE_DEAD as u64 {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the loop handled {} of {RECV_ERRORS_BEFORE_DEAD} datagrams",
+                handled.load(Ordering::Acquire)
+            );
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        assert!(
+            !dead.load(Ordering::SeqCst),
+            "a success between errors must keep the socket alive"
+        );
+        task.abort();
     }
 }

@@ -355,14 +355,18 @@ impl RouteRegistry {
     }
 
     /// The highest sequence number `route`'s DVR archive already holds. Callers
-    /// hold the route's name lock, not [`Self::mutation_lock`].
-    async fn archive_floor(&self, route: &Route) -> u32 {
+    /// hold the route's name lock, not [`Self::mutation_lock`]. A failed scan is
+    /// an error: numbering from `0` over an archive that may hold higher
+    /// sequences would collide with archived segments.
+    async fn archive_floor(&self, route: &Route) -> crate::Result<u32> {
         #[cfg(test)]
         self.hooks.wait_floor_gate(&route.name).await;
-        let floor = archive_floor_of(route).await;
+        let floor = archive_floor_of(route)
+            .await
+            .map_err(crate::MultimuxError::Dvr)?;
         #[cfg(test)]
         self.hooks.log(format!("floor:{}", route.name));
-        floor
+        Ok(floor)
     }
 
     fn check_name_free(&self, route: &Route) -> crate::Result<()> {
@@ -554,7 +558,7 @@ impl RouteRegistry {
         route.validate_standalone(&self.ctx.base_config.playlist_name)?;
         let _name = self.lock_names([route.name.as_str()]).await;
         self.check_name_free(&route)?;
-        let archive_floor = self.archive_floor(&route).await;
+        let archive_floor = self.archive_floor(&route).await?;
         let _guard = self.mutation_lock.lock().await;
         self.check_name_free(&route)?;
         let runtime = self.spawn_route(&route, archive_floor, None)?;
@@ -721,7 +725,7 @@ impl RouteRegistry {
                 .await;
             let mut added_floors = Vec::with_capacity(plan.added.len());
             for route in &plan.added {
-                added_floors.push(self.archive_floor(route).await);
+                added_floors.push(self.archive_floor(route).await?);
             }
             let global = self.mutation_lock.lock().await;
             // The registry may have changed while the locks were being taken: a route this
@@ -774,7 +778,7 @@ impl RouteRegistry {
             // `_HLS_msn` for this route keeps its meaning on the replacement.
             floors.push(
                 self.archive_floor(route)
-                    .await
+                    .await?
                     .max(old_store.media_sequence_floor()),
             );
         }
@@ -936,9 +940,18 @@ impl RouteRegistry {
     /// logged and left out of the registry.
     async fn restore_retired(&self, routes: &[Route], stores: &[Arc<RouteHandle>]) {
         for (route, store) in routes.iter().zip(stores) {
-            let floor = archive_floor_of(route)
-                .await
-                .max(store.media_sequence_floor());
+            let floor = match archive_floor_of(route).await {
+                Ok(floor) => floor.max(store.media_sequence_floor()),
+                Err(e) => {
+                    tracing::error!(
+                        route = %route.name,
+                        error = %e,
+                        "admin: a failed reload could not read a stopped route's archive floor; \
+                         it was not started again"
+                    );
+                    continue;
+                }
+            };
             match self.spawn_route(route, floor, Some(store)) {
                 Ok(runtime) => {
                     self.inner.write().insert(
@@ -1058,7 +1071,16 @@ async fn drain_route(runtime: RouteRuntime) {
         abort_handle.abort();
     }
     for h in runtime.push_handles {
-        h.abort();
+        let abort_handle = h.abort_handle();
+        if tokio::time::timeout(SUPERVISOR_SHUTDOWN_GRACE, h)
+            .await
+            .is_err()
+        {
+            tracing::warn!(
+                "admin: push task did not exit within the shutdown grace period; aborting"
+            );
+            abort_handle.abort();
+        }
     }
     // Release the route's catch-up index cache: nothing reads it any more,
     // and each entry owns its whole parsed segment vector (audit 20 finding
@@ -1589,13 +1611,16 @@ pub(crate) async fn serve_with_admin(
 
 /// The highest sequence number `route`'s DVR archive already holds, or `0`
 /// when DVR is off (see `crate::dvr::archive_seq_floor`).
-pub(super) async fn archive_floor_of(route: &Route) -> u32 {
+///
+/// # Errors
+/// [`crate::dvr::DvrError::ArchiveScan`] when the archive scan could not run.
+pub(super) async fn archive_floor_of(route: &Route) -> Result<u32, crate::dvr::DvrError> {
     if route.dvr.enabled {
-        crate::dvr::archive_seq_floor(&route.dvr, &route.name)
-            .await
-            .value()
+        Ok(crate::dvr::archive_seq_floor(&route.dvr, &route.name)
+            .await?
+            .value())
     } else {
-        0
+        Ok(0)
     }
 }
 
@@ -1654,6 +1679,36 @@ mod tests {
         for _ in 0..32 {
             tokio::task::yield_now().await;
         }
+    }
+
+    /// Removing a route cancels its push tasks and waits for them to close
+    /// their transport; an abort would skip that close, so the downstream
+    /// server would see an abrupt drop instead of a graceful shutdown.
+    #[tokio::test]
+    async fn drain_route_lets_push_tasks_close_before_aborting_them() {
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let task_cancel = cancel.clone();
+        let task_closed = Arc::clone(&closed);
+        let push = tokio::spawn(async move {
+            task_cancel.cancelled().await;
+            tokio::task::yield_now().await;
+            task_closed.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+        let runtime = RouteRuntime {
+            generation: 0,
+            route: rtsp_route("x", "rtsp://host/x"),
+            store: Arc::new(RouteHandle::new(RouteConfig::default())),
+            outputs: Vec::new(),
+            cancel,
+            handle: tokio::spawn(async {}),
+            push_handles: vec![push],
+        };
+        drain_route(runtime).await;
+        assert!(
+            closed.load(std::sync::atomic::Ordering::SeqCst),
+            "the push task must run its close, not be aborted"
+        );
     }
 
     fn rtsp_route(name: &str, url: &str) -> Route {

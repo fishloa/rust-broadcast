@@ -270,11 +270,20 @@ impl FileReader {
     /// Read the whole file, probe it, and demux it into the playable tracks —
     /// no pacing, no publishing.
     async fn read_probe_demux_once(&self) -> Result<ParsedFile, FileReaderError> {
-        // Metadata first — reject a non-regular file (character device /
-        // FIFO / socket / directory) and an over-cap file *before* the read,
-        // so an operator-supplied path can never trigger an unbounded read
-        // that grows until the process dies.
-        let metadata = tokio::fs::metadata(&self.config.path)
+        // Open once and check the handle's own metadata — reject a
+        // non-regular file (character device / FIFO / socket / directory) and
+        // an over-cap file *before* the read, so an operator-supplied path can
+        // never trigger an unbounded read that grows until the process dies.
+        // The read itself is tied to this handle, so a path swapped or a file
+        // grown after the check cannot bypass either bound.
+        let file = tokio::fs::File::open(&self.config.path)
+            .await
+            .map_err(|source| FileReaderError::Read {
+                path: self.config.path.clone(),
+                source,
+            })?;
+        let metadata = file
+            .metadata()
             .await
             .map_err(|source| FileReaderError::Read {
                 path: self.config.path.clone(),
@@ -296,13 +305,7 @@ impl FileReader {
             });
         }
 
-        let bytes =
-            tokio::fs::read(&self.config.path)
-                .await
-                .map_err(|source| FileReaderError::Read {
-                    path: self.config.path.clone(),
-                    source,
-                })?;
+        let bytes = read_capped(&self.config.path, file, cap).await?;
 
         // Identify + demux — whole file, never a prefix. Both are CPU-heavy
         // (a `container-probe` lattice search over the whole buffer, then a
@@ -402,6 +405,34 @@ impl FileReader {
         }
         Ok(())
     }
+}
+
+/// Read an already-opened file through a `cap + 1` window, so a file that
+/// grew past the cap after the metadata check is still refused instead of
+/// held in memory unbounded.
+async fn read_capped(
+    path: &std::path::Path,
+    file: tokio::fs::File,
+    cap: usize,
+) -> Result<Vec<u8>, FileReaderError> {
+    use tokio::io::AsyncReadExt as _;
+
+    let mut bytes = Vec::new();
+    file.take((cap as u64).saturating_add(1))
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|source| FileReaderError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() > cap {
+        return Err(FileReaderError::FileTooLarge {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            max: cap,
+        });
+    }
+    Ok(bytes)
 }
 
 /// Stable label for a [`std::fs::FileType`], for the [`FileReaderError`]
@@ -729,5 +760,30 @@ mod playout_tests {
         assert_eq!(file_trunk_config(8).timed_capacity.get(), FILE_TIMED_RING);
         assert_eq!(file_trunk_config(500).timed_capacity.get(), FILE_TIMED_RING);
         assert_eq!(file_trunk_config(500).segment_capacity.get(), 500);
+    }
+
+    /// The cap is tied to the opened handle, not a path lookup: a file that
+    /// grows past the cap after the open is refused rather than read whole.
+    #[tokio::test]
+    async fn a_file_grown_past_the_cap_after_the_open_is_refused() {
+        let dir = std::env::temp_dir().join(format!("multimux-capped-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("grow.bin");
+        std::fs::write(&path, vec![0u8; 8]).unwrap();
+        let file = tokio::fs::File::open(&path).await.unwrap();
+        std::fs::write(&path, vec![0u8; 9]).unwrap();
+        let err = read_capped(&path, file, 8).await;
+        assert!(matches!(
+            err,
+            Err(FileReaderError::FileTooLarge {
+                size: 9,
+                max: 8,
+                ..
+            })
+        ));
+        let file = tokio::fs::File::open(&path).await.unwrap();
+        assert_eq!(read_capped(&path, file, 9).await.unwrap().len(), 9);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
     }
 }

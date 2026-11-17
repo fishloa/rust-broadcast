@@ -1512,7 +1512,9 @@ async fn serve_with_registry_impl(
         // Segment numbers must stay above what the DVR archive already holds
         // (a previous process's), or the archive and any HTTP cache would
         // see numbers reused for different media (audit r07-C5, #1083).
-        let archive_floor = admin::archive_floor_of(route).await;
+        let archive_floor = admin::archive_floor_of(route)
+            .await
+            .map_err(crate::MultimuxError::Dvr)?;
         let route_config = RouteConfig::default()
             .with_target_duration(target_duration)
             .with_part_target(part_target)
