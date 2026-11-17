@@ -23,6 +23,7 @@ use broadcast_client::{
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use media_plane::ingress::{IngestDriver, IngestSession, SessionEvent};
+use rustls_platform_verifier::BuilderVerifierExt;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpStream, UdpSocket};
 use tokio::sync::mpsc;
@@ -43,13 +44,11 @@ const MESSAGE_QUEUE: usize = 64;
 /// ring-backed with the platform trust roots (reqwest's own default, minus the aws-lc-rs provider).
 pub(crate) fn http_client() -> Result<reqwest::Client, String> {
     let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
-    let verifier =
-        rustls_platform_verifier::Verifier::new(provider.clone()).map_err(|e| e.to_string())?;
     let tls = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .map_err(|e| e.to_string())?
-        .dangerous()
-        .with_custom_certificate_verifier(std::sync::Arc::new(verifier))
+        .with_platform_verifier()
+        .map_err(|e| e.to_string())?
         .with_no_client_auth();
     reqwest::Client::builder()
         .use_preconfigured_tls(tls)
