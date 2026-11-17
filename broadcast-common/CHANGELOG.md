@@ -3,6 +3,8 @@
 ## [Unreleased]
 ### Fixed
 - `backoff::RetrySchedule` applies the drawn jitter term itself, not that term raised to the attempt index. Raising it collapsed every retry from the fifth attempt on to exactly `5/6` of the raw delay (only a term of exactly one escaped), so during the long outage the cap exists for, a fleet of clients retried on one shared instant: the lockstep the schedule and its `with_offset` are meant to prevent. The delay now stays inside `[raw * 5/6, raw]` with the sequence's own spread at every attempt (#2920).
+### Tests
+- Audit 21 (#2921): `decode_mjd_bcd` refuses a BCD time of day past its field (12:60:00, 12:30:60, 24:00:00) and accepts 23:59:59, the calendar gate keeps refusing 31 February, month 13 and day 0, the whole representable `jiff::Timestamp` range encodes through `encode_seconds_since_2000_utc`, and `MonoUtc::utc_at` moves by exactly the elapsed read and saturates at `jiff::Timestamp::MIN`/`MAX`.
 
 ## [13.1.0] - 2026-11-17
 ### Added
