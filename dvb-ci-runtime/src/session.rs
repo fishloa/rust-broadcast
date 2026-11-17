@@ -413,6 +413,129 @@ mod tests {
         assert_eq!(s.len(), MAX_SESSIONS);
     }
 
+    /// #2946: the cap also holds on the module-chosen bind path — the one a
+    /// CAM drives by sending `open_session_response`s of its own.
+    #[test]
+    fn module_chosen_sessions_are_capped_at_max_sessions() {
+        let response = |session_nb: u16, resource: u32, status: SessionStatus| {
+            ser(&OpenSessionResponse {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                status,
+                resource: ResourceId(0x0100_0000 + resource),
+                session_nb,
+            })
+            .unwrap()
+        };
+
+        let mut s = SessionLayer::new();
+        for i in 0..MAX_SESSIONS as u16 {
+            let out = s
+                .on_spdu(&response(i + 1, u32::from(i), SessionStatus::Ok), |_| true)
+                .unwrap();
+            assert_eq!(
+                out.opened,
+                vec![(i + 1, ResourceId(0x0100_0000 + u32::from(i)))]
+            );
+        }
+        assert_eq!(s.len(), MAX_SESSIONS);
+
+        let out = s
+            .on_spdu(&response(100, 0x0000_00FF, SessionStatus::Ok), |_| true)
+            .unwrap();
+        assert!(
+            out.opened.is_empty(),
+            "the cap must refuse a further module-chosen session"
+        );
+        assert_eq!(s.len(), MAX_SESSIONS);
+
+        let out = s
+            .on_spdu(&response(101, 0, SessionStatus::Ok), |_| true)
+            .unwrap();
+        assert!(
+            out.opened.is_empty(),
+            "a second session for an already-open resource is refused"
+        );
+        assert_eq!(s.resource_of(101), None);
+        assert_eq!(s.len(), MAX_SESSIONS);
+    }
+
+    /// #2946: only an `ok` status binds a module-chosen session.
+    #[test]
+    fn a_non_ok_open_session_response_never_binds() {
+        let mut s = SessionLayer::new();
+        let resp = ser(&OpenSessionResponse {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            status: SessionStatus::ResourceBusy,
+            resource: ResourceId(0x0004_1001),
+            session_nb: 7,
+        })
+        .unwrap();
+        let out = s.on_spdu(&resp, |_| true).unwrap();
+        assert!(out.opened.is_empty());
+        assert_eq!(s.resource_of(7), None);
+        assert!(s.is_empty());
+    }
+
+    /// #2946: the host-initiated open request is the tag-`0x91` SPDU with the
+    /// resource identifier, hand-derived from ETSI EN 50221 §7.2.6.1.
+    #[test]
+    fn create_session_emits_the_open_session_request_spdu() {
+        let mut s = SessionLayer::new();
+        assert_eq!(
+            s.create_session(ResourceId(0x0004_1001)).unwrap(),
+            vec![0x91, 0x04, 0x00, 0x04, 0x10, 0x01]
+        );
+    }
+
+    /// #2946: a module acknowledging a close the host initiated removes the
+    /// session and reports it closed.
+    #[test]
+    fn a_close_session_response_removes_the_session() {
+        let mut s = SessionLayer::new();
+        for i in 0..5u32 {
+            let req = ser(&OpenSessionRequest {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resource: ResourceId(0x0100_0000 + i),
+            })
+            .unwrap();
+            let out = s.on_spdu(&req, |_| true).unwrap();
+            assert_eq!(out.opened[0].0, u16::try_from(i).unwrap() + 1);
+        }
+        assert_eq!(s.len(), 5);
+
+        let resp = ser(&CloseSessionResponse {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            status: SessionStatus::Ok,
+            session_nb: 5,
+        })
+        .unwrap();
+        let out = s.on_spdu(&resp, |_| false).unwrap();
+        assert_eq!(out.closed, vec![5]);
+        assert_eq!(s.resource_of(5), None);
+        assert_eq!(s.len(), 4);
+    }
+
+    /// #2946: a `session_number` SPDU carries an APDU only when a body follows
+    /// the header.
+    #[test]
+    fn a_session_number_spdu_without_a_body_yields_no_apdu() {
+        let mut s = SessionLayer::new();
+        let header_only = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb: 3,
+        })
+        .unwrap();
+        assert_eq!(header_only.len(), 4);
+        assert!(s.on_spdu(&header_only, |_| false).unwrap().apdus.is_empty());
+
+        let mut with_body = header_only;
+        with_body.push(0xAA);
+        assert_eq!(
+            s.on_spdu(&with_body, |_| false).unwrap().apdus,
+            vec![(3, vec![0xAA])]
+        );
+    }
+
     #[test]
     fn open_request_for_absent_resource_denied() {
         let mut s = SessionLayer::new();
