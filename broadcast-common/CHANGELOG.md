@@ -6,6 +6,7 @@
 ### Tests
 - Audit 21 (#2921): `decode_mjd_bcd` refuses a BCD time of day past its field (12:60:00, 12:30:60, 24:00:00) and accepts 23:59:59, the calendar gate keeps refusing 31 February, month 13 and day 0, the whole representable `jiff::Timestamp` range encodes through `encode_seconds_since_2000_utc`, and `MonoUtc::utc_at` moves by exactly the elapsed read and saturates at `jiff::Timestamp::MIN`/`MAX`.
 - Audit 21 (#2922): `SeqSpace`'s `lt`/`leq`/`gt`/`geq` and `is_tie` at equal values, exactly half the space apart (all four answers false, both orders) and across the wrap, plus `in_closed_range` over a one-element range, a `last` that precedes `first` and a range that wraps.
+- Audit 21 (#2923): `read_tree` enforces the attribute-count and attribute-value-size bounds at exactly the configured cap (the cap is allowed, one past it is `XmlError::Limit`), `Elem`'s `child`/`children_named`/`has_child`/`attr_in` match on namespace and name together, and `xml_chars::read_attributes` resolves each prefix, skips the namespace declarations and reports a value outside the `Char` production.
 
 ## [13.1.0] - 2026-11-17
 ### Added

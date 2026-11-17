@@ -620,6 +620,42 @@ mod tests {
         assert!(matches!(err, XmlCharError::Reader { .. }), "{err:?}");
     }
 
+    #[test]
+    fn read_attributes_resolves_each_prefix_and_skips_the_declarations() {
+        let xml = r#"<a xmlns:p="urn:p" x="1" p:y="2"></a>"#;
+        let mut reader = NsReader::from_str(xml);
+        let (_, event) = reader.read_resolved_event().unwrap();
+        let Event::Start(start) = event else {
+            panic!("the first event is a start tag");
+        };
+        let attributes = read_attributes(&reader, &start, |message| message.to_string()).unwrap();
+        assert_eq!(
+            attributes.len(),
+            2,
+            "the xmlns declaration is not an attribute"
+        );
+        assert_eq!(attributes[0].namespace, None);
+        assert_eq!(attributes[0].name, "x");
+        assert_eq!(attributes[0].value, "1");
+        assert_eq!(attributes[1].namespace.as_deref(), Some("urn:p"));
+        assert_eq!(attributes[1].name, "y");
+        assert_eq!(attributes[1].value, "2");
+    }
+
+    #[test]
+    fn read_attributes_reports_a_value_outside_the_char_production() {
+        let xml = "<a x=\"\u{1}\"></a>";
+        let mut reader = NsReader::from_str(xml);
+        let (_, event) = reader.read_resolved_event().unwrap();
+        let Event::Start(start) = event else {
+            panic!("the first event is a start tag");
+        };
+        assert_eq!(
+            read_attributes(&reader, &start, |_| String::from("refused")).unwrap_err(),
+            "refused"
+        );
+    }
+
     fn start_attributes(
         xml: &str,
         admit: impl FnMut(usize, &str) -> Result<(), String>,
