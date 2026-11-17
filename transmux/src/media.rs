@@ -192,6 +192,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // or per-`moof` cap lets N tiny fragments held before one `mdat` cost
         // N x 40 MiB of `TrunSample`s.
         let mut zero_width_budget = crate::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
+        // Sample bytes copied so far, for the whole file and never refilled:
+        // one `mdat` followed by N `moof`s that each claim all of it would
+        // otherwise copy those same bytes N times (audit 20 finding 13).
+        let mut copied_bytes: usize = 0;
         // A `moof` whose body does not parse is skipped and reported (audit
         // T16, #1144): the box framing is intact, so the next box is read from
         // a correct offset and one corrupt fragment costs only itself.
@@ -237,7 +241,14 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 // segment carrying several `moof`s before one `mdat` resolves
                 // them in order.
                 for (moof_off, moof) in pending_moofs.drain(..) {
-                    for _ in 0..absorb_fragment(input, &mdats, moof_off, &moof, &mut builders) {
+                    for _ in 0..absorb_fragment(
+                        input,
+                        &mdats,
+                        moof_off,
+                        &moof,
+                        &mut builders,
+                        &mut copied_bytes,
+                    ) {
                         degraded.push(InputDegradation::MalformedUnit {
                             position: moof_off as u64,
                         });
@@ -328,13 +339,14 @@ fn absorb_fragment(
     moof_off: usize,
     moof: &MovieFragmentBox,
     builders: &mut [TrackBuilder],
+    copied_bytes: &mut usize,
 ) -> usize {
     // A `traf` whose `trun` addressing or timing is invalid is skipped whole
     // and counted (audit T16, #1144); each `traf` is committed atomically so a
     // failure leaves its track exactly as it was.
     let mut bad = 0usize;
     for traf in &moof.traf {
-        if absorb_traf(file, mdats, moof_off, moof, traf, builders).is_err() {
+        if absorb_traf(file, mdats, moof_off, moof, traf, builders, copied_bytes).is_err() {
             bad += 1;
         }
     }
@@ -348,6 +360,7 @@ fn absorb_traf(
     moof: &MovieFragmentBox,
     traf: &crate::movie_fragment::TrackFragmentBox,
     builders: &mut [TrackBuilder],
+    copied_bytes: &mut usize,
 ) -> Result<()> {
     {
         let tfhd = &traf.tfhd;
@@ -388,8 +401,14 @@ fn absorb_traf(
             next_dts = crate::frag_offsets::tfdt_as_i64(base)?;
         }
         let mut samples = Vec::new();
-        for r in crate::frag_offsets::sample_ranges_in(file, mdats, moof_off, moof, tfhd.track_id)?
-        {
+        for r in crate::frag_offsets::sample_ranges_in_run(
+            file,
+            mdats,
+            moof_off,
+            moof,
+            tfhd.track_id,
+            copied_bytes,
+        )? {
             let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
             let dts = next_dts;
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;

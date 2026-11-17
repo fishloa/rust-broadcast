@@ -47,6 +47,13 @@ use super::{seq, timestamp_to_wire_us};
 /// cause.
 const MAX_NAK_SEQS_PER_PACKET: usize = 1 << 16;
 
+/// Shortest interval between two retransmissions of the same sequence number
+/// (#2819), the same implementation-policy value `rist-runtime` uses for its
+/// own sender. `draft-sharabayko-srt-01` does not state one; without it a peer
+/// re-sending one NAK back to back could keep every buffered packet in the
+/// driver's outbound queue forever.
+const MIN_RETRANSMIT_INTERVAL: Duration = Duration::from_millis(20);
+
 /// One buffered, sent-but-not-yet-acknowledged data packet (rules 1, 16,
 /// 18).
 #[derive(Debug, Clone)]
@@ -58,6 +65,15 @@ struct SentPacket {
     key_flag: EncryptionKeyField,
     /// Resend counter (rule 18): incremented on every retransmission.
     resend_count: u32,
+    /// This packet's retransmission is already in the driver's outbound
+    /// queue, not yet sent. A repeated NAK must not queue a second copy
+    /// (r17-SRT-I6/#2819); the flag clears when the datagram leaves that
+    /// queue.
+    queued_retransmit: bool,
+    /// When this packet was last handed out for retransmission, so one
+    /// sequence number cannot be retransmitted faster than
+    /// [`MIN_RETRANSMIT_INTERVAL`].
+    last_retransmit_at: Option<Timestamp>,
 }
 
 /// ARQ sender-side state (`draft-sharabayko-srt-01` §4.8). See the module
@@ -193,6 +209,8 @@ impl Sender {
             payload: payload.to_vec(),
             key_flag: EncryptionKeyField::NotEncrypted,
             resend_count: 0,
+            queued_retransmit: false,
+            last_retransmit_at: None,
         });
         Ok(buf)
     }
@@ -234,6 +252,8 @@ impl Sender {
             payload: payload.to_vec(),
             key_flag,
             resend_count: 0,
+            queued_retransmit: false,
+            last_retransmit_at: None,
         });
         Ok(buf)
     }
@@ -282,12 +302,17 @@ impl Sender {
         }
     }
 
-    /// Drain the pending retransmit queue, returning the wire bytes of each
-    /// retransmission (rules 16, 18 — the `R` flag is set, the resend
-    /// counter incremented). A queued sequence number no longer in the
-    /// buffer (freed by a since-received ACK) is dropped without emitting
-    /// anything (rule 17).
-    pub fn tick(&mut self, now: Timestamp) -> Vec<Vec<u8>> {
+    /// Drain the pending retransmit queue, returning each retransmission's
+    /// sequence number and wire bytes (rules 16, 18 — the `R` flag is set,
+    /// the resend counter incremented). A queued sequence number no longer
+    /// in the buffer (freed by a since-received ACK) is dropped without
+    /// emitting anything (rule 17).
+    ///
+    /// A sequence number already queued in the caller's outbound queue
+    /// ([`Self::on_retransmit_sent`] clears it once the datagram leaves) or
+    /// retransmitted less than `MIN_RETRANSMIT_INTERVAL` ago stays pending:
+    /// a peer re-sending the same NAK cannot queue a second copy (#2819).
+    pub fn tick(&mut self, now: Timestamp) -> Vec<(u32, Vec<u8>)> {
         let mut seqs: Vec<u32> = core::mem::take(&mut self.pending_retransmit)
             .into_iter()
             .collect();
@@ -298,11 +323,21 @@ impl Sender {
             seqs.sort_unstable_by_key(|&s| seq::seq_diff(s, base));
         }
         let mut out = Vec::with_capacity(seqs.len());
+        let mut still_pending = BTreeSet::new();
         for seq in seqs {
             let Some(idx) = self.index_of(seq) else {
                 continue; // rule 17: already dropped from the buffer.
             };
             let sent = &mut self.buffer[idx];
+            let rate_limited = sent
+                .last_retransmit_at
+                .is_some_and(|last| now.saturating_sub(last) < MIN_RETRANSMIT_INTERVAL);
+            if sent.queued_retransmit || rate_limited {
+                still_pending.insert(seq);
+                continue;
+            }
+            sent.queued_retransmit = true;
+            sent.last_retransmit_at = Some(now);
             sent.resend_count = sent.resend_count.saturating_add(1);
             let pkt = DataPacket {
                 seq_number: sent.seq,
@@ -319,10 +354,30 @@ impl Sender {
             // Built from an already-buffered (so in-range) packet: cannot fail,
             // but a failure drops this retransmit rather than panicking.
             if pkt.serialize_into(&mut buf).is_ok() {
-                out.push(buf);
+                out.push((seq, buf));
+            } else {
+                sent.queued_retransmit = false;
             }
         }
+        self.pending_retransmit = still_pending;
         out
+    }
+
+    /// The retransmission of `seq` left the caller's outbound queue: it may
+    /// be queued again by a later [`Self::tick`] (a NAK asking for it again,
+    /// or the rate limit having passed).
+    pub fn on_retransmit_sent(&mut self, seq: u32) {
+        if let Some(idx) = self.index_of(seq) {
+            self.buffer[idx].queued_retransmit = false;
+        }
+    }
+
+    /// The retransmission of `seq` was dropped instead of queued (the
+    /// caller's outbound queue was full): clear the queued mark and put it
+    /// back in the pending set, so a later tick offers it again.
+    pub fn on_retransmit_dropped(&mut self, seq: u32) {
+        self.on_retransmit_sent(seq);
+        self.pending_retransmit.insert(seq);
     }
 
     /// Process an incoming ACK: free every acknowledged packet (rules 7, 8,
@@ -434,9 +489,44 @@ mod tests {
 
         let out = s.tick(Timestamp::from_millis(5));
         assert_eq!(out.len(), 1);
-        let dp = DataPacket::parse(&out[0]).unwrap();
+        let dp = DataPacket::parse(&out[0].1).unwrap();
         assert_eq!(dp.seq_number, 1);
         assert!(dp.retransmitted);
+        assert_eq!(s.pending_retransmit_count(), 0);
+    }
+
+    /// #2819: a sequence number whose retransmission is already queued is
+    /// never queued twice, and one already retransmitted is rate-limited to
+    /// one emission per `MIN_RETRANSMIT_INTERVAL`; both stay pending rather
+    /// than disappearing, so a later tick still sends them.
+    #[test]
+    fn a_queued_retransmit_is_not_queued_twice_and_is_rate_limited() {
+        let mut s = Sender::new(PEER);
+        s.on_data(0, 1, b"a", Timestamp::ZERO).unwrap();
+
+        feed_nak(&mut s, &[LossListEntry::Single(sn(0))]);
+        assert_eq!(s.tick(Timestamp::from_millis(1)).len(), 1);
+
+        // A second NAK while the first copy is still queued in the driver.
+        feed_nak(&mut s, &[LossListEntry::Single(sn(0))]);
+        assert_eq!(
+            s.tick(Timestamp::from_millis(2)).len(),
+            0,
+            "a queued retransmission must not be queued again"
+        );
+        assert_eq!(s.pending_retransmit_count(), 1, "but it stays pending");
+
+        // The datagram left the queue; the interval has not passed yet.
+        s.on_retransmit_sent(0);
+        assert_eq!(s.tick(Timestamp::from_millis(3)).len(), 0);
+        assert_eq!(s.pending_retransmit_count(), 1);
+
+        let at_interval = Timestamp::from_millis(1)
+            .checked_add(MIN_RETRANSMIT_INTERVAL)
+            .expect("deadline in range");
+        let again = s.tick(at_interval);
+        assert_eq!(again.len(), 1);
+        assert_eq!(again[0].0, 0);
         assert_eq!(s.pending_retransmit_count(), 0);
     }
 
@@ -557,7 +647,7 @@ mod tests {
         let out = s.tick(Timestamp::ZERO);
         assert_eq!(out.len(), 1);
         assert!(s.lookup_steps - before <= 14);
-        assert_eq!(DataPacket::parse(&out[0]).unwrap().seq_number, 8000);
+        assert_eq!(DataPacket::parse(&out[0].1).unwrap().seq_number, 8000);
     }
 
     /// A NAK range that straddles the 31-bit sequence wrap selects exactly
@@ -576,7 +666,7 @@ mod tests {
         let seqs: Vec<u32> = s
             .tick(Timestamp::ZERO)
             .iter()
-            .map(|b| DataPacket::parse(b).unwrap().seq_number)
+            .map(|(seq, _)| *seq)
             .collect();
         assert_eq!(seqs, alloc::vec![MAX - 1, MAX, 0, 1]);
     }
@@ -620,7 +710,7 @@ mod tests {
         let seqs: Vec<u32> = s
             .tick(Timestamp::ZERO)
             .iter()
-            .map(|b| DataPacket::parse(b).unwrap().seq_number)
+            .map(|(seq, _)| *seq)
             .collect();
         assert_eq!(seqs, alloc::vec![3, 4]);
     }
