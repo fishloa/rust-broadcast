@@ -14,7 +14,7 @@
 
 use smooth_runtime::{Dropped, Output, SmoothClientConfig};
 
-use crate::common::{Host, Reply, fixture};
+use crate::common::{Host, Reply, fixture, now};
 
 const VIDEO_TEMPLATE: &str = r#"QualityLevels({bitrate})/Fragments(video={start time})"#;
 
@@ -90,5 +90,76 @@ fn the_fixture_manifest_is_unchanged() {
     assert_eq!(
         manifest_with_video_url(VIDEO_TEMPLATE),
         fixture("av/Manifest")
+    );
+}
+
+#[test]
+fn a_fragment_url_template_naming_a_local_file_is_never_fetched() {
+    let mut host = av_host(manifest_with_video_url(
+        "file:///etc/QualityLevels({bitrate})/Fragments(video={start time})",
+    ));
+    host.run();
+    assert!(
+        !host.requested.iter().any(|u| u.contains("file:")),
+        "{:?}",
+        host.requested
+    );
+    assert!(
+        !dropped_fragment_urls(&host).is_empty(),
+        "the unfetchable scheme is reported as a dropped fragment URL"
+    );
+}
+
+#[test]
+fn a_fragment_url_template_naming_another_scheme_is_never_fetched() {
+    let mut host = av_host(manifest_with_video_url(
+        "ftp://cdn.example/QualityLevels({bitrate})/Fragments(video={start time})",
+    ));
+    host.run();
+    assert!(
+        !host.requested.iter().any(|u| u.contains("ftp:")),
+        "{:?}",
+        host.requested
+    );
+    assert!(
+        !dropped_fragment_urls(&host).is_empty(),
+        "the unfetchable scheme is reported as a dropped fragment URL"
+    );
+}
+
+#[test]
+fn an_https_to_http_fragment_downgrade_is_never_fetched() {
+    use smooth_runtime::{Action, SmoothClient};
+
+    let manifest = manifest_with_video_url(
+        "http://cdn.example/QualityLevels({bitrate})/Fragments(video={start time})",
+    );
+    let mut client = SmoothClient::new(SmoothClientConfig::new("https://origin.test/Manifest"));
+    let Some(Action::FetchManifest { id, .. }) = client.poll(now(0)) else {
+        panic!("the first action is the manifest fetch");
+    };
+    client.on_manifest(now(0), id, &manifest);
+    let mut fetched = Vec::new();
+    let mut dropped = 0usize;
+    for _ in 0..16 {
+        let Some(action) = client.poll(now(0)) else {
+            break;
+        };
+        if let Action::FetchFragment { url, .. } = action {
+            fetched.push(url.to_string());
+        }
+        while let Some(output) = client.next_output() {
+            if matches!(output, Output::Dropped(Dropped::FragmentUrl { .. })) {
+                dropped += 1;
+            }
+        }
+    }
+    assert!(
+        dropped > 0,
+        "the downgraded reference is dropped, not fetched"
+    );
+    assert!(
+        fetched.iter().all(|u| u.starts_with("https://")),
+        "no fetch leaves over a plain connection: {fetched:?}"
     );
 }

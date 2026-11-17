@@ -461,6 +461,14 @@ pub enum ErrorKind {
         /// The status as the server sent it, for example `Service Unavailable`.
         status: String,
     },
+    /// The session gave up after [`Config::ts_http`]'s `max_reconnect_attempts` failed attempts in
+    /// a row with no media played in between, so a URL that accepts and then drops, or keeps
+    /// answering `429`/`503`, cannot hold a connection slot forever. Fatal: no further request is
+    /// attempted for this session. `None` (the default) retries forever.
+    ReconnectAttemptsExhausted {
+        /// The failed attempts that led here.
+        attempts: u32,
+    },
     /// A Smooth Streaming client manifest could not be read as XML, broke a size or structure
     /// bound or is not a manifest (`reason` is a stable token). Non-fatal and reported once per
     /// reason until a good manifest arrives; the session keeps the last good manifest and
@@ -559,6 +567,7 @@ impl ErrorKind {
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
             Self::SrtPeerIdle => "srt_peer_idle",
             Self::RequestRefused { .. } => "request_refused",
+            Self::ReconnectAttemptsExhausted { .. } => "reconnect_attempts_exhausted",
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
             Self::BufferInputsDropped => "buffer_inputs_dropped",
@@ -1038,9 +1047,10 @@ pub const DEFAULT_MAX_RECORDED_BUFFER_INPUTS: usize = 1_000_000;
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,
-    /// TS-over-HTTP config (also the RTSP timers). An inconsistent value (a zero timeout, an
-    /// empty or zero-entry backoff, a stall reconnect not after the notice) is replaced by the
-    /// nearest valid one, see `crate::tshttp::TsHttpConfig::clamped`; it is not rejected.
+    /// TS-over-HTTP config (also the RTSP timers and the RTMP policy). An inconsistent value (a
+    /// zero timeout, an empty or zero-entry backoff, a stall reconnect not after the notice) is
+    /// replaced by the nearest valid one, see `crate::tshttp::TsHttpConfig::clamped`; it is not
+    /// rejected.
     pub ts_http: crate::tshttp::TsHttpConfig,
     /// Maximum redirects per open (per request for HLS). `0` follows none: a redirect response
     /// fails the connection.
@@ -1120,7 +1130,10 @@ pub struct Config {
     /// always survives). One [`Event::Discontinuity`] takes the place of each burst of dropped samples
     /// so the player re-syncs. Every other event (tracks, errors, buffer events, terminal
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
-    /// stalled host leaves unread. Must be non-zero (a zero cap would drop every sample).
+    /// stalled host leaves unread. The kept events that a player can also resync past
+    /// ([`Event::Discontinuity`], [`Event::AvSync`]) have a ceiling of their own, and a
+    /// [`Event::Discontinuity`] queued right behind another coalesces into it. Must be non-zero (a
+    /// zero cap would drop every sample).
     pub max_queued_events: usize,
     /// Bytes of [`Event::Sample`] payload the session keeps queued for the host, next to
     /// [`Config::max_queued_events`]: when a host does not drain and the queued sample bytes exceed

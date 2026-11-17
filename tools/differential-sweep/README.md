@@ -37,7 +37,7 @@ Every probe runs in its own thread under `catch_unwind` and a per-probe timeout
 | probe | crate(s) | records (per fixture) |
 |---|---|---|
 | `transmux.stream` | transmux | `StreamingTsDemux` fed 188 B packets, drained after every feed: ordered `TrackAdded` (id, PID, program, codec identity + RFC 6381), `TrackRemoved`/`TrackAbandoned`, **phase = `pre_finish` vs `at_finish`**, per-track sample count/bytes/dts range/SHA-256, event counters, `TracksResolved` per phase (`tracks_resolved:*`) and `samples_before_first_resolved` |
-| `multimux.ts_ingest` | multimux, media-plane | `TsIngestSession` (the shared ts_udp/ts_http/srt ingest) fed 7-packet datagrams: programmes announced (sorted track-id sets: `ProgramId`s are `HashMap`-order random), per-track published samples/bytes/dts/SHA-256. Compare with `transmux.stream`: any shortfall is a sample the session dropped |
+| `multimux.ts_ingest` | media-plane | `TsIngestSession` (the shared ts_udp/ts_http/srt ingest) fed 7-packet datagrams: programmes announced (sorted track-id sets: `ProgramId`s are `HashMap`-order random), per-track published samples/bytes/dts/SHA-256. Compare with `transmux.stream`: any shortfall is a sample the session dropped |
 | `transmux.batch` | transmux | `TsDemux::demux` tracks + sample SHA-256, PCR count |
 | `transmux.run` | transmux | container autodetect + `cli::run_bytes` to CMAF, CMAF-HLS, TS-HLS, DASH, TS, progressive MP4: size + SHA-256 per output, per segment name |
 | `dvb-si.sections` | dvb-si | `SiDemux` per `(PID, table_id)`: sections, parse ok/err, typed, `parse -> serialize` identity/mismatch, bad CRC; descriptor typed/unknown/err per tag |

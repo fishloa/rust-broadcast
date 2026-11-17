@@ -3,6 +3,7 @@
 //! carry (no `n`, a `t` + `r` run, an entry with only `d`) and the live /
 //! protection / text surfaces.
 
+use broadcast_common::xml_chars::WriteRefusal;
 use broadcast_smooth::{C, QualityLevel, SmoothManifest, StreamIndex, StreamType};
 
 fn round_trips(model: &SmoothManifest) {
@@ -152,4 +153,26 @@ fn a_named_second_stream_of_a_type_round_trips() {
     ])
     .with_duration(20_000_000);
     round_trips(&model);
+}
+
+#[test]
+fn a_control_character_in_an_attribute_is_refused() {
+    let model = SmoothManifest::new(vec![
+        StreamIndex::new(
+            StreamType::Video,
+            "QualityLevels({bitrate})/Fragments(video={start time})\u{1}",
+            vec![quality("H264")],
+        )
+        .with_chunks(vec![C::new(20_000_000).at(0)]),
+    ])
+    .with_duration(20_000_000);
+    assert_eq!(model.to_xml(), Err(WriteRefusal::InvalidChar));
+}
+
+#[test]
+fn a_control_character_in_the_protection_header_is_refused() {
+    let model = SmoothManifest::new(vec![video_stream(vec![C::new(20_000_000).at(0)])])
+        .with_duration(20_000_000)
+        .with_protection("AAABAw\u{1}");
+    assert_eq!(model.to_xml(), Err(WriteRefusal::InvalidChar));
 }

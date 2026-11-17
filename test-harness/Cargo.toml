@@ -16,7 +16,6 @@ test-fixtures = { path = "../test-fixtures" }
 jiff = { version = "0.2", default-features = false, features = ["std"] }
 url = "2"
 headers = { workspace = true }
-http = "1"
 transmux = { path = "../transmux", version = "0.32.0" }
 
 [lints]

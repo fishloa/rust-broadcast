@@ -102,6 +102,58 @@ fn a_refresh_that_adds_a_chunk_fetches_exactly_that_chunk() {
 }
 
 #[test]
+fn a_refresh_past_the_plan_cap_drops_the_oldest_chunks_with_a_discontinuity() {
+    let mut grown = String::from("<c n=\"2\" d=\"10000000\" />");
+    for n in 3..=10 {
+        grown.push_str(&format!("\n<c n=\"{n}\" d=\"10000000\" />"));
+    }
+    let refreshed = String::from_utf8(live_manifest(""))
+        .expect("utf8")
+        .replacen("<c n=\"2\" d=\"10000000\" />", &grown, 1);
+    let mut host = Host::new(SmoothClientConfig::default().with_max_plan_len(3));
+    host.serve_dir("av");
+    host.route(
+        "Manifest",
+        vec![
+            Reply::Body(live_manifest("")),
+            Reply::Body(refreshed.into_bytes()),
+        ],
+    );
+    for start in [30_000_000, 40_000_000, 50_000_000, 60_000_000, 70_000_000] {
+        host.route(
+            &format!("QualityLevels(64528)/Fragments(video={start})"),
+            vec![Reply::Body(fixture(
+                "av/QualityLevels(64528)/Fragments(video=20000000)",
+            ))],
+        );
+    }
+    for start in [80_000_000, 90_000_000, 100_000_000] {
+        host.route(
+            &format!("QualityLevels(64528)/Fragments(video={start})"),
+            vec![Reply::Body(fixture(
+                "av/QualityLevels(64528)/Fragments(video=20000000)",
+            ))],
+        );
+    }
+    host.run_until(|o| o.iter().any(|o| matches!(o, Output::Discontinuity)));
+    assert!(host.has(|o| matches!(o, Output::Discontinuity)));
+    for start in [30_000_000, 40_000_000, 50_000_000, 60_000_000, 70_000_000] {
+        assert_eq!(
+            host.count_requests(&format!("{VIDEO_URL}{start})")),
+            0,
+            "the plan dropped chunk {start}"
+        );
+    }
+    for start in [80_000_000, 90_000_000, 100_000_000] {
+        assert_eq!(
+            host.count_requests(&format!("{VIDEO_URL}{start})")),
+            1,
+            "the plan kept chunk {start}"
+        );
+    }
+}
+
+#[test]
 fn a_live_window_that_moves_past_the_last_fragment_is_a_discontinuity() {
     let moved = String::from_utf8(live_manifest("")).expect("utf8").replace(
         "<c n=\"0\" d=\"10000000\" />",
@@ -117,6 +169,31 @@ fn a_live_window_that_moves_past_the_last_fragment_is_a_discontinuity() {
     );
     host.run_until(|o| o.iter().any(|o| matches!(o, Output::Discontinuity)));
     assert!(host.has(|o| matches!(o, Output::Discontinuity)));
+}
+
+#[test]
+fn held_fragments_are_bounded_by_abandoning_a_stream_that_never_announces() {
+    let held =
+        |start: &str| fixture(&format!("av/QualityLevels(64528)/Fragments(video={start})")).len();
+    let cap = held("0") + held("10000000");
+    let mut host = Host::new(SmoothClientConfig::default().with_max_held_bytes(cap));
+    host.serve_dir("av");
+    host.route("Manifest", vec![Reply::Body(live_manifest(""))]);
+    for start in ["0", "10214580", "20199161"] {
+        host.route(
+            &format!("QualityLevels(98429)/Fragments(audio={start})"),
+            vec![Reply::Status(404)],
+        );
+    }
+    host.run_until(|o| o.iter().any(|o| matches!(o, Output::Tracks(_))));
+    assert!(
+        host.has(|o| matches!(o, Output::Dropped(Dropped::StreamLost { stream }) if stream.0 == 1)),
+        "the stream that never announced its track id is abandoned"
+    );
+    assert!(
+        sample_count(&host.outputs) > 0,
+        "the held fragments of the announced streams are released"
+    );
 }
 
 #[test]

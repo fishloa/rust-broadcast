@@ -16,6 +16,12 @@ exclude      = ["docs/**"]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+# `md-5` is imported as `md5` (`use md5::{Digest as _, Md5}`), which
+# cargo-machete cannot see: the dependency is used, only renamed (audit 20
+# finding 60).
+[package.metadata.cargo-machete]
+ignored = ["md-5"]
+
 [dependencies]
 # The shared time-unit ratios (`units`).
 broadcast-common = { path = "../broadcast-common", version = "13.0.0", default-features = false }
