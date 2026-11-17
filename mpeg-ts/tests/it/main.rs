@@ -1,6 +1,13 @@
+mod adaptation_field_edges;
 mod af_extension_roundtrip;
 mod fixture_af_fields;
 mod fixture_roundtrip;
+mod labels_and_counters;
+mod owned_mutators;
 mod pid_typed;
 mod pusi_emsg;
+mod resync_accounting;
+mod section_edge;
+mod section_reassembler_pusi_pointer;
+mod si_mux_api;
 mod tsduck_simux_oracle;

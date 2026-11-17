@@ -222,3 +222,98 @@ fn rejects_truncated_extension_data() {
         ))
     ));
 }
+// ── Every offset compounded: CC=3 + X=1 + P=1 — RFC 3550 §5.1/§5.3.1 ───────
+//
+// byte0 = 0b1011_0011 (V=2, P=1, X=1, CC=3)
+// byte1 = 0b0110_0000 (M=0, PT=96)
+// seq=7, ts=0x11223344, ssrc=0xAABBCCDD,
+// csrc=[0x01020304, 0x10203040, 0xFFEEDDCC],
+// extension profile_id=0xBEDE, length=2 words,
+// padding exactly fills the remaining 4 bytes, so the payload is empty.
+#[rustfmt::skip]
+const CSRC_EXTENSION_PADDING_VECTOR: [u8; 40] = [
+    0xB3, 0x60, 0x00, 0x07,
+    0x11, 0x22, 0x33, 0x44,
+    0xAA, 0xBB, 0xCC, 0xDD,
+    0x01, 0x02, 0x03, 0x04,
+    0x10, 0x20, 0x30, 0x40,
+    0xFF, 0xEE, 0xDD, 0xCC,
+    0xBE, 0xDE, 0x00, 0x02,
+    0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x23, 0x45, 0x67,
+    0x00, 0x00, 0x00, 0x04,
+];
+
+#[test]
+fn csrc_extension_padding_offsets_compound() {
+    let pkt = RtpPacket::parse(&CSRC_EXTENSION_PADDING_VECTOR).expect("parse");
+    assert_eq!(pkt.csrc_count(), 3);
+    assert_eq!(pkt.csrc, vec![0x0102_0304, 0x1020_3040, 0xFFEE_DDCC]);
+    let ext = pkt.extension.expect("X=1");
+    assert_eq!(ext.profile_id, 0xBEDE);
+    assert_eq!(ext.length_words(), 2);
+    assert_eq!(ext.data, &[0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x23, 0x45, 0x67]);
+    assert_eq!(pkt.payload, &[] as &[u8], "padding exactly fills the tail");
+    assert_eq!(pkt.padding, Some(&[0x00, 0x00, 0x00, 0x04][..]));
+
+    let mut out = vec![0u8; pkt.serialized_len()];
+    let written = pkt.serialize_into(&mut out).unwrap();
+    assert_eq!(written, pkt.serialized_len());
+    assert_eq!(out, CSRC_EXTENSION_PADDING_VECTOR);
+}
+
+#[test]
+fn csrc_extension_padding_with_one_payload_byte() {
+    let mut bytes = CSRC_EXTENSION_PADDING_VECTOR[..36].to_vec();
+    bytes.push(0x5A); // one payload byte after the extension
+    bytes.extend_from_slice(&[0x00, 0x00, 0x00, 0x04]);
+    let pkt = RtpPacket::parse(&bytes).expect("parse");
+    assert_eq!(pkt.csrc_count(), 3);
+    assert_eq!(pkt.payload, &[0x5A]);
+    assert_eq!(pkt.padding, Some(&[0x00, 0x00, 0x00, 0x04][..]));
+
+    let mut out = vec![0u8; pkt.serialized_len()];
+    pkt.serialize_into(&mut out).unwrap();
+    assert_eq!(out, bytes);
+}
+
+#[test]
+fn rejects_extension_flag_without_the_four_byte_prefix() {
+    #[rustfmt::skip]
+    let bytes: [u8; 12] = [
+        0x90, 0x60, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+    ];
+    assert_eq!(
+        RtpPacket::parse(&bytes),
+        Err(Error::BufferTooShort(
+            broadcast_common::error::BufferTooShort {
+                need: 16,
+                have: 12,
+                what: "header extension profile-id/length",
+            }
+        ))
+    );
+}
+
+#[test]
+fn rejects_padding_count_exceeding_the_bytes_after_a_csrc_list() {
+    // CC=1 (pos=16), P=1, total 20 bytes, count byte says 8 > the 4
+    // bytes actually remaining after the header and CSRC.
+    #[rustfmt::skip]
+    let mut bytes: [u8; 20] = [
+        0xA1, 0x60, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00,
+        0x01, 0x02, 0x03, 0x04,
+        0x00, 0x00, 0x00, 0x08,
+    ];
+    bytes[19] = 8;
+    assert_eq!(
+        RtpPacket::parse(&bytes),
+        Err(Error::InvalidPadding {
+            count: 8,
+            reason: "padding count exceeds the bytes remaining after the header",
+        })
+    );
+}

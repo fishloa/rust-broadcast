@@ -4,6 +4,8 @@ mod ext_x_media;
 mod hls_fixture_corpus;
 mod hls_playlist;
 mod hls_tag_completeness;
+mod hls_version;
+mod ll_hls;
 mod pdt_typed;
 mod quoted_attr_roundtrip;
 mod segment_keys;
