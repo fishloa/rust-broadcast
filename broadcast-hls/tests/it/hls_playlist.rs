@@ -755,6 +755,157 @@ fn limits_boundaries_are_inclusive_and_report_the_observed_length() {
     );
 }
 
+/// Audit 21 finding 41 (issue #2936): `parse_iv` validates length AND hex
+/// digits. A 31- or 33-digit all-hex `IV` must be a typed error, never the
+/// slice-overrun panic an `||` validator would cause, and a 32-digit value
+/// is the 16 bytes it spells.
+#[test]
+fn wrong_length_hex_iv_is_a_typed_error_not_a_panic() {
+    let valid = "0x000102030405060708090a0b0c0d0e0f";
+    assert_eq!(valid.len(), 34);
+    let short = "0x000102030405060708090a0b0c0d0e0";
+    assert_eq!(short.len(), 33);
+    let long = "0x000102030405060708090a0b0c0d0e0f00";
+    assert_eq!(long.len(), 36);
+    let non_hex = "0x000102030405060708090a0b0c0d0g0f";
+    assert_eq!(non_hex.len(), 34);
+
+    fn media_key_playlist(iv: &str) -> String {
+        format!(
+            "#EXTM3U\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\",IV={iv}\n#EXTINF:4,\ns.ts\n#EXT-X-ENDLIST\n"
+        )
+    }
+
+    for bad in [short, long, non_hex] {
+        let playlist = MediaPlaylist::parse(&media_key_playlist(bad)).unwrap();
+        assert_eq!(
+            playlist.segment_keys(),
+            Err(Error::InvalidIv {
+                value: bad.to_string()
+            }),
+            "{bad:?}"
+        );
+    }
+
+    let playlist = MediaPlaylist::parse(&media_key_playlist(valid)).unwrap();
+    let keys = playlist.segment_keys().unwrap();
+    assert_eq!(
+        keys[0].as_ref().unwrap().iv,
+        Some([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15])
+    );
+}
+
+/// Audit 21 finding 41 (issue #2936): the key in effect for the open
+/// (in-progress) segment is the last `#EXT-X-KEY` seen, and a session key
+/// may never be `METHOD=NONE`.
+#[test]
+fn open_segment_key_and_session_key_none_are_pinned() {
+    use broadcast_hls::EncryptionMethod;
+
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n\
+#EXTINF:4,\nseg0.ts\n\
+#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\",IV=0x000102030405060708090a0b0c0d0e0f\n\
+#EXTINF:4,\nseg1.ts\n\
+#EXT-X-PART:DURATION=1.0,URI=\"part0.m4s\"\n";
+    let pl = MediaPlaylist::parse(text).unwrap();
+    let keys = pl.segment_keys().unwrap();
+    assert_eq!(keys[0], None, "segment 0 precedes the key");
+    let open = pl
+        .open_segment_key()
+        .unwrap()
+        .expect("the open segment inherits the last key");
+    assert_eq!(open.method, EncryptionMethod::Aes128);
+    assert_eq!(open.uri.as_deref(), Some("k.bin"));
+    assert_eq!(open.iv, Some(keys[1].clone().unwrap().iv.unwrap()));
+
+    let master = "#EXTM3U\n#EXT-X-SESSION-KEY:METHOD=NONE\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n";
+    assert!(
+        matches!(
+            MasterPlaylist::parse(master),
+            Err(Error::HlsParse { ref reason, .. }) if reason.contains("MUST NOT be NONE")
+        ),
+        "a session key with METHOD=NONE must be refused"
+    );
+}
+
+/// Audit 21 finding 41 (issue #2936): `#EXT-X-MAP` before the first segment
+/// applies to every segment, `TYPE=MAP` is a typed preload hint, and
+/// `FORMAT=RAW` is a typed session-data format.
+#[test]
+fn map_preload_hint_and_session_data_arms_are_pinned() {
+    use broadcast_hls::{PreloadHintType, SessionDataContent, SessionDataFormat};
+
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n\
+#EXT-X-MAP:URI=\"init.mp4\",BYTERANGE=\"100@0\"\n\
+#EXTINF:4,\nseg0.ts\n#EXTINF:4,\nseg1.ts\n";
+    let pl = MediaPlaylist::parse(text).unwrap();
+    let map = pl.segments[0].map.as_ref().expect("first segment's MAP");
+    assert_eq!(map.uri, "init.mp4");
+    assert_eq!(pl.segments[1].map.as_ref().map(|m| &m.uri), Some(&map.uri));
+
+    let ll = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n\
+#EXTINF:4,\nseg0.ts\n\
+#EXT-X-PART:DURATION=1.0,URI=\"part0.m4s\"\n\
+#EXT-X-PRELOAD-HINT:TYPE=MAP,URI=\"init.mp4\"\n";
+    let pl = MediaPlaylist::parse(ll).unwrap();
+    let config = pl.low_latency.as_ref().expect("LL-HLS config");
+    assert_eq!(config.preload_hint_type, PreloadHintType::Map);
+    assert_eq!(config.preload_hint_part.as_deref(), Some("init.mp4"));
+
+    let master = "#EXTM3U\n\
+#EXT-X-SESSION-DATA:DATA-ID=\"com.example.x\",URI=\"x.json\",FORMAT=RAW\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n";
+    let m = MasterPlaylist::parse(master).unwrap();
+    assert_eq!(
+        m.session_data[0].content,
+        SessionDataContent::Uri {
+            uri: "x.json".to_string(),
+            format: SessionDataFormat::Raw,
+        }
+    );
+}
+
+/// Audit 21 finding 41 (issue #2936): the typed VIDEO/CLOSED-CAPTIONS group
+/// references are pulled out of the unmodeled attribute bag, and an
+/// unrecognized tag that is not segment-scoped stays playlist-level.
+#[test]
+fn group_references_and_segment_scoping_are_pinned() {
+    use broadcast_hls::{AttrValue, ClosedCaptionsRef};
+
+    let master = "#EXTM3U\n\
+#EXT-X-MEDIA:TYPE=VIDEO,GROUP-ID=\"v\",NAME=\"main\"\n\
+#EXT-X-MEDIA:TYPE=CLOSED-CAPTIONS,GROUP-ID=\"cc\",NAME=\"cc1\",INSTREAM-ID=\"CC1\"\n\
+#EXT-X-STREAM-INF:BANDWIDTH=1,VIDEO=\"v\",CLOSED-CAPTIONS=\"cc\"\nv.m3u8\n";
+    let m = MasterPlaylist::parse(master).unwrap();
+    assert_eq!(m.variants[0].video.as_deref(), Some("v"));
+    assert_eq!(
+        m.variants[0].closed_captions,
+        Some(ClosedCaptionsRef::Group("cc".to_string()))
+    );
+    assert_eq!(
+        AttrValue::for_attr("CLOSED-CAPTIONS", "NONE")
+            .unwrap()
+            .is_quoted(),
+        false,
+        "CLOSED-CAPTIONS=NONE is a bare enumerated-string (§4.4.6.2.1)"
+    );
+    assert!(
+        AttrValue::for_attr("CLOSED-CAPTIONS", "cc")
+            .unwrap()
+            .is_quoted(),
+        "a CLOSED-CAPTIONS group id is a quoted-string"
+    );
+
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:4\n\
+#EXTINF:4,\nseg0.ts\n#EXT-X-CUSTOM-TAG:1\n#EXTINF:4,\nseg1.ts\n";
+    let pl = MediaPlaylist::parse(text).unwrap();
+    assert_eq!(pl.extra_tags, vec!["#EXT-X-CUSTOM-TAG:1".to_string()]);
+    assert!(pl.segments[1].pre_tags.is_empty());
+    assert!(pl.segments[0].pre_tags.is_empty());
+}
+
 /// Audit BH-W9 (issue #1111): `#EXT-X-STREAM-INF` MUST be followed by the
 /// URI line of the Variant it describes (RFC 8216bis §4.4.6.2). A second
 /// STREAM-INF, or EOF, before that line is a truncated playlist — silently

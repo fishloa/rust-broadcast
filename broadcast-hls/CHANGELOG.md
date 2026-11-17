@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - `MediaPlaylist::parse_with`/`MasterPlaylist::parse_with` and the `limits` defaults are now pinned at their inclusive boundaries: a playlist of exactly `max_playlist_bytes` parses, `+ 1` fails reporting that observed length, and `MAX_PLAYLIST_BYTES`/`MAX_SEGMENT_BYTES`/`MAX_SEGMENTS` are asserted by literal value (audit 21 finding 40, #2935).
+- `parse_iv` is pinned against a wrong-length hex `IV`: 31 or 33 digits and a 32-character non-hex value are a typed `Error::InvalidIv` (never the slice-overrun panic an `||`-joined validator would cause), the open-segment key and the `EXT-X-SESSION-KEY METHOD=NONE` refusal are asserted, and the `EXT-X-MAP`/preload-hint `TYPE=MAP`/`SESSION-DATA FORMAT=RAW`/`VIDEO`/`CLOSED-CAPTIONS` parse arms and the segment-scoped tag routing each have a test that fails if the arm is deleted (audit 21 finding 41, #2936).
 
 ## [0.8.1] - 2026-11-17
 ### Added
