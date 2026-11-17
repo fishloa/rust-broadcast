@@ -20,6 +20,20 @@ pub enum Error {
     #[error("playlist parse: {0}")]
     PlaylistParse(#[from] broadcast_hls::Error),
 
+    /// The playlist exceeded a [`broadcast_hls::limits::Limits`] bound. The
+    /// same response will exceed it however often it is fetched, so this is a
+    /// permanent failure: a caller must not retry it (audit 20 finding 41,
+    /// #2852).
+    #[error("playlist {what} is {len}, over the limit of {max}")]
+    PlaylistTooLarge {
+        /// What exceeded the bound (e.g. `"playlist bytes"`).
+        what: &'static str,
+        /// The observed size.
+        len: usize,
+        /// The bound it exceeded.
+        max: usize,
+    },
+
     /// [`crate::client::HlsClient::on_resource`] was fed bytes for a
     /// [`crate::client::ResourceId`] the client never requested (a
     /// caller/driver bug, or a stale/duplicate delivery after the client
@@ -71,6 +85,20 @@ pub enum Error {
     NotMedia {
         /// The id whose bytes are not media.
         id: super::action::ResourceId,
+    },
+
+    /// A resource body exceeded
+    /// [`HlsClientConfig::limits`](crate::client::HlsClientConfig::limits)'s
+    /// `max_segment_bytes`. The body is refused before it is buffered or
+    /// demuxed, and is not requested again (audit 20 finding 41, issue #2852).
+    #[error("resource {id:?} is {len} bytes, over the limit of {max}")]
+    ResourceTooLarge {
+        /// The resource whose body was too large.
+        id: super::action::ResourceId,
+        /// The body size received.
+        len: usize,
+        /// The configured maximum.
+        max: usize,
     },
 
     /// A fetched Media Initialization Section holds no `moov` box (it is not an
@@ -126,6 +154,13 @@ pub enum Error {
         segments: usize,
     },
 
+    /// The playlist declares `#EXT-X-DEFINE` variables (RFC 8216bis §4.4.2.3).
+    /// This client does not expand `{$name}` substitution, so a URI naming a
+    /// variable would be fetched literally; the playlist is refused instead
+    /// (audit 20 finding 19, issue #2830).
+    #[error("EXT-X-DEFINE variable substitution is not supported")]
+    UnsupportedDefine,
+
     /// A playlist reference (a segment, Part, init, key or variant URI) could
     /// not be resolved against the playlist URL: it carried an ASCII control
     /// character, or the two did not form a URL (issue #2458). The reference is
@@ -138,6 +173,17 @@ pub enum Error {
         /// Why it could not be resolved.
         #[source]
         source: broadcast_common::url_ref::Error,
+    },
+
+    /// More playlist references were refused than the client reports one by
+    /// one: the queue keeps the first `MAX_PENDING_ERRORS` reports and
+    /// coalesces the rest into this count, so a playlist naming an unbounded
+    /// number of bad references cannot grow the queue without bound (audit 20
+    /// finding 33, issue #2844).
+    #[error("{count} further unresolvable playlist references")]
+    UnresolvableReferences {
+        /// How many further references were refused.
+        count: usize,
     },
 
     /// [`crate::client::HlsClient::select_variant`] named a variant index that
@@ -191,6 +237,15 @@ pub enum Error {
     #[error("encrypted segments waiting for a key exceed the buffer cap; dropped {dropped:?}")]
     PendingKeyedOverflow {
         /// The ciphertext that was dropped.
+        dropped: super::action::ResourceId,
+    },
+
+    /// Part/Segment bodies waiting for their init segment exceeded the
+    /// buffering cap; the oldest was dropped and will be requested again by a
+    /// later reload (audit 20 finding 3, issue #2814).
+    #[error("segments waiting for an init segment exceed the buffer cap; dropped {dropped:?}")]
+    PendingDemuxOverflow {
+        /// The body that was dropped.
         dropped: super::action::ResourceId,
     },
 

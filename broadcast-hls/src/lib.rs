@@ -15,6 +15,7 @@
 extern crate alloc;
 
 mod error;
+pub mod limits;
 pub mod seq;
 
 pub use error::{Error, Result};
@@ -2027,6 +2028,22 @@ impl MediaPlaylist {
     /// tag with a missing required attribute or an unparsable value returns
     /// [`crate::Error::HlsParse`].
     pub fn parse(input: &str) -> Result<Self> {
+        Self::parse_with(input, &crate::limits::Limits::default())
+    }
+
+    /// Parse a Media Playlist under `limits`.
+    ///
+    /// # Errors
+    /// As [`Self::parse`], plus [`crate::Error::TooLarge`] when the input or
+    /// its segment count exceeds a bound.
+    pub fn parse_with(input: &str, limits: &crate::limits::Limits) -> Result<Self> {
+        if input.len() > limits.max_playlist_bytes {
+            return Err(Error::TooLarge {
+                what: "playlist bytes",
+                len: input.len(),
+                max: limits.max_playlist_bytes,
+            });
+        }
         // `0` (not `1`): distinguishes "no #EXT-X-VERSION line was present
         // on the wire at all" from "the wire explicitly said version 1",
         // so a fully-untagged input round-trips back to no tag rather than
@@ -2364,6 +2381,13 @@ impl MediaPlaylist {
                     line: line.to_string(),
                     reason: "media segment URI with no preceding #EXTINF".to_string(),
                 })?;
+                if segments.len() >= limits.max_segments {
+                    return Err(Error::TooLarge {
+                        what: "media segments",
+                        len: segments.len() + 1,
+                        max: limits.max_segments,
+                    });
+                }
                 segments.push(MediaSegment {
                     uri: line.to_string(),
                     duration,
@@ -2842,13 +2866,22 @@ fn validate_quoted_string(value: &str, what: &str) -> Result<()> {
 /// A tag line this crate re-emits verbatim (an opaque `extra_tags`/
 /// `pre_tags` entry) is not a quoted-string, but it is one line: a CR or LF
 /// inside it would split it into two lines and inject a tag (audit BH-W7,
-/// issue #1111).
+/// issue #1111). It must also actually be a tag — non-empty and starting
+/// `#EXT` — or it would render as a URI line (a segment reference) or as a
+/// bare terminator instead of the tag the caller meant (audit 20 finding 51,
+/// issue #2862).
 fn validate_tag_body(what: &str, tags: &[String]) -> Result<()> {
     for tag in tags {
         if let Some(bad) = tag.chars().find(|c| *c == '\r' || *c == '\n') {
             return Err(Error::InvalidQuotedString {
                 what: what.to_string(),
                 bad_char: bad,
+                value: tag.clone(),
+            });
+        }
+        if !tag.starts_with("#EXT") {
+            return Err(Error::InvalidTagLine {
+                what: what.to_string(),
                 value: tag.clone(),
             });
         }
@@ -4385,6 +4418,22 @@ impl MasterPlaylist {
     /// attribute, unparsable value) or a variant URI with no preceding
     /// `#EXT-X-STREAM-INF` returns [`crate::Error::HlsParse`].
     pub fn parse(input: &str) -> Result<Self> {
+        Self::parse_with(input, &crate::limits::Limits::default())
+    }
+
+    /// Parse a Master Playlist under `limits`.
+    ///
+    /// # Errors
+    /// As [`Self::parse`], plus [`crate::Error::TooLarge`] when the input
+    /// exceeds `limits.max_playlist_bytes`.
+    pub fn parse_with(input: &str, limits: &crate::limits::Limits) -> Result<Self> {
+        if input.len() > limits.max_playlist_bytes {
+            return Err(Error::TooLarge {
+                what: "playlist bytes",
+                len: input.len(),
+                max: limits.max_playlist_bytes,
+            });
+        }
         // `0` (not `1`): see the identical comment in `MediaPlaylist::parse`.
         let mut version: u8 = 0;
         let mut variants: Vec<Variant> = Vec::new();

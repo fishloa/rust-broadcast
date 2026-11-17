@@ -15,6 +15,18 @@ pub type Result<T> = core::result::Result<T, Error>;
 #[derive(Debug, Error, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum Error {
+    /// A playlist exceeded a [`crate::limits::Limits`] bound (audit 20
+    /// finding 41, issue #2852).
+    #[error("{what} is {len}, over the limit of {max}")]
+    TooLarge {
+        /// What exceeded the bound (e.g. `"playlist bytes"`).
+        what: &'static str,
+        /// The observed size.
+        len: usize,
+        /// The bound it exceeded.
+        max: usize,
+    },
+
     /// An HLS playlist (`.m3u8`, RFC 8216bis) tag could not be parsed —
     /// [`crate::MediaPlaylist::parse`]/[`crate::MasterPlaylist::parse`]'s
     /// `to_m3u8()` renderers' symmetric inverse. Unrecognized tags are
@@ -89,6 +101,17 @@ pub enum Error {
         /// The offending character: `"`, CR or LF.
         bad_char: char,
         /// The value that failed validation.
+        value: String,
+    },
+
+    /// A verbatim tag line (`extra_tags`/`pre_tags`) is empty or does not
+    /// start with `#EXT`, so it would render as a URI line or a terminator
+    /// instead of a tag (audit 20 finding 51, issue #2862).
+    #[error("{what} {value:?} is not an #EXT tag line")]
+    InvalidTagLine {
+        /// Which field rejected the value (e.g. `"segment pre-tag"`).
+        what: String,
+        /// The offending line.
         value: String,
     },
 

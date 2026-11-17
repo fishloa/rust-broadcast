@@ -565,6 +565,104 @@ fn render_rejects_injection_characters_in_uris_and_quoted_strings() {
     assert!(mpl.to_m3u8().unwrap().contains(",CODECS=\"avc1.640020\""));
 }
 
+/// Audit 20 finding 51 (issue #2862): an opaque `extra_tags`/`pre_tags` line
+/// is emitted verbatim, so it must actually be a tag. A bare `seg9.ts` would
+/// render as a URI line (a segment reference the caller never meant), and an
+/// empty or non-`#EXT` line is refused rather than injected.
+#[test]
+fn render_rejects_a_non_tag_extra_or_pre_tag_line() {
+    use broadcast_hls::Error;
+
+    for bad in ["", "seg9.ts", "EXT-X-FOO:V=1", "# seg"] {
+        let pl = MediaPlaylist {
+            target_duration: 6,
+            extra_tags: vec![bad.to_string()],
+            ..Default::default()
+        };
+        assert!(
+            matches!(pl.to_m3u8(), Err(Error::InvalidTagLine { .. })),
+            "playlist-level {bad:?} must be rejected"
+        );
+
+        let pl = MediaPlaylist {
+            target_duration: 6,
+            segments: vec![MediaSegment {
+                uri: "seg.m4s".into(),
+                duration: DecimalSeconds::new(6.0).unwrap(),
+                pre_tags: vec![bad.to_string()],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(
+            matches!(pl.to_m3u8(), Err(Error::InvalidTagLine { .. })),
+            "segment pre-tag {bad:?} must be rejected"
+        );
+    }
+
+    let pl = MediaPlaylist {
+        target_duration: 6,
+        extra_tags: vec!["#EXT-X-FOO:V=1".into()],
+        ..Default::default()
+    };
+    assert!(pl.to_m3u8().unwrap().contains("#EXT-X-FOO:V=1"));
+}
+
+/// Audit 20 finding 41 (issue #2852): `parse` has an unbounded input and
+/// segment count by default, so `parse_with` takes explicit limits and rejects
+/// an over-limit playlist with a typed error.
+#[test]
+fn parse_with_enforces_playlist_byte_and_segment_limits() {
+    use broadcast_hls::Error;
+    use broadcast_hls::limits::Limits;
+
+    let text = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg.ts\n";
+    let mut limits = Limits::default();
+    limits.max_playlist_bytes = 16;
+    assert!(
+        matches!(
+            MediaPlaylist::parse_with(text, &limits),
+            Err(Error::TooLarge {
+                what: "playlist bytes",
+                ..
+            })
+        ),
+        "an over-size playlist must be refused"
+    );
+    assert!(
+        MediaPlaylist::parse(text).is_ok(),
+        "the default parse applies the default (larger) bound"
+    );
+
+    let two = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n\
+               #EXTINF:2.0,\nseg1.ts\n";
+    let mut limits = Limits::default();
+    limits.max_segments = 1;
+    assert!(
+        matches!(
+            MediaPlaylist::parse_with(two, &limits),
+            Err(Error::TooLarge {
+                what: "media segments",
+                ..
+            })
+        ),
+        "a playlist over the segment cap must be refused"
+    );
+    let one = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n";
+    assert!(
+        MediaPlaylist::parse_with(one, &limits).is_ok(),
+        "a playlist exactly at the cap must parse"
+    );
+
+    let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n";
+    let mut limits = Limits::default();
+    limits.max_playlist_bytes = 16;
+    assert!(matches!(
+        MasterPlaylist::parse_with(master, &limits),
+        Err(Error::TooLarge { .. })
+    ));
+}
+
 /// Audit BH-W9 (issue #1111): `#EXT-X-STREAM-INF` MUST be followed by the
 /// URI line of the Variant it describes (RFC 8216bis §4.4.6.2). A second
 /// STREAM-INF, or EOF, before that line is a truncated playlist — silently

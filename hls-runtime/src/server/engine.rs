@@ -215,8 +215,25 @@ const SKIP_BOUNDARY_MULTIPLIER: f64 = 6.0;
 /// `Config::playlist_name`, defaulting to `"media.m3u8"`) — the same
 /// regardless of any stream state (no multi-rendition support yet), so this
 /// takes no `Trunk`/origin argument.
-pub fn master_playlist_m3u8(media_playlist_name: &str, bandwidth_bps: u32) -> String {
-    format!("#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH={bandwidth_bps}\n{media_playlist_name}\n")
+///
+/// # Errors
+/// [`broadcast_hls::Error::InvalidUri`] when `media_playlist_name` carries a
+/// `"`, CR or LF: it is rendered as a URI line, so a newline would inject a
+/// tag into the playlist instead of naming a resource (audit 20 finding 31,
+/// issue #2842).
+pub fn master_playlist_m3u8(
+    media_playlist_name: &str,
+    bandwidth_bps: u32,
+) -> Result<String, broadcast_hls::Error> {
+    let master = MasterPlaylist {
+        variants: vec![Variant {
+            bandwidth: bandwidth_bps,
+            uri: media_playlist_name.to_string(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    master.to_m3u8()
 }
 
 /// Typed value of the `_HLS_skip` Delivery Directive (RFC 8216bis §6.2.5.1):
@@ -4358,6 +4375,91 @@ mod tests {
         )
     }
 
+    // Audit 20 finding 52 (#2863): `MAX_CACHED_RENDERS` bounds the per-stamp
+    // render cache; the one past the bound is rendered but not retained.
+    #[test]
+    fn render_cache_does_not_grow_past_max_cached_renders() {
+        let (_trunk, origin, _writer) = make_origin();
+        for i in 0..=MAX_CACHED_RENDERS {
+            let key = RenderKey::Media {
+                track_id: TrackId::new(i as u32 + 1),
+                skip: None,
+            };
+            let rendered = origin
+                .cached_render(key, || Ok(format!("playlist-{i}")))
+                .expect("render");
+            assert_eq!(rendered, format!("playlist-{i}"));
+        }
+        assert_eq!(
+            locked(&origin.render_cache).entries.len(),
+            MAX_CACHED_RENDERS,
+            "the first {MAX_CACHED_RENDERS} renders are cached, the rest are not"
+        );
+    }
+
+    // Audit 20 finding 52 (#2863): `FUTURE_PART_SEGMENT_BOUND` is the deepest
+    // segment a part fetch may name; one past it is `NotFound` promptly
+    // rather than parked.
+    #[test]
+    fn part_request_beyond_the_future_segment_bound_is_not_found() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
+        let at_bound = resolve_with_deadline(
+            &origin,
+            HlsRequest::Resource {
+                name: origin.part_name(
+                    DEFAULT_TRACK_ID,
+                    SegmentSeq::new(1 + FUTURE_PART_SEGMENT_BOUND),
+                    PartIndex::new(0),
+                    "m4s",
+                ),
+            },
+            0,
+            1_000_000_000,
+        );
+        assert!(
+            matches!(at_bound, EgressResponse::Await { .. }),
+            "a part at the bound is held open, got {at_bound:?}"
+        );
+
+        let beyond = resolve_with_deadline(
+            &origin,
+            HlsRequest::Resource {
+                name: origin.part_name(
+                    DEFAULT_TRACK_ID,
+                    SegmentSeq::new(2 + FUTURE_PART_SEGMENT_BOUND),
+                    PartIndex::new(0),
+                    "m4s",
+                ),
+            },
+            0,
+            1_000_000_000,
+        );
+        assert!(
+            matches!(beyond, EgressResponse::NotFound),
+            "a part past the bound must be NotFound, got {beyond:?}"
+        );
+    }
+
+    // Audit 20 finding 52 (#2863): the I-frame playlist enforces the same
+    // `ABUSE_MSN_FUTURE_BOUND` as the Media Playlist.
+    #[test]
+    fn iframe_far_future_msn_rejected() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, Duration::from_secs_f64(4.0), false);
+        let outcome = resolve_now(
+            &origin,
+            iframe_playlist_request(BlockingQuery {
+                hls_msn: Some(1002),
+                ..Default::default()
+            }),
+        );
+        assert!(
+            matches!(outcome, EgressResponse::BadRequest { .. }),
+            "got {outcome:?}"
+        );
+    }
+
     // --- cold Media Playlist hold ---------------------------------------
 
     fn make_cold_origin(hold: bool) -> (Arc<Trunk>, HlsOrigin, media_plane::trunk::SegmentWriter) {
@@ -4735,7 +4837,7 @@ mod tests {
 
     #[test]
     fn master_playlist_has_stream_inf() {
-        let m = master_playlist_m3u8("media.m3u8", 5_000_000);
+        let m = master_playlist_m3u8("media.m3u8", 5_000_000).expect("renders");
         assert!(m.contains("#EXTM3U"));
         assert!(m.contains("#EXT-X-STREAM-INF"));
         assert!(m.contains("media.m3u8"));
@@ -4743,9 +4845,29 @@ mod tests {
 
     #[test]
     fn master_playlist_points_at_configured_playlist_name() {
-        let m = master_playlist_m3u8("index.m3u8", 5_000_000);
+        let m = master_playlist_m3u8("index.m3u8", 5_000_000).expect("renders");
         assert!(m.contains("index.m3u8"));
         assert!(!m.contains("media.m3u8"));
+    }
+
+    // Audit 20 finding 31 (#2842): the media-playlist name is a caller
+    // string rendered as a URI line, so an embedded newline must be refused
+    // rather than injecting #EXT-X lines into the master playlist.
+    #[test]
+    fn master_playlist_rejects_an_injecting_playlist_name() {
+        for bad in [
+            "media.m3u8\n#EXT-X-ENDLIST",
+            "media.m3u8\r#EXT-X-ENDLIST",
+            "media\"quoted.m3u8",
+        ] {
+            assert!(
+                matches!(
+                    master_playlist_m3u8(bad, 5_000_000),
+                    Err(broadcast_hls::Error::InvalidUri { .. })
+                ),
+                "{bad:?} must be refused"
+            );
+        }
     }
 
     // --- 1. playlist rendered from a populated Trunk matches the expected

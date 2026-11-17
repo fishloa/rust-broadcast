@@ -253,6 +253,11 @@ mod tests {
                 .scheme(),
             "https"
         );
+        assert_eq!(
+            resolve_http(&Url::parse("file:///a/p.m3u8").expect("base"), "seg1.m4s"),
+            Err(Error::ForbiddenScheme),
+            "a relative reference inherits a non-web base scheme"
+        );
     }
 
     #[test]
