@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `MediaPlaylist::parse_with`/`MasterPlaylist::parse_with` and the `limits` defaults are now pinned at their inclusive boundaries: a playlist of exactly `max_playlist_bytes` parses, `+ 1` fails reporting that observed length, and `MAX_PLAYLIST_BYTES`/`MAX_SEGMENT_BYTES`/`MAX_SEGMENTS` are asserted by literal value (audit 21 finding 40, #2935).
+
 ## [0.8.1] - 2026-11-17
 ### Added
 - `limits` module: `Limits` with `MAX_PLAYLIST_BYTES` (4 MiB), `MAX_SEGMENTS` (1 000 000, a backstop behind the byte cap) and `MAX_SEGMENT_BYTES` (64 MiB) defaults; `MediaPlaylist::parse_with` / `MasterPlaylist::parse_with` take them, `parse` delegates to the defaults, and `Error::TooLarge` reports an over-limit document or segment count (audit 20 finding 41, #2852).

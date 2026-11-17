@@ -663,6 +663,98 @@ fn parse_with_enforces_playlist_byte_and_segment_limits() {
     ));
 }
 
+/// Audit 21 finding 40 (issue #2935): the caps are inclusive boundaries and
+/// the reported `len` is the observed size, not an off-by-one derivation.
+/// A playlist of exactly `max_playlist_bytes` MUST be accepted; `+1` MUST be
+/// refused reporting that exact length.
+#[test]
+fn limits_boundaries_are_inclusive_and_report_the_observed_length() {
+    use broadcast_hls::limits::{Limits, MAX_PLAYLIST_BYTES, MAX_SEGMENT_BYTES, MAX_SEGMENTS};
+
+    assert_eq!(MAX_PLAYLIST_BYTES, 4_194_304);
+    assert_eq!(MAX_SEGMENT_BYTES, 67_108_864);
+    assert_eq!(MAX_SEGMENTS, 1_000_000);
+    let defaults = Limits::default();
+    assert_eq!(defaults.max_playlist_bytes, 4_194_304);
+    assert_eq!(defaults.max_segment_bytes, 67_108_864);
+    assert_eq!(defaults.max_segments, 1_000_000);
+
+    fn pad_to(base: &str, n: usize) -> String {
+        assert!(base.len() <= n, "base {} longer than pad {n}", base.len());
+        let mut out = String::from(base);
+        if out.len() < n {
+            out.push('#');
+            while out.len() < n {
+                out.push('x');
+            }
+        }
+        out
+    }
+
+    let media_base = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg.ts\n";
+    let media_n: usize = 200;
+    let mut for_media = Limits::default();
+    for_media.max_playlist_bytes = media_n;
+    let at_cap = pad_to(media_base, media_n);
+    assert_eq!(at_cap.len(), media_n);
+    assert!(
+        MediaPlaylist::parse_with(&at_cap, &for_media).is_ok(),
+        "a playlist of exactly max_playlist_bytes must parse"
+    );
+    let over_cap = pad_to(media_base, media_n + 1);
+    assert_eq!(
+        MediaPlaylist::parse_with(&over_cap, &for_media),
+        Err(Error::TooLarge {
+            what: "playlist bytes",
+            len: media_n + 1,
+            max: media_n,
+        })
+    );
+
+    let master_base = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n";
+    let master_n: usize = 120;
+    let mut for_master = Limits::default();
+    for_master.max_playlist_bytes = master_n;
+    let at_cap = pad_to(master_base, master_n);
+    assert_eq!(at_cap.len(), master_n);
+    assert!(
+        MasterPlaylist::parse_with(&at_cap, &for_master).is_ok(),
+        "a master playlist of exactly max_playlist_bytes must parse"
+    );
+    let over_cap = pad_to(master_base, master_n + 1);
+    assert_eq!(
+        MasterPlaylist::parse_with(&over_cap, &for_master),
+        Err(Error::TooLarge {
+            what: "playlist bytes",
+            len: master_n + 1,
+            max: master_n,
+        })
+    );
+
+    let three_segments = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
+#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n#EXTINF:2.0,\nseg2.ts\n";
+    let four_segments = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n\
+#EXTINF:2.0,\nseg0.ts\n#EXTINF:2.0,\nseg1.ts\n#EXTINF:2.0,\nseg2.ts\n\
+#EXTINF:2.0,\nseg3.ts\n";
+    let mut three_max = Limits::default();
+    three_max.max_segments = 3;
+    assert_eq!(
+        MediaPlaylist::parse_with(three_segments, &three_max)
+            .map(|p| p.segments.len())
+            .ok(),
+        Some(3),
+        "a playlist of exactly max_segments must parse"
+    );
+    assert_eq!(
+        MediaPlaylist::parse_with(four_segments, &three_max),
+        Err(Error::TooLarge {
+            what: "media segments",
+            len: 4,
+            max: 3,
+        })
+    );
+}
+
 /// Audit BH-W9 (issue #1111): `#EXT-X-STREAM-INF` MUST be followed by the
 /// URI line of the Variant it describes (RFC 8216bis §4.4.6.2). A second
 /// STREAM-INF, or EOF, before that line is a truncated playlist — silently
