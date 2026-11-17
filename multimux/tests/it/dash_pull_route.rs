@@ -131,7 +131,7 @@ async fn a_route_that_allows_cross_origin_urls_pulls_the_media_from_the_other_or
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let closed = extinf_within(
         &client,
         &format!("http://{bind}/pulled/media.m3u8"),
@@ -155,7 +155,7 @@ async fn a_route_refuses_the_other_origin_unless_it_opts_in() {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let closed = extinf_within(
         &client,
         &format!("http://{bind}/pulled/media.m3u8"),

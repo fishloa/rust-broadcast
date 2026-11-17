@@ -40,7 +40,7 @@ mod segment_tests;
 /// Default demand (in bytes) a source asks the pipeline to feed per
 /// iteration.
 pub(crate) const INGEST_DEMAND_BYTES: usize = 4096;
-mod client_host;
+pub(crate) mod client_host;
 pub mod smooth_pull;
 #[cfg(test)]
 mod smooth_pull_golden;

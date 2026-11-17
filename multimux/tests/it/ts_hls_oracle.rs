@@ -118,7 +118,7 @@ impl Drop for Served {
 /// via `Config::prebound` — so neither address can lose a bind race and no
 /// whole-attempt retry loop is needed.
 async fn serve_ts_hls_until_extinf() -> Served {
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let UdpTsOrigin {
         bind_addr,
         server,
@@ -159,7 +159,7 @@ async fn ts_hls_segment_content_type_is_video_mp2t() {
     let served = serve_ts_hls_until_extinf().await;
     let bind_addr = served.bind_addr;
     let playlist = served.playlist.clone();
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     let seg_uri = first_segment_uri(&playlist);
     let resp = client
@@ -196,7 +196,7 @@ async fn ffprobe_recognises_served_segment_as_mpegts() {
     let served = serve_ts_hls_until_extinf().await;
     let bind_addr = served.bind_addr;
     let playlist = served.playlist.clone();
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     let dir = temp_dir("ffprobe");
     // Write a whole playlist tree the validator can read from disk: the
@@ -258,7 +258,7 @@ async fn mediastreamvalidator_accepts_served_ts_hls_playlist() {
     let served = serve_ts_hls_until_extinf().await;
     let bind_addr = served.bind_addr;
     let playlist = served.playlist.clone();
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     let dir = temp_dir("msv");
     std::fs::write(dir.join("media.m3u8"), playlist.as_bytes()).expect("write playlist");

@@ -160,7 +160,7 @@ async fn fetch_segment(route: Arc<RouteHandle>, seq: u32) -> Vec<u8> {
         let _ = axum::serve(listener, app).await;
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let resp = client
         .get(format!("http://{addr}/live/seg-{TRACK_ID}-{seq}.m4s"))
         .timeout(Duration::from_secs(10))

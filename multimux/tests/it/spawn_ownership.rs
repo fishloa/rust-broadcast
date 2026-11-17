@@ -33,7 +33,7 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
     // Admit a real viewer session (a POST /whep with a valid offer), so the
     // tracker is non-empty before cancel — otherwise the drain below would be
     // vacuous.
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let resp = client
         .post(format!("http://{addr}/whep"))
         .header(reqwest::header::CONTENT_TYPE, "application/sdp")

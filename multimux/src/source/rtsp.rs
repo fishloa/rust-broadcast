@@ -740,7 +740,7 @@ mod tests {
         const HANG_GUARD: Duration = Duration::from_secs(60);
 
         fn tls_provider() -> Arc<rustls::crypto::CryptoProvider> {
-            Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+            Arc::new(rustls::crypto::ring::default_provider())
         }
 
         fn server_config() -> rustls::ServerConfig {
@@ -749,7 +749,7 @@ mod tests {
             let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der()));
             rustls::ServerConfig::builder_with_provider(tls_provider())
                 .with_safe_default_protocol_versions()
-                .expect("aws-lc-rs provider supports the safe default protocol versions")
+                .expect("ring provider supports the safe default protocol versions")
                 .with_no_client_auth()
                 .with_single_cert(certs, key)
                 .expect("server config")
@@ -763,7 +763,7 @@ mod tests {
                 .expect("add self-signed root");
             rustls::ClientConfig::builder_with_provider(tls_provider())
                 .with_safe_default_protocol_versions()
-                .expect("aws-lc-rs provider supports the safe default protocol versions")
+                .expect("ring provider supports the safe default protocol versions")
                 .with_root_certificates(roots)
                 .with_no_client_auth()
         }

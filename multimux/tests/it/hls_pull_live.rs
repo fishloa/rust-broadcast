@@ -169,7 +169,7 @@ async fn a_sliding_window_live_playlist_closes_segments_on_the_output() {
         .serve(),
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist = observe_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
     server.abort();
     assert!(
@@ -192,7 +192,7 @@ async fn a_finite_playlist_is_fetched_once_and_served() {
         .serve(),
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist = observe_extinf(&client, &format!("http://{bind}/pulled/media.m3u8")).await;
     assert!(playlist.is_some(), "the finished VOD must be served");
 

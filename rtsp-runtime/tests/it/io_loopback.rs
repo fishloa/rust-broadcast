@@ -212,14 +212,11 @@ async fn tls_full_session_over_loopback() {
     let server_config = {
         let certs = vec![CertificateDer::from(cert_der.clone())];
         let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key_der));
-        // Explicit aws-lc-rs provider — see `io::default_tls_client_config`: with
-        // `aws-lc-rs` also in the workspace build (via reqwest elsewhere) the
-        // plain `::builder()` has no unambiguous default provider and panics.
         rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+            rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
-        .expect("aws-lc-rs provider supports the safe default protocol versions")
+        .expect("ring provider supports the safe default protocol versions")
         .with_no_client_auth()
         .with_single_cert(certs, key)
         .expect("server config")
@@ -231,10 +228,10 @@ async fn tls_full_session_over_loopback() {
             .add(CertificateDer::from(cert_der))
             .expect("add self-signed root");
         rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+            rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
-        .expect("aws-lc-rs provider supports the safe default protocol versions")
+        .expect("ring provider supports the safe default protocol versions")
         .with_root_certificates(roots)
         .with_no_client_auth()
     };
