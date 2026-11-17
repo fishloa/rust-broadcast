@@ -14538,6 +14538,51 @@ pub(crate) mod tests {
         );
     }
 
+    /// A mid-stream flush emits the carried access unit at the seed cursor and
+    /// advances all three seed fields by that access unit's span, so the next
+    /// access unit continues instead of repeating it.
+    #[test]
+    fn flush_audio_carry_emits_at_the_cursor_and_advances_the_seed() {
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_dependent_frame(0));
+        let mut anchor = AudioAnchor {
+            seed: Some(AudioAnchorSeed {
+                next_dts: 1_000,
+                next_pts: 2_000,
+                anchor_dts_uw: 90_000,
+                anchor_pts_uw: 90_000,
+                ticks_since_anchor: 0,
+            }),
+            duration_scale: 0,
+            carry: au.clone(),
+            hold_final_au: true,
+            carry_provenance: None,
+        };
+        let mut events = VecDeque::new();
+        flush_audio_carry(&AudioKind::Eac3, &mut anchor, TrackId::new(1), &mut events)
+            .expect("the held access unit flushes");
+        assert_eq!(events.len(), 1, "one whole access unit is emitted");
+        let sample = match events.pop_front() {
+            Some(DemuxEvent::Sample { sample, .. }) => sample,
+            other => panic!("expected a Sample, got {other:?}"),
+        };
+        let timing = sample.timing.expect("stamped");
+        assert_eq!((timing.dts(), timing.pts()), (Some(1_000), Some(2_000)));
+        assert_eq!(timing.duration(), Some(1_536));
+        let seed = anchor.seed.expect("the seed stays set");
+        assert_eq!(
+            (seed.next_dts, seed.next_pts, seed.ticks_since_anchor),
+            (1_000 + 1_536, 2_000 + 1_536, 1_536),
+            "every cursor advances by the flushed access unit's span"
+        );
+        assert_eq!(
+            (seed.anchor_dts_uw, seed.anchor_pts_uw),
+            (90_000, 90_000),
+            "the drift-prediction anchor is left where it was established"
+        );
+        assert!(anchor.carry.is_empty(), "the carry is consumed");
+    }
+
     /// Each flushed E-AC-3 access unit advances the seed cursor by its own
     /// duration, so the next flush continues one frame later on both clocks.
     #[test]
