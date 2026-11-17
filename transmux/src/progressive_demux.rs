@@ -500,6 +500,15 @@ thread_local! {
 /// `stsc.first_chunk` must be >= 1 and strictly ascending (ISO/IEC 14496-12:2026
 /// §8.7.4); anything else is a structured `InvalidValue`. That ordering is
 /// what lets the expansion be one forward pass, linear in chunks + entries.
+///
+/// The bound on the count alone is not enough: `stco` entries may all point at
+/// the same file region, and a uniform `stsz.sample_size` then makes
+/// `sample_count` samples each copy those same bytes again — `file_len^2`
+/// bytes from a `file_len` input. The running total is therefore capped at
+/// [`sample_bytes_budget`](crate::frag_offsets::sample_bytes_budget)
+/// (§8.7.3: a sample's data lies in the file, so samples that do not overlap
+/// never total more than it holds), reported as
+/// [`Error::SampleDataBudgetExceeded`] (audit 20 finding 6).
 pub(crate) fn sample_layout(
     stsz: &SampleSizeBox,
     stsc: &SampleToChunkBox,
@@ -530,6 +539,10 @@ pub(crate) fn sample_layout(
     }
 
     let mut layout = Vec::with_capacity(declared);
+    // Total sample bytes resolved so far, against the input's own length: an
+    // overlapping chunk layout would otherwise be copied once per claimant.
+    let mut total_bytes: usize = 0;
+    let budget = crate::frag_offsets::sample_bytes_budget(file_len);
     // Index of the stsc run applying to the current chunk, once one starts.
     let mut run = 0usize;
     for (c, &chunk_base) in chunk_offsets.iter().enumerate() {
@@ -554,6 +567,12 @@ pub(crate) fn sample_layout(
                 break;
             }
             let size = sample_size(stsz, layout.len())?;
+            total_bytes = total_bytes
+                .checked_add(size)
+                .ok_or(Error::SampleDataBudgetExceeded { limit: budget })?;
+            if total_bytes > budget {
+                return Err(Error::SampleDataBudgetExceeded { limit: budget });
+            }
             let start = usize::try_from(cursor)
                 .map_err(|_| Error::InvalidInput("chunk offset exceeds addressable range"))?;
             layout.push((start, size));
@@ -856,6 +875,56 @@ mod tests {
         )
         .unwrap();
         assert_eq!(layout, [(0, 8), (8, 8), (16, 8), (100, 8)]);
+    }
+
+    /// Several chunks may point at the same file bytes; before the byte
+    /// budget existed, a uniform `stsz` then made `sample_count x sample_size`
+    /// samples (`file_len^2` bytes) out of a `file_len` file, each copying the
+    /// same input region (audit 20 findings 6 / 57).
+    #[test]
+    fn layout_rejects_overlapping_chunks_past_the_input_length() {
+        // Four chunks all at offset 0, one 64-byte sample each: 256 bytes
+        // claimed from a 100-byte file.
+        let err = sample_layout(
+            &uniform_stsz(64, 4),
+            &stsc_of(alloc::vec![run(1, 1)]),
+            None,
+            Some(&stco_of(&[0, 0, 0, 0])),
+            100,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::SampleDataBudgetExceeded { limit: 100 }),
+            "expected the byte budget error, got {err:?}"
+        );
+    }
+
+    /// The budget is exactly one container length: a layout totalling the file
+    /// length is accepted, and the same layout one byte over it is not.
+    #[test]
+    fn layout_budget_boundary_is_one_container_length() {
+        let at_cap = sample_layout(
+            &uniform_stsz(25, 4),
+            &stsc_of(alloc::vec![run(1, 4)]),
+            None,
+            Some(&stco_of(&[0])),
+            100,
+        )
+        .unwrap();
+        assert_eq!(at_cap.len(), 4);
+
+        let err = sample_layout(
+            &uniform_stsz(25, 4),
+            &stsc_of(alloc::vec![run(1, 4)]),
+            None,
+            Some(&stco_of(&[0])),
+            99,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, Error::SampleDataBudgetExceeded { limit: 99 }),
+            "expected the byte budget error one byte past the cap, got {err:?}"
+        );
     }
 
     /// (c) The chunk tables cover fewer samples than `stsz` declares.
