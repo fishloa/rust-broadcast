@@ -55,13 +55,13 @@ pub const MAX_SESSION_WARNINGS: usize = 16;
 /// keepalive into a busy loop.
 pub const MIN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
-/// Maximum bytes retained in [`ClientSession::inbound`] while waiting for a
+/// Maximum bytes retained in the client's inbound buffer while waiting for a
 /// complete response or interleaved frame. An unterminated header, or a
 /// `Content-Length` that promises more than the peer ever sends, would
 /// otherwise grow this buffer without bound (multimux pulls from
 /// operator-configured but externally hosted RTSP URLs) — 1 MiB is generous
 /// for RTSP headers plus an SDP body (audit run-09 W6).
-const MAX_INBOUND_BYTES: usize = 1024 * 1024;
+pub const MAX_INBOUND_BYTES: usize = 1024 * 1024;
 
 /// Most 401 replays of one logical request: a challenge, a `stale=true` nonce
 /// refresh (RFC 2617 §3.2.1) and one more for a rotation racing the refresh.

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `MAX_COLD_WINDOW`'s literal value, the exact accept/refuse edges, `RetentionConfigError`'s label and Display text, and `RetentionDriver::pending_len` are pinned by tests (audit 21 findings 49 and 50, #2944/#2945).
 
 ### Fixed
 - **A slow `Trunk` cursor's loss report is checked against its own position, and a pin's release is observed.** The `Lagged`/`Degraded`/`HandoversLagged` `skipped` counts, the `StallIngest` expiry predicate and `Drop for SegmentCursor` were only exercised from a cursor that had read nothing, where `base - consumed` and `base + consumed` agree and a leaked or wrongly-terminated pin is invisible: a cursor that had read part of a ring could report a nonsense skip count (or jump past live data), `expire_stalled_pins` could terminate a pin that had already caught up (or leave the blocking one), and a dropped pinning cursor could hold retention forever, with every test green. The trunk tests now lag a cursor that has already consumed part of each ring, terminate exactly the blocking `StallIngest` pin of three, observe the pin table emptying on `Drop`, and assert `generation()` advances and a pre-registered `listen()` wakes exactly once (audit 21 finding 58, #2953).

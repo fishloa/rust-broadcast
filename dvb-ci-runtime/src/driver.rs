@@ -3952,4 +3952,315 @@ pub(crate) mod tests {
             "the frame must have been taken off the device, not refused"
         );
     }
+
+    // --- #2947: the public control API, timers, CA PIDs and card inference ---
+
+    const APP_INFO_SESSION: u16 = 2;
+
+    fn ca_pmt_for(
+        pmt: &PmtSection<'_>,
+        list_management: CaPmtListManagement,
+        cmd_id: CaPmtCmdId,
+    ) -> Vec<u8> {
+        let bytes = build_ca_pmt(pmt, list_management, cmd_id)
+            .to_bytes()
+            .unwrap();
+        assert_eq!(&bytes[..3], &[0x9F, 0x80, 0x32], "ca_pmt APDU tag");
+        let parsed = dvb_ci::objects::ca_pmt::CaPmt::parse(&bytes).unwrap();
+        assert_eq!(parsed.list_management, list_management);
+        assert_eq!(parsed.cmd_id, Some(cmd_id));
+        assert_eq!(parsed.program_number, 1546);
+        bytes
+    }
+
+    #[test]
+    fn descramble_writes_the_ok_descrambling_ca_pmt() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        d.descramble(&pmt_bytes).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        assert_apdu_on_session(
+            &d,
+            CA_SESSION,
+            &ca_pmt_for(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling),
+        );
+    }
+
+    #[test]
+    fn descramble_programs_writes_the_ca_pmt_list() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        d.descramble_programs(&[&pmt_bytes]).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        assert_apdu_on_session(
+            &d,
+            CA_SESSION,
+            &ca_pmt_for(&pmt, CaPmtListManagement::Only, CaPmtCmdId::OkDescrambling),
+        );
+    }
+
+    #[test]
+    fn add_program_writes_the_add_ca_pmt() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+
+        d.add_program(&pmt_bytes).unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+
+        assert_apdu_on_session(
+            &d,
+            CA_SESSION,
+            &ca_pmt_for(&pmt, CaPmtListManagement::Add, CaPmtCmdId::OkDescrambling),
+        );
+    }
+
+    #[test]
+    fn ca_pids_lists_the_programme_and_es_ca_descriptor_pids() {
+        let mut d = driver_with_sessions();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt).unwrap();
+
+        assert_eq!(
+            d.ca_pids(),
+            [Pid::from_const(0x0064), Pid::from_const(0x0065)]
+        );
+    }
+
+    #[test]
+    fn enter_menu_and_mmi_cancel_write_their_apdus() {
+        use dvb_ci::objects::application_info::EnterMenu;
+        use dvb_ci::objects::mmi_high::{Answ, AnswId};
+
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+
+        d.enter_menu().unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_apdu_on_session(&d, APP_INFO_SESSION, &ser(&EnterMenu::default()));
+
+        d.mmi_cancel().unwrap();
+        d.device_mut().inbound.push_back(sb());
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_apdu_on_session(
+            &d,
+            MMI_SESSION,
+            &ser(&Answ {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                answ_id: AnswId::Cancel,
+                text_chars: &[],
+            }),
+        );
+    }
+
+    #[test]
+    fn next_timer_is_none_until_a_write_arms_the_poll_cadence() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        assert_eq!(d.next_timer(), None);
+        d.init().unwrap();
+        assert_eq!(
+            d.next_timer(),
+            Some(crate::transport::DEFAULT_REPLY_TIMEOUT),
+            "the outstanding Create_T_C arms the reply timer"
+        );
+        assert!(d.next_timer().is_some_and(|d| d > Duration::ZERO));
+    }
+
+    /// #2947: exactly at the settle deadline the deferred writes flush; one
+    /// nanosecond earlier they must not.
+    #[test]
+    fn the_settle_deadline_flushes_writes_at_the_exact_instant() {
+        let clock = TestClock::new();
+        let mut d = settling_driver(&clock);
+        d.init().unwrap();
+
+        clock.advance(SETTLE - Duration::from_nanos(1));
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(
+            create_tc_writes(&d),
+            0,
+            "1ns before the deadline the slot is still settling"
+        );
+
+        clock.advance(Duration::from_nanos(1));
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(
+            create_tc_writes(&d),
+            1,
+            "at the deadline the deferred write flushes"
+        );
+    }
+
+    /// #2947: an `EINVAL` at the exact instant the slot-ready grace window
+    /// ends is reported, not retried.
+    #[test]
+    fn an_einval_at_the_grace_deadline_is_reported() {
+        let clock = TestClock::new();
+        let mut d = not_running_driver(&clock, 1);
+        d.init().unwrap();
+        clock.advance(SETTLE + SLOT_READY_GRACE);
+        let err = d
+            .pump(Duration::from_millis(10))
+            .expect_err("at the deadline the refusal must be reported");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    /// #2947: a retry armed after an `EINVAL` waits `SLOT_RETRY`, not zero
+    /// time.
+    #[test]
+    fn an_einval_retry_waits_slot_retry_before_the_next_attempt() {
+        let clock = TestClock::new();
+        let mut d = not_running_driver(&clock, u32::MAX);
+        d.init().unwrap();
+        clock.advance(SETTLE + Duration::from_millis(100));
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(d.device().refused, 1);
+
+        clock.advance(Duration::from_millis(100));
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(d.device().refused, 1, "the retry waits for SLOT_RETRY");
+
+        clock.advance(Duration::from_millis(200));
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(d.device().refused, 2, "the retry fires after SLOT_RETRY");
+    }
+
+    /// A device that reports a readiness edge but hands back no bytes.
+    struct ReadBreaksDevice(MockCaDevice);
+
+    impl CaDevice for ReadBreaksDevice {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Ok(0)
+        }
+        fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+            self.0.write(buf)
+        }
+        fn reset(&mut self) -> io::Result<()> {
+            self.0.reset()
+        }
+        fn reset_settle(&self) -> Duration {
+            self.0.reset_settle()
+        }
+        fn slot_info(&mut self) -> io::Result<SlotInfo> {
+            self.0.slot_info()
+        }
+        fn poll(&mut self, _timeout: Duration) -> io::Result<bool> {
+            Ok(true)
+        }
+    }
+
+    /// #2947: a readiness edge that yields zero bytes is not a processed frame.
+    #[test]
+    fn a_readiness_edge_with_no_bytes_is_not_a_frame() {
+        let mut d = Driver::new(ReadBreaksDevice(MockCaDevice::new([])));
+        d.init().unwrap();
+        assert!(
+            !d.pump(Duration::from_millis(10)).unwrap(),
+            "a zero-byte read is not a processed frame"
+        );
+    }
+
+    /// #2947: a refusal produced by an earlier call, still in a full queue,
+    /// is not attributed to a later successful call.
+    #[test]
+    fn an_old_refusal_in_a_full_queue_is_not_reported_for_a_healthy_send() {
+        let mut d = driver_with_sessions();
+        for _ in 0..MAX_PENDING_NOTIFICATIONS + 5 {
+            d.push_notification(Notification::CamReady);
+        }
+        d.push_notification(Notification::Error {
+            detail: "an earlier failure".to_string(),
+        });
+        assert_eq!(d.notifications.len(), MAX_PENDING_NOTIFICATIONS);
+        assert!(d.notifications_dropped() > 0);
+
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        d.add_service(&pmt)
+            .expect("a healthy send must not inherit an older refusal");
+    }
+
+    /// #2947: the refusal produced by this very call is reported.
+    #[test]
+    fn a_refusal_produced_by_this_call_is_reported() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        d.init().unwrap();
+        let pmt_bytes = build_ca_pmt_fixture(1546);
+        let pmt = PmtSection::parse(&pmt_bytes).unwrap();
+        let err = d
+            .add_service(&pmt)
+            .expect_err("no open CA session means the ca_pmt was not handed over");
+        assert!(
+            matches!(err, CaError::NotSent { .. }),
+            "expected CaError::NotSent, got {err:?}"
+        );
+    }
+
+    fn ca_info(ids: &[u16]) -> Notification {
+        Notification::CaInfo {
+            ca_system_ids: ids.to_vec(),
+        }
+    }
+
+    fn ca_pmt_reply(descrambling_ok: bool) -> Notification {
+        Notification::CaPmtReply {
+            program_number: 1546,
+            ca_enable: None,
+            descrambling_ok,
+        }
+    }
+
+    #[test]
+    fn infer_card_follows_the_ca_info_edges() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        assert!(d.infer_card(&ca_info(&[])).is_empty());
+        assert_eq!(
+            d.infer_card(&ca_info(&[0x0500])),
+            vec![Notification::HotPlug(HotPlug::CardInserted)]
+        );
+        assert!(
+            d.infer_card(&ca_info(&[0x0500])).is_empty(),
+            "the same CAID set repeated is not an edge"
+        );
+        assert_eq!(
+            d.infer_card(&ca_info(&[0x0500, 0x0B00])),
+            vec![Notification::HotPlug(HotPlug::CardChanged)]
+        );
+        assert_eq!(
+            d.infer_card(&ca_info(&[])),
+            vec![Notification::HotPlug(HotPlug::CardRemoved)]
+        );
+    }
+
+    #[test]
+    fn infer_card_follows_the_descrambling_reply_edges() {
+        let mut d = Driver::new(MockCaDevice::new([]));
+        assert!(d.infer_card(&ca_pmt_reply(false)).is_empty());
+        assert_eq!(
+            d.infer_card(&ca_pmt_reply(true)),
+            vec![Notification::HotPlug(HotPlug::CardInserted)]
+        );
+        assert!(
+            d.infer_card(&ca_pmt_reply(true)).is_empty(),
+            "the same state repeated is not an edge"
+        );
+        assert_eq!(
+            d.infer_card(&ca_pmt_reply(false)),
+            vec![Notification::HotPlug(HotPlug::CardRemoved)]
+        );
+    }
 }

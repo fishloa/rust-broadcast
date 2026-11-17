@@ -75,6 +75,24 @@ async fn an_exhausted_ordinary_budget_sheds_and_ops_routes_still_answer() {
     );
 }
 
+/// #2948: the queue wait is the helper's `queue` argument, not the default.
+#[tokio::test(start_paused = true)]
+async fn the_queue_wait_is_the_configured_timeout() {
+    let app = multimux::origin::limit_budget_test_app(1, Duration::from_millis(37));
+    let hold = app.clone().oneshot(get("/cam1/master.m3u8")).await.unwrap();
+
+    let started = tokio::time::Instant::now();
+    let shed = app.clone().oneshot(get("/cam1/media.m3u8")).await.unwrap();
+    let waited = tokio::time::Instant::now() - started;
+    assert_eq!(shed.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(
+        waited >= Duration::from_millis(37) && waited < Duration::from_secs(1),
+        "the queue wait must be the configured 37 ms, not the default: {waited:?}"
+    );
+
+    drop(hold);
+}
+
 /// I4: the WHIP/WHEP routers use ONE shared concurrency pool across routes
 /// (`GlobalConcurrencyLimitLayer`, not the per-route `ConcurrencyLimitLayer`).
 /// This drives the PRODUCTION `whep_router` (built by `whep_router_for_test`)

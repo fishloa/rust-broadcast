@@ -5,5 +5,6 @@ mod ffmpeg_publish;
 mod flv_tags;
 mod golden_wire;
 mod io_timeouts;
+mod limits;
 mod secret_hygiene;
 mod send_sync;
