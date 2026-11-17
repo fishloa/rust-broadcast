@@ -9,6 +9,7 @@
 - Audit 21 (#2923): `read_tree` enforces the attribute-count and attribute-value-size bounds at exactly the configured cap (the cap is allowed, one past it is `XmlError::Limit`), `Elem`'s `child`/`children_named`/`has_child`/`attr_in` match on namespace and name together, and `xml_chars::read_attributes` resolves each prefix, skips the namespace declarations and reports a value outside the `Char` production.
 - Audit 21 (#2924): `PusiAccumulator` keeps a PUSI payload of exactly `max_unit_size` bytes and drops one past it, and `len`/`is_empty`/`is_started` report the in-progress unit's state.
 - Audit 21 (#2925): exact-boundary tests for `BitReader::skip_bits` (the whole remainder succeeds, one past it fails at the end), the 16-nibble BCD carrier, the 127/128 BER short/long-form split and a truncated long form, a `Content-Range` ending on the entity's last byte, the saturating `rescale_i64`/`rescale_u64`, `Timestamp::as_nanos`' own ceiling, `bcp47_language`'s subtag guard, `MulticastInterface::parse`'s index-versus-address error, `KlvItem` equality and `walk_klv_items`' byte offsets.
+- Audit 21 (#2926): the formatting and conversion faces of the shared value types are asserted exactly — `Clock27::seconds`, `Clock33`'s `TryFrom<i64>` (including a negative sample's magnitude) and its `Display`/`Debug`, `Timescale`'s `Display`/transparent `Debug` and its `u32`/`u64`/`i128`/`usize` conversions, and the `Display` of `InvalidBackoff`, `GrowthFactor`, `BitError`, `KlvError`, `InterfaceError` and `JoinMismatch`.
 
 ## [13.1.0] - 2026-11-17
 ### Added

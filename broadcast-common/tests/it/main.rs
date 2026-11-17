@@ -2,6 +2,7 @@ mod backoff_jitter;
 mod bcp47_language;
 mod boundaries;
 mod crc32_mpeg2;
+mod display_and_conversions;
 mod hex_parity;
 mod http_date;
 mod no_panicking_to_bytes_guard;
