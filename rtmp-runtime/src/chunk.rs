@@ -831,9 +831,10 @@ impl ChunkAssembler {
     /// re-derivation from byte counts, and nothing parsed at a stale chunk
     /// size.
     pub fn swap_pending(&mut self, now: &[u8]) -> Vec<u8> {
-        let unconsumed = self.pending.len() - self.cursor;
+        let consumed = self.cursor;
         let previous = core::mem::replace(&mut self.pending, Vec::from(now));
-        previous.get(unconsumed..).unwrap_or_default().to_vec()
+        self.cursor = 0;
+        previous.get(consumed..).unwrap_or_default().to_vec()
     }
 
     /// Parse and return the next complete [`Message`] out of the
@@ -3327,5 +3328,251 @@ mod invalid_csid_tests {
         for ok in [2u32, 63, 64, 319, 320, 65599] {
             assert!(w.write(&msg(ok)).is_ok(), "csid {ok} must be accepted");
         }
+    }
+
+    #[test]
+    fn denial_of_service_ceilings_are_pinned_by_value() {
+        assert_eq!(MAX_CHUNK_SIZE, 16_777_216);
+        assert_eq!(MAX_MESSAGE_LEN, 8_388_608);
+    }
+
+    /// csid 320 needs the three-byte basic header form; the assembler derives
+    /// the header length from the wire marker.
+    #[test]
+    fn csid_320_three_byte_basic_header_reassembles() {
+        let mut writer = ChunkWriter::new();
+        let original = Message {
+            chunk_stream_id: ChunkStreamId::new(320),
+            timestamp: Timestamp::from_millis(5),
+            message_type_id: MessageTypeId::Video,
+            message_stream_id: MessageStreamId::new(1),
+            payload: vec![0xAB; 300],
+        };
+        let bytes = writer.write(&original).unwrap();
+        let rel = 320 - BASIC_HEADER_CSID_OFFSET;
+        assert_eq!(bytes[0], BASIC_HEADER_3BYTE_MARKER);
+        assert_eq!(bytes[1], rel as u8);
+        assert_eq!(bytes[2], (rel >> 8) as u8);
+
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&bytes).unwrap();
+        assert_eq!(out, vec![original]);
+    }
+
+    /// Type 1/2 headers that used the Extended Timestamp must make their
+    /// Type 3 continuation consume it too, or every later byte mis-frames.
+    #[test]
+    fn type1_type2_and_type3_extended_timestamp_chunks_reassemble() {
+        const EXT: u32 = 0x0100_0000;
+
+        let mut a = Vec::new();
+        a.push(0x04);
+        a.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0x00, 0x00, 200, 9, 1, 0, 0, 0]);
+        a.extend_from_slice(&EXT.to_be_bytes());
+        a.extend_from_slice(&[0xAAu8; 128]);
+        a.push(0xC4);
+        a.extend_from_slice(&EXT.to_be_bytes());
+        a.extend_from_slice(&[0xABu8; 72]);
+
+        let mut b = Vec::new();
+        b.push(0x44);
+        b.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0x00, 0x00, 200, 8]);
+        b.extend_from_slice(&EXT.to_be_bytes());
+        b.extend_from_slice(&[0xB0u8; 128]);
+        b.push(0xC4);
+        b.extend_from_slice(&EXT.to_be_bytes());
+        b.extend_from_slice(&[0xB1u8; 72]);
+
+        let mut c = Vec::new();
+        c.push(0x84);
+        c.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
+        c.extend_from_slice(&EXT.to_be_bytes());
+        c.extend_from_slice(&[0xC0u8; 128]);
+        c.push(0xC4);
+        c.extend_from_slice(&EXT.to_be_bytes());
+        c.extend_from_slice(&[0xC1u8; 72]);
+
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&a);
+        wire.extend_from_slice(&b);
+        wire.extend_from_slice(&c);
+
+        let mut assembler = ChunkAssembler::new();
+        let out = assembler.push(&wire).unwrap();
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].chunk_stream_id, ChunkStreamId::new(4));
+        assert_eq!(out[0].timestamp.millis(), 0x0100_0000);
+        assert_eq!(out[0].message_type_id, MessageTypeId::Video);
+        assert_eq!(out[0].message_stream_id, MessageStreamId::new(1));
+        assert_eq!(&out[0].payload[..128], &vec![0xAAu8; 128][..]);
+        assert_eq!(&out[0].payload[128..], &vec![0xABu8; 72][..]);
+
+        assert_eq!(out[1].timestamp.millis(), 0x0200_0000);
+        assert_eq!(out[1].message_type_id, MessageTypeId::Audio);
+        assert_eq!(out[1].payload.len(), 200);
+        assert_eq!(&out[1].payload[128..], &vec![0xB1u8; 72][..]);
+
+        assert_eq!(out[2].timestamp.millis(), 0x0300_0000);
+        assert_eq!(out[2].message_type_id, MessageTypeId::Audio);
+        assert_eq!(out[2].message_stream_id, MessageStreamId::new(1));
+        assert_eq!(&out[2].payload[128..], &vec![0xC1u8; 72][..]);
+
+        // The writer's Type 0 + Type 3 framing for the first message is
+        // byte-for-byte the hand-written chunk stream above.
+        let mut writer = ChunkWriter::new();
+        assert_eq!(writer.write(&out[0]).unwrap(), a);
+    }
+
+    #[test]
+    fn message_header_serialized_len_counts_the_extended_timestamp() {
+        let type0_ext = MessageHeader::Type0 {
+            timestamp: Timestamp::from_millis(EXTENDED_TIMESTAMP_MARKER),
+            message_length: 1,
+            message_type_id: MessageTypeId::Video,
+            message_stream_id: MessageStreamId::new(1),
+        };
+        assert_eq!(type0_ext.serialized_len(), 15);
+        let type0 = MessageHeader::Type0 {
+            timestamp: Timestamp::from_millis(EXTENDED_TIMESTAMP_MARKER - 1),
+            message_length: 1,
+            message_type_id: MessageTypeId::Video,
+            message_stream_id: MessageStreamId::new(1),
+        };
+        assert_eq!(type0.serialized_len(), 11);
+
+        let type1_ext = MessageHeader::Type1 {
+            timestamp_delta: Duration::from_millis(u64::from(EXTENDED_TIMESTAMP_MARKER)),
+            message_length: 1,
+            message_type_id: MessageTypeId::Audio,
+        };
+        assert_eq!(type1_ext.serialized_len(), 11);
+        let type1 = MessageHeader::Type1 {
+            timestamp_delta: Duration::from_millis(u64::from(EXTENDED_TIMESTAMP_MARKER - 1)),
+            message_length: 1,
+            message_type_id: MessageTypeId::Audio,
+        };
+        assert_eq!(type1.serialized_len(), 7);
+
+        let type2_ext = MessageHeader::Type2 {
+            timestamp_delta: Duration::from_millis(u64::from(EXTENDED_TIMESTAMP_MARKER)),
+        };
+        assert_eq!(type2_ext.serialized_len(), 7);
+        let type2 = MessageHeader::Type2 {
+            timestamp_delta: Duration::from_millis(u64::from(EXTENDED_TIMESTAMP_MARKER - 1)),
+        };
+        assert_eq!(type2.serialized_len(), 3);
+
+        let mut buf = [0u8; 11];
+        assert_eq!(type1_ext.serialize_into(&mut buf).unwrap(), 11);
+        let mut buf = [0u8; 7];
+        assert_eq!(type2_ext.serialize_into(&mut buf).unwrap(), 7);
+    }
+
+    /// A Type 1/2 header whose delta overflows the 32-bit timestamp reports
+    /// the exact summed value in the error.
+    #[test]
+    fn timestamp_overflow_reports_the_exact_sum_for_type1_and_type2() {
+        const MAX_MS: u32 = u32::MAX;
+        let type0 = |length: u32| {
+            let mut bytes = Vec::new();
+            bytes.push(0x04);
+            bytes.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
+            bytes.extend_from_slice(&[0, 0, length as u8]);
+            bytes.push(9);
+            bytes.extend_from_slice(&1u32.to_le_bytes());
+            bytes.extend_from_slice(&MAX_MS.to_be_bytes());
+            bytes
+        };
+        let mut base = type0(1);
+        base.push(0x00); // one payload byte completes the message
+
+        let mut type1 = base.clone();
+        type1.push(0x44);
+        type1.extend_from_slice(&[0x00, 0x00, 0x02, 0x00, 0x00, 0x01, 0x09]);
+        match ChunkAssembler::new().push(&type1) {
+            Err(RtmpError::FieldOverflow(e)) => {
+                assert_eq!(e.field, "timestamp");
+                assert_eq!(e.value, u64::from(MAX_MS) + 2);
+            }
+            other => panic!("expected FieldOverflow, got {other:?}"),
+        }
+
+        let mut type2 = base;
+        type2.push(0x84);
+        type2.extend_from_slice(&[0x00, 0x00, 0x02]);
+        match ChunkAssembler::new().push(&type2) {
+            Err(RtmpError::FieldOverflow(e)) => {
+                assert_eq!(e.field, "timestamp");
+                assert_eq!(e.value, u64::from(MAX_MS) + 2);
+            }
+            other => panic!("expected FieldOverflow, got {other:?}"),
+        }
+    }
+
+    /// A Type 3 chunk that starts a new message re-applies the inherited
+    /// delta; its overflow reports the exact summed value.
+    #[test]
+    fn type3_new_message_timestamp_overflow_reports_the_exact_sum() {
+        const MAX_MS: u32 = u32::MAX;
+        let mut wire = Vec::new();
+        wire.push(0x04);
+        wire.extend_from_slice(&[0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x01, 0x09, 1, 0, 0, 0]);
+        wire.extend_from_slice(&MAX_MS.to_be_bytes());
+        wire.push(0x00); // completes the one-byte message
+        wire.push(0xC4);
+        wire.extend_from_slice(&MAX_MS.to_be_bytes()); // inherited extended field
+        match ChunkAssembler::new().push(&wire) {
+            Err(RtmpError::FieldOverflow(e)) => {
+                assert_eq!(e.field, "timestamp");
+                assert_eq!(e.value, u64::from(MAX_MS) + u64::from(MAX_MS));
+            }
+            other => panic!("expected FieldOverflow, got {other:?}"),
+        }
+    }
+
+    /// The receive-buffer backstop trips one byte past twice the
+    /// in-progress budget.
+    #[test]
+    fn receive_buffer_backstop_is_twice_the_in_progress_budget() {
+        let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(8);
+        assembler.feed(&[0u8; 16]);
+        assert!(assembler.next_message().is_ok());
+
+        let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(8);
+        assembler.feed(&[0u8; 17]);
+        match assembler.next_message() {
+            Err(RtmpError::InputBudgetExceeded { max }) => assert_eq!(max, 16),
+            other => panic!("expected InputBudgetExceeded, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn compact_drops_only_the_consumed_prefix() {
+        let mut assembler = ChunkAssembler::new();
+        assembler.pending.extend_from_slice(b"abcdef");
+        assembler.cursor = 4;
+        assembler.compact();
+        assert_eq!(assembler.pending.as_slice(), b"ef");
+        assert_eq!(assembler.cursor, 0);
+    }
+
+    #[test]
+    fn swap_pending_returns_only_the_unconsumed_bytes() {
+        let mut assembler = ChunkAssembler::new();
+        assembler.pending.extend_from_slice(b"abcde");
+        assembler.cursor = 2;
+        let restored = assembler.swap_pending(b"xyz");
+        assert_eq!(restored.as_slice(), b"cde");
+        assert_eq!(assembler.pending.as_slice(), b"xyz");
+        assert_eq!(assembler.cursor, 0);
+    }
+
+    #[test]
+    fn pending_len_counts_the_unparsed_bytes() {
+        let mut assembler = ChunkAssembler::new();
+        assembler.feed(b"abc");
+        assert_eq!(assembler.pending_len(), 3);
+        assembler.feed(b"de");
+        assert_eq!(assembler.pending_len(), 5);
     }
 }

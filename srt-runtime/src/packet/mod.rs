@@ -165,3 +165,24 @@ pub(crate) fn be16(bytes: &[u8], off: usize) -> u16 {
 pub(crate) fn put_be16(buf: &mut [u8], off: usize, value: u16) {
     buf[off..off + 2].copy_from_slice(&value.to_be_bytes());
 }
+
+#[cfg(all(test, feature = "tokio"))]
+mod tests {
+    use super::*;
+
+    /// The listener's demultiplexing peek needs a whole header: exactly
+    /// [`SRT_HEADER_LEN`] bytes yields the id, one byte fewer yields `None`
+    /// (never a partial read).
+    #[test]
+    fn peek_dest_socket_id_needs_a_whole_header() {
+        let mut bytes = [0u8; SRT_HEADER_LEN];
+        put_be32(&mut bytes, DEST_SOCKET_ID_OFFSET, 0x1234_5678);
+        assert_eq!(peek_dest_socket_id(&bytes), Some(0x1234_5678));
+        assert_eq!(
+            peek_dest_socket_id(&bytes[..SRT_HEADER_LEN - 1]),
+            None,
+            "a 15-byte datagram has no complete header"
+        );
+        assert_eq!(peek_dest_socket_id(&[]), None);
+    }
+}

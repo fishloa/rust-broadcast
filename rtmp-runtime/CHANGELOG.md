@@ -5,7 +5,11 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `chunk::ChunkAssembler::swap_pending` returns the previous pending buffer's unconsumed bytes (`previous[consumed..]`, not its tail) and resets the read cursor for the replacement buffer, so a caller swapping in the unparsed tail does not have its next parse start at a stale offset.
+
 ### Tests
+- Pin the chunk layer's numeric ceilings by value, the receive-buffer backstop, `compact`/`swap_pending`/`pending_len`, the three-byte basic header, Type 1/2/3 extended-timestamp framing and the exact error sums, AMF0 nested-container offsets/depth/truncation, and the FLV aggregate sub-message arithmetic plus the tolerant resync chain heuristics (#2932, #2933, #2934).
 - `ffmpeg_publish` requires its oracle through `test_fixtures::process::require_tool`, so `REQUIRE_EXTERNAL_TOOLS=1` turns the missing-ffmpeg skip into a failure instead of a green run that never published (audit 21 finding 60).
 
 ## [0.11.1] - 2026-11-17
