@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `MediaPlaylist::parse_with`/`MasterPlaylist::parse_with` and the `limits` defaults are now pinned at their inclusive boundaries: a playlist of exactly `max_playlist_bytes` parses, `+ 1` fails reporting that observed length, and `MAX_PLAYLIST_BYTES`/`MAX_SEGMENT_BYTES`/`MAX_SEGMENTS` are asserted by literal value (audit 21 finding 40, #2935).
+- `parse_iv` is pinned against a wrong-length hex `IV`: 31 or 33 digits and a 32-character non-hex value are a typed `Error::InvalidIv` (never the slice-overrun panic an `||`-joined validator would cause), the open-segment key and the `EXT-X-SESSION-KEY METHOD=NONE` refusal are asserted, and the `EXT-X-MAP`/preload-hint `TYPE=MAP`/`SESSION-DATA FORMAT=RAW`/`VIDEO`/`CLOSED-CAPTIONS` parse arms and the segment-scoped tag routing each have a test that fails if the arm is deleted (audit 21 finding 41, #2936).
+- Every RFC 8216bis §8 row-8 variable-substitution trigger in `MasterPlaylist::computed_version` (each `MEDIA` string field, variant and I-frame URIs, an opaque tag, an `EXT-X-DEFINE` value) and the media-playlist counterpart are exercised alone, so an `||` turned into `&&` now declares a too-low version only at the cost of a failing test; likewise the `EXT-X-KEY` `KEYFORMAT*`/`SAMPLE-AES` row-5 triggers and the `REQ-` row-12 triggers on a map, a part and the open segment (audit 21 finding 42, #2937).
+- `dangling_group_references` requires a matching `TYPE` and `GROUP-ID` (and reports a dangling `CLOSED-CAPTIONS` group), `mark_init_discontinuities` marks a two-entry init change, a UTF-8 BOM is stripped only on line 1, the attribute-list tokenizer's end-of-input boundaries are pinned, `format_signed_secs(-0.0)` renders `0`, and every `AttrValue::bare`/`for_attr` rejection character is asserted on its own (audit 21 finding 43, #2938).
+- The LL-HLS builder methods (`PartSpec::with_*`, `RenditionReport::with_last_part`, `LowLatencyConfig::with_*`) are asserted through the rendered playlist, `EXT-X-MAP` re-emits only on a change, `MediaSequence`/`PartIndex` conversions and serde round-trip as bare numbers, and the `DecimalSeconds`/`SignedDecimalSeconds`/`SessionDataFormat` display forms are pinned (audit 21 finding 44, #2939).
+
 ## [0.8.1] - 2026-11-17
 ### Added
 - `limits` module: `Limits` with `MAX_PLAYLIST_BYTES` (4 MiB), `MAX_SEGMENTS` (1 000 000, a backstop behind the byte cap) and `MAX_SEGMENT_BYTES` (64 MiB) defaults; `MediaPlaylist::parse_with` / `MasterPlaylist::parse_with` take them, `parse` delegates to the defaults, and `Error::TooLarge` reports an over-limit document or segment count (audit 20 finding 41, #2852).
