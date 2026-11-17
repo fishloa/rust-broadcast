@@ -68,7 +68,7 @@ fn main() {
             sender.on_nak(&n);
         }
     }
-    for bytes in sender.tick(now) {
+    for (_, bytes) in sender.tick(now) {
         let dp = DataPacket::parse(&bytes).expect("retransmission");
         println!(
             "seq {}: retransmitted (R flag = {})",

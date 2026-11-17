@@ -767,17 +767,20 @@ impl RendezvousHandshake {
             Err(_) => return Some(self.reject(RejectionReason::Rogue)),
         };
         match (&self.config.crypto, parsed.km) {
-            (Some(crypto), Some(km)) => match handshake_sm::recover_sek(&crypto.passphrase, &km) {
-                Ok((sek, salt)) => {
-                    self.crypto_recovered = Some((sek, salt));
-                    let mut contents = alloc::vec![0u8; km.serialized_len()];
-                    match km.serialize_into(&mut contents) {
-                        Ok(_) => self.km_echo = Some(contents),
-                        Err(_) => return Some(self.reject(RejectionReason::Rogue)),
+            (Some(crypto), Some(km)) => {
+                let mut kek_cache = crate::crypto::KekCache::new();
+                match handshake_sm::recover_sek(&crypto.passphrase, &km, &mut kek_cache) {
+                    Ok((sek, salt)) => {
+                        self.crypto_recovered = Some((sek, salt));
+                        let mut contents = alloc::vec![0u8; km.serialized_len()];
+                        match km.serialize_into(&mut contents) {
+                            Ok(_) => self.km_echo = Some(contents),
+                            Err(_) => return Some(self.reject(RejectionReason::Rogue)),
+                        }
                     }
+                    Err(_) => return Some(self.reject(RejectionReason::BadSecret)),
                 }
-                Err(_) => return Some(self.reject(RejectionReason::BadSecret)),
-            },
+            }
             (Some(_), None) | (None, Some(_)) => {
                 return Some(self.reject(RejectionReason::Unsecure));
             }

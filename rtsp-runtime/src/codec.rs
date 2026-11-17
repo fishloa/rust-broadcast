@@ -316,6 +316,61 @@ mod tests {
         ));
     }
 
+    fn announce_with_body(body_len: usize) -> String {
+        format!("ANNOUNCE rtsp://h/s RTSP/1.0\r\nCSeq: 1\r\nContent-Length: {body_len}\r\n\r\n")
+    }
+
+    /// #2860: a `Content-Length` past `MAX_MESSAGE_BYTES` is refused with the
+    /// typed `TooLarge` error rather than waiting for the body forever.
+    #[test]
+    fn server_codec_rejects_a_body_beyond_the_message_cap() {
+        let mut codec = ServerCodec::default();
+        let mut buf = BytesMut::from(announce_with_body(3_000_000).as_bytes());
+        match codec.decode(&mut buf) {
+            Err(Error::MessageParse {
+                what: MessageKind::Request,
+                source: MessageParseError::TooLarge { at_least, limit },
+            }) => {
+                assert!(at_least > limit);
+                assert_eq!(limit, MAX_MESSAGE_BYTES);
+            }
+            Err(other) => panic!("expected TooLarge, got {other:?}"),
+            Ok(_) => panic!("expected TooLarge, got a decoded frame"),
+        }
+    }
+    /// #2860: exactly at the cap is still accepted (the codec waits for the
+    /// body); one byte over is refused.
+    #[test]
+    fn server_codec_message_cap_boundary_inclusive() {
+        let mut body_len = MAX_MESSAGE_BYTES;
+        loop {
+            let head = announce_with_body(body_len);
+            let total = head.len() + body_len;
+            match total.cmp(&MAX_MESSAGE_BYTES) {
+                core::cmp::Ordering::Equal => break,
+                core::cmp::Ordering::Greater => body_len -= total - MAX_MESSAGE_BYTES,
+                core::cmp::Ordering::Less => body_len += MAX_MESSAGE_BYTES - total,
+            }
+        }
+        let mut codec = ServerCodec::default();
+        let mut buf = BytesMut::from(announce_with_body(body_len).as_bytes());
+        assert!(
+            codec.decode(&mut buf).unwrap().is_none(),
+            "at the cap is a body wait, not an error"
+        );
+        assert_eq!(codec.skip_until, MAX_MESSAGE_BYTES);
+
+        let mut codec = ServerCodec::default();
+        let mut buf = BytesMut::from(announce_with_body(body_len + 1).as_bytes());
+        assert!(matches!(
+            codec.decode(&mut buf),
+            Err(Error::MessageParse {
+                source: MessageParseError::TooLarge { .. },
+                ..
+            })
+        ));
+    }
+
     #[test]
     fn server_codec_parses_once_per_message_even_when_fed_a_byte_at_a_time() {
         let req: &[u8] = b"OPTIONS rtsp://h/s RTSP/1.0\r\nCSeq: 1\r\n\r\n";

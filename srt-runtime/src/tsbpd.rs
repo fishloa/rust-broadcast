@@ -1227,4 +1227,17 @@ mod tests {
         // rest by the final tick. `next_release` and an empty buffer prove
         // all 100 went out in order.)
     }
+
+    /// #2860: a DROPREQ flood ahead of the delivery cursor cannot grow the
+    /// remembered-skip set past `MAX_SKIPS`.
+    #[test]
+    fn a_dropreq_flood_stops_at_the_skip_cap() {
+        let mut s = sched();
+        let flood = u32::try_from(MAX_SKIPS).unwrap() + 48;
+        for i in 0..flood {
+            let seq_number = 1000 + 2 * i;
+            s.skip_range(seq_number, seq_number);
+        }
+        assert_eq!(s.pending_skips.len(), MAX_SKIPS);
+    }
 }
