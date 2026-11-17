@@ -51,5 +51,8 @@ fn lang_code_renders_its_three_bytes() {
 #[test]
 fn dvb_text_debug_shows_the_decoded_string() {
     assert_eq!(format!("{:?}", DvbText::new(b"abc")), "DvbText(\"abc\")");
-    assert_eq!(format!("{:?}", DvbText::new(&[0xC2, b'e'])), "DvbText(\"é\")");
+    assert_eq!(
+        format!("{:?}", DvbText::new(&[0xC2, b'e'])),
+        "DvbText(\"é\")"
+    );
 }

@@ -3,6 +3,7 @@
 //!
 //! Sections are built here from the ISO/IEC 13818-1 syntax (independent CRC)
 //! rather than through the production serializer.
+#![cfg(feature = "ts")]
 
 use core::num::NonZeroUsize;
 
@@ -168,7 +169,10 @@ fn a_tot_is_crc_checked_despite_being_short_form() {
 fn a_three_byte_section_is_measured_against_the_minimum_exactly() {
     let mut demux = demux_for(0x0070);
     let header_only_short = [0x70u8, 0x00, 0x00];
-    assert_eq!(demux.feed(&ts_packet(0x0070, &header_only_short)).count(), 1);
+    assert_eq!(
+        demux.feed(&ts_packet(0x0070, &header_only_short)).count(),
+        1
+    );
     assert_eq!(demux.stats().crc_failures, 0);
 
     let header_only_long = [0x42u8, 0x80, 0x00];

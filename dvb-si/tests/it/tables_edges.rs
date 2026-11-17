@@ -219,16 +219,37 @@ fn downloadable_font_info_rejects_entries_past_the_loop_end() {
 #[test]
 fn downloadable_font_info_accepts_entries_that_end_at_the_loop_end() {
     use dvb_si::tables::downloadable_font_info::{DownloadableFontInfoSection, FontInfo};
+    type Mapper = fn(&FontInfo<'_>) -> bool;
     let header = [0x12, 0x34, 0xF5, 0x07, 0x02];
-    let cases: &[(&[u8], fn(&FontInfo<'_>) -> bool)] = &[
+    let cases: &[(&[u8], Mapper)] = &[
         (&[0x01, 0x00, 0x00], |f| {
-            matches!(f, FontInfo::FileUri { format: 0, uri: b"", .. })
+            matches!(
+                f,
+                FontInfo::FileUri {
+                    format: 0,
+                    uri: b"",
+                    ..
+                }
+            )
         }),
         (&[0x01, 0x00, 0x01, b'a'], |f| {
-            matches!(f, FontInfo::FileUri { format: 0, uri: b"a", .. })
+            matches!(
+                f,
+                FontInfo::FileUri {
+                    format: 0,
+                    uri: b"a",
+                    ..
+                }
+            )
         }),
         (&[0x02, 0x01, 0x20, 0x00], |f| {
-            matches!(f, FontInfo::FontSize { size: 288, info: b"" })
+            matches!(
+                f,
+                FontInfo::FontSize {
+                    size: 288,
+                    info: b""
+                }
+            )
         }),
         (&[0x03, 0x00], |f| {
             matches!(
@@ -378,7 +399,10 @@ fn int_maximal_section_parses_and_re_serializes() {
     assert_eq!(parsed.processing_order, 7);
     assert_eq!(parsed.platform_descriptors.raw(), &[0x40, 0x02, 0xAA, 0xBB]);
     assert_eq!(parsed.loops.len(), 2);
-    assert_eq!(parsed.loops[0].target_descriptors.raw(), &[0x11, 0x22, 0x33]);
+    assert_eq!(
+        parsed.loops[0].target_descriptors.raw(),
+        &[0x11, 0x22, 0x33]
+    );
     assert_eq!(parsed.loops[0].operational_descriptors.raw(), &[0x44, 0x55]);
     assert_eq!(parsed.loops[1].target_descriptors.raw(), &[0x66]);
     assert_eq!(
@@ -709,7 +733,10 @@ fn int_action_type_labels_are_the_spec_tokens() {
         IntActionType::DvbReserved(0x7F).to_string(),
         "DVB Reserved(0x7F)"
     );
-    assert_eq!(IntActionType::from_u8(0x01), IntActionType::IpMacStreamLocation);
+    assert_eq!(
+        IntActionType::from_u8(0x01),
+        IntActionType::IpMacStreamLocation
+    );
     assert_eq!(IntActionType::from_u8(0x42).to_u8(), 0x42);
 }
 
