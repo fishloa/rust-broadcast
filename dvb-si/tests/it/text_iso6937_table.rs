@@ -1,9 +1,11 @@
 //! EN 300 468 Annex A Figure A.1 default-Latin (ISO/IEC 6937) combining row.
 //!
-//! The oracle is `fixtures/golden/text/iso6937_combining.tsv`: one row per
+//! The oracle is the private tier's `text/iso6937_combining.tsv`: one row per
 //! defined non-spacing prefix (0xC1..=0xCF) and printable base byte, with the
-//! expected Unicode code points computed from Unicode NFC per the topic's
-//! `PROVENANCE.md`, never from the table under test.
+//! expected Unicode code points computed from Unicode NFC (see that topic's
+//! `PROVENANCE.md`), never from the table under test. It is spec-derived, so it
+//! lives in the private repo; without that checkout the table test skips loudly
+//! and the literal-letter tests still run.
 
 use dvb_si::text::{decode_dvb_string, try_decode_dvb_string};
 
@@ -18,12 +20,34 @@ fn parse_code_points(field: &str) -> Vec<u32> {
         .collect()
 }
 
+/// The private oracle table, or `None` (after a loud notice) without the
+/// private checkout. A present checkout that lacks the table is a hard failure.
+fn oracle_table() -> Option<String> {
+    let Some(root) = test_fixtures::private_root() else {
+        eprintln!(
+            "SKIP every_combining_pair_matches_the_unicode_oracle: private fixtures absent \
+             (the `private` submodule is not checked out); \
+             `git submodule update --init private` (maintainers only)"
+        );
+        return None;
+    };
+    let path = root.join("fixtures/text/iso6937_combining.tsv");
+    assert!(
+        path.is_file(),
+        "private checkout present but {} is missing",
+        path.display()
+    );
+    Some(std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+}
+
 /// Every (prefix, base) pair of the figure's non-spacing row decodes exactly
 /// as the independent Unicode oracle says: a precomposed letter where ISO 6937
 /// defines one, otherwise the base letter followed by the combining mark.
 #[test]
 fn every_combining_pair_matches_the_unicode_oracle() {
-    let tsv = test_fixtures::read_to_string("golden/text/iso6937_combining.tsv");
+    let Some(tsv) = oracle_table() else {
+        return;
+    };
     let mut precomposed = 0usize;
     let mut fallback = 0usize;
     for line in tsv.lines().skip(1) {
