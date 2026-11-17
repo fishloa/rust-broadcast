@@ -83,7 +83,7 @@ def test_prepare_job_is_the_only_private_clone_and_needs_nothing():
 def test_every_consumer_job_needs_the_prepare_job():
     doc = _ci()
     consumers = [job for job, mode, _ in _consumers(doc) if mode == "use"]
-    assert sorted(consumers) == ["dvb-stream", "test", "test-no-default"], consumers
+    assert sorted(consumers) == ["dvb-stream", "oracles", "test", "test-no-default"], consumers
     for job in consumers:
         needs = doc["jobs"][job].get("needs")
         needs = [needs] if isinstance(needs, str) else list(needs or [])
