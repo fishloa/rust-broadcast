@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Changed
 - Test-only: the RFC 3550 §A.1 cycle counter increments on the wrapping packet only (never on a duplicate), `ExtendedSeqNo::forward_distance` across a cycle boundary, and the `RTP_SEQ_MOD_PLUS_ONE` `bad_seq` sentinel are pinned (audit 21 finding 13, #2908).
+- Test-only: a packet with three distinct CSRCs, a two-word extension and exact-fit padding is parsed field-for-field, so each compounded header offset (CSRC walk, extension prefix, padding split) is pinned by value (audit 21 finding 15, #2910).
 
 ## [0.8.0] - 2026-11-15
 ### Changed
