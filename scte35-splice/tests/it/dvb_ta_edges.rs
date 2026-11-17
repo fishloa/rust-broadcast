@@ -125,7 +125,7 @@ fn compact_insert() -> CompactSpliceInsert {
         cw_index: 0x22,
         pts_time: 0x1_0000_0001,
         splice_event_id: 0x0A0B_0C0D,
-        duration: 0x00FF_FFFF_FF,
+        duration: 0x00_FF_FF_FF_FF,
         unique_program_id: 0x1111,
         avail_num: 3,
         avails_expected: 4,

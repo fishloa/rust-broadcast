@@ -48,7 +48,7 @@ fn matrix_descriptor() -> SegmentationDescriptor<'static> {
             },
             SegmentationComponent {
                 component_tag: 0x22,
-                pts_offset: 0x00FE_DCBA_98,
+                pts_offset: 0x00_FE_DC_BA_98,
             },
         ],
         segmentation_duration: Some(0x01_0203_0405),
@@ -77,7 +77,7 @@ fn the_full_value_matrix_round_trips_byte_exactly() {
     assert_eq!(parsed.segmentation_event_id, 0x0102_0304);
     assert_eq!(parsed.segmentation_duration, Some(0x01_0203_0405));
     assert_eq!(parsed.components[0].pts_offset, 0x1_2345_6789);
-    assert_eq!(parsed.components[1].pts_offset, 0x00FE_DCBA_98);
+    assert_eq!(parsed.components[1].pts_offset, 0x00_FE_DC_BA_98);
     assert_eq!(parsed.segment_num, 2);
     assert_eq!(parsed.segments_expected, 5);
     assert_eq!(parsed.sub_segments.unwrap().pair(), (1, 3));

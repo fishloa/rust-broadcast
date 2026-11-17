@@ -39,7 +39,7 @@ fn section_with_tier(tier: u16) -> SpliceInfoSection<'static> {
     section
 }
 
-fn seal(bytes: &mut Vec<u8>) {
+fn seal(bytes: &mut [u8]) {
     let crc_pos = bytes.len() - 4;
     let crc = broadcast_common::crc32_mpeg2::compute(&bytes[..crc_pos]);
     bytes[crc_pos..].copy_from_slice(&crc.to_be_bytes());
