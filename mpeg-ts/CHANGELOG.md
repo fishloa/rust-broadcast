@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Tests
+- Regression tests for the audit-21 surviving mutants: `SectionReassembler`'s `pointer_field` tail that completes a section spanning into a PUSI packet, its `MAX_SECTION_SIZE` guards, `len`/`is_empty`, the discontinuity exemption from duplicate detection, and `extract_ts_payload`'s exact-fit payload start; `TsResync`'s three public resync helpers, its loss/`ResyncStats` accounting, the 204-byte stride and the truncated tail; `OwnedTsPacket`'s continuity-counter and OPCR rewrites plus its `false`/`None` accessor cases; `Section`'s `validate_crc` boundaries, `crc32()` and the `private_indicator`/high-length/high-extension serializer; every adaptation-field flag subset and its truncations; `SiMux::upsert_pmt` emission and `TS_BYTES_PER_DATAGRAM`; and the `name()`/`Display` labels plus `TsHeader`'s trait `Serialize` impl.
 
 ## [0.9.0] - 2026-11-15
 ### Changed
