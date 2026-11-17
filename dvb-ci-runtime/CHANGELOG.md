@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.21.1] - 2026-11-17
 ### Added
 - `MAX_CA_FRAME` is public (re-exported from `device`): the largest legal link-layer frame a `CaDevice` can deliver.
 - `Driver::notifications_dropped` reports how many of the oldest buffered notifications the new 1024-entry bound discarded.

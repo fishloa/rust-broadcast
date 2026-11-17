@@ -6,6 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.15.0] - 2026-11-17
 ### Fixed
 - Client: every segment, part, map, key and variant URI is resolved through `broadcast_common::url_ref::resolve_http`, so a reference to `file:`/`ftp:`/`data:` or any other non-web scheme is refused (as `UnresolvableReference`) instead of requested, and an `https` stream refuses an `http` key/map/segment URI rather than downgrading the fetch (audit 20 finding 42, #2853).
 - Client: Part/Segment bodies held until their init segment is ready are capped at `MAX_PENDING_DEMUX_BYTES` (64 MiB), dropping the oldest with `Error::PendingDemuxOverflow`, and `prune` drops them below the window. A playlist whose `EXT-X-MAP` never becomes ready while media keeps arriving can no longer grow the queue for the life of the pull (audit 20 finding 3, #2814).

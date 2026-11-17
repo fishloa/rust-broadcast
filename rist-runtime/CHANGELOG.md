@@ -4,6 +4,7 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-17
 ### Added
 - `arq::Receiver::feed_rtp(&RtpPacket, now)` processes a full RTP packet: a resynchronisation run beyond `max_gap` now confirms only when every packet carries the stream's own SSRC and the RTP timestamps advance by one consistent forward step, so three injected sequence numbers no longer redirect the receiver (#2841).
 

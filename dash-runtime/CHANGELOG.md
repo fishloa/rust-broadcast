@@ -3,6 +3,8 @@
 All notable changes to dash-runtime will be documented in this file.
 
 ## [Unreleased]
+
+## [0.6.0] - 2026-11-17
 ### Changed
 - Test-only: `MAX_BASE_CANDIDATES` has an over-limit test that fails if the cap is removed (audit 20 finding 52, #2863).
 

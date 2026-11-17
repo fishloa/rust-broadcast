@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [15.1.0] - 2026-11-17
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common, dvb-bbframe); no functional change.
+
 ## [15.0.0] - 2026-11-15
 ### Changed
 - BREAKING: the `chrono` feature is replaced by `jiff` (no alias): `T2TimestampPayload::emission_time_utc` returns and `set_emission_time_utc` takes `jiff::Timestamp` instead of `chrono::DateTime<Utc>`; `chrono` is no longer a dependency (#2635).

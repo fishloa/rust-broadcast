@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.32.1] - 2026-11-17
 ### Fixed
 - **Overlapping samples can no longer each copy the same bytes (quadratic memory).** `progressive_demux::sample_layout` bounded only `stsz.sample_count` against the file length, so `stco` entries all pointing at one region with a uniform `stsz` made `sample_count x sample_size` samples — `file_len^2` bytes from a `file_len` input — and every one of them copied those same bytes again. The expander now accumulates the resolved sample bytes and refuses a total past `frag_offsets::MAX_SAMPLE_BYTES_PER_INPUT_LENGTH` times the input length (samples that do not overlap can never total more) with the typed `Error::SampleDataBudgetExceeded { limit }`; the protected-progressive path of `CencDecryptor` expands through the same function and inherits the bound (audit 20 finding 6, #2817).
 - **The fMP4 sample-byte bound is per run, not per `moof`.** `Fmp4Demux` and `CencDecryptor` capped each fragment's sample total against the file length, so one large `mdat` followed by N tiny `moof`s that each name it in `tfhd.base_data_offset` passed every check and copied the whole payload N times (tens of GB from a few MB). Both now thread one never-refilled counter through the run (`frag_offsets::sample_ranges_in_run`) and refuse a fragment past `MAX_SAMPLE_BYTES_PER_INPUT_LENGTH` times the input length with `Error::SampleDataBudgetExceeded`; `Fmp4Demux` records such a fragment in `Media::degraded` and keeps the samples before it, while `CencDecryptor::demux` returns the error (audit 20 finding 13, #2824).

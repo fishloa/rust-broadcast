@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-17
 ### Added
 - `Config::hls_limits` (`broadcast_hls::limits::Limits`) is passed to the HLS engine, and a playlist the parser refuses for exceeding one is a permanent failure: it ends the session at once as `ErrorKind::PlaylistParse { reason: "too_large" }` instead of being fetched and re-parsed forever (audit 20 finding 41, #2852).
 - `UdpConfig::reorder_bytes` (default `DEFAULT_REORDER_BYTES`, 4 MiB) bounds the RTP reorder buffer in bytes next to `reorder_packets`. The sender chooses a payload's size, so the packet window alone let it hold `reorder_packets` payloads of 64 KiB; reaching the byte budget gives up on every held packet, counts the gaps lost and delivers the packet that would have overrun it. `UdpConfig::validate` rejects a zero budget as `ConfigField::UdpReorderBytes` (#2846).

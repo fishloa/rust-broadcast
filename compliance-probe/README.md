@@ -82,7 +82,7 @@ is clock-independent: the test asserts 876 at every rate from frozen to
 
 ```toml
 [dependencies]
-compliance-probe = "0.9"
+compliance-probe = "0.10"
 ```
 
 ## Quick start

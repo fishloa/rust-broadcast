@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-17
 ### Fixed
 - A listener no longer allocates handshake state for an INDUCTION: it answers statelessly from the SYN cookie, and a `PendingListener` is created only when a CONCLUSION proves the Caller received that answer and echoes a cookie this listener issued (under the current or previous key, across the current or previous one-minute bucket). A spoofed INDUCTION flood therefore holds no slots and locks no legitimate caller out, and no datagram path drives pending retransmits any more. The cookie is also bound to the Caller's own SRT Socket ID, so a captured CONCLUSION replayed with a rewritten ID does not validate (#2820).
 

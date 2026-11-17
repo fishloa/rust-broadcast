@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [15.1.0] - 2026-11-17
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common); no functional change.
+
 ## [15.0.0] - 2026-11-15
 
 ### Changed

@@ -1,6 +1,6 @@
 [package]
 name         = "dash-runtime"
-version      = "0.5.0"
+version      = "0.6.0"
 edition      = "2024"
 description  = "Sans-IO MPEG-DASH (ISO/IEC 23009-1): MPD model and parser, segment addressing, UTC clock and live-edge arithmetic, and a client for static and dynamic presentations. No I/O, no clock reads."
 license      = "MIT OR Apache-2.0"
@@ -17,10 +17,10 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "13.0.0", default-features = false, features = ["std", "jiff", "xml", "http-date", "lang", "url"] }
-broadcast-dash   = { path = "../broadcast-dash", version = "0.2.0" }
-transmux         = { path = "../transmux", version = "0.32.0", default-features = false, features = ["std"] }
-media-plane      = { path = "../media-plane", version = "0.12.0", default-features = false, features = ["std"] }
+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false, features = ["std", "jiff", "xml", "http-date", "lang", "url"] }
+broadcast-dash   = { path = "../broadcast-dash", version = "0.2.1" }
+transmux         = { path = "../transmux", version = "0.32.1", default-features = false, features = ["std"] }
+media-plane      = { path = "../media-plane", version = "0.13.0", default-features = false, features = ["std"] }
 http             = "1"
 headers          = { workspace = true }
 container-probe  = { path = "../container-probe", version = "0.5.0", default-features = false }
