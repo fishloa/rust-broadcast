@@ -14478,10 +14478,8 @@ pub(crate) mod tests {
             .to_vec();
         carried.resize(FRAME_LEN, 0x5A);
         carried[PLANT_AT..PLANT_AT + ADTS_HEADER_SIZE].copy_from_slice(&planted_header);
-        assert!(
-            PLANT_AT > CARRY,
-            "the planted header must be in the payload, not the carry"
-        );
+        // The planted header must sit in the payload, not in the carry.
+        const { assert!(PLANT_AT > CARRY) };
         let parsed = match AdtsSync::parse(&carried[PLANT_AT..]) {
             SyncParse::Frame(h, 17) => AudioSpecificConfig::from_adts_header(&h),
             _ => panic!("the planted header must parse as a 17-byte frame"),
