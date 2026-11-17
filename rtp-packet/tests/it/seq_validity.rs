@@ -1,7 +1,9 @@
 //! RFC 3550 §A.1 sequence-validity cycle accounting and the extended
 //! sequence-number distance that feeds RTCP loss reporting (§6.4.1).
 
-use rtp_packet::{ExtendedSeqNo, SeqNo, RTP_SEQ_MOD, RTP_SEQ_MOD_PLUS_ONE, SeqValidity, SeqVerdict};
+use rtp_packet::{
+    ExtendedSeqNo, RTP_SEQ_MOD, RTP_SEQ_MOD_PLUS_ONE, SeqNo, SeqValidity, SeqVerdict,
+};
 
 fn probation_complete_at(v: &mut SeqValidity, first: u16) {
     v.new_source(first);
@@ -20,16 +22,10 @@ fn the_cycle_counter_increments_only_on_the_wrapping_packet() {
     probation_complete_at(&mut v, 65532);
     assert_eq!(v.max_seq, 65533);
 
-    assert_eq!(
-        v.update_seq(65534),
-        SeqVerdict::Valid { restarted: false }
-    );
+    assert_eq!(v.update_seq(65534), SeqVerdict::Valid { restarted: false });
     assert_eq!(v.cycles, 0, "an in-order packet must not add a cycle");
 
-    assert_eq!(
-        v.update_seq(65535),
-        SeqVerdict::Valid { restarted: false }
-    );
+    assert_eq!(v.update_seq(65535), SeqVerdict::Valid { restarted: false });
     assert_eq!(v.cycles, 0, "an in-order packet must not add a cycle");
 
     assert_eq!(v.update_seq(0), SeqVerdict::Valid { restarted: false });
@@ -66,7 +62,13 @@ fn extended_forward_distance_across_a_cycle_boundary() {
     let ext = ExtendedSeqNo::from(0x0001_0005);
     assert_eq!(ext.forward_distance(SeqNo::new(0xFFFE)), 7);
     assert_eq!(ext.forward_distance(SeqNo::new(0x0005)), 0);
-    assert_eq!(ExtendedSeqNo::from(0x0001_0000).forward_distance(SeqNo::new(0xFFFF)), 1);
-    assert_eq!(ExtendedSeqNo::from(0x0002_0003).forward_distance(SeqNo::new(0xFFFD)), 6);
+    assert_eq!(
+        ExtendedSeqNo::from(0x0001_0000).forward_distance(SeqNo::new(0xFFFF)),
+        1
+    );
+    assert_eq!(
+        ExtendedSeqNo::from(0x0002_0003).forward_distance(SeqNo::new(0xFFFD)),
+        6
+    );
     assert_eq!(ExtendedSeqNo::from(0x0002_0003).get(), 0x0002_0003);
 }

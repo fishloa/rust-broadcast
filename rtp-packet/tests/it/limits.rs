@@ -11,8 +11,8 @@ use rtp_packet::rtcp::{
     RtcpPadding, SdesChunk, SdesItem, SdesItemType, SenderReport, SourceDescription,
 };
 use rtp_packet::{
-    Error, ExtendedSeqNo, HeaderExtension, RtpPacket, SeqNo, Ssrc, MAX_CSRC_COUNT,
-    MAX_PADDING_COUNT, MAX_PAYLOAD_TYPE,
+    Error, ExtendedSeqNo, HeaderExtension, MAX_CSRC_COUNT, MAX_PADDING_COUNT, MAX_PAYLOAD_TYPE,
+    RtpPacket, SeqNo, Ssrc,
 };
 
 fn empty_packet() -> RtpPacket<'static> {
@@ -343,10 +343,7 @@ fn app_subtype_maximum_round_trips_and_one_more_is_rejected() {
     assert_eq!(&out[12..20], &[1, 2, 3, 4, 5, 6, 7, 8]);
     assert_eq!(App::parse(&out).unwrap(), app);
 
-    let too_high = App {
-        subtype: 32,
-        ..app
-    };
+    let too_high = App { subtype: 32, ..app };
     let mut out = vec![0u8; too_high.serialized_len()];
     assert_eq!(
         too_high.serialize_into(&mut out),
@@ -490,7 +487,9 @@ fn truncated_rtcp_bodies_report_the_exact_needed_bytes() {
     );
 
     // SDES chunk ending right after a non-terminator item type byte.
-    let sdes = [0x81, 0xCA, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, b'a', 0x01];
+    let sdes = [
+        0x81, 0xCA, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x01, b'a', 0x01,
+    ];
     assert_eq!(
         SourceDescription::parse(&sdes),
         Err(RtcpError::BufferTooShort(

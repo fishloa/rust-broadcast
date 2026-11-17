@@ -3,12 +3,12 @@
 //! raw/typed iterator paths (ANSI/SCTE 35 2023r1 §10.1-§10.3).
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::Error;
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::descriptors::{
     AudioComponent, AudioDescriptor, AvailDescriptor, DtmfDescriptor, TimeDescriptor,
 };
 use scte35_splice::time::duration_to_ticks;
-use scte35_splice::Error;
 
 const CUEI: u32 = 0x4355_4549;
 
@@ -46,7 +46,10 @@ fn dtmf_descriptor_holds_the_maximum_seven_characters() {
     assert_eq!(bytes, expected);
     let parsed = DtmfDescriptor::parse(&expected).unwrap();
     assert_eq!(parsed, descriptor);
-    assert_eq!(parsed.preroll_duration(), core::time::Duration::from_secs(4));
+    assert_eq!(
+        parsed.preroll_duration(),
+        core::time::Duration::from_secs(4)
+    );
 
     let too_many = DtmfDescriptor {
         dtmf_chars: b"12345678".to_vec(),

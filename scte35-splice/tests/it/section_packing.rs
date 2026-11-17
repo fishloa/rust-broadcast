@@ -4,10 +4,10 @@
 //! (ANSI/SCTE 35 2023r1 §9.6.1, Table 5).
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::Error;
 use scte35_splice::commands::{AnyCommand, PrivateCommand};
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::section::{SpliceInfoSection, TIER_IGNORE};
-use scte35_splice::Error;
 
 const COMMAND_BODY_BYTES: usize = 300;
 const DESCRIPTOR_LOOP_BYTES: usize = 300;

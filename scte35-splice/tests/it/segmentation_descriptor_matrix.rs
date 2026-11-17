@@ -3,17 +3,15 @@
 //! the optional sections' truncation boundaries, and the MID() walker.
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::Error;
 use scte35_splice::descriptors::segmentation::{
     DeliveryRestrictions, MidUpid, SegmentationComponent, SegmentationDescriptor, SubSegments,
 };
 use scte35_splice::descriptors::segmentation_enums::{
     DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,
 };
-use scte35_splice::Error;
 
-const MID_UPID: [u8; 10] = [
-    0x03, 0x04, 0x11, 0x22, 0x33, 0x44, 0x09, 0x02, 0xAA, 0xBB,
-];
+const MID_UPID: [u8; 10] = [0x03, 0x04, 0x11, 0x22, 0x33, 0x44, 0x09, 0x02, 0xAA, 0xBB];
 
 /// `02 2D` tag/length, "CUEI", then the layout of Table 20 hand-assembled
 /// from the spec: event id 0x01020304, compliance, no delivery restrictions,
@@ -184,7 +182,10 @@ fn delivery_restriction_flags_come_from_their_own_bits() {
     let bytes = descriptor.try_to_bytes().unwrap();
     assert_eq!(bytes[11], 0x80);
     let parsed = SegmentationDescriptor::parse(&bytes).unwrap();
-    assert_eq!(parsed.delivery_restrictions, descriptor.delivery_restrictions);
+    assert_eq!(
+        parsed.delivery_restrictions,
+        descriptor.delivery_restrictions
+    );
     assert_eq!(parsed.segmentation_duration, None);
     assert!(parsed.program_segmentation_flag);
 }
@@ -276,7 +277,6 @@ fn the_descriptor_length_field_accepts_exactly_255() {
         }))
     );
 }
-
 
 fn truncated_to(bytes: &[u8], len: usize) -> Vec<u8> {
     let mut out = bytes[..len].to_vec();

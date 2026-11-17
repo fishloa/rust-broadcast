@@ -3,14 +3,14 @@
 //! `descriptor_length` gate, and every truncation boundary.
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::Error;
+use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, SpliceNull};
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::dvb_ta::{
     CompactDas, CompactSpliceInsert, CompactTimeSignal, DasNibbleOrder, DvbDasDescriptor,
     EquivalentSegmentationType, PrivateData, Scte35Carriage, StreamEventPayload, TimelineType,
 };
-use scte35_splice::Error;
-use scte35_splice::SpliceInfoSection;
 
 fn time_signal() -> CompactTimeSignal {
     CompactTimeSignal {
@@ -191,13 +191,11 @@ fn compact_splice_insert_rejects_a_das_length_below_three() {
     bytes[19] = 2;
     assert_eq!(
         CompactSpliceInsert::parse(&bytes),
-        Err(Error::InvalidValue(
-            broadcast_common::error::InvalidValue {
-                field: "compact_splice_insert.descriptor_length",
-                value: 2,
-                reason: "DAS body length must be at least 3 (break_num, breaks_expected, type)",
-            }
-        ))
+        Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "compact_splice_insert.descriptor_length",
+            value: 2,
+            reason: "DAS body length must be at least 3 (break_num, breaks_expected, type)",
+        }))
     );
 }
 
@@ -459,7 +457,10 @@ fn a_private_data_block_ending_exactly_at_the_buffer_needs_the_carriage() {
         "the private block ends exactly at the buffer; the carriage byte is missing"
     );
     exact.push(0x00);
-    assert!(StreamEventPayload::parse(&exact).is_ok(), "empty carousel name");
+    assert!(
+        StreamEventPayload::parse(&exact).is_ok(),
+        "empty carousel name"
+    );
 }
 
 #[test]

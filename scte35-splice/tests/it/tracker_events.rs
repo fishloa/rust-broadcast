@@ -3,10 +3,10 @@
 //! `NoCue`/`SpliceSanity` labels (ANSI/SCTE 35 §9.7.3, §9.8.2).
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::{AnyCommand, ProgramSplice, SpliceInsert, SpliceMode};
 use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use scte35_splice::tracker::{MAX_OPEN_EVENTS, NoCue, SpliceSanity, SpliceTracker};
-use scte35_splice::SpliceInfoSection;
 
 fn insert_section(event_id: u32, avail_num: u8) -> Vec<u8> {
     let insert = SpliceInsert {
@@ -16,10 +16,8 @@ fn insert_section(event_id: u32, avail_num: u8) -> Vec<u8> {
         avail_num,
         ..Default::default()
     };
-    let section = SpliceInfoSection::new_clear(
-        AnyCommand::from(insert),
-        SpliceDescriptorLoop::new(&[]),
-    );
+    let section =
+        SpliceInfoSection::new_clear(AnyCommand::from(insert), SpliceDescriptorLoop::new(&[]));
     section.try_to_bytes().unwrap()
 }
 
@@ -82,16 +80,10 @@ fn no_cue_and_sanity_labels_are_the_monitor_tokens() {
         error: scte35_splice::Error::UnexpectedTableId { table_id: 0 },
     };
     assert_eq!(malformed.name(), "malformed");
-    assert_eq!(
-        std::format!("{}", NoCue::NotACue),
-        "not_a_cue"
-    );
+    assert_eq!(std::format!("{}", NoCue::NotACue), "not_a_cue");
 
     assert_eq!(SpliceSanity::Encrypted.name(), "encrypted");
     assert_eq!(SpliceSanity::Cancelled.name(), "cancelled");
     assert_eq!(SpliceSanity::NotSpliceInsert.name(), "not_splice_insert");
-    assert_eq!(
-        std::format!("{}", SpliceSanity::Cancelled),
-        "cancelled"
-    );
+    assert_eq!(std::format!("{}", SpliceSanity::Cancelled), "cancelled");
 }

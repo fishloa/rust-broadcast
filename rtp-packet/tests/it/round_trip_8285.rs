@@ -334,7 +334,9 @@ fn one_byte_elements_keep_their_length_nibbles_across_fourteen_elements() {
     assert_eq!(ids, (1..=14).collect::<Vec<u8>>());
     assert_eq!(
         lens,
-        (0..14).map(|i| if i % 2 == 0 { 1 } else { 16 }).collect::<Vec<_>>()
+        (0..14)
+            .map(|i| if i % 2 == 0 { 1 } else { 16 })
+            .collect::<Vec<_>>()
     );
 }
 

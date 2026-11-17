@@ -3,12 +3,12 @@
 //! empty commands' parse behaviour.
 
 use broadcast_common::{Parse, Serialize};
+use scte35_splice::Error;
 use scte35_splice::commands::{
-    BandwidthReservation, SpliceInsert, SpliceMode, SpliceNull, SpliceSchedule, SpliceScheduleComponent,
-    SpliceScheduleEvent,
+    BandwidthReservation, SpliceInsert, SpliceMode, SpliceNull, SpliceSchedule,
+    SpliceScheduleComponent, SpliceScheduleEvent,
 };
 use scte35_splice::time::{BreakDuration, SpliceTime};
-use scte35_splice::Error;
 
 fn break_duration() -> BreakDuration {
     BreakDuration {
@@ -104,10 +104,7 @@ fn splice_schedule_events_advance_the_cursor_per_event() {
     assert!(parsed.events[2].event_id_compliance_flag);
     assert_eq!(parsed.events[2].components.len(), 2);
     assert_eq!(parsed.events[2].components[1].component_tag, 0x22);
-    assert_eq!(
-        parsed.events[2].components[1].utc_splice_time,
-        0xAABB_CCDD
-    );
+    assert_eq!(parsed.events[2].components[1].utc_splice_time, 0xAABB_CCDD);
     assert_eq!(parsed.events[2].avail_num, 5);
     assert_eq!(parsed.events[2].avails_expected, 6);
 }

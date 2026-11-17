@@ -2,12 +2,13 @@
 //! (the workspace #204 convention): every token is asserted literally, so a
 //! label cannot silently become empty or a placeholder.
 
-use scte35_splice::commands::{ProgramSplice, SpliceMode, SpliceInsertComponent};
+use scte35_splice::commands::{ProgramSplice, SpliceInsertComponent, SpliceMode};
 use scte35_splice::descriptors::segmentation_enums::{
     DeviceRestrictions, SegmentationTypeId, SegmentationUpidType,
 };
 use scte35_splice::dvb_ta::{
-    DasNibbleOrder, EquivalentSegmentationType, PlacementOpportunity, ProfileViolation, TimelineType,
+    DasNibbleOrder, EquivalentSegmentationType, PlacementOpportunity, ProfileViolation,
+    TimelineType,
 };
 use scte35_splice::time::SpliceTime;
 
@@ -48,9 +49,18 @@ fn splice_mode_labels_are_the_table_10_tokens() {
 #[test]
 fn device_restriction_labels_are_the_table_21_tokens() {
     let cases = [
-        (DeviceRestrictions::RestrictGroup0, "restricted for device group 0"),
-        (DeviceRestrictions::RestrictGroup1, "restricted for device group 1"),
-        (DeviceRestrictions::RestrictGroup2, "restricted for device group 2"),
+        (
+            DeviceRestrictions::RestrictGroup0,
+            "restricted for device group 0",
+        ),
+        (
+            DeviceRestrictions::RestrictGroup1,
+            "restricted for device group 1",
+        ),
+        (
+            DeviceRestrictions::RestrictGroup2,
+            "restricted for device group 2",
+        ),
         (DeviceRestrictions::None, "no device restrictions"),
     ];
     for (value, label) in cases {
@@ -77,10 +87,7 @@ fn every_known_segmentation_type_id_has_its_table_23_label() {
         SegmentationTypeId::from_u8(0x34).name(),
         "Provider Placement Opportunity Start"
     );
-    assert_eq!(
-        SegmentationTypeId::from_u8(0x00).name(),
-        "Not Indicated"
-    );
+    assert_eq!(SegmentationTypeId::from_u8(0x00).name(), "Not Indicated");
     assert_eq!(SegmentationTypeId::from_u8(0x10).name(), "Program Start");
     assert_eq!(SegmentationTypeId::from_u8(0x11).name(), "Program End");
     assert_eq!(
@@ -209,5 +216,8 @@ fn dvb_ta_enum_labels_are_their_spec_tokens() {
         std::format!("{}", TimelineType::Reserved(0x0E)),
         "reserved(0x0E)"
     );
-    assert_eq!(std::format!("{}", TimelineType::VideoPts), "PTS references video PTS");
+    assert_eq!(
+        std::format!("{}", TimelineType::VideoPts),
+        "PTS references video PTS"
+    );
 }

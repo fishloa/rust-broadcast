@@ -150,10 +150,7 @@ fn every_general_full_content_shape_is_labelled_with_its_spec_token() {
 #[test]
 fn header_labels_are_the_spec_tokens() {
     let general_high = round_trip(&[0xFF, 0xF0, 0x19, 0x12, 0x34, 0xAB, 0xAB, 0x66]);
-    assert_eq!(
-        general_high.header.name(),
-        "general high-rate audio coding"
-    );
+    assert_eq!(general_high.header.name(), "general high-rate audio coding");
     assert_eq!(
         std::format!("{}", general_high.header),
         "general high-rate audio coding"
@@ -161,16 +158,10 @@ fn header_labels_are_the_spec_tokens() {
 
     let lossless = round_trip(&[0xFF, 0xF1, 0x23, 0x12, 0x34, 0x56]);
     assert_eq!(lossless.header.name(), "lossless audio coding");
-    assert_eq!(
-        std::format!("{}", lossless.header),
-        "lossless audio coding"
-    );
+    assert_eq!(std::format!("{}", lossless.header), "lossless audio coding");
 
     let general_full = round_trip(&[0xFF, 0xF2, 0x12, 0x4B, 0x40, 0x75, 0xB0, 0xC0]);
-    assert_eq!(
-        general_full.header.name(),
-        "general full-rate audio coding"
-    );
+    assert_eq!(general_full.header.name(), "general full-rate audio coding");
     assert_eq!(
         std::format!("{}", general_full.header),
         "general full-rate audio coding"
@@ -190,7 +181,6 @@ fn codec_nn_id_packs_the_two_bytes() {
     assert_eq!(CodecNnId::from_u16(0xABCD).audio_codec_id, 0xAB);
     assert_eq!(CodecNnId::from_u16(0xABCD).nn_type, 0xCD);
 }
-
 
 #[test]
 fn objects_only_header_with_nonzero_alignment_round_trips() {
