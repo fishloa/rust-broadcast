@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Command Messages are capped at `server::MAX_COMMAND_LEN` (64 KiB) before AMF0 parsing, and AMF0 decoding counts every value in the sequence against `amf0::MAX_AMF0_VALUES` (4096), so an 8 MiB pre-authentication body of one-byte nulls or three-byte empty-key pairs can no longer expand into millions of values and strings. Both limits report the new typed `RtmpError::CommandTooLong` / `RtmpError::Amf0TooManyValues` (#2813).
+
 ## [0.11.0] - 2026-11-15
 ### Changed
 - BREAKING: the wire identities are typed instead of bare integers (new module `ids`): `chunk::BasicHeader::chunk_stream_id`, `chunk::Message::chunk_stream_id` and `ProtocolControl::Abort`'s field are `ChunkStreamId` (2..=65599, `basic_header_encodable()`); `chunk::Message::message_stream_id` and `chunk::MessageHeader::Type0`'s field are `MessageStreamId`; `chunk::Message::timestamp` and `Type0`/`Type1`/`Type2`'s timestamp fields are `Timestamp` (a span carried as whole milliseconds) and their deltas are `core::time::Duration`; `ProtocolControl::Acknowledgement` wraps `SequenceNumber`; `chunk::ChunkAssembler::abort` takes a `ChunkStreamId`; `message::CONTROL_CHUNK_STREAM_ID`/`CONTROL_MESSAGE_STREAM_ID` are the typed constants. A chunk stream id can no longer be passed where a message stream id belongs. Wire bytes are unchanged. Migration: `Message { chunk_stream_id: 4, timestamp: 0, .. }` -> `Message { chunk_stream_id: ChunkStreamId::new(4), timestamp: Timestamp::ZERO, .. }`, `msg.timestamp` -> `msg.timestamp.millis()` where a raw count is wanted, `abort(4)` -> `abort(ChunkStreamId::new(4))` (#2768).

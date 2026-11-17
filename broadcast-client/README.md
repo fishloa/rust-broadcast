@@ -41,10 +41,10 @@ binds `host:port` (with `socket2`: `set_reuse_address`, `set_recv_buffer_size`, 
 forms for a `Some(MulticastJoin { interface, source })`), and reports the bind with `Session::on_connected(conn)` (or a failure with
 `on_closed(conn, Some(error), now_us)`). Every datagram it then receives goes to `Session::on_data(conn, datagram, now_us)`, one call
 per datagram. `Config::udp` carries the interface, the source-specific multicast source (RFC 4607), `SO_RCVBUF` and, for RTP, the
-reorder window (`reorder_packets`, `reorder_wait_us`).
+reorder window (`reorder_packets`, `reorder_bytes`, `reorder_wait`).
 
 A plain UDP datagram must be a whole number of 188-byte packets that each start with the sync byte; anything else is dropped and counted.
-RTP packets are put back in sequence order inside the window; a packet that does not arrive within `reorder_wait_us` (or a jump beyond the
+RTP packets are put back in sequence order inside the window; a packet that does not arrive within `reorder_wait` (or a jump beyond the
 window) is counted lost, duplicates and late packets are dropped, and a new SSRC or a backward jump beyond the window restarts the sequence
 space with `Event::Discontinuity`. `Session::datagram_stats()` reads the counters. Silence is handled exactly as for TS-over-HTTP
 (`Config::ts_http`): start timeout, `Starved`, `Status::Stalled`, rebind (a new `UdpBind` after `Close`) and backoff.

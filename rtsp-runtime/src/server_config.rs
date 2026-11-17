@@ -5,6 +5,7 @@
 use broadcast_common::timeouts::Timeouts;
 
 use crate::config::SessionIdSource;
+use crate::error::Result;
 
 /// The `Server` header a server session answers with when its config names
 /// none.
@@ -41,10 +42,14 @@ impl RtspServerConfig {
     }
 
     /// Replace [`RtspServerConfig::server_header`].
-    #[must_use]
-    pub fn with_server_header(mut self, server_header: impl Into<String>) -> Self {
-        self.server_header = server_header.into();
-        self
+    ///
+    /// # Errors
+    /// [`Error::HeaderSerialize`](crate::Error::HeaderSerialize) when
+    /// `server_header` holds a control character, which would inject a header
+    /// (or end the header block) on the wire.
+    pub fn with_server_header(mut self, server_header: impl Into<String>) -> Result<Self> {
+        self.server_header = crate::error::header_value(&server_header.into(), "Server")?;
+        Ok(self)
     }
 
     /// Answer `DESCRIBE` with `sdp`.
@@ -87,5 +92,28 @@ impl Default for RtspServerConfig {
             session_timeout: None,
             timeouts: Timeouts::default(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2859: the `Server` header value was written raw, so a CR/LF in config
+    /// forged the rest of the response's header block.
+    #[test]
+    fn a_server_header_with_a_control_character_is_rejected() {
+        let err = RtspServerConfig::default()
+            .with_server_header("rtsp\r\nX-Injected: 1")
+            .expect_err("a control character must be rejected");
+        assert!(
+            matches!(err, crate::Error::HeaderSerialize(_)),
+            "got {err:?}"
+        );
+        assert!(
+            RtspServerConfig::default()
+                .with_server_header("cam/1.0")
+                .is_ok()
+        );
     }
 }
