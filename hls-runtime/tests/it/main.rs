@@ -8,6 +8,7 @@ mod client_state;
 mod closed_captions;
 #[path = "support/dummy_avc_config.rs"]
 mod dummy_avc_config;
+mod engine_limits;
 mod frame_rate;
 mod golden_client;
 #[cfg(feature = "std")]

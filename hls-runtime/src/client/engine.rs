@@ -3892,4 +3892,256 @@ mod tests {
             assert_eq!(program_date_ms(bad), None, "{bad:?}");
         }
     }
+
+    // Audit 21 finding 54 (#2949): the largest legal resource body is
+    // accepted; one byte more is refused with the observed length and the id
+    // is requestable again.
+    #[test]
+    fn resource_body_cap_boundary_is_inclusive() {
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = 400;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(map_playlist(0, 1).as_bytes())
+            .expect("playlist parses");
+        let id = ResourceId::Segment {
+            msn: broadcast_hls::MediaSequence::new(0),
+        };
+        client
+            .on_resource(id, &media_fragment_of_len(400))
+            .expect("a body of exactly max_segment_bytes is accepted");
+        assert_eq!(client.pending_demux.len(), 1);
+
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = 400;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(map_playlist(0, 1).as_bytes())
+            .expect("playlist parses");
+        let err = client
+            .on_resource(id, &media_fragment_of_len(401))
+            .expect_err("one byte over the cap is refused");
+        assert!(
+            matches!(err, Error::ResourceTooLarge { id: refused, len: 401, max: 400 } if refused == id),
+            "{err:?}"
+        );
+        assert_eq!(
+            client.pending_demux.len(),
+            0,
+            "an over-size body is not held"
+        );
+        assert!(
+            client.retry_resource(id),
+            "a refused resource must be fetchable again"
+        );
+        assert!(client.requested.contains(&id));
+    }
+
+    // ...and the ciphertext holding queue treats the cap as a total budget:
+    // exact fit holds, one byte over drops the OLDEST with a typed error, and
+    // a single body over the cap is refused outright.
+    #[test]
+    fn pending_keyed_cap_boundary_and_oldest_drop() {
+        let id = |msn: u64| ResourceId::Segment {
+            msn: broadcast_hls::MediaSequence::new(msn),
+        };
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = MAX_PENDING_KEYED_BYTES + 1;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(keyed_playlist(0, 3, "key.bin").as_bytes())
+            .expect("playlist parses");
+        client
+            .on_resource(id(0), &vec![7u8; MAX_PENDING_KEYED_BYTES])
+            .expect("a body of exactly the cap is held");
+        assert_eq!(pending_keyed_bytes(&client), MAX_PENDING_KEYED_BYTES);
+        let err = client
+            .on_resource(id(1), &[7u8; 1])
+            .expect_err("one byte over the cap drops the oldest");
+        assert!(
+            matches!(err, Error::PendingKeyedOverflow { dropped } if dropped == id(0)),
+            "{err:?}"
+        );
+        assert_eq!(
+            client
+                .pending_keyed
+                .iter()
+                .map(|(i, _)| *i)
+                .collect::<Vec<_>>(),
+            vec![id(1)]
+        );
+        let err = client
+            .on_resource(id(2), &vec![7u8; MAX_PENDING_KEYED_BYTES + 1])
+            .expect_err("a single body over the cap is refused");
+        assert!(
+            matches!(err, Error::PendingKeyedOverflow { dropped } if dropped == id(2)),
+            "{err:?}"
+        );
+
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = MAX_PENDING_KEYED_BYTES + 1;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(keyed_playlist(0, 3, "key.bin").as_bytes())
+            .expect("playlist parses");
+        client
+            .on_resource(id(0), &vec![7u8; MAX_PENDING_KEYED_BYTES / 2])
+            .expect("first half");
+        client
+            .on_resource(id(1), &vec![7u8; MAX_PENDING_KEYED_BYTES / 2])
+            .expect("an exact fit of two halves is held");
+        assert_eq!(client.pending_keyed.len(), 2);
+        let err = client
+            .on_resource(id(2), &vec![7u8; MAX_PENDING_KEYED_BYTES / 2 + 1])
+            .expect_err("one byte over an exact fit drops the oldest");
+        assert!(
+            matches!(err, Error::PendingKeyedOverflow { dropped } if dropped == id(0)),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn pending_demux_cap_boundary_and_oldest_drop() {
+        let id = |msn: u64| ResourceId::Segment {
+            msn: broadcast_hls::MediaSequence::new(msn),
+        };
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = MAX_PENDING_DEMUX_BYTES + 1;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(map_playlist(0, 3).as_bytes())
+            .expect("playlist parses");
+        client
+            .on_resource(id(0), &media_fragment_of_len(MAX_PENDING_DEMUX_BYTES))
+            .expect("a body of exactly the cap is held");
+        assert_eq!(pending_demux_bytes(&client), MAX_PENDING_DEMUX_BYTES);
+        let err = client
+            .on_resource(id(1), &media_fragment_of_len(EMPTY_FRAGMENT.len() + 1))
+            .expect_err("one byte over the cap drops the oldest");
+        assert!(
+            matches!(err, Error::PendingDemuxOverflow { dropped } if dropped == id(0)),
+            "{err:?}"
+        );
+        assert_eq!(
+            client
+                .pending_demux
+                .iter()
+                .map(|(i, _)| *i)
+                .collect::<Vec<_>>(),
+            vec![id(1)]
+        );
+        let err = client
+            .on_resource(id(2), &media_fragment_of_len(MAX_PENDING_DEMUX_BYTES + 1))
+            .expect_err("a single body over the cap is refused");
+        assert!(
+            matches!(err, Error::PendingDemuxOverflow { dropped } if dropped == id(2)),
+            "{err:?}"
+        );
+
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = MAX_PENDING_DEMUX_BYTES + 1;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(map_playlist(0, 3).as_bytes())
+            .expect("playlist parses");
+        client
+            .on_resource(id(0), &media_fragment_of_len(MAX_PENDING_DEMUX_BYTES / 2))
+            .expect("first half");
+        client
+            .on_resource(id(1), &media_fragment_of_len(MAX_PENDING_DEMUX_BYTES / 2))
+            .expect("an exact fit of two halves is held");
+        assert_eq!(client.pending_demux.len(), 2);
+    }
+
+    // Audit 21 finding 54 (#2949): the init-slot bound evicts the oldest
+    // UNREFERENCED slot, never the newest and never one a live segment is
+    // bound to; when every slot is referenced it falls back to the oldest
+    // non-newest one, and a surviving init_target is untouched.
+    #[test]
+    fn prune_inits_prefers_unreferenced_victims_and_keeps_referenced_ones() {
+        let msn = broadcast_hls::MediaSequence::new;
+
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        for slot in [0, 1, 2] {
+            insert_init_slot(&mut client, slot, InitFetch::Wanted);
+            client.msn_init.insert(msn(u64::from(slot)), slot);
+        }
+        for slot in 3..=65 {
+            insert_init_slot(&mut client, slot, InitFetch::Ready);
+        }
+        client.prune_inits();
+        assert_eq!(client.inits.len(), MAX_INIT_SLOTS);
+        assert!(client.inits.contains_key(&65), "the newest slot survives");
+        for slot in [0, 1, 2] {
+            assert!(
+                client.inits.contains_key(&slot),
+                "slot {slot} is bound to a live segment"
+            );
+        }
+        assert!(
+            !client.inits.contains_key(&3),
+            "the oldest unreferenced slot is the victim"
+        );
+        assert!(!client.inits.contains_key(&4));
+        assert!(client.inits.contains_key(&5));
+
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        for slot in 0..70u32 {
+            insert_init_slot(&mut client, slot, InitFetch::Wanted);
+            client.msn_init.insert(msn(u64::from(slot)), slot);
+        }
+        client.init_target = Some(69);
+        client.prune_inits();
+        assert_eq!(client.inits.len(), MAX_INIT_SLOTS);
+        assert!(client.inits.contains_key(&69), "the newest slot survives");
+        assert!(
+            !client.inits.contains_key(&0) && !client.inits.contains_key(&1),
+            "with every slot referenced the oldest non-newest ones are evicted"
+        );
+        assert!(
+            client
+                .msn_init
+                .values()
+                .all(|id| client.inits.contains_key(id)),
+            "no segment may stay bound to an evicted slot"
+        );
+        assert_eq!(
+            client.init_target,
+            Some(69),
+            "an evicted slot was not the init_target"
+        );
+    }
+
+    // Audit 21 finding 54 (#2949): the outstanding-fetch counter counts
+    // REQUESTS, so the end-of-stream gate can never see a false zero.
+    #[test]
+    fn outstanding_fetch_counter_counts_requests() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(map_playlist(0, 2).as_bytes())
+            .expect("playlist parses");
+        assert_eq!(
+            client.outstanding_fetches, 3,
+            "one init and two segment requests"
+        );
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                EMPTY_FRAGMENT,
+            )
+            .expect("held pending the init");
+        assert_eq!(client.outstanding_fetches, 2);
+
+        let mut keyed = HlsClient::new(config("http://example.com/p.m3u8"));
+        keyed
+            .on_playlist(keyed_playlist(0, 1, "key.bin").as_bytes())
+            .expect("playlist parses");
+        assert_eq!(
+            keyed.outstanding_fetches, 2,
+            "one key and one segment request"
+        );
+    }
+
 }

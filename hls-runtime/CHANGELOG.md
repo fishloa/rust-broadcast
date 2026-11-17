@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Test-only: the resource-body, keyed-ciphertext and init-buffering caps are pinned at their inclusive edge (a body of exactly the cap is accepted, one byte more dropped with the observed id), the oldest-not-newest drop order and the init-slot eviction preference are asserted, and the outstanding-fetch counter is checked against the requests it counted (audit 21 finding 54, #2949).
 ## [0.15.0] - 2026-11-17
 ### Added
 - `client::Error::PlaylistTooLarge`: a playlist over a `broadcast_hls::limits::Limits` bound is a distinct, non-retryable error rather than a generic `PlaylistParse`, so a caller never re-fetches the same over-limit response (audit 20 finding 41, #2852).
