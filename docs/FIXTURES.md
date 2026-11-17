@@ -26,6 +26,7 @@ The only directories permitted directly under either tier (the guard
 | `dash` | MPDs and DASH segment sets |
 | `smooth` | Smooth Streaming manifests and fragments |
 | `si` | DVB/ATSC service information sections, tables, descriptors |
+| `text` | Broadcast text code tables and expected-string oracles (e.g. EN 300 468 Annex A / ISO 6937) |
 | `scte35` | SCTE 35 splice data and SCTE 214 carriage |
 | `simulcrypt` | DVB SimulCrypt messages |
 | `mabr` | DVB multicast ABR configuration |
