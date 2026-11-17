@@ -1,3 +1,4 @@
+mod backoff_jitter;
 mod bcp47_language;
 mod crc32_mpeg2;
 mod hex_parity;
