@@ -875,3 +875,263 @@ fn strip_set_data_frame(payload: &[u8]) -> &[u8] {
     };
     payload.strip_prefix(name.as_slice()).unwrap_or(payload)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ids::{ChunkStreamId, MessageStreamId, Timestamp};
+
+    fn header(tag_type: TagType, timestamp: u32, data_size: u32) -> FlvTagHeader {
+        FlvTagHeader {
+            tag_type,
+            data_size,
+            timestamp,
+            stream_id: 0,
+        }
+    }
+
+    fn tag(tag_type: TagType, timestamp: u32, body: &[u8]) -> Vec<u8> {
+        let header = header(
+            tag_type,
+            timestamp,
+            u32::try_from(body.len()).expect("fits"),
+        );
+        let mut out = vec![0u8; header.total_len()];
+        header
+            .serialize_into(&mut out[..FLV_TAG_HEADER_LEN])
+            .unwrap();
+        out[FLV_TAG_HEADER_LEN..FLV_TAG_HEADER_LEN + body.len()].copy_from_slice(body);
+        let previous = u32::try_from(FLV_TAG_HEADER_LEN + body.len()).expect("fits");
+        out[FLV_TAG_HEADER_LEN + body.len()..].copy_from_slice(&previous.to_be_bytes());
+        out
+    }
+
+    fn aggregate_msg(timestamp: u32, payload: Vec<u8>) -> Message {
+        Message {
+            chunk_stream_id: ChunkStreamId::new(3),
+            timestamp: Timestamp::from_millis(timestamp),
+            message_type_id: MessageTypeId::Aggregate,
+            message_stream_id: MessageStreamId::new(1),
+            payload,
+        }
+    }
+
+    fn sub_message(tag_type: MessageTypeId, timestamp: u32, body: &[u8]) -> Vec<u8> {
+        let mut out = vec![0u8; AGG_SUB_MESSAGE_HEADER_LEN];
+        out[0] = tag_type.to_u8();
+        let size = u32::try_from(body.len()).expect("fits");
+        out[1..4].copy_from_slice(&size.to_be_bytes()[1..]);
+        out[4..7].copy_from_slice(&timestamp.to_be_bytes()[1..]);
+        out[7] = u8::try_from(timestamp >> AGG_TIMESTAMP_EXTENDED_SHIFT).expect("fits");
+        out.extend_from_slice(body);
+        out.extend_from_slice(
+            &u32::try_from(AGG_SUB_MESSAGE_HEADER_LEN + body.len())
+                .expect("fits")
+                .to_be_bytes(),
+        );
+        out
+    }
+
+    #[test]
+    fn aggregate_rebases_extended_sub_message_timestamps() {
+        let big = vec![0xB0u8; 65_837];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&sub_message(
+            MessageTypeId::Audio,
+            0x0000_0010,
+            &[0xA1, 0xA2],
+        ));
+        payload.extend_from_slice(&sub_message(MessageTypeId::Video, 0x0100_0020, &big));
+        payload.extend_from_slice(&sub_message(MessageTypeId::DataAmf0, 0x0000_0030, &[0xC1]));
+
+        let mut delivered = Vec::new();
+        unpack_aggregate(&aggregate_msg(0x0100_0100, payload), |tt, ts, body| {
+            delivered.push((tt, ts, body.to_vec()));
+            Ok(())
+        })
+        .expect("well-formed aggregate");
+        assert_eq!(delivered.len(), 3);
+        assert_eq!(
+            delivered[0],
+            (MessageTypeId::Audio, 0x0100_0100, vec![0xA1, 0xA2])
+        );
+        assert_eq!(delivered[1].0, MessageTypeId::Video);
+        assert_eq!(delivered[1].1, 0x0200_0110);
+        assert_eq!(delivered[1].2.len(), 65_837);
+        assert_eq!(delivered[1].2[0], 0xB0);
+        assert_eq!(
+            delivered[2],
+            (MessageTypeId::DataAmf0, 0x0100_0120, vec![0xC1])
+        );
+    }
+
+    #[test]
+    fn aggregate_header_exactly_at_the_end_is_malformed_as_data_overrun() {
+        let mut payload = sub_message(MessageTypeId::Audio, 0, &[1]);
+        payload.extend_from_slice(&[0u8; AGG_SUB_MESSAGE_HEADER_LEN]);
+        match unpack_aggregate(&aggregate_msg(0, payload), |_, _, _| Ok(())) {
+            Err(RtmpError::Malformed { what }) => assert_eq!(
+                what,
+                "aggregate sub-message data or Back Pointer runs past the end"
+            ),
+            other => panic!("expected Malformed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn aggregate_truncated_into_a_sub_message_is_malformed() {
+        let mut payload = sub_message(MessageTypeId::Audio, 0, &[1, 2, 3]);
+        let full_len = payload.len();
+        payload.truncate(full_len - 1);
+        assert!(matches!(
+            unpack_aggregate(&aggregate_msg(0, payload), |_, _, _| Ok(())),
+            Err(RtmpError::Malformed { .. })
+        ));
+
+        let mut payload = sub_message(MessageTypeId::Audio, 0, &[1, 2, 3]);
+        payload.extend_from_slice(&[0xFF, 0xFF, 0xFF]);
+        assert!(matches!(
+            unpack_aggregate(&aggregate_msg(0, payload), |_, _, _| Ok(())),
+            Err(RtmpError::Malformed { .. })
+        ));
+    }
+
+    #[test]
+    fn tag_type_from_byte_maps_the_three_media_types() {
+        assert_eq!(TagType::from_byte(8), TagType::Audio);
+        assert_eq!(TagType::from_byte(9), TagType::Video);
+        assert_eq!(TagType::from_byte(18), TagType::Script);
+        assert_eq!(TagType::from_byte(0), TagType::Reserved(0));
+        assert_eq!(TagType::Audio.name(), "audio");
+        assert_eq!(TagType::Video.name(), "video");
+        assert_eq!(TagType::Script.name(), "script");
+        assert_eq!(TagType::Reserved(0).name(), "reserved");
+    }
+
+    #[test]
+    fn tag_header_lengths_and_bytes_are_exact() {
+        let header = header(TagType::Audio, 0x0A0B_0C0D, 0x01_0203);
+        assert_eq!(header.total_len(), 11 + 0x010203 + 4);
+        assert_eq!(header.serialized_len(), 11);
+        let mut bytes = [0u8; 11];
+        assert_eq!(header.serialize_into(&mut bytes).unwrap(), 11);
+        assert_eq!(
+            bytes,
+            [8, 0x01, 0x02, 0x03, 0x0B, 0x0C, 0x0D, 0x0A, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn reserved_tag_type_is_plausible_only_inside_a_chain() {
+        let bytes = tag(TagType::Reserved(200), 0, b"abc");
+        assert!(
+            plausible_tag_header(&bytes, 0, false),
+            "an unknown type is legal in a chain"
+        );
+        assert!(
+            !plausible_tag_header(&bytes, 0, true),
+            "a resync candidate must be a known media type"
+        );
+    }
+
+    #[test]
+    fn a_chain_whose_second_header_is_implausible_does_not_hold() {
+        let mut bytes = tag(TagType::Audio, 0, b"abc");
+        bytes.extend_from_slice(&[0xFF; 20]);
+        assert!(!tag_chain_holds(&bytes, 0, false));
+        assert!(!tag_chain_holds(&bytes, 0, true));
+    }
+
+    #[test]
+    fn a_chain_ending_exactly_after_the_body_holds() {
+        let header = header(TagType::Audio, 0, 3);
+        let mut bytes = vec![0u8; FLV_TAG_HEADER_LEN];
+        header.serialize_into(&mut bytes).unwrap();
+        bytes.extend_from_slice(b"abc");
+        assert!(tag_chain_holds(&bytes, 0, false));
+    }
+
+    #[test]
+    fn a_chain_whose_next_header_is_exactly_at_the_end_with_eleven_bytes() {
+        let mut bytes = tag(TagType::Audio, 0, b"abc");
+        bytes.extend_from_slice(&[0x12, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0]);
+        assert_eq!(bytes.len(), 18 + FLV_TAG_HEADER_LEN);
+        assert!(
+            !tag_chain_holds(&bytes, 0, false),
+            "an implausible header at the very end breaks the chain"
+        );
+    }
+
+    #[test]
+    fn a_final_tag_body_reaching_the_end_without_previous_size_is_kept() {
+        let flv_header = FlvHeader::new(true, true);
+        let mut input = flv_header.try_to_bytes().unwrap();
+        input.extend_from_slice(&tag(TagType::Audio, 0, b"abc"));
+        let tail_header = header(TagType::Video, 1, 2);
+        let mut tail = vec![0u8; FLV_TAG_HEADER_LEN];
+        tail_header.serialize_into(&mut tail).unwrap();
+        tail.extend_from_slice(&[0xBB, 0xCC]);
+        input.extend_from_slice(&tail);
+
+        let walk = tags_resync(&input, &flv_header).expect("tolerant walk");
+        assert_eq!(walk.tags.len(), 2);
+        assert!(walk.truncated_tail.is_none());
+    }
+
+    #[test]
+    fn tags_resync_starts_the_search_after_the_damaged_offset() {
+        let flv_header = FlvHeader::new(true, true);
+        let mut input = flv_header.try_to_bytes().unwrap();
+        input.extend_from_slice(&tag(TagType::Audio, 0, &[0u8; 7]));
+        // The previous tag's PreviousTagSize is 18, whose last byte is the
+        // Data-AMF0 type id: a plausible tag starts one byte before the
+        // damaged offset. Only a search that starts at off + 1 skips it.
+        input.extend_from_slice(&[
+            0, 0, 1, // DataSize 1
+            0, 0, 0, // Timestamp 0
+            0, // TimestampExtended
+            0, 0, 0, // StreamID
+            0, // body
+            0, 0, 0, 12, // PreviousTagSize = 11 + 1
+        ]);
+
+        let walk = tags_resync(&input, &flv_header).expect("tolerant walk");
+        assert_eq!(walk.tags.len(), 1);
+        assert!(walk.damaged.is_empty());
+        assert!(walk.truncated_tail.is_some());
+    }
+
+    #[test]
+    fn tags_resync_recovers_after_garbage() {
+        let header = FlvHeader::new(true, true);
+        let mut input = header.try_to_bytes().unwrap();
+        let mut offsets = Vec::new();
+        for i in 0..10u32 {
+            offsets.push(input.len());
+            input.extend_from_slice(&tag(
+                TagType::Audio,
+                i,
+                &[u8::try_from(i).expect("fits"), 0xEE],
+            ));
+            if i == 3 {
+                input.extend_from_slice(&[0xFF; 37]);
+            }
+        }
+
+        let walk = tags_resync(&input, &header).expect("tolerant walk");
+        // The tag whose chain runs into the damage is skipped too, so the
+        // three tags before it plus tags 5..10 come back.
+        assert_eq!(
+            walk.tags.len(),
+            9,
+            "offsets {:?} damaged {:?}",
+            walk.tags.iter().map(|(o, _)| *o).collect::<Vec<_>>(),
+            walk.damaged
+        );
+        assert_eq!(walk.damaged, vec![offsets[3]]);
+        assert_eq!(walk.tags[3].0, offsets[4]);
+        assert_eq!(walk.tags[3].1.timestamp, 4);
+        assert_eq!(walk.tags[8].0, offsets[9]);
+        assert_eq!(walk.tags[8].1.timestamp, 9);
+    }
+}

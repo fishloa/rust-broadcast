@@ -13,7 +13,7 @@ use crate::support::hdr_route::{
     Source, attribute, contains, init_bytes, joined_mp4, load, master_text, route_app,
     route_app_from, scratch, validator_comments, video_codec,
 };
-use test_fixtures::process::tool_available;
+use test_fixtures::process::{REQUIRE_EXTERNAL_TOOLS, require_tool, tool_available};
 
 use broadcast_hls::MasterPlaylist;
 
@@ -167,10 +167,7 @@ fn ffprobe_streams(file: &std::path::Path) -> String {
 
 #[tokio::test]
 async fn ffprobe_reads_dolby_vision_configuration_only_from_our_box() {
-    if !tool_available("ffprobe", "-version") {
-        eprintln!(
-            "SKIP ffprobe_reads_dolby_vision_configuration_only_from_our_box: ffprobe not on PATH"
-        );
+    if !require_tool("ffprobe", "-version", REQUIRE_EXTERNAL_TOOLS) {
         return;
     }
     for (fixture, profile, level, compat) in [(P81, 8, 3, 1), (P5, 5, 3, 0), (P84, 8, 7, 4)] {
@@ -205,8 +202,7 @@ async fn ffprobe_reads_dolby_vision_configuration_only_from_our_box() {
 
 #[tokio::test]
 async fn gpac_dumps_the_dolby_vision_configuration_box() {
-    if !tool_available("MP4Box", "-version") {
-        eprintln!("SKIP gpac_dumps_the_dolby_vision_configuration_box: MP4Box not on PATH");
+    if !require_tool("MP4Box", "-version", REQUIRE_EXTERNAL_TOOLS) {
         return;
     }
     for (fixture, box_name) in [(P81, "dvvC"), (P5, "dvcC"), (P84, "dvvC")] {

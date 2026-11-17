@@ -1,3 +1,4 @@
+mod client_accessors;
 mod client_push_methods;
 mod dependency_features;
 mod golden_wire;
@@ -6,6 +7,7 @@ mod io_loopback;
 mod io_push_drain;
 mod io_timeouts;
 mod k2_server;
+mod limits;
 mod no_handroll_guard;
 mod send_sync;
 mod session_edge_cases;
