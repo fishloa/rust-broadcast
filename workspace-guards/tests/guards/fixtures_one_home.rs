@@ -29,6 +29,7 @@ const TOPIC_DIRS: &[&str] = &[
     "dash",
     "smooth",
     "si",
+    "text",
     "scte35",
     "simulcrypt",
     "mabr",
