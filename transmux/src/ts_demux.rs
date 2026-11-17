@@ -14405,6 +14405,144 @@ pub(crate) mod tests {
         );
     }
 
+    /// The payload that merely finishes a frame held in the carry is mid-frame:
+    /// its bytes are not scanned for a new AudioSpecificConfig, even though a
+    /// header-looking sequence sits inside the frame body.
+    #[test]
+    fn a_carried_frames_body_is_not_reprobed_as_a_new_config() {
+        // A 44.1 kHz ADTS header to plant inside a body (ISO/IEC 14496-3
+        // §1.6.2.2: AOT 2, sf index 4, 2 channels = 0x12 0x10).
+        let asc44 = AudioSpecificConfig::parse(&[0x12, 0x10]).expect("a 44.1 kHz ASC");
+        const FRAME_LEN: usize = 207;
+        /// Bytes of the frame carried across the boundary (its header included).
+        const CARRY: usize = 50;
+        /// Where inside the body the header-looking sequence sits.
+        const PLANT_AT: usize = 60;
+        let planted_header = asc44.to_adts_header(17).expect("44.1 kHz ADTS header");
+        let mut carried = asc44
+            .to_adts_header(u16::try_from(FRAME_LEN).unwrap())
+            .expect("48 kHz-sized ADTS header for the carried frame")
+            .to_vec();
+        carried.resize(FRAME_LEN, 0x5A);
+        carried[PLANT_AT..PLANT_AT + ADTS_HEADER_SIZE].copy_from_slice(&planted_header);
+        assert!(
+            PLANT_AT > CARRY,
+            "the planted header must be in the payload, not the carry"
+        );
+        let parsed = match AdtsSync::parse(&carried[PLANT_AT..]) {
+            SyncParse::Frame(h, 17) => AudioSpecificConfig::from_adts_header(&h),
+            _ => panic!("the planted header must parse as a 17-byte frame"),
+        };
+        assert_eq!(
+            parsed.effective_sampling_frequency(),
+            Some(44_100),
+            "a probe that reached it would report a config change"
+        );
+
+        let frames = adts_frames();
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, payload: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, payload);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        // A whole 48 kHz frame resolves the track, then the carried frame
+        // straddles: `CARRY` bytes in the first PES, the rest (with the planted
+        // header) opening the second.
+        let mut first = frames[0].clone();
+        first.extend_from_slice(&carried[..CARRY]);
+        push(&mut input, &mut cc, 90_000, &first);
+        let mut rest = carried[CARRY..].to_vec();
+        rest.extend_from_slice(&frames[1]);
+        push(&mut input, &mut cc, 90_000 + 1_920, &rest);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let mut rates: Vec<u32> = Vec::new();
+        let mut samples = 0;
+        while let Some(e) = demux.poll_event() {
+            match e {
+                DemuxEvent::Sample { .. } => samples += 1,
+                DemuxEvent::TrackUpdated(spec) => {
+                    if let CodecConfig::Aac { sample_rate: r, .. } = spec.config {
+                        rates.push(r);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert!(samples >= 2, "both whole frames are emitted, got {samples}");
+        assert!(
+            rates.iter().all(|&r| r == 48_000),
+            "the planted header is mid-frame, so it cannot re-label the track: {rates:?}"
+        );
+    }
+
+    /// Each flushed E-AC-3 access unit advances the seed cursor by its own
+    /// duration, so the next flush continues one frame later on both clocks.
+    #[test]
+    fn a_flushed_access_unit_advances_the_seed_cursor() {
+        /// 1 536 samples per E-AC-3 syncframe at 48 kHz, and its 90 kHz span.
+        const FRAME_SAMPLES: i64 = 1_536;
+        const FRAME_TICKS: i64 = 2_880;
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_dependent_frame(0));
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_EAC3, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, au: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, au);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        let base = 90_000i64;
+        // A whole access unit first, so the track resolves and the dependent
+        // substream turns the hold-back on; then three held ones, each split
+        // from the next by a continuity gap (which flushes the held one).
+        push(&mut input, &mut cc, base, &au);
+        push(&mut input, &mut cc, base + FRAME_TICKS, &au);
+        for k in 2..=3i64 {
+            // Skip a continuity counter: the gap flushes what was held.
+            cc = cc.wrapping_add(2);
+            push(&mut input, &mut cc, base + k * FRAME_TICKS, &au);
+        }
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let mut dts = Vec::new();
+        let mut pts = Vec::new();
+        while let Some(e) = demux.poll_event() {
+            if let DemuxEvent::Sample { sample, .. } = e
+                && let Some(t) = sample.timing
+            {
+                dts.push(t.dts());
+                pts.push(t.pts());
+            }
+        }
+        let start = 48_000i64;
+        let want: Vec<Option<i64>> = (0..dts.len() as i64)
+            .map(|k| Some(start + k * FRAME_SAMPLES))
+            .collect();
+        assert_eq!(dts, want, "every flush continues one frame later");
+        assert_eq!(pts, want, "and so does the presentation cursor");
+    }
+
     /// A held-back E-AC-3 access unit flushed by a continuity gap advances the
     /// frame cursor by its own duration, so the next access unit continues one
     /// frame later instead of repeating it.
