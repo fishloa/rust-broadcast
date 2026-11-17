@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Tests
+- The EN 300 468 Annex A default-Latin combining row is pinned pair by pair against an independent Unicode oracle committed at `fixtures/golden/text/iso6937_combining.tsv`, and the emphasis-marker strip, the `0x10 0x00 nn` ISO 8859 selector and the three legacy charsets have named samples (#2940).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
