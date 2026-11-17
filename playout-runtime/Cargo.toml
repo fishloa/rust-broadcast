@@ -16,7 +16,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "13.0.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
 # Splice-point conditioning (nearest-boundary snap with an explicit
 # tolerance): this crate decides *when* a transition happens, ssai-runtime
 # decides *how the splice lands* — see the crate-root docs. Not duplicated

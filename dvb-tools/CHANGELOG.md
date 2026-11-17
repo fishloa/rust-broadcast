@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [15.1.0] - 2026-11-17
+
+### Changed
+- Dependency/epoch bump only (follows broadcast-common, dvb-si, dvb-t2mi); no functional change.
+
 ## [15.0.0] - 2026-11-15
 ### Changed
 - `epg` prints event start times as RFC 3339 with a `Z` suffix (jiff's `Timestamp`) instead of `+00:00`; `dvb-si` is built with its `jiff` feature in place of the removed `chrono` (#2635).

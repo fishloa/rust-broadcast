@@ -6,11 +6,8 @@ documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
-### Fixed
-- Client: every segment, part, map, key and variant URI is resolved through `broadcast_common::url_ref::resolve_http`, so a reference to `file:`/`ftp:`/`data:` or any other non-web scheme is refused (as `UnresolvableReference`) instead of requested, and an `https` stream refuses an `http` key/map/segment URI rather than downgrading the fetch (audit 20 finding 42, #2853).
-- Client: Part/Segment bodies held until their init segment is ready are capped at `MAX_PENDING_DEMUX_BYTES` (64 MiB), dropping the oldest with `Error::PendingDemuxOverflow`, and `prune` drops them below the window. A playlist whose `EXT-X-MAP` never becomes ready while media keeps arriving can no longer grow the queue for the life of the pull (audit 20 finding 3, #2814).
-- Client: `prune_inits` drops a non-`Ready` init slot that neither a segment nor the current playlist's maps refer to, and the slot map is capped at `MAX_INIT_SLOTS` (64), so a playlist naming a new failing `EXT-X-MAP` on every reload can no longer grow the map without bound or slow the per-map scan (audit 20 finding 4, #2815).
 
+## [0.15.0] - 2026-11-17
 ### Added
 - `client::Error::PlaylistTooLarge`: a playlist over a `broadcast_hls::limits::Limits` bound is a distinct, non-retryable error rather than a generic `PlaylistParse`, so a caller never re-fetches the same over-limit response (audit 20 finding 41, #2852).
 - `HlsClientConfig::limits` (a `broadcast_hls::limits::Limits`, default 4 MiB playlist, 1 000 000 segments, 64 MiB resource body) and `HlsClientConfig::with_limits`; `on_playlist` parses through `parse_with` and `on_resource` refuses a body over `max_segment_bytes` with `Error::ResourceTooLarge` (audit 20 finding 41, #2852).
@@ -23,6 +20,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Client: a fragment's track specs are compared with `TrackSpec`'s `PartialEq` instead of formatting and comparing two `Debug` strings per fragment, so the per-fragment cost no longer scales with the codec-config size (audit 20 finding 50, #2861).
 
 ### Fixed
+- Client: every segment, part, map, key and variant URI is resolved through `broadcast_common::url_ref::resolve_http`, so a reference to `file:`/`ftp:`/`data:` or any other non-web scheme is refused (as `UnresolvableReference`) instead of requested, and an `https` stream refuses an `http` key/map/segment URI rather than downgrading the fetch (audit 20 finding 42, #2853).
+- Client: Part/Segment bodies held until their init segment is ready are capped at `MAX_PENDING_DEMUX_BYTES` (64 MiB), dropping the oldest with `Error::PendingDemuxOverflow`, and `prune` drops them below the window. A playlist whose `EXT-X-MAP` never becomes ready while media keeps arriving can no longer grow the queue for the life of the pull (audit 20 finding 3, #2814).
+- Client: `prune_inits` drops a non-`Ready` init slot that neither a segment nor the current playlist's maps refer to, and the slot map is capped at `MAX_INIT_SLOTS` (64), so a playlist naming a new failing `EXT-X-MAP` on every reload can no longer grow the map without bound or slow the per-map scan (audit 20 finding 4, #2815).
 - Client: an `EXT-X-MEDIA-SEQUENCE` that overflows `u64` is rejected before any client state is mutated, so one hostile reload can no longer move the high-water mark to `u64::MAX` and drop every key, wedging the session for every later playlist (audit 20 finding 18, #2829).
 
 ## [0.14.0] - 2026-11-15

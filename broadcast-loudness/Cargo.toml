@@ -17,7 +17,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "13.0.0", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 libm       = { version = "0.2", default-features = false }
 

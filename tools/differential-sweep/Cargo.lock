@@ -101,7 +101,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "13.0.0"
+version = "13.1.0"
 dependencies = [
  "base64 0.23.1",
  "erased-serde",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-dash"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -128,7 +128,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.8.0"
+version = "0.8.1"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -138,7 +138,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-smooth"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
 ]
@@ -324,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "dash-runtime"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "broadcast-dash",
@@ -392,7 +392,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-bbframe"
-version = "15.0.0"
+version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "num_enum",
@@ -402,7 +402,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "15.0.0"
+version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "15.0.0"
+version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -426,7 +426,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "15.0.0"
+version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -785,7 +785,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "media-doctor"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "broadcast-common",
  "broadcast-dash",
@@ -803,7 +803,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.12.0"
+version = "0.13.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -1020,7 +1020,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.11.0"
+version = "0.11.1"
 dependencies = [
  "broadcast-common",
  "subtle",
@@ -1318,7 +1318,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.32.0"
+version = "0.32.1"
 dependencies = [
  "aes",
  "base64 0.23.1",

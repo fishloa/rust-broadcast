@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-17
 ### Added
 - `ServerCodec::decode` is pinned at its message-size cap: a `Content-Length` of 3 000 000 bytes is refused with `MessageParseError::TooLarge`, a message of exactly `MAX_MESSAGE_BYTES` is still a body wait, and one byte over is refused (#2860).
 
