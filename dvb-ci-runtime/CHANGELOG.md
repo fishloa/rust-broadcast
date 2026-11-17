@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- The module-chosen session cap, the OPEN/CLOSE response arms, `create_session`'s SPDU bytes and the empty-body `session_number` edge have tests; likewise `descramble`/`descramble_programs`/`add_program`/`enter_menu`/`mmi_cancel` writing their APDUs, `ca_pids`, `next_timer`, the `send_ca_pmt_checked` overflow arithmetic, the post-reset settle boundaries and `infer_card`'s edges (audit 21 findings 51 and 52, #2946/#2947).
 
 ## [0.21.1] - 2026-11-17
 ### Added

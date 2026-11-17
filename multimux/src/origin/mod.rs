@@ -607,6 +607,15 @@ pub async fn serve_hyper_util_with_task_gauge(
     .await
 }
 
+/// Drop a peer's entry once it holds no permit: the per-IP table is bounded by
+/// the addresses connected right now, not every address ever seen.
+fn retain_connected_peers(
+    table: &mut std::collections::HashMap<std::net::IpAddr, Arc<tokio::sync::Semaphore>>,
+    max_connections_per_ip: usize,
+) {
+    table.retain(|_, sem| sem.available_permits() < max_connections_per_ip);
+}
+
 /// The core accept/drain loop shared by [`serve_hyper_util`] (a `Router`) and
 /// [`serve_hyper_util_service`] (a per-connection service factory): every
 /// connection is wrapped in `hyper_util::server::graceful::GracefulShutdown`
@@ -697,9 +706,7 @@ where
         }
         // A peer's entry is dropped once it holds no permit, so the table is
         // bounded by the IPs connected right now, not every IP ever seen.
-        per_ip_conns
-            .lock()
-            .retain(|_, sem| sem.available_permits() < max_connections_per_ip);
+        retain_connected_peers(&mut per_ip_conns.lock(), max_connections_per_ip);
 
         let accepted = tokio::select! {
             () = token.cancelled() => break,
@@ -5137,6 +5144,15 @@ mod tests {
             ("/cam1/init-1.mp4", ok, CACHE_CONTROL_MANIFEST),
             ("/cam1/media.m3u8", ok, CACHE_CONTROL_MANIFEST),
             ("/cam1/manifest.mpd", ok, CACHE_CONTROL_MANIFEST),
+            // The extension alone makes a playlist a manifest, whatever the
+            // numeric shape of the stem suggests.
+            (
+                "/cam1/seg-1-1790000000000-7.m3u8",
+                ok,
+                CACHE_CONTROL_MANIFEST,
+            ),
+            // An empty numeric field is not an instance token.
+            ("/cam1/seg---.m4s", ok, CACHE_CONTROL_MANIFEST),
             (
                 "/cam1/seg-1-1790000000000-7.m4s",
                 S::NOT_FOUND,
@@ -5197,5 +5213,66 @@ mod tests {
         // Late data into a closed channel changes nothing.
         let _ = tx.send(axum::body::Bytes::from_static(b"late")).await;
         assert_eq!(bytes_served(&state, "c10-drop", "segment") - before, 7);
+    }
+
+    // --- #2948: per-IP pruning, route classification and health handlers ---
+
+    #[test]
+    fn per_ip_pruning_keeps_a_connected_peer_and_drops_a_finished_one() {
+        use std::net::{IpAddr, Ipv4Addr};
+
+        const MAX_PER_IP: usize = 4;
+        let mut table = std::collections::HashMap::new();
+        let connected = Arc::new(tokio::sync::Semaphore::new(MAX_PER_IP));
+        let _held = connected
+            .clone()
+            .try_acquire_owned()
+            .expect("a permit is free");
+        table.insert(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)), connected);
+        table.insert(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3)),
+            Arc::new(tokio::sync::Semaphore::new(MAX_PER_IP)),
+        );
+
+        retain_connected_peers(&mut table, MAX_PER_IP);
+
+        assert!(
+            table.contains_key(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2))),
+            "a peer holding a permit stays"
+        );
+        assert!(
+            !table.contains_key(&IpAddr::V4(Ipv4Addr::new(127, 0, 0, 3))),
+            "a peer holding no permit is pruned"
+        );
+    }
+
+    #[test]
+    fn classify_path_labels_the_ops_routes_without_a_route() {
+        let state = make_state();
+        assert_eq!(
+            classify_path(&state, "/metrics"),
+            ("-".to_string(), "metrics")
+        );
+        assert_eq!(
+            classify_path(&state, "/healthz"),
+            ("-".to_string(), "health")
+        );
+        assert_eq!(
+            classify_path(&state, "/readyz"),
+            ("-".to_string(), "health")
+        );
+        assert_eq!(
+            classify_path(&state, "/cam1/media.m3u8"),
+            ("cam1".to_string(), "playlist")
+        );
+        assert_eq!(
+            classify_path(&state, "/nowhere/media.m3u8"),
+            ("unknown".to_string(), "playlist")
+        );
+    }
+
+    #[tokio::test]
+    async fn healthz_answers_ok() {
+        assert_eq!(healthz().await, StatusCode::OK);
     }
 }

@@ -5,6 +5,11 @@ All notable changes to `rtsp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- `client::MAX_INBOUND_BYTES` (1 MiB) is public: the bound on the client's inbound buffer.
+
+### Fixed
+- The inbound cap, the `public_methods`/`session_timeout`/`negotiated_transport` accessors, the PLAY/DESCRIBE capture conditions and the auth-retry bound each have a test pinning the literal value and both edges, so a changed constant, a loosened `&&`, or an accessor returning a constant fails the suite (audit 21 findings 49 and 50, #2944/#2945).
 
 ## [0.13.0] - 2026-11-17
 ### Added
