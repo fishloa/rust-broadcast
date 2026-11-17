@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Test-only: a segmentation descriptor carrying all-32-bit `segmentation_event_id`, a 40-bit `segmentation_duration`, a two-entry MID() UPID, two distinct components and the sub-segment appendix is asserted byte-for-byte against hand-assembled Table 20 bytes, each optional section's truncation is a typed error, and the MID() walker's truncated-header and over-long-entry cases are pinned (audit 21 finding 18, #2913).
 
 ## [7.0.0] - 2026-11-15
 ### Changed
