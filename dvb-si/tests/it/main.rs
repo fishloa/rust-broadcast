@@ -10,6 +10,7 @@ mod demux;
 mod demux_e2e;
 mod descriptor_length_overflow;
 mod descriptor_loop;
+mod descriptor_loop_helpers;
 mod docs_coverage_drift;
 mod downloaded_ait;
 mod downloaded_lcn;
