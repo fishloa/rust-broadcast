@@ -21,7 +21,7 @@ use multimux::output::hls::HlsOutput;
 use multimux::output::{Output, OutputKind};
 use multimux::registry::SchemeRegistry;
 use multimux::route::RouteHandle;
-use test_fixtures::process::{output_bounded, tool_available};
+use test_fixtures::process::{REQUIRE_EXTERNAL_TOOLS, output_bounded, require_tool};
 
 use crate::support::listener::bind_tcp;
 use crate::support::origin::{body_string, get};
@@ -367,8 +367,7 @@ async fn cold_file_route_first_answer_carries_a_segment() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn ffmpeg_opens_a_cold_stream() {
-    if !tool_available("ffmpeg", "-version") {
-        eprintln!("SKIP ffmpeg_opens_a_cold_stream: ffmpeg not on PATH");
+    if !require_tool("ffmpeg", "-version", REQUIRE_EXTERNAL_TOOLS) {
         return;
     }
     let (bind, listener) = bind_tcp();

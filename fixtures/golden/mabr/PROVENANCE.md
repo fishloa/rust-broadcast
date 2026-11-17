@@ -23,3 +23,14 @@ The tests (`dvb-mabr/tests/it/golden.rs`) compare the current output to these fi
 byte difference. Intended, documented differences from main are listed in the crate
 CHANGELOG `### Changed` section; none of them is exercised by these inputs.
 
+## Independent oracle
+
+The three Annex C inputs are this workspace's own hand-authored documents
+(`fixtures/mabr/PROVENANCE.md`), modelled on the *shape* of ETSI TS 103 769 V1.2.1 Annex C but not
+transcribed from it, and no third-party MABR schema validator is available offline. These goldens
+therefore pin stability, not correctness; correctness rests on `spec_fidelity.rs` (every field of
+the clause 10 documents is parsed) and `round_trip.rs` (`parse -> to_xml -> parse` is
+structure-preserving).
+
+`GOLDEN_BLESS` refuses to write when `CI` is set, so a re-bless cannot ride along in a CI run.
+

@@ -14,6 +14,16 @@ Bless command (writes instead of comparing):
 Never regenerate on this branch. A deliberate difference is edited into the file in the commit that causes it and
 listed in CHANGELOG `[Unreleased]`.
 
+## Independent oracle
+
+`http-auth` (the third-party crate this crate's challenge parser and client are built on) parses
+every rendered challenge back in `broadcast-auth/tests/it/challenge_render.rs`, so a golden that
+records a challenge `http-auth` cannot read fails even before the comparison. `respond`'s
+`Authorization` header is cross-checked against the header `http-auth`'s own client builds for the
+same credentials (`digest_params.rs`).
+
+`GOLDEN_BLESS` refuses to write when `CI` is set, so a re-bless cannot ride along in a CI run.
+
 
 
 ## Media-doctor goldens
