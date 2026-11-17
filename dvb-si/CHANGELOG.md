@@ -5,6 +5,7 @@
 - The EN 300 468 Annex A default-Latin combining row is pinned pair by pair against an independent Unicode oracle committed at `fixtures/golden/text/iso6937_combining.tsv`, and the emphasis-marker strip, the `0x10 0x00 nn` ISO 8859 selector and the three legacy charsets have named samples (#2940).
 - `DescriptorLoop::raw_tags`/`contains_tag` (including a descriptor that ends exactly at the loop end) and the `LangCode`/`DvbText` renderings are asserted literally (#2942).
 - `SiDemux`'s version/CRC gate is pinned at its boundaries: the minimum-length and CRC-length guards, the long-form/short-form change hash, the per-PID eviction fairness, the PAT generation and PAT-follow size checks, the `current_next` distinction, and the `SectionEvent` accessors (#2941).
+- INT, Downloadable Font Information, EIT, CIT, DIT, Container and DSM-CC sections get exact-minimum, maximal and loop-overrun tests, and every compared `DsmccSection` field is covered by an inequality test (#2943).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

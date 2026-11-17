@@ -45,6 +45,7 @@ mod spec_drift;
 mod spec_labels;
 mod table_dispatch;
 mod table_reserved_bits;
+mod tables_edges;
 mod text_iso6937_table;
 mod truncation_no_panic;
 mod tsduck_decompile_oracle;
