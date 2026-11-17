@@ -8,6 +8,7 @@
 - Audit 21 (#2922): `SeqSpace`'s `lt`/`leq`/`gt`/`geq` and `is_tie` at equal values, exactly half the space apart (all four answers false, both orders) and across the wrap, plus `in_closed_range` over a one-element range, a `last` that precedes `first` and a range that wraps.
 - Audit 21 (#2923): `read_tree` enforces the attribute-count and attribute-value-size bounds at exactly the configured cap (the cap is allowed, one past it is `XmlError::Limit`), `Elem`'s `child`/`children_named`/`has_child`/`attr_in` match on namespace and name together, and `xml_chars::read_attributes` resolves each prefix, skips the namespace declarations and reports a value outside the `Char` production.
 - Audit 21 (#2924): `PusiAccumulator` keeps a PUSI payload of exactly `max_unit_size` bytes and drops one past it, and `len`/`is_empty`/`is_started` report the in-progress unit's state.
+- Audit 21 (#2925): exact-boundary tests for `BitReader::skip_bits` (the whole remainder succeeds, one past it fails at the end), the 16-nibble BCD carrier, the 127/128 BER short/long-form split and a truncated long form, a `Content-Range` ending on the entity's last byte, the saturating `rescale_i64`/`rescale_u64`, `Timestamp::as_nanos`' own ceiling, `bcp47_language`'s subtag guard, `MulticastInterface::parse`'s index-versus-address error, `KlvItem` equality and `walk_klv_items`' byte offsets.
 
 ## [13.1.0] - 2026-11-17
 ### Added
