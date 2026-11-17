@@ -303,6 +303,15 @@ jobs:
       - name: A real ffmpeg publishes H.264 + AAC over RTMP
         timeout-minutes: 10
         run: "cargo test -p rtmp-runtime --all-features --locked --test it -- ffmpeg_publish::"
+      # ffmpeg's own remux of the anamorphic Zenith captures, demuxed back
+      # through transmux's fMP4 reader (`tests/it/display_demux.rs`). This job
+      # has both halves the test needs — the private captures and ffmpeg — and
+      # REQUIRE_FFMPEG=1 makes a missing tool a failure, never a silent skip.
+      - name: Display geometry (ffmpeg remux of the anamorphic captures)
+        timeout-minutes: 10
+        env:
+          REQUIRE_FFMPEG: "1"
+        run: "cargo test -p transmux --all-features --locked --test it -- display_demux::"
 
   lint:
     name: clippy
@@ -599,20 +608,11 @@ jobs:
   golden-gate:
     name: golden gate (ffprobe + mediastreamvalidator, non-blocking)
     runs-on: ubuntu-24.04
-    needs: [private-fixtures, changes]
+    needs: changes
     if: needs.changes.outputs.rust == 'true'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v5
-      # `tests/it/display_demux.rs` remuxes a private capture with ffmpeg: it
-      # needs both halves, so this job takes the fixtures the
-      # `private-fixtures` job prepared (skips loudly on a fork PR).
-      - name: Private fixtures (real-capture tests)
-        uses: ./.github/actions/private-fixtures
-        with:
-          mode: use
-          deploy-key: ${{ secrets.PRIVATE_FIXTURES_DEPLOY_KEY }}
-          skip: ${{ vars.SKIP_PRIVATE_FIXTURES }}
       - uses: Swatinem/rust-cache@v2
       - name: Install ffmpeg (provides ffprobe)
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -622,13 +622,6 @@ jobs:
         run: cargo test -p multimux --test golden_gate --all-features --locked
       - name: HLS conformance oracle (media-doctor, all features)
         run: cargo test -p media-doctor --test mediastreamvalidator_oracle --all-features --locked
-      # ffmpeg's own remux of the anamorphic private captures, demuxed back
-      # through our fMP4 reader. REQUIRE_FFMPEG=1 makes a missing ffmpeg a
-      # failure here, never a silent skip.
-      - name: Display geometry (ffmpeg remux oracle)
-        env:
-          REQUIRE_FFMPEG: "1"
-        run: cargo test -p transmux --test it --all-features --locked display_demux -- --nocapture
 
   # Apple-platform cross-check (issue #1162 R6): transmux (std, default
   # features) must keep compiling for tvOS / iOS / macOS so Apple-device
