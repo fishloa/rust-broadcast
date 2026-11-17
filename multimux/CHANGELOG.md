@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+- `HttpLimits::from(&Config)`'s field mapping, the per-IP connection table's pruning, `classify_path`'s ops-route labels and the literal cap values have tests (audit 21 findings 49 and 53, #2944/#2948).
 
 ## [0.20.0] - 2026-11-17
 ### Changed
