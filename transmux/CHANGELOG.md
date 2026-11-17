@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **The display-geometry ffmpeg oracle tests can no longer pass by testing nothing.** `tests/it/display_demux.rs` carried the author's absolute `/Volumes/...` fixture path, so on CI, in any other checkout and in every git worktree both tests printed `SKIP: private fixture missing` and passed (from a worktree that path also pointed at the MAIN checkout's private data, silently testing another commit). They now resolve the capture through `test_fixtures::require` (a loud skip only without a private checkout, a hard failure under `REQUIRE_PRIVATE_FIXTURES=1`, or when the checkout has it but the file is missing) and gate on `test_fixtures::process::tool_available("ffmpeg", "-version")` with a `REQUIRE_FFMPEG=1` hard failure; the CI `golden-gate` job, the one that installs ffmpeg, now restores the private fixtures and runs them with `REQUIRE_FFMPEG=1`. A new `test-fixtures` guard fails if any test file hard-codes an absolute `/Volumes/`, `/Users/` or `C:/Users/` path (audit 21 finding 59, #2954).
 
 ## [0.32.1] - 2026-11-17
 ### Fixed
