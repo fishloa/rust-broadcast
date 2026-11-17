@@ -11,7 +11,7 @@ use crate::support::hdr_route::{
     Source, contains, dump_route, init_bytes, load, master_text, route_app, route_app_from,
     scratch, validator_comments,
 };
-use test_fixtures::process::{msv, tool_available};
+use test_fixtures::process::{REQUIRE_EXTERNAL_TOOLS, msv, require_tool};
 
 use broadcast_hls::MasterPlaylist;
 
@@ -110,10 +110,7 @@ async fn ffprobe_reads_mastering_display_and_content_light_level() {
     if test_fixtures::require(HDR_FIXTURE, "hdr10_route").is_none() {
         return;
     }
-    if !tool_available("ffprobe", "-version") {
-        eprintln!(
-            "SKIP ffprobe_reads_mastering_display_and_content_light_level: ffprobe not on PATH"
-        );
+    if !require_tool("ffprobe", "-version", REQUIRE_EXTERNAL_TOOLS) {
         return;
     }
     let app = route_app_from(without_in_band_sei(load(HDR_FIXTURE)));
@@ -167,8 +164,7 @@ async fn gpac_dumps_the_mdcv_and_clli_boxes() {
     if test_fixtures::require(HDR_FIXTURE, "hdr10_route").is_none() {
         return;
     }
-    if !tool_available("MP4Box", "-version") {
-        eprintln!("SKIP gpac_dumps_the_mdcv_and_clli_boxes: MP4Box not on PATH");
+    if !require_tool("MP4Box", "-version", REQUIRE_EXTERNAL_TOOLS) {
         return;
     }
     let app = route_app(HDR_FIXTURE);

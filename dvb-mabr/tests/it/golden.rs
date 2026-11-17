@@ -12,6 +12,10 @@ use dvb_mabr::{MulticastGatewayConfiguration, MulticastServerConfiguration};
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "refuse to re-bless a golden under CI=true (GOLDEN_BLESS is a local review step)"
+        );
         let path = Path::new(&dir).join(name);
         fs::create_dir_all(&dir).expect("create golden dir");
         fs::write(&path, actual).expect("write golden");
@@ -58,4 +62,28 @@ fn specials_document_matches_golden() {
     let parsed = MulticastGatewayConfiguration::parse_str(xml).expect("parse");
     check("specials.parse.txt", &format!("{parsed:#?}\n"));
     check("specials.xml", &parsed.to_xml().expect("render"));
+}
+
+/// Re-blessing is a local review step: under `CI=true` the switch must fail the
+/// run (this re-runs this binary with both set, and on the old code it would
+/// have written the golden and exited green).
+#[test]
+fn a_bless_is_refused_under_ci() {
+    let dir = std::env::temp_dir().join(format!("mabr-bless-refused-{}", std::process::id()));
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "golden::server_fixture_matches_golden",
+            "--exact",
+            "--nocapture",
+        ])
+        .env("GOLDEN_BLESS", &dir)
+        .env("CI", "true")
+        .output()
+        .expect("run the test binary");
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!dir.exists(), "a refused bless must write no golden");
+    assert!(
+        !out.status.success(),
+        "GOLDEN_BLESS under CI must fail instead of re-blessing"
+    );
 }
