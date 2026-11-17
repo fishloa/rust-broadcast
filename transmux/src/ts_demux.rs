@@ -14405,6 +14405,59 @@ pub(crate) mod tests {
         );
     }
 
+    /// A re-anchoring payload that finishes a carried frame records the anchor
+    /// `lead` *before* the wire stamp, so the following access unit is still
+    /// predicted at the media cadence and continues the cursor.
+    #[test]
+    fn a_reanchor_past_a_carried_frame_keeps_the_prediction_on_cadence() {
+        const FRAME_TICKS: i64 = 1_920;
+        let frames = adts_frames();
+        let mut input = psi_section_packets(PAT_PID_UNDER_TEST, 0, 0x00, &pat_body());
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            0x02,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS, ES_PID_UNDER_TEST),
+        ));
+        let mut cc = 0u8;
+        let push = |input: &mut Vec<u8>, cc: &mut u8, dts: i64, payload: &[u8]| {
+            let pes = pes_packet(ES_STREAM_ID_MPEG_AUDIO, dts, None, payload);
+            let packets = pes_packets(ES_PID_UNDER_TEST, *cc, &pes);
+            *cc = cc.wrapping_add((packets.len() / TS_PACKET_SIZE) as u8);
+            input.extend_from_slice(&packets);
+        };
+        let base = 90_000i64;
+        // A whole frame, a partial one (carried), then the carried frame's rest
+        // plus another whole frame — stamped a full second later, so it
+        // re-anchors with `lead` = one carried frame.
+        push(&mut input, &mut cc, base, &frames[0]);
+        push(&mut input, &mut cc, base + FRAME_TICKS, &frames[1][..10]);
+        let far = base + 1_000_000;
+        let mut rest = frames[1][10..].to_vec();
+        rest.extend_from_slice(&frames[2]);
+        push(&mut input, &mut cc, far, &rest);
+        // The next access unit sits 1 000 ticks past the on-cadence prediction
+        // (within the 1 800-tick threshold), so it must continue the cursor
+        // rather than re-anchor.
+        push(&mut input, &mut cc, far + FRAME_TICKS + 1_000, &frames[3]);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("valid timing");
+        demux.finish().expect("valid timing");
+        let dts: Vec<i64> = std::iter::from_fn(|| demux.poll_event())
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dts.len(), 4, "one sample per frame: {dts:?}");
+        assert_eq!(
+            dts[3] - dts[2],
+            1_024,
+            "the last access unit continues the cursor by one frame ({dts:?})"
+        );
+    }
+
     /// The payload that merely finishes a frame held in the carry is mid-frame:
     /// its bytes are not scanned for a new AudioSpecificConfig, even though a
     /// header-looking sequence sits inside the frame body.
