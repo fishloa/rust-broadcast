@@ -5,7 +5,11 @@
 //!
 //! The streams are spec-built by `transmux/tests/it/support/paff_gen.rs` (I_PCM, losslessly
 //! decodable, every field different), 12 frames of 64x64, TFF and BFF; two are
-//! also committed under `../fixtures/video/paff/` and pinned against the generator.
+//! also committed under `../fixtures/video/paff/` and pinned against both the
+//! generator and the SHA-256 recorded in that directory's `PROVENANCE.md`.
+//! Regenerating them is `cargo run -p transmux --example regen_paff_fixtures --
+//! --write`, never a test (a test that rewrites a fixture compares the code
+//! against its own output).
 
 #[path = "support/paff_gen.rs"]
 mod paff_gen;
@@ -243,9 +247,39 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
     }
 }
 
+/// The SHA-256 recorded for each fixture in `fixtures/video/paff/PROVENANCE.md`.
+///
+/// The generator's own output is compared against the committed bytes in the
+/// same test, so this second pin is what makes a regeneration visible: editing
+/// the generator does not silently re-bless the fixture, the recorded digest
+/// has to be updated in the same commit.
+fn recorded_digests() -> Vec<(String, String)> {
+    let doc = test_fixtures::read_to_string("video/paff/PROVENANCE.md");
+    doc.lines()
+        .filter_map(|line| {
+            let cells: Vec<&str> = line.split('|').map(str::trim).collect();
+            let name = cells.get(1)?.trim_matches('`');
+            let digest = cells.get(2)?.trim_matches('`');
+            let is_hex = digest.len() == 64 && digest.chars().all(|c| c.is_ascii_hexdigit());
+            is_hex.then(|| (name.to_string(), digest.to_string()))
+        })
+        .collect()
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    broadcast_common::hex::hex_encode(&Sha256::digest(bytes))
+}
+
 #[test]
 fn committed_fixtures_match_the_generator_and_pair() {
     let dir = test_fixtures::path("video/paff");
+    let recorded = recorded_digests();
+    assert_eq!(
+        recorded.len(),
+        4,
+        "PROVENANCE.md records a digest for every committed fixture: {recorded:?}"
+    );
     for (name, g) in [
         ("paff-tff-12f-64x64", gen_tff()),
         ("paff-bff-12f-64x64", gen_bff()),
@@ -254,6 +288,22 @@ fn committed_fixtures_match_the_generator_and_pair() {
         assert_eq!(ts, g.ts, "{name}.ts is exactly what paff_gen produces");
         let yuv = std::fs::read(dir.join(format!("{name}.yuv"))).expect("committed yuv");
         assert_eq!(yuv, g.yuv, "{name}.yuv");
+        for (file, bytes) in [
+            (format!("{name}.ts"), ts.as_slice()),
+            (format!("{name}.yuv"), yuv.as_slice()),
+        ] {
+            let want = recorded
+                .iter()
+                .find(|(n, _)| *n == file)
+                .unwrap_or_else(|| panic!("PROVENANCE.md has no digest for {file}"))
+                .1
+                .clone();
+            assert_eq!(
+                sha256_hex(bytes),
+                want,
+                "{file} is the file PROVENANCE.md records"
+            );
+        }
         assert_paired(&g, &batch(&ts), name);
     }
 }
@@ -410,21 +460,6 @@ fn progressive_and_non_field_streams_are_unaffected() {
         checked >= 3,
         "expected the committed H.264 fixtures, got {checked}"
     );
-}
-
-/// Regenerates the committed fixtures: `cargo test -p transmux --test it --
-/// --ignored regenerate_fixtures`.
-#[test]
-#[ignore = "fixture generator: rewrites fixtures/video/paff, asserts nothing; run explicitly"]
-fn regenerate_fixtures() {
-    let dir = test_fixtures::path("video/paff");
-    for (name, g) in [
-        ("paff-tff-12f-64x64", gen_tff()),
-        ("paff-bff-12f-64x64", gen_bff()),
-    ] {
-        std::fs::write(dir.join(format!("{name}.ts")), &g.ts).unwrap();
-        std::fs::write(dir.join(format!("{name}.yuv")), &g.yuv).unwrap();
-    }
 }
 
 /// The committed real broadcast capture `fixtures/ts/gulli-opengop.ts` is field-coded

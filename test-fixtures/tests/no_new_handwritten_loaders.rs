@@ -110,6 +110,40 @@ fn no_new_handwritten_fixture_loaders() {
     );
 }
 
+/// Absolute paths that only resolve on the machine that wrote them: a test
+/// carrying one passes there and, everywhere else, skips (or fails), and in a
+/// worktree it silently reads another checkout's data. Fixtures resolve
+/// through `test_fixtures`; scratch files go under `std::env::temp_dir()`.
+#[test]
+fn no_developer_machine_paths() {
+    const NEEDLES: &[&str] = &["\"/Volumes/", "\"/Users/", "\"C:/Users/"];
+    let root = workspace_root();
+    let mut files = Vec::new();
+    walk(&root, &mut files);
+    let mut bad = Vec::new();
+    for f in files {
+        if !f.components().any(|c| c.as_os_str() == "tests") {
+            continue;
+        }
+        let rel = f
+            .strip_prefix(&root)
+            .unwrap()
+            .to_string_lossy()
+            .replace('\\', "/");
+        let Ok(s) = std::fs::read_to_string(&f) else {
+            continue;
+        };
+        if NEEDLES.iter().any(|n| s.contains(n)) {
+            bad.push(rel);
+        }
+    }
+    assert!(
+        bad.is_empty(),
+        "test file(s) hard-code a developer-machine absolute path - load fixtures through \
+         test_fixtures and write scratch files under std::env::temp_dir(): {bad:?}"
+    );
+}
+
 #[test]
 fn allowlist_only_names_files_that_still_offend() {
     let root = workspace_root();

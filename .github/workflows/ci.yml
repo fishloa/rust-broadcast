@@ -303,6 +303,15 @@ jobs:
       - name: A real ffmpeg publishes H.264 + AAC over RTMP
         timeout-minutes: 10
         run: "cargo test -p rtmp-runtime --all-features --locked --test it -- ffmpeg_publish::"
+      # ffmpeg's own remux of the anamorphic Zenith captures, demuxed back
+      # through transmux's fMP4 reader (`tests/it/display_demux.rs`). This job
+      # has both halves the test needs — the private captures and ffmpeg — and
+      # REQUIRE_FFMPEG=1 makes a missing tool a failure, never a silent skip.
+      - name: Display geometry (ffmpeg remux of the anamorphic captures)
+        timeout-minutes: 10
+        env:
+          REQUIRE_FFMPEG: "1"
+        run: "cargo test -p transmux --all-features --locked --test it -- display_demux::"
 
   lint:
     name: clippy

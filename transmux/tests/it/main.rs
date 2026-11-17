@@ -208,6 +208,7 @@ mod ts_hevc_carriage;
 mod ts_hls;
 mod ts_hls_audio_catch_up;
 mod ts_mux;
+mod ts_mux_psi_pcr;
 mod ts_mux_psi_repeat;
 mod ts_mux_streaming;
 #[path = "support/ts_psi.rs"]
