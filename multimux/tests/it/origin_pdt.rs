@@ -378,7 +378,7 @@ async fn config_default_arrival_emits_pdt() {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let clock_before_ms = jiff::Timestamp::now().as_millisecond();
     let playlist = poll_until_extinf_yield(&client, &playlist_url).await;
@@ -416,7 +416,7 @@ async fn config_off_emits_no_pdt() {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf_yield(&client, &playlist_url).await;
     assert!(

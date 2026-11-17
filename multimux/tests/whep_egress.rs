@@ -64,6 +64,8 @@ use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 
+#[path = "support/http.rs"]
+mod http;
 #[path = "support/listener.rs"]
 mod listener;
 use listener::bind_tcp;
@@ -367,7 +369,7 @@ async fn admin_added_route_starts_its_whep_listener() {
         "nothing may have consumed the WHEP listener before the route is added"
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let resp = client
         .post(format!("http://{admin_addr}/admin/routes"))
         .bearer_auth("admin-test-token")

@@ -20,6 +20,7 @@
 - The file source opens the path once and checks that handle's metadata, reading through a `max_file_bytes + 1` window, so a path swapped for a FIFO or a file grown after the check cannot block the read or exceed the cap (#2837).
 - `redact::redact_url` renders a query string as `?<redacted>` and drops the fragment, and its unparseable-URL fallback finds the credential `@` past a `/` inside a password, so a `?token=…` or a `rtsp://u:pa/ss@host/s` URL can no longer reach a log line (#2858).
 ### Changed
+- BREAKING: the TLS crypto provider is ring, not aws-lc-rs (#2877). `rustls` is no longer optional because the HTTP pull client always uses it; `tokio-rustls`/`rustls` take `default-features = false`; `reqwest` uses `rustls-no-provider` with a ring-backed `ClientConfig` built by `source::client_host::http_client` (platform roots, as reqwest's default). The `tls` feature no longer names `dep:rustls`. Migration: none for configs; a downstream crate that wants aws-lc-rs must install its own provider.
 - BREAKING: `source::sdp::load_sdp` is async (it reads an on-disk `@path` with `tokio::fs`), and an SDP file is capped at `source::sdp::MAX_SDP_FILE_BYTES` (64 KiB) and must be a regular file, so `@/dev/zero` or a FIFO can no longer stall a runtime worker or grow the process. Migration: `.await` the call (#2836).
 ### Tests
 - The DASH-IF handler-drop abort and the over-long `Range` suffix each have a regression test (#2876).

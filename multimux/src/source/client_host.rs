@@ -39,6 +39,25 @@ use transmux::stitch::Stitcher;
 
 const MESSAGE_QUEUE: usize = 64;
 
+/// The one HTTP client every pull uses: redirects are the session's to follow, and TLS is
+/// ring-backed with the platform trust roots (reqwest's own default, minus the aws-lc-rs provider).
+pub(crate) fn http_client() -> Result<reqwest::Client, String> {
+    let provider = std::sync::Arc::new(rustls::crypto::ring::default_provider());
+    let verifier =
+        rustls_platform_verifier::Verifier::new(provider.clone()).map_err(|e| e.to_string())?;
+    let tls = rustls::ClientConfig::builder_with_provider(provider)
+        .with_safe_default_protocol_versions()
+        .map_err(|e| e.to_string())?
+        .dangerous()
+        .with_custom_certificate_verifier(std::sync::Arc::new(verifier))
+        .with_no_client_auth();
+    reqwest::Client::builder()
+        .use_preconfigured_tls(tls)
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| e.to_string())
+}
+
 /// Events handed to the driver between two yields to the runtime, so a large queued burst cannot
 /// hold a worker thread (or starve a current-thread runtime) for its whole length.
 const EVENT_DRAIN_YIELD_EVERY: usize = 256;
@@ -254,12 +273,9 @@ impl SessionStep {
                 ))
             })?;
         }
-        let client = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| MultimuxError::Connect {
-                reason: format!("reqwest client: {e}"),
-            })?;
+        let client = http_client().map_err(|e| MultimuxError::Connect {
+            reason: format!("reqwest client: {e}"),
+        })?;
         let (tx, rx) = mpsc::channel(MESSAGE_QUEUE);
         let mut step = Self {
             session,

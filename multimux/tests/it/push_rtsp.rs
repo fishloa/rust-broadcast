@@ -191,7 +191,7 @@ impl MediaMtx {
     /// delivered to it, which leaves `ffprobe` waiting for a first packet that never comes.
     async fn wait_for_reader(&self, guard: Duration) {
         let url = format!("http://127.0.0.1:{}/v3/rtspsessions/list", self.api_port);
-        let client = reqwest::Client::new();
+        let client = crate::support::http::client();
         let deadline = tokio::time::Instant::now() + guard;
         loop {
             if let Ok(resp) = client.get(&url).send().await

@@ -718,15 +718,9 @@ where
 pub fn default_tls_client_config() -> crate::Result<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    // Select the aws-lc-rs provider explicitly rather than via
-    // `ClientConfig::builder()`'s process-global default: another crate in the
-    // same build (e.g. a `reqwest` that pulls `aws-lc-rs`) can put a *second*
-    // `CryptoProvider` in the tree, leaving no unambiguous default and making
-    // the plain builder panic. Choosing the provider here keeps `rtsp-runtime`
-    // working regardless of what else is linked.
     Ok(
         rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+            rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .map_err(Error::TlsConfig)?
@@ -926,7 +920,7 @@ mod tls_timeout_tests {
         let cert = test_fixtures::read("tls/localhost-cert.der");
         let key = test_fixtures::read("tls/localhost-key.der");
         rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+            rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .unwrap()

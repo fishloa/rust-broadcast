@@ -347,7 +347,7 @@ async fn cold_file_route_first_answer_carries_a_segment() {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let url = format!("http://{bind}/cam/media.m3u8");
 
     let first = first_answered_playlist(&client, &url).await;
@@ -382,7 +382,7 @@ async fn ffmpeg_opens_a_cold_stream() {
     );
     let url = format!("http://{bind}/cam/media.m3u8");
     wait_for_init(
-        &reqwest::Client::new(),
+        &crate::support::http::client(),
         &format!("http://{bind}/cam/init-1.mp4"),
     )
     .await;

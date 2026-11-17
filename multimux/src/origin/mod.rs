@@ -3477,7 +3477,7 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
 
-        let client = reqwest::Client::new();
+        let client = crate::source::client_host::http_client().expect("reqwest client");
         // msn=2 is within the future bound of the current max (1), so these
         // are genuine WouldBlock reloads that park until the LL-HLS cap.
         let reload_url = format!("http://{addr}/cam1/media.m3u8?_HLS_msn=2&_HLS_part=0");
@@ -3581,7 +3581,7 @@ mod tests {
             let _ = axum::serve(listener, app).await;
         });
 
-        let client = reqwest::Client::new();
+        let client = crate::source::client_host::http_client().expect("reqwest client");
         let url = format!("http://{addr}/cam1/media.m3u8?_HLS_msn=2&_HLS_part=0");
         let floods = (0..12)
             .map(|_| {

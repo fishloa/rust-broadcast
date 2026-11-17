@@ -144,7 +144,7 @@ fn start(route: Route) -> Server {
         media,
         admin,
         handle,
-        client: reqwest::Client::new(),
+        client: crate::support::http::client(),
     }
 }
 

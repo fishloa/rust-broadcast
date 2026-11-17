@@ -105,7 +105,7 @@ struct Served {
 /// never races a reserved port. No whole-attempt retry loop is needed now that
 /// neither address can lose a bind race.
 async fn serve_smooth_until_fragment(min_chunks: usize) -> Served {
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let UdpTsOrigin {
         bind_addr,
         server,
@@ -240,7 +240,7 @@ async fn each_stream_index_serves_its_own_track_fragment() {
     }
     let served = serve_smooth_until_fragment(1).await;
     let manifest = SmoothManifest::parse(&served.manifest).expect("manifest parses");
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let base = format!("http://{}/cam", served.bind_addr);
     let fragments = fetch_first_fragments(&client, &base, &manifest).await;
     served.shutdown();

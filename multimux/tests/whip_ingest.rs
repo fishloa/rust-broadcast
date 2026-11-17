@@ -56,6 +56,8 @@ use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
 
+#[path = "support/http.rs"]
+mod http;
 #[path = "support/listener.rs"]
 mod listener;
 use listener::bind_tcp;
@@ -234,7 +236,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
         result.ok, result.connection_state, result.bytes_sent, result.error
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf(&client, &playlist_url).await;
     server.abort();
@@ -325,7 +327,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
         result.ok, result.connection_state, result.bytes_sent, result.error
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf(&client, &playlist_url).await;
     server.abort();
