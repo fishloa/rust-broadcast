@@ -8,6 +8,7 @@
 - Test-only: `SpliceTracker` closing one open event keeps the others in the eviction order (the open set still caps at `MAX_OPEN_EVENTS` after a close), a different section for the same event is a duplicate open while identical bytes are a retransmission, and the `NoCue`/`SpliceSanity` labels are pinned (audit 21 finding 22, #2917).
 - Test-only: the DVB-TA stream-event payload's optional sections are round-tripped and truncated at every byte, its declared lengths are checked at their bounds, the compact time-signal and splice-insert bit widths and `bit_err` mapping are pinned at their maxima and maxima plus one, and the DAS `descriptor_length` gate and nibble order are asserted (audit 21 finding 23, #2918).
 - Test-only: the avail/DTMF/time/audio descriptors are serialized at their maximum sizes (7 DTMF chars, 15 audio components, a 48-bit TAI second) and their one-past-the-limit rejection, the shared descriptor header gate is checked for each truncation shape, and the descriptor loop's raw iterator, `Deref`, `From` and serde paths are pinned (audit 21 finding 21, #2916).
+- Test-only: every SCTE 35 and DVB-TA spec/field enum's `name()`/`Display` labels are asserted literally (including five Table 23 segmentation type labels and all Table 21/22 variants), so a label can no longer render empty or as a placeholder (audit 21 finding 24, #2919).
 
 ## [7.0.0] - 2026-11-15
 ### Changed
