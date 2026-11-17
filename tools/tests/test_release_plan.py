@@ -174,3 +174,27 @@ def test_manual_stop_exit_2_and_lockstep_gate():
     assert rc == 0 and started[-1] == "z-v1.0.0"
     rc = rp.run_levels([pv("a")], [["a"]], lambda t: (2, "waiting"), stagger=0, sleep=lambda s: None, out=lambda *_: None)
     assert rc == 2
+
+
+FLOOR_ONLY = '''--- a/mpeg-ts/Cargo.toml
++++ b/mpeg-ts/Cargo.toml
+@@ -20 +20 @@
+-broadcast-common = { path = "../broadcast-common", version = "13.0.0", default-features = false }
++broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }
+'''
+
+
+def test_a_sibling_requirement_raise_is_not_a_source_change():
+    assert rp.only_sibling_requirements_moved(FLOOR_ONLY)
+
+
+def test_any_other_manifest_edit_is_a_source_change():
+    feature = FLOOR_ONLY + '+serde = { version = "1", optional = true }\n'
+    assert not rp.only_sibling_requirements_moved(feature)
+    external = FLOOR_ONLY.replace('path = "../broadcast-common", ', "")
+    assert not rp.only_sibling_requirements_moved(external)
+    features_changed = FLOOR_ONLY.replace(
+        '+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = false }',
+        '+broadcast-common = { path = "../broadcast-common", version = "13.1.0", default-features = true }',
+    )
+    assert not rp.only_sibling_requirements_moved(features_changed)
