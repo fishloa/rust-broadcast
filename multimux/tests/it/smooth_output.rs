@@ -467,15 +467,6 @@ const W13_FRAME_DUR: u32 = VIDEO_TIMESCALE.get() / 30;
 const W13_SYNC_EVERY: u32 = 120;
 const W13_FRAMES: u32 = W13_SYNC_EVERY * 3 + 10;
 
-fn have_oracle(bin: &str) -> bool {
-    std::process::Command::new(bin)
-        .arg("-version")
-        .output()
-        .or_else(|_| std::process::Command::new(bin).arg("-h").output())
-        .map(|_| true)
-        .unwrap_or(false)
-}
-
 /// A route with `W13_TARGET` segments: `W13_FRAMES` video frames through
 /// a real `LlHlsSegmenter`.
 fn w13_route() -> Arc<RouteHandle> {
@@ -890,8 +881,11 @@ fn read_one_trun(body: &[u8], out: &mut Vec<u64>) {
 /// only the first fragment, dropping the rest.
 #[tokio::test]
 async fn w13_one_segment_is_one_fragment() {
-    if !have_oracle("mp4dump") {
-        eprintln!("SKIP w13_one_segment_is_one_fragment: mp4dump not on PATH");
+    if !test_fixtures::process::require_tool_lenient(
+        "mp4dump",
+        "--version",
+        test_fixtures::process::REQUIRE_EXTERNAL_TOOLS,
+    ) {
         return;
     }
     let store = w13_route();

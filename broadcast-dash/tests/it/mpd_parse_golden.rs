@@ -33,6 +33,10 @@ fn goldens() -> String {
 fn every_fixture_parses_to_the_recorded_model() {
     let got = goldens();
     if std::env::var_os(REGENERATE).is_some() {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "refuse to re-record the MPD model under CI=true ({REGENERATE} is a local review step)"
+        );
         std::fs::write(test_fixtures::path(GOLDEN), &got).expect("write golden");
         return;
     }
@@ -62,5 +66,26 @@ fn the_corpus_is_not_empty() {
             .iter()
             .any(|(n, _)| n.contains("/manifest.mpd")),
         "the public corpus must include the reference MPD"
+    );
+}
+
+/// Re-recording the model is a local review step: under `CI=true` the switch
+/// must fail the run (this re-runs this binary with both set, and on the old
+/// code it would have written the golden and exited green).
+#[test]
+fn re_recording_the_model_is_refused_under_ci() {
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "mpd_parse_golden::every_fixture_parses_to_the_recorded_model",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(REGENERATE, "1")
+        .env("CI", "true")
+        .output()
+        .expect("run the test binary");
+    assert!(
+        !out.status.success(),
+        "{REGENERATE} under CI must fail instead of re-recording the golden"
     );
 }

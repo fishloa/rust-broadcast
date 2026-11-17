@@ -10,6 +10,10 @@ use broadcast_auth::{Credentials, RequestContext, SignedUrlKeySet, Verifier, res
 
 fn check(name: &str, actual: &str) {
     if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "refuse to re-bless a golden under CI=true (GOLDEN_BLESS is a local review step)"
+        );
         fs::create_dir_all(&dir).expect("create golden dir");
         fs::write(Path::new(&dir).join(name), actual).expect("write golden");
         return;
@@ -105,5 +109,29 @@ fn client_authorization_matches_golden() {
     check(
         "client-authorization.txt",
         &format!("basic\t{basic}\nbearer\t{bearer}\n"),
+    );
+}
+
+/// Re-blessing is a local review step: under `CI=true` the switch must fail the
+/// run (this re-runs this binary with both set, and on the old code it would
+/// have written the golden and exited green).
+#[test]
+fn a_bless_is_refused_under_ci() {
+    let dir = std::env::temp_dir().join(format!("bless-refused-{}", std::process::id()));
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "golden_wire::challenges_match_golden",
+            "--exact",
+            "--nocapture",
+        ])
+        .env("GOLDEN_BLESS", &dir)
+        .env("CI", "true")
+        .output()
+        .expect("run the test binary");
+    let _ = fs::remove_dir_all(&dir);
+    assert!(!dir.exists(), "a refused bless must write no golden");
+    assert!(
+        !out.status.success(),
+        "GOLDEN_BLESS under CI must fail instead of re-blessing"
     );
 }

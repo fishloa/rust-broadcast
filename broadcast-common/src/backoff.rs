@@ -373,8 +373,7 @@ impl RetrySchedule {
 
     fn jittered(&self, attempt: u32, cursor: usize) -> Duration {
         let raw = self.raw_delay_for_attempt(attempt);
-        let capped = attempt.min(MAX_ATTEMPT_INDEX);
-        scaled(raw, term_power(self.terms[cursor], capped), self.max)
+        scaled(raw, self.terms[cursor], self.max)
     }
 
     /// The delay before the `attempt + 1`-th retry without jitter:

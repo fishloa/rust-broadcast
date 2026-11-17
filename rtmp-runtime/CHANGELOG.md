@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- `ffmpeg_publish` requires its oracle through `test_fixtures::process::require_tool`, so `REQUIRE_EXTERNAL_TOOLS=1` turns the missing-ffmpeg skip into a failure instead of a green run that never published (audit 21 finding 60).
 
 ## [0.11.1] - 2026-11-17
 ### Fixed

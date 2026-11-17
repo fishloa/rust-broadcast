@@ -1027,6 +1027,17 @@ mod tests {
             &(ga(1, GaContent::ReservedSoundBed(2), Some(0)).serialize_into(&mut buf)),
             Err(crate::error::Error::InvalidValue(..))
         ));
+        // reserved coding_profile outside 3..=7
+        assert_eq!(
+            ga(0, GaContent::ReservedProfile(0), Some(0)).serialize_into(&mut buf),
+            Err(crate::error::Error::InvalidValue(
+                broadcast_common::error::InvalidValue {
+                    field: "coding_profile",
+                    value: 0,
+                    reason: "does not match the content variant",
+                }
+            ))
+        );
         // over-wide field
         assert!(matches!(
             &(ga(

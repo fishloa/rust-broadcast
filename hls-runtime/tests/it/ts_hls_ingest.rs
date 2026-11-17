@@ -587,3 +587,194 @@ fn duplicate_ts_segment_delivery_emits_samples_once() {
     assert!(ended, "ENDLIST playlist with nothing outstanding ends");
     assert_eq!(got, want);
 }
+
+// ---------------------------------------------------------------------------
+// Audit 21 finding 55 (#2950): the TS routing's dropped-track report, its
+// per-track routing guard, and the silent-PID release at a segment boundary,
+// on the real fixture with its PMT rewritten.
+// ---------------------------------------------------------------------------
+
+/// PID of the fixture's PMT (read from its PAT: program 1 -> 0x1000).
+const PMT_PID: u16 = 0x1000;
+
+/// The `(start, end)` byte spans of the PMT section in every packet that
+/// starts one (ISO/IEC 13818-1 §2.4.4: a pointer field then the section).
+fn pmt_spans(ts: &[u8]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    for (index, packet) in ts.chunks_exact(TS_PACKET_LEN).enumerate() {
+        let pid = (u16::from(packet[1] & 0x1f) << 8) | u16::from(packet[2]);
+        if pid != PMT_PID || packet[1] & 0x40 == 0 {
+            continue;
+        }
+        let adaptation = (packet[3] >> 4) & 0x3;
+        let payload = 4 + if adaptation & 0x2 != 0 {
+            1 + usize::from(packet[4])
+        } else {
+            0
+        };
+        let start = index * TS_PACKET_LEN + payload + 1 + usize::from(packet[payload]);
+        if ts[start] != 0x02 {
+            continue;
+        }
+        let section_length = (usize::from(ts[start + 1] & 0x0f) << 8) | usize::from(ts[start + 2]);
+        spans.push((start, start + 3 + section_length));
+    }
+    assert!(!spans.is_empty(), "the fixture must carry a PMT");
+    spans
+}
+
+/// Recompute the PMT section's CRC-32/MPEG-2 after an edit.
+fn reseal(ts: &mut [u8], start: usize, end: usize) {
+    let crc = broadcast_common::crc32_mpeg2::compute(&ts[start..end - 4]);
+    ts[end - 4..end].copy_from_slice(&crc.to_be_bytes());
+}
+
+/// Rewrite every PMT's elementary-stream entries with `edit`, which receives
+/// the entry's `(stream_type, elementary_pid)` and returns the replacement.
+fn rewrite_streams(ts: &[u8], edit: impl Fn(u8, u16) -> (u8, u16)) -> Vec<u8> {
+    let mut out = ts.to_vec();
+    for (start, end) in pmt_spans(ts) {
+        let section = out[start..end].to_vec();
+        let program_info_len = usize::from(u16::from_be_bytes([section[10], section[11]]) & 0x0fff);
+        let mut i = 12 + program_info_len;
+        while i + 5 <= section.len() - 4 {
+            let stream_type = section[i];
+            let pid = u16::from_be_bytes([section[i + 1], section[i + 2]]);
+            let (new_type, new_pid) = edit(stream_type, pid);
+            out[start + i] = new_type;
+            out[start + i + 1..start + i + 3].copy_from_slice(&new_pid.to_be_bytes());
+            let es_info_len =
+                usize::from(u16::from_be_bytes([section[i + 3], section[i + 4]]) & 0x0fff);
+            i += 5 + es_info_len;
+        }
+        reseal(&mut out, start, end);
+    }
+    out
+}
+
+/// Write the PMT's elementary-stream entries back in `order` (indices into
+/// their original order), fixing the CRC.
+fn reorder_streams(ts: &[u8], order: &[usize]) -> Vec<u8> {
+    let mut out = ts.to_vec();
+    for (start, end) in pmt_spans(ts) {
+        let section = out[start..end].to_vec();
+        let loop_start = 12 + usize::from(u16::from_be_bytes([section[10], section[11]]) & 0x0fff);
+        let mut entries: Vec<(usize, Vec<u8>)> = Vec::new();
+        let mut i = loop_start;
+        while i + 5 <= section.len() - 4 {
+            let len =
+                5 + usize::from(u16::from_be_bytes([section[i + 3], section[i + 4]]) & 0x0fff);
+            entries.push((len, section[i..i + len].to_vec()));
+            i += len;
+        }
+        let mut cursor = loop_start;
+        for &index in order {
+            let (len, bytes) = &entries[index];
+            out[start + cursor..start + cursor + len].copy_from_slice(bytes);
+            cursor += len;
+        }
+        reseal(&mut out, start, end);
+    }
+    out
+}
+
+/// A one-segment VOD playlist over `name`, and the segment id the client
+/// requested for it.
+fn one_segment_request(client: &mut HlsClient, name: &str) -> hls_runtime::client::ResourceId {
+    let playlist = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
+         #EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\n{name}\n#EXT-X-ENDLIST\n"
+    );
+    client
+        .on_playlist(playlist.as_bytes())
+        .expect("playlist parses");
+    loop {
+        match client.poll() {
+            Some(Action::FetchResource { id, .. }) => return id,
+            Some(Action::FetchPlaylist(_) | Action::Wait(_)) => {}
+            other => panic!("expected the segment fetch, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn an_unsupported_stream_is_reported_dropped_and_contributes_no_samples() {
+    // The fixture's AAC entry (stream_type 0x0F) becomes private data (0x06):
+    // a track this crate can demux but cannot put in an ISOBMFF sample entry.
+    let patched = rewrite_streams(&read_fixture("index0.ts"), |stream_type, pid| {
+        if stream_type == 0x0F {
+            (0x06, pid)
+        } else {
+            (stream_type, pid)
+        }
+    });
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse("http://fixture/one.m3u8").expect("URL"),
+    ));
+    let id = one_segment_request(&mut client, "index0.ts");
+    client.on_resource(id, &patched).expect("demux");
+    let outputs: Vec<Output> = std::iter::from_fn(|| client.next_output()).collect();
+
+    let dropped = outputs
+        .iter()
+        .find_map(|o| match o {
+            Output::TrackDropped {
+                track_id,
+                stream_type,
+            } => Some((*track_id, *stream_type)),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the private-data stream must be reported dropped: {outputs:?}"));
+    assert_eq!(
+        dropped.1,
+        Some(6),
+        "the dropped track reports the PMT's stream_type"
+    );
+    assert!(
+        outputs.iter().any(|o| matches!(o, Output::Samples { .. })),
+        "the still-supported track's samples must be emitted: {outputs:?}"
+    );
+    assert!(
+        !outputs
+            .iter()
+            .any(|o| matches!(o, Output::Samples { track_id, .. } if *track_id == dropped.0)),
+        "a dropped track must not contribute samples"
+    );
+}
+
+#[test]
+fn a_pid_the_pmt_declares_but_the_segment_never_sends_is_released_at_its_end() {
+    // The AAC entry names a PID the segment never carries, and it is put
+    // FIRST in the PMT so it is the head: the video PID behind it parks
+    // (under the 2 MiB parked-bytes bound), so only the segment-end release
+    // lets its samples out.
+    let patched = rewrite_streams(&read_fixture("index0.ts"), |stream_type, pid| {
+        if stream_type == 0x0F {
+            (stream_type, 0x1F0)
+        } else {
+            (stream_type, pid)
+        }
+    });
+    let patched = reorder_streams(&patched, &[1, 0]);
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse("http://fixture/two.m3u8").expect("URL"),
+    ));
+    let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nindex0.ts\n#EXTINF:1.0,\nindex1.ts\n";
+    client
+        .on_playlist(playlist.as_bytes())
+        .expect("playlist parses");
+    let first = loop {
+        match client.poll() {
+            Some(Action::FetchResource { id, .. }) => break id,
+            Some(Action::FetchPlaylist(_) | Action::Wait(_)) => {}
+            other => panic!("expected the first segment fetch, got {other:?}"),
+        }
+    };
+    client.on_resource(first, &patched).expect("demux");
+    let outputs: Vec<Output> = std::iter::from_fn(|| client.next_output()).collect();
+    assert!(
+        outputs.iter().any(|o| matches!(o, Output::Samples { .. })),
+        "the supported video track must be released when the segment ends: {outputs:?}"
+    );
+}
