@@ -189,6 +189,14 @@ pub enum MultimuxError {
         /// The output kind's name.
         kind: String,
     },
+    /// A route's DVR archive could not be read or scanned, so its segment
+    /// numbering cannot continue above what the archive already holds.
+    #[error("dvr: {0}")]
+    Dvr(
+        /// Why the archive read failed.
+        #[source]
+        crate::dvr::DvrError,
+    ),
 }
 
 /// Which config field failed validation.
@@ -196,6 +204,7 @@ pub enum MultimuxError {
 #[non_exhaustive]
 pub enum ConfigField {
     AdminBind,
+    AdminAllowedRoots,
     AdminReload,
     AudioProfiles,
     AudioRenditionSources,
@@ -261,6 +270,7 @@ impl ConfigField {
     pub fn name(&self) -> &'static str {
         match self {
             Self::AdminBind => "admin.bind",
+            Self::AdminAllowedRoots => "admin.allowed_roots",
             Self::AdminReload => "admin.reload",
             Self::AudioProfiles => "audio_profiles",
             Self::AudioRenditionSources => "audio_rendition_sources",

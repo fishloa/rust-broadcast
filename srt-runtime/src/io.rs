@@ -388,6 +388,14 @@ const KEEPALIVE_PERIOD: Duration = Duration::from_secs(1);
 /// §6.1.6; the interval is this crate's choice).
 #[cfg(feature = "crypto")]
 const KM_RESEND_INTERVAL: Duration = Duration::from_millis(500);
+/// Shortest interval between two peer Key Material messages this driver
+/// processes. Recovering the SEK runs a 2048-iteration PBKDF2; a peer that
+/// re-sends KMREQ back to back would otherwise spend a core on it (#2840).
+/// The interval is this crate's choice — `private/specs-verified/rules/srt-crypto.md`
+/// §6.1.6 fixes the KM Refresh *packet-count* periods, not a time limit on
+/// inbound requests.
+#[cfg(feature = "crypto")]
+const KMREQ_MIN_INTERVAL: Duration = Duration::from_millis(100);
 /// SEK length used when the connection's own key length is unknown: AES-128.
 #[cfg(feature = "crypto")]
 const DEFAULT_SEK_LEN: usize = 16;
@@ -426,6 +434,25 @@ const MAX_RECENT_ACCEPTS: usize = MAX_PENDING;
 // ACK/NAK — sat there just as throttled as if pacing applied to it too. Two
 // queues make that structurally impossible: control is always drained in
 // full before data pacing is even considered.
+
+/// One queued outbound DATA datagram. `retransmit` names the sequence number
+/// when the datagram is a retransmission, so the sender's "already queued"
+/// mark is cleared when the datagram leaves this queue (#2819).
+#[derive(Debug)]
+struct OutboundData {
+    bytes: Vec<u8>,
+    retransmit: Option<u32>,
+}
+
+impl OutboundData {
+    /// A first transmission (never a retransmission).
+    fn first_transmission(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            retransmit: None,
+        }
+    }
+}
 
 /// Per-connection counters for datagrams a bounded internal channel dropped
 /// because it was full (item 4) — this adapter's own internal backpressure,
@@ -1286,10 +1313,18 @@ struct Driver {
     crypto_key_len: usize,
     #[cfg(feature = "crypto")]
     km_refresh: crate::km_refresh::KmRefreshDriver,
+    /// The last KEK derived from a peer Key Material message, so a repeated
+    /// KMREQ with the same `(Salt, KLen)` does not rerun PBKDF2 (#2840).
+    #[cfg(feature = "crypto")]
+    kek_cache: crate::crypto::KekCache,
+    /// When the peer's most recent KMREQ was processed, so a peer cannot burn
+    /// a core by re-sending Key Material (#2840, `KMREQ_MIN_INTERVAL`).
+    #[cfg(feature = "crypto")]
+    last_peer_kmreq_at: Option<Instant>,
 
     // Outbound datagram queues — separate so control can never queue behind
     // a not-yet-due paced DATA packet (see the module doc above).
-    outbound_data: VecDeque<Vec<u8>>,
+    outbound_data: VecDeque<OutboundData>,
     outbound_control: VecDeque<Vec<u8>>,
 
     // Token-bucket pacing schedule (issue #1061): the earliest time the next
@@ -1383,6 +1418,10 @@ impl Driver {
                 p.crypto_thresholds,
                 crate::km_refresh::KeyParity::Even,
             ),
+            #[cfg(feature = "crypto")]
+            kek_cache: crate::crypto::KekCache::new(),
+            #[cfg(feature = "crypto")]
+            last_peer_kmreq_at: None,
             outbound_data: VecDeque::new(),
             outbound_control: VecDeque::new(),
             next_data_send_at: None,
@@ -1673,22 +1712,36 @@ impl Driver {
         if subtype != crate::packet::handshake::EXT_TYPE_KMREQ {
             return;
         }
+        // Recovering the SEK runs PBKDF2; a peer re-sending Key Material
+        // back to back is refused beyond one message per
+        // `KMREQ_MIN_INTERVAL` (#2840). A legitimate refresh that lands
+        // inside the window is retransmitted by the peer.
+        let now = Instant::now();
+        if self
+            .last_peer_kmreq_at
+            .is_some_and(|last| now.saturating_duration_since(last) < KMREQ_MIN_INTERVAL)
+        {
+            return;
+        }
+        self.last_peer_kmreq_at = Some(now);
         let installed = match km.kk {
-            crate::packet::KmKeyFlag::Both => {
-                crate::handshake_sm::recover_both_seks(&self.crypto_passphrase, km)
-                    .map(|(even, odd, salt)| {
-                        self.rx_keys.install(KeyParity::Even, even.to_vec(), salt);
-                        self.rx_keys.install(KeyParity::Odd, odd.to_vec(), salt);
-                    })
-                    .is_ok()
-            }
+            crate::packet::KmKeyFlag::Both => crate::handshake_sm::recover_both_seks(
+                &self.crypto_passphrase,
+                km,
+                &mut self.kek_cache,
+            )
+            .map(|(even, odd, salt)| {
+                self.rx_keys.install(KeyParity::Even, even.to_vec(), salt);
+                self.rx_keys.install(KeyParity::Odd, odd.to_vec(), salt);
+            })
+            .is_ok(),
             kk => {
                 let parity = if kk == crate::packet::KmKeyFlag::Odd {
                     KeyParity::Odd
                 } else {
                     KeyParity::Even
                 };
-                crate::handshake_sm::recover_sek(&self.crypto_passphrase, km)
+                crate::handshake_sm::recover_sek(&self.crypto_passphrase, km, &mut self.kek_cache)
                     .map(|(sek, salt)| self.rx_keys.install(parity, sek.to_vec(), salt))
                     .is_ok()
             }
@@ -1745,7 +1798,8 @@ impl Driver {
         // Wrap at the wire field's own bit width ...
         self.next_send_seq = seq_next(self.next_send_seq);
         self.next_message_number = next_message_number(self.next_message_number);
-        self.outbound_data.push_back(bytes);
+        self.outbound_data
+            .push_back(OutboundData::first_transmission(bytes));
     }
 
     /// Process one datagram from the peer. Takes the datagram by value so a
@@ -1968,11 +2022,23 @@ impl Driver {
         // "original or retransmitted") and tag them `is_data` so pacing
         // applies. The payload length is the datagram less its fixed header —
         // no need to re-parse the packet just to learn it.
-        for bytes in self.sender.tick(now) {
+        let queue_cap = usize::try_from(self.max_flow_window).unwrap_or(usize::MAX);
+        for (seq, bytes) in self.sender.tick(now) {
             self.livecc.on_data_packet(
                 u64::try_from(bytes.len().saturating_sub(SRT_HEADER_LEN)).unwrap_or(u64::MAX),
             );
-            self.outbound_data.push_back(bytes);
+            // Retransmissions are capped at the negotiated flow window: a
+            // NAK naming the whole send buffer must not turn into an
+            // unbounded queue (#2819). A dropped retransmission stays in the
+            // sender's loss list and is offered again by a later tick.
+            if self.outbound_data.len() < queue_cap {
+                self.outbound_data.push_back(OutboundData {
+                    bytes,
+                    retransmit: Some(seq),
+                });
+            } else {
+                self.sender.on_retransmit_dropped(seq);
+            }
         }
 
         // Keep-Alive (§3.2.3): a connection that has sent nothing for a
@@ -2097,9 +2163,12 @@ impl Driver {
                 // preserve send order) queued for a later pass.
                 break;
             }
-            let Some(bytes) = self.outbound_data.pop_front() else {
+            let Some(datagram) = self.outbound_data.pop_front() else {
                 break;
             };
+            if let Some(seq) = datagram.retransmit {
+                self.sender.on_retransmit_sent(seq);
+            }
             let period = self.livecc.on_ack_received();
             // Catch-up: a wake that arrives late (the timer has ~1 ms
             // granularity, `MIN_WAKE`) still owes the packets whose slots
@@ -2115,7 +2184,7 @@ impl Driver {
             sent += 1;
             send_bounded(
                 &self.udp,
-                &bytes,
+                &datagram.bytes,
                 self.peer_addr,
                 self.write_timeout,
                 "send",
@@ -2296,14 +2365,13 @@ struct ListenerCore {
     last_pending_tick: Instant,
 }
 
-/// The listener's SYN-cookie key and when it was drawn. Each pending
-/// handshake keeps the cookie it was *issued* (the engine compares the
-/// CONCLUSION's cookie with it), so a handshake that began under the previous
-/// key still completes after a rotation — the "previous key stays acceptable"
-/// window is exactly one handshake's lifetime; only cookies issued from then
-/// on use the new key.
+/// The listener's SYN-cookie key and when it was drawn. A stateless INDUCTION
+/// answer stores no per-peer cookie, so the CONCLUSION is validated against
+/// the current key and the one it replaced: a handshake that began just
+/// before a rotation still completes.
 struct CookieKeys {
     current: u128,
+    previous: Option<u128>,
     drawn_at: Instant,
 }
 
@@ -2311,12 +2379,19 @@ impl CookieKeys {
     fn new(now: Instant) -> Result<Self> {
         Ok(CookieKeys {
             current: random_u128()?,
+            previous: None,
             drawn_at: now,
         })
     }
 
     fn current(&self) -> u128 {
         self.current
+    }
+
+    /// Every key a CONCLUSION-phase cookie may have been issued under: the
+    /// current one and the one it replaced on the last rotation.
+    fn acceptable(&self) -> impl Iterator<Item = u128> + '_ {
+        core::iter::once(self.current).chain(self.previous)
     }
 
     /// Replace the key once it is [`COOKIE_KEY_ROTATION`] old. Returns whether
@@ -2328,6 +2403,7 @@ impl CookieKeys {
         }
         match random_u128() {
             Ok(key) => {
+                self.previous = Some(self.current);
                 self.current = key;
                 self.drawn_at = now;
                 true
@@ -2641,6 +2717,9 @@ impl ListenerCore {
                 }
                 HandshakeType::Induction => {
                     self.recent_accepts.remove(&src);
+                    // §4.3.1.1's SYN Cookie exists so an unverified Caller
+                    // allocates nothing: answer, and keep no state (#2820).
+                    return self.answer_induction(src, hp);
                 }
                 _ => {}
             }
@@ -2676,55 +2755,41 @@ impl ListenerCore {
         let is_new = !self.pending.contains_key(&src);
 
         if is_new {
-            // Pending state is bounded: a new source can only be admitted
-            // after expired entries have been reaped, and even then only if
-            // room remains — otherwise the source is ignored (§4.3.1.1's SYN
-            // Cookie keeps unverified callers from allocating resources in
-            // the first place; this caps what a verified-looking flood can
-            // hold).
-            if self.pending.len() >= MAX_PENDING {
-                self.tick_pending();
-                if self.pending.len() >= MAX_PENDING {
-                    return Ok(());
-                }
-            }
-
-            let peer_isn = match &ctrl {
-                ControlPacket::Handshake(hp) => hp.initial_seq_number,
-                _ => return Ok(()),
+            // Only a CONCLUSION that echoes a cookie this listener issued may
+            // allocate anything: an INDUCTION was answered statelessly above,
+            // so a flood of guessed or spoofed ones holds no slots (#2820).
+            let ControlPacket::Handshake(hp) = &ctrl else {
+                return Ok(());
             };
-
-            // Both this connection's own Socket ID and its ISN must be
-            // freshly generated, not a predictable incrementing counter
-            // (Socket ID) or the listener-wide `config.initial_seq_number`
-            // reused for every accepted peer (ISN) — `draft-sharabayko-srt-01`
-            // §3/§4.3.1.1 expects both random per connection, and either a
-            // fixed or a sequential value lets an off-path party that
-            // observed one accepted connection predict the next one's wire
-            // identifiers.
-            let own_socket_id = random_socket_id()?;
-            let our_initial_seq = random_isn()?;
+            if hp.handshake_type != HandshakeType::Conclusion {
+                return Ok(());
+            }
+            let Some((own_socket_id, our_initial_seq)) =
+                self.validated_conclusion_ids(src, hp.srt_socket_id, hp.syn_cookie)
+            else {
+                return Ok(());
+            };
+            // The cookie proves the round trip but the table is still bounded
+            // against a flood of genuinely answered Callers.
+            if self.pending.len() >= MAX_PENDING {
+                return Ok(());
+            }
             let mut per_conn_config = self.config.clone();
             per_conn_config.initial_seq_number = our_initial_seq;
-            // §4.3.1.1: "a cookie that is crafted based on host, port and
-            // current time with 1 minute accuracy" — `derive_cookie` mixes
-            // exactly those inputs (`crate::handshake_sm`'s existing,
-            // documented derivation), keyed by this listener's own secret so
-            // two listeners never hand out the same cookie for the same
-            // peer/time bucket.
-            let peer_key = addr_to_u64(&src);
-            let time_bucket = unix_time_bucket();
-            let syn_cookie = derive_cookie(peer_key, time_bucket, self.cookie_keys.current());
-            let hs = ListenerHandshake::new(own_socket_id, syn_cookie, per_conn_config);
+            let created_at = Instant::now();
             self.pending.insert(
                 src,
                 PendingListener {
-                    handshake: hs,
+                    handshake: ListenerHandshake::awaiting_conclusion(
+                        own_socket_id,
+                        hp.syn_cookie,
+                        per_conn_config,
+                    ),
                     params: None,
-                    peer_initial_seq: peer_isn,
+                    peer_initial_seq: hp.initial_seq_number,
                     peer_timestamp_us: 0,
                     concluded_at: None,
-                    created_at: Instant::now(),
+                    created_at,
                     last_response: None,
                     our_initial_seq,
                 },
@@ -2783,12 +2848,72 @@ impl ListenerCore {
         Ok(())
     }
 
+    /// Answer an INDUCTION without retaining any per-peer state
+    /// (`draft-sharabayko-srt-01` §4.3.1.1). The response is built by the same
+    /// sans-IO machine the stateful path used, then dropped: the connection's
+    /// Socket ID and ISN are re-derived from the same keyed inputs when a
+    /// CONCLUSION proves the Caller received this answer (#2820).
+    fn answer_induction(
+        &mut self,
+        src: std::net::SocketAddr,
+        hp: &HandshakePacket<'_>,
+    ) -> Result<()> {
+        let peer_key = cookie_peer_key(&src, hp.srt_socket_id);
+        let time_bucket = unix_time_bucket();
+        let secret = self.cookie_keys.current();
+        let syn_cookie = derive_cookie(peer_key, time_bucket, secret);
+        let (own_socket_id, our_initial_seq) = self.connection_ids(peer_key, time_bucket, secret);
+        let mut per_conn_config = self.config.clone();
+        per_conn_config.initial_seq_number = our_initial_seq;
+        let mut handshake = ListenerHandshake::new(own_socket_id, syn_cookie, per_conn_config);
+        for outcome in handshake.feed(&ControlPacket::Handshake(hp.clone()))? {
+            if let HandshakeOutput::Send(bytes) = outcome {
+                self.outbound_queue.entry(src).or_default().push_back(bytes);
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate a CONCLUSION's SYN Cookie against this listener's current and
+    /// previous key, across the current and previous one-minute bucket, and
+    /// return the `(own socket id, our ISN)` the stateless INDUCTION answer
+    /// carried for that `(peer, bucket, key)`. `None` means no state may be
+    /// allocated (§4.3.1.1).
+    fn validated_conclusion_ids(
+        &self,
+        src: std::net::SocketAddr,
+        caller_socket_id: u32,
+        syn_cookie: u32,
+    ) -> Option<(u32, u32)> {
+        if syn_cookie == 0 {
+            return None;
+        }
+        let peer_key = cookie_peer_key(&src, caller_socket_id);
+        let now = unix_time_bucket();
+        for time_bucket in [now, now.wrapping_sub(1)] {
+            for secret in self.cookie_keys.acceptable() {
+                if derive_cookie(peer_key, time_bucket, secret) == syn_cookie {
+                    return Some(self.connection_ids(peer_key, time_bucket, secret));
+                }
+            }
+        }
+        None
+    }
+
+    /// This listener's per-connection Socket ID and ISN for a cookie issued
+    /// over `(peer_key, time_bucket, secret)`, kept in libsrt's allocation
+    /// range for the Socket ID (see [`MAX_SRT_SOCKET_ID`]).
+    fn connection_ids(&self, peer_key: u64, time_bucket: u32, secret: u128) -> (u32, u32) {
+        let (socket_id, initial_seq) =
+            handshake_sm::derive_listener_ids(peer_key, time_bucket, secret);
+        (socket_id % MAX_SRT_SOCKET_ID + 1, initial_seq)
+    }
+
     fn tick_pending(&mut self) {
-        self.cookie_keys.rotate_if_due(Instant::now());
         let mut to_remove = Vec::new();
         for (addr, entry) in self.pending.iter_mut() {
             entry.handshake.set_elapsed(entry.created_at.elapsed());
-            for outcome in entry.handshake.tick(HANDSHAKE_RETRANSMIT_PERIOD) {
+            for outcome in entry.handshake.tick(PENDING_TICK_INTERVAL) {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
                         self.outbound_queue
@@ -3118,6 +3243,16 @@ fn addr_to_u64(addr: &std::net::SocketAddr) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     addr.hash(&mut hasher);
     hasher.finish()
+}
+
+/// The `peer_key` a listener binds a SYN cookie to: the source address and the
+/// Caller's own SRT Socket ID. §4.3.1.1's cookie is "crafted based on host,
+/// port and current time"; binding the ID as well means a captured
+/// CONCLUSION replayed with a rewritten Socket ID no longer validates, while
+/// the same host may still reconnect from the same port under a fresh ID
+/// (its INDUCTION issues a cookie for that ID).
+fn cookie_peer_key(addr: &std::net::SocketAddr, caller_socket_id: u32) -> u64 {
+    addr_to_u64(addr) ^ (u64::from(caller_socket_id) << 32)
 }
 
 /// The current UNIX time, bucketed to 1-minute accuracy — the `time_bucket`
@@ -3499,6 +3634,59 @@ mod adapter_tests {
         buf
     }
 
+    /// A CONCLUSION with no extensions and `cookie` — either a stray (cookie
+    /// 0 never validates) or a probe with a chosen cookie.
+    fn conclusion_bytes(socket_id: u32, cookie: u32) -> Vec<u8> {
+        let hp = HandshakePacket {
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
+            version: crate::handshake_sm::HANDSHAKE_VERSION_5,
+            encryption_field: crate::packet::EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: crate::packet::HandshakeType::Conclusion,
+            srt_socket_id: socket_id,
+            syn_cookie: cookie,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(Vec::new()),
+        };
+        let pkt = ControlPacket::Handshake(hp);
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).expect("serialize conclusion");
+        buf
+    }
+
+    /// Drives a real [`CallerHandshake`] through its INDUCTION against `core`
+    /// and returns the CONCLUSION bytes it produces, leaving `core` with no
+    /// queued handshake datagram for `src`.
+    fn listener_conclusion(
+        core: &mut ListenerCore,
+        src: std::net::SocketAddr,
+        caller_socket_id: u32,
+    ) -> Vec<u8> {
+        let mut caller = CallerHandshake::new(caller_socket_id, HandshakeConfig::default());
+        let induction = caller.start().expect("caller induction");
+        core.handle_datagram(src, &induction)
+            .expect("the listener answers an induction");
+        let answer = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .expect("an INDUCTION response")
+            .clone();
+        core.outbound_queue.remove(&src);
+        let parsed = ControlPacket::parse(&answer).expect("parse induction response");
+        let mut conclusion = None;
+        for outcome in caller.feed(&parsed).expect("caller feed") {
+            if let HandshakeOutput::Send(bytes) = outcome {
+                conclusion = Some(bytes);
+            }
+        }
+        conclusion.expect("the caller sends a conclusion")
+    }
+
     /// Review-focus 2. UDP truncates a datagram larger than the receive buffer
     /// without telling the reader; a truncated DATA packet then parses as a
     /// shorter, valid packet and its payload is delivered corrupted. The
@@ -3618,6 +3806,25 @@ mod adapter_tests {
         (core, unrouted_tx, accepted)
     }
 
+    /// #2860: remembered CONCLUSION responses stay at `MAX_RECENT_ACCEPTS`
+    /// under a flood of accepted addresses.
+    #[tokio::test(start_paused = true)]
+    async fn recent_accepts_stop_at_the_cap_under_a_flood() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        for i in 0..u32::try_from(MAX_RECENT_ACCEPTS).unwrap() + 64 {
+            let addr = format!("127.0.0.1:{}", 10_000 + i).parse().unwrap();
+            core.remember_accept(
+                addr,
+                RecentAccept {
+                    peer_socket_id: 1,
+                    response: alloc::vec![0u8; 4],
+                    accepted_at: Instant::now(),
+                },
+            );
+        }
+        assert_eq!(core.recent_accepts.len(), MAX_RECENT_ACCEPTS);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn bounded_turns_a_stuck_future_into_a_timed_out_io_error() {
         let r: Result<()> = bounded(
@@ -3715,7 +3922,9 @@ mod adapter_tests {
     async fn the_deadline_is_the_pacing_slot_when_it_is_the_earliest_term() {
         let mut driver = quiet_driver().await;
         let now = Instant::now();
-        driver.outbound_data.push_back(alloc::vec![0u8; 100]);
+        driver
+            .outbound_data
+            .push_back(OutboundData::first_transmission(alloc::vec![0u8; 100]));
         driver.next_data_send_at = Some(now + Duration::from_millis(3));
         assert_eq!(
             driver.poll_timeout().unwrap(),
@@ -3819,6 +4028,16 @@ mod adapter_tests {
             .expect("induction");
         assert_eq!(
             core.poll_timeout(),
+            None,
+            "an INDUCTION allocates no pending handshake (#2820)"
+        );
+        let src = peer_addr();
+        let conclusion = listener_conclusion(&mut core, src, 7);
+        core.handle_datagram(src, &conclusion)
+            .expect("cookie-validated conclusion");
+        assert!(core.pending.contains_key(&src));
+        assert_eq!(
+            core.poll_timeout(),
             Some(core.last_pending_tick + PENDING_TICK_INTERVAL)
         );
         core.accepting = false;
@@ -3829,32 +4048,72 @@ mod adapter_tests {
         );
     }
 
-    /// The run loop actually ticks a pending handshake on that deadline: with no
-    /// further inbound traffic the INDUCTION response is retransmitted.
+    /// A lost INDUCTION response is recovered by the Caller re-sending its
+    /// INDUCTION, which the stateless listener answers identically — not by a
+    /// listener-side retransmit tick (#2820). No pending state is created.
     #[tokio::test]
-    async fn a_pending_handshake_is_retransmitted_by_the_listener_tick_alone() {
+    async fn a_repeated_induction_is_answered_again_without_state() {
         let config = HandshakeConfig {
             retransmit_after: Duration::from_millis(1),
             max_retries: 5,
             ..HandshakeConfig::default()
         };
-        let (core, unrouted_tx, _accepted) = test_core_with_channels(config).await;
-        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        let cancel = CancellationToken::new();
-        let task = tokio::spawn(core.run(cancel.clone()));
-        unrouted_tx
-            .send((peer.local_addr().unwrap(), Bytes::from(induction_bytes(7))))
-            .await
-            .unwrap();
-        let mut buf = [0u8; 2048];
-        for n in 1..=2 {
-            tokio::time::timeout(Duration::from_secs(5), peer.recv_from(&mut buf))
-                .await
-                .unwrap_or_else(|_| panic!("datagram {n} never arrived: the tick is not wired"))
-                .unwrap();
-        }
-        cancel.cancel();
-        let _ = task.await;
+        let mut core = test_core(config).await;
+        let src = peer_addr();
+        let induction = induction_bytes(7);
+
+        core.handle_datagram(src, &induction).expect("induction");
+        let first = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .cloned()
+            .expect("an INDUCTION response");
+        core.handle_datagram(src, &induction).expect("repeat");
+        let second = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .cloned()
+            .expect("the repeat is answered too");
+        assert_eq!(first, second, "the stateless answer is identical");
+        assert!(core.pending.is_empty(), "neither answer allocated state");
+    }
+
+    /// #2820: a CONCLUSION is validated against the key that issued its
+    /// cookie even after that key has rotated, and against the previous
+    /// one-minute bucket.
+    #[tokio::test(start_paused = true)]
+    async fn a_conclusion_cookie_survives_a_key_rotation_and_a_bucket_boundary() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let src = peer_addr();
+        let peer_key = cookie_peer_key(&src, 5);
+        let bucket = unix_time_bucket();
+        let old_secret = core.cookie_keys.current();
+        let old_key_cookie = derive_cookie(peer_key, bucket, old_secret);
+
+        core.cookie_keys.drawn_at = Instant::now() - COOKIE_KEY_ROTATION;
+        assert!(core.cookie_keys.rotate_if_due(Instant::now()));
+        assert_ne!(core.cookie_keys.current(), old_secret);
+
+        assert!(
+            core.validated_conclusion_ids(src, 5, old_key_cookie)
+                .is_some(),
+            "the previous key must still validate a cookie it issued"
+        );
+
+        let previous_bucket_cookie =
+            derive_cookie(peer_key, bucket.wrapping_sub(1), core.cookie_keys.current());
+        assert!(
+            core.validated_conclusion_ids(src, 5, previous_bucket_cookie)
+                .is_some(),
+            "a cookie issued a minute ago is still within its window"
+        );
+
+        let truncated = conclusion_bytes(5, 0);
+        core.handle_datagram(src, &truncated)
+            .expect("an unvalidated conclusion is ignored");
+        assert!(core.pending.is_empty());
     }
 
     /// Send errors are counted, never queued: a flood of them must not touch
@@ -3958,8 +4217,8 @@ mod adapter_tests {
 
         // Every enqueued DATA packet must itself carry a legal (in-range)
         // seq/message number — not just the counter that produced it.
-        for bytes in &driver.outbound_data {
-            let dp = DataPacket::parse(bytes).expect("parse enqueued data packet");
+        for datagram in &driver.outbound_data {
+            let dp = DataPacket::parse(&datagram.bytes).expect("parse enqueued data packet");
             assert!(dp.seq_number <= SEQ_NUMBER_MASK);
             assert!(dp.message_number <= crate::packet::data::MESSAGE_NUMBER_MASK);
         }
@@ -4304,6 +4563,73 @@ mod adapter_tests {
         crate::km_refresh::KmRefreshThresholds::new(20, 5).unwrap()
     }
 
+    /// #2840: a peer re-sending the same Key Material message back to back
+    /// gets one answer, not one PBKDF2 run per datagram; a repeat after the
+    /// interval is answered from the KEK cache instead of deriving again.
+    #[cfg(feature = "crypto")]
+    #[tokio::test(start_paused = true)]
+    async fn repeat_kmreq_is_rate_limited_and_reuses_the_kek() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.crypto_passphrase = b"rate-limit-passphrase".to_vec().into();
+        let salt = [0x6Bu8; crate::crypto::SALT_LEN];
+        let sek = [0x5Au8; 16];
+        let kek = crate::crypto::derive_kek(&driver.crypto_passphrase, &salt, sek.len()).unwrap();
+        let (icv, wrapped) = crate::crypto::wrap_sek(&kek, &sek).unwrap();
+        let km = crate::packet::KeyMaterial {
+            kk: crate::packet::KmKeyFlag::Even,
+            keki: 0,
+            cipher: crate::packet::Cipher::AesCtr,
+            auth: crate::packet::KmAuth::None,
+            se: crate::packet::StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv,
+            x_sek: &wrapped,
+            o_sek: None,
+        };
+        let mut km_buf = vec![0u8; km.serialized_len()];
+        km.serialize_into(&mut km_buf).unwrap();
+        let ud = ControlPacket::UserDefined(crate::packet::UserDefinedPacket {
+            control_type: crate::packet::ControlType::UserDefined.to_bits(),
+            subtype: crate::packet::handshake::EXT_TYPE_KMREQ,
+            type_specific_info: 0,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
+            cif: &km_buf,
+        });
+        let mut request = vec![0u8; ud.serialized_len()];
+        ud.serialize_into(&mut request).unwrap();
+
+        driver
+            .ingress(Bytes::from(request.clone()))
+            .expect("ingress");
+        assert_eq!(driver.outbound_control.len(), 1, "first KMREQ answered");
+        assert_eq!(driver.kek_cache.derivations(), 1);
+        assert!(driver.rx_keys.even.is_some());
+
+        driver.outbound_control.clear();
+        driver
+            .ingress(Bytes::from(request.clone()))
+            .expect("ingress");
+        assert!(
+            driver.outbound_control.is_empty(),
+            "a repeat inside KMREQ_MIN_INTERVAL must be dropped"
+        );
+        assert_eq!(driver.kek_cache.derivations(), 1, "no derivation on a drop");
+
+        tokio::time::advance(KMREQ_MIN_INTERVAL).await;
+        driver.ingress(Bytes::from(request)).expect("ingress");
+        assert_eq!(
+            driver.outbound_control.len(),
+            1,
+            "after the interval: answered"
+        );
+        assert_eq!(
+            driver.kek_cache.derivations(),
+            1,
+            "the same Salt and KLen must reuse the derived KEK"
+        );
+    }
+
     #[cfg(feature = "crypto")]
     async fn encrypted_pair() -> (Driver, mpsc::Receiver<Bytes>, Driver, mpsc::Receiver<Bytes>) {
         let (mut a, a_rx) = test_driver(8192).await;
@@ -4335,7 +4661,7 @@ mod adapter_tests {
         let datagrams: Vec<Vec<u8>> = from
             .outbound_control
             .drain(..)
-            .chain(from.outbound_data.drain(..))
+            .chain(from.outbound_data.drain(..).map(|d| d.bytes))
             .collect();
         for datagram in datagrams {
             if is_kmreq(&datagram) && *kmreqs_to_drop > 0 {
@@ -4483,32 +4809,19 @@ mod adapter_tests {
             "pending grew to {} — must be capped at MAX_PENDING",
             listener.pending.len()
         );
+        assert_eq!(
+            listener.pending.len(),
+            0,
+            "a spoofed INDUCTION flood must allocate no handshake state (#2820)"
+        );
     }
 
     #[tokio::test]
     async fn stray_conclusions_do_not_hold_listener_handshake_slots() {
         let mut listener = test_core(HandshakeConfig::default()).await;
-        let stray = {
-            let hp = HandshakePacket {
-                timestamp: crate::packet::SrtTimestamp::ZERO,
-                dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
-                version: crate::handshake_sm::HANDSHAKE_VERSION_5,
-                encryption_field: crate::packet::EncryptionField::NoEncryption,
-                extension_field: HandshakeExtensionFlags(0),
-                initial_seq_number: 0,
-                mtu: 1500,
-                max_flow_window_size: 8192,
-                handshake_type: crate::packet::HandshakeType::Conclusion,
-                srt_socket_id: 5,
-                syn_cookie: 0,
-                peer_ip: [0; 4],
-                extensions: HandshakeExtensions(Vec::new()),
-            };
-            let pkt = ControlPacket::Handshake(hp);
-            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-            pkt.serialize_into(&mut buf).unwrap();
-            buf
-        };
+        // Cookie 0 is never issued (`derive_cookie` forces the low bit), so a
+        // CONCLUSION carrying it must allocate nothing.
+        let stray = conclusion_bytes(5, 0);
         for i in 0..2000u32 {
             let src = std::net::SocketAddr::from(([198, 18, (i >> 8) as u8, i as u8], 40_000));
             let _ = listener.handle_datagram(src, &stray);
@@ -4523,13 +4836,14 @@ mod adapter_tests {
             listener.pending.len()
         );
         let honest = std::net::SocketAddr::from(([203, 0, 113, 9], 4000));
+        let conclusion = listener_conclusion(&mut listener, honest, 7);
         listener
-            .handle_datagram(honest, &induction_bytes(7))
+            .handle_datagram(honest, &conclusion)
             .expect("an honest caller");
         assert!(listener.pending.contains_key(&honest));
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn pending_entries_expire_while_other_sources_keep_sending() {
         let config = HandshakeConfig {
             retransmit_after: Duration::from_millis(1),
@@ -4538,16 +4852,41 @@ mod adapter_tests {
         };
         let mut listener = test_core(config).await;
 
+        // A handshake left awaiting its CONCLUSION — the same state a
+        // validated CONCLUSION's allocation passes through — stalled by
+        // inserting it directly (no public path leaves it there).
         let stalling_src = std::net::SocketAddr::from(([203, 0, 113, 1], 1234));
-        listener
-            .handle_datagram(stalling_src, &induction_bytes(7))
-            .expect("first induction");
+        let peer_key = addr_to_u64(&stalling_src);
+        let bucket = unix_time_bucket();
+        let secret = listener.cookie_keys.current();
+        let cookie = derive_cookie(peer_key, bucket, secret);
+        let (own_socket_id, our_initial_seq) = listener.connection_ids(peer_key, bucket, secret);
+        let mut stalled_config = listener.config.clone();
+        stalled_config.initial_seq_number = our_initial_seq;
+        listener.pending.insert(
+            stalling_src,
+            PendingListener {
+                handshake: ListenerHandshake::awaiting_conclusion(
+                    own_socket_id,
+                    cookie,
+                    stalled_config,
+                ),
+                params: None,
+                peer_initial_seq: 0,
+                peer_timestamp_us: 0,
+                concluded_at: None,
+                created_at: Instant::now(),
+                last_response: None,
+                our_initial_seq,
+            },
+        );
 
         // Continuous traffic from *other* sources must not keep the stalling
         // entry alive: the timer-driven tick expires it.
         for i in 0..10u32 {
             let src = std::net::SocketAddr::from(([198, 51, (i >> 8) as u8, i as u8], 40_000));
             let _ = listener.handle_datagram(src, &induction_bytes(100 + i));
+            tokio::time::advance(Duration::from_millis(10)).await;
             listener.tick_pending();
         }
 
@@ -4840,32 +5179,16 @@ mod adapter_tests {
     #[tokio::test]
     async fn listener_feed_failure_is_wrapped_with_the_engine_error() {
         let mut listener = test_core(HandshakeConfig::default()).await;
-        // A CONCLUSION as the very first packet from a source: the fresh
-        // engine expects an INDUCTION.
-        let conclusion = {
-            let hp = HandshakePacket {
-                timestamp: crate::packet::SrtTimestamp::ZERO,
-                dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
-                version: crate::handshake_sm::HANDSHAKE_VERSION_5,
-                encryption_field: crate::packet::EncryptionField::NoEncryption,
-                extension_field: HandshakeExtensionFlags(0),
-                initial_seq_number: 0,
-                mtu: 1500,
-                max_flow_window_size: 8192,
-                handshake_type: crate::packet::HandshakeType::Conclusion,
-                srt_socket_id: 5,
-                syn_cookie: 0,
-                peer_ip: [0; 4],
-                extensions: HandshakeExtensions(Vec::new()),
-            };
-            let pkt = ControlPacket::Handshake(hp);
-            let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-            pkt.serialize_into(&mut buf).unwrap();
-            buf
-        };
+        let src = peer_addr();
+        let conclusion = listener_conclusion(&mut listener, src, 7);
+        listener
+            .handle_datagram(src, &conclusion)
+            .expect("a cookie-validated conclusion completes the handshake");
+        // A CONCLUSION from a different Caller Socket ID after this one
+        // connected is out of sequence for the engine.
         let err = listener
-            .handle_datagram(peer_addr(), &conclusion)
-            .expect_err("a CONCLUSION before an INDUCTION");
+            .handle_datagram(src, &conclusion_bytes(9, 0))
+            .expect_err("a stray CONCLUSION on a connected entry");
         let Error::Handshake { stage, source } = err else {
             panic!("expected Error::Handshake, got {err:?}");
         };
@@ -5070,6 +5393,77 @@ mod adapter_tests {
         assert_eq!(
             driver.livecc.avg_payload_size(),
             reference.avg_payload_size()
+        );
+    }
+
+    /// #2819: one NAK naming the whole send buffer cannot queue more
+    /// retransmissions than the negotiated flow window, and a second NAK
+    /// before the queue drains adds no duplicates.
+    #[tokio::test(start_paused = true)]
+    async fn a_nak_naming_the_whole_buffer_is_capped_at_the_flow_window() {
+        use crate::packet::number::SeqNo;
+        use crate::packet::{LossListEntry, NakPacket};
+        const WINDOW: u32 = 4;
+        const BUFFERED: u32 = 8;
+        let (mut driver, _rx) = test_driver(WINDOW).await;
+        driver.peer_addr = "127.0.0.1:1".parse().unwrap();
+        for _ in 0..BUFFERED {
+            driver.send_one(&[0u8; 100]);
+        }
+        driver.outbound_data.clear(); // the first transmissions are on the wire
+
+        let nak = || {
+            let nak = ControlPacket::Nak(NakPacket {
+                timestamp: crate::packet::SrtTimestamp::ZERO,
+                dest_socket_id: crate::packet::SocketId::from_wire(1),
+                entries: alloc::vec![LossListEntry::Range(
+                    SeqNo::try_new(0).expect("fits 31 bits"),
+                    SeqNo::try_new(BUFFERED - 1).expect("fits 31 bits"),
+                )],
+            });
+            let mut bytes = alloc::vec![0u8; nak.serialized_len()];
+            nak.serialize_into(&mut bytes).expect("serialize nak");
+            bytes
+        };
+
+        driver.ingress(Bytes::from(nak())).expect("ingress nak");
+        driver.tick_engines();
+        assert_eq!(
+            driver.outbound_data.len(),
+            WINDOW as usize,
+            "the outbound queue is capped at the flow window"
+        );
+        assert_eq!(
+            driver.sender.pending_retransmit_count(),
+            (BUFFERED - WINDOW) as usize
+        );
+
+        driver.ingress(Bytes::from(nak())).expect("ingress nak");
+        driver.tick_engines();
+        assert_eq!(
+            driver.outbound_data.len(),
+            WINDOW as usize,
+            "a repeated NAK must not queue a second copy"
+        );
+
+        for _ in 0..WINDOW {
+            driver.flush_outbound().await.expect("flush");
+            if let Some(wait) = driver.next_paced_send_wait() {
+                tokio::time::advance(wait).await;
+            }
+        }
+        assert!(driver.outbound_data.is_empty());
+        driver.tick_engines();
+        assert!(
+            driver.outbound_data.is_empty(),
+            "the dropped retransmissions are still inside MIN_RETRANSMIT_INTERVAL"
+        );
+        tokio::time::advance(Duration::from_millis(20)).await;
+        driver.tick_engines();
+        assert_eq!(
+            driver.outbound_data.len(),
+            (BUFFERED - WINDOW) as usize,
+            "the remainder is offered once the interval has passed"
         );
     }
 

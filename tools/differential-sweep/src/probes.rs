@@ -122,7 +122,8 @@ pub fn transmux_stream(fx: &Fixture, _: &Cfg) -> Option<Value> {
     }))
 }
 
-/// multimux `TsIngestSession` (the shared TS ingest of ts_udp/ts_http/srt):
+/// `media-plane`'s `TsIngestSession` (the shared TS ingest multimux's
+/// ts_udp/ts_http/srt inputs drive):
 /// 7-packet feeds (UDP datagram size), every `SessionEvent` drained. Records
 /// the programs/tracks announced, whether samples came before the first
 /// `NewProgram`, and the per-track published sample count/bytes/first+last

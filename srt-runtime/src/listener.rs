@@ -102,6 +102,27 @@ impl ListenerHandshake {
         }
     }
 
+    /// A machine already past its INDUCTION, for a driver that answered the
+    /// INDUCTION statelessly and has only now, on a cookie-validated
+    /// CONCLUSION, allocated the connection's state (#2820).
+    #[cfg(feature = "tokio")]
+    pub(crate) fn awaiting_conclusion(
+        own_socket_id: u32,
+        syn_cookie: u32,
+        config: HandshakeConfig,
+    ) -> Self {
+        ListenerHandshake {
+            own_socket_id,
+            syn_cookie,
+            config,
+            state: ListenerHandshakeState::AwaitingConclusion,
+            peer_socket_id: 0,
+            retransmit: Retransmit::default(),
+            clock: WireClock::default(),
+            negotiated: None,
+        }
+    }
+
     /// Sets the time elapsed since the connection started; every packet built
     /// from here on carries it as its wire timestamp (§3.2.1). The machine reads
     /// no clock, so the driver calls this before each `start`, `feed` and `tick`.
@@ -284,7 +305,8 @@ impl ListenerHandshake {
         let (crypto_result, km_echo_ext): CryptoConclusionResult<'_> =
             match (&crypto_cfg, &parsed.km) {
                 (Some(crypto), Some(km_req)) => {
-                    match handshake_sm::recover_sek(&crypto.passphrase, km_req) {
+                    let mut kek_cache = crate::crypto::KekCache::new();
+                    match handshake_sm::recover_sek(&crypto.passphrase, km_req, &mut kek_cache) {
                         Ok((sek, salt)) => (Some((sek, salt)), Some(km_req)),
                         Err(_) => return self.reject(RejectionReason::BadSecret, hp),
                     }

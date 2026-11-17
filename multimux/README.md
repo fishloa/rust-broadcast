@@ -251,7 +251,7 @@ One route ("stream") is served per configured `name`, under `/{stream}/...`:
 | `GET /{stream}/part-{track}-{seq}.{part}.m4s` | An LL-HLS partial segment of the in-progress segment (also how `ll_dash`'s chunked-transfer path internally sources the bytes it streams — never addressed directly by the LL-DASH MPD itself). Not applicable under `ts_hls`, which never produces parts. |
 | `GET /healthz` | Liveness — always `200`. Never gated by `output_auth`. |
 | `GET /readyz` | Readiness — `200` once at least one route is live, `503` otherwise. Never gated by `output_auth`. |
-| `GET /metrics` | Prometheus metrics. Never gated by `output_auth`. |
+| `GET /metrics` | Prometheus metrics. Gated by `output_auth` when it is configured, and counted against the ordinary concurrency limit. |
 
 An unknown stream name, or a filename `multimux` doesn't recognize, returns
 `404`.
@@ -431,6 +431,13 @@ admin listener is ever bound, no admin route ever exists.
   binds a socket. There is no way to run an unauthenticated admin listener.
   Use a *different* credential from `output_auth` — the admin API can add
   and remove routes; media playback can only read them.
+- **Filesystem access is confineable.** An added route can name a local
+  `File` input, an `@path` SDP reference, or a DVR `archive_root`. Set
+  `admin.allowed_roots` (a list of existing directories) to reject any route
+  whose path resolves outside them; it is enforced for startup configs,
+  `POST /admin/routes` and `POST /admin/reload`. Leaving it empty keeps the
+  admin caller's filesystem access unrestricted, so treat the admin
+  credential as equivalent to shell access on the box.
 
 ### Endpoints
 

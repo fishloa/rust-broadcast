@@ -168,18 +168,50 @@ pub(crate) fn plan_tracks(
     Ok((plan, tracks))
 }
 
+/// Largest on-disk SDP body accepted. A regular SDP is a few KiB; the cap
+/// stops `@/dev/zero` or an over-long file from growing the process.
+pub const MAX_SDP_FILE_BYTES: u64 = 64 * 1024;
+
 /// Loads an SDP body from `spec`: either the literal inline text, or —
 /// prefixed with `@` — a file path read fresh on every call, so an on-disk
 /// SDP can be updated between reconnects without a process restart. Used by
 /// [`crate::source::rtp_udp::run_rtp_udp`], the raw-RTP-over-UDP
 /// ingest source that has no RTSP DESCRIBE to fetch its SDP from.
-pub fn load_sdp(spec: &str) -> Result<Vec<u8>> {
-    match spec.strip_prefix('@') {
-        Some(path) => Ok(std::fs::read(path).map_err(|e| {
-            MultimuxError::Sdp(format!("failed to read SDP file {path:?}: {e}").into())
-        })?),
-        None => Ok(spec.as_bytes().to_vec()),
+///
+/// The file is opened once and its own handle checked, so a path swapped for
+/// a FIFO or a growing file after the check cannot exceed
+/// [`MAX_SDP_FILE_BYTES`] or block on a non-regular file.
+///
+/// # Errors
+/// [`MultimuxError::Sdp`] when the file cannot be opened or read, is not a
+/// regular file, or holds more than [`MAX_SDP_FILE_BYTES`].
+pub async fn load_sdp(spec: &str) -> Result<Vec<u8>> {
+    use tokio::io::AsyncReadExt as _;
+
+    let Some(path) = spec.strip_prefix('@') else {
+        return Ok(spec.as_bytes().to_vec());
+    };
+    let read_err = |e: std::io::Error| {
+        MultimuxError::Sdp(format!("failed to read SDP file {path:?}: {e}").into())
+    };
+    let file = tokio::fs::File::open(path).await.map_err(read_err)?;
+    let metadata = file.metadata().await.map_err(read_err)?;
+    if !metadata.is_file() {
+        return Err(MultimuxError::Sdp(
+            format!("SDP path {path:?} is not a regular file").into(),
+        ));
     }
+    let mut bytes = Vec::new();
+    file.take(MAX_SDP_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(read_err)?;
+    if bytes.len() as u64 > MAX_SDP_FILE_BYTES {
+        return Err(MultimuxError::Sdp(
+            format!("SDP file {path:?} is over the {MAX_SDP_FILE_BYTES}-byte limit").into(),
+        ));
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -247,29 +279,64 @@ a=control:streamid=0\r\n";
         }
     }
 
-    #[test]
-    fn load_sdp_returns_inline_text_verbatim() {
-        let loaded = load_sdp(std::str::from_utf8(SDP).unwrap()).unwrap();
+    #[tokio::test]
+    async fn load_sdp_returns_inline_text_verbatim() {
+        let loaded = load_sdp(std::str::from_utf8(SDP).unwrap()).await.unwrap();
         assert_eq!(loaded, SDP);
     }
 
     /// Biting test: `@path` must read the file's bytes, not treat the whole
     /// `@path` string as literal SDP text (which would then fail to parse).
-    #[test]
-    fn load_sdp_at_prefix_reads_file() {
+    #[tokio::test]
+    async fn load_sdp_at_prefix_reads_file() {
         let dir = std::env::temp_dir().join(format!("multimux-sdp-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.sdp");
         std::fs::write(&path, SDP).unwrap();
-        let loaded = load_sdp(&format!("@{}", path.display())).unwrap();
+        let loaded = load_sdp(&format!("@{}", path.display())).await.unwrap();
         assert_eq!(loaded, SDP);
         let _ = std::fs::remove_file(&path);
     }
 
-    #[test]
-    fn load_sdp_at_prefix_missing_file_errors() {
-        let err = load_sdp("@/no/such/path/multimux-missing.sdp");
+    #[tokio::test]
+    async fn load_sdp_at_prefix_missing_file_errors() {
+        let err = load_sdp("@/no/such/path/multimux-missing.sdp").await;
         assert!(matches!(err, Err(crate::error::MultimuxError::Sdp(_))));
+    }
+
+    /// A path that is not a regular file (here a directory, standing in for
+    /// `@/dev/zero` or a FIFO) is refused before any read.
+    #[tokio::test]
+    async fn load_sdp_refuses_a_non_regular_file() {
+        let dir = std::env::temp_dir().join(format!("multimux-sdp-dir-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let err = load_sdp(&format!("@{}", dir.display())).await;
+        assert!(matches!(err, Err(crate::error::MultimuxError::Sdp(_))));
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    /// One byte past the cap is refused, and the file's own length is never
+    /// read into memory beyond the cap plus one.
+    #[tokio::test]
+    async fn load_sdp_refuses_a_file_over_the_cap() {
+        let dir = std::env::temp_dir().join(format!("multimux-sdp-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.sdp");
+        std::fs::write(&path, vec![b'v'; MAX_SDP_FILE_BYTES as usize + 1]).unwrap();
+        let err = load_sdp(&format!("@{}", path.display())).await;
+        assert!(matches!(err, Err(crate::error::MultimuxError::Sdp(_))));
+        let at_cap = dir.join("at-cap.sdp");
+        std::fs::write(&at_cap, vec![b'v'; MAX_SDP_FILE_BYTES as usize]).unwrap();
+        assert_eq!(
+            load_sdp(&format!("@{}", at_cap.display()))
+                .await
+                .unwrap()
+                .len(),
+            MAX_SDP_FILE_BYTES as usize
+        );
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&at_cap);
+        let _ = std::fs::remove_dir(&dir);
     }
 
     #[test]

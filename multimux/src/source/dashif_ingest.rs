@@ -58,6 +58,66 @@ enum Job {
     Abort { rep_id: String },
 }
 
+/// The outcome of awaiting a pump reply.
+enum Reply<T> {
+    /// The pump answered.
+    Got(T),
+    /// The body deadline elapsed before the pump answered.
+    Timeout,
+    /// The pump dropped the reply sender.
+    Closed,
+}
+
+/// Await one pump reply under the route's body deadline.
+async fn wait_reply<T>(
+    rx: oneshot::Receiver<T>,
+    deadline: Option<tokio::time::Duration>,
+) -> Reply<T> {
+    match deadline {
+        Some(d) => match tokio::time::timeout(d, rx).await {
+            Ok(Ok(v)) => Reply::Got(v),
+            Ok(Err(_)) => Reply::Closed,
+            Err(_) => Reply::Timeout,
+        },
+        None => match rx.await {
+            Ok(v) => Reply::Got(v),
+            Err(_) => Reply::Closed,
+        },
+    }
+}
+
+/// Relinquishes an in-progress segment handle when the handler future is
+/// dropped before `Finish` (a publisher disconnect mid-PUT).
+struct SegmentGuard {
+    tx: mpsc::Sender<Job>,
+    rep_id: String,
+    armed: bool,
+}
+
+impl SegmentGuard {
+    fn new(tx: mpsc::Sender<Job>, rep_id: String) -> Self {
+        Self {
+            tx,
+            rep_id,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for SegmentGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = self.tx.try_send(Job::Abort {
+                rep_id: self.rep_id.clone(),
+            });
+        }
+    }
+}
+
 /// One DASH-IF ingest route.
 pub struct DashifIngestRoute {
     name: String,
@@ -584,13 +644,15 @@ async fn dashif_handler(
             _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
 
+        let timeout = state.body_timeout;
+        let tx = state.tx.clone();
         // Begin (wait for its Result).
         let (btx, brx) = oneshot::channel();
         let begin_job = Job::Begin {
             kind: kind.clone(),
             resp: btx,
         };
-        if state.tx.try_send(begin_job).is_err() {
+        if tx.try_send(begin_job).is_err() {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [("retry-after", "1")],
@@ -598,19 +660,20 @@ async fn dashif_handler(
             )
                 .into_response();
         }
-        match brx.await {
-            Ok(Ok(())) => {}
-            Ok(Err(SessionError::Ingest(e))) => return e.status().into_response(),
-            Ok(Err(SessionError::Demux(_))) => {
+        match wait_reply(brx, timeout).await {
+            Reply::Got(Ok(())) => {}
+            Reply::Got(Err(SessionError::Ingest(e))) => return e.status().into_response(),
+            Reply::Got(Err(SessionError::Demux(_))) => {
                 return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
             }
-            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Reply::Got(Err(_)) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Reply::Timeout => return StatusCode::REQUEST_TIMEOUT.into_response(),
+            Reply::Closed => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
+        let mut guard = SegmentGuard::new(tx.clone(), rep_id.clone());
 
         // Stream the body frame by frame.
         let max = state.max_object_bytes;
-        let timeout = state.body_timeout;
-        let tx = state.tx.clone();
         let mut body = std::pin::pin!(req.into_body());
         let start = tokio::time::Instant::now();
         let mut total: usize = 0;
@@ -656,17 +719,26 @@ async fn dashif_handler(
                     read_result = Err(StatusCode::SERVICE_UNAVAILABLE);
                     break;
                 }
-                match crx.await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(SessionError::Ingest(e))) => {
+                let remaining = timeout.map(|d| d.saturating_sub(start.elapsed()));
+                match wait_reply(crx, remaining).await {
+                    Reply::Got(Ok(())) => {}
+                    Reply::Got(Err(SessionError::Ingest(e))) => {
                         read_result = Err(e.status());
                         break;
                     }
-                    Ok(Err(SessionError::Demux(_))) => {
+                    Reply::Got(Err(SessionError::Demux(_))) => {
                         read_result = Err(StatusCode::UNSUPPORTED_MEDIA_TYPE);
                         break;
                     }
-                    _ => {
+                    Reply::Got(Err(_)) => {
+                        read_result = Err(StatusCode::INTERNAL_SERVER_ERROR);
+                        break;
+                    }
+                    Reply::Timeout => {
+                        read_result = Err(StatusCode::REQUEST_TIMEOUT);
+                        break;
+                    }
+                    Reply::Closed => {
                         read_result = Err(StatusCode::INTERNAL_SERVER_ERROR);
                         break;
                     }
@@ -675,9 +747,6 @@ async fn dashif_handler(
         }
 
         if let Err(status) = read_result {
-            let _ = tx.try_send(Job::Abort {
-                rep_id: rep_id.clone(),
-            });
             return status.into_response();
         }
 
@@ -688,9 +757,6 @@ async fn dashif_handler(
             resp: ftx,
         };
         if tx.try_send(finish_job).is_err() {
-            let _ = tx.try_send(Job::Abort {
-                rep_id: rep_id.clone(),
-            });
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
                 [("retry-after", "1")],
@@ -698,11 +764,20 @@ async fn dashif_handler(
             )
                 .into_response();
         }
-        match frx.await {
-            Ok(Ok(())) => StatusCode::OK.into_response(),
-            Ok(Err(SessionError::Ingest(e))) => e.status().into_response(),
-            Ok(Err(SessionError::Demux(_))) => StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response(),
-            _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        let remaining = timeout.map(|d| d.saturating_sub(start.elapsed()));
+        let reply = wait_reply(frx, remaining).await;
+        if let Reply::Got(_) = &reply {
+            guard.disarm();
+        }
+        match reply {
+            Reply::Got(Ok(())) => StatusCode::OK.into_response(),
+            Reply::Got(Err(SessionError::Ingest(e))) => e.status().into_response(),
+            Reply::Got(Err(SessionError::Demux(_))) => {
+                StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response()
+            }
+            Reply::Got(Err(_)) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+            Reply::Timeout => StatusCode::REQUEST_TIMEOUT.into_response(),
+            Reply::Closed => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         }
     } else {
         // Buffered path (non-segment objects).
@@ -832,5 +907,118 @@ mod tests {
         assert_eq!(budget.available_permits(), 8);
         let third = read_limited(body_of(vec![b"abcd"]), 100, &budget).await;
         assert!(third.is_ok());
+    }
+
+    fn grouping() -> dash_runtime::ingest::ManifestGrouping {
+        dash_runtime::ingest::ManifestGrouping {
+            init_template: "$RepresentationID$/init.mp4".to_string(),
+            media_template: "$RepresentationID$/seg-$Number$.m4s".to_string(),
+            addressing: dash_runtime::ingest::Addressing::Number,
+            switching_sets: vec![vec!["v1".to_string()]],
+            availability_start_time: None,
+            period_start: None,
+        }
+    }
+
+    fn handler_state(
+        tx: mpsc::Sender<Job>,
+        body_timeout: Option<tokio::time::Duration>,
+    ) -> HandlerState {
+        HandlerState {
+            tx,
+            publishing_point: "/".to_string(),
+            grouping: Arc::new(Mutex::new(Some(grouping()))),
+            auth: None,
+            max_object_bytes: 1 << 20,
+            max_buffered_object_bytes: 1 << 20,
+            buffered_budget: ample(),
+            body_timeout,
+        }
+    }
+
+    fn segment_request() -> Request<axum::body::Body> {
+        Request::builder()
+            .method(Method::PUT)
+            .uri("/v1/seg-1.m4s")
+            .header(axum::http::header::CONTENT_LENGTH, "4")
+            .body(body_of(vec![b"abcd"]))
+            .expect("request builds")
+    }
+
+    /// A publisher disconnect drops the handler future while its segment is
+    /// still open; the pump must see `Job::Abort`, or every later segment for
+    /// that representation is refused with `SegmentInProgress`.
+    #[tokio::test]
+    async fn a_dropped_handler_aborts_the_open_segment() {
+        let (tx, mut rx) = mpsc::channel::<Job>(CHANNEL_CAPACITY);
+        let state = handler_state(tx, None);
+        let task = tokio::spawn(async move {
+            dashif_handler(State(state), segment_request())
+                .await
+                .into_response()
+        });
+
+        let job = rx.recv().await.expect("begin job");
+        let Job::Begin { resp, .. } = job else {
+            panic!("expected Begin");
+        };
+        let _ = resp.send(Ok(()));
+        let job = rx.recv().await.expect("chunk job");
+        let Job::Chunk { resp, .. } = job else {
+            panic!("expected Chunk");
+        };
+        task.abort();
+        let _ = task.await;
+        drop(resp);
+
+        let Job::Abort { rep_id } =
+            tokio::time::timeout(tokio::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("abort observed")
+                .expect("channel open")
+        else {
+            panic!("expected Abort");
+        };
+        assert_eq!(rep_id, "v1");
+    }
+
+    /// An unanswered pump reply must not park the handler forever: the body
+    /// deadline turns it into 408 and the open segment is aborted.
+    #[tokio::test]
+    async fn an_unanswered_pump_reply_times_out_and_aborts() {
+        let (tx, mut rx) = mpsc::channel::<Job>(CHANNEL_CAPACITY);
+        let state = handler_state(tx, Some(tokio::time::Duration::from_millis(50)));
+        let task = tokio::spawn(async move {
+            dashif_handler(State(state), segment_request())
+                .await
+                .into_response()
+        });
+
+        let job = rx.recv().await.expect("begin job");
+        let Job::Begin { resp, .. } = job else {
+            panic!("expected Begin");
+        };
+        let _ = resp.send(Ok(()));
+        let job = rx.recv().await.expect("chunk job");
+        let Job::Chunk { resp, .. } = job else {
+            panic!("expected Chunk");
+        };
+
+        let response = tokio::time::timeout(tokio::time::Duration::from_secs(5), task)
+            .await
+            .expect("handler returns")
+            .expect("handler joins");
+        assert_eq!(response.status(), StatusCode::REQUEST_TIMEOUT);
+        drop(resp);
+
+        let Job::Abort { rep_id } =
+            tokio::time::timeout(tokio::time::Duration::from_secs(5), rx.recv())
+                .await
+                .expect("abort observed")
+                .expect("channel open")
+        else {
+            panic!("expected Abort");
+        };
+        assert_eq!(rep_id, "v1");
     }
 }

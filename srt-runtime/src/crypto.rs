@@ -143,6 +143,71 @@ pub fn derive_kek(
     Ok(kek)
 }
 
+/// One-entry cache for [`derive_kek`], keyed by the Key Material `Salt` and
+/// the requested `KLen` (the passphrase is fixed for the life of a
+/// connection). A peer can re-send the same Key Material message, and deriving
+/// the KEK costs a full 2048-iteration PBKDF2 run every time; the cache makes
+/// a repeat cost a comparison instead (#2840).
+pub(crate) struct KekCache {
+    entry: Option<CachedKek>,
+    /// Derivation count, so a test can prove a repeat is served from the
+    /// cache.
+    #[cfg(test)]
+    derivations: u64,
+}
+
+struct CachedKek {
+    salt: [u8; SALT_LEN],
+    klen: usize,
+    kek: Zeroizing<Vec<u8>>,
+}
+
+impl KekCache {
+    pub(crate) const fn new() -> Self {
+        KekCache {
+            entry: None,
+            #[cfg(test)]
+            derivations: 0,
+        }
+    }
+
+    /// The KEK for `(salt, klen)`, derived once and reused for an identical
+    /// request.
+    ///
+    /// # Errors
+    /// The same as [`derive_kek`].
+    pub(crate) fn derive(
+        &mut self,
+        passphrase: &[u8],
+        salt: &[u8; SALT_LEN],
+        klen: usize,
+    ) -> Result<Zeroizing<Vec<u8>>> {
+        if let Some(entry) = &self.entry
+            && entry.salt == *salt
+            && entry.klen == klen
+        {
+            return Ok(entry.kek.clone());
+        }
+        let kek = derive_kek(passphrase, salt, klen)?;
+        self.entry = Some(CachedKek {
+            salt: *salt,
+            klen,
+            kek: kek.clone(),
+        });
+        #[cfg(test)]
+        {
+            self.derivations = self.derivations.saturating_add(1);
+        }
+        Ok(kek)
+    }
+
+    /// How many PBKDF2 derivations this cache has performed.
+    #[cfg(test)]
+    pub(crate) fn derivations(&self) -> u64 {
+        self.derivations
+    }
+}
+
 // ---------------------------------------------------------------------------
 // §6.1.5/§6.2.1/§6.3.1 — RFC 3394 AES key wrap/unwrap of the SEK.
 // ---------------------------------------------------------------------------
@@ -578,5 +643,27 @@ mod tests {
         assert_eq!(&recovered[..], &plaintext[..]);
         assert_eq!(&recovered[..16], &even_sek[..]);
         assert_eq!(&recovered[16..], &odd_sek[..]);
+    }
+
+    /// #2840: an identical `(Salt, KLen)` request is served from the cache,
+    /// so a peer re-sending Key Material does not rerun PBKDF2. A different
+    /// salt or key length misses and derives again.
+    #[test]
+    fn kek_cache_derives_once_per_salt_and_length() {
+        let mut cache = KekCache::new();
+        let salt = [0x33u8; SALT_LEN];
+        let first = cache.derive(b"cache-passphrase", &salt, 16).unwrap();
+        let again = cache.derive(b"cache-passphrase", &salt, 16).unwrap();
+        assert_eq!(&first[..], &again[..]);
+        assert_eq!(cache.derivations(), 1, "same salt and length is a hit");
+
+        let other_salt = [0x44u8; SALT_LEN];
+        let third = cache.derive(b"cache-passphrase", &other_salt, 16).unwrap();
+        assert_ne!(&first[..], &third[..]);
+        assert_eq!(cache.derivations(), 2, "a new salt misses");
+
+        let longer = cache.derive(b"cache-passphrase", &salt, 24).unwrap();
+        assert_eq!(longer.len(), 24);
+        assert_eq!(cache.derivations(), 3, "a new length misses");
     }
 }

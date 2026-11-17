@@ -120,6 +120,27 @@ pub enum Error {
         limit: usize,
     },
 
+    /// Resolved sample data claims more bytes than the container it is being
+    /// read from holds.
+    ///
+    /// The bound is structural, not a tunable: samples that do not overlap can
+    /// never total more than the input length (the allowance is
+    /// [`MAX_SAMPLE_BYTES_PER_INPUT_LENGTH`](crate::frag_offsets::MAX_SAMPLE_BYTES_PER_INPUT_LENGTH)
+    /// times it). A larger total means overlapping `stco`/`stsc` chunks,
+    /// overlapping `trun` runs, or several `moof`s each claiming the same
+    /// `mdat` — every one of which would have its bytes copied again, turning
+    /// a linear input into quadratic memory (audit 20 findings 6 and 13).
+    /// Progressive layouts and fragmented demux runs share this allowance, so
+    /// the per-`moof` total is not the last word.
+    #[error(
+        "sample data budget exceeded: resolved sample bytes exceed the {limit}-byte allowance \
+         (overlapping chunks, runs or fragments?)"
+    )]
+    SampleDataBudgetExceeded {
+        /// The aggregate allowance for this run, in bytes.
+        limit: usize,
+    },
+
     /// A [`CodecConfig`](crate::pipeline::CodecConfig) has no ISOBMFF/fMP4
     /// carriage in this crate (e.g. the WebM-native VP8 / Vorbis codecs, which
     /// are carried in the IR for `{WebM} → IR → {WebM}` and inspection only).

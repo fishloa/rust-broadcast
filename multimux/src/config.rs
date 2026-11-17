@@ -999,6 +999,18 @@ pub struct AdminSpec {
     /// instance from [`Config::output_auth`], so the admin credential can
     /// (and should) differ from whatever gates media playback.
     pub auth: OutputAuthSpec,
+    /// Filesystem roots a route accepted by the admin API may read from and
+    /// write under: [`InputSpec::File`]'s `path`, an `@path` RTP/WHIP `sdp`
+    /// reference, and an enabled [`DvrConfig::archive_root`]. Empty (the
+    /// default) leaves the admin API's filesystem access unconfined — the
+    /// admin caller is trusted with it — and is documented here so that
+    /// boundary is explicit rather than accidental. A non-empty list confines
+    /// all three, canonicalising each path (or, for a path not created yet,
+    /// its nearest existing parent) and requiring it to start with one of
+    /// these roots; every root must exist. The same roots apply to routes
+    /// added at runtime and to `POST /admin/reload`.
+    #[serde(default)]
+    pub allowed_roots: Vec<String>,
 }
 
 impl AdminSpec {
@@ -1006,8 +1018,102 @@ impl AdminSpec {
     /// auth.
     #[must_use]
     pub fn new(bind: String, auth: OutputAuthSpec) -> Self {
-        Self { bind, auth }
+        Self {
+            bind,
+            auth,
+            allowed_roots: Vec::new(),
+        }
     }
+
+    /// Confine the admin API's filesystem access to `roots` — see
+    /// [`Self::allowed_roots`].
+    #[must_use]
+    pub fn with_allowed_roots(mut self, roots: Vec<String>) -> Self {
+        self.allowed_roots = roots;
+        self
+    }
+
+    /// [`Self::allowed_roots`] canonicalised, so a confinement check compares
+    /// real paths (no `..` or symlink escape). Every root must exist.
+    pub(crate) fn resolved_allowed_roots(&self) -> Result<Vec<std::path::PathBuf>> {
+        self.allowed_roots
+            .iter()
+            .map(|root| {
+                std::path::Path::new(root).canonicalize().map_err(|e| {
+                    MultimuxError::ConfigInvalid {
+                        field: ConfigField::AdminAllowedRoots,
+                        reason: format!("{root:?} cannot be resolved: {e}"),
+                    }
+                })
+            })
+            .collect()
+    }
+
+    /// Reject a route whose local paths leave [`Self::allowed_roots`].
+    pub(crate) fn check_route_paths(&self, route: &Route) -> Result<()> {
+        check_route_paths(&self.resolved_allowed_roots()?, route)
+    }
+}
+
+/// Reject a route whose local filesystem paths leave `roots` (already
+/// canonicalised). An empty `roots` accepts every route: unconfined is the
+/// documented default.
+pub(crate) fn check_route_paths(roots: &[std::path::PathBuf], route: &Route) -> Result<()> {
+    if roots.is_empty() {
+        return Ok(());
+    }
+    let mut paths: Vec<(&std::path::Path, ConfigField)> = Vec::new();
+    match &route.input {
+        InputSpec::File { path, .. } => {
+            paths.push((std::path::Path::new(path), ConfigField::RoutesInputPath));
+        }
+        InputSpec::Rtp { sdp, .. } => {
+            if let Some(path) = sdp.strip_prefix('@') {
+                paths.push((std::path::Path::new(path), ConfigField::RoutesInputSdp));
+            }
+        }
+        _ => {}
+    }
+    if route.dvr.enabled {
+        paths.push((
+            std::path::Path::new(&route.dvr.archive_root),
+            ConfigField::ArchiveRoot,
+        ));
+    }
+    for (path, field) in paths {
+        let resolved =
+            resolve_for_confinement(path).ok_or_else(|| MultimuxError::ConfigInvalid {
+                field,
+                reason: format!("{path:?} cannot be resolved for the allowed_roots check"),
+            })?;
+        if !roots.iter().any(|root| resolved.starts_with(root)) {
+            return Err(MultimuxError::ConfigInvalid {
+                field,
+                reason: format!(
+                    "{path:?} is outside admin.allowed_roots (resolved to {resolved:?})"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+/// `path` canonicalised, or — for a path that does not exist yet, such as a
+/// DVR archive root — its nearest existing parent canonicalised with the
+/// final component appended, so a not-yet-created directory cannot escape a
+/// root through `..` or a symlinked parent.
+fn resolve_for_confinement(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if let Ok(resolved) = path.canonicalize() {
+        return Some(resolved);
+    }
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir().ok()?.join(path)
+    };
+    let parent = absolute.parent()?;
+    let name = absolute.file_name()?;
+    Some(parent.canonicalize().ok()?.join(name))
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`): [`InputSpec::Rtsp`]'s
@@ -2829,6 +2935,9 @@ impl Config {
             }
             r.validate_standalone(&self.playlist_name)?;
             r.validate_dvr()?;
+            if let Some(admin) = &self.admin {
+                admin.check_route_paths(r)?;
+            }
             let validate = if r.audio_rendition_sources.is_empty() {
                 hls_runtime::server::validate_audio_renditions(&r.audio_renditions)
             } else {
@@ -2880,6 +2989,7 @@ impl Config {
                 });
             }
             admin.auth.validate()?;
+            admin.resolved_allowed_roots()?;
         }
         Ok(())
     }
@@ -6092,5 +6202,126 @@ mod tests {
         assert_eq!(cfg.part_target, Duration::from_secs(3) / 2);
         let missing: Config = serde_json::from_str("{}").expect("defaults");
         assert_eq!(missing.part_target, Config::default().part_target);
+    }
+
+    /// A temporary, existing root for the `admin.allowed_roots` tests.
+    fn allowed_roots_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "multimux-allowed-roots-{}-{tag}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temp root");
+        dir
+    }
+
+    fn confined_config(root: &std::path::Path, input: &str) -> Config {
+        let json = format!(
+            r#"{{
+                "routes": [ {{ "name": "cam", "input": {input}, "outputs": [ "llhls" ] }} ],
+                "admin": {{
+                    "bind": "127.0.0.1:1",
+                    "auth": {{ "scheme": "bearer", "token": "t" }},
+                    "allowed_roots": ["{}"]
+                }}
+            }}"#,
+            root.display()
+        );
+        serde_json::from_str(&json).expect("parses")
+    }
+
+    /// `admin.allowed_roots` confines a `File` input path: inside is accepted,
+    /// outside is rejected with the path field named (audit 20 finding 64 —
+    /// an admin-created route could otherwise read any local file).
+    /// MUTATION VERIFIED: with no confinement check the outside path
+    /// validates and this fails.
+    #[test]
+    fn admin_allowed_roots_confines_a_file_input_path() {
+        fn field_of(err: &MultimuxError) -> ConfigField {
+            match err {
+                MultimuxError::ConfigInvalid { field, .. } => *field,
+                other => panic!("not a ConfigInvalid: {other}"),
+            }
+        }
+
+        let root = allowed_roots_dir("file");
+        let inside = root.join("clip.ts");
+        std::fs::write(&inside, b"x").expect("inside file");
+        confined_config(
+            &root,
+            &format!(r#"{{ "type": "file", "path": "{}" }}"#, inside.display()),
+        )
+        .validate()
+        .expect("a path inside the root is accepted");
+
+        let outside = std::env::temp_dir().join("multimux-outside-clip.ts");
+        std::fs::write(&outside, b"x").expect("outside file");
+        let err = confined_config(
+            &root,
+            &format!(r#"{{ "type": "file", "path": "{}" }}"#, outside.display()),
+        )
+        .validate()
+        .expect_err("a path outside the root is rejected");
+        assert_eq!(field_of(&err), ConfigField::RoutesInputPath, "{err}");
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_file(&outside);
+    }
+
+    /// The same confinement covers an `@path` SDP reference and an enabled
+    /// DVR `archive_root`.
+    #[test]
+    fn admin_allowed_roots_confines_sdp_and_archive_paths() {
+        fn field_of(err: &MultimuxError) -> ConfigField {
+            match err {
+                MultimuxError::ConfigInvalid { field, .. } => *field,
+                other => panic!("not a ConfigInvalid: {other}"),
+            }
+        }
+
+        let root = allowed_roots_dir("sdp-archive");
+        let outside = std::env::temp_dir();
+        let err = confined_config(
+            &root,
+            &format!(
+                r#"{{ "type": "rtp", "addr": "127.0.0.1:5004", "sdp": "@{}" }}"#,
+                outside.join("stream.sdp").display()
+            ),
+        )
+        .validate()
+        .expect_err("an SDP path outside the root is rejected");
+        assert_eq!(field_of(&err), ConfigField::RoutesInputSdp, "{err}");
+
+        let mut cfg = confined_config(&root, r#"{ "type": "rtsp", "url": "rtsp://host/s" }"#);
+        cfg.routes[0].dvr = crate::dvr::DvrConfig {
+            enabled: true,
+            archive_root: outside.join("archive").display().to_string(),
+            retention_periods: 1,
+            period_duration_secs: 3600,
+            ..crate::dvr::DvrConfig::default()
+        };
+        let err = cfg
+            .validate()
+            .expect_err("an archive root outside the allowed roots is rejected");
+        assert_eq!(field_of(&err), ConfigField::ArchiveRoot, "{err}");
+
+        cfg.routes[0].dvr.archive_root = root.join("archive").display().to_string();
+        cfg.validate().expect("an archive root inside is accepted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A configured `allowed_roots` entry that does not exist is a config
+    /// error rather than a silently useless constraint.
+    #[test]
+    fn admin_allowed_roots_must_exist() {
+        let missing = std::env::temp_dir().join("multimux-no-such-allowed-root");
+        let _ = std::fs::remove_dir_all(&missing);
+        let cfg = confined_config(&missing, r#"{ "type": "rtsp", "url": "rtsp://host/s" }"#);
+        let err = cfg.validate().expect_err("a missing root is rejected");
+        match err {
+            MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, ConfigField::AdminAllowedRoots);
+            }
+            other => panic!("not a ConfigInvalid: {other}"),
+        }
     }
 }

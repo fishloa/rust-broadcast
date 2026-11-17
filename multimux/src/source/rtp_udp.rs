@@ -101,8 +101,8 @@ impl Source for RtpUdpRoute {
 }
 
 impl RtpUdpRoute {
-    fn session_config(&self) -> Result<Config, MultimuxError> {
-        let sdp = load_sdp(&self.sdp)?;
+    async fn session_config(&self) -> Result<Config, MultimuxError> {
+        let sdp = load_sdp(&self.sdp).await?;
         let mut config = Config::relay();
         config.kind = SourceKind::Rtp;
         config.max_queued_bytes = crate::source::LIVE_EVENT_QUEUE_BYTES;
@@ -143,7 +143,7 @@ pub async fn run_rtp_udp(
     }
     let (url, config) = match (
         crate::source::udp::session_url("rtp", &route.addr, route.socket.join.as_ref()),
-        route.session_config(),
+        route.session_config().await,
     ) {
         (Ok(url), Ok(config)) => (url, config),
         (Err(e), _) | (_, Err(e)) => return e,
