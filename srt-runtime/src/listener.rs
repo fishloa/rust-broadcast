@@ -105,6 +105,7 @@ impl ListenerHandshake {
     /// A machine already past its INDUCTION, for a driver that answered the
     /// INDUCTION statelessly and has only now, on a cookie-validated
     /// CONCLUSION, allocated the connection's state (#2820).
+    #[cfg(feature = "tokio")]
     pub(crate) fn awaiting_conclusion(
         own_socket_id: u32,
         syn_cookie: u32,

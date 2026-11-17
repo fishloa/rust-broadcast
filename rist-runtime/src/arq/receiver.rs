@@ -251,7 +251,7 @@ impl Receiver {
     /// RTP identity.
     ///
     /// Ordinary in-order and small-gap arrivals are handled exactly as
-    /// [`Self::feed_rtp`]; a jump beyond [`Self::max_gap`] never resynchronises
+    /// [`Self::feed_rtp`]; a jump beyond `Self::max_gap` never resynchronises
     /// from this method, because a bare sequence number cannot be told apart
     /// from forged numbers (see [`Self::feed_rtp`]). A caller that has the RTP
     /// header must use [`Self::feed_rtp`] to keep the resync path available.
@@ -262,8 +262,8 @@ impl Receiver {
     /// Process one arriving RTP data packet, including the SSRC and timestamp
     /// needed to confirm a stream resynchronisation.
     ///
-    /// A jump beyond [`Self::max_gap`] confirms only after
-    /// [`RESYNC_CONFIRM_COUNT`] consecutive packets that all carry the
+    /// A jump beyond `Self::max_gap` confirms only after
+    /// `RESYNC_CONFIRM_COUNT` consecutive packets that all carry the
     /// stream's own SSRC and whose RTP timestamps advance by one constant
     /// forward step — three sequence numbers alone are not enough, since the
     /// sequence field is unauthenticated and a peer able to inject into the

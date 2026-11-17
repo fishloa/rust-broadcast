@@ -310,7 +310,7 @@ impl Sender {
     ///
     /// A sequence number already queued in the caller's outbound queue
     /// ([`Self::on_retransmit_sent`] clears it once the datagram leaves) or
-    /// retransmitted less than [`MIN_RETRANSMIT_INTERVAL`] ago stays pending:
+    /// retransmitted less than `MIN_RETRANSMIT_INTERVAL` ago stays pending:
     /// a peer re-sending the same NAK cannot queue a second copy (#2819).
     pub fn tick(&mut self, now: Timestamp) -> Vec<(u32, Vec<u8>)> {
         let mut seqs: Vec<u32> = core::mem::take(&mut self.pending_retransmit)
