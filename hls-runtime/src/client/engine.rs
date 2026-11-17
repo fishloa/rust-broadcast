@@ -4144,4 +4144,456 @@ mod tests {
         );
     }
 
+    // Audit 21 finding 55 (#2950): every continuity signal on its own, since
+    // a single mis-classification restarts a healthy stream or delivers one
+    // backwards.
+    fn pdt(secs: u64) -> broadcast_hls::ProgramDateTime {
+        broadcast_hls::ProgramDateTime::parse(&format!(
+            "2026-10-02T{:02}:{:02}:{:02}Z",
+            secs / 3600,
+            (secs % 3600) / 60,
+            secs % 60
+        ))
+        .expect("test PDT")
+    }
+
+    fn playlist_of(first_msn: u64, segs: Vec<MediaSegment>) -> MediaPlaylist {
+        MediaPlaylist {
+            msn: broadcast_hls::MediaSequence::new(first_msn),
+            segments: segs,
+            ..Default::default()
+        }
+    }
+
+    fn seg(uri: &str) -> MediaSegment {
+        MediaSegment {
+            uri: uri.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn continuity_identity_and_regression_signals() {
+        let msn = broadcast_hls::MediaSequence::new;
+        let client_with = |prev: Option<MediaPlaylist>, last: u64| {
+            let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+            client.last_full_playlist = prev;
+            client.last_media_sequence = Some(msn(last));
+            client
+        };
+
+        // No previous full playlist: only an older media sequence restarts.
+        let client = client_with(None, 5);
+        assert_eq!(
+            client.continuity(&playlist_of(3, vec![seg("a.ts")])),
+            Continuity::Restart
+        );
+        assert_eq!(
+            client.continuity(&playlist_of(5, vec![seg("a.ts")])),
+            Continuity::Continues,
+            "an equal media sequence is not a regression"
+        );
+
+        let prev = playlist_of(5, vec![seg("a.ts"), seg("b.ts")]);
+        let client = client_with(Some(prev.clone()), 6);
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![seg("b.ts"), seg("c.ts")])),
+            Continuity::Continues,
+            "the shared number names the same segment"
+        );
+
+        let mut different_uri = seg("b.ts");
+        different_uri.uri = "other.ts".to_string();
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![different_uri, seg("c.ts")])),
+            Continuity::Restart,
+            "a shared number naming different media is a restart"
+        );
+
+        let mut different_duration = seg("b.ts");
+        different_duration.duration = broadcast_hls::DecimalSeconds::new(9.0).expect("duration");
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![different_duration, seg("c.ts")])),
+            Continuity::Restart
+        );
+
+        let mut different_range = seg("b.ts");
+        different_range.byte_range = Some(broadcast_hls::ByteRange {
+            length: 10,
+            offset: Some(0),
+        });
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![different_range, seg("c.ts")])),
+            Continuity::Restart
+        );
+
+        let mut pdt_a = seg("b.ts");
+        pdt_a.program_date_time = Some(pdt(100));
+        let mut prev_pdt = prev.clone();
+        prev_pdt.segments[1].program_date_time = Some(pdt(100));
+        let client = client_with(Some(prev_pdt), 6);
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![pdt_a.clone(), seg("c.ts")])),
+            Continuity::Continues,
+            "the same wall-clock time at a shared number"
+        );
+        let mut pdt_b = seg("b.ts");
+        pdt_b.program_date_time = Some(pdt(102));
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![pdt_b, seg("c.ts")])),
+            Continuity::Restart,
+            "a different wall-clock time at a shared number"
+        );
+
+        // A CDN re-signing every shared URI is still the same stream; one
+        // re-signed URI among unchanged ones is not.
+        let client = client_with(
+            Some(playlist_of(5, vec![seg("a.ts?t=1"), seg("b.ts?t=1")])),
+            6,
+        );
+        assert_eq!(
+            client.continuity(&playlist_of(6, vec![seg("b.ts?t=2"), seg("c.ts?t=2")])),
+            Continuity::Continues,
+            "a wholly re-signed window"
+        );
+        let client = client_with(
+            Some(playlist_of(
+                5,
+                vec![seg("a.ts?t=1"), seg("b.ts?t=1"), seg("c.ts")],
+            )),
+            6,
+        );
+        assert_eq!(
+            client.continuity(&playlist_of(
+                6,
+                vec![seg("b.ts?t=2"), seg("c.ts"), seg("d.ts")]
+            )),
+            Continuity::Restart,
+            "only some shared URIs re-signed"
+        );
+    }
+
+    #[test]
+    fn continuity_regression_without_overlap() {
+        let msn = broadcast_hls::MediaSequence::new;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client.last_full_playlist =
+            Some(playlist_of(100, vec![seg("seg100.ts"), seg("seg101.ts")]));
+        client.last_media_sequence = Some(msn(100));
+
+        let mut new = playlist_of(10, vec![seg("seg10.ts"), seg("seg11.ts")]);
+        assert_eq!(client.continuity(&new), Continuity::Restart);
+
+        // The same URIs under different numbers: names reused.
+        let reused = playlist_of(10, vec![seg("seg100.ts")]);
+        assert_eq!(client.continuity(&reused), Continuity::Restart);
+
+        // PROGRAM-DATE-TIME decides an older copy from a restart.
+        let mut prev = playlist_of(100, vec![seg("seg100.ts")]);
+        prev.segments[0].program_date_time = Some(pdt(12 * 3600));
+        client.last_full_playlist = Some(prev);
+        new.segments[1].program_date_time = Some(pdt(10 * 3600 + 2));
+        assert_eq!(
+            client.continuity(&new),
+            Continuity::OlderWindow,
+            "a window ending before the previous one began is a lagging copy"
+        );
+        new.segments[1].program_date_time = Some(pdt(12 * 3600 + 2));
+        assert_eq!(
+            client.continuity(&new),
+            Continuity::Restart,
+            "a window ending inside or after the previous one is a restart"
+        );
+        new.segments[1].program_date_time = Some(pdt(12 * 3600));
+        assert_eq!(
+            client.continuity(&new),
+            Continuity::Restart,
+            "a window ending exactly where the previous one began is not wholly older"
+        );
+
+        // Overlapping but regressed is a lagging copy, as is one whose
+        // discontinuity sequence decreased while regressed.
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let mut prev = playlist_of(5, vec![seg("a.ts"), seg("b.ts")]);
+        prev.discontinuity_sequence = 3;
+        client.last_full_playlist = Some(prev);
+        client.last_media_sequence = Some(msn(6));
+        let mut lagging = playlist_of(5, vec![seg("a.ts"), seg("b.ts")]);
+        lagging.discontinuity_sequence = 3;
+        assert_eq!(client.continuity(&lagging), Continuity::Lagging);
+        lagging.discontinuity_sequence = 5;
+        assert_eq!(
+            client.continuity(&lagging),
+            Continuity::Lagging,
+            "a regressed window is not a restart for a higher discontinuity sequence"
+        );
+        lagging.discontinuity_sequence = 2;
+        assert_eq!(
+            client.continuity(&lagging),
+            Continuity::Lagging,
+            "a regressed window is a lagging copy whatever its discontinuity sequence"
+        );
+
+        // ...but a decreasing discontinuity sequence at a non-regressed
+        // number is a restart.
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let mut prev = playlist_of(5, vec![seg("a.ts"), seg("b.ts")]);
+        prev.discontinuity_sequence = 3;
+        client.last_full_playlist = Some(prev);
+        client.last_media_sequence = Some(msn(5));
+        let mut decreased = playlist_of(6, vec![seg("b.ts"), seg("c.ts")]);
+        decreased.discontinuity_sequence = 2;
+        assert_eq!(client.continuity(&decreased), Continuity::Restart);
+        decreased.discontinuity_sequence = 3;
+        assert_eq!(client.continuity(&decreased), Continuity::Continues);
+    }
+
+    #[test]
+    fn has_movie_box_needs_the_moov_box() {
+        let moov = [0u8, 0, 0, 8, b'm', b'o', b'o', b'v'];
+        let mdat = [0u8, 0, 0, 8, b'm', b'd', b'a', b't'];
+        assert!(has_movie_box(&moov));
+        assert!(!has_movie_box(&mdat));
+        assert!(!has_movie_box(&[]));
+    }
+
+    #[test]
+    fn an_encrypted_init_without_a_moov_is_undecodable() {
+        let key = [0x11u8; KEY_LEN];
+        let iv = [0x22u8; BLOCK_LEN];
+        let crypto = SegmentCrypto {
+            key_id: KeyId(0),
+            iv,
+        };
+        let moov = [0u8, 0, 0, 8, b'm', b'o', b'o', b'v'];
+
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        insert_init_slot(&mut client, 0, InitFetch::InFlight);
+        let cipher = aes128_encrypt_segment(&key, &iv, EMPTY_FRAGMENT);
+        let err = client
+            .complete_encrypted_init(0, crypto, &key, &cipher)
+            .expect_err("a fragment without a moov is not an init section");
+        assert!(matches!(err, Error::InitUndecodable), "{err:?}");
+        assert_eq!(client.inits[&0].fetch, InitFetch::Failed);
+
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        insert_init_slot(&mut client, 0, InitFetch::InFlight);
+        let cipher = aes128_encrypt_segment(&key, &iv, &moov);
+        client
+            .complete_encrypted_init(0, crypto, &key, &cipher)
+            .expect("a moov-bearing init section is accepted");
+        assert_eq!(client.inits[&0].fetch, InitFetch::Ready);
+        assert_eq!(client.inits[&0].bytes.as_deref(), Some(&moov[..]));
+    }
+
+    #[test]
+    fn merge_delta_splices_only_an_advancing_or_equal_delta() {
+        let prev = MediaPlaylist {
+            msn: broadcast_hls::MediaSequence::new(5),
+            segments: vec![seg("a.ts"), seg("b.ts"), seg("c.ts"), seg("d.ts")],
+            ..Default::default()
+        };
+        let client = {
+            let mut c = HlsClient::new(config("http://example.com/p.m3u8"));
+            c.last_full_playlist = Some(prev);
+            c
+        };
+
+        let delta = |first: u64, uri: &str| MediaPlaylist {
+            msn: broadcast_hls::MediaSequence::new(first),
+            skip: Some(broadcast_hls::SkipInfo::new(2)),
+            segments: vec![seg(uri)],
+            ..Default::default()
+        };
+
+        let merged = client.merge_delta(delta(7, "e.ts"));
+        assert_eq!(merged.skip, None, "the delta is merged into a full view");
+        assert_eq!(
+            merged
+                .segments
+                .iter()
+                .map(|s| s.uri.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c.ts", "d.ts", "e.ts"]
+        );
+
+        let equal = client.merge_delta(delta(5, "e.ts"));
+        assert_eq!(
+            equal.skip, None,
+            "a delta starting at the previous window's first number is mergeable"
+        );
+        assert_eq!(
+            equal
+                .segments
+                .iter()
+                .map(|s| s.uri.as_str())
+                .collect::<Vec<_>>(),
+            vec!["a.ts", "b.ts", "e.ts"]
+        );
+
+        let behind = client.merge_delta(delta(3, "e.ts"));
+        assert!(
+            behind.skip.is_some(),
+            "a delta below the previous window cannot be spliced"
+        );
+    }
+
+    #[test]
+    fn covered_by_parts_needs_a_part_and_no_undelivered_part() {
+        let msn = broadcast_hls::MediaSequence::new;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let url = Url::parse("http://example.com/p0.m4s").expect("test URL");
+        client.resource_requests.insert(
+            ResourceId::Part {
+                msn: msn(0),
+                part: broadcast_hls::PartIndex::new(0),
+            },
+            (url.clone(), None),
+        );
+        client.resource_requests.insert(
+            ResourceId::Part {
+                msn: msn(0),
+                part: broadcast_hls::PartIndex::new(1),
+            },
+            (url, None),
+        );
+        client
+            .delivered_parts
+            .insert((msn(0), broadcast_hls::PartIndex::new(0)));
+        assert!(
+            !client.covered_by_parts(msn(0)),
+            "one part is still undelivered"
+        );
+        client
+            .delivered_parts
+            .insert((msn(0), broadcast_hls::PartIndex::new(1)));
+        assert!(client.covered_by_parts(msn(0)));
+        assert!(
+            !client.covered_by_parts(msn(1)),
+            "a segment with no parts is never covered by parts"
+        );
+    }
+
+    #[test]
+    fn skipping_a_segment_ignores_its_gap_parts() {
+        let msn = broadcast_hls::MediaSequence::new;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let gap = MediaSegment {
+            uri: "s0.m4s".to_string(),
+            parts: vec![
+                broadcast_hls::PartSpec::new(
+                    "gap.m4s".to_string(),
+                    broadcast_hls::DecimalSeconds::new(0.5).expect("duration"),
+                )
+                .with_gap(true)
+                .with_byte_range(broadcast_hls::ByteRange {
+                    length: 100,
+                    offset: Some(0),
+                }),
+                broadcast_hls::PartSpec::new(
+                    "real.m4s".to_string(),
+                    broadcast_hls::DecimalSeconds::new(0.5).expect("duration"),
+                )
+                .with_byte_range(broadcast_hls::ByteRange {
+                    length: 50,
+                    offset: Some(0),
+                }),
+            ],
+            ..Default::default()
+        };
+        client.skip_segment(msn(0), &gap).expect("skip");
+        assert!(client.delivered_segments.contains(&msn(0)));
+        assert_eq!(
+            client
+                .byte_range_cursor
+                .iter()
+                .map(|(u, c)| (u.as_str(), *c))
+                .collect::<Vec<_>>(),
+            vec![("http://example.com/real.m4s", 50)],
+            "a GAP part is never fetched, so its byte range is not consumed"
+        );
+    }
+
+    #[test]
+    fn prune_keeps_the_current_window_entries() {
+        let msn = broadcast_hls::MediaSequence::new;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let part = broadcast_hls::PartIndex::new(0);
+        client.delivered_parts.insert((msn(4), part));
+        client.delivered_segments.insert(msn(4));
+        client.discontinuous_msns.insert(msn(4));
+        client.discontinuity_emitted.insert(msn(4));
+        client.segment_crypto.insert(
+            msn(4),
+            SegmentCrypto {
+                key_id: KeyId(0),
+                iv: [0u8; BLOCK_LEN],
+            },
+        );
+        client.delivered_parts.insert((msn(5), part));
+        client.delivered_segments.insert(msn(5));
+        client.discontinuous_msns.insert(msn(5));
+        client.discontinuity_emitted.insert(msn(5));
+
+        let playlist = playlist_of(5, vec![seg("s5.ts")]);
+        client.prune(&playlist);
+        assert_eq!(
+            client.delivered_parts.iter().copied().collect::<Vec<_>>(),
+            vec![(msn(5), part)],
+            "entries below the window go, entries in it stay"
+        );
+        assert_eq!(
+            client
+                .delivered_segments
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![msn(5)]
+        );
+        assert_eq!(
+            client
+                .discontinuous_msns
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![msn(5)]
+        );
+        assert_eq!(
+            client
+                .discontinuity_emitted
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![msn(5)]
+        );
+        assert!(client.segment_crypto.is_empty());
+    }
+
+    // Audit 21 finding 55 (#2950): a regression withdraws the old
+    // numbering's queued key fetches (their ids name the old stream).
+    #[test]
+    fn restart_withdraws_queued_key_and_resource_fetches() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client.pending_actions.push_back(Action::FetchKey {
+            id: KeyId(0),
+            url: Url::parse("http://example.com/key.bin").expect("test URL"),
+        });
+        client.pending_actions.push_back(Action::FetchResource {
+            id: ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(5),
+            },
+            url: Url::parse("http://example.com/s5.ts").expect("test URL"),
+            byte_range: None,
+        });
+        client.restart_after_regression().expect("restart");
+        assert!(
+            !client
+                .pending_actions
+                .iter()
+                .any(|a| matches!(a, Action::FetchKey { .. } | Action::FetchResource { .. })),
+            "the old numbering's fetches are withdrawn: {:?}",
+            client.pending_actions
+        );
+        assert!(matches!(client.next_output(), Some(Output::Discontinuity)));
+    }
 }

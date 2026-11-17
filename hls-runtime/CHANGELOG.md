@@ -9,6 +9,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 - Test-only: the resource-body, keyed-ciphertext and init-buffering caps are pinned at their inclusive edge (a body of exactly the cap is accepted, one byte more dropped with the observed id), the oldest-not-newest drop order and the init-slot eviction preference are asserted, and the outstanding-fetch counter is checked against the requests it counted (audit 21 finding 54, #2949).
+- Test-only: `endlist_seen`/`target_duration_secs`/`ensure_playlist_reload`/`set_playlist_base` are asserted against a scripted playlist, `choose_variant` honours a variant exactly at `max_bandwidth`, a `TYPE=MAP` preload hint prefetches its init and a part hint keeps its byte range, a media-sequence regression restarts exactly once, a wholly older window is skipped, the continuity signals and the delta merge each have one test, and the TS routing's dropped-track report and silent-PID release are pinned on the real TS-HLS fixture with its PMT rewritten (audit 21 finding 55, #2950).
+
 ## [0.15.0] - 2026-11-17
 ### Added
 - `client::Error::PlaylistTooLarge`: a playlist over a `broadcast_hls::limits::Limits` bound is a distinct, non-retryable error rather than a generic `PlaylistParse`, so a caller never re-fetches the same over-limit response (audit 20 finding 41, #2852).
