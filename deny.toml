@@ -1,0 +1,54 @@
+[advisories]
+version = 2
+yanked = "deny"
+
+[licenses]
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[bans]
+multiple-versions = "warn"
+skip = [
+    { crate = "base64@0.22.1", reason = "pulled by headers 0.4.2, http-auth 0.1.10, rtc-stun 0.21 (rtc-*), pem 3 (x509-parser 0.16 under rtc-dtls) and metrics-exporter-prometheus 0.18.3; each must move to base64 0.23" },
+    { crate = "block-buffer@0.10.4", reason = "digest 0.10 line via http-auth 0.1.10 and rtc-crypto 0.21; upstream must move to the digest 0.11 stack" },
+    { crate = "cpufeatures@0.2.17", reason = "aes 0.8, sha1 0.10 and sha2 0.10 via rtc-crypto 0.21, http-auth 0.1.10 and headers 0.4.2; upstream must move to the RustCrypto 0.11 stack" },
+    { crate = "crypto-common@0.1.7", reason = "aead 0.5, cipher 0.4 and digest 0.10 via rtc-dtls/rtc-crypto 0.21; upstream must move to crypto-common 0.2" },
+    { crate = "digest@0.10.7", reason = "hmac 0.12, md-5 0.10, sha1 0.10 and sha2 0.10 via http-auth 0.1.10 and rtc-crypto 0.21; upstream must move to digest 0.11" },
+    { crate = "getrandom@0.2.17", reason = "rand_core 0.6 via rand 0.8 (http-auth 0.1.10) and ring 0.17.14 (rustls 0.23); upstream must move to getrandom 0.4" },
+    { crate = "getrandom@0.3.4", reason = "rand_core 0.9 via rand 0.9 (metrics-util 0.20.4 under metrics-exporter-prometheus 0.18.3); upstream must move to rand 0.10" },
+    { crate = "hashbrown@0.16.1", reason = "metrics-util 0.20.4 under metrics-exporter-prometheus 0.18.3; upstream must move to hashbrown 0.17" },
+    { crate = "md-5@0.10.6", reason = "http-auth 0.1.10 and rtc-crypto 0.21 (digest 0.10); upstream must move to md-5 0.11" },
+    { crate = "r-efi@5.3.0", reason = "getrandom 0.3.4 via rand_core 0.9 (metrics-util 0.20.4); clears when that chain moves to getrandom 0.4" },
+    { crate = "rand@0.8.8", reason = "http-auth 0.1.10 (rand 0.8 line); upstream must move to rand 0.10" },
+    { crate = "rand@0.9.5", reason = "metrics-util 0.20.4 under metrics-exporter-prometheus 0.18.3; upstream must move to rand 0.10" },
+    { crate = "rand_chacha@0.3.1", reason = "rand 0.8 via http-auth 0.1.10; clears with rand 0.8" },
+    { crate = "rand_chacha@0.9.0", reason = "rand 0.9 via metrics-util 0.20.4; clears with rand 0.9" },
+    { crate = "rand_core@0.6.4", reason = "rand 0.8 via http-auth 0.1.10 and crypto-common 0.1 via rtc-crypto 0.21; upstream must move to rand_core 0.10" },
+    { crate = "rand_core@0.9.5", reason = "rand 0.9 via metrics-util 0.20.4 and rand_xoshiro 0.7; clears with rand 0.9" },
+    { crate = "sha1@0.10.7", reason = "headers 0.4.2 and rtc-crypto 0.21; upstream must move to sha1 0.11" },
+    { crate = "sha2@0.10.9", reason = "http-auth 0.1.10; upstream must move to sha2 0.11" },
+    { crate = "syn@2.0.119", reason = "pulled by asn1-rs-derive 0.5 and thiserror-impl 1 (x509-parser 0.16 under rtc-dtls), jni-macros 0.22, num_enum_derive 0.7, synstructure 0.13, zerocopy-derive 0.8, tracing-attributes 0.1 and windows-implement/interface 0.100; upstream macros must move to syn 3" },
+    { crate = "tower-http@0.6.11", reason = "reqwest 0.13.5 pins tower-http 0.6; upstream must move to tower-http 0.7" },
+    { crate = "windows-link@0.100.0", reason = "windows-core 0.100 via generator 0.8.12 (loom 0.7 under evmap 11 and metrics-exporter-prometheus 0.18.3); upstream must move to windows-link 0.2" },
+    { crate = "windows-sys@0.52.0", reason = "ring 0.17.14 (rustls 0.23 stack); upstream must move to windows-sys 0.61" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
