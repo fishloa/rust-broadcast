@@ -44,4 +44,21 @@ pub enum SmoothError {
     /// The configuration's retry schedule is not one a client can run with.
     #[error("invalid retry backoff")]
     InvalidBackoff(broadcast_common::backoff::InvalidBackoff),
+    /// Fragment bodies held back waiting for a stream to announce its local track id
+    /// outgrew `max_held_bytes` with no unannounced stream left to abandon.
+    #[error("announcement stalled with {max} bytes of fragments held")]
+    AnnounceStalled {
+        /// The configured `max_held_bytes`.
+        max: usize,
+    },
+    /// A fragment body was longer than `max_fragment_bytes`.
+    #[error("fragment of stream {stream:?} is {bytes} bytes, past the {max}-byte cap")]
+    FragmentTooLarge {
+        /// The stream it belonged to.
+        stream: crate::client::StreamId,
+        /// The body's length.
+        bytes: usize,
+        /// The configured `max_fragment_bytes`.
+        max: usize,
+    },
 }

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- `SmoothManifest::to_xml` refuses an attribute value or `ProtectionHeader` text holding a character outside the XML 1.0 §2.2 `Char` production (`ManifestWriteError::InvalidChar`, the shared `broadcast_common::xml_chars::WriteRefusal`) instead of writing a manifest every reader rejects (#2843).
 
 ## [0.2.0] - 2026-11-15
 ### Changed

@@ -49,6 +49,7 @@ const FIELD_MAX_MANIFEST_BYTES: &str = "max_manifest_bytes";
 const FIELD_MAX_SEGMENT_BYTES: &str = "max_segment_bytes";
 const REASON_NON_FRAGMENTED_MP4: &str = "non_fragmented_mp4";
 const REASON_DAMAGED_FRAGMENT: &str = "damaged_fragment";
+const REASON_TOO_LARGE: &str = "too_large";
 
 /// Which playlist an adapter plays.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,7 +142,9 @@ impl HlsSource {
         seed: u64,
     ) -> Result<Self, Error> {
         let client = HlsClient::new(
-            HlsClientConfig::new(url.clone()).with_variant_policy(config.variant_policy.clone()),
+            HlsClientConfig::new(url.clone())
+                .with_variant_policy(config.variant_policy.clone())
+                .with_limits(config.hls_limits),
         );
         let backoff = Backoff::new(&config.backoff, seed)
             .map_err(|_| Error::InvalidConfig(crate::error::ConfigField::Backoff))?;
@@ -178,7 +181,7 @@ impl HlsSource {
                 duration_us(config.segment_inactivity_timeout),
                 conn_alloc,
             ),
-            stash: Stash::new(),
+            stash: Stash::with_segment_budget(config.max_segment_bytes),
             parked: Vec::new(),
             lanes: Lanes::new(),
             window: Window::new(config.max_inflight_segments),
@@ -368,6 +371,18 @@ impl HlsSource {
                 HeadOutcome::Fallback => {
                     self.actions.push_back(Action::Close { conn });
                     self.send(req, auth, now);
+                }
+                HeadOutcome::Oversize => {
+                    self.actions.push_back(Action::Close { conn });
+                    if let Some(field) = req.purpose.oversize_field()
+                        && self.oversize_reported.insert(field)
+                    {
+                        self.events.push_back(Event::Error {
+                            kind: ErrorKind::BodyTooLarge { field },
+                            fatal: false,
+                        });
+                    }
+                    self.fail(req, now);
                 }
                 HeadOutcome::Accepted => {
                     req.responded_ok = true;
@@ -1092,6 +1107,12 @@ fn classify(error: &CoreError) -> Option<(ErrorKind, bool)> {
         CoreError::PlaylistParse(broadcast_hls::Error::KeyWithoutUri { method }) => Some((
             ErrorKind::UnsupportedEncryption {
                 method: method.to_string(),
+            },
+            true,
+        )),
+        CoreError::PlaylistTooLarge { .. } => Some((
+            ErrorKind::PlaylistParse {
+                reason: REASON_TOO_LARGE,
             },
             true,
         )),

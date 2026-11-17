@@ -234,7 +234,7 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf(&client, &playlist_url).await;
     stop.store(true, Ordering::Relaxed);
@@ -315,7 +315,7 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
         .serve(),
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf(&client, &playlist_url).await;
 
@@ -408,7 +408,7 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
         }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf(&client, &playlist_url).await;
 
@@ -673,7 +673,7 @@ mod custom_dispatch_driver_backed {
             .serve(),
         );
 
-        let client = reqwest::Client::new();
+        let client = crate::support::http::client();
         let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
         let playlist = poll_until_extinf(&client, &playlist_url).await;
 
@@ -928,7 +928,7 @@ mod custom_dispatch_driver_backed {
 
         // Also verify the SPTS manifest works (the DASH renderer only uses
         // SPTS_PROGRAM_ID), as a smoke test that the route is functional.
-        let client = reqwest::Client::new();
+        let client = crate::support::http::client();
         let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
         let resp = client
             .get(&mpd_url)
@@ -1042,7 +1042,7 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
     )
     .await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
     let mpd_body = poll_until_200_with(&client, &mpd_url, |body| {
         body.contains("<MPD")
@@ -1093,7 +1093,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
     )
     .await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let mpd_url = format!("http://{bind_addr}/cam/manifest-ll.mpd");
     let mpd_body = poll_until_200_with(&client, &mpd_url, |body| {
         body.contains("<MPD")
@@ -1155,7 +1155,7 @@ async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
     // announces a program, so the route's track specs stay empty.
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let mpd_url = format!("http://{bind_addr}/cam/manifest.mpd");
     let resp = client
         .get(&mpd_url)

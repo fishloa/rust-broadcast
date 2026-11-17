@@ -3,7 +3,7 @@ use url::Url;
 
 use std::collections::{BTreeSet, HashMap, VecDeque};
 
-use broadcast_client::{Action, Config, ConnId, Credentials, Event, Session, Status};
+use broadcast_client::{Action, Config, ConnId, Credentials, ErrorKind, Event, Session, Status};
 use broadcast_common::stage::Timestamp;
 
 /// The harness's microsecond clock as the session's `now`.
@@ -58,6 +58,7 @@ struct Stats {
     overloaded: bool,
     requested: Vec<String>,
     succeeded: Vec<String>,
+    errors: Vec<(ErrorKind, bool)>,
 }
 
 fn run_vod(
@@ -95,6 +96,9 @@ fn run_vod(
         }
         while let Some(event) = session.next_event() {
             stats.ended |= is_ended(&event);
+            if let Event::Error { kind, fatal } = event {
+                stats.errors.push((kind, fatal));
+            }
         }
         let segments = outstanding
             .iter()
@@ -167,6 +171,44 @@ fn a_hostile_150k_segment_playlist_completes_in_bounded_steps() {
     assert!(stats.peak_total <= 5, "{}", stats.peak_total);
     assert!(stats.ended && !stats.stuck, "{stats:?}");
     assert!(stats.steps <= n + 100, "steps {}", stats.steps);
+}
+
+/// A playlist over a `broadcast_hls::limits` cap can never become playable:
+/// the same response exceeds it on every fetch, so the session must fail once,
+/// fatally, without re-requesting the playlist.
+#[test]
+fn an_over_limit_playlist_is_terminal_and_requested_once() {
+    let mut config = hls_config();
+    config.hls_limits.max_segments = 1;
+    let mut session = vod_session(config);
+    let stats = run_vod(
+        &mut session,
+        VOD_PLAYLIST_URL,
+        &vod_playlist(2),
+        |_, _| 200,
+        16,
+    );
+    assert_eq!(
+        stats.errors,
+        vec![(
+            ErrorKind::PlaylistParse {
+                reason: "too_large"
+            },
+            true
+        )],
+        "{stats:?}"
+    );
+    assert_eq!(
+        stats
+            .requested
+            .iter()
+            .filter(|u| u.as_str() == VOD_PLAYLIST_URL)
+            .count(),
+        1,
+        "the over-limit playlist must be requested exactly once: {:?}",
+        stats.requested
+    );
+    assert!(stats.steps <= 8, "bounded steps, got {}", stats.steps);
 }
 
 #[test]

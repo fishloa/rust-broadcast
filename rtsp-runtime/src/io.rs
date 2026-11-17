@@ -111,6 +111,13 @@ pub struct AsyncRtspClient<S> {
     pending_media: VecDeque<ClientEvent>,
     deferred_error: Option<Error>,
     timeouts: Timeouts,
+    /// The one deadline covering a whole inbound read: reset only when a
+    /// frame is decoded, so a keepalive wake in
+    /// [`recv_interleaved`](Self::recv_interleaved) cannot restart
+    /// [`Timeouts::read_idle`] and leave a silent server undetected. `None`
+    /// means the interval does not fit the clock, so no deadline exists and
+    /// the read has no timer (it never fires).
+    idle_deadline: Option<tokio::time::Instant>,
 }
 
 impl AsyncRtspClient<TcpStream> {
@@ -141,11 +148,13 @@ where
 {
     /// Wraps an already-connected stream (plain or TLS) with `config`.
     pub fn from_stream(stream: S, config: RtspClientIoConfig) -> Self {
+        let timeouts = config.timeouts;
         AsyncRtspClient {
             framed: Framed::new(stream, ClientCodec::new(config.session)),
             pending_media: VecDeque::new(),
             deferred_error: None,
-            timeouts: config.timeouts,
+            timeouts,
+            idle_deadline: tokio::time::Instant::now().checked_add(timeouts.read_idle),
         }
     }
 
@@ -178,8 +187,10 @@ where
         Ok(())
     }
 
-    /// The next decoded event; `Ok(None)` = clean EOF. One deadline covers the WHOLE
-    /// frame (see [`Timeouts::read_idle`]).
+    /// The next decoded event; `Ok(None)` = clean EOF. One deadline covers the
+    /// WHOLE read and is only pushed back when a frame is decoded (see
+    /// [`Timeouts::read_idle`]), so cancel-and-retry callers that wake for an
+    /// unrelated timer do not extend it.
     async fn next_event(&mut self) -> Result<Option<ClientEvent>> {
         // Inbound events (media, responses) deliberately do NOT count as keepalive
         // activity: the server's session timeout is refreshed by RTSP *requests*
@@ -188,10 +199,18 @@ where
         if let Some(e) = self.deferred_error.take() {
             return Err(e);
         }
-        match tokio::time::timeout(self.timeouts.read_idle, self.framed.next()).await {
+        let read = match self.idle_deadline {
+            Some(deadline) => tokio::time::timeout_at(deadline, self.framed.next()).await,
+            None => Ok(self.framed.next().await),
+        };
+        match read {
             Err(_) => Err(Error::Timeout { what: "read" }),
             Ok(None) => Ok(None),
-            Ok(Some(r)) => r.map(Some),
+            Ok(Some(r)) => {
+                self.idle_deadline =
+                    tokio::time::Instant::now().checked_add(self.timeouts.read_idle);
+                r.map(Some)
+            }
         }
     }
 
@@ -462,20 +481,28 @@ where
                     self.deferred_error = Some(e);
                     return Ok(());
                 }
-                Some(Some(Ok(ClientEvent::Response { method, status, .. }))) => {
-                    if status == rtsp_types::StatusCode::SessionNotFound {
-                        return Err(Error::SessionNotFound { method });
+                Some(Some(Ok(event))) => {
+                    self.idle_deadline =
+                        tokio::time::Instant::now().checked_add(self.timeouts.read_idle);
+                    match event {
+                        ClientEvent::Response {
+                            method,
+                            status: rtsp_types::StatusCode::SessionNotFound,
+                            ..
+                        } => {
+                            return Err(Error::SessionNotFound { method });
+                        }
+                        event @ ClientEvent::MediaData { .. } => {
+                            if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
+                                self.pending_media.pop_front();
+                            }
+                            self.pending_media.push_back(event);
+                        }
+                        // `AuthRetry`/any future variant: nothing to do for a
+                        // send-only pusher.
+                        _ => {}
                     }
                 }
-                Some(Some(Ok(event @ ClientEvent::MediaData { .. }))) => {
-                    if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
-                        self.pending_media.pop_front();
-                    }
-                    self.pending_media.push_back(event);
-                }
-                // `AuthRetry`/any future variant: nothing to do for a
-                // send-only pusher.
-                Some(Some(Ok(_))) => {}
             }
         }
         // Hit the per-call cap: leave the remainder buffered, do not spin.
@@ -691,15 +718,9 @@ where
 pub fn default_tls_client_config() -> crate::Result<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
     roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    // Select the aws-lc-rs provider explicitly rather than via
-    // `ClientConfig::builder()`'s process-global default: another crate in the
-    // same build (e.g. a `reqwest` that pulls `aws-lc-rs`) can put a *second*
-    // `CryptoProvider` in the tree, leaving no unambiguous default and making
-    // the plain builder panic. Choosing the provider here keeps `rtsp-runtime`
-    // working regardless of what else is linked.
     Ok(
         rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+            rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .map_err(Error::TlsConfig)?
@@ -899,7 +920,7 @@ mod tls_timeout_tests {
         let cert = test_fixtures::read("tls/localhost-cert.der");
         let key = test_fixtures::read("tls/localhost-key.der");
         rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(
-            rustls::crypto::aws_lc_rs::default_provider(),
+            rustls::crypto::ring::default_provider(),
         ))
         .with_safe_default_protocol_versions()
         .unwrap()

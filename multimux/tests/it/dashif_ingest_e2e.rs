@@ -154,7 +154,7 @@ impl Rig {
         Rig {
             ingest: format!("http://{ingest_addr}"),
             origin: format!("http://{bind_addr}"),
-            client: reqwest::Client::new(),
+            client: crate::support::http::client(),
             server,
         }
     }
@@ -177,7 +177,7 @@ impl Rig {
         Rig {
             ingest: format!("http://{ingest_addr}"),
             origin: format!("http://{bind_addr}"),
-            client: reqwest::Client::new(),
+            client: crate::support::http::client(),
             server,
         }
     }

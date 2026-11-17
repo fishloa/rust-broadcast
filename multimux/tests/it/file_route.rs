@@ -84,7 +84,7 @@ async fn file_route_serves_real_media_segments() {
         .serve(),
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
     let playlist = poll_until_extinf(&client, &playlist_url).await;
 
@@ -168,7 +168,7 @@ async fn file_route_loop_false_stops() {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
     // Wait for the first pass's segments to be served, then let the single
@@ -268,7 +268,7 @@ async fn file_route_loop_true_keeps_serving_and_paces_across_the_loop_point() {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
     let first = poll_until_extinf(&client, &playlist_url).await;

@@ -23,6 +23,10 @@ All six must be green on a fresh run before staging a release:
 
 Bare-metal `no_std` (`thumbv7em-none-eabi`) per-lib loop is the CI no_std job — covered on each merge PR; re-confirm if any lib changed since.
 
+### 1.1 Dependency policy: `cargo deny check` (pre-release)
+
+Run `cargo deny --locked check` from the workspace root before staging a release. It covers advisories (RUSTSEC, yanked crates denied), licences, sources (crates.io only) and bans. Duplicate crate versions are warnings, and the accepted set is the `[bans] skip` list in `deny.toml`, one entry per old copy with the upstream root that must bump in its `reason`. A new duplicate or an unexplained warning blocks the release until it is either fixed or recorded there. The CI `cargo-deny` job is non-blocking on PRs; the nightly `deny` job is blocking.
+
 Defensive: the recurring dvb-si "hang" = concurrent `cargo test` on one crate + a rustdoc doctest deadlock. Use a single target dir per run and don't parallelize same-crate test runs.
 
 ---

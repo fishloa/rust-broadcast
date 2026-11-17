@@ -29,6 +29,8 @@ use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
 use core::time::Duration;
 
+use rtp_packet::RtpPacket;
+
 use crate::nack::{BLP_BIT_WIDTH, MAX_RANGE_ENTRIES};
 use crate::{NackFci, PacketRange};
 
@@ -60,6 +62,13 @@ const BASE_MAX_GAP: u16 = 512;
 /// handful of packets. **Implementation policy** — TR-06-1 does not specify
 /// a confirmation count.
 const RESYNC_CONFIRM_COUNT: u32 = 3;
+
+/// Half the 32-bit RTP timestamp space (RFC 3550 §5.1's `timestamp` is a
+/// wrapping 32-bit counter): a wrapped difference at or above this is a
+/// backward step, not forward progress. A resync candidate's timestamps must
+/// advance forward, so a run of guessed sequence numbers carrying an
+/// unrelated timestamp is dropped.
+const TIMESTAMP_HALF_SPACE: u32 = 1 << 31;
 
 /// Derive a [`Receiver`]'s [`Receiver::max_gap`] ceiling from its configured
 /// [`ArqConfig::receiver_buffer`]: [`BASE_MAX_GAP`] scaled proportionally to
@@ -95,6 +104,15 @@ struct PendingResync {
     /// Consecutive matching arrivals so far, including the one that opened
     /// the candidate.
     count: u32,
+    /// The SSRC every packet of the candidate run carries — it must be the
+    /// stream's own (r08-RIST-C2/#2841).
+    ssrc: u32,
+    /// The RTP timestamp of the most recent packet in the run.
+    last_timestamp: u32,
+    /// The per-packet RTP timestamp step established by the run's first
+    /// continuation; every later packet must repeat it, so a burst of
+    /// sequence numbers without a consistent time base never confirms.
+    step: Option<u32>,
 }
 
 /// Outcome of one [`Receiver::feed`] call.
@@ -179,6 +197,10 @@ pub struct Receiver {
     /// the most recent out-of-range arrival hasn't yet reached
     /// [`RESYNC_CONFIRM_COUNT`].
     pending_resync: Option<PendingResync>,
+    /// The SSRC of the stream this receiver has accepted, once a packet
+    /// carrying RTP identity has arrived. A resync candidate from any other
+    /// SSRC is rejected.
+    stream_ssrc: Option<u32>,
     rtt: RttEstimator,
 }
 
@@ -194,6 +216,7 @@ impl Receiver {
             highest_received: None,
             max_gap,
             pending_resync: None,
+            stream_ssrc: None,
             rtt: RttEstimator::new(),
         }
     }
@@ -224,8 +247,42 @@ impl Receiver {
         self.rtt.smoothed()
     }
 
-    /// Process one arriving RTP data packet's sequence number.
+    /// Process one arriving RTP data packet's sequence number, without its
+    /// RTP identity.
+    ///
+    /// Ordinary in-order and small-gap arrivals are handled exactly as
+    /// [`Self::feed_rtp`]; a jump beyond `Self::max_gap` never resynchronises
+    /// from this method, because a bare sequence number cannot be told apart
+    /// from forged numbers (see [`Self::feed_rtp`]). A caller that has the RTP
+    /// header must use [`Self::feed_rtp`] to keep the resync path available.
     pub fn feed(&mut self, seq_number: u16, now: Duration) -> DeliveryOutcome {
+        self.feed_identified(seq_number, None, now)
+    }
+
+    /// Process one arriving RTP data packet, including the SSRC and timestamp
+    /// needed to confirm a stream resynchronisation.
+    ///
+    /// A jump beyond `Self::max_gap` confirms only after
+    /// `RESYNC_CONFIRM_COUNT` consecutive packets that all carry the
+    /// stream's own SSRC and whose RTP timestamps advance by one constant
+    /// forward step — three sequence numbers alone are not enough, since the
+    /// sequence field is unauthenticated and a peer able to inject into the
+    /// RTP flow could otherwise redirect the receiver with three crafted
+    /// datagrams (#2841).
+    pub fn feed_rtp(&mut self, packet: &RtpPacket<'_>, now: Duration) -> DeliveryOutcome {
+        self.feed_identified(
+            packet.sequence_number.get(),
+            Some((packet.ssrc.get(), packet.timestamp)),
+            now,
+        )
+    }
+
+    fn feed_identified(
+        &mut self,
+        seq_number: u16,
+        identity: Option<(u32, u32)>,
+        now: Duration,
+    ) -> DeliveryOutcome {
         match self.highest_received {
             None => {
                 self.highest_received = Some(seq_number);
@@ -243,7 +300,7 @@ impl Receiver {
                     // RESYNC_CONFIRM_COUNT consecutive confirmations before
                     // acting — never resync (or blackhole the stream) on
                     // one arrival alone.
-                    return self.feed_resync_candidate(seq_number);
+                    return self.feed_resync_candidate(seq_number, identity);
                 }
                 // A genuine forward-progressing arrival within the gap
                 // ceiling — any stale, unconfirmed resync candidate from an
@@ -269,13 +326,16 @@ impl Receiver {
                 // further behind than any reordering or retransmission the
                 // buffer covers, so confirm it as a resync run instead of
                 // dropping it as a late duplicate.
-                return self.feed_resync_candidate(seq_number);
+                return self.feed_resync_candidate(seq_number, identity);
             }
             _ => {}
         }
 
         // Arrived, whichever bucket it was tracked in (if any).
         self.missing.remove(&seq_number);
+        if let Some((ssrc, _timestamp)) = identity {
+            self.stream_ssrc.get_or_insert(ssrc);
+        }
 
         let mut delivered = Vec::new();
         let next_expected = self.next_expected.unwrap_or(seq_number);
@@ -304,18 +364,50 @@ impl Receiver {
     /// then the arrival is an unconfirmed candidate — dropped, exactly like
     /// a genuinely bogus outlier, so a single spoofed packet cannot
     /// blackhole the stream.
-    fn feed_resync_candidate(&mut self, seq_number: u16) -> DeliveryOutcome {
+    fn feed_resync_candidate(
+        &mut self,
+        seq_number: u16,
+        identity: Option<(u32, u32)>,
+    ) -> DeliveryOutcome {
+        // A bare sequence number cannot confirm a resync: three forged
+        // numbers would otherwise redirect the stream (#2841). Without RTP
+        // identity the candidate is dropped outright.
+        let Some((ssrc, timestamp)) = identity else {
+            self.pending_resync = None;
+            return DeliveryOutcome::default();
+        };
+        if self.stream_ssrc.is_some_and(|known| known != ssrc) {
+            self.pending_resync = None;
+            return DeliveryOutcome::default();
+        }
         let candidate = match self.pending_resync {
-            Some(mut p) if p.next_needed == seq_number => {
+            Some(mut p) if p.next_needed == seq_number && p.ssrc == ssrc => {
+                let step = timestamp.wrapping_sub(p.last_timestamp);
+                let plausible = step < TIMESTAMP_HALF_SPACE
+                    && p.step.is_none_or(|established| established == step);
+                if !plausible {
+                    self.pending_resync = None;
+                    return DeliveryOutcome::default();
+                }
+                p.step = Some(step);
                 p.count += 1;
                 p.next_needed = seq::seq_next(seq_number);
+                p.last_timestamp = timestamp;
                 p
             }
-            _ => PendingResync {
-                base: seq_number,
-                next_needed: seq::seq_next(seq_number),
-                count: 1,
-            },
+            _ => {
+                // A fresh candidate run establishes its own time base (a
+                // genuine sender restart may reset the RTP timestamp), so
+                // only the *continuations* must agree on a step.
+                PendingResync {
+                    base: seq_number,
+                    next_needed: seq::seq_next(seq_number),
+                    count: 1,
+                    ssrc,
+                    last_timestamp: timestamp,
+                    step: None,
+                }
+            }
         };
         self.pending_resync = Some(candidate);
         if candidate.count < RESYNC_CONFIRM_COUNT {
@@ -573,6 +665,27 @@ mod tests {
 
     fn cfg() -> ArqConfig {
         ArqConfig::default()
+    }
+
+    const SSRC: u32 = 0x1234_5678;
+
+    fn rtp(seq_number: u16, ssrc: u32, timestamp: u32) -> RtpPacket<'static> {
+        RtpPacket {
+            marker: false,
+            payload_type: 33,
+            sequence_number: rtp_packet::SeqNo::new(seq_number),
+            timestamp,
+            ssrc: rtp_packet::Ssrc::new(ssrc),
+            csrc: Vec::new(),
+            extension: None,
+            padding: None,
+            payload: &[],
+        }
+    }
+
+    fn feed_rtp(r: &mut Receiver, seq_number: u16, timestamp: u32) -> DeliveryOutcome {
+        let packet = rtp(seq_number, SSRC, timestamp);
+        r.feed_rtp(&packet, Duration::ZERO)
     }
 
     #[test]
@@ -869,19 +982,19 @@ mod tests {
     fn a_backward_sequence_restart_beyond_max_gap_resyncs_after_confirmation() {
         let mut r = Receiver::new(cfg());
         let highest = 40_000u16;
-        r.feed(highest, Duration::ZERO);
+        feed_rtp(&mut r, highest, 1_000_000);
         let restart = 20_000u16;
         assert!(seq::seq_lt(restart, highest));
         assert!(u32::from(highest - restart) > u32::from(r.max_gap));
 
         for i in 0..(RESYNC_CONFIRM_COUNT - 1) {
-            let out = r.feed(restart + i as u16, Duration::ZERO);
+            let out = feed_rtp(&mut r, restart + i as u16, 500_000 + i * 3000);
             assert!(out.delivered.is_empty());
         }
         assert_eq!(r.next_expected(), Some(highest + 1));
 
         let last = restart + (RESYNC_CONFIRM_COUNT - 1) as u16;
-        let confirmed = r.feed(last, Duration::ZERO);
+        let confirmed = feed_rtp(&mut r, last, 500_000 + (RESYNC_CONFIRM_COUNT - 1) * 3000);
         assert_eq!(confirmed.delivered.len(), RESYNC_CONFIRM_COUNT as usize);
         assert_eq!(confirmed.delivered[0], restart);
         assert_eq!(r.next_expected(), Some(last + 1));
@@ -923,10 +1036,11 @@ mod tests {
     #[test]
     fn one_past_the_max_gap_boundary_starts_an_unconfirmed_candidate_not_a_reset() {
         let mut r = Receiver::new(cfg());
-        r.feed(0, Duration::ZERO);
+        feed_rtp(&mut r, 0, 1_000_000);
         let max_gap = r.max_gap;
         let jump = seq::seq_add(0, max_gap + 1); // gap == max_gap + 1
-        let out = r.feed(jump, Duration::ZERO);
+        let base_ts = 1_000_000 + u32::from(max_gap + 1) * 3000;
+        let out = feed_rtp(&mut r, jump, base_ts);
         assert!(
             out.delivered.is_empty(),
             "unconfirmed candidate must not deliver"
@@ -939,7 +1053,7 @@ mod tests {
         // not including) the RESYNC_CONFIRM_COUNT-th continuation, still
         // unconfirmed.
         for i in 1..(RESYNC_CONFIRM_COUNT - 1) {
-            let out = r.feed(seq::seq_add(jump, i as u16), Duration::ZERO);
+            let out = feed_rtp(&mut r, seq::seq_add(jump, i as u16), base_ts + i * 3000);
             assert!(out.delivered.is_empty());
         }
         assert_eq!(r.next_expected(), Some(1));
@@ -947,7 +1061,7 @@ mod tests {
         // The RESYNC_CONFIRM_COUNT-th consecutive continuation confirms:
         // the whole run is delivered at once and the stream resyncs.
         let last = seq::seq_add(jump, (RESYNC_CONFIRM_COUNT - 1) as u16);
-        let confirmed = r.feed(last, Duration::ZERO);
+        let confirmed = feed_rtp(&mut r, last, base_ts + (RESYNC_CONFIRM_COUNT - 1) * 3000);
         assert_eq!(confirmed.delivered.len(), RESYNC_CONFIRM_COUNT as usize);
         assert_eq!(confirmed.delivered[0], jump);
         assert_eq!(*confirmed.delivered.last().unwrap(), last);
@@ -1026,13 +1140,14 @@ mod tests {
     #[test]
     fn a_confirmed_resync_clears_previously_buffered_received_ahead() {
         let mut r = Receiver::new(cfg());
-        r.feed(0, Duration::ZERO);
-        r.feed(2, Duration::ZERO); // seq 1 missing, seq 2 buffered ahead
+        feed_rtp(&mut r, 0, 1_000_000);
+        feed_rtp(&mut r, 2, 1_006_000); // seq 1 missing, seq 2 buffered ahead
         assert_eq!(r.missing_count(), 1);
 
         let base = seq::seq_add(2, 5000);
+        let base_ts = 32_000_000;
         for i in 0..RESYNC_CONFIRM_COUNT {
-            r.feed(seq::seq_add(base, i as u16), Duration::ZERO);
+            feed_rtp(&mut r, seq::seq_add(base, i as u16), base_ts + i * 3000);
         }
         let last = seq::seq_add(base, (RESYNC_CONFIRM_COUNT - 1) as u16);
         assert_eq!(r.missing_count(), 0);
@@ -1060,15 +1175,74 @@ mod tests {
         // candidate, and its RESYNC_CONFIRM_COUNT-confirmed run then
         // genuinely crosses the 0xFFFF -> 0 wrap.
         let highest: u16 = 0xFFFEu16.wrapping_sub(600); // 0xFDE6
-        r.feed(highest, Duration::ZERO);
+        feed_rtp(&mut r, highest, 1_000_000);
 
         let base = 0xFFFEu16;
         for i in 0..RESYNC_CONFIRM_COUNT {
-            r.feed(seq::seq_add(base, i as u16), Duration::ZERO);
+            feed_rtp(&mut r, seq::seq_add(base, i as u16), 2_000_000 + i * 3000);
         }
         // base=0xFFFE, +1=0xFFFF, +2 wraps to 0 (RESYNC_CONFIRM_COUNT == 3).
         assert_eq!(r.next_expected(), Some(1));
         assert_eq!(r.missing_count(), 0);
+    }
+
+    /// #2841: three consecutive sequence numbers beyond `max_gap` do not
+    /// confirm a resync when they carry a different SSRC from the stream the
+    /// receiver is tracking — an injected flow must not steal the stream.
+    #[test]
+    fn a_resync_run_from_a_foreign_ssrc_is_rejected() {
+        let mut r = Receiver::new(cfg());
+        feed_rtp(&mut r, 40_000, 1_000_000);
+        assert_eq!(r.next_expected(), Some(40_001));
+
+        let base = 20_000u16;
+        const FOREIGN: u32 = 0xDEAD_BEEF;
+        for i in 0..RESYNC_CONFIRM_COUNT {
+            let packet = rtp(base + i as u16, FOREIGN, 500_000 + i * 3000);
+            let out = r.feed_rtp(&packet, Duration::ZERO);
+            assert!(out.delivered.is_empty());
+        }
+        assert_eq!(
+            r.next_expected(),
+            Some(40_001),
+            "a foreign SSRC must never redirect the stream"
+        );
+        assert_eq!(r.missing_count(), 0);
+    }
+
+    /// #2841: three sequence numbers on the right SSRC still do not confirm
+    /// when their RTP timestamps do not advance by one constant step — the
+    /// run does not look like a real stream continuation.
+    #[test]
+    fn a_resync_run_with_an_inconsistent_timestamp_step_is_rejected() {
+        let mut r = Receiver::new(cfg());
+        feed_rtp(&mut r, 40_000, 1_000_000);
+
+        let base = 20_000u16;
+        let timestamps = [500_000, 500_300, 501_900];
+        for (i, timestamp) in timestamps.into_iter().enumerate() {
+            let out = feed_rtp(&mut r, base + i as u16, timestamp);
+            assert!(out.delivered.is_empty());
+        }
+        assert_eq!(
+            r.next_expected(),
+            Some(40_001),
+            "an inconsistent timestamp progression must not resync"
+        );
+    }
+
+    /// #2841: [`Receiver::feed`] carries no RTP identity, so it can never
+    /// confirm a resync — only [`Receiver::feed_rtp`] can.
+    #[test]
+    fn a_sequence_only_feed_never_resyncs() {
+        let mut r = Receiver::new(cfg());
+        r.feed(40_000, Duration::ZERO);
+
+        let base = 20_000u16;
+        for i in 0..RESYNC_CONFIRM_COUNT {
+            assert!(r.feed(base + i as u16, Duration::ZERO).delivered.is_empty());
+        }
+        assert_eq!(r.next_expected(), Some(40_001));
     }
 
     #[test]

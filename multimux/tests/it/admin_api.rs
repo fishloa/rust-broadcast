@@ -546,7 +546,7 @@ async fn add_route_at_runtime_serves_media_without_restart() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let resp = admin_json(
         &client,
         admin_addr,
@@ -587,7 +587,7 @@ async fn delete_drains_route_without_disturbing_others() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "cam1").await;
     wait_until_live(&client, media_addr, "cam2").await;
 
@@ -680,7 +680,7 @@ async fn deleted_route_is_no_longer_reported_up() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "o5-gone").await;
     wait_until_live(&client, media_addr, "o5-stays").await;
     assert_eq!(route_up(&client, media_addr, "o5-gone").await, Some(1.0));
@@ -727,7 +727,7 @@ async fn post_duplicate_name_is_conflict_and_original_stays_live() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "cam1").await;
     let before = admin_get(&client, admin_addr, "/admin/routes/cam1")
         .await
@@ -783,7 +783,7 @@ async fn delete_unknown_route_is_not_found() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "cam1").await;
 
     let resp = admin_json(
@@ -817,7 +817,7 @@ async fn malformed_route_body_is_bad_request_and_state_unchanged() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "cam1").await;
 
     let before = admin_get(&client, admin_addr, "/admin/routes")
@@ -889,7 +889,7 @@ async fn admin_api_unreachable_on_media_port() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "cam1").await;
 
     // Same path, same (correct) bearer token, but sent to the MEDIA port
@@ -931,7 +931,7 @@ async fn unauthenticated_admin_request_is_unauthorized_and_no_mutation() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "cam1").await;
 
     // No `Authorization` header at all.
@@ -1017,7 +1017,7 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "keep").await;
 
     let keep_before = admin_get(&client, admin_addr, "/admin/routes/keep")
@@ -1176,7 +1176,7 @@ async fn a_reload_of_a_changed_route_never_answers_a_viewer_with_an_error() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "live").await;
     let before = admin_get(&client, admin_addr, "/admin/routes/live")
         .await
@@ -1334,7 +1334,7 @@ async fn removing_a_route_answers_a_parked_blocking_reload_with_404() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "live").await;
 
     let answered = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1421,7 +1421,7 @@ async fn a_changed_routes_replacement_continues_numbering_with_a_discontinuity()
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let url = media_playlist_url(media_addr, "live");
 
     // Let the first route publish a few segments, then read its playlist as the viewers see it.
@@ -1715,7 +1715,7 @@ async fn observe_reload(who: &'static str, first_tag: &str, second_tag: &str) ->
     );
     let observation = tokio::time::timeout(RELOAD_DEADLINE, async {
         wait_for_port(admin_addr).await;
-        let client = reqwest::Client::new();
+        let client = crate::support::http::client();
         let playlist_url = media_playlist_url(media_addr, "reload");
         let mpd_url = format!("http://{media_addr}/reload/manifest.mpd");
         let old_playlist = loop {
@@ -2314,7 +2314,7 @@ async fn admin_add_rejects_a_traversal_route_name() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     for bad in ["..", ".", "a*b", "a/b"] {
         let resp = admin_json(
@@ -2369,7 +2369,7 @@ async fn raw_traversal_requests_never_read_outside_the_root() {
         .serve(),
     );
     wait_for_port(media_addr).await;
-    let playlist = wait_until_live(&reqwest::Client::new(), media_addr, "cam1").await;
+    let playlist = wait_until_live(&crate::support::http::client(), media_addr, "cam1").await;
     assert!(playlist.contains("#EXTINF:"));
 
     const RAW_PATHS: [&str; 6] = [
@@ -2473,7 +2473,7 @@ async fn a_router_build_panic_does_not_register_the_route() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     // The route carries a WHEP output (a real listen socket) *and* the
     // panicking Custom output, so a leak would show as the port staying
@@ -2611,7 +2611,7 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     let resp = client
         .post(format!("http://{admin_addr}/admin/routes"))
@@ -2702,7 +2702,7 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     wait_until_live(&client, media_addr, "wide").await;
 
     // A file that ADDS "keep" (carrying a WHEP output — a real listen socket a
@@ -2824,7 +2824,7 @@ async fn reloading_a_route_drains_the_displaced_runtime() {
         .serve(),
     );
     wait_for_port(admin_addr).await;
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
 
     // Wait for the old WHEP listener to bind.
     wait_for_port(old_whep).await;
@@ -2898,7 +2898,7 @@ async fn admin_added_route_emits_pdt_by_default() {
     );
     wait_for_port(admin_addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let resp = admin_json(
         &client,
         admin_addr,

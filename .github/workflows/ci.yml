@@ -500,6 +500,22 @@ jobs:
       - name: clippy on pinned stable ${{ env.CANARY_RUST }}
         run: cargo "+$CANARY_RUST" clippy --workspace --all-features --all-targets --locked -- -D warnings
 
+  # Dependency policy (deny.toml): advisories, bans, licenses and sources.
+  # Non-blocking on PRs and not a required check; nightly.yml runs the same
+  # check blocking. Duplicate-version skips are recorded in deny.toml.
+  cargo-deny:
+    name: cargo deny (non-blocking)
+    runs-on: ubuntu-24.04
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          command: check
+          arguments: --locked
+
   # Player-validated golden gate (issue #569): every other transmux test
   # proves round-trip symmetry against our own parsers only. This job packages
   # a real fixture through transmux's CMAF/progressive-MP4/TS-HLS/DASH outputs

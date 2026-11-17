@@ -13,6 +13,7 @@ use dash_runtime::address::template::{
 };
 use dash_runtime::address::timeline::TimelineIndex;
 use dash_runtime::address::{AddressError, PlanError, PlanOptions, plan_representation};
+use dash_runtime::limits::MAX_BASE_CANDIDATES;
 use dash_runtime::mpd::base_url::{ResolveError, ResolvedRef};
 use dash_runtime::mpd::inherit::InheritError;
 use dash_runtime::mpd::urls::{
@@ -635,6 +636,29 @@ fn base_url_alternates_are_ordered_by_priority_then_document_order() {
         .map(|c| c.service_location.clone().unwrap())
         .collect();
     assert_eq!(order, vec!["a", "c", "b"]);
+}
+
+/// Audit 20 finding 52 (#2863): `MAX_BASE_CANDIDATES` bounds the candidate
+/// cross-product of hostile `BaseURL` alternates.
+#[test]
+fn base_candidates_are_capped() {
+    let level: Vec<broadcast_dash::BaseUrl> = (0..=MAX_BASE_CANDIDATES)
+        .map(|i| {
+            let mut base = broadcast_dash::BaseUrl::default();
+            base.url = format!("http://cdn{i}.example/");
+            base
+        })
+        .collect();
+    let candidates = base_candidates(&[&level]);
+    assert_eq!(
+        candidates.len(),
+        MAX_BASE_CANDIDATES,
+        "the (MAX + 1)th alternate is dropped"
+    );
+    assert_eq!(
+        candidates[0].chain,
+        vec!["http://cdn0.example/".to_string()]
+    );
 }
 
 #[test]

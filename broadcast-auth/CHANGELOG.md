@@ -5,6 +5,8 @@ follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- `[package.metadata.cargo-machete]` records `md-5` (imported as `md5`) as a false positive, so the unused-dependency lint can run over this crate without a manual exception (audit 20 #2871).
 
 ## [0.8.0] - 2026-11-15
 ### Changed

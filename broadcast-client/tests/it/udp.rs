@@ -2,6 +2,7 @@ use crate::support::replay::{SampleRec, replay_paced};
 use crate::support::udp_host::{
     MP2T_PAYLOAD_TYPE, TS_PACKET, UdpHost, rtp_datagram, rtp_datagrams, ts_datagrams,
 };
+use broadcast_client::udp::{MAX_REORDER_PACKETS, SSRC_PROBATION};
 use broadcast_client::{
     Action, Config, ConnId, Error, Event, Session, SourceKind, Status, TransportError, UdpConfig,
     UdpMode,
@@ -221,6 +222,12 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
             udp_cfg(|c| c.reorder_packets = 0),
             "udp.reorder_packets",
         ),
+        (
+            GROUP,
+            udp_cfg(|c| c.reorder_packets = MAX_REORDER_PACKETS + 1),
+            "udp.reorder_packets",
+        ),
+        (GROUP, udp_cfg(|c| c.reorder_bytes = 0), "udp.reorder_bytes"),
         (
             GROUP,
             udp_cfg(|c| c.reorder_wait = Duration::ZERO),
@@ -457,6 +464,39 @@ fn a_packet_beyond_the_window_gives_up_everything_held() {
 }
 
 #[test]
+fn a_reorder_buffer_that_would_outgrow_its_byte_budget_gives_up_what_it_holds() {
+    const PAYLOAD: usize = 7 * TS_PACKET;
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
+    let mut host = UdpHost::open(
+        "rtp://239.1.1.1:5000",
+        config_with(|c| {
+            c.udp.reorder_wait = LONG_WAIT;
+            c.udp.reorder_bytes = 2 * PAYLOAD;
+        }),
+    );
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[2]);
+    host.datagram(&rtp[3]);
+    assert_eq!(
+        host.session.datagram_stats().lost,
+        0,
+        "a full byte budget is still waiting for the missing packet"
+    );
+    host.datagram(&rtp[4]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        stats.lost, 1,
+        "the held payloads would have overrun the budget, so they were given up"
+    );
+    assert_eq!(
+        host.session.payload_bytes(),
+        (4 * PAYLOAD) as u64,
+        "every payload was delivered in order, none dropped"
+    );
+}
+
+#[test]
 fn a_duplicate_of_a_held_packet_is_counted_and_not_delivered_twice() {
     let media = small();
     let want = baseline(&media);
@@ -489,6 +529,51 @@ fn a_new_ssrc_restarts_the_sequence_space_with_a_discontinuity() {
     let stats = host.session.datagram_stats();
     assert_eq!((stats.resyncs, stats.lost), (1, 0));
     assert!(host.count(|e| matches!(e, Event::Discontinuity)) >= 1);
+}
+
+#[test]
+fn a_single_datagram_from_another_ssrc_is_not_adopted() {
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    host.datagram(&rtp[1]);
+    let spoof = rtp_datagrams(&media, 7, 0, SSRC_B);
+    host.datagram(&spoof[0]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(stats.resyncs, 0, "one datagram is not a new source");
+    assert_eq!(stats.late, 1);
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 0);
+    host.datagram(&rtp[2]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        (stats.resyncs, stats.late),
+        (0, 1),
+        "the real source's packets clear the candidate and keep playing"
+    );
+}
+
+#[test]
+fn a_new_ssrc_is_adopted_after_its_probation_worth_of_consecutive_packets() {
+    let media = small();
+    let rtp = rtp_datagrams(&media, 7, 0, SSRC_A);
+    let next = rtp_datagrams(&media, 7, 0, SSRC_B);
+    let mut host = UdpHost::open("rtp://239.1.1.1:5000", Config::default());
+    host.datagram(&rtp[0]);
+    for d in &next[..usize::from(SSRC_PROBATION) - 1] {
+        host.datagram(d);
+    }
+    let stats = host.session.datagram_stats();
+    assert_eq!(stats.resyncs, 0, "probation is not served yet");
+    assert_eq!(stats.late, u64::from(SSRC_PROBATION) - 1);
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 0);
+    host.datagram(&next[usize::from(SSRC_PROBATION) - 1]);
+    let stats = host.session.datagram_stats();
+    assert_eq!(
+        stats.resyncs, 1,
+        "the last probation packet adopts the source"
+    );
+    assert_eq!(host.count(|e| matches!(e, Event::Discontinuity)), 1);
 }
 
 #[test]

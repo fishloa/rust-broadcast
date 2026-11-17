@@ -148,18 +148,21 @@ tokio-util        = { version = "0.7", features = ["rt"] }
 parking_lot       = "0.13"
 metrics           = { workspace = true }
 metrics-exporter-prometheus = { workspace = true }
-tokio-rustls      = { version = "0.26", optional = true }
+tokio-rustls      = { version = "0.26", optional = true, default-features = false, features = ["ring", "tls12", "logging"] }
 # `rustls::pki_types::ServerName` for SNI, plus the loopback TLS test server
 # (`source::rtsp`'s `rtsps://` connect, issue #804) — pinned to the same
 # "0.23" line as `rtsp-runtime`'s own optional `rustls` dep, already resolved
 # at that version transitively (via `reqwest`/`hyper-rustls`), so this adds no
 # new version to the lock.
-rustls            = { version = "0.23", optional = true }
+rustls            = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+# The ring-backed verifier reqwest's own default would have built (platform
+# roots), handed to reqwest through `use_preconfigured_tls`.
+rustls-platform-verifier = "0.7"
 # TS-over-HTTP ingest (`source::ts_http`, issue #663 P3c): a streaming GET
-# fed straight into `StreamingTsDemux`. `rustls` (the renamed `rustls-tls` in
-# reqwest 0.13) for consistency with the rest of the workspace's TLS backend
-# (rustls/aws-lc-rs); `stream` for `Response::bytes_stream()`.
-reqwest           = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
+# fed straight into `StreamingTsDemux`. `rustls-no-provider` so no aws-lc-rs
+# provider is linked; the client is built from a ring `ClientConfig`
+# (`source::client_host::http_client`). `stream` for `Response::bytes_stream()`.
+reqwest           = { version = "0.13", default-features = false, features = ["rustls-no-provider", "stream"] }
 # `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
 # extension methods of its own).
 futures-util      = { workspace = true, features = ["std"] }
@@ -213,7 +216,7 @@ timed-metadata    = { path = "../timed-metadata", version = "0.11.0", default-fe
 # only to name the connected stream's concrete type
 # (`tokio_rustls::client::TlsStream<TcpStream>`).
 default     = ["tls"]
-tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
+tls         = ["rtsp-runtime/tls", "dep:tokio-rustls"]
 # WHIP (RFC 9725) push input (issue #740): accepts an inbound WHIP publisher
 # over HTTP + ICE/DTLS-SRTP, via `webrtc_runtime::media::MediaTransport`.
 #

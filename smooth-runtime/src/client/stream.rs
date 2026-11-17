@@ -75,7 +75,10 @@ impl Stream {
         self.plan = chunks.into();
     }
 
-    pub(crate) fn merge_refresh(&mut self, chunks: Vec<Chunk>) -> bool {
+    /// Merge a refreshed manifest's chunks into the plan. Returns true when the
+    /// timeline has a gap at the join, or when `max_plan_len` forced the oldest
+    /// chunks out of the plan: either way playback skips.
+    pub(crate) fn merge_refresh(&mut self, chunks: Vec<Chunk>, max_plan_len: usize) -> bool {
         let gap = chunks.first().is_some_and(|&(t, _)| t > self.known_end) && self.known_end != 0;
         let from = if gap { 0 } else { self.known_end };
         for (t, d) in chunks {
@@ -84,7 +87,13 @@ impl Stream {
                 self.plan.push_back((t, d));
             }
         }
-        gap
+        if self.plan.len() <= max_plan_len {
+            return gap;
+        }
+        while self.plan.len() > max_plan_len {
+            self.plan.pop_front();
+        }
+        true
     }
 }
 

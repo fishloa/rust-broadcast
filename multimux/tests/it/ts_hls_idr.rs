@@ -179,7 +179,7 @@ async fn served_ts_segment_starts(cut: TsHlsCutPolicy, tag: &str) -> Vec<bool> {
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let base = format!("http://{bind}/cam");
     let (_, uris) = playlist_with_segments(&client, &base, ".ts").await;
     let mut starts = Vec::new();
@@ -237,7 +237,7 @@ async fn hevc_program_on_ts_hls_fails_with_typed_error() {
         .serve(),
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let deadline = tokio::time::Instant::now() + HANG_GUARD;
     let mut tick = tokio::time::interval(POLL_INTERVAL);
     let error = loop {
@@ -321,7 +321,7 @@ async fn fmp4_first_segment(cut: TsHlsCutPolicy, tag: &str) -> (Vec<u8>, Vec<u8>
         )
         .serve(),
     );
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let base = format!("http://{bind}/cam");
     let (body, uris) = playlist_with_segments(&client, &base, ".m4s").await;
     let init_uri = body

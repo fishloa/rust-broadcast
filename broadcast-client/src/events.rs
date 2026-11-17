@@ -403,6 +403,13 @@ pub enum ErrorKind {
         /// The stable reason token.
         reason: &'static str,
     },
+    /// An HLS playlist exceeded a `broadcast_hls::limits` bound (`reason` is a
+    /// stable token; [`Config::hls_limits`]). The same response always exceeds
+    /// it, so this is fatal at once and never retried.
+    PlaylistParse {
+        /// The stable reason token.
+        reason: &'static str,
+    },
     /// An MPD parsed but cannot be played: no Period, no playable AdaptationSet, or an
     /// essential descriptor group none of whose members is understood. Fatal when nothing is
     /// left to play.
@@ -460,6 +467,14 @@ pub enum ErrorKind {
         method: &'static str,
         /// The status as the server sent it, for example `Service Unavailable`.
         status: String,
+    },
+    /// The session gave up after [`Config::ts_http`]'s `max_reconnect_attempts` failed attempts in
+    /// a row with no media played in between, so a URL that accepts and then drops, or keeps
+    /// answering `429`/`503`, cannot hold a connection slot forever. Fatal: no further request is
+    /// attempted for this session. `None` (the default) retries forever.
+    ReconnectAttemptsExhausted {
+        /// The failed attempts that led here.
+        attempts: u32,
     },
     /// A Smooth Streaming client manifest could not be read as XML, broke a size or structure
     /// bound or is not a manifest (`reason` is a stable token). Non-fatal and reported once per
@@ -549,6 +564,7 @@ impl ErrorKind {
             Self::UnsupportedContainer { .. } => "unsupported_container",
             Self::BodyTooLarge { .. } => "body_too_large",
             Self::MpdParse { .. } => "mpd_parse",
+            Self::PlaylistParse { .. } => "playlist_parse",
             Self::MpdInvalid { .. } => "mpd_invalid",
             Self::UnsupportedAddressing { .. } => "unsupported_addressing",
             Self::UnsupportedFeature { .. } => "unsupported_feature",
@@ -559,6 +575,7 @@ impl ErrorKind {
             Self::SrtHandshakeTimeout => "srt_handshake_timeout",
             Self::SrtPeerIdle => "srt_peer_idle",
             Self::RequestRefused { .. } => "request_refused",
+            Self::ReconnectAttemptsExhausted { .. } => "reconnect_attempts_exhausted",
             Self::SmoothManifest { .. } => "smooth_manifest",
             Self::RtmpStatus { .. } => "rtmp_status",
             Self::BufferInputsDropped => "buffer_inputs_dropped",
@@ -1038,9 +1055,10 @@ pub const DEFAULT_MAX_RECORDED_BUFFER_INPUTS: usize = 1_000_000;
 pub struct Config {
     /// Source kind.
     pub kind: SourceKind,
-    /// TS-over-HTTP config (also the RTSP timers). An inconsistent value (a zero timeout, an
-    /// empty or zero-entry backoff, a stall reconnect not after the notice) is replaced by the
-    /// nearest valid one, see `crate::tshttp::TsHttpConfig::clamped`; it is not rejected.
+    /// TS-over-HTTP config (also the RTSP timers and the RTMP policy). An inconsistent value (a
+    /// zero timeout, an empty or zero-entry backoff, a stall reconnect not after the notice) is
+    /// replaced by the nearest valid one, see `crate::tshttp::TsHttpConfig::clamped`; it is not
+    /// rejected.
     pub ts_http: crate::tshttp::TsHttpConfig,
     /// Maximum redirects per open (per request for HLS). `0` follows none: a redirect response
     /// fails the connection.
@@ -1064,6 +1082,12 @@ pub struct Config {
     /// Segment-pull sources: maximum media resource body bytes (HLS segment or part, DASH init,
     /// index or segment); must be non-zero.
     pub max_segment_bytes: usize,
+    /// HLS: the playlist parse bounds the sans-IO engine enforces (playlist
+    /// byte size and segment count; `broadcast_hls::limits::Limits`). A
+    /// playlist over one is a permanent failure and ends the session, never
+    /// retried. [`Config::max_manifest_bytes`] still bounds the response body
+    /// before it reaches the parser.
+    pub hls_limits: broadcast_hls::limits::Limits,
     /// Segment-pull sources: manifest request timeout; must be non-zero.
     pub request_timeout: Duration,
     /// Segment-pull sources: media resource request timeout; must be non-zero.
@@ -1120,7 +1144,10 @@ pub struct Config {
     /// always survives). One [`Event::Discontinuity`] takes the place of each burst of dropped samples
     /// so the player re-syncs. Every other event (tracks, errors, buffer events, terminal
     /// statuses) is kept, so the queue is bounded by this cap plus the undroppable events a
-    /// stalled host leaves unread. Must be non-zero (a zero cap would drop every sample).
+    /// stalled host leaves unread. The kept events that a player can also resync past
+    /// ([`Event::Discontinuity`], [`Event::AvSync`]) have a ceiling of their own, and a
+    /// [`Event::Discontinuity`] queued right behind another coalesces into it. Must be non-zero (a
+    /// zero cap would drop every sample).
     pub max_queued_events: usize,
     /// Bytes of [`Event::Sample`] payload the session keeps queued for the host, next to
     /// [`Config::max_queued_events`]: when a host does not drain and the queued sample bytes exceed
@@ -1391,6 +1418,7 @@ impl Default for Config {
             variant_policy: hls_runtime::client::VariantPolicy::default(),
             max_manifest_bytes: DEFAULT_MAX_MANIFEST_BYTES,
             max_segment_bytes: DEFAULT_MAX_SEGMENT_BYTES,
+            hls_limits: broadcast_hls::limits::Limits::default(),
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             segment_timeout: DEFAULT_SEGMENT_TIMEOUT,
             segment_inactivity_timeout: DEFAULT_SEGMENT_INACTIVITY_TIMEOUT,
@@ -1441,6 +1469,7 @@ impl core::fmt::Debug for Config {
             .field("variant_policy", &self.variant_policy)
             .field("max_manifest_bytes", &self.max_manifest_bytes)
             .field("max_segment_bytes", &self.max_segment_bytes)
+            .field("hls_limits", &self.hls_limits)
             .field("request_timeout", &self.request_timeout)
             .field("segment_timeout", &self.segment_timeout)
             .field(

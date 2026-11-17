@@ -135,7 +135,7 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
         "the receiver's NAK must trigger sender retransmission of exactly \
          the dropped packets"
     );
-    for bytes in &retransmits {
+    for (_, bytes) in &retransmits {
         let dp = DataPacket::parse(bytes).unwrap();
         assert!(
             dp.retransmitted,

@@ -63,7 +63,7 @@ async fn h2c_fetches_playlist_and_blocking_reload_over_one_connection() {
 
     wait_for_port(addr).await;
 
-    let client = reqwest::Client::builder()
+    let client = crate::support::http::client_builder()
         .http2_prior_knowledge()
         .build()
         .unwrap();
@@ -102,7 +102,7 @@ async fn http1_client_still_works() {
 
     wait_for_port(addr).await;
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let base = format!("http://{}", addr);
     let resp = client
         .get(format!("{}/cam/media.m3u8", base))

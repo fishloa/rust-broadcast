@@ -44,13 +44,13 @@ const ALLOW: &[(&str, &str, &str, &str)] = &[
     (
         "redact.rs",
         "rfind('@')",
-        "let Some(at) = authority.rfind('@') else {",
-        "redact.rs masking-only fallback: locate the credential's `@` boundary (spec §9.5)",
+        "let Some(at) = after_scheme[..tail_end].rfind('@') else {",
+        "redact.rs masking-only fallback: locate the credential's `@` before the query/fragment, past a `/` in a password (spec §9.5)",
     ),
     (
         "redact.rs",
         "find('@')",
-        "let Some(at) = authority.rfind('@') else {",
+        "let Some(at) = after_scheme[..tail_end].rfind('@') else {",
         "`find('@')` is a substring of this `rfind('@')` line (same masking fallback site)",
     ),
     (

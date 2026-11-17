@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use broadcast_client::{
-    Action, Config, ConnId, Credentials, Error, Event, Session, SourceKind, Status, TransportError,
+    Action, Config, ConnId, Credentials, Error, ErrorKind, Event, Session, SourceKind, Status,
+    TransportError,
 };
 use broadcast_common::stage::Timestamp;
 use support::hls_host::*;
@@ -893,6 +894,51 @@ fn oversized_segment_body_closes_and_fails() {
     assert_eq!(reconnect_attempts(&drain_events(&mut s)), vec![1]);
     s.on_closed(seg_conn, None, ts(0));
     assert_eq!(count(&drain_events(&mut s), is_sample), 0);
+}
+
+#[test]
+fn a_declared_segment_length_past_the_cap_is_refused_before_the_body_is_read() {
+    let limit = 1000usize;
+    let config = {
+        let mut new_config = Config::default();
+        new_config.kind = SourceKind::Hls;
+        new_config.max_segment_bytes = limit;
+        new_config
+    };
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
+    let (conn, _) = single_http_request(&drain_actions(&mut s, 0));
+    respond_ok(&mut s, conn, &ts_playlist(), 0);
+    let reqs = http_requests(&drain_actions(&mut s, 0));
+    let (seg_conn, seg_url) = reqs[0].clone();
+    assert_eq!(seg_url, TS_SEG0_URL);
+    s.on_response(
+        seg_conn,
+        http::StatusCode::from_u16(200).expect("a test names a real status"),
+        &crate::support::headers(&[("content-length", "1001")]),
+        ts(0),
+    );
+    let after = drain_actions(&mut s, 0);
+    assert_eq!(
+        closes(&after),
+        vec![seg_conn],
+        "the declared length alone is past the cap, so not one body byte is read"
+    );
+    let errors: Vec<(ErrorKind, bool)> = drain_events(&mut s)
+        .into_iter()
+        .filter_map(|e| match e {
+            Event::Error { kind, fatal } => Some((kind, fatal)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        errors,
+        vec![(
+            ErrorKind::BodyTooLarge {
+                field: "max_segment_bytes"
+            },
+            false
+        )]
+    );
 }
 
 #[test]

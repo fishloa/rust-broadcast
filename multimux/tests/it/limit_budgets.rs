@@ -35,7 +35,9 @@ fn a_query_that_merely_contains_the_marker_is_not_a_blocking_reload() {
         classify(&u("/cam1/media.m3u8?_HLS_part=2")),
         Budget::BlockingReload
     );
-    assert_eq!(classify(&u("/metrics")), Budget::Exempt);
+    // `/metrics` is an ordinary, bounded request (audit 20 finding 64), not
+    // an exempt ops route like the probes.
+    assert_eq!(classify(&u("/metrics")), Budget::Ordinary);
 }
 
 /// One ordinary permit, held by an unread response body: a second ordinary

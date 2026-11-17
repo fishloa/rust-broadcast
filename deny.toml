@@ -1,0 +1,75 @@
+# Dependency audit policy for the whole workspace: `cargo deny check` runs in
+# the nightly CI lane and as a release-audit step (docs/RELEASE-AUDIT.md).
+# Duplicate crate versions are recorded here with the upstream crate that must
+# move; they are never resolved by pinning an upstream line locally, so a
+# duplicate that is not in this list is a new one and must be reviewed.
+
+[graph]
+all-features = true
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+ignore = []
+
+[licenses]
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+skip = [
+    { crate = "aes@0.8.4", reason = "rtc-crypto 0.21.1 is on aes 0.8; it must move to 0.9" },
+    { crate = "base64@0.22.1", reason = "http-auth 0.1.10, headers 0.4.2 and metrics-exporter-prometheus 0.18.3 are on base64 0.22; they must move to 0.23" },
+    { crate = "bitflags@1.3.2", reason = "rtc-shared 0.21.1 is on bitflags 1; it must move to 2" },
+    { crate = "block-buffer@0.10.4", reason = "http-auth 0.1.10 and rtc-crypto 0.21.1 are on block-buffer 0.10; both must move to 0.12" },
+    { crate = "cipher@0.4.4", reason = "aes 0.8.4, ccm 0.5.0 and ctr 0.9.2 (rtc-crypto 0.21.1) are on cipher 0.4; rtc-crypto must move to 0.5" },
+    { crate = "cpufeatures@0.2.17", reason = "sha1 0.10.7 (headers 0.4.2), sha2 0.10.9 (http-auth 0.1.10) and aes 0.8.4 (rtc-crypto 0.21.1) are on cpufeatures 0.2; they must move to 0.3" },
+    { crate = "crypto-common@0.1.7", reason = "http-auth 0.1.10 and rtc-crypto 0.21.1 are on crypto-common 0.1; both must move to 0.2" },
+    { crate = "ctr@0.9.2", reason = "rtc-crypto 0.21.1 and ccm 0.5.0 are on ctr 0.9; both must move to 0.10" },
+    { crate = "digest@0.10.7", reason = "http-auth 0.1.10 and rtc-crypto 0.21.1 are on digest 0.10; both must move to 0.11" },
+    { crate = "getrandom@0.2.17", reason = "rand 0.8.8 (http-auth 0.1.10) and ring 0.17.14 are on getrandom 0.2; both must move to 0.4" },
+    { crate = "getrandom@0.3.4", reason = "rand 0.9.5 (metrics-util 0.20.4) is on getrandom 0.3; metrics-util must move to rand 0.10" },
+    { crate = "hashbrown@0.16.1", reason = "metrics-util 0.20.4 (metrics-exporter-prometheus 0.18.3) is on hashbrown 0.16; it must move to 0.17" },
+    { crate = "hmac@0.12.1", reason = "rtc-crypto 0.21.1 is on hmac 0.12; it must move to 0.13" },
+    { crate = "inout@0.1.4", reason = "cipher 0.4.4 (rtc-crypto 0.21.1) is on inout 0.1; it must move to 0.2" },
+    { crate = "md-5@0.10.6", reason = "http-auth 0.1.10 and rtc-crypto 0.21.1 are on md-5 0.10; both must move to 0.11" },
+    { crate = "pem@3.0.6", reason = "rtc-dtls 0.21.1 is on pem 3; it must move to 4" },
+    { crate = "r-efi@5.3.0", reason = "getrandom 0.3.4 (rand 0.9.5 via metrics-util 0.20.4) is on r-efi 5; metrics-util must move to rand 0.10" },
+    { crate = "rand@0.8.8", reason = "http-auth 0.1.10 is on rand 0.8; it must move to 0.10" },
+    { crate = "rand@0.9.5", reason = "metrics-util 0.20.4 (metrics-exporter-prometheus 0.18.3) is on rand 0.9; it must move to 0.10" },
+    { crate = "rand_chacha@0.3.1", reason = "rand 0.8.8 (http-auth 0.1.10) is on rand_chacha 0.3; http-auth must move to rand 0.10" },
+    { crate = "rand_core@0.6.4", reason = "rand 0.8.8 (http-auth 0.1.10) is on rand_core 0.6; http-auth must move to rand 0.10" },
+    { crate = "rand_core@0.9.5", reason = "rand 0.9.5 (metrics-util 0.20.4) is on rand_core 0.9; metrics-util must move to rand 0.10" },
+    { crate = "sha1@0.10.7", reason = "headers 0.4.2 and rtc-crypto 0.21.1 are on sha1 0.10; both must move to 0.11" },
+    { crate = "sha2@0.10.9", reason = "http-auth 0.1.10 is on sha2 0.10; it must move to 0.11" },
+    { crate = "syn@2.0.119", reason = "thiserror-impl 1.0.69 (rtc-dtls 0.21.1), asn1-rs-derive 0.5.1, synstructure 0.13.2, munge_macro 0.4.7, num_enum_derive 0.7.6, zerocopy-derive 0.8.63, tracing-attributes 0.1.31, jiff-static, jni-macros and windows-implement 0.100 are on syn 2; they must move to syn 3" },
+    { crate = "synstructure@0.13.2", reason = "asn1-rs-derive 0.5.1 (asn1-rs 0.6.2 via rtc-dtls 0.21.1) is on synstructure 0.13; it must move to 0.14" },
+    { crate = "thiserror@1.0.69", reason = "asn1-rs 0.6.2 and x509-parser 0.16.0 (rtc-dtls 0.21.1) are on thiserror 1; they must move to 2" },
+    { crate = "thiserror-impl@1.0.69", reason = "thiserror 1.0.69 (asn1-rs 0.6.2 and x509-parser 0.16.0 via rtc-dtls 0.21.1) is on thiserror-impl 1; they must move to 2" },
+    { crate = "tower-http@0.6.11", reason = "reqwest 0.13.5 is on tower-http 0.6; it must move to 0.7" },
+    { crate = "windows-link@0.100.0", reason = "windows-core 0.100.0 (generator 0.8.12 -> loom 0.7.3 -> left-right 0.11.8 -> evmap 11.0.0 -> metrics-exporter-prometheus 0.18.3) is on windows-link 0.100; generator must move to 0.2" },
+    { crate = "windows-sys@0.52.0", reason = "ring 0.17.14 is on windows-sys 0.52; ring must move to 0.61" },
+]
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

@@ -63,7 +63,7 @@ async fn catchup_output_end_to_end() {
         .serve(),
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::support::http::client();
     let playlist_url = format!("http://{bind_addr}/cam/catchup.m3u8");
 
     // Let the archive accumulate past at least one segment boundary.

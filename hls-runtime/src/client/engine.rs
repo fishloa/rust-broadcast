@@ -14,6 +14,7 @@ use broadcast_common::Unpackage;
 use broadcast_common::range::ByteSpan;
 use broadcast_common::timescale::Timescale;
 use broadcast_common::url_ref;
+use broadcast_hls::limits::Limits;
 use broadcast_hls::{
     ByteRange, EncryptionMethod, MapTag, MasterPlaylist, MediaKey, MediaPlaylist, MediaSegment,
     OpenSegment, PreloadHintType,
@@ -42,6 +43,28 @@ const LIVE_EDGE_TARGET_DURATIONS: f64 = 3.0;
 
 /// Ceiling on ciphertext held while its key is still missing (total bytes).
 const MAX_PENDING_KEYED_BYTES: usize = 64 * 1024 * 1024;
+
+/// Ceiling on Part/Segment bodies held until their init segment is ready
+/// (total bytes). A playlist whose `EXT-X-MAP` never becomes ready while media
+/// keeps arriving would otherwise copy every segment into
+/// [`HlsClient::pending_demux`] for the life of the pull (audit 20 finding 3,
+/// issue #2814), so the oldest waiting body is dropped past this cap and
+/// reported as [`Error::PendingDemuxOverflow`].
+const MAX_PENDING_DEMUX_BYTES: usize = 64 * 1024 * 1024;
+
+/// Ceiling on errors queued for [`HlsClient::next_error`]. The final slot
+/// coalesces any further report into one counted
+/// [`Error::UnresolvableReferences`], so a playlist naming an unbounded number
+/// of bad references cannot grow the queue without bound even when the host
+/// never drains it.
+const MAX_PENDING_ERRORS: usize = 256;
+
+/// Ceiling on held Media Initialization Section slots. A playlist may name a
+/// new `EXT-X-MAP` per segment (and a failing fetch leaves a slot stuck
+/// non-`Ready`), so without a bound the map grows for the life of the pull and
+/// `init_slot_for`'s linear scan gets slower with it (audit 20 finding 4,
+/// issue #2815).
+const MAX_INIT_SLOTS: usize = 64;
 
 /// Longest the non-blocking reload cadence may wait, however large the
 /// untrusted `EXT-X-TARGETDURATION` says the target duration is.
@@ -368,6 +391,7 @@ pub struct HlsClient {
     playlist_url: Url,
     base_override: Option<Url>,
     variant_policy: VariantPolicy,
+    limits: Limits,
     master: Option<MasterSelection>,
 
     pending_actions: VecDeque<Action>,
@@ -530,6 +554,10 @@ pub struct HlsClientConfig {
     /// The URL relative playlist URIs resolve against until the first playlist
     /// response says otherwise; `None` resolves against `playlist_url`.
     pub playlist_base: Option<Url>,
+    /// Hostile-input bounds: the playlist byte size and segment count the
+    /// parser accepts, and the largest resource body [`HlsClient::on_resource`]
+    /// accepts (audit 20 finding 41, issue #2852).
+    pub limits: Limits,
 }
 
 impl HlsClientConfig {
@@ -539,7 +567,15 @@ impl HlsClientConfig {
             playlist_url,
             variant_policy: VariantPolicy::default(),
             playlist_base: None,
+            limits: Limits::default(),
         }
+    }
+
+    /// Replace [`HlsClientConfig::limits`].
+    #[must_use]
+    pub fn with_limits(mut self, limits: Limits) -> Self {
+        self.limits = limits;
+        self
     }
 
     /// Replace [`HlsClientConfig::variant_policy`].
@@ -573,6 +609,7 @@ impl HlsClient {
             playlist_url,
             base_override: config.playlist_base,
             variant_policy: config.variant_policy,
+            limits: config.limits,
             master: None,
             pending_actions,
             pending_errors: VecDeque::new(),
@@ -724,7 +761,11 @@ impl HlsClient {
     pub fn on_playlist(&mut self, bytes: &[u8]) -> Result<()> {
         let text = core::str::from_utf8(bytes)?;
         if text.contains("#EXT-X-STREAM-INF") {
-            let master = MasterPlaylist::parse(text)?;
+            let master =
+                MasterPlaylist::parse_with(text, &self.limits).map_err(Self::playlist_error)?;
+            if !master.defines.is_empty() {
+                return Err(Error::UnsupportedDefine);
+            }
             let base = self.base().clone();
             let mut variants: Vec<VariantInfo> = Vec::new();
             for v in &master.variants {
@@ -784,7 +825,11 @@ impl HlsClient {
                 }));
             return Ok(());
         }
-        let playlist = MediaPlaylist::parse(text)?;
+        let playlist =
+            MediaPlaylist::parse_with(text, &self.limits).map_err(Self::playlist_error)?;
+        if !playlist.defines.is_empty() {
+            return Err(Error::UnsupportedDefine);
+        }
         let playlist = self.merge_delta(playlist);
         if playlist.skip.is_some() {
             return Err(self.request_full_playlist(&playlist));
@@ -801,6 +846,18 @@ impl HlsClient {
         } else {
             None
         };
+        // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
+        // derived below is `media_sequence + index` with `index <
+        // segments.len()`, so proving the end fits proves them all. Computed
+        // before any state is mutated, so a hostile sequence number cannot
+        // poison the high-water mark or drop key material before rejection.
+        let next_msn = playlist
+            .msn
+            .checked_add(index_u64(playlist.segments.len()))
+            .ok_or(Error::MediaSequenceOverflow {
+                msn: playlist.msn,
+                segments: playlist.segments.len(),
+            })?;
         let mut first_error: Option<Error> = None;
         // An older view of the same stream must never make the client deliver
         // backwards: its segments below the previous window are skipped.
@@ -820,17 +877,6 @@ impl HlsClient {
                 .map_or(playlist.msn, |p| p.max(playlist.msn)),
         );
         self.forget_keys_below(playlist.msn);
-
-        // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
-        // derived below is `media_sequence + index` with `index <
-        // segments.len()`, so proving the end fits proves them all.
-        let next_msn = playlist
-            .msn
-            .checked_add(index_u64(playlist.segments.len()))
-            .ok_or(Error::MediaSequenceOverflow {
-                msn: playlist.msn,
-                segments: playlist.segments.len(),
-            })?;
 
         if !self.joined {
             self.joined = true;
@@ -905,7 +951,7 @@ impl HlsClient {
                     };
                     if !self.requested.contains(&id)
                         && !self.delivered_parts.contains(&(next_msn, part_index))
-                        && let Ok(url) = Url::parse(&url::resolve(self.base(), hint_uri))
+                        && let Ok(url) = url_ref::resolve_http(self.base(), hint_uri)
                     {
                         let byte_range = self.resolve_hint_byte_range(url.as_str(), ll)?;
                         self.request_resource(id, url, byte_range);
@@ -1299,6 +1345,17 @@ impl HlsClient {
             return Err(Error::DuplicateResource { id });
         }
         self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+        if bytes.len() > self.limits.max_segment_bytes {
+            self.requested.remove(&id);
+            if let Some(slot) = self.init_target.and_then(|t| self.inits.get_mut(&t)) {
+                slot.fetch = InitFetch::Failed;
+            }
+            return Err(Error::ResourceTooLarge {
+                id,
+                len: bytes.len(),
+                max: self.limits.max_segment_bytes,
+            });
+        }
         if id != ResourceId::Init {
             self.fulfilled.insert(id);
         }
@@ -1308,7 +1365,8 @@ impl HlsClient {
                 let processed = self.accept_media_resource(id, bytes);
                 match processed {
                     Ok(()) => {}
-                    Err(e @ Error::PendingKeyedOverflow { .. }) => return Err(e),
+                    Err(e @ Error::PendingKeyedOverflow { .. })
+                    | Err(e @ Error::PendingDemuxOverflow { .. }) => return Err(e),
                     Err(e) => {
                         self.fulfilled.remove(&id);
                         self.requested.remove(&id);
@@ -1478,10 +1536,37 @@ impl HlsClient {
             // than buffering it forever waiting for one.
             self.finish_ts_resource(id, bytes)
         } else if !self.init_ready(self.init_of(&id)) {
-            self.pending_demux.push_back((id, bytes.to_vec()));
-            Ok(())
+            self.buffer_until_init(id, bytes)
         } else {
             self.finish_media_resource(id, bytes)
+        }
+    }
+
+    /// Hold a Part/Segment body until its init becomes ready, within
+    /// [`MAX_PENDING_DEMUX_BYTES`]: the oldest waiting bodies are dropped (and
+    /// become requestable again) to make room, reported as
+    /// [`Error::PendingDemuxOverflow`].
+    fn buffer_until_init(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > MAX_PENDING_DEMUX_BYTES {
+            self.fulfilled.remove(&id);
+            self.requested.remove(&id);
+            return Err(Error::PendingDemuxOverflow { dropped: id });
+        }
+        let mut held: usize = self.pending_demux.iter().map(|(_, b)| b.len()).sum();
+        let mut dropped: Option<ResourceId> = None;
+        while held.saturating_add(bytes.len()) > MAX_PENDING_DEMUX_BYTES {
+            let Some((old_id, old)) = self.pending_demux.pop_front() else {
+                break;
+            };
+            held = held.saturating_sub(old.len());
+            self.fulfilled.remove(&old_id);
+            self.requested.remove(&old_id);
+            dropped.get_or_insert(old_id);
+        }
+        self.pending_demux.push_back((id, bytes.to_vec()));
+        match dropped {
+            Some(dropped) => Err(Error::PendingDemuxOverflow { dropped }),
+            None => Ok(()),
         }
     }
 
@@ -1739,6 +1824,17 @@ impl HlsClient {
 
     // -- internals ------------------------------------------------------
 
+    /// Classify a `broadcast_hls` parse failure: a bound the playlist broke is
+    /// permanent ([`Error::PlaylistTooLarge`]), never a retryable parse error.
+    fn playlist_error(error: broadcast_hls::Error) -> Error {
+        match error {
+            broadcast_hls::Error::TooLarge { what, len, max } => {
+                Error::PlaylistTooLarge { what, len, max }
+            }
+            other => Error::PlaylistParse(other),
+        }
+    }
+
     /// Reconstruct a full playlist view from an `EXT-X-SKIP` delta update
     /// (RFC 8216bis §4.4.5.2), by splicing the skipped prefix back in from
     /// the last playlist this client processed (itself a full view, merged or
@@ -1953,7 +2049,7 @@ impl HlsClient {
         match self.resolved_url(base, uri) {
             Ok(url) => Some(url.to_string()),
             Err(report) => {
-                self.pending_errors.push_back(report);
+                self.push_pending_error(report);
                 None
             }
         }
@@ -1963,7 +2059,7 @@ impl HlsClient {
     /// it — without reporting it, so a caller that fails the whole playlist
     /// (an unusable init) can return the error directly.
     fn resolved_url(&self, base: &Url, uri: &str) -> core::result::Result<Url, Error> {
-        url_ref::resolve(base, uri).map_err(|source| Error::UnresolvableReference {
+        url_ref::resolve_http(base, uri).map_err(|source| Error::UnresolvableReference {
             uri: uri.to_string(),
             source,
         })
@@ -1974,7 +2070,7 @@ impl HlsClient {
     /// resolver refuses it: the segment stays unrequested instead of being
     /// silently renamed (issue #2458).
     fn segment_url(&mut self, msn: broadcast_hls::MediaSequence, uri: &str) -> Option<Url> {
-        match url_ref::resolve(self.base(), uri) {
+        match url_ref::resolve_http(self.base(), uri) {
             Ok(url) => Some(url),
             Err(source) => {
                 self.report_unresolvable(msn, uri, source);
@@ -1993,10 +2089,27 @@ impl HlsClient {
         source: broadcast_common::url_ref::Error,
     ) {
         self.segment_crypto.remove(&msn);
-        self.pending_errors.push_back(Error::UnresolvableReference {
+        self.push_pending_error(Error::UnresolvableReference {
             uri: uri.to_string(),
             source,
         });
+    }
+
+    /// Queue an error for [`Self::next_error`] within [`MAX_PENDING_ERRORS`].
+    /// Once the real slots are full the last one becomes a counted
+    /// [`Error::UnresolvableReferences`] and every further report increments
+    /// it, so the queue is bounded whether or not the host drains it.
+    fn push_pending_error(&mut self, error: Error) {
+        if self.pending_errors.len() < MAX_PENDING_ERRORS - 1 {
+            self.pending_errors.push_back(error);
+            return;
+        }
+        match self.pending_errors.back_mut() {
+            Some(Error::UnresolvableReferences { count }) => *count += 1,
+            _ => self
+                .pending_errors
+                .push_back(Error::UnresolvableReferences { count: 1 }),
+        }
     }
 
     /// The errors [`Self::poll`] and [`Self::next_output`] raise on the
@@ -2135,8 +2248,7 @@ impl HlsClient {
         let specs_changed = self
             .last_fmp4_specs
             .as_ref()
-            .map(|prev| format!("{:?}", prev) != format!("{:?}", specs))
-            .unwrap_or(true);
+            .is_none_or(|prev| *prev != specs);
         if specs_changed {
             self.pending_outputs
                 .push_back(Output::Tracks(specs.clone()));
@@ -2471,6 +2583,7 @@ impl HlsClient {
         self.resource_requests.retain(|id, _| !below(id));
         self.fulfilled.retain(|id| !below(id));
         self.pending_keyed.retain(|(id, _)| !below(id));
+        self.pending_demux.retain(|(id, _)| !below(id));
         self.segment_crypto.retain(|&m, _| m >= first);
         self.delivered_parts.retain(|&(m, _)| m >= first);
         self.delivered_segments.retain(|&m| m >= first);
@@ -2510,14 +2623,40 @@ impl HlsClient {
         }
     }
 
-    /// Drop every held init no segment still being fetched refers to, keeping
-    /// the newest.
+    /// Drop every held init no segment still being fetched refers to and no
+    /// map of the current playlist names, keeping the newest; then enforce
+    /// [`MAX_INIT_SLOTS`], evicting the oldest slot no segment refers to (and,
+    /// if every remaining slot is referred to, the oldest one anyway, so the
+    /// bound always holds).
     fn prune_inits(&mut self) {
         let newest = self.inits.keys().next_back().copied();
         let bound: BTreeSet<InitId> = self.msn_init.values().copied().collect();
+        let live: Vec<&MapTag> = self.playlist_maps.iter().map(|e| &e.map).collect();
         self.inits.retain(|id, slot| {
-            Some(*id) == newest || bound.contains(id) || slot.fetch != InitFetch::Ready
+            Some(*id) == newest
+                || bound.contains(id)
+                || live.contains(&&slot.map)
+                || slot.fetch == InitFetch::Ready
         });
+        while self.inits.len() > MAX_INIT_SLOTS {
+            let unreferenced = self
+                .inits
+                .iter()
+                .find(|(id, _)| Some(**id) != newest && !bound.contains(id))
+                .map(|(id, _)| *id);
+            let victim = match unreferenced {
+                Some(id) => id,
+                None => match self.inits.keys().find(|id| Some(**id) != newest) {
+                    Some(id) => *id,
+                    None => break,
+                },
+            };
+            self.inits.remove(&victim);
+            self.msn_init.retain(|_, id| *id != victim);
+            if self.init_target == Some(victim) {
+                self.init_target = None;
+            }
+        }
     }
 
     /// Decide whether `new` continues the stream the previous full playlist
@@ -2720,6 +2859,18 @@ mod tests {
 
     fn config(url: &str) -> HlsClientConfig {
         HlsClientConfig::new(Url::parse(url).expect("test URL"))
+    }
+
+    // Audit 20 finding 52 (#2863): the reload cadence is derived from the
+    // untrusted EXT-X-TARGETDURATION, so `MAX_RELOAD_WAIT_MS` clamps it.
+    #[test]
+    fn reload_wait_is_clamped_for_a_hostile_target_duration() {
+        assert_eq!(
+            reload_wait(u32::MAX),
+            Duration::from_millis(MAX_RELOAD_WAIT_MS)
+        );
+        assert_eq!(reload_wait(4), Duration::from_millis(2_000));
+        assert_eq!(reload_wait(0), Duration::from_millis(500));
     }
 
     const EMPTY_FRAGMENT: &[u8] = &[
@@ -3100,6 +3251,393 @@ mod tests {
 
     fn pending_keyed_bytes(client: &HlsClient) -> usize {
         client.pending_keyed.iter().map(|(_, b)| b.len()).sum()
+    }
+
+    fn pending_demux_bytes(client: &HlsClient) -> usize {
+        client.pending_demux.iter().map(|(_, b)| b.len()).sum()
+    }
+
+    fn map_playlist(first_msn: u64, count: u64) -> String {
+        let mut text = format!(
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n\
+             #EXT-X-MEDIA-SEQUENCE:{first_msn}\n\
+             #EXT-X-MAP:URI=\"init.mp4\"\n"
+        );
+        for msn in first_msn..first_msn + count {
+            text.push_str(&format!("#EXTINF:2.0,\nseg{msn}.m4s\n"));
+        }
+        text
+    }
+
+    fn media_fragment_of_len(len: usize) -> Vec<u8> {
+        let mut bytes = vec![0u8; len];
+        bytes[..EMPTY_FRAGMENT.len()].copy_from_slice(EMPTY_FRAGMENT);
+        bytes
+    }
+
+    // Audit 20 finding 3 (#2814): a media segment that arrives before its
+    // init is buffered, and the queue was never bounded while the init never
+    // became ready. Past the cap the oldest waiting body is dropped with a
+    // typed error and the queue stays bounded.
+    #[test]
+    fn pending_demux_is_capped_and_drops_the_oldest_with_a_typed_error() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(map_playlist(0, 2).as_bytes())
+            .expect("playlist parses");
+        let big = media_fragment_of_len(40 * 1024 * 1024);
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                &big,
+            )
+            .expect("first body is buffered");
+        let err = client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(1),
+                },
+                &big,
+            )
+            .expect_err("the second 40 MiB body exceeds the 64 MiB cap");
+        assert!(
+            matches!(err, Error::PendingDemuxOverflow { dropped } if dropped == ResourceId::Segment {
+                msn: broadcast_hls::MediaSequence::new(0),
+            }),
+            "{err:?}"
+        );
+        assert!(
+            pending_demux_bytes(&client) <= MAX_PENDING_DEMUX_BYTES,
+            "{} bytes held",
+            pending_demux_bytes(&client)
+        );
+        assert_eq!(client.pending_demux.len(), 1);
+    }
+
+    // ...and a body below the current window can never be played, so prune
+    // must drop it with the other MSN-keyed records.
+    #[test]
+    fn pending_demux_is_pruned_with_the_window() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(map_playlist(0, 2).as_bytes())
+            .expect("playlist parses");
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                EMPTY_FRAGMENT,
+            )
+            .expect("body is buffered pending the init");
+        assert_eq!(client.pending_demux.len(), 1);
+        client
+            .on_playlist(map_playlist(1, 2).as_bytes())
+            .expect("playlist parses");
+        assert!(
+            client.pending_demux.is_empty(),
+            "a body below the window must be pruned: {:?}",
+            client
+                .pending_demux
+                .iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    // Audit 20 finding 18 (#2829): the overflow check must run before any
+    // state mutation, or one hostile `EXT-X-MEDIA-SEQUENCE` sets the
+    // high-water mark to ~u64::MAX and drops every key, so the very next
+    // legitimate playlist looks regressed and the session wedges.
+    #[test]
+    fn media_sequence_overflow_is_rejected_before_it_poisons_state() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        client
+            .on_playlist(keyed_playlist(0, 2, "key.bin").as_bytes())
+            .unwrap();
+        let high_water = client.last_media_sequence;
+        let keys = client.key_urls.len();
+        assert_eq!(high_water, Some(broadcast_hls::MediaSequence::new(0)));
+        assert_eq!(keys, 1, "the playlist's key must be tracked");
+
+        let hostile = format!(
+            "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
+             #EXT-X-MEDIA-SEQUENCE:{}\n\
+             #EXT-X-KEY:METHOD=AES-128,URI=\"key.bin\"\n\
+             #EXTINF:2.0,\nseg.ts\n",
+            u64::MAX
+        );
+        let err = client
+            .on_playlist(hostile.as_bytes())
+            .expect_err("u64::MAX + one segment overflows");
+        assert!(
+            matches!(err, Error::MediaSequenceOverflow { .. }),
+            "{err:?}"
+        );
+        assert_eq!(
+            client.last_media_sequence, high_water,
+            "a rejected playlist must not move the high-water mark"
+        );
+        assert_eq!(
+            client.key_urls.len(),
+            keys,
+            "a rejected playlist must not drop key material"
+        );
+    }
+
+    // Audit 20 finding 19 (#2830): a URI containing `{$name}` must never be
+    // fetched literally. The client refuses a playlist that declares
+    // `EXT-X-DEFINE` variables instead of resolving them.
+    #[test]
+    fn playlist_with_ext_x_define_is_refused_not_fetched_literally() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let text = "#EXTM3U\n#EXT-X-VERSION:8\n#EXT-X-TARGETDURATION:2\n\
+                    #EXT-X-DEFINE:NAME=\"host\",VALUE=\"cdn.example\"\n\
+                    #EXTINF:2.0,\nhttps://{$host}/seg0.m4s\n";
+        assert_eq!(
+            client
+                .on_playlist(text.as_bytes())
+                .expect_err("EXT-X-DEFINE is refused"),
+            Error::UnsupportedDefine
+        );
+        for _ in 0..16 {
+            match client.poll() {
+                Some(Action::FetchResource { id, .. }) => {
+                    panic!("a refused playlist must not request {id:?}")
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+
+        let mut master_client = HlsClient::new(config("http://example.com/master.m3u8"));
+        let master = "#EXTM3U\n\
+                      #EXT-X-DEFINE:IMPORT=\"host\"\n\
+                      #EXT-X-STREAM-INF:BANDWIDTH=1000\n\
+                      https://{$host}/v.m3u8\n";
+        assert_eq!(
+            master_client
+                .on_playlist(master.as_bytes())
+                .expect_err("a master EXT-X-DEFINE is refused"),
+            Error::UnsupportedDefine
+        );
+    }
+
+    // Audit 20 finding 42 (#2853): a reference to a non-web scheme must never
+    // become a fetch. Before the fix `ftp:` was resolved and requested like
+    // any other URI.
+    #[test]
+    fn non_web_fetch_schemes_are_refused() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let text = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
+                    #EXT-X-MEDIA-SEQUENCE:0\n\
+                    #EXTINF:2.0,\nftp://cdn/seg0.ts\n#EXT-X-ENDLIST\n";
+        client
+            .on_playlist(text.as_bytes())
+            .expect("playlist parses");
+        match client.next_error() {
+            Some(Error::UnresolvableReference { source, .. }) => {
+                assert_eq!(source, broadcast_common::url_ref::Error::ForbiddenScheme)
+            }
+            other => panic!("expected a scheme refusal, got {other:?}"),
+        }
+        for _ in 0..16 {
+            match client.poll() {
+                Some(Action::FetchResource { id, .. }) => {
+                    panic!("a non-web reference must not be requested: {id:?}")
+                }
+                Some(_) => {}
+                None => break,
+            }
+        }
+    }
+
+    // ...and an `https` stream must not have a key fetch downgraded into the
+    // clear.
+    #[test]
+    fn an_https_stream_refuses_an_http_key_uri() {
+        let mut client = HlsClient::new(config("https://example.com/p.m3u8"));
+        let text = "#EXTM3U\n#EXT-X-VERSION:5\n#EXT-X-TARGETDURATION:2\n\
+                    #EXT-X-MEDIA-SEQUENCE:0\n\
+                    #EXT-X-KEY:METHOD=AES-128,URI=\"http://cdn/key.bin\"\n\
+                    #EXTINF:2.0,\nseg0.ts\n#EXT-X-ENDLIST\n";
+        match client.on_playlist(text.as_bytes()) {
+            Err(Error::UnresolvableReference { source, .. }) => {
+                assert_eq!(source, broadcast_common::url_ref::Error::ForbiddenScheme)
+            }
+            other => panic!("expected an https->http downgrade refusal, got {other:?}"),
+        }
+        assert!(
+            client.key_urls.is_empty(),
+            "no key URL may be retained for a downgraded fetch"
+        );
+    }
+
+    // Audit 20 finding 41 (#2852): the sans-IO client has no own playlist or
+    // resource bound, so `HlsClientConfig::limits` is enforced here.
+    #[test]
+    fn client_limits_bound_playlist_and_resource_bodies() {
+        let text = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg.ts\n\
+                    #EXT-X-ENDLIST\n";
+        let mut limits = Limits::default();
+        limits.max_playlist_bytes = 16;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        assert!(matches!(
+            client.on_playlist(text.as_bytes()),
+            Err(Error::PlaylistTooLarge {
+                what: "playlist bytes",
+                ..
+            })
+        ));
+
+        let two = "#EXTM3U\n#EXT-X-TARGETDURATION:2\n#EXTINF:2.0,\nseg0.ts\n\
+                   #EXTINF:2.0,\nseg1.ts\n#EXT-X-ENDLIST\n";
+        let mut limits = Limits::default();
+        limits.max_segments = 1;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        assert!(matches!(
+            client.on_playlist(two.as_bytes()),
+            Err(Error::PlaylistTooLarge {
+                what: "media segments",
+                ..
+            })
+        ));
+
+        let master = "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1\nv.m3u8\n";
+        let mut limits = Limits::default();
+        limits.max_playlist_bytes = 16;
+        let mut client =
+            HlsClient::new(config("http://example.com/master.m3u8").with_limits(limits));
+        assert!(matches!(
+            client.on_playlist(master.as_bytes()),
+            Err(Error::PlaylistTooLarge { .. })
+        ));
+
+        let mut limits = Limits::default();
+        limits.max_segment_bytes = 4;
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8").with_limits(limits));
+        client
+            .on_playlist(map_playlist(0, 1).as_bytes())
+            .expect("playlist parses");
+        let err = client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(0),
+                },
+                EMPTY_FRAGMENT,
+            )
+            .expect_err("a 16-byte body exceeds the 4-byte cap");
+        assert!(
+            matches!(err, Error::ResourceTooLarge { id: ResourceId::Segment { msn }, .. } if msn == broadcast_hls::MediaSequence::new(0)),
+            "{err:?}"
+        );
+        assert!(
+            client.pending_demux.is_empty(),
+            "an over-size body must be refused before it is buffered"
+        );
+    }
+
+    // Audit 20 finding 33 (#2844): `pending_errors` is drained by a separate
+    // API a host can skip, so a playlist naming many bad references must not
+    // grow the queue without bound. The excess coalesces into one counted
+    // error.
+    #[test]
+    fn pending_errors_are_capped_and_coalesced() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let total = MAX_PENDING_ERRORS + 44;
+        let mut text = String::from(
+            "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n",
+        );
+        for i in 0..total {
+            text.push_str(&format!("#EXTINF:2.0,\nbad seg{i}.ts\n"));
+        }
+        text.push_str("#EXT-X-ENDLIST\n");
+        client
+            .on_playlist(text.as_bytes())
+            .expect("an unresolvable-segment playlist still parses");
+        assert_eq!(
+            client.pending_errors.len(),
+            MAX_PENDING_ERRORS,
+            "the report queue is capped at MAX_PENDING_ERRORS"
+        );
+
+        let mut real = 0usize;
+        let mut coalesced = 0usize;
+        for _ in 0..MAX_PENDING_ERRORS + 2 {
+            match client.next_error() {
+                Some(Error::UnresolvableReferences { count }) => coalesced += count,
+                Some(Error::UnresolvableReference { .. }) => real += 1,
+                Some(other) => panic!("unexpected error: {other:?}"),
+                None => break,
+            }
+        }
+        assert_eq!(real, MAX_PENDING_ERRORS - 1);
+        assert_eq!(real + coalesced, total);
+        assert!(client.next_error().is_none());
+    }
+
+    fn insert_init_slot(client: &mut HlsClient, id: InitId, fetch: InitFetch) {
+        client.inits.insert(
+            id,
+            InitSlot {
+                map: MapTag {
+                    uri: format!("init{id}.mp4"),
+                    ..Default::default()
+                },
+                url: Url::parse(&format!("http://example.com/init{id}.mp4")).expect("test URL"),
+                byte_range: None,
+                encryption: None,
+                crypto: None,
+                fetch,
+                cipher: None,
+                bytes: None,
+                skipped_reported: BTreeSet::new(),
+            },
+        );
+    }
+
+    // Audit 20 finding 4 (#2815): a failing or never-completing EXT-X-MAP
+    // fetch leaves a non-Ready slot, and the old retain kept every one of
+    // them. A slot no segment and no current map refers to must be dropped.
+    #[test]
+    fn prune_inits_drops_unreferenced_non_ready_slots() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        for id in 0..10 {
+            insert_init_slot(&mut client, id, InitFetch::Failed);
+        }
+        client.prune_inits();
+        assert_eq!(
+            client.inits.len(),
+            1,
+            "only the newest unreferenced slot may survive, not every Failed one"
+        );
+        assert!(client.inits.contains_key(&9));
+    }
+
+    // ...and a playlist naming more maps than MAX_INIT_SLOTS must not grow
+    // the slot map past the cap.
+    #[test]
+    fn init_slots_are_capped() {
+        let mut client = HlsClient::new(config("http://example.com/p.m3u8"));
+        let total = MAX_INIT_SLOTS + 36;
+        for id in 0..total as u32 {
+            insert_init_slot(&mut client, id, InitFetch::Wanted);
+            client
+                .msn_init
+                .insert(broadcast_hls::MediaSequence::new(u64::from(id)), id);
+        }
+        client.prune_inits();
+        assert_eq!(client.inits.len(), MAX_INIT_SLOTS);
+        assert!(
+            client
+                .msn_init
+                .values()
+                .all(|id| client.inits.contains_key(id)),
+            "no segment may stay bound to an evicted slot"
+        );
+        assert!(client.inits.contains_key(&(total as u32 - 1)));
     }
 
     #[test]

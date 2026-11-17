@@ -11,7 +11,9 @@ pub(crate) const REDACTED: &str = "<redacted>";
 
 /// Redacts the userinfo (`user[:pass]@`) portion of a URL-shaped string to
 /// `***@`, leaving the scheme, host, and path intact — e.g.
-/// `"rtsp://user:secret@host/s"` becomes `"rtsp://***@host/s"`.
+/// `"rtsp://user:secret@host/s"` becomes `"rtsp://***@host/s"`. A query
+/// string is rendered as `?<redacted>` and a fragment is dropped, since
+/// either can carry a token.
 ///
 /// A URL the `url` crate parses is redacted through it
 /// (`Url::set_username`/`set_password(None)`, then re-serialized), so an
@@ -22,15 +24,30 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// redact, the string is returned unchanged.
 pub fn redact_url(raw: &str) -> String {
     if let Ok(mut url) = url::Url::parse(raw) {
-        if url.username().is_empty() && url.password().is_none() {
+        let had_credentials = !url.username().is_empty() || url.password().is_some();
+        let had_query = url.query().is_some();
+        let had_fragment = url.fragment().is_some();
+        if !had_credentials && !had_query && !had_fragment {
             return raw.to_string();
         }
-        // Keep the `***@` marker (the pre-url text scrub wrote it too), so a
-        // reader sees a credential WAS present and was redacted, rather than
-        // a bare host that looks like the URL never carried one.
-        let _ = url.set_username("***");
-        let _ = url.set_password(None);
-        return url.to_string();
+        if had_credentials {
+            // Keep the `***@` marker (the pre-url text scrub wrote it too), so
+            // a reader sees a credential WAS present and was redacted, rather
+            // than a bare host that looks like the URL never carried one.
+            let _ = url.set_username("***");
+            let _ = url.set_password(None);
+        }
+        // A query can carry a token the same way userinfo carries a password,
+        // so its text never survives; the fragment is never sent and is
+        // dropped outright.
+        url.set_query(None);
+        url.set_fragment(None);
+        let mut out = url.to_string();
+        if had_query {
+            out.push('?');
+            out.push_str(REDACTED);
+        }
+        return out;
     }
     redact_unparseable_userinfo(raw)
 }
@@ -44,16 +61,17 @@ pub fn redact_url(raw: &str) -> String {
 /// rest of the authority + path/query is kept, exactly as [`redact_url`]'s
 /// text scrub always did (`"rtsp://user:secret@host/s"` →
 /// `"rtsp://***@host/s"`) — the host and path are NOT secrets, so they stay
-/// legible; only the credential is masked. No `://` or no `@` in the authority
-/// leaves the string unchanged.
+/// legible; only the credential is masked. The `@` is found over the text
+/// before the first `?`/`#`, because a password may itself contain `/`, which
+/// would otherwise end the authority before its `@`. No `://` or no `@` in
+/// that prefix leaves the string unchanged.
 fn redact_unparseable_userinfo(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return raw.to_string();
     };
     let after_scheme = &raw[scheme_end + 3..];
-    let authority_end = after_scheme.find('/').unwrap_or(after_scheme.len());
-    let authority = &after_scheme[..authority_end];
-    let Some(at) = authority.rfind('@') else {
+    let tail_end = after_scheme.find(['?', '#']).unwrap_or(after_scheme.len());
+    let Some(at) = after_scheme[..tail_end].rfind('@') else {
         return raw.to_string();
     };
     let scheme = &raw[..scheme_end + 3];
@@ -217,6 +235,36 @@ mod tests {
     #[test]
     fn leaves_url_without_userinfo_unchanged() {
         assert_eq!(redact_url("rtsp://host/s"), "rtsp://host/s");
+    }
+
+    /// A query string is a secret carrier (`?token=…`): its text never
+    /// survives, only a redaction marker showing one was present.
+    #[test]
+    fn redacts_a_query_string_and_keeps_the_path() {
+        let redacted = redact_url("https://cdn.example/x.m3u8?token=SECRET&k=v");
+        assert_eq!(redacted, "https://cdn.example/x.m3u8?<redacted>");
+        assert!(!redacted.contains("SECRET"), "{redacted}");
+        assert!(!redacted.contains("token"), "{redacted}");
+    }
+
+    /// The fragment names media the client selects itself and is never sent,
+    /// so it is dropped from the printed form.
+    #[test]
+    fn drops_the_fragment() {
+        assert_eq!(
+            redact_url("https://cdn.example/x.m3u8#track-2"),
+            "https://cdn.example/x.m3u8"
+        );
+    }
+
+    /// An unparseable URL whose password contains `/` still has its userinfo
+    /// masked: the `@` is located past the slash rather than at the first
+    /// authority terminator.
+    #[test]
+    fn masks_a_password_containing_a_slash_in_the_fallback() {
+        let redacted = redact_url("rtsp://u:pa/ss@host/s");
+        assert_eq!(redacted, "rtsp://***@host/s");
+        assert!(!redacted.contains("pa/ss"), "{redacted}");
     }
 
     #[test]

@@ -28,6 +28,12 @@ pub struct Config {
     /// lasted less than this interval, so a long-lived stream still
     /// reconnects with no delay.
     pub min_reconnect_interval: Duration,
+    /// Failed attempts in a row, with no media played in between, after which the session gives up
+    /// with one fatal `Event::Error` (`ErrorKind::ReconnectAttemptsExhausted`) instead of retrying.
+    /// `None` (the default) retries forever, which is what a live stream wants: the backoff bounds
+    /// the rate, never the number of attempts. A connection that played before it ended does not
+    /// count, so a healthy stream that reconnects is never given up on.
+    pub max_reconnect_attempts: Option<u32>,
 }
 
 /// Smallest start timeout [`Config::with_timeouts`] produces.
@@ -86,6 +92,13 @@ impl Config {
         self.min_reconnect_interval = min_reconnect_interval;
         self
     }
+
+    /// Set the give-up ceiling on failed attempts in a row.
+    #[must_use]
+    pub fn with_max_reconnect_attempts(mut self, max_reconnect_attempts: Option<u32>) -> Self {
+        self.max_reconnect_attempts = max_reconnect_attempts;
+        self
+    }
 }
 
 impl Default for Config {
@@ -103,6 +116,7 @@ impl Default for Config {
                 cap: Duration::from_millis(10_000),
             },
             min_reconnect_interval: Duration::from_millis(1_000),
+            max_reconnect_attempts: None,
         }
     }
 }

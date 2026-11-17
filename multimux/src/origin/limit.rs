@@ -11,11 +11,13 @@
 //!
 //! A single pool cannot serve an HTTP origin with long-polls in it:
 //!
-//! - **Ops routes** (`/healthz`, `/readyz`, `/metrics`) are *exempt*: they
+//! - **Liveness/readiness routes** (`/healthz`, `/readyz`) are *exempt*: they
 //!   must answer `200` even while the pool is saturated, or an orchestrator's
 //!   liveness probe fails and the process is restarted — turning a load spike
-//!   into an outage. The admin API is a separate listener with its own router
-//!   and never passes through here at all.
+//!   into an outage. `/metrics` is NOT exempt: a scrape is an ordinary request
+//!   that can be made as often as a client likes, so it draws from the same
+//!   ordinary pool as media requests. The admin API is a separate listener
+//!   with its own router and never passes through here at all.
 //! - **Blocking-reload** requests (LL-HLS `_HLS_msn`/`_HLS_part`,
 //!   RFC 8216bis §6.2.5.2) get their own pools, one per route. A blocking
 //!   reload legitimately holds its connection up to the LL-HLS cap, so a few
@@ -50,6 +52,13 @@ use tower::ServiceExt as _;
 
 pub(crate) use crate::prometheus::HTTP_SHED_TOTAL;
 
+/// How long a response body may make no progress — produce no frame at all —
+/// before it is failed and the connection closed. This is the write side of
+/// the request bound: without it a client that asks for a large resource
+/// (segment, catch-up, TS stream, LL-HLS part) and never reads it holds its
+/// connection and its pool permit for as long as it likes.
+pub const IDLE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Default queue wait before a request with no free permit is shed —
 /// deliberately short: the point of the bound is to shed load a slow-loris is
 /// trying to accumulate, so waiting long enough to defeat that defeats the
@@ -64,10 +73,12 @@ pub const DEFAULT_MAX_BLOCKING_RELOADS_PER_ROUTE: usize = 1024;
 /// The `Retry-After` value as a static header value.
 const RETRY_AFTER: axum::http::HeaderValue = axum::http::HeaderValue::from_static("1");
 
-/// The ops/supervision endpoints an orchestrator probes. These answer even
+/// The liveness/readiness endpoints an orchestrator probes. These answer even
 /// while every data permit is held — a `503` here means a container restart,
-/// which turns a load spike into an outage.
-const OPS_PATHS: [&str; 3] = ["/healthz", "/readyz", "/metrics"];
+/// which turns a load spike into an outage. `/metrics` is deliberately not
+/// here: an unauthenticated, locally-unbounded scrape target was audit 20
+/// finding 64, so it takes an ordinary permit.
+const OPS_PATHS: [&str; 2] = ["/healthz", "/readyz"];
 
 /// Which pool a request draws from.
 #[doc(hidden)]
@@ -135,6 +146,7 @@ pub struct BudgetLimitLayer {
     reload: Arc<ReloadPools>,
     reload_permits: usize,
     queue_timeout: Duration,
+    idle_write_timeout: Duration,
 }
 
 /// The blocking-reload pools: one per registered route plus the shared
@@ -175,7 +187,16 @@ impl BudgetLimitLayer {
             reload: Arc::new(ReloadPools::new(reload, [])),
             reload_permits: reload,
             queue_timeout,
+            idle_write_timeout: IDLE_WRITE_TIMEOUT,
         }
+    }
+
+    /// Override [`IDLE_WRITE_TIMEOUT`] — the longest a response body may make
+    /// no progress before it is failed and its connection closed.
+    #[must_use]
+    pub fn with_idle_write_timeout(mut self, timeout: Duration) -> Self {
+        self.idle_write_timeout = timeout;
+        self
     }
 
     /// Give each of `routes` its own blocking-reload pool of the size passed
@@ -184,6 +205,12 @@ impl BudgetLimitLayer {
     pub fn with_routes<'a>(mut self, routes: impl IntoIterator<Item = &'a str>) -> Self {
         self.reload = Arc::new(ReloadPools::new(self.reload_permits, routes));
         self
+    }
+
+    /// Free ordinary permits (test-only diagnostic).
+    #[cfg(test)]
+    pub(crate) fn ordinary_available(&self) -> usize {
+        self.ordinary.available_permits()
     }
 }
 
@@ -195,6 +222,7 @@ impl<S> tower::Layer<S> for BudgetLimitLayer {
             ordinary: Arc::clone(&self.ordinary),
             reload: Arc::clone(&self.reload),
             queue_timeout: self.queue_timeout,
+            idle_write_timeout: self.idle_write_timeout,
         }
     }
 }
@@ -207,6 +235,7 @@ pub struct BudgetLimit<S> {
     ordinary: Arc<Semaphore>,
     reload: Arc<ReloadPools>,
     queue_timeout: Duration,
+    idle_write_timeout: Duration,
 }
 
 /// A response body that owns a pool permit.
@@ -220,18 +249,88 @@ pub struct PermitBody {
 pub struct PermitHeld;
 
 impl PermitBody {
-    /// Wrap `resp`'s body in a [`PermitBody`] carrying `permit`, and record
-    /// the [`PermitHeld`] marker in the response extensions.
-    fn pin_permit(resp: Response<Body>, permit: OwnedSemaphorePermit) -> Response<Body> {
+    /// Wrap `resp`'s body in an idle-write timeout and then a [`PermitBody`]
+    /// carrying `permit`, and record the [`PermitHeld`] marker in the response
+    /// extensions.
+    fn pin_permit(
+        resp: Response<Body>,
+        permit: OwnedSemaphorePermit,
+        idle_write_timeout: Duration,
+    ) -> Response<Body> {
         let (mut parts, body) = resp.into_parts();
         parts.extensions.insert(PermitHeld);
         Response::from_parts(
             parts,
             Body::new(PermitBody {
-                inner: body,
+                inner: Body::new(StallTimeoutBody::new(body, idle_write_timeout)),
                 _permit: permit,
             }),
         )
+    }
+}
+
+/// The body of [`WriteStalled`]: a response body that produced no frame for
+/// the whole idle-write timeout.
+#[derive(Debug)]
+pub struct WriteStalled;
+
+impl std::fmt::Display for WriteStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("response body made no progress within the idle write timeout")
+    }
+}
+
+impl std::error::Error for WriteStalled {}
+
+/// A response body that fails once it has made no progress — yielded no frame
+/// — for `idle`. Each frame restarts the window; the body's own end stream is
+/// a frame like any other.
+struct StallTimeoutBody {
+    inner: Body,
+    idle: Duration,
+    deadline: Option<Pin<Box<tokio::time::Sleep>>>,
+}
+
+impl StallTimeoutBody {
+    fn new(inner: Body, idle: Duration) -> Self {
+        StallTimeoutBody {
+            inner,
+            idle,
+            deadline: None,
+        }
+    }
+}
+
+impl HttpBody for StallTimeoutBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+    fn poll_frame(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+        let this = self.get_mut();
+        match Pin::new(&mut this.inner).poll_frame(cx) {
+            Poll::Ready(frame) => {
+                this.deadline = None;
+                Poll::Ready(frame)
+            }
+            Poll::Pending => {
+                let idle = this.idle;
+                let deadline = this
+                    .deadline
+                    .get_or_insert_with(|| Box::pin(tokio::time::sleep(idle)));
+                match deadline.as_mut().poll(cx) {
+                    Poll::Ready(()) => Poll::Ready(Some(Err(axum::Error::new(WriteStalled)))),
+                    Poll::Pending => Poll::Pending,
+                }
+            }
+        }
+    }
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+    fn size_hint(&self) -> SizeHint {
+        self.inner.size_hint()
     }
 }
 
@@ -273,6 +372,7 @@ where
     fn call(&mut self, req: Request<B>) -> Self::Future {
         let budget = classify(req.uri());
         let queue_timeout = self.queue_timeout;
+        let idle_write_timeout = self.idle_write_timeout;
         let pool = match budget {
             Budget::Exempt => {
                 let mut svc = self.inner.clone();
@@ -288,7 +388,7 @@ where
                 Ok(Err(_)) | Err(_) => return Ok(shed_into_response(budget)),
             };
             let resp = svc.ready().await?.call(req).await?;
-            Ok(PermitBody::pin_permit(resp, permit))
+            Ok(PermitBody::pin_permit(resp, permit, idle_write_timeout))
         })
     }
 }
@@ -303,12 +403,13 @@ mod tests {
         s.parse().expect("uri")
     }
 
-    /// Ops routes classify as `Exempt`; a stream named `healthz` is not.
+    /// Liveness/readiness routes classify as `Exempt`; a stream named `healthz`
+    /// is not, and `/metrics` is an ordinary (bounded) request.
     #[test]
     fn ops_paths_are_exempt_from_the_bound() {
         assert_eq!(classify(&uri("/healthz")), Budget::Exempt);
         assert_eq!(classify(&uri("/readyz")), Budget::Exempt);
-        assert_eq!(classify(&uri("/metrics")), Budget::Exempt);
+        assert_eq!(classify(&uri("/metrics")), Budget::Ordinary);
         assert_eq!(classify(&uri("/cam1/healthz")), Budget::Ordinary);
     }
 
@@ -659,5 +760,54 @@ mod tests {
             "permit returned on drop"
         );
         drop(tx);
+    }
+
+    /// A body that never produces a frame is failed once the idle-write
+    /// timeout passes, so a client that requests a resource and never reads
+    /// it cannot hold the connection (and its permit) indefinitely (audit 20
+    /// finding 7). MUTATION VERIFIED: not wrapping the body at all makes the
+    /// `to_bytes` call below wait until the outer bound, so the test fails on
+    /// the old shape.
+    #[tokio::test]
+    async fn a_response_body_that_stops_making_progress_is_failed() {
+        const IDLE: Duration = Duration::from_millis(20);
+        const OUTER_BOUND: Duration = Duration::from_secs(5);
+
+        struct PendingBody;
+        impl http_body::Body for PendingBody {
+            type Data = Bytes;
+            type Error = Infallible;
+            fn poll_frame(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+            ) -> Poll<Option<Result<Frame<Bytes>, Infallible>>> {
+                Poll::Pending
+            }
+        }
+
+        let inner = tower::service_fn(|_req: Request<Body>| {
+            std::future::ready(Ok::<_, Infallible>(Response::new(Body::new(PendingBody))))
+        });
+        let layer =
+            BudgetLimitLayer::new(4, 1, Duration::from_millis(20)).with_idle_write_timeout(IDLE);
+        let mut svc = tower::Layer::layer(&layer, inner);
+        let req = || {
+            Request::builder()
+                .uri("/cam1/media.m3u8")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let resp = svc.call(req()).await.expect("infallible");
+        let err = tokio::time::timeout(
+            OUTER_BOUND,
+            axum::body::to_bytes(resp.into_body(), usize::MAX),
+        )
+        .await
+        .expect("the stalled body must fail rather than hang")
+        .expect_err("a body with no progress is an error");
+        assert!(
+            err.to_string().contains("idle write timeout"),
+            "the error names the stall: {err}"
+        );
     }
 }
