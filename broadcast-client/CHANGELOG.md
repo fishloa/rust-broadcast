@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- The libsrt wire oracle and the B-frame RTSP a/v-sync oracle gate their external tools through `test_fixtures::process::require_tool_probed`, so `SRT_REQUIRE_LIBSRT`/`REQUIRE_MEDIAMTX_E2E` (or a global `REQUIRE_EXTERNAL_TOOLS=1`) fails the run instead of skipping it (audit 21 finding 60).
+- Every pull golden refuses to re-record under `CI=true` (the Smooth switch gained the refusal and a regression test; the RTSP and SDP switches already had one), and each golden's PROVENANCE now names its independent oracle (audit 21 finding 62).
 
 ## [0.7.0] - 2026-11-17
 ### Added

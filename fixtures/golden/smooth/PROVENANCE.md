@@ -199,3 +199,15 @@ code at commit `c7aa2eaca` (branch `feat/smooth-runtime-2370`, tree identical to
 `fa9898e94` for both clients) before the shared engine of issue #2370 existed. Regenerate with
 `SMOOTH_PULL_GOLDEN_BLESS=<dir>` set when running the `smooth_pull_golden` tests. `av-low`'s
 manifest lists a fourth chunk with no fragment file, so both traces end in a failed fetch.
+
+### Independent oracle
+
+The fixtures behind these traces are output of ffmpeg's `smoothstreaming` muxer
+(`fixtures/smooth/PROVENANCE.md`), not hand-built bytes, and the init segment and each fragment
+the client accepts are read back by ffprobe and MP4Box (Bento4 `mp4dump` for the fragment layout)
+in `smooth_oracle`/`smooth_output`. The sample trace itself (track/dts/pts/hash) has no
+third-party reader, so this golden pins stability, not correctness: a diff means the client's
+interpretation changed and needs its own reason.
+
+`SMOOTH_PULL_GOLDEN_BLESS` refuses to write when `CI` is set, so a re-bless cannot ride along in a
+CI run.

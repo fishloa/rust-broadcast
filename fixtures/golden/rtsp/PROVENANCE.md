@@ -205,3 +205,14 @@ cargo test -p multimux --all-features --locked --test it push_rtsp_wire
 ## `pull-multimux.txt` / `pull-broadcast-client.txt`
 
 RTSP pull wire and sample goldens (#2372, Step 0), recorded from current code at commit `ecb70c658d4ed710f7494d7063723737bb70aa87` before the play flow moves.
+
+### Independent oracle
+
+The wire recording is driven against rtsp-runtime's own sans-IO `ServerSession` behind a loopback
+listener (so a request the real parser cannot read fails the recording), and the samples are
+demuxed from `fixtures/ts/h264-aac.ts`, a real capture. No third-party reader inspects the sample
+trace (track/dts/pts/hash), so it pins stability, not correctness: a diff means the client's
+interpretation changed and needs its own reason.
+
+`REGENERATE_RTSP_PULL_GOLDEN` refuses to write when `CI` is set, so a re-record cannot ride along
+in a CI run.

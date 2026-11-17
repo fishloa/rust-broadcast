@@ -1,6 +1,14 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- Test-only: a segmentation descriptor carrying all-32-bit `segmentation_event_id`, a 40-bit `segmentation_duration`, a two-entry MID() UPID, two distinct components and the sub-segment appendix is asserted byte-for-byte against hand-assembled Table 20 bytes, each optional section's truncation is a typed error, and the MID() walker's truncated-header and over-long-entry cases are pinned (audit 21 finding 18, #2913).
+- Test-only: `splice_info_section()` packs a nonzero 12-bit `tier` beside a 12-bit `splice_command_length` above 255 and a `descriptor_loop_length` above 255, asserted on bytes 10-12, with `tier_is_ignored()` checked for both values, the encrypted-section packing exercised, and every truncation boundary refused (audit 21 finding 19, #2914).
+- Test-only: a `splice_schedule` with three events (program, cancelled, component mode) and a `splice_insert` in scheduled program mode are asserted byte-for-byte against hand-assembled Table 9/Table 10 bytes, including the per-event `event_id_compliance_flag` and every cursor offset, plus the two empty commands' parse behaviour (audit 21 finding 20, #2915).
+- Test-only: `SpliceTracker` closing one open event keeps the others in the eviction order (the open set still caps at `MAX_OPEN_EVENTS` after a close), a different section for the same event is a duplicate open while identical bytes are a retransmission, and the `NoCue`/`SpliceSanity` labels are pinned (audit 21 finding 22, #2917).
+- Test-only: the DVB-TA stream-event payload's optional sections are round-tripped and truncated at every byte, its declared lengths are checked at their bounds, the compact time-signal and splice-insert bit widths and `bit_err` mapping are pinned at their maxima and maxima plus one, and the DAS `descriptor_length` gate and nibble order are asserted (audit 21 finding 23, #2918).
+- Test-only: the avail/DTMF/time/audio descriptors are serialized at their maximum sizes (7 DTMF chars, 15 audio components, a 48-bit TAI second) and their one-past-the-limit rejection, the shared descriptor header gate is checked for each truncation shape, and the descriptor loop's raw iterator, `Deref`, `From` and serde paths are pinned (audit 21 finding 21, #2916).
+- Test-only: every SCTE 35 and DVB-TA spec/field enum's `name()`/`Display` labels are asserted literally (including five Table 23 segmentation type labels and all Table 21/22 variants), so a label can no longer render empty or as a placeholder (audit 21 finding 24, #2919).
 
 ## [7.0.0] - 2026-11-15
 ### Changed

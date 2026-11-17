@@ -36,15 +36,6 @@ use crate::support::shared_it::fixture_path;
 use crate::support::udp_origin::{UdpTsOrigin, spawn_udp_ts_origin};
 use broadcast_smooth::SmoothManifest;
 
-fn have_oracle(bin: &str) -> bool {
-    Command::new(bin)
-        .arg("-version")
-        .output()
-        .or_else(|_| Command::new(bin).arg("-h").output())
-        .map(|_| true)
-        .unwrap_or(false)
-}
-
 fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
     Config::default()
         .with_bind(bind.to_string())
@@ -234,8 +225,11 @@ async fn manifest_advertises_real_codecs_for_both_tracks() {
 /// init segment) decodes only the requested track's codec from each.
 #[tokio::test]
 async fn each_stream_index_serves_its_own_track_fragment() {
-    if !have_oracle("MP4Box") {
-        eprintln!("SKIP each_stream_index_serves_its_own_track_fragment: MP4Box not on PATH");
+    if !test_fixtures::process::require_tool(
+        "MP4Box",
+        "-version",
+        test_fixtures::process::REQUIRE_EXTERNAL_TOOLS,
+    ) {
         return;
     }
     let served = serve_smooth_until_fragment(1).await;

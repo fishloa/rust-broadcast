@@ -885,4 +885,68 @@ mod tests {
             }
         }
     }
+
+    fn serialized(km: &KeyMaterial<'_>) -> alloc::vec::Vec<u8> {
+        let mut buf = alloc::vec![0u8; km.serialized_len()];
+        km.serialize_into(&mut buf).unwrap();
+        buf
+    }
+
+    /// Each fixed-value field is checked by its own shift: a set `S` or
+    /// `Resv3` bit must be rejected naming that field.
+    #[test]
+    fn fixed_fields_are_checked_by_their_owned_bits() {
+        let km = sample_even_only();
+        let mut buf = serialized(&km);
+        buf[0] |= 0x80; // S = 1
+        assert!(matches!(
+            KeyMaterial::parse(&buf),
+            Err(Error::InvalidKeyMaterial { field: "S", .. })
+        ));
+
+        let mut buf = serialized(&km);
+        buf[12] = 0x01; // Resv3 = 1
+        assert!(matches!(
+            KeyMaterial::parse(&buf),
+            Err(Error::InvalidKeyMaterial { field: "Resv3", .. })
+        ));
+    }
+
+    /// A truncated salt reports the exact byte count it needs (header + the
+    /// announced salt), not a product of the two.
+    #[test]
+    fn truncated_salt_reports_the_exact_need() {
+        let buf = serialized(&sample_even_only());
+        match KeyMaterial::parse(&buf[..20]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, 32);
+                assert_eq!(b.have, 20);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// A truncated wrap field reports the exact byte count it needs.
+    #[test]
+    fn truncated_wrap_field_reports_the_exact_need() {
+        let buf = serialized(&sample_even_only());
+        match KeyMaterial::parse(&buf[..40]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, 56);
+                assert_eq!(b.have, 40);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// Trailing bytes report the exact number left past the message.
+    #[test]
+    fn trailing_bytes_report_the_exact_extra_count() {
+        let mut buf = serialized(&sample_even_only());
+        buf.extend_from_slice(&[0xAA, 0xBB]);
+        match KeyMaterial::parse(&buf) {
+            Err(Error::UnexpectedTrailingBytes { extra, .. }) => assert_eq!(extra, 2),
+            other => panic!("expected UnexpectedTrailingBytes, got {other:?}"),
+        }
+    }
 }

@@ -52,7 +52,13 @@ fn have_oracle(bin: &str) -> bool {
             assert!(e.kind() != std::io::ErrorKind::TimedOut, "{e}");
         })
     };
-    probe("-version").or_else(|_| probe("-h")).is_ok()
+    let present = probe("-version").or_else(|_| probe("-h")).is_ok();
+    test_fixtures::process::require_tool_probed(
+        present,
+        bin,
+        test_fixtures::process::REQUIRE_EXTERNAL_TOOLS,
+    );
+    present
 }
 
 fn base_config(bind: std::net::SocketAddr, input: InputSpec) -> Config {
@@ -190,7 +196,6 @@ async fn ts_hls_segment_content_type_is_video_mp2t() {
 #[tokio::test]
 async fn ffprobe_recognises_served_segment_as_mpegts() {
     if !have_oracle("ffprobe") {
-        eprintln!("SKIP ffprobe_recognises_served_segment_as_mpegts: ffprobe not on PATH");
         return;
     }
     let served = serve_ts_hls_until_extinf().await;

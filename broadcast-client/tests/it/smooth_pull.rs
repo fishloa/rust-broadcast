@@ -719,12 +719,40 @@ fn check_golden(fixture: &str) {
     let name = format!("pull-broadcast-client-{fixture}.txt");
     let actual = sample_trace(fixture);
     if let Ok(dir) = std::env::var(GOLDEN_BLESS_ENV) {
+        assert!(
+            std::env::var_os("CI").is_none(),
+            "refuse to re-bless a golden under CI=true ({GOLDEN_BLESS_ENV} is a local review step)"
+        );
         std::fs::write(std::path::Path::new(&dir).join(&name), &actual).expect("write golden");
         return;
     }
     let expected = std::fs::read_to_string(test_fixtures::path(&format!("golden/smooth/{name}")))
         .expect("read golden");
     assert_eq!(actual, expected, "{name} differs from the recorded trace");
+}
+
+/// Re-blessing is a local review step: under `CI=true` the switch must fail the
+/// run (this re-runs this binary with both set, and on the old code it would
+/// have written the golden and exited green).
+#[test]
+fn a_smooth_pull_bless_is_refused_under_ci() {
+    let dir = std::env::temp_dir().join(format!("smooth-bless-refused-{}", std::process::id()));
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([
+            "smooth_pull::smooth_pull_golden_av",
+            "--exact",
+            "--nocapture",
+        ])
+        .env(GOLDEN_BLESS_ENV, &dir)
+        .env("CI", "true")
+        .output()
+        .expect("run the test binary");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!dir.exists(), "a refused bless must write no golden");
+    assert!(
+        !out.status.success(),
+        "{GOLDEN_BLESS_ENV} under CI must fail instead of re-blessing"
+    );
 }
 
 #[test]

@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed
+- Test-only: the RFC 3550 §A.1 cycle counter increments on the wrapping packet only (never on a duplicate), `ExtendedSeqNo::forward_distance` across a cycle boundary, and the `RTP_SEQ_MOD_PLUS_ONE` `bad_seq` sentinel are pinned (audit 21 finding 13, #2908).
+- Test-only: a packet with three distinct CSRCs, a two-word extension and exact-fit padding is parsed field-for-field, so each compounded header offset (CSRC walk, extension prefix, padding split) is pinned by value (audit 21 finding 15, #2910).
+- Test-only: every RTP/RTCP maximum field value and the one-past-the-end rejection are pinned at the boundary (15 CSRCs, payload type 127, 65 535 extension words, padding 255, 31 report blocks/chunks/sources/subtypes, 255-byte SDES text and BYE reason), as are the RTCP `pt()`/`RtcpPadding::count()` accessors and a padding region that fills the whole body (audit 21 finding 14, #2909).
+- Test-only: RFC 8285 elements are consumed through their `IntoIterator` implementations, and the two-byte length-byte offset is exercised across three elements (lengths 0, 3, 255) plus a missing length byte, so the multi-element length prefix and the iterator path are pinned (audit 21 finding 16, #2911).
+- Test-only: each AV3A (`av3a` feature) AATF header shape is parsed from a hand-assembled vector and re-serialized byte-for-byte, with a nonzero alignment field, so the header bit budget, the optional-field presence rules and the spec labels are pinned (audit 21 finding 17, #2912).
 
 ## [0.8.0] - 2026-11-15
 ### Changed
