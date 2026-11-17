@@ -3426,7 +3426,7 @@ mod tests {
             .expect("playlist parses");
         match client.next_error() {
             Some(Error::UnresolvableReference { source, .. }) => {
-                assert_eq!(source, broadcast_common::url_ref::Error::Scheme)
+                assert_eq!(source, broadcast_common::url_ref::Error::ForbiddenScheme)
             }
             other => panic!("expected a scheme refusal, got {other:?}"),
         }
@@ -3452,7 +3452,7 @@ mod tests {
                     #EXTINF:2.0,\nseg0.ts\n#EXT-X-ENDLIST\n";
         match client.on_playlist(text.as_bytes()) {
             Err(Error::UnresolvableReference { source, .. }) => {
-                assert_eq!(source, broadcast_common::url_ref::Error::Scheme)
+                assert_eq!(source, broadcast_common::url_ref::Error::ForbiddenScheme)
             }
             other => panic!("expected an https->http downgrade refusal, got {other:?}"),
         }

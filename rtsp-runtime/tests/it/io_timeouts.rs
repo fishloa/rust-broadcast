@@ -5,8 +5,10 @@
 use std::time::Duration;
 
 use broadcast_common::timeouts::Timeouts;
+use rtsp_runtime::client::ClientEvent;
 use rtsp_runtime::{
-    AsyncRtspClient, ClientSession, Error, RtspServerConfig, ServerSession, SessionIdSource,
+    AsyncRtspClient, ClientSession, Error, RtspClientIoConfig, RtspServerConfig, ServerSession,
+    SessionIdSource, Transport, TransportSpec,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt, duplex};
 
@@ -16,6 +18,65 @@ fn short() -> Timeouts {
     Timeouts::default()
         .with_read_idle(Duration::from_secs(5))
         .with_write(Duration::from_secs(5))
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_keepalive_wake_does_not_extend_the_read_idle_deadline() {
+    // #2838: the session timeout (4 s -> keepalive every 2 s) is shorter than
+    // `read_idle` (20 s). `recv_interleaved` wakes for each keepalive; if that
+    // wake restarts the read timer, a silent server is never detected.
+    let (client_io, mut server_io) = duplex(4096);
+    tokio::spawn(async move {
+        let mut buf = [0u8; 1024];
+        let mut request = Vec::new();
+        while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+            let n = server_io.read(&mut buf).await.expect("read SETUP");
+            if n == 0 {
+                return;
+            }
+            request.extend_from_slice(&buf[..n]);
+        }
+        server_io
+            .write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: abc;timeout=4\r\n\r\n")
+            .await
+            .expect("write SETUP response");
+        // Absorb every keepalive; never answer.
+        loop {
+            if server_io.read(&mut buf).await.expect("read keepalive") == 0 {
+                return;
+            }
+        }
+    });
+    let mut c = AsyncRtspClient::from_stream(
+        client_io,
+        RtspClientIoConfig::default()
+            .with_session(ClientSession::default())
+            .with_timeouts(
+                Timeouts::default()
+                    .with_read_idle(Duration::from_secs(20))
+                    .with_write(Duration::from_secs(5)),
+            ),
+    );
+    let event = c
+        .setup(
+            URI,
+            &Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1)),
+        )
+        .await
+        .expect("SETUP response");
+    assert!(matches!(
+        event,
+        ClientEvent::Response { status, .. } if status.is_success()
+    ));
+
+    let err = c
+        .recv_interleaved()
+        .await
+        .expect_err("a silent server must time out the whole read");
+    assert!(
+        matches!(err, Error::Timeout { what: "read" }),
+        "got {err:?}"
+    );
 }
 
 #[tokio::test(start_paused = true)]

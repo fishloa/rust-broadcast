@@ -7,8 +7,11 @@
 
 /// Largest playlist document accepted, in bytes.
 pub const MAX_PLAYLIST_BYTES: usize = 4 * 1024 * 1024;
-/// Most closed Media Segments accepted in one playlist.
-pub const MAX_SEGMENTS: usize = 65_536;
+/// Most closed Media Segments accepted in one playlist. A one-line segment is
+/// at least a few bytes, so a playlist within [`MAX_PLAYLIST_BYTES`] can hold
+/// at most a few hundred thousand; this cap is the backstop, not the working
+/// bound, and admits a 150 000-segment hostile playlist within the byte cap.
+pub const MAX_SEGMENTS: usize = 1_000_000;
 /// Largest resource body (init, part or segment) accepted by a client.
 pub const MAX_SEGMENT_BYTES: usize = 64 * 1024 * 1024;
 

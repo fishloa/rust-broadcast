@@ -31,6 +31,8 @@ pub enum ManifestFault {
     Parse,
     /// A chunk timeline could not be enumerated.
     Timeline,
+    /// The body is longer than `max_manifest_bytes`.
+    TooLarge,
 }
 
 impl ManifestFault {
@@ -41,6 +43,7 @@ impl ManifestFault {
             Self::Utf8 => "utf8",
             Self::Parse => "parse",
             Self::Timeline => "timeline",
+            Self::TooLarge => "too_large",
         }
     }
 }
