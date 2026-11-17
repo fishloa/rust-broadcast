@@ -156,7 +156,8 @@ impl RecvSource for Arc<UdpSocket> {
         &'a self,
         buf: &'a mut [u8],
     ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a {
-        async move { (**self).recv_from(buf).await }
+        let socket = Arc::clone(self);
+        async move { UdpSocket::recv_from(socket.as_ref(), buf).await }
     }
 }
 
@@ -501,8 +502,9 @@ mod tests {
                 buf: &'a mut [u8],
             ) -> impl std::future::Future<Output = io::Result<(usize, SocketAddr)>> + Send + 'a
             {
+                let calls = &self.calls;
                 async move {
-                    match self.calls.fetch_add(1, Ordering::SeqCst) {
+                    match calls.fetch_add(1, Ordering::SeqCst) {
                         0 => Err(io::Error::other("recv failed")),
                         1 => {
                             buf[0] = DTLS_RECORD[0];
