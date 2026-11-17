@@ -271,7 +271,7 @@ jobs:
     if: needs.changes.outputs.rust == 'true'
     env:
       REQUIRE_EXTERNAL_TOOLS: "1"
-      BENTO4_SHA: b98c928eaf3d63b29d59d1d7aa90e60c8c210fb2
+      BENTO4_SHA: dc264854d1f76c370b65b18d9f303a95f7f21ab1  # v1.6.0-641
     steps:
       - uses: actions/checkout@v5
       - name: Private fixtures (Dolby Vision / HDR10 captures)
