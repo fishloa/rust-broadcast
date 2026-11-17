@@ -35,7 +35,7 @@ fn main() {
         },
     ];
 
-    let formatted = format_ice_server_links(&custom);
+    let formatted = format_ice_server_links(&custom).expect("safe link values");
     println!("Formatted Link header:\n  {formatted}");
 
     // Verify round-trip.

@@ -28,10 +28,13 @@ pub struct RtspClientConfig {
 
 impl RtspClientConfig {
     /// Replace [`RtspClientConfig::user_agent`].
-    #[must_use]
-    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Self {
-        self.user_agent = user_agent.into();
-        self
+    ///
+    /// # Errors
+    /// [`Error::HeaderSerialize`] when `user_agent` holds a control character,
+    /// which would inject a header (or end the header block) on the wire.
+    pub fn with_user_agent(mut self, user_agent: impl Into<String>) -> Result<Self> {
+        self.user_agent = crate::error::header_value(&user_agent.into(), "User-Agent")?;
+        Ok(self)
     }
 
     /// Replace [`RtspClientConfig::initial_cseq`].

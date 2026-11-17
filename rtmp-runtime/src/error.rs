@@ -64,6 +64,26 @@ pub enum RtmpError {
         max: usize,
     },
 
+    /// AMF0 data held more values than
+    /// [`MAX_AMF0_VALUES`](crate::amf0::MAX_AMF0_VALUES) — a wide container
+    /// (millions of one-byte nulls, or three-byte empty-key pairs) would
+    /// otherwise expand into millions of `Amf0Value`s from one message.
+    #[error("AMF0 value count exceeds {max}")]
+    Amf0TooManyValues {
+        /// The limit that was reached.
+        max: usize,
+    },
+
+    /// A Command Message body was longer than
+    /// [`MAX_COMMAND_LEN`](crate::server::MAX_COMMAND_LEN).
+    #[error("command message is {len} bytes, above the {max}-byte limit")]
+    CommandTooLong {
+        /// The body length that was rejected.
+        len: usize,
+        /// The limit that was reached.
+        max: usize,
+    },
+
     /// An AMF0 String carried more than the 65535 bytes its 16-bit length
     /// prefix can hold; AMF0 has no Long String variant to fall back on
     /// inside these messages.

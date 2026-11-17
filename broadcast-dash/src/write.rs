@@ -5,6 +5,8 @@ use std::io;
 use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 use quick_xml::{Reader, Writer};
 
+use broadcast_common::xml_chars::is_xml_char;
+
 use crate::duration::xs_duration;
 use crate::error::MpdError;
 use crate::model::*;
@@ -86,8 +88,9 @@ impl Mpd {
     ///
     /// # Errors
     /// [`MpdError::Write`] if the in-memory writer fails (it cannot in
-    /// practice) and [`MpdError::Invalid`] if a stored instant cannot be
-    /// formatted.
+    /// practice), [`MpdError::Invalid`] if a stored instant cannot be
+    /// formatted or a stored string holds a character outside the XML 1.0 §2.2
+    /// `Char` production.
     pub fn to_xml(&self) -> Result<String, MpdError> {
         let mut w = Writer::new_with_indent(Vec::new(), b' ', 2);
         w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)))
@@ -112,6 +115,7 @@ impl Mpd {
         out.extend_from_slice(rest);
         let mut out = String::from_utf8_lossy(&out).into_owned();
         out.push('\n');
+        refuse_illegal_chars(&out)?;
         Ok(out)
     }
 
@@ -587,6 +591,22 @@ fn write_service_description(
 fn io_err(e: io::Error) -> MpdError {
     MpdError::Write {
         message: e.to_string(),
+    }
+}
+
+/// The manifest holds a character outside the XML 1.0 §2.2 `Char` production.
+///
+/// `quick-xml` escapes only the markup characters, so a control character a
+/// host stores in a label, a `BaseURL` or an id reaches the document verbatim
+/// and every reader rejects it; the completed document is the one place every
+/// attribute and text node passes through.
+fn refuse_illegal_chars(doc: &str) -> Result<(), MpdError> {
+    match doc.chars().find(|&c| !is_xml_char(c)) {
+        Some(c) => Err(MpdError::Invalid {
+            what: "character outside the XML 1.0 Char production",
+            detail: format!("U+{:04X}", u32::from(c)),
+        }),
+        None => Ok(()),
     }
 }
 

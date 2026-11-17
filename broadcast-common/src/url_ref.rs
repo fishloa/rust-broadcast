@@ -24,6 +24,9 @@ pub enum Error {
     ForbiddenChar(char),
     /// The base or the joined reference did not parse as a URL.
     Parse,
+    /// The joined reference is not an `http`/`https` URL, or it drops from
+    /// `https` to `http`: [`resolve_http`] refuses both.
+    ForbiddenScheme,
 }
 
 impl Error {
@@ -32,6 +35,7 @@ impl Error {
         match self {
             Self::ForbiddenChar(_) => "forbidden char",
             Self::Parse => "parse",
+            Self::ForbiddenScheme => "forbidden scheme",
         }
     }
 }
@@ -80,6 +84,33 @@ pub fn resolve(base: &Url, reference: &str) -> Result<Url> {
 pub fn resolve_str(base: &str, reference: &str) -> Result<alloc::string::String> {
     let base = Url::parse(base).map_err(|_| Error::Parse)?;
     resolve(&base, reference).map(|joined| joined.to_string())
+}
+
+/// `http`, the only scheme a manifest reference may resolve to over a plain
+/// connection.
+const HTTP: &str = "http";
+/// `https`.
+const HTTPS: &str = "https";
+
+/// [`resolve`], then require the joined URL to be an `http`/`https` one reached
+/// without downgrading `https` to `http`.
+///
+/// A manifest is remote input: a playlist, `EXT-X-KEY`, `EXT-X-MAP` or Smooth
+/// `Url` template naming `file:`, `ftp:` or an `https`->`http` downgrade must
+/// not become a fetch the caller performs — a key reference downgraded to
+/// `http` would leak the key fetch in clear. Cross-origin `http(s)` itself is
+/// ordinary, so only the scheme is restricted.
+///
+/// # Errors
+/// As [`resolve`], plus [`Error::ForbiddenScheme`] when the joined URL's scheme
+/// is neither `http` nor `https`, or when it is `http` and `base` is `https`.
+pub fn resolve_http(base: &Url, reference: &str) -> Result<Url> {
+    let joined = resolve(base, reference)?;
+    let scheme = joined.scheme();
+    if scheme == HTTPS || (scheme == HTTP && base.scheme() != HTTPS) {
+        return Ok(joined);
+    }
+    Err(Error::ForbiddenScheme)
 }
 
 #[cfg(test)]
@@ -197,9 +228,76 @@ mod tests {
     }
 
     #[test]
+    fn resolve_http_refuses_a_scheme_the_caller_cannot_fetch() {
+        let plain = Url::parse("http://h/a/b/playlist.mpd").expect("base parses");
+        for evil in [
+            "file:///etc/passwd",
+            "ftp://h/seg1.m4s",
+            "data:text/plain,seg",
+            "javascript:alert(1)",
+            "rtsp://h/seg1.m4s",
+        ] {
+            assert_eq!(
+                resolve_http(&plain, evil),
+                Err(Error::ForbiddenScheme),
+                "{evil:?}"
+            );
+        }
+        assert_eq!(
+            resolve_http(&plain, "seg1.m4s"),
+            Ok(plain.join("seg1.m4s").expect("joins"))
+        );
+        assert_eq!(
+            resolve_http(&plain, "https://cdn.example/seg1.m4s")
+                .expect("an upgrade is ordinary")
+                .scheme(),
+            "https"
+        );
+    }
+
+    #[test]
+    fn resolve_http_refuses_an_https_to_http_downgrade() {
+        let secure = Url::parse("https://h/a/b/playlist.mpd").expect("base parses");
+        for downgrade in ["http://h/seg1.m4s", "http://other.example/seg1.m4s"] {
+            assert_eq!(
+                resolve_http(&secure, downgrade),
+                Err(Error::ForbiddenScheme),
+                "{downgrade:?}"
+            );
+        }
+        assert_eq!(
+            resolve_http(&secure, "//h/seg1.m4s")
+                .expect("a scheme-relative reference inherits https")
+                .scheme(),
+            "https"
+        );
+        assert_eq!(
+            resolve_http(&secure, "seg1.m4s")
+                .expect("a relative reference stays secure")
+                .scheme(),
+            "https"
+        );
+        assert_eq!(
+            resolve_http(&secure, "https://cdn.example/seg1.m4s")
+                .expect("staying on https")
+                .host_str(),
+            Some("cdn.example")
+        );
+    }
+
+    #[test]
+    fn resolve_http_keeps_the_control_character_rule() {
+        assert_eq!(
+            resolve_http(&base(), "seg\r\n1.m4s"),
+            Err(Error::ForbiddenChar('\r'))
+        );
+    }
+
+    #[test]
     fn labels() {
         assert_eq!(Error::ForbiddenChar('\r').name(), "forbidden char");
         assert_eq!(Error::ForbiddenChar('\r').to_string(), "forbidden char");
         assert_eq!(Error::Parse.name(), "parse");
+        assert_eq!(Error::ForbiddenScheme.name(), "forbidden scheme");
     }
 }

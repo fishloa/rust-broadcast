@@ -56,6 +56,8 @@
 //! exposition (served at `GET /metrics` by `origin::router`).
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 
@@ -135,6 +137,16 @@ pub(crate) const TS_HLS_NON_IDR_TOTAL: &str = "multimux_ts_hls_non_idr_total";
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
+/// How often the recorder drains its histogram buckets into their summaries.
+/// `metrics-exporter-prometheus` does this in `render()` or `run_upkeep()`;
+/// with no upkeep and no (or slow) scraping, every request's sample stays
+/// resident for good.
+pub const UPKEEP_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The one upkeep task, started by the first [`install`] that runs inside a
+/// Tokio runtime.
+static UPKEEP_STARTED: AtomicBool = AtomicBool::new(false);
+
 /// Install the process-wide Prometheus recorder exactly once, returning a
 /// clone of its handle on every call.
 ///
@@ -152,10 +164,10 @@ static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 /// **upkeep thread** (non-daemon) that never exits, which keeps every process
 /// alive and makes `cargo nextest` (one process per test) time out on *every*
 /// test in this binary — including the pure-sync store tests. `build_recorder`
-/// installs no thread; we don't need periodic upkeep for a scrape-rendered
-/// exposition.
+/// installs no thread. Periodic upkeep instead runs on the caller's Tokio
+/// runtime, so it dies with that runtime.
 pub fn install() -> PrometheusHandle {
-    HANDLE
+    let handle = HANDLE
         .get_or_init(|| {
             let recorder = PrometheusBuilder::new().build_recorder();
             let handle = recorder.handle();
@@ -165,7 +177,40 @@ pub fn install() -> PrometheusHandle {
             );
             handle
         })
-        .clone()
+        .clone();
+    spawn_upkeep_once(handle.clone());
+    handle
+}
+
+/// Start [`spawn_upkeep`] once, when a runtime is available. Called from an
+/// async context (every listener) it starts the task; from a synchronous
+/// test it is a no-op, and a later in-runtime call still starts it.
+fn spawn_upkeep_once(handle: PrometheusHandle) {
+    if UPKEEP_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if spawn_upkeep(handle).is_none() {
+        UPKEEP_STARTED.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Spawn the periodic upkeep task on the current runtime, or `None` outside
+/// one. The task ends with the runtime.
+fn spawn_upkeep(handle: PrometheusHandle) -> Option<tokio::task::JoinHandle<()>> {
+    spawn_upkeep_with(UPKEEP_INTERVAL, move || handle.run_upkeep())
+}
+
+fn spawn_upkeep_with(
+    interval: Duration,
+    mut upkeep: impl FnMut() + Send + 'static,
+) -> Option<tokio::task::JoinHandle<()>> {
+    let runtime = tokio::runtime::Handle::try_current().ok()?;
+    Some(runtime.spawn(async move {
+        loop {
+            tokio::time::sleep(interval).await;
+            upkeep();
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -187,5 +232,31 @@ mod tests {
         // the same underlying recorder rather than two independent ones.
         assert!(a.render().contains("multimux_test_idempotent_probe"));
         assert!(b.render().contains("multimux_test_idempotent_probe"));
+    }
+
+    /// The upkeep task calls its upkeep function on every interval, so the
+    /// recorder's histogram buckets are drained even when nothing scrapes
+    /// (audit 20 finding 22: with no upkeep, samples accumulate until a
+    /// scrape, which may never come). MUTATION VERIFIED: a task that never
+    /// calls `upkeep` leaves the counter at zero and the bounded wait fails.
+    #[tokio::test]
+    async fn the_upkeep_task_calls_upkeep_every_interval() {
+        const INTERVAL: Duration = Duration::from_millis(5);
+        let ticks = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&ticks);
+        let task = spawn_upkeep_with(INTERVAL, move || {
+            counted.fetch_add(1, Ordering::Relaxed);
+        })
+        .expect("a runtime is current");
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while ticks.load(Ordering::Relaxed) < 3 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "upkeep ran {} times",
+                ticks.load(Ordering::Relaxed)
+            );
+            tokio::time::sleep(INTERVAL).await;
+        }
+        task.abort();
     }
 }

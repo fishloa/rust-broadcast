@@ -49,8 +49,12 @@ fn exchange(
 
 #[test]
 fn session_transcript_is_byte_identical() {
-    let mut c = ClientSession::new(RtspClientConfig::default().with_user_agent("golden-ua"))
-        .expect("a client session");
+    let mut c = ClientSession::new(
+        RtspClientConfig::default()
+            .with_user_agent("golden-ua")
+            .expect("a safe User-Agent"),
+    )
+    .expect("a client session");
     let mut s = ServerSession::new(
         RtspServerConfig::default()
             .with_session_ids(SessionIdSource::counter(0xABCD))

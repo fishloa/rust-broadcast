@@ -14,7 +14,8 @@ use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use bytes::Bytes;
 use parking_lot::Mutex;
@@ -29,6 +30,16 @@ const RECV_BUFFER_BYTES: usize = 1500;
 
 /// Datagrams one viewer may have queued before further ones are dropped.
 const SESSION_INBOUND_QUEUE: usize = 64;
+
+/// Wait before retrying `recv_from` after a failed receive. A persistent
+/// error (a closed descriptor, `ENOBUFS`) would otherwise busy-loop the task
+/// and starve every viewer on the same socket.
+const RECV_ERROR_BACKOFF: Duration = Duration::from_millis(10);
+
+/// Consecutive receive errors after which the loop gives the socket up and
+/// marks it dead, so the next `socket_for` binds a replacement rather than
+/// handing out a socket nothing reads.
+const RECV_ERRORS_BEFORE_DEAD: u32 = 10;
 
 type SessionKey = u64;
 
@@ -49,6 +60,8 @@ pub(crate) struct SharedSocket {
     local_addr: SocketAddr,
     router: Arc<Mutex<Router>>,
     next_key: AtomicU64,
+    /// Set when the receive loop ends; the next `socket_for` rebinds.
+    dead: Arc<AtomicBool>,
     #[cfg(test)]
     dropped: Arc<AtomicU64>,
     #[cfg(test)]
@@ -74,17 +87,20 @@ impl SharedSocket {
         }));
         let dropped = Arc::new(AtomicU64::new(0));
         let handled = Arc::new(AtomicU64::new(0));
+        let dead = Arc::new(AtomicBool::new(false));
         let task = tokio::spawn(receive_loop(
             Arc::clone(&socket),
             Arc::clone(&router),
             Arc::clone(&dropped),
             Arc::clone(&handled),
+            Arc::clone(&dead),
         ));
         Ok(Self {
             socket,
             local_addr,
             router,
             next_key: AtomicU64::new(0),
+            dead,
             #[cfg(test)]
             dropped,
             #[cfg(test)]
@@ -115,17 +131,19 @@ impl SharedSocket {
         self.handled.load(Ordering::Acquire)
     }
 
-    /// Route datagrams naming `local_ufrag` to a new viewer. `None` when
-    /// another viewer already owns that ufrag.
+    /// Route datagrams naming `local_ufrag` to a new viewer, authenticating
+    /// its connectivity checks with `local_pwd`. `None` when another viewer
+    /// already owns that ufrag.
     pub(crate) fn attach(
         self: &Arc<Self>,
         local_ufrag: &str,
+        local_pwd: &str,
     ) -> Option<(Attachment, mpsc::Receiver<Inbound>)> {
         let key = self.next_key.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel(SESSION_INBOUND_QUEUE);
         {
             let mut router = self.router.lock();
-            if !router.demux.register(local_ufrag, key) {
+            if !router.demux.register(local_ufrag, local_pwd, key) {
                 return None;
             }
             router.queues.insert(key, tx);
@@ -140,16 +158,49 @@ impl SharedSocket {
     }
 }
 
-async fn receive_loop(
-    socket: Arc<UdpSocket>,
+/// A datagram source: the real [`UdpSocket`], or a test's injected
+/// (always-failing) receiver.
+trait RecvFrom {
+    async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)>;
+}
+
+impl RecvFrom for Arc<UdpSocket> {
+    async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        (**self).recv_from(buf).await
+    }
+}
+
+async fn receive_loop<S: RecvFrom>(
+    source: S,
     router: Arc<Mutex<Router>>,
     dropped: Arc<AtomicU64>,
     handled: Arc<AtomicU64>,
+    dead: Arc<AtomicBool>,
 ) {
     let mut buf = [0u8; RECV_BUFFER_BYTES];
+    let mut consecutive_errors = 0u32;
     loop {
-        let Ok((len, peer)) = socket.recv_from(&mut buf).await else {
-            continue;
+        let (len, peer) = match source.recv_from(&mut buf).await {
+            Ok(ok) => {
+                consecutive_errors = 0;
+                ok
+            }
+            Err(e) => {
+                consecutive_errors = consecutive_errors.saturating_add(1);
+                if consecutive_errors == 1 {
+                    tracing::warn!(error = %e, "whep: media socket receive failed; backing off");
+                }
+                if consecutive_errors >= RECV_ERRORS_BEFORE_DEAD {
+                    tracing::warn!(
+                        error = %e,
+                        errors = consecutive_errors,
+                        "whep: media socket receive keeps failing; closing it"
+                    );
+                    break;
+                }
+                tokio::time::sleep(RECV_ERROR_BACKOFF).await;
+                continue;
+            }
         };
         let data = &buf[..len];
         let queue = {
@@ -170,6 +221,7 @@ async fn receive_loop(
         }
         handled.fetch_add(1, Ordering::Release);
     }
+    dead.store(true, Ordering::SeqCst);
 }
 
 /// A viewer's registration on a [`SharedSocket`]; dropping it unregisters the
@@ -181,14 +233,14 @@ pub(crate) struct Attachment {
 
 impl Attachment {
     /// Also route datagrams naming `local_ufrag` (the one an ICE restart
-    /// introduces) to this viewer.
-    pub(crate) fn register_ufrag(&self, local_ufrag: &str) {
+    /// introduces) to this viewer, authenticating its checks with `local_pwd`.
+    pub(crate) fn register_ufrag(&self, local_ufrag: &str, local_pwd: &str) {
         if !self
             .shared
             .router
             .lock()
             .demux
-            .register(local_ufrag, self.key)
+            .register(local_ufrag, local_pwd, self.key)
         {
             tracing::warn!("whep: restart ufrag already belongs to another viewer");
         }
@@ -233,7 +285,8 @@ impl SharedSockets {
     }
 
     /// A socket for `ip`: a newly bound one while the IP has fewer than the configured count,
-    /// otherwise the next in rotation.
+    /// otherwise the next in rotation. A rotation slot whose socket died (its
+    /// receive loop ended) is rebound here rather than handed out.
     pub(crate) fn socket_for(&self, ip: IpAddr) -> io::Result<Arc<SharedSocket>> {
         let mut sockets = self.sockets.lock();
         let entry = sockets.entry(ip).or_default();
@@ -242,9 +295,14 @@ impl SharedSockets {
             entry.shards.push(Arc::clone(&socket));
             return Ok(socket);
         }
-        let socket = Arc::clone(&entry.shards[entry.next % entry.shards.len()]);
+        let index = entry.next % entry.shards.len();
         entry.next = entry.next.wrapping_add(1);
-        Ok(socket)
+        if entry.shards[index].dead.load(Ordering::SeqCst) {
+            let socket = Arc::new(SharedSocket::bind(ip)?);
+            entry.shards[index] = Arc::clone(&socket);
+            return Ok(socket);
+        }
+        Ok(Arc::clone(&entry.shards[index]))
     }
 
     /// How many sockets are bound.
@@ -259,6 +317,7 @@ mod tests {
     use super::*;
     use rtc_stun::attributes::ATTR_USERNAME;
     use rtc_stun::fingerprint::FINGERPRINT;
+    use rtc_stun::integrity::MessageIntegrity;
     use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
     use rtc_stun::textattrs::TextAttribute;
     use std::net::Ipv4Addr;
@@ -267,8 +326,31 @@ mod tests {
     const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
     const DTLS_RECORD: [u8; 4] = [22, 254, 253, 0];
     const HANDLED_DEADLINE: Duration = Duration::from_secs(60);
+    /// The ice-pwd every viewer in these tests is attached with, so a check
+    /// naming any of them can carry a verifiable `MESSAGE-INTEGRITY`.
+    const PWD: &str = "whep-socket-ice-password-0";
 
     fn check(username: &str) -> Vec<u8> {
+        let crypto = rtc_stun::crypto::default_provider().expect("default crypto provider");
+        let mut message = Message::new();
+        message
+            .build(&[
+                Box::new(BINDING_REQUEST),
+                Box::new(TransactionId::new()),
+                Box::new(TextAttribute::new(ATTR_USERNAME, username.to_string())),
+                Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
+                    PWD.to_string(),
+                    crypto.crypto(),
+                )),
+                Box::new(FINGERPRINT),
+            ])
+            .expect("build a binding request");
+        message.raw
+    }
+
+    /// A check with no `MESSAGE-INTEGRITY`: any sender who knows a ufrag can
+    /// produce one, but only the peer knows the password.
+    fn bare_check(username: &str) -> Vec<u8> {
         let mut message = Message::new();
         message
             .build(&[
@@ -277,7 +359,7 @@ mod tests {
                 Box::new(TextAttribute::new(ATTR_USERNAME, username.to_string())),
                 Box::new(FINGERPRINT),
             ])
-            .expect("build a binding request");
+            .expect("build a bare binding request");
         message.raw
     }
 
@@ -312,7 +394,7 @@ mod tests {
             for i in 0..per_ip * ROUNDS {
                 let socket = sockets.socket_for(LOCALHOST).expect("socket");
                 *per_address.entry(socket.local_addr()).or_default() += 1;
-                attached.push(socket.attach(&format!("ufrag{i:04}")).expect("attach"));
+                attached.push(socket.attach(&format!("ufrag{i:04}"), PWD).expect("attach"));
             }
             assert_eq!(sockets.len(), per_ip, "bound sockets");
             assert_eq!(per_address.len(), per_ip, "distinct addresses");
@@ -331,8 +413,8 @@ mod tests {
     async fn datagrams_reach_only_the_viewer_that_owns_the_sender() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let (_a, mut a_rx) = shared.attach("aaaaaaaa").expect("attach a");
-        let (_b, mut b_rx) = shared.attach("bbbbbbbb").expect("attach b");
+        let (_a, mut a_rx) = shared.attach("aaaaaaaa", PWD).expect("attach a");
+        let (_b, mut b_rx) = shared.attach("bbbbbbbb", PWD).expect("attach b");
         let peer = client().await;
         peer.send_to(&check("bbbbbbbb:peer"), shared.local_addr())
             .await
@@ -355,7 +437,7 @@ mod tests {
     async fn a_spoofed_check_reaches_nobody() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let (_a, mut a_rx) = shared.attach("aaaaaaaa").expect("attach");
+        let (_a, mut a_rx) = shared.attach("aaaaaaaa", PWD).expect("attach");
         let peer = client().await;
         peer.send_to(&check("zzzzzzzz:peer"), shared.local_addr())
             .await
@@ -380,8 +462,8 @@ mod tests {
     async fn a_full_viewer_queue_drops_without_blocking_the_others() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let (_slow, _slow_rx) = shared.attach("aaaaaaaa").expect("attach slow");
-        let (_fast, mut fast_rx) = shared.attach("bbbbbbbb").expect("attach fast");
+        let (_slow, _slow_rx) = shared.attach("aaaaaaaa", PWD).expect("attach slow");
+        let (_fast, mut fast_rx) = shared.attach("bbbbbbbb", PWD).expect("attach fast");
         let slow_peer = client().await;
         let fast_peer = client().await;
         slow_peer
@@ -411,9 +493,91 @@ mod tests {
     async fn a_dropped_attachment_frees_its_ufrag() {
         let sockets = SharedSockets::default();
         let shared = sockets.socket_for(LOCALHOST).expect("socket");
-        let first = shared.attach("aaaaaaaa").expect("attach");
-        assert!(shared.attach("aaaaaaaa").is_none());
+        let first = shared.attach("aaaaaaaa", PWD).expect("attach");
+        assert!(shared.attach("aaaaaaaa", PWD).is_none());
         drop(first);
-        assert!(shared.attach("aaaaaaaa").is_some());
+        assert!(shared.attach("aaaaaaaa", PWD).is_some());
+    }
+
+    /// Audit 20 finding 40: a check naming a viewer's real ufrag reaches it
+    /// only when its `MESSAGE-INTEGRITY` verifies under that viewer's
+    /// password, so a ufrag-knowing sender cannot map an address to it.
+    #[tokio::test]
+    async fn a_check_without_the_password_reaches_nobody() {
+        let sockets = SharedSockets::default();
+        let shared = sockets.socket_for(LOCALHOST).expect("socket");
+        let (_a, mut a_rx) = shared.attach("aaaaaaaa", PWD).expect("attach a");
+        let spoof = client().await;
+        spoof
+            .send_to(&bare_check("aaaaaaaa:peer"), shared.local_addr())
+            .await
+            .expect("send bare check");
+        let peer = client().await;
+        peer.send_to(&check("aaaaaaaa:peer"), shared.local_addr())
+            .await
+            .expect("send authenticated check");
+        wait_handled(&shared, 2).await;
+        let got = a_rx.try_recv().expect("a has the authenticated check");
+        assert_eq!(got.peer, peer.local_addr().expect("addr"));
+        assert!(
+            a_rx.try_recv().is_err(),
+            "only the authenticated check arrived"
+        );
+    }
+
+    /// A receive error that never clears backs off rather than spinning, and
+    /// after the consecutive-error limit the loop ends and marks the socket
+    /// dead (audit 20 finding 23 — the old loop `continue`d with no bound).
+    /// MUTATION VERIFIED: restoring a bare `continue` makes this test's outer
+    /// timeout expire instead of the loop ending.
+    #[tokio::test]
+    async fn a_persistent_receive_error_backs_off_then_ends_the_loop() {
+        struct FailingSource;
+        impl RecvFrom for FailingSource {
+            async fn recv_from(&self, _buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+                Err(io::Error::from_raw_os_error(105 /* ENOBUFS */))
+            }
+        }
+
+        let router = Arc::new(Mutex::new(Router {
+            demux: SocketDemux::new(MAX_REMOTE_CANDIDATES),
+            queues: HashMap::new(),
+        }));
+        let dead = Arc::new(AtomicBool::new(false));
+        let started = tokio::time::Instant::now();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            receive_loop(
+                FailingSource,
+                router,
+                Arc::new(AtomicU64::new(0)),
+                Arc::new(AtomicU64::new(0)),
+                Arc::clone(&dead),
+            ),
+        )
+        .await
+        .expect("the loop ends after the consecutive-error limit");
+        assert!(
+            dead.load(Ordering::SeqCst),
+            "an ended loop marks the socket dead"
+        );
+        assert!(
+            started.elapsed() >= RECV_ERROR_BACKOFF * (RECV_ERRORS_BEFORE_DEAD - 1),
+            "it backed off between retries rather than spinning: {:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A socket whose receive loop ended is rebound by `socket_for`, so a new
+    /// viewer never attaches to a socket nothing reads.
+    #[tokio::test]
+    async fn a_dead_socket_is_rebound_on_the_next_socket_for() {
+        let sockets = SharedSockets::with_sockets_per_ip(1);
+        let first = sockets.socket_for(LOCALHOST).expect("socket");
+        first.dead.store(true, Ordering::SeqCst);
+        let second = sockets.socket_for(LOCALHOST).expect("rebound");
+        assert!(!Arc::ptr_eq(&first, &second), "the dead socket is replaced");
+        assert_ne!(first.local_addr(), second.local_addr());
+        assert_eq!(sockets.len(), 1, "the dead socket is replaced in place");
     }
 }

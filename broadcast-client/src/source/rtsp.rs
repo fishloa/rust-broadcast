@@ -1225,6 +1225,20 @@ impl RtspSource {
 
     fn fail_before_playing(&mut self, now: Timestamp) {
         self.attempt = self.attempt.saturating_add(1);
+        if self
+            .cfg
+            .max_reconnect_attempts
+            .is_some_and(|max| self.attempt > max)
+        {
+            self.phase = Phase::Closed;
+            self.events.push_back(Event::Error {
+                kind: crate::ErrorKind::ReconnectAttemptsExhausted {
+                    attempts: self.attempt,
+                },
+                fatal: true,
+            });
+            return;
+        }
         let wait = self.retry.on_disconnected(now);
         self.events.push_back(Event::Status(Status::Reconnecting {
             attempt: self.retry.attempts(),

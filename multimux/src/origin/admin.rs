@@ -17,6 +17,12 @@
 //! - **Opt-in.** [`crate::config::Config::admin`] defaults to `None`: no
 //!   admin field configured means no admin listener, no admin routes, at
 //!   all — `serve_with_admin` is only ever reached when it is `Some`.
+//! - **Filesystem confinement.** An admin add would otherwise let an
+//!   authenticated caller read any local file (`File` input, `@path` SDP) or
+//!   write anywhere (DVR `archive_root`). [`crate::config::AdminSpec::allowed_roots`]
+//!   confines all three when configured; empty leaves the admin caller's
+//!   filesystem access unconfined, which is the documented (not accidental)
+//!   default for a trusted operator.
 //!
 //! # Endpoints
 //!
@@ -98,7 +104,7 @@ use crate::output::{Output, OutputKind};
 use crate::registry::SchemeRegistry;
 use crate::route::RouteHandle;
 
-use super::{AppState, HttpLimits, SUPERVISOR_SHUTDOWN_GRACE, StreamRoute, build_output, router};
+use super::{AppState, HttpLimits, SUPERVISOR_SHUTDOWN_GRACE, StreamRoute, build_output};
 
 /// Realm the admin API's mandatory `Verifier` challenges with — distinct
 /// from [`super::OUTPUT_AUTH_REALM`] (which names the media output-auth
@@ -236,6 +242,16 @@ struct RegistryContext {
     scheme_registry: SchemeRegistry,
     http_limits: HttpLimits,
     output_auth: Option<Arc<Verifier>>,
+    /// The one concurrency budget every router rebuild layers: its ordinary
+    /// pool is shared across rebuilds (a new one per rebuild would double the
+    /// effective bound while in-flight permits from the old pool drain), while
+    /// [`super::router_with_budget`] re-keys only the per-route reload pools.
+    budget: super::limit::BudgetLimitLayer,
+    /// [`crate::config::AdminSpec::allowed_roots`], canonicalised once at
+    /// startup: every route this registry spawns (an admin add, a reload, or
+    /// a startup route) must keep its local paths inside these. Empty means
+    /// unconfined.
+    allowed_roots: Vec<std::path::PathBuf>,
 }
 
 /// A media [`Router`] and, for each route it serves, the token that fires when that route is
@@ -388,9 +404,10 @@ impl RouteRegistry {
             app_state = app_state.with_output_auth(Arc::clone(verifier));
         }
         // The concurrency bound (and the ops/reload budgets) is applied
-        // inside `router()` itself, so it is present here too.
+        // inside `router_with_budget` itself, over this registry's one shared
+        // budget, so the ordinary pool survives the rebuild.
         LiveRouter {
-            router: router(Arc::new(app_state)),
+            router: super::router_with_budget(Arc::new(app_state), self.ctx.budget.clone()),
             retire,
         }
     }
@@ -427,6 +444,7 @@ impl RouteRegistry {
         archive_floor: u32,
         continues: Option<&RouteHandle>,
     ) -> crate::Result<RouteRuntime> {
+        crate::config::check_route_paths(&self.ctx.allowed_roots, route)?;
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -1042,6 +1060,14 @@ async fn drain_route(runtime: RouteRuntime) {
     for h in runtime.push_handles {
         h.abort();
     }
+    // Release the route's catch-up index cache: nothing reads it any more,
+    // and each entry owns its whole parsed segment vector (audit 20 finding
+    // 24). A reload that keeps the route re-scans on the next request, which
+    // is what a missing cache already means.
+    if let Some(dvr) = runtime.store.dvr_config() {
+        let dir = crate::catchup::archive_dir(dvr, runtime.store.name());
+        crate::catchup::drop_route_cache(&dir);
+    }
 }
 
 /// One route's admin-visible status — `GET /admin/routes`/`GET
@@ -1450,6 +1476,15 @@ pub(crate) async fn serve_with_admin(
     };
 
     let http_limits = HttpLimits::from(&config);
+    let allowed_roots = match &config.admin {
+        Some(admin) => admin.resolved_allowed_roots()?,
+        None => Vec::new(),
+    };
+    let budget = super::limit::BudgetLimitLayer::new(
+        http_limits.max_concurrent_requests,
+        http_limits.max_blocking_reloads_per_route,
+        http_limits.queue_timeout,
+    );
     let base_config = Config {
         routes: Vec::new(),
         admin: None,
@@ -1460,6 +1495,8 @@ pub(crate) async fn serve_with_admin(
         scheme_registry: scheme_registry.clone(),
         http_limits,
         output_auth,
+        budget,
+        allowed_roots,
     };
 
     let registry = RouteRegistry::new(ctx, config_path);
@@ -1569,11 +1606,18 @@ mod tests {
     use crate::dvr::DvrConfig;
 
     fn ctx_for_tests() -> RegistryContext {
+        let http_limits = HttpLimits::default();
         RegistryContext {
             base_config: Config::default(),
             scheme_registry: SchemeRegistry::new(),
-            http_limits: HttpLimits::default(),
+            http_limits,
             output_auth: None,
+            budget: crate::origin::limit::BudgetLimitLayer::new(
+                http_limits.max_concurrent_requests,
+                http_limits.max_blocking_reloads_per_route,
+                http_limits.queue_timeout,
+            ),
+            allowed_roots: Vec::new(),
         }
     }
 
@@ -1630,6 +1674,163 @@ mod tests {
             audio_profiles: Vec::new(),
             subtitles: true,
         }
+    }
+
+    /// The admin API rejects a route whose local paths leave
+    /// `admin.allowed_roots` (audit 20 finding 64: an authenticated admin
+    /// could otherwise point a `File` input at any local file). MUTATION
+    /// VERIFIED: without `spawn_route`'s check the outside path is accepted.
+    #[tokio::test]
+    async fn add_route_rejects_a_path_outside_the_allowed_roots() {
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-allowed-roots-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("allowed root");
+        let mut ctx = ctx_for_tests();
+        ctx.allowed_roots = vec![root.canonicalize().expect("canonical root")];
+        let registry = RouteRegistry::new(ctx, None);
+
+        let mut outside = rtsp_route("cam", "rtsp://host/cam");
+        outside.input = InputSpec::File {
+            path: root.join("..").join("outside.ts").display().to_string(),
+            loop_file: true,
+        };
+        let err = registry
+            .add_route(outside)
+            .await
+            .expect_err("a path outside the allowed roots is rejected");
+        match err {
+            crate::MultimuxError::ConfigInvalid { field, .. } => {
+                assert_eq!(field, crate::ConfigField::RoutesInputPath);
+            }
+            other => panic!("not a ConfigInvalid: {other}"),
+        }
+
+        let clip = root.join("clip.ts");
+        std::fs::write(&clip, b"x").expect("clip inside the root");
+        let mut inside = rtsp_route("cam2", "rtsp://host/cam2");
+        inside.input = InputSpec::File {
+            path: clip.display().to_string(),
+            loop_file: true,
+        };
+        registry
+            .add_route(inside)
+            .await
+            .expect("a path inside the allowed roots is accepted");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Removing a route releases its catch-up index cache, whose entries hold
+    /// whole parsed segment vectors (audit 20 finding 24). MUTATION VERIFIED:
+    /// a no-op `drop_route_cache` leaves the entry resident and this fails.
+    #[tokio::test]
+    async fn removing_a_route_releases_its_catchup_index_cache() {
+        let root = std::env::temp_dir().join(format!(
+            "multimux-admin-catchup-cache-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let dir = root.join("cam");
+        std::fs::create_dir_all(&dir).expect("archive dir");
+        std::fs::write(dir.join("p0.idx"), b"[]").expect("period index");
+
+        let registry = RouteRegistry::new(ctx_for_tests(), None);
+        let mut route = rtsp_route("cam", "rtsp://host/cam");
+        route.dvr = DvrConfig {
+            enabled: true,
+            archive_root: root.to_string_lossy().into_owned(),
+            ..DvrConfig::default()
+        };
+        registry.add_route(route).await.expect("add");
+        let _ = crate::catchup::read_period_segments(&dir, 0);
+        assert_eq!(
+            crate::catchup::cached_index_entries(&dir),
+            1,
+            "the read populated the route's index cache"
+        );
+
+        registry.remove_route("cam").await.expect("remove");
+        assert_eq!(
+            crate::catchup::cached_index_entries(&dir),
+            0,
+            "a removed route's cache must not stay resident"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// A router rebuild keeps the same ordinary concurrency pool: a permit an
+    /// in-flight request still holds after a route add still bounds the new
+    /// router, so the effective limit does not double (audit 20 finding 63).
+    /// MUTATION VERIFIED: building a fresh `BudgetLimitLayer` per rebuild lets
+    /// the second request through with `200` and this fails.
+    #[tokio::test]
+    async fn a_router_rebuild_keeps_the_shared_concurrency_pool() {
+        use tower::ServiceExt as _;
+
+        const QUEUE: std::time::Duration = std::time::Duration::from_millis(20);
+        let limits = HttpLimits {
+            max_concurrent_requests: 1,
+            queue_timeout: QUEUE,
+            ..HttpLimits::default()
+        };
+        let budget = crate::origin::limit::BudgetLimitLayer::new(
+            limits.max_concurrent_requests,
+            limits.max_blocking_reloads_per_route,
+            limits.queue_timeout,
+        );
+        let watch = budget.clone();
+        let ctx = RegistryContext {
+            base_config: Config::default(),
+            scheme_registry: SchemeRegistry::new(),
+            http_limits: limits,
+            output_auth: None,
+            budget,
+            allowed_roots: Vec::new(),
+        };
+        let registry = RouteRegistry::new(ctx, None);
+        registry
+            .add_route(rtsp_route("a", "rtsp://host/a"))
+            .await
+            .expect("add a");
+        let req = || {
+            axum::http::Request::builder()
+                .uri("/zzz/not-a-route")
+                .body(axum::body::Body::empty())
+                .expect("request")
+        };
+        // Hold the only ordinary permit: the response body is never polled.
+        let held = registry
+            .live_router()
+            .router
+            .clone()
+            .oneshot(req())
+            .await
+            .expect("infallible");
+        assert_eq!(
+            watch.ordinary_available(),
+            0,
+            "the first request acquired the only permit"
+        );
+
+        registry
+            .add_route(rtsp_route("b", "rtsp://host/b"))
+            .await
+            .expect("add b rebuilds the router");
+        let shed = registry
+            .live_router()
+            .router
+            .clone()
+            .oneshot(req())
+            .await
+            .expect("infallible");
+        assert_eq!(
+            shed.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            "the permit held across the rebuild still bounds the new router"
+        );
+        drop(held);
     }
 
     /// A slow archive scan for route `a` holds only `a`'s name lock: an admin
