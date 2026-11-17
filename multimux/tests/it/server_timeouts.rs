@@ -492,6 +492,45 @@ async fn the_connection_cap_closes_over_cap_sockets_at_accept() {
     let _ = serve.await;
 }
 
+/// (d2) The per-PEER cap closes a second connection from one address at
+/// `accept` while the global cap still has room, so one host cannot take
+/// every connection slot (audit 20 finding 7).
+#[tokio::test]
+async fn the_per_ip_connection_cap_closes_one_hosts_extra_sockets() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let token = tokio_util::sync::CancellationToken::new();
+    let serve = tokio::spawn(multimux::origin::serve_hyper_util_with_per_ip_limit(
+        listener,
+        streaming_app(),
+        token.clone(),
+        Duration::from_secs(5),
+        Duration::from_secs(5),
+        8, // the global cap has room for both
+        1, // but this address may hold only one
+    ));
+
+    let mut held = TcpStream::connect(addr).await.unwrap();
+    held.write_all(b"GET /peer HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n")
+        .await
+        .unwrap();
+    // Let the server accept and count the first connection before dialling
+    // the second.
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut over = TcpStream::connect(addr).await.unwrap();
+    let mut buf = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(2), over.read(&mut buf)).await;
+    assert!(
+        matches!(read, Ok(Ok(0)) | Ok(Err(_))),
+        "the over-cap-per-host socket must be closed at accept, not held: {read:?}"
+    );
+
+    drop(held);
+    token.cancel();
+    let _ = serve.await;
+}
+
 /// An `accept()` error (EMFILE) does not end the listener: it backs off and
 /// the next real connection is still served.
 #[tokio::test]

@@ -4,6 +4,16 @@
 ### Fixed
 - The WHEP shared media socket registers each viewer's local `ice-pwd` with `webrtc_runtime::media::SocketDemux` (including after an ICE restart), so a STUN check that names a viewer's ufrag but does not carry the password no longer maps its source address to that viewer: unauthenticated traffic can neither fill a viewer's tuple budget nor steal an already-mapped address (audit 20 finding 40).
 
+### Fixed
+- The RTMP accept pump backs off 100 ms through a transient listen-socket error (a connection flood's `EMFILE`, a peer's pre-accept `ECONNABORTED`) instead of ending the route, and a pump that does end is marked dead so the next attempt rebinds rather than reusing a receiver nothing feeds (#2812).
+- The media listener caps concurrent connections per peer IP at `MAX_CONNECTIONS_PER_IP` (64) alongside the global cap, and fails a response body that produces no frame for `limit::IDLE_WRITE_TIMEOUT` (30 s), so one host cannot hold every connection slot and pool permit by never reading what it requested (#2818).
+- The Prometheus recorder runs `run_upkeep` every `prometheus::UPKEEP_INTERVAL` (5 s) on the caller's Tokio runtime, so histogram samples no longer accumulate until `/metrics` is scraped (#2833).
+- A WHEP media socket's receive loop backs off 10 ms on a failed `recv_from` and, after `RECV_ERRORS_BEFORE_DEAD` consecutive errors, ends and marks the socket dead; the next `socket_for` rebinds it, so a persistent receive error no longer busy-loops the task and starves every viewer on that socket (#2834).
+- A removed or replaced route's catch-up index cache is dropped (`catchup::drop_route_cache`, called from the admin drain) instead of staying resident for the process lifetime, and the cache is bounded by total cached segments (`INDEX_CACHE_MAX_SEGMENTS`), not just period-file count (#2835).
+- The admin registry keeps one `limit::BudgetLimitLayer` and passes it to every router rebuild, so the ordinary concurrency pool and its in-flight permits survive a route add/remove; only the per-route blocking-reload pools are rebuilt, instead of the effective bound doubling after each rebuild (#2874).
+- `GET /metrics` is behind `output_auth` when it is configured (the liveness/readiness probes stay open) and draws from the ordinary concurrency pool instead of being exempt, so an unauthenticated scrape can no longer read every route name and counter or bypass the limit (#2875).
+- `AdminSpec` gains `allowed_roots` (`with_allowed_roots`), confining a route's `File` path, `@path` SDP reference and DVR `archive_root` to those directories (canonicalised, existing roots); empty keeps the documented unrestricted default. Enforced for startup configs, `POST /admin/routes` and `POST /admin/reload` (#2875).
+
 ## [0.19.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).
 
