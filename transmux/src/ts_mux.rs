@@ -2118,6 +2118,92 @@ mod tests {
         assert_ne!(pkts[0][1] & 0x40, 0, "PUSI must be set on the first packet");
     }
 
+    /// The 184-byte PSI payload (§2.4.4.2) minus the PUSI packet's
+    /// `pointer_field`: a section of exactly this many bytes fills one packet.
+    const ONE_PACKET_SECTION: usize = 183;
+
+    /// A section of `len` bytes whose every byte is its own index, so a
+    /// mis-split shows up as a moved byte rather than as a same-value overwrite.
+    fn numbered_section(len: usize) -> alloc::vec::Vec<u8> {
+        (0..len).map(|i| i as u8).collect()
+    }
+
+    #[test]
+    fn packetise_section_fits_183_bytes_in_one_packet() {
+        let section = numbered_section(ONE_PACKET_SECTION);
+        let pkts = packetise_section(PAT_PID, &section, 0);
+        assert_eq!(pkts.len(), 1, "183 section bytes + pointer_field = 184");
+        assert_eq!(pkts[0][4], 0, "pointer_field is 0");
+        assert_eq!(&pkts[0][5..], &section[..], "the section follows whole");
+        assert_eq!(pkts[0][3] & 0x0F, 0, "first packet carries CC 0");
+    }
+
+    #[test]
+    fn packetise_section_needs_two_packets_at_184_bytes() {
+        let section = numbered_section(ONE_PACKET_SECTION + 1);
+        let pkts = packetise_section(PAT_PID, &section, 0);
+        assert_eq!(pkts.len(), 2, "one byte past the first packet's capacity");
+        assert_ne!(pkts[0][1] & 0x40, 0, "PUSI on the first packet");
+        assert_eq!(pkts[1][1] & 0x40, 0, "no PUSI on the continuation");
+        assert_eq!(&pkts[0][5..], &section[..ONE_PACKET_SECTION]);
+        // A continuation packet has no pointer_field, so its payload starts at
+        // the four-byte header.
+        assert_eq!(pkts[1][4], section[ONE_PACKET_SECTION]);
+        assert_eq!(
+            pkts[1][5..].iter().filter(|&&b| b == 0xFF).count(),
+            TS_PACKET_SIZE - 5,
+            "every byte after the last section byte is 0xFF stuffing"
+        );
+        assert_eq!(
+            [pkts[0][3] & 0x0F, pkts[1][3] & 0x0F],
+            [0, 1],
+            "the continuity counter increments (§2.4.3.3)"
+        );
+    }
+
+    #[test]
+    fn packetise_section_splits_at_184_byte_continuations() {
+        // 183 + 184 + 184 = 551 fills three packets exactly; one more byte
+        // needs a fourth, whose payload is a single section byte.
+        let full = numbered_section(ONE_PACKET_SECTION + 2 * (TS_PACKET_SIZE - 4));
+        let pkts = packetise_section(PAT_PID, &full, 0);
+        assert_eq!(pkts.len(), 3, "551 bytes is three packets");
+        assert_eq!(
+            &pkts[1][4..],
+            &full[ONE_PACKET_SECTION..ONE_PACKET_SECTION + 184]
+        );
+        assert_eq!(
+            pkts[2][4],
+            full[ONE_PACKET_SECTION + 184],
+            "the third packet starts at the 368th section byte"
+        );
+
+        let past = numbered_section(ONE_PACKET_SECTION + 2 * (TS_PACKET_SIZE - 4) + 1);
+        let pkts = packetise_section(PAT_PID, &past, 0);
+        assert_eq!(pkts.len(), 4, "one byte past three full packets");
+        assert_eq!(
+            [
+                pkts[0][3] & 0x0F,
+                pkts[1][3] & 0x0F,
+                pkts[2][3] & 0x0F,
+                pkts[3][3] & 0x0F
+            ],
+            [0, 1, 2, 3],
+            "continuity_counter runs 0,1,2,3"
+        );
+    }
+
+    #[test]
+    fn packetise_section_starts_from_the_given_counter() {
+        let section = numbered_section(ONE_PACKET_SECTION + 1);
+        let pkts = packetise_section(PAT_PID, &section, 15);
+        assert_eq!(
+            [pkts[0][3] & 0x0F, pkts[1][3] & 0x0F],
+            [15, 0],
+            "the counter wraps at 16 (§2.4.3.3)"
+        );
+    }
+
     /// `extension_descriptor_tag` of `MPEG-H_3dAudio_descriptor` (H.222.0
     /// Table 2-110), as it appears on the wire in these tests.
     const MPEGH_EXT_TAG_FOR_TEST: u8 = 0x08;
@@ -2270,6 +2356,32 @@ mod tests {
             merged, expected,
             "two extension_descriptor entries with distinct extension_descriptor_tag values \
              are not duplicates and must both survive"
+        );
+    }
+
+    #[test]
+    fn merge_es_info_descriptors_accepts_exactly_the_cap_and_refuses_more() {
+        // A 3-byte descriptor (tag 0x80, length 1, one body byte): 1365 of them
+        // are exactly the 4095-byte ES_info_length cap (§2.4.4.9), which a PMT
+        // may state but not exceed.
+        let descriptor = [0x80u8, 0x01, 0xAA];
+        let at_cap: alloc::vec::Vec<u8> =
+            core::iter::repeat_n(descriptor, 1365).flatten().collect();
+        assert_eq!(at_cap.len(), MAX_ES_INFO_LENGTH);
+        assert_eq!(
+            merge_es_info_descriptors(&at_cap, &[]).expect("exactly at the cap is legal"),
+            at_cap,
+            "a loop of exactly the cap is neither truncated nor refused"
+        );
+
+        let mut over = at_cap;
+        over.extend_from_slice(&descriptor);
+        assert!(
+            matches!(
+                merge_es_info_descriptors(&over, &[]),
+                Err(Error::BufferCapExceeded { .. })
+            ),
+            "one descriptor past the cap is an error, not a silent truncation"
         );
     }
 
