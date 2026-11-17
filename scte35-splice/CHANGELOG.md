@@ -6,6 +6,7 @@
 - Test-only: `splice_info_section()` packs a nonzero 12-bit `tier` beside a 12-bit `splice_command_length` above 255 and a `descriptor_loop_length` above 255, asserted on bytes 10-12, with `tier_is_ignored()` checked for both values, the encrypted-section packing exercised, and every truncation boundary refused (audit 21 finding 19, #2914).
 - Test-only: a `splice_schedule` with three events (program, cancelled, component mode) and a `splice_insert` in scheduled program mode are asserted byte-for-byte against hand-assembled Table 9/Table 10 bytes, including the per-event `event_id_compliance_flag` and every cursor offset, plus the two empty commands' parse behaviour (audit 21 finding 20, #2915).
 - Test-only: `SpliceTracker` closing one open event keeps the others in the eviction order (the open set still caps at `MAX_OPEN_EVENTS` after a close), a different section for the same event is a duplicate open while identical bytes are a retransmission, and the `NoCue`/`SpliceSanity` labels are pinned (audit 21 finding 22, #2917).
+- Test-only: the DVB-TA stream-event payload's optional sections are round-tripped and truncated at every byte, its declared lengths are checked at their bounds, the compact time-signal and splice-insert bit widths and `bit_err` mapping are pinned at their maxima and maxima plus one, and the DAS `descriptor_length` gate and nibble order are asserted (audit 21 finding 23, #2918).
 
 ## [7.0.0] - 2026-11-15
 ### Changed
