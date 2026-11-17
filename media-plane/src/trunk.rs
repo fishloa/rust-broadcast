@@ -7624,6 +7624,17 @@ mod tests {
             Some(SampleCursorItem::Degraded { skipped }) => assert_eq!(skipped, 6),
             other => panic!("expected Degraded {{ skipped: 6 }}, got {other:?}"),
         }
+        // The four still-resident entries arrive, then the cursor is caught up
+        // and reports nothing (not a zero-skip `Degraded`).
+        assert!(
+            matches!(cursor.poll(), Some(SampleCursorItem::Sparse { .. })),
+            "the first item after the loss report is data, not a zero-skip loss"
+        );
+        assert_eq!(drain(&mut cursor, 3).len(), 3);
+        assert!(
+            cursor.poll().is_none(),
+            "a sparse cursor that has consumed exactly to `base` is not lagging"
+        );
     }
 
     /// A cursor that fell behind the fixed handover backlog reports how many
@@ -7671,6 +7682,122 @@ mod tests {
             }
             other => panic!("expected HandoversLagged, got {other:?}"),
         }
+    }
+
+    /// The segment and event cursors count their loss from their own read
+    /// position too, and a pinning cursor reports the gap it missed.
+    #[test]
+    fn segment_and_event_lag_is_counted_from_the_cursor_position() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(4))
+                .with_part_capacity(nz(8)),
+        );
+        let pinning = trunk.pin_segments(ArchiveOverrun::Gap);
+        let writer = trunk.segment_writer().unwrap();
+        for seq in 1..=12u32 {
+            writer
+                .publish_segment(segment_entry(u8::try_from(seq).unwrap(), seq))
+                .expect("a Gap pin never blocks");
+        }
+        // Capacity 4, 12 published: base 8, and the pin read none of them.
+        let mut pinning = pinning;
+        match pinning.poll() {
+            Some(SegmentCursorItem::Gap { skipped }) => assert_eq!(skipped, 8),
+            other => panic!("expected Gap {{ skipped: 8 }}, got {other:?}"),
+        }
+
+        let sample_writer = trunk.writer().unwrap();
+        let mut events = trunk.subscribe_events();
+        for id in 0..4u32 {
+            sample_writer.publish_event(
+                basic_event(id),
+                EventAnchor::Media(MediaTime(u64::from(id))),
+            );
+        }
+        assert_eq!(
+            std::iter::from_fn(|| events.poll())
+                .filter(|i| matches!(i, EventCursorItem::Event(_)))
+                .count(),
+            4
+        );
+        for id in 4..12u32 {
+            sample_writer.publish_event(
+                basic_event(id),
+                EventAnchor::Media(MediaTime(u64::from(id))),
+            );
+        }
+        // The event ring holds 4 and 12 were published: base 8, the cursor was
+        // at 4, so it lost four — not twelve.
+        match events.poll() {
+            Some(EventCursorItem::Lagged { skipped }) => assert_eq!(skipped, 4),
+            other => panic!("expected Lagged {{ skipped: 4 }}, got {other:?}"),
+        }
+    }
+
+    /// An eviction marks a `Terminate` pin as terminated, so its cursor learns
+    /// the recording ended rather than silently losing segments.
+    #[test]
+    fn an_eviction_terminates_a_terminate_pinned_cursor() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.segment_writer().unwrap();
+        let mut pin = trunk.pin_segments(ArchiveOverrun::Terminate);
+        for seq in 1..=4u32 {
+            writer
+                .publish_segment(segment_entry(u8::try_from(seq).unwrap(), seq))
+                .unwrap();
+        }
+        // The pin has read nothing, so the fifth segment's eviction terminates
+        // it instead of gapping or stalling.
+        writer
+            .publish_segment(segment_entry(5, 5))
+            .expect("a Terminate pin never blocks ingest");
+        assert!(matches!(pin.poll(), Some(SegmentCursorItem::Terminated)));
+        // And it is gone: the next segment publishes without it.
+        writer
+            .publish_segment(segment_entry(6, 6))
+            .expect("the terminated pin is dropped");
+    }
+
+    /// A cursor that has read two segments loses exactly what it had not read.
+    #[test]
+    fn segment_lag_from_a_non_zero_position() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.segment_writer().unwrap();
+        let mut cursor = trunk.subscribe_segments();
+        for seq in 1..=4u32 {
+            writer
+                .publish_segment(segment_entry(u8::try_from(seq).unwrap(), seq))
+                .unwrap();
+        }
+        assert_eq!(drain_segments(&mut cursor, 2).len(), 2, "read two");
+        for seq in 5..=12u32 {
+            writer
+                .publish_segment(segment_entry(u8::try_from(seq).unwrap(), seq))
+                .unwrap();
+        }
+        match cursor.poll() {
+            Some(SegmentCursorItem::Lagged { skipped }) => assert_eq!(skipped, 6),
+            other => panic!("expected Lagged {{ skipped: 6 }}, got {other:?}"),
+        }
+        assert!(matches!(cursor.poll(), Some(SegmentCursorItem::Segment(_))));
     }
 
     /// `expire_stalled_pins` terminates exactly the `StallIngest` pins that
@@ -7829,6 +7956,31 @@ mod tests {
             trunk.open_segment(),
             None,
             "once the segment closes its parts are no longer open"
+        );
+    }
+
+    /// The open segment is the **lowest** one above the last closed segment: a
+    /// part belonging to a segment that has already closed is not it.
+    #[test]
+    fn the_open_segment_is_the_lowest_above_the_last_closed_one() {
+        let trunk = Trunk::new(
+            TrunkConfig::default()
+                .with_timed_capacity(nz(4))
+                .with_sparse_capacity(nz(4))
+                .with_segment_capacity(nz(4))
+                .with_event_capacity(nz(8))
+                .with_part_capacity(nz(8)),
+        );
+        let writer = trunk.segment_writer().unwrap();
+        writer.publish_part(part_entry(1, 1, 0));
+        writer.publish_part(part_entry(2, 4, 0));
+        writer
+            .publish_segment(segment_entry(1, 1))
+            .expect("close segment 1");
+        assert_eq!(
+            trunk.open_segment(),
+            Some(SegmentSeq::new(4)),
+            "segment 1's own part is closed; segment 4 is the open one"
         );
     }
 }
