@@ -112,7 +112,7 @@ fn ensure_playlist_reload_is_true_exactly_when_no_reload_is_queued() {
     );
     assert!(matches!(client.poll(), Some(Action::FetchPlaylist(_))));
     assert!(
-        matches!(client.poll(), None),
+        client.poll().is_none(),
         "ensure_playlist_reload queued exactly one fetch"
     );
 }

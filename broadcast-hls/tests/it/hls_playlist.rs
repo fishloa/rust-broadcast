@@ -884,11 +884,10 @@ fn group_references_and_segment_scoping_are_pinned() {
         m.variants[0].closed_captions,
         Some(ClosedCaptionsRef::Group("cc".to_string()))
     );
-    assert_eq!(
-        AttrValue::for_attr("CLOSED-CAPTIONS", "NONE")
+    assert!(
+        !AttrValue::for_attr("CLOSED-CAPTIONS", "NONE")
             .unwrap()
             .is_quoted(),
-        false,
         "CLOSED-CAPTIONS=NONE is a bare enumerated-string (§4.4.6.2.1)"
     );
     assert!(
