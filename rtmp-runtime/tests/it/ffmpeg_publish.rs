@@ -18,14 +18,11 @@ const FLV_FILE_HEADER_LEN: usize = 13;
 
 #[tokio::test]
 async fn ffmpeg_publish_delivers_audio_and_video() {
-    if std::process::Command::new("ffmpeg")
-        .arg("-version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_err()
-    {
-        eprintln!("skipping ffmpeg_publish_delivers_audio_and_video: ffmpeg not on PATH");
+    if !test_fixtures::process::require_tool(
+        "ffmpeg",
+        "-version",
+        test_fixtures::process::REQUIRE_EXTERNAL_TOOLS,
+    ) {
         return;
     }
 

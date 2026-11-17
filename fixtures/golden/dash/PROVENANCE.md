@@ -201,3 +201,21 @@ WebVTT in ISO BMFF). `dvb-hdr10plus` is the real HEVC HDR10+ stream
 profile, the one input whose video track carries the HDR10+ flag, recorded from
 the current code at capture commit `65ec7ed6a` (the `dvb-hdr` case above is the
 AVC fixture and has no HDR property).
+
+## `mpd-parse.golden`
+
+`Debug` dump of `Mpd::parse_with` over every committed MPD fixture — the
+public corpus always, the private rows only when the private checkout is
+present — taken before the model moved here from `dash-runtime`.
+Regenerate with `REGENERATE_MPD_PARSE_GOLDEN=1`.
+
+### Independent oracle
+
+The same corpus is validated against the ISO/IEC 23009-1 ed6 schema with
+`xmllint --schema` (`broadcast-dash/tests/it/mpd_xsd.rs`, through
+`test_fixtures::process::xsd`), so a fixture our parse silently mis-shapes is
+still caught by a third-party validator. The `Debug` dump itself has no
+third-party equivalent: it pins the model's shape, not its correctness.
+
+`REGENERATE_MPD_PARSE_GOLDEN` refuses to write when `CI` is set, so a re-record
+cannot ride along in a CI run.

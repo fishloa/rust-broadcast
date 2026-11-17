@@ -111,6 +111,85 @@ pub fn tool_available_lenient(tool: &str, arg: &str) -> bool {
         .is_ok_and(|o| o.status.success() || !o.stdout.is_empty() || !o.stderr.is_empty())
 }
 
+/// Set (to any value) to make every [`require_tool`] gate a hard failure on a
+/// host without the oracle, instead of a loud skip. CI jobs that install the
+/// tools set it, so a green run there means the oracle actually ran.
+pub const REQUIRE_EXTERNAL_TOOLS: &str = "REQUIRE_EXTERNAL_TOOLS";
+
+/// The one gate for tests whose coverage comes from an external oracle binary
+/// (`ffprobe`, `MP4Box`, `mp4dump`, `ffmpeg`, …).
+///
+/// Returns `true` when `tool arg` runs, so the caller proceeds. When it is
+/// absent the result is `false` and the caller returns, printing why — UNLESS
+/// `env_name` or [`REQUIRE_EXTERNAL_TOOLS`] is set, in which case this panics:
+/// an oracle test that passes without its oracle is not coverage, and these are
+/// the tests meant to catch a misreading of a spec shared by our code and our
+/// own checker.
+///
+/// # Panics
+/// If the tool is absent and a require switch is set.
+#[must_use]
+pub fn require_tool(tool: &str, arg: &str, env_name: &str) -> bool {
+    let present = tool_available(tool, arg);
+    require_tool_probed(present, tool, env_name);
+    present
+}
+
+/// [`require_tool`] for a tool whose version probe exits non-zero (see
+/// [`tool_available_lenient`]).
+///
+/// # Panics
+/// If the tool is absent and a require switch is set.
+#[must_use]
+pub fn require_tool_lenient(tool: &str, arg: &str, env_name: &str) -> bool {
+    let present = tool_available_lenient(tool, arg);
+    require_tool_probed(present, tool, env_name);
+    present
+}
+
+/// The gate itself: returns when `present`, panics when the tool is absent and
+/// `env_name` or [`REQUIRE_EXTERNAL_TOOLS`] is set, and otherwise prints why the
+/// caller is about to skip.
+///
+/// Takes the caller's own presence probe so a test that probes through
+/// [`output_bounded`] keeps its hang guard.
+///
+/// # Panics
+/// If `present` is false and a require switch is set.
+pub fn require_tool_probed(present: bool, tool: &str, env_name: &str) {
+    gate(
+        present,
+        tool,
+        env_name,
+        std::env::var_os(env_name).is_some(),
+        std::env::var_os(REQUIRE_EXTERNAL_TOOLS).is_some(),
+    );
+}
+
+/// [`require_tool_probed`] with both switches passed in, so every arm is
+/// testable without mutating process state.
+fn gate(present: bool, tool: &str, env_name: &str, site_required: bool, globally_required: bool) {
+    if present {
+        return;
+    }
+    if site_required || globally_required {
+        let switch = if site_required {
+            env_name
+        } else {
+            REQUIRE_EXTERNAL_TOOLS
+        };
+        panic!("external oracle `{tool}` is not on PATH and {switch} is set");
+    }
+    let switch = if env_name == REQUIRE_EXTERNAL_TOOLS {
+        REQUIRE_EXTERNAL_TOOLS.to_string()
+    } else {
+        format!("{env_name}=1 or {REQUIRE_EXTERNAL_TOOLS}=1")
+    };
+    eprintln!(
+        "SKIP: `{tool}` is not on PATH, so this oracle did NOT run (set {switch} to fail instead)"
+    );
+}
+
 /// Locate `bin` on `PATH`, returning its full path.
 #[must_use]
 pub fn which(bin: &str) -> Option<PathBuf> {
@@ -175,4 +254,44 @@ pub fn free_tcp_port() -> u16 {
         .local_addr()
         .expect("local addr")
         .port()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{REQUIRE_EXTERNAL_TOOLS, gate};
+
+    const SITE: &str = "SOME_TOOL_REQUIRE";
+
+    #[test]
+    fn a_present_tool_is_never_a_failure() {
+        gate(true, "ffprobe", SITE, false, false);
+        gate(true, "ffprobe", SITE, true, false);
+        gate(true, "ffprobe", SITE, false, true);
+    }
+
+    #[test]
+    fn an_absent_tool_returns_an_unrequired_skip() {
+        gate(false, "ffprobe", SITE, false, false);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "external oracle `ffprobe` is not on PATH and SOME_TOOL_REQUIRE is set"
+    )]
+    fn the_site_switch_turns_an_absent_tool_into_a_failure() {
+        gate(false, "ffprobe", SITE, true, false);
+    }
+
+    #[test]
+    #[should_panic(
+        expected = "external oracle `MP4Box` is not on PATH and REQUIRE_EXTERNAL_TOOLS is set"
+    )]
+    fn the_global_switch_turns_an_absent_tool_into_a_failure() {
+        gate(false, "MP4Box", SITE, false, true);
+    }
+
+    #[test]
+    fn the_global_switch_is_named_require_external_tools() {
+        assert_eq!(REQUIRE_EXTERNAL_TOOLS, "REQUIRE_EXTERNAL_TOOLS");
+    }
 }
