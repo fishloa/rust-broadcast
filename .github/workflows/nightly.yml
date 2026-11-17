@@ -66,3 +66,14 @@ jobs:
         run: python3 fuzz/seed-corpus.py
       - name: Fuzz this shard's targets (60 s each)
         run: tools/fuzz-smoke.sh ${{ matrix.shard }} 4 60
+
+  deny:
+    name: cargo deny (advisories, bans, licenses, sources)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          command: check
+          arguments: --locked
