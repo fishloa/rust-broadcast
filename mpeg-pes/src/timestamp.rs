@@ -245,4 +245,17 @@ mod tests {
             assert_eq!(decoded, dts, "val={val:#x}");
         }
     }
+
+    /// A four-byte slice is rejected before any marker bit is read.
+    #[test]
+    fn a_short_field_reports_the_five_bytes_it_needs() {
+        let short = [0x21u8, 0x00, 0x01, 0x01];
+        match read(&short, 0b0010, "PTS") {
+            Err(crate::error::Error::BufferTooShort(e)) => {
+                assert_eq!(e.need, 5);
+                assert_eq!(e.have, 4);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
 }
