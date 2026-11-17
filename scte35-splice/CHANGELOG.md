@@ -4,6 +4,7 @@
 ### Changed
 - Test-only: a segmentation descriptor carrying all-32-bit `segmentation_event_id`, a 40-bit `segmentation_duration`, a two-entry MID() UPID, two distinct components and the sub-segment appendix is asserted byte-for-byte against hand-assembled Table 20 bytes, each optional section's truncation is a typed error, and the MID() walker's truncated-header and over-long-entry cases are pinned (audit 21 finding 18, #2913).
 - Test-only: `splice_info_section()` packs a nonzero 12-bit `tier` beside a 12-bit `splice_command_length` above 255 and a `descriptor_loop_length` above 255, asserted on bytes 10-12, with `tier_is_ignored()` checked for both values, the encrypted-section packing exercised, and every truncation boundary refused (audit 21 finding 19, #2914).
+- Test-only: a `splice_schedule` with three events (program, cancelled, component mode) and a `splice_insert` in scheduled program mode are asserted byte-for-byte against hand-assembled Table 9/Table 10 bytes, including the per-event `event_id_compliance_flag` and every cursor offset, plus the two empty commands' parse behaviour (audit 21 finding 20, #2915).
 
 ## [7.0.0] - 2026-11-15
 ### Changed
