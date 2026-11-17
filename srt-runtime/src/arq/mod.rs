@@ -138,4 +138,29 @@ mod tests {
             "the wrap is modulo 2^32, not a clamp"
         );
     }
+
+    /// `NAKInterval = max((RTT + 4*RTTVar) / 2, 20 ms)` (rule 22, L2953-2960).
+    #[test]
+    fn nak_interval_follows_the_rule_22_formula() {
+        assert_eq!(
+            nak_interval(Duration::from_millis(100), Duration::from_millis(25)),
+            Duration::from_millis(100),
+            "(100 + 4*25) / 2 = 100"
+        );
+        assert_eq!(
+            nak_interval(Duration::from_millis(10), Duration::from_millis(2)),
+            Duration::from_millis(20),
+            "(10 + 4*2) / 2 = 9 is below the 20 ms floor"
+        );
+        assert_eq!(
+            nak_interval(Duration::from_millis(40), Duration::ZERO),
+            Duration::from_millis(20),
+            "40 / 2 = 20 is exactly the floor"
+        );
+        assert_eq!(
+            nak_interval(Duration::from_millis(50), Duration::ZERO),
+            Duration::from_millis(25),
+            "above the floor the halved sum is used as-is"
+        );
+    }
 }

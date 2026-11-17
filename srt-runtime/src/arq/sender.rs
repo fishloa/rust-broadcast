@@ -566,7 +566,10 @@ mod tests {
         };
         let reply = s.on_ack(&ack, Timestamp::from_millis(1)).unwrap();
         assert_eq!(s.buffered_count(), 1); // seq 2 remains (not < last_ack_seq)
-        assert!(s.rtt() < Duration::from_millis(100)); // moved from the 100ms init toward 20ms
+        // rule 29: (7*100 000 + 20 000) / 8 = 90 000 us.
+        assert_eq!(s.rtt(), Duration::from_micros(90_000));
+        // rule 30: (3*50 000 + |100 000 - 20 000|) / 4 = 57 500 us.
+        assert_eq!(s.rtt_var(), Duration::from_micros(57_500));
 
         let ControlPacket::AckAck(ackack) = ControlPacket::parse(&reply).unwrap() else {
             panic!("expected ACKACK");
@@ -713,6 +716,27 @@ mod tests {
             .map(|(seq, _)| *seq)
             .collect();
         assert_eq!(seqs, alloc::vec![3, 4]);
+    }
+
+    /// One NAK may name at most `MAX_NAK_SEQS_PER_PACKET` buffered packets:
+    /// the per-NAK work budget, decremented per single entry, runs out before
+    /// the (unbounded) loss list does.
+    #[test]
+    fn on_nak_stops_at_the_per_packet_work_budget() {
+        let mut s = Sender::new(PEER);
+        let total = MAX_NAK_SEQS_PER_PACKET + 1000;
+        for q in 0..u32::try_from(total).expect("fits") {
+            s.on_data(q, q, b"x", Timestamp::ZERO).unwrap();
+        }
+        let entries: Vec<LossListEntry> = (0..total)
+            .map(|q| LossListEntry::Single(sn(u32::try_from(q).expect("fits"))))
+            .collect();
+        s.on_nak(&NakPacket {
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(PEER),
+            entries,
+        });
+        assert_eq!(s.pending_retransmit_count(), MAX_NAK_SEQS_PER_PACKET);
     }
 
     /// Wire fields are 31 / 26 bits: wider inputs are an error (nothing is
