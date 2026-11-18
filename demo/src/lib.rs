@@ -38,7 +38,6 @@ use mpeg_ts::pid::well_known as wk;
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
-use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
@@ -974,6 +973,7 @@ pub fn analyze(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use scte35_splice::descriptor_loop::SpliceDescriptorLoop;
 
     fn fixture(name: &str) -> Vec<u8> {
         test_fixtures::read(&format!("ts/{name}"))
