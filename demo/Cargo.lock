@@ -10,14 +10,29 @@ checksum = "fc0fc36d7440d015b45468ba08a21e80e056ebbd014c611c6298bb7503e04bd1"
 dependencies = [
  "cipher",
  "cpubits",
- "cpufeatures",
+ "cpufeatures 0.3.1",
 ]
+
+[[package]]
+name = "base64"
+version = "0.22.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
 name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
+name = "block-buffer"
+version = "0.10.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3078c7629b62d3f0439517fa394996acacc5cbc91c5a20d8c658e77abd503a71"
+dependencies = [
+ "generic-array",
+]
 
 [[package]]
 name = "block-buffer"
@@ -30,9 +45,9 @@ dependencies = [
 
 [[package]]
 name = "broadcast-common"
-version = "12.0.0"
+version = "13.1.0"
 dependencies = [
- "base64",
+ "base64 0.23.1",
  "erased-serde",
  "hex",
  "iso-639",
@@ -43,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-dash"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -53,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.7.0"
+version = "0.8.1"
 dependencies = [
  "broadcast-common",
  "jiff",
@@ -63,7 +78,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-smooth"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
 ]
@@ -100,7 +115,7 @@ dependencies = [
 
 [[package]]
 name = "cc-data"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -119,8 +134,8 @@ version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8cf2a2c93cd704877c0858356ed03480ff301ee950b43f1cbe4573b088bfa6c"
 dependencies = [
- "block-buffer",
- "crypto-common",
+ "block-buffer 0.12.1",
+ "crypto-common 0.2.2",
  "inout",
 ]
 
@@ -138,11 +153,30 @@ checksum = "15b85f9c39137c3a891689859392b1bd49812121d0d61c9caf00d46ed5ce06ae"
 
 [[package]]
 name = "cpufeatures"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59ed5838eebb26a2bb2e58f6d5b5316989ae9d08bab10e0e6d103e656d1b0280"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "cpufeatures"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ca28b0ae3115b884660db4118d803791fd6756b6e88f39c0f3f7859060d7566"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "crypto-common"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
+dependencies = [
+ "generic-array",
+ "typenum",
 ]
 
 [[package]]
@@ -164,8 +198,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "digest"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
+dependencies = [
+ "block-buffer 0.10.4",
+ "crypto-common 0.1.7",
+]
+
+[[package]]
 name = "dvb-conformance"
-version = "14.0.0"
+version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -193,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "14.0.0"
+version = "15.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -207,7 +251,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-subtitle"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -252,16 +296,66 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
+name = "generic-array"
+version = "0.14.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
+dependencies = [
+ "typenum",
+ "version_check",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
+name = "headers"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fc2700e3fe555c3310aa7286cac6167449f2c87e0eb58769c9208a1c58a1d106"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "headers-core",
+ "http",
+ "httpdate",
+ "mime",
+ "sha1",
+]
+
+[[package]]
+name = "headers-core"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54b4a22553d4242c49fddb9ba998a99962b5cc6f22cb5a3482bec22522403ce4"
+dependencies = [
+ "http",
+]
+
+[[package]]
 name = "hex"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "http"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "918d3568bebf352712bc2ef3d46a8bcf1a75b373be6539de198e9105cbbf9ce0"
+dependencies = [
+ "bytes",
+ "itoa",
+]
+
+[[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
 
 [[package]]
 name = "hybrid-array"
@@ -357,6 +451,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
+name = "mime"
+version = "0.3.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5848f5a9e8117cf94f2f90faac24a87ff81600ff8628c1e3deaab572e76bfa1"
+
+[[package]]
 name = "mio"
 version = "1.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -369,7 +469,7 @@ dependencies = [
 
 [[package]]
 name = "mp4-emsg"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -378,7 +478,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-pes"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -387,7 +487,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ps"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "mpeg-pes",
@@ -397,7 +497,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg-ts"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -492,7 +592,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.10.0"
+version = "0.11.1"
 dependencies = [
  "broadcast-common",
  "subtle",
@@ -501,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "rtp-packet"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -522,7 +622,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "scte35-splice"
-version = "6.0.0"
+version = "7.0.0"
 dependencies = [
  "broadcast-common",
  "mpeg-ts",
@@ -586,6 +686,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1"
+version = "0.10.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a978451301f4db1d02937a4ab3ccce137717b81826e79b7d49ffe3244a13c3b8"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.2.17",
+ "digest",
+]
+
+[[package]]
 name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -633,7 +744,9 @@ dependencies = [
 name = "test-fixtures"
 version = "0.1.0"
 dependencies = [
+ "headers",
  "hex",
+ "http",
  "serde_json",
  "tokio",
  "wait-timeout",
@@ -704,10 +817,10 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.31.0"
+version = "0.32.1"
 dependencies = [
  "aes",
- "base64",
+ "base64 0.23.1",
  "broadcast-common",
  "broadcast-dash",
  "broadcast-hls",
@@ -751,6 +864,12 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "version_check"
+version = "0.9.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "wait-timeout"

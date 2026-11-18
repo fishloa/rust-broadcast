@@ -42,7 +42,7 @@ use serde::Serialize;
 /// on (ETSI EN 300 743 §4.2, via ISO/IEC 13818-1 Table 2-22). The same PID
 /// commonly multiplexes `padding_stream` (0xBE) PES too, which are not
 /// subtitle data and must be filtered out by `stream_id` + `data_identifier`.
-const PRIVATE_STREAM_1: StreamId = StreamId(0xBD);
+const PRIVATE_STREAM_1: StreamId = StreamId::new(0xBD);
 
 /// Defensive cap on a single decoded pixel row. Real subtitle regions are
 /// bounded by the spec to at most 720x576 (or the DDS display size); this
