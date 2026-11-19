@@ -2012,6 +2012,16 @@ mod live_decision_tests {
             0,
             "announcing again while not ready changes nothing"
         );
+        c.live = Some(Live::new(now));
+        c.announce_clock();
+        assert_eq!(
+            c.outputs
+                .iter()
+                .filter(|o| matches!(o, Output::ClockSynced { .. }))
+                .count(),
+            0,
+            "a live presentation whose ladder has not finished announces nothing"
+        );
     }
 
     #[test]
@@ -2334,9 +2344,29 @@ mod live_decision_tests {
         let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
         let class = c.expired_segment(mono(0), id, utc);
         assert_eq!(class, FailureClass::Expired);
-        let (next, joined, _, _, _) = lane_state(&c);
+        let (next, joined, _, last, _) = lane_state(&c);
         assert_eq!(next, 3, "the cursor is not moved backwards");
         assert!(joined, "nothing was skipped");
+        assert_eq!(last, None, "no media time is recorded");
+        assert!(
+            c.periods[0].lanes[0].queue.is_empty(),
+            "no gap marker is queued"
+        );
+    }
+
+    #[test]
+    fn an_expired_response_past_the_next_segment_but_rejoining_does_not_skip() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 5, 2);
+        let id = seg_id(&c);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        let class = c.expired_segment(mono(0), id, utc);
+        assert_eq!(class, FailureClass::Expired);
+        let (next, joined, run, last, _) = lane_state(&c);
+        assert_eq!(next, 5, "the cursor is not moved");
+        assert!(!joined, "the lane rejoins");
+        assert_eq!(run, 0);
+        assert_eq!(last, None);
     }
 
     #[test]
@@ -2412,6 +2442,32 @@ mod live_decision_tests {
         );
     }
 
+    fn two_lane_mpd(publish: &str) -> String {
+        format!(
+            r#"<?xml version="1.0"?><MPD xmlns="{NS}" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" publishTime="2026-01-01T00:00:{publish}Z" minimumUpdatePeriod="PT2S" minBufferTime="PT2S"><Period id="P0" start="PT0S"><AdaptationSet id="0" contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1000" duration="2000" initialization="v-init.mp4" media="v-$Number$.m4s"/><Representation id="V" bandwidth="2" codecs="avc1.4d400d"/></AdaptationSet><AdaptationSet id="1" contentType="audio" mimeType="audio/mp4" lang="en"><SegmentTemplate timescale="1000" duration="2000" initialization="a-init.mp4" media="a-$Number$.m4s"/><Representation id="A" bandwidth="1" codecs="mp4a.40.2"/></AdaptationSet></Period></MPD>"#
+        )
+    }
+
+    #[test]
+    fn a_refresh_keeps_the_audio_rendition_as_the_chosen_one() {
+        let mut c = fresh(mono(0), &two_lane_mpd("00"));
+        let new_text = two_lane_mpd("01");
+        let new = Mpd::parse(new_text.as_bytes()).expect("the refreshed MPD parses");
+        let meta = ResponseMeta::new(mono(0), mono(10));
+        c.refresh_mpd(mono(1_000), new, new_text.as_bytes(), &meta);
+        let m = c.manifest(0);
+        assert_eq!(
+            m.chosen_audio,
+            Some(0),
+            "audio is still the chosen rendition"
+        );
+        assert_eq!(
+            m.variants[0].audio_group.as_deref(),
+            Some("1"),
+            "the audio group on the video variant names the audio set"
+        );
+    }
+
     #[test]
     fn a_closed_period_stays_open_for_the_grace_after_its_end() {
         let text = format!(
@@ -2442,6 +2498,85 @@ mod live_decision_tests {
         assert!(
             !c.period_open(0, mono(1_000)),
             "the grace (4 s) after a 10 s Period is over"
+        );
+    }
+
+    #[test]
+    fn retry_mpd_does_not_set_the_want_flag_while_a_fetch_is_in_flight() {
+        let now = mono(0);
+        let mut c = fresh(now, &single_period(true));
+        c.mpd_inflight = true;
+        if let Some(live) = c.live.as_mut() {
+            live.refresh.awaiting_retry = true;
+        }
+        c.retry_mpd(now);
+        assert!(!c.want_mpd, "the in-flight MPD already answers the retry");
+    }
+
+    #[test]
+    fn a_dynamic_mpd_without_low_latency_gets_no_notice() {
+        let now = mono(0);
+        let c = fresh(now, &single_period(true));
+        assert_eq!(
+            c.outputs
+                .iter()
+                .filter(|o| matches!(o, Output::Notice(Notice::LowLatencyIgnored)))
+                .count(),
+            0,
+            "no availabilityTimeOffset means no low-latency notice"
+        );
+        let ll = dynamic(
+            r#"minimumUpdatePeriod="PT2S""#,
+            r#"<BaseURL availabilityTimeOffset="1.0">http://dash.test/live/</BaseURL><Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" initialization="seg/init.mp4" media="seg/$Number$.m4s"/>
+               <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+        );
+        let c = fresh(now, &ll);
+        assert_eq!(
+            c.outputs
+                .iter()
+                .filter(|o| matches!(o, Output::Notice(Notice::LowLatencyIgnored)))
+                .count(),
+            1,
+            "a low-latency MPD is noticed once"
+        );
+    }
+
+    #[test]
+    fn fill_queue_with_no_period_returns_instead_of_indexing() {
+        let now = mono(0);
+        let mut c = fresh(now, &single_period(true));
+        c.periods.clear();
+        c.issue = 0;
+        c.rep_loc.clear();
+        c.queue.clear();
+        c.fill_queue(now);
+        assert!(c.queue.is_empty());
+    }
+
+    #[test]
+    fn two_lanes_with_equal_starts_issue_the_first_lane_first() {
+        let text = format!(
+            r#"<?xml version="1.0"?><MPD xmlns="{NS}" type="static" mediaPresentationDuration="PT4S" minBufferTime="PT2S"><Period id="P0" start="PT0S"><AdaptationSet id="0" contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1000" duration="2000" initialization="v-init.mp4" media="v-$Number$.m4s"/><Representation id="V" bandwidth="2" codecs="avc1.4d400d"/></AdaptationSet><AdaptationSet id="1" contentType="audio" mimeType="audio/mp4" lang="en"><SegmentTemplate timescale="1000" duration="2000" initialization="a-init.mp4" media="a-$Number$.m4s"/><Representation id="A" bandwidth="1" codecs="mp4a.40.2"/></AdaptationSet></Period></MPD>"#
+        );
+        let now = mono(0);
+        let mut c = fresh(now, &text);
+        c.queue.clear();
+        for lane in &mut c.periods[0].lanes {
+            lane.queue.clear();
+            for rep in &mut lane.reps {
+                rep.next_issue = 0;
+            }
+        }
+        c.periods[0].issue_done = false;
+        c.fill_queue(now);
+        let video = c.periods[0].lanes[0].reps.last().map(|r| r.id);
+        let first = c.queue.front().copied();
+        assert!(first.is_some(), "the fill issues at least one segment");
+        assert_eq!(
+            first.map(|id| id.rep()),
+            video,
+            "an equal start keeps the first lane's order"
         );
     }
 

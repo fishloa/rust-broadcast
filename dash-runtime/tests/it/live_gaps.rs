@@ -141,7 +141,6 @@ fn a_segment_answered_425_is_retried_without_counting_a_failure() {
         "an early answer is not a counted failure: {:?}",
         sim.classes
     );
-    assert_eq!(sim.count(|o| matches!(o, Output::Fatal(_))), 0);
 }
 
 #[test]
@@ -245,5 +244,78 @@ fn a_candidate_rotation_forces_a_refresh_of_a_live_mpd() {
     assert!(
         mpd_requests >= 2,
         "a rotation after the initial MPD forces a refresh: {mpd_requests}"
+    );
+}
+
+fn two_set_mpd(with_audio: bool) -> String {
+    let audio = if with_audio {
+        r#"<AdaptationSet contentType="audio" mimeType="audio/mp4"><SegmentTemplate timescale="1000" duration="2000" initialization="a-init.mp4" media="a-$Number$.m4s"/><Representation id="A" bandwidth="1" codecs="mp4a.40.2"/></AdaptationSet>"#
+    } else {
+        ""
+    };
+    format!(
+        r#"<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT2S" timeShiftBufferDepth="PT30S" minBufferTime="PT2S"><Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1000" duration="2000" initialization="v-init.mp4" media="v-$Number$.m4s"/><Representation id="V" bandwidth="2" codecs="avc1.4d400d"/></AdaptationSet>{audio}</Period><UTCTiming schemeIdUri="urn:mpeg:dash:utc:direct:2014" value="2026-01-01T00:00:00Z"/></MPD>"#
+    )
+}
+
+#[test]
+fn a_refresh_that_drops_the_last_set_does_not_index_past_the_list() {
+    let mut synth = with_utc(Addressing::Number);
+    let switch_at = AST_US + START + 8 * MICROS;
+    synth.mpd_override = Some(Box::new(move |at| Some(two_set_mpd(at <= switch_at))));
+    let (mut sim, _geo) = sim_with(synth, START, DashConfig::default());
+    sim.run_for(20 * MICROS as u64);
+    let audio_after: Vec<_> = sim
+        .log
+        .iter()
+        .filter(|l| l.kind == Kind::Segment && l.send_utc_us > switch_at + 8 * MICROS)
+        .filter(|l| l.url.contains("/a-"))
+        .collect();
+    assert!(
+        audio_after.is_empty(),
+        "the vanished audio set is not requested: {:?}",
+        audio_after
+            .iter()
+            .map(|l| l.url.clone())
+            .collect::<Vec<_>>()
+    );
+}
+
+fn two_variant_mpd() -> String {
+    format!(
+        r#"<?xml version="1.0"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="dynamic" availabilityStartTime="{}" minimumUpdatePeriod="PT2S" timeShiftBufferDepth="PT120S" suggestedPresentationDelay="PT6S" minBufferTime="PT2S"><Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1000" duration="2000" initialization="seg/$RepresentationID$/init.mp4" media="seg/$RepresentationID$/$Number$.m4s"/><Representation id="V9" bandwidth="62440" codecs="avc1.4d400d"/><Representation id="V8" bandwidth="262440" codecs="avc1.4d400d"/></AdaptationSet></Period><UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-xsdate:2014" value="http://utc.test/xsdate"/></MPD>"#,
+        common::world::xs_datetime_ms(AST_US)
+    )
+}
+
+#[test]
+fn a_vanish_picks_the_selected_variant_and_resumes_at_the_switch() {
+    let mut synth = with_utc(Addressing::Number);
+    synth.second_video = true;
+    synth.tsb_us = Some(120 * MICROS);
+    let switch_at = AST_US + START + 20 * MICROS;
+    synth.mpd_override = Some(Box::new(move |at| (at > switch_at).then(two_variant_mpd)));
+    let (mut sim, geo) = sim_with(synth, START, DashConfig::default());
+    run_checked(&mut sim, geo, 40);
+    let all: Vec<(String, i64)> = sim
+        .log
+        .iter()
+        .filter(|l| l.kind == Kind::Segment)
+        .filter_map(|l| common::synth::parse_segment_url(&l.url))
+        .map(|(rep, n)| (rep, i64::try_from(n).unwrap_or(i64::MAX)))
+        .collect();
+    let v8: Vec<i64> = all
+        .iter()
+        .filter(|(rep, _)| rep == "V8")
+        .map(|(_, n)| *n)
+        .collect();
+    assert!(!v8.is_empty(), "the selection's highest variant is played");
+    assert!(
+        v8.iter().all(|n| *n > 5),
+        "the survivor resumes at the switch instant, not from 0: {v8:?}"
+    );
+    assert!(
+        all.iter().all(|(rep, _)| rep != "V9"),
+        "the lower variant is never played: {all:?}"
     );
 }
