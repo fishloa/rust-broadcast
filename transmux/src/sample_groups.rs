@@ -1482,6 +1482,56 @@ mod tests {
         assert_eq!(parsed, b);
     }
 
+    /// Every `prft` field with a non-zero upper byte in both versions, and the
+    /// exact byte count `serialize_into` reports (ISO/IEC 14496-12:2026
+    /// §8.14.5.2). Truncating anywhere must be a reported shortfall.
+    #[test]
+    fn prft_fields_and_lengths_are_pinned_in_both_versions() {
+        for (version, media_time, len) in [
+            (0u8, 0x1112_1314u64, 28usize),
+            (1, 0x1112_1314_1516_1718, 32),
+        ] {
+            let b = ProducerReferenceTimeBox {
+                version,
+                flags: 0x0102_0304 & 0x00FF_FFFF,
+                reference_track_id: TrackId::new(0x0102_0304),
+                ntp_timestamp: 0x0102_0304_0506_0708,
+                media_time,
+            };
+            assert_eq!(b.serialized_len(), len, "v{version} serialized_len");
+            let mut buf = alloc::vec![0u8; b.serialized_len()];
+            let n = b.serialize_into(&mut buf).unwrap();
+            assert_eq!(n, len, "v{version} serialize_into return value");
+
+            let parsed = ProducerReferenceTimeBox::parse(&buf).unwrap();
+            assert_eq!(parsed.version, version);
+            assert_eq!(parsed.flags, 0x02_0304);
+            assert_eq!(parsed.reference_track_id, TrackId::new(0x0102_0304));
+            assert_eq!(parsed.ntp_timestamp, 0x0102_0304_0506_0708);
+            assert_eq!(parsed.media_time, media_time);
+
+            for cut in 0..buf.len() {
+                match ProducerReferenceTimeBox::parse(&buf[..cut]) {
+                    Err(Error::BufferTooShort(_)) => {}
+                    Err(other) => {
+                        panic!("v{version} {cut}-byte prft: expected BufferTooShort, got {other:?}")
+                    }
+                    Ok(_) => panic!("v{version} {cut}-byte prft parsed"),
+                }
+            }
+            match ProducerReferenceTimeBox::parse(&buf[..27]) {
+                Err(Error::BufferTooShort(b)) => {
+                    assert_eq!(
+                        (b.need, b.have, b.what),
+                        (28, 27, "prft box"),
+                        "v{version} box-level minimum"
+                    );
+                }
+                other => panic!("v{version}: expected BufferTooShort, got {other:?}"),
+            }
+        }
+    }
+
     // -----------------------------------------------------------------------
     // sgpd
     // -----------------------------------------------------------------------
@@ -1637,6 +1687,242 @@ mod tests {
         let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries.len(), 2);
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// Version 1 with `default_length == 0`: every entry is preceded by its own
+    /// `description_length` (§8.9.3.2). Values here have non-zero upper bytes so
+    /// a read from the wrong byte inside the u32 changes the answer.
+    fn sgpd_v1_variable_body() -> &'static [u8] {
+        &[
+            1, 0, 0, 0, // version 1, flags 0
+            b'r', b'o', b'l', b'l', // grouping_type
+            0, 0, 0, 0, // default_length = 0 (per-entry lengths)
+            0, 0, 0, 2, // entry_count = 2
+            0, 0, 0, 2, 0xFF, 0xFE, // entry 0: length 2, roll_distance -2
+            0, 0, 0, 3, 0x01, 0x02, 0x03, // entry 1: length 3, opaque
+        ]
+    }
+
+    #[test]
+    fn sgpd_v1_zero_default_length_reads_each_entry_length() {
+        let body = sgpd_v1_variable_body();
+        let parsed = SampleGroupDescriptionBox::parse_body(body).unwrap();
+        assert_eq!(parsed.version, 1);
+        assert_eq!(parsed.default_length, 0);
+        assert_eq!(parsed.default_group_description_index, None);
+        assert_eq!(
+            parsed.entries,
+            alloc::vec![
+                SgpdEntry::Roll { roll_distance: -2 },
+                SgpdEntry::Unknown(alloc::vec![0x01, 0x02, 0x03]),
+            ]
+        );
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        let n = parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[8..n], body, "byte-exact round trip");
+    }
+
+    #[test]
+    fn sgpd_v2_group_index_keeps_every_non_zero_byte() {
+        let body: &[u8] = &[
+            2, 0, 0, 0, // version 2, flags 0
+            b'r', b'o', b'l', b'l', // grouping_type
+            0, 0, 0, 2, // default_length = 2
+            0x01, 0x02, 0x03, 0x04, // default_group_description_index
+            0, 0, 0, 1, // entry_count = 1
+            0xFF, 0xFF, // roll_distance -1
+        ];
+        let parsed = SampleGroupDescriptionBox::parse_body(body).unwrap();
+        assert_eq!(parsed.default_length, 2);
+        assert_eq!(parsed.default_group_description_index, Some(0x0102_0304));
+        assert_eq!(
+            parsed.entries,
+            alloc::vec![SgpdEntry::Roll { roll_distance: -1 }]
+        );
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        let n = parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[8..n], body, "byte-exact round trip");
+    }
+
+    /// A `default_length` above 255: its second byte is what a shifted read
+    /// loses, and 65536 is small enough to build the one entry it declares.
+    #[test]
+    fn sgpd_v1_default_length_above_255_parses_its_entry() {
+        let mut body = alloc::vec![
+            1, 0, 0, 0, // version 1, flags 0
+            b'r', b'o', b'l', b'l', // grouping_type
+            0x00, 0x01, 0x00, 0x00, // default_length = 65536
+            0, 0, 0, 1, // entry_count = 1
+        ];
+        body.extend(core::iter::repeat_n(0xABu8, 0x0001_0000));
+        let parsed = SampleGroupDescriptionBox::parse_body(&body).unwrap();
+        assert_eq!(parsed.default_length, 0x0001_0000);
+        assert_eq!(parsed.entries.len(), 1);
+        let SgpdEntry::Unknown(ref entry) = parsed.entries[0] else {
+            panic!("a roll entry wider than 2 bytes stays opaque");
+        };
+        assert_eq!(entry.len(), 0x0001_0000);
+        assert_eq!(entry[0], 0xAB);
+        assert_eq!(entry[0xFFFF], 0xAB);
+        let mut out = alloc::vec![0u8; parsed.serialized_len()];
+        let n = parsed.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[8..n], body, "byte-exact round trip");
+    }
+
+    fn assert_sgpd_prefixes_are_buffer_too_short(body: &[u8]) {
+        for cut in 0..body.len() {
+            match SampleGroupDescriptionBox::parse_body(&body[..cut]) {
+                Err(Error::BufferTooShort(_)) => {}
+                Err(other) => {
+                    panic!("{cut}-byte sgpd body: expected BufferTooShort, got {other:?}")
+                }
+                Ok(parsed) => panic!(
+                    "{cut}-byte sgpd body of {} parsed to {} entries",
+                    body.len(),
+                    parsed.entries.len()
+                ),
+            }
+        }
+        SampleGroupDescriptionBox::parse_body(body).expect("the whole body parses");
+    }
+
+    #[test]
+    fn sgpd_truncations_are_buffer_too_short_with_the_exact_shortfall() {
+        assert_sgpd_prefixes_are_buffer_too_short(&[
+            0, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0, 2, 0xFF, 0xFF, 0x00, 0x02,
+        ]);
+        assert_sgpd_prefixes_are_buffer_too_short(sgpd_v1_variable_body());
+        assert_sgpd_prefixes_are_buffer_too_short(&[
+            1, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0, 2, 0, 0, 0, 2, 0xFF, 0xFF, 0x00, 0x02,
+        ]);
+        assert_sgpd_prefixes_are_buffer_too_short(&[
+            2, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0, 2, 0x01, 0x02, 0x03, 0x04, 0, 0, 0, 1,
+            0xFF, 0xFF,
+        ]);
+
+        match SampleGroupDescriptionBox::parse(&[0u8; 12]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (16, 12, "sgpd box"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+        match SampleGroupDescriptionBox::parse_body(&[0u8; 4]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (12, 4, "sgpd body"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+        match SampleGroupDescriptionBox::parse_body(&[0u8; 9]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (12, 9, "sgpd body"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+        let mut v1 = alloc::vec![1u8, 0, 0, 0];
+        v1.extend_from_slice(b"roll");
+        match SampleGroupDescriptionBox::parse_body(&v1) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (12, 8, "sgpd body"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+        let mut v2 = alloc::vec![2u8, 0, 0, 0];
+        v2.extend_from_slice(b"roll");
+        v2.extend_from_slice(&[0, 0, 0, 2]);
+        v2.extend_from_slice(&[0x01, 0x02, 0x03]);
+        match SampleGroupDescriptionBox::parse_body(&v2) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (16, 15, "sgpd default_group_description_index")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+        let mut two_entries = alloc::vec![1u8, 0, 0, 0];
+        two_entries.extend_from_slice(b"roll");
+        two_entries.extend_from_slice(&[0, 0, 0, 0]);
+        two_entries.extend_from_slice(&[0, 0, 0, 2]);
+        two_entries.extend_from_slice(&[0, 0, 0, 100]);
+        two_entries.extend(core::iter::repeat_n(0xABu8, 100));
+        two_entries.extend_from_slice(&[0xAA, 0xBB]);
+        match SampleGroupDescriptionBox::parse_body(&two_entries) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (124, 122, "sgpd description_length")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sgpd_hostile_entry_count_is_rejected_with_the_exact_need() {
+        let mut v0_roll = alloc::vec![0u8, 0, 0, 0];
+        v0_roll.extend_from_slice(b"roll");
+        v0_roll.extend_from_slice(&0x7FFF_FFFFu32.to_be_bytes());
+        match SampleGroupDescriptionBox::parse_body(&v0_roll) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (4_294_967_306, 12, "sgpd entries")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let mut v1_variable = alloc::vec![1u8, 0, 0, 0];
+        v1_variable.extend_from_slice(b"roll");
+        v1_variable.extend_from_slice(&[0, 0, 0, 0]);
+        v1_variable.extend_from_slice(&0x7FFF_FFFFu32.to_be_bytes());
+        match SampleGroupDescriptionBox::parse_body(&v1_variable) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (8_589_934_604, 16, "sgpd entries")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let mut v1_fixed = alloc::vec![1u8, 0, 0, 0];
+        v1_fixed.extend_from_slice(b"roll");
+        v1_fixed.extend_from_slice(&[0, 0, 0, 8]);
+        v1_fixed.extend_from_slice(&[0, 0, 0, 3]);
+        v1_fixed.extend(core::iter::repeat_n(0xABu8, 20));
+        match SampleGroupDescriptionBox::parse_body(&v1_fixed) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (40, 36, "sgpd entries"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let mut hostile_len = alloc::vec![1u8, 0, 0, 0];
+        hostile_len.extend_from_slice(b"roll");
+        hostile_len.extend_from_slice(&[0, 0, 0, 0]);
+        hostile_len.extend_from_slice(&[0, 0, 0, 1]);
+        hostile_len.extend_from_slice(&0x7FFF_FFFFu32.to_be_bytes());
+        match SampleGroupDescriptionBox::parse_body(&hostile_len) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (2_147_483_667, 20, "sgpd entry body")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let mut v0_unknown = alloc::vec![0u8, 0, 0, 0];
+        v0_unknown.extend_from_slice(b"abcd");
+        v0_unknown.extend_from_slice(&[0, 0, 0, 2]);
+        v0_unknown.push(0xAB);
+        match SampleGroupDescriptionBox::parse_body(&v0_unknown) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (14, 13, "sgpd entries"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
     }
 
     // -----------------------------------------------------------------------
