@@ -772,6 +772,20 @@ mod tests {
     }
 
     #[test]
+    fn presentation_time_labels_and_display_match_the_spec_tokens() {
+        assert_eq!(PresentationTime::Delta(0).name(), "presentation_time_delta");
+        assert_eq!(PresentationTime::Absolute(0).name(), "presentation_time");
+        assert_eq!(
+            alloc::format!("{}", PresentationTime::Delta(0x1A)),
+            "presentation_time_delta(0x1A)"
+        );
+        assert_eq!(
+            alloc::format!("{}", PresentationTime::Absolute(7)),
+            "presentation_time(0x07)"
+        );
+    }
+
+    #[test]
     fn a_present_zero_timescale_is_a_typed_error_in_both_versions() {
         let mut v0 = emsg_with(PresentationTime::Delta(0)).to_vec().unwrap();
         let v0_timescale = FULLBOX_HEADER_LEN + "s\0v\0".len();

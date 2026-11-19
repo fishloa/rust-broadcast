@@ -207,6 +207,18 @@ mod tests {
     }
 
     #[test]
+    fn the_synthetic_scheme_needs_a_byte_after_the_colon() {
+        assert!(names_synthetic_scheme("transmux-relative:"));
+        assert!(names_synthetic_scheme("transmux-relative:x"));
+        assert!(names_synthetic_scheme("TRANSMUX-RELATIVE://x"));
+        assert!(!names_synthetic_scheme("transmux-relative/a"));
+        assert!(
+            !names_synthetic_scheme("transmux-relative"),
+            "the bare name has no byte after it"
+        );
+    }
+
+    #[test]
     fn render_cases() {
         let r = |s: &str, abs: bool| render(&Url::parse(s).unwrap(), abs);
         assert_eq!(

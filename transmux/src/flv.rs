@@ -1828,4 +1828,245 @@ mod tests {
             Ok(1000)
         );
     }
+
+    #[test]
+    fn flv_error_display_names_every_variant() {
+        let cases = [
+            (
+                FlvError::BadSignature([0x58, 0x59, 0x5A]),
+                "bad FLV signature: [58, 59, 5A] (expected \"FLV\")",
+            ),
+            (
+                FlvError::TagOverrun {
+                    offset: 10,
+                    need: 20,
+                    have: 5,
+                },
+                "FLV tag at offset 10 overruns buffer: need 20, have 5",
+            ),
+            (
+                FlvError::NoSupportedTrack,
+                "FLV carried no supported track (need AVC video or AAC audio)",
+            ),
+            (
+                FlvError::HeaderTooLarge {
+                    declared: 2_000,
+                    max: 1_024,
+                },
+                "FLV header DataOffset 2000 exceeds the maximum accepted 1024 bytes",
+            ),
+            (
+                FlvError::UnsupportedCodec { codec: "AV1" },
+                "codec AV1 has no FLV carriage in this crate (only AVC + AAC)",
+            ),
+            (
+                FlvError::Codec(Error::InvalidInput("boom")),
+                "FLV codec config: invalid input: boom",
+            ),
+            (
+                FlvError::TimestampBackwards {
+                    previous: Some(5),
+                    next: Some(3),
+                },
+                "FLV tag timestamp went backwards: Some(3) follows Some(5)",
+            ),
+            (
+                FlvError::SampleDurationTooLarge { ticks: 5 },
+                "FLV sample span 5 ticks exceeds a 32-bit duration",
+            ),
+            (
+                FlvError::Header(RtmpError::Malformed { what: "x" }),
+                "FLV header: malformed x",
+            ),
+            (
+                FlvError::Tag(RtmpError::Malformed { what: "y" }),
+                "FLV tag: malformed y",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(alloc::format!("{error}"), expected);
+        }
+    }
+
+    #[test]
+    fn flv_error_bridge_names_every_variant() {
+        let cases = [
+            (
+                FlvError::BadSignature([1, 2, 3]),
+                Error::InvalidInput("FLV bad signature"),
+            ),
+            (
+                FlvError::NoSupportedTrack,
+                Error::InvalidInput("FLV no supported track"),
+            ),
+            (
+                FlvError::UnsupportedCodec { codec: "AV1" },
+                Error::InvalidInput("FLV unsupported codec"),
+            ),
+            (
+                FlvError::HeaderTooLarge {
+                    declared: 1,
+                    max: 2,
+                },
+                Error::InvalidInput("FLV header DataOffset too large"),
+            ),
+            (
+                FlvError::Header(RtmpError::Malformed { what: "x" }),
+                Error::InvalidInput("FLV header DataOffset below the header"),
+            ),
+            (
+                FlvError::Tag(RtmpError::Malformed { what: "y" }),
+                Error::InvalidInput("FLV tag parse error"),
+            ),
+            (
+                FlvError::Codec(Error::InvalidInput("z")),
+                Error::InvalidInput("FLV error"),
+            ),
+        ];
+        for (flv, expected) in cases {
+            assert_eq!(Error::from(FlvErrorAsError(flv)), expected);
+        }
+        assert_eq!(
+            Error::from(FlvErrorAsError(FlvError::TagOverrun {
+                offset: 3,
+                need: 40,
+                have: 7,
+            })),
+            Error::BufferTooShort(BufferTooShort {
+                need: 40,
+                have: 7,
+                what: "FLV tag body",
+            })
+        );
+    }
+
+    struct BitWriter {
+        bits: Vec<bool>,
+    }
+
+    impl BitWriter {
+        fn bit(&mut self, value: bool) {
+            self.bits.push(value);
+        }
+
+        fn ue(&mut self, value: u64) {
+            let code = value + 1;
+            let len = (u64::BITS - code.leading_zeros()) as usize;
+            for _ in 0..len - 1 {
+                self.bit(false);
+            }
+            for shift in (0..len).rev() {
+                self.bit((code >> shift) & 1 == 1);
+            }
+        }
+    }
+
+    /// One H.264 SPS (ITU-T H.264 §7.3.2.1.1) with the given coded size and
+    /// frame cropping, for the dimension-overflow boundary.
+    fn avc_sps(
+        high_profile: bool,
+        chroma_format_idc: u64,
+        separate_colour_plane: bool,
+        width_mbs_minus1: u64,
+        height_map_units_minus1: u64,
+        crop_left: u64,
+        crop_bottom: u64,
+    ) -> Vec<u8> {
+        let mut w = BitWriter { bits: Vec::new() };
+        w.ue(0); // seq_parameter_set_id
+        if high_profile {
+            w.ue(chroma_format_idc);
+            if chroma_format_idc == 3 {
+                w.bit(separate_colour_plane);
+            }
+            w.ue(0); // bit_depth_luma_minus8
+            w.ue(0); // bit_depth_chroma_minus8
+            w.bit(false); // qpprime_y_zero_transform_bypass_flag
+            w.bit(false); // seq_scaling_matrix_present_flag
+        }
+        w.ue(0); // log2_max_frame_num_minus4
+        w.ue(0); // pic_order_cnt_type
+        w.ue(0); // log2_max_pic_order_cnt_lsb_minus4
+        w.ue(0); // max_num_ref_frames
+        w.bit(false); // gaps_in_frame_num_value_allowed_flag
+        w.ue(width_mbs_minus1);
+        w.ue(height_map_units_minus1);
+        w.bit(true); // frame_mbs_only_flag
+        w.bit(true); // direct_8x8_inference_flag
+        let crop = crop_left != 0 || crop_bottom != 0;
+        w.bit(crop);
+        if crop {
+            w.ue(crop_left);
+            w.ue(0); // crop_right
+            w.ue(0); // crop_top
+            w.ue(crop_bottom);
+        }
+        w.bit(false); // vui_parameters_present_flag
+        w.bit(true); // rbsp_stop_one_bit
+        while !w.bits.len().is_multiple_of(8) {
+            w.bit(false);
+        }
+        let mut rbsp = Vec::new();
+        for chunk in w.bits.chunks(8) {
+            let mut byte = 0u8;
+            for &bit in chunk {
+                byte = (byte << 1) | u8::from(bit);
+            }
+            rbsp.push(byte);
+        }
+        let mut out = alloc::vec![0x67, if high_profile { 0x64 } else { 0x42 }, 0x00, 0x1F];
+        let mut zeros = 0u8;
+        for byte in rbsp {
+            if zeros >= 2 && byte <= 0x03 {
+                out.push(0x03);
+                zeros = 0;
+            }
+            out.push(byte);
+            zeros = if byte == 0 { zeros + 1 } else { 0 };
+        }
+        out
+    }
+
+    fn dimensions_of(sps: Vec<u8>) -> core::result::Result<(u16, u16), FlvError> {
+        let record = AVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            profile_indication: 0,
+            profile_compatibility: 0,
+            level_indication: 0,
+            length_size_minus_one: NAL_LENGTH_SIZE_MINUS_ONE,
+            sps: alloc::vec![crate::AvcSps(sps)],
+            pps: Vec::new(),
+            chroma_format: None,
+            bit_depth_luma_minus8: None,
+            bit_depth_chroma_minus8: None,
+            sps_ext: Vec::new(),
+        };
+        avc_dimensions(&AVCConfigurationBox::new(record))
+    }
+
+    #[test]
+    fn avc_dimensions_accept_u16_max_dimensions() {
+        // 4:4:4 with separate_colour_plane_flag: crop units are 1, so the
+        // 65 536-pixel coded size is cropped to 65 535 = u16::MAX.
+        let sps = avc_sps(true, 3, true, 4_095, 4_095, 1, 1);
+        assert_eq!(dimensions_of(sps), Ok((65_535, 65_535)));
+    }
+
+    #[test]
+    fn avc_dimensions_reject_each_field_past_u16() {
+        let width = dimensions_of(avc_sps(false, 1, false, 4_095, 2, 0, 0));
+        assert_eq!(
+            width,
+            Err(FlvError::Codec(Error::InvalidInput(
+                "FLV avcC width does not fit 16 bits"
+            )))
+        );
+        let height = dimensions_of(avc_sps(false, 1, false, 0, 4_095, 0, 0));
+        assert_eq!(
+            height,
+            Err(FlvError::Codec(Error::InvalidInput(
+                "FLV avcC height does not fit 16 bits"
+            )))
+        );
+    }
 }

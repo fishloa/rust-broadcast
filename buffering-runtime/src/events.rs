@@ -463,3 +463,43 @@ impl EventQueue {
         self.dropped_pending = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Event, EventQueue, Reason, State};
+    use crate::time::Clock27;
+    use core::time::Duration;
+
+    fn zero() -> Clock27 {
+        Clock27::from_27mhz(0).expect("zero is on the clock")
+    }
+
+    #[test]
+    fn every_state_has_its_stable_label() {
+        assert_eq!(State::Buffering.name(), "buffering");
+        assert_eq!(State::Playing.name(), "playing");
+        assert_eq!(State::Starved.name(), "starved");
+    }
+
+    #[test]
+    fn every_reason_has_its_stable_label() {
+        assert_eq!(Reason::Startup.name(), "startup");
+        assert_eq!(Reason::NoData.name(), "no data");
+        assert_eq!(Reason::DataArriving.name(), "data arriving");
+        assert_eq!(Reason::Discontinuity.name(), "discontinuity");
+        assert_eq!(Reason::Reprime.name(), "reprime");
+    }
+
+    #[test]
+    fn clearing_the_queue_discards_every_queued_event() {
+        let mut q = EventQueue::new();
+        q.push(Event::StartPlaying {
+            media_27mhz: zero(),
+            lead: Duration::ZERO,
+        });
+        q.push(Event::Rebaselined);
+        q.clear();
+        assert_eq!(q.poll(), None);
+        assert_eq!(q.poll(), None);
+    }
+}

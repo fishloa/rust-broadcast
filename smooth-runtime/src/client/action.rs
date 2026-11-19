@@ -58,3 +58,24 @@ impl FetchFailure {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(code: u16) -> FetchFailure {
+        FetchFailure {
+            status: Some(http::StatusCode::from_u16(code).expect("a real status")),
+            retry_after: core::time::Duration::ZERO,
+        }
+    }
+
+    #[test]
+    fn only_404_and_410_are_not_found() {
+        assert!(status(404).is_not_found());
+        assert!(status(410).is_not_found());
+        assert!(!status(500).is_not_found());
+        assert!(!status(403).is_not_found());
+        assert!(!FetchFailure::default().is_not_found());
+    }
+}

@@ -319,3 +319,58 @@ fn state_name(s: &State) -> &'static str {
         State::Closed => "closed",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session_url() -> url::Url {
+        url::Url::parse("https://whip.example.com/session/1").expect("session URL")
+    }
+
+    /// Audit-22 #3009: `WrongState` reports these names, so each state must
+    /// have its own. Bite test: a constant (the mutant) makes every error
+    /// name the same state.
+    #[test]
+    fn every_client_state_has_its_own_name() {
+        let cases = [
+            (State::Idle, "idle"),
+            (State::OfferSent, "offer-sent"),
+            (
+                State::CounterOffered {
+                    session_url: session_url(),
+                },
+                "counter-offered",
+            ),
+            (
+                State::Established {
+                    session_url: session_url(),
+                    etag: Some("e1".to_string()),
+                },
+                "established",
+            ),
+            (State::Closed, "closed"),
+        ];
+        for (state, expected) in cases {
+            assert_eq!(state_name(&state), expected, "{state:?}");
+        }
+    }
+
+    /// Audit-22 #3009: the config's `Debug` names the endpoint and redacts
+    /// the credentials. Bite test: an empty `Debug` (the mutant) passes a
+    /// "does not print the secret" assertion while telling a caller nothing.
+    #[test]
+    fn client_config_debug_names_the_endpoint_and_redacts_credentials() {
+        let config = WebRtcClientConfig::new(
+            url::Url::parse("https://whip.example.com/pub").expect("endpoint"),
+        )
+        .with_credentials(broadcast_auth::Credentials::Bearer {
+            token: "tok-do-not-print".to_string(),
+        });
+        let rendered = format!("{config:?}");
+        assert!(rendered.contains("whip.example.com"), "{rendered}");
+        assert!(rendered.contains("/pub"), "{rendered}");
+        assert!(rendered.contains("<redacted>"), "{rendered}");
+        assert!(!rendered.contains("tok-do-not-print"), "{rendered}");
+    }
+}

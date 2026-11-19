@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+- `media::gather` now closes its server-reflexive gather when the STUN Binding transaction exhausts its retransmissions (RFC 8489 §6.2.1): `handle_timeout` drains the terminal event, so a STUN server that never answers settles the gather instead of leaving `MediaTransport` to schedule it forever (audit 22 finding 37).
 
 ## [0.9.0] - 2026-11-17
 ### Changed

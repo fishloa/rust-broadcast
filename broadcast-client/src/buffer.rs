@@ -1523,4 +1523,204 @@ mod tests {
         f.on_chunk(0, 1316, None);
         assert!(f.controller.is_some());
     }
+
+    fn set_timing(s: &mut Sample, pts: i64, dts: i64, dur: u32) {
+        let d = std::num::NonZeroU32::new(dur).expect("a non-zero frame span");
+        if let Some(t) = s.timing.as_mut() {
+            *t = t.with_composition(dts, pts).with_duration(d);
+        } else {
+            s.timing = Some(transmux::ir::SampleTiming::timed_with_duration(
+                dts, pts, dur,
+            ));
+        }
+    }
+
+    #[test]
+    fn a_reordered_picture_abuts_only_within_half_a_slot() {
+        let mut r = ReorderEnd::new(0, -20, 10);
+        assert_eq!(
+            r.push(25, -20, 10),
+            10,
+            "fifteen is more than half a slot past the end"
+        );
+        let mut r = ReorderEnd::new(0, -20, 10);
+        assert_eq!(
+            r.push(15, -20, 10),
+            25,
+            "exactly half a slot past the end still abuts"
+        );
+    }
+
+    #[test]
+    fn the_lowest_id_of_a_kind_is_the_primary() {
+        let (video, audio) = lowest_id_per_kind([
+            (TrackId::new(3), true, false),
+            (TrackId::new(1), true, false),
+            (TrackId::new(9), false, true),
+            (TrackId::new(7), false, true),
+        ]);
+        assert_eq!(
+            (video, audio),
+            (Some(TrackId::new(1)), Some(TrackId::new(7)))
+        );
+        let (video, _) = lowest_id_per_kind([
+            (TrackId::new(1), true, false),
+            (TrackId::new(1), true, false),
+        ]);
+        assert_eq!(video, Some(TrackId::new(1)));
+    }
+
+    #[test]
+    fn has_video_follows_the_live_join_tracks_and_explicit_rendering() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(0, &st.audio.0);
+        assert!(!f.has_video());
+        assert!(!f.rendered_explicit());
+        f.on_track_added(0, &st.video.0);
+        assert!(f.has_video());
+        f.set_rendered(0, Some(&[st.audio.0.track_id]));
+        assert!(f.rendered_explicit());
+    }
+
+    #[test]
+    fn the_pending_track_hold_ends_exactly_at_the_effective_wait() {
+        let mut f = feeder();
+        let wait = crate::events::DEFAULT_START_PENDING_TRACK_WAIT;
+        f.first_media_us = Some(0);
+        f.set_expecting(instant_micros(wait) - 1, true, false);
+        assert!(f.holding, "one microsecond short still waits");
+        assert!(matches!(
+            f.pending_events.first(),
+            Some(Event::Status(Status::AwaitingTracks))
+        ));
+        f.pending_events.clear();
+        f.set_expecting(instant_micros(wait), true, false);
+        assert!(!f.holding, "the wait is over at exactly the effective span");
+    }
+
+    #[test]
+    fn dropping_the_last_rendered_video_track_forgets_the_video_join() {
+        let mut r = Rig::new();
+        r.announce(&[VIDEO_ID, AUDIO_A_ID]);
+        r.prefill();
+        assert!(r.f.video_join_pts_27.is_some());
+        r.f.set_rendered(r.now, Some(&[TrackId::new(AUDIO_A_ID)]));
+        assert!(r.f.video_join_pts_27.is_none());
+    }
+
+    #[test]
+    fn an_audio_end_exactly_at_the_video_join_is_not_ahead_of_it() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(0, &st.video.0);
+        f.on_track_added(0, &st.audio.0);
+        let aid = st.audio.0.track_id;
+        let end = st.audio.1[0]
+            .timing
+            .and_then(|t| t.pts())
+            .expect("the fixture audio sample has a PTS");
+        f.audio_max_end.insert(aid, end);
+        f.first_seen.insert(aid, end);
+        f.origin = Some(0);
+        f.video_join_pts_27 = Some(pts_to_27mhz(end, st.audio.0.timescale));
+        f.queue_audio_end(aid);
+        assert!(!f.pending_ends.contains_key(&aid));
+    }
+
+    #[test]
+    fn a_second_join_point_does_not_replace_the_first() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(0, &st.video.0);
+        let id = st.video.0.track_id;
+        let rap = st
+            .video
+            .1
+            .iter()
+            .find_map(|s| {
+                f.join_sample(id, s)
+                    .filter(|d| matches!(d, JoinDecision::JoinPoint(_)))
+            })
+            .expect("the fixture has a join point");
+        let mut first = st.video.1[0].clone();
+        set_timing(&mut first, 10, 10, 3_000);
+        f.on_sample(id, &first, Some(rap));
+        let joined_at = f.video_join_at.get(&id).copied();
+        assert_eq!(joined_at, Some((10, st.video.0.timescale)));
+        let mut second = first.clone();
+        set_timing(&mut second, 20, 20, 3_000);
+        f.on_sample(id, &second, Some(rap));
+        assert_eq!(f.video_join_at.get(&id).copied(), joined_at);
+    }
+
+    #[test]
+    fn a_keep_before_the_join_point_is_not_a_video_sample() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(0, &st.video.0);
+        let id = st.video.0.track_id;
+        let sample = st.video.1[0].clone();
+        f.on_sample(id, &sample, Some(JoinDecision::Keep));
+        assert!(!f.video_reorder.contains_key(&id));
+        assert!(!f.video_end.contains_key(&id));
+    }
+
+    #[test]
+    fn a_finite_connection_does_not_flush_a_pending_end() {
+        let st = streams();
+        let mut f = feeder();
+        f.on_track_added(0, &st.audio.0);
+        f.on_chunk(0, 1316, None);
+        assert!(f.controller.is_some());
+        let aid = st.audio.0.track_id;
+        f.pending_ends.insert(aid, 1_000);
+        f.finite = true;
+        f.flush_pending(0);
+        assert!(f.pending_ends.contains_key(&aid));
+    }
+
+    #[test]
+    fn a_reprime_pause_keeps_its_reason() {
+        let st = streams();
+        let mut f = feeder();
+        f.config.policy.min = Duration::from_millis(20);
+        f.config.policy.initial = Duration::from_millis(20);
+        f.config.policy.reprime_floor = Duration::from_millis(200);
+        f.config.policy.reprime_hold = Duration::from_millis(100);
+        f.config.starve_threshold = Duration::from_millis(1);
+        f.config.track_granularity = false;
+        f.on_track_added(0, &st.audio.0);
+        let aid = st.audio.0.track_id;
+        let ts = st.audio.0.timescale;
+        let one_second = i64::from(ts.get());
+        let dur = u32::try_from(one_second).expect("a one-second span");
+        let mut first = st.audio.1[0].clone();
+        set_timing(&mut first, 0, 0, dur);
+        let mut second = first.clone();
+        set_timing(&mut second, one_second, one_second, dur);
+        f.on_sample(aid, &first, None);
+        f.on_chunk(0, 1316, None);
+        f.on_sample(aid, &second, None);
+        f.on_chunk(1_000, 1316, None);
+        f.on_playback_position(2_000, Some(0));
+        assert!(
+            f.drain()
+                .iter()
+                .any(|e| matches!(e, Event::Buffer(BufferEvent::Start { .. })))
+        );
+        let playback = 54_000_000 - 5_373_000;
+        f.on_playback_position(10_000, Some(playback));
+        f.on_playback_position(110_000, Some(playback));
+        assert!(
+            f.drain().iter().any(|e| matches!(
+                e,
+                Event::Buffer(BufferEvent::Pause {
+                    reason: crate::events::PauseReason::Reprime,
+                    ..
+                })
+            )),
+            "the re-prime pause lost its reason"
+        );
+    }
 }
