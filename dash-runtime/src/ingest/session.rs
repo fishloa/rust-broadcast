@@ -580,3 +580,138 @@ impl IngestSession for DashifIngestSession {
 }
 
 // end of file
+
+#[cfg(test)]
+mod tests {
+    use super::{DashifIngestConfig, DashifIngestSession, IngestObject, ObjectKind};
+    use broadcast_common::{Demand, Package, Stage, Timestamp, Unpackage};
+    use transmux::FragmentTrackData;
+    use transmux::dash::DashPackager;
+    use transmux::pipeline::{build_init_segment, build_media_segment};
+    use transmux::ts_demux::TsDemux;
+
+    fn styp(brands: &[&[u8; 4]]) -> Vec<u8> {
+        let size = 8 + 8 + brands.len() * 4;
+        let mut v = u32::try_from(size).unwrap().to_be_bytes().to_vec();
+        v.extend_from_slice(b"styp");
+        v.extend_from_slice(b"msdh");
+        v.extend_from_slice(&[0, 0, 0, 0]);
+        for b in brands {
+            v.extend_from_slice(*b);
+        }
+        v
+    }
+
+    #[test]
+    fn the_lmsg_brand_marks_the_end_of_a_representation() {
+        let mut s = DashifIngestSession::new(DashifIngestConfig::default());
+        s.detect_styp_lmsg("V", &styp(&[b"msdh", b"msix", b"lmsg"]));
+        assert!(s.ingest_state.is_last("V"));
+        assert!(!s.ingest_state.is_last("A"));
+    }
+
+    #[test]
+    fn a_styp_without_lmsg_does_not_mark_the_end() {
+        let mut s = DashifIngestSession::new(DashifIngestConfig::default());
+        s.detect_styp_lmsg("V", &styp(&[b"msdh", b"msix", b"slat"]));
+        assert!(!s.ingest_state.is_last("V"));
+    }
+
+    #[test]
+    fn a_styp_body_shorter_than_two_brand_words_marks_nothing() {
+        let mut s = DashifIngestSession::new(DashifIngestConfig::default());
+        let mut boxed = 12u32.to_be_bytes().to_vec();
+        boxed.extend_from_slice(b"styp");
+        boxed.extend_from_slice(b"lmsg");
+        s.detect_styp_lmsg("V", &boxed);
+        assert!(!s.ingest_state.is_last("V"));
+    }
+
+    #[test]
+    fn the_demand_is_the_read_buffer() {
+        let s = DashifIngestSession::new(DashifIngestConfig::default());
+        let d = s.demand();
+        assert_eq!(d.want_bytes, 65_536);
+        assert!(!d.saturated);
+        assert_ne!(d, Demand::default());
+    }
+
+    fn media_and_mpd() -> (Vec<u8>, transmux::media::Media) {
+        let ts = test_fixtures::read("ts/h264-aac.ts");
+        let mut demux = TsDemux::new();
+        let media = demux.unpackage(&ts[..]).expect("demux");
+        let mut pkg = DashPackager::default();
+        let mpd = pkg.package(&media).expect("package");
+        (mpd.into_bytes(), media)
+    }
+
+    fn init_of(media: &transmux::media::Media, track: usize) -> Vec<u8> {
+        build_init_segment(
+            std::slice::from_ref(&media.tracks[track].spec),
+            media.movie_timescale,
+        )
+        .expect("init")
+    }
+
+    fn segment_of(media: &transmux::media::Media, track: usize, count: usize) -> Vec<u8> {
+        let t = &media.tracks[track];
+        let mut many = Vec::new();
+        for i in 0..count {
+            many.push(t.samples[i % t.samples.len()].clone());
+        }
+        let ftd = FragmentTrackData::new(t.spec.track_id, t.start_decode_time, &many);
+        build_media_segment(1, &[ftd]).expect("seg")
+    }
+
+    fn session_with_one_header() -> (DashifIngestSession, transmux::media::Media) {
+        let (mpd, media) = media_and_mpd();
+        let mut s = DashifIngestSession::new(DashifIngestConfig::default());
+        let now = Timestamp::from_nanos(0);
+        s.feed(
+            IngestObject {
+                kind: ObjectKind::Manifest(super::super::ManifestFormat::Dash),
+                bytes: &mpd,
+            },
+            now,
+        )
+        .unwrap();
+        s.feed(
+            IngestObject {
+                kind: ObjectKind::Header {
+                    representation_id: "1".into(),
+                },
+                bytes: &init_of(&media, 0),
+            },
+            now,
+        )
+        .unwrap();
+        assert!(
+            !s.new_program_emitted,
+            "the second Representation still has no header"
+        );
+        (s, media)
+    }
+
+    #[test]
+    fn buffering_accepts_exactly_sixty_four_samples() {
+        let (mut s, media) = session_with_one_header();
+        let seg = segment_of(&media, 0, 64);
+        s.on_segment("1", Some(1), None, &seg).expect("64 buffered");
+    }
+
+    #[test]
+    fn buffering_refuses_the_sixty_fifth_sample() {
+        let (mut s, media) = session_with_one_header();
+        let seg = segment_of(&media, 0, 64);
+        s.on_segment("1", Some(1), None, &seg).expect("64 buffered");
+        let one = segment_of(&media, 0, 1);
+        let r = s.on_segment("1", Some(2), None, &one);
+        assert!(
+            matches!(
+                r,
+                Err(super::SessionError::Ingest(super::IngestError::Internal))
+            ),
+            "{r:?}"
+        );
+    }
+}
