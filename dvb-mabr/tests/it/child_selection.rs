@@ -23,11 +23,15 @@ fn gateway(body: &str) -> String {
 }
 
 fn session(inner: &str) -> String {
-    format!(r#"<MulticastSession serviceIdentifier="urn:example:service">{inner}</MulticastSession>"#)
+    format!(
+        r#"<MulticastSession serviceIdentifier="urn:example:service">{inner}</MulticastSession>"#
+    )
 }
 
 fn transport_session(inner: &str) -> String {
-    format!(r#"<MulticastTransportSession id="ts1" sessionIdleTimeout="1000">{inner}</MulticastTransportSession>"#)
+    format!(
+        r#"<MulticastTransportSession id="ts1" sessionIdleTimeout="1000">{inner}</MulticastTransportSession>"#
+    )
 }
 
 fn transport_protocol(id: &str) -> String {
@@ -175,7 +179,10 @@ fn duplicate_transport_protocol_keeps_the_first_value() {
     ))));
     let parsed = parse_server(&xml);
     let ts = &parsed.sessions[0].transport_sessions[0];
-    assert_eq!(ts.transport_protocol.protocol_identifier, "urn:example:first");
+    assert_eq!(
+        ts.transport_protocol.protocol_identifier,
+        "urn:example:first"
+    );
 }
 
 #[test]
@@ -187,7 +194,10 @@ fn a_known_child_before_the_transport_protocol_is_not_read_as_it() {
     ))));
     let parsed = parse_server(&xml);
     let ts = &parsed.sessions[0].transport_sessions[0];
-    assert_eq!(ts.transport_protocol.protocol_identifier, "urn:example:protocol");
+    assert_eq!(
+        ts.transport_protocol.protocol_identifier,
+        "urn:example:protocol"
+    );
 }
 // --- clause 10.2.5: MulticastGatewayConfigurationTransportSession -----------
 
@@ -206,7 +216,10 @@ fn duplicate_gateway_transport_protocol_keeps_the_first_value() {
     )));
     let parsed = MulticastGatewayConfiguration::parse_str(&xml).expect("parse gateway document");
     let ts = &parsed.gateway_config_transport_sessions[0];
-    assert_eq!(ts.transport_protocol.protocol_identifier, "urn:example:first");
+    assert_eq!(
+        ts.transport_protocol.protocol_identifier,
+        "urn:example:first"
+    );
 }
 
 #[test]
@@ -236,7 +249,10 @@ fn a_known_child_before_the_gateway_transport_protocol_is_not_read_as_it() {
     )));
     let parsed = MulticastGatewayConfiguration::parse_str(&xml).expect("parse gateway document");
     let ts = &parsed.gateway_config_transport_sessions[0];
-    assert_eq!(ts.transport_protocol.protocol_identifier, "urn:example:protocol");
+    assert_eq!(
+        ts.transport_protocol.protocol_identifier,
+        "urn:example:protocol"
+    );
 }
 
 #[test]
@@ -251,9 +267,8 @@ fn an_unknown_child_before_the_gateway_transport_protocol_is_skipped() {
         "<Unknown>ignored</Unknown>",
     ))))
     .expect("parse");
-    let without =
-        MulticastGatewayConfiguration::parse_str(&gateway(&gateway_transport(&body(""))))
-            .expect("parse");
+    let without = MulticastGatewayConfiguration::parse_str(&gateway(&gateway_transport(&body(""))))
+        .expect("parse");
     assert_eq!(with, without);
 }
 
@@ -267,7 +282,9 @@ fn a_component_identifier_with_a_plain_type_attribute_is_still_untyped() {
     ))));
     match MulticastServerConfiguration::parse_str(&xml) {
         Err(Error::MissingComponentType) => {}
-        other => panic!("a plain (un-namespaced) type attribute must not select a variant: {other:?}"),
+        other => {
+            panic!("a plain (un-namespaced) type attribute must not select a variant: {other:?}")
+        }
     }
 }
 
