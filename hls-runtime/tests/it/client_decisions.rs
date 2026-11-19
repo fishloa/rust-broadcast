@@ -257,13 +257,6 @@ fn a_damaged_fragment_is_reported_not_silently_dropped() {
 }
 
 #[test]
-fn the_service_control_directive_names_its_wire_tokens() {
-    use hls_runtime::server::SkipDirective;
-    assert_eq!(SkipDirective::Yes.name(), "YES");
-    assert_eq!(SkipDirective::V2.name(), "v2");
-}
-
-#[test]
 fn a_playlist_request_debug_names_the_type_and_url() {
     let request = PlaylistRequest {
         url: Url::parse("http://example.com/live.m3u8").expect("URL"),

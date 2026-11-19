@@ -426,3 +426,9 @@ fn iframe_playlist_accepts_a_reload_at_the_abuse_bound() {
     );
     assert!(matches!(reload(5), EgressResponse::BadRequest { .. }));
 }
+
+#[test]
+fn the_service_control_directive_names_its_wire_tokens() {
+    assert_eq!(SkipDirective::Yes.name(), "YES");
+    assert_eq!(SkipDirective::V2.name(), "v2");
+}
