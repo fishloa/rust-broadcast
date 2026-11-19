@@ -7,5 +7,6 @@ mod digest_params;
 mod digest_username_ext;
 mod golden_wire;
 mod http_auth_rfc7616;
+mod hygiene;
 mod signed_url_expiry;
 mod signed_url_kid;

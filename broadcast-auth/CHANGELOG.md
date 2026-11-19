@@ -12,6 +12,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The Digest nonce-count anti-replay window is pinned directly: a jump records every value below the new highest as unseen, an accepted `nc` is refused on replay, and a jump past the 64-bit window drops what is too old, plus an end-to-end out-of-order `nc` replay that must be rejected (audit 22 #2991).
 - The Digest `Authorization` field-rejection branches each have a case that only that check can reject: a claimed username or realm that differs from the configured one while the response hash is still correct, an empty `cnonce`, six-hex-digit `nc`, the inclusive 64-parameter cap, the `username*` `attr-char` syntax gate, and whitespace inside an unquoted token (audit 22 #2992).
 - The signed-URL expiry gate is tested through the real wall clock: an `exp` a minute in the past and `exp=1` are rejected by `Verifier::verify`, and `exp = now + 3600` is accepted, so a clock read that stopped advancing cannot make expired URLs pass (audit 22 #2993).
+- Secret hygiene is pinned: `Authenticator`/`AuthState` `Debug` name their type and never a password or header secret, `Scheme`/`BearerError` `name()` and `Display` agree on the spec tokens, `HttpAuthError` renders its diagnostic, and a Bearer challenge keeps `error_uri` (a repeat still refused) (audit 22 #2994).
 
 ## [0.8.1] - 2026-11-17
 ### Changed
