@@ -3,6 +3,8 @@
 //! Raw mode has no PUSI to resynchronise from, so the pump buffers bytes and
 //! scans forward for a CRC-valid packet start after a CRC failure (#1095).
 
+#![cfg(feature = "ts")]
+
 use broadcast_common::crc32_mpeg2;
 use dvb_t2mi::pump::T2miPump;
 use mpeg_ts::pid::Pid;

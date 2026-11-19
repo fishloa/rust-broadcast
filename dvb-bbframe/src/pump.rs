@@ -201,6 +201,7 @@ mod tests {
     use super::*;
     use crate::crc::crc8;
     use crate::header::{Matype, TsGs};
+    use alloc::vec;
 
     const TS_SYNC: u8 = 0x47;
     const TS_LEN: usize = NM_UP_SIZE;
