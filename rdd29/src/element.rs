@@ -299,4 +299,24 @@ mod tests {
         let err = AnyElement::parse_with_frame_rate(&wire, None).unwrap_err();
         assert!(matches!(err, Error::InvalidValue(..)));
     }
+
+    /// Table 1's four named ElementIDs and the reserved catch-all.
+    #[test]
+    fn element_id_labels_are_pinned() {
+        for (id, label) in [
+            (ElementId::AtmosFrame, "ATMOS_FRAME"),
+            (ElementId::BedDefinition1, "BED_DEFINITION1"),
+            (ElementId::ObjectDefinition1, "OBJECT_DEFINITION1"),
+            (ElementId::AudioDataDlc, "AUDIO_DATA_DLC"),
+            (ElementId::Reserved(0x20), "reserved"),
+        ] {
+            assert_eq!(id.name(), label);
+        }
+        assert_eq!(ElementId::AtmosFrame.to_string(), "ATMOS_FRAME");
+        assert_eq!(ElementId::AudioDataDlc.to_string(), "AUDIO_DATA_DLC");
+        assert_eq!(ElementId::Reserved(0x20).to_string(), "reserved(0x20)");
+        assert_eq!(ElementId::from_wire(0x08), ElementId::AtmosFrame);
+        assert_eq!(ElementId::from_wire(0x200), ElementId::AudioDataDlc);
+        assert_eq!(ElementId::Reserved(0x400).to_wire(), 0x400);
+    }
 }

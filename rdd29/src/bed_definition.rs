@@ -432,4 +432,111 @@ mod tests {
             Err(Error::InvalidValue(..))
         ));
     }
+
+    /// The AlignBits field sits before the last two reserved bytes; with
+    /// seven channels everything before it already ends on a byte boundary,
+    /// so only `0` fits there.
+    #[test]
+    fn align_bits_must_be_zero_when_no_padding_bits_are_needed() {
+        let mut bed = BedDefinition1::new(
+            1,
+            alloc::vec![
+                BedChannel {
+                    channel_id: ChannelId::Lfe,
+                    audio_data_id: 1,
+                };
+                7
+            ],
+        );
+        bed.align_bits = 0;
+        assert!(bed.try_to_bytes().is_ok());
+        bed.align_bits = 1;
+        let mut buf = alloc::vec![0u8; bed.serialized_len()];
+        assert!(
+            matches!(
+                bed.serialize_into(&mut buf),
+                Err(Error::InvalidValue(..))
+            ),
+            "nonzero AlignBits where no padding bits exist must be rejected"
+        );
+    }
+
+    /// The widest value that fits the four padding bits is accepted.
+    #[test]
+    fn align_bits_at_the_padding_maximum_are_accepted() {
+        let mut bed = sample();
+        bed.align_bits = 0x0F;
+        let bytes = bed.try_to_bytes().unwrap();
+        assert_eq!(BedDefinition1::parse(&bytes).unwrap().align_bits, 0x0F);
+    }
+
+    #[test]
+    fn trailing_bits_in_the_declared_element_are_rejected() {
+        let bed = sample();
+        let mut bytes = bed.try_to_bytes().unwrap();
+        bytes.push(0x00);
+        assert!(matches!(
+            BedDefinition1::parse(&bytes),
+            Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
+                field: "BedDefinition1",
+                ..
+            }))
+        ));
+    }
+
+    /// The bound is "more than the ceiling", so a count equal to it is not
+    /// rejected by that check (it still fails later for lack of trailer bits).
+    #[test]
+    fn channel_count_at_the_provable_ceiling_is_not_rejected_by_the_bound() {
+        // MetaID 0x00, reserved 0, Plex(4) ChannelCount = 2: 43 bits remain,
+        // whose provable ceiling is 43 / 15 = 2.
+        let data = [0x00u8, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00];
+        match BedDefinition1::parse(&data) {
+            Err(Error::InvalidValue(iv)) => panic!(
+                "a count equal to the provable ceiling is not over it, but got {}",
+                iv.field
+            ),
+            Err(_) => {}
+            Ok(_) => panic!("7 bytes cannot hold two channels and the trailers"),
+        }
+    }
+
+    #[test]
+    fn serialized_len_matches_the_wire_for_each_channel_count() {
+        for (n, want) in [(0usize, 5usize), (1, 7), (7, 18), (8, 20)] {
+            let bed = BedDefinition1::new(
+                1,
+                alloc::vec![
+                    BedChannel {
+                        channel_id: ChannelId::LeftScreen,
+                        audio_data_id: 1,
+                    };
+                    n
+                ],
+            );
+            assert_eq!(bed.serialized_len(), want, "channels={n}");
+            let mut buf = alloc::vec![0u8; want];
+            assert_eq!(bed.serialize_into(&mut buf).unwrap(), want);
+            assert_eq!(BedDefinition1::parse(&buf).unwrap(), bed);
+        }
+    }
+
+    #[test]
+    fn channel_id_labels_are_pinned() {
+        for (id, bits, name, display) in [
+            (
+                ChannelId::LeftScreen,
+                0u64,
+                "left screen speaker",
+                "left screen speaker",
+            ),
+            (ChannelId::Lfe, 0xD, "lfe speaker", "lfe speaker"),
+            (ChannelId::Reserved(0xE), 0xE, "reserved", "reserved(0x0E)"),
+        ] {
+            assert_eq!(id.to_bits(), bits);
+            assert_eq!(ChannelId::from_bits(bits), id);
+            assert_eq!(id.name(), name);
+            assert_eq!(id.to_string(), display);
+        }
+    }
 }

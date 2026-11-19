@@ -473,4 +473,59 @@ mod tests {
         // is unaffected by changing MaxRendered.
         assert_eq!(&original[..3], &mutated[..3]); // ElementID+ElementSize+ATMOSVersion byte-ish prefix
     }
+
+    /// §5.2.1: 8 + 2 + 2 + 4 fixed bits, then Plex(8) MaxRendered and Plex(8)
+    /// SubElementCount; an empty frame is a 2-byte header plus 4 bytes.
+    #[test]
+    fn empty_frame_wire_len_is_hand_computed() {
+        let frame = AtmosFrame::new(
+            SampleRate::Hz48000,
+            BitDepth::Bits24,
+            FrameRate::Fps24,
+            0,
+            Vec::new(),
+        );
+        assert_eq!(frame.serialized_len(), 6);
+        let mut buf = alloc::vec![0u8; 6];
+        assert_eq!(frame.serialize_into(&mut buf).unwrap(), 6);
+        assert_eq!(&buf, &[0x08, 0x04, 0x01, 0x10, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn trailing_bytes_after_the_sub_elements_report_the_exact_count() {
+        let bytes = [0x08u8, 0x07, 0x01, 0x10, 0x00, 0x00, 0xAA, 0xBB, 0xCC];
+        match AtmosFrame::parse(&bytes) {
+            Err(Error::InvalidValue(iv)) => {
+                assert_eq!(iv.field, "ATMOSFrame");
+                assert_eq!(iv.value, 3);
+            }
+            other => panic!("expected a trailing-bytes InvalidValue, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn sample_rate_and_bit_depth_names_and_bits_are_pinned() {
+        for (rate, bits, name, display) in [
+            (SampleRate::Hz48000, 0u64, "48000 Hz", "48000 Hz"),
+            (SampleRate::Hz96000, 1, "96000 Hz", "96000 Hz"),
+            (SampleRate::Reserved(2), 2, "reserved", "reserved(0x02)"),
+            (SampleRate::Reserved(3), 3, "reserved", "reserved(0x03)"),
+        ] {
+            assert_eq!(rate.to_bits(), bits);
+            assert_eq!(SampleRate::from_bits(bits), rate);
+            assert_eq!(rate.name(), name);
+            assert_eq!(rate.to_string(), display);
+        }
+        for (depth, bits, name, display) in [
+            (BitDepth::Bits24, 1u64, "24 bits", "24 bits"),
+            (BitDepth::Reserved(0), 0, "reserved", "reserved(0x00)"),
+            (BitDepth::Reserved(2), 2, "reserved", "reserved(0x02)"),
+            (BitDepth::Reserved(3), 3, "reserved", "reserved(0x03)"),
+        ] {
+            assert_eq!(depth.to_bits(), bits);
+            assert_eq!(BitDepth::from_bits(bits), depth);
+            assert_eq!(depth.name(), name);
+            assert_eq!(depth.to_string(), display);
+        }
+    }
 }

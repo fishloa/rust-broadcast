@@ -141,4 +141,25 @@ mod tests {
             assert_eq!(fr.to_bits(), bits);
         }
     }
+
+    /// Table 4's nine frame-rate labels plus the reserved catch-all.
+    #[test]
+    fn frame_rate_labels_are_pinned() {
+        for (fr, label) in [
+            (FrameRate::Fps24, "24 fps"),
+            (FrameRate::Fps25, "25 fps"),
+            (FrameRate::Fps30, "30 fps"),
+            (FrameRate::Fps48, "48 fps"),
+            (FrameRate::Fps50, "50 fps"),
+            (FrameRate::Fps60, "60 fps"),
+            (FrameRate::Fps96, "96 fps"),
+            (FrameRate::Fps100, "100 fps"),
+            (FrameRate::Fps120, "120 fps"),
+        ] {
+            assert_eq!(fr.name(), label);
+            assert_eq!(fr.to_string(), label);
+        }
+        assert_eq!(FrameRate::Reserved(13).name(), "reserved");
+        assert_eq!(FrameRate::Reserved(13).to_string(), "reserved(0x0D)");
+    }
 }
