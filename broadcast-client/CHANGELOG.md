@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Tests
+- The DER client-certificate boundary, every spec label, the secret `Debug` redaction, the UDP reorder defaults and largest window, the `Last-Modified` resume validator, the parked-prefix byte budget, the restart-time clears, the refused-reason truncation, the retry jitter seed, the non-HTTP `on_response` guard, the dead `live_conn`, the UDP/SDP and malformed-RTP counters, the replay/seed/stall accessors, the HLS adaptive switch/render/discontinuity paths and the https default-port identity are pinned (audit 23 findings 2-18).
 - The TS-over-HTTP engine's unit suite (`tests/it/tshttp/`, 84 tests) compiles again as `src/tshttp/tests/` modules; it had been inert since the engine was made `pub(crate)`, so its policy-level assertions again pin the TS policy's transitions, timeouts and body accounting (audit 23 finding 1, #3150).
 - A `workspace-guards` tripwire fails when a `.rs` file under a `tests/<bin>/` directory is unreachable from that binary's `main.rs`; it found and revived `mpeg-pes/tests/it/reproductions_2747.rs`, which had never compiled since it was written (audit 23 finding 1, #3150).
 - The TS reconnect wake is pinned at the session surface: a failed connect arms exactly one `WakeAt` at the next backoff, a second poll does not re-arm it, and an earlier deadline replaces an outstanding one (audit 23 finding 19, #3168).

@@ -464,6 +464,30 @@ fn closing_before_the_handshake_completes_sends_nothing_but_the_close() {
 }
 
 #[test]
+fn a_link_closed_by_the_host_is_not_named_by_a_later_farewell() {
+    let mut sim = clear_sim();
+    sim.connect();
+    let conn = sim.conn.expect("a connected socket");
+    sim.session.on_closed(
+        conn,
+        Some(broadcast_client::TransportError::Other {
+            reason: "reset".to_string(),
+        }),
+        stamp(sim.now),
+    );
+    while sim.session.poll(stamp(sim.now)).is_some() {}
+    sim.session.close(stamp(sim.now));
+    let mut sends = 0;
+    while let Some(a) = sim.session.poll(stamp(sim.now)) {
+        if let broadcast_client::Action::Send { conn: sent, .. } = a {
+            assert_ne!(sent, conn, "no farewell goes out on the closed connection");
+            sends += 1;
+        }
+    }
+    assert_eq!(sends, 0);
+}
+
+#[test]
 fn the_entropy_seed_is_required_and_every_attempt_derives_fresh_identifiers() {
     assert!(matches!(
         Session::open(Url::parse(URL).unwrap(), Config::default(), stamp(0)).unwrap_err(),
@@ -566,6 +590,16 @@ fn secrets_never_appear_in_debug_output() {
     let text = format!("{config:?} {:?}", config.srt.entropy_seed);
     assert!(!text.contains("hunter2"), "{text}");
     assert!(text.contains("redacted"));
+    let encryption = format!("{:?}", SrtEncryption::new("hunter2", SrtKeyLength::Aes256));
+    assert!(encryption.contains("<redacted>"), "{encryption}");
+    assert!(encryption.contains("Aes256"), "{encryption}");
+    assert!(!encryption.contains("hunter2"), "{encryption}");
+    let entropy_seed = config.srt.entropy_seed.clone().expect("a seeded config");
+    assert_eq!(
+        format!("{entropy_seed:?}"),
+        "SrtEntropySeed(<redacted>)",
+        "the seed is shown as redacted and nothing else"
+    );
     let sim = SrtSim::open(URL, config, SrtPeer::new(Cipher::Clear, None, LATENCY_MS));
     assert!(!format!("{:?}", sim.session).contains("hunter2"));
 }

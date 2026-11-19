@@ -201,6 +201,7 @@ mod tests {
     use super::*;
     use crate::crc::crc8;
     use crate::header::{Matype, TsGs};
+    use alloc::vec;
 
     const TS_SYNC: u8 = 0x47;
     const TS_LEN: usize = NM_UP_SIZE;
@@ -422,5 +423,107 @@ mod tests {
         // Each CarryOverExtractor fed one NM frame with no issues.
         assert_eq!(s.carry_over.header_parse_failures, 0);
         assert_eq!(s.carry_over.mode_mismatches, 0);
+    }
+
+    fn nm_header(syncd: u16, dfl_bits: u16, upl: u16) -> [u8; BBHEADER_LEN] {
+        Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0,
+            },
+            upl,
+            sync: TS_SYNC,
+            dfl: dfl_bits,
+            syncd,
+            mode: Mode::Normal,
+            issy_in_header: None,
+        }
+        .serialize()
+        .unwrap()
+    }
+
+    fn hem_header(npd: bool, syncd: u16, dfl_bits: u16) -> [u8; BBHEADER_LEN] {
+        Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd,
+                ext: 0,
+                isi: 0,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: dfl_bits,
+            syncd,
+            mode: Mode::HighEfficiency,
+            issy_in_header: None,
+        }
+        .serialize()
+        .unwrap()
+    }
+
+    /// Every `carry_over` field is summed across all PLP extractors. Counter
+    /// values differ per field so a `+=` → `-=`/`*=` (or a swapped field)
+    /// changes the result.
+    #[test]
+    fn stats_aggregates_every_carry_over_counter() {
+        let mut pump = BbframePump::new();
+
+        let mut npd = CarryOverExtractor::new();
+        for _ in 0..5 {
+            npd.feed_hem(&hem_header(true, 0, 0), &[], true);
+        }
+        pump.extractors[0] = Some(npd);
+
+        let mut bad_header = CarryOverExtractor::new();
+        let mut corrupt = nm_header(0, 0, 1504);
+        corrupt[9] ^= 0x55;
+        for _ in 0..6 {
+            bad_header.feed_nm(&corrupt, &[]);
+        }
+        pump.extractors[1] = Some(bad_header);
+
+        let mut mismatch = CarryOverExtractor::new();
+        for _ in 0..7 {
+            mismatch.feed_nm(&hem_header(false, 0, 0), &[]);
+        }
+        pump.extractors[2] = Some(mismatch);
+
+        let mut discards = CarryOverExtractor::new();
+        for _ in 0..8 {
+            discards.feed_nm(&nm_header(0, 100 * 8, 1504), &[0xAA; 100]);
+            discards.feed_nm(&nm_header(50 * 8, 50 * 8, 1504), &[0xAA; 50]);
+        }
+        pump.extractors[3] = Some(discards);
+
+        let mut upl = CarryOverExtractor::new();
+        for _ in 0..9 {
+            upl.feed_nm(&nm_header(0, 0, 1505), &[0xAA; 10]);
+        }
+        pump.extractors[4] = Some(upl);
+
+        let mut crc = CarryOverExtractor::new();
+        let wrong_leading = crc8(&[0x11u8; NM_UP_SIZE - 1]) ^ 0xFF;
+        for _ in 0..11 {
+            let mut frame = vec![wrong_leading];
+            frame.extend_from_slice(&[0x11u8; NM_UP_SIZE - 1]);
+            crc.feed_nm(&nm_header(0, (NM_UP_SIZE * 8) as u16, 1504), &frame);
+        }
+        pump.extractors[5] = Some(crc);
+
+        let carry_over = pump.stats().carry_over;
+        assert_eq!(carry_over.npd_unsupported, 5);
+        assert_eq!(carry_over.header_parse_failures, 6);
+        assert_eq!(carry_over.mode_mismatches, 7);
+        assert_eq!(carry_over.partial_discards, 8);
+        assert_eq!(carry_over.nm_upl_invalid, 9);
+        assert_eq!(carry_over.crc8_mismatches, 10);
     }
 }

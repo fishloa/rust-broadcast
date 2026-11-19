@@ -135,4 +135,23 @@ mod tests {
         let mut watch = Inactivity::new(LIMIT);
         assert_eq!(watch.arm(ConnId::new(1), u64::MAX), None);
     }
+
+    #[test]
+    fn clear_drops_every_armed_deadline() {
+        let mut watch = Inactivity::new(LIMIT);
+        watch.arm(ConnId::new(1), 0);
+        watch.clear();
+        assert_eq!(watch.expire(10_000, |_| Some(0)), Expired::default());
+        assert_eq!(watch.deadlines.len(), 0);
+    }
+
+    #[test]
+    fn compact_drops_stale_entries_when_no_request_is_live() {
+        let mut watch = Inactivity::new(LIMIT);
+        for id in 0..1_000u32 {
+            watch.arm(ConnId::new(id), 0);
+        }
+        watch.compact(Vec::<(ConnId, u64)>::new);
+        assert_eq!(watch.deadlines.len(), 0);
+    }
 }

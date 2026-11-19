@@ -446,6 +446,25 @@ fn rtcp_sender_report_forwarded_without_error() {
 }
 
 #[test]
+fn a_malformed_rtp_frame_costs_only_itself_and_is_counted() {
+    let mut host = playing();
+    assert_eq!(host.session.rtp_malformed_count(), 0);
+    let mut bad = vec![0u8; 16];
+    bad[1] = 96;
+    host.deliver(&interleaved(channel_of(0), &bad));
+    assert_eq!(
+        host.session.rtp_malformed_count(),
+        1,
+        "an RTP frame with version 0 is rejected and counted"
+    );
+    host.deliver_all(&fixture().frames());
+    assert!(
+        samples_of(&host.events()).len() > 2,
+        "the stream continues past the damaged frame"
+    );
+}
+
+#[test]
 fn status_establishing_then_live_once() {
     let mut host = playing();
     let events = finish_stream(&mut host);
