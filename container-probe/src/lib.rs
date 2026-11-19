@@ -558,6 +558,30 @@ pub(crate) fn signature_gate(region: &[u8], signature: &[u8], min_len: usize) ->
     (region[..signature.len()] != *signature).then_some(Outcome::None)
 }
 
+#[cfg(test)]
+mod signature_gate_tests {
+    use super::*;
+
+    const MAGIC: [u8; 4] = *b"TEST";
+
+    /// A region of exactly `min_len` bytes holding the signature is complete:
+    /// the gate hands it on to the prober's own checks instead of asking for
+    /// one more byte.
+    #[test]
+    fn a_region_of_exactly_the_minimum_length_passes_the_gate() {
+        assert_eq!(signature_gate(&MAGIC, &MAGIC, 4), None);
+    }
+
+    /// One byte short is still a short read when the bytes seen agree.
+    #[test]
+    fn a_short_agreeing_region_is_insufficient() {
+        assert_eq!(
+            signature_gate(&MAGIC[..3], &MAGIC, 4),
+            Some(Outcome::Insufficient(4))
+        );
+    }
+}
+
 /// The single shared decision every prober must make: is "no match" a *proof of
 /// non-membership* — or merely the walk *running off the end of the supplied
 /// region* mid-structure?

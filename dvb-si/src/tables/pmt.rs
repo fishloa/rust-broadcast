@@ -1141,6 +1141,15 @@ mod tests {
     }
 
     #[test]
+    fn stream_type_reserved_range_is_not_user_private() {
+        assert_eq!(StreamType::from_u8(0x36), StreamType::ReservedRange(0x36));
+        assert_eq!(StreamType::from_u8(0x40), StreamType::ReservedRange(0x40));
+        assert_eq!(StreamType::from_u8(0x7E), StreamType::ReservedRange(0x7E));
+        assert_eq!(StreamType::from_u8(0x7F), StreamType::IpmpHigh);
+        assert_eq!(StreamType::from_u8(0x80), StreamType::ChinaClosedCaption);
+    }
+
+    #[test]
     fn stream_type_named_values() {
         assert_eq!(StreamType::Mpeg2Video.to_u8(), 0x02);
         assert_eq!(StreamType::H264.to_u8(), 0x1B);

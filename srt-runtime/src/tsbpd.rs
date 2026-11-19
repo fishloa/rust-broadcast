@@ -1240,4 +1240,56 @@ mod tests {
         }
         assert_eq!(s.pending_skips.len(), MAX_SKIPS);
     }
+
+    /// The too-late-drop boundary is strict: a packet exactly at
+    /// `now - TLPKTDROP_THRESHOLD` is still kept, one microsecond later is
+    /// dropped.
+    #[test]
+    fn on_arrival_too_late_drop_boundary_is_strict() {
+        let threshold_us = (DELAY_MS * 5).div_ceil(4) * 1000;
+        let pkt_tsbpd = TIME_BASE + DELAY_MS * 1000;
+
+        let mut s = sched();
+        let out = s.feed_data(0, 0, Timestamp::from_micros(pkt_tsbpd + threshold_us));
+        assert!(out.dropped.is_empty(), "the boundary packet is kept");
+        assert_eq!(out.delivered, vec![0], "the boundary packet is delivered");
+        assert_eq!(s.buffered_count(), 0);
+
+        let mut s = sched();
+        let out = s.feed_data(0, 0, Timestamp::from_micros(pkt_tsbpd + threshold_us + 1));
+        assert_eq!(out.dropped, vec![0]);
+        assert_eq!(s.buffered_count(), 0);
+    }
+
+    /// The release-scan drop boundary is strict too: a buffered packet exactly
+    /// at `now - TLPKTDROP_THRESHOLD` is delivered, not dropped.
+    #[test]
+    fn release_scan_too_late_drop_boundary_is_strict() {
+        let threshold_us = (DELAY_MS * 5).div_ceil(4) * 1000;
+        let pkt_tsbpd = TIME_BASE + DELAY_MS * 1000;
+
+        let mut s = sched();
+        let _ = s.feed_data(0, 0, Timestamp::ZERO);
+        let out = s.tick(Timestamp::from_micros(pkt_tsbpd + threshold_us));
+        assert_eq!(out.delivered, vec![0]);
+        assert!(out.dropped.is_empty());
+
+        let mut s = sched();
+        let _ = s.feed_data(0, 0, Timestamp::ZERO);
+        let out = s.tick(Timestamp::from_micros(pkt_tsbpd + threshold_us + 1));
+        assert_eq!(out.dropped, vec![0]);
+        assert!(out.delivered.is_empty());
+    }
+
+    /// A reversed (malformed) DROPREQ range is ignored; a valid range
+    /// immediately before it is still remembered.
+    #[test]
+    fn a_reversed_skip_range_is_ignored() {
+        let mut s = sched();
+        s.skip_range(5, 7);
+        assert_eq!(s.pending_skips, vec![(5, 7)]);
+        s.skip_range(7, 5);
+        assert_eq!(s.next_release(), 0);
+        assert_eq!(s.pending_skips, vec![(5, 7)]);
+    }
 }

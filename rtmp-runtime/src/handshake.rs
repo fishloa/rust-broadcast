@@ -665,4 +665,38 @@ mod tests {
         // would fail if the FSM instead echoed its *own* S1 random.
         assert_ne!(patterned_random(0x77), default_random_fill());
     }
+
+    /// Audit 22: `serialized_len` is the size `serialize_into` requires, on the
+    /// wire lengths §5.2.2 (`1`) and §5.2.3/§5.2.4 (`1536`).
+    #[test]
+    fn serialized_len_sizes_exactly_what_serialize_into_writes() {
+        let version = Version(RTMP_VERSION);
+        assert_eq!(version.serialized_len(), 1);
+        let mut buf = vec![0u8; version.serialized_len()];
+        assert_eq!(version.serialize_into(&mut buf).unwrap(), 1);
+        assert_eq!(buf, vec![3]);
+        assert!(version.serialize_into(&mut [0u8; 0]).is_err());
+
+        let packet = HandshakePacket {
+            time: 0x1122_3344,
+            zero: 0,
+            random: patterned_random(0x5A),
+        };
+        assert_eq!(packet.serialized_len(), 1536);
+        let mut buf = vec![0u8; packet.serialized_len()];
+        assert_eq!(packet.serialize_into(&mut buf).unwrap(), 1536);
+        assert_eq!(&buf[..8], &[0x11, 0x22, 0x33, 0x44, 0, 0, 0, 0]);
+        assert!(packet.serialize_into(&mut [0u8; 1535]).is_err());
+
+        let echo = EchoPacket {
+            time: 1,
+            time2: 2,
+            random_echo: patterned_random(0xA5),
+        };
+        assert_eq!(echo.serialized_len(), 1536);
+        let mut buf = vec![0u8; echo.serialized_len()];
+        assert_eq!(echo.serialize_into(&mut buf).unwrap(), 1536);
+        assert_eq!(&buf[..8], &[0, 0, 0, 1, 0, 0, 0, 2]);
+        assert!(echo.serialize_into(&mut [0u8; 1535]).is_err());
+    }
 }

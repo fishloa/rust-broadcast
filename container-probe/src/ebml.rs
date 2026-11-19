@@ -505,4 +505,56 @@ mod tests {
             other => panic!("a truncated real MKV header must be Insufficient, got {other:?}"),
         }
     }
+
+    /// A one-byte all-ones size VINT is the "unknown size" marker (RFC 8794
+    /// §4.5), not the known size 127.
+    #[test]
+    fn an_all_ones_size_is_unknown() {
+        assert_eq!(read_size_vint(&[0xFF]), VintRead::Ok(1, None));
+        let eight = [0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        assert_eq!(read_size_vint(&eight), VintRead::Ok(8, None));
+    }
+
+    /// Multi-byte sizes accumulate shifted by 8: `0x7F 0x01` is
+    /// `0x3F << 8 | 0x01` = 16 129, and `0x40 0x23` is 0x23 (RFC 8794 §4.2).
+    #[test]
+    fn a_multi_byte_size_accumulates_shifted_bytes() {
+        assert_eq!(read_size_vint(&[0x7F, 0x01]), VintRead::Ok(2, Some(16_129)));
+        assert_eq!(read_size_vint(&[0x40, 0x23]), VintRead::Ok(2, Some(0x23)));
+    }
+
+    /// A four-byte ID is read whole even when it ends exactly at the region
+    /// end; three bytes of it is a short read, not a malformed VINT.
+    #[test]
+    fn a_four_byte_id_at_the_region_boundary() {
+        let id = [0x1F, 0x43, 0xB6, 0x75];
+        assert_eq!(read_id_vint(&id), VintRead::Ok(4, &id[..]));
+        assert_eq!(read_id_vint(&id[..3]), VintRead::Truncated);
+    }
+
+    /// A DocType whose declared body is clipped by an unknown-length parent is
+    /// a short read reporting the declared end, not a structural error.
+    #[test]
+    fn an_unknown_length_parent_clipped_by_the_region_is_truncation() {
+        let mut buf = std::vec![
+            0x1A, 0x45, 0xDF, 0xA3, // EBML magic
+            0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // unknown-size parent
+            0x42, 0x82, 0xE4, // DocType id, width-1 size = 100
+        ];
+        buf.resize(20, 0x00);
+        assert_eq!(find_doc_type(&buf), DocTypeResult::Truncated(115));
+    }
+
+    /// A four-byte size VINT for the EBML header element still finds the
+    /// DocType it bounds (RFC 8794 §4.2).
+    #[test]
+    fn a_four_byte_header_size_still_finds_the_doc_type() {
+        let data = std::vec![
+            0x1A, 0x45, 0xDF, 0xA3, // EBML magic
+            0x10, 0x00, 0x00, 0x07, // width-4 size, header body = 7 bytes
+            0x42, 0x82, // DocType id
+            0x84, b'w', b'e', b'b', b'm', // size 4, "webm"
+        ];
+        assert_eq!(find_doc_type(&data), DocTypeResult::Found(DocType::Webm));
+    }
 }

@@ -462,4 +462,36 @@ mod tests {
             other => panic!("5-byte ADTS prefix must be Insufficient(6), got {other:?}"),
         }
     }
+
+    /// Encode a header through byte 5 (ISO/IEC 13818-7 §6.2.1).
+    fn header(frame_len: u16) -> [u8; ADTS_HEADER_LEN] {
+        [
+            0xFF,
+            0xF1,
+            0x00,
+            ((frame_len >> 11) & 0x03) as u8,
+            ((frame_len >> 3) & 0xFF) as u8,
+            (((frame_len & 0x07) as u8) << 5),
+        ]
+    }
+
+    /// A region of exactly one header is a short read: the chain can continue
+    /// in more bytes, so the prober asks for a weak chain's worth of frames.
+    #[test]
+    fn a_region_of_exactly_one_header_probes_insufficient() {
+        let data = header(64);
+        match probe(&data, data.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, 256),
+            other => panic!("one 64-byte frame must ask for four (256), got {other:?}"),
+        }
+    }
+
+    /// `frame_length` must be at least 7 (a header alone) and at most the
+    /// 13-bit field's maximum (ISO/IEC 13818-7 §6.2.1).
+    #[test]
+    fn the_frame_length_bounds_are_the_13_bit_field() {
+        assert_eq!(adts_frame_len(&header(7), 0), Some(7));
+        assert_eq!(adts_frame_len(&header(6), 0), None);
+        assert_eq!(adts_frame_len(&header(0x1FFF), 0), Some(8191));
+    }
 }

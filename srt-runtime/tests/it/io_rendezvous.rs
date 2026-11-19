@@ -78,3 +78,49 @@ async fn rendezvous_without_a_peer_times_out() {
         "{err:?}"
     );
 }
+
+/// A silent rendezvous peer gets the WAVEAHAND again only after the
+/// retransmit period (the ticker's first tick is in the future, not now).
+#[tokio::test]
+async fn rendezvous_retransmits_the_wavehand_after_the_retransmit_period() {
+    use srt_runtime::SrtPacket;
+    use srt_runtime::packet::ControlPacket;
+    use std::time::Instant;
+
+    let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let peer_addr = peer.local_addr().unwrap();
+    let local = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let task = tokio::spawn(SrtSocket::rendezvous_from_socket(
+        local,
+        peer_addr,
+        srt_runtime::io::SrtSocketConfig::new(HandshakeConfig::default())
+            .with_io(IoConfig::default()),
+    ));
+
+    let mut buf = [0u8; 2048];
+    let (n, _) = tokio::time::timeout(Duration::from_secs(5), peer.recv_from(&mut buf))
+        .await
+        .expect("no WAVEAHAND")
+        .expect("recv_from");
+    assert!(matches!(
+        SrtPacket::parse(&buf[..n]),
+        Ok(SrtPacket::Control(ControlPacket::Handshake(_)))
+    ));
+    let first = buf[..n].to_vec();
+    let first_at = Instant::now();
+    let (n2, _) = tokio::time::timeout(Duration::from_secs(5), peer.recv_from(&mut buf))
+        .await
+        .expect("no WAVEAHAND retransmit")
+        .expect("recv_from");
+    let gap = first_at.elapsed();
+    assert_eq!(
+        &buf[..n2],
+        first.as_slice(),
+        "the retransmission is the same WAVEAHAND"
+    );
+    assert!(
+        gap >= Duration::from_millis(200),
+        "the WAVEAHAND was retransmitted after {gap:?}"
+    );
+    task.abort();
+}

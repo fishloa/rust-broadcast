@@ -302,4 +302,27 @@ mod tests {
     fn the_default_carries_a_parsed_placeholder_manifest() {
         assert!(SmoothClientConfig::default().manifest_url.has_host());
     }
+
+    #[test]
+    fn the_default_size_caps_are_32_and_16_mib() {
+        let config = SmoothClientConfig::default();
+        assert_eq!(config.max_held_bytes, 33_554_432);
+        assert_eq!(config.max_fragment_bytes, 16_777_216);
+    }
+
+    #[test]
+    fn every_timing_setter_reads_back() {
+        let config = SmoothClientConfig::default()
+            .with_max_refresh_misses(7)
+            .with_refresh_min(Duration::from_millis(150))
+            .with_refresh_max(Duration::from_secs(9));
+        assert_eq!(config.max_refresh_misses, 7);
+        assert_eq!(config.refresh_min, Duration::from_millis(150));
+        assert_eq!(config.refresh_max, Duration::from_secs(9));
+    }
+
+    #[test]
+    fn the_quality_selector_debug_names_its_type() {
+        assert!(format!("{:?}", QualitySelector::first()).contains("QualitySelector"));
+    }
 }

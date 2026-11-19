@@ -793,3 +793,22 @@ impl SmoothClient {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codec_family_groups_fourccs_by_codec_and_keeps_unknowns_distinct() {
+        assert_eq!(codec_family("avc1"), "H264");
+        assert_eq!(codec_family("AVC1"), "H264");
+        assert_eq!(codec_family("H264"), "H264");
+        assert_eq!(codec_family("hvc1"), "H265");
+        assert_eq!(codec_family("HEV1"), "H265");
+        assert_eq!(codec_family("hevc"), "H265");
+        assert_ne!(codec_family("avc1"), codec_family("hvc1"));
+        assert_eq!(codec_family("aacl"), "AACL");
+        assert_eq!(codec_family("ec-3"), "EC-3");
+        assert_ne!(codec_family("aacl"), codec_family("ec-3"));
+    }
+}

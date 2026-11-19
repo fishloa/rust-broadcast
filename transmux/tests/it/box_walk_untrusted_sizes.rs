@@ -105,3 +105,40 @@ fn box_iter_rejects_overflowing_largesize() {
     let mut it = transmux::box_iter(&bytes);
     assert!(matches!(it.next(), Some(Err(_))));
 }
+
+/// A `tfhd` body shorter than its FullBox header plus the mandatory
+/// `track_ID` (ISO/IEC 14496-12:2026 §8.8.7.1) must be a typed short read,
+/// never an out-of-bounds index.
+#[test]
+fn tfhd_body_shorter_than_track_id_is_a_short_read() {
+    use broadcast_common::error::BufferTooShort;
+    for len in 0..=7usize {
+        let err = transmux::TrackFragmentHeaderBox::parse_body(&vec![0u8; len])
+            .expect_err("truncated tfhd must not parse");
+        let transmux::Error::BufferTooShort(BufferTooShort { what, .. }) = err else {
+            panic!("len {len}: wrong error: {err:?}");
+        };
+        if len >= 4 {
+            assert_eq!(what, "tfhd.track_id", "len {len}");
+        }
+    }
+}
+
+/// The four `track_ID` bytes are one big-endian `u32`
+/// (ISO/IEC 14496-12:2026 §8.8.7.1), including non-zero upper bytes.
+#[test]
+fn tfhd_track_id_is_a_big_endian_u32_and_round_trips() {
+    use broadcast_common::Serialize;
+    for id in [0x0102_0304u32, 0xFFFF_FFFF, 0x0000_0100] {
+        let mut body = vec![0u8, 0, 0, 0];
+        body.extend_from_slice(&id.to_be_bytes());
+        let tfhd = transmux::TrackFragmentHeaderBox::parse_body(&body)
+            .unwrap_or_else(|e| panic!("{id:#010x}: {e}"));
+        assert_eq!(tfhd.track_id, transmux::TrackId::new(id));
+        let mut buf = vec![0u8; tfhd.serialized_len()];
+        let n = tfhd.serialize_into(&mut buf).expect("serialize");
+        assert_eq!(n, buf.len());
+        let reparsed = transmux::TrackFragmentHeaderBox::parse_body(&buf[8..]).expect("reparse");
+        assert_eq!(reparsed, tfhd);
+    }
+}

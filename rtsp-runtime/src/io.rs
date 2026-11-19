@@ -980,6 +980,25 @@ mod tls_timeout_tests {
             r.err()
         );
     }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_silent_peer_handshake_bound_is_the_configured_four_seconds() {
+        let (client_io, _server_io) = duplex(4096);
+        let start = tokio::time::Instant::now();
+        let r = guard(connect_tls_via(
+            async { Ok(client_io) },
+            "localhost",
+            default_tls_client_config().expect("TLS client config"),
+            RtspClientIoConfig::default().with_timeouts(timeouts()),
+        ))
+        .await;
+        assert!(matches!(r, Err(Error::Timeout { what: "handshake" })));
+        assert_eq!(
+            start.elapsed(),
+            Duration::from_secs(4),
+            "the handshake bound is the configured one, not the default"
+        );
+    }
 }
 
 fn expect_success(method: Method, event: ClientEvent) -> Result<()> {

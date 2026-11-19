@@ -237,15 +237,17 @@ impl UtcTiming {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub struct MpdFeatures {
-    /// `InbandEventStream` (5.10.3).
+    /// An `InbandEventStream` (5.10.3) the model keeps: one on an
+    /// AdaptationSet, Representation or Preselection.
     pub inband_event_stream: bool,
     /// `ServiceDescription` (Annex K).
     pub service_description: bool,
     /// An `availabilityTimeOffset`, or `availabilityTimeComplete="false"`,
     /// anywhere: a low-latency presentation.
     pub low_latency: bool,
-    /// A Period or AdaptationSet removed because its xlink was
-    /// `urn:mpeg:dash:resolve-to-zero:2013`.
+    /// An xlink the model keeps whose href is
+    /// `urn:mpeg:dash:resolve-to-zero:2013` (5.5.3 rule 4). A Period or
+    /// AdaptationSet with that href is removed instead, so it raises no flag.
     pub xlink_resolve_to_zero: bool,
 }
 
