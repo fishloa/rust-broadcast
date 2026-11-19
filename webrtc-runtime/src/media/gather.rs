@@ -152,14 +152,14 @@ impl StunGather {
                 })?;
                 Ok(Some(SocketAddr::new(xor_addr.ip, xor_addr.port)))
             }
+            StunEvent::TransactionTimeOut
+            | StunEvent::TransactionStopped
+            | StunEvent::AgentClosed => Ok(None),
             // `StunEvent` is `#[non_exhaustive]` in rtc-stun 0.21. An event
             // this crate does not know terminates the gather attempt
             // (done, no srflx address) exactly like a timeout, so the
             // caller proceeds instead of waiting on a transaction that
             // may never conclude.
-            StunEvent::TransactionTimeOut
-            | StunEvent::TransactionStopped
-            | StunEvent::AgentClosed => Ok(None),
             _ => Ok(None),
         }
     }
