@@ -34,7 +34,13 @@ fn real_ts_packet() -> [u8; NM_UP_SIZE] {
         let header_bytes: [u8; BBHEADER_LEN] = frame[..BBHEADER_LEN].try_into().unwrap();
         let extractor = extractors.entry(hdr.matype.isi).or_default();
         for packet in extractor.feed_nm(&header_bytes, &frame[BBHEADER_LEN..]) {
-            if packet[0] == TS_SYNC_BYTE && packet[1] & 0x80 == 0 && packet[1] != 0x00 {
+            // The last payload byte must be non-zero so a carry that drops the
+            // final byte cannot coincidentally reproduce the packet.
+            if packet[0] == TS_SYNC_BYTE
+                && packet[1] & 0x80 == 0
+                && packet[1] != 0x00
+                && packet[NM_UP_SIZE - 1] != 0
+            {
                 return packet;
             }
         }
