@@ -7,9 +7,9 @@
 //! serializer (so its CRC_32 is the real MPEG-2 CRC-32), and the PES packet is
 //! a minimal PTS-only packet.
 
-use broadcast_common::Serialize;
+use broadcast_common::{Parse, Serialize};
 use mpeg_ps::DescriptorLoop;
-use mpeg_ps::{EsMapEntry, ProgramStreamMap};
+use mpeg_ps::{Error, EsMapEntry, ProgramStreamMap};
 
 const PACK_HEADER: &[u8] = &[
     0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01, 0x43, 0x36, 0x3B, 0xF8,
@@ -157,4 +157,114 @@ fn psm_descriptor_loops_walk_typed_and_keep_bytes() {
         .collect();
     assert_eq!(entries.len(), 1);
     assert_eq!((entries[0].tag, entries[0].body), (0x05, &b"HDMV"[..]));
+}
+
+/// A hand-assembled Table 2-41 PSM: `current_next_indicator` 0,
+/// `single_extension_stream_flag` 0, version 0x15, a non-empty program
+/// descriptor loop, and three elementary-stream entries, the middle one
+/// carrying a 3-byte pseudo descriptor (`elementary_stream_id` 0xFD) plus one
+/// descriptor. Every field is distinct so a wrong bit position cannot hide.
+fn table_2_41_psm() -> Vec<u8> {
+    let mut wire = vec![
+        0x00, 0x00, 0x01, 0xBC, // packet_start_code_prefix + map_stream_id
+        0x00, 0x25, // program_stream_map_length = 37
+        0x35, // current_next=0 | single_extension=0 | reserved=1 | version=0x15
+        0xFF, // reserved + marker_bit
+        0x00, 0x06, // program_stream_info_length = 6
+        0x05, 0x04, b'H', b'D', b'M', b'V', // registration descriptor
+        0x00, 0x15, // elementary_stream_map_length = 21
+        0x02, 0xE0, 0x00, 0x00, // video, no descriptors
+        0x06, 0xFD, 0x00, 0x06, // stream_id_extension entry, ES_info_length 6
+        0x01, 0x04, 0xC5, // pseudo_descriptor_tag 1, length 4, marker+0x45
+        0x59, 0x01, 0xAB, // its own descriptor
+        0x03, 0xC1, 0x00, 0x03, // audio-ish entry with one descriptor
+        0x59, 0x01, 0xAB,
+    ];
+    let crc = broadcast_common::crc32_mpeg2::compute(&wire);
+    wire.extend_from_slice(&crc.to_be_bytes());
+    wire
+}
+
+#[test]
+fn psm_flags_and_every_entry_decode_field_by_field() {
+    let wire = table_2_41_psm();
+    let psm = ProgramStreamMap::parse(&wire).expect("the hand-built PSM parses");
+
+    assert!(!psm.current_next_indicator);
+    assert!(!psm.single_extension_stream_flag);
+    assert_eq!(psm.version, 0x15);
+    assert_eq!(
+        psm.program_stream_info.raw(),
+        &[0x05, 0x04, b'H', b'D', b'M', b'V']
+    );
+
+    assert_eq!(psm.elementary_stream_map.len(), 3);
+    let video = &psm.elementary_stream_map[0];
+    assert_eq!(
+        (video.stream_type, video.elementary_stream_id),
+        (0x02, 0xE0)
+    );
+    assert_eq!(video.stream_id_extension, None);
+    assert_eq!(video.pseudo_descriptor_tag, None);
+    assert!(video.descriptors.raw().is_empty());
+
+    let extended = &psm.elementary_stream_map[1];
+    assert_eq!(
+        (extended.stream_type, extended.elementary_stream_id),
+        (0x06, 0xFD)
+    );
+    assert_eq!(extended.stream_id_extension, Some(0x45));
+    assert_eq!(extended.pseudo_descriptor_tag, Some(0x01));
+    assert_eq!(extended.pseudo_descriptor_length, Some(0x04));
+    assert_eq!(extended.descriptors.raw(), &[0x59, 0x01, 0xAB]);
+
+    let third = &psm.elementary_stream_map[2];
+    assert_eq!(
+        (third.stream_type, third.elementary_stream_id),
+        (0x03, 0xC1)
+    );
+    assert_eq!(third.stream_id_extension, None);
+    assert_eq!(third.descriptors.raw(), &[0x59, 0x01, 0xAB]);
+
+    let mut out = vec![0u8; psm.serialized_len()];
+    assert_eq!(psm.serialize_into(&mut out).unwrap(), wire.len());
+    assert_eq!(out, wire, "serialize must reproduce the hand-built bytes");
+}
+
+#[test]
+fn a_cleared_extension_marker_is_rejected() {
+    let mut wire = table_2_41_psm();
+    wire[28] &= 0x7F; // clear bit 7 of the marker+elementary_stream_id_extension byte
+    let crc_at = wire.len() - 4;
+    let crc = broadcast_common::crc32_mpeg2::compute(&wire[..crc_at]);
+    wire[crc_at..].copy_from_slice(&crc.to_be_bytes());
+    assert_eq!(
+        ProgramStreamMap::parse(&wire).unwrap_err(),
+        Error::BadMarker("elementary_stream_id_extension marker")
+    );
+}
+
+#[test]
+fn a_set_single_extension_stream_flag_decodes_the_entry_as_plain() {
+    let psm = ProgramStreamMap {
+        current_next_indicator: true,
+        single_extension_stream_flag: true,
+        version: 0x15,
+        program_stream_info: DescriptorLoop::new(&[]),
+        elementary_stream_map: vec![EsMapEntry {
+            stream_type: 0x06,
+            elementary_stream_id: 0xFD,
+            stream_id_extension: None,
+            pseudo_descriptor_tag: None,
+            pseudo_descriptor_length: None,
+            descriptors: DescriptorLoop::new(&[]),
+        }],
+        crc: 0,
+    };
+    let wire = psm.try_to_bytes().unwrap();
+    let parsed = ProgramStreamMap::parse(&wire).unwrap();
+    assert!(parsed.current_next_indicator);
+    assert!(parsed.single_extension_stream_flag);
+    assert_eq!(parsed.elementary_stream_map[0].stream_id_extension, None);
+    assert_eq!(parsed.try_to_bytes().unwrap(), wire);
 }
