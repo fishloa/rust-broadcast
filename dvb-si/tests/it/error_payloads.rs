@@ -949,51 +949,80 @@ fn sat_position_v3_header_short() {
 
 #[test]
 fn sat_position_v3_metadata_short() {
-    let mut body = [0x00u8; 12];
+    // 26 bytes: 112 bits left of the 120-bit metadata block.
+    let mut body = [0x00u8; 26];
     body[11] = 0x10;
     assert_eq!(
         SatSection::parse(&sat(4, &body)).unwrap_err(),
-        too_short(15, 0, "SatSection PositionV3 metadata")
+        too_short(15, 14, "SatSection PositionV3 metadata")
     );
 }
 
 #[test]
 fn sat_position_v3_usable_start_time_short() {
-    let mut body = [0x00u8; 27];
+    // 33 bytes: 48 bits left of the 56-bit usable time block.
+    let mut body = [0x00u8; 33];
     body[11] = 0x18;
     assert_eq!(
         SatSection::parse(&sat(4, &body)).unwrap_err(),
-        too_short(7, 0, "SatSection PositionV3 usable_start_time")
+        too_short(7, 6, "SatSection PositionV3 usable_start_time")
+    );
+}
+
+#[test]
+fn sat_position_v3_usable_start_time_exactly_fits() {
+    // 34 bytes: exactly 56 bits left, so the block is read.
+    let mut body = [0x00u8; 34];
+    body[11] = 0x18;
+    // The usable time is read; the ephemeris count that follows is short.
+    assert_eq!(
+        SatSection::parse(&sat(4, &body)).unwrap_err(),
+        too_short(36, 34, "SatSection bit reader overrun")
     );
 }
 
 #[test]
 fn sat_position_v3_usable_stop_time_short() {
-    let mut body = [0x00u8; 27];
+    // 33 bytes: 48 bits left of the 56-bit usable time block.
+    let mut body = [0x00u8; 33];
     body[11] = 0x14;
     assert_eq!(
         SatSection::parse(&sat(4, &body)).unwrap_err(),
-        too_short(7, 0, "SatSection PositionV3 usable_stop_time")
+        too_short(7, 6, "SatSection PositionV3 usable_stop_time")
+    );
+}
+
+#[test]
+fn sat_position_v3_usable_stop_time_exactly_fits() {
+    // 34 bytes: exactly 56 bits left, so the block is read.
+    let mut body = [0x00u8; 34];
+    body[11] = 0x14;
+    // The usable time is read; the ephemeris count that follows is short.
+    assert_eq!(
+        SatSection::parse(&sat(4, &body)).unwrap_err(),
+        too_short(36, 34, "SatSection bit reader overrun")
     );
 }
 
 #[test]
 fn sat_position_v3_ephemeris_entry_short() {
-    let mut body = [0x00u8; 14];
+    // 44 bytes: 240 bits left of the 248-bit entry.
+    let mut body = [0x00u8; 44];
     body[13] = 0x01;
     assert_eq!(
         SatSection::parse(&sat(4, &body)).unwrap_err(),
-        too_short(31, 0, "SatSection PositionV3 ephemeris_data entry")
+        too_short(31, 30, "SatSection PositionV3 ephemeris_data entry")
     );
 }
 
 #[test]
 fn sat_position_v3_covariance_short() {
-    let mut body = [0x00u8; 14];
+    // 104 bytes: 720 bits left of the 728-bit covariance block.
+    let mut body = [0x00u8; 104];
     body[11] = 0x01;
     assert_eq!(
         SatSection::parse(&sat(4, &body)).unwrap_err(),
-        too_short(91, 0, "SatSection PositionV3 covariance")
+        too_short(91, 90, "SatSection PositionV3 covariance")
     );
 }
 
