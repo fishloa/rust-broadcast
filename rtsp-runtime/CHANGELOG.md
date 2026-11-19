@@ -12,6 +12,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The inbound cap, the `public_methods`/`session_timeout`/`negotiated_transport` accessors, the PLAY/DESCRIBE capture conditions and the auth-retry bound each have a test pinning the literal value and both edges, so a changed constant, a loosened `&&`, or an accessor returning a constant fails the suite (audit 21 findings 49 and 50, #2944/#2945).
 - The whole RFC 2326 Appendix A state table is exercised transition by transition for both roles, and a server test drives SETUP, PLAY, a second PLAY (a seek) and a SETUP while Playing, so a valid transition can no longer degrade into a 455 (audit 22 finding 27, #2995).
 - A server that hands out several sessions over its lifetime is tested to give each one a distinct `Session` id, so the allocation counter cannot silently stay at zero (audit 22 finding 28, #2996).
+- `sdp::session_description` is asserted line by line for a video + audio session (and parses back through `sdp-types`), and `sdp::resolve_control` is tested at both default ports (`rtsp` 554, `rtsps` 322), so a builder returning a constant and a wrong per-scheme default cannot pass (audit 22 finding 30, #2998).
 
 ## [0.13.0] - 2026-11-17
 ### Added
