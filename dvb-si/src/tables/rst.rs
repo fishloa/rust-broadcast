@@ -330,6 +330,37 @@ mod tests {
         assert_eq!(v["entries"][0]["service_id"], 3);
     }
 
+    /// A declared `section_length` larger than the bytes supplied is rejected
+    /// before the entry loop, never parsed past the buffer.
+    #[test]
+    fn parse_rejects_truncated_entry() {
+        let e = entry(0x1234, 0x0001, 0xABCD, 0x4000, RunningStatus::Running);
+        let mut bytes = build_rst(&[e]);
+        assert_eq!(bytes.len(), 12);
+        bytes.truncate(bytes.len() - 1);
+        match RstSection::parse(&bytes) {
+            Err(Error::SectionLengthOverflow {
+                declared,
+                available,
+            }) => {
+                assert_eq!(declared, 9);
+                assert_eq!(available, 8);
+            }
+            other => panic!("expected SectionLengthOverflow, got {other:?}"),
+        }
+    }
+
+    /// The parser reads exactly `HEADER_LEN + section_length` bytes and ignores
+    /// anything after the section.
+    #[test]
+    fn parse_ignores_trailing_bytes() {
+        let e = entry(0x1234, 0x0001, 0xABCD, 0x4000, RunningStatus::Running);
+        let mut bytes = build_rst(&[e]);
+        bytes.extend_from_slice(&[0xDE, 0xAD, 0xBE]);
+        let rst = RstSection::parse(&bytes).unwrap();
+        assert_eq!(rst.entries, [e]);
+    }
+
     /// The field is 5 bits wide, so a wider value is unrepresentable and cannot
     /// spill into `running_status`.
     #[test]

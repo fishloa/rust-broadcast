@@ -273,6 +273,11 @@ fn key_rotation_two_keys_two_fetches() {
     let run = run_vod(&text, &enc_files(&KEY_A, &iv0, &KEY_B, &iv1), &key_files()).unwrap();
     assert_eq!(run.key_fetches.len(), 2, "{:?}", run.key_fetches);
     assert_ne!(run.key_fetches[0].0, run.key_fetches[1].0);
+    assert_ne!(
+        run.key_fetches[0].0.get(),
+        run.key_fetches[1].0.get(),
+        "distinct URIs get distinct numeric key ids"
+    );
     let urls: Vec<&str> = run.key_fetches.iter().map(|(_, u)| u.as_str()).collect();
     assert!(urls.contains(&"http://fixture/key.bin"));
     assert!(urls.contains(&"http://fixture/keyB.bin"));

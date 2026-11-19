@@ -281,6 +281,46 @@ mod tests {
     }
 
     #[test]
+    fn max_bw_mode_labels_match_the_spec_table() {
+        assert_eq!(MaxBwConfig::Set(1).name(), "MAXBW_SET");
+        assert_eq!(
+            MaxBwConfig::InputBased {
+                input_bw: 1,
+                overhead: 0
+            }
+            .name(),
+            "INPUTBW_SET"
+        );
+        assert_eq!(
+            MaxBwConfig::Estimated {
+                est_input_bw: 1,
+                overhead: 0,
+            }
+            .name(),
+            "INPUTBW_ESTIMATED"
+        );
+        assert_eq!(MaxBwConfig::Infinite.name(), "Infinite");
+    }
+
+    #[test]
+    fn max_bw_config_returns_the_configured_mode() {
+        let cc = LiveCC::new(MaxBwConfig::Set(1_234_567));
+        assert_eq!(cc.max_bw_config(), &MaxBwConfig::Set(1_234_567));
+        let mut cc = LiveCC::new(MaxBwConfig::Infinite);
+        cc.set_max_bw_config(MaxBwConfig::Estimated {
+            est_input_bw: 900_000,
+            overhead: 10,
+        });
+        assert_eq!(
+            cc.max_bw_config(),
+            &MaxBwConfig::Estimated {
+                est_input_bw: 900_000,
+                overhead: 10,
+            }
+        );
+    }
+
+    #[test]
     fn default_bw_is_1_gbps() {
         // L3122-3123: recommended default is 1 Gbps.
         let cfg = MaxBwConfig::default();

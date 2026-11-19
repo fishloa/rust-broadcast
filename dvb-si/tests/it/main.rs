@@ -39,6 +39,7 @@ mod review_lossy_section_parse;
 mod review_random_round_trip;
 mod review_table_field_width;
 mod round_trip;
+mod sat_golden;
 mod sat_reserved_runs;
 mod section_length_floor;
 mod serde_round_trip;

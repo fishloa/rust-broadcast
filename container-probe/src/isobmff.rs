@@ -511,4 +511,58 @@ mod tests {
             ),
         }
     }
+
+    /// A segment beginning `styp` reports its major brand just as an `ftyp`
+    /// file does (§8.14.2); the CMAF segment fixtures start `styp` with the
+    /// brand `msdh`.
+    #[test]
+    fn a_leading_styp_box_reports_its_brand() {
+        let data = fixture_bytes("fixtures/hls/cmaf-fmp4/index0.m4s");
+        match probe(&data, data.len()) {
+            Outcome::Match(Evidence {
+                detail:
+                    Isobmff {
+                        major_brand: Some(brand),
+                        ..
+                    },
+                ..
+            }) => assert_eq!(brand, *b"msdh"),
+            other => panic!("a styp-led segment must report its brand, got {other:?}"),
+        }
+    }
+
+    /// A minimal 12-byte `ftyp` box carries its brand in the last four bytes;
+    /// the brand is still read and the layout is undetermined without a
+    /// `moov`/`moof`.
+    #[test]
+    fn a_minimal_ftyp_box_reports_its_brand() {
+        let data = [
+            0x00, 0x00, 0x00, 0x0C, b'f', b't', b'y', b'p', b'i', b's', b'o', b'm',
+        ];
+        match probe(&data, data.len()) {
+            Outcome::Match(Evidence {
+                detail:
+                    Isobmff {
+                        major_brand,
+                        boxes_walked,
+                        layout,
+                    },
+                ..
+            }) => {
+                assert_eq!(major_brand, Some(*b"isom"));
+                assert_eq!(boxes_walked, 1);
+                assert_eq!(layout, IsobmffLayout::Unknown);
+            }
+            other => panic!("a 12-byte ftyp box must report its brand, got {other:?}"),
+        }
+    }
+
+    /// An 8-byte box header (exactly the minimum) decodes.
+    #[test]
+    fn an_eight_byte_box_header_decodes() {
+        assert_eq!(
+            decode_header(&[0x00, 0x00, 0x00, 0x08, b'f', b'r', b'e', b'e']),
+            Some((8, 8))
+        );
+    }
 }

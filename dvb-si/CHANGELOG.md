@@ -12,6 +12,10 @@
 - `DescriptorLoop::raw_tags`/`contains_tag` (including a descriptor that ends exactly at the loop end) and the `LangCode`/`DvbText` renderings are asserted literally (#2942).
 - `SiDemux`'s version/CRC gate is pinned at its boundaries: the minimum-length and CRC-length guards, the long-form/short-form change hash, the per-PID eviction fairness, the PAT generation and PAT-follow size checks, the `current_next` distinction, and the `SectionEvent` accessors (#2941).
 - INT, Downloadable Font Information, EIT, CIT, DIT, Container and DSM-CC sections get exact-minimum, maximal and loop-overrun tests, and every compared `DsmccSection` field is covered by an inequality test (#2943).
+- RST rejects a declared `section_length` larger than the buffer and ignores bytes after the section; TOT rejects a `descriptors_loop_length` beyond the section and accepts one that exactly fills it (#3113, #3114).
+- SAT pins the signed-field range guard of `centre_latitude`/`centre_longitude` at both boundaries, the bit-level `write_zero`/`seek_forward` helpers, the empty body of `satellite_table_id` 0/1/3, and the doubling heap fallback of its body-length calculation up to the 1 MiB cap (#3115, #3116, #3117, #3118).
+- SAT bodies are pinned against hand-derived EN 300 468 Tables 11c–11h byte vectors (Position V2 orbital and SGP4, Cell Fragment first/last, Time Association with leap flags, Beamhopping Mode 0/1/2 and Position V3 with and without acceleration), including the computed `beamhopping_time_plan_length` (#3119).
+- The UNT and RCT byte-exact round-trip tests re-serialize the parsed value instead of the original, so a symmetric parser/serializer mistake cannot pass (#3123).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

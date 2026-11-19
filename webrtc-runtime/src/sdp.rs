@@ -341,3 +341,48 @@ fn fragment_lines(rendered: &str) -> String {
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sdp_types::{MediaType, TransportProto};
+
+    fn offer_media() -> Media {
+        let mut media = Media::new(MediaType::Audio, 9, TransportProto::UdpTlsRtpSavpf, "");
+        media.add_attribute_with_value("ice-ufrag", "abcd");
+        media
+    }
+
+    /// Audit-22 #3007: the `a=mid` a Trickle-ICE/ICE-restart fragment echoes
+    /// is the offer section's own; RFC 8843 §9.1's bundled default is `0` for
+    /// a section that carries none. Bite test: a constant (or empty) answer
+    /// makes every PATCH name the wrong media section.
+    #[test]
+    fn offer_mid_echoes_the_offer_section_or_the_bundled_default() {
+        let mut media = offer_media();
+        media.add_attribute_with_value("mid", "1");
+        assert_eq!(offer_mid(&media), "1");
+        assert_eq!(DEFAULT_MID, "0");
+        assert_eq!(offer_mid(&offer_media()), "0");
+    }
+
+    /// Audit-22 #3007: the session header lines an RFC 8840 §4.4 fragment is
+    /// parsed against (a fragment carries none of its own). Bite test: an
+    /// empty or constant prelude makes the documented
+    /// `Session::parse(fragment_prelude() + fragment)` path parse nothing.
+    #[test]
+    fn fragment_prelude_is_rfc_8840s_session_header() {
+        let prelude = fragment_prelude().expect("render");
+        assert_eq!(prelude, "v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\ns=-\r\nt=0 0\r\n");
+        // The prelude really is a parseable session header: a fragment's own
+        // `a=` lines follow it.
+        let fragment = "a=ice-ufrag:localufrag\r\na=ice-pwd:localpwd\r\n";
+        let mut document = prelude;
+        document.push_str(fragment);
+        let session = Session::parse(document.as_bytes()).expect("prelude plus fragment parses");
+        assert_eq!(
+            session.get_first_attribute_value("ice-ufrag"),
+            Some(Some("localufrag"))
+        );
+    }
+}

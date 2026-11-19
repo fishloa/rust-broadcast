@@ -498,3 +498,31 @@ fn single_sample_segment_does_not_set_the_frame_rate() {
         Some(broadcast_hls::FrameRate::from_millihertz(30_000))
     );
 }
+
+#[test]
+fn the_maximum_survives_a_faster_track_listed_first() {
+    let specs25 = specs_from_fixture("ts/h264-aac.ts").unwrap_or_default();
+    let specs30 =
+        specs_from_fixture("scte35/ts/video-with-scte35-splice-insert.ts").unwrap_or_default();
+    if specs25.is_empty() || specs30.is_empty() {
+        return;
+    }
+    let mut fast = specs30
+        .into_iter()
+        .find(|s| matches!(s.config, CodecConfig::Avc { .. }))
+        .expect("video spec");
+    let mut slow = specs25
+        .into_iter()
+        .find(|s| matches!(s.config, CodecConfig::Avc { .. }))
+        .expect("video spec");
+    fast.track_id = transmux::TrackId::new(1);
+    slow.track_id = transmux::TrackId::new(2);
+    let origin = origin();
+    origin.set_track_specs(&[slow, fast]).unwrap();
+    let parsed = MasterPlaylist::parse(&render(&origin)).expect("parse master");
+    assert_eq!(
+        parsed.variants[0].frame_rate,
+        Some(broadcast_hls::FrameRate::from_millihertz(30_000)),
+        "the maximum wins even when the slower track sorts last"
+    );
+}

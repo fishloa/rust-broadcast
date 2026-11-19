@@ -76,6 +76,41 @@ fn offer_can_be_retried_after_a_503_or_a_redirect() {
     }
 }
 
+/// Audit-22 #3006: an ICE-restart `PATCH` answered `200` without an `ETag`
+/// cannot refresh the resource's tag, so the state machine says exactly that.
+/// Bite test: dropping the `(OK, None)` arm turns it into a generic
+/// `Http { status: 200 }`, hiding which header was missing.
+#[test]
+fn an_ice_restart_answer_without_an_etag_reports_the_missing_header() {
+    let mut c = established_client();
+    c.ice_restart(b"a=ice-ufrag:new\r\n".to_vec())
+        .expect("an established session can restart ICE");
+    let err = c
+        .on_response(client::HttpResponse::new(StatusCode::OK))
+        .expect_err("a 200 without an ETag cannot be applied");
+    assert!(
+        matches!(err, webrtc_runtime::Error::MissingHeader { header: "ETag" }),
+        "{err:?}"
+    );
+
+    // The same answer carrying the new tag is the ICE-restart result.
+    let mut c = established_client();
+    c.ice_restart(b"a=ice-ufrag:new\r\n".to_vec()).unwrap();
+    let event = c
+        .on_response(
+            client::HttpResponse::new(StatusCode::OK)
+                .with_etag("e2")
+                .unwrap()
+                .with_body(b"a=ice-ufrag:peer\r\n".to_vec()),
+        )
+        .expect("a 200 with an ETag is the restart answer")
+        .expect("an event is emitted");
+    assert!(matches!(
+        event,
+        client::Event::IceRestart { new_etag, .. } if new_etag == "e2"
+    ));
+}
+
 #[test]
 fn late_ack_restart_does_not_resurrect_a_deleted_session() {
     let mut s = WhipSession::new(session_url());

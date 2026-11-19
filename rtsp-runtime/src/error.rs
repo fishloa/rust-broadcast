@@ -429,6 +429,84 @@ mod tests {
         assert!(parse.to_string().contains("request"));
         assert_eq!(IoContext::TlsHandshake.to_string(), "TLS handshake");
     }
+
+    #[test]
+    fn every_transport_parse_error_renders_its_facts() {
+        assert_eq!(
+            TransportParseError::UnsupportedProtocol.to_string(),
+            "unsupported transport protocol (only RTP)"
+        );
+        assert_eq!(
+            TransportParseError::UnknownProfile.to_string(),
+            "unsupported profile (only AVP)"
+        );
+        assert_eq!(
+            TransportParseError::UnknownLowerTransport {
+                value: "SCTP".into()
+            }
+            .to_string(),
+            "unknown lower-transport \"SCTP\""
+        );
+        assert_eq!(
+            TransportParseError::MissingValue {
+                param: "ttl".into()
+            }
+            .to_string(),
+            "ttl requires a value"
+        );
+        assert_eq!(
+            TransportParseError::TtlNotSingle.to_string(),
+            "ttl is a single value"
+        );
+        assert_eq!(
+            TransportParseError::BadPortRange {
+                param: "client_port".into(),
+                reason: "reversed range".into()
+            }
+            .to_string(),
+            "client_port: reversed range"
+        );
+        assert_eq!(
+            TransportParseError::NoSpecs.to_string(),
+            "no transport-specs"
+        );
+    }
+
+    #[test]
+    fn every_other_parse_error_renders_its_facts() {
+        assert_eq!(
+            HeaderSerializeError::ControlChar("a\r\nb".into()).to_string(),
+            "a\r\nb"
+        );
+        assert_eq!(
+            HeaderSerializeError::NotToken {
+                value: "a b".into()
+            }
+            .to_string(),
+            "\"a b\" is not a token"
+        );
+        assert_eq!(SessionParseError::Empty.to_string(), "empty session id");
+        assert_eq!(
+            SessionParseError::Malformed("x y".into()).to_string(),
+            "x y"
+        );
+        assert_eq!(
+            FrameError::BadMagic { found: 0x52 }.to_string(),
+            "expected '$' (0x24), found 0x52"
+        );
+        assert_eq!(
+            FrameError::TooLong { len: 70_000 }.to_string(),
+            "payload of 70000 bytes exceeds 16-bit length field"
+        );
+        assert_eq!(
+            SdpParseError::Utf8("bad utf8".into()).to_string(),
+            "bad utf8"
+        );
+        assert_eq!(
+            SdpParseError::Parse("bad sdp".into()).to_string(),
+            "bad sdp"
+        );
+    }
 }
 
 /// Reason a `Transport` header value could not be parsed (RFC 2326 §12.39).

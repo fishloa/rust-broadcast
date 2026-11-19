@@ -129,4 +129,53 @@ mod tests {
             other => panic!("13-byte MPEG-PS prefix must be Insufficient(14), got {other:?}"),
         }
     }
+
+    fn structurally_valid(outcome: Outcome) -> bool {
+        match outcome {
+            Outcome::Match(Evidence {
+                detail: Detail::MpegPs { structurally_valid },
+                ..
+            }) => structurally_valid,
+            other => panic!("expected an MPEG-PS match, got {other:?}"),
+        }
+    }
+
+    /// Every marker bit in the pack header is required (ISO/IEC 13818-1
+    /// §2.5.3.3): clearing any one of them drops the verdict to `HEURISTIC`.
+    #[test]
+    fn each_pack_header_marker_bit_is_required() {
+        let data = fixture_bytes("fixtures/ps/h264-ac3.ps");
+        let pack = &data[..PACK_HEADER_MIN_LEN];
+        assert!(structurally_valid(probe(pack, pack.len())));
+
+        for &(byte_off, bit) in &SCR_MARKER_BITS {
+            let mut broken = [0u8; PACK_HEADER_MIN_LEN];
+            broken.copy_from_slice(pack);
+            broken[SCR_OFFSET + byte_off] &= !bit;
+            assert!(
+                !structurally_valid(probe(&broken, broken.len())),
+                "a cleared SCR marker at pack byte {} must be rejected",
+                SCR_OFFSET + byte_off
+            );
+        }
+        for bit in [0x01u8, 0x02] {
+            let mut broken = [0u8; PACK_HEADER_MIN_LEN];
+            broken.copy_from_slice(pack);
+            broken[MUX_RATE_MARKERS_BYTE] &= !bit;
+            assert!(
+                !structurally_valid(probe(&broken, broken.len())),
+                "cleared program_mux_rate marker {bit:#04x} must be rejected"
+            );
+        }
+    }
+
+    /// The SCR field's top two bits must be the `'01'` prefix, not `'10'`.
+    #[test]
+    fn the_scr_prefix_must_be_one_zero() {
+        let data = fixture_bytes("fixtures/ps/h264-ac3.ps");
+        let mut broken = [0u8; PACK_HEADER_MIN_LEN];
+        broken.copy_from_slice(&data[..PACK_HEADER_MIN_LEN]);
+        broken[SCR_OFFSET] = 0x84;
+        assert!(!structurally_valid(probe(&broken, broken.len())));
+    }
 }
