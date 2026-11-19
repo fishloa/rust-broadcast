@@ -1550,3 +1550,15 @@ fn sat_beamhopping_plan_header_past_nine_bytes() {
         too_short(12, 9, "SatSection bit reader overrun")
     );
 }
+
+#[test]
+fn sat_position_v3_ephemeris_entry_with_acceleration_short() {
+    // 56 bytes: 336 bits left of the 344-bit accelerated entry.
+    let mut body = [0x00u8; 56];
+    body[11] = 0x02;
+    body[13] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(4, &body)).unwrap_err(),
+        too_short(43, 42, "SatSection PositionV3 ephemeris_data entry")
+    );
+}
