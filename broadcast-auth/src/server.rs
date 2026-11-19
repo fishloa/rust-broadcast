@@ -2361,4 +2361,23 @@ mod tests {
             AuthResult::Unauthorized
         );
     }
+
+    /// RFC 8187 §3.2.1: `value-chars` is `pct-encoded` or `attr-char` only.
+    /// A space, a control byte, or any other delimiter is not an `attr-char`
+    /// and must not pass the `username*` syntax gate.
+    #[test]
+    fn ext_value_syntax_rejects_bytes_outside_attr_char() {
+        for bad in [
+            "UTF-8''adm in",
+            "UTF-8''adm\tin",
+            "UTF-8''adm\u{7f}in",
+            "UTF-8''a/b",
+            "UTF-8''a\"b",
+            "UTF-8''a%2",
+        ] {
+            assert!(decode_ext_value(bad).is_none(), "{bad:?}");
+        }
+        assert_eq!(decode_ext_value("UTF-8''ad%6din").as_deref(), Some("admin"));
+        assert_eq!(decode_ext_value("utf-8''admin").as_deref(), Some("admin"));
+    }
 }
