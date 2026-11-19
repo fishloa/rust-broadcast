@@ -4,6 +4,8 @@ mod deep_drop;
 #[cfg(feature = "std")]
 mod error_variants;
 mod golden;
+#[cfg(feature = "std")]
+mod hostile_structure;
 mod integration;
 #[cfg(feature = "std")]
 mod mixed_content;
