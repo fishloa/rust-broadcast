@@ -1259,3 +1259,168 @@ fn dsi_server_id_exactly_fills_the_payload() {
 }
 
 // MARKER
+
+#[test]
+fn rct_link_info_two_trailing_bytes() {
+    let link = [0x3C, 0x00, 0x10, 0x00, 0xC0, 0x00, 0x00, 0xAA, 0xBB];
+    assert_eq!(
+        RctSection::parse(&rct_link(&link)).unwrap_err(),
+        too_short(2, 0, "RctSection link_info trailing bytes")
+    );
+}
+
+#[test]
+fn rct_descriptor_loop_two_trailing_bytes() {
+    assert_eq!(
+        RctSection::parse(&rct(0, &[0xF0, 0x00, 0xAA, 0xBB])).unwrap_err(),
+        too_short(2, 0, "RctSection trailing bytes after descriptor loop")
+    );
+}
+
+#[test]
+fn rnt_common_descriptors_overrun_counts_from_the_loop_start() {
+    // 19-byte section, common_descriptors_length 5 at bytes 9-10: 4 bytes
+    // remain between the loop start and the CRC.
+    let bytes = rnt(5, &[0xAA, 0xAA, 0xAA, 0xAA]);
+    assert_eq!(RntSection::parse(&bytes).unwrap_err(), overflow(5, 4));
+}
+
+#[test]
+fn rnt_resolution_provider_length_field_ending_at_body_end() {
+    // payload_end == 13: the length field fits, the provider name field does not.
+    let bytes = rnt(0, &[0xF0, 0x00]);
+    assert_eq!(
+        RntSection::parse(&bytes).unwrap_err(),
+        too_short(14, 13, "RntSection resolution_provider_name_length")
+    );
+}
+
+#[test]
+fn rnt_resolution_provider_name_ending_at_provider_end() {
+    // rp_info_length 3: a 2-byte name ends exactly at rp_end.
+    let bytes = rnt(0, &[0xF0, 0x03, 0x02, b'a', b'b']);
+    assert_eq!(
+        RntSection::parse(&bytes).unwrap_err(),
+        too_short(18, 16, "RntSection resolution_provider_descriptors_length")
+    );
+}
+
+#[test]
+fn rnt_resolution_provider_descriptors_ending_at_provider_end_is_accepted() {
+    let bytes = rnt(0, &[0xF0, 0x03, 0x00, 0x00, 0x00]);
+    let rnt = RntSection::parse(&bytes).expect("provider ends at the payload end");
+    assert_eq!(rnt.resolution_providers.len(), 1);
+    assert!(rnt.resolution_providers[0].crid_authorities.is_empty());
+}
+
+#[test]
+fn rnt_crid_authority_name_ending_at_provider_end() {
+    // rp_info_length 4: a zero-length CA name ends exactly at rp_end; the CA
+    // header is then the missing field.
+    let bytes = rnt(0, &[0xF0, 0x04, 0x00, 0x00, 0x00, 0x00]);
+    assert_eq!(
+        RntSection::parse(&bytes).unwrap_err(),
+        too_short(19, 17, "RntSection CRID_authority header")
+    );
+}
+
+#[test]
+fn sat_position_v2_sgp4_exactly_fits() {
+    // Body 47 bytes: 32 header bits + 344 SGP4 bits.
+    let mut body = [0x00u8; 47];
+    body[3] = 0x01;
+    let sat = SatSection::parse(&sat(0, &body)).expect("44-byte SGP4 satellite");
+    match sat.body {
+        dvb_si::tables::sat::SatBody::PositionV2(v2) => assert_eq!(v2.satellites.len(), 1),
+        other => panic!("expected PositionV2, got {other:?}"),
+    }
+}
+
+#[test]
+fn sat_cell_fragment_loop_threshold_rejects_trailing_bytes() {
+    // 32 bits cannot hold a 34-bit fragment header.
+    assert_eq!(
+        SatSection::parse(&sat(1, &[0x00; 4])).unwrap_err(),
+        too_short(
+            4,
+            0,
+            "SatSection trailing body bytes after the last whole entry"
+        )
+    );
+}
+
+#[test]
+fn sat_cell_fragment_delivery_system_id_exactly_fits() {
+    // 10-byte body: dsid_count 1 with exactly 32 bits left; the fragment
+    // flags after it are then short.
+    let mut body = [0x00u8; 10];
+    body[5] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(1, &body)).unwrap_err(),
+        too_short(11, 10, "SatSection bit reader overrun")
+    );
+}
+
+#[test]
+fn sat_cell_fragment_delivery_system_ids_shortfall_in_bytes() {
+    // 11-byte body: dsid_count 2 needs 64 bits with 40 left.
+    let mut body = [0x00u8; 11];
+    body[5] = 0x02;
+    assert_eq!(
+        SatSection::parse(&sat(1, &body)).unwrap_err(),
+        too_short(8, 5, "SatSection CellFragment delivery_system_ids")
+    );
+}
+
+#[test]
+fn sat_cell_fragment_new_delivery_systems_exactly_fits() {
+    // 22-byte body: dsid_count 1, nds_count 1 with exactly 80 bits left.
+    let mut body = [0x00u8; 22];
+    body[5] = 0x01;
+    body[11] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(1, &body)).unwrap_err(),
+        too_short(23, 22, "SatSection bit reader overrun")
+    );
+}
+
+#[test]
+fn sat_cell_fragment_new_delivery_systems_shortfall_in_bytes() {
+    // 17-byte body: dsid_count 1, nds_count 1 needs 80 bits with 40 left.
+    let mut body = [0x00u8; 17];
+    body[5] = 0x01;
+    body[11] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(1, &body)).unwrap_err(),
+        too_short(10, 5, "SatSection CellFragment new_delivery_systems")
+    );
+}
+
+#[test]
+fn sat_cell_fragment_obsolescent_delivery_systems_shortfall_in_bytes() {
+    // 19-byte body: dsid_count 1, ods_count 1 needs 80 bits with 40 left.
+    let mut body = [0x00u8; 19];
+    body[5] = 0x01;
+    body[13] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(1, &body)).unwrap_err(),
+        too_short(
+            10,
+            5,
+            "SatSection CellFragment obsolescent_delivery_systems"
+        )
+    );
+}
+
+#[test]
+fn sat_beamhopping_loop_threshold_rejects_trailing_bytes() {
+    // 16 bits cannot hold a 48-bit plan header.
+    assert_eq!(
+        SatSection::parse(&sat(3, &[0x00, 0x00])).unwrap_err(),
+        too_short(
+            2,
+            0,
+            "SatSection trailing body bytes after the last whole entry"
+        )
+    );
+}
