@@ -203,4 +203,73 @@ mod tests {
             )))
         );
     }
+
+    fn pes_field(id: DataUnitId, teletext: TeletextDataField) -> alloc::vec::Vec<u8> {
+        let mut body = [0u8; dvb_vbi::TELETEXT_FIELD_LEN];
+        teletext.serialize_into(&mut body).unwrap();
+        let mut wire = alloc::vec![0x10, id.to_u8(), dvb_vbi::TELETEXT_DATA_UNIT_LENGTH,];
+        wire.extend_from_slice(&body);
+        wire
+    }
+
+    fn subtitle_page() -> (TeletextDataField, TeletextDataField) {
+        let mut header = [0u8; 42];
+        header[0] = hamming(0);
+        header[1] = hamming(0);
+        header[2] = hamming(8);
+        header[3] = hamming(8);
+        header[5] = hamming(0b1000); // C4 erase_page
+        header[7] = hamming(0b1000); // C6 subtitle
+        for b in header.iter_mut().skip(10) {
+            *b = set_odd_parity(0x20);
+        }
+
+        let mut row = [0u8; 42];
+        row[0] = hamming(1 << 3); // magazine 8, Y bit0 = 1 (row 1)
+        row[1] = hamming(0);
+        row[2] = set_odd_parity(0x0B); // Start Box, doubled
+        row[3] = set_odd_parity(0x0B);
+        for (i, c) in b"HELLO".iter().enumerate() {
+            row[4 + i] = set_odd_parity(*c);
+        }
+        row[9] = set_odd_parity(0x0A); // End Box
+        for b in row.iter_mut().skip(10) {
+            *b = set_odd_parity(0x20);
+        }
+        (field(header), field(row))
+    }
+
+    #[test]
+    fn inverted_teletext_units_are_not_subtitles() {
+        let (header, row) = subtitle_page();
+        let mut inverted_header = header;
+        inverted_header.framing_code = dvb_vbi::FRAMING_CODE_INVERTED;
+        let mut inverted_row = row;
+        inverted_row.framing_code = dvb_vbi::FRAMING_CODE_INVERTED;
+
+        let mut inverted = TeletextToWebVtt::new(8, 0x88);
+        inverted
+            .push_pes_data_field(0, &pes_field(DataUnitId::InvertedTeletext, inverted_header))
+            .unwrap();
+        inverted
+            .push_pes_data_field(1, &pes_field(DataUnitId::InvertedTeletext, inverted_row))
+            .unwrap();
+        inverted.finalize(2);
+        assert!(
+            inverted.cues().is_empty(),
+            "inverted teletext must not reach the subtitle extractor: {:?}",
+            inverted.cues()
+        );
+
+        let mut subtitle = TeletextToWebVtt::new(8, 0x88);
+        subtitle
+            .push_pes_data_field(0, &pes_field(DataUnitId::EbuTeletextSubtitle, header))
+            .unwrap();
+        subtitle
+            .push_pes_data_field(1, &pes_field(DataUnitId::EbuTeletextSubtitle, row))
+            .unwrap();
+        subtitle.finalize(2);
+        assert_eq!(subtitle.cues().len(), 1);
+        assert_eq!(subtitle.cues()[0].text, "HELLO");
+    }
 }
