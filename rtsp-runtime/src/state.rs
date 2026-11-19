@@ -223,16 +223,32 @@ mod tests {
         (SessionState::Init, Method::Play, None),
         (SessionState::Init, Method::Pause, None),
         (SessionState::Init, Method::Record, None),
-        (SessionState::Init, Method::Teardown, Some(SessionState::Init)),
-        (SessionState::Ready, Method::Setup, Some(SessionState::Ready)),
-        (SessionState::Ready, Method::Play, Some(SessionState::Playing)),
+        (
+            SessionState::Init,
+            Method::Teardown,
+            Some(SessionState::Init),
+        ),
+        (
+            SessionState::Ready,
+            Method::Setup,
+            Some(SessionState::Ready),
+        ),
+        (
+            SessionState::Ready,
+            Method::Play,
+            Some(SessionState::Playing),
+        ),
         (SessionState::Ready, Method::Pause, None),
         (
             SessionState::Ready,
             Method::Record,
             Some(SessionState::Recording),
         ),
-        (SessionState::Ready, Method::Teardown, Some(SessionState::Init)),
+        (
+            SessionState::Ready,
+            Method::Teardown,
+            Some(SessionState::Init),
+        ),
         (
             SessionState::Playing,
             Method::Setup,
