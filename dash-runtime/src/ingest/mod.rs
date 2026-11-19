@@ -506,6 +506,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn count_ident_counts_every_occurrence() {
+        assert_eq!(count_ident("$Number$", "Number"), 1);
+        assert_eq!(count_ident("$Number%03d$", "Number"), 1);
+        assert_eq!(count_ident("$Number$-$Number$", "Number"), 2);
+        assert_eq!(count_ident("$Time$-$Number$", "Number"), 1);
+        assert_eq!(count_ident("$Time$-$Number$", "Time"), 1);
+        assert_eq!(count_ident("$RepresentationID$/$Number$", "Number"), 1);
+        assert_eq!(count_ident("plain.m4s", "Number"), 0);
+        assert_eq!(count_ident("$Time$$Number$", "Number"), 1);
+    }
+
+    #[test]
     fn status_mapping_exhaustive() {
         // Exhaustive match (no wildcard): adding a variant breaks compile.
         fn expected(e: &IngestError) -> u16 {
