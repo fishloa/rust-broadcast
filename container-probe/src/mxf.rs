@@ -245,4 +245,60 @@ mod tests {
             other => panic!("prefix-only MXF must be STRONG, got {other:?}"),
         }
     }
+
+    /// A complete Partition Pack key with the given BER length bytes.
+    fn partition_pack(ber: &[u8]) -> std::vec::Vec<u8> {
+        let mut data = std::vec::Vec::new();
+        data.extend_from_slice(&MXF_KEY_PREFIX);
+        data.push(0x01);
+        data.extend_from_slice(&MXF_KEY_MID);
+        data.push(MXF_KEY_STRUCTURE_KIND);
+        data.push(MXF_PARTITION_KIND_HEADER);
+        data.push(0x04);
+        data.push(0x00);
+        data.extend_from_slice(ber);
+        data
+    }
+
+    fn confidence_of(outcome: Outcome) -> Confidence {
+        match outcome {
+            Outcome::Match(ev) => ev.confidence,
+            other => panic!("expected an MXF match, got {other:?}"),
+        }
+    }
+
+    /// A malformed BER length leaves the verdict at `STRONG`; only a
+    /// well-formed short form or long form with 1..=8 fully present octets
+    /// reaches `CERTAIN` (ITU-T X.690 §8.1.3).
+    #[test]
+    fn a_malformed_ber_length_is_not_certain() {
+        // Long form declaring 0 octets (the count must be 1..=8).
+        assert_eq!(
+            confidence_of(probe(&partition_pack(&[0x80]), 17)),
+            Confidence::STRONG
+        );
+        // Long form declaring 9 octets (above the bound).
+        assert_eq!(
+            confidence_of(probe(
+                &partition_pack(&[0x89, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+                26
+            )),
+            Confidence::STRONG
+        );
+        // Long form declaring two octets but only one present.
+        assert_eq!(
+            confidence_of(probe(&partition_pack(&[0x82, 0x00]), 18)),
+            Confidence::STRONG
+        );
+        // The same long form with both octets present is well formed.
+        assert_eq!(
+            confidence_of(probe(&partition_pack(&[0x82, 0x00, 0x01]), 19)),
+            Confidence::CERTAIN
+        );
+        // Short form is always a single length octet.
+        assert_eq!(
+            confidence_of(probe(&partition_pack(&[0x10]), 17)),
+            Confidence::CERTAIN
+        );
+    }
 }
