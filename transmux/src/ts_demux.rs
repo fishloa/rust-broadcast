@@ -15041,4 +15041,1865 @@ pub(crate) mod tests {
             "no section_syntax_indicator, no CRC to accept"
         );
     }
+
+    // ── audit 22: live-track attribution and the PES cap boundary ───────────
+
+    fn real_h264_ts() -> Vec<u8> {
+        std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts/h264-aac.ts")
+    }
+
+    fn video_pid_and_track(bytes: &[u8]) -> (u16, TrackId) {
+        let media = TsDemux::new().unpackage(bytes).expect("demux");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.config.is_video())
+            .expect("video track");
+        (
+            track.spec.source_pid.expect("source pid").value(),
+            track.spec.track_id,
+        )
+    }
+
+    fn packets_of_pid(bytes: &[u8]) -> Vec<usize> {
+        (0..bytes.len() / TS_PACKET_SIZE)
+            .filter(|i| bytes[i * TS_PACKET_SIZE] == 0x47)
+            .map(|i| i * TS_PACKET_SIZE)
+            .collect()
+    }
+
+    fn pid_of(bytes: &[u8], off: usize) -> u16 {
+        ((u16::from(bytes[off + 1]) & 0x1F) << 8) | u16::from(bytes[off + 2])
+    }
+
+    fn drain_events(demux: &mut StreamingTsDemux) -> Vec<DemuxEvent> {
+        std::iter::from_fn(|| demux.poll_event()).collect()
+    }
+
+    #[test]
+    fn a_continuity_gap_on_a_live_pid_names_its_track() {
+        let bytes = real_h264_ts();
+        let (pid, track_id) = video_pid_and_track(&bytes);
+        let mut mutated = bytes.clone();
+        let offsets: Vec<usize> = packets_of_pid(&bytes)
+            .into_iter()
+            .filter(|&off| pid_of(&bytes, off) == pid)
+            .collect();
+        let off = offsets[60];
+        mutated[off + 3] = (bytes[off + 3] & 0xF0) | (bytes[off + 3].wrapping_add(7) & 0x0F);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&mutated).expect("feed");
+        let _ = demux.finish();
+        let gap = drain_events(&mut demux)
+            .into_iter()
+            .find_map(|ev| match ev {
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind: InputDegradation::ContinuityGap { .. },
+                    provenance,
+                } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
+                _ => None,
+            });
+        assert_eq!(
+            gap,
+            Some(Some(track_id)),
+            "a gap on a resolved PID names its live track, never None"
+        );
+    }
+
+    #[test]
+    fn a_scrambled_payload_on_a_live_pid_names_its_track() {
+        let bytes = real_h264_ts();
+        let (pid, track_id) = video_pid_and_track(&bytes);
+        let mut mutated = bytes.clone();
+        let offsets: Vec<usize> = packets_of_pid(&bytes)
+            .into_iter()
+            .filter(|&off| pid_of(&bytes, off) == pid)
+            .collect();
+        let off = offsets[60];
+        // transport_scrambling_control = 2 (even key), bits [7:6].
+        mutated[off + 3] = (bytes[off + 3] & 0x3F) | 0x80;
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&mutated).expect("feed");
+        let _ = demux.finish();
+        let scrambled = drain_events(&mut demux)
+            .into_iter()
+            .find_map(|ev| match ev {
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind: InputDegradation::Scrambled,
+                    provenance,
+                } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
+                _ => None,
+            });
+        assert_eq!(
+            scrambled,
+            Some(Some(track_id)),
+            "scrambled payload on a resolved PID names its live track"
+        );
+    }
+
+    #[test]
+    fn the_pes_cap_is_exclusive_and_names_the_live_track() {
+        use crate::TsMux;
+        use crate::media::{Media as IrMedia, Track as IrTrack};
+        use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let spec = TrackSpec::new(
+            TrackId::new(1),
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            },
+        );
+        let samples = (0..3u32)
+            .map(|i| {
+                Sample::new(
+                    alloc::vec![0, 0, 0, 3, 0x65, 0xAA, i as u8],
+                    Some(i64::from(i) * 3_000),
+                    Some(i64::from(i) * 3_000),
+                    Some(3_000),
+                    i == 0,
+                )
+                .expect("valid timing")
+            })
+            .collect();
+        let media = IrMedia::new(alloc::vec![IrTrack::new(spec, samples)], VIDEO_TIMESCALE);
+        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts_bytes).expect("feed");
+        demux.finish().expect("finish");
+        while demux.poll_event().is_some() {}
+        let pid = *demux
+            .streams
+            .keys()
+            .find(|pid| matches!(demux.streams[pid].carrier, Carrier::Pes(_)))
+            .expect("video ES");
+        let stream = demux.streams.get_mut(&pid).expect("video ES");
+
+        let mut events = VecDeque::new();
+        let at_cap = alloc::vec![0u8; MAX_PES_BUFFER_BYTES];
+        feed_pes_bounded(stream, pid, true, &at_cap, &mut events).expect("feed at cap");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "exactly MAX_PES_BUFFER_BYTES is accepted"
+        );
+
+        let over_cap = alloc::vec![0u8; MAX_PES_BUFFER_BYTES + 1];
+        feed_pes_bounded(stream, pid, true, &over_cap, &mut events).expect("feed over cap");
+        let track = events.iter().find_map(|e| match e {
+            DemuxEvent::Discontinuity { track, .. } => Some(*track),
+            _ => None,
+        });
+        assert_eq!(
+            track,
+            Some(Some(TrackId::new(1))),
+            "one byte over the cap drops the PES and names the live track"
+        );
+
+        // The continuation path (`prev_len + payload`) has the same boundary.
+        let mut events = VecDeque::new();
+        let start = alloc::vec![0u8; 100];
+        feed_pes_bounded(stream, pid, true, &start, &mut events).expect("start");
+        let rest = alloc::vec![0u8; MAX_PES_BUFFER_BYTES - 100];
+        feed_pes_bounded(stream, pid, false, &rest, &mut events).expect("fill");
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "prev_len + payload == MAX_PES_BUFFER_BYTES is accepted"
+        );
+        feed_pes_bounded(stream, pid, false, &[0u8], &mut events).expect("one more");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "prev_len + payload == MAX + 1 drops the PES"
+        );
+
+        // A unit that ended before its declared length on this now-live PID
+        // names the track too.
+        let mut events = VecDeque::new();
+        let pes = alloc::vec![0u8, 0, 1, 0xE0, 0x00, 0x64, 0x80, 0x00, 0x00, 0xAA, 0xBB];
+        let mut epoch = ProgramEpoch {
+            last: None,
+            splice_offset: None,
+        };
+        on_completed_pes(stream, pid, &pes, &mut epoch, &mut events)
+            .expect("truncated PES is reported, not fatal");
+        let track = events.iter().find_map(|e| match e {
+            DemuxEvent::InputDegraded {
+                track,
+                kind: InputDegradation::PesUnitTruncated { .. },
+                ..
+            } => Some(*track),
+            _ => None,
+        });
+        assert_eq!(
+            track,
+            Some(Some(TrackId::new(1))),
+            "a truncated unit on a live PID names its track"
+        );
+    }
+
+    #[test]
+    fn an_adaptation_field_length_of_zero_is_not_a_discontinuity_signal() {
+        let mut demux = StreamingTsDemux::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null_packet()).expect("bootstrap");
+        }
+        let pkt = |cc: u8, payload_first: u8| {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00;
+            p[2] = 0x44;
+            p[3] = 0x30 | (cc & 0x0F); // adaptation + payload
+            p[4] = 0x00; // adaptation_field_length = 0
+            p[5] = payload_first;
+            p
+        };
+        demux.feed(&pkt(0, 0x00)).expect("first");
+        // The payload's first byte has bit 7 set: with `>=` on the length this
+        // packet would be mistaken for a signalled discontinuity.
+        demux.feed(&pkt(5, 0x80)).expect("gap");
+        let gap = drain_events(&mut demux)
+            .into_iter()
+            .find_map(|ev| match ev {
+                DemuxEvent::InputDegraded {
+                    kind: InputDegradation::ContinuityGap { expected, got },
+                    ..
+                } => Some((expected, got)),
+                _ => None,
+            });
+        assert_eq!(
+            gap,
+            Some((1, 5)),
+            "an empty adaptation field signals nothing"
+        );
+    }
+
+    #[test]
+    fn the_degraded_budget_is_released_by_draining() {
+        let mut demux = StreamingTsDemux::new().with_max_degraded_events(2);
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null_packet()).expect("bootstrap");
+        }
+        let gap_pair = |pid_hi: u8, pid_lo: u8| {
+            let mut first = [0xFFu8; TS_PACKET_SIZE];
+            first[0] = 0x47;
+            first[1] = pid_hi & 0x1F;
+            first[2] = pid_lo;
+            first[3] = 0x10;
+            first[4] = 0xAA;
+            let mut second = first;
+            second[3] = 0x15;
+            second[4] = 0xBB;
+            (first, second)
+        };
+        for wave in 0..3u8 {
+            for k in 0..2u8 {
+                let (a, b) = gap_pair(0x05, 0x10 + wave * 2 + k);
+                demux.feed(&a).expect("first");
+                demux.feed(&b).expect("gap");
+            }
+            let delivered = drain_events(&mut demux)
+                .into_iter()
+                .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
+                .count();
+            assert_eq!(delivered, 2, "wave {wave}: drained budget is reusable");
+        }
+        assert_eq!(
+            demux.degraded_events_dropped(),
+            0,
+            "no phantom budget after draining"
+        );
+    }
+
+    // ── audit 22 round 2: HEVC parameter-set gating and finalize_probe ─────
+
+    fn real_hevc_parameter_sets() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        let bytes = std::fs::read(test_fixtures::path("ts/hevc/main.ts")).expect("hevc fixture");
+        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Hevc { .. }))
+            .expect("HEVC track");
+        let (mut vps, mut sps, mut pps) = (None, None, None);
+        for nal in crate::iter_length_prefixed_nals(&track.samples[0].data).expect("lp") {
+            match nal_unit_type(NalCodec::Hevc, nal) {
+                Some(H265_NAL_VPS) => vps = Some(nal.to_vec()),
+                Some(H265_NAL_SPS) => sps = Some(nal.to_vec()),
+                Some(H265_NAL_PPS) => pps = Some(nal.to_vec()),
+                _ => {}
+            }
+        }
+        (vps.expect("VPS"), sps.expect("SPS"), pps.expect("PPS"))
+    }
+
+    fn flipped_nal(nal: &[u8]) -> Vec<u8> {
+        let mut out = nal.to_vec();
+        let at = out.len() - 2;
+        out[at] ^= 0x01;
+        out
+    }
+
+    fn invalid_hevc_nal(nal: &[u8]) -> Vec<u8> {
+        let mut out = nal.to_vec();
+        out[1] &= 0xF8;
+        out
+    }
+
+    fn hevc_sps_from(fixture: &str) -> Vec<u8> {
+        let bytes = std::fs::read(test_fixtures::path(fixture)).expect("hevc fixture");
+        let media = TsDemux::new().unpackage(&bytes).expect("demux");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.config(), CodecConfig::Hevc { .. }))
+            .expect("HEVC track");
+        crate::iter_length_prefixed_nals(&track.samples[0].data)
+            .expect("lp")
+            .into_iter()
+            .find(|n| nal_unit_type(NalCodec::Hevc, n) == Some(H265_NAL_SPS))
+            .expect("SPS")
+            .to_vec()
+    }
+
+    #[test]
+    fn hevc_parameter_set_observe_rejects_garbage_and_reports_replacements() {
+        let (vps, sps, pps) = real_hevc_parameter_sets();
+        let mut sets = ParameterSets::default();
+        assert!(sets.observe(Codec::Hevc, &annexb_au(&[&vps, &sps, &pps])));
+        assert!(
+            !sets.observe(Codec::Hevc, &annexb_au(&[&vps, &sps, &pps])),
+            "an identical repeat is not a change"
+        );
+        assert!(
+            sets.observe(Codec::Hevc, &annexb_au(&[&flipped_nal(&pps)])),
+            "a replaced PPS is a change"
+        );
+        assert!(
+            sets.observe(Codec::Hevc, &annexb_au(&[&flipped_nal(&vps)])),
+            "a replaced VPS is a change"
+        );
+        assert_eq!(
+            count_invalid_parameter_sets(
+                Codec::Hevc,
+                &annexb_au(&[
+                    &invalid_hevc_nal(&vps),
+                    &invalid_hevc_nal(&sps),
+                    &invalid_hevc_nal(&pps),
+                ]),
+            ),
+            3,
+            "one event per garbage VPS/SPS/PPS"
+        );
+
+        let mut bad = ParameterSets::default();
+        assert!(!bad.observe(
+            Codec::Hevc,
+            &annexb_au(&[
+                &invalid_hevc_nal(&vps),
+                &invalid_hevc_nal(&sps),
+                &invalid_hevc_nal(&pps),
+            ]),
+        ));
+        assert!(bad.vps.current.is_none(), "garbage VPS never recorded");
+        assert!(bad.sps.current.is_none(), "garbage SPS never recorded");
+        assert!(bad.pps.current.is_none(), "garbage PPS never recorded");
+
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let mut bad_avc = ParameterSets::default();
+        let mut garbage_pps = pps.clone();
+        garbage_pps[0] |= 0x80;
+        let mut garbage_sps = sps.clone();
+        garbage_sps[0] |= 0x80;
+        assert_eq!(
+            count_invalid_parameter_sets(Codec::H264, &annexb_au(&[&garbage_sps, &garbage_pps])),
+            2,
+            "one event per garbage AVC SPS/PPS"
+        );
+        assert!(!bad_avc.observe(Codec::H264, &annexb_au(&[&garbage_pps])));
+        assert!(
+            bad_avc.pps.current.is_none(),
+            "garbage AVC PPS never recorded"
+        );
+    }
+
+    #[test]
+    fn hevc_seed_probe_copies_all_three_parameter_sets() {
+        let (vps, sps, pps) = real_hevc_parameter_sets();
+        let mut sets = ParameterSets::default();
+        sets.observe(Codec::Hevc, &annexb_au(&[&vps, &sps, &pps]));
+        let mut probe = ConfigProbe::Hevc {
+            vps: None,
+            sps: None,
+            pps: None,
+            hdr_sei: Vec::new(),
+        };
+        seed_probe_parameter_sets(&mut probe, &sets);
+        match probe {
+            ConfigProbe::Hevc {
+                vps: v,
+                sps: s,
+                pps: p,
+                ..
+            } => {
+                assert_eq!(v.as_deref(), Some(vps.as_slice()));
+                assert_eq!(s.as_deref(), Some(sps.as_slice()));
+                assert_eq!(p.as_deref(), Some(pps.as_slice()));
+            }
+            _ => panic!("expected an HEVC probe"),
+        }
+    }
+
+    #[test]
+    fn hevc_finalize_probe_resolves_an_unseeded_probe_from_all_three_sets() {
+        let (vps, sps, pps) = real_hevc_parameter_sets();
+        let mut probe = ConfigProbe::Hevc {
+            vps: None,
+            sps: None,
+            pps: None,
+            hdr_sei: Vec::new(),
+        };
+        let data = annexb_au(&[&vps, &sps, &pps]);
+        let (config, _, _) = finalize_probe(Codec::Hevc, &[], &mut probe, &data).expect("resolves");
+        let CodecConfig::Hevc { config, .. } = config else {
+            panic!("expected an HEVC config");
+        };
+        for nal_type in [H265_NAL_VPS, H265_NAL_SPS, H265_NAL_PPS] {
+            assert!(
+                config
+                    .config
+                    .arrays
+                    .iter()
+                    .any(|a| a.nal_unit_type == nal_type && !a.nalus.is_empty()),
+                "array {nal_type} present"
+            );
+        }
+    }
+
+    #[test]
+    fn hevc_finalize_probe_keeps_a_seeded_set_over_a_later_valid_one() {
+        let (vps, sps, pps) = real_hevc_parameter_sets();
+        let seed_vps = flipped_nal(&vps);
+        let seed_pps = flipped_nal(&pps);
+        let seed_sps = hevc_sps_from("ts/hevc/main10.ts");
+        assert_ne!(seed_sps, sps, "the seed must differ from the later set");
+        let mut probe = ConfigProbe::Hevc {
+            vps: Some(seed_vps.clone()),
+            sps: Some(seed_sps.clone()),
+            pps: Some(seed_pps.clone()),
+            hdr_sei: Vec::new(),
+        };
+        let data = annexb_au(&[&vps, &sps, &pps]);
+        let (config, _, _) =
+            finalize_probe(Codec::Hevc, &[], &mut probe, &data).expect("resolves with the seeds");
+        let CodecConfig::Hevc { config, .. } = config else {
+            panic!("expected an HEVC config");
+        };
+        let array = |nal_type: u8| {
+            config
+                .config
+                .arrays
+                .iter()
+                .find(|a| a.nal_unit_type == nal_type)
+                .and_then(|a| a.nalus.first())
+                .map(|n| n.0.clone())
+                .expect("array present")
+        };
+        assert_eq!(array(H265_NAL_VPS), seed_vps, "seeded VPS wins");
+        assert_eq!(array(H265_NAL_SPS), seed_sps, "seeded SPS wins");
+        assert_eq!(array(H265_NAL_PPS), seed_pps, "seeded PPS wins");
+    }
+
+    #[test]
+    fn h264_finalize_probe_keeps_a_seeded_set_over_a_later_valid_one() {
+        let (seed_sps, seed_pps, _) = real_avc_parameter_sets();
+        let avc = crate::rtp_sdp::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
+            .expect("sprop");
+        let later_sps = avc.config.sps[0].0.clone();
+        let later_pps = avc.config.pps[0].0.clone();
+        assert_ne!(seed_sps, later_sps);
+        let mut probe = ConfigProbe::H264 {
+            sps: Some(seed_sps.clone()),
+            pps: Some(seed_pps.clone()),
+        };
+        let data = annexb_au(&[&later_sps, &later_pps]);
+        let (config, _, _) = finalize_probe(Codec::H264, &[], &mut probe, &data).expect("resolves");
+        let CodecConfig::Avc { config, .. } = config else {
+            panic!("expected AVC");
+        };
+        assert_eq!(config.config.sps[0].0, seed_sps, "seeded SPS wins");
+        assert_eq!(config.config.pps[0].0, seed_pps, "seeded PPS wins");
+    }
+
+    #[test]
+    fn h264_finalize_probe_minimum_parameter_set_size_is_four() {
+        let (_, pps, _) = real_avc_parameter_sets();
+        let probe_with = |sps: Vec<u8>| ConfigProbe::H264 {
+            sps: Some(sps),
+            pps: Some(pps.clone()),
+        };
+        assert!(
+            finalize_probe(
+                Codec::H264,
+                &[],
+                &mut probe_with(vec![0x67, 0x42, 0x00, 0x1E]),
+                &[]
+            )
+            .is_some()
+        );
+        assert!(
+            finalize_probe(
+                Codec::H264,
+                &[],
+                &mut probe_with(vec![0x67, 0x42, 0x00, 0x1E, 0x00]),
+                &[]
+            )
+            .is_some()
+        );
+        assert!(
+            finalize_probe(
+                Codec::H264,
+                &[],
+                &mut probe_with(vec![0x67, 0x42, 0x00]),
+                &[]
+            )
+            .is_none()
+        );
+    }
+
+    fn mhas_config_packet(payload: &[u8]) -> Vec<u8> {
+        const TYPE_CFG: u64 = 1;
+        let extra = payload.len() as u64 - 0x7FF;
+        let header = (TYPE_CFG << 37) | (0x7FF << 24) | (extra & 0xFF_FFFF);
+        let mut out = header.to_be_bytes()[3..].to_vec();
+        out.extend_from_slice(payload);
+        out
+    }
+
+    #[test]
+    fn mpegh_config_at_the_16_bit_limit_is_accepted() {
+        let payload = alloc::vec![0x0B; MPEGH_CONFIG_LEN_MAX];
+        let data = mhas_config_packet(&payload);
+        assert_eq!(
+            find_mpegh3da_config(&data).map(<[u8]>::len),
+            Some(MPEGH_CONFIG_LEN_MAX)
+        );
+        let mut probe = ConfigProbe::MpegH;
+        assert!(
+            finalize_probe(Codec::MpegH, &[], &mut probe, &data).is_some(),
+            "exactly 65 535 config bytes is representable"
+        );
+    }
+
+    // ── audit 22 round 2: caps, eviction and timestamp boundaries ──────────
+
+    #[test]
+    fn eviction_happens_only_one_byte_past_the_unattributed_cap() {
+        let mut demux = StreamingTsDemux::new();
+        let pid = Pid::from_const(0x0200);
+        demux.unattributed.insert(
+            pid,
+            VecDeque::from([(true, alloc::vec![0u8; MAX_UNATTRIBUTED_BYTES])]),
+        );
+        demux.unattributed_order.push_back(pid.value());
+        demux.unattributed_bytes = MAX_UNATTRIBUTED_BYTES;
+        demux.evict_unattributed();
+        assert_eq!(
+            demux.unattributed_bytes, MAX_UNATTRIBUTED_BYTES,
+            "exactly at the cap is accepted"
+        );
+        demux.unattributed_bytes = MAX_UNATTRIBUTED_BYTES + 1;
+        demux.evict_unattributed();
+        assert_eq!(
+            demux.unattributed_bytes, 1,
+            "one byte over evicts a payload"
+        );
+        assert!(
+            !demux.unattributed.contains_key(&pid),
+            "the evicted PID's buffer is gone"
+        );
+    }
+
+    #[test]
+    fn demand_saturates_one_packet_before_the_cap() {
+        let mut demux = StreamingTsDemux::new();
+        demux.unattributed_bytes = MAX_UNATTRIBUTED_BYTES - TS_MAX_PAYLOAD_BYTES;
+        assert!(!broadcast_common::stage::Stage::demand(&demux).saturated);
+        demux.unattributed_bytes = MAX_UNATTRIBUTED_BYTES - TS_MAX_PAYLOAD_BYTES + 1;
+        assert!(broadcast_common::stage::Stage::demand(&demux).saturated);
+    }
+
+    #[test]
+    fn reinserting_a_track_past_the_end_appends_instead_of_panicking() {
+        let mut demux = StreamingTsDemux::new();
+        let pid = Pid::from_const(0x0300);
+        demux
+            .register_new_es_at(pid, Codec::H264, Vec::new(), Some(7))
+            .expect("out-of-range insertion appends");
+        assert_eq!(demux.codec_order, alloc::vec![pid]);
+    }
+
+    #[test]
+    fn removing_a_track_keeps_its_siblings() {
+        let mut demux = StreamingTsDemux::new();
+        let a = Pid::from_const(0x0300);
+        let b = Pid::from_const(0x0301);
+        demux
+            .register_new_es(a, Codec::H264, Vec::new())
+            .expect("a");
+        demux
+            .register_new_es(b, Codec::H264, Vec::new())
+            .expect("b");
+        demux.remove_track(a).expect("remove a");
+        assert_eq!(demux.codec_order, alloc::vec![b], "b survives a's removal");
+    }
+
+    #[test]
+    fn a_zero_span_is_not_an_observed_frame_period() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let idr = [0x65u8, 0x88, 0x84, 0x01];
+        let aus = alloc::vec![annexb_au(&[&sps, &pps, &idr]); 3];
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&avc_ts_over(&aus)).expect("feed");
+        while demux.poll_event().is_some() {}
+        let stream = demux.streams.get_mut(&ES_PID_UNDER_TEST).expect("stream");
+        stream.last_stamped_dts = Some(100);
+        stream.units_since_stamped = 0;
+        stream.pending_rebase = false;
+        stream.recent_steps.clear();
+        stream.frame_period = None;
+        let pes = pes_packet(ES_STREAM_ID_VIDEO, 100, Some(100), &aus[0]);
+        let mut events = VecDeque::new();
+        let mut epoch = ProgramEpoch {
+            last: None,
+            splice_offset: None,
+        };
+        on_completed_pes(stream, ES_PID_UNDER_TEST, &pes, &mut epoch, &mut events).expect("first");
+        on_completed_pes(stream, ES_PID_UNDER_TEST, &pes, &mut epoch, &mut events).expect("second");
+        assert!(
+            !stream.recent_steps.contains(&0),
+            "a zero span is not evidence of cadence"
+        );
+        assert_eq!(stream.frame_period, None);
+    }
+
+    #[test]
+    fn an_unstamped_pes_masks_the_fallback_back_onto_33_bits() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let idr = [0x65u8, 0x88, 0x84, 0x02];
+        let au = annexb_au(&[&sps, &pps, &idr]);
+        let mut demux = StreamingTsDemux::new();
+        demux
+            .feed(&avc_ts_over(&alloc::vec![au.clone(); 3]))
+            .expect("feed");
+        while demux.poll_event().is_some() {}
+        let stream = demux.streams.get_mut(&ES_PID_UNDER_TEST).expect("stream");
+        stream.fallback = (TS_WRAP - 10, TS_WRAP - 10);
+        stream.frame_period = Some(20);
+        stream.has_any = true;
+        stream.last_stamped_dts = None;
+        stream.pending_rebase = false;
+        let pes = pes_packet_untimed(ES_STREAM_ID_VIDEO, &au);
+        let mut events = VecDeque::new();
+        let mut epoch = ProgramEpoch {
+            last: None,
+            splice_offset: None,
+        };
+        on_completed_pes(stream, ES_PID_UNDER_TEST, &pes, &mut epoch, &mut events)
+            .expect("unstamped");
+        assert_eq!(stream.fallback.0, 10, "prev + step mod 2^33");
+        assert!(stream.fallback.0 < TS_WRAP);
+    }
+
+    // ── audit 22 round 2: probe limits and E-AC-3 probe helpers ────────────
+
+    #[test]
+    fn probe_limit_constants_are_the_documented_literals() {
+        assert_eq!(MAX_PROBE_BACKLOG_BYTES, 4_194_304);
+        assert_eq!(STUCK_HEAD_OWN_BYTES, 2_097_152);
+        assert_eq!(STUCK_HEAD_INPUT_PACKETS, 22_310);
+        assert_eq!(EAC3_PROBE_TAIL_MAX, 65_552);
+    }
+
+    #[test]
+    fn audio_probe_window_gates_on_the_framing() {
+        let tail = alloc::vec![0xAAu8; 4];
+        let mpeg = mp2_frame(0);
+        assert_eq!(
+            audio_probe_window(Codec::MpegAudio(false), &tail, &mpeg),
+            None,
+            "a header in the latest payload alone cannot improve"
+        );
+        let no_sync = alloc::vec![0u8; 32];
+        assert_eq!(
+            audio_probe_window(Codec::MpegAudio(false), &tail, &no_sync),
+            Some([tail.as_slice(), &no_sync[..AUDIO_PROBE_BOUNDARY_BYTES]].concat())
+        );
+        assert_eq!(
+            audio_probe_window(Codec::Eac3, &tail, &[0x11, 0x22, 0x33]),
+            Some([tail.as_slice(), &[0x11u8, 0x22, 0x33]].concat())
+        );
+    }
+
+    #[test]
+    fn eac3_probe_tail_starts_at_the_independent_frame_and_respects_its_cap() {
+        let frame = eac3_frame(0);
+        let mut junk = alloc::vec![0x11u8; 50_000];
+        junk.extend_from_slice(&frame);
+        assert_eq!(eac3_probe_tail(&junk), frame, "from the first frame");
+
+        let mut oversize = frame.clone();
+        oversize.resize(EAC3_PROBE_TAIL_MAX + 1, 0x00);
+        let kept = eac3_probe_tail(&oversize);
+        assert!(
+            kept.is_empty(),
+            "a window past the cap is dropped, got {} bytes",
+            kept.len()
+        );
+
+        assert_eq!(
+            audio_probe_next_tail(Codec::Eac3, &[], &frame),
+            frame,
+            "the E-AC-3 arm is not the generic 16-byte window"
+        );
+    }
+
+    #[test]
+    fn the_first_independent_eac3_frame_skips_dependent_and_bad_crc_frames() {
+        let dep = eac3_dependent_frame(0);
+        let ind = eac3_frame(0);
+        let data = [dep.as_slice(), ind.as_slice()].concat();
+        assert_eq!(
+            first_eac3_independent_offset(&data, false),
+            Some(dep.len()),
+            "a dependent frame is not an independent start"
+        );
+
+        let mut good = eac3_frame(0);
+        crate::ac3::tests::stamp_crc2(&mut good);
+        let mut bad = good.clone();
+        let at = bad.len() - 10;
+        bad[at] ^= 0xFF;
+        let data = [bad.as_slice(), good.as_slice()].concat();
+        assert_eq!(
+            first_eac3_independent_offset(&data, true),
+            Some(bad.len()),
+            "the bad-crc frame is skipped when crc is required"
+        );
+        assert_eq!(
+            first_eac3_independent_offset(&data, false),
+            Some(0),
+            "without crc the header alone is enough"
+        );
+        assert_eq!(
+            first_eac3_independent_offset(&good, true),
+            Some(0),
+            "a good whole frame is accepted with crc"
+        );
+    }
+
+    fn probing_stream(codec: Codec) -> (StreamingTsDemux, Pid) {
+        let mut demux = StreamingTsDemux::new();
+        let pid = Pid::from_const(0x0500);
+        demux
+            .register_new_es(pid, codec, Vec::new())
+            .expect("register");
+        (demux, pid)
+    }
+
+    #[test]
+    fn probe_backlog_abandons_only_one_byte_past_the_cap() {
+        let data = alloc::vec![0x11u8; 100];
+        let mut demux = probing_stream(Codec::Eac3).0;
+        let pid = Pid::from_const(0x0500);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.backlog_bytes = MAX_PROBE_BACKLOG_BYTES - data.len();
+            let mut events = VecDeque::new();
+            advance_track(stream, pid, &data, 0, 0, &mut events).expect("at cap");
+            assert!(
+                matches!(stream.track, Some(TrackState::Probing { .. })),
+                "exactly at the cap stays probing"
+            );
+            stream.backlog_bytes = MAX_PROBE_BACKLOG_BYTES - data.len() + 1;
+            let mut events = VecDeque::new();
+            advance_track(stream, pid, &data, 0, 0, &mut events).expect("over cap");
+            assert!(
+                matches!(stream.track, Some(TrackState::Abandoned)),
+                "one byte over abandons"
+            );
+        }
+
+        let mut demux = probing_stream(Codec::H264).0;
+        let pid = Pid::from_const(0x0500);
+        let stream = demux.streams.get_mut(&pid).expect("stream");
+        stream.track = Some(TrackState::Parked(Box::new(ParkedTrack {
+            config: CodecConfig::Data {
+                stream_type: 0x7F,
+                descriptors: Vec::new(),
+                carriage: crate::pipeline::DataCarriage::Pes,
+            },
+            timescale: VIDEO_TIMESCALE,
+            kind: LiveKind::Data {
+                pending: None,
+                last_duration: 0,
+            },
+            backlog: Vec::new(),
+        })));
+        stream.backlog_bytes = MAX_PROBE_BACKLOG_BYTES - data.len();
+        let mut events = VecDeque::new();
+        advance_track(stream, pid, &data, 0, 0, &mut events).expect("parked at cap");
+        assert!(
+            !matches!(stream.track, Some(TrackState::Abandoned)),
+            "a parked backlog exactly at the cap is not abandoned"
+        );
+    }
+
+    #[test]
+    fn the_eac3_probe_walk_gate_and_tail_cap_are_boundaries() {
+        let mut demux = probing_stream(Codec::Eac3).0;
+        let pid = Pid::from_const(0x0500);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_walks = EAC3_PROBE_FULL_WALKS;
+            stream.probe_walked_len = EAC3_PROBE_TAIL_MAX;
+            stream.probe_tail = alloc::vec![0x0Bu8; EAC3_PROBE_TAIL_MAX - 4];
+            let latest = alloc::vec![0x11u8; 4];
+            let mut events = VecDeque::new();
+            advance_track(stream, pid, &latest, 0, 0, &mut events).expect("exact cap");
+            assert_eq!(
+                stream.probe_tail.len(),
+                EAC3_PROBE_TAIL_MAX,
+                "exactly at the tail cap is kept"
+            );
+        }
+
+        let mut demux = probing_stream(Codec::Eac3).0;
+        let pid = Pid::from_const(0x0500);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_walks = EAC3_PROBE_FULL_WALKS;
+            stream.probe_walked_len = 8;
+            stream.probe_tail = alloc::vec![0x0Bu8; 8];
+            let latest = alloc::vec![0x11u8; 8];
+            let mut events = VecDeque::new();
+            advance_track(stream, pid, &latest, 0, 0, &mut events).expect("exact gate");
+            assert_eq!(
+                stream.probe_walks,
+                EAC3_PROBE_FULL_WALKS + 1,
+                "exactly at the growth threshold is not gated"
+            );
+        }
+
+        let mut demux = probing_stream(Codec::Eac3).0;
+        let pid = Pid::from_const(0x0500);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_walks = EAC3_PROBE_FULL_WALKS;
+            stream.probe_walked_len = 1000;
+            stream.probe_tail = alloc::vec![0x0Bu8; 100];
+            let latest = alloc::vec![0x11u8; 100];
+            let mut events = VecDeque::new();
+            advance_track(stream, pid, &latest, 0, 0, &mut events).expect("gated");
+            assert_eq!(
+                stream.probe_walks, EAC3_PROBE_FULL_WALKS,
+                "a small growth is appended without a re-walk"
+            );
+        }
+    }
+
+    #[test]
+    fn a_payload_with_no_held_eac3_tail_is_probed_once() {
+        let mut demux = probing_stream(Codec::Eac3).0;
+        let pid = Pid::from_const(0x0500);
+        let stream = demux.streams.get_mut(&pid).expect("stream");
+        assert!(stream.probe_tail.is_empty());
+        let latest = alloc::vec![0x11u8; 64];
+        let mut events = VecDeque::new();
+        let before = sync_probes();
+        advance_track(stream, pid, &latest, 0, 0, &mut events).expect("probe");
+        assert_eq!(
+            sync_probes() - before,
+            1,
+            "an empty held tail is not probed twice in one payload"
+        );
+    }
+
+    #[test]
+    fn a_damaged_promotion_suppresses_only_an_afd_change() {
+        let flag = |name: &str| {
+            let mut c = crate::ir::DisplayChangeSet {
+                initial: false,
+                aspect_ratio: false,
+                output_rect: false,
+                default_display_rect: false,
+                video_signal: false,
+                overscan: false,
+                afd: true,
+                bar_data: false,
+            };
+            match name {
+                "initial" => c.initial = true,
+                "aspect_ratio" => c.aspect_ratio = true,
+                "output_rect" => c.output_rect = true,
+                "default_display_rect" => c.default_display_rect = true,
+                "video_signal" => c.video_signal = true,
+                "overscan" => c.overscan = true,
+                "bar_data" => c.bar_data = true,
+                "afd" => {}
+                other => panic!("unknown flag {other}"),
+            }
+            c
+        };
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let idr = [0x65u8, 0x88, 0x84, 0x31];
+        for name in [
+            "afd",
+            "initial",
+            "aspect_ratio",
+            "output_rect",
+            "default_display_rect",
+            "video_signal",
+            "overscan",
+            "bar_data",
+        ] {
+            let mut demux = StreamingTsDemux::new();
+            demux
+                .feed(&avc_ts_over(
+                    &alloc::vec![annexb_au(&[&sps, &pps, &idr]); 2],
+                ))
+                .expect("feed");
+            while demux.poll_event().is_some() {}
+            let stream = demux.streams.get_mut(&ES_PID_UNDER_TEST).expect("stream");
+            let Some(TrackState::Live(live)) = stream.track.as_mut() else {
+                panic!("expected a live track");
+            };
+            live.damaged_promotion = true;
+            live.display = Some((
+                alloc::sync::Arc::new(crate::ir::DisplayInfo::new(None)),
+                flag(name),
+            ));
+            let mut events = VecDeque::new();
+            advance_track(
+                stream,
+                ES_PID_UNDER_TEST,
+                &annexb_au(&[&[0x65, 0x88, 0x84, 0x32]]),
+                0,
+                0,
+                &mut events,
+            )
+            .expect("advance");
+            advance_track(
+                stream,
+                ES_PID_UNDER_TEST,
+                &annexb_au(&[&[0x65, 0x88, 0x84, 0x33]]),
+                3_600,
+                3_600,
+                &mut events,
+            )
+            .expect("advance");
+            let emitted = events
+                .iter()
+                .filter(|e| matches!(e, DemuxEvent::DisplayChanged { .. }))
+                .count();
+            assert_eq!(
+                emitted,
+                usize::from(name != "afd"),
+                "an AFD-only change is suppressed and AFD plus {name} is kept"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stuck_head_is_stepped_over_but_a_probing_video_head_is_not() {
+        let (mut demux, pid) = probing_stream(Codec::Aac);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_aus = 0;
+            stream.payload_packets = (STUCK_HEAD_OWN_BYTES / TS_PACKET_SIZE) as u32 + 1;
+        }
+        demux.try_promote_ready().expect("promote");
+        assert!(
+            demux.skipped.contains(&pid),
+            "a non-video head with no access unit is stepped over"
+        );
+
+        let (mut demux, pid) = probing_stream(Codec::H264);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_aus = 1;
+            stream.payload_packets = (STUCK_HEAD_OWN_BYTES / TS_PACKET_SIZE) as u32 + 1;
+            stream.declared_at_packet = 0;
+        }
+        demux.try_promote_ready().expect("promote");
+        assert!(
+            !demux.skipped.contains(&pid),
+            "a video head that has produced an access unit is not stepped over"
+        );
+
+        let (mut demux, pid) = probing_stream(Codec::Aac);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_aus = 1;
+            stream.payload_packets = 1;
+            stream.declared_at_packet = 0;
+        }
+        demux.packet_index = STUCK_HEAD_INPUT_PACKETS;
+        demux.try_promote_ready().expect("promote");
+        assert!(
+            demux.skipped.contains(&pid),
+            "a sparse non-video head is stepped over after the input bound"
+        );
+    }
+
+    #[test]
+    fn release_silent_heads_does_not_release_a_parked_pid() {
+        let (mut demux, pid) = probing_stream(Codec::H264);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.payload_packets = 0;
+            stream.track = Some(TrackState::Parked(Box::new(ParkedTrack {
+                config: CodecConfig::Data {
+                    stream_type: 0x7F,
+                    descriptors: Vec::new(),
+                    carriage: crate::pipeline::DataCarriage::Pes,
+                },
+                timescale: VIDEO_TIMESCALE,
+                kind: LiveKind::Data {
+                    pending: None,
+                    last_duration: 0,
+                },
+                backlog: Vec::new(),
+            })));
+        }
+        demux.release_silent_heads().expect("release");
+        let stream = demux.streams.get(&pid).expect("stream");
+        assert!(!stream.unit_released, "only a Probing head is released");
+
+        let (mut demux, pid) = probing_stream(Codec::H264);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.payload_packets = 1;
+        }
+        demux.release_silent_heads().expect("release");
+        let stream = demux.streams.get(&pid).expect("stream");
+        assert!(
+            !stream.unit_released,
+            "a Probing head that sent payload is not silent"
+        );
+    }
+
+    #[test]
+    fn a_strict_pmt_order_never_steps_over_a_stuck_head() {
+        let mut demux = StreamingTsDemux::new().with_strict_pmt_order();
+        let pid = Pid::from_const(0x0500);
+        demux
+            .register_new_es(pid, Codec::Aac, Vec::new())
+            .expect("register");
+        let stream = demux.streams.get_mut(&pid).expect("stream");
+        stream.probe_aus = 0;
+        stream.payload_packets = (STUCK_HEAD_OWN_BYTES / TS_PACKET_SIZE) as u32 + 1;
+        demux.try_promote_ready().expect("promote");
+        assert!(
+            !demux.skipped.contains(&pid),
+            "strict PMT order stops at the head instead of stepping over it"
+        );
+    }
+
+    #[test]
+    fn parked_behind_counts_only_unresolved_other_pids() {
+        let behind = Pid::from_const(0x0701);
+        let (mut demux, head) = probing_stream(Codec::H264);
+        demux
+            .register_new_es(behind, Codec::H264, Vec::new())
+            .expect("behind");
+        let stream = demux.streams.get_mut(&head).expect("head");
+        stream.payload_packets = 0;
+        let behind_stream = demux.streams.get_mut(&behind).expect("behind");
+        behind_stream.backlog_bytes = SILENT_HEAD_PARKED_BYTES;
+        demux.resolved.insert(behind);
+        assert_eq!(
+            demux.parked_behind(head),
+            0,
+            "a resolved PID's stale backlog is not collateral"
+        );
+    }
+
+    #[test]
+    fn eac3_tail_resolution_ignores_non_eac3_probing_streams() {
+        let frame = eac3_frame(0);
+        let (mut demux, pid) = probing_stream(Codec::Aac);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_tail = frame.clone();
+        }
+        demux.resolve_eac3_probes_from_tail();
+        let stream = demux.streams.get(&pid).expect("stream");
+        assert_eq!(stream.probe_tail, frame, "a non-E-AC-3 tail is left");
+        assert!(
+            matches!(stream.track, Some(TrackState::Probing { .. })),
+            "a non-E-AC-3 PID is never resolved as E-AC-3"
+        );
+
+        let (mut demux, pid) = probing_stream(Codec::Eac3);
+        {
+            let stream = demux.streams.get_mut(&pid).expect("stream");
+            stream.probe_tail = frame.clone();
+            stream.track = Some(TrackState::Parked(Box::new(ParkedTrack {
+                config: CodecConfig::Data {
+                    stream_type: 0x7F,
+                    descriptors: Vec::new(),
+                    carriage: crate::pipeline::DataCarriage::Pes,
+                },
+                timescale: VIDEO_TIMESCALE,
+                kind: LiveKind::Data {
+                    pending: None,
+                    last_duration: 0,
+                },
+                backlog: Vec::new(),
+            })));
+        }
+        demux.resolve_eac3_probes_from_tail();
+        let stream = demux.streams.get(&pid).expect("stream");
+        assert!(
+            matches!(stream.track, Some(TrackState::Parked(_))),
+            "a resolved E-AC-3 track is neither re-probed nor dropped"
+        );
+    }
+
+    // ── audit 22 round 2: cross-PES audio carry and hold-back ──────────────
+
+    #[test]
+    fn flushing_two_held_frames_advances_each_clock_by_its_own_duration() {
+        let mut au = eac3_frame(0);
+        au.extend_from_slice(&eac3_frame(1));
+        let mut anchor = AudioAnchor {
+            seed: Some(AudioAnchorSeed {
+                next_dts: 1_000,
+                next_pts: 2_000,
+                anchor_dts_uw: 90_000,
+                anchor_pts_uw: 90_000,
+                ticks_since_anchor: 0,
+            }),
+            duration_scale: 0,
+            carry: au,
+            hold_final_au: true,
+            carry_provenance: None,
+        };
+        let mut events = VecDeque::new();
+        flush_audio_carry(&AudioKind::Eac3, &mut anchor, TrackId::new(1), &mut events)
+            .expect("flush");
+        let dts: Vec<i64> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        let pts: Vec<i64> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.pts()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(dts, alloc::vec![1_000, 2_536], "the second frame is +1 536");
+        assert_eq!(pts, alloc::vec![2_000, 3_536], "pts advances in step");
+        let seed = anchor.seed.expect("seed");
+        assert_eq!(seed.next_dts, 4_072);
+    }
+
+    #[test]
+    fn a_reanchor_emits_each_carried_frame_at_the_old_cursor() {
+        let mut carry = Vec::new();
+        for n in 0..3 {
+            carry.extend_from_slice(&eac3_frame(n));
+        }
+        let mut anchor = AudioAnchor {
+            seed: Some(AudioAnchorSeed {
+                next_dts: 1_000,
+                next_pts: 2_000,
+                anchor_dts_uw: 0,
+                anchor_pts_uw: 0,
+                ticks_since_anchor: 0,
+            }),
+            duration_scale: 0,
+            carry,
+            hold_final_au: true,
+            carry_provenance: None,
+        };
+        let mut events = VecDeque::new();
+        emit_audio_au(
+            &AudioKind::Eac3,
+            timescale(48_000),
+            &mut anchor,
+            &eac3_frame(9),
+            90_000,
+            90_000,
+            TrackId::new(1),
+            &mut events,
+        )
+        .expect("emit");
+        let dts: Vec<i64> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.dts()),
+                _ => None,
+            })
+            .collect();
+        let pts: Vec<i64> = events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => sample.timing.and_then(|t| t.pts()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            &dts[..3],
+            &[1_000, 2_536, 4_072],
+            "three held frames at +0, +d, +2d"
+        );
+        assert_eq!(
+            &pts[..3],
+            &[2_000, 3_536, 5_072],
+            "the pts cursor advances with the dts cursor"
+        );
+    }
+
+    #[test]
+    fn a_zero_length_audio_payload_is_not_rewalked() {
+        let mut anchor = AudioAnchor {
+            seed: Some(AudioAnchorSeed {
+                next_dts: 0,
+                next_pts: 0,
+                anchor_dts_uw: 0,
+                anchor_pts_uw: 0,
+                ticks_since_anchor: 0,
+            }),
+            duration_scale: 0,
+            carry: Vec::new(),
+            hold_final_au: false,
+            carry_provenance: None,
+        };
+        let mut events = VecDeque::new();
+        emit_audio_au(
+            &AudioKind::Eac3,
+            timescale(48_000),
+            &mut anchor,
+            &[],
+            0,
+            0,
+            TrackId::new(1),
+            &mut events,
+        )
+        .expect("empty payload");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn an_invalid_header_completed_exactly_at_the_payload_end_is_not_mid_frame() {
+        let ts = single_es_pes_ts(
+            STREAM_TYPE_AAC_ADTS,
+            &[adts_frame(0), adts_frame(1), adts_frame(2)],
+        );
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts).expect("feed");
+        while demux.poll_event().is_some() {}
+        let stream = demux.streams.get_mut(&ES_PID_UNDER_TEST).expect("stream");
+        {
+            let Some(TrackState::Live(live)) = stream.track.as_mut() else {
+                panic!("expected a live AAC track");
+            };
+            let LiveKind::Audio {
+                anchor,
+                kind: AudioKind::Aac,
+                ..
+            } = &mut live.kind
+            else {
+                panic!("expected AAC audio");
+            };
+            anchor.carry = alloc::vec![0xFF, 0xF0];
+        }
+        let live = match stream.track.as_ref() {
+            Some(TrackState::Live(live)) => live,
+            _ => panic!("expected Live"),
+        };
+
+        // The payload completes the 7-byte header exactly (`need == 5`), and
+        // the completed header is invalid (`sampling_frequency_index` 13 is
+        // reserved): the five bytes are not mid-frame.
+        let invalid = [0x74u8, 0x00, 0x00, 0x00, 0x00];
+        assert_eq!(invalid.len(), ADTS_HEADER_SIZE - 2);
+        assert_eq!(
+            carried_frame_remainder(live, &invalid),
+            0,
+            "an invalid completed header does not skip the payload"
+        );
+
+        let frame = adts_frame(0);
+        assert_eq!(
+            carried_frame_remainder(live, &frame[2..]),
+            frame.len() - 2,
+            "a valid completed header skips exactly the bytes it completes"
+        );
+    }
+
+    #[test]
+    fn an_audio_reanchor_fires_only_past_the_discontinuity_threshold() {
+        let rate = timescale(48_000);
+        assert_eq!(
+            audio_discontinuity_threshold_90k(rate),
+            1_800,
+            "20 ms at 90 kHz"
+        );
+        for (offset, expected) in [(1_800i128, false), (1_801, true)] {
+            let mut anchor = AudioAnchor {
+                seed: Some(AudioAnchorSeed {
+                    next_dts: 1_000,
+                    next_pts: 2_000,
+                    anchor_dts_uw: 0,
+                    anchor_pts_uw: 0,
+                    ticks_since_anchor: 0,
+                }),
+                duration_scale: 0,
+                carry: Vec::new(),
+                hold_final_au: false,
+                carry_provenance: None,
+            };
+            let mut events = VecDeque::new();
+            emit_audio_au(
+                &AudioKind::Eac3,
+                rate,
+                &mut anchor,
+                &eac3_frame(0),
+                offset,
+                offset,
+                TrackId::new(1),
+                &mut events,
+            )
+            .expect("emit");
+            let reanchored = events.iter().any(|e| {
+                matches!(
+                    e,
+                    DemuxEvent::Discontinuity {
+                        kind: DiscontinuityKind::TimelineReanchored,
+                        ..
+                    }
+                )
+            });
+            assert_eq!(
+                reanchored, expected,
+                "a {offset}-tick offset re-anchors: {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn duration_scaling_applies_only_above_unity() {
+        let plan = || {
+            Some(AudioPlan {
+                frames: alloc::vec![PlannedFrame {
+                    data: None,
+                    duration: 1_536,
+                    from_carry: false,
+                    start: 0,
+                    end: 7,
+                }],
+                tail: &[],
+                commences: false,
+                carry_ok: true,
+            })
+        };
+        let mut doubled = plan();
+        scale_plan_durations(&mut doubled, 2);
+        assert_eq!(
+            doubled.as_ref().expect("plan").frames[0].duration,
+            3_072,
+            "44.1 kHz output over a 22.05 kHz core"
+        );
+        let mut unchanged = plan();
+        scale_plan_durations(&mut unchanged, 1);
+        assert_eq!(
+            unchanged.as_ref().expect("plan").frames[0].duration,
+            1_536,
+            "scaling by 1 is the identity"
+        );
+        let mut absent = None;
+        scale_plan_durations(&mut absent, 2);
+        assert!(absent.is_none());
+    }
+
+    // ── audit 22 round 2: PMT section numbers and resync-loss placement ────
+
+    fn psi_section_packets_section_numbers(
+        pid: Pid,
+        cc0: u8,
+        table_id: u8,
+        section_number: u8,
+        last_section_number: u8,
+        body: &[u8],
+    ) -> Vec<u8> {
+        let mut section = Vec::new();
+        let section_length = (SECTION_BODY_PREFIX_LEN + body.len() + CRC32_LEN) as u16;
+        section.push(table_id);
+        section.push(0xB0 | (section_length >> 8) as u8);
+        section.push(section_length as u8);
+        section.extend_from_slice(&1u16.to_be_bytes());
+        section.push(0xC1);
+        section.push(section_number);
+        section.push(last_section_number);
+        section.extend_from_slice(body);
+        let crc = broadcast_common::crc32_mpeg2::compute(&section);
+        section.extend_from_slice(&crc.to_be_bytes());
+        let mut packetised = alloc::vec![0x00];
+        packetised.extend_from_slice(&section);
+        pes_packets(pid, cc0, &packetised)
+    }
+
+    fn avc_ts_with_pmt_sections(section: u8, last: u8) -> Vec<u8> {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let idr = [0x65u8, 0x88, 0x84, 0x21];
+        let au = annexb_au(&[&sps, &pps, &idr]);
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets_section_numbers(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            section,
+            last,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AVC),
+        ));
+        let pes = pes_packet(ES_STREAM_ID_VIDEO, 0, Some(0), &au);
+        input.extend_from_slice(&pes_packets(ES_PID_UNDER_TEST, 0, &pes));
+        input
+    }
+
+    #[test]
+    fn a_multisection_pmt_is_ignored_but_a_single_section_is_accepted() {
+        for (section, last, expected) in [(1u8, 0u8, false), (0, 1, false), (0, 0, true)] {
+            let bytes = avc_ts_with_pmt_sections(section, last);
+            let mut demux = StreamingTsDemux::new();
+            demux.feed(&bytes).expect("feed");
+            demux.finish().expect("finish");
+            let added = std::iter::from_fn(|| demux.poll_event())
+                .any(|e| matches!(e, DemuxEvent::TrackAdded(_)));
+            assert_eq!(
+                added, expected,
+                "PMT section {section} last {last} accepted={expected}"
+            );
+        }
+    }
+
+    fn payload_packet(pid: Pid, cc: u8, pusi: bool, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        use mpeg_ts::ts::{AdaptationFieldControl, TsHeader};
+        let mut packet = null_packet();
+        TsHeader {
+            tei: false,
+            pusi,
+            pid,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation_field_control: AdaptationFieldControl::PayloadOnly,
+            continuity_counter: ContinuityCounter::from_wire_masked(cc),
+        }
+        .serialize_into(&mut packet[..4])
+        .expect("header");
+        packet[4..4 + payload.len()].copy_from_slice(payload);
+        packet
+    }
+
+    fn empty_adaptation_packet(pid: Pid, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        use mpeg_ts::ts::{AdaptationFieldControl, TsHeader};
+        let mut packet = null_packet();
+        TsHeader {
+            tei: false,
+            pusi: false,
+            pid,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation_field_control: AdaptationFieldControl::AdaptationAndPayload,
+            continuity_counter: ContinuityCounter::from_wire_masked(cc),
+        }
+        .serialize_into(&mut packet[..4])
+        .expect("header");
+        packet[4] = 0;
+        packet[5..5 + payload.len()].copy_from_slice(payload);
+        packet
+    }
+
+    #[test]
+    fn a_zero_length_adaptation_field_is_not_a_signalled_discontinuity() {
+        let pid = Pid::from_const(0x0411);
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&payload_packet(
+            pid,
+            0,
+            true,
+            &[0x00, 0x00, 0x01, 0xE0, 0x00, 0x00],
+        ));
+        let mut payload = alloc::vec![0x00u8; TS_MAX_PAYLOAD_BYTES - 1];
+        payload[0] = 0x80;
+        input.extend_from_slice(&empty_adaptation_packet(pid, 2, &payload));
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("feed");
+        demux.finish().expect("finish");
+        let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::InputDegraded {
+                    kind: InputDegradation::ContinuityGap {
+                        expected: 1,
+                        got: 2
+                    },
+                    ..
+                }
+            )),
+            "a zero-length adaptation field carries no indicator: {events:?}"
+        );
+    }
+
+    fn video_ts_with_unbounded_pes() -> Vec<u8> {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let idr = [0x65u8, 0x88, 0x84, 0x51];
+        let au = annexb_au(&[&sps, &pps, &idr]);
+        let mut pes = alloc::vec![0x00, 0x00, 0x01, 0xE0, 0x00, 0x00];
+        pes.extend_from_slice(&[0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01]);
+        pes.extend_from_slice(&au);
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AVC),
+        ));
+        input.extend_from_slice(&pes_packets(ES_PID_UNDER_TEST, 0, &pes));
+        input
+    }
+
+    #[test]
+    fn an_unbounded_video_pes_is_flushed_whole_at_end_of_input() {
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&video_ts_with_unbounded_pes()).expect("feed");
+        demux.finish().expect("finish");
+        let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::TrackAdded(_))),
+            "a declared-length-0 PES is flushed at end of input: {events:?}"
+        );
+    }
+
+    #[test]
+    fn a_bounded_pes_short_of_its_declared_length_is_not_flushed() {
+        let es = adts_frame(0);
+        let declared = (es.len() + 1_000) as u16;
+        let mut pes = alloc::vec![0x00, 0x00, 0x01, 0xBD];
+        pes.extend_from_slice(&declared.to_be_bytes());
+        pes.extend_from_slice(&[0x80, 0x80, 0x05, 0x21, 0x00, 0x01, 0x00, 0x01]);
+        pes.extend_from_slice(&es);
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body(ES_PID_UNDER_TEST, STREAM_TYPE_AAC_ADTS),
+        ));
+        input.extend_from_slice(&pes_packets(ES_PID_UNDER_TEST, 0, &pes));
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("feed");
+        demux.finish().expect("finish");
+        let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::TrackAdded(_))),
+            "a truncated bounded PES is not flushed as complete: {events:?}"
+        );
+    }
+
+    fn pcr_only_packet(pid: Pid, base: u64, cc: u8) -> [u8; TS_PACKET_SIZE] {
+        use mpeg_ts::ts::{AdaptationField, AdaptationFieldControl, Pcr, TsHeader};
+        let mut adaptation = AdaptationField::new();
+        adaptation.pcr = Some(Pcr::from_parts(base, 0).expect("valid PCR"));
+        let body_len = adaptation.serialized_len();
+        let mut packet = null_packet();
+        TsHeader {
+            tei: false,
+            pusi: false,
+            pid,
+            scrambling: ScramblingControl::NotScrambled,
+            adaptation_field_control: AdaptationFieldControl::AdaptationOnly,
+            continuity_counter: ContinuityCounter::from_wire_masked(cc),
+        }
+        .serialize_into(&mut packet[..4])
+        .expect("header");
+        packet[4] = u8::try_from(body_len).expect("adaptation length");
+        adaptation
+            .serialize_into(&mut packet[5..])
+            .expect("adaptation field");
+        packet
+    }
+
+    #[test]
+    fn a_resync_loss_is_reported_before_the_packet_after_the_gap() {
+        let mut input = Vec::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            input.extend_from_slice(&null_packet());
+        }
+        input.extend_from_slice(&psi_section_packets(
+            PAT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PAT,
+            &pat_body(),
+        ));
+        input.extend_from_slice(&psi_section_packets(
+            PMT_PID_UNDER_TEST,
+            0,
+            TABLE_ID_PMT,
+            &pmt_body_with_pcr_pid(ES_PID_UNDER_TEST, STREAM_TYPE_AVC, ES_PID_UNDER_TEST),
+        ));
+        input.extend_from_slice(&alloc::vec![0u8; 512]);
+        input.extend_from_slice(&pcr_only_packet(ES_PID_UNDER_TEST, 90_000, 0));
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&input).expect("feed");
+        demux.finish().expect("finish");
+        let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
+        let loss = events.iter().position(|e| {
+            matches!(
+                e,
+                DemuxEvent::InputDegraded {
+                    kind: InputDegradation::SyncLoss { .. },
+                    ..
+                }
+            )
+        });
+        let clock = events
+            .iter()
+            .position(|e| matches!(e, DemuxEvent::ClockReference { .. }));
+        let (Some(loss), Some(clock)) = (loss, clock) else {
+            panic!("expected both a SyncLoss and a ClockReference: {events:?}");
+        };
+        assert!(
+            loss < clock,
+            "the loss is reported before the first packet after the gap"
+        );
+    }
+
+    // ── audit 22 round 2: damaged-promotion re-probe skip and carry clearing ─
+
+    #[test]
+    fn a_damaged_promotion_clears_the_skip_on_invalid_sets_alone() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let idr = [0x65u8, 0x88, 0x84, 0x31];
+        let mut demux = StreamingTsDemux::new();
+        demux
+            .feed(&avc_ts_over(
+                &alloc::vec![annexb_au(&[&sps, &pps, &idr]); 2],
+            ))
+            .expect("feed");
+        while demux.poll_event().is_some() {}
+        let stream = demux.streams.get_mut(&ES_PID_UNDER_TEST).expect("stream");
+        if let Some(TrackState::Live(live)) = stream.track.as_mut() {
+            live.skip_next_reprobe = true;
+        }
+        let mut bad_sps = sps.clone();
+        bad_sps[0] |= 0x80;
+        let invalid = annexb_au(&[&bad_sps, &idr]);
+        let mut events = VecDeque::new();
+        advance_track(stream, ES_PID_UNDER_TEST, &invalid, 0, 0, &mut events)
+            .expect("invalid-only AU");
+        assert!(
+            events.iter().any(|e| matches!(
+                e,
+                DemuxEvent::InputDegraded {
+                    track: Some(_),
+                    kind: InputDegradation::InvalidParameterSet,
+                    ..
+                }
+            )),
+            "damage on a live track names the track"
+        );
+        let live = match stream.track.as_ref() {
+            Some(TrackState::Live(live)) => live,
+            _ => panic!("expected Live"),
+        };
+        assert!(
+            !live.skip_next_reprobe,
+            "invalid sets alone clear the re-probe skip"
+        );
+
+        if let Some(TrackState::Live(live)) = stream.track.as_mut() {
+            live.skip_next_reprobe = true;
+        }
+        let clean = annexb_au(&[&[0x65, 0x88, 0x84, 0x32]]);
+        let mut events = VecDeque::new();
+        advance_track(stream, ES_PID_UNDER_TEST, &clean, 0, 0, &mut events).expect("clean AU");
+        let live = match stream.track.as_ref() {
+            Some(TrackState::Live(live)) => live,
+            _ => panic!("expected Live"),
+        };
+        assert!(
+            live.skip_next_reprobe,
+            "an AU with neither a change nor damage leaves the skip armed"
+        );
+    }
+
+    #[test]
+    fn clearing_a_carried_audio_tail_flushes_the_held_unit_and_drops_the_rest() {
+        let bytes = std::fs::read(test_fixtures::path("ts/dolby/eac3.ts")).expect("eac3 fixture");
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes).expect("feed");
+        while demux.poll_event().is_some() {}
+        let pid = *demux
+            .streams
+            .iter()
+            .find(|(_, s)| {
+                matches!(
+                    &s.track,
+                    Some(TrackState::Live(live))
+                        if matches!(live.kind, LiveKind::Audio { kind: AudioKind::Eac3, .. })
+                )
+            })
+            .map(|(pid, _)| pid)
+            .expect("a live E-AC-3 track");
+        let stream = demux.streams.get_mut(&pid).expect("stream");
+        let held = eac3_frame(3);
+        if let Some(TrackState::Live(live)) = stream.track.as_mut()
+            && let LiveKind::Audio { anchor, .. } = &mut live.kind
+        {
+            anchor.seed = Some(AudioAnchorSeed {
+                next_dts: 500,
+                next_pts: 600,
+                anchor_dts_uw: 0,
+                anchor_pts_uw: 0,
+                ticks_since_anchor: 0,
+            });
+            anchor.carry = held.clone();
+            anchor.hold_final_au = true;
+        } else {
+            panic!("expected a live audio track");
+        }
+        let mut events = VecDeque::new();
+        clear_audio_carry(stream, &mut events).expect("clear");
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Sample { .. }))
+        );
+        let live = match stream.track.as_ref() {
+            Some(TrackState::Live(live)) => live,
+            _ => panic!("expected Live"),
+        };
+        let LiveKind::Audio { anchor, .. } = &live.kind else {
+            panic!("expected audio");
+        };
+        assert!(anchor.carry.is_empty(), "the stale tail is dropped");
+    }
+
+    #[test]
+    fn a_split_eac3_header_resolves_from_the_joined_window() {
+        let au = crate::ac3::tests::seven_one_eac3_es();
+        let mut demux = StreamingTsDemux::new();
+        demux
+            .feed(&eac3_pes_ts(&[
+                au[..6].to_vec(),
+                au[6..].to_vec(),
+                au.clone(),
+                au.clone(),
+            ]))
+            .expect("feed");
+        let added = std::iter::from_fn(|| demux.poll_event())
+            .any(|e| matches!(e, DemuxEvent::TrackAdded(_)));
+        assert!(
+            added,
+            "a header split across two PES resolves from the joined window"
+        );
+    }
+
+    #[test]
+    fn a_small_mpegh_config_is_below_the_limit() {
+        let payload = alloc::vec![0x0B, 0xAA];
+        let word: u32 = (1u32 << 13) | (payload.len() as u32 & 0x7FF);
+        let mut data = alloc::vec![(word >> 8) as u8, word as u8];
+        data.extend_from_slice(&payload);
+        assert_eq!(find_mpegh3da_config(&data), Some(payload.as_slice()));
+        let mut probe = ConfigProbe::MpegH;
+        assert!(
+            finalize_probe(Codec::MpegH, &[], &mut probe, &data).is_some(),
+            "a small config is not oversized"
+        );
+    }
+
+    #[test]
+    fn an_he_aac_probe_sets_the_output_to_core_duration_scale() {
+        use broadcast_common::Serialize;
+        use dvb_si::descriptors::aac::{AacDescriptor, AacExtension};
+        let descriptor = AacDescriptor {
+            profile_and_level: 0x58,
+            extension: Some(AacExtension::new(false, Some(0x43), &[])),
+        };
+        let descriptors = descriptor.try_to_bytes().expect("descriptor");
+        let body = alloc::vec![0x11u8; 100];
+        let len = ADTS_HEADER_SIZE + body.len();
+        let mut frame = crate::aac_asc::build_adts_header(1, 7, 2, len as u16).to_vec();
+        frame.extend_from_slice(&body);
+        let mut probe = ConfigProbe::Aac;
+        let (config, _, kind) =
+            finalize_probe(Codec::Aac, &descriptors, &mut probe, &frame).expect("resolves");
+        assert_eq!(config.audio_sample_rate(), Some(44_100));
+        match kind {
+            LiveKind::Audio { anchor, .. } => {
+                assert_eq!(
+                    anchor.duration_scale, 2,
+                    "44.1 kHz output over 22.05 kHz core"
+                );
+            }
+            _ => panic!("expected audio"),
+        }
+    }
 }

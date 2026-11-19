@@ -638,3 +638,47 @@ fn hevc_prefix_plus_suffix_keeps_prefix() {
     drain(&mut demux);
     assert_eq!(afd0, Some(ActiveFormatDescription::Centre4x3));
 }
+
+// ---------------------------------------------------------------------------
+// audit 22 — the batch TsDemux path honours with_afd_persistence
+// ---------------------------------------------------------------------------
+
+#[test]
+fn batch_tsdemux_afd_persistence_changes_the_result() {
+    let mut sei: Vec<Vec<Vec<u8>>> = vec![vec![]; 26];
+    sei[0] = vec![afd_nal(9, true)];
+    let ts = build_avc_from_n("ts/h264-aac.ts", &sei, Some(26));
+
+    let last_afd = |policy| {
+        let media = TsDemux::new()
+            .with_afd_persistence(policy)
+            .unpackage(&ts)
+            .expect("batch demux");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| {
+                matches!(
+                    t.spec.config,
+                    CodecConfig::Avc { .. } | CodecConfig::Hevc { .. }
+                )
+            })
+            .expect("video track");
+        track
+            .samples
+            .last()
+            .and_then(|s| s.display.as_deref())
+            .and_then(afd_of)
+    };
+
+    assert_eq!(
+        last_afd(AfdPersistence::UntilReplaced),
+        Some(ActiveFormatDescription::Centre4x3),
+        "the AFD persists until replaced"
+    );
+    assert_eq!(
+        last_afd(AfdPersistence::ResetAtRandomAccess),
+        Some(ActiveFormatDescription::SameAsCodedFrame),
+        "the AFD resets at the next random-access point"
+    );
+}
