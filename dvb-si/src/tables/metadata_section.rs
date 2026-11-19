@@ -298,6 +298,56 @@ mod tests {
         ));
     }
 
+    fn hand_section(b1_flags: u8) -> Vec<u8> {
+        let mut b = vec![0x06, b1_flags, 0x09, 0x21, 0xFF, 0b1000_1011, 0x00, 0x02];
+        let crc = broadcast_common::crc32_mpeg2::compute(&b);
+        b.extend_from_slice(&crc.to_be_bytes());
+        b
+    }
+
+    #[test]
+    fn section_syntax_indicator_zero_reparses_byte_identically() {
+        // SSI=0, private_indicator=0, random_access=1, decoder_config=1.
+        let bytes = hand_section(0x30);
+        let s = MetadataSection::parse(&bytes).unwrap();
+        assert!(!s.section_syntax_indicator);
+        assert!(!s.private_indicator);
+        assert!(s.random_access_indicator);
+        assert!(s.decoder_config_flag);
+
+        let mut out = vec![0u8; s.serialized_len()];
+        s.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
+    #[test]
+    fn each_flag_bit_is_independent() {
+        for (b1, ssi, private, random_access, decoder_config) in [
+            (0x80u8, true, false, false, false),
+            (0x40, false, true, false, false),
+            (0x20, false, false, true, false),
+            (0x10, false, false, false, true),
+            (0x00, false, false, false, false),
+        ] {
+            let bytes = hand_section(b1);
+            let s = MetadataSection::parse(&bytes).unwrap();
+            assert_eq!(
+                (
+                    s.section_syntax_indicator,
+                    s.private_indicator,
+                    s.random_access_indicator,
+                    s.decoder_config_flag
+                ),
+                (ssi, private, random_access, decoder_config),
+                "flags for byte 1 {b1:#04x}"
+            );
+
+            let mut out = vec![0u8; s.serialized_len()];
+            s.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes, "round trip for byte 1 {b1:#04x}");
+        }
+    }
+
     /// The field is 8 bits wide, so a wider value is unrepresentable and cannot
     /// spill into the next byte.
     #[test]

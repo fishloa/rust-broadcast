@@ -1092,6 +1092,126 @@ mod tests {
         assert_eq!(MessageTypeId::Other(7).to_string(), "other(0x07)");
     }
 
+    // ── Truncated User Control payloads (audit 22) ────────────────────────
+
+    #[test]
+    fn truncated_four_byte_user_control_data_is_rejected() {
+        for event in [
+            event_type::STREAM_BEGIN,
+            event_type::STREAM_EOF,
+            event_type::STREAM_DRY,
+            event_type::STREAM_IS_RECORDED,
+            event_type::PING_REQUEST,
+            event_type::PING_RESPONSE,
+        ] {
+            for data_len in 0..4usize {
+                let mut bytes = event.to_be_bytes().to_vec();
+                bytes.extend(core::iter::repeat_n(0u8, data_len));
+                assert!(
+                    matches!(
+                        UserControl::parse(&bytes),
+                        Err(RtmpError::BufferTooShort(BufferTooShort {
+                            need: 4,
+                            have,
+                            ..
+                        })) if have == data_len
+                    ),
+                    "event 0x{event:04X} with {data_len} data bytes must be rejected"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn set_buffer_length_requires_both_four_byte_fields() {
+        for data_len in 0..8usize {
+            let mut bytes = event_type::SET_BUFFER_LENGTH.to_be_bytes().to_vec();
+            bytes.extend(core::iter::repeat_n(0u8, data_len));
+            assert!(
+                matches!(
+                    UserControl::parse(&bytes),
+                    Err(RtmpError::BufferTooShort(BufferTooShort {
+                        need: 8,
+                        have,
+                        ..
+                    })) if have == data_len
+                ),
+                "set buffer length with {data_len} data bytes must be rejected"
+            );
+        }
+        // §6.7: event type 0x0003, stream id 9, buffer 0x000003E8 ms.
+        let bytes = [0x00, 0x03, 0x00, 0x00, 0x00, 0x09, 0x00, 0x00, 0x03, 0xE8];
+        assert_eq!(
+            UserControl::parse(&bytes).unwrap(),
+            UserControl::SetBufferLength {
+                stream_id: 9,
+                buffer: Duration::from_millis(1_000),
+            }
+        );
+    }
+
+    #[test]
+    fn protocol_control_names_are_pinned() {
+        for (pc, name) in [
+            (
+                ProtocolControl::SetChunkSize(ChunkSize::try_new(4096).unwrap()),
+                "set chunk size",
+            ),
+            (
+                ProtocolControl::Abort { chunk_stream_id: 7 },
+                "abort message",
+            ),
+            (
+                ProtocolControl::Acknowledgement(SequenceNumber::new(1)),
+                "acknowledgement",
+            ),
+            (
+                ProtocolControl::WindowAckSize(2_500_000),
+                "window acknowledgement size",
+            ),
+            (
+                ProtocolControl::SetPeerBandwidth {
+                    ack_window_size: 2_500_000,
+                    limit_type: LimitType::Hard,
+                },
+                "set peer bandwidth",
+            ),
+        ] {
+            assert_eq!(pc.name(), name);
+            assert_eq!(pc.to_string(), name);
+        }
+    }
+
+    #[test]
+    fn user_control_names_are_pinned() {
+        for (uc, name) in [
+            (UserControl::StreamBegin(1), "stream begin"),
+            (UserControl::StreamEof(1), "stream eof"),
+            (UserControl::StreamDry(1), "stream dry"),
+            (
+                UserControl::SetBufferLength {
+                    stream_id: 1,
+                    buffer: Duration::from_millis(3_000),
+                },
+                "set buffer length",
+            ),
+            (UserControl::StreamIsRecorded(1), "stream is recorded"),
+            (UserControl::PingRequest(1), "ping request"),
+            (UserControl::PingResponse(1), "ping response"),
+        ] {
+            assert_eq!(uc.name(), name);
+            assert_eq!(uc.to_string(), name);
+        }
+    }
+
+    #[test]
+    fn conversions_expose_the_spec_values() {
+        // §7.1: Audio(8) and Video(9).
+        assert_eq!(u8::from(MessageTypeId::Audio), 8);
+        assert_eq!(u8::from(MessageTypeId::Video), 9);
+        assert_eq!(u32::from(ChunkSize::new(4096).unwrap()), 4096);
+    }
+
     #[test]
     fn a_header_and_a_message_carry_the_undecoded_message_type_id() {
         use crate::chunk::{ChunkWriter, MessageHeader};

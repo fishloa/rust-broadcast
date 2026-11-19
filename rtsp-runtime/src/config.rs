@@ -150,3 +150,21 @@ impl Default for RtspClientIoConfig {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_configured_initial_cseq_is_the_first_requests_cseq() {
+        let config = RtspClientConfig::default().with_initial_cseq(100);
+        assert_eq!(config.initial_cseq, 100);
+        let mut session = crate::client::ClientSession::new(config).expect("a session");
+        let request = session.options("rtsp://h/s").expect("OPTIONS from Init");
+        let text = String::from_utf8(request).expect("requests are UTF-8");
+        assert!(
+            text.contains("\r\nCSeq: 100\r\n"),
+            "the first request must carry the configured CSeq: {text}"
+        );
+    }
+}

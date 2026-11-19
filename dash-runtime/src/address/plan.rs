@@ -796,3 +796,55 @@ impl SegmentPlan {
         self.avail.as_ref().map(|a| (a.ast_us, a.ato_us))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{micros_to_signed, micros_to_timestamp};
+    use crate::address::{PlanOptions, plan_representation};
+    use crate::selection::RepRef;
+    use broadcast_dash::Mpd;
+    use jiff::{SignedDuration, Timestamp};
+
+    const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
+
+    fn plan_of(template: &str) -> super::SegmentPlan {
+        let xml = format!(
+            r#"<?xml version="1.0"?><MPD xmlns="{NS}" type="static" mediaPresentationDuration="PT6S"><Period><AdaptationSet mimeType="video/mp4">{template}<Representation id="v" bandwidth="1"/></AdaptationSet></Period></MPD>"#
+        );
+        let m = Mpd::parse(xml.as_bytes()).unwrap_or_else(|e| panic!("{e}\n{xml}"));
+        plan_representation(&m, RepRef::at(0, 0, 0), &PlanOptions::default())
+            .unwrap_or_else(|e| panic!("{e}"))
+            .plan
+    }
+
+    #[test]
+    fn a_signed_duration_saturates_at_both_ends() {
+        assert_eq!(micros_to_signed(i128::MAX), SignedDuration::MAX);
+        assert_eq!(micros_to_signed(i128::MIN), SignedDuration::MIN);
+        assert_eq!(micros_to_signed(-1).as_micros(), -1);
+        assert_eq!(micros_to_signed(1_500_000).as_micros(), 1_500_000);
+        assert_eq!(micros_to_signed(0).as_micros(), 0);
+    }
+
+    #[test]
+    fn a_timestamp_saturates_at_both_ends() {
+        assert_eq!(micros_to_timestamp(i128::MAX), Timestamp::MAX);
+        assert_eq!(micros_to_timestamp(i128::MIN), Timestamp::MIN);
+        assert_eq!(micros_to_timestamp(0), Timestamp::UNIX_EPOCH);
+        assert_eq!(
+            micros_to_timestamp(1_000_000),
+            Timestamp::from_second(1).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_constant_duration_is_reported_only_for_a_duration_template() {
+        let duration =
+            plan_of(r#"<SegmentTemplate timescale="1000" duration="2000" media="$Number$.m4s"/>"#);
+        assert_eq!(duration.constant_duration(), Some(2000));
+        let timeline = plan_of(
+            r#"<SegmentTemplate timescale="1000" media="$Time$.m4s"><SegmentTimeline><S t="0" d="2000" r="1"/></SegmentTimeline></SegmentTemplate>"#,
+        );
+        assert_eq!(timeline.constant_duration(), None);
+    }
+}

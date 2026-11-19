@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Namespace preservation no longer rewrites an outer-scope foreign attribute or element to an inner-scope `xmlns:` override URI; each item keeps its recorded prefix only while that prefix still resolves to its namespace, otherwise a fallback prefix is emitted. A foreign namespace bound to a core prefix (`tt`, `ttp`, `tts`, `ttm`, or the default namespace) now gets a fallback binding instead of silently changing the core declaration's meaning.
 
 ## [0.8.0] - 2026-11-15
 ### Changed

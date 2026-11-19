@@ -306,6 +306,25 @@ mod tests {
     }
 
     #[test]
+    fn srt_mode_labels() {
+        assert_eq!(SrtMode::Caller.name(), "caller");
+        assert_eq!(SrtMode::Listener.name(), "listener");
+    }
+
+    #[test]
+    fn url_rejection_labels() {
+        assert_eq!(UrlRejection::Authority.name(), "authority");
+        assert_eq!(
+            UrlRejection::LatencyNotANumber.name(),
+            "latency-not-a-number"
+        );
+        assert_eq!(UrlRejection::LatencyTooLarge.name(), "latency-too-large");
+        assert_eq!(UrlRejection::Mode.name(), "mode");
+        assert_eq!(UrlRejection::InvalidUtf8.name(), "invalid-utf8");
+        assert_eq!(UrlRejection::DuplicateKey.name(), "duplicate-key");
+    }
+
+    #[test]
     fn host_only_takes_the_default_port() {
         let url = SrtUrl::parse("srt://example.com").expect("host only");
         assert_eq!(url.host, "example.com");

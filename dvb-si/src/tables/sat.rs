@@ -2154,6 +2154,18 @@ mod tests {
     }
 
     #[test]
+    fn section_length_high_nibble_is_written_for_a_300_byte_body() {
+        let body_data = vec![0xAAu8; 300];
+        let bytes = build_sat(7, 0, &SatBody::Raw(body_data.clone()));
+
+        assert_eq!(bytes[1], 0xF1);
+        assert_eq!(bytes[2], 0x36);
+
+        let sat = SatSection::parse(&bytes).expect("reparse");
+        assert_eq!(sat.body, SatBody::Raw(body_data));
+    }
+
+    #[test]
     fn private_indicator_false_round_trip() {
         let body = SatBody::TimeAssociation(TimeAssociationBody {
             association_type: AssociationType::UtcWithoutLeap,
@@ -3433,6 +3445,345 @@ mod tests {
         assert_eq!(TimePlanMode::Bitmap.name(), "bitmap");
         assert_eq!(TimePlanMode::GridRevisitSleep.name(), "grid/revisit/sleep");
         assert_eq!(TimePlanMode::Reserved(3).name(), "reserved");
+    }
+
+    fn mode1_plan(id: u32, bit_map_size: u16) -> BeamhoppingPlan {
+        BeamhoppingPlan {
+            beamhopping_time_plan_id: id,
+            time_plan_mode: TimePlanMode::Bitmap,
+            time_of_application_base: 0,
+            time_of_application_ext: 0,
+            cycle_duration_base: 0,
+            cycle_duration_ext: 0,
+            mode: BeamhoppingMode::Mode1 {
+                bit_map_size,
+                current_slot: 0,
+                slot_transmission_on: vec![true; bit_map_size as usize],
+                reserved_zero_future_use_size: ReservedZero::from_bits(0),
+                reserved_zero_future_use_slot: ReservedZero::from_bits(0),
+            },
+            reserved_zero_future_use_4: ReservedZero::from_bits(0),
+            reserved_zero_future_use_mode: ReservedZero::from_bits(0),
+            time_of_application_reserved_zero_future_use: ReservedZero::from_bits(0),
+            cycle_duration_reserved_zero_future_use: ReservedZero::from_bits(0),
+        }
+    }
+
+    // ── Signed-field range guard (§5.2.11.3: 18-bit latitude, 19-bit longitude)
+
+    #[test]
+    fn write_i_rejects_out_of_range_values() {
+        let mut buf = [0u8; 8];
+        let mut w = BitWriter::new(&mut buf);
+        assert!(matches!(
+            w.write_i(18, 1 << 17),
+            Err(Error::FieldOverflow(_))
+        ));
+        let mut buf = [0u8; 8];
+        let mut w = BitWriter::new(&mut buf);
+        assert!(matches!(
+            w.write_i(18, -(1 << 17) - 1),
+            Err(Error::FieldOverflow(_))
+        ));
+        let mut buf = [0u8; 8];
+        let mut w = BitWriter::new(&mut buf);
+        assert!(matches!(
+            w.write_i(19, 1 << 18),
+            Err(Error::FieldOverflow(_))
+        ));
+        let mut buf = [0u8; 8];
+        let mut w = BitWriter::new(&mut buf);
+        assert!(matches!(
+            w.write_i(19, -(1 << 18) - 1),
+            Err(Error::FieldOverflow(_))
+        ));
+    }
+
+    #[test]
+    fn write_i_accepts_both_boundaries() {
+        let mut buf = [0u8; 16];
+        let mut w = BitWriter::new(&mut buf);
+        w.write_i(18, (1 << 17) - 1).unwrap();
+        w.write_i(18, -(1 << 17)).unwrap();
+        w.write_i(19, (1 << 18) - 1).unwrap();
+        w.write_i(19, -(1 << 18)).unwrap();
+        assert_eq!(w.bits_written(), 18 + 18 + 19 + 19);
+    }
+
+    fn centre_fragment(lat: i32, lon: i32) -> CellFragment {
+        CellFragment {
+            cell_fragment_id: 1,
+            first_occurrence: true,
+            last_occurrence: false,
+            centre: Some(CellCentre {
+                centre_latitude: lat,
+                centre_longitude: lon,
+                max_distance: 0,
+                reserved_zero_future_use_4: ReservedZero::from_bits(0),
+                reserved_zero_future_use_5: ReservedZero::from_bits(0),
+                reserved_zero_future_use_6: ReservedZero::from_bits(0),
+            }),
+            delivery_system_ids: Vec::new(),
+            new_delivery_systems: Vec::new(),
+            obsolescent_delivery_systems: Vec::new(),
+            reserved_zero_future_use_4: ReservedZero::from_bits(0),
+            reserved_zero_future_use_new: ReservedZero::from_bits(0),
+            reserved_zero_future_use_obsolescent: ReservedZero::from_bits(0),
+        }
+    }
+
+    #[test]
+    fn cell_centre_rejects_out_of_range_coordinates() {
+        for frag in [centre_fragment(1 << 17, 0), centre_fragment(0, 1 << 18)] {
+            let body = SatBody::CellFragment(CellFragmentBody {
+                fragments: vec![frag],
+            });
+            let mut buf = [0u8; 32];
+            let mut w = BitWriter::new(&mut buf);
+            assert!(matches!(
+                sat_body_write(&body, &mut w),
+                Err(Error::FieldOverflow(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn cell_centre_boundary_coordinates_round_trip() {
+        let centre = centre_fragment((1 << 17) - 1, -(1 << 18));
+        let body = SatBody::CellFragment(CellFragmentBody {
+            fragments: vec![centre],
+        });
+        let bytes = build_sat(1, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        match &sat.body {
+            SatBody::CellFragment(cf) => {
+                let c = cf.fragments[0].centre.as_ref().unwrap();
+                assert_eq!(c.centre_latitude, 131_071);
+                assert_eq!(c.centre_longitude, -262_144);
+            }
+            other => panic!("expected CellFragment, got {other:?}"),
+        }
+        let mut again = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut again).unwrap();
+        assert_eq!(again, bytes);
+    }
+
+    // ── Bit-level helper hygiene ─────────────────────────────────────────────
+
+    /// `write_zero` must clear its bits and advance the cursor: emitting into a
+    /// 0xFF buffer yields the same bytes as into a zeroed one.
+    #[test]
+    fn bit_writer_zero_runs_clear_a_dirty_buffer() {
+        let bodies = [
+            SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+                plans: vec![mode1_plan(1, 13), mode0_plan(2)],
+            }),
+            SatBody::PositionV3(PositionV3Body {
+                oem_version_major: 1,
+                oem_version_minor: 0,
+                creation_date_year: 24,
+                creation_date_day: 1,
+                creation_date_day_fraction: 0,
+                satellites: vec![PositionV3Satellite {
+                    satellite_id: 1,
+                    usable_start_time_flag: true,
+                    usable_stop_time_flag: true,
+                    ephemeris_accel_flag: true,
+                    covariance_flag: true,
+                    metadata: Some(PositionV3Metadata {
+                        total_start_time_year: 1,
+                        total_start_time_day: 2,
+                        total_start_time_day_fraction: 3,
+                        total_stop_time_year: 4,
+                        total_stop_time_day: 5,
+                        total_stop_time_day_fraction: 6,
+                        interpolation_flag: true,
+                        interpolation_type: InterpolationType::Linear,
+                        interpolation_degree: 2,
+                        usable_start_time: None,
+                        usable_stop_time: None,
+                        total_start_time_reserved_zero_future_use: ReservedZero::from_bits(0),
+                        total_stop_time_reserved_zero_future_use: ReservedZero::from_bits(0),
+                        reserved_zero_future_use: ReservedZero::from_bits(0),
+                    }),
+                    ephemeris_data: Vec::new(),
+                    covariance: None,
+                    reserved_zero_future_use: ReservedZero::from_bits(0),
+                }],
+                creation_date_reserved_zero_future_use: ReservedZero::from_bits(0),
+            }),
+        ];
+        for body in &bodies {
+            let len = sat_body_serialized_len(body);
+            let mut dirty = vec![0xFFu8; len];
+            sat_body_write(body, &mut BitWriter::new(&mut dirty)).unwrap();
+            let mut clean = vec![0x00u8; len];
+            sat_body_write(body, &mut BitWriter::new(&mut clean)).unwrap();
+            assert_eq!(dirty, clean);
+        }
+    }
+
+    fn mode0_plan(id: u32) -> BeamhoppingPlan {
+        BeamhoppingPlan {
+            beamhopping_time_plan_id: id,
+            time_plan_mode: TimePlanMode::DwellOnTime,
+            time_of_application_base: 0,
+            time_of_application_ext: 0,
+            cycle_duration_base: 0,
+            cycle_duration_ext: 0,
+            mode: BeamhoppingMode::Mode0 {
+                dwell_duration_base: 0,
+                dwell_duration_ext: 0,
+                on_time_base: 0,
+                on_time_ext: 0,
+                dwell_duration_reserved_zero_future_use: ReservedZero::from_bits(0),
+                on_time_reserved_zero_future_use: ReservedZero::from_bits(0),
+            },
+            reserved_zero_future_use_4: ReservedZero::from_bits(0),
+            reserved_zero_future_use_mode: ReservedZero::from_bits(0),
+            time_of_application_reserved_zero_future_use: ReservedZero::from_bits(0),
+            cycle_duration_reserved_zero_future_use: ReservedZero::from_bits(0),
+        }
+    }
+
+    /// `seek_forward` consumes the reserved bytes of a reserved-mode plan only
+    /// when a following plan must be reached; a body of two reserved plans makes
+    /// a no-op seek re-read the reserved bytes as a plan.
+    #[test]
+    fn beamhopping_reserved_mode_seek_forward() {
+        let plan = BeamhoppingPlan {
+            beamhopping_time_plan_id: 0x33333333,
+            time_plan_mode: TimePlanMode::Reserved(3),
+            time_of_application_base: 0,
+            time_of_application_ext: 0,
+            cycle_duration_base: 0,
+            cycle_duration_ext: 0,
+            mode: BeamhoppingMode::Reserved(vec![0xFF; 8]),
+            reserved_zero_future_use_4: ReservedZero::from_bits(0),
+            reserved_zero_future_use_mode: ReservedZero::from_bits(0),
+            time_of_application_reserved_zero_future_use: ReservedZero::from_bits(0),
+            cycle_duration_reserved_zero_future_use: ReservedZero::from_bits(0),
+        };
+        let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+            plans: vec![plan.clone(), mode0_plan(0x44)],
+        });
+        let bytes = build_sat(3, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        assert_eq!(sat.body, body);
+        let mut again = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut again).unwrap();
+        assert_eq!(again, bytes);
+    }
+
+    // ── Empty bodies for the loop-shaped layouts ─────────────────────────────
+
+    #[test]
+    fn parse_empty_position_v2_body() {
+        let body = SatBody::PositionV2(PositionV2Body {
+            satellites: Vec::new(),
+        });
+        let bytes = build_sat(0, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        assert_eq!(sat.body, body);
+        let mut again = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut again).unwrap();
+        assert_eq!(again, bytes);
+    }
+
+    #[test]
+    fn parse_empty_cell_fragment_body() {
+        let body = SatBody::CellFragment(CellFragmentBody {
+            fragments: Vec::new(),
+        });
+        let bytes = build_sat(1, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        assert_eq!(sat.body, body);
+        let mut again = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut again).unwrap();
+        assert_eq!(again, bytes);
+    }
+
+    #[test]
+    fn parse_empty_beamhopping_body() {
+        let body = SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody { plans: Vec::new() });
+        let bytes = build_sat(3, 0, &body);
+        let sat = SatSection::parse(&bytes).unwrap();
+        assert_eq!(sat.body, body);
+        let mut again = vec![0u8; sat.serialized_len()];
+        sat.serialize_into(&mut again).unwrap();
+        assert_eq!(again, bytes);
+    }
+
+    // ── Oversize fallback in sat_body_serialized_len ─────────────────────────
+
+    fn ephemeris_entry() -> EphemerisData {
+        EphemerisData {
+            epoch_year: 0,
+            epoch_day: 0,
+            epoch_day_fraction: 0,
+            ephemeris_x: 0,
+            ephemeris_y: 0,
+            ephemeris_z: 0,
+            ephemeris_x_dot: 0,
+            ephemeris_y_dot: 0,
+            ephemeris_z_dot: 0,
+            acceleration: None,
+            reserved_zero_future_use: ReservedZero::from_bits(0),
+        }
+    }
+
+    fn oversize_v3(entries: usize) -> SatSection {
+        SatSection::new(
+            4,
+            true,
+            0,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            SatBody::PositionV3(PositionV3Body {
+                oem_version_major: 1,
+                oem_version_minor: 0,
+                creation_date_year: 24,
+                creation_date_day: 1,
+                creation_date_day_fraction: 0,
+                satellites: vec![PositionV3Satellite {
+                    satellite_id: 1,
+                    usable_start_time_flag: false,
+                    usable_stop_time_flag: false,
+                    ephemeris_accel_flag: false,
+                    covariance_flag: false,
+                    metadata: None,
+                    ephemeris_data: vec![ephemeris_entry(); entries],
+                    covariance: None,
+                    reserved_zero_future_use: ReservedZero::from_bits(0),
+                }],
+                creation_date_reserved_zero_future_use: ReservedZero::from_bits(0),
+            }),
+        )
+    }
+
+    #[test]
+    fn serialized_len_grows_the_heap_buffer_for_an_oversized_body() {
+        // Each ephemeris entry is 31 bytes; 2 258 entries is ~70 000 bytes.
+        let sat = oversize_v3(2_258);
+        let len = sat.serialized_len();
+        assert!(len > 70_000, "got {len}");
+        let mut buf = vec![0u8; len];
+        assert!(matches!(
+            sat.serialize_into(&mut buf),
+            Err(Error::SectionLengthOverflow { .. })
+        ));
+    }
+
+    #[test]
+    fn serialized_len_stops_at_the_one_mib_cap() {
+        // ~2 MiB of entries never fits the 1 MiB body cap, so the body length
+        // is the cap (1 048 576) plus the 9-byte header and 4-byte CRC.
+        let sat = oversize_v3(67_764);
+        assert_eq!(sat.serialized_len(), 1_048_589);
+        let mut buf = vec![0u8; 1_048_589];
+        assert!(matches!(
+            sat.serialize_into(&mut buf),
+            Err(Error::SectionLengthOverflow { .. })
+        ));
     }
 
     /// Each reserved run is width-limited by its type, so a wider value is

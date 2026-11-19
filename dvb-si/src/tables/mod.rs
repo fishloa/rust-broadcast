@@ -716,3 +716,25 @@ pub mod tdt;
 pub mod tot;
 pub mod tsdt;
 pub mod unt;
+
+#[cfg(test)]
+mod section_length_floor_tests {
+    use super::check_section_length;
+    use crate::error::Error;
+
+    #[test]
+    fn total_equal_to_min_total_is_accepted() {
+        assert_eq!(check_section_length(12, 3, 9, 12).unwrap(), 12);
+    }
+
+    #[test]
+    fn one_byte_below_min_total_is_rejected() {
+        assert_eq!(
+            check_section_length(12, 3, 8, 12).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 8,
+                available: 9,
+            }
+        );
+    }
+}

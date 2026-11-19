@@ -63,4 +63,15 @@ mod tests {
             other => panic!("11-byte RIFF prefix must be Insufficient(12), got {other:?}"),
         }
     }
+
+    /// The full 12-byte `"RIFF"`..`"WAVE"` span is a match, not still a short
+    /// read.
+    #[test]
+    fn a_full_twelve_byte_header_matches() {
+        let data = fixture_bytes("fixtures/audio/pcm-s16le.wav");
+        match probe(&data[..12], 12) {
+            Outcome::Match(ev) => assert_eq!(ev.confidence, Confidence::STRONG),
+            other => panic!("a 12-byte RIFF header must match, got {other:?}"),
+        }
+    }
 }

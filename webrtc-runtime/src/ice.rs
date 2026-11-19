@@ -470,4 +470,76 @@ mod tests {
             .expect_err("a control character in a credential must be refused");
         assert!(matches!(err, Error::InvalidHeader { header: "Link" }));
     }
+
+    // -----------------------------------------------------------------------
+    // RFC 8288 `Link` splitting (audit-22 #3006). The header a TURN/STUN
+    // discovery response carries is one comma-separated list, so a comma
+    // inside the URI's `< >` delimiters or inside a `quoted-string` (where
+    // `\"` is an escaped quote) is part of the value, never a separator.
+    // -----------------------------------------------------------------------
+
+    /// A comma in the URI and an escaped quote in a credential.
+    ///
+    /// Bite tests: dropping the `< >` tracking splits the URI (`?x=1,2`);
+    /// treating `\"` as a closing quote ends the credential early, after
+    /// which the entry comma is swallowed.
+    #[test]
+    fn uri_commas_and_escaped_quotes_do_not_split_entries() {
+        let header = r#"<turn:a.example?x=1,2>; rel="ice-server"; username="a,b\"c", <stun:b.example>; rel="ice-server""#;
+        let servers = parse_ice_server_links(header);
+        assert_eq!(servers.len(), 2, "{header}: {servers:?}");
+        assert_eq!(servers[0].url, "turn:a.example?x=1,2");
+        assert_eq!(servers[0].username.as_deref(), Some("a,b\"c"));
+        assert_eq!(servers[1].url, "stun:b.example");
+    }
+
+    /// A `<` inside a quoted parameter value is a character, not an opening
+    /// angle bracket: counting it would leave the depth raised and swallow
+    /// the next entry's comma.
+    #[test]
+    fn a_lt_inside_a_quoted_parameter_does_not_open_a_bracket() {
+        let header = r#"<stun:s.example>; rel="ice-server"; username="a<b", <stun:s2.example>; rel="ice-server""#;
+        let servers = parse_ice_server_links(header);
+        assert_eq!(servers.len(), 2, "{header}: {servers:?}");
+        assert_eq!(servers[0].username.as_deref(), Some("a<b"));
+        assert_eq!(servers[1].url, "stun:s2.example");
+    }
+
+    /// A `>` inside a quoted parameter value never closes an angle bracket.
+    /// With an unmatched `<` still open, a quoted `>` must not re-open the
+    /// comma as a separator.
+    #[test]
+    fn a_gt_inside_a_quoted_parameter_does_not_close_a_bracket() {
+        let header = r#"<turn:a.example?x=<1>; rel="ice-server"; username="q>z", <stun:b.example>; rel="ice-server""#;
+        let servers = parse_ice_server_links(header);
+        assert_eq!(
+            servers.len(),
+            1,
+            "an unclosed `<` must keep the entry unsplit: {servers:?}"
+        );
+        assert_eq!(servers[0].url, "turn:a.example?x=<1");
+    }
+
+    /// An escaped quote sits outside a quoted-string only as an ordinary
+    /// character (RFC 9110 §5.6.4's `quoted-pair` applies inside quotes
+    /// alone), so a `\` cannot hide the entry-separating comma after it.
+    #[test]
+    fn a_backslash_outside_quotes_does_not_escape_the_separator() {
+        let header =
+            r#"<stun:s.example>; rel="ice-server"; note=a\, <stun:s2.example>; rel="ice-server""#;
+        let servers = parse_ice_server_links(header);
+        assert_eq!(servers.len(), 2, "{header}: {servers:?}");
+        assert_eq!(servers[0].url, "stun:s.example");
+        assert_eq!(servers[1].url, "stun:s2.example");
+    }
+
+    /// An unbalanced `>` before any `<` must not make the parser panic or
+    /// invent a server: only the well-formed entry remains.
+    #[test]
+    fn an_unbalanced_gt_yields_no_phantom_server() {
+        let header = r#"> junk, <stun:s.example>; rel="ice-server""#;
+        let servers = parse_ice_server_links(header);
+        assert_eq!(servers.len(), 1, "{servers:?}");
+        assert_eq!(servers[0].url, "stun:s.example");
+    }
 }

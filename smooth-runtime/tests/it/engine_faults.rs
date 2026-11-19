@@ -331,6 +331,14 @@ fn a_manifest_body_one_byte_past_the_cap_is_a_too_large_fault() {
 }
 
 #[test]
+fn a_fragment_body_at_the_cap_is_accepted() {
+    let cap = fixture("av/QualityLevels(98429)/Fragments(audio=0)").len();
+    let mut host = av_host(SmoothClientConfig::default().with_max_fragment_bytes(cap));
+    host.run_until(|o| o.iter().any(is_ended));
+    assert!(host.has(is_ended));
+}
+
+#[test]
 fn a_fragment_body_one_byte_past_the_cap_ends_the_session() {
     let cap = fixture("av/QualityLevels(98429)/Fragments(audio=0)").len() - 1;
     let mut host = av_host(SmoothClientConfig::default().with_max_fragment_bytes(cap));

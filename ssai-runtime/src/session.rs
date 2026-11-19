@@ -210,6 +210,7 @@ mod tests {
             .begin_break("s1", BreakState::new(decision.clone(), splice_point()))
             .unwrap();
         assert_eq!(store.len(), 1);
+        assert!(!store.is_empty());
         assert!(!store.get("s1").unwrap().is_resumed());
 
         store.resume("s1", splice_point()).unwrap();

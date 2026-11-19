@@ -491,4 +491,81 @@ mod tests {
         assert!(text.starts_with("RTSP/1.0 461"), "got: {text}");
         assert_eq!(s.state(), SessionState::Init);
     }
+
+    #[test]
+    fn the_debug_output_names_the_state_and_the_session() {
+        let mut s = test_session();
+        setup(&mut s, "RTP/AVP/TCP;interleaved=0-1");
+        let id = s.session_id().unwrap();
+        let text = format!("{s:?}");
+        assert!(text.starts_with("ServerSession {"), "{text}");
+        assert!(text.contains("state: Ready"), "{text}");
+        assert!(text.contains(&format!("session_id: Some({id:?}")), "{text}");
+    }
+
+    /// RFC 2326 §A.2: PLAY in Playing (a seek / Range change) and SETUP in
+    /// Playing (a transport change, §10.4) are listed transitions, so the
+    /// server must answer them 200 and keep the state, not 455.
+    #[test]
+    fn play_while_playing_and_setup_while_playing_are_accepted() {
+        let mut s = test_session();
+        setup(&mut s, "RTP/AVP/TCP;interleaved=0-1");
+        let sid = s.session_id().unwrap().to_string();
+        let play = format!("PLAY rtsp://h/s RTSP/1.0\nCSeq: 2\nSession: {sid}\n\n");
+        let (resp, _) = s.handle_request(&req(&play)).unwrap();
+        assert!(String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 200"));
+        assert_eq!(s.state(), SessionState::Playing);
+
+        let (resp, _) = s.handle_request(&req(&play)).unwrap();
+        assert!(
+            String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 200"),
+            "a second PLAY is a seek, not 455: {}",
+            String::from_utf8_lossy(&resp)
+        );
+        assert_eq!(s.state(), SessionState::Playing);
+
+        let setup_again = format!(
+            "SETUP rtsp://h/s RTSP/1.0\nCSeq: 3\nSession: {sid}\n\
+             Transport: RTP/AVP/TCP;interleaved=2-3\n\n"
+        );
+        let (resp, _) = s.handle_request(&req(&setup_again)).unwrap();
+        assert!(
+            String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 200"),
+            "a transport change while playing is legal: {}",
+            String::from_utf8_lossy(&resp)
+        );
+        assert_eq!(s.state(), SessionState::Playing);
+        assert_eq!(
+            s.negotiated_transport()
+                .and_then(|t| t.first())
+                .and_then(|spec| spec.interleaved),
+            Some((2, 3))
+        );
+    }
+
+    #[test]
+    fn each_new_session_on_one_server_gets_its_own_id() {
+        let mut s = ServerSession::new(
+            RtspServerConfig::default()
+                .with_session_ids(crate::config::SessionIdSource::counter(0x1000)),
+        )
+        .expect("a session");
+        let mut ids = Vec::new();
+        for _ in 0..3 {
+            setup(&mut s, "RTP/AVP/TCP;interleaved=0-1");
+            let id = s.session_id().expect("SETUP allocated an id");
+            ids.push(id.to_string());
+            let (resp, _) = s
+                .handle_request(&req(&format!(
+                    "TEARDOWN rtsp://h/s RTSP/1.0\nCSeq: 9\nSession: {id}\n\n"
+                )))
+                .unwrap();
+            assert!(String::from_utf8_lossy(&resp).starts_with("RTSP/1.0 200"));
+        }
+        assert_eq!(
+            ids,
+            ["0000000000001000", "0000000000001001", "0000000000001002"]
+        );
+        assert_eq!(s.allocated, 3, "each allocation advances the counter");
+    }
 }
