@@ -4,6 +4,7 @@ mod audit_1485;
 mod audit_1492;
 mod audit_prerelease;
 mod avg_bandwidth;
+mod client_decisions;
 mod client_state;
 mod closed_captions;
 #[path = "support/dummy_avc_config.rs"]
@@ -20,8 +21,14 @@ mod map_runs;
 mod master_bandwidth;
 mod master_playlist;
 #[cfg(feature = "std")]
+mod origin_codecs;
+#[cfg(feature = "std")]
 mod origin_hardening;
 mod origin_loop;
+#[cfg(feature = "std")]
+mod origin_playlist_fields;
+#[cfg(feature = "std")]
+mod origin_state;
 mod pdt_arrival;
 mod pdt_origin;
 mod playlist_base;

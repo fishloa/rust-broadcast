@@ -11,6 +11,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_common::Timestamp;
+use broadcast_common::Unpackage;
 use broadcast_hls::MasterPlaylist;
 use bytes::Bytes;
 use hls_runtime::server::{HlsOrigin, HlsOriginConfig};
@@ -401,4 +402,61 @@ fn iframe_variant_carries_video_range_for_hdr() {
     assert!(iframe_variant_line(18).contains("VIDEO-RANGE=HLG"), "HLG");
     // SDR (transfer 1): the attribute is omitted (Apple 9.16 requires it only for non-SDR).
     assert!(!iframe_variant_line(1).contains("VIDEO-RANGE"), "SDR");
+}
+
+#[test]
+fn iframe_variant_codecs_stay_with_the_first_video_track() {
+    let (_trunk, origin, writer) = origin_fmp4(64);
+    let init = fixture_bytes("init.mp4");
+    let media = transmux::Fmp4Demux::new()
+        .unpackage(&init[..])
+        .expect("init demuxes");
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| t.spec.config.is_video())
+        .expect("video track")
+        .spec
+        .clone();
+    let first_codecs = transmux::rfc6381_codec_string(&video.config).expect("first video codec");
+    let other = test_fixtures::read("mp4/hevc-main.mp4");
+    let mut second = transmux::Fmp4Demux::new()
+        .unpackage(&other[..])
+        .expect("HEVC fixture demuxes")
+        .tracks
+        .into_iter()
+        .find(|t| t.spec.config.is_video())
+        .expect("HEVC video track")
+        .spec;
+    second.track_id = TrackId::new(2);
+    let second_codecs = transmux::rfc6381_codec_string(&second.config).expect("second video codec");
+    assert_ne!(first_codecs, second_codecs, "the fixtures must differ");
+    origin
+        .set_track_specs(&[video, second])
+        .expect("specs build codecs");
+    writer
+        .publish_segment(SegmentEntry::new(
+            Bytes::from(fixture_bytes("index0.m4s")),
+            SegmentSeq::new(1),
+            Duration::from_secs(1),
+            Timestamp::from_nanos(0),
+            SegmentMeta {
+                discontinuous: false,
+            },
+        ))
+        .expect("publish");
+
+    let text = origin
+        .master_playlist_with_iframes("media.m3u8", "iframe.m3u8")
+        .expect("master");
+    let parsed = MasterPlaylist::parse(&text).expect("parse master");
+    let iframe = parsed
+        .iframe_variants
+        .first()
+        .expect("an I-frame variant is advertised");
+    assert_eq!(
+        iframe.codecs.clone(),
+        Some(first_codecs),
+        "the I-frame variant names the first video track's codec, not a later one"
+    );
 }
