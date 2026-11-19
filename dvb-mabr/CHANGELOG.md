@@ -4,6 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 ### Tests
+- Every `StructureError`, `ServiceComponentIdentifier` and `BaselineNamespace` variant's `name()`/`Display` label is asserted against its documented token (audit 22 #3047).
 - The "first singleton child wins, unknown or reordered siblings are skipped" guards are pinned for `ForwardErrorCorrectionParameters`, `EndpointAddress`, `MulticastTransportSession`, each gateway transport-session child, and the `xsi:type` component selector (which must ignore a plain `type` and any other `xsi:*` attribute) (audit 22 #3046).
 - All three `@transportSecurity` values (`none`, `integrity`, `integrityAndAuthenticity`) are parsed to their typed variant and round-tripped, not only the value the fixtures happen to carry (audit 22 #3045).
 - The root-element identity check is pinned: a gateway document is refused by the server entry point (and vice versa), and right-name/foreign-namespace and right-namespace/wrong-name roots are each rejected (audit 22 #3044).
