@@ -969,6 +969,19 @@ fn group_info_compatibility_past_end() {
 }
 
 #[test]
+fn group_info_compatibility_ending_at_end_reports_the_missing_length_field() {
+    // The compatibility descriptor ends exactly at the buffer end, so the next
+    // field (GroupInfoLength) is the one that is missing.
+    assert_eq!(
+        GroupInfoIndication::parse(&group_info(&[
+            0x00, 0x01, 0, 0, 0, 1, 0, 0, 0, 2, 0x00, 0x00
+        ]))
+        .unwrap_err(),
+        too_short(14, 12, "GroupInfo GroupInfoLength")
+    );
+}
+
+#[test]
 fn group_info_length_field_short() {
     assert_eq!(
         GroupInfoIndication::parse(&group_info(&[
@@ -987,6 +1000,18 @@ fn group_info_bytes_past_end() {
         ]))
         .unwrap_err(),
         overflow(4, 2)
+    );
+}
+
+#[test]
+fn group_info_bytes_ending_at_end_reports_the_missing_private_length_field() {
+    // GroupInfoLength 0 ends exactly at the buffer end.
+    assert_eq!(
+        GroupInfoIndication::parse(&group_info(&[
+            0x00, 0x01, 0, 0, 0, 1, 0, 0, 0, 2, 0x00, 0x00, 0x00, 0x00
+        ]))
+        .unwrap_err(),
+        too_short(16, 14, "GroupInfo PrivateDataLength")
     );
 }
 
@@ -1011,6 +1036,38 @@ fn group_info_private_data_past_end() {
         .unwrap_err(),
         overflow(3, 2)
     );
+}
+
+#[test]
+fn group_info_private_data_one_byte_past_end() {
+    // PrivateDataLength 1 with the field itself last: the slice would start
+    // past the buffer, so no product of position and length may mask it.
+    assert_eq!(
+        GroupInfoIndication::parse(&group_info(&[
+            0x00, 0x01, 0, 0, 0, 1, 0, 0, 0, 2, 0x00, 0x00, 0x00, 0x01, 0xAA, 0x00, 0x01
+        ]))
+        .unwrap_err(),
+        overflow(1, 0)
+    );
+}
+
+#[test]
+fn group_info_two_groups_advance_past_private_data() {
+    // Two groups, the first with one private-data byte: the second group's
+    // fields must be read from just past that byte.
+    let bytes = group_info(&[
+        0x00, 0x02, // NumberOfGroups
+        0, 0, 0, 1, 0, 0, 0, 2, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0xAA, // group 1
+        0, 0, 0, 3, 0, 0, 0, 4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // group 2
+    ]);
+    let gii = GroupInfoIndication::parse(&bytes).expect("two groups");
+    assert_eq!(gii.groups.len(), 2);
+    assert_eq!(gii.groups[0].group_id, 1);
+    assert_eq!(gii.groups[0].group_size, 2);
+    assert_eq!(gii.groups[0].private_data, &[0xAA]);
+    assert_eq!(gii.groups[1].group_id, 3);
+    assert_eq!(gii.groups[1].group_size, 4);
+    assert!(gii.groups[1].private_data.is_empty());
 }
 
 fn un_message(message_id: u16, adaptation_length: u8, body: &[u8]) -> Vec<u8> {
@@ -1047,6 +1104,16 @@ fn un_message_adaptation_longer_than_message() {
 }
 
 #[test]
+fn un_message_adaptation_equal_to_message_is_accepted_by_the_header() {
+    // adaptation_length == message_length is legal; the body parse then runs.
+    let bytes = un_message(MESSAGE_ID_DII, 0, &[]);
+    assert_eq!(
+        UnMessage::parse(&bytes).unwrap_err(),
+        too_short(16, 0, "Dii body")
+    );
+}
+
+#[test]
 fn dsi_compatibility_length_field_short() {
     let body = [0xAAu8; 21];
     let bytes = un_message(MESSAGE_ID_DSI, 0, &body);
@@ -1079,13 +1146,15 @@ fn dsi_private_data_length_field_short() {
 
 #[test]
 fn dsi_private_data_past_end() {
-    let mut body = [0xAAu8; 25];
+    // 20-byte server id + an empty compatibility descriptor + a declared
+    // 8-byte private data block with 6 bytes present.
+    let mut body = [0xAAu8; 30];
     body[20] = 0x00;
     body[21] = 0x00;
     body[22] = 0x00;
-    body[23] = 0x03;
+    body[23] = 0x08;
     let bytes = un_message(MESSAGE_ID_DSI, 0, &body);
-    assert_eq!(UnMessage::parse(&bytes).unwrap_err(), overflow(3, 1));
+    assert_eq!(UnMessage::parse(&bytes).unwrap_err(), overflow(8, 6));
 }
 
 #[test]
