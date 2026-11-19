@@ -215,6 +215,7 @@ mod tests {
             .unwrap();
         sched.push(entry("ad-1", EntryKind::Ad, 1_000)).unwrap();
         assert_eq!(sched.len(), 2);
+        assert!(!sched.is_empty());
     }
 
     #[test]

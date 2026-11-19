@@ -2046,6 +2046,27 @@ mod tests {
             chunks: Vec::new(),
         };
         assert!(!window_holds(&empty, 0));
+        let window = StreamPlan {
+            key,
+            codec: codec.clone(),
+            interleaved_ordinal: 1,
+            chunks: vec![
+                ChunkTiming {
+                    sequence: SegmentSeq::new(1),
+                    start: 100,
+                    duration: 50,
+                },
+                ChunkTiming {
+                    sequence: SegmentSeq::new(2),
+                    start: 200,
+                    duration: 100,
+                },
+            ],
+        };
+        assert!(window_holds(&window, 100));
+        assert!(window_holds(&window, 299));
+        assert!(!window_holds(&window, 99));
+        assert!(!window_holds(&window, 300));
         let huge = StreamPlan {
             key,
             codec,
@@ -2261,5 +2282,213 @@ mod tests {
         let both = render(&origin);
         assert_ne!(both, video_only);
         assert_eq!(builds(&origin), 2);
+    }
+
+    fn fragment_request(
+        origin: &SmoothOrigin,
+        stream: StreamKey,
+        bitrate: u64,
+        start: u64,
+    ) -> EgressResponse<SmoothBody> {
+        origin.resolve(
+            SmoothRequest::Fragment {
+                stream,
+                bitrate,
+                start,
+            },
+            Timestamp::from_nanos(0),
+            AwaitPolicy::new(Timestamp::from_nanos(u64::MAX)),
+        )
+    }
+
+    fn fragment_bytes(response: EgressResponse<SmoothBody>) -> Bytes {
+        match response {
+            EgressResponse::Ready {
+                body: SmoothBody::Fragment(bytes),
+                ..
+            } => bytes,
+            other => panic!("expected a fragment, got {other:?}"),
+        }
+    }
+
+    /// The init accessor reports the stored segment, and nothing before one is
+    /// stored.
+    #[test]
+    fn the_init_accessor_returns_the_stored_segment() {
+        let route = publish(vec![video_spec()]);
+        let origin = SmoothOrigin::new(SmoothOriginConfig::new(
+            Arc::clone(&route.trunk),
+            Arc::new(route.published()),
+            Arc::new({
+                let specs = route.specs();
+                move || specs.clone()
+            }),
+        ));
+        assert_eq!(origin.init(), None);
+        origin.set_init(route.init.clone());
+        assert_eq!(origin.init(), Some(Bytes::from(route.init.clone())));
+    }
+
+    /// A fragment is served only at the bitrate the manifest advertises for its
+    /// stream, and the answer is immutable.
+    #[test]
+    fn a_fragment_is_served_only_at_its_advertised_bitrate() {
+        let route = publish(vec![audio_spec(1)]);
+        let origin = origin(&route);
+        let manifest = manifest(&route);
+        let stream = &manifest.streams[0];
+        let bitrate = stream.qualities[0].bitrate;
+        let start = stream.enumerate_chunks().expect("chunks")[0].0;
+        let key = keys(&route)[0];
+        match fragment_request(&origin, key, bitrate, start) {
+            EgressResponse::Ready {
+                body: SmoothBody::Fragment(bytes),
+                cache,
+            } => {
+                assert_eq!(cache, CachePolicy::Immutable);
+                assert!(!bytes.is_empty());
+            }
+            other => panic!("expected a fragment, got {other:?}"),
+        }
+        assert_eq!(
+            fragment_request(&origin, key, bitrate + 1, start),
+            EgressResponse::NotFound
+        );
+    }
+
+    /// A fragment is packaged from the segment its chunk's sequence names, not
+    /// from a neighbouring segment of the same window.
+    #[test]
+    fn a_fragment_is_packaged_from_its_own_segment() {
+        let route = publish(vec![video_spec()]);
+        let (one, _) = sliding(&route, 1);
+        let (two, _) = sliding(&route, 2);
+        let stream = two.stream_keys()[0];
+        let chunk = two.fragments().expect("fragments")[0];
+        let bitrate =
+            advertised_bitrate(&two.snapshot().ok().expect("a snapshot").plan.streams[0].codec);
+        assert_eq!(
+            fragment_bytes(fragment_request(&one, stream, bitrate, chunk.start)),
+            fragment_bytes(fragment_request(&two, stream, bitrate, chunk.start))
+        );
+    }
+
+    /// `FragmentKey::is_in` matches a fragment on kind, ordinal, start and
+    /// segment sequence together.
+    #[test]
+    fn a_fragment_key_matches_only_its_own_plan_entry() {
+        let route = publish(vec![video_spec()]);
+        let (origin, _) = sliding(&route, 2);
+        let plan = origin.snapshot().ok().expect("a snapshot").plan;
+        let stream = plan.streams[0].key;
+        let first = plan.streams[0].chunks[0].clone();
+        let second = plan.streams[0].chunks[1].clone();
+        let key = FragmentKey::new(stream, &first);
+        assert!(key.is_in(&plan));
+        assert!(
+            !FragmentKey {
+                kind: "audio",
+                ..key
+            }
+            .is_in(&plan)
+        );
+        assert!(
+            !FragmentKey {
+                ordinal: key.ordinal + 1,
+                ..key
+            }
+            .is_in(&plan)
+        );
+        assert!(
+            !FragmentKey {
+                start: key.start + 1,
+                ..key
+            }
+            .is_in(&plan)
+        );
+        assert!(
+            !FragmentKey {
+                sequence: key.sequence + 1,
+                ..key
+            }
+            .is_in(&plan)
+        );
+        assert!(
+            !FragmentKey {
+                start: first.start,
+                sequence: second.sequence.value(),
+                ..key
+            }
+            .is_in(&plan)
+        );
+    }
+
+    /// A stream's interleaved ordinal is its track id, not one less.
+    #[test]
+    fn a_streams_interleaved_ordinal_follows_its_track_id() {
+        let route = publish(vec![audio_spec(2)]);
+        let (origin, _) = sliding(&route, 1);
+        let plan = origin.snapshot().ok().expect("a snapshot").plan;
+        assert_eq!(plan.streams[0].interleaved_ordinal, 2);
+    }
+
+    /// The prewarm contract: a never-requested fragment is cold, preparing it
+    /// makes it warm, and an origin with nothing to warm reports warm.
+    #[test]
+    fn the_prewarm_contract_is_observed() {
+        use media_plane::egress::ServedEgress;
+        let route = publish(vec![video_spec()]);
+        let (origin, _) = sliding(&route, 2);
+        let stream = origin.stream_keys()[0];
+        let chunk = origin.fragments().expect("fragments")[0];
+        let bitrate =
+            advertised_bitrate(&origin.snapshot().ok().expect("a snapshot").plan.streams[0].codec);
+        let request = SmoothRequest::Fragment {
+            stream,
+            bitrate,
+            start: chunk.start,
+        };
+        assert!(!ServedEgress::is_warm(&origin, &request));
+        ServedEgress::prepare(&origin, request);
+        assert!(ServedEgress::is_warm(&origin, &request));
+
+        let cold = SmoothOrigin::new(SmoothOriginConfig::new(
+            trunk(),
+            Arc::new(route.published()),
+            Arc::new(Vec::new),
+        ));
+        cold.set_init(route.init.clone());
+        assert!(ServedEgress::is_warm(&cold, &request));
+    }
+
+    /// A fragment whose chunk is still in a rebuilt plan stays cached.
+    #[test]
+    fn a_fragment_in_the_rebuilt_plan_stays_cached() {
+        let route = publish(vec![video_spec()]);
+        let (origin, window) = sliding(&route, 1);
+        let stream = origin.stream_keys()[0];
+        let chunk = origin.fragments().expect("fragments")[0];
+        let bitrate =
+            advertised_bitrate(&origin.snapshot().ok().expect("a snapshot").plan.streams[0].codec);
+        let first = fragment_request(&origin, stream, bitrate, chunk.start);
+        assert!(matches!(first, EgressResponse::Ready { .. }));
+        assert_eq!(locked(&origin.fragments).len(), 1);
+
+        locked(&window).push(route.published[1].clone());
+        render(&origin);
+        assert_eq!(locked(&origin.fragments).len(), 1);
+        let builds = origin
+            .fragment_builds
+            .load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(
+            fragment_request(&origin, stream, bitrate, chunk.start),
+            first
+        );
+        assert_eq!(
+            origin
+                .fragment_builds
+                .load(std::sync::atomic::Ordering::SeqCst),
+            builds
+        );
     }
 }

@@ -113,3 +113,17 @@ pub enum Output {
     /// The session is over.
     Fatal(SmoothError),
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_manifest_fault_has_its_own_label() {
+        assert_eq!(ManifestFault::Fetch.name(), "fetch");
+        assert_eq!(ManifestFault::Utf8.name(), "utf8");
+        assert_eq!(ManifestFault::Parse.name(), "parse");
+        assert_eq!(ManifestFault::Timeline.name(), "timeline");
+        assert_eq!(ManifestFault::TooLarge.name(), "too_large");
+    }
+}
