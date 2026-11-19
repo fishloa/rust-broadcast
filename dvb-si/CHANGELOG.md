@@ -20,6 +20,7 @@
 - Carousel U-N messages are sized and parsed across message boundaries with non-empty adaptation, private data, group info and multi-sub-descriptor compatibility blocks, and a two-group `GroupInfoIndication` is byte-anchored; `put_length_prefixed`'s returned position is pinned (#3120).
 - `ModuleReassembler`'s three default caps, the aggregate budget as a sum of announced sizes (including the exact boundary), the completed-version FIFO bound and `clear()` are pinned (#3121).
 - The EIT collector's 8-section segment completeness, the schedule-other table_id range and the schedule-cap eviction count are pinned (#3122).
+- `ContentGenre::from_nibble_1` is pinned for every EN 300 468 Table 29 level-1 nibble (variant and `name()`), including `Adult` and `UserDefined` (#3236).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

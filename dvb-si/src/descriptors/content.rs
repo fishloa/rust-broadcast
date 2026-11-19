@@ -500,4 +500,53 @@ mod tests {
         assert_eq!(ContentGenre::Reserved(0xD).name(), "reserved");
         assert_eq!(ContentGenre::UserDefined(0xF).name(), "user defined");
     }
+
+    #[test]
+    fn from_nibble_1_decodes_every_table_29_category() {
+        let cases = [
+            (0x0, ContentGenre::UndefinedContent, "undefined content"),
+            (0x1, ContentGenre::MovieDrama, "Movie/Drama"),
+            (0x2, ContentGenre::NewsCurrentAffairs, "News/Current Affairs"),
+            (0x3, ContentGenre::ShowGameShow, "Show/Game Show"),
+            (0x4, ContentGenre::Sports, "Sports"),
+            (0x5, ContentGenre::ChildrenYouth, "Children/Youth"),
+            (0x6, ContentGenre::MusicBalletDance, "Music/Ballet/Dance"),
+            (0x7, ContentGenre::ArtsCulture, "Arts/Culture"),
+            (
+                0x8,
+                ContentGenre::SocialPoliticalEconomics,
+                "Social/Political/Economics",
+            ),
+            (
+                0x9,
+                ContentGenre::EducationScienceFactual,
+                "Education/Science/Factual",
+            ),
+            (0xA, ContentGenre::LeisureHobbies, "Leisure hobbies"),
+            (
+                0xB,
+                ContentGenre::SpecialCharacteristics,
+                "Special characteristics",
+            ),
+            (0xC, ContentGenre::Adult, "Adult"),
+        ];
+        for (n1, want, label) in cases {
+            let got = ContentGenre::from_nibble_1(n1);
+            assert_eq!(got, want, "nibble_1 = 0x{n1:02X}");
+            assert_eq!(got.name(), label, "nibble_1 = 0x{n1:02X}");
+        }
+        assert_eq!(ContentGenre::from_nibble_1(0xD), ContentGenre::Reserved(0xD));
+        assert_eq!(ContentGenre::from_nibble_1(0xE), ContentGenre::Reserved(0xE));
+        assert_eq!(
+            ContentGenre::from_nibble_1(0xF),
+            ContentGenre::UserDefined(0xF)
+        );
+        for n1 in 0x0..=0xC_u8 {
+            assert_ne!(
+                ContentGenre::from_nibble_1(n1).name(),
+                "reserved",
+                "nibble_1 = 0x{n1:02X}"
+            );
+        }
+    }
 }
