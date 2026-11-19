@@ -194,7 +194,20 @@ impl SrtCallerConfig {
 #[cfg(test)]
 mod timeouts_tests {
     use super::*;
+    use alloc::string::ToString;
     use core::time::Duration;
+
+    #[test]
+    fn the_key_lengths_are_their_names() {
+        for (length, label) in [
+            (SrtKeyLength::Aes128, "aes-128"),
+            (SrtKeyLength::Aes192, "aes-192"),
+            (SrtKeyLength::Aes256, "aes-256"),
+        ] {
+            assert_eq!(length.name(), label);
+            assert_eq!(length.to_string(), label);
+        }
+    }
 
     #[test]
     fn the_default_bounds_are_three_seconds_of_handshake_and_five_of_peer_idle() {
