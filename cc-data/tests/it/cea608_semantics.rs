@@ -616,3 +616,23 @@ fn colour_labels() {
         assert_eq!(color.name(), name);
     }
 }
+
+#[test]
+fn field_one_never_uses_the_field_two_misc_first_byte_shift() {
+    // 0x15 / 0x1D are misc-control first bytes only on field 2. On field 1
+    // they are ordinary (ignored) control bytes, so no mode may change.
+    for b1 in [0x15u8, 0x1D] {
+        let mut dec = Cea608Decoder::new();
+        feed(&mut dec, &[(b1, MC_RDC)]);
+        assert_eq!(
+            dec.mode(Cea608Channel::Cc1),
+            Cea608Mode::None,
+            "b1={b1:#04X}"
+        );
+        assert_eq!(
+            dec.mode(Cea608Channel::Cc2),
+            Cea608Mode::None,
+            "b1={b1:#04X}"
+        );
+    }
+}

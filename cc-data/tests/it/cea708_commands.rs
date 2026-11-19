@@ -680,10 +680,11 @@ fn a_non_consecutive_packet_sequence_resets_services() {
 #[test]
 fn packet_data_size_is_honoured() {
     // size_code 1 declares one data byte; the trailing bytes must not be
-    // parsed as service blocks.
+    // parsed as service blocks. seq 1 follows the window-defining seq 0.
     let mut dec = Cea708Decoder::new();
-    dec.push_packet(&[0x01, 0x21, b'X']);
-    assert_eq!(dec.service_text(1), "");
+    dec.push_packet(&ccp(1, &base_window()));
+    dec.push_packet(&[0x41, 0x21, b'X']);
+    assert_eq!(text(&dec, 1, 0), "");
 }
 
 #[test]
@@ -775,4 +776,31 @@ fn pen_commands_at_the_end_of_the_block_still_decode() {
     assert_eq!(w.bg_opacity, Opacity::Flash);
     assert_eq!(w.bg_color, Color::new(1, 2, 0));
     assert_eq!(w.edge_color, Color::new(1, 2, 2));
+}
+
+#[test]
+fn back_space_truncates_the_row_without_a_following_character() {
+    let mut dec = Cea708Decoder::new();
+    let mut cmds = base_window();
+    cmds.extend_from_slice(&[b'A', b'B', 0x08]);
+    dec.push_packet(&ccp(1, &cmds));
+    assert_eq!(text(&dec, 1, 0), "A");
+
+    let mut dec = Cea708Decoder::new();
+    let mut cmds = base_window();
+    cmds.extend_from_slice(&[b'A', 0x08]);
+    dec.push_packet(&ccp(1, &cmds));
+    assert_eq!(text(&dec, 1, 0), "");
+}
+
+#[test]
+fn pen_size_small_from_zero_bits() {
+    let mut dec = Cea708Decoder::new();
+    let mut cmds = base_window();
+    // SPA: offset 2 (bits [3:2]), size 0 (bits [1:0]).
+    cmds.extend_from_slice(&[0x90, 0x08, 0x00]);
+    dec.push_packet(&ccp(1, &cmds));
+    let w = dec.windows(1)[0].as_ref().expect("window 0");
+    assert_eq!(w.pen_offset, PenOffset::Superscript);
+    assert_eq!(w.pen_size, PenSize::Small);
 }
