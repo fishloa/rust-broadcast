@@ -3,6 +3,7 @@ mod fef_payloads;
 mod individual_addressing_bodies;
 mod inner_ts_plp_carryover;
 mod inner_ts_recovery;
+mod l1_enum_labels;
 mod l1_fixture;
 mod l1_future_dynamic_next;
 mod packet_header;
