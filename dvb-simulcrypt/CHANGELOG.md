@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- Every registry `name()` label and its `Display` rendering (including each `reserved(0x…)` arm) is pinned to its ETSI TS 103 197 token (#3124).
 
 ## [0.10.0] - 2026-11-15
 
