@@ -133,3 +133,17 @@ pub struct DatagramStats {
     /// Times the sequence space was restarted by a new SSRC or a backward jump beyond the window.
     pub resyncs: u64,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+
+    #[test]
+    fn the_modes_are_their_names() {
+        for (mode, label) in [(UdpMode::Receive, "receive"), (UdpMode::Connect, "connect")] {
+            assert_eq!(mode.name(), label);
+            assert_eq!(mode.to_string(), label);
+        }
+    }
+}
