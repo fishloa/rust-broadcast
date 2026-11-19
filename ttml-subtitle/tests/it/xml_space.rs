@@ -3,8 +3,8 @@
 //! round trip.
 #![cfg(feature = "std")]
 
-use ttml_subtitle::document::{NS_TT, XmlSpace};
 use ttml_subtitle::Document;
+use ttml_subtitle::document::{NS_TT, XmlSpace};
 
 fn wrap(inner: &str) -> String {
     format!(r#"<tt xmlns="{NS_TT}">{inner}</tt>"#)
@@ -52,7 +52,10 @@ fn xml_space_absent_is_none() {
 fn xml_space_bogus_is_none() {
     let xml = wrap(r#"<body><div><p xml:space="bogus">a b</p></div></body>"#);
     let doc = parse(&xml);
-    assert_eq!(doc.tt.body.as_ref().expect("body").divs[0].paragraphs[0].xml_space, None);
+    assert_eq!(
+        doc.tt.body.as_ref().expect("body").divs[0].paragraphs[0].xml_space,
+        None
+    );
 }
 
 #[test]

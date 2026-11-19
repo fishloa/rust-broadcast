@@ -3,16 +3,14 @@
 //! `TtElement::time_context` is asserted through the public entry point.
 #![cfg(feature = "std")]
 
+use ttml_subtitle::Document;
 use ttml_subtitle::document::{NS_TT, NS_TTP};
 use ttml_subtitle::time::{ClockMode, DropMode, MarkerMode, TimeBase, TimeContext};
-use ttml_subtitle::Document;
 
 const FRAME_PARAMS: &str = r#"ttp:frameRate="30" ttp:frameRateMultiplier="1000 1001""#;
 
 fn parse_with(params: &str) -> Document {
-    let xml = format!(
-        r#"<tt xmlns="{NS_TT}" xmlns:ttp="{NS_TTP}" {FRAME_PARAMS} {params}/>"#
-    );
+    let xml = format!(r#"<tt xmlns="{NS_TT}" xmlns:ttp="{NS_TTP}" {FRAME_PARAMS} {params}/>"#);
     ttml_subtitle::parse(&xml).unwrap_or_else(|e| panic!("parse failed for '{params}': {e}"))
 }
 
@@ -155,10 +153,7 @@ fn free_parse_matches_document_parse_str() {
     assert_eq!(free, method);
     assert_eq!(free.tt.xml_lang.as_deref(), Some("en"));
 
-    assert_eq!(
-        ttml_subtitle::parse("<tt/>"),
-        Document::parse_str("<tt/>")
-    );
+    assert_eq!(ttml_subtitle::parse("<tt/>"), Document::parse_str("<tt/>"));
 }
 
 #[test]

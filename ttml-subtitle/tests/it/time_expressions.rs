@@ -7,7 +7,8 @@
 
 use ttml_subtitle::error::Error;
 use ttml_subtitle::time::{
-    parse_time_expression as parse, TimeBase, TimeContext, TimeExpression, TimeMetric, WallclockForm,
+    TimeBase, TimeContext, TimeExpression, TimeMetric, WallclockForm,
+    parse_time_expression as parse,
 };
 
 fn ctx() -> TimeContext {
@@ -129,7 +130,9 @@ fn offset_time_metrics() {
     ] {
         match parse(input, &ctx).unwrap() {
             TimeExpression::OffsetTime {
-                count: c, metric: m, ..
+                count: c,
+                metric: m,
+                ..
             } => {
                 assert_eq!(c, count, "{input}");
                 assert_eq!(m, metric, "{input}");
@@ -209,11 +212,12 @@ fn wallclock_date_form_and_fields() {
     };
     match parse("wallclock(2024-12-31)", &ctx).unwrap() {
         TimeExpression::WallclockTime {
-            form: WallclockForm::Date {
-                years,
-                months,
-                days,
-            },
+            form:
+                WallclockForm::Date {
+                    years,
+                    months,
+                    days,
+                },
         } => {
             assert_eq!((years, months, days), (2024, 12, 31));
         }

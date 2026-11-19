@@ -12,6 +12,7 @@ mod limits;
 mod mixed_content;
 mod namespace_round_trip;
 mod review_signalling_findings;
+mod serialize_shape;
 mod time_context;
 mod time_expressions;
 mod truncation;

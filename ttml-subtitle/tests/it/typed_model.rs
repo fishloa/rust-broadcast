@@ -233,10 +233,12 @@ fn head_children_are_typed() {
         })
         .expect("documentMetadata");
     assert!(document_metadata.unknown_children.is_empty());
-    assert!(document_metadata
-        .children
-        .iter()
-        .any(|c| matches!(c, MetadataChild::EbuttmConformsToStandard(_))));
+    assert!(
+        document_metadata
+            .children
+            .iter()
+            .any(|c| matches!(c, MetadataChild::EbuttmConformsToStandard(_)))
+    );
     let nested = metadata
         .children
         .iter()

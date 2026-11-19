@@ -62,7 +62,11 @@ fn inner_scope_prefix_rebinding_keeps_resolved_namespaces() {
 
 #[test]
 fn well_known_prefixes_bound_elsewhere_keep_their_uri() {
-    for (prefix, uri) in [("ttp", "urn:not:ttp"), ("tts", "urn:not:tts"), ("ebutts", "urn:not:ebutts")] {
+    for (prefix, uri) in [
+        ("ttp", "urn:not:ttp"),
+        ("tts", "urn:not:tts"),
+        ("ebutts", "urn:not:ebutts"),
+    ] {
         let xml = format!(
             r#"<tt xmlns="{NS_TT}" xmlns:{prefix}="{uri}" {prefix}:weird="v"><body/></tt>"#
         );
@@ -134,8 +138,14 @@ fn extension_style_namespaces_are_declared_on_demand() {
     let reparsed = parse(&rendered);
     let p = &reparsed.tt.body.as_ref().expect("body").divs[0].paragraphs[0];
     assert_eq!(p.style_attributes.tta_gain.as_deref(), Some("1"));
-    assert_eq!(p.style_attributes.itts_forced_display.as_deref(), Some("true"));
-    assert_eq!(p.style_attributes.ebutts_line_padding.as_deref(), Some("1c"));
+    assert_eq!(
+        p.style_attributes.itts_forced_display.as_deref(),
+        Some("true")
+    );
+    assert_eq!(
+        p.style_attributes.ebutts_line_padding.as_deref(),
+        Some("1c")
+    );
 }
 
 #[test]
@@ -172,16 +182,26 @@ fn modeled_attributes_keep_metadata_children_typed() {
     );
     let doc = parse(&xml);
     let children = &metadata_element(&doc).children;
-    assert!(children.iter().any(|c| matches!(c, MetadataChild::TtmTitle(_))));
-    assert!(children
-        .iter()
-        .any(|c| matches!(c, MetadataChild::EbuttmConformsToStandard(_))));
-    assert!(children
-        .iter()
-        .any(|c| matches!(c, MetadataChild::EbuttmDocumentMetadata(_))));
-    assert!(children
-        .iter()
-        .all(|c| !matches!(c, MetadataChild::Unknown(_))));
+    assert!(
+        children
+            .iter()
+            .any(|c| matches!(c, MetadataChild::TtmTitle(_)))
+    );
+    assert!(
+        children
+            .iter()
+            .any(|c| matches!(c, MetadataChild::EbuttmConformsToStandard(_)))
+    );
+    assert!(
+        children
+            .iter()
+            .any(|c| matches!(c, MetadataChild::EbuttmDocumentMetadata(_)))
+    );
+    assert!(
+        children
+            .iter()
+            .all(|c| !matches!(c, MetadataChild::Unknown(_)))
+    );
 }
 
 #[test]
@@ -196,10 +216,12 @@ fn foreign_attribute_makes_a_metadata_child_untyped() {
         "expected an unknown metadata child: {:?}",
         metadata.children
     );
-    assert!(!metadata
-        .children
-        .iter()
-        .any(|c| matches!(c, MetadataChild::TtmTitle(_))));
+    assert!(
+        !metadata
+            .children
+            .iter()
+            .any(|c| matches!(c, MetadataChild::TtmTitle(_)))
+    );
 }
 
 #[test]
@@ -234,15 +256,17 @@ fn vendor_prefixes_survive_across_containers() {
         .expect("root attr");
     assert_eq!(root.namespace.as_deref(), Some("urn:one"));
     let body = reparsed.tt.body.as_ref().expect("body");
-    assert!(body
-        .foreign_attributes
-        .iter()
-        .any(|a| a.local_name == "body" && a.namespace.as_deref() == Some("urn:one")));
+    assert!(
+        body.foreign_attributes
+            .iter()
+            .any(|a| a.local_name == "body" && a.namespace.as_deref() == Some("urn:one"))
+    );
     let div = &body.divs[0];
-    assert!(div
-        .foreign_attributes
-        .iter()
-        .any(|a| a.local_name == "div" && a.namespace.as_deref() == Some("urn:one")));
+    assert!(
+        div.foreign_attributes
+            .iter()
+            .any(|a| a.local_name == "div" && a.namespace.as_deref() == Some("urn:one"))
+    );
     let p = &div.paragraphs[0];
     let unknown = p
         .content
@@ -253,14 +277,18 @@ fn vendor_prefixes_survive_across_containers() {
         })
         .expect("unknown element");
     assert_eq!(unknown.namespace.as_deref(), Some("urn:three"));
-    assert!(unknown
-        .attributes
-        .iter()
-        .any(|a| a.local_name == "a" && a.namespace.as_deref() == Some("urn:three")));
-    assert!(unknown
-        .attributes
-        .iter()
-        .any(|a| a.local_name == "c" && a.namespace.as_deref() == Some("urn:one")));
+    assert!(
+        unknown
+            .attributes
+            .iter()
+            .any(|a| a.local_name == "a" && a.namespace.as_deref() == Some("urn:three"))
+    );
+    assert!(
+        unknown
+            .attributes
+            .iter()
+            .any(|a| a.local_name == "c" && a.namespace.as_deref() == Some("urn:one"))
+    );
 }
 
 #[test]
@@ -363,7 +391,8 @@ fn scope_less_foreign_items_are_healed_to_the_winning_uri() {
     p.content.push(InlineContent::Span(Box::new(span)));
     p.content.push(InlineContent::Image(Box::new(image)));
     p.content.push(InlineContent::Audio(Box::new(audio)));
-    p.content.push(InlineContent::Unknown(Box::new(inline_unknown)));
+    p.content
+        .push(InlineContent::Unknown(Box::new(inline_unknown)));
     p.metadata.push(MetadataChild::Metadata(metadata));
     p.metadata.push(MetadataChild::Unknown(metadata_unknown));
 

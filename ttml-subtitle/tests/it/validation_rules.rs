@@ -5,9 +5,9 @@
 //! well-formedness is TTML2 §12.3.1.
 #![cfg(feature = "std")]
 
-use ttml_subtitle::document::{IMSC11_TEXT_PROFILE, IMSC1_TEXT_PROFILE, NS_TT, NS_TTP, NS_TTS};
-use ttml_subtitle::validation::{ImscVersion, Profile, ValidationResult, Validator};
 use ttml_subtitle::Document;
+use ttml_subtitle::document::{IMSC1_TEXT_PROFILE, IMSC11_TEXT_PROFILE, NS_TT, NS_TTP, NS_TTS};
+use ttml_subtitle::validation::{ImscVersion, Profile, ValidationResult, Validator};
 
 fn validate(xml: &str, profile: Profile, version: ImscVersion) -> ValidationResult {
     let doc = Document::parse_str(xml).unwrap_or_else(|e| panic!("parse: {e}\n{xml}"));
@@ -83,12 +83,8 @@ fn frame_usage_cases() -> Vec<String> {
     let mut cases = Vec::new();
     for attr in ["begin", "dur", "end"] {
         cases.push(format!(r#"<body {attr}="10f"><div><p>x</p></div></body>"#));
-        cases.push(format!(
-            r#"<body><div {attr}="10f"><p>x</p></div></body>"#
-        ));
-        cases.push(format!(
-            r#"<body><div><p {attr}="10f">x</p></div></body>"#
-        ));
+        cases.push(format!(r#"<body><div {attr}="10f"><p>x</p></div></body>"#));
+        cases.push(format!(r#"<body><div><p {attr}="10f">x</p></div></body>"#));
         cases.push(format!(
             r#"<body><div><image src="a.png" {attr}="10f"/></div></body>"#
         ));

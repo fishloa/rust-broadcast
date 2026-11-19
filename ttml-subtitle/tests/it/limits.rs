@@ -11,9 +11,8 @@ fn attribute_size_ceiling_is_64_kib() {
     assert_eq!(MAX_TTML_ATTRIBUTE_BYTES, 65_536);
 
     let long = "a".repeat(4096);
-    let xml = format!(
-        r#"<tt xmlns="{NS_TT}"><body><div><p region="{long}">x</p></div></body></tt>"#
-    );
+    let xml =
+        format!(r#"<tt xmlns="{NS_TT}"><body><div><p region="{long}">x</p></div></body></tt>"#);
     let doc = Document::parse_str(&xml).expect("a 4 KiB attribute value is inside the ceiling");
     let p = &doc.tt.body.as_ref().expect("body").divs[0].paragraphs[0];
     assert_eq!(p.region.as_deref(), Some(long.as_str()));
@@ -31,10 +30,7 @@ fn nested_unknown(levels: usize) -> String {
 fn unknown_nesting_accepts_64_and_rejects_65() {
     Document::parse_str(&nested_unknown(64)).expect("64 unknown levels are allowed");
     match Document::parse_str(&nested_unknown(65)) {
-        Err(Error::ConstraintViolation {
-            constraint,
-            detail,
-        }) => {
+        Err(Error::ConstraintViolation { constraint, detail }) => {
             assert_eq!(constraint, "Unknown element nesting depth limit");
             assert!(detail.contains("64"), "{detail}");
         }
@@ -54,10 +50,7 @@ fn nested_metadata(levels: usize) -> String {
 fn metadata_nesting_accepts_64_and_rejects_65() {
     Document::parse_str(&nested_metadata(64)).expect("64 metadata levels are allowed");
     match Document::parse_str(&nested_metadata(65)) {
-        Err(Error::ConstraintViolation {
-            constraint,
-            detail,
-        }) => {
+        Err(Error::ConstraintViolation { constraint, detail }) => {
             assert_eq!(constraint, "Metadata nesting depth limit");
             assert!(detail.contains("64"), "{detail}");
         }

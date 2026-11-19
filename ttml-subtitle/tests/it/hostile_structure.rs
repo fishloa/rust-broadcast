@@ -44,10 +44,7 @@ fn unknown_element_with_nested_children_does_not_swallow_a_sibling() {
             _ => None,
         })
         .expect("sibling span was swallowed");
-    assert_eq!(
-        span.content,
-        vec![InlineContent::Text("after".into())]
-    );
+    assert_eq!(span.content, vec![InlineContent::Text("after".into())]);
 }
 
 #[test]
@@ -64,10 +61,7 @@ fn skipped_br_content_does_not_swallow_a_sibling() {
             _ => None,
         })
         .expect("span after </br> was swallowed");
-    assert_eq!(
-        span.content,
-        vec![InlineContent::Text("after".into())]
-    );
+    assert_eq!(span.content, vec![InlineContent::Text("after".into())]);
 }
 
 #[test]
@@ -106,9 +100,7 @@ fn trailing_comment_and_pi_after_root_are_allowed() {
 
 #[test]
 fn second_root_element_is_rejected() {
-    let xml = format!(
-        r#"<tt xmlns="{NS_TT}"><body/></tt><tt xmlns="{NS_TT}"><body/></tt>"#
-    );
+    let xml = format!(r#"<tt xmlns="{NS_TT}"><body/></tt><tt xmlns="{NS_TT}"><body/></tt>"#);
     match Document::parse_str(&xml) {
         Err(Error::XmlParse(message)) => {
             assert!(
@@ -123,10 +115,7 @@ fn second_root_element_is_rejected() {
 #[test]
 fn character_data_before_the_root_is_rejected() {
     let xml = format!(r#"noise<tt xmlns="{NS_TT}"><body/></tt>"#);
-    assert!(matches!(
-        Document::parse_str(&xml),
-        Err(Error::XmlParse(_))
-    ));
+    assert!(matches!(Document::parse_str(&xml), Err(Error::XmlParse(_))));
 }
 
 #[test]
