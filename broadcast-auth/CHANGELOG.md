@@ -8,6 +8,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Tests
 - The wire golden's `GOLDEN_BLESS` switch refuses to write when `CI` is set, with a regression test, and `fixtures/golden/http/PROVENANCE.md` names the `http-auth` round-trip as its independent oracle (audit 21 finding 62).
 - `AuthState`'s 401/407 decision table is exercised inside this crate: no-credential `AuthRequired`, the first `Replay` and the following `AuthRejected`, the `stale=true` `ReplayStale` once per lineage (including `Stale`/`TRUE` spellings), `stale=false`, the proxy vs origin challenge header and answer header, `carries_credentials`, and the stored-challenge/accessor behaviour (audit 22 #2989).
+- The cookie jar is tested through `AuthState`/`CookieWatch`: `Secure` and `__Secure-`/`__Host-` rules, origin/domain/path matching, the 4096-byte cookie, 1024-byte path, 50-cookie and 16 KiB header caps (boundary-inclusive), same-name-different-path coexistence and longest-path-first ordering, `Max-Age=0` leaving siblings, the seeded-prefix skip, and redacted `Debug` (audit 22 #2990).
 
 ## [0.8.1] - 2026-11-17
 ### Changed
