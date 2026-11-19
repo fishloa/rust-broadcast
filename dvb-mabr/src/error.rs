@@ -137,3 +137,24 @@ impl StructureError {
 
 #[cfg(feature = "std")]
 broadcast_common::impl_spec_display!(StructureError);
+
+#[cfg(all(test, feature = "std"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structure_error_labels_and_display_agree() {
+        let cases = [
+            (StructureError::Doctype, "doctype"),
+            (StructureError::UnexpectedEof, "unexpected_eof"),
+            (StructureError::CharDataOutsideRoot, "chardata_outside_root"),
+            (StructureError::NoRoot, "no_root"),
+            (StructureError::MultipleRoots, "multiple_roots"),
+            (StructureError::ContentAfterRoot, "content_after_root"),
+        ];
+        for (value, label) in cases {
+            assert_eq!(value.name(), label);
+            assert_eq!(value.to_string(), label);
+        }
+    }
+}

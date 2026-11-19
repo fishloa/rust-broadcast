@@ -66,6 +66,34 @@ fn drop_of_million_deep_metadata_chain_does_not_overflow() {
 }
 
 #[test]
+fn drop_of_million_deep_pure_metadata_chain_does_not_overflow() {
+    on_small_stack(|| {
+        let mut cur = MetadataElement::default();
+        for _ in 0..DEPTH {
+            let mut parent = MetadataElement::default();
+            parent.children.push(MetadataChild::Metadata(cur));
+            cur = parent;
+        }
+        drop(cur);
+    });
+}
+
+#[test]
+fn drop_of_million_deep_pure_ebuttm_chain_does_not_overflow() {
+    on_small_stack(|| {
+        let mut cur = EbuttmElement::default();
+        for _ in 0..DEPTH {
+            let mut parent = EbuttmElement::default();
+            parent
+                .children
+                .push(MetadataChild::EbuttmDocumentMetadata(cur));
+            cur = parent;
+        }
+        drop(cur);
+    });
+}
+
+#[test]
 fn drop_of_million_deep_unknown_chain_does_not_overflow() {
     on_small_stack(|| {
         let mut cur = UnknownElement::new(None, None, "x");
