@@ -1346,4 +1346,669 @@ mod tests {
             "expected Error event: {events:?}"
         );
     }
+
+    // ── Play mode (audit 22, finding 1) ───────────────────────────────────
+
+    fn play_config() -> RtmpClientConfig {
+        RtmpClientConfig {
+            mode: ClientMode::Play,
+            app: "live".to_string(),
+            stream_key: "stream_key".to_string(),
+            ..RtmpClientConfig::default()
+        }
+    }
+
+    fn server_properties() -> Vec<(String, Amf0Value)> {
+        vec![
+            (
+                "fmsVer".to_string(),
+                Amf0Value::String("FMS/3,5,3,888".to_string()),
+            ),
+            ("capabilities".to_string(), Amf0Value::Number(31.0)),
+        ]
+    }
+
+    fn connect_result(transaction_id: f64) -> Command {
+        Command {
+            name: "_result".to_string(),
+            transaction_id,
+            arguments: vec![Amf0Value::Object(server_properties())],
+        }
+    }
+
+    fn create_stream_result(transaction_id: f64, stream_id: f64) -> Command {
+        Command {
+            name: "_result".to_string(),
+            transaction_id,
+            arguments: vec![Amf0Value::Null, Amf0Value::Number(stream_id)],
+        }
+    }
+
+    fn on_status(code: &str, level: &str, description: &str) -> Command {
+        Command {
+            name: "onStatus".to_string(),
+            transaction_id: 0.0,
+            arguments: vec![
+                Amf0Value::Null,
+                Amf0Value::Object(vec![
+                    ("level".to_string(), Amf0Value::String(level.to_string())),
+                    ("code".to_string(), Amf0Value::String(code.to_string())),
+                    (
+                        "description".to_string(),
+                        Amf0Value::String(description.to_string()),
+                    ),
+                ]),
+            ],
+        }
+    }
+
+    fn command_bytes(cmd: &Command) -> Vec<u8> {
+        let msg = Message {
+            chunk_stream_id: ChunkStreamId::new(COMMAND_CHUNK_STREAM_ID),
+            timestamp: Timestamp::ZERO,
+            message_type_id: MessageTypeId::CommandAmf0,
+            message_stream_id: MessageStreamId::new(0),
+            payload: cmd.to_body().unwrap(),
+        };
+        ChunkWriter::new().write(&msg).unwrap()
+    }
+
+    fn user_control_bytes(event: UserControl) -> Vec<u8> {
+        ChunkWriter::new()
+            .write(&event.to_message().unwrap())
+            .unwrap()
+    }
+
+    fn media_bytes(
+        tag_type: MessageTypeId,
+        timestamp: u32,
+        payload: &[u8],
+        chunk_stream_id: u32,
+    ) -> Vec<u8> {
+        let msg = Message {
+            chunk_stream_id: ChunkStreamId::new(chunk_stream_id),
+            timestamp: Timestamp::from_millis(timestamp),
+            message_type_id: tag_type,
+            message_stream_id: MessageStreamId::new(1),
+            payload: payload.to_vec(),
+        };
+        ChunkWriter::new().write(&msg).unwrap()
+    }
+
+    /// Client-outbound messages are all framed at the client's own configured
+    /// chunk size, which `build_connect` adopts before anything else.
+    fn decode_client_messages(bytes: &[u8]) -> Vec<Message> {
+        let mut assembler = ChunkAssembler::new();
+        assembler.set_chunk_size(ChunkSize::new(4096).unwrap());
+        assembler.push(bytes).unwrap()
+    }
+
+    fn commands(bytes: &[u8]) -> Vec<Command> {
+        decode_client_messages(bytes)
+            .iter()
+            .filter(|m| m.message_type_id == MessageTypeId::CommandAmf0)
+            .map(|m| Command::parse(&m.payload).unwrap())
+            .collect()
+    }
+
+    fn ack_in(out: &[u8]) -> Option<u32> {
+        decode_client_messages(out).into_iter().find_map(|m| {
+            match ProtocolControl::from_message(&m).unwrap() {
+                Some(ProtocolControl::Acknowledgement(seq)) => Some(seq.get()),
+                _ => None,
+            }
+        })
+    }
+
+    /// The FLV tag Adobe FLV v10.1 Annex E.4.1 defines for these values,
+    /// written out from the spec layout (not through the writer under test).
+    fn expected_flv_tag(
+        file_header: bool,
+        tag_type: u8,
+        timestamp: u32,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut out = Vec::new();
+        if file_header {
+            out.extend_from_slice(b"FLV");
+            out.extend_from_slice(&[0x01, 0x05]);
+            out.extend_from_slice(&[0x00, 0x00, 0x00, 0x09]);
+            out.extend_from_slice(&[0x00, 0x00, 0x00, 0x00]);
+        }
+        let data_size = payload.len() as u32;
+        out.push(tag_type);
+        out.extend_from_slice(&[
+            (data_size >> 16) as u8,
+            (data_size >> 8) as u8,
+            data_size as u8,
+        ]);
+        out.extend_from_slice(&[
+            (timestamp >> 16) as u8,
+            (timestamp >> 8) as u8,
+            timestamp as u8,
+        ]);
+        out.push((timestamp >> 24) as u8);
+        out.extend_from_slice(&[0x00, 0x00, 0x00]);
+        out.extend_from_slice(payload);
+        out.extend_from_slice(&(11u32 + data_size).to_be_bytes());
+        out
+    }
+
+    fn amf0_string(s: &str) -> Vec<u8> {
+        let mut out = vec![0x02];
+        out.extend_from_slice(&(s.len() as u16).to_be_bytes());
+        out.extend_from_slice(s.as_bytes());
+        out
+    }
+
+    fn aggregate_sub_tag(tag_type: u8, timestamp: u32, payload: &[u8]) -> Vec<u8> {
+        let data_size = payload.len() as u32;
+        let mut out = vec![tag_type];
+        out.extend_from_slice(&[
+            (data_size >> 16) as u8,
+            (data_size >> 8) as u8,
+            data_size as u8,
+        ]);
+        out.extend_from_slice(&[
+            (timestamp >> 16) as u8,
+            (timestamp >> 8) as u8,
+            timestamp as u8,
+        ]);
+        out.push((timestamp >> 24) as u8);
+        out.extend_from_slice(&[0x00, 0x00, 0x00]);
+        out.extend_from_slice(payload);
+        out.extend_from_slice(&(11u32 + data_size).to_be_bytes());
+        out
+    }
+
+    fn aggregate_bytes(timestamp: u32, sub_tags: &[Vec<u8>]) -> Vec<u8> {
+        let mut payload = Vec::new();
+        for sub_tag in sub_tags {
+            payload.extend_from_slice(sub_tag);
+        }
+        let msg = Message {
+            chunk_stream_id: ChunkStreamId::new(4),
+            timestamp: Timestamp::from_millis(timestamp),
+            message_type_id: MessageTypeId::Aggregate,
+            message_stream_id: MessageStreamId::new(1),
+            payload,
+        };
+        ChunkWriter::new().write(&msg).unwrap()
+    }
+
+    /// Client that has completed the handshake and sent `connect` (state
+    /// `ConnectSent { txn_id: 1.0 }`).
+    fn started_play_client() -> ClientSession {
+        let mut client = ClientSession::new(play_config());
+        let c0_c1 = client.start();
+        let mut server_hs = handshake::Handshake::new();
+        let (s0_s1_s2, consumed, _) = server_hs.read(&c0_c1).unwrap();
+        assert_eq!(consumed, c0_c1.len());
+        let (out, events) = client.handle_data(&s0_s1_s2).unwrap();
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(client.state, ClientState::ConnectSent { txn_id: 1.0 });
+        let sent = commands(&out[HANDSHAKE_PACKET_LEN..]);
+        assert_eq!(sent.len(), 1, "{sent:?}");
+        assert_eq!(sent[0].name, "connect");
+        assert_eq!(sent[0].transaction_id, 1.0);
+        client
+    }
+
+    fn play_client_at_play_sent() -> ClientSession {
+        let mut client = started_play_client();
+        client
+            .handle_data(&command_bytes(&connect_result(1.0)))
+            .unwrap();
+        client
+            .handle_data(&command_bytes(&create_stream_result(2.0, 1.0)))
+            .unwrap();
+        assert_eq!(client.state, ClientState::PlaySent);
+        client
+    }
+
+    #[test]
+    fn client_mode_names_are_the_netstream_commands() {
+        assert_eq!(ClientMode::Publish.name(), "publish");
+        assert_eq!(ClientMode::Play.name(), "play");
+        assert_eq!(ClientMode::Publish.to_string(), "publish");
+        assert_eq!(ClientMode::Play.to_string(), "play");
+    }
+
+    #[test]
+    fn play_mode_runs_create_stream_then_set_buffer_and_play() {
+        let mut client = started_play_client();
+        let (out, events) = client
+            .handle_data(&command_bytes(&connect_result(1.0)))
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Connected {
+                properties: server_properties(),
+            }]
+        );
+        assert_eq!(client.state, ClientState::CreateStreamSent { txn_id: 2.0 });
+        assert_eq!(
+            commands(&out),
+            vec![Command {
+                name: "createStream".to_string(),
+                transaction_id: 2.0,
+                arguments: vec![Amf0Value::Null],
+            }]
+        );
+
+        let (out, events) = client
+            .handle_data(&command_bytes(&create_stream_result(2.0, 3.0)))
+            .unwrap();
+        assert_eq!(events, vec![ClientEvent::StreamCreated { stream_id: 3 }]);
+        assert_eq!(client.state, ClientState::PlaySent);
+        assert_eq!(client.next_txn_id, 3.0);
+
+        let messages = decode_client_messages(&out);
+        assert_eq!(
+            messages
+                .iter()
+                .find_map(|m| UserControl::parse(&m.payload).ok()),
+            Some(UserControl::SetBufferLength {
+                stream_id: 3,
+                buffer: core::time::Duration::from_secs(3),
+            })
+        );
+        let play = commands(&out);
+        assert_eq!(play.len(), 1, "{play:?}");
+        assert_eq!(play[0].name, "play");
+        assert_eq!(play[0].transaction_id, 0.0);
+        assert_eq!(
+            play[0].arguments,
+            vec![
+                Amf0Value::Null,
+                Amf0Value::String("stream_key".to_string()),
+                Amf0Value::Number(-2.0),
+            ]
+        );
+        let play_message = messages
+            .iter()
+            .find(|m| m.message_type_id == MessageTypeId::CommandAmf0)
+            .unwrap();
+        assert_eq!(play_message.message_stream_id, MessageStreamId::new(3));
+    }
+
+    #[test]
+    fn result_transaction_ids_must_match_the_pending_request() {
+        let mut client = started_play_client();
+        let (out, events) = client
+            .handle_data(&command_bytes(&connect_result(7.0)))
+            .unwrap();
+        assert!(events.is_empty(), "{events:?}");
+        assert!(out.is_empty());
+        assert_eq!(client.state, ClientState::ConnectSent { txn_id: 1.0 });
+
+        let (out, events) = client
+            .handle_data(&command_bytes(&connect_result(1.0)))
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Connected {
+                properties: server_properties(),
+            }]
+        );
+        assert_eq!(client.state, ClientState::CreateStreamSent { txn_id: 2.0 });
+        assert_eq!(commands(&out)[0].name, "createStream");
+
+        let (out, events) = client
+            .handle_data(&command_bytes(&create_stream_result(9.0, 5.0)))
+            .unwrap();
+        assert!(events.is_empty(), "{events:?}");
+        assert!(out.is_empty());
+        assert_eq!(client.state, ClientState::CreateStreamSent { txn_id: 2.0 });
+
+        let (out, events) = client
+            .handle_data(&command_bytes(&create_stream_result(2.0, 5.0)))
+            .unwrap();
+        assert_eq!(events, vec![ClientEvent::StreamCreated { stream_id: 5 }]);
+        let play_message = decode_client_messages(&out)
+            .into_iter()
+            .find(|m| m.message_type_id == MessageTypeId::CommandAmf0)
+            .unwrap();
+        assert_eq!(play_message.message_stream_id, MessageStreamId::new(5));
+    }
+
+    #[test]
+    fn play_mode_delivers_audio_video_and_data_as_flv_tags() {
+        let mut client = started_play_client();
+        let audio = media_bytes(MessageTypeId::Audio, 7, &[0xAF, 0x00], 4);
+        let (out, events) = client.handle_data(&audio).unwrap();
+        assert!(
+            events.is_empty(),
+            "state Connected receives no media: {events:?}"
+        );
+        assert!(out.is_empty());
+
+        client
+            .handle_data(&command_bytes(&connect_result(1.0)))
+            .unwrap();
+        client
+            .handle_data(&command_bytes(&create_stream_result(2.0, 1.0)))
+            .unwrap();
+        assert_eq!(client.state, ClientState::PlaySent);
+
+        let (_, events) = client.handle_data(&audio).unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Media {
+                flv: expected_flv_tag(true, 8, 7, &[0xAF, 0x00]),
+            }]
+        );
+        let (_, events) = client
+            .handle_data(&media_bytes(
+                MessageTypeId::Video,
+                40,
+                &[0x17, 0x01, 0xAA],
+                5,
+            ))
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Media {
+                flv: expected_flv_tag(false, 9, 40, &[0x17, 0x01, 0xAA]),
+            }]
+        );
+        let meta = amf0_string("onMetaData");
+        let (_, events) = client
+            .handle_data(&media_bytes(MessageTypeId::DataAmf0, 0, &meta, 4))
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Media {
+                flv: expected_flv_tag(false, 18, 0, &meta),
+            }]
+        );
+    }
+
+    #[test]
+    fn play_mode_unpacks_an_aggregate_into_its_sub_tags() {
+        let mut client = play_client_at_play_sent();
+        let sub_audio = aggregate_sub_tag(8, 0, &[0xAF, 0x01]);
+        let sub_video = aggregate_sub_tag(9, 40, &[0x17, 0x01, 0xBB]);
+        let (_, events) = client
+            .handle_data(&aggregate_bytes(0, &[sub_audio, sub_video]))
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![
+                ClientEvent::Media {
+                    flv: expected_flv_tag(true, 8, 0, &[0xAF, 0x01]),
+                },
+                ClientEvent::Media {
+                    flv: expected_flv_tag(false, 9, 40, &[0x17, 0x01, 0xBB]),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn play_mode_reports_recorded_only_announced_while_receiving() {
+        let mut client = play_client_at_play_sent();
+        client
+            .handle_data(&user_control_bytes(UserControl::StreamIsRecorded(1)))
+            .unwrap();
+        let (_, events) = client
+            .handle_data(&command_bytes(&on_status(
+                "NetStream.Play.Start",
+                "status",
+                "started",
+            )))
+            .unwrap();
+        assert_eq!(events, vec![ClientEvent::Playing { recorded: true }]);
+        assert_eq!(client.state, ClientState::Playing);
+
+        let mut client = started_play_client();
+        client
+            .handle_data(&user_control_bytes(UserControl::StreamIsRecorded(1)))
+            .unwrap();
+        client
+            .handle_data(&command_bytes(&connect_result(1.0)))
+            .unwrap();
+        client
+            .handle_data(&command_bytes(&create_stream_result(2.0, 1.0)))
+            .unwrap();
+        let (_, events) = client
+            .handle_data(&command_bytes(&on_status(
+                "NetStream.Play.Start",
+                "status",
+                "started",
+            )))
+            .unwrap();
+        assert_eq!(events, vec![ClientEvent::Playing { recorded: false }]);
+    }
+
+    #[test]
+    fn play_mode_ends_on_eof_and_on_the_play_status_codes() {
+        for code in ["NetStream.Play.Stop", "NetStream.Play.Complete"] {
+            let mut client = play_client_at_play_sent();
+            let (_, events) = client
+                .handle_data(&command_bytes(&on_status(code, "status", "stopped")))
+                .unwrap();
+            assert_eq!(events, vec![ClientEvent::StreamEnded], "{code}");
+        }
+
+        let mut client = play_client_at_play_sent();
+        let (_, events) = client
+            .handle_data(&user_control_bytes(UserControl::StreamEof(1)))
+            .unwrap();
+        assert_eq!(events, vec![ClientEvent::StreamEnded]);
+
+        let mut client = started_play_client();
+        let (_, events) = client
+            .handle_data(&user_control_bytes(UserControl::StreamEof(1)))
+            .unwrap();
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    #[test]
+    fn play_mode_ignores_a_status_that_is_neither_error_nor_lifecycle() {
+        let mut client = play_client_at_play_sent();
+        let (_, events) = client
+            .handle_data(&command_bytes(&on_status(
+                "NetStream.Play.Reset",
+                "status",
+                "reset",
+            )))
+            .unwrap();
+        assert!(events.is_empty(), "{events:?}");
+        assert_eq!(client.state, ClientState::PlaySent);
+    }
+
+    #[test]
+    fn play_mode_maps_error_statuses_and_error_level_to_error_events() {
+        for (code, level, description) in [
+            (
+                "NetStream.Play.StreamNotFound",
+                "error",
+                "Failed to play live",
+            ),
+            ("NetStream.Play.Failed", "error", "Failed"),
+            (
+                "NetStream.Play.InsufficientBW",
+                "error",
+                "Insufficient bandwidth",
+            ),
+            ("NetStream.Play.StreamNotFound", "status", "No such stream"),
+            ("NetStream.Play.Failed", "status", "Play failed"),
+        ] {
+            let mut client = play_client_at_play_sent();
+            let (_, events) = client
+                .handle_data(&command_bytes(&on_status(code, level, description)))
+                .unwrap();
+            assert_eq!(
+                events,
+                vec![ClientEvent::Error {
+                    code: code.to_string(),
+                    description: description.to_string(),
+                }],
+                "{code}"
+            );
+        }
+    }
+
+    // ── Coalesced S2 (audit 22, finding 2) ────────────────────────────────
+
+    fn coalesced_s2_batch(client: &mut ClientSession) -> Vec<u8> {
+        let c0_c1 = client.start();
+        let mut server_hs = handshake::Handshake::new();
+        let (s0_s1_s2, _, _) = server_hs.read(&c0_c1).unwrap();
+        let mut batch = s0_s1_s2;
+        batch.extend_from_slice(
+            &ChunkWriter::new()
+                .write(&ProtocolControl::WindowAckSize(2_500_000).to_message())
+                .unwrap(),
+        );
+        batch.extend_from_slice(&command_bytes(&connect_result(1.0)));
+        batch
+    }
+
+    #[test]
+    fn s2_coalesced_with_control_and_connect_result_is_dispatched() {
+        let mut client = ClientSession::new(play_config());
+        let batch = coalesced_s2_batch(&mut client);
+        let (out, events) = client.handle_data(&batch).unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Connected {
+                properties: server_properties(),
+            }]
+        );
+        assert_eq!(client.state, ClientState::CreateStreamSent { txn_id: 2.0 });
+        let sent = commands(&out[HANDSHAKE_PACKET_LEN..]);
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert_eq!(sent[0].name, "connect");
+        assert_eq!(sent[1].name, "createStream");
+    }
+
+    #[test]
+    fn the_coalesced_s2_batch_is_byte_split_independent() {
+        let mut client = ClientSession::new(play_config());
+        let batch = coalesced_s2_batch(&mut client);
+        let expected = vec![ClientEvent::Connected {
+            properties: server_properties(),
+        }];
+
+        for split in 1..batch.len() {
+            let mut client = ClientSession::new(play_config());
+            client.start();
+            let (out_a, events_a) = client.handle_data(&batch[..split]).unwrap();
+            let (out_b, events_b) = client.handle_data(&batch[split..]).unwrap();
+            let events: Vec<ClientEvent> = events_a.into_iter().chain(events_b).collect();
+            assert_eq!(events, expected, "split at {split}");
+            assert_eq!(
+                client.state,
+                ClientState::CreateStreamSent { txn_id: 2.0 },
+                "split at {split}"
+            );
+            let mut out = Vec::new();
+            if out_a.is_empty() {
+                out.extend_from_slice(&out_b[HANDSHAKE_PACKET_LEN..]);
+            } else {
+                out.extend_from_slice(&out_a[HANDSHAKE_PACKET_LEN..]);
+                out.extend_from_slice(&out_b);
+            }
+            let names: Vec<String> = commands(&out).into_iter().map(|c| c.name).collect();
+            assert_eq!(
+                names,
+                vec!["connect".to_string(), "createStream".to_string()],
+                "split at {split}"
+            );
+        }
+    }
+
+    // ── Acknowledgement and Abort (audit 22, finding 4) ───────────────────
+
+    #[test]
+    fn acknowledgement_follows_the_servers_advertised_window() {
+        let mut client = ClientSession::new(play_config());
+        let c0_c1 = client.start();
+        let mut server_hs = handshake::Handshake::new();
+        let (s0_s1_s2, _, _) = server_hs.read(&c0_c1).unwrap();
+        let (out, _) = client.handle_data(&s0_s1_s2).unwrap();
+        assert!(ack_in(&out).is_none());
+        assert_eq!(client.ack_threshold, 2_500_000);
+
+        let connect = command_bytes(&connect_result(1.0));
+        let create = command_bytes(&create_stream_result(2.0, 1.0));
+        client.handle_data(&connect).unwrap();
+        client.handle_data(&create).unwrap();
+        let mut fed = (connect.len() + create.len()) as u64;
+
+        let ping = user_control_bytes(UserControl::PingRequest(7));
+        fed += ping.len() as u64;
+        let (out, _) = client.handle_data(&ping).unwrap();
+        assert_eq!(ack_in(&out), None, "no ack below the window");
+
+        let window = ChunkWriter::new()
+            .write(&ProtocolControl::WindowAckSize(100).to_message())
+            .unwrap();
+        fed += window.len() as u64;
+        let (out, _) = client.handle_data(&window).unwrap();
+        assert_eq!(client.ack_threshold, 100);
+        assert_eq!(ack_in(&out), Some(fed as u32));
+
+        let small = user_control_bytes(UserControl::PingRequest(9));
+        fed += small.len() as u64;
+        let (out, _) = client.handle_data(&small).unwrap();
+        assert_eq!(ack_in(&out), None, "still below the window");
+
+        let big_payload = vec![0xAF; 1_200];
+        let big = media_bytes(MessageTypeId::Audio, 0, &big_payload, 4);
+        fed += big.len() as u64;
+        let (out, events) = client.handle_data(&big).unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Media {
+                flv: expected_flv_tag(true, 8, 0, &big_payload),
+            }]
+        );
+        assert_eq!(ack_in(&out), Some(fed as u32));
+    }
+
+    #[test]
+    fn acknowledgement_sequence_is_the_low_32_bits_of_the_byte_count() {
+        let mut client = play_client_at_play_sent();
+        let ping = user_control_bytes(UserControl::PingRequest(7));
+        client.ack_threshold = 1;
+        client.bytes_acked = 0;
+        client.bytes_received = 0x1_0000_0000 - ping.len() as u64 + 0x10;
+        let (out, _) = client.handle_data(&ping).unwrap();
+        assert_eq!(ack_in(&out), Some(0x10));
+    }
+
+    #[test]
+    fn abort_discards_the_in_progress_message_on_that_chunk_stream() {
+        let mut client = play_client_at_play_sent();
+        let aborted = media_bytes(MessageTypeId::Audio, 0, &[0xAA; 300], 12);
+        let (_, events) = client.handle_data(&aborted[..1 + 11 + 128]).unwrap();
+        assert!(events.is_empty(), "{events:?}");
+
+        let abort = ChunkWriter::new()
+            .write(
+                &ProtocolControl::Abort {
+                    chunk_stream_id: 12,
+                }
+                .to_message(),
+            )
+            .unwrap();
+        let (_, events) = client.handle_data(&abort).unwrap();
+        assert!(events.is_empty(), "{events:?}");
+
+        let mut fresh = Vec::new();
+        for chunk_len in [128usize, 128, 44] {
+            fresh.push(0xCC);
+            fresh.extend(core::iter::repeat_n(0xEEu8, chunk_len));
+        }
+        let (_, events) = client.handle_data(&fresh).unwrap();
+        assert_eq!(
+            events,
+            vec![ClientEvent::Media {
+                flv: expected_flv_tag(true, 8, 0, &[0xEE; 300]),
+            }]
+        );
+    }
 }
