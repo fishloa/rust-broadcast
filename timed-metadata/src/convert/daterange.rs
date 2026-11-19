@@ -82,4 +82,35 @@ mod tests {
         assert_eq!(s.raw, vec![0xFC, 0x30, 0x21]); // verbatim
         assert_eq!(dr.start_date, "1970-01-01T00:00:00.000Z");
     }
+
+    #[test]
+    fn break_end_maps_to_scte35_in_and_other_kinds_to_cmd() {
+        let anchor = TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 0,
+        };
+        let event = |kind| TimedEvent {
+            id: Some(7),
+            kind,
+            at: None,
+            duration: None,
+            source: SourcePayload::Scte35 {
+                raw: vec![0xFC, 0x30, 0x21],
+            },
+        };
+
+        let dr = scte35_to_daterange(&event(EventKind::BreakEnd), &anchor).unwrap();
+        let line = dr.to_tag_line().unwrap();
+        assert!(line.contains("SCTE35-IN=0xFC3021"), "{line}");
+        let s = dr.scte35.unwrap();
+        assert_eq!(s.cue, Scte35Cue::In);
+        assert_eq!(s.raw, vec![0xFC, 0x30, 0x21]);
+
+        for kind in [EventKind::Chapter, EventKind::Unspecified] {
+            let dr = scte35_to_daterange(&event(kind), &anchor).unwrap();
+            let line = dr.to_tag_line().unwrap();
+            assert!(line.contains("SCTE35-CMD=0xFC3021"), "{line}");
+            assert_eq!(dr.scte35.unwrap().cue, Scte35Cue::Cmd, "{kind:?}");
+        }
+    }
 }

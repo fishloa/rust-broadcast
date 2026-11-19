@@ -611,6 +611,42 @@ mod tests {
     }
 
     #[test]
+    fn hamming_8_4_encoding_matches_the_spec_equations_for_all_16_nibbles() {
+        // EN 300 706 §8.2 (private/specs-verified/dvb/timed-metadata/
+        // teletext-subtitles.md): P1 = 1^D1^D3^D4, P2 = 1^D1^D2^D4,
+        // P3 = 1^D1^D2^D3, P4 = 1^P1^D1^P2^D2^P3^D3^D4, wire order
+        // P1 D1 P2 D2 P3 D3 P4 D4. Each entry is evaluated by hand from
+        // those equations (nibble 0 => 0x15, nibble 1 => 0x02, ...), so a
+        // self-consistent encoder regression cannot hide behind the
+        // encode/decode round-trip.
+        const SPEC: [u8; 16] = [
+            0x15, 0x02, 0x49, 0x5E, 0x64, 0x73, 0x38, 0x2F, 0xD0, 0xC7, 0x8C, 0x9B, 0xA1, 0xB6,
+            0xFD, 0xEA,
+        ];
+        for (nibble, &byte) in SPEC.iter().enumerate() {
+            let nibble = nibble as u8;
+            assert_eq!(encode_hamming_8_4(nibble), byte, "nibble {nibble:#X}");
+            assert_eq!(decode_hamming_8_4(byte), Some(nibble));
+            for bit in 0..8u8 {
+                assert_eq!(
+                    decode_hamming_8_4(byte ^ (1 << bit)),
+                    Some(nibble),
+                    "nibble {nibble:#X}, single-bit error at bit {bit}"
+                );
+            }
+            for first in 0..8u8 {
+                for second in (first + 1)..8u8 {
+                    assert_eq!(
+                        decode_hamming_8_4(byte ^ (1 << first) ^ (1 << second)),
+                        None,
+                        "nibble {nibble:#X}, double-bit error at bits {first},{second}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn hamming_manual_cross_check_against_spec_encoding_equations() {
         // Manually compute nibble 0b0110 (D1=0,D2=1,D3=1,D4=0) by hand from
         // §8.2's stated equations, cross-checking `encode_hamming_8_4`:
@@ -801,6 +837,43 @@ mod tests {
     }
 
     #[test]
+    fn national_option_names_are_the_table_36_labels() {
+        // ETSI EN 300 706 Table 36 row names (issue #204 label convention:
+        // `Display` renders `name()`, and a byte-bearing catch-all also keeps
+        // its raw value).
+        let cases = [
+            (NationalOption::English, "English"),
+            (NationalOption::German, "German"),
+            (
+                NationalOption::SwedishFinnishHungarian,
+                "Swedish/Finnish/Hungarian",
+            ),
+            (NationalOption::Italian, "Italian"),
+            (NationalOption::French, "French"),
+            (NationalOption::PortugueseSpanish, "Portuguese/Spanish"),
+            (NationalOption::CzechSlovak, "Czech/Slovak"),
+            (NationalOption::Polish, "Polish"),
+            (NationalOption::Rumanian, "Rumanian"),
+            (NationalOption::Turkish, "Turkish"),
+            (
+                NationalOption::SerbianCroatianSlovenian,
+                "Serbian/Croatian/Slovenian",
+            ),
+            (NationalOption::Estonian, "Estonian"),
+            (NationalOption::LettishLithuanian, "Lettish/Lithuanian"),
+            (NationalOption::Reserved(7), "reserved"),
+        ];
+        for (option, expected) in cases {
+            assert_eq!(option.name(), expected);
+        }
+        assert_eq!(alloc::format!("{}", NationalOption::English), "English");
+        assert_eq!(
+            alloc::format!("{}", NationalOption::Reserved(7)),
+            "reserved(0x07)"
+        );
+    }
+
+    #[test]
     fn packet_address_decodes_magazine_0_as_magazine_8() {
         // magazine field = 0 (nibble low 3 bits = 0), row = 0.
         let b4 = encode_hamming_8_4(0); // magazine field 0, Y bit0 = 0
@@ -822,6 +895,60 @@ mod tests {
         let addr = decode_packet_address(b4, b5).unwrap();
         assert_eq!(addr.magazine, 3);
         assert_eq!(addr.row, 17);
+    }
+
+    #[test]
+    fn page_header_decodes_every_subcode_field_and_control_bit() {
+        // ETSI EN 300 706 §9.3.1 + Table 2: S1 (byte 8), S2 (byte 9 low 3
+        // bits), S3 (byte 10), S4 (byte 11 low 2 bits), C4 (byte 9 bit 8),
+        // C5/C6 (byte 11 bits 6/8), C7-C10 (byte 12 bits 2/4/6/8), C11-C14
+        // (byte 13 bits 2/4/6/8). `controls` packs C4..C14 low-to-high.
+        const S1: u8 = 0xA;
+        const S2: u8 = 0b101;
+        const S3: u8 = 0xC;
+        const S4: u8 = 0b10;
+        for controls in 0u16..(1 << 11) {
+            let block = header_block_fields(0xD, 0x3, S1, S2, S3, S4, controls);
+            let h = PageHeader::parse(&block).unwrap();
+            assert_eq!(h.page, 0x3D);
+            assert_eq!(h.s1, S1);
+            assert_eq!(h.s2, S2, "S2 controls={controls:#013b}");
+            assert_eq!(h.s3, S3);
+            assert_eq!(h.s4, S4, "S4 controls={controls:#013b}");
+            assert_eq!(h.erase_page, controls & (1 << 0) != 0, "C4");
+            assert_eq!(h.newsflash, controls & (1 << 1) != 0, "C5");
+            assert_eq!(h.subtitle, controls & (1 << 2) != 0, "C6");
+            assert_eq!(h.suppress_header, controls & (1 << 3) != 0, "C7");
+            assert_eq!(h.update_indicator, controls & (1 << 4) != 0, "C8");
+            assert_eq!(h.interrupted_sequence, controls & (1 << 5) != 0, "C9");
+            assert_eq!(h.inhibit_display, controls & (1 << 6) != 0, "C10");
+            assert_eq!(h.magazine_serial, controls & (1 << 7) != 0, "C11");
+            let c12 = (controls >> 8) & 1;
+            let c13 = (controls >> 9) & 1;
+            let c14 = (controls >> 10) & 1;
+            assert_eq!(
+                h.national_option,
+                NationalOption::from_bits(((c12 << 2) | (c13 << 1) | c14) as u8)
+            );
+        }
+
+        // The four distinct C12/C13/C14 values the field is decoded from:
+        // 001 German, 010 Swedish/Finnish/Hungarian, 100 French, 111 reserved.
+        for (packed, expected) in [
+            (0b001u16, NationalOption::German),
+            (0b010, NationalOption::SwedishFinnishHungarian),
+            (0b100, NationalOption::French),
+            (0b111, NationalOption::Reserved(7)),
+        ] {
+            let controls =
+                ((packed & 1) << 10) | (((packed >> 1) & 1) << 9) | (((packed >> 2) & 1) << 8);
+            let block = header_block_fields(0, 0, 0, 0, 0, 0, controls);
+            assert_eq!(
+                PageHeader::parse(&block).unwrap().national_option,
+                expected,
+                "C12C13C14 = {packed:#05b}"
+            );
+        }
     }
 
     #[test]
@@ -892,6 +1019,65 @@ mod tests {
             asm.rows[19].is_some(),
             "inhibit_display must not clear the underlying row buffer"
         );
+    }
+
+    #[test]
+    fn row_24_is_displayed_and_rows_25_to_31_are_ignored() {
+        // EN 300 706 §7.1.2: Y=1..=24 are display rows; Y=25..=31 are
+        // enhancement/control packets (X/26, X/27, ...), so the assembler's
+        // row guard must drop them instead of indexing its 24-row buffer.
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, false, false, NationalOption::English),
+            0,
+        ));
+        asm.push(&field_from_block(build_row_bytes(8, 24, b"ROW24"), 24));
+        assert_eq!(
+            asm.display_text(),
+            "ROW24",
+            "row 24 is the last display row"
+        );
+        for row in 25u8..=31 {
+            asm.push(&field_from_block(
+                build_raw_row_bytes(8, row, b"ENHANCED"),
+                row,
+            ));
+            assert_eq!(
+                asm.display_text(),
+                "ROW24",
+                "row {row} must be ignored, not stored"
+            );
+        }
+    }
+
+    #[test]
+    fn adjacent_boxes_on_one_row_get_exactly_one_separator_space() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, true, false, NationalOption::English),
+            0,
+        ));
+        // clause 12.2: successive boxes are separated by a single space, and
+        // a row starting with a Start Box has no leading space.
+        let row = [
+            START_BOX, b'A', b'B', END_BOX, START_BOX, b'C', b'D', END_BOX,
+        ];
+        asm.push(&field_from_block(build_row_bytes(8, 20, &row), 20));
+        assert_eq!(asm.display_text(), "AB CD");
+    }
+
+    #[test]
+    fn a_trailing_space_inside_a_box_is_not_doubled_by_the_separator() {
+        let mut asm = PageAssembler::new(8, 0x88);
+        asm.push(&field_from_block(
+            build_header_block(8, 0x88, true, true, false, NationalOption::English),
+            0,
+        ));
+        let row = [
+            START_BOX, b'A', b'B', b' ', END_BOX, START_BOX, b'C', b'D', END_BOX,
+        ];
+        asm.push(&field_from_block(build_row_bytes(8, 20, &row), 20));
+        assert_eq!(asm.display_text(), "AB CD");
     }
 
     /// Test-only helper: build a 42-byte `txt_data_block` for a page header
@@ -982,6 +1168,47 @@ mod tests {
             let code = codes.get(i).copied().unwrap_or(b' ');
             b[2 + i] = broadcast_common::parity::set_odd_parity(code & 0x7F);
         }
+        b
+    }
+
+    /// Test-only: a row packet like [`build_row_bytes`] without its
+    /// `Y=1..=24` precondition, for the legal `Y=25..=31` enhancement
+    /// packets the assembler must ignore.
+    pub(super) fn build_raw_row_bytes(magazine: u8, row: u8, codes: &[u8]) -> [u8; 42] {
+        let mut b = [0u8; 42];
+        let mag_field = if magazine == 8 { 0 } else { magazine };
+        b[0] = encode_hamming_8_4(mag_field | ((row & 1) << 3));
+        b[1] = encode_hamming_8_4(row >> 1);
+        for i in 0..40usize {
+            let code = codes.get(i).copied().unwrap_or(b' ');
+            b[2 + i] = broadcast_common::parity::set_odd_parity(code & 0x7F);
+        }
+        b
+    }
+
+    /// Test-only: a page-header packet from raw header field nibbles with
+    /// C4..C14 packed low-to-high in `controls` (bit 0 = C4, bit 10 = C14).
+    pub(super) fn header_block_fields(
+        units: u8,
+        tens: u8,
+        s1: u8,
+        s2: u8,
+        s3: u8,
+        s4: u8,
+        controls: u16,
+    ) -> [u8; 42] {
+        let c = |i: u16| u8::from(controls & (1 << i) != 0);
+        let mut b = [0u8; 42];
+        b[0] = encode_hamming_8_4(0); // magazine 8, Y bit0 = 0
+        b[1] = encode_hamming_8_4(0); // Y bits1..4 = 0
+        b[2] = encode_hamming_8_4(units);
+        b[3] = encode_hamming_8_4(tens);
+        b[4] = encode_hamming_8_4(s1);
+        b[5] = encode_hamming_8_4(s2 | (c(0) << 3)); // S2, C4
+        b[6] = encode_hamming_8_4(s3);
+        b[7] = encode_hamming_8_4(s4 | (c(1) << 2) | (c(2) << 3)); // S4, C5, C6
+        b[8] = encode_hamming_8_4(c(3) | (c(4) << 1) | (c(5) << 2) | (c(6) << 3)); // C7-C10
+        b[9] = encode_hamming_8_4(c(7) | (c(8) << 1) | (c(9) << 2) | (c(10) << 3)); // C11-C14
         b
     }
 

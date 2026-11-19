@@ -3,6 +3,8 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Tests
+- Audit 22: the Hamming-8/4 encoder is pinned to all 16 spec-equation codewords (single- and double-bit errors included), every `PageHeader` sub-code field and C4-C14 control bit is decoded in isolation, rows 24-31 hit the assembler's row guard, adjacent Teletext boxes keep exactly one separator, the CEA-708 cue extractor's push/close/finalize path and both `open_cue()` views are driven end to end, and DATERANGE's zero/fractional/negative duration edges plus the SCTE-35 BreakEnd-to-`SCTE35-IN` mapping are asserted (#3048, #3049, #3050, #3051, #3052, #3053, #3054, #3055).
 
 ## [0.11.0] - 2026-11-15
 ### Dependencies

@@ -382,6 +382,43 @@ mod tests {
     }
 
     #[test]
+    fn zero_and_fractional_durations_render_distinctly() {
+        // RFC 8216 §4.4.5.1: decimal-floating-point seconds. 0 is valid;
+        // an integer renders without a `.0`, a fractional value keeps its
+        // fraction rather than truncating to the integer part.
+        for (value, expected) in [
+            (0.0, "DURATION=0"),
+            (5.5, "DURATION=5.5"),
+            (30.0, "DURATION=30"),
+        ] {
+            let mut dr = sample();
+            dr.duration = Some(value);
+            let line = dr.to_tag_line().unwrap();
+            assert!(line.contains(expected), "{line}");
+        }
+    }
+
+    #[test]
+    fn parse_accepts_zero_duration_and_rejects_negative_or_non_finite() {
+        let prefix = "#EXT-X-DATERANGE:ID=\"x\",START-DATE=\"2020-01-01T00:00:00Z\",DURATION=";
+        let zero = alloc::format!("{prefix}0");
+        assert_eq!(
+            DateRange::parse_tag_line(&zero).unwrap().duration,
+            Some(0.0)
+        );
+        for bad in ["-1", "-0.5", "nan", "inf"] {
+            let line = alloc::format!("{prefix}{bad}");
+            assert!(
+                matches!(
+                    DateRange::parse_tag_line(&line).unwrap_err(),
+                    Error::InvalidDuration { .. }
+                ),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_rejects_non_finite_duration() {
         let line = "#EXT-X-DATERANGE:ID=\"x\",START-DATE=\"2020-01-01T00:00:00Z\",DURATION=nan";
         assert!(matches!(

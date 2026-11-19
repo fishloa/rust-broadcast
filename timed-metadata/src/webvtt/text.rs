@@ -278,6 +278,25 @@ mod tests {
     }
 
     #[test]
+    fn parse_rejects_a_one_digit_minutes_or_seconds_field() {
+        // W3C WebVTT §4.3.1: the minutes and seconds fields are exactly two
+        // digits (the hour field, when present, is one or more).
+        for bad in ["1:05.000", "00:1:05.000", "00:01:5.000"] {
+            assert_eq!(parse_timestamp(bad, '.'), Err(TimestampError), "{bad}");
+        }
+    }
+
+    #[test]
+    fn timestamp_error_message_is_the_documented_one() {
+        let message = format!("{}", TimestampError);
+        assert!(!message.is_empty());
+        assert_eq!(
+            message,
+            "invalid cue timestamp (expected (hh:)?mm:ss<sep>ttt)"
+        );
+    }
+
+    #[test]
     fn parse_rejects_out_of_range_fields() {
         assert_eq!(parse_timestamp("00:60:00.000", '.'), Err(TimestampError));
         assert_eq!(parse_timestamp("00:00:60.000", '.'), Err(TimestampError));

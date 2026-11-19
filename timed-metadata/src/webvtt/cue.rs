@@ -516,4 +516,133 @@ mod tests {
         // commit a cue).
         assert!(ex.cues().is_empty());
     }
+
+    /// Build one CCP (CTA-708-E §5/§6.2) from a service-1 block's commands
+    /// and split it into the Start/Data triplets `push_frame` consumes.
+    /// `seq` fills the packet's sequence bits so successive packets are not
+    /// treated as a discontinuity; the packet is padded to its declared size
+    /// because `push_triplets` flushes only a complete CCP.
+    fn ccp_triplets(seq: u8, cmds: &[u8]) -> Vec<CcTriplet> {
+        let mut block = alloc::vec![(1u8 << 5) | (cmds.len() as u8)];
+        block.extend_from_slice(cmds);
+        let size_code = (block.len().div_ceil(2) + 1) as u8 & 0x3F;
+        let mut packet = alloc::vec![(seq << 6) | size_code];
+        packet.extend_from_slice(&block);
+        let data_size = (size_code as usize) * 2 - 1;
+        while packet.len() < data_size + 1 {
+            packet.push(0);
+        }
+        let mut out = Vec::with_capacity(packet.len() / 2);
+        out.push(CcTriplet {
+            cc_valid: true,
+            cc_type: CcType::Dtvcc708Start,
+            cc_data_1: packet[0],
+            cc_data_2: packet[1],
+        });
+        for pair in packet[2..].chunks(2) {
+            out.push(CcTriplet {
+                cc_valid: true,
+                cc_type: CcType::Dtvcc708Data,
+                cc_data_1: pair[0],
+                cc_data_2: *pair.get(1).unwrap_or(&0),
+            });
+        }
+        out
+    }
+
+    /// 708 boundaries: DefineWindow + "HI" opens a cue at 0; hiding the
+    /// window closes it at 90_000 ticks (1 s); a later text is closed by
+    /// `finalize` at its end PTS.
+    #[test]
+    fn cea708_cue_boundaries_and_finalize() {
+        let mut ex = Cea708CueExtractor::new(1);
+        ex.push_frame(
+            0,
+            &ccp_triplets(0, &[0x98, 0x20, 0x00, 0x00, 0x02, 0x0F, 0x00, b'H', b'I']),
+        );
+        assert!(ex.cues().is_empty(), "an open cue is not emitted yet");
+
+        ex.push_frame(90_000, &ccp_triplets(1, &[0x8A, 0x01])); // HDW window 0
+        assert_eq!(
+            ex.cues(),
+            &[Cue {
+                start: MediaTime(0),
+                end: MediaTime(90_000),
+                text: String::from("HI"),
+            }]
+        );
+
+        // CLW (clear text) + DSW (show) + "BYE" at 120_000, closed by finalize.
+        ex.push_frame(
+            120_000,
+            &ccp_triplets(2, &[0x88, 0x01, 0x89, 0x01, b'B', b'Y', b'E']),
+        );
+        ex.finalize(180_000);
+        assert_eq!(ex.cues().len(), 2);
+        assert_eq!(ex.cues()[1].text, "BYE");
+        assert_eq!(ex.cues()[1].start, MediaTime(120_000));
+        assert_eq!(ex.cues()[1].end, MediaTime(180_000));
+    }
+}
+
+#[cfg(all(test, feature = "teletext"))]
+mod teletext_tests {
+    use super::*;
+    use crate::webvtt::teletext::encode_hamming_8_4;
+    use broadcast_common::parity::set_odd_parity;
+
+    fn field(block: [u8; 42]) -> dvb_vbi::TeletextDataField {
+        // EN 300 706 transmits each byte LSB-first; reverse to build a
+        // realistic wire value for `TeletextDataField::txt_data_block`.
+        dvb_vbi::TeletextDataField {
+            header: dvb_vbi::LineHeader::new(true, 0),
+            framing_code: dvb_vbi::FRAMING_CODE_EBU,
+            txt_data_block: block.map(u8::reverse_bits),
+        }
+    }
+
+    fn header() -> dvb_vbi::TeletextDataField {
+        let mut b = [0u8; 42];
+        b[0] = encode_hamming_8_4(0); // magazine 8, Y bit0 = 0
+        b[1] = encode_hamming_8_4(0); // Y = 0
+        b[2] = encode_hamming_8_4(8); // page units
+        b[3] = encode_hamming_8_4(8); // page tens -> page 0x88
+        b[5] = encode_hamming_8_4(0b1000); // C4 erase page
+        b[7] = encode_hamming_8_4(0b1000); // C6 subtitle
+        field(b)
+    }
+
+    fn row1() -> dvb_vbi::TeletextDataField {
+        let mut b = [0u8; 42];
+        b[0] = encode_hamming_8_4(1 << 3); // magazine 8, Y bit0 = 1
+        b[1] = encode_hamming_8_4(0); // Y = 1
+        let codes = [0x0B, 0x0B, b'H', b'I', 0x0A];
+        for (i, &code) in codes.iter().enumerate() {
+            b[2 + i] = set_odd_parity(code);
+        }
+        for byte in b.iter_mut().skip(2 + codes.len()) {
+            *byte = set_odd_parity(0x20);
+        }
+        field(b)
+    }
+
+    #[test]
+    fn teletext_open_cue_is_visible_mid_cue_and_gone_after_close() {
+        let mut ex = TeletextCueExtractor::new(8, 0x88);
+        ex.push_frame(0, &[header()]);
+        ex.push_frame(1, &[row1()]);
+        assert_eq!(
+            ex.open_cue(),
+            Some(OpenCue {
+                start_pts_90k: 1,
+                text: String::from("HI"),
+            })
+        );
+        ex.finalize(2);
+        assert_eq!(ex.open_cue(), None);
+        assert_eq!(ex.cues().len(), 1);
+        assert_eq!(ex.cues()[0].text, "HI");
+        assert_eq!(ex.cues()[0].start, MediaTime(1));
+        assert_eq!(ex.cues()[0].end, MediaTime(2));
+    }
 }
