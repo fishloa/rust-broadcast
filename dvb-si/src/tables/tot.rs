@@ -317,6 +317,28 @@ mod tests {
         }
     }
 
+    /// An overrun that stays inside the section's CRC-adjusted end differs from
+    /// one that runs clear past the buffer: both are rejected before the slice.
+    #[test]
+    fn parse_rejects_descriptors_loop_length_just_past_the_section() {
+        let desc = vec![0xAAu8; 20];
+        let mut bytes = build_tot(&desc);
+        // Declare 25 descriptor bytes: d_end = 10 + 25 = 35, one byte past the
+        // 34-byte buffer but only one past the CRC-adjusted end (30).
+        bytes[8] = 0xF0;
+        bytes[9] = 25;
+        match TotSection::parse(&bytes) {
+            Err(Error::SectionLengthOverflow {
+                declared,
+                available,
+            }) => {
+                assert_eq!(declared, 25);
+                assert_eq!(available, 20);
+            }
+            other => panic!("expected SectionLengthOverflow, got {other:?}"),
+        }
+    }
+
     /// A descriptor loop that exactly fills the section is accepted.
     #[test]
     fn parse_accepts_descriptors_loop_exactly_filling_section() {
