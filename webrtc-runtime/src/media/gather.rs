@@ -133,31 +133,35 @@ impl StunGather {
         // runs a single transaction, so the first event settles it either
         // way (a `while` would never loop a second time).
         if let Some(event) = Protocol::poll_event(&mut self.client) {
-            match event {
-                StunEvent::Message(msg) => {
-                    self.done = true;
-                    let mut xor_addr = XorMappedAddress::default();
-                    xor_addr.get_from(&msg).map_err(|e| {
-                        Error::Media(MediaError::Other(format!("read XOR-MAPPED-ADDRESS: {e}")))
-                    })?;
-                    return Ok(Some(SocketAddr::new(xor_addr.ip, xor_addr.port)));
-                }
-                StunEvent::TransactionTimeOut
-                | StunEvent::TransactionStopped
-                | StunEvent::AgentClosed => {
-                    self.done = true;
-                }
-                // `StunEvent` is `#[non_exhaustive]` in rtc-stun 0.21. An event
-                // this crate does not know terminates the gather attempt
-                // (done, no srflx address) exactly like a timeout, so the
-                // caller proceeds instead of waiting on a transaction that
-                // may never conclude.
-                _ => {
-                    self.done = true;
-                }
-            }
+            return self.settle(event);
         }
         Ok(None)
+    }
+
+    /// Apply the one event that concludes the transaction, if any.
+    ///
+    /// The caller drops this gatherer once [`Self::done`] is set, so every
+    /// terminal event must set it — a timeout is as final as a response.
+    fn settle(&mut self, event: StunEvent) -> Result<Option<SocketAddr>, Error> {
+        self.done = true;
+        match event {
+            StunEvent::Message(msg) => {
+                let mut xor_addr = XorMappedAddress::default();
+                xor_addr.get_from(&msg).map_err(|e| {
+                    Error::Media(MediaError::Other(format!("read XOR-MAPPED-ADDRESS: {e}")))
+                })?;
+                Ok(Some(SocketAddr::new(xor_addr.ip, xor_addr.port)))
+            }
+            // `StunEvent` is `#[non_exhaustive]` in rtc-stun 0.21. An event
+            // this crate does not know terminates the gather attempt
+            // (done, no srflx address) exactly like a timeout, so the
+            // caller proceeds instead of waiting on a transaction that
+            // may never conclude.
+            StunEvent::TransactionTimeOut
+            | StunEvent::TransactionStopped
+            | StunEvent::AgentClosed => Ok(None),
+            _ => Ok(None),
+        }
     }
 
     /// The next instant at which `handle_timeout` has work (the STUN client's
@@ -173,9 +177,16 @@ impl StunGather {
         Protocol::poll_timeout(&mut self.client).map(|d| d + Duration::from_nanos(1))
     }
 
-    /// Drive retransmission timing (RFC 8489 §6.2.1).
+    /// Drive retransmission timing (RFC 8489 §6.2.1) and notice the event it
+    /// produces: a transaction that has exhausted its retransmissions only
+    /// terminates through here, so without this the gatherer would never
+    /// report [`Self::done`] and [`super::MediaTransport`] would drive it
+    /// forever.
     pub(super) fn handle_timeout(&mut self, now: Instant) {
         let _ = Protocol::handle_timeout(&mut self.client, now);
+        while let Some(event) = Protocol::poll_event(&mut self.client) {
+            let _ = self.settle(event);
+        }
     }
 }
 
@@ -231,5 +242,99 @@ mod tests {
             first_tid, second_tid,
             "two independently-built Binding requests must not share a transaction ID"
         );
+    }
+
+    /// A Binding success response (RFC 8489 §7.3, class
+    /// `CLASS_SUCCESS_RESPONSE`) for `tid` carrying `mapped` in
+    /// XOR-MAPPED-ADDRESS (RFC 8489 §14.2).
+    fn binding_success(tid: &[u8], mapped: SocketAddr) -> Vec<u8> {
+        use rtc_stun::fingerprint::FINGERPRINT;
+        use rtc_stun::message::{BINDING_SUCCESS, Message, TransactionId};
+
+        let mut tid_bytes = [0u8; TRANSACTION_ID_LEN];
+        tid_bytes.copy_from_slice(tid);
+        let mut msg = Message::new();
+        msg.build(&[
+            Box::new(BINDING_SUCCESS),
+            Box::new(TransactionId(tid_bytes)),
+            Box::new(XorMappedAddress {
+                ip: mapped.ip(),
+                port: mapped.port(),
+            }),
+            Box::new(FINGERPRINT),
+        ])
+        .expect("build a binding success response");
+        msg.raw
+    }
+
+    /// Audit-22 #3005: the srflx path is what a NATed publisher relies on.
+    /// A Binding success must resolve to exactly the XOR-MAPPED-ADDRESS the
+    /// server sent and settle the gather. Bite test: an `Ok(None)`-always
+    /// `handle_datagram` (the audit mutant) resolves nothing.
+    #[test]
+    fn a_binding_success_resolves_the_mapped_address_and_settles_the_gather() {
+        let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server: SocketAddr = "127.0.0.1:3478".parse().unwrap();
+        let now = Instant::now();
+        let mut gather = StunGather::new(now, local, server).unwrap();
+        assert_eq!(gather.server(), server);
+        assert!(!gather.done());
+        assert!(
+            gather.poll_timeout().is_some(),
+            "the Binding transaction's retransmission schedule must be reported"
+        );
+
+        let request = gather
+            .poll_transmit()
+            .expect("StunGather::new queues its Binding request");
+        let tid = request.message
+            [TRANSACTION_ID_OFFSET..TRANSACTION_ID_OFFSET + TRANSACTION_ID_LEN]
+            .to_vec();
+
+        let mapped: SocketAddr = "198.51.100.7:62000".parse().unwrap();
+        assert_eq!(
+            gather
+                .handle_datagram(now, local, &binding_success(&tid, mapped))
+                .expect("a well-formed Binding success"),
+            Some(mapped),
+            "the resolved address is the server's XOR-MAPPED-ADDRESS"
+        );
+        assert!(gather.done(), "a response concludes the transaction");
+    }
+
+    /// Audit-22 #3005: a transaction that is never answered must still end
+    /// the gather. Bite test: `handle_timeout` only *drives* rtc-stun unless
+    /// it also drains the terminal event, so before the fix this gatherer
+    /// stayed unfinished forever and `MediaTransport` kept scheduling it.
+    #[test]
+    fn a_transaction_that_never_answers_settles_on_its_deadline() {
+        let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let server: SocketAddr = "127.0.0.1:3478".parse().unwrap();
+        let start = Instant::now();
+        let mut gather = StunGather::new(start, local, server).unwrap();
+
+        let mut now = start;
+        let mut settled = false;
+        for _ in 0..200 {
+            while gather.poll_transmit().is_some() {}
+            if gather.done() {
+                settled = true;
+                break;
+            }
+            let Some(deadline) = gather.poll_timeout() else {
+                break;
+            };
+            now = now.max(deadline);
+            gather.handle_timeout(now);
+            if gather.done() {
+                settled = true;
+                break;
+            }
+        }
+        assert!(
+            settled,
+            "a STUN transaction that exhausts its retransmissions must settle the gather"
+        );
+        assert!(gather.done());
     }
 }
