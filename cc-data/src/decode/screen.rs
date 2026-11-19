@@ -428,4 +428,184 @@ mod tests {
         assert_eq!(FontStyle::from_bits(7), FontStyle::SmallCapitals);
         assert_eq!(FontStyle::from_bits(1).to_string(), "monospaced_serif");
     }
+
+    #[test]
+    fn opacity_table_and_labels() {
+        let expected = [
+            Opacity::Solid,
+            Opacity::Flash,
+            Opacity::Translucent,
+            Opacity::Transparent,
+        ];
+        let names = ["solid", "flash", "translucent", "transparent"];
+        for v in 0..=3u8 {
+            assert_eq!(Opacity::from_bits(v), expected[v as usize]);
+            assert_eq!(Opacity::from_bits(v).name(), names[v as usize]);
+        }
+        assert_eq!(Opacity::from_bits(0x06), Opacity::Translucent);
+    }
+
+    #[test]
+    fn edge_type_table_and_labels() {
+        let expected = [
+            EdgeType::None,
+            EdgeType::Raised,
+            EdgeType::Depressed,
+            EdgeType::Uniform,
+            EdgeType::LeftDropShadow,
+            EdgeType::RightDropShadow,
+            EdgeType::None,
+            EdgeType::None,
+        ];
+        let names = [
+            "none",
+            "raised",
+            "depressed",
+            "uniform",
+            "left_drop_shadow",
+            "right_drop_shadow",
+            "none",
+            "none",
+        ];
+        for v in 0..=7u8 {
+            assert_eq!(EdgeType::from_bits(v), expected[v as usize], "v={v}");
+            assert_eq!(EdgeType::from_bits(v).name(), names[v as usize], "v={v}");
+        }
+    }
+
+    #[test]
+    fn pen_size_table_and_labels() {
+        let expected = [
+            PenSize::Small,
+            PenSize::Standard,
+            PenSize::Large,
+            PenSize::Standard,
+        ];
+        let names = ["small", "standard", "large", "standard"];
+        for v in 0..=3u8 {
+            assert_eq!(PenSize::from_bits(v), expected[v as usize]);
+            assert_eq!(PenSize::from_bits(v).name(), names[v as usize]);
+        }
+    }
+
+    #[test]
+    fn pen_offset_table_and_labels() {
+        let expected = [
+            PenOffset::Subscript,
+            PenOffset::Normal,
+            PenOffset::Superscript,
+            PenOffset::Normal,
+        ];
+        let names = ["subscript", "normal", "superscript", "normal"];
+        for v in 0..=3u8 {
+            assert_eq!(PenOffset::from_bits(v), expected[v as usize]);
+            assert_eq!(PenOffset::from_bits(v).name(), names[v as usize]);
+        }
+    }
+
+    #[test]
+    fn font_style_table_and_labels() {
+        let expected = [
+            FontStyle::Default,
+            FontStyle::MonospacedSerif,
+            FontStyle::ProportionalSerif,
+            FontStyle::MonospacedSansSerif,
+            FontStyle::ProportionalSansSerif,
+            FontStyle::Casual,
+            FontStyle::Cursive,
+            FontStyle::SmallCapitals,
+        ];
+        let names = [
+            "default",
+            "monospaced_serif",
+            "proportional_serif",
+            "monospaced_sans_serif",
+            "proportional_sans_serif",
+            "casual",
+            "cursive",
+            "small_capitals",
+        ];
+        for v in 0..=7u8 {
+            assert_eq!(FontStyle::from_bits(v), expected[v as usize], "v={v}");
+            assert_eq!(FontStyle::from_bits(v).name(), names[v as usize], "v={v}");
+        }
+    }
+
+    #[test]
+    fn justify_table_and_labels() {
+        let expected = [
+            Justify::Left,
+            Justify::Right,
+            Justify::Center,
+            Justify::Full,
+        ];
+        let names = ["left", "right", "center", "full"];
+        for v in 0..=3u8 {
+            assert_eq!(Justify::from_bits(v), expected[v as usize]);
+            assert_eq!(Justify::from_bits(v).name(), names[v as usize]);
+        }
+    }
+
+    #[test]
+    fn print_direction_table_and_labels() {
+        let expected = [
+            PrintDirection::LeftToRight,
+            PrintDirection::RightToLeft,
+            PrintDirection::TopToBottom,
+            PrintDirection::BottomToTop,
+        ];
+        let names = [
+            "left_to_right",
+            "right_to_left",
+            "top_to_bottom",
+            "bottom_to_top",
+        ];
+        for v in 0..=3u8 {
+            assert_eq!(PrintDirection::from_bits(v), expected[v as usize]);
+            assert_eq!(PrintDirection::from_bits(v).name(), names[v as usize]);
+        }
+    }
+
+    #[test]
+    fn scroll_direction_table_and_labels() {
+        let expected = [
+            ScrollDirection::LeftToRight,
+            ScrollDirection::RightToLeft,
+            ScrollDirection::TopToBottom,
+            ScrollDirection::BottomToTop,
+        ];
+        let names = [
+            "left_to_right",
+            "right_to_left",
+            "top_to_bottom",
+            "bottom_to_top",
+        ];
+        for v in 0..=3u8 {
+            assert_eq!(ScrollDirection::from_bits(v), expected[v as usize]);
+            assert_eq!(ScrollDirection::from_bits(v).name(), names[v as usize]);
+        }
+    }
+
+    #[test]
+    fn from_bits_masks_to_its_field_width() {
+        // High bits outside the 2-/3-bit field must be ignored.
+        assert_eq!(Opacity::from_bits(0b0000_0101), Opacity::Flash);
+        assert_eq!(EdgeType::from_bits(0b0000_1010), EdgeType::Depressed);
+        assert_eq!(PenSize::from_bits(0b0000_0110), PenSize::Large);
+        assert_eq!(PenOffset::from_bits(0b0000_0101), PenOffset::Normal);
+        assert_eq!(PenOffset::from_bits(0b0000_0100), PenOffset::Subscript);
+        assert_eq!(
+            FontStyle::from_bits(0b0000_1010),
+            FontStyle::ProportionalSerif
+        );
+        assert_eq!(Justify::from_bits(0b0000_0110), Justify::Center);
+        assert_eq!(
+            PrintDirection::from_bits(0b0000_0101),
+            PrintDirection::RightToLeft
+        );
+        assert_eq!(
+            ScrollDirection::from_bits(0b0000_0110),
+            ScrollDirection::TopToBottom
+        );
+    }
 }
