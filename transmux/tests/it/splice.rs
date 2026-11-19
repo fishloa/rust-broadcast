@@ -1649,9 +1649,7 @@ fn concat_uses_the_video_track_as_the_single_reference() {
     let a = Media::new(vec![a_audio, a_video], timescale(1000));
     let b = Media::new(vec![b_audio, b_video], timescale(1000));
     let out = concat(&a, &b).expect("concat");
-    let video_join = out.media.tracks[1].samples[7]
-        .timing
-        .and_then(|t| t.dts());
+    let video_join = out.media.tracks[1].samples[7].timing.and_then(|t| t.dts());
     assert_eq!(
         video_join,
         Some(7000),
@@ -1666,13 +1664,19 @@ fn concat_picks_a_track_timed_on_only_one_side() {
         timescale(1000),
     );
     let b = Media::new(
-        vec![data_track_at(1, 1000, 0xB1, 1, 100, 5000, DataCarriage::Pes)],
+        vec![data_track_at(
+            1,
+            1000,
+            0xB1,
+            1,
+            100,
+            5000,
+            DataCarriage::Pes,
+        )],
         timescale(1000),
     );
     let out = concat(&a, &b).expect("concat");
-    let joined = out.media.tracks[0].samples[1]
-        .timing
-        .and_then(|t| t.dts());
+    let joined = out.media.tracks[0].samples[1].timing.and_then(|t| t.dts());
     assert_eq!(
         joined,
         Some(0),
@@ -1685,7 +1689,11 @@ fn splice_insert_past_the_end_of_a_track_has_no_resume_point() {
     let a_audio = data_track(1, 1000, 0xA1, 1, 1000, DataCarriage::Pes, true);
     let a_video = avc_track_from(
         2,
-        vec![timed(0, 1000, true), timed(1000, 1000, true), timed(2000, 1000, true)],
+        vec![
+            timed(0, 1000, true),
+            timed(1000, 1000, true),
+            timed(2000, 1000, true),
+        ],
         0,
     );
     let ad_audio = data_track(1, 1000, 0xB1, 1, 500, DataCarriage::Pes, true);
@@ -1705,7 +1713,11 @@ fn splice_insert_past_the_end_of_a_track_has_no_resume_point() {
 fn splice_insert_ad_in_point_reads_the_boundary_sample() {
     let base_video = avc_track_from(
         2,
-        vec![timed(0, 1000, true), timed(5000, 1000, true), timed(6000, 1000, true)],
+        vec![
+            timed(0, 1000, true),
+            timed(5000, 1000, true),
+            timed(6000, 1000, true),
+        ],
         0,
     );
     let ad_video = avc_track_from(2, vec![timed(0, 400, true)], 0);
@@ -1726,17 +1738,15 @@ fn splice_insert_ad_in_point_reads_the_boundary_sample() {
 
 #[test]
 fn splice_insert_duration_sum_falls_back_additively() {
-    let untimed = |dur: u32| {
-        Sample::new(vec![0xCD; 4], None, None, Some(dur), true).expect("duration-only")
-    };
+    let untimed =
+        |dur: u32| Sample::new(vec![0xCD; 4], None, None, Some(dur), true).expect("duration-only");
     let base_video = avc_track_from(2, vec![untimed(100), untimed(100), untimed(100)], 1000);
     let ad_video = avc_track_from(2, vec![timed(0, 400, true)], 0);
     let base = Media::new(vec![base_video], timescale(1000));
     let ad = Media::new(vec![ad_video], timescale(1000));
     let out = splice_insert(&base, &ad, 1300).expect("splice");
     assert_eq!(
-        out.discontinuity_points[0].presentation_time,
-        1200,
+        out.discontinuity_points[0].presentation_time, 1200,
         "start_decode_time 1000 + the two 100-tick durations"
     );
 }

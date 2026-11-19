@@ -760,18 +760,22 @@ mod tests {
     }
 
     fn timed(pts: i64, duration: u32) -> Sample {
-        Sample::new(alloc::vec![0x65], Some(pts), Some(pts), Some(duration), true)
-            .expect("valid timing")
+        Sample::new(
+            alloc::vec![0x65],
+            Some(pts),
+            Some(pts),
+            Some(duration),
+            true,
+        )
+        .expect("valid timing")
     }
 
     fn two_track_aligner() -> (RtpStreamDepacketiser, TrackAligner) {
         let scale = |rate| Timescale::try_new(rate).expect("rate");
-        let track = |id, rate| RtpStreamTrack::new(id, RtpMediaKind::H264, dummy_avc(), scale(rate));
+        let track =
+            |id, rate| RtpStreamTrack::new(id, RtpMediaKind::H264, dummy_avc(), scale(rate));
         (
-            RtpStreamDepacketiser::new(alloc::vec![
-                track(VIDEO, VIDEO_RATE),
-                track(OTHER, 48_000)
-            ]),
+            RtpStreamDepacketiser::new(alloc::vec![track(VIDEO, VIDEO_RATE), track(OTHER, 48_000)]),
             TrackAligner::new(&[
                 (VIDEO, true, scale(VIDEO_RATE)),
                 (OTHER, false, scale(48_000)),
@@ -808,7 +812,10 @@ mod tests {
     fn note_rtp_info_requires_a_time_for_every_track() {
         let (_, mut aligner) = two_track_aligner();
         aligner.note_rtp_info(&[(VIDEO, 1_000)]);
-        assert!(aligner.rtp_info.is_empty(), "incomplete RTP-Info is refused");
+        assert!(
+            aligner.rtp_info.is_empty(),
+            "incomplete RTP-Info is refused"
+        );
         aligner.note_rtp_info(&[(VIDEO, 1_000), (OTHER, 5_000)]);
         assert_eq!(aligner.rtp_info.len(), 2, "complete RTP-Info is kept");
 
@@ -935,9 +942,7 @@ mod tests {
         }
         let mut out = Vec::new();
         aligner.place(OTHER, timed(0, duration), &mut out);
-        let discontinuity = out
-            .iter()
-            .any(|o| matches!(o, AlignOut::Discontinuity));
+        let discontinuity = out.iter().any(|o| matches!(o, AlignOut::Discontinuity));
         let delta = aligner.lanes.get(&OTHER).expect("lane").delta;
         (discontinuity, delta)
     }

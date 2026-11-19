@@ -138,8 +138,7 @@ fn tfhd_track_id_is_a_big_endian_u32_and_round_trips() {
         let mut buf = vec![0u8; tfhd.serialized_len()];
         let n = tfhd.serialize_into(&mut buf).expect("serialize");
         assert_eq!(n, buf.len());
-        let reparsed =
-            transmux::TrackFragmentHeaderBox::parse_body(&buf[8..]).expect("reparse");
+        let reparsed = transmux::TrackFragmentHeaderBox::parse_body(&buf[8..]).expect("reparse");
         assert_eq!(reparsed, tfhd);
     }
 }

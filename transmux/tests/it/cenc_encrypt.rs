@@ -698,8 +698,8 @@ fn whole_sample_media(data: Vec<u8>) -> Media {
             height: 16,
         },
     );
-    let sample = transmux::Sample::new(data, Some(0), Some(0), Some(1000), true)
-        .expect("valid timing");
+    let sample =
+        transmux::Sample::new(data, Some(0), Some(0), Some(1000), true).expect("valid timing");
     Media::new(vec![Track::new(spec, vec![sample])], timescale(1000))
 }
 

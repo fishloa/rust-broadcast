@@ -2003,7 +2003,7 @@ mod tests {
         }
         w.bit(false); // vui_parameters_present_flag
         w.bit(true); // rbsp_stop_one_bit
-        while w.bits.len() % 8 != 0 {
+        while !w.bits.len().is_multiple_of(8) {
             w.bit(false);
         }
         let mut rbsp = Vec::new();
@@ -2014,12 +2014,7 @@ mod tests {
             }
             rbsp.push(byte);
         }
-        let mut out = alloc::vec![
-            0x67,
-            if high_profile { 0x64 } else { 0x42 },
-            0x00,
-            0x1F
-        ];
+        let mut out = alloc::vec![0x67, if high_profile { 0x64 } else { 0x42 }, 0x00, 0x1F];
         let mut zeros = 0u8;
         for byte in rbsp {
             if zeros >= 2 && byte <= 0x03 {

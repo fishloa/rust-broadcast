@@ -15092,14 +15092,16 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         demux.feed(&mutated).expect("feed");
         let _ = demux.finish();
-        let gap = drain_events(&mut demux).into_iter().find_map(|ev| match ev {
-            DemuxEvent::InputDegraded {
-                track,
-                kind: InputDegradation::ContinuityGap { .. },
-                provenance,
-            } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
-            _ => None,
-        });
+        let gap = drain_events(&mut demux)
+            .into_iter()
+            .find_map(|ev| match ev {
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind: InputDegradation::ContinuityGap { .. },
+                    provenance,
+                } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
+                _ => None,
+            });
         assert_eq!(
             gap,
             Some(Some(track_id)),
@@ -15123,14 +15125,16 @@ pub(crate) mod tests {
         let mut demux = StreamingTsDemux::new();
         demux.feed(&mutated).expect("feed");
         let _ = demux.finish();
-        let scrambled = drain_events(&mut demux).into_iter().find_map(|ev| match ev {
-            DemuxEvent::InputDegraded {
-                track,
-                kind: InputDegradation::Scrambled,
-                provenance,
-            } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
-            _ => None,
-        });
+        let scrambled = drain_events(&mut demux)
+            .into_iter()
+            .find_map(|ev| match ev {
+                DemuxEvent::InputDegraded {
+                    track,
+                    kind: InputDegradation::Scrambled,
+                    provenance,
+                } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
+                _ => None,
+            });
         assert_eq!(
             scrambled,
             Some(Some(track_id)),
@@ -15168,10 +15172,7 @@ pub(crate) mod tests {
                 .expect("valid timing")
             })
             .collect();
-        let media = IrMedia::new(
-            alloc::vec![IrTrack::new(spec, samples)],
-            VIDEO_TIMESCALE,
-        );
+        let media = IrMedia::new(alloc::vec![IrTrack::new(spec, samples)], VIDEO_TIMESCALE);
         let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
 
         let mut demux = StreamingTsDemux::new();
@@ -15189,7 +15190,9 @@ pub(crate) mod tests {
         let at_cap = alloc::vec![0u8; MAX_PES_BUFFER_BYTES];
         feed_pes_bounded(stream, pid, true, &at_cap, &mut events).expect("feed at cap");
         assert!(
-            !events.iter().any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
             "exactly MAX_PES_BUFFER_BYTES is accepted"
         );
 
@@ -15212,12 +15215,16 @@ pub(crate) mod tests {
         let rest = alloc::vec![0u8; MAX_PES_BUFFER_BYTES - 100];
         feed_pes_bounded(stream, pid, false, &rest, &mut events).expect("fill");
         assert!(
-            !events.iter().any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            !events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
             "prev_len + payload == MAX_PES_BUFFER_BYTES is accepted"
         );
         feed_pes_bounded(stream, pid, false, &[0u8], &mut events).expect("one more");
         assert!(
-            events.iter().any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            events
+                .iter()
+                .any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
             "prev_len + payload == MAX + 1 drops the PES"
         );
 
@@ -15266,14 +15273,20 @@ pub(crate) mod tests {
         // The payload's first byte has bit 7 set: with `>=` on the length this
         // packet would be mistaken for a signalled discontinuity.
         demux.feed(&pkt(5, 0x80)).expect("gap");
-        let gap = drain_events(&mut demux).into_iter().find_map(|ev| match ev {
-            DemuxEvent::InputDegraded {
-                kind: InputDegradation::ContinuityGap { expected, got },
-                ..
-            } => Some((expected, got)),
-            _ => None,
-        });
-        assert_eq!(gap, Some((1, 5)), "an empty adaptation field signals nothing");
+        let gap = drain_events(&mut demux)
+            .into_iter()
+            .find_map(|ev| match ev {
+                DemuxEvent::InputDegraded {
+                    kind: InputDegradation::ContinuityGap { expected, got },
+                    ..
+                } => Some((expected, got)),
+                _ => None,
+            });
+        assert_eq!(
+            gap,
+            Some((1, 5)),
+            "an empty adaptation field signals nothing"
+        );
     }
 
     #[test]

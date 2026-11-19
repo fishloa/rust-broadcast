@@ -578,7 +578,10 @@ fn a_non_compatible_base_layer_suppresses_the_companion_set() {
     let mpd = transmux::DashPackager::default().package(&media).unwrap();
     let video_sets = adaptation_set_codecs(&mpd)
         .into_iter()
-        .filter(|c| c.iter().any(|x| x.starts_with("hvc1.") || x.starts_with("dvh1.")))
+        .filter(|c| {
+            c.iter()
+                .any(|x| x.starts_with("hvc1.") || x.starts_with("dvh1."))
+        })
         .count();
     assert_eq!(video_sets, 1, "no separate companion set: {mpd}");
 }

@@ -133,7 +133,9 @@ fn sequence_body(tag_type: u8, packet_type: u8) -> Vec<u8> {
             9 => tag.body.first().is_some_and(|b| b & 0x0F == 7),
             _ => tag.body.first().is_some_and(|b| b >> 4 == 10),
         };
-        if tag.tag_type == TagType::from_byte(tag_type) && wanted && tag.body.len() > 1
+        if tag.tag_type == TagType::from_byte(tag_type)
+            && wanted
+            && tag.body.len() > 1
             && tag.body[1] == packet_type
         {
             return tag.body.to_vec();
@@ -171,12 +173,16 @@ fn composition_time_is_written_as_the_exact_si24_bytes() {
 fn composition_time_si24_bounds_are_inclusive() {
     let ok_max = timed_video(8_388_607, 0, 1000, vec![0u8; 4]);
     let media = Media::new(vec![video_track(vec![ok_max])], timescale(1000));
-    let flv = FlvMux::new().package(&media).expect("SI24_MAX is representable");
+    let flv = FlvMux::new()
+        .package(&media)
+        .expect("SI24_MAX is representable");
     assert_eq!(&video_nalu_bodies(&flv)[0][2..5], &[0x7F, 0xFF, 0xFF]);
 
     let ok_min = timed_video(-8_388_608, 0, 1000, vec![0u8; 4]);
     let media = Media::new(vec![video_track(vec![ok_min])], timescale(1000));
-    let flv = FlvMux::new().package(&media).expect("SI24_MIN is representable");
+    let flv = FlvMux::new()
+        .package(&media)
+        .expect("SI24_MIN is representable");
     assert_eq!(&video_nalu_bodies(&flv)[0][2..5], &[0x80, 0x00, 0x00]);
 
     for offset in [8_388_608i64, -8_388_609] {
@@ -203,7 +209,9 @@ fn the_tag_timestamp_31_bit_boundary_is_exact() {
         timed_video(0, 0, 1000, vec![0u8; 4]),
     ];
     let media = Media::new(vec![video_track(at_max)], timescale(1000));
-    let flv = FlvMux::new().package(&media).expect("u32::MAX ms is representable");
+    let flv = FlvMux::new()
+        .package(&media)
+        .expect("u32::MAX ms is representable");
     let timestamps: Vec<u32> = tag_bodies(&flv)
         .into_iter()
         .filter(|t| t.tag_type == TagType::Video && t.body[1] == 1)
@@ -402,8 +410,9 @@ fn a_bad_signature_is_reported_with_its_bytes() {
 fn a_header_data_offset_past_the_buffer_is_a_short_read() {
     let mut bytes = flv_prefix();
     bytes[5..9].copy_from_slice(&100u32.to_be_bytes());
-    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
-        FlvDemux::new().unpackage(&bytes).expect_err("DataOffset past the buffer")
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) = FlvDemux::new()
+        .unpackage(&bytes)
+        .expect_err("DataOffset past the buffer")
     else {
         panic!("wrong variant");
     };
@@ -430,13 +439,19 @@ fn an_incomplete_first_tag_reports_the_overrun() {
     bytes.push(9);
     bytes.extend_from_slice(&[0x00, 0x03, 0xE8]);
     bytes.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0]);
-    let FlvError::Codec(transmux::Error::BufferTooShort(short)) =
-        FlvDemux::new().unpackage(&bytes).expect_err("incomplete first tag")
+    let FlvError::Codec(transmux::Error::BufferTooShort(short)) = FlvDemux::new()
+        .unpackage(&bytes)
+        .expect_err("incomplete first tag")
     else {
         panic!("wrong variant");
     };
     assert_eq!(short.what, "FLV tag body");
-    assert!(short.need > short.have, "need {} have {}", short.need, short.have);
+    assert!(
+        short.need > short.have,
+        "need {} have {}",
+        short.need,
+        short.have
+    );
 }
 
 #[test]
@@ -501,12 +516,10 @@ fn a_second_avc_sequence_header_does_not_replace_the_first() {
     let mut second = first.clone();
     second[6] = first[6] ^ 0x01;
     let nalu = vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09];
-    let flv = flv_with(&[
-        (9, 0, first.clone()),
-        (9, 0, second),
-        (9, 0, nalu),
-    ]);
-    let media = FlvDemux::new().unpackage(&flv).expect("two sequence headers");
+    let flv = flv_with(&[(9, 0, first.clone()), (9, 0, second), (9, 0, nalu)]);
+    let media = FlvDemux::new()
+        .unpackage(&flv)
+        .expect("two sequence headers");
     let CodecConfig::Avc { config, .. } = media.tracks[0].config() else {
         panic!("track 0 must be AVC");
     };
@@ -518,10 +531,19 @@ fn an_empty_avc_sequence_header_is_skipped_without_damage() {
     let flv = flv_with(&[
         (9, 0, vec![0x17, 0x00, 0x00, 0x00, 0x00]),
         (9, 0, sequence_body(9, 0)),
-        (9, 0, vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09]),
+        (
+            9,
+            0,
+            vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09],
+        ),
     ]);
-    let media = FlvDemux::new().unpackage(&flv).expect("empty then real header");
-    assert!(media.degraded.is_empty(), "an empty header is skipped, not damage");
+    let media = FlvDemux::new()
+        .unpackage(&flv)
+        .expect("empty then real header");
+    assert!(
+        media.degraded.is_empty(),
+        "an empty header is skipped, not damage"
+    );
     assert_eq!(media.tracks.len(), 1);
 }
 
@@ -536,7 +558,9 @@ fn the_last_sample_repeats_the_second_to_last_forward_delta() {
             vec![0x17, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x09],
         ));
     }
-    let media = FlvDemux::new().unpackage(&flv_with(&tags)).expect("six samples");
+    let media = FlvDemux::new()
+        .unpackage(&flv_with(&tags))
+        .expect("six samples");
     let durations: Vec<u32> = media.tracks[0]
         .samples
         .iter()

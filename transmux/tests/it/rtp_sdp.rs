@@ -75,9 +75,7 @@ fn an_audio_section_of_another_codec_is_not_playable_even_with_aac_fmtp() {
              a=fmtp:97 {AAC_FMTP}\r\n"
         ),
         // PCMU with the AAC-hbr parameter list.
-        format!(
-            "m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=fmtp:0 {AAC_FMTP}\r\n"
-        ),
+        format!("m=audio 0 RTP/AVP 0\r\na=rtpmap:0 PCMU/8000\r\na=fmtp:0 {AAC_FMTP}\r\n"),
     ] {
         assert_eq!(sdp_track(&media(&body)), None, "{body}");
     }
@@ -89,6 +87,17 @@ fn an_aac_section_is_playable() {
         "m=audio 0 RTP/AVP 97\r\na=rtpmap:97 mpeg4-generic/48000/2\r\na=fmtp:97 {AAC_FMTP}\r\n"
     ));
     assert!(sdp_track(&m).is_some());
+}
+
+#[test]
+fn h264_without_sprop_is_a_playable_placeholder() {
+    let m = media(
+        "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1\r\n",
+    );
+    assert!(
+        sdp_track(&m).is_some(),
+        "RFC 6184 §8.2.1 allows in-band parameter sets"
+    );
 }
 
 #[test]
@@ -106,9 +115,8 @@ fn is_played_encoding_recognises_only_the_played_payloads() {
 
 #[test]
 fn first_encoding_name_reads_the_first_payload_types_rtpmap() {
-    let m = media(
-        "m=video 0 RTP/AVP 96 97\r\na=rtpmap:96 H264/90000\r\na=rtpmap:97 H265/90000\r\n",
-    );
+    let m =
+        media("m=video 0 RTP/AVP 96 97\r\na=rtpmap:96 H264/90000\r\na=rtpmap:97 H265/90000\r\n");
     assert_eq!(first_encoding_name(&m), Some("H264"));
     let no_rtpmap = media("m=video 0 RTP/AVP 96\r\n");
     assert_eq!(first_encoding_name(&no_rtpmap), None);
@@ -121,7 +129,10 @@ fn a_numeric_leading_payload_token_is_stripped_from_a_fmtp_value() {
         Some("1")
     );
     assert_eq!(
-        fmtp_param("96 packetization-mode=1;sprop-parameter-sets=aa", "packetization-mode"),
+        fmtp_param(
+            "96 packetization-mode=1;sprop-parameter-sets=aa",
+            "packetization-mode"
+        ),
         Some("1")
     );
 }
@@ -130,7 +141,10 @@ fn a_numeric_leading_payload_token_is_stripped_from_a_fmtp_value() {
 fn a_non_numeric_first_word_is_not_stripped_from_a_fmtp_value() {
     assert_eq!(fmtp_param("abc profile=1", "profile"), None);
     assert_eq!(fmtp_param("abc profile=1", "abc profile"), Some("1"));
-    assert_eq!(fmtp_param("packetization-mode=1", "packetization-mode"), Some("1"));
+    assert_eq!(
+        fmtp_param("packetization-mode=1", "packetization-mode"),
+        Some("1")
+    );
 }
 
 #[test]

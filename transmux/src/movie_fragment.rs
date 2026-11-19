@@ -1676,9 +1676,9 @@ mod tests {
         };
         // data-offset-present (0x000001) | sample-duration (0x000100) |
         // sample-size (0x000200) | sample-flags (0x000400).
-        assert_eq!(flags_of(0), 0x0007_01);
+        assert_eq!(flags_of(0), 0x0000_0701);
         // plus sample-composition-time-offset-present (0x000800).
-        assert_eq!(flags_of(1), 0x000F_01);
+        assert_eq!(flags_of(1), 0x0000_0F01);
     }
 
     #[test]

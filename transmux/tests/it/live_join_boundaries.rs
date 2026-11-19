@@ -19,7 +19,9 @@ fn timed_au(nals: &[&[u8]], pts: i64) -> Sample {
 
 fn vvc_config() -> CodecConfig {
     let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
-    let media = Fmp4Demux::new().unpackage(bytes.as_slice()).expect("demux vvc fixture");
+    let media = Fmp4Demux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux vvc fixture");
     media
         .tracks
         .iter()
