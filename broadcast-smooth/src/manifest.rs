@@ -1725,4 +1725,109 @@ mod tests {
             let _ = SmoothManifest::parse(input);
         }
     }
+
+    #[test]
+    fn xml_reader_errors_keep_their_position_and_message() {
+        assert_eq!(
+            SmoothParseError::from(XmlError::NotWellFormed {
+                position: 42,
+                message: String::from("mismatched end tag"),
+            }),
+            SmoothParseError::Xml {
+                pos: 42,
+                message: String::from("mismatched end tag"),
+            }
+        );
+        assert_eq!(
+            SmoothParseError::from(XmlError::InvalidUtf8 { valid_up_to: 1 }),
+            SmoothParseError::Xml {
+                pos: 1,
+                message: String::from("invalid UTF-8"),
+            }
+        );
+    }
+
+    #[test]
+    fn display_is_exact_for_every_variant() {
+        let cases = [
+            (
+                SmoothParseError::UnexpectedElement {
+                    expected: "SmoothStreamingMedia",
+                    found: String::from("x"),
+                },
+                "expected element <SmoothStreamingMedia>, found <x>",
+            ),
+            (
+                SmoothParseError::UnexpectedElement {
+                    expected: "SmoothStreamingMedia",
+                    found: String::new(),
+                },
+                "expected element <SmoothStreamingMedia>, found none",
+            ),
+            (
+                SmoothParseError::MissingAttribute {
+                    element: "StreamIndex",
+                    attr: "Url",
+                },
+                "<StreamIndex> is missing required attribute @Url",
+            ),
+            (
+                SmoothParseError::InvalidAttributeValue {
+                    element: "StreamIndex",
+                    attr: "Type",
+                    value: String::from("bogus"),
+                },
+                "<StreamIndex>@Type has invalid value \"bogus\"",
+            ),
+            (
+                SmoothParseError::InvalidRepeatCount { r: 0 },
+                "<c>@r has invalid value 0 (must be >= 1)",
+            ),
+            (
+                SmoothParseError::MissingDuration { index: 3 },
+                "<c> at index 3 duration cannot be derived",
+            ),
+            (
+                SmoothParseError::IndivisibleRun { index: 4 },
+                "<c> at index 4 run does not divide evenly",
+            ),
+            (
+                SmoothParseError::NonMonotonicTime { index: 5 },
+                "<c> at index 5 has non-monotonic time",
+            ),
+            (
+                SmoothParseError::ChunkRunTooLong {
+                    count_hint: 100_001,
+                },
+                "c@r repeat run exceeded max chunk count (100001 > 100000)",
+            ),
+            (
+                SmoothParseError::CodecPrivateDataTooLong { len: 65_538 },
+                "CodecPrivateData hex length 65538 exceeds max 65536",
+            ),
+            (
+                SmoothParseError::InvalidHex {
+                    value: String::from("zz"),
+                },
+                "invalid CodecPrivateData hex \"zz\"",
+            ),
+            (
+                SmoothParseError::TooLarge {
+                    limit: XmlLimit::InputBytes,
+                    max: 4_194_304,
+                },
+                "manifest exceeds the input_bytes limit of 4194304",
+            ),
+            (
+                SmoothParseError::Xml {
+                    pos: 7,
+                    message: String::from("boom"),
+                },
+                "XML error at byte offset 7: boom",
+            ),
+        ];
+        for (error, expected) in cases {
+            assert_eq!(error.to_string(), expected, "{error:?}");
+        }
+    }
 }

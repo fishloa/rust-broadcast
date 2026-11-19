@@ -130,3 +130,39 @@ impl ServiceComponentIdentifier {
 }
 
 broadcast_common::impl_spec_display!(ServiceComponentIdentifier);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dash() -> ServiceComponentIdentifier {
+        ServiceComponentIdentifier::Dash {
+            manifest_id_ref: String::new(),
+            period_id: String::new(),
+            adaptation_set_id: 0,
+            representation_id: String::new(),
+        }
+    }
+
+    fn hls() -> ServiceComponentIdentifier {
+        ServiceComponentIdentifier::Hls {
+            manifest_id_ref: String::new(),
+            media_playlist_locator: String::new(),
+        }
+    }
+
+    fn generic() -> ServiceComponentIdentifier {
+        ServiceComponentIdentifier::Generic {
+            manifest_id_ref: String::new(),
+            component_id: String::new(),
+        }
+    }
+
+    #[test]
+    fn component_identifier_labels_and_display_agree() {
+        for (value, label) in [(dash(), "dash"), (hls(), "hls"), (generic(), "generic")] {
+            assert_eq!(value.name(), label);
+            assert_eq!(value.to_string(), label);
+        }
+    }
+}
