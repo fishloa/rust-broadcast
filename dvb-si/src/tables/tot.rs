@@ -294,6 +294,38 @@ mod tests {
         assert_eq!(tot.descriptors.raw(), reparsed.descriptors.raw());
     }
 
+    /// A hostile `descriptors_loop_length` larger than the section is rejected
+    /// with the exact overrun, never sliced past the buffer (§5.2.6).
+    #[test]
+    fn parse_rejects_descriptors_loop_length_beyond_section() {
+        let desc = vec![0xAAu8; 20];
+        let mut bytes = build_tot(&desc);
+        assert_eq!(bytes.len(), 34);
+        // descriptors_loop_length lives at bytes 8..10; reserved(4) is the high
+        // nibble, so 0xFF 0xFF declares 4095.
+        bytes[8] = 0xFF;
+        bytes[9] = 0xFF;
+        match TotSection::parse(&bytes) {
+            Err(Error::SectionLengthOverflow {
+                declared,
+                available,
+            }) => {
+                assert_eq!(declared, 4095);
+                assert_eq!(available, 20);
+            }
+            other => panic!("expected SectionLengthOverflow, got {other:?}"),
+        }
+    }
+
+    /// A descriptor loop that exactly fills the section is accepted.
+    #[test]
+    fn parse_accepts_descriptors_loop_exactly_filling_section() {
+        let desc = vec![0xAAu8; 20];
+        let bytes = build_tot(&desc);
+        let tot = TotSection::parse(&bytes).unwrap();
+        assert_eq!(tot.descriptors.raw(), desc.as_slice());
+    }
+
     /// The field is 4 bits wide, so a wider value is unrepresentable and cannot
     /// spill into the 12-bit descriptors_loop_length below it.
     #[test]
