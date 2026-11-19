@@ -8,6 +8,8 @@ mod integration;
 #[cfg(feature = "std")]
 mod mixed_content;
 mod review_signalling_findings;
+mod time_context;
+mod time_expressions;
 mod truncation;
 #[cfg(feature = "std")]
 mod unknown_attributes;
