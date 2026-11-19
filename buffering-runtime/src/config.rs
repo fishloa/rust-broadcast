@@ -372,6 +372,7 @@ impl Default for ControllerConfig {
 #[cfg(test)]
 mod tests {
     use super::{ControllerConfig, Error, JitterConfig, PolicyConfig};
+    use crate::error::ConfigField;
     use core::time::Duration;
 
     #[test]
@@ -412,5 +413,116 @@ mod tests {
         assert_eq!(c.jitter.bucket, Duration::from_millis(10));
         assert_eq!(c.granularity_hold, Duration::from_secs(30));
         assert_eq!(c.track_silence_timeout, Duration::from_secs(3));
+    }
+
+    #[test]
+    fn the_minimum_window_must_cover_two_intervals() {
+        let mut jitter = JitterConfig {
+            min_window: Duration::from_secs(1),
+            interval: Duration::from_millis(500),
+            ..JitterConfig::DEFAULT
+        };
+        assert_eq!(jitter.validate(), Ok(()));
+        jitter.min_window = Duration::from_micros(999_999);
+        assert_eq!(
+            jitter.validate(),
+            Err(Error::InvalidConfig(ConfigField::MinWindow))
+        );
+    }
+
+    #[test]
+    fn a_zero_bucket_or_zero_bucket_count_is_rejected() {
+        let jitter = JitterConfig {
+            bucket: Duration::ZERO,
+            ..JitterConfig::DEFAULT
+        };
+        assert_eq!(
+            jitter.validate(),
+            Err(Error::InvalidConfig(ConfigField::Bucket))
+        );
+        let jitter = JitterConfig {
+            buckets: 0,
+            ..JitterConfig::DEFAULT
+        };
+        assert_eq!(
+            jitter.validate(),
+            Err(Error::InvalidConfig(ConfigField::Bucket))
+        );
+    }
+
+    #[test]
+    fn the_quantile_accepts_exactly_one_thousand_permille() {
+        let mut jitter = JitterConfig {
+            quantile_permille: 1_000,
+            ..JitterConfig::DEFAULT
+        };
+        assert_eq!(jitter.validate(), Ok(()));
+        jitter.quantile_permille = 1_001;
+        assert_eq!(
+            jitter.validate(),
+            Err(Error::InvalidConfig(ConfigField::Quantile))
+        );
+    }
+
+    #[test]
+    fn the_sample_cap_accepts_exactly_the_minimum_and_rejects_one_less() {
+        let mut jitter = JitterConfig {
+            max_samples: 8,
+            ..JitterConfig::DEFAULT
+        };
+        assert_eq!(jitter.validate(), Ok(()));
+        jitter.max_samples = 7;
+        assert_eq!(
+            jitter.validate(),
+            Err(Error::InvalidConfig(ConfigField::Capacity))
+        );
+    }
+
+    #[test]
+    fn the_policy_order_accepts_equal_min_initial_and_max() {
+        let policy = PolicyConfig {
+            min: Duration::from_millis(300),
+            initial: Duration::from_millis(300),
+            max: Duration::from_millis(300),
+            ..PolicyConfig::DEFAULT
+        };
+        assert_eq!(policy.validate(), Ok(()));
+        let policy = PolicyConfig {
+            initial: Duration::from_millis(301),
+            max: Duration::from_millis(300),
+            ..PolicyConfig::DEFAULT
+        };
+        assert_eq!(
+            policy.validate(),
+            Err(Error::InvalidConfig(ConfigField::Order))
+        );
+    }
+
+    #[test]
+    fn the_policy_max_may_fill_the_histogram_range_exactly() {
+        let jitter = JitterConfig::DEFAULT;
+        let policy = PolicyConfig {
+            max: Duration::from_secs(4),
+            ..PolicyConfig::DEFAULT
+        };
+        let cfg = ControllerConfig {
+            jitter,
+            policy,
+            ..ControllerConfig::DEFAULT
+        };
+        assert_eq!(cfg.validate(), Ok(()));
+        let policy = PolicyConfig {
+            max: Duration::from_secs(4) + Duration::from_micros(1),
+            ..PolicyConfig::DEFAULT
+        };
+        let cfg = ControllerConfig {
+            jitter,
+            policy,
+            ..ControllerConfig::DEFAULT
+        };
+        assert_eq!(
+            cfg.validate(),
+            Err(Error::InvalidConfig(ConfigField::Bucket))
+        );
     }
 }

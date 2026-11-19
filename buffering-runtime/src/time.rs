@@ -132,4 +132,9 @@ mod tests {
         let p = super::Clock27::from_27mhz(27_000_000).expect("one second");
         assert_eq!(p.ticks(), 27_000_000);
     }
+
+    #[test]
+    fn the_difference_error_bound_is_999_nanoseconds() {
+        assert_eq!(MAX_DIFFERENCE_ERROR, Duration::from_nanos(999));
+    }
 }
