@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- `StreamIndex::same_stream` is pinned on `Type` + `Name` + `Url` separately, including two audio streams distinguished only by `Name` (#3037).
 
 ## [0.2.1] - 2026-11-17
 ### Fixed
