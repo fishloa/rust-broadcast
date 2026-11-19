@@ -542,3 +542,39 @@ impl Transport {
         self.specs.first()
     }
 }
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+
+    #[test]
+    fn every_lower_transport_names_and_displays_its_token() {
+        for (value, token) in [(LowerTransport::Udp, "UDP"), (LowerTransport::Tcp, "TCP")] {
+            assert_eq!(value.name(), token);
+            assert_eq!(value.to_string(), token);
+        }
+    }
+
+    #[test]
+    fn every_delivery_names_and_displays_its_token() {
+        for (value, token) in [
+            (Delivery::Unicast, "unicast"),
+            (Delivery::Multicast, "multicast"),
+        ] {
+            assert_eq!(value.name(), token);
+            assert_eq!(value.to_string(), token);
+        }
+    }
+
+    #[test]
+    fn every_transport_mode_names_and_displays_its_token() {
+        assert_eq!(TransportMode::Play.name(), "PLAY");
+        assert_eq!(TransportMode::Play.to_string(), "PLAY");
+        assert_eq!(TransportMode::Record.name(), "RECORD");
+        assert_eq!(TransportMode::Record.to_string(), "RECORD");
+        assert_eq!(
+            TransportMode::Other("ANNOUNCE".into()).to_string(),
+            "ANNOUNCE"
+        );
+    }
+}
