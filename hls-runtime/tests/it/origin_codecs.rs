@@ -448,3 +448,52 @@ fn a_later_dolby_vision_track_keeps_its_own_base_codec() {
         "only the first video track decides the Dolby Vision signalling: {body}"
     );
 }
+
+#[test]
+fn a_rendition_report_uri_stops_when_the_target_runs_out_of_segments() {
+    let (own_trunk, own_writer) = new_trunk(8);
+    let (sibling_trunk, _sibling_writer) = new_trunk(8);
+    let own = HlsOrigin::new(
+        HlsOriginConfig::new(Arc::clone(&own_trunk), Duration::from_secs(4), nz(8))
+            .with_instance(7)
+            .with_low_latency(Duration::from_millis(500))
+            .with_playlist_uri("a/b/c/main.m3u8"),
+    )
+    .expect("origin builds");
+    let sibling = Arc::new(
+        HlsOrigin::new(
+            HlsOriginConfig::new(Arc::clone(&sibling_trunk), Duration::from_secs(4), nz(8))
+                .with_instance(8)
+                .with_low_latency(Duration::from_millis(500))
+                .with_playlist_uri("a/b/"),
+        )
+        .expect("sibling builds"),
+    );
+    own.set_rendition_siblings(vec![RenditionSibling {
+        origin: Arc::downgrade(&sibling),
+        playlist_uri: "a/b/".to_string(),
+    }]);
+    publish(&own_writer, 1, &[1; 8]);
+    let (now, policy) = (
+        Timestamp::from_nanos(0),
+        AwaitPolicy::new(Timestamp::from_nanos(60_000_000_000)),
+    );
+    let body = match own.resolve(
+        HlsRequest::Playlist {
+            track_id: DEFAULT_TRACK_ID,
+            query: BlockingQuery::default(),
+        },
+        now,
+        policy,
+    ) {
+        EgressResponse::Ready {
+            body: HlsBody::Playlist(body),
+            ..
+        } => body,
+        other => panic!("expected a playlist, got {other:?}"),
+    };
+    assert!(
+        body.contains("#EXT-X-RENDITION-REPORT:URI=\"..\""),
+        "{body}"
+    );
+}
