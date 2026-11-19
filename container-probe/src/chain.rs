@@ -79,3 +79,82 @@ pub(crate) fn longest_chain(
     }
     (best, best_truncated, best_anchor, best_frame_len)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every position is a frame header of this fixed length.
+    fn fixed(frame_len: usize) -> impl Fn(&[u8], usize) -> Option<usize> {
+        move |_, _| Some(frame_len)
+    }
+
+    /// A header only at positions whose byte is `0xAA`.
+    fn marked(data: &[u8], i: usize) -> Option<usize> {
+        data.get(i).is_some_and(|&b| b == 0xAA).then_some(4)
+    }
+
+    /// `while i < n` must not visit `i == n`, where no header exists.
+    #[test]
+    fn an_empty_region_has_no_chain() {
+        assert_eq!(longest_chain(&[], 0, 0, 8, fixed(1)), (0, false, 0, 0));
+    }
+
+    /// A frame body extending past the end is truncated and is not counted as
+    /// a second frame.
+    #[test]
+    fn a_frame_body_past_the_end_is_truncated_once() {
+        let data = [0u8; 10];
+        assert_eq!(longest_chain(&data, 0, 0, 8, fixed(11)), (1, true, 9, 11));
+    }
+
+    /// A frame body ending exactly at the end is fully present: it is not a
+    /// truncation, and the walk stops at that boundary.
+    #[test]
+    fn a_frame_body_ending_at_the_end_is_complete() {
+        let data = [0u8; 10];
+        let got = longest_chain(&data, 0, 0, 8, |_, i| (i == 0).then_some(10));
+        assert_eq!(got, (1, false, 0, 10));
+    }
+
+    /// A next header ending exactly at the region end is visible, so the chain
+    /// is not reported as truncated merely for sitting on the boundary.
+    #[test]
+    fn a_header_ending_at_the_region_end_is_visible() {
+        let data = [0u8; 10];
+        let got = longest_chain(&data, 0, 4, 8, |_, i| (i == 0).then_some(6));
+        assert_eq!(got, (1, false, 0, 6));
+    }
+
+    /// Equal-length chains: the earlier anchor is kept when neither is
+    /// truncated.
+    #[test]
+    fn the_first_equal_chain_keeps_its_anchor() {
+        let mut data = [0u8; 24];
+        for i in [0usize, 4, 12, 16] {
+            data[i] = 0xAA;
+        }
+        assert_eq!(longest_chain(&data, 0, 4, 8, marked), (2, false, 0, 4));
+    }
+
+    /// A later equal-length chain that ran off the end replaces the earlier
+    /// one: it could still grow, so its anchor is the useful answer.
+    #[test]
+    fn a_later_truncated_equal_chain_wins_the_tie() {
+        let mut data = [0u8; 20];
+        for i in [0usize, 4, 12, 16] {
+            data[i] = 0xAA;
+        }
+        assert_eq!(longest_chain(&data, 0, 4, 8, marked), (2, true, 12, 4));
+    }
+
+    /// Reaching `strong` exactly returns immediately with the first chain.
+    #[test]
+    fn reaching_the_strong_threshold_returns_the_first_chain() {
+        let mut data = [0u8; 12];
+        for i in [0usize, 4, 8] {
+            data[i] = 0xAA;
+        }
+        assert_eq!(longest_chain(&data, 0, 4, 3, marked), (3, false, 0, 4));
+    }
+}

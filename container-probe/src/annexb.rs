@@ -309,4 +309,56 @@ mod tests {
             other => panic!("bare start code must be Insufficient, got {other:?}"),
         }
     }
+
+    /// The ran-out need is four minimal NAL units (4 x 4 bytes), a property of
+    /// the weak chain, not of the supplied buffer length.
+    #[test]
+    fn the_ran_out_need_is_the_weak_chain_lower_bound() {
+        let mut data = std::vec![0x00, 0x00, 0x00, 0x01, 0x67];
+        data.resize(8, 0x00);
+        match probe(&data, data.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, 16),
+            other => panic!("a truncated single NAL must ask for 16 bytes, got {other:?}"),
+        }
+    }
+
+    /// Three NAL units chained through alternating 4-byte and 3-byte start
+    /// codes are counted as three, with the walk ending at the buffer end.
+    #[test]
+    fn alternating_start_code_lengths_chain_through() {
+        let mut data = std::vec::Vec::new();
+        for (start_code, header) in [
+            (&START_CODE_4[..], 0x67u8),
+            (&START_CODE_3[..], 0x68),
+            (&START_CODE_3[..], 0x65),
+        ] {
+            data.extend_from_slice(start_code);
+            data.push(header);
+            data.extend_from_slice(&[0xAA; 4]);
+        }
+        assert_eq!(annexb_nal_chain(&data), (3, true));
+    }
+
+    /// A start code ending exactly at the region end is fully visible, even at
+    /// a non-zero index.
+    #[test]
+    fn start_codes_ending_at_the_region_end_are_recognised() {
+        let four = [0xAA, 0xAA, 0x00, 0x00, 0x00, 0x01];
+        assert!(start_code4_at(&four, 2));
+        assert!(!start_code4_at(&four, 3));
+        let three = [0xAA, 0xAA, 0x00, 0x00, 0x01];
+        assert!(start_code3_at(&three, 2));
+        assert!(!start_code3_at(&three, 3));
+    }
+
+    /// A buffer that is exactly a bare 3-byte start code has not yet shown a
+    /// NAL header, so it is a short read.
+    #[test]
+    fn a_bare_three_byte_start_code_is_a_short_read() {
+        assert_eq!(annexb_nal_chain(&START_CODE_3), (0, true));
+        match probe(&START_CODE_3, START_CODE_3.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, ANNEXB_MIN_LEN),
+            other => panic!("a bare start code must be Insufficient(4), got {other:?}"),
+        }
+    }
 }
