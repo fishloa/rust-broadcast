@@ -380,6 +380,11 @@ mod tests {
         assert_eq!(d.name(), "other");
         assert_eq!(d.to_string(), "other(0xC4)");
         assert_eq!(d.serialized_len(), 5, "tag + length + 3 body octets");
+        assert_eq!(
+            Serialize::serialized_len(&d),
+            5,
+            "the Serialize impl callers size their buffers from"
+        );
         let mut out = vec![0u8; d.serialized_len()];
         let n = d.serialize_into(&mut out).unwrap();
         assert_eq!(n, 5);

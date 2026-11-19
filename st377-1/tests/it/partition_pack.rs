@@ -96,6 +96,22 @@ fn every_truncation_is_an_error_not_a_panic() {
     }
 }
 
+/// A complete KLV whose declared value is one byte short of the 80-byte fixed
+/// region: the outer length check passes, so the fixed-fields guard is what
+/// must reject it (the value is never read out of bounds).
+#[test]
+fn a_declared_value_shorter_than_the_fixed_fields_is_rejected() {
+    let mut bytes = PartitionPack::key(PartitionKind::Body, PartitionStatus::ClosedComplete)
+        .as_bytes()
+        .to_vec();
+    bytes.push(79);
+    bytes.extend_from_slice(&[0u8; 79]);
+    assert!(matches!(
+        PartitionPack::parse(&bytes),
+        Err(Error::BufferTooShort(_))
+    ));
+}
+
 #[test]
 fn an_edited_container_list_is_written_with_its_new_batch() {
     let mut bytes = vec![0u8; distinct_pack().serialized_len()];
