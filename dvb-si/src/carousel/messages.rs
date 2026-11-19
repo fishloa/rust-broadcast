@@ -1255,4 +1255,208 @@ mod tests {
         assert!(json.contains("\"group_size\":500000"));
         assert!(json.contains("\"group_info\""));
     }
+
+    /// A two-group GII whose every variable field is non-empty, so the
+    /// per-group position advance and the `serialized_len` sum are exercised
+    /// across a group boundary. Hand-built wire layout (65 bytes):
+    ///
+    /// ```text
+    /// [0..2]   NumberOfGroups = 2
+    /// group 1: GroupId 1, GroupSize 500 000,
+    ///          compat len 0x0014 (count 1 + 18-byte entry with 2 sub-descriptors),
+    ///          GroupInfo 11 22 33, PrivateData 44 55 66
+    /// group 2: GroupId 2, GroupSize 0x00010000, compat len 0,
+    ///          GroupInfo 77 88 99 AA, PrivateData B1..B5
+    /// ```
+    fn two_group_gii() -> GroupInfoIndication<'static> {
+        GroupInfoIndication {
+            groups: vec![
+                GroupInfo {
+                    group_id: 0x0000_0001,
+                    group_size: 500_000,
+                    group_compatibility: CompatibilityDescriptor {
+                        empty_count_present: false,
+                        descriptors: vec![crate::compatibility::CompatibilityDescriptorEntry {
+                            descriptor_type: crate::compatibility::DescriptorType::SystemHardware,
+                            specifier_type: crate::compatibility::SpecifierType::IeeeOui,
+                            specifier_data: [0x00, 0x15, 0x0A],
+                            model: 0x1234,
+                            version: 0x0001,
+                            sub_descriptors: vec![
+                                crate::compatibility::SubDescriptor {
+                                    sub_descriptor_type:
+                                        crate::compatibility::SubDescriptorType::Unallocated(0x05),
+                                    data: &[0xAA],
+                                },
+                                crate::compatibility::SubDescriptor {
+                                    sub_descriptor_type:
+                                        crate::compatibility::SubDescriptorType::Unallocated(0x06),
+                                    data: &[0xBB, 0xCC],
+                                },
+                            ],
+                        }],
+                    },
+                    group_info: &[0x11, 0x22, 0x33],
+                    private_data: &[0x44, 0x55, 0x66],
+                },
+                GroupInfo {
+                    group_id: 0x0000_0002,
+                    group_size: 0x0001_0000,
+                    group_compatibility: CompatibilityDescriptor {
+                        empty_count_present: false,
+                        descriptors: vec![],
+                    },
+                    group_info: &[0x77, 0x88, 0x99, 0xAA],
+                    private_data: &[0xB1, 0xB2, 0xB3, 0xB4, 0xB5],
+                },
+            ],
+        }
+    }
+
+    #[rustfmt::skip]
+    const TWO_GROUP_GII_WIRE: &[u8] = &[
+        0x00, 0x02,                                     // NumberOfGroups = 2
+        0x00, 0x00, 0x00, 0x01,                         // GroupId = 1
+        0x00, 0x07, 0xA1, 0x20,                         // GroupSize = 500 000
+        0x00, 0x14,                                     // compat length = 20
+        0x00, 0x01,                                     // descriptorCount = 1
+        0x01, 0x10,                                     // system hardware, length 16
+        0x01, 0x00, 0x15, 0x0A,                         // IEEE OUI 00-15-0A
+        0x12, 0x34, 0x00, 0x01,                         // model 0x1234, version 0x0001
+        0x02,                                           // subDescriptorCount = 2
+        0x05, 0x01, 0xAA,                               // sub-descriptor 0x05
+        0x06, 0x02, 0xBB, 0xCC,                         // sub-descriptor 0x06
+        0x00, 0x03, 0x11, 0x22, 0x33,                   // GroupInfo
+        0x00, 0x03, 0x44, 0x55, 0x66,                   // PrivateData
+        0x00, 0x00, 0x00, 0x02,                         // GroupId = 2
+        0x00, 0x01, 0x00, 0x00,                         // GroupSize = 0x00010000
+        0x00, 0x00,                                     // compat length = 0
+        0x00, 0x04, 0x77, 0x88, 0x99, 0xAA,             // GroupInfo
+        0x00, 0x05, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5,       // PrivateData
+    ];
+
+    #[test]
+    fn gii_two_groups_parse_and_reserialize_across_the_boundary() {
+        let gii = two_group_gii();
+        assert_eq!(gii.serialized_len(), 65);
+        assert_eq!(gii.serialized_len(), TWO_GROUP_GII_WIRE.len());
+        let mut buf = vec![0u8; TWO_GROUP_GII_WIRE.len()];
+        assert_eq!(
+            gii.serialize_into(&mut buf).unwrap(),
+            TWO_GROUP_GII_WIRE.len()
+        );
+        assert_eq!(buf, TWO_GROUP_GII_WIRE);
+        assert_eq!(GroupInfoIndication::parse(TWO_GROUP_GII_WIRE).unwrap(), gii);
+    }
+
+    #[test]
+    fn gii_serialized_len_counts_group_info_and_private_data_literals() {
+        let gii = two_group_gii();
+        // 2 + group1 (8 + 22 compat + 2 + 3 + 2 + 3)
+        //   + group2 (8 + 2 compat + 2 + 4 + 2 + 5) = 65 bytes.
+        assert_eq!(gii.serialized_len(), 2 + 40 + 23);
+        assert_eq!(gii.groups[0].group_info.len(), 3);
+        assert_eq!(gii.groups[0].private_data.len(), 3);
+        assert_eq!(gii.groups[1].group_info.len(), 4);
+        assert_eq!(gii.groups[1].private_data.len(), 5);
+    }
+
+    #[test]
+    fn dsi_serialized_len_counts_adaptation_and_private_data() {
+        let msg = UnMessage::Dsi(Dsi {
+            transaction_id: 0x8000_0000,
+            adaptation: &[0xA1, 0xA2, 0xA3],
+            server_id: [0xFF; SERVER_ID_LEN],
+            compatibility_descriptor: nonempty_compat(),
+            private_data: &[0x0A, 0x0B, 0x0C],
+        });
+        #[rustfmt::skip]
+        let expected: &[u8] = &[
+            0x11, 0x03, 0x10, 0x06, 0x80, 0x00, 0x00, 0x00, 0xFF, 0x03, 0x00, 0x2F,
+            0xA1, 0xA2, 0xA3,                                       // adaptation
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // serverId
+            0x00, 0x11, 0x00, 0x01, 0x01, 0x0D, 0x01, 0x00, 0x15, 0x0A,
+            0x12, 0x34, 0x00, 0x01, 0x01, 0x05, 0x02, 0xAA, 0xBB,   // compat
+            0x00, 0x03, 0x0A, 0x0B, 0x0C,                           // privateData
+        ];
+        assert_eq!(msg.serialized_len(), 59);
+        assert_eq!(msg.serialized_len(), expected.len());
+        let mut buf = vec![0u8; expected.len()];
+        assert_eq!(msg.serialize_into(&mut buf).unwrap(), expected.len());
+        assert_eq!(buf, expected);
+        let parsed = UnMessage::parse(expected).unwrap();
+        assert_eq!(parsed, msg);
+        let mut again = vec![0u8; parsed.serialized_len()];
+        assert_eq!(parsed.serialize_into(&mut again).unwrap(), expected.len());
+        assert_eq!(again, expected, "DSI byte-exact re-serialize");
+    }
+
+    #[test]
+    fn dii_serialized_len_counts_adaptation_modules_and_private_data() {
+        let msg = UnMessage::Dii(Dii {
+            transaction_id: 0x8002_0002,
+            adaptation: &[0xB1, 0xB2],
+            download_id: 0x0000_00AB,
+            block_size: 4066,
+            window_size: 5,
+            ack_period: 7,
+            t_c_download_window: 0x0000_0010,
+            t_c_download_scenario: 0x0000_0020,
+            compatibility_descriptor: CompatibilityDescriptor {
+                empty_count_present: false,
+                descriptors: vec![],
+            },
+            modules: vec![
+                DiiModule {
+                    module_id: 1,
+                    module_size: 8000,
+                    module_version: 3,
+                    module_info: &[0xDE, 0xAD],
+                },
+                DiiModule {
+                    module_id: 2,
+                    module_size: 100,
+                    module_version: 1,
+                    module_info: &[0xBE, 0xEF, 0x01],
+                },
+            ],
+            private_data: &[0xC1, 0xC2],
+        });
+        #[rustfmt::skip]
+        let expected: &[u8] = &[
+            0x11, 0x03, 0x10, 0x02, 0x80, 0x02, 0x00, 0x02, 0xFF, 0x02, 0x00, 0x2F,
+            0xB1, 0xB2,                                     // adaptation
+            0x00, 0x00, 0x00, 0xAB,                         // downloadId
+            0x0F, 0xE2,                                     // blockSize = 4066
+            0x05, 0x07,                                     // windowSize, ackPeriod
+            0x00, 0x00, 0x00, 0x10,                         // tCDownloadWindow
+            0x00, 0x00, 0x00, 0x20,                         // tCDownloadScenario
+            0x00, 0x00,                                     // compat length = 0
+            0x00, 0x02,                                     // numberOfModules = 2
+            0x00, 0x01, 0x00, 0x00, 0x1F, 0x40, 0x03, 0x02, // module 1 header
+            0xDE, 0xAD,                                     // module 1 info
+            0x00, 0x02, 0x00, 0x00, 0x00, 0x64, 0x01, 0x03, // module 2 header
+            0xBE, 0xEF, 0x01,                               // module 2 info
+            0x00, 0x02, 0xC1, 0xC2,                         // privateData
+        ];
+        assert_eq!(msg.serialized_len(), 59);
+        assert_eq!(msg.serialized_len(), expected.len());
+        let mut buf = vec![0u8; expected.len()];
+        assert_eq!(msg.serialize_into(&mut buf).unwrap(), expected.len());
+        assert_eq!(buf, expected);
+        let parsed = UnMessage::parse(expected).unwrap();
+        assert_eq!(parsed, msg);
+        let mut again = vec![0u8; parsed.serialized_len()];
+        assert_eq!(parsed.serialize_into(&mut again).unwrap(), expected.len());
+        assert_eq!(again, expected, "DII byte-exact re-serialize");
+    }
+
+    #[test]
+    fn put_length_prefixed_returns_the_position_after_the_payload() {
+        let mut buf = [0u8; 8];
+        let end = put_length_prefixed(&mut buf, 2, &[0xAA, 0xBB, 0xCC]).unwrap();
+        assert_eq!(end, 7);
+        assert_eq!(&buf[2..7], &[0x00, 0x03, 0xAA, 0xBB, 0xCC]);
+    }
 }

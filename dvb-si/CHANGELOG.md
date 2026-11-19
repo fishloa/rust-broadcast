@@ -6,6 +6,7 @@
 - `DescriptorLoop::raw_tags`/`contains_tag` (including a descriptor that ends exactly at the loop end) and the `LangCode`/`DvbText` renderings are asserted literally (#2942).
 - `SiDemux`'s version/CRC gate is pinned at its boundaries: the minimum-length and CRC-length guards, the long-form/short-form change hash, the per-PID eviction fairness, the PAT generation and PAT-follow size checks, the `current_next` distinction, and the `SectionEvent` accessors (#2941).
 - INT, Downloadable Font Information, EIT, CIT, DIT, Container and DSM-CC sections get exact-minimum, maximal and loop-overrun tests, and every compared `DsmccSection` field is covered by an inequality test (#2943).
+- Carousel U-N messages are sized and parsed across message boundaries with non-empty adaptation, private data, group info and multi-sub-descriptor compatibility blocks, and a two-group `GroupInfoIndication` is byte-anchored; `put_length_prefixed`'s returned position is pinned (#3120).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
