@@ -4552,6 +4552,280 @@ mod tests {
         assert_eq!(parsed, t);
     }
 
+    /// A §8.2.2/§8.3.2 transformation matrix whose nine 16.16/2.30 entries all
+    /// have their low bytes non-zero: the identity matrix's low 16 bits are
+    /// always zero, so a read from the wrong byte index inside the 36-byte
+    /// matrix (audit 23) still picked up a zero and parsed "correctly".
+    #[test]
+    fn mvhd_and_tkhd_matrix_keep_every_non_zero_byte() {
+        let matrix: [i32; 9] = [
+            0x0001_8000,
+            0x0000_00FF,
+            0x1234_5678,
+            0x9ABC_DEF0u32 as i32,
+            0x0001_0001,
+            0x0102_0304,
+            0x7FFF_FFFF,
+            0x0000_0001,
+            0x4000_00AB,
+        ];
+
+        let mvhd = MovieHeaderBox {
+            matrix,
+            ..sample_mvhd_v0()
+        };
+        let bytes = mvhd.try_to_bytes().unwrap();
+        let parsed = MovieHeaderBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.matrix, matrix, "mvhd matrix entries");
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        let tkhd = TrackHeaderBox {
+            version: 0,
+            flags: 0,
+            creation_time: 0,
+            modification_time: 0,
+            track_id: TrackId::new(1),
+            duration: 0,
+            layer: 0,
+            alternate_group: 0,
+            volume: 0,
+            matrix,
+            width: 0,
+            height: 0,
+        };
+        let bytes = tkhd.try_to_bytes().unwrap();
+        let parsed = TrackHeaderBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.matrix, matrix, "tkhd matrix entries");
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// The trailing-byte shortfall `walk_children` reports must name the bytes
+    /// actually missing: a caller feeding buffer length back from `need` reads
+    /// the wrong amount otherwise (ISO/IEC 14496-12:2026 §4.2 box framing).
+    #[test]
+    fn walk_children_reports_the_trailing_child_header_shortfall() {
+        let after_one_child = b"\x00\x00\x00\x08free\xAA\xBB\xCC";
+        let b = match walk_children(after_one_child, |_| Ok(())) {
+            Err(Error::BufferTooShort(b)) => b,
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        };
+        assert_eq!(b.need, 16);
+        assert_eq!(b.have, 11);
+        assert_eq!(b.what, "container child header");
+
+        let at_start = b"\xAA\xBB\xCC";
+        let b = match walk_children(at_start, |_| Ok(())) {
+            Err(Error::BufferTooShort(b)) => b,
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        };
+        assert_eq!(b.need, 8);
+        assert_eq!(b.have, 3);
+        assert_eq!(b.what, "container child header");
+    }
+
+    /// `ChildOrder::is_empty` is the public way to ask whether a container
+    /// recorded a wire order (hand-built) or came off the wire (parsed).
+    #[test]
+    fn child_order_is_empty_only_before_a_child_is_recorded() {
+        let mut order = ChildOrder::default();
+        assert!(order.is_empty());
+        order.append_opaque(*b"free");
+        assert!(!order.is_empty());
+
+        let hand_built = MovieBox::new(sample_mvhd_v0(), alloc::vec![], None, alloc::vec![]);
+        assert!(hand_built.order.is_empty(), "hand-built moov has no order");
+        let bytes = hand_built.try_to_bytes().unwrap();
+        let parsed = MovieBox::parse(&bytes).unwrap();
+        assert!(
+            !parsed.order.is_empty(),
+            "a parsed moov must record the wire order it read"
+        );
+    }
+
+    /// A `url ` data entry's `location` is an external reference
+    /// (ISO/IEC 14496-12:2026 §8.7.2.2); dropping it rewrites the file as
+    /// self-contained and loses the data reference.
+    #[test]
+    fn url_data_entry_keeps_its_external_location() {
+        let url = DataEntryUrlBox {
+            version: 0,
+            flags: 0,
+            location: b"http://example.com/a.mp4\0".to_vec(),
+        };
+        assert_eq!(url.serialized_len(), 12 + 25);
+        let mut buf = alloc::vec![0u8; url.serialized_len()];
+        let n = url.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 37);
+        assert_eq!(&buf[4..8], b"url ");
+        assert_eq!(&buf[12..], b"http://example.com/a.mp4\0");
+        assert_eq!(DataEntryUrlBox::parse(&buf).unwrap(), url);
+
+        let dref = DataReferenceBox {
+            version: 0,
+            flags: 0,
+            entries: alloc::vec![DataEntry::Url(url)],
+        };
+        let bytes = dref.try_to_bytes().unwrap();
+        let parsed = DataReferenceBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries.len(), 1);
+        let DataEntry::Url(entry) = &parsed.entries[0] else {
+            panic!("expected a `url ` entry, got {:?}", parsed.entries[0]);
+        };
+        assert_eq!(entry.location, b"http://example.com/a.mp4\0");
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// `co64` is the chunk-offset table used past 4 GiB (§8.7.5.2): every
+    /// entry is 8 bytes wide and the box length must follow them.
+    #[test]
+    fn co64_entries_are_eight_bytes_wide() {
+        let co64 = ChunkLargeOffsetBox {
+            version: 0,
+            flags: 0,
+            entries: alloc::vec![0x1_0000_0000, 0x1122_3344_5566_7788],
+        };
+        assert_eq!(co64.serialized_len(), 8 + 4 + 4 + 16);
+        let mut buf = alloc::vec![0u8; co64.serialized_len()];
+        let n = co64.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 32);
+        let mut expected = alloc::vec![0, 0, 0, 32, b'c', b'o', b'6', b'4', 0, 0, 0, 0];
+        expected.extend_from_slice(&2u32.to_be_bytes());
+        expected.extend_from_slice(&0x1_0000_0000u64.to_be_bytes());
+        expected.extend_from_slice(&0x1122_3344_5566_7788u64.to_be_bytes());
+        assert_eq!(buf, expected);
+        assert_eq!(ChunkLargeOffsetBox::parse(&buf).unwrap(), co64);
+    }
+
+    /// `AudioSampleEntryV1`'s `samplerate` field is the placeholder `1 << 16`
+    /// (ISO/IEC 14496-12:2026 §12.2.3.2), with the real rate in `srat`.
+    #[test]
+    fn audio_sample_entry_v1_writes_the_samplerate_placeholder() {
+        assert_eq!(AudioSampleEntryV1::SAMPLERATE_PLACEHOLDER, 0x0001_0000);
+        let entry = FlacSampleEntry {
+            entry_version: AudioSampleEntryV1::ENTRY_VERSION,
+            reserved_1: [0; 6],
+            data_reference_index: 1,
+            channelcount: 2,
+            samplesize: 24,
+            compression_id_and_packet_size: [0; 4],
+            samplerate: AudioSampleEntryV1::SAMPLERATE_PLACEHOLDER,
+            config_boxes: alloc::vec![],
+        };
+        assert_eq!(entry.entry_version, 1);
+        let mut buf = alloc::vec![0u8; entry.serialized_len()];
+        let _ = entry.serialize_into(&mut buf).unwrap();
+        assert_eq!(&buf[16..18], &[0x00, 0x01], "entry_version");
+        assert_eq!(&buf[32..36], &[0x00, 0x01, 0x00, 0x00], "samplerate");
+    }
+
+    /// `stsc` entries are 12 bytes (§8.7.4.2) and every field must come from its
+    /// own offset; the four-CCs of a declared-but-absent entry are a shortfall,
+    /// not a silently shorter table.
+    #[test]
+    fn stsc_entries_read_their_own_fields_and_a_short_table_errors() {
+        let mut body = alloc::vec![0u8, 0, 0, 0];
+        body.extend_from_slice(&3u32.to_be_bytes());
+        for chunk in 1..=3u32 {
+            body.extend_from_slice(&chunk.to_be_bytes());
+            body.extend_from_slice(&(0x10 + chunk).to_be_bytes());
+            body.extend_from_slice(&(0x20 + chunk).to_be_bytes());
+        }
+        let mut bytes = alloc::vec![0u8; 8];
+        bytes[0..4].copy_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+        bytes[4..8].copy_from_slice(b"stsc");
+        bytes.extend_from_slice(&body);
+        let parsed = SampleToChunkBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries.len(), 3);
+        for (i, entry) in parsed.entries.iter().enumerate() {
+            let chunk = i as u32 + 1;
+            assert_eq!(entry.first_chunk, chunk);
+            assert_eq!(entry.samples_per_chunk, 0x10 + chunk);
+            assert_eq!(entry.sample_description_index, 0x20 + chunk);
+        }
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        let mut short = bytes.clone();
+        short.truncate(16 + 24);
+        short[0..4].copy_from_slice(&((16 + 24) as u32).to_be_bytes());
+        match SampleToChunkBox::parse(&short) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (60, 24, "SampleToChunkBox.entry_count")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// `stsz` with `sample_size == 0` carries a 4-byte per-sample table
+    /// (§8.7.3.2); a table one entry short of `sample_count` is a malformed
+    /// box, and the last entry that does fit must be read.
+    #[test]
+    fn stsz_per_sample_sizes_are_read_to_the_last_entry() {
+        let mut body = alloc::vec![0u8, 0, 0, 0];
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.extend_from_slice(&3u32.to_be_bytes());
+        for size in [0x0102u32, 0x0304, 0x0506] {
+            body.extend_from_slice(&size.to_be_bytes());
+        }
+        let mut bytes = alloc::vec![0u8; 8];
+        bytes[0..4].copy_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+        bytes[4..8].copy_from_slice(b"stsz");
+        bytes.extend_from_slice(&body);
+        let parsed = SampleSizeBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.sample_size, 0);
+        assert_eq!(parsed.sample_count, 3);
+        assert_eq!(parsed.entries, alloc::vec![0x0102, 0x0304, 0x0506]);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
+
+        let mut short = bytes.clone();
+        short.truncate(20 + 10);
+        short[0..4].copy_from_slice(&(20 + 10u32).to_be_bytes());
+        match SampleSizeBox::parse(&short) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(
+                    (b.need, b.have, b.what),
+                    (22, 10, "SampleSizeBox sample_count")
+                );
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// A `dref` whose last child is a truncated 8-byte box is an error, not a
+    /// table that silently stops one entry early (§8.7.2.1).
+    #[test]
+    fn dref_last_child_shorter_than_its_own_body_errors() {
+        let mut body = alloc::vec![0u8, 0, 0, 0, 0, 0, 0, 2];
+        body.extend_from_slice(&12u32.to_be_bytes());
+        body.extend_from_slice(b"url ");
+        body.extend_from_slice(&[0, 0, 0, 1]);
+        body.extend_from_slice(&8u32.to_be_bytes());
+        body.extend_from_slice(b"urn ");
+        let mut bytes = alloc::vec![0u8; 8];
+        bytes[0..4].copy_from_slice(&((8 + body.len()) as u32).to_be_bytes());
+        bytes[4..8].copy_from_slice(b"dref");
+        bytes.extend_from_slice(&body);
+        match DataReferenceBox::parse(&bytes) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (12, 8, "expected urn "));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        for short_len in 8..12usize {
+            match DataEntryUrnBox::parse(&[0u8; 12][..short_len]) {
+                Err(Error::BufferTooShort(b)) => {
+                    assert_eq!(b.need, 12, "urn at {short_len} bytes");
+                    assert_eq!(b.have, short_len);
+                    assert_eq!(b.what, "expected urn ");
+                }
+                other => panic!("urn at {short_len} bytes: expected BufferTooShort, got {other:?}"),
+            }
+        }
+    }
+
     #[test]
     fn stsc_round_trip() {
         let s = SampleToChunkBox {
