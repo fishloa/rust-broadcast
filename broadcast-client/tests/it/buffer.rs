@@ -688,6 +688,16 @@ fn no_pause_for_steady_delivery() {
             .any(|(t, e)| *t > last_arrival && matches!(e, BufferEvent::Pause { .. })),
         "the tail after the last chunk must exhaust the lead: {timed:?}"
     );
+    assert_eq!(
+        h.session.buffer_stats().stalls,
+        1,
+        "the tail is one starve, counted once"
+    );
+    assert_eq!(
+        h.session.stale_samples_dropped(),
+        0,
+        "a steady stream drops no stale sample"
+    );
     let ticks_with_position = h
         .log()
         .iter()

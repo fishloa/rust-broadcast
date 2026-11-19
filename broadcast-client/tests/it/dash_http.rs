@@ -732,3 +732,44 @@ fn an_mpd_retry_waits_for_retry_after() {
     assert_eq!(mpd.len(), 2);
     assert_eq!((mpd[1].send_elapsed_us - mpd[0].send_elapsed_us) / SEC, 7);
 }
+
+#[test]
+fn basic_credentials_replay_a_401_at_once() {
+    struct Gate(StaticBackend);
+    impl Backend for Gate {
+        fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+            if req.header("authorization").is_none() {
+                return Answer::status_with(
+                    401,
+                    crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"r\"")]),
+                );
+            }
+            self.0.serve(at, req)
+        }
+    }
+    let mut sim = DashSim::new(
+        &url_of(MANIFEST),
+        Config::default(),
+        World::new(AST_US),
+        Box::new(Gate(StaticBackend(Origin::new()))),
+    );
+    sim.session
+        .set_credentials(ts(0), Credentials::new("u", "p"))
+        .unwrap();
+    sim.run_for(SEC);
+    let mpd: Vec<&Logged> = sim.log.iter().filter(|l| l.is_mpd()).collect();
+    assert_eq!(mpd.len(), 2, "the 401 is replayed without a backoff wait");
+    assert!(
+        mpd[1].send_elapsed_us - mpd[0].send_elapsed_us < SEC,
+        "the replay follows at once ({} us), not after the first backoff step",
+        mpd[1].send_elapsed_us - mpd[0].send_elapsed_us
+    );
+    assert!(
+        mpd[1]
+            .header("authorization")
+            .is_some_and(|v| v.starts_with("Basic ")),
+        "{:?}",
+        mpd[1].headers
+    );
+    assert!(sim.errors().is_empty(), "{:?}", sim.errors());
+}

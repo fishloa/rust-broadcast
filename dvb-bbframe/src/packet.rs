@@ -1366,4 +1366,42 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[1][1], 0x22);
     }
+
+    #[test]
+    fn hem_size_hint_counts_complete_ups() {
+        // 3 * 187 + 50 bytes holds three whole 187-byte UPs.
+        let data = vec![0xAAu8; 3 * HEM_UP_SIZE + 50];
+        let mut iter = HemTsIter::new(&data, false);
+        assert_eq!(iter.size_hint(), (3, Some(3)));
+        assert!(iter.next().is_some());
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+
+        // NPD adds the 1-byte DNP trailer to the stride.
+        let mut npd_iter = HemTsIter::new(&data, true);
+        assert_eq!(npd_iter.size_hint(), (3, Some(3)));
+        assert!(npd_iter.next().is_some());
+        assert_eq!(npd_iter.size_hint(), (2, Some(2)));
+
+        // 558 bytes holds two 187-byte UPs but three of the 186-byte stride a
+        // dropped `+ 1`/`- 1` would compute.
+        let edge = vec![0xAAu8; 3 * (HEM_UP_SIZE - 1)];
+        assert_eq!(HemTsIter::new(&edge, false).size_hint(), (2, Some(2)));
+        assert_eq!(HemTsIter::new(&edge, true).size_hint(), (2, Some(2)));
+    }
+
+    #[test]
+    fn nm_size_hint_counts_complete_ups() {
+        let data = vec![0xAAu8; 3 * NM_UP_SIZE + 50];
+        let hdr = make_nm_header(0);
+        let mut iter = up_iter(&data, &hdr);
+        assert_eq!(iter.size_hint(), (3, Some(3)));
+        assert!(iter.next().is_some());
+        assert_eq!(iter.size_hint(), (2, Some(2)));
+
+        let hem_hdr = make_hem_header(false);
+        let mut hem_iter = up_iter(&data, &hem_hdr);
+        assert_eq!(hem_iter.size_hint(), (3, Some(3)));
+        assert!(hem_iter.next().is_some());
+        assert_eq!(hem_iter.size_hint(), (2, Some(2)));
+    }
 }

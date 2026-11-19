@@ -392,3 +392,80 @@ pub(crate) fn record_refusal(
     }
     actions.push_back(Action::Close { conn });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::source::fetch::conn::ConnAlloc;
+
+    #[derive(Debug, Clone, Copy, PartialEq)]
+    enum Kind {
+        Segment,
+    }
+
+    impl PurposeKind for Kind {
+        fn is_media(self) -> bool {
+            true
+        }
+
+        fn timeout_class(self) -> TimeoutClass {
+            TimeoutClass::Segment
+        }
+
+        fn oversize_field(self) -> Option<&'static str> {
+            None
+        }
+    }
+
+    fn timeouts() -> Timeouts {
+        Timeouts {
+            manifest_us: 1_000,
+            segment_us: 1_000,
+            aux_us: 1_000,
+        }
+    }
+
+    #[test]
+    fn clear_forgets_every_request_and_its_inactivity() {
+        let mut flight = InFlight::<Kind, ()>::new(timeouts(), 100, ConnAlloc::new());
+        let mut actions = VecDeque::new();
+        let req = Req::new(
+            Kind::Segment,
+            Url::parse("http://a/x.ts").unwrap(),
+            None,
+            16,
+            (),
+        );
+        flight.start(req, Vec::new(), "GET", 0, &mut actions);
+        let conn = *flight.reqs.keys().next().expect("a started request");
+        assert_eq!(flight.reqs.len(), 1);
+        flight.clear();
+        assert!(flight.reqs.is_empty(), "the request is gone");
+        assert_eq!(flight.deadlines.len(), 0, "its deadline is gone");
+        assert_eq!(
+            flight.inactive(10_000),
+            Expired::default(),
+            "nothing has a deadline to stall"
+        );
+        let mut refused = BTreeMap::new();
+        let mut reported = BTreeSet::new();
+        let mut events = VecDeque::new();
+        assert!(
+            flight
+                .on_data(
+                    conn,
+                    b"late",
+                    10_000,
+                    &mut refused,
+                    &mut reported,
+                    Outbox {
+                        actions: &mut actions,
+                        events: &mut events,
+                    }
+                )
+                .is_none(),
+            "data for a forgotten request is ignored"
+        );
+        assert!(events.is_empty());
+    }
+}
