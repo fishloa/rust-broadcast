@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Tests
 - Every registry `name()` label and its `Display` rendering (including each `reserved(0x…)` arm) is pinned to its ETSI TS 103 197 token (#3124).
+- Generic-message framing is pinned at its boundaries: a header-only frame, a zero-length parameter value, a truncated parameter value and a trailing partial TLV header (#3125).
 
 ## [0.10.0] - 2026-11-15
 

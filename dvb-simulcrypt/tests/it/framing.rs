@@ -5,7 +5,8 @@ use broadcast_common::traits::Serialize;
 use dvb_simulcrypt::{
     CpSigMessageType, CpSigParameterType, DataType, EcmgErrorStatus, EcmgScsMessageType,
     EcmgScsParameterType, EmmgErrorStatus, EmmgMuxMessageType, EmmgMuxParameterType, Interface,
-    MessageType, Parameter, ParameterType, SectionTspktFlag, SimulcryptMessage,
+    MessageType, PARAMETER_HEADER_LEN, Parameter, ParameterType, SectionTspktFlag,
+    SimulcryptMessage,
 };
 
 /// Construct an ECMG channel_setup with Super_CAS_id + ECM_channel_id, assert
@@ -703,5 +704,85 @@ fn cpsig_channel_setup_round_trip() {
         msg.try_to_bytes().unwrap(),
         mutated.try_to_bytes().unwrap(),
         "mutating a parameter changes the wire bytes"
+    );
+}
+
+/// A complete frame with `message_length == 0` is exactly the 5-byte header:
+/// `frame_len` must report it complete (not `None`, which a stream reader
+/// would treat as "read more" forever) and `parse_on` yields no parameters.
+#[test]
+fn header_only_frame_is_five_bytes_and_has_no_parameters() {
+    let wire: &[u8] = &[0x02, 0x00, 0x10, 0x00, 0x00];
+    assert_eq!(SimulcryptMessage::frame_len(wire), Some(5));
+
+    let parsed = SimulcryptMessage::parse_on(Interface::EcmgScs, wire).unwrap();
+    assert_eq!(parsed.protocol_version, 0x02);
+    assert_eq!(
+        parsed.message_type,
+        MessageType::EcmgScs(EcmgScsMessageType::Reserved(0x0010))
+    );
+    assert!(parsed.parameters.is_empty());
+    assert_eq!(parsed.try_to_bytes().unwrap(), wire);
+}
+
+/// TS 103 197 allows a zero-length `parameter_value`: the TLV header alone is
+/// exactly four bytes, which must parse as a present parameter.
+#[test]
+fn zero_length_parameter_parses_and_reserializes() {
+    #[rustfmt::skip]
+    let wire: &[u8] = &[
+        0x03, 0x00, 0x01, 0x00, 0x04, // header, message_length = 4
+        0x00, 0x0E, 0x00, 0x00,       // ECM_channel_id, parameter_length = 0
+    ];
+    let msg = SimulcryptMessage::parse_on(Interface::EcmgScs, wire).unwrap();
+    assert_eq!(
+        msg.message_type,
+        MessageType::EcmgScs(EcmgScsMessageType::ChannelSetup)
+    );
+    assert_eq!(msg.parameters.len(), 1);
+    assert_eq!(
+        msg.parameters[0].ptype,
+        ParameterType::EcmgScs(EcmgScsParameterType::EcmChannelId)
+    );
+    assert!(msg.parameters[0].value.is_empty());
+    assert_eq!(msg.body_len(), PARAMETER_HEADER_LEN);
+    assert_eq!(msg.try_to_bytes().unwrap(), wire);
+}
+
+/// A `parameter_length` that runs past the end of the message body is a typed
+/// error, never an out-of-range slice on hostile input.
+#[test]
+fn truncated_parameter_value_is_reported_with_the_remaining_bytes() {
+    #[rustfmt::skip]
+    let wire: &[u8] = &[
+        0x03, 0x00, 0x01, 0x00, 0x07,             // message_length = 4 + 3
+        0x00, 0x0E, 0x00, 0x0A, 0xAA, 0xBB, 0xCC, // declares 10, has 3
+    ];
+    assert_eq!(
+        SimulcryptMessage::parse_on(Interface::EcmgScs, wire).unwrap_err(),
+        dvb_simulcrypt::Error::TruncatedParameter {
+            ptype: 0x000E,
+            need: 10,
+            have: 3,
+        }
+    );
+}
+
+/// Trailing bytes that cannot hold a whole TLV header are a typed
+/// `BufferTooShort` whose `have` is the bytes actually left in the body.
+#[test]
+fn trailing_partial_parameter_header_is_buffer_too_short() {
+    #[rustfmt::skip]
+    let wire: &[u8] = &[
+        0x03, 0x00, 0x01, 0x00, 0x07,                   // message_length = 7
+        0x00, 0x0E, 0x00, 0x00, 0x01, 0x02, 0x03,       // one empty TLV + 3 bytes
+    ];
+    assert_eq!(
+        SimulcryptMessage::parse_on(Interface::EcmgScs, wire).unwrap_err(),
+        dvb_simulcrypt::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            need: PARAMETER_HEADER_LEN,
+            have: 3,
+            what: "parameter TLV header",
+        })
     );
 }
