@@ -1,6 +1,7 @@
-use crate::tshttp::TsHttpConfig as Config;
+use super::TsHttpClient;
 use crate::tshttp::StarveKind;
-use crate::tshttp::{Action, Event, TsHttpClient};
+use crate::tshttp::TsHttpConfig as Config;
+use crate::tshttp::{Action, Event};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -35,17 +36,17 @@ fn t03_opening_404_notfound_then_backoff() {
     let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(404, &[], ts(10));
-    assert!(matches!(
-        c.poll_event(),
-        Some(Event::NotFound)
-    ));
+    assert!(matches!(c.poll_event(), Some(Event::NotFound)));
     assert!(matches!(
         c.poll_event(),
         Some(Event::Reconnecting { attempt: 1 })
     ));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 }
 
 #[test]
@@ -58,9 +59,12 @@ fn t04_opening_other_status_or_error_backoff() {
         c.poll_event(),
         Some(Event::Reconnecting { attempt: 1 })
     ));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 
     // on_error
     let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
@@ -70,9 +74,12 @@ fn t04_opening_other_status_or_error_backoff() {
         c.poll_event(),
         Some(Event::Reconnecting { attempt: 1 })
     ));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 }
 
 #[test]
@@ -119,9 +126,12 @@ fn t06_awaiting_start_timeout() {
     assert_eq!(c.poll(), None);
     c.poll_timeout(ts(15000));
     assert_eq!(c.poll(), Some(Action::Abort));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 }
 
 #[test]
@@ -136,9 +146,12 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
         c.poll_event(),
         Some(Event::Reconnecting { attempt: 1 })
     ));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 
     // error
     let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
@@ -150,9 +163,12 @@ fn t07_awaiting_eof_or_error_before_sample_backoff() {
         c.poll_event(),
         Some(Event::Reconnecting { attempt: 1 })
     ));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 }
 
 #[test]
@@ -178,7 +194,7 @@ fn t08_playing_eof_reconnect_zero() {
 fn t09_failure_before_playing_attempt_increments_and_emits_reconnecting() {
     let mut c = TsHttpClient::with_seed("u", cfg(), ts(0), ts(0).as_millis());
     let _ = c.poll();
-    for expected in 1u64..=3 {
+    for expected in 1u32..=3 {
         c.on_error(ts(0));
         assert!(matches!(
             c.poll_event(),
@@ -272,9 +288,12 @@ fn t13_any_connected_reconnect_aborts() {
         let _ = c.poll();
         c.reconnect(ts(5));
         assert_eq!(c.poll(), Some(Action::Abort));
-        assert_eq!(c.poll(), Some(Action::Reconnect {
-            after: std::time::Duration::from_millis(0),
-        }));
+        assert_eq!(
+            c.poll(),
+            Some(Action::Reconnect {
+                after: std::time::Duration::from_millis(0),
+            })
+        );
     }
     // Awaiting
     {
@@ -284,9 +303,12 @@ fn t13_any_connected_reconnect_aborts() {
         let _ = c.poll_event();
         c.reconnect(ts(5));
         assert_eq!(c.poll(), Some(Action::Abort));
-        assert_eq!(c.poll(), Some(Action::Reconnect {
-            after: std::time::Duration::from_millis(0),
-        }));
+        assert_eq!(
+            c.poll(),
+            Some(Action::Reconnect {
+                after: std::time::Duration::from_millis(0),
+            })
+        );
     }
     // Playing
     {
@@ -297,9 +319,12 @@ fn t13_any_connected_reconnect_aborts() {
         c.feed(D.as_slice(), ts(1));
         c.reconnect(ts(5));
         assert_eq!(c.poll(), Some(Action::Abort));
-        assert_eq!(c.poll(), Some(Action::Reconnect {
-            after: std::time::Duration::from_millis(0),
-        }));
+        assert_eq!(
+            c.poll(),
+            Some(Action::Reconnect {
+                after: std::time::Duration::from_millis(0),
+            })
+        );
     }
 }
 
