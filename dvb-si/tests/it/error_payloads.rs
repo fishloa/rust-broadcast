@@ -460,10 +460,12 @@ fn rst_unaligned_entry_length() {
 
 #[test]
 fn tot_descriptors_past_body_end() {
-    let bytes = seal(vec![
-        0x73, 0xF0, 0x00, 0xE4, 0x09, 0x12, 0x34, 0x56, 0xF0, 0x01,
-    ]);
-    assert_eq!(TotSection::parse(&bytes).unwrap_err(), overflow(1, 0));
+    // 19-byte section: the declared 4095-byte loop leaves 3 bytes of body.
+    let mut bytes = vec![
+        0x73, 0xF0, 0x00, 0xE4, 0x09, 0x12, 0x34, 0x56, 0xFF, 0xFF, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    ];
+    bytes = seal(bytes);
+    assert_eq!(TotSection::parse(&bytes).unwrap_err(), overflow(0x0FFF, 5));
 }
 
 #[test]
@@ -479,12 +481,13 @@ fn sdt_shorter_than_minimum() {
 
 #[test]
 fn sdt_trailing_service_bytes() {
+    // 17-byte section: two bytes after the fixed header fit no 5-byte entry.
     let bytes = seal(vec![
-        0x42, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xAA,
+        0x42, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xAA, 0xBB,
     ]);
     assert_eq!(
         SdtSection::parse(&bytes).unwrap_err(),
-        too_short(1, 0, "SdtSection trailing service bytes")
+        too_short(2, 0, "SdtSection trailing service bytes")
     );
 }
 
@@ -698,7 +701,30 @@ fn unt(common_desc_len: u16, rest: &[u8]) -> Vec<u8> {
 
 #[test]
 fn unt_common_descriptors_past_body_end() {
-    assert_eq!(UntSection::parse(&unt(1, &[])).unwrap_err(), overflow(1, 0));
+    // 19-byte section with common_descriptors_length 2: one byte of body left.
+    assert_eq!(
+        UntSection::parse(&unt(2, &[0xAA])).unwrap_err(),
+        overflow(2, 1)
+    );
+}
+
+#[test]
+fn unt_compatibility_descriptor_ending_at_body_end() {
+    // compat_desc_len 0 ends exactly at the payload end; the platform loop
+    // length field is then missing.
+    assert_eq!(
+        UntSection::parse(&unt(0, &[0x00, 0x00])).unwrap_err(),
+        too_short(18, 16, "UntSection platform_loop_length")
+    );
+}
+
+#[test]
+fn unt_compatibility_descriptor_shortfall_after_the_length_field() {
+    // compat_desc_len 4 with 3 bytes after the length field.
+    assert_eq!(
+        UntSection::parse(&unt(0, &[0x00, 0x04, 0xAA])).unwrap_err(),
+        overflow(4, 1)
+    );
 }
 
 #[test]
