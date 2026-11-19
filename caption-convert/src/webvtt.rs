@@ -386,4 +386,26 @@ mod tests {
             assert_eq!(parse_webvtt(&doc).unwrap().cues.len(), 1, "{head:?}");
         }
     }
+
+    #[test]
+    fn trailing_whitespace_after_the_timing_line_is_not_settings() {
+        let doc = "WEBVTT\n\n00:01.000 --> 00:02.000   \nhi\n";
+        let parsed = parse_webvtt(doc).unwrap();
+        assert!(!parsed.lossy);
+        assert_eq!(parsed.cues.len(), 1);
+        assert_eq!(parsed.cues[0].text, "hi");
+        assert_eq!(parsed.cues[0].start, timed_metadata::MediaTime(90_000));
+        assert_eq!(parsed.cues[0].end, timed_metadata::MediaTime(180_000));
+    }
+
+    #[test]
+    fn malformed_timing_error_names_the_offending_line() {
+        let err = parse_webvtt("WEBVTT\n\ncue-1\ngarbage\nhi\n").unwrap_err();
+        assert_eq!(
+            err,
+            Error::InvalidWebVtt(WebVttError::MalformedTiming {
+                line: "cue block has no '-->' in its timing line: \"garbage\"".to_string(),
+            })
+        );
+    }
 }

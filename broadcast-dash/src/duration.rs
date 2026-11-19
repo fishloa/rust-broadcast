@@ -79,13 +79,12 @@ pub fn parse_iso8601_duration(s: &str) -> Result<Duration> {
 
 /// Format a [`Duration`] as an `xs:duration` string the parser accepts.
 ///
-/// The inverse of [`parse_iso8601_duration`]: emits `PT{secs}S`, appending a
-/// nine-digit fractional part only when the duration has sub-second
-/// nanoseconds.
+/// The inverse of [`parse_iso8601_duration`]: the value is rendered by
+/// `jiff`'s ISO 8601 duration printer, which writes an `H`/`M`/`S`
+/// designator for each non-zero component (`PT5S`, `PT1H2M3.5S`) and only as
+/// many fractional digits as the nanoseconds require.
 #[must_use]
 pub fn xs_duration(d: Duration) -> String {
-    let secs = d.as_secs();
-    let _ = secs;
     let signed = jiff::SignedDuration::try_from(d).unwrap_or(jiff::SignedDuration::MAX);
     jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed)
 }

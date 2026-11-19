@@ -967,10 +967,300 @@ mod tests {
     }
 
     #[test]
+    fn phase_labels_match_the_spec_names() {
+        assert_eq!(Phase::SlowStart.name(), "SlowStart");
+        assert_eq!(Phase::CongestionAvoidance.name(), "CongestionAvoidance");
+    }
+
+    #[test]
     fn default_matches_new_zero() {
         let a = FileCc::default();
         let b = FileCc::new(0);
         assert_eq!(a.cwnd_size(), b.cwnd_size());
         assert_eq!(a.phase(), b.phase());
+    }
+
+    /// A Congestion Avoidance engine with a hand-set period and
+    /// `LastDecPeriod`, so the Step 5 formula can be evaluated from known
+    /// inputs (`private/specs-verified/rules/srt-congestion.md` §5.2.1.2 (1)
+    /// Step 5).
+    fn ca_engine(pkt_snd_period_us: f64, last_dec_period_us: f64) -> FileCc {
+        let mut cc = FileCc::new(0);
+        cc.phase = Phase::CongestionAvoidance;
+        cc.pkt_snd_period_us = pkt_snd_period_us;
+        cc.last_dec_period_us = last_dec_period_us;
+        cc
+    }
+
+    fn one_rc_interval_ack(cc: &mut FileCc, receiving_rate_pps: u64, est_link_capacity_pps: u64) {
+        cc.on_ack(
+            Timestamp::from_millis(10),
+            0,
+            receiving_rate_pps,
+            est_link_capacity_pps,
+            Duration::from_millis(100),
+        );
+    }
+
+    #[test]
+    fn step5_uses_the_minimum_increase_when_available_bandwidth_is_not_positive() {
+        let mut cc = ca_engine(10.0, 10.0);
+        one_rc_interval_ack(&mut cc, 5_000, 100_000);
+        // lossBandwidth = 2 * (1e6/10) = 200000, clamped by EST_LINK_CAPACITY
+        // to 100000; B = 100000 - 1e6/10 = 0 -> inc = 1/1500;
+        // PKT_SND_PERIOD = (10*10000)/(10*(1/1500) + 10000).
+        assert_eq!(cc.pkt_snd_period_us(), 9.999993333337779);
+        assert_eq!(cc.cwnd_size(), 566.0);
+    }
+
+    #[test]
+    fn step5_clamps_available_bandwidth_to_ninth_of_link_capacity() {
+        let mut cc = ca_engine(20.0, 10.0);
+        one_rc_interval_ack(&mut cc, 5_000, 200_000);
+        // linkCapacity = min(200000, 200000) = 200000; B = 200000 - 50000 =
+        // 150000, clamped to 200000/9; inc = 1.0;
+        // PKT_SND_PERIOD = (20*10000)/(20*1 + 10000).
+        assert_eq!(cc.pkt_snd_period_us(), 19.960079840319363);
+    }
+
+    #[test]
+    fn step5_clamp_requires_the_period_to_be_strictly_above_last_dec_period() {
+        let mut cc = ca_engine(10.0, 10.0);
+        one_rc_interval_ack(&mut cc, 5_000, 200_000);
+        // PKT_SND_PERIOD == LastDecPeriod, so the clamp must NOT apply:
+        // B = 100000, inc = pow10(100000*1500*8)*1.5e-6/1500 = 10.0;
+        // PKT_SND_PERIOD = (10*10000)/(10*10 + 10000).
+        assert_eq!(cc.pkt_snd_period_us(), 9.900990099009901);
+    }
+
+    #[test]
+    fn step5_uses_loss_bandwidth_when_it_is_below_link_capacity() {
+        let mut cc = ca_engine(100.0, 100.0);
+        one_rc_interval_ack(&mut cc, 5_000, 1_000_000);
+        // lossBandwidth = 2 * (1e6/100) = 20000, below EST_LINK_CAPACITY, so
+        // linkCapacity = 20000 and B = 10000 (the clamp requires
+        // PKT_SND_PERIOD > LastDecPeriod, which is false here);
+        // inc = pow10(10000*1500*8)*1.5e-6/1500 = 1.0.
+        assert_eq!(cc.pkt_snd_period_us(), 99.00990099009901);
+    }
+
+    #[test]
+    fn step5_does_not_clamp_when_available_bandwidth_is_below_ninth_of_link_capacity() {
+        let mut cc = ca_engine(1001.0, 1.0);
+        one_rc_interval_ack(&mut cc, 5_000, 1_000);
+        // linkCapacity = min(2000000, 1000) = 1000; B = 1000 - 1e6/1001 =
+        // 0.999... < 1000/9, so the clamp does not fire; inc = 1/1500.
+        assert_eq!(cc.pkt_snd_period_us(), 1000.9332043908271);
+    }
+
+    #[test]
+    fn step6_max_bw_clamp_binds_with_the_configured_bandwidth() {
+        let mut cc = ca_engine(10.0, 10.0);
+        cc.set_max_bw_bytes_per_sec(Some(3_000));
+        one_rc_interval_ack(&mut cc, 5_000, 100_000);
+        // MIN_PERIOD = 1e6/(3000/1500) = 500000 us, above the Step 5 result.
+        assert_eq!(cc.pkt_snd_period_us(), 500_000.0);
+        assert_eq!(cc.max_bw_bytes_per_sec(), Some(3_000));
+    }
+
+    #[test]
+    fn rate_control_gate_passes_at_exactly_rc_interval() {
+        let mut cc = FileCc::new(0);
+        cc.on_ack(
+            Timestamp::from_millis(0),
+            0,
+            0,
+            0,
+            Duration::from_millis(100),
+        );
+        cc.on_ack(
+            Timestamp::from_millis(10),
+            10,
+            0,
+            0,
+            Duration::from_millis(100),
+        );
+        assert_eq!(
+            cc.cwnd_size(),
+            26.0,
+            "an ACK exactly RC_INTERVAL later must not be gated"
+        );
+    }
+
+    #[test]
+    fn slow_start_survives_cwnd_equal_to_max_cwnd_size() {
+        let mut cc = FileCc::new(0);
+        cc.set_max_cwnd_size(26.0);
+        cc.on_ack(
+            Timestamp::from_millis(10),
+            10,
+            0,
+            0,
+            Duration::from_millis(100),
+        );
+        assert_eq!(cc.cwnd_size(), 26.0);
+        assert_eq!(cc.phase(), Phase::SlowStart);
+        assert_eq!(cc.pkt_snd_period_us(), 1.0);
+    }
+
+    #[test]
+    fn end_slow_start_uses_receiving_rate_when_known() {
+        let mut cc = FileCc::new(0);
+        cc.on_ack(
+            Timestamp::from_millis(10),
+            0,
+            5_000,
+            0,
+            Duration::from_millis(100),
+        );
+        assert_eq!(cc.receiving_rate_pps(), 5_000);
+        cc.on_loss(1, 1, 0.9);
+        assert_eq!(cc.phase(), Phase::CongestionAvoidance);
+        assert_eq!(cc.pkt_snd_period_us(), 200.0);
+    }
+
+    #[test]
+    fn end_slow_start_falls_back_to_cwnd_over_rtt_when_rate_is_unknown() {
+        let mut cc = FileCc::new(0);
+        cc.on_ack(
+            Timestamp::from_millis(10),
+            0,
+            0,
+            0,
+            Duration::from_millis(100),
+        );
+        assert_eq!(cc.receiving_rate_pps(), 0);
+        cc.on_timeout();
+        assert_eq!(cc.phase(), Phase::CongestionAvoidance);
+        // CWND_SIZE = 16, RTT + RC_INTERVAL = 110000 us.
+        assert_eq!(cc.pkt_snd_period_us(), 0.00014545454545454546);
+    }
+
+    #[test]
+    fn loss_ratio_exactly_two_percent_starts_a_new_congestion_period() {
+        let mut cc = ca_engine(10.0, 1.0);
+        cc.on_loss(10, 100, 0.02);
+        assert!(cc.b_loss());
+        assert_eq!(cc.pkt_snd_period_us(), 10.3);
+        assert_eq!(cc.last_dec_seq(), Some(100));
+        assert_eq!(cc.nak_count(), 1);
+        assert_eq!(cc.dec_count(), 1);
+    }
+
+    #[test]
+    fn loss_ratio_below_two_percent_only_records_last_dec_period() {
+        let mut cc = ca_engine(10.0, 1.0);
+        cc.on_loss(10, 100, 0.019);
+        assert_eq!(cc.pkt_snd_period_us(), 10.0);
+        assert_eq!(cc.last_dec_seq(), None);
+        assert_eq!(cc.last_dec_period_us(), 10.0);
+        assert_eq!(cc.nak_count(), 0);
+    }
+
+    #[test]
+    fn new_congestion_period_updates_avg_nak_num_from_the_finished_period() {
+        let mut cc = ca_engine(10.0, 1.0);
+        cc.avg_nak_num = 1.5;
+        cc.nak_count = 7;
+        cc.on_loss(10, 100, 0.9);
+        // AvgNAKNum = 0.97*1.5 + 0.03*7 = 1.455 + 0.21 = 1.665.
+        assert_eq!(cc.avg_nak_num(), 1.665);
+        assert_eq!(cc.est_link_capacity_pps(), 0);
+    }
+
+    #[test]
+    fn repeat_decrease_requires_nak_count_to_equal_dec_count_times_dec_random() {
+        let mut cc = ca_engine(10.0, 1.0);
+        cc.last_dec_seq = Some(100);
+        cc.dec_count = 2;
+        cc.nak_count = 4;
+        cc.dec_random = 2.0;
+        cc.on_loss(50, 120, 0.9);
+        assert_eq!(cc.pkt_snd_period_us(), 10.3);
+        assert_eq!(cc.dec_count(), 3);
+        assert_eq!(cc.nak_count(), 5);
+        assert_eq!(cc.last_dec_seq(), Some(120));
+    }
+
+    #[test]
+    fn repeat_decrease_does_not_fire_on_a_non_matching_nak_count() {
+        let mut cc = ca_engine(10.0, 1.0);
+        cc.last_dec_seq = Some(100);
+        cc.dec_count = 2;
+        cc.nak_count = 5;
+        cc.dec_random = 2.0;
+        cc.on_loss(50, 120, 0.9);
+        assert_eq!(cc.pkt_snd_period_us(), 10.0);
+        assert_eq!(cc.dec_count(), 2);
+        assert_eq!(cc.nak_count(), 5);
+        assert_eq!(cc.last_dec_seq(), Some(100));
+    }
+
+    #[test]
+    fn fmin_and_fmax_pick_the_named_extremum() {
+        assert_eq!(fmin(1.0, 2.0), 1.0);
+        assert_eq!(fmin(2.0, 1.0), 1.0);
+        assert_eq!(fmin(2.0, 3.0), 2.0);
+        assert_eq!(fmax(2.0, 1.0), 2.0);
+        assert_eq!(fmax(1.0, 2.0), 2.0);
+        assert_eq!(fmax(3.0, 2.0), 3.0);
+    }
+
+    #[test]
+    fn fround_matches_round_half_away_from_zero() {
+        assert_eq!(fround(-2.5), -3.0);
+        assert_eq!(fround(2.5), 3.0);
+        assert_eq!(fround(0.49), 0.0);
+        assert_eq!(fround(0.5), 1.0);
+        assert_eq!(fround(-0.5), -1.0);
+        assert_eq!(fround(7.0), 7.0);
+    }
+
+    #[test]
+    fn xorshift_seed_one_matches_the_reference_sequence() {
+        let mut rng = XorShift64::new(1);
+        assert_eq!(rng.next_unit(), 0.7303895583163529);
+        assert_eq!(rng.next_unit(), 0.01114514886742557);
+        assert_eq!(rng.next_unit(), 0.992548190308695);
+    }
+
+    #[test]
+    fn dec_random_sequence_matches_the_reference_draws() {
+        let mut cc = FileCc::new(0);
+        cc.avg_nak_num = 8.0;
+        assert_eq!(cc.next_dec_random(), 4.0);
+        assert_eq!(cc.next_dec_random(), 7.0);
+        assert_eq!(cc.next_dec_random(), 4.0);
+    }
+
+    #[test]
+    fn dec_random_covers_a_range_of_integer_values() {
+        let mut cc = FileCc::new(0);
+        cc.avg_nak_num = 8.0;
+        let mut seen = [false; 9];
+        for _ in 0..1_000 {
+            let v = cc.next_dec_random();
+            assert_eq!(v, v.round(), "DecRandom must be a whole number (got {v})");
+            assert!((1.0..=8.0).contains(&v), "DecRandom out of range: {v}");
+            seen[v as usize] = true;
+        }
+        let distinct = seen.iter().filter(|&&s| s).count();
+        assert!(
+            distinct >= 4,
+            "DecRandom must vary across draws (saw {distinct} distinct values)"
+        );
+    }
+
+    #[test]
+    fn accessors_report_the_fed_and_configured_values() {
+        let mut cc = ca_engine(10.0, 1.0);
+        cc.set_max_bw_bytes_per_sec(Some(1_234));
+        assert_eq!(cc.max_bw_bytes_per_sec(), Some(1_234));
+        one_rc_interval_ack(&mut cc, 5_000, 100_000);
+        assert_eq!(cc.receiving_rate_pps(), 5_000);
+        assert_eq!(cc.est_link_capacity_pps(), 100_000);
+        cc.on_loss(10, 100, 0.9);
+        assert_eq!(cc.last_dec_seq(), Some(100));
+        assert_eq!(cc.nak_count(), 1);
     }
 }

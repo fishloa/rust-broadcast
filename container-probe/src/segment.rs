@@ -361,4 +361,24 @@ mod tests {
             "hls/cmaf-fmp4/index0.m4s"
         )));
     }
+
+    /// Three lanes are already "trusted": half of them synced suffices, so a
+    /// body whose third packet is damaged is still media.
+    #[test]
+    fn three_lanes_need_only_half_synced() {
+        let whole = test_fixtures::read("ts/h264-aac.ts");
+        let mut body = whole[..3 * TS_PACKET_SIZE].to_vec();
+        body[2 * TS_PACKET_SIZE] = 0;
+        assert!(ts_structure(&body));
+    }
+
+    /// A to-EOF `uuid` box needs its 16-byte extended type even when the size
+    /// field says "runs to the end"; a 20-byte body is one byte short.
+    #[test]
+    fn a_to_eof_uuid_box_without_its_usertype_is_rejected() {
+        let mut bytes = vec![0, 0, 0, 0];
+        bytes.extend_from_slice(b"uuid");
+        bytes.extend_from_slice(&[7u8; 12]);
+        assert_eq!(next_box(&bytes), None);
+    }
 }

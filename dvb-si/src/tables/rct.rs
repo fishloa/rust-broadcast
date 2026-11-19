@@ -1420,10 +1420,10 @@ mod tests {
         );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
-        let mut buf2 = vec![0u8; rct.serialized_len()];
-        rct.serialize_into(&mut buf2).unwrap();
-        assert_eq!(buf, buf2, "byte-exact re-serialize");
         let p = RctSection::parse(&buf).unwrap();
+        let mut buf2 = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
         assert_eq!(p.links.len(), 1);
         assert_eq!(p.links[0].link_type, LinkType::BinaryLocator);
         let l = p.links[0].dvb_binary_locator.as_ref().unwrap();

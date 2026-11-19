@@ -359,4 +359,36 @@ mod tests {
             Err(crate::rfc2326_lex::LexError(..))
         ));
     }
+
+    #[test]
+    fn digits_accept_one_to_max_digits_of_ascii_digits_only() {
+        assert_eq!(digits("123", 3, "n").unwrap(), 123);
+        assert_eq!(digits(" 7 ", 3, "n").unwrap(), 7);
+        assert!(matches!(digits("", 3, "n"), Err(LexError(..))));
+        assert!(matches!(digits("1234", 3, "n"), Err(LexError(..))));
+        assert!(matches!(digits("12a", 3, "n"), Err(LexError(..))));
+        assert_eq!(digits_u64("123", 3, "n").unwrap(), 123);
+        assert_eq!(digits_u64(" 7 ", 3, "n").unwrap(), 7);
+        assert!(matches!(digits_u64("", 3, "n"), Err(LexError(..))));
+        assert!(matches!(digits_u64("1234", 3, "n"), Err(LexError(..))));
+        assert!(matches!(digits_u64("12a", 3, "n"), Err(LexError(..))));
+    }
+
+    #[test]
+    fn a_range_end_at_the_maximum_is_accepted_and_one_over_is_not() {
+        assert_eq!(range("255", 3, 255, "ch").unwrap(), (255, 255));
+        assert_eq!(range("0-255", 3, 255, "ch").unwrap(), (0, 255));
+        assert!(matches!(range("256", 3, 255, "ch"), Err(LexError(..))));
+        assert!(matches!(range("1-300", 3, 255, "ch"), Err(LexError(..))));
+        assert!(matches!(range("5-3", 3, 255, "ch"), Err(LexError(..))));
+    }
+
+    #[test]
+    fn the_bound_check_precedes_the_reversal_check() {
+        assert!(matches!(
+            range("300-1", 3, 255, "ch"),
+            Err(LexError(ref msg)) if msg.contains("exceeds 255")
+        ));
+        assert!(matches!(range("1-300", 3, 255, "ch"), Err(LexError(..))));
+    }
 }
