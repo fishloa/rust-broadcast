@@ -325,6 +325,40 @@ mod tests {
     }
 
     #[test]
+    fn scr_seconds_follow_the_actual_clock_value() {
+        assert_eq!(
+            Scr {
+                base: 0,
+                extension: 0,
+            }
+            .seconds(),
+            0.0
+        );
+        let half = Scr {
+            base: 45_000,
+            extension: 150,
+        };
+        assert!(
+            (half.seconds() - 0.500_005_555_555_555_6).abs() < 1e-12,
+            "got {}",
+            half.seconds()
+        );
+    }
+
+    #[test]
+    fn bad_scr_prefix_reports_the_two_prefix_bits() {
+        let mut enc = write_scr_field(Scr {
+            base: 0,
+            extension: 0,
+        });
+        enc[0] = 0x80; // '10' prefix
+        assert_eq!(
+            read_scr_field(&enc, "SCR").unwrap_err(),
+            Error::BadScrPrefix(0b10)
+        );
+    }
+
+    #[test]
     fn scr_from_clock27_round_trips_the_validated_value() {
         let clock = broadcast_common::clock33::Clock27::from_parts(100, 50).expect("in range");
         let scr = Scr::from_clock27(clock);

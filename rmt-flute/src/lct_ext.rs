@@ -280,6 +280,7 @@ mod tests {
     use super::*;
     use alloc::string::ToString;
     use alloc::vec;
+    use broadcast_common::Serialize;
 
     #[test]
     fn ext_type_round_trip() {
@@ -411,5 +412,42 @@ mod tests {
         assert_eq!(t.slc, Some(7));
         assert_eq!(t.trailing, vec![0xDE, 0xAD, 0xBE, 0xEF]);
         assert_eq!(t.to_content().unwrap(), content);
+    }
+
+    #[test]
+    fn ext_time_serialized_len_counts_every_present_value() {
+        let all = ExtTime {
+            sct_high: Some(1),
+            sct_low: Some(2),
+            ert: Some(3),
+            slc: Some(4),
+            ..Default::default()
+        };
+        assert_eq!(all.serialized_len(), 20);
+        assert_eq!(all.to_content().unwrap().len(), 18);
+
+        let three = ExtTime {
+            sct_high: Some(1),
+            sct_low: Some(2),
+            ert: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(three.serialized_len(), 16);
+        assert_eq!(three.to_content().unwrap().len(), 14);
+
+        let trailing = ExtTime {
+            sct_high: Some(1),
+            ert: Some(3),
+            trailing: vec![0u8; 4],
+            ..Default::default()
+        };
+        assert_eq!(trailing.serialized_len(), 16);
+        assert_eq!(trailing.to_content().unwrap().len(), 14);
+
+        let content = all.to_content().unwrap();
+        let mut buf = vec![0u8; content.len()];
+        assert_eq!(all.serialize_into(&mut buf).unwrap(), content.len());
+        assert_eq!(buf, content);
+        assert_eq!(ExtTime::parse(&buf).unwrap(), all);
     }
 }
