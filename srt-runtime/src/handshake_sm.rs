@@ -1641,8 +1641,8 @@ mod tests {
     #[test]
     fn cookie_and_listener_ids_use_both_halves_of_the_secret() {
         const LOW: u128 = 0x1111_2222_3333_4444;
-        let a = u128::from(LOW) | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
-        let high_differs = u128::from(LOW) | (u128::from(0xAAAA_BBBB_CCCC_EEEEu64) << 64);
+        let a = LOW | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
+        let high_differs = LOW | (u128::from(0xAAAA_BBBB_CCCC_EEEEu64) << 64);
         let low_differs =
             u128::from(0x1111_2222_3333_5555u64) | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
         assert_ne!(derive_cookie(7, 9, a), derive_cookie(7, 9, high_differs));

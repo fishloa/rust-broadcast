@@ -768,7 +768,7 @@ mod tests {
             srt_socket_id: 0x3333_4444,
             syn_cookie: 0xC0FF_EE00,
             peer_ip: [0; 4],
-            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
+            extensions: HandshakeExtensions::parse(ext).expect("test extension bytes"),
         })
     }
 
