@@ -1219,4 +1219,148 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn l1post_len_bits_pin_the_figure_widths() {
+        // 35 header + 35 RF + 34 FEF + 89 PLP + 32 post-loop = 225
+        assert_eq!(synthetic_conf(1, true, 1, 0).len_bits(), 225);
+        // + two 32-bit AUX entries (4 + 28 each) = 289
+        assert_eq!(synthetic_conf(1, true, 1, 2).len_bits(), 289);
+        // 71 header + 48 PLP + 8 post-loop + two 48-bit AUX entries = 223
+        assert_eq!(synthetic_dyn(1, 2).len_bits(), 223);
+    }
+
+    fn full_post() -> L1Post {
+        let mut conf = synthetic_conf(1, true, 1, 2);
+        conf.aux[0].aux_private_conf = 0x0012_3456;
+        conf.aux[1].aux_stream_type = AuxStreamType::TxSig;
+        conf.aux[1].aux_private_conf = 0x0ABC_DEF0;
+        let mut dyn_ = synthetic_dyn(1, 2);
+        dyn_.aux[0].aux_private_dyn = 0x0011_2233_4455;
+        dyn_.aux[1].aux_private_dyn = 0x66AA_BBCC_DDEE;
+        L1Post {
+            configurable: conf,
+            dynamic_current: dyn_,
+            dynamic_next: None,
+            extension: vec![
+                L1ExtBlock {
+                    block_type: 0x01,
+                    data_bit_len: 13,
+                    data: vec![0xAB, 0xC0],
+                },
+                L1ExtBlock {
+                    block_type: 0x02,
+                    data_bit_len: 30,
+                    data: vec![0x12, 0x34, 0x56, 0x78],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn l1post_framed_round_trip_with_aux_and_two_ext_blocks() {
+        let post = full_post();
+        let framed = post.to_l1_current_framed().unwrap();
+        assert_eq!(framed.len(), 83);
+        assert_eq!(&framed[0..2], &289u16.to_be_bytes());
+        assert_eq!(&framed[39..41], &223u16.to_be_bytes());
+        assert_eq!(&framed[69..71], &91u16.to_be_bytes());
+
+        let parsed = parse_l1_post_from_framed(&framed, 1, true).unwrap();
+        assert_eq!(parsed, post);
+        assert_eq!(parsed.extension.len(), 2);
+    }
+
+    #[test]
+    fn framed_section_truncation_reports_the_exact_need() {
+        let framed = full_post().to_l1_current_framed().unwrap();
+        let cases = [
+            (0usize, 2usize, "L1CONF_LEN"),
+            (1, 2, "L1CONF_LEN"),
+            (2, 39, "L1CONF"),
+            (38, 39, "L1CONF"),
+            (39, 41, "L1DYN_CURR_LEN"),
+            (40, 41, "L1DYN_CURR_LEN"),
+            (41, 69, "L1DYN_CURR"),
+            (68, 69, "L1DYN_CURR"),
+            (69, 71, "L1EXT_LEN"),
+            (70, 71, "L1EXT_LEN"),
+            (71, 83, "L1EXT"),
+            (82, 83, "L1EXT"),
+        ];
+        for (have, need, what) in cases {
+            assert_eq!(
+                parse_l1_post_from_framed(&framed[..have], 1, true).err(),
+                Some(crate::Error::BufferTooShort(
+                    broadcast_common::error::BufferTooShort { need, have, what }
+                )),
+                "truncated at {have} bytes"
+            );
+        }
+        assert!(parse_l1_post_from_framed(&framed, 1, true).is_ok());
+    }
+
+    fn pre_with_s2(s2: u8) -> crate::payload::l1::pre::L1Pre {
+        crate::payload::l1::pre::L1Pre {
+            type_: crate::payload::l1::TxInputStreamType::TsOnly,
+            bwt_ext: false,
+            s1: crate::payload::fef_null::S1Field::V0,
+            s2,
+            l1_repetition_flag: false,
+            guard_interval: crate::payload::GuardInterval::G1_8,
+            papr: 0,
+            l1_mod: crate::payload::L1Modulation::Qpsk,
+            l1_cod: crate::payload::L1CodeRate::R1_2,
+            l1_fec_type: crate::payload::L1FecType::Ldpc16K,
+            l1_post_size: 10,
+            l1_post_info_size: 20,
+            pilot_pattern: crate::payload::PilotPattern::Pp1,
+            tx_id_availability: 1,
+            cell_id: 0x1234,
+            network_id: 0x5678,
+            t2_system_id: 0x9ABC,
+            num_t2_frames: 2,
+            num_data_symbols: 100,
+            regen_flag: 0,
+            l1_post_extension: true,
+            num_rf: 1,
+            current_rf_idx: 0,
+            t2_version: crate::payload::T2Version::V1_1_1,
+            l1_post_scrambled: false,
+            t2_base_lite: false,
+            reserved: 0,
+        }
+    }
+
+    fn through_l1_current(pre_s2: u8, post: &L1Post) -> crate::error::Result<L1Post> {
+        let mut data = pre_with_s2(pre_s2).to_bytes().unwrap().to_vec();
+        data.extend_from_slice(&post.to_l1_current_framed().unwrap());
+        let payload = crate::payload::l1_current::L1CurrentPayload {
+            frame_idx: 0,
+            freq_source: crate::payload::l1_current::FrequencySource::UseL1CurrentData,
+            l1_current_data: &data,
+        };
+        payload.l1_post()
+    }
+
+    #[test]
+    fn l1_current_fef_presence_is_the_s2_lsb() {
+        let with_fef = L1Post {
+            configurable: synthetic_conf(1, true, 1, 0),
+            dynamic_current: synthetic_dyn(1, 0),
+            dynamic_next: None,
+            extension: Vec::new(),
+        };
+        assert_eq!(through_l1_current(0b011, &with_fef).unwrap(), with_fef);
+
+        let without_fef = L1Post {
+            configurable: synthetic_conf(1, false, 1, 0),
+            dynamic_current: synthetic_dyn(1, 0),
+            dynamic_next: None,
+            extension: Vec::new(),
+        };
+        let parsed = through_l1_current(0b110, &without_fef).unwrap();
+        assert_eq!(parsed, without_fef);
+        assert!(parsed.configurable.fef.is_none());
+    }
 }
