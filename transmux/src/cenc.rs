@@ -1344,6 +1344,224 @@ mod tests {
         assert_eq!(parsed.default_kid, [0u8; 16]);
     }
 
+    /// A `tenc` v1 with the cbcs constant IV (ISO/IEC 23001-7 §12.2.2:
+    /// `default_is_protected == 1`, `default_per_sample_iv_size == 0`, then a
+    /// `default_constant_IV_size` byte and the IV).
+    fn tenc_v1_with_constant_iv() -> TrackEncryptionBox {
+        TrackEncryptionBox {
+            version: 1,
+            default_crypt_byte_block: 1,
+            default_skip_byte_block: 9,
+            default_is_protected: 1,
+            default_per_sample_iv_size: 0,
+            default_kid: [
+                0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E,
+                0x1F, 0x20,
+            ],
+            default_constant_iv: Some(alloc::vec![0x11; 16]),
+        }
+    }
+
+    fn buffer_too_short(err: Error) -> BufferTooShort {
+        match err {
+            Error::BufferTooShort(b) => b,
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// Every proper prefix of a valid box must be rejected with
+    /// `BufferTooShort`, never an index panic: each guard sits in front of a
+    /// direct `bytes[offset]` read, so only truncated input exercises it.
+    fn assert_every_prefix_is_buffer_too_short(full: &[u8], parse: impl Fn(&[u8]) -> Result<()>) {
+        for len in 0..full.len() {
+            match parse(&full[..len]) {
+                Err(Error::BufferTooShort(_)) => {}
+                Err(other) => {
+                    panic!("{len}-byte prefix: expected BufferTooShort, got {other:?}")
+                }
+                Ok(()) => panic!("{len}-byte prefix of a {}-byte box parsed", full.len()),
+            }
+        }
+        parse(full).expect("the whole box parses");
+    }
+
+    #[test]
+    fn tenc_truncations_are_buffer_too_short_with_the_exact_shortfall() {
+        let tenc = tenc_v1_with_constant_iv();
+        assert_eq!(tenc.serialized_len(), 12 + 20 + 1 + 16);
+        let mut buf = alloc::vec![0u8; tenc.serialized_len()];
+        assert_eq!(
+            tenc.serialize_into(&mut buf).unwrap(),
+            tenc.serialized_len()
+        );
+        assert_every_prefix_is_buffer_too_short(&buf, |b| {
+            TrackEncryptionBox::parse_box(b).map(|_| ())
+        });
+
+        let b = buffer_too_short(TrackEncryptionBox::parse_box(&buf[..8]).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (12, 8, "tenc header"));
+        let b = buffer_too_short(TrackEncryptionBox::parse_box(&buf[..32]).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (21, 20, "tenc constant_IV_size"));
+        let b = buffer_too_short(TrackEncryptionBox::parse_box(&buf[..42]).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (37, 30, "tenc constant_IV"));
+    }
+
+    /// A `senc` with two 8-byte IVs and one subsample map each
+    /// (ISO/IEC 23001-7 §12.3), with every field byte distinct.
+    fn senc_two_subsample_entries() -> SampleEncryptionBox {
+        SampleEncryptionBox {
+            version: 0,
+            flags: SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+            per_sample_iv_size: 8,
+            entries: alloc::vec![
+                SampleEncryptionEntry {
+                    initialization_vector: alloc::vec![
+                        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+                    ],
+                    subsamples: alloc::vec![SubSampleEntry {
+                        bytes_of_clear_data: 0x0102,
+                        bytes_of_protected_data: 0x0304_0506,
+                    }],
+                },
+                SampleEncryptionEntry {
+                    initialization_vector: alloc::vec![
+                        0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18
+                    ],
+                    subsamples: alloc::vec![SubSampleEntry {
+                        bytes_of_clear_data: 0x2132,
+                        bytes_of_protected_data: 0x3344_5566,
+                    }],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn senc_truncations_are_buffer_too_short_with_the_exact_shortfall() {
+        let senc = senc_two_subsample_entries();
+        let mut buf = alloc::vec![0u8; senc.serialized_len()];
+        let n = senc.serialize_into(&mut buf).unwrap();
+        let body = &buf[BOX_HDR + FULL_HDR..n];
+        assert_eq!(body.len(), 4 + 2 * (8 + 2 + 6));
+        assert_eq!(senc.serialized_len(), BOX_HDR + FULL_HDR + body.len());
+
+        for len in 0..body.len() {
+            match SampleEncryptionBox::parse_body(
+                &body[..len],
+                senc.version,
+                senc.flags,
+                senc.per_sample_iv_size,
+            ) {
+                Err(Error::BufferTooShort(_)) => {}
+                Err(other) => {
+                    panic!("{len}-byte senc body: expected BufferTooShort, got {other:?}")
+                }
+                Ok(_) => panic!("{len}-byte senc body of {} parsed", body.len()),
+            }
+        }
+        let whole = SampleEncryptionBox::parse_body(
+            body,
+            senc.version,
+            senc.flags,
+            senc.per_sample_iv_size,
+        )
+        .unwrap();
+        assert_eq!(whole.entries[0].subsamples[0].bytes_of_clear_data, 0x0102);
+        assert_eq!(
+            whole.entries[0].subsamples[0].bytes_of_protected_data,
+            0x0304_0506
+        );
+        assert_eq!(
+            whole.entries[1].subsamples[0].bytes_of_protected_data,
+            0x3344_5566
+        );
+
+        let b = buffer_too_short(
+            SampleEncryptionBox::parse_body(&body[..29], 0, senc.flags, 8).unwrap_err(),
+        );
+        assert_eq!((b.need, b.have, b.what), (30, 29, "senc subsample_count"));
+        let b = buffer_too_short(
+            SampleEncryptionBox::parse_body(&body[..35], 0, senc.flags, 8).unwrap_err(),
+        );
+        assert_eq!((b.need, b.have, b.what), (36, 35, "senc subsample"));
+        let b = buffer_too_short(
+            SampleEncryptionBox::parse_body(&body[..8], 0, senc.flags, 8).unwrap_err(),
+        );
+        assert_eq!(
+            (b.need, b.have, b.what),
+            (
+                24,
+                8,
+                "senc entries (sample_count exceeds what the box can hold)"
+            )
+        );
+    }
+
+    #[test]
+    fn pssh_truncations_are_buffer_too_short() {
+        let pssh = ProtectionSystemSpecificHeaderBox {
+            version: 1,
+            system_id: [0x22; 16],
+            kids: alloc::vec![[0x33; 16], [0x44; 16]],
+            data: alloc::vec![0xA5; 300],
+        };
+        let bytes = pssh.try_to_bytes().unwrap();
+        assert_every_prefix_is_buffer_too_short(&bytes, |b| {
+            ProtectionSystemSpecificHeaderBox::parse_box(b).map(|_| ())
+        });
+        let b = buffer_too_short(
+            ProtectionSystemSpecificHeaderBox::parse_box(&bytes[..11]).unwrap_err(),
+        );
+        assert_eq!((b.need, b.have, b.what), (12, 11, "pssh header"));
+    }
+
+    #[test]
+    fn saiz_truncations_are_buffer_too_short_with_the_exact_shortfall() {
+        let mut body = alloc::vec![0u8];
+        body.extend_from_slice(&4u32.to_be_bytes());
+        body.extend_from_slice(&[8, 16, 24]);
+        assert_eq!(body.len(), 8);
+
+        let b = buffer_too_short(SampleAuxInfoSizesBox::parse_body(&body, 0, 0).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (9, 8, "saiz sample_info_size"));
+
+        let b = buffer_too_short(SampleAuxInfoSizesBox::parse_box(&[0u8; 8]).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (12, 8, "saiz header"));
+    }
+
+    /// `serialize_into` must return the number of bytes it wrote, constant IV
+    /// included — every cbcs stream's `tenc` carries one.
+    #[test]
+    fn tenc_constant_iv_serialize_returns_the_written_length() {
+        let tenc = tenc_v1_with_constant_iv();
+        let mut buf = alloc::vec![0u8; tenc.serialized_len()];
+        let n = tenc.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 49);
+        assert_eq!(n, tenc.serialized_len());
+        assert_eq!(n, buf.len());
+        assert_eq!(TrackEncryptionBox::parse_box(&buf[..n]).unwrap(), tenc);
+    }
+
+    /// A per-sample-size `saiz` table of four entries (§8.7.8.2), in each
+    /// version's width. With zero or one entry the length guard's arithmetic
+    /// is indistinguishable from a wrong bound.
+    #[test]
+    fn saiz_per_sample_table_of_four_entries_round_trips_in_every_width() {
+        for (version, sizes) in [
+            (0u8, alloc::vec![8u32, 16, 24, 16]),
+            (1, alloc::vec![8, 16, 24, 16]),
+            (2, alloc::vec![8, 16, 24, 16]),
+        ] {
+            let bytes = saiz_variable_box(version, &[], &sizes);
+            let saiz = SampleAuxInfoSizesBox::parse_box(&bytes).unwrap();
+            assert_eq!(saiz.version, version);
+            assert_eq!(saiz.default_sample_info_size, 0, "v{version}");
+            assert_eq!(saiz.sample_count, 4, "v{version}");
+            assert_eq!(saiz.sample_info_sizes, sizes, "v{version}");
+            assert_eq!(saiz.try_to_bytes().unwrap(), bytes, "v{version} bytes");
+        }
+    }
+
     #[test]
     fn pssh_v0_round_trip() {
         let system_id = [
@@ -1364,6 +1582,57 @@ mod tests {
         assert_eq!(parsed.system_id, system_id);
         assert_eq!(parsed.data, pssh.data);
         assert!(parsed.kids.is_empty());
+    }
+
+    /// A `pssh` v1 carrying three KIDs and a 300-byte Data blob — the
+    /// Widevine/PlayReady form (ISO/IEC 23001-7 §12.1, §8.1.2). Every length
+    /// and KID offset on both sides is pinned, and DataSize is above 255 so a
+    /// single mis-read byte cannot pass for it.
+    #[test]
+    fn pssh_v1_three_kids_and_long_data_round_trip() {
+        let system_id = [
+            0xED, 0xEF, 0x8B, 0xA9, 0x79, 0xD6, 0x4A, 0xCE, 0xA3, 0xC8, 0x27, 0xDC, 0xD5, 0x1D,
+            0x21, 0xED,
+        ];
+        let kids: [[u8; 16]; 3] = [
+            [
+                0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D,
+                0x1E, 0x1F,
+            ],
+            [
+                0x20, 0x21, 0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D,
+                0x2E, 0x2F,
+            ],
+            [
+                0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D,
+                0x3E, 0x3F,
+            ],
+        ];
+        let pssh = ProtectionSystemSpecificHeaderBox {
+            version: 1,
+            system_id,
+            kids: kids.to_vec(),
+            data: (0..300u32).map(|i| (i % 251) as u8).collect(),
+        };
+
+        assert_eq!(pssh.serialized_len(), 8 + 4 + 16 + 4 + 3 * 16 + 4 + 300);
+        let mut buf = vec![0u8; pssh.serialized_len()];
+        let n = pssh.serialize_into(&mut buf).unwrap();
+        assert_eq!(n, 384, "serialize_into must return every byte it wrote");
+        assert_eq!(&buf[28..32], &3u32.to_be_bytes(), "KID_count");
+        for (i, kid) in kids.iter().enumerate() {
+            assert_eq!(&buf[32 + 16 * i..48 + 16 * i], kid, "KID {i}");
+        }
+        assert_eq!(&buf[80..84], &300u32.to_be_bytes(), "DataSize");
+        assert_eq!(&buf[84..], pssh.data, "Data");
+
+        let parsed = ProtectionSystemSpecificHeaderBox::parse_box(&buf).unwrap();
+        assert_eq!(parsed.version, 1);
+        assert_eq!(parsed.system_id, system_id);
+        assert_eq!(parsed.kids, kids.to_vec());
+        assert_eq!(parsed.data.len(), 300);
+        assert_eq!(parsed, pssh);
+        assert_eq!(parsed.try_to_bytes().unwrap(), buf);
     }
 
     #[test]
