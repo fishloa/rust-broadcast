@@ -1,3 +1,4 @@
+mod carousel;
 mod error_variants;
 mod golden;
 mod round_trip;
