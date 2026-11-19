@@ -629,4 +629,78 @@ mod tests {
             .expect("module completes under the re-announced geometry");
         assert_eq!(done.data, [1, 2, 3, 4, 5, 6]);
     }
+
+    #[test]
+    fn default_caps_are_the_documented_byte_and_slot_caps() {
+        assert_eq!(DEFAULT_MAX_MODULE_SIZE, 67_108_864);
+        assert_eq!(DEFAULT_MAX_TOTAL_BYTES, 268_435_456);
+        assert_eq!(DEFAULT_MAX_SLOTS, 16_384);
+        let r = ModuleReassembler::new();
+        assert_eq!(r.max_module_size, DEFAULT_MAX_MODULE_SIZE);
+        assert_eq!(r.max_total_bytes, DEFAULT_MAX_TOTAL_BYTES);
+        assert_eq!(r.max_slots, DEFAULT_MAX_SLOTS);
+    }
+
+    /// The aggregate budget is a sum of announced sizes: two 3-byte modules
+    /// fit in an 8-byte budget, and filling it exactly is still accepted.
+    #[test]
+    fn aggregate_budget_sums_announced_sizes_and_accepts_the_exact_boundary() {
+        let mut r = ModuleReassembler::with_limits(8, 8);
+        r.note_dii(&dii(1, 4, vec![module(1, 3, 0)]));
+        assert_eq!(r.pending_bytes(), 3);
+        r.note_dii(&dii(1, 4, vec![module(2, 3, 0)]));
+        assert_eq!(r.pending(), 2, "3 + 3 is within the 8-byte budget");
+        assert_eq!(r.pending_bytes(), 6);
+        r.note_dii(&dii(1, 4, vec![module(3, 2, 0)]));
+        assert_eq!(r.pending(), 3, "6 + 2 exactly fills the 8-byte budget");
+        assert_eq!(r.pending_bytes(), 8);
+        r.note_dii(&dii(1, 4, vec![module(4, 1, 0)]));
+        assert_eq!(r.pending(), 3, "one more byte would exceed the budget");
+    }
+
+    /// The completed-version FIFO is bounded by `max_slots` independently of
+    /// the in-progress slot map: completing a third distinct module evicts
+    /// the oldest record, so its next DII repeat re-collects it while the two
+    /// most recent records keep suppressing repeats.
+    #[test]
+    fn completed_records_are_capped_at_max_slots() {
+        let mut r = ModuleReassembler::new().with_max_slots(2);
+        for module_id in 0..3u16 {
+            r.note_dii(&dii(1, 1, vec![module(module_id, 1, 0)]));
+            assert!(
+                r.feed_ddb(&ddb(1, module_id, 0, 0, &[module_id as u8]))
+                    .is_some(),
+                "module {module_id} completes"
+            );
+        }
+        assert_eq!(r.completed.len(), 2);
+
+        r.note_dii(&dii(1, 1, vec![module(0, 1, 0)]));
+        assert_eq!(r.pending(), 1, "the evicted oldest module re-collects");
+        r.note_dii(&dii(1, 1, vec![module(1, 1, 0)]));
+        r.note_dii(&dii(1, 1, vec![module(2, 1, 0)]));
+        assert_eq!(r.pending(), 1, "retained records still suppress repeats");
+    }
+
+    #[test]
+    fn clear_drops_slots_records_and_budget() {
+        let mut r = ModuleReassembler::new();
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 0), module(2, 4, 0)]));
+        assert!(r.feed_ddb(&ddb(1, 1, 0, 0, &[1, 2])).is_none());
+        assert!(r.feed_ddb(&ddb(1, 1, 0, 1, &[3, 4])).is_some());
+        assert_eq!(r.pending(), 1);
+        assert_eq!(r.pending_bytes(), 4);
+
+        r.clear();
+        assert_eq!(r.pending(), 0);
+        assert_eq!(r.pending_bytes(), 0);
+
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 0)]));
+        assert_eq!(
+            r.pending(),
+            1,
+            "clear also dropped the completed-version record"
+        );
+        assert_eq!(r.pending_bytes(), 4);
+    }
 }
