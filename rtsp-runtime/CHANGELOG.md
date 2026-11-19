@@ -13,6 +13,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The whole RFC 2326 Appendix A state table is exercised transition by transition for both roles, and a server test drives SETUP, PLAY, a second PLAY (a seek) and a SETUP while Playing, so a valid transition can no longer degrade into a 455 (audit 22 finding 27, #2995).
 - A server that hands out several sessions over its lifetime is tested to give each one a distinct `Session` id, so the allocation counter cannot silently stay at zero (audit 22 finding 28, #2996).
 - `sdp::session_description` is asserted line by line for a video + audio session (and parses back through `sdp-types`), and `sdp::resolve_control` is tested at both default ports (`rtsp` 554, `rtsps` 322), so a builder returning a constant and a wrong per-scheme default cannot pass (audit 22 finding 30, #2998).
+- The 64 KiB header and 2 MiB message caps are pinned at their literal byte values with both edges, a header terminator split at any chunk boundary is still found, a zero-length interleaved payload is a complete frame, and the RFC 2326 numeric lexer is tested at its digit and range bounds (audit 22 finding 31, #2999).
+- `InterleavedFrame::serialized_len` is asserted against the bytes it writes, the configured initial `CSeq` is checked on the wire, and `PlayPlan::channels` is tested per setup (offered pair, server-chosen pair, and past the end) (audit 22 finding 32, #3000).
 
 ## [0.13.0] - 2026-11-17
 ### Added
