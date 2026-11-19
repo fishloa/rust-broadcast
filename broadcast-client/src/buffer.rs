@@ -315,6 +315,11 @@ impl Feeder {
         self.rendered_explicit
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_expecting(&self) -> bool {
+        self.expecting
+    }
+
     /// A stream the source knows exists (PMT-declared) has no track yet: until one appears, or
     /// [`Config::start_pending_track_wait`] after the first media, or the first `Start`, the
     /// controller waits for it like for any registered track that has not delivered. The

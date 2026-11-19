@@ -217,6 +217,20 @@ fn nothing_is_recorded_unless_asked() {
 }
 
 #[test]
+fn the_replay_seed_is_the_one_the_session_was_opened_with() {
+    let seed = buffering_runtime::StallMemorySnapshot::new(
+        micros_as_duration(2_000_000),
+        micros_as_duration(1_000_000),
+    );
+    let url = Url::parse("http://seed/live.ts").unwrap();
+    let seeded =
+        Session::open_with_memory(url.clone(), Config::default(), ts(0), Some(seed)).unwrap();
+    assert_eq!(seeded.buffer_input_log_seed(), Some(seed));
+    let fresh = Session::open(url, Config::default(), ts(0)).unwrap();
+    assert_eq!(fresh.buffer_input_log_seed(), None);
+}
+
+#[test]
 fn a_full_queue_drops_counts_and_reports_once() {
     let mut config = recording();
     config.max_recorded_buffer_inputs = SMALL_CAP;
