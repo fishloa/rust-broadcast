@@ -332,6 +332,8 @@ mod tests {
     use crate::{
         AudioDataDlc, AudioDescription, BedChannel, BedDefinition1, ChannelId, PanSubBlock,
     };
+    extern crate alloc;
+    use alloc::string::ToString;
 
     fn sample_frame() -> AtmosFrame<'static> {
         let bed = BedDefinition1::new(

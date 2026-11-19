@@ -108,6 +108,8 @@ broadcast_common::impl_spec_display!(FrameRate, Reserved);
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     #[test]
     fn num_pan_sub_blocks_matches_table_7() {

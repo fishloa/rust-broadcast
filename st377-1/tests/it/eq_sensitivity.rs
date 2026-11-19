@@ -23,10 +23,10 @@ fn fixture_kvls() -> Vec<Vec<u8>> {
 
 fn first_local(kind: StructuralSetKind) -> Vec<u8> {
     for klv in fixture_kvls() {
-        if let Ok(set) = LocalSet::parse(&klv) {
-            if set.kind() == kind {
-                return klv;
-            }
+        if let Ok(set) = LocalSet::parse(&klv)
+            && set.kind() == kind
+        {
+            return klv;
         }
     }
     panic!("fixture has no {kind:?} set");

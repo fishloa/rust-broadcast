@@ -244,6 +244,8 @@ pub(crate) fn write_element_header(buf: &mut [u8], element_id: u32, body_len: us
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     #[test]
     fn element_id_round_trips() {

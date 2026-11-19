@@ -747,6 +747,8 @@ fn write_pan_info(w: &mut BitWriter<'_>, info: &PanInfo) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     fn minimal_pan_info() -> PanInfo {
         PanInfo {

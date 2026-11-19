@@ -339,6 +339,8 @@ impl Serialize for BedDefinition1 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     fn sample() -> BedDefinition1 {
         BedDefinition1::new(
