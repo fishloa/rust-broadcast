@@ -14,7 +14,6 @@ use super::circuits::{
     CDEF_OUT_BITS, STREAM_SBOX_OUT_BITS, stream_b_sel, stream_cdef, stream_out, stream_sboxes,
 };
 use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
-use crate::zeroize::zeroize;
 
 /// Bits in a nibble — the shift registers advance one nibble per round.
 const NIBBLE_BITS: usize = 4;
@@ -76,10 +75,10 @@ pub(crate) struct BitslicedStream {
 /// Zero every register on drop — see the `zeroize` module.
 impl Drop for BitslicedStream {
     fn drop(&mut self) {
-        zeroize(&mut self.a);
-        zeroize(&mut self.b);
-        zeroize(&mut self.pqzyx);
-        zeroize(&mut self.cfed);
+        crate::zeroize::zeroize(&mut self.a);
+        crate::zeroize::zeroize(&mut self.b);
+        crate::zeroize::zeroize(&mut self.pqzyx);
+        crate::zeroize::zeroize(&mut self.cfed);
     }
 }
 

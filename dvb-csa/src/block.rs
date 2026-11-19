@@ -5,7 +5,6 @@
 //! - `PERM[256]` — the permutation table
 //! - `sch[56]` — round keys (derived from the control word via `key::expand_block`)
 use super::tables::{PERM, SBOX};
-use crate::zeroize::zeroize;
 
 /// The DVB-CSA2 block cipher, initialized with 56 round-key bytes.
 ///
@@ -18,7 +17,7 @@ pub(crate) struct BlockCipher {
 /// Zero the round-key schedule on drop — see the `zeroize` module.
 impl Drop for BlockCipher {
     fn drop(&mut self) {
-        zeroize(&mut self.sch);
+        crate::zeroize::zeroize(&mut self.sch);
     }
 }
 

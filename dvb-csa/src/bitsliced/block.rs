@@ -9,7 +9,6 @@
 //! selected bit-words rather than a XOR against data.
 use super::circuits::{PERM_BIT, block_sbox};
 use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
-use crate::zeroize::zeroize;
 
 /// Rounds in the DVB-CSA2 block cipher; one round key byte each.
 const ROUNDS: usize = 56;
@@ -30,7 +29,7 @@ pub(crate) struct BitslicedBlock {
 /// Zero the round-key schedule on drop — see the `zeroize` module.
 impl Drop for BitslicedBlock {
     fn drop(&mut self) {
-        zeroize(&mut self.sch);
+        crate::zeroize::zeroize(&mut self.sch);
     }
 }
 
