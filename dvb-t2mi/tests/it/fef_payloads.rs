@@ -61,6 +61,20 @@ fn arbitrary_cells_cell_address_overflow_is_rejected() {
 }
 
 #[test]
+fn arbitrary_cells_rfu_reports_the_combined_value() {
+    // byte 4 carries RFU bits [9:2] of the 18-bit reserved field.
+    let buf = [0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00];
+    assert_eq!(
+        ArbitraryCellsPayload::parse(&buf).err(),
+        Some(Error::ReservedBits(broadcast_common::error::ReservedBits {
+            field: "18-bit RFU",
+            expected: 0,
+            found: 4,
+        }))
+    );
+}
+
+#[test]
 fn fef_composite_round_trips_every_field() {
     let bytes = [0x0A, 0x1A, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34];
     let payload = FefCompositePayload {
