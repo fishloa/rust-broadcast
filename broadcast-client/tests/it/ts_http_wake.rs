@@ -13,10 +13,18 @@ const FIRST_BACKOFF_US: u64 = 2_000_000;
 /// The TS policy's default start timeout, the wake a fresh open arms.
 const START_TIMEOUT_US: u64 = 15_000_000;
 
+/// A poll that keeps producing actions would otherwise make the drain spin:
+/// bound it so a re-arming bug fails the assertion instead of the timeout.
+const DRAIN_BOUND: usize = 16;
+
 fn drain(session: &mut Session, now: u64) -> Vec<Action> {
     let mut out = Vec::new();
     while let Some(a) = session.poll(ts(now)) {
         out.push(a);
+        assert!(
+            out.len() < DRAIN_BOUND,
+            "poll kept producing actions: {out:?}"
+        );
     }
     out
 }
