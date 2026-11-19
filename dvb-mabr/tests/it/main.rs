@@ -1,4 +1,5 @@
 mod carousel;
+mod child_selection;
 mod error_variants;
 mod golden;
 mod hostile;
