@@ -1896,13 +1896,14 @@ mod tests {
             original_network_id: 0x0002,
             service_id: 0x0003,
         };
-        let cases: &[(
-            &[u8],
+        type LocatorCase<'a> = (
+            &'a [u8],
             bool,
-            &DvbLocatorService,
-            &DvbLocatorIdentifier,
+            &'a DvbLocatorService,
+            &'a DvbLocatorIdentifier,
             Option<(u8, u8)>,
-        )] = &[
+        );
+        let cases: &[LocatorCase<'_>] = &[
             (
                 &[0x0D, 0x56, 0xAB, 0x12, 0x34, 0x56, 0x78],
                 false,

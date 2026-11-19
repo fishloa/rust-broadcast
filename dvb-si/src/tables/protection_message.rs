@@ -1019,7 +1019,7 @@ mod tests {
             &[],
         );
         assert_eq!(
-            body.write_into(&mut vec![0u8; 64]).unwrap_err(),
+            body.write_into(&mut [0u8; 64]).unwrap_err(),
             Error::SectionLengthOverflow {
                 declared: 16,
                 available: NIBBLE_MAX,
@@ -1084,7 +1084,7 @@ mod tests {
         let certificates = vec![&[][..]; 16];
         let body = ProtectionMessageBody::certificate_collection(certificates);
         assert_eq!(
-            body.write_into(&mut vec![0u8; 64]).unwrap_err(),
+            body.write_into(&mut [0u8; 64]).unwrap_err(),
             Error::SectionLengthOverflow {
                 declared: 16,
                 available: NIBBLE_MAX,

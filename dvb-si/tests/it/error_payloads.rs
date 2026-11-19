@@ -160,12 +160,13 @@ fn ait_common_descriptors_past_application_loop_end() {
 #[test]
 fn ait_common_descriptors_reaching_body_end_is_not_the_floor_error() {
     // common_desc_end == app_loop_end: the application-loop-length field then
-    // starts inside the CRC, so the error must not be the floor overflow.
+    // starts inside the CRC, so the reported overrun is that CRC-derived
+    // length, not the common-descriptor length itself.
     let bytes = ait(2, &[0x00, 0x00]);
-    assert_ne!(
+    let crc_derived_length = (u16::from(bytes[12] & 0x0F) << 8 | u16::from(bytes[13])) as usize;
+    assert_eq!(
         AitSection::parse(&bytes).unwrap_err(),
-        overflow(2, 0),
-        "an equality at the common-descriptor bound is not an overrun"
+        overflow(crc_derived_length, 0)
     );
 }
 
@@ -191,8 +192,10 @@ fn ait_partial_application_header_in_loop() {
 
 #[test]
 fn cat_ca_descriptors_truncated_descriptor() {
+    // A zero-length descriptor first, so the truncated entry starts at pos 2
+    // and the reported shortfall counts from there.
     let bytes = seal(vec![
-        0x01, 0xF0, 0x00, 0x00, 0x00, 0xC1, 0x00, 0x00, 0x09, 0x05, 0x00,
+        0x01, 0xF0, 0x00, 0x00, 0x00, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x09, 0x05, 0x00,
     ]);
     let cat = CatSection::parse(&bytes).expect("parse");
     assert_eq!(
@@ -728,6 +731,17 @@ fn unt_operational_descriptor_loop_past_platform_end() {
     assert_eq!(
         UntSection::parse(&unt(0, &rest)).unwrap_err(),
         overflow(3, 1)
+    );
+}
+
+#[test]
+fn unt_platform_loop_leftover_byte() {
+    // platform_loop_length 5: a target loop (0) + an operational loop (0)
+    // consume 4 bytes, leaving one that fits no pair.
+    let rest = [0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00, 0xAA];
+    assert_eq!(
+        UntSection::parse(&unt(0, &rest)).unwrap_err(),
+        too_short(24, 23, "UntSection target_descriptor_loop length")
     );
 }
 
