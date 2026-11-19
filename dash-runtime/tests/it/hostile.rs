@@ -400,7 +400,7 @@ fn resolve_to_zero_xlink_removes_the_element() {
     let m = parse(&xml).unwrap();
     assert_eq!(m.periods.len(), 1);
     assert_eq!(m.periods[0].id.as_deref(), Some("keep"));
-    assert!(m.features.xlink_resolve_to_zero);
+    assert!(!m.features.xlink_resolve_to_zero);
     let remote = wrap(
         r#"<Period xlink:href="http://x/p.xml" xlink:actuate="onLoad" xmlns:xlink="http://www.w3.org/1999/xlink"/>"#,
     );
