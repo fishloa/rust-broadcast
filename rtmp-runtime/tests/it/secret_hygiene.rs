@@ -44,6 +44,21 @@ fn client_config_debug_hides_the_stream_key() {
     assert!(!text.contains(KEY), "{text}");
 }
 
+/// Audit 22 (finding 8): the redacting `Debug` still renders every non-secret
+/// field — an empty `Debug` would satisfy the secrecy assertion while
+/// destroying diagnostics.
+#[test]
+fn client_config_debug_keeps_the_non_secret_fields() {
+    let mut cfg = RtmpClientConfig::default();
+    cfg.app = "live".to_string();
+    cfg.stream_key = KEY.to_string();
+    let text = format!("{cfg:?}");
+    assert!(text.contains("RtmpClientConfig"), "{text}");
+    assert!(text.contains("app: \"live\""), "{text}");
+    assert!(text.contains("mode: Publish"), "{text}");
+    assert!(text.contains("<redacted>"), "{text}");
+}
+
 #[cfg(feature = "tokio")]
 #[test]
 fn target_debug_hides_the_stream_key() {
