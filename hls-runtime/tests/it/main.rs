@@ -4,6 +4,7 @@ mod audit_1485;
 mod audit_1492;
 mod audit_prerelease;
 mod avg_bandwidth;
+mod client_decisions;
 mod client_state;
 mod closed_captions;
 #[path = "support/dummy_avc_config.rs"]
