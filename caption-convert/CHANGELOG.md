@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 ### Tests
+- An Inverted Teletext (`0xC0`) data unit carrying a valid subtitle page yields no cues, while the same bytes as EBU Teletext subtitle (`0x03`) do (#3035).
 - The CEA-708 path now has a behavioural test: a real DTVCC service-1 window paints text and is cleared, producing a timed WebVTT cue, and invalid `cc_data()` bytes propagate `Error::CcData` (#3034).
 
 ## [0.7.0] - 2026-11-15
