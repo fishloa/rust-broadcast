@@ -55,6 +55,25 @@ impl StreamCipher {
         sc
     }
 
+    /// The two shift registers and the S-box/feedback words, read back by the
+    /// zeroize-on-drop gate.
+    #[cfg(test)]
+    pub(crate) fn registers(&self) -> [u64; 4] {
+        [self.a, self.b, u64::from(self.pqzyx), u64::from(self.cfed)]
+    }
+
+    /// A cipher with every register set to a non-zero sentinel, so the
+    /// zeroize-on-drop gate can prove each one is cleared.
+    #[cfg(test)]
+    pub(crate) fn with_sentinel_registers() -> Self {
+        Self {
+            a: 0x0123_4567_89ab_cdef,
+            b: 0xfedc_ba98_7654_3210,
+            pqzyx: 0xdead_beef,
+            cfed: 0x1fff_ffff,
+        }
+    }
+
     /// XOR the stream cipher's keystream into `data` in-place.
     pub(crate) fn xor_stream(&mut self, data: &mut [u8]) {
         for byte in data.iter_mut() {
@@ -228,4 +247,5 @@ mod tests {
             assert_eq!(csa_stream_sboxes(a), want, "A = {a:#012x}");
         }
     }
+
 }

@@ -66,7 +66,7 @@ const C_BIT: usize = 12;
 /// Not `Copy` (every field is LFSR state seeded from the control word,
 /// broadcast across every lane; see [`Drop for
 /// BitslicedStream`](BitslicedStream)).
-pub(super) struct BitslicedStream {
+pub(crate) struct BitslicedStream {
     a: [Word; A_BITS],
     b: [Word; B_BITS],
     pqzyx: [Word; PQZYX_BITS],
@@ -98,7 +98,7 @@ impl BitslicedStream {
     /// initialisation vector per lane.
     ///
     /// `iv` is the transposed first block: `iv[byte * 8 + bit]`.
-    pub(super) fn new(cws: &[u8; BLOCK_BYTES], iv: &[Word; BLOCK_BITS]) -> Self {
+    pub(crate) fn new(cws: &[u8; BLOCK_BYTES], iv: &[Word; BLOCK_BITS]) -> Self {
         let a = u32::from_le_bytes([cws[0], cws[1], cws[2], cws[3]]);
         let b = u32::from_le_bytes([cws[4], cws[5], cws[6], cws[7]]);
         let mut sc = Self {
@@ -122,6 +122,29 @@ impl BitslicedStream {
             }
         }
         sc
+    }
+
+    /// The four register banks, read back by the zeroize-on-drop gate.
+    #[cfg(test)]
+    pub(crate) fn registers(&self) -> (
+        &[Word; A_BITS],
+        &[Word; B_BITS],
+        &[Word; PQZYX_BITS],
+        &[Word; CFED_BITS],
+    ) {
+        (&self.a, &self.b, &self.pqzyx, &self.cfed)
+    }
+
+    /// A cipher with every register bit set, so the zeroize-on-drop gate can
+    /// prove each bank is cleared.
+    #[cfg(test)]
+    pub(crate) fn with_sentinel_registers() -> Self {
+        Self {
+            a: [!0; A_BITS],
+            b: [!0; B_BITS],
+            pqzyx: [!0; PQZYX_BITS],
+            cfed: [!0; CFED_BITS],
+        }
     }
 
     /// Advance one round.
@@ -266,4 +289,5 @@ mod tests {
             assert_eq!(got[lane], want, "lane {lane} keystream disagrees");
         }
     }
+
 }

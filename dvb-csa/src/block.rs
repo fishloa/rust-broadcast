@@ -28,6 +28,12 @@ impl BlockCipher {
         Self { sch }
     }
 
+    /// The round-key schedule, read back by the zeroize-on-drop gate.
+    #[cfg(test)]
+    pub(crate) fn round_keys(&self) -> &[u8] {
+        &self.sch
+    }
+
     /// Encrypt one 8-byte block in-place (rounds 0..55 forward).
     pub(crate) fn encrypt_block(&self, w: &mut [u8]) {
         debug_assert_eq!(w.len(), 8);
@@ -148,4 +154,5 @@ mod tests {
             "Vector 12 block decrypt mismatch"
         );
     }
+
 }

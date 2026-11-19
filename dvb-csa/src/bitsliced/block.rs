@@ -23,7 +23,7 @@ type BlockSlice = [ByteSlice; BLOCK_BYTES];
 ///
 /// Not `Copy` (holds key-derived round-key bytes shared by every lane; see
 /// [`Drop for BitslicedBlock`](BitslicedBlock)).
-pub(super) struct BitslicedBlock {
+pub(crate) struct BitslicedBlock {
     sch: [u8; ROUNDS],
 }
 
@@ -89,8 +89,14 @@ fn pack(b: &BlockSlice, m: &mut [Word; BLOCK_BITS]) {
 }
 
 impl BitslicedBlock {
-    pub(super) fn new(sch: [u8; ROUNDS]) -> Self {
+    pub(crate) fn new(sch: [u8; ROUNDS]) -> Self {
         Self { sch }
+    }
+
+    /// The round-key schedule, read back by the zeroize-on-drop gate.
+    #[cfg(test)]
+    pub(crate) fn round_keys(&self) -> &[u8] {
+        &self.sch
     }
 
     /// Encrypt [`LANES`](super::LANES) blocks in place, rounds 0..56 forward.
@@ -191,4 +197,5 @@ mod tests {
             }
         }
     }
+
 }
