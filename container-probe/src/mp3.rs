@@ -90,12 +90,13 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     if longest == 0 {
         // No valid MP3 frame header was examined. That only rules MP3 out when
         // the region *was* long enough to have carried one: a leading ID3v2 tag
-        // whose declared length extends past the region means the audio frames
-        // begin beyond what the caller supplied, so the prober ran out of data
-        // before it ever reached a frame position — `Insufficient`, not `None`
+        // whose declared length reaches or extends past the region means the
+        // audio frames begin at or beyond what the caller supplied, so the
+        // prober ran out of data before it ever reached a frame position —
+        // `Insufficient`, not `None`
         // (the shared `Insufficient` vs `Unknown` decision).
         if let Some(skip) = id3_skip(region)
-            && skip > region.len()
+            && skip >= region.len()
         {
             // The ID3 skip target is itself the structural need: the first
             // frame cannot start before it. The dropped `region.len() + 1`
@@ -298,6 +299,127 @@ mod tests {
         match probe(&data, data.len()) {
             Outcome::Insufficient(need) => assert_eq!(need, 137),
             other => panic!("ID3 tag longer than the region must be Insufficient, got {other:?}"),
+        }
+    }
+
+    /// An ID3v2 header with the given flags and 4-byte syncsafe size.
+    fn id3_header(flags: u8, size: [u8; 4]) -> [u8; ID3_HEADER_LEN] {
+        [
+            b'I', b'D', b'3', 0x04, 0x00, flags, size[0], size[1], size[2], size[3],
+        ]
+    }
+
+    /// The syncsafe size is seven bits from each of the four size bytes, most
+    /// significant first: `[01 02 03 04]` is `1<<21 | 2<<14 | 3<<7 | 4` =
+    /// 2 130 308 (ID3v2 §3.1), and the footer flag adds a 10-byte footer.
+    #[test]
+    fn id3_syncsafe_size_spans_all_four_bytes() {
+        assert_eq!(
+            id3_skip(&id3_header(0x00, [0x01, 0x02, 0x03, 0x04])),
+            Some(2_130_318)
+        );
+        assert_eq!(
+            id3_skip(&id3_header(ID3_FLAG_FOOTER, [0x01, 0x02, 0x03, 0x04])),
+            Some(2_130_328)
+        );
+        // A size carried entirely by the high byte: 1 << 21 = 2 097 152.
+        assert_eq!(
+            id3_skip(&id3_header(0x00, [0x01, 0x00, 0x00, 0x00])),
+            Some(2_097_162)
+        );
+    }
+
+    /// A tag whose declared length exceeds the supplied region is a structural
+    /// need, even when the size lives in the top syncsafe byte.
+    #[test]
+    fn a_tag_larger_than_the_region_is_a_structural_need() {
+        let data = id3_header(0x00, [0x01, 0x00, 0x00, 0x00]);
+        match probe(&data, data.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, 2_097_162),
+            other => panic!("a 2 MiB ID3 tag must be Insufficient, got {other:?}"),
+        }
+    }
+
+    /// A two-hundred-and-fifty-seven-byte tag body is skipped exactly, so the
+    /// frame chain is found at the byte the tag declared (ID3v2 §3.1).
+    #[test]
+    fn a_multi_byte_tag_size_places_the_first_frame_after_the_tag() {
+        let mut data = std::vec::Vec::from(id3_header(0x00, [0x00, 0x00, 0x02, 0x01]));
+        data.resize(267, 0x00);
+        let mut frame = std::vec![0xFF, 0xFB, 0x90, 0x00];
+        frame.resize(417, 0x00);
+        for _ in 0..MP3_MIN_CHAIN_WEAK {
+            data.extend_from_slice(&frame);
+        }
+        assert_eq!(id3_skip(&data), Some(267));
+        assert!(mp3_frame_len(&data, 267).is_some());
+        assert_eq!(longest_mp3_chain(&data).2, 267);
+        match probe(&data, data.len()) {
+            Outcome::Match(_) => {}
+            other => panic!("the frame after the tag must be seen, got {other:?}"),
+        }
+    }
+
+    /// The footer flag moves the first frame another 10 bytes on.
+    #[test]
+    fn the_id3_footer_is_skipped() {
+        let mut data = std::vec::Vec::from(id3_header(ID3_FLAG_FOOTER, [0x00, 0x00, 0x02, 0x01]));
+        data.resize(277, 0x00);
+        let mut frame = std::vec![0xFF, 0xFB, 0x90, 0x00];
+        frame.resize(417, 0x00);
+        data.extend_from_slice(&frame);
+        assert_eq!(id3_skip(&data), Some(277));
+        assert!(mp3_frame_len(&data, 277).is_some());
+        assert_eq!(longest_mp3_chain(&data).2, 277);
+    }
+
+    /// `frame_length = 144 * bitrate / sample_rate + padding` (ISO/IEC
+    /// 11172-3 §2.4.2.3): 144 * 128 000 / 44 100 is 417, plus the padding bit.
+    #[test]
+    fn a_frame_length_matches_the_iso_table_with_and_without_padding() {
+        assert_eq!(mp3_frame_len(&[0xFF, 0xFB, 0x90, 0x00], 0), Some(417));
+        assert_eq!(mp3_frame_len(&[0xFF, 0xFB, 0x90, 0x02], 0), Some(418));
+    }
+
+    /// Each reserved or out-of-range header field is rejected on its own.
+    #[test]
+    fn invalid_frame_header_fields_are_rejected() {
+        for header in [
+            [0xFF, 0x1A, 0x90, 0x00], // syncword bits 7:5 clear
+            [0xFF, 0xF2, 0x90, 0x00], // version 10 (MPEG-2)
+            [0xFF, 0xEB, 0x90, 0x00], // version 01 (reserved)
+            [0xFF, 0xF9, 0x90, 0x00], // layer 00 (reserved)
+            [0xFF, 0xFB, 0xF0, 0x00], // bitrate index 1111 (forbidden)
+            [0xFF, 0xFB, 0x00, 0x00], // bitrate index 0000 (free format)
+            [0xFF, 0xFB, 0x9C, 0x00], // sample-rate index 11 (reserved)
+        ] {
+            assert_eq!(mp3_frame_len(&header, 0), None, "{header:?}");
+        }
+    }
+
+    /// One truncated frame is a structural need for four frames at its own
+    /// length, not a fixed or length-relative figure.
+    #[test]
+    fn a_single_truncated_frame_asks_for_a_weak_chain() {
+        let data = [0xFF, 0xFB, 0x90, 0x00];
+        match probe(&data, data.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, 1_668),
+            other => panic!("one 417-byte frame must ask for four (1668), got {other:?}"),
+        }
+    }
+
+    /// A region that holds exactly the ID3 tag ends at the first audio byte;
+    /// more bytes could still reveal the frame, so this is a short read, not a
+    /// definitive rejection.
+    #[test]
+    fn a_region_that_is_exactly_the_id3_tag_asks_for_the_frames() {
+        let mut data = std::vec::Vec::from(id3_header(0x00, [0x00, 0x00, 0x02, 0x01]));
+        data.resize(267, 0x00);
+        match probe(&data, data.len()) {
+            Outcome::Insufficient(need) => assert_eq!(need, 267),
+            other => panic!(
+                "a region ending exactly at the tag's audio start is a short read, got {other:?}"
+            ),
         }
     }
 }
