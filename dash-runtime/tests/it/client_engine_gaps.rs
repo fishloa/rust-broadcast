@@ -256,3 +256,33 @@ fn a_base_url_candidate_rotates_after_two_consecutive_failures() {
     );
     let _ = DIR;
 }
+
+#[test]
+fn a_segment_byte_range_that_cannot_be_a_span_names_its_cause() {
+    let text = format!(
+        r#"<?xml version="1.0" encoding="utf-8"?><MPD xmlns="urn:mpeg:dash:schema:mpd:2011" profiles="urn:mpeg:dash:profile:isoff-live:2011" type="static" mediaPresentationDuration="PT4S" minBufferTime="PT2S">
+<Period id="0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+<Representation id="0" bandwidth="1" codecs="avc1.4d400d">
+<SegmentList timescale="90000" duration="180000">
+<Initialization sourceURL="init-stream0.m4s"/>
+<SegmentURL media="chunk-stream0-00001.m4s"/>
+<SegmentURL media="chunk-stream0-00001.m4s" mediaRange="5-"/>
+</SegmentList>
+</Representation></AdaptationSet></Period></MPD>"#
+    );
+    let mut origin = Origin::new().doc(URL, text.into_bytes());
+    let run = drive(
+        URL,
+        PullLimits::default(),
+        &mut origin,
+        &mut Drive::default(),
+    );
+    assert_eq!(
+        run.fatal,
+        Some(FatalKind::UnsupportedAddressing {
+            reason: "open_ended_range"
+        }),
+        "{:#?}",
+        run.outputs
+    );
+}
