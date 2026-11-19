@@ -2154,6 +2154,18 @@ mod tests {
     }
 
     #[test]
+    fn section_length_high_nibble_is_written_for_a_300_byte_body() {
+        let body_data = vec![0xAAu8; 300];
+        let bytes = build_sat(7, 0, &SatBody::Raw(body_data.clone()));
+
+        assert_eq!(bytes[1], 0xF1);
+        assert_eq!(bytes[2], 0x36);
+
+        let sat = SatSection::parse(&bytes).expect("reparse");
+        assert_eq!(sat.body, SatBody::Raw(body_data));
+    }
+
+    #[test]
     fn private_indicator_false_round_trip() {
         let body = SatBody::TimeAssociation(TimeAssociationBody {
             association_type: AssociationType::UtcWithoutLeap,

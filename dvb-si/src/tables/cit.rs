@@ -583,6 +583,41 @@ mod tests {
     }
 
     #[test]
+    fn last_crid_entry_with_empty_unique_string_is_accepted() {
+        let cit = CitSection::new(
+            false,
+            1,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            1,
+            1,
+            DvbText::new(b"crid://example.com/\x00"),
+            vec![
+                CridEntry {
+                    crid_ref: 1,
+                    prepend_string_index: 0,
+                    unique_string: DvbText::new(b"one"),
+                },
+                CridEntry {
+                    crid_ref: 2,
+                    prepend_string_index: 0,
+                    unique_string: DvbText::new(&[]),
+                },
+            ],
+        );
+        let mut buf = vec![0u8; cit.serialized_len()];
+        cit.serialize_into(&mut buf).expect("serialize");
+
+        let parsed = CitSection::parse(&buf).expect("empty unique_string at the end is valid");
+        assert_eq!(parsed.crid_entries.len(), 2);
+        assert_eq!(parsed.crid_entries[1].unique_string.raw(), b"");
+        assert_eq!(parsed, cit);
+
+        let mut again = vec![0u8; parsed.serialized_len()];
+        parsed.serialize_into(&mut again).unwrap();
+        assert_eq!(again, buf);
+    }
+
+    #[test]
     fn parse_handwritten_cit_no_entries() {
         let mut bytes: Vec<u8> = vec![
             0x77, 0xF0, 0x0E, 0x12, 0x34, 0xC7, 0x00, 0x00, 0x00, 0x64, 0x00, 0x02, 0x00,
