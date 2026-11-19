@@ -1562,7 +1562,8 @@ mod tests {
     fn conclusion_extension_flags_advertise_a_present_stream_id() {
         use crate::packet::handshake::HS_EXT_FLAG_CONFIG;
         let contents = ConclusionExtensionContents::new(example_hs_msg(), Some("sid"), None);
-        let (_, flags) = build_conclusion_extensions(crate::packet::ExtensionType::HsReq, &contents);
+        let (_, flags) =
+            build_conclusion_extensions(crate::packet::ExtensionType::HsReq, &contents);
         assert_eq!(flags & HS_EXT_FLAG_CONFIG, HS_EXT_FLAG_CONFIG);
     }
 
@@ -1577,7 +1578,8 @@ mod tests {
             weight: 0,
         };
         let contents = ConclusionExtensionContents::new(example_hs_msg(), None, Some(group));
-        let (_, flags) = build_conclusion_extensions(crate::packet::ExtensionType::HsReq, &contents);
+        let (_, flags) =
+            build_conclusion_extensions(crate::packet::ExtensionType::HsReq, &contents);
         assert_eq!(flags & HS_EXT_FLAG_CONFIG, HS_EXT_FLAG_CONFIG);
     }
 
@@ -1587,10 +1589,7 @@ mod tests {
         let mut retransmit = Retransmit::default();
         retransmit.arm_fresh(b"packet");
         assert!(matches!(
-            retransmit.tick(
-                config.retransmit_after - Duration::from_micros(1),
-                &config
-            ),
+            retransmit.tick(config.retransmit_after - Duration::from_micros(1), &config),
             RetransmitStep::Idle
         ));
         for _ in 0..=config.max_retries {
@@ -1644,11 +1643,17 @@ mod tests {
         const LOW: u128 = 0x1111_2222_3333_4444;
         let a = u128::from(LOW) | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
         let high_differs = u128::from(LOW) | (u128::from(0xAAAA_BBBB_CCCC_EEEEu64) << 64);
-        let low_differs = u128::from(0x1111_2222_3333_5555u64)
-            | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
+        let low_differs =
+            u128::from(0x1111_2222_3333_5555u64) | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
         assert_ne!(derive_cookie(7, 9, a), derive_cookie(7, 9, high_differs));
-        assert_ne!(derive_listener_ids(7, 9, a), derive_listener_ids(7, 9, high_differs));
+        assert_ne!(
+            derive_listener_ids(7, 9, a),
+            derive_listener_ids(7, 9, high_differs)
+        );
         assert_ne!(derive_cookie(7, 9, a), derive_cookie(7, 9, low_differs));
-        assert_ne!(derive_listener_ids(7, 9, a), derive_listener_ids(7, 9, low_differs));
+        assert_ne!(
+            derive_listener_ids(7, 9, a),
+            derive_listener_ids(7, 9, low_differs)
+        );
     }
 }

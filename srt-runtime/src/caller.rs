@@ -752,8 +752,9 @@ mod tests {
             receiver_tsbpd_delay: Duration::from_millis(120),
             sender_tsbpd_delay: Duration::from_millis(120),
         };
-        let ext: &'static [u8] =
-            alloc::vec::Vec::leak(build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap());
+        let ext: &'static [u8] = alloc::vec::Vec::leak(
+            build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap(),
+        );
         ControlPacket::Handshake(HandshakePacket {
             timestamp: SrtTimestamp::ZERO,
             dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
@@ -785,8 +786,7 @@ mod tests {
             | HS_MSG_FLAG_PERIODICNAK
             | HS_MSG_FLAG_REXMITFLG;
         let peer = HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TSBPDRCV | HS_MSG_FLAG_REXMITFLG;
-        let config = HandshakeConfig::default()
-            .with_flags(HandshakeExtensionMessageFlags(local));
+        let config = HandshakeConfig::default().with_flags(HandshakeExtensionMessageFlags(local));
         let mut c = CallerHandshake::new(0xAAAA_BBBB, config);
         c.start().unwrap();
         c.feed(&induction_response(0xC0FF_EE00, 0x1111_2222))

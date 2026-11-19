@@ -1301,8 +1301,7 @@ mod tests {
         let contents = handshake_sm::ConclusionExtensionContents::new(ext_hs_msg(), None, None);
         let contents: &'static handshake_sm::ConclusionExtensionContents =
             alloc::boxed::Box::leak(alloc::boxed::Box::new(contents));
-        let (extensions, ext_flags) =
-            handshake_sm::build_conclusion_extensions(ext_type, contents);
+        let (extensions, ext_flags) = handshake_sm::build_conclusion_extensions(ext_type, contents);
         ControlPacket::Handshake(HandshakePacket {
             timestamp: SrtTimestamp::ZERO,
             dest_socket_id: SocketId::from_wire(1),
@@ -1373,8 +1372,7 @@ mod tests {
             .feed(&plain_handshake(HandshakeType::Conclusion, 1, 500))
             .unwrap();
         let bytes = sent_bytes(&outputs);
-        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap()
-        else {
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
             panic!("expected handshake");
         };
         assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
@@ -1397,8 +1395,7 @@ mod tests {
             .unwrap();
         assert_eq!(b.state(), RendezvousHandshakeState::Connected);
         let bytes = sent_bytes(&outputs);
-        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap()
-        else {
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
             panic!("expected handshake");
         };
         assert_eq!(hp.handshake_type, HandshakeType::Agreement);
@@ -1417,8 +1414,7 @@ mod tests {
             .feed(&plain_handshake(HandshakeType::Conclusion, 2, 100))
             .unwrap();
         let bytes = sent_bytes(&outputs);
-        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap()
-        else {
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
             panic!("expected handshake");
         };
         assert_eq!(hp.handshake_type, HandshakeType::Agreement);
@@ -1517,10 +1513,7 @@ mod tests {
             cookie_contest(0x8000_0000, 0x7FFF_FFFF),
             RendezvousRole::Initiator
         );
-        assert_eq!(
-            cookie_contest(0x8000_0001, 1),
-            RendezvousRole::Responder
-        );
+        assert_eq!(cookie_contest(0x8000_0001, 1), RendezvousRole::Responder);
         assert_eq!(cookie_contest(1, 0x8000_0001), RendezvousRole::Initiator);
     }
 
