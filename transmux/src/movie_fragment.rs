@@ -107,8 +107,17 @@ pub(crate) fn media_fragment_run(
             sample_composition_time_offset: any_cts.then_some(i64::from(s.composition_offset)),
         });
     }
-    let tr_flags = 0;
-    let version = if any_cts { 1u8 } else { 0u8 };
+    let mut tr_flags = TRUN_DATA_OFFSET_PRESENT
+        | TRUN_SAMPLE_DURATION_PRESENT
+        | TRUN_SAMPLE_SIZE_PRESENT
+        | TRUN_SAMPLE_FLAGS_PRESENT;
+    // Version 1 carries a signed composition offset (needed for B-frames).
+    let version = if any_cts {
+        tr_flags |= TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
+        1u8
+    } else {
+        0u8
+    };
     let trun = TrackFragmentRunBox {
         version,
         tr_flags,
