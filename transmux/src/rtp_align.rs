@@ -758,4 +758,216 @@ mod tests {
         }
         assert!(!rig.aligner.sender_reports_refused());
     }
+
+    fn timed(pts: i64, duration: u32) -> Sample {
+        Sample::new(alloc::vec![0x65], Some(pts), Some(pts), Some(duration), true)
+            .expect("valid timing")
+    }
+
+    fn two_track_aligner() -> (RtpStreamDepacketiser, TrackAligner) {
+        let scale = |rate| Timescale::try_new(rate).expect("rate");
+        let track = |id, rate| RtpStreamTrack::new(id, RtpMediaKind::H264, dummy_avc(), scale(rate));
+        (
+            RtpStreamDepacketiser::new(alloc::vec![
+                track(VIDEO, VIDEO_RATE),
+                track(OTHER, 48_000)
+            ]),
+            TrackAligner::new(&[
+                (VIDEO, true, scale(VIDEO_RATE)),
+                (OTHER, false, scale(48_000)),
+            ]),
+        )
+    }
+
+    fn states(out: &[AlignOut]) -> Vec<AvSync> {
+        out.iter()
+            .filter_map(|o| match o {
+                AlignOut::State(state) => Some(*state),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn av_sync_labels_are_stable() {
+        assert_eq!(AvSync::Provisional.name(), "provisional");
+        assert_eq!(AvSync::SenderReport.name(), "sender-report");
+        assert_eq!(AvSync::RtpInfo.name(), "rtp-info");
+    }
+
+    #[test]
+    fn rescale_and_ticks_to_us_convert_exactly() {
+        let scale = |rate| Timescale::try_new(rate).expect("rate");
+        assert_eq!(rescale(48_000, scale(48_000), scale(90_000)), 90_000);
+        assert_eq!(rescale(90_000, scale(90_000), scale(44_100)), 44_100);
+        assert_eq!(ticks_to_us(48_000, scale(48_000)), 1_000_000);
+        assert_eq!(ticks_to_us(90_000, scale(90_000)), 1_000_000);
+    }
+
+    #[test]
+    fn note_rtp_info_requires_a_time_for_every_track() {
+        let (_, mut aligner) = two_track_aligner();
+        aligner.note_rtp_info(&[(VIDEO, 1_000)]);
+        assert!(aligner.rtp_info.is_empty(), "incomplete RTP-Info is refused");
+        aligner.note_rtp_info(&[(VIDEO, 1_000), (OTHER, 5_000)]);
+        assert_eq!(aligner.rtp_info.len(), 2, "complete RTP-Info is kept");
+
+        // Three lanes, two times: an `id != time_id` test would accept it.
+        let third = TrackId::new(3);
+        let scale = |rate| Timescale::try_new(rate).expect("rate");
+        let mut three = TrackAligner::new(&[
+            (VIDEO, true, scale(VIDEO_RATE)),
+            (OTHER, false, scale(VIDEO_RATE)),
+            (third, false, scale(VIDEO_RATE)),
+        ]);
+        three.note_rtp_info(&[(VIDEO, 1_000), (OTHER, 5_000)]);
+        assert!(
+            three.rtp_info.is_empty(),
+            "a time for every one of three lanes is required"
+        );
+    }
+
+    #[test]
+    fn rtp_info_places_the_tracks_and_is_not_moved_by_sender_reports() {
+        let (mut depa, mut aligner) = two_track_aligner();
+        aligner.note_rtp_info(&[(VIDEO, 1_000), (OTHER, 5_000)]);
+        let mut out = aligner.push(&depa, VIDEO, timed(1_000, 1));
+        out.extend(aligner.push(&depa, OTHER, timed(5_000, 1)));
+        let pts_of = |id: TrackId, out: &[AlignOut]| -> i64 {
+            out.iter()
+                .find_map(|o| match o {
+                    AlignOut::Sample(t, s) if *t == id => s.timing.and_then(|t| t.pts()),
+                    _ => None,
+                })
+                .expect("sample")
+        };
+        assert_eq!(pts_of(VIDEO, &out), 1_000, "video passes through");
+        assert_eq!(pts_of(OTHER, &out), 533, "rescale(1000, 90k -> 48k)");
+        assert_eq!(states(&out).last(), Some(&AvSync::RtpInfo));
+
+        depa.push_rtcp(VIDEO, &sender_report(0, VIDEO_BASE));
+        depa.push_rtcp(OTHER, &sender_report(0, 5_000));
+        aligner.note_rtcp();
+        let later = aligner.push(&depa, OTHER, timed(6_000, 1));
+        assert_eq!(
+            pts_of(OTHER, &later),
+            1_533,
+            "the RTP-Info offset, not a Sender Report offset"
+        );
+    }
+
+    #[test]
+    fn flush_releases_samples_held_without_an_anchor() {
+        let (depa, mut aligner) = two_track_aligner();
+        let out = aligner.push(&depa, OTHER, timed(5_000, 1));
+        assert!(out.is_empty(), "no sample before an anchor exists");
+        let flushed = aligner.flush(&depa);
+        let samples: Vec<_> = flushed
+            .iter()
+            .filter(|o| matches!(o, AlignOut::Sample(..)))
+            .collect();
+        assert_eq!(samples.len(), 1);
+        match samples[0] {
+            AlignOut::Sample(id, _) => assert_eq!(*id, OTHER),
+            other => panic!("expected the held sample, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_held_backlog_is_bounded_at_max_held_samples() {
+        let (depa, mut aligner) = two_track_aligner();
+        for i in 0..MAX_HELD_SAMPLES {
+            let out = aligner.push(&depa, OTHER, timed(i as i64, 1));
+            assert!(out.is_empty(), "still held at {i}");
+        }
+        let out = aligner.push(&depa, OTHER, timed(MAX_HELD_SAMPLES as i64, 1));
+        assert!(
+            !out.is_empty(),
+            "the {}th held sample anchors and releases",
+            MAX_HELD_SAMPLES + 1
+        );
+    }
+
+    #[test]
+    fn a_sender_report_state_is_reported_and_stays_sticky() {
+        let (_, mut aligner) = two_track_aligner();
+        assert_eq!(aligner.current_state(VIDEO), AvSync::Provisional);
+        aligner.lanes.get_mut(&OTHER).expect("lane").target = Some(0);
+        assert_eq!(
+            aligner.current_state(VIDEO),
+            AvSync::SenderReport,
+            "every other lane targeted is the Sender-Report placement"
+        );
+        aligner.rtp_info.insert(VIDEO, 1_000);
+        aligner.rtp_info.insert(OTHER, 5_000);
+        assert_eq!(
+            aligner.current_state(VIDEO),
+            AvSync::RtpInfo,
+            "a complete RTP-Info mapping outranks Sender Reports"
+        );
+
+        let (_, mut sticky) = two_track_aligner();
+        sticky.state = Some(AvSync::SenderReport);
+        assert_eq!(
+            sticky.current_state(VIDEO),
+            AvSync::SenderReport,
+            "a reached Sender-Report state is not downgraded by a missing target"
+        );
+    }
+
+    fn placement_aligner() -> TrackAligner {
+        let scale = |rate| Timescale::try_new(rate).expect("rate");
+        TrackAligner::new(&[
+            (VIDEO, true, scale(VIDEO_RATE)),
+            (OTHER, false, scale(VIDEO_RATE)),
+        ])
+    }
+
+    fn placement_step(target: i64, duration: u32) -> (bool, i64) {
+        let mut aligner = placement_aligner();
+        aligner.anchor = Some((VIDEO, 0));
+        {
+            let lane = aligner.lanes.get_mut(&OTHER).expect("lane");
+            lane.first_pts = Some(0);
+            lane.placed = true;
+            lane.delta = 0;
+            lane.target = Some(target);
+        }
+        let mut out = Vec::new();
+        aligner.place(OTHER, timed(0, duration), &mut out);
+        let discontinuity = out
+            .iter()
+            .any(|o| matches!(o, AlignOut::Discontinuity));
+        let delta = aligner.lanes.get(&OTHER).expect("lane").delta;
+        (discontinuity, delta)
+    }
+
+    #[test]
+    fn the_switch_tolerance_boundary_is_exclusive() {
+        // 9 000 ticks at 90 kHz is exactly 100 000 us.
+        let (discontinuity, delta) = placement_step(9_000, 9_000);
+        assert!(!discontinuity, "exactly the tolerance is absorbed");
+        assert_eq!(delta, 9_000);
+        let (discontinuity, delta) = placement_step(9_001, 9_000);
+        assert!(discontinuity, "one microsecond past it steps");
+        assert_eq!(delta, 9_001);
+    }
+
+    #[test]
+    fn a_backward_step_slews_by_half_a_sample() {
+        let (_, delta) = placement_step(-9_000, 9_000);
+        assert_eq!(delta, -4_500, "half of a 9 000-tick sample");
+    }
+
+    #[test]
+    fn a_skew_refusal_is_zero_until_sender_reports_disagree() {
+        let mut rig = Rig::new(48_000, WRAPPING_BASE);
+        // The other track's first sample carries the 100 ms arrival lag, so
+        // an NTP offset of 3 600 s - 100 ms is exactly one hour of skew.
+        rig.sender_reports(3_599_900_000);
+        for k in 0..FRAMES {
+            rig.frame(k);
+        }
+        assert_eq!(rig.aligner.skew_rejections(), 0, "exactly one hour agrees");
+    }
 }

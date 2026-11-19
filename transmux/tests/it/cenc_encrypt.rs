@@ -666,3 +666,87 @@ fn rejected_encrypt_leaves_media_and_counter_untouched() {
     );
     assert_eq!(used_encryptor.next_counter(), fresh.next_counter());
 }
+
+// ---------------------------------------------------------------------------
+// audit 22 — cbcs `0:0` means full-sample protection (ISO/IEC 23001-7 §10.2)
+// ---------------------------------------------------------------------------
+
+use aes::cipher::{Block, BlockModeEncrypt, KeyIvInit};
+
+type Aes128CbcEnc = cbc::Encryptor<aes::Aes128>;
+
+fn whole_sample_media(data: Vec<u8>) -> Media {
+    let record = transmux::AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: Vec::new(),
+        pps: Vec::new(),
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: Vec::new(),
+    };
+    let spec = transmux::TrackSpec::new(
+        TrackId::new(1),
+        timescale(1000),
+        CodecConfig::Avc {
+            config: transmux::AVCConfigurationBox::new(record),
+            width: 16,
+            height: 16,
+        },
+    );
+    let sample = transmux::Sample::new(data, Some(0), Some(0), Some(1000), true)
+        .expect("valid timing");
+    Media::new(vec![Track::new(spec, vec![sample])], timescale(1000))
+}
+
+fn cbcs_encrypt(data: Vec<u8>, pattern: (u8, u8)) -> Result<Vec<u8>, transmux::Error> {
+    const KEY: [u8; 16] = [0x42; 16];
+    const IV: [u8; 16] = [0x11; 16];
+    const KID: [u8; 16] = [0x22; 16];
+    let mut media = whole_sample_media(data);
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID, SubsamplePolicy::WholeSample)
+        .with_iv(IvGen::Constant(IV))
+        .with_pattern(pattern);
+    CencEncryptor::new(KEY).encrypt(&mut media, &cfg)?;
+    Ok(media.tracks[0].samples[0].data.to_vec())
+}
+
+fn independent_cbc(data: &[u8], blocks: usize) -> Vec<u8> {
+    const KEY: [u8; 16] = [0x42; 16];
+    const IV: [u8; 16] = [0x11; 16];
+    let mut out = data.to_vec();
+    let mut enc = Aes128CbcEnc::new((&KEY).into(), (&IV).into());
+    for chunk in out[..blocks * 16].chunks_exact_mut(16) {
+        let block: &mut Block<aes::Aes128> = chunk.try_into().expect("16-byte block");
+        enc.encrypt_block(block);
+    }
+    out
+}
+
+#[test]
+fn cbcs_zero_zero_pattern_encrypts_the_whole_sample() {
+    let plain: Vec<u8> = (0..87u8).collect();
+    let got = cbcs_encrypt(plain.clone(), (0, 0)).expect("full-sample protection");
+    let want = independent_cbc(&plain, 5);
+    assert_eq!(got, want, "5 whole blocks encrypted, 7-byte tail clear");
+}
+
+#[test]
+fn cbcs_one_nine_pattern_encrypts_only_the_crypt_run() {
+    let plain: Vec<u8> = (0..87u8).collect();
+    let got = cbcs_encrypt(plain.clone(), (1, 9)).expect("1:9 pattern");
+    let want = independent_cbc(&plain, 1);
+    assert_eq!(got, want, "first block encrypted, the rest clear");
+}
+
+#[test]
+fn cbcs_zero_crypt_with_nonzero_skip_is_rejected() {
+    assert!(matches!(
+        cbcs_encrypt(vec![0u8; 87], (0, 5)),
+        Err(transmux::Error::InvalidInput(_))
+    ));
+}
