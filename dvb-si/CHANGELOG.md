@@ -23,6 +23,7 @@
 - `ContentGenre::from_nibble_1` is pinned for every EN 300 468 Table 29 level-1 nibble (variant and `name()`), including `Adult` and `UserDefined` (#3236).
 - The AC-3 channel modes 4-6 decode to their Table D.5 variants, and `Ac3Descriptor::decoded_component_type` is asserted for a multichannel component_type byte (#3237).
 - `LocalTimeOffsetEntry::set_offsets` keeps the shared polarity bit set when only one of the local/next offsets is negative, and the BCD `HHMM` encoder accepts 99:59 and rejects 100 hours (#3238, #3239).
+- Mobile hand-over linkage descriptors are parsed with the minimal 3-byte (network_id only) and 5-byte (network_id + initial_service_id) tails and no private data, each re-serialising byte-identically (#3240).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
