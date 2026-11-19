@@ -469,6 +469,15 @@ fn tot_descriptors_past_body_end() {
 }
 
 #[test]
+fn tot_shorter_than_the_fixed_header() {
+    // 3 + 5 + 2 + 4 = 14 bytes before any descriptor loop.
+    assert_eq!(
+        TotSection::parse(&[0x73, 0xF0, 0x00, 0x00, 0x00]).unwrap_err(),
+        too_short(14, 5, "TotSection")
+    );
+}
+
+#[test]
 fn sdt_shorter_than_minimum() {
     let bytes = vec![
         0x42, 0xF0, 0x0F, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xFF, 0x00, 0x00, 0x00,
@@ -1560,5 +1569,132 @@ fn sat_position_v3_ephemeris_entry_with_acceleration_short() {
     assert_eq!(
         SatSection::parse(&sat(4, &body)).unwrap_err(),
         too_short(43, 42, "SatSection PositionV3 ephemeris_data entry")
+    );
+}
+
+#[test]
+fn sat_beamhopping_mode0_short_with_one_byte_left() {
+    // A 20-byte body leaves 8 bits after the 152-bit plan header: the 12-byte
+    // mode 0 tail is short, and one whole byte is still available.
+    assert_eq!(
+        SatSection::parse(&sat(3, &[0x00; 20])).unwrap_err(),
+        too_short(12, 1, "SatSection Beamhopping Mode0")
+    );
+}
+
+#[test]
+fn sat_beamhopping_mode1_header_short_with_one_byte_left() {
+    let mut body = [0x00u8; 20];
+    body[6] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(3, &body)).unwrap_err(),
+        too_short(4, 1, "SatSection Beamhopping Mode1 header")
+    );
+}
+
+#[test]
+fn sat_beamhopping_mode1_bitmap_short_with_one_byte_left() {
+    // bit_map_size 9 needs two bytes; 8 bits remain after the 32-bit mode 1
+    // header of a 24-byte body.
+    let mut body = [0x00u8; 24];
+    body[6] = 0x01;
+    body[20] = 0x09;
+    assert_eq!(
+        SatSection::parse(&sat(3, &body)).unwrap_err(),
+        too_short(2, 1, "SatSection Beamhopping Mode1 bitmap")
+    );
+}
+
+#[test]
+fn sat_beamhopping_mode2_short_with_one_byte_left() {
+    let mut body = [0x00u8; 20];
+    body[6] = 0x02;
+    assert_eq!(
+        SatSection::parse(&sat(3, &body)).unwrap_err(),
+        too_short(24, 1, "SatSection Beamhopping Mode2")
+    );
+}
+
+#[test]
+fn sat_position_v3_covariance_short_with_one_byte_left() {
+    // A 15-byte body holds the 64-bit header, the 32-bit satellite header and
+    // the 16-bit ephemeris count: 8 bits remain of the 91-byte covariance.
+    let mut body = [0x00u8; 15];
+    body[11] = 0x01;
+    assert_eq!(
+        SatSection::parse(&sat(4, &body)).unwrap_err(),
+        too_short(91, 1, "SatSection PositionV3 covariance")
+    );
+}
+
+fn rct_locator_link(locator: &[u8]) -> Vec<u8> {
+    let mut link = vec![0x1F, 0x01, 0x23, 0xA5];
+    link.extend_from_slice(locator);
+    rct_link(&link)
+}
+
+#[test]
+fn rct_locator_full_triplet_short() {
+    assert_eq!(
+        RctSection::parse(&rct_locator_link(&[
+            0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+        ]))
+        .unwrap_err(),
+        too_short(8, 7, "RctSection dvb_binary_locator full triplet")
+    );
+}
+
+#[test]
+fn rct_locator_start_time_duration_short() {
+    assert_eq!(
+        RctSection::parse(&rct_locator_link(&[
+            0x10, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34, 0x56,
+        ]))
+        .unwrap_err(),
+        too_short(12, 11, "RctSection dvb_binary_locator start_time/duration")
+    );
+}
+
+#[test]
+fn rct_locator_event_id_short() {
+    assert_eq!(
+        RctSection::parse(&rct_locator_link(&[
+            0x40, 0x00, 0xAB, 0x12, 0x34, 0x56, 0x78, 0x00,
+        ]))
+        .unwrap_err(),
+        too_short(9, 8, "RctSection dvb_binary_locator event_id")
+    );
+}
+
+#[test]
+fn rct_locator_tva_id_eit_short() {
+    assert_eq!(
+        RctSection::parse(&rct_locator_link(&[
+            0x80, 0x00, 0xAB, 0x12, 0x34, 0x56, 0x78, 0x00,
+        ]))
+        .unwrap_err(),
+        too_short(9, 8, "RctSection dvb_binary_locator TVA_id (EIT)")
+    );
+}
+
+#[test]
+fn rct_locator_tva_id_pes_short() {
+    assert_eq!(
+        RctSection::parse(&rct_locator_link(&[
+            0xC0, 0x00, 0xAB, 0x12, 0x34, 0x56, 0x78, 0x00, 0x00,
+        ]))
+        .unwrap_err(),
+        too_short(10, 9, "RctSection dvb_binary_locator TVA_id (PES)")
+    );
+}
+
+#[test]
+fn rct_locator_windows_short() {
+    assert_eq!(
+        RctSection::parse(&rct_locator_link(&[
+            0x20, 0x00, 0xAB, 0x12, 0x34, 0x56, 0x78,
+        ]))
+        .unwrap_err(),
+        too_short(8, 7, "RctSection dvb_binary_locator windows")
     );
 }
