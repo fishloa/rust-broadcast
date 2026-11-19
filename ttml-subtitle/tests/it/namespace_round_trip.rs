@@ -233,9 +233,9 @@ fn wrapper_root_requires_a_real_tt_child() {
     let p = &doc.tt.body.as_ref().expect("body").divs[0].paragraphs[0];
     assert_eq!(p.content, vec![InlineContent::Text("ok".into())]);
 
-    let missing = format!(r#"<wrapper><other/></wrapper>"#);
+    let missing = r#"<wrapper><other/></wrapper>"#;
     assert!(matches!(
-        Document::parse_str(&missing),
+        Document::parse_str(missing),
         Err(ttml_subtitle::Error::NotTtmlRoot(_))
     ));
 }
