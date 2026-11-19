@@ -800,6 +800,28 @@ fn a_declared_audio_that_never_arrives_starts_at_the_cap_and_reports_it_once() {
 }
 
 #[test]
+fn a_pending_declaration_does_not_expect_a_kind_that_is_not_missing() {
+    let bytes = test_fixtures::read("ts/h264-aac.ts");
+    let (mut s, c) = open_live(Config::default());
+    for chunk in bytes.chunks(4096) {
+        s.on_data(c, chunk, ts(0));
+    }
+    while s.next_event().is_some() {}
+    while s.poll(ts(0)).is_some() {}
+    s.set_rendered_tracks(ts(1), &[TrackId::new(999)]);
+    let mut events = Vec::new();
+    while let Some(e) = s.next_event() {
+        events.push(e);
+    }
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, Event::Status(Status::AwaitingTracks))),
+        "nothing is missing, so the pending declaration awaits nothing: {events:?}"
+    );
+}
+
+#[test]
 fn a_zero_hard_cap_reproduces_the_wait_alone() {
     let Some(b) = gulp_without_audio() else {
         return;

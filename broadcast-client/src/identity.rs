@@ -199,3 +199,20 @@ impl ClientIdentityScope {
 }
 
 broadcast_common::impl_spec_display!(ClientIdentityScope);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+
+    #[test]
+    fn the_scope_labels_are_their_names() {
+        for (scope, label) in [
+            (ClientIdentityScope::SessionOrigin, "session-origin"),
+            (ClientIdentityScope::AnyHttps, "any-https"),
+        ] {
+            assert_eq!(scope.name(), label);
+            assert_eq!(scope.to_string(), label);
+        }
+    }
+}

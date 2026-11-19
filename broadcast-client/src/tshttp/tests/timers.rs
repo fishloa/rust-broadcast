@@ -1,5 +1,6 @@
+use super::TsHttpClient;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, Event, TsHttpClient};
+use crate::tshttp::{Action, Event};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -86,8 +87,11 @@ fn stall_reconnect_emits_abort_then_zero_delay_reconnect() {
     c.poll_timeout(ts(30_000));
     assert_eq!(
         drain_actions(&mut c),
-        vec![Action::Abort, Action::Reconnect {
-            after: std::time::Duration::from_millis(0),
-        }]
+        vec![
+            Action::Abort,
+            Action::Reconnect {
+                after: std::time::Duration::from_millis(0),
+            }
+        ]
     );
 }

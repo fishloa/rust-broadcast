@@ -563,4 +563,23 @@ mod tests {
             PaprReduction::Vn(PaprReductionVn::L1AceAndAce)
         );
     }
+
+    #[test]
+    fn serialized_len_is_the_168_bit_information_block() {
+        let pre = synthetic_pre();
+        assert_eq!(pre.serialized_len(), L1PRE_BYTES);
+        assert_eq!(pre.serialized_len(), 21);
+    }
+
+    #[test]
+    fn serialize_into_rejects_a_buffer_shorter_than_the_information_block() {
+        let pre = synthetic_pre();
+        let mut small = [0u8; L1PRE_BYTES - 1];
+        assert!(matches!(
+            pre.serialize_into(&mut small),
+            Err(crate::error::Error::OutputBufferTooSmall(_))
+        ));
+        let mut exact = [0u8; L1PRE_BYTES];
+        assert_eq!(pre.serialize_into(&mut exact).unwrap(), 21);
+    }
 }
