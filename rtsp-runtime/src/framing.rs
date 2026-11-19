@@ -71,4 +71,50 @@ mod tests {
         ));
         assert!(head_end(&a[..1000], 0).unwrap().is_none());
     }
+
+    #[test]
+    fn a_chunked_head_is_found_whatever_the_chunk_boundary() {
+        let buf = b"OPTIONS rtsp://h/s RTSP/1.0\r\nCSeq: 1\r\n\r\nbody";
+        let end = buf.len() - 4;
+        for chunk in 1..=buf.len() {
+            let mut scanned = 0;
+            let mut found = None;
+            let mut upto = 0;
+            while upto < buf.len() {
+                upto = (upto + chunk).min(buf.len());
+                match head_end(&buf[..upto], scanned) {
+                    Ok(Some(end)) => {
+                        found = Some(end);
+                        break;
+                    }
+                    Ok(None) => scanned = upto,
+                    Err(e) => panic!("chunk {chunk} at {upto}: {e:?}"),
+                }
+            }
+            assert_eq!(found, Some(end), "chunk size {chunk}");
+        }
+    }
+
+    #[test]
+    fn the_head_cap_is_64_kib_including_the_terminator() {
+        let mut head = Vec::new();
+        head.extend_from_slice(b"OPTIONS rtsp://h/s RTSP/1.0\r\nX-Pad: ");
+        head.resize(65_536 - 4, b'a');
+        head.extend_from_slice(b"\r\n\r\n");
+        assert_eq!(head.len(), 65_536);
+        assert_eq!(head_end(&head, 0).unwrap(), Some(65_536));
+
+        head.insert(65_536 - 4, b'a');
+        assert_eq!(head.len(), 65_537);
+        match head_end(&head, 0) {
+            Err(crate::error::Error::MessageParse {
+                source: crate::error::MessageParseError::HeaderUnterminated { at_least, limit },
+                ..
+            }) => {
+                assert_eq!(at_least, 65_537);
+                assert_eq!(limit, 65_536);
+            }
+            other => panic!("expected HeaderUnterminated, got {other:?}"),
+        }
+    }
 }

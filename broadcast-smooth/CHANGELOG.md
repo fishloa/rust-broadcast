@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- A second `Protection`/`ProtectionHeader` never replaces the first, malformed XML keeps its reader position and message, and every `SmoothParseError` variant's `Display` text is asserted literally (#3040).
+- `hex_decode` accepts exactly `MAX_CODEC_PRIVATE_DATA_HEX_LEN` characters and rejects more, and `default_limits` admits twice that so an oversized `CodecPrivateData` reports the typed error rather than a generic limit (#3039).
+- `enumerate_chunks`' `c@r` caps are pinned at their edges: a zero-length run between equal explicit times is accepted, one run of exactly `MAX_CHUNK_RUN` is accepted, `MAX_CHUNK_RUN + 1` and several runs summing over the cap are `ChunkRunTooLong` (#3038).
+- `StreamIndex::same_stream` is pinned on `Type` + `Name` + `Url` separately, including two audio streams distinguished only by `Name` (#3037).
 
 ## [0.2.1] - 2026-11-17
 ### Fixed

@@ -389,4 +389,74 @@ mod tests {
         assert_eq!(demux.classify(&DTLS_RECORD, addr(201)), Some(2));
         assert_eq!(demux.mapped_tuples(&2), 1);
     }
+
+    /// Audit-22 #3004: the demux's own bookkeeping is what a caller sizes its
+    /// per-session budgets from. Bite test: a constant `sessions()` (the audit
+    /// mutant returns 1) and a constant `max_tuples_per_session()` (0 or 1)
+    /// would report a session count and cap nobody configured.
+    #[test]
+    fn sessions_and_the_tuple_cap_are_reported_as_configured() {
+        let mut demux = demux();
+        assert_eq!(demux.sessions(), 2);
+        assert_eq!(demux.max_tuples_per_session(), CAP);
+        assert_eq!(CAP, 3, "the literal cap these tests run with");
+
+        let empty: SocketDemux<u32> = SocketDemux::new(7);
+        assert_eq!(empty.sessions(), 0);
+        assert_eq!(empty.max_tuples_per_session(), 7);
+
+        demux.unregister(&1);
+        assert_eq!(demux.sessions(), 1);
+        demux.unregister(&2);
+        assert_eq!(demux.sessions(), 0);
+    }
+
+    /// Audit-22 #3004: two sessions on one socket keep their own 5-tuples;
+    /// unregistering one frees only its own mappings.
+    #[test]
+    fn two_sessions_keep_their_own_tuples() {
+        let mut demux = demux();
+        assert_eq!(
+            demux.classify(&authenticated_check("aaaaaaaa:p", PWD_A), addr(1)),
+            Some(1)
+        );
+        assert_eq!(
+            demux.classify(&authenticated_check("bbbbbbbb:p", PWD_B), addr(2)),
+            Some(2)
+        );
+        assert_eq!(demux.classify(&DTLS_RECORD, addr(1)), Some(1));
+        assert_eq!(demux.classify(&SRTP_PACKET, addr(2)), Some(2));
+        assert_eq!(demux.mapped_tuples(&1), 1);
+        assert_eq!(demux.mapped_tuples(&2), 1);
+
+        demux.unregister(&2);
+        assert_eq!(demux.classify(&DTLS_RECORD, addr(2)), None);
+        assert_eq!(
+            demux.classify(&DTLS_RECORD, addr(1)),
+            Some(1),
+            "unregistering one session must not free another session's tuple"
+        );
+        assert_eq!(demux.mapped_tuples(&1), 1);
+        assert_eq!(demux.mapped_tuples(&2), 0);
+
+        // The remaining session's own re-check is idempotent.
+        assert_eq!(
+            demux.classify(&authenticated_check("aaaaaaaa:p", PWD_A), addr(1)),
+            Some(1)
+        );
+        assert_eq!(demux.mapped_tuples(&1), 1);
+    }
+
+    /// Audit-22 #3004: `Debug` names the registered ufrags for diagnosis but
+    /// never a password. Bite test: an empty `Debug` (the mutant) hides both.
+    #[test]
+    fn debug_names_the_ufrags_and_never_a_password() {
+        let demux = demux();
+        let rendered = format!("{demux:?}");
+        assert!(rendered.starts_with("SocketDemux"), "{rendered}");
+        assert!(rendered.contains("aaaaaaaa"), "{rendered}");
+        assert!(rendered.contains("bbbbbbbb"), "{rendered}");
+        assert!(!rendered.contains(PWD_A), "{rendered}");
+        assert!(!rendered.contains(PWD_B), "{rendered}");
+    }
 }

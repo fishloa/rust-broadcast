@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- `EmsgBox::parse`'s declared-size guard is pinned at every boundary: a size of 8..=11 is `InvalidSize`, a size of exactly 12 is a valid empty FullBox whose body parse fails (not a size error), and a version-1 body of 0..=19 bytes is `BufferTooShort { need: 20 }` at each length (#3032).
+- `PresentationTime::name()` and its `Display` form are asserted literally against the DASH-IF Part 10 Table 6-2 tokens (#3033).
 
 ## [0.8.0] - 2026-11-15
 ### Changed
