@@ -809,4 +809,14 @@ mod tests {
         parsed.serialize_into(&mut out).unwrap();
         assert_eq!(out, original);
     }
+
+    /// §9.3 Table 16's registry designator byte names the two item-length
+    /// forms; both labels are pinned.
+    #[test]
+    fn item_length_mode_labels_are_pinned() {
+        assert_eq!(ItemLengthMode::TwoByte.name(), "2-byte length");
+        assert_eq!(ItemLengthMode::Ber.name(), "BER length");
+        assert_eq!(ItemLengthMode::TwoByte.to_string(), "2-byte length");
+        assert_eq!(ItemLengthMode::Ber.to_string(), "BER length");
+    }
 }

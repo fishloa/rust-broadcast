@@ -530,4 +530,18 @@ mod tests {
             Err(Error::UnknownPartitionStatus { byte: 0x05 })
         ));
     }
+
+    /// Table 4 byte 15's four status labels, pinned literally.
+    #[test]
+    fn partition_status_labels_are_pinned() {
+        for (status, label) in [
+            (PartitionStatus::OpenIncomplete, "open and incomplete"),
+            (PartitionStatus::ClosedIncomplete, "closed and incomplete"),
+            (PartitionStatus::OpenComplete, "open and complete"),
+            (PartitionStatus::ClosedComplete, "closed and complete"),
+        ] {
+            assert_eq!(status.name(), label);
+            assert_eq!(status.to_string(), label);
+        }
+    }
 }
