@@ -1531,4 +1531,129 @@ mod tests {
         assert_zeroize_on_drop::<CryptoConfig>();
         assert_zeroize_on_drop::<SecretBytes>();
     }
+
+    #[test]
+    fn config_builders_store_each_field() {
+        use crate::packet::HandshakeExtensionMessageFlags;
+        let flags = HandshakeExtensionMessageFlags(0x0000_0023);
+        let config = HandshakeConfig::default()
+            .with_srt_version(0x0105_0003)
+            .with_flags(flags)
+            .with_local_ip([1, 2, 3, 4])
+            .with_retransmit_after(Duration::from_millis(7))
+            .with_max_retries(3);
+        assert_eq!(config.srt_version, 0x0105_0003);
+        assert_eq!(config.flags, flags);
+        assert_eq!(config.local_ip, [1, 2, 3, 4]);
+        assert_eq!(config.retransmit_after, Duration::from_millis(7));
+        assert_eq!(config.max_retries, 3);
+    }
+
+    fn example_hs_msg() -> HsExtMessage {
+        HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: crate::packet::HandshakeExtensionMessageFlags(0),
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
+        }
+    }
+
+    #[test]
+    fn conclusion_extension_flags_advertise_a_present_stream_id() {
+        use crate::packet::handshake::HS_EXT_FLAG_CONFIG;
+        let contents = ConclusionExtensionContents::new(example_hs_msg(), Some("sid"), None);
+        let (_, flags) =
+            build_conclusion_extensions(crate::packet::ExtensionType::HsReq, &contents);
+        assert_eq!(flags & HS_EXT_FLAG_CONFIG, HS_EXT_FLAG_CONFIG);
+    }
+
+    #[test]
+    fn conclusion_extension_flags_advertise_a_present_group() {
+        use crate::packet::handshake::HS_EXT_FLAG_CONFIG;
+        use crate::packet::{GroupFlags, GroupMembershipExtension, GroupType};
+        let group = GroupMembershipExtension {
+            group_id: 7,
+            group_type: GroupType::from_bits(0),
+            flags: GroupFlags(0),
+            weight: 0,
+        };
+        let contents = ConclusionExtensionContents::new(example_hs_msg(), None, Some(group));
+        let (_, flags) =
+            build_conclusion_extensions(crate::packet::ExtensionType::HsReq, &contents);
+        assert_eq!(flags & HS_EXT_FLAG_CONFIG, HS_EXT_FLAG_CONFIG);
+    }
+
+    #[test]
+    fn arm_fresh_resets_the_retry_budget_and_the_silence() {
+        let config = HandshakeConfig::default();
+        let mut retransmit = Retransmit::default();
+        retransmit.arm_fresh(b"packet");
+        assert!(matches!(
+            retransmit.tick(config.retransmit_after - Duration::from_micros(1), &config),
+            RetransmitStep::Idle
+        ));
+        for _ in 0..=config.max_retries {
+            let _ = retransmit.tick(config.retransmit_after, &config);
+        }
+        assert!(matches!(
+            retransmit.tick(config.retransmit_after, &config),
+            RetransmitStep::TimedOut
+        ));
+        retransmit.arm_fresh(b"packet");
+        assert!(
+            matches!(
+                retransmit.tick(config.retransmit_after, &config),
+                RetransmitStep::Resend(ref bytes) if bytes.as_slice() == b"packet"
+            ),
+            "arm_fresh must restore the retry budget and resend"
+        );
+    }
+
+    #[test]
+    fn rejection_reason_labels_match_table_7() {
+        let cases: &[(RejectionReason, &str)] = &[
+            (RejectionReason::Unknown, "REJ_UNKNOWN"),
+            (RejectionReason::System, "REJ_SYSTEM"),
+            (RejectionReason::Peer, "REJ_PEER"),
+            (RejectionReason::Resource, "REJ_RESOURCE"),
+            (RejectionReason::Rogue, "REJ_ROGUE"),
+            (RejectionReason::Backlog, "REJ_BACKLOG"),
+            (RejectionReason::Ipe, "REJ_IPE"),
+            (RejectionReason::Close, "REJ_CLOSE"),
+            (RejectionReason::Version, "REJ_VERSION"),
+            (RejectionReason::RdvCookie, "REJ_RDVCOOKIE"),
+            (RejectionReason::BadSecret, "REJ_BADSECRET"),
+            (RejectionReason::Unsecure, "REJ_UNSECURE"),
+            (RejectionReason::MessageApi, "REJ_MESSAGEAPI"),
+            (RejectionReason::Congestion, "REJ_CONGESTION"),
+            (RejectionReason::Filter, "REJ_FILTER"),
+            (RejectionReason::Group, "REJ_GROUP"),
+        ];
+        for &(reason, label) in cases {
+            assert_eq!(reason.name(), label);
+        }
+        assert_eq!(RejectionReason::Reserved(1500).name(), "reserved");
+    }
+
+    /// A secret's two 64-bit halves must both feed the keyed hash: secrets
+    /// that differ only in the high half (or only in the low half) must not
+    /// derive the same cookie or listener identifiers.
+    #[test]
+    fn cookie_and_listener_ids_use_both_halves_of_the_secret() {
+        const LOW: u128 = 0x1111_2222_3333_4444;
+        let a = LOW | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
+        let high_differs = LOW | (u128::from(0xAAAA_BBBB_CCCC_EEEEu64) << 64);
+        let low_differs =
+            u128::from(0x1111_2222_3333_5555u64) | (u128::from(0xAAAA_BBBB_CCCC_DDDDu64) << 64);
+        assert_ne!(derive_cookie(7, 9, a), derive_cookie(7, 9, high_differs));
+        assert_ne!(
+            derive_listener_ids(7, 9, a),
+            derive_listener_ids(7, 9, high_differs)
+        );
+        assert_ne!(derive_cookie(7, 9, a), derive_cookie(7, 9, low_differs));
+        assert_ne!(
+            derive_listener_ids(7, 9, a),
+            derive_listener_ids(7, 9, low_differs)
+        );
+    }
 }

@@ -369,3 +369,19 @@ impl MulticastGatewayConfiguration {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn baseline_namespace_labels_and_display_agree() {
+        for (value, label) in [
+            (BaselineNamespace::V2019, "2019"),
+            (BaselineNamespace::V2024, "2024"),
+        ] {
+            assert_eq!(value.name(), label);
+            assert_eq!(value.to_string(), label);
+        }
+    }
+}

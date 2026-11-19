@@ -546,4 +546,23 @@ mod tests {
             Err(Error::InvalidSdp(_))
         ));
     }
+
+    #[test]
+    fn channels_reports_each_setups_pair_and_none_past_the_end() {
+        let plan = plan(None, None, &["trackID=0", "trackID=1"], 0).unwrap();
+        assert_eq!(plan.channels(0), Some((0, 1)));
+        assert_eq!(plan.channels(1), Some((2, 3)));
+        assert_eq!(plan.channels(2), None);
+    }
+
+    #[test]
+    fn channels_reports_the_pair_the_server_chose() {
+        let mut plan = plan(None, None, &["trackID=0", "trackID=1"], 0).unwrap();
+        plan.accept_setup(0, Some(&interleaved("RTP/AVP/TCP;interleaved=0-1")))
+            .unwrap();
+        plan.accept_setup(1, Some(&interleaved("RTP/AVP/TCP;interleaved=6-7")))
+            .unwrap();
+        assert_eq!(plan.channels(0), Some((0, 1)));
+        assert_eq!(plan.channels(1), Some((6, 7)));
+    }
 }

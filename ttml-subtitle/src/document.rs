@@ -4223,6 +4223,14 @@ fn collect_namespaces(tt: &mut TtElement) -> NamespaceMap {
     // with exactly the namespaces it resolved to originally (#1110/TT-W1).
     let overrides: Vec<(String, String)> = core::mem::take(&mut ns.last_wins);
     for (prefix, uri) in &overrides {
+        if KEY_BINDINGS.iter().any(|(p, _)| p == prefix) {
+            // The five core bindings are written unconditionally by the
+            // serializer, so a foreign URI may never take one over: give it a
+            // fallback binding and keep every core declaration intact.
+            ns.add_fallback(uri);
+            ns.scoped.retain(|(p, _)| p != prefix);
+            continue;
+        }
         let owner_index = ns.bindings.iter().position(|(p, _)| p == prefix);
         let wins_uri = match owner_index {
             Some(index) => {
@@ -4280,7 +4288,10 @@ fn heal_last_wins(tt: &mut TtElement, prefix: &str, uri: &str) {
 
     fn heal_attrs(attrs: &mut [ForeignAttribute], prefix: &str, uri: &str) {
         for a in attrs {
-            if a.prefix.as_deref() == Some(prefix) && a.namespace.as_deref() != Some(uri) {
+            if a.prefix.as_deref() == Some(prefix)
+                && a.namespace.as_deref() != Some(uri)
+                && !a.scoped_namespaces.iter().any(|(p, _)| p == prefix)
+            {
                 a.namespace = Some(String::from(uri));
             }
         }
@@ -4447,7 +4458,15 @@ fn heal_last_wins(tt: &mut TtElement, prefix: &str, uri: &str) {
                 _ => {}
             },
             Mut::Unknown(u) => {
-                if u.prefix.as_deref() == Some(prefix) && u.namespace.as_deref() != Some(uri) {
+                if u.prefix.as_deref() == Some(prefix)
+                    && u.namespace.as_deref() != Some(uri)
+                    && !u
+                        .scoped_namespaces
+                        .as_deref()
+                        .unwrap_or_default()
+                        .iter()
+                        .any(|(p, _)| p == prefix)
+                {
                     u.namespace = Some(String::from(uri));
                 }
                 heal_attrs(&mut u.attributes, prefix, uri);
@@ -4751,7 +4770,7 @@ fn serialize_unknown_element(
     indent: usize,
     ns: &mut NamespaceMap,
 ) -> WriteOutcome {
-    let name = match elem.prefix.as_deref() {
+    let mut name = match elem.prefix.as_deref() {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", elem.local_name),
         _ => elem.local_name.clone(),
     };
@@ -4763,6 +4782,18 @@ fn serialize_unknown_element(
         && !prefix.is_empty()
     {
         ns.add_binding(prefix, uri);
+        let usable = ns.bindings.iter().any(|(p, u)| p == prefix && u == uri);
+        if !usable {
+            // The original prefix now belongs to a different URI (or is a core
+            // binding): write the element name under a prefix that actually
+            // resolves to its namespace instead of silently changing it.
+            if ns.prefix_for(uri).is_none() {
+                ns.add_fallback(uri);
+            }
+            if let Some(bound) = ns.prefix_for(uri) {
+                name = format!("{bound}:{}", elem.local_name);
+            }
+        }
     }
 
     put_indent(w, indent)?;

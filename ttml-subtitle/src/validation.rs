@@ -451,3 +451,25 @@ impl Validator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+
+    #[test]
+    fn profile_name_is_the_spec_token() {
+        assert_eq!(Profile::Text.name(), "text");
+        assert_eq!(Profile::Image.name(), "image");
+        assert_eq!(Profile::Text.to_string(), "text");
+        assert_eq!(Profile::Image.to_string(), "image");
+    }
+
+    #[test]
+    fn imsc_version_name_is_the_spec_token() {
+        assert_eq!(ImscVersion::V1_0.name(), "1.0");
+        assert_eq!(ImscVersion::V1_1.name(), "1.1");
+        assert_eq!(ImscVersion::V1_0.to_string(), "1.0");
+        assert_eq!(ImscVersion::V1_1.to_string(), "1.1");
+    }
+}

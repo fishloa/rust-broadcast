@@ -235,4 +235,23 @@ mod tests {
             Err(crate::error::Error::InterleavedFrame(..))
         ));
     }
+
+    #[test]
+    fn a_zero_length_payload_frame_is_complete_at_its_header() {
+        let (frame, consumed) = InterleavedFrame::parse(&[MAGIC, 5, 0, 0])
+            .unwrap()
+            .expect("a complete frame with an empty payload");
+        assert_eq!(consumed, 4);
+        assert_eq!(frame.channel, 5);
+        assert!(frame.payload.is_empty());
+    }
+
+    #[test]
+    fn serialized_len_is_the_four_byte_prefix_plus_the_payload() {
+        let frame = InterleavedFrame::new(1, vec![0u8; 10]);
+        assert_eq!(frame.serialized_len(), 14);
+        let bytes = frame.to_bytes().unwrap();
+        assert_eq!(bytes.len(), 14);
+        assert_eq!(frame.serialized_len(), bytes.len());
+    }
 }

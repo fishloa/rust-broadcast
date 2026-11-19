@@ -125,4 +125,88 @@ mod tests {
             base.to_string()
         );
     }
+
+    fn video() -> sdp_types::Media {
+        let mut media = sdp_types::Media::new(
+            sdp_types::MediaType::Video,
+            0,
+            sdp_types::TransportProto::RtpAvp,
+            96,
+        );
+        media.add_attribute_with_value("control", "streamid=0");
+        media.add_attribute_with_value("rtpmap", "96 H264/90000");
+        media.add_attribute_with_value("fmtp", "96 packetization-mode=1");
+        media
+    }
+
+    fn audio() -> sdp_types::Media {
+        let mut media = sdp_types::Media::new(
+            sdp_types::MediaType::Audio,
+            0,
+            sdp_types::TransportProto::RtpAvp,
+            97,
+        );
+        media.add_attribute_with_value("control", "streamid=1");
+        media.add_attribute_with_value("rtpmap", "97 MPEG4-GENERIC/48000/2");
+        media
+    }
+
+    #[test]
+    fn a_built_session_description_carries_every_field_and_parses_back() {
+        let sdp = session_description(
+            "cam",
+            Origin::with_ip_addr(0, 0, std::net::Ipv4Addr::LOCALHOST),
+            Connection::from_ip_addr(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            vec![video(), audio()],
+        )
+        .expect("rendered");
+
+        let expected = "v=0\r\n\
+                        o=- 0 0 IN IP4 127.0.0.1\r\n\
+                        s=cam\r\n\
+                        c=IN IP4 127.0.0.1\r\n\
+                        t=0 0\r\n\
+                        m=video 0 RTP/AVP 96\r\n\
+                        a=control:streamid=0\r\n\
+                        a=rtpmap:96 H264/90000\r\n\
+                        a=fmtp:96 packetization-mode=1\r\n\
+                        m=audio 0 RTP/AVP 97\r\n\
+                        a=control:streamid=1\r\n\
+                        a=rtpmap:97 MPEG4-GENERIC/48000/2\r\n";
+        assert_eq!(sdp, expected);
+
+        let parsed = Session::parse(sdp.as_bytes()).expect("the rendered SDP parses back");
+        assert_eq!(parsed.session_name, "cam");
+        assert_eq!(parsed.medias.len(), 2);
+        assert_eq!(parsed.medias[0].media, "video");
+        assert_eq!(parsed.medias[1].media, "audio");
+    }
+
+    #[test]
+    fn an_explicit_default_port_on_a_control_url_stays_on_the_request_authority() {
+        let request = Url::parse("rtsp://h/a").unwrap();
+        assert_eq!(
+            resolve_control(&request, &request, Some("rtsp://h:554/b")).as_deref(),
+            Some("rtsp://h:554/b")
+        );
+        let request = Url::parse("rtsps://h/a").unwrap();
+        assert_eq!(
+            resolve_control(&request, &request, Some("rtsps://h:322/b")).as_deref(),
+            Some("rtsps://h:322/b")
+        );
+    }
+
+    #[test]
+    fn a_control_url_on_the_other_schemes_default_port_crosses_authority() {
+        let request = Url::parse("rtsp://h/a").unwrap();
+        assert_eq!(
+            resolve_control(&request, &request, Some("rtsp://h:322/b")),
+            None
+        );
+        let request = Url::parse("rtsps://h/a").unwrap();
+        assert_eq!(
+            resolve_control(&request, &request, Some("rtsps://h:554/b")),
+            None
+        );
+    }
 }

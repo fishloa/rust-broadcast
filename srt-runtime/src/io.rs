@@ -3917,6 +3917,41 @@ mod adapter_tests {
         );
     }
 
+    /// With no ACK deadline left (its timestamp cannot represent another
+    /// period), the TSBPD release alone sets the wake-up.
+    #[tokio::test(start_paused = true)]
+    async fn the_tsbpd_release_alone_sets_the_deadline_without_an_ack_term() {
+        let mut driver = quiet_driver().await;
+        let _ = driver
+            .receiver
+            .tick(Timestamp::from_micros(u64::MAX - 1_000));
+        assert!(driver.receiver.next_timeout().is_none());
+        driver.ingress(Bytes::from(data_bytes(0, 0, b"p"))).unwrap();
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            driver.epoch + Duration::from_millis(LATENCY_MS)
+        );
+    }
+
+    /// With no earlier deadline, the Keep-Alive alone sets the wake-up.
+    #[tokio::test(start_paused = true)]
+    async fn the_keepalive_alone_sets_the_deadline_without_an_ack_term() {
+        let mut driver = quiet_driver().await;
+        let _ = driver
+            .receiver
+            .tick(Timestamp::from_micros(u64::MAX - 1_000));
+        assert!(driver.receiver.next_timeout().is_none());
+        assert!(driver.outbound_control.is_empty() && driver.outbound_data.is_empty());
+        let now = Instant::now();
+        driver.last_tx_at = now;
+        driver.last_rx_at = now;
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            now + KEEPALIVE_PERIOD,
+            "the keep-alive alone must be the next wake-up"
+        );
+    }
+
     /// Pacing: a queued DATA packet whose slot is 3 ms away beats the 10 ms ACK.
     #[tokio::test(start_paused = true)]
     async fn the_deadline_is_the_pacing_slot_when_it_is_the_earliest_term() {
@@ -5796,5 +5831,637 @@ mod adapter_tests {
             .handle_datagram(src, &conclusion)
             .expect("a repeated CONCLUSION");
         assert_eq!(listener.pending[&src].concluded_at, Some(concluded));
+    }
+
+    fn test_life() -> Arc<ListenerLife> {
+        Arc::new(ListenerLife {
+            cancel: CancellationToken::new(),
+            tasks: TaskTracker::new(),
+        })
+    }
+
+    fn conclusion_with_encryption(socket_id: u32, encryption_field: EncryptionField) -> Vec<u8> {
+        let hp = HandshakePacket {
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
+            version: crate::handshake_sm::HANDSHAKE_VERSION_5,
+            encryption_field,
+            extension_field: HandshakeExtensionFlags(0),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: crate::packet::HandshakeType::Conclusion,
+            srt_socket_id: socket_id,
+            syn_cookie: 0,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(Vec::new()),
+        };
+        let pkt = ControlPacket::Handshake(hp);
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).expect("serialize conclusion");
+        buf
+    }
+
+    fn conclusion_with_extension_flags(
+        socket_id: u32,
+        extension_field: HandshakeExtensionFlags,
+    ) -> Vec<u8> {
+        let hp = HandshakePacket {
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::CONNECTION_REQUEST,
+            version: crate::handshake_sm::HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field,
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: crate::packet::HandshakeType::Conclusion,
+            srt_socket_id: socket_id,
+            syn_cookie: 0,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(Vec::new()),
+        };
+        let pkt = ControlPacket::Handshake(hp);
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).expect("serialize conclusion");
+        buf
+    }
+
+    /// §4.3.1.1: an INDUCTION reply cookie is bound to the source address —
+    /// a CONCLUSION replayed from another port validates nothing.
+    #[tokio::test]
+    async fn cookie_replay_from_another_source_is_not_accepted() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let src_a: std::net::SocketAddr = "127.0.0.1:40001".parse().unwrap();
+        let src_b: std::net::SocketAddr = "127.0.0.1:40002".parse().unwrap();
+        let conclusion = listener_conclusion(&mut core, src_a, 7);
+        core.outbound_queue.clear();
+
+        core.handle_datagram(src_b, &conclusion)
+            .expect("a replayed conclusion is ignored");
+        assert!(
+            core.pending.is_empty(),
+            "a cookie issued to another source must allocate no state"
+        );
+        assert!(
+            core.outbound_queue.get(&src_b).is_none_or(|q| q.is_empty()),
+            "no response may go to the replayer"
+        );
+
+        core.handle_datagram(src_a, &conclusion)
+            .expect("the genuine source connects");
+        assert_eq!(
+            core.pending[&src_a].handshake.state(),
+            ListenerHandshakeState::Connected
+        );
+    }
+
+    /// A Listener without crypto refuses an encrypted INDUCTION with a
+    /// well-formed REJ_UNSECURE handshake packet.
+    #[tokio::test]
+    async fn listener_refuses_an_encrypted_request_with_a_rejection_packet() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let src = peer_addr();
+        let caller_id = 0x0000_0777;
+        core.handle_datagram(
+            src,
+            &conclusion_with_encryption(caller_id, EncryptionField::Aes128),
+        )
+        .expect("encrypted conclusion");
+        let answer = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .cloned()
+            .expect("a rejection answer");
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&answer).expect("parse") else {
+            panic!("expected handshake");
+        };
+        assert_eq!(
+            hp.handshake_type,
+            RejectionReason::Unsecure.to_handshake_type()
+        );
+        assert_eq!(hp.srt_socket_id, 0);
+        assert_eq!(
+            hp.dest_socket_id,
+            crate::packet::SocketId::from_wire(caller_id)
+        );
+        assert_eq!(answer.len(), 64, "SRT header (16) + fixed CIF (48)");
+        assert!(core.pending.is_empty());
+    }
+
+    /// A CONCLUSION carrying the KMREQ extension bit is refused even when its
+    /// Encryption Field is zero.
+    #[tokio::test]
+    async fn listener_refuses_a_kmreq_flag_on_a_conclusion() {
+        use crate::packet::handshake::HS_EXT_FLAG_KMREQ;
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let src = peer_addr();
+        let caller_id = 0x0000_0778;
+        core.handle_datagram(
+            src,
+            &conclusion_with_extension_flags(caller_id, HandshakeExtensionFlags(HS_EXT_FLAG_KMREQ)),
+        )
+        .expect("conclusion");
+        let answer = core
+            .outbound_queue
+            .get(&src)
+            .and_then(|queue| queue.back())
+            .cloned()
+            .expect("a rejection answer");
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&answer).expect("parse") else {
+            panic!("expected handshake");
+        };
+        assert_eq!(
+            hp.handshake_type,
+            RejectionReason::Unsecure.to_handshake_type()
+        );
+        assert_eq!(
+            hp.dest_socket_id,
+            crate::packet::SocketId::from_wire(caller_id)
+        );
+    }
+
+    /// The remembered CONCLUSION answer is answered while fresh and dropped at
+    /// exactly `RECENT_ACCEPT_TTL`.
+    #[tokio::test(start_paused = true)]
+    async fn remembered_conclusion_answer_expires_at_the_ttl() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let src = peer_addr();
+        let response = alloc::vec![1u8, 2, 3, 4];
+        core.remember_accept(
+            src,
+            RecentAccept {
+                peer_socket_id: 7,
+                response: response.clone(),
+                accepted_at: Instant::now(),
+            },
+        );
+        core.handle_datagram(src, &conclusion_bytes(7, 123))
+            .expect("repeat");
+        assert_eq!(
+            core.outbound_queue.get(&src).and_then(|q| q.back()),
+            Some(&response)
+        );
+        core.outbound_queue.clear();
+
+        core.recent_accepts
+            .get_mut(&src)
+            .expect("entry")
+            .accepted_at = Instant::now() - RECENT_ACCEPT_TTL;
+        core.handle_datagram(src, &conclusion_bytes(7, 123))
+            .expect("expired repeat");
+        assert!(
+            core.outbound_queue.get(&src).is_none_or(|q| q.is_empty()),
+            "a cached answer must not outlive its TTL"
+        );
+    }
+
+    /// The pending-handshake tick re-sends an unanswered INDUCTION response.
+    #[tokio::test]
+    async fn tick_pending_retransmits_a_pending_handshake() {
+        let config = HandshakeConfig {
+            retransmit_after: Duration::from_millis(10),
+            max_retries: 5,
+            ..HandshakeConfig::default()
+        };
+        let mut core = test_core(config.clone()).await;
+        let src = peer_addr();
+        let mut handshake = ListenerHandshake::new(0x1234, 0xCAFE, config);
+        let outputs = handshake
+            .feed_bytes(&induction_bytes(7))
+            .expect("induction");
+        let expected = outputs
+            .into_iter()
+            .find_map(|o| match o {
+                HandshakeOutput::Send(bytes) => Some(bytes),
+                _ => None,
+            })
+            .expect("an INDUCTION response");
+        core.pending.insert(
+            src,
+            PendingListener {
+                handshake,
+                params: None,
+                peer_initial_seq: 0,
+                peer_timestamp_us: 0,
+                concluded_at: None,
+                created_at: Instant::now(),
+                last_response: None,
+                our_initial_seq: 0,
+            },
+        );
+        core.outbound_queue.clear();
+        core.tick_pending();
+        assert_eq!(
+            core.outbound_queue.get(&src).and_then(|q| q.back()),
+            Some(&expected),
+            "the tick must queue the retransmit"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn tick_pending_reaps_expired_recent_accepts() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let stale = peer_addr();
+        let fresh: std::net::SocketAddr = "10.0.0.2:9999".parse().unwrap();
+        core.recent_accepts.insert(
+            stale,
+            RecentAccept {
+                peer_socket_id: 1,
+                response: alloc::vec![1],
+                accepted_at: Instant::now() - RECENT_ACCEPT_TTL,
+            },
+        );
+        core.recent_accepts.insert(
+            fresh,
+            RecentAccept {
+                peer_socket_id: 2,
+                response: alloc::vec![2],
+                accepted_at: Instant::now(),
+            },
+        );
+        core.tick_pending();
+        assert!(!core.recent_accepts.contains_key(&stale));
+        assert!(core.recent_accepts.contains_key(&fresh));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn remember_accept_reaps_expired_entries() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        let stale = peer_addr();
+        core.recent_accepts.insert(
+            stale,
+            RecentAccept {
+                peer_socket_id: 1,
+                response: alloc::vec![1],
+                accepted_at: Instant::now() - RECENT_ACCEPT_TTL,
+            },
+        );
+        let fresh: std::net::SocketAddr = "10.0.0.2:9999".parse().unwrap();
+        core.remember_accept(
+            fresh,
+            RecentAccept {
+                peer_socket_id: 2,
+                response: alloc::vec![2],
+                accepted_at: Instant::now(),
+            },
+        );
+        assert!(!core.recent_accepts.contains_key(&stale));
+        assert!(core.recent_accepts.contains_key(&fresh));
+    }
+
+    /// `flush_all` actually drains every queued per-peer datagram.
+    #[tokio::test]
+    async fn flush_all_sends_every_queued_datagram() {
+        let (mut core, _tx, _accepted) = test_core_with_channels(HandshakeConfig::default()).await;
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer_addr = peer.local_addr().unwrap();
+        core.outbound_queue
+            .entry(peer_addr)
+            .or_default()
+            .push_back(alloc::vec![1u8, 2, 3]);
+        core.flush_all().await.expect("flush");
+        assert!(core.outbound_queue.values().all(|q| q.is_empty()));
+        let mut buf = [0u8; 8];
+        let (n, _) = tokio::time::timeout(Duration::from_secs(2), peer.recv_from(&mut buf))
+            .await
+            .expect("no datagram")
+            .expect("recv_from");
+        assert_eq!(&buf[..n], &[1, 2, 3]);
+    }
+
+    /// `drain_completed` skips an entry whose negotiated parameters were never
+    /// recorded (the defensive branch), rather than handing it over.
+    #[tokio::test]
+    async fn drain_completed_skips_an_entry_without_parameters() {
+        let life = test_life();
+        let (mut core, _tx, _accepted) = test_core_with_channels(HandshakeConfig::default()).await;
+        core.life = Arc::downgrade(&life);
+        let src = peer_addr();
+        let conclusion = listener_conclusion(&mut core, src, 7);
+        core.handle_datagram(src, &conclusion)
+            .expect("cookie-validated conclusion");
+        assert!(core.pending.contains_key(&src));
+        core.pending.get_mut(&src).expect("pending").params = None;
+        assert!(core.drain_completed().is_none());
+    }
+
+    /// The listener counters read the shared atomics, and `Debug` names the
+    /// listener and its address.
+    #[tokio::test]
+    async fn listener_accessors_and_debug_report_the_live_values() {
+        let (_accepted_tx, accepted) = mpsc::channel::<Result<SrtSocket>>(1);
+        let listener = SrtListener {
+            _life: test_life(),
+            local: "127.0.0.1:1234".parse().unwrap(),
+            accepted,
+            routes: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            unrouted_dropped: Arc::new(AtomicU64::new(7)),
+            overflow_dropped: Arc::new(AtomicU64::new(8)),
+            send_errors: Arc::new(AtomicU64::new(9)),
+        };
+        assert_eq!(listener.unrouted_dropped(), 7);
+        assert_eq!(listener.accept_overflow_dropped(), 8);
+        assert_eq!(listener.send_errors(), 9);
+        let rendered = alloc::format!("{listener:?}");
+        assert!(rendered.contains("SrtListener"), "{rendered}");
+        assert!(rendered.contains("1234"), "{rendered}");
+    }
+
+    #[tokio::test]
+    async fn local_crypto_enabled_reflects_the_configuration() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        assert!(!core.local_crypto_enabled());
+        #[cfg(feature = "crypto")]
+        {
+            core.config.crypto = Some(crate::handshake_sm::CryptoConfig::new(
+                b"pw".to_vec(),
+                [0u8; 16],
+                vec![0u8; 16],
+            ));
+            assert!(core.local_crypto_enabled());
+        }
+    }
+
+    #[test]
+    fn with_handshake_stores_the_config() {
+        let config = HandshakeConfig::default()
+            .with_srt_version(0x0105_0001)
+            .with_max_retries(4);
+        let socket_config = SrtSocketConfig::default().with_handshake(config.clone());
+        assert_eq!(socket_config.handshake, config);
+    }
+
+    /// The Retransmit-free helper `with_handshake` above also leaves the I/O
+    /// config untouched; `SrtSocketConfig::new` is its equivalent.
+    #[test]
+    fn socket_config_new_keeps_the_default_io() {
+        let config = HandshakeConfig::default().with_mtu(1400);
+        let socket_config = SrtSocketConfig::new(config.clone());
+        assert_eq!(socket_config.handshake, config);
+        assert_eq!(socket_config.io, IoConfig::default());
+    }
+
+    /// A dedicated-socket forwarder only passes datagrams from the peer.
+    #[tokio::test]
+    async fn forwarder_rejects_datagrams_from_another_source() {
+        let local = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let intruder = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let stats = Arc::new(Counters::default());
+        let (mut rx, _guard) = spawn_dedicated_socket_forwarder(
+            Arc::clone(&local),
+            peer.local_addr().unwrap(),
+            stats,
+            1500,
+        );
+        let local_addr = local.local_addr().unwrap();
+        intruder.send_to(b"injected", local_addr).await.unwrap();
+        peer.send_to(b"genuine", local_addr).await.unwrap();
+        let got = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .expect("no genuine datagram")
+            .expect("recv");
+        assert_eq!(&got[..], b"genuine");
+        assert!(
+            tokio::time::timeout(Duration::from_millis(200), rx.recv())
+                .await
+                .is_err(),
+            "a datagram from a third source must never be forwarded"
+        );
+    }
+
+    /// An ACKACK measures the RTT from the matching ACK's send time.
+    #[tokio::test(start_paused = true)]
+    async fn ackack_updates_the_receiver_rtt() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        assert_eq!(driver.receiver.rtt(), crate::arq::rtt::INITIAL_RTT);
+        driver
+            .ingress(Bytes::from(data_bytes(0, 0, b"x")))
+            .expect("data");
+        tokio::time::advance(Duration::from_millis(10)).await;
+        driver.tick_engines();
+        let ack = driver
+            .outbound_control
+            .iter()
+            .find_map(|bytes| match ControlPacket::parse(bytes) {
+                Ok(ControlPacket::Ack(a)) => Some(a),
+                _ => None,
+            })
+            .expect("a full ACK");
+        let ackack = crate::packet::misc::AckAckPacket {
+            ack_number: ack.ack_number,
+            timestamp: crate::packet::SrtTimestamp::ZERO,
+            dest_socket_id: crate::packet::SocketId::from_wire(1),
+            libsrt_pad: false,
+        };
+        let mut bytes = alloc::vec![0u8; ControlPacket::AckAck(ackack).serialized_len()];
+        ControlPacket::AckAck(ackack)
+            .serialize_into(&mut bytes)
+            .expect("serialize ackack");
+        tokio::time::advance(Duration::from_millis(20)).await;
+        driver.ingress(Bytes::from(bytes)).expect("ackack");
+        assert!(
+            driver.receiver.rtt() < crate::arq::rtt::INITIAL_RTT,
+            "the RTT sample must lower the estimate, got {:?}",
+            driver.receiver.rtt()
+        );
+        assert!(driver.receiver.rtt() > Duration::from_millis(10));
+    }
+
+    /// A single-sequence DROPREQ is well-formed and must stop the NAK.
+    #[tokio::test(start_paused = true)]
+    async fn single_sequence_dropreq_stops_the_nak() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver
+            .ingress(Bytes::from(data_bytes(0, 1_000_000_000, b"a")))
+            .expect("data 0");
+        driver
+            .ingress(Bytes::from(data_bytes(2, 1_000_000_000, b"c")))
+            .expect("data 2");
+        tokio::time::advance(Duration::from_millis(10)).await;
+        driver.tick_engines();
+        assert!(driver.receiver.loss_list_len() > 0, "seq 1 is missing");
+        driver
+            .ingress(Bytes::from(dropreq_bytes(1, 1)))
+            .expect("dropreq 1..=1");
+        assert_eq!(
+            driver.receiver.loss_list_len(),
+            0,
+            "a single-sequence DROPREQ must clear the loss list"
+        );
+    }
+
+    /// The Keep-Alive carries the connection clock, not a zero timestamp.
+    #[tokio::test(start_paused = true)]
+    async fn keepalive_carries_the_connection_clock() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        tokio::time::advance(Duration::from_secs(3)).await;
+        driver.tick_engines();
+        let keepalive = driver
+            .outbound_control
+            .iter()
+            .find_map(|bytes| match SrtPacket::parse(bytes) {
+                Ok(SrtPacket::Control(ControlPacket::KeepAlive(ka))) => Some(ka),
+                _ => None,
+            })
+            .expect("a keep-alive");
+        assert!(
+            keepalive.timestamp.value() >= 3_000_000,
+            "keep-alive timestamp {} ~= 0",
+            keepalive.timestamp.value()
+        );
+    }
+
+    /// An expired pacing slot is dropped, not replayed as credit.
+    #[tokio::test(start_paused = true)]
+    async fn idle_pacing_credit_expires_at_the_exact_deadline() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        assert!(driver.outbound_data.is_empty());
+        driver.next_data_send_at = Some(Instant::now());
+        driver.flush_outbound().await.expect("flush");
+        assert!(driver.next_data_send_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn task_guard_aborts_its_task_on_drop() {
+        use core::sync::atomic::AtomicBool;
+        struct MarkOnDrop(Arc<AtomicBool>);
+        impl Drop for MarkOnDrop {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let marker = MarkOnDrop(Arc::clone(&dropped));
+        let guard = TaskGuard(Some(tokio::spawn(async move {
+            let _marker = marker;
+            std::future::pending::<()>().await;
+        })));
+        drop(guard);
+        let mut aborted = false;
+        for _ in 0..1_000 {
+            tokio::task::yield_now().await;
+            if dropped.load(Ordering::SeqCst) {
+                aborted = true;
+                break;
+            }
+        }
+        assert!(aborted, "dropping a TaskGuard must abort its task");
+    }
+
+    #[cfg(feature = "crypto")]
+    #[test]
+    fn key_set_clear_empties_the_slot() {
+        let mut keys = KeySet::default();
+        keys.install(KeyParity::Even, alloc::vec![1u8; 16], [0u8; 16]);
+        assert!(!keys.is_empty());
+        keys.clear(KeyParity::Even);
+        assert!(keys.is_empty());
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn key_refresh_does_not_clear_the_active_parity() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver
+            .tx_keys
+            .install(KeyParity::Even, alloc::vec![1u8; 16], [0u8; 16]);
+        driver
+            .tx_keys
+            .install(KeyParity::Odd, alloc::vec![2u8; 16], [0u8; 16]);
+        driver.tx_parity = KeyParity::Even;
+        driver.retire_deferred = Some(KeyParity::Even);
+        driver.advance_key_refresh();
+        assert!(
+            driver.tx_keys.get(KeyParity::Even).is_some(),
+            "the active parity must never be retired"
+        );
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn key_refresh_clears_a_retired_parity() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver
+            .tx_keys
+            .install(KeyParity::Even, alloc::vec![1u8; 16], [0u8; 16]);
+        driver
+            .tx_keys
+            .install(KeyParity::Odd, alloc::vec![2u8; 16], [0u8; 16]);
+        driver.tx_parity = KeyParity::Even;
+        driver.retire_deferred = Some(KeyParity::Odd);
+        driver.advance_key_refresh();
+        assert!(
+            driver.tx_keys.get(KeyParity::Odd).is_none(),
+            "a retired (non-active) parity is wiped"
+        );
+        assert!(driver.tx_keys.get(KeyParity::Even).is_some());
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn announce_key_uses_the_default_sek_length_when_unset() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.crypto_passphrase = zeroize::Zeroizing::new(b"pw".to_vec());
+        assert_eq!(driver.crypto_key_len, 0);
+        driver.announce_key(KeyParity::Even);
+        let installed = driver.tx_keys.get(KeyParity::Even).expect("installed");
+        assert_eq!(installed.0.len(), DEFAULT_SEK_LEN);
+        assert_eq!(DEFAULT_SEK_LEN, 16);
+    }
+
+    #[cfg(feature = "crypto")]
+    #[tokio::test]
+    async fn resend_pending_km_repeats_a_due_key_material_request() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.km_pending = Some(PendingKm {
+            parity: KeyParity::Even,
+            salt: [0u8; 16],
+            datagram: alloc::vec![9u8, 9],
+            resend_at: Instant::now() - Duration::from_millis(1),
+        });
+        driver.resend_pending_km();
+        assert_eq!(driver.outbound_control.len(), 1);
+        assert_eq!(driver.outbound_control[0], alloc::vec![9u8, 9]);
+    }
+}
+
+#[cfg(test)]
+mod cookie_binding_tests {
+    use super::*;
+
+    #[test]
+    fn addr_to_u64_distinguishes_host_and_port() {
+        let a: std::net::SocketAddr = "127.0.0.1:4001".parse().unwrap();
+        let b: std::net::SocketAddr = "127.0.0.1:4002".parse().unwrap();
+        let c: std::net::SocketAddr = "127.0.0.2:4001".parse().unwrap();
+        assert_ne!(addr_to_u64(&a), addr_to_u64(&b));
+        assert_ne!(addr_to_u64(&a), addr_to_u64(&c));
+        assert_eq!(addr_to_u64(&a), addr_to_u64(&a));
+    }
+
+    #[test]
+    fn cookie_peer_key_binds_the_address_and_the_socket_id() {
+        let a: std::net::SocketAddr = "127.0.0.1:4001".parse().unwrap();
+        let b: std::net::SocketAddr = "127.0.0.1:4002".parse().unwrap();
+        assert_ne!(cookie_peer_key(&a, 1), cookie_peer_key(&a, 2));
+        assert_ne!(cookie_peer_key(&a, 1), cookie_peer_key(&b, 1));
+        assert_eq!(cookie_peer_key(&a, 1), cookie_peer_key(&a, 1));
+    }
+
+    #[test]
+    fn unix_time_bucket_tracks_the_current_minute() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_secs()
+            / 60;
+        let bucket = u64::from(unix_time_bucket());
+        assert!(
+            bucket.abs_diff(before) <= 1,
+            "bucket {bucket} is not the current minute ({before})"
+        );
     }
 }
