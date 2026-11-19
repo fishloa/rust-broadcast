@@ -743,4 +743,123 @@ mod tests {
             .unwrap();
         assert_eq!(c.state(), CallerHandshakeState::Connected);
     }
+
+    fn conclusion_with_peer_flags(peer_flags: u32) -> ControlPacket<'static> {
+        use crate::packet::handshake::{HandshakeExtensionMessageFlags, build_extension_block};
+        let hs_msg = HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: HandshakeExtensionMessageFlags(peer_flags),
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
+        };
+        let ext: &'static [u8] =
+            alloc::vec::Vec::leak(build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap());
+        ControlPacket::Handshake(HandshakePacket {
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(0xAAAA_BBBB),
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0x0001),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: 0x3333_4444,
+            syn_cookie: 0xC0FF_EE00,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions::parse(&ext).expect("test extension bytes"),
+        })
+    }
+
+    /// §3.2.1.1: the connection's flags are the bitwise intersection of both
+    /// sides' advertised sets, never a union or a symmetric difference.
+    #[test]
+    fn negotiated_flags_are_the_intersection_of_both_sides() {
+        use crate::packet::handshake::{
+            HS_MSG_FLAG_PERIODICNAK, HS_MSG_FLAG_REXMITFLG, HS_MSG_FLAG_TLPKTDROP,
+            HS_MSG_FLAG_TSBPDRCV, HS_MSG_FLAG_TSBPDSND, HandshakeExtensionMessageFlags,
+        };
+        let local = HS_MSG_FLAG_TSBPDSND
+            | HS_MSG_FLAG_TSBPDRCV
+            | HS_MSG_FLAG_TLPKTDROP
+            | HS_MSG_FLAG_PERIODICNAK
+            | HS_MSG_FLAG_REXMITFLG;
+        let peer = HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TSBPDRCV | HS_MSG_FLAG_REXMITFLG;
+        let config = HandshakeConfig::default()
+            .with_flags(HandshakeExtensionMessageFlags(local));
+        let mut c = CallerHandshake::new(0xAAAA_BBBB, config);
+        c.start().unwrap();
+        c.feed(&induction_response(0xC0FF_EE00, 0x1111_2222))
+            .unwrap();
+        c.feed(&conclusion_with_peer_flags(peer)).unwrap();
+        assert_eq!(
+            c.negotiated().expect("connected").flags,
+            HandshakeExtensionMessageFlags(peer)
+        );
+    }
+
+    #[test]
+    fn negotiated_flags_drop_a_flag_only_the_peer_advertises() {
+        use crate::packet::handshake::{
+            HS_MSG_FLAG_TLPKTDROP, HS_MSG_FLAG_TSBPDSND, HandshakeExtensionMessageFlags,
+        };
+        let config = HandshakeConfig::default()
+            .with_flags(HandshakeExtensionMessageFlags(HS_MSG_FLAG_TSBPDSND));
+        let mut c = CallerHandshake::new(0xAAAA_BBBB, config);
+        c.start().unwrap();
+        c.feed(&induction_response(0xC0FF_EE00, 0x1111_2222))
+            .unwrap();
+        c.feed(&conclusion_with_peer_flags(
+            HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TLPKTDROP,
+        ))
+        .unwrap();
+        assert_eq!(
+            c.negotiated().expect("connected").flags,
+            HandshakeExtensionMessageFlags(HS_MSG_FLAG_TSBPDSND)
+        );
+    }
+
+    /// The configured SRT version, flags and local IP are the ones the
+    /// CONCLUSION's HSREQ and CIF actually advertise.
+    #[test]
+    fn configured_handshake_values_are_carried_on_the_wire() {
+        use crate::packet::handshake::HandshakeExtensionMessageFlags;
+        let config = HandshakeConfig::default()
+            .with_srt_version(0x0105_0003)
+            .with_flags(HandshakeExtensionMessageFlags(0x0000_0063))
+            .with_local_ip([10, 0, 0, 7]);
+        let mut c = CallerHandshake::new(0xAAAA_BBBB, config);
+        c.start().unwrap();
+        let outputs = c
+            .feed(&induction_response(0xC0FF_EE00, 0x1111_2222))
+            .unwrap();
+        let bytes = match &outputs[0] {
+            HandshakeOutput::Send(b) => b.clone(),
+            other => panic!("expected Send, got {other:?}"),
+        };
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
+            panic!("expected handshake");
+        };
+        assert_eq!(hp.peer_ip, [10, 0, 0, 7]);
+        let parsed = crate::handshake_sm::parse_peer_extensions(&hp).expect("extensions");
+        let msg = parsed.hs_msg.expect("HSREQ");
+        assert_eq!(msg.srt_version, 0x0105_0003);
+        assert_eq!(msg.srt_flags.0, 0x0000_0063);
+    }
+
+    #[test]
+    fn state_labels_match_the_diagram_names() {
+        assert_eq!(CallerHandshakeState::Idle.name(), "Idle");
+        assert_eq!(
+            CallerHandshakeState::AwaitingInductionResponse.name(),
+            "AwaitingInductionResponse"
+        );
+        assert_eq!(
+            CallerHandshakeState::AwaitingConclusionResponse.name(),
+            "AwaitingConclusionResponse"
+        );
+        assert_eq!(CallerHandshakeState::Connected.name(), "Connected");
+        assert_eq!(CallerHandshakeState::Rejected.name(), "Rejected");
+        assert_eq!(CallerHandshakeState::TimedOut.name(), "TimedOut");
+    }
 }
