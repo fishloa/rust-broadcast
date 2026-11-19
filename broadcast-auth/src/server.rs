@@ -2309,4 +2309,75 @@ mod tests {
         });
         assert!(filled.is_ok());
     }
+
+    /// RFC 4303 §3.4.3 sliding window, driven directly: a jump records every
+    /// value below the new highest as unseen, an accepted `nc` is refused when
+    /// replayed, and a jump past the window drops everything older.
+    #[test]
+    fn nc_window_accepts_unseen_values_once_and_refuses_replays() {
+        let mut entry = NcEntry {
+            stamp: NonceStamp { time: 0, seq: 0 },
+            highest: 0,
+            window: 0,
+        };
+        assert!(entry.accept(1));
+        assert!(entry.accept(5), "a jump of four is fresh");
+        assert!(!entry.accept(1), "1 is below the jump, inside the window");
+        assert!(!entry.accept(5));
+        assert!(entry.accept(3), "3 was skipped, never accepted");
+        assert!(!entry.accept(3));
+        assert!(entry.accept(4));
+        assert!(entry.accept(2));
+        assert!(!entry.accept(2));
+
+        assert!(entry.accept(70));
+        assert!(
+            !entry.accept(5),
+            "65 below the highest is outside the window"
+        );
+        assert!(entry.accept(6), "64 below the highest is inside the window");
+        assert!(!entry.accept(6));
+        assert!(entry.accept(69));
+        assert!(!entry.accept(69));
+        assert_eq!(entry.highest, 70);
+    }
+
+    #[test]
+    fn digest_out_of_order_nc_replay_is_refused() {
+        let now = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(1_000_000));
+        let v = digest_verifier_at(now);
+        let uri = "/stream/part.m4s";
+        let first = digest_header(&v.challenge(), uri);
+        assert_eq!(verify_auth(&v, Some(&first), "GET", uri), AuthResult::Ok);
+        let nc = |n| with_nc(&first, n, uri);
+        assert_eq!(verify_auth(&v, Some(&nc(5)), "GET", uri), AuthResult::Ok);
+        assert_eq!(verify_auth(&v, Some(&nc(3)), "GET", uri), AuthResult::Ok);
+        assert_eq!(
+            verify_auth(&v, Some(&nc(3)), "GET", uri),
+            AuthResult::Unauthorized
+        );
+        assert_eq!(
+            verify_auth(&v, Some(&nc(1)), "GET", uri),
+            AuthResult::Unauthorized
+        );
+    }
+
+    /// RFC 8187 §3.2.1: `value-chars` is `pct-encoded` or `attr-char` only.
+    /// A space, a control byte, or any other delimiter is not an `attr-char`
+    /// and must not pass the `username*` syntax gate.
+    #[test]
+    fn ext_value_syntax_rejects_bytes_outside_attr_char() {
+        for bad in [
+            "UTF-8''adm in",
+            "UTF-8''adm\tin",
+            "UTF-8''adm\u{7f}in",
+            "UTF-8''a/b",
+            "UTF-8''a\"b",
+            "UTF-8''a%2",
+        ] {
+            assert!(decode_ext_value(bad).is_none(), "{bad:?}");
+        }
+        assert_eq!(decode_ext_value("UTF-8''ad%6din").as_deref(), Some("admin"));
+        assert_eq!(decode_ext_value("utf-8''admin").as_deref(), Some("admin"));
+    }
 }
