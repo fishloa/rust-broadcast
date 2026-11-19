@@ -10,6 +10,7 @@ mod integration;
 mod limits;
 #[cfg(feature = "std")]
 mod mixed_content;
+mod namespace_round_trip;
 mod review_signalling_findings;
 mod time_context;
 mod time_expressions;
