@@ -624,6 +624,14 @@ mod tests {
             select_sek(EncryptionKeyField::Reserved(0b11), Some(&even), Some(&odd)),
             Err(Error::InvalidField(InvalidField { field: "KK", .. }))
         ));
+        assert!(matches!(
+            select_sek(EncryptionKeyField::Even, None, Some(&odd)),
+            Err(Error::InvalidField(ref e)) if e.reason.contains("even")
+        ));
+        assert!(matches!(
+            select_sek(EncryptionKeyField::Odd, Some(&even), None),
+            Err(Error::InvalidField(ref e)) if e.reason.contains("odd")
+        ));
     }
 
     #[test]
