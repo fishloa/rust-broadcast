@@ -425,3 +425,213 @@ impl TrackSet {
         min
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{StepRules, TrackSet};
+    use crate::time::Clock27;
+    use core::time::Duration;
+
+    fn set() -> TrackSet {
+        TrackSet::new(Duration::from_secs(30), Duration::from_secs(30))
+    }
+
+    fn rules(
+        epoch: u64,
+        max_interval: Duration,
+        max_excess: Duration,
+        gap: Option<Duration>,
+    ) -> StepRules {
+        StepRules {
+            max_interval,
+            max_excess,
+            gap_end_at: gap,
+            epoch,
+        }
+    }
+
+    fn short(epoch: u64, gap: Option<Duration>) -> StepRules {
+        rules(
+            epoch,
+            Duration::from_secs(3),
+            Duration::from_millis(200),
+            gap,
+        )
+    }
+
+    fn ticks(n: u64) -> Clock27 {
+        Clock27::from_27mhz(n).expect("on the clock")
+    }
+
+    fn clock(secs: u64) -> Clock27 {
+        Clock27::from_27mhz(secs * 27_000_000).expect("whole seconds are on the clock")
+    }
+
+    #[test]
+    fn equal_ends_keep_the_first_track_as_the_limiting_one() {
+        let mut s = set();
+        let r = short(0, None);
+        assert_eq!(s.deliver(0, Duration::ZERO, clock(5), r), Some(true));
+        assert_eq!(s.deliver(1, Duration::ZERO, clock(5), r), Some(true));
+        let e = s
+            .effective(Duration::ZERO, Duration::from_secs(3), true)
+            .expect("both tracks delivered");
+        assert_eq!(e.limiting, 0);
+        assert_eq!(e.end, clock(5));
+    }
+
+    #[test]
+    fn a_zero_length_delivery_interval_is_not_a_step() {
+        let mut s = set();
+        let r = short(1, None);
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::ZERO, ticks(540_000), r);
+        s.close_windows(r);
+        assert_eq!(
+            s.granularity(Duration::ZERO, Duration::from_secs(3)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn a_delivery_interval_at_the_silence_timeout_is_not_a_step() {
+        let mut s = set();
+        let r = short(1, None);
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_secs(3), ticks(540_000), r);
+        s.close_windows(r);
+        assert_eq!(
+            s.granularity(Duration::from_secs(3), Duration::from_secs(3)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn a_gap_after_the_delivery_interval_suppresses_the_step() {
+        let mut s = set();
+        let r = short(1, Some(Duration::from_secs(1)));
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_secs(1), ticks(540_000), r);
+        s.close_windows(r);
+        assert_eq!(
+            s.granularity(Duration::from_secs(1), Duration::from_secs(3)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn a_gap_at_the_previous_delivery_instant_is_not_inside_the_interval() {
+        let mut s = set();
+        let r = short(1, Some(Duration::ZERO));
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_secs(1), ticks(540_000), r);
+        s.close_windows(r);
+        assert_eq!(
+            s.granularity(Duration::from_secs(1), Duration::from_secs(3)),
+            Duration::from_millis(20)
+        );
+    }
+
+    #[test]
+    fn a_step_exactly_at_the_interval_plus_allowance_is_recorded() {
+        let mut s = set();
+        let r = short(1, None);
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_secs(1), ticks(32_400_000), r);
+        s.close_windows(r);
+        assert_eq!(
+            s.granularity(Duration::from_secs(1), Duration::from_secs(3)),
+            Duration::from_millis(1_200)
+        );
+    }
+
+    #[test]
+    fn deliveries_in_one_chunk_epoch_are_one_window_however_far_apart() {
+        let mut s = set();
+        let r = short(1, None);
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.deliver(0, Duration::from_millis(2), ticks(540_000), r);
+        s.deliver(0, Duration::from_millis(4), ticks(1_080_000), r);
+        s.deliver(0, Duration::from_millis(6), ticks(1_620_000), r);
+        assert!(!s.granularity_known(
+            Duration::from_millis(6),
+            Duration::from_secs(3),
+            Duration::MAX
+        ));
+    }
+
+    #[test]
+    fn deliveries_exactly_one_coalescing_window_apart_are_separate_windows() {
+        let mut s = set();
+        let r = short(0, None);
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.deliver(0, Duration::from_millis(1), ticks(540_000), r);
+        s.deliver(0, Duration::from_millis(3), ticks(1_080_000), r);
+        s.deliver(0, Duration::from_millis(5), ticks(1_620_000), r);
+        assert!(s.granularity_known(
+            Duration::from_millis(5),
+            Duration::from_secs(3),
+            Duration::MAX
+        ));
+    }
+
+    #[test]
+    fn clearing_the_set_forgets_every_track_and_delivery() {
+        let mut s = set();
+        let r = short(0, None);
+        s.deliver(0, Duration::ZERO, clock(1), r);
+        s.register(7, Duration::ZERO);
+        assert_eq!(s.len(), 2);
+        s.clear();
+        assert_eq!(s.len(), 0);
+        assert_eq!(
+            s.effective(Duration::ZERO, Duration::from_secs(3), true),
+            None
+        );
+        assert!(!s.is_live(0, Duration::ZERO, Duration::from_secs(3)));
+        assert_eq!(
+            s.granularity(Duration::ZERO, Duration::from_secs(3)),
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn only_a_known_speaking_track_is_live() {
+        let mut s = set();
+        let r = short(0, None);
+        let silence = Duration::from_secs(3);
+        s.deliver(1, Duration::ZERO, clock(0), r);
+        assert!(s.is_live(1, Duration::ZERO, silence));
+        assert!(!s.is_live(9, Duration::ZERO, silence));
+        s.deliver(2, Duration::ZERO, clock(0), r);
+        s.deliver(2, Duration::from_secs(20), clock(20), r);
+        assert!(!s.is_live(1, Duration::from_secs(20), silence));
+        s.deliver(1, Duration::from_secs(20), clock(20), r);
+        assert!(s.is_live(1, Duration::from_secs(20), silence));
+    }
+
+    #[test]
+    fn a_track_that_never_delivered_does_not_block_the_granularity_gate() {
+        let mut s = set();
+        let r = short(1, None);
+        s.register(1, Duration::ZERO);
+        s.deliver(0, Duration::ZERO, ticks(0), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_millis(1), ticks(540_000), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_millis(2), ticks(1_080_000), r);
+        s.close_windows(r);
+        s.deliver(0, Duration::from_millis(3), ticks(1_620_000), r);
+        s.close_windows(r);
+        assert!(s.granularity_known(
+            Duration::from_millis(3),
+            Duration::from_secs(3),
+            Duration::MAX
+        ));
+    }
+}

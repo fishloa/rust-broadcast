@@ -102,3 +102,21 @@ impl MinWindow {
         self.last_t = None;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::MinWindow;
+    use core::time::Duration;
+
+    #[test]
+    fn a_new_window_is_empty_and_holding_one_sample_is_not() {
+        let mut w = MinWindow::new(Duration::from_secs(2), 4).expect("a two-second window");
+        assert!(w.is_empty());
+        assert_eq!(w.len(), 0);
+        assert_eq!(w.min(), None);
+        assert_eq!(w.push(1_000, 7), 7);
+        assert!(!w.is_empty());
+        assert_eq!(w.len(), 1);
+        assert_eq!(w.min(), Some(7));
+    }
+}

@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- The label accessors (`State`/`Reason`/`Input`/`SampleOutcome`), `EventQueue::clear`, `MinWindow::is_empty` and the input-log error text arms are pinned by literal-value tests, so an empty or placeholder label, a no-op `clear` or a dropped field/error detail fails the suite (audit 22 finding 62).
 
 ## [0.4.0] - 2026-11-15
 ### Changed
