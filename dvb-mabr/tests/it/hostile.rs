@@ -78,3 +78,47 @@ fn a_nested_element_inside_a_text_element_does_not_absorb_its_text() {
     assert_eq!(locators[0].locator, "ac");
     assert_eq!(locators[1].locator, "second");
 }
+
+/// Audit-22 #3043: trailing comments/PIs after the root are legal `Misc`, a
+/// second root is `MultipleRoots` (not `ContentAfterRoot`), non-blank text
+/// before the root is refused, and `drain` still lets a later
+/// well-formedness error outrank an earlier semantic one.
+#[test]
+fn trailing_comments_and_processing_instructions_after_the_root_are_allowed() {
+    let xml = format!("{}\n<!-- trailer -->\n<?pi y?>\n", gateway_with(""));
+    let parsed = MulticastGatewayConfiguration::parse_str(&xml).expect("trailer is legal Misc");
+    assert_eq!(parsed.schema_version, 2);
+}
+
+#[test]
+fn a_second_root_element_is_a_multiple_roots_error() {
+    let second_root = format!(r#"<MulticastGatewayConfiguration xmlns="{NS}" schemaVersion="2"/>"#);
+    let xml = format!("{}{second_root}", gateway_with(""));
+    match MulticastGatewayConfiguration::parse_str(&xml) {
+        Err(Error::InvalidStructure(StructureError::MultipleRoots)) => {}
+        other => panic!("a second root must be MultipleRoots, got {other:?}"),
+    }
+}
+
+#[test]
+fn non_blank_text_before_the_root_is_refused() {
+    let xml = format!("junk{}", gateway_with(""));
+    match MulticastGatewayConfiguration::parse_str(&xml) {
+        Err(Error::InvalidStructure(StructureError::CharDataOutsideRoot)) => {}
+        other => panic!("text before the root must be CharDataOutsideRoot, got {other:?}"),
+    }
+}
+
+/// `drain` exists so a later well-formedness error outranks an earlier
+/// semantic one. Here the root's `schemaVersion` is invalid (semantic) and a
+/// later end tag is mismatched (well-formedness).
+#[test]
+fn a_later_well_formedness_error_outranks_an_earlier_semantic_one() {
+    let xml = format!(
+        "<MulticastGatewayConfiguration xmlns=\"{NS}\" schemaVersion=\"two\"><A></B></MulticastGatewayConfiguration>"
+    );
+    match MulticastGatewayConfiguration::parse_str(&xml) {
+        Err(Error::XmlParse(_) | Error::XmlInvalid(_)) => {}
+        other => panic!("the lexical error must win over the semantic one, got {other:?}"),
+    }
+}
