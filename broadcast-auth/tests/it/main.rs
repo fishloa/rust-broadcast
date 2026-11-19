@@ -1,3 +1,4 @@
+mod auth_state;
 mod basic_bearer;
 mod challenge;
 mod challenge_render;
