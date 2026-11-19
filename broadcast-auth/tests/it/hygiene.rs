@@ -55,8 +55,7 @@ fn bearer_challenge_keeps_error_uri() {
 
 #[test]
 fn a_duplicate_error_uri_is_refused() {
-    let parsed =
-        parse_challenges(&["Bearer error_uri=\"https://x/a\", error_uri=\"https://x/b\""]);
+    let parsed = parse_challenges(&["Bearer error_uri=\"https://x/a\", error_uri=\"https://x/b\""]);
     assert!(parsed.challenges.is_empty());
     assert_eq!(
         parsed.errors,

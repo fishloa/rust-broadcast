@@ -73,12 +73,7 @@ fn response_for(nonce: &str, nc: &str, cnonce: &str) -> String {
 /// A `Digest` header whose response is always the correct one for the
 /// configured identity, with `overrides` replacing or adding parameters: only
 /// the field-level checks (not the hash compare) can reject it.
-fn digest_header(
-    nonce: &str,
-    nc: &str,
-    cnonce: &str,
-    overrides: Vec<(String, String)>,
-) -> String {
+fn digest_header(nonce: &str, nc: &str, cnonce: &str, overrides: Vec<(String, String)>) -> String {
     let response = response_for(nonce, nc, cnonce);
     let mut params = vec![
         pair("username", "admin"),
@@ -219,12 +214,7 @@ fn an_empty_cnonce_is_rejected_even_with_a_matching_response() {
 fn an_empty_response_is_rejected() {
     let v = digest_verifier("admin", "12345");
     let nonce = challenge_nonce(&v);
-    let h = digest_header(
-        &nonce,
-        "00000001",
-        "0a4f113b",
-        vec![pair("response", "")],
-    );
+    let h = digest_header(&nonce, "00000001", "0a4f113b", vec![pair("response", "")]);
     assert_eq!(verify(&v, &h, "GET", "/x"), AuthResult::Unauthorized);
 }
 

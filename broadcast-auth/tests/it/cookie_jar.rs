@@ -67,8 +67,15 @@ fn cookie_name_prefixes_are_enforced() {
     );
 
     let mut host = state("https://cdn.test/");
-    receive(&mut host, "https://cdn.test/", &["__Host-x=1; Secure; Path=/"]);
-    assert_eq!(stored(&host), vec![("__Host-x".to_string(), "1".to_string())]);
+    receive(
+        &mut host,
+        "https://cdn.test/",
+        &["__Host-x=1; Secure; Path=/"],
+    );
+    assert_eq!(
+        stored(&host),
+        vec![("__Host-x".to_string(), "1".to_string())]
+    );
 
     let mut bad_path = state("https://cdn.test/");
     receive(
@@ -133,10 +140,7 @@ fn cookie_value_and_path_size_caps() {
     receive(
         &mut jar,
         "https://cdn.test/",
-        &[
-            &format!("b={big}"),
-            &format!("c={}", "v".repeat(4096)),
-        ],
+        &[&format!("b={big}"), &format!("c={}", "v".repeat(4096))],
     );
     assert_eq!(
         stored(&jar),
@@ -162,10 +166,7 @@ fn cookie_value_and_path_size_caps() {
             &format!("too-long=1; Path={longest}p"),
         ],
     );
-    assert_eq!(
-        stored(&paths),
-        vec![("long".to_string(), "1".to_string())]
-    );
+    assert_eq!(stored(&paths), vec![("long".to_string(), "1".to_string())]);
     assert_eq!(
         cookie_header(&mut paths, &format!("https://cdn.test{longest}/leaf")),
         Some("long=1".to_string())
@@ -257,7 +258,11 @@ fn deleting_one_cookie_leaves_its_siblings() {
         "https://cdn.test/",
         &["gone=1; Path=/x", "kept=2; Path=/x"],
     );
-    receive(&mut jar, "https://cdn.test/", &["gone=0; Path=/x; Max-Age=0"]);
+    receive(
+        &mut jar,
+        "https://cdn.test/",
+        &["gone=0; Path=/x; Max-Age=0"],
+    );
     assert_eq!(
         stored(&jar),
         vec![("kept".to_string(), "2".to_string())],

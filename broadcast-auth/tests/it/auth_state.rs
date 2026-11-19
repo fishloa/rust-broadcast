@@ -156,14 +156,18 @@ fn proxy_status_answers_on_the_proxy_header() {
     let mut state = state_with(Some(basic_credentials()));
     let headers = map(&[("proxy-authenticate", "Basic realm=\"p\"")]);
     assert!(matches!(
-        state.handle_unauthorized(StatusCode::PROXY_AUTHENTICATION_REQUIRED, &headers, false, false),
+        state.handle_unauthorized(
+            StatusCode::PROXY_AUTHENTICATION_REQUIRED,
+            &headers,
+            false,
+            false
+        ),
         AuthDecision::Replay
     ));
     let sent = state.request_headers(&origin(), Timestamp::from_micros(0));
     assert!(
         sent.iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("proxy-authorization")
-                && v.starts_with("Basic ")),
+            .any(|(k, v)| k.eq_ignore_ascii_case("proxy-authorization") && v.starts_with("Basic ")),
         "{sent:?}"
     );
     assert!(
