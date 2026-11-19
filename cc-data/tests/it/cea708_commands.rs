@@ -1,3 +1,5 @@
+#![cfg(feature = "decode")]
+
 //! CEA-708 command handlers — ANSI/CTA-708-E §8.10.5 (DefineWindow, SWA, SPA,
 //! SPC, SPL, the window-map commands), §8.10.5.1/2 window + pen style presets
 //! (Tables 26/27), §7.1.4 C0, §7.1.8/§7.1.9 G2/G3, and the §5/§6 packet and

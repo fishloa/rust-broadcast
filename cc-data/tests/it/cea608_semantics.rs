@@ -1,3 +1,5 @@
+#![cfg(feature = "decode")]
+
 //! CEA-608 decoder semantics — ANSI/CTA-608-E Tables 49–53 and the
 //! RCL/BS/DER/RU2–4/FON/RDC/TR/RTD/EDM/CR/ENM/EOC misc-control state machine
 //! (`private/specs-verified/captions/cc-data/decode/cea608-decode.md`).
