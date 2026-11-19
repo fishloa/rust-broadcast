@@ -934,6 +934,183 @@ mod tests {
         }
     }
 
+    fn auth_body_with<'a>(
+        hashes: Vec<SectionHashEntry<'a>>,
+        extension_bytes: &'a [u8],
+        signature_key_identifier: &'a [u8],
+    ) -> ProtectionMessageBody<'a> {
+        ProtectionMessageBody::AuthenticationMessage {
+            section_hash_algorithm_identifier: 0,
+            section_hash_length: 0,
+            signature_algorithm_identifier: 0,
+            hashes,
+            extension_bytes,
+            signature_key_identifier,
+            signature: &[],
+            reserved_section_hashes_loop_length: ReservedOnes::FILL,
+        }
+    }
+
+    /// `section_hashes_loop_length` is 12 bits: 4095 is legal, 4096 is not.
+    #[test]
+    fn section_hashes_loop_length_boundary() {
+        let reference = [0u8; 15];
+        let short_reference = [0u8; 14];
+        let mut at_max = Vec::new();
+        for _ in 0..255 {
+            at_max.push(SectionHashEntry {
+                reference_type: ReferenceType::SameEs,
+                reference: &reference,
+                hash: &[],
+            });
+        }
+        at_max.push(SectionHashEntry {
+            reference_type: ReferenceType::SameEs,
+            reference: &short_reference,
+            hash: &[],
+        });
+        let body = auth_body_with(at_max, &[], &[]);
+        let mut buf = vec![0u8; body.body_len()];
+        assert_eq!(body.write_into(&mut buf).unwrap(), 4102);
+
+        let mut over = Vec::new();
+        for _ in 0..256 {
+            over.push(SectionHashEntry {
+                reference_type: ReferenceType::SameEs,
+                reference: &reference,
+                hash: &[],
+            });
+        }
+        let body = auth_body_with(over, &[], &[]);
+        let mut buf = vec![0u8; 8192];
+        assert_eq!(
+            body.write_into(&mut buf).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 4096,
+                available: LOOP_LEN_MAX,
+            }
+        );
+    }
+
+    /// `reference_length` is 4 bits: 15 is legal, 16 is not.
+    #[test]
+    fn reference_length_boundary() {
+        let reference = [0u8; 15];
+        let body = auth_body_with(
+            vec![SectionHashEntry {
+                reference_type: ReferenceType::SameEs,
+                reference: &reference,
+                hash: &[],
+            }],
+            &[],
+            &[],
+        );
+        let mut buf = vec![0u8; body.body_len()];
+        assert_eq!(body.write_into(&mut buf).unwrap(), 5 + 16 + 1 + 1);
+
+        let too_long = [0u8; 16];
+        let body = auth_body_with(
+            vec![SectionHashEntry {
+                reference_type: ReferenceType::SameEs,
+                reference: &too_long,
+                hash: &[],
+            }],
+            &[],
+            &[],
+        );
+        assert_eq!(
+            body.write_into(&mut [0u8; 64]).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 16,
+                available: NIBBLE_MAX,
+            }
+        );
+    }
+
+    /// `extension_bytes_length` is 8 bits: 255 is legal, 256 is not.
+    #[test]
+    fn extension_bytes_length_boundary() {
+        let extension = vec![0x5Au8; 255];
+        let body = auth_body_with(Vec::new(), &extension, &[]);
+        let section = ProtectionMessageSection::new(0x0001, 0, true, 0, 0, body);
+        let mut buf = vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).expect("255 fits");
+        let reparsed = ProtectionMessageSection::parse(&buf).expect("reparse");
+        assert_eq!(section, reparsed);
+        assert_eq!(buf[8 + 5], 255);
+
+        let extension = vec![0x5Au8; 256];
+        let body = auth_body_with(Vec::new(), &extension, &[]);
+        assert_eq!(
+            body.write_into(&mut vec![0u8; 512]).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 256,
+                available: u8::MAX as usize,
+            }
+        );
+    }
+
+    /// `signature_key_identifier_length` is 8 bits: 255 is legal, 256 is not.
+    #[test]
+    fn signature_key_identifier_length_boundary() {
+        let key_id = vec![0xC3u8; 255];
+        let body = auth_body_with(Vec::new(), &[], &key_id);
+        let section = ProtectionMessageSection::new(0x0001, 0, true, 0, 0, body);
+        let mut buf = vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut buf).expect("255 fits");
+        let reparsed = ProtectionMessageSection::parse(&buf).expect("reparse");
+        assert_eq!(section, reparsed);
+        assert_eq!(buf[8 + 5 + 1], 255);
+
+        let key_id = vec![0xC3u8; 256];
+        let body = auth_body_with(Vec::new(), &[], &key_id);
+        assert_eq!(
+            body.write_into(&mut vec![0u8; 512]).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 256,
+                available: u8::MAX as usize,
+            }
+        );
+    }
+
+    /// `certificate_count` is 4 bits: 15 is legal, 16 is not.
+    #[test]
+    fn certificate_count_boundary() {
+        let certificates = vec![&[][..]; 15];
+        let body = ProtectionMessageBody::certificate_collection(certificates);
+        let mut buf = vec![0u8; body.body_len()];
+        assert_eq!(body.write_into(&mut buf).unwrap(), 1 + 15 * 2);
+
+        let certificates = vec![&[][..]; 16];
+        let body = ProtectionMessageBody::certificate_collection(certificates);
+        assert_eq!(
+            body.write_into(&mut [0u8; 64]).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 16,
+                available: NIBBLE_MAX,
+            }
+        );
+    }
+
+    /// `certificate_length` is 12 bits: 4095 is legal, 4096 is not.
+    #[test]
+    fn certificate_length_boundary() {
+        let certificate = vec![0xA5u8; 4095];
+        let body = ProtectionMessageBody::certificate_collection(vec![&certificate]);
+        let mut buf = vec![0u8; body.body_len()];
+        assert_eq!(body.write_into(&mut buf).unwrap(), 1 + 2 + 4095);
+
+        let certificate = vec![0xA5u8; 4096];
+        let body = ProtectionMessageBody::certificate_collection(vec![&certificate]);
+        assert_eq!(
+            body.write_into(&mut vec![0u8; 8192]).unwrap_err(),
+            Error::SectionLengthOverflow {
+                declared: 4096,
+                available: LOOP_LEN_MAX,
+            }
+        );
+    }
+
     /// The reserved fields are 4 bits wide, so a wider value is unrepresentable
     /// and cannot spill into the adjacent length/count nibbles.
     #[test]
