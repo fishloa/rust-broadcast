@@ -107,17 +107,8 @@ pub(crate) fn media_fragment_run(
             sample_composition_time_offset: any_cts.then_some(i64::from(s.composition_offset)),
         });
     }
-    let mut tr_flags = TRUN_DATA_OFFSET_PRESENT
-        | TRUN_SAMPLE_DURATION_PRESENT
-        | TRUN_SAMPLE_SIZE_PRESENT
-        | TRUN_SAMPLE_FLAGS_PRESENT;
-    // Version 1 carries a signed composition offset (needed for B-frames).
-    let version = if any_cts {
-        tr_flags |= TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
-        1u8
-    } else {
-        0u8
-    };
+    let tr_flags = 0;
+    let version = if any_cts { 1u8 } else { 0u8 };
     let trun = TrackFragmentRunBox {
         version,
         tr_flags,
@@ -1664,6 +1655,30 @@ mod tests {
     #[test]
     fn mfhd_len() {
         assert_eq!(MovieFragmentHeaderBox::new(1).serialized_len(), 16);
+    }
+
+    #[test]
+    fn media_fragment_run_serializes_the_derived_trun_flags() {
+        let sample = |composition_offset: i32| MediaRunSample {
+            duration: 1_000,
+            size: 40,
+            is_sync: true,
+            composition_offset,
+        };
+        let flags_of = |offset: i32| {
+            let (_, trun) = media_fragment_run(
+                TrackId::new(1),
+                [sample(offset), sample(offset)].into_iter(),
+            )
+            .expect("two-sample run");
+            let bytes = trun.try_to_bytes().expect("serialize trun");
+            u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]])
+        };
+        // data-offset-present (0x000001) | sample-duration (0x000100) |
+        // sample-size (0x000200) | sample-flags (0x000400).
+        assert_eq!(flags_of(0), 0x0007_01);
+        // plus sample-composition-time-offset-present (0x000800).
+        assert_eq!(flags_of(1), 0x000F_01);
     }
 
     #[test]
