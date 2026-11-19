@@ -1540,3 +1540,13 @@ fn sat_beamhopping_plan_length_shorter_than_its_fields() {
         )
     );
 }
+
+#[test]
+fn sat_beamhopping_plan_header_past_nine_bytes() {
+    // 72 bits enter the plan loop (>=48) but the 33-bit time-of-application
+    // field runs past the body.
+    assert_eq!(
+        SatSection::parse(&sat(3, &[0x00; 9])).unwrap_err(),
+        too_short(12, 9, "SatSection bit reader overrun")
+    );
+}
