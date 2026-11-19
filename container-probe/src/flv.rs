@@ -82,4 +82,87 @@ mod tests {
             other => panic!("8-byte FLV prefix must be Insufficient(9), got {other:?}"),
         }
     }
+
+    /// An FLV header with the given `TypeFlags` and big-endian `DataOffset`.
+    fn header(flags: u8, data_offset: [u8; 4]) -> [u8; FLV_HEADER_LEN] {
+        [
+            b'F',
+            b'L',
+            b'V',
+            0x01,
+            flags,
+            data_offset[0],
+            data_offset[1],
+            data_offset[2],
+            data_offset[3],
+        ]
+    }
+
+    /// The reported `(has_audio, has_video, data_offset)` from an FLV match.
+    fn detail(outcome: Outcome) -> (bool, bool, u32) {
+        match outcome {
+            Outcome::Match(Evidence {
+                detail:
+                    Detail::Flv {
+                        has_audio,
+                        has_video,
+                        data_offset,
+                    },
+                ..
+            }) => (has_audio, has_video, data_offset),
+            other => panic!("expected an FLV Detail match, got {other:?}"),
+        }
+    }
+
+    /// `TypeFlags` bit 0 is video and bit 2 is audio (FLV v10.1 §E.2), each
+    /// read independently of the other.
+    #[test]
+    fn type_flags_decode_audio_and_video_independently() {
+        for (flags, has_audio, has_video) in [
+            (0x00u8, false, false),
+            (TYPE_FLAG_VIDEO, false, true),
+            (TYPE_FLAG_AUDIO, true, false),
+            (TYPE_FLAG_AUDIO | TYPE_FLAG_VIDEO, true, true),
+        ] {
+            let data = header(flags, [0x00, 0x00, 0x00, 0x09]);
+            assert_eq!(
+                detail(probe(&data, data.len())),
+                (has_audio, has_video, 9),
+                "TypeFlags {flags:#04x}"
+            );
+        }
+    }
+
+    /// `DataOffset` is the 4-byte big-endian header size (FLV v10.1 §E.2).
+    #[test]
+    fn data_offset_is_the_big_endian_header_size() {
+        let data = header(TYPE_FLAG_VIDEO, [0x00, 0x00, 0x01, 0x00]);
+        assert_eq!(detail(probe(&data, data.len())), (false, true, 256));
+        let data = header(TYPE_FLAG_VIDEO, [0x01, 0x02, 0x03, 0x04]);
+        assert_eq!(detail(probe(&data, data.len())), (false, true, 0x0102_0304));
+    }
+
+    /// A `DataOffset` smaller than the 9-byte header cannot point at/after the
+    /// header and is rejected.
+    #[test]
+    fn data_offset_below_the_header_length_is_rejected() {
+        let data = header(TYPE_FLAG_VIDEO, [0x00, 0x00, 0x00, 0x08]);
+        assert!(
+            matches!(probe(&data, data.len()), Outcome::None),
+            "DataOffset 8 is shorter than the 9-byte header"
+        );
+        let data = header(TYPE_FLAG_VIDEO, [0x00, 0x00, 0x00, 0x09]);
+        assert!(matches!(probe(&data, data.len()), Outcome::Match(_)));
+    }
+
+    /// Only bit 0 and bit 2 are defined in `TypeFlags`; a reserved bit set is
+    /// not a conformant header (FLV v10.1 §E.2).
+    #[test]
+    fn reserved_type_flag_bits_are_rejected() {
+        let data = header(0x02, [0x00, 0x00, 0x00, 0x09]);
+        assert!(
+            matches!(probe(&data, data.len()), Outcome::None),
+            "reserved TypeFlags bit 1 must not be accepted"
+        );
+    }
 }
