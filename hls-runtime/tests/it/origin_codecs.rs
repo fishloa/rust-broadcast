@@ -401,10 +401,12 @@ fn a_measured_fmp4_frame_rate_appears_in_the_variant() {
     let origin = origin(&trunk, 8);
     set_init(&origin);
     // A spec with no SPS VUI timing forces the per-segment measurement, so
-    // the rate comes from the fragment's `trun` durations.
+    // the rate comes from the fragment's `trun` durations. The 90 009
+    // timescale makes the division non-integral, so the half-tick rounding
+    // decides the last millihertz.
     let spec = TrackSpec::new(
         transmux::TrackId::new(1),
-        broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+        broadcast_common::timescale::Timescale::try_new(90_009).expect("timescale"),
         CodecConfig::Avc {
             config: crate::dummy_avc_config::dummy_avc_config(),
             width: 320,
@@ -420,7 +422,7 @@ fn a_measured_fmp4_frame_rate_appears_in_the_variant() {
         parsed.variants[0]
             .frame_rate
             .map(broadcast_hls::FrameRate::millihertz),
-        Some(25_000),
+        Some(25_003),
         "{body}"
     );
 }
