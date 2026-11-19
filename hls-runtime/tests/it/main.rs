@@ -20,6 +20,8 @@ mod map_runs;
 mod master_bandwidth;
 mod master_playlist;
 #[cfg(feature = "std")]
+mod origin_codecs;
+#[cfg(feature = "std")]
 mod origin_hardening;
 mod origin_loop;
 #[cfg(feature = "std")]
