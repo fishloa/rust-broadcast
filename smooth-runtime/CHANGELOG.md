@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Fixed
 - **`codec_family` is pinned by its FourCC groups.** Quality switching is only allowed within one codec family, so a constant answer would let an `avc1` ladder switch to `hvc1` (or `AACL` to `EC-3`) and break the decoder, and the alternate HEVC FourCC would be classified as unknown (audit 22 finding 43, #3011).
+- **A live refresh join reports a real gap and never a first-join one.** A refreshed timeline that continues at the known end, overlaps it, or starts a fresh stream is not a discontinuity; only a start past it is, and a zero `DVRWindowLength` keeps the whole timeline (audit 22 finding 44, #3012).
 
 ## [0.3.0] - 2026-11-17
 ### Added

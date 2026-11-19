@@ -174,3 +174,69 @@ fn shift(time: Option<i64>, offset: i64) -> Result<Option<i64>, FragmentFault> {
         t.map(Some).ok_or(FragmentFault::TimeOutOfRange)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn manifest() -> SmoothManifest {
+        SmoothManifest::parse(&String::from_utf8_lossy(&test_fixtures::read("smooth/av/Manifest")))
+            .expect("the committed manifest parses")
+    }
+
+    fn stream() -> Stream {
+        let manifest = manifest();
+        let index = manifest.streams[0].clone();
+        let quality = index.qualities[0].clone();
+        Stream::new(index, manifest.timescale, quality)
+    }
+
+    #[test]
+    fn a_refresh_continuing_at_the_known_end_is_not_a_gap() {
+        let mut stream = stream();
+        stream.plan_from(vec![(0, 100), (100, 100)]);
+        assert!(!stream.merge_refresh(vec![(200, 100)], 10));
+        assert_eq!(stream.plan.len(), 3);
+        assert_eq!(stream.known_end, 300);
+    }
+
+    #[test]
+    fn a_refresh_starting_past_the_known_end_is_a_gap() {
+        let mut stream = stream();
+        stream.plan_from(vec![(0, 100), (100, 100)]);
+        assert!(stream.merge_refresh(vec![(250, 100)], 10));
+        assert_eq!(stream.plan.len(), 3);
+    }
+
+    #[test]
+    fn the_first_refresh_is_never_a_gap() {
+        let mut stream = stream();
+        assert_eq!(stream.known_end, 0);
+        assert!(!stream.merge_refresh(vec![(5, 100)], 10));
+        assert_eq!(stream.plan.len(), 1);
+    }
+
+    #[test]
+    fn an_overlapping_refresh_adds_no_duplicates() {
+        let mut stream = stream();
+        stream.plan_from(vec![(0, 100), (100, 100)]);
+        assert!(!stream.merge_refresh(vec![(150, 100)], 10));
+        assert_eq!(stream.plan.len(), 2);
+    }
+
+    #[test]
+    fn a_plan_cap_forced_skip_is_a_gap() {
+        let mut stream = stream();
+        stream.plan_from(vec![(0, 100)]);
+        assert!(stream.merge_refresh(vec![(100, 100), (200, 100)], 2));
+        assert_eq!(stream.plan.len(), 2);
+    }
+
+    #[test]
+    fn a_zero_dvr_window_keeps_the_whole_timeline() {
+        let mut manifest = manifest();
+        manifest.dvr_window_length = Some(0);
+        let chunks = vec![(0, 100), (100, 100), (200, 100)];
+        assert_eq!(live_join(chunks.clone(), &manifest, 10), chunks);
+    }
+}
