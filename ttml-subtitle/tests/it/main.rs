@@ -7,6 +7,7 @@ mod golden;
 #[cfg(feature = "std")]
 mod hostile_structure;
 mod integration;
+mod limits;
 #[cfg(feature = "std")]
 mod mixed_content;
 mod review_signalling_findings;
