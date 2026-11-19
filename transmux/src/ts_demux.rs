@@ -3179,7 +3179,6 @@ fn harvest_damaged_au(
         Some(TrackState::Live(live)) => Some(live.track_id),
         _ => None,
     };
-    let _ = track_id;
     for _ in 0..count_invalid_parameter_sets(stream.codec, data) {
         events.push_back(DemuxEvent::InputDegraded {
             track: track_id,

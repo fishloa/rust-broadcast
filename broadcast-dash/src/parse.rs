@@ -240,7 +240,6 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
         .iter()
         .find(|c| c.ns == Ns::Cenc && c.name == "pssh")
         .map(|c| c.text.trim().to_owned());
-    let _ = url_query.as_ref();
     Ok(Descriptor {
         scheme_id_uri,
         value: opt_str(e, "value"),
@@ -817,16 +816,27 @@ fn content_steering(e: &Elem<Ns>) -> Result<ContentSteering, MpdError> {
 }
 
 fn scan_features(e: &Elem<Ns>, f: &mut MpdFeatures) {
-    if e.ns == Ns::Mpd {
-        match e.name.as_str() {
-            "InbandEventStream" => f.inband_event_stream = true,
-            "ServiceDescription" => f.service_description = true,
-            _ => {}
-        }
+    if e.ns == Ns::Mpd && e.name == "InbandEventStream" {
+        f.inband_event_stream = true;
     }
     for c in &e.children {
         scan_features(c, f);
     }
+}
+
+fn retains_service_description(
+    service_descriptions: &[ServiceDescription],
+    periods: &[Period],
+) -> bool {
+    !service_descriptions.is_empty()
+        || periods.iter().any(|p| {
+            !p.service_descriptions.is_empty()
+                || p.event_streams.iter().any(|es| {
+                    es.events
+                        .iter()
+                        .any(|ev| !ev.service_descriptions.is_empty())
+                })
+        })
 }
 
 impl Mpd {
@@ -876,8 +886,13 @@ impl Mpd {
             .map(utc_timing)
             .collect::<Result<Vec<_>, _>>()?;
         let base = base_urls(&root, &mut ctx)?;
+        let service_descriptions = root
+            .children_named("ServiceDescription")
+            .map(service_description)
+            .collect::<Result<Vec<_>, _>>()?;
         let mut features = ctx.features;
         scan_features(&root, &mut features);
+        features.service_description = retains_service_description(&service_descriptions, &periods);
         Ok(Self {
             id: opt_str(&root, "id"),
             profiles: root
@@ -909,10 +924,7 @@ impl Mpd {
                 .children_named("PatchLocation")
                 .map(patch_location)
                 .collect::<Result<Vec<_>, _>>()?,
-            service_descriptions: root
-                .children_named("ServiceDescription")
-                .map(service_description)
-                .collect::<Result<Vec<_>, _>>()?,
+            service_descriptions,
             utc_timings,
             essential_properties: descriptors(&root, "EssentialProperty")?,
             supplemental_properties: descriptors(&root, "SupplementalProperty")?,

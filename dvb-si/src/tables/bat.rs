@@ -262,6 +262,47 @@ mod tests {
     }
 
     #[test]
+    fn bouquet_name_found_after_another_descriptor() {
+        let descs: Vec<u8> = vec![
+            0x40,
+            0x03,
+            b'A',
+            b'B',
+            b'C',
+            DESCRIPTOR_TAG_BOUQUET_NAME,
+            0x02,
+            b'H',
+            b'I',
+        ];
+        let bytes = build_bat(0x0001, 0, 0, 0, &descs, &[]);
+        let bat = BatSection::parse(&bytes).unwrap();
+        assert_eq!(bat.bouquet_name(), Some("HI".to_string()));
+    }
+
+    #[test]
+    fn bouquet_name_found_before_another_descriptor() {
+        let descs: Vec<u8> = vec![DESCRIPTOR_TAG_BOUQUET_NAME, 0x02, b'H', b'I', 0x53, 0x00];
+        let bytes = build_bat(0x0001, 0, 0, 0, &descs, &[]);
+        let bat = BatSection::parse(&bytes).unwrap();
+        assert_eq!(bat.bouquet_name(), Some("HI".to_string()));
+    }
+
+    #[test]
+    fn bouquet_name_on_empty_descriptor_loop_is_none() {
+        let bytes = build_bat(0x0001, 0, 0, 0, &[], &[]);
+        let bat = BatSection::parse(&bytes).unwrap();
+        assert_eq!(bat.bouquet_name(), None);
+    }
+
+    #[test]
+    fn bouquet_name_with_truncated_last_descriptor_is_none() {
+        let descs: Vec<u8> = vec![DESCRIPTOR_TAG_BOUQUET_NAME, 0x05, b'H'];
+        let bytes = build_bat(0x0001, 0, 0, 0, &descs, &[]);
+        let bat = BatSection::parse(&bytes).unwrap();
+        assert_eq!(bat.bouquet_name(), None);
+    }
+
+    #[test]
     fn private_descriptors_preserved_in_bouquet_descriptors() {
         // Private descriptor tag (>= 0x80). Per anti-instructions, surface as raw bytes.
         let private_desc: Vec<u8> = vec![0x80, 0x04, 0xDE, 0xAD, 0xBE, 0xEF];

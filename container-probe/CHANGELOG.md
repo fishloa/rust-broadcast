@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- MP3 probing with a leading ID3v2 tag whose declared length ends exactly at the region boundary now reports `Insufficient` (the first frame has not been examined) instead of `Unknown`, so a streaming caller is told to read more (#3069).
+
+### Tests
+- FLV probe detail: `TypeFlags` audio/video bits, big-endian `DataOffset`, the header-length floor and reserved-bit rejection (#3067).
+- MP3: ID3v2 syncsafe size across all four bytes plus the footer, and the frame-length / header-field boundaries (#3068, #3069).
+- ADTS/Annex B: one-header and start-code boundaries, frame-length bounds, and the structural weak-chain need (#3070).
+- The shared frame-chain walker's tie, truncation and boundary rules (#3071).
+- EBML VINT widths, unknown-size elements, and the clipped-parent truncation rule (#3072).
+- MPEG-PS: every pack-header marker bit is required (#3073).
+- Per-format exact-length boundaries for ISOBMFF, RIFF, MXF, TS and the segment structure checks (#3074).
+- The stable `PartitionKind` wire bytes and every `name()`/`Display` label (#3075).
+
 ## [0.5.0] - 2026-11-15
 
 ### Changed

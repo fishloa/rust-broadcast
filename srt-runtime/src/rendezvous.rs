@@ -1261,6 +1261,308 @@ mod tests {
             Err(Error::HandshakeOutOfSequence { .. })
         ));
     }
+
+    fn ext_hs_msg() -> HsExtMessage {
+        HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: crate::packet::HandshakeExtensionMessageFlags(0),
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
+        }
+    }
+
+    fn plain_handshake(
+        handshake_type: HandshakeType,
+        socket_id: u32,
+        cookie: u32,
+    ) -> ControlPacket<'static> {
+        ControlPacket::Handshake(HandshakePacket {
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type,
+            srt_socket_id: socket_id,
+            syn_cookie: cookie,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(Vec::new()),
+        })
+    }
+
+    fn conclusion_with_hs_ext(
+        ext_type: ExtensionType,
+        socket_id: u32,
+        cookie: u32,
+    ) -> ControlPacket<'static> {
+        let contents = handshake_sm::ConclusionExtensionContents::new(ext_hs_msg(), None, None);
+        let contents: &'static handshake_sm::ConclusionExtensionContents =
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(contents));
+        let (extensions, ext_flags) = handshake_sm::build_conclusion_extensions(ext_type, contents);
+        ControlPacket::Handshake(HandshakePacket {
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(ext_flags),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: socket_id,
+            syn_cookie: cookie,
+            peer_ip: [0; 4],
+            extensions,
+        })
+    }
+
+    fn sent_bytes(outputs: &[HandshakeOutput]) -> Vec<u8> {
+        outputs
+            .iter()
+            .find_map(|o| match o {
+                HandshakeOutput::Send(b) => Some(b.clone()),
+                _ => None,
+            })
+            .expect("a Send output")
+    }
+
+    /// §4.3.2 serial-flow crossing: an Initiator still in Waving receives a
+    /// CONCLUSION+HSRSP directly and completes.
+    #[test]
+    fn initiator_completes_from_a_crossing_conclusion_with_hsrsp() {
+        let mut a = RendezvousHandshake::new(1, 500, HandshakeConfig::default());
+        a.start().unwrap();
+        let outputs = a
+            .feed(&conclusion_with_hs_ext(ExtensionType::HsRsp, 2, 100))
+            .unwrap();
+        assert_eq!(a.role(), Some(RendezvousRole::Initiator));
+        assert_eq!(a.state(), RendezvousHandshakeState::Connected);
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_))),
+            "{outputs:?}"
+        );
+    }
+
+    /// Attention + duplicate WAVEAHAND: resend the last message, no state
+    /// change (neither table defines the duplicate).
+    #[test]
+    fn duplicate_wavehand_in_attention_is_resent() {
+        let mut b = RendezvousHandshake::new(2, 100, HandshakeConfig::default());
+        b.start().unwrap();
+        let first = b.feed(&wavehand(1, 500)).unwrap();
+        let first_bytes = sent_bytes(&first);
+        let again = b.feed(&wavehand(1, 500)).unwrap();
+        assert_eq!(sent_bytes(&again), first_bytes);
+        assert_eq!(b.state(), RendezvousHandshakeState::Attention);
+    }
+
+    /// Responder Attention + extension-less CONCLUSION: resend the empty
+    /// CONCLUSION and stay in Attention (L2357-2360).
+    #[test]
+    fn responder_attention_without_extensions_resends_empty_conclusion() {
+        let mut b = RendezvousHandshake::new(2, 100, HandshakeConfig::default());
+        b.start().unwrap();
+        b.feed(&wavehand(1, 500)).unwrap();
+        let outputs = b
+            .feed(&plain_handshake(HandshakeType::Conclusion, 1, 500))
+            .unwrap();
+        let bytes = sent_bytes(&outputs);
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
+            panic!("expected handshake");
+        };
+        assert_eq!(hp.handshake_type, HandshakeType::Conclusion);
+        assert_eq!(hp.extensions.iter().count(), 0);
+        assert_eq!(b.state(), RendezvousHandshakeState::Attention);
+        assert_eq!(b.role(), Some(RendezvousRole::Responder));
+    }
+
+    /// Responder Initiated + AGREEMENT: enter Connected and answer AGREEMENT.
+    #[test]
+    fn responder_initiated_agreement_connects() {
+        let mut b = RendezvousHandshake::new(2, 100, HandshakeConfig::default());
+        b.start().unwrap();
+        b.feed(&wavehand(1, 500)).unwrap();
+        b.feed(&conclusion_with_hs_ext(ExtensionType::HsReq, 1, 500))
+            .unwrap();
+        assert_eq!(b.state(), RendezvousHandshakeState::Initiated);
+        let outputs = b
+            .feed(&plain_handshake(HandshakeType::Agreement, 1, 500))
+            .unwrap();
+        assert_eq!(b.state(), RendezvousHandshakeState::Connected);
+        let bytes = sent_bytes(&outputs);
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
+            panic!("expected handshake");
+        };
+        assert_eq!(hp.handshake_type, HandshakeType::Agreement);
+    }
+
+    /// A Connected engine answers a repeated CONCLUSION with another
+    /// AGREEMENT (recovery rule 4).
+    #[test]
+    fn connected_engine_answers_a_repeated_conclusion() {
+        let mut a = RendezvousHandshake::new(1, 500, HandshakeConfig::default());
+        a.start().unwrap();
+        a.feed(&conclusion_with_hs_ext(ExtensionType::HsRsp, 2, 100))
+            .unwrap();
+        assert_eq!(a.state(), RendezvousHandshakeState::Connected);
+        let outputs = a
+            .feed(&plain_handshake(HandshakeType::Conclusion, 2, 100))
+            .unwrap();
+        let bytes = sent_bytes(&outputs);
+        let ControlPacket::Handshake(hp) = ControlPacket::parse(&bytes).unwrap() else {
+            panic!("expected handshake");
+        };
+        assert_eq!(hp.handshake_type, HandshakeType::Agreement);
+        assert_eq!(a.state(), RendezvousHandshakeState::Connected);
+    }
+
+    /// `tick` resends the last message once the retransmit period has passed
+    /// and times out after the retry budget.
+    #[test]
+    fn tick_retransmits_and_then_times_out() {
+        let config = HandshakeConfig::default();
+        let mut r = RendezvousHandshake::new(1, 500, config.clone());
+        let sent = r.start().unwrap();
+        let outputs = r.tick(config.retransmit_after);
+        assert_eq!(sent_bytes(&outputs), sent, "the WAVEAHAND is re-sent");
+        for _ in 0..=config.max_retries {
+            let _ = r.tick(config.retransmit_after);
+        }
+        assert_eq!(r.state(), RendezvousHandshakeState::TimedOut);
+    }
+
+    /// Recovery rule 3: only a Responder stuck in Initiated is promoted by a
+    /// non-handshake packet or [`RendezvousHandshake::on_recovery_trigger`];
+    /// an Initiator in the same state is an error, not a promotion.
+    #[test]
+    fn recovery_trigger_promotes_only_a_responder_in_initiated() {
+        let mut b = RendezvousHandshake::new(2, 100, HandshakeConfig::default());
+        b.start().unwrap();
+        b.feed(&wavehand(1, 500)).unwrap();
+        b.feed(&conclusion_with_hs_ext(ExtensionType::HsReq, 1, 500))
+            .unwrap();
+        assert_eq!(b.state(), RendezvousHandshakeState::Initiated);
+        let outputs = b.on_recovery_trigger().unwrap();
+        assert_eq!(b.state(), RendezvousHandshakeState::Connected);
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_)))
+        );
+
+        let mut a = RendezvousHandshake::new(1, 500, HandshakeConfig::default());
+        a.start().unwrap();
+        a.feed(&wavehand(2, 100)).unwrap();
+        a.feed(&plain_handshake(HandshakeType::Conclusion, 2, 100))
+            .unwrap();
+        assert_eq!(a.state(), RendezvousHandshakeState::Initiated);
+        assert!(a.on_recovery_trigger().unwrap().is_empty());
+        assert_eq!(a.state(), RendezvousHandshakeState::Initiated);
+    }
+
+    #[test]
+    fn recovery_feed_promotes_only_a_responder_in_initiated() {
+        use crate::packet::misc::KeepAlivePacket;
+        let keepalive = ControlPacket::KeepAlive(KeepAlivePacket {
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
+            libsrt_pad: false,
+        });
+
+        let mut b = RendezvousHandshake::new(2, 100, HandshakeConfig::default());
+        b.start().unwrap();
+        b.feed(&wavehand(1, 500)).unwrap();
+        b.feed(&conclusion_with_hs_ext(ExtensionType::HsReq, 1, 500))
+            .unwrap();
+        let outputs = b.feed(&keepalive).unwrap();
+        assert_eq!(b.state(), RendezvousHandshakeState::Connected);
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_)))
+        );
+
+        let mut a = RendezvousHandshake::new(1, 500, HandshakeConfig::default());
+        a.start().unwrap();
+        a.feed(&wavehand(2, 100)).unwrap();
+        a.feed(&plain_handshake(HandshakeType::Conclusion, 2, 100))
+            .unwrap();
+        assert!(matches!(
+            a.feed(&keepalive),
+            Err(Error::UnexpectedControlPacket { .. })
+        ));
+        assert_eq!(a.state(), RendezvousHandshakeState::Initiated);
+    }
+
+    /// The libsrt-port tie-break across the sign boundary: the cases where
+    /// the bit-31 test differs from an XOR of the sign bit.
+    #[test]
+    fn cookie_contest_signed_boundary_cases() {
+        assert_eq!(cookie_contest(1, 0x8000_0000), RendezvousRole::Responder);
+        assert_eq!(cookie_contest(0x8000_0000, 1), RendezvousRole::Initiator);
+        assert_eq!(
+            cookie_contest(0x7FFF_FFFF, 0x8000_0000),
+            RendezvousRole::Responder
+        );
+        assert_eq!(
+            cookie_contest(0x8000_0000, 0x7FFF_FFFF),
+            RendezvousRole::Initiator
+        );
+        assert_eq!(cookie_contest(0x8000_0001, 1), RendezvousRole::Responder);
+        assert_eq!(cookie_contest(1, 0x8000_0001), RendezvousRole::Initiator);
+    }
+
+    /// §3.2.1.1 (reused by §4.3.2): rendezvous flags are the intersection of
+    /// both sides' advertised sets, exactly as in the Caller-Listener flow.
+    #[test]
+    fn negotiated_flags_are_the_intersection_of_both_sides() {
+        use crate::packet::handshake::{
+            HS_MSG_FLAG_REXMITFLG, HS_MSG_FLAG_TLPKTDROP, HS_MSG_FLAG_TSBPDRCV,
+            HS_MSG_FLAG_TSBPDSND, HandshakeExtensionMessageFlags,
+        };
+        let local = HandshakeExtensionMessageFlags(
+            HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TSBPDRCV | HS_MSG_FLAG_TLPKTDROP,
+        );
+        let peer = HandshakeExtensionMessageFlags(
+            HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TSBPDRCV | HS_MSG_FLAG_REXMITFLG,
+        );
+        let config = HandshakeConfig {
+            flags: local,
+            ..HandshakeConfig::default()
+        };
+        let mut r = RendezvousHandshake::new(1, 500, config);
+        r.start().unwrap();
+        r.role = Some(RendezvousRole::Initiator);
+        r.peer_hs_msg = Some(HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: peer,
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
+        });
+        r.peer_limits = Some((1500, 8192));
+        assert_eq!(
+            r.build_negotiated().expect("negotiated").flags,
+            HandshakeExtensionMessageFlags(HS_MSG_FLAG_TSBPDSND | HS_MSG_FLAG_TSBPDRCV)
+        );
+    }
+
+    #[test]
+    fn state_and_role_labels_match_the_diagram() {
+        assert_eq!(RendezvousHandshakeState::Idle.name(), "Idle");
+        assert_eq!(RendezvousHandshakeState::Waving.name(), "Waving");
+        assert_eq!(RendezvousHandshakeState::Attention.name(), "Attention");
+        assert_eq!(RendezvousHandshakeState::Initiated.name(), "Initiated");
+        assert_eq!(RendezvousHandshakeState::Connected.name(), "Connected");
+        assert_eq!(RendezvousHandshakeState::Rejected.name(), "Rejected");
+        assert_eq!(RendezvousHandshakeState::TimedOut.name(), "TimedOut");
+        assert_eq!(RendezvousRole::Initiator.name(), "Initiator");
+        assert_eq!(RendezvousRole::Responder.name(), "Responder");
+    }
 }
 
 #[cfg(test)]
@@ -1268,7 +1570,14 @@ mod tests {
 mod crypto_echo_tests {
     use super::super::*;
     #[cfg(feature = "crypto")]
-    use crate::handshake_sm::CryptoConfig;
+    use crate::handshake_sm::{CryptoConfig, HANDSHAKE_VERSION_5};
+    #[cfg(feature = "crypto")]
+    use crate::packet::{
+        ControlPacket, EncryptionField, ExtensionType, HandshakeExtensionFlags, HandshakePacket,
+        HandshakeType, HsExtMessage, SocketId, SrtTimestamp,
+    };
+    #[cfg(feature = "crypto")]
+    use core::time::Duration;
 
     #[cfg(feature = "crypto")]
     #[test]
@@ -1398,5 +1707,159 @@ mod crypto_echo_tests {
         assert!(tampered, "never found a key-material echo to tamper");
         assert!(rejected, "initiator did not reject the tampered echo");
         assert_eq!(b.state(), RendezvousHandshakeState::Rejected);
+    }
+
+    fn test_crypto() -> CryptoConfig {
+        CryptoConfig::new(
+            b"rendezvous-crypto-passphrase".to_vec(),
+            [0x11u8; 16],
+            vec![0x22u8; 16],
+        )
+    }
+
+    fn test_hs_msg() -> HsExtMessage {
+        HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: crate::packet::HandshakeExtensionMessageFlags(0),
+            receiver_tsbpd_delay: Duration::from_millis(120),
+            sender_tsbpd_delay: Duration::from_millis(120),
+        }
+    }
+
+    fn crossing_conclusion(
+        hs_msg: HsExtMessage,
+        km: Option<Vec<u8>>,
+        socket_id: u32,
+        cookie: u32,
+    ) -> ControlPacket<'static> {
+        let mut contents = handshake_sm::ConclusionExtensionContents::new(hs_msg, None, None);
+        if let Some(bytes) = km {
+            contents.set_key_material(ExtensionType::KmRsp, bytes);
+        }
+        let contents: &'static handshake_sm::ConclusionExtensionContents =
+            alloc::boxed::Box::leak(alloc::boxed::Box::new(contents));
+        let (extensions, ext_flags) =
+            handshake_sm::build_conclusion_extensions(ExtensionType::HsRsp, contents);
+        ControlPacket::Handshake(HandshakePacket {
+            timestamp: SrtTimestamp::ZERO,
+            dest_socket_id: SocketId::from_wire(1),
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::Aes128,
+            extension_field: HandshakeExtensionFlags(ext_flags),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: socket_id,
+            syn_cookie: cookie,
+            peer_ip: [0; 4],
+            extensions,
+        })
+    }
+
+    fn crossing_initiator(crypto: Option<CryptoConfig>) -> RendezvousHandshake {
+        let config = HandshakeConfig {
+            encryption_field: EncryptionField::Aes128,
+            crypto,
+            ..HandshakeConfig::default()
+        };
+        let mut r = RendezvousHandshake::new(1, 500, config);
+        r.start().unwrap();
+        r
+    }
+
+    /// The serial-crossing Initiator (Waving -> a CONCLUSION+HSRSP directly)
+    /// verifies the Key Material echo before it may use the SEK.
+    #[test]
+    fn crossing_initiator_verifies_a_matching_km_echo() {
+        let crypto = test_crypto();
+        let km = handshake_sm::build_key_material_contents(&crypto).expect("key material");
+        let mut r = crossing_initiator(Some(crypto.clone()));
+        let outputs = r
+            .feed(&crossing_conclusion(test_hs_msg(), Some(km), 2, 100))
+            .expect("complete");
+        assert_eq!(r.state(), RendezvousHandshakeState::Connected);
+        assert!(
+            outputs
+                .iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_)))
+        );
+        let negotiated = r.negotiated().expect("negotiated");
+        assert_eq!(
+            negotiated.sek.as_ref().map(|s| &s[..]),
+            Some(crypto.sek.as_slice())
+        );
+        assert_eq!(negotiated.salt, Some(crypto.salt));
+    }
+
+    #[test]
+    fn crossing_initiator_rejects_a_tampered_km_echo() {
+        let crypto = test_crypto();
+        let mut km = handshake_sm::build_key_material_contents(&crypto).expect("key material");
+        let last = km.len() - 1;
+        km[last] ^= 0xFF;
+        let mut r = crossing_initiator(Some(crypto));
+        let outputs = r
+            .feed(&crossing_conclusion(test_hs_msg(), Some(km), 2, 100))
+            .expect("feed");
+        assert!(
+            outputs.contains(&HandshakeOutput::Rejected(RejectionReason::BadSecret)),
+            "{outputs:?}"
+        );
+        assert_eq!(r.state(), RendezvousHandshakeState::Rejected);
+    }
+
+    #[test]
+    fn crossing_initiator_without_crypto_rejects_a_km_echo() {
+        let km = handshake_sm::build_key_material_contents(&test_crypto()).expect("key material");
+        let mut r = crossing_initiator(None);
+        let outputs = r
+            .feed(&crossing_conclusion(test_hs_msg(), Some(km), 2, 100))
+            .expect("feed");
+        assert!(
+            outputs.contains(&HandshakeOutput::Rejected(RejectionReason::Unsecure)),
+            "{outputs:?}"
+        );
+    }
+
+    #[test]
+    fn crossing_initiator_with_crypto_rejects_a_missing_km_echo() {
+        let mut r = crossing_initiator(Some(test_crypto()));
+        let outputs = r
+            .feed(&crossing_conclusion(test_hs_msg(), None, 2, 100))
+            .expect("feed");
+        assert!(
+            outputs.contains(&HandshakeOutput::Rejected(RejectionReason::Unsecure)),
+            "{outputs:?}"
+        );
+    }
+
+    /// SEK and Salt are only handed to a connection whose KM echo was
+    /// verified (the `crypto_verified` conjunction).
+    #[test]
+    fn negotiated_secrets_require_a_verified_km_echo() {
+        let crypto = test_crypto();
+        let config = HandshakeConfig {
+            encryption_field: EncryptionField::Aes128,
+            crypto: Some(crypto.clone()),
+            ..HandshakeConfig::default()
+        };
+        let mut r = RendezvousHandshake::new(1, 500, config);
+        r.start().unwrap();
+        r.role = Some(RendezvousRole::Initiator);
+        r.peer_hs_msg = Some(test_hs_msg());
+        r.peer_limits = Some((1500, 8192));
+        r.crypto_verified = false;
+        let unverified = r.build_negotiated().expect("negotiated");
+        assert!(unverified.sek.is_none());
+        assert!(unverified.salt.is_none());
+
+        r.crypto_verified = true;
+        let verified = r.build_negotiated().expect("negotiated");
+        assert_eq!(
+            verified.sek.as_ref().map(|s| &s[..]),
+            Some(crypto.sek.as_slice())
+        );
+        assert_eq!(verified.salt, Some(crypto.salt));
     }
 }

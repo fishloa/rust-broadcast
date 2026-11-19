@@ -702,9 +702,9 @@ mod tests {
         assert_eq!(pairs[0].operational_descriptors.raw(), o0);
         assert_eq!(pairs[1].target_descriptors.raw(), t1);
         assert_eq!(pairs[1].operational_descriptors.raw(), o1);
-        // serialize is deterministic.
-        let mut buf2 = vec![0u8; unt.serialized_len()];
-        unt.serialize_into(&mut buf2).unwrap();
+        // The re-serialize must come from the parsed value, not the original.
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf, buf2, "byte-exact re-serialize");
     }
 
@@ -753,8 +753,8 @@ mod tests {
         assert_eq!(entry.descriptor_type, DescriptorType::SystemHardware);
         assert_eq!(entry.model, 0x1234);
         assert_eq!(entry.sub_descriptors[0].data, &[0xAA, 0xBB]);
-        let mut buf2 = vec![0u8; unt.serialized_len()];
-        unt.serialize_into(&mut buf2).unwrap();
+        let mut buf2 = vec![0u8; re.serialized_len()];
+        re.serialize_into(&mut buf2).unwrap();
         assert_eq!(buf, buf2, "byte-exact re-serialize");
     }
 
@@ -871,6 +871,27 @@ mod tests {
         assert_eq!(unt.oui, 0x00015A);
         assert!(unt.current_next_indicator);
         assert!(unt.platforms.is_empty());
+    }
+
+    #[test]
+    fn action_type_arm_boundaries_are_classified() {
+        assert_eq!(UntActionType::from_u8(0x00), UntActionType::Reserved);
+        assert_eq!(
+            UntActionType::from_u8(0x01),
+            UntActionType::SystemSoftwareUpdate
+        );
+        assert_eq!(
+            UntActionType::from_u8(0x02),
+            UntActionType::DvbReserved(0x02)
+        );
+        assert_eq!(
+            UntActionType::from_u8(0x7F),
+            UntActionType::DvbReserved(0x7F)
+        );
+        assert_eq!(
+            UntActionType::from_u8(0x80),
+            UntActionType::UserDefined(0x80)
+        );
     }
 
     #[test]
