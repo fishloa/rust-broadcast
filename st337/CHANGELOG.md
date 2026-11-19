@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- Pin the ST 337 Table 7 `Pc` burst-info layout (every field at its bit position, both directions) and all four Table 8 `data_mode` codes, so a 20/24-bit-mode burst can no longer be emitted as 16-bit (#3213).
+
 ## [0.7.0] - 2026-11-15
 
 ### Changed
