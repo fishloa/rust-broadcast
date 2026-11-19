@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Tests pin what survived mutation in the framing and payload layer: the raw-mode resync buffer bound and hunt statistics, `PacketReassembler::drop_buffered`, HEM-NPD gating in `InnerTsRecovery`, the packet header length and payload slicing, the FEF/arbitrary-cells/P2-bias/individual-addressing/timestamp payload fields and limits, the L1-post framed parse/write with AUX blocks and extension blocks, and the L1 enum wire values and labels. No functional change.
+
 ## [15.1.0] - 2026-11-17
 
 ### Changed
