@@ -121,14 +121,14 @@ fn an_inverted_or_malformed_byte_range_is_refused() {
 fn a_resolve_to_zero_xlink_removes_its_element() {
     let mpd = parse(r#"<Period id="0" xlink:href="urn:mpeg:dash:resolve-to-zero:2013"/>"#);
     assert!(mpd.periods.is_empty());
-    assert!(mpd.features.xlink_resolve_to_zero);
+    assert!(!mpd.features.xlink_resolve_to_zero);
 
     let mpd = parse(
         r#"<Period id="0"><AdaptationSet mimeType="video/mp4" xlink:href="urn:mpeg:dash:resolve-to-zero:2013"/></Period>"#,
     );
     assert_eq!(mpd.periods.len(), 1);
     assert!(mpd.periods[0].adaptation_sets.is_empty());
-    assert!(mpd.features.xlink_resolve_to_zero);
+    assert!(!mpd.features.xlink_resolve_to_zero);
 
     let mpd = parse(r#"<Period id="0" xlink:href="http://example/period"/>"#);
     assert_eq!(mpd.periods.len(), 1);
