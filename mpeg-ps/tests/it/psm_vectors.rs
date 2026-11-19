@@ -268,3 +268,43 @@ fn a_set_single_extension_stream_flag_decodes_the_entry_as_plain() {
     assert_eq!(parsed.elementary_stream_map[0].stream_id_extension, None);
     assert_eq!(parsed.try_to_bytes().unwrap(), wire);
 }
+
+#[test]
+fn a_clear_psm_reserved_marker_bit_is_rejected() {
+    let mut wire = table_2_41_psm();
+    wire[7] = 0xFE; // marker_bit clear, every reserved bit set
+    let crc_at = wire.len() - 4;
+    let crc = broadcast_common::crc32_mpeg2::compute(&wire[..crc_at]);
+    wire[crc_at..].copy_from_slice(&crc.to_be_bytes());
+    assert_eq!(
+        ProgramStreamMap::parse(&wire).unwrap_err(),
+        Error::BadMarker("program_stream_map marker_bit")
+    );
+}
+
+#[test]
+fn the_minimum_length_guard_reports_its_exact_shortfall() {
+    // 11 bytes: the guard needs 12 (prefix 6 + psm_length 2 + CRC 4).
+    let eleven = [0u8, 0, 1, 0xBC, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE];
+    assert_eq!(
+        ProgramStreamMap::parse(&eleven).unwrap_err(),
+        Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            need: 12,
+            have: 11,
+            what: "program_stream_map",
+        })
+    );
+
+    // Exactly 12 bytes passes the length guard and is instead rejected by the
+    // declared map_length (zero here).
+    let twelve = [
+        0u8, 0, 1, 0xBC, 0x00, 0x00, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+    ];
+    assert_eq!(
+        ProgramStreamMap::parse(&twelve).unwrap_err(),
+        Error::MapLengthOverflow {
+            map_length: 0,
+            available: 6,
+        }
+    );
+}

@@ -149,3 +149,40 @@ fn a_four_byte_region_is_a_header_not_a_straddle() {
     assert_eq!(done, vec![region.to_vec()]);
     assert!(!rx.in_reassembly());
 }
+
+#[test]
+fn a_d0_length_0x7fff_header_is_buffered_not_an_end_indicator() {
+    // D=0, Length=0x7FFF is a real (very large) SNDU header, distinct from the
+    // 0xFFFF End Indicator.
+    let region = [0x7Fu8, 0xFF, 0x08, 0x00];
+    let mut payload = vec![0x00];
+    payload.extend_from_slice(&region);
+
+    let mut rx = UleReceiver::new();
+    let done = rx.push(&payload, true);
+    assert!(done.is_empty());
+    assert!(
+        rx.in_reassembly(),
+        "the header must be buffered as an SNDU start, not treated as padding"
+    );
+}
+
+#[test]
+fn a_split_header_then_a_packed_follow_on_after_completion() {
+    let a = make_sndu(&[0x11u8; 4]);
+    let b = make_sndu(&[0x22u8; 3]);
+
+    let mut rx = UleReceiver::new();
+    let mut p1 = vec![0x00];
+    p1.push(a[0]);
+    assert!(rx.push(&p1, true).is_empty());
+    assert!(rx.in_reassembly());
+
+    // The pointer spans the rest of A plus all of packed B; only A's first
+    // byte was buffered, so its length is not known yet.
+    let pp = (a.len() - 1) + b.len();
+    let mut p2 = vec![pp as u8];
+    p2.extend_from_slice(&a[1..]);
+    p2.extend_from_slice(&b);
+    assert_eq!(rx.push(&p2, true), vec![a, b]);
+}
