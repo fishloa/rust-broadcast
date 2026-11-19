@@ -24,6 +24,8 @@ mod origin_hardening;
 mod origin_loop;
 #[cfg(feature = "std")]
 mod origin_playlist_fields;
+#[cfg(feature = "std")]
+mod origin_state;
 mod pdt_arrival;
 mod pdt_origin;
 mod playlist_base;
