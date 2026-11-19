@@ -180,8 +180,10 @@ mod tests {
     use super::*;
 
     fn manifest() -> SmoothManifest {
-        SmoothManifest::parse(&String::from_utf8_lossy(&test_fixtures::read("smooth/av/Manifest")))
-            .expect("the committed manifest parses")
+        SmoothManifest::parse(&String::from_utf8_lossy(&test_fixtures::read(
+            "smooth/av/Manifest",
+        )))
+        .expect("the committed manifest parses")
     }
 
     fn stream() -> Stream {
