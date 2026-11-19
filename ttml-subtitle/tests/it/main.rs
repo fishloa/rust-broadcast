@@ -15,6 +15,8 @@ mod time_context;
 mod time_expressions;
 mod truncation;
 #[cfg(feature = "std")]
+mod typed_model;
+#[cfg(feature = "std")]
 mod unknown_attributes;
 mod unknown_children_roundtrip;
 mod validation_rules;
