@@ -444,6 +444,8 @@ impl Serialize for LtcFrame {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     fn sample_frame() -> LtcFrame {
         LtcFrame {
@@ -698,5 +700,73 @@ mod tests {
         a.serialize_into(&mut oa).unwrap();
         b.serialize_into(&mut ob).unwrap();
         assert_ne!(oa, ob);
+    }
+
+    /// The LTC codeword is eighty bits; the buffer-sizing length and the
+    /// bytes written must both be exactly ten.
+    #[test]
+    fn serialized_len_is_the_ten_byte_codeword() {
+        let frame = sample_frame();
+        assert_eq!(frame.serialized_len(), 10);
+        let mut out = [0u8; 10];
+        let n = frame.serialize_into(&mut out).unwrap();
+        assert_eq!(n, 10);
+        assert_eq!(n, frame.serialized_len());
+    }
+
+    /// ST 12-1 Table 3's column headers and §5.2/§6.2/§7.2 frame maxima.
+    #[test]
+    fn frame_rate_labels_are_pinned() {
+        for (rate, label, max) in [
+            (FrameRate::Fps30, "30-frame", 29u8),
+            (FrameRate::Fps25, "25-frame", 24),
+            (FrameRate::Fps24, "24-frame", 23),
+        ] {
+            assert_eq!(rate.name(), label);
+            assert_eq!(rate.to_string(), label);
+            assert_eq!(rate.max_frame(), max);
+        }
+    }
+
+    /// ST 12-1 Table 1's time-address-reference / binary-group column pairs.
+    #[test]
+    fn binary_group_usage_labels_are_pinned() {
+        for (usage, label) in [
+            (
+                BinaryGroupUsage::UnspecifiedUnspecified,
+                "unspecified time address, unspecified binary group",
+            ),
+            (
+                BinaryGroupUsage::UnspecifiedEightBitCodes,
+                "unspecified time address, 8-bit codes",
+            ),
+            (
+                BinaryGroupUsage::ClockTimeUnspecified,
+                "clock time, unspecified binary group",
+            ),
+            (
+                BinaryGroupUsage::Reserved,
+                "reserved time address, reserved binary group",
+            ),
+            (
+                BinaryGroupUsage::UnspecifiedDateTimeZone,
+                "unspecified time address, date and time zone",
+            ),
+            (
+                BinaryGroupUsage::UnspecifiedPageLine,
+                "unspecified time address, page/line",
+            ),
+            (
+                BinaryGroupUsage::ClockTimeDateTimeZone,
+                "clock time, date and time zone",
+            ),
+            (
+                BinaryGroupUsage::ClockTimePageLine,
+                "clock time, page/line",
+            ),
+        ] {
+            assert_eq!(usage.name(), label);
+            assert_eq!(usage.to_string(), label);
+        }
     }
 }
