@@ -128,3 +128,22 @@ fn lexically_invalid_forms_are_rejected() {
         assert_invalid(bad);
     }
 }
+
+/// The exact text the writer emits for each shape, and its own inverse.
+#[test]
+fn xs_duration_writes_the_documented_lexical_form() {
+    use broadcast_dash::duration::xs_duration;
+    for (duration, text) in [
+        (Duration::ZERO, "PT0S"),
+        (Duration::from_secs(5), "PT5S"),
+        (Duration::from_millis(1_500), "PT1.5S"),
+        (Duration::from_nanos(1), "PT0.000000001S"),
+        (Duration::from_secs(3_600), "PT1H"),
+        (Duration::from_secs(90_061), "PT25H1M1S"),
+        (Duration::new(62, 1), "PT1M2.000000001S"),
+        (Duration::from_secs(86_400), "PT24H"),
+    ] {
+        assert_eq!(xs_duration(duration), text, "{duration:?}");
+        assert_eq!(parse_iso8601_duration(text).unwrap(), duration, "{text}");
+    }
+}

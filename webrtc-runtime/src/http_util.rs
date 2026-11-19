@@ -308,4 +308,40 @@ mod tests {
         }
         assert!(location_of(&endpoint, &bad).is_none());
     }
+
+    /// Audit-22 #3007: the typed `If-Match` an ICE-restart/trickle PATCH
+    /// carries (RFC 9725 §4.3) must be visible on the request the state
+    /// machine hands the caller. Bite test: an `if_match()` that always
+    /// answers `None` hides the precondition the server compares.
+    #[test]
+    fn if_match_is_visible_on_the_typed_request() {
+        use http::Method;
+
+        let mut req = HttpRequest::new(
+            Method::PATCH,
+            url::Url::parse("https://a.example/session/1").expect("session URL"),
+        );
+        assert!(req.if_match().is_none());
+
+        req.headers.typed_insert(IfMatch::any());
+        let parsed = req.if_match().expect("the If-Match header is set");
+        assert!(parsed.is_any());
+
+        req.headers
+            .typed_insert(IfMatch::from(etag("v1").expect("a strong tag")));
+        let parsed = req.if_match().expect("the If-Match header is set");
+        assert!(!parsed.is_any());
+        assert!(parsed.precondition_passes(&etag("v1").expect("a strong tag")));
+    }
+
+    /// Audit-22 #3007: the `Content-Type` text an error message reports.
+    /// Bite test: a constant (or empty) answer hides what the peer actually
+    /// sent.
+    #[test]
+    fn content_type_text_renders_the_header_the_peer_sent() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(content_type_text(&headers), "");
+        headers.typed_insert(content_type("application/sdp").expect("a media type"));
+        assert_eq!(content_type_text(&headers), "application/sdp");
+    }
 }

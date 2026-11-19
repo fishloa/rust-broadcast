@@ -137,4 +137,16 @@ mod tests {
             SessionId::new(0x12345678)
         );
     }
+
+    #[test]
+    fn the_debug_spelling_is_the_typed_id() {
+        assert_eq!(
+            format!("{:?}", SessionId::new(0x0123_4567_89ab_cdef)),
+            "SessionId(0123456789abcdef)"
+        );
+        assert_eq!(
+            format!("{:?}", SessionId::new(1)),
+            "SessionId(0000000000000001)"
+        );
+    }
 }

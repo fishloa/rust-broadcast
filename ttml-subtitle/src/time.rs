@@ -1199,3 +1199,47 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod label_tests {
+    use super::*;
+    use alloc::string::ToString;
+
+    #[test]
+    fn time_base_name_is_the_spec_token() {
+        assert_eq!(TimeBase::Media.name(), "media");
+        assert_eq!(TimeBase::Smpte.name(), "smpte");
+        assert_eq!(TimeBase::Clock.name(), "clock");
+        assert_eq!(TimeBase::Media.to_string(), "media");
+        assert_eq!(TimeBase::Smpte.to_string(), "smpte");
+        assert_eq!(TimeBase::Clock.to_string(), "clock");
+    }
+
+    #[test]
+    fn drop_mode_name_is_the_spec_token() {
+        assert_eq!(DropMode::NonDrop.name(), "nonDrop");
+        assert_eq!(DropMode::DropNtsc.name(), "dropNTSC");
+        assert_eq!(DropMode::DropPal.name(), "dropPAL");
+        assert_eq!(DropMode::NonDrop.to_string(), "nonDrop");
+        assert_eq!(DropMode::DropNtsc.to_string(), "dropNTSC");
+        assert_eq!(DropMode::DropPal.to_string(), "dropPAL");
+    }
+
+    #[test]
+    fn marker_mode_name_is_the_spec_token() {
+        assert_eq!(MarkerMode::Continuous.name(), "continuous");
+        assert_eq!(MarkerMode::Discontinuous.name(), "discontinuous");
+        assert_eq!(MarkerMode::Continuous.to_string(), "continuous");
+        assert_eq!(MarkerMode::Discontinuous.to_string(), "discontinuous");
+    }
+
+    #[test]
+    fn clock_mode_name_is_the_spec_token() {
+        assert_eq!(ClockMode::Local.name(), "local");
+        assert_eq!(ClockMode::Utc.name(), "utc");
+        assert_eq!(ClockMode::Gps.name(), "gps");
+        assert_eq!(ClockMode::Local.to_string(), "local");
+        assert_eq!(ClockMode::Utc.to_string(), "utc");
+        assert_eq!(ClockMode::Gps.to_string(), "gps");
+    }
+}

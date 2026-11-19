@@ -372,6 +372,41 @@ mod tests {
     }
 
     #[test]
+    fn the_message_cap_is_two_mebibytes_of_total_message() {
+        let head_len = announce_with_body(2_097_152).len();
+        let body_len = 2_097_152 - head_len;
+        let head = announce_with_body(body_len);
+        assert_eq!(head.len() + body_len, 2_097_152);
+
+        let mut codec = ServerCodec::default();
+        let mut buf = BytesMut::from(head.as_bytes());
+        assert!(
+            codec.decode(&mut buf).unwrap().is_none(),
+            "a message of exactly 2 MiB still fits"
+        );
+        assert_eq!(codec.skip_until, 2_097_152);
+        buf.extend(std::iter::repeat_n(b'x', body_len));
+        assert!(matches!(
+            codec.decode(&mut buf),
+            Ok(Some(ServerFrame::Request(_)))
+        ));
+
+        let mut codec = ServerCodec::default();
+        let mut buf = BytesMut::from(announce_with_body(body_len + 1).as_bytes());
+        match codec.decode(&mut buf) {
+            Err(Error::MessageParse {
+                source: MessageParseError::TooLarge { at_least, limit },
+                ..
+            }) => {
+                assert_eq!(at_least, 2_097_153);
+                assert_eq!(limit, 2_097_152);
+            }
+            Ok(_) => panic!("expected TooLarge, got a decoded frame"),
+            Err(other) => panic!("expected TooLarge, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn server_codec_parses_once_per_message_even_when_fed_a_byte_at_a_time() {
         let req: &[u8] = b"OPTIONS rtsp://h/s RTSP/1.0\r\nCSeq: 1\r\n\r\n";
         let mut codec = ServerCodec::default();

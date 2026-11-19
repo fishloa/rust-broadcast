@@ -240,7 +240,6 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
         .iter()
         .find(|c| c.ns == Ns::Cenc && c.name == "pssh")
         .map(|c| c.text.trim().to_owned());
-    let _ = url_query.as_ref();
     Ok(Descriptor {
         scheme_id_uri,
         value: opt_str(e, "value"),
