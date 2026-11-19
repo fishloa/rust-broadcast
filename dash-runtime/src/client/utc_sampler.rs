@@ -263,3 +263,91 @@ impl UtcSampler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Step, UtcSampler};
+    use crate::client::action::{Action, UtcId, UtcMethod};
+    use crate::client::config::DashConfig;
+    use crate::client::error::Failure;
+    use crate::timing::utc_timing::{Exchange, UtcScheme};
+    use broadcast_common::stage::Timestamp;
+    use broadcast_dash::UtcTiming;
+    use url::Url;
+
+    const XSDATE: &str = "urn:mpeg:dash:utc:http-xsdate:2014";
+    const HTTP_HEAD: &str = "urn:mpeg:dash:utc:http-head:2014";
+
+    fn now() -> Timestamp {
+        Timestamp::from_micros(1_000_000)
+    }
+
+    fn timing(scheme_id_uri: &str, value: &str) -> UtcTiming {
+        let mut t = UtcTiming::default();
+        t.scheme = UtcScheme::from_scheme_id_uri(scheme_id_uri);
+        t.scheme_id_uri = scheme_id_uri.to_owned();
+        t.value = value.to_owned();
+        t
+    }
+
+    fn accept(v: &str) -> Option<Url> {
+        Url::parse(v).ok()
+    }
+
+    fn exchange() -> Exchange {
+        Exchange::new(now(), now())
+    }
+
+    fn fetch_id(s: &mut UtcSampler, next_id: &mut u32) -> (UtcId, UtcMethod) {
+        match s.poll(now(), next_id, &DashConfig::default()) {
+            Step::Fetch(Action::FetchUtcTiming { id, method, .. }) => (id, method),
+            other => panic!("no fetch: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_sampler_with_no_candidate_is_empty_and_awaits_nothing() {
+        let s = UtcSampler::new(&[], &mut accept, exchange());
+        assert!(s.is_empty());
+        assert!(!s.awaits(UtcId(0)));
+    }
+
+    #[test]
+    fn only_the_in_flight_id_is_awaited() {
+        let elems = [timing(XSDATE, "http://utc.test/x")];
+        let mut s = UtcSampler::new(&elems, &mut accept, exchange());
+        assert!(!s.is_empty());
+        let mut next = 0u32;
+        let (id, method) = fetch_id(&mut s, &mut next);
+        assert_eq!(id.get(), 0);
+        assert_eq!(method, UtcMethod::Get);
+        assert!(s.awaits(UtcId(0)));
+        assert!(!s.awaits(UtcId(1)));
+    }
+
+    #[test]
+    fn a_refused_head_is_reissued_as_a_get() {
+        let elems = [timing(HTTP_HEAD, "http://utc.test/head")];
+        let mut s = UtcSampler::new(&elems, &mut accept, exchange());
+        let mut next = 0u32;
+        let (id, method) = fetch_id(&mut s, &mut next);
+        assert_eq!(method, UtcMethod::Head);
+        s.on_failure(id, Failure::Status(405));
+        let (_, method) = fetch_id(&mut s, &mut next);
+        assert_eq!(method, UtcMethod::Get);
+    }
+
+    #[test]
+    fn a_head_that_fails_for_another_reason_moves_on() {
+        let elems = [timing(HTTP_HEAD, "http://utc.test/head")];
+        let mut s = UtcSampler::new(&elems, &mut accept, exchange());
+        let mut next = 0u32;
+        let (id, method) = fetch_id(&mut s, &mut next);
+        assert_eq!(method, UtcMethod::Head);
+        s.on_failure(id, Failure::Status(500));
+        assert_eq!(
+            s.poll(now(), &mut next, &DashConfig::default()),
+            Step::Exhausted
+        );
+    }
+}
