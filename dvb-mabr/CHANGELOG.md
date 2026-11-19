@@ -4,6 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 ### Tests
+- Every DOCTYPE refusal site is pinned with hostile input (inside a skipped subtree, between children, inside modelled text, and after a semantic error via `drain`), and a nested element inside a text-only element is shown not to absorb its text (audit 22 #3042).
 - `ObjectCarousel` serialization is round-tripped with each of its three child lists populated on its own, so a writer regression that self-closes the element whenever any list is empty cannot silently drop carousel content (audit 22 #3041).
 - The golden's `GOLDEN_BLESS` switch refuses to write when `CI` is set, with a regression test, and `fixtures/golden/mabr/PROVENANCE.md` records that no third-party validator exists for these documents, so the golden pins stability while `spec_fidelity` and `round_trip` carry correctness (audit 21 finding 62).
 
