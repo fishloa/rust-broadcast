@@ -33,10 +33,7 @@ pub(crate) fn longest_chain(
     let mut best_truncated = false;
     let mut best_anchor = 0usize;
     let mut best_frame_len = 0usize;
-    // A start beyond the buffer scans nothing; clamping it keeps the walk
-    // bounded when a caller's skip target lies past the supplied region (an
-    // MP3 ID3v2 header can declare one).
-    let mut i = core::cmp::min(start, n);
+    let mut i = start;
     while i < n {
         if let Some(first_len) = frame_len(data, i) {
             let mut p = i;
