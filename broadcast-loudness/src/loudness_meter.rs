@@ -1049,7 +1049,8 @@ impl LoudnessMeter {
 #[cfg(all(test, feature = "std"))]
 mod tests {
     use super::{
-        EXACT_BLOCKS, HISTOGRAM_BINS, LoudnessMeter, SHORT_TERM_SUB_BLOCKS, SlidingWindowMax,
+        EXACT_BLOCKS, GateComparison, HISTOGRAM_BINS, LoudnessHistogram, LoudnessMeter,
+        SHORT_TERM_SUB_BLOCKS, SUB_BLOCK_S, SlidingWindowMax, lkfs_to_mean_sq, mean_sq_to_lkfs,
     };
     use crate::channel_layout::ChannelLayout;
 
@@ -1791,5 +1792,167 @@ mod tests {
         let msg = format!("{err}");
         assert!(msg.contains("channel 0"), "got: {msg}");
         assert!(msg.contains("index 1"), "got: {msg}");
+    }
+
+    fn push_tone(meter: &mut LoudnessMeter, rate: u32, dbfs: f64, seconds: f64) {
+        let n = (seconds * f64::from(rate)) as usize;
+        let amp = libm::pow(10.0, dbfs / 20.0);
+        for i in 0..n {
+            let t = i as f64 / f64::from(rate);
+            meter
+                .push_f64(&[amp * libm::sin(2.0 * core::f64::consts::PI * 997.0 * t)])
+                .unwrap();
+        }
+    }
+
+    /// `reset()` must make the meter indistinguishable from a fresh one:
+    /// the earlier programme's blocks, sliding-window maxima and true peak
+    /// all survive otherwise.
+    #[test]
+    fn reset_discards_the_previous_programme() {
+        const RATE: u32 = 48_000;
+        let mut reused = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+        push_tone(&mut reused, RATE, -6.0, 2.0);
+        reused.finish();
+        reused.reset();
+        assert_eq!(reused.frame_count(), 0);
+        assert_eq!(reused.duration_seconds(), 0.0);
+        push_tone(&mut reused, RATE, -30.0, 5.0);
+        reused.finish();
+
+        let mut fresh = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+        push_tone(&mut fresh, RATE, -30.0, 5.0);
+        fresh.finish();
+
+        assert_eq!(reused.integrated_lufs(), fresh.integrated_lufs());
+        assert_eq!(reused.max_momentary_lufs(), fresh.max_momentary_lufs());
+        assert_eq!(reused.max_short_term_lufs(), fresh.max_short_term_lufs());
+        assert_eq!(reused.loudness_range(), fresh.loudness_range());
+    }
+
+    #[test]
+    fn frame_count_and_duration_are_exact_for_every_entry_point() {
+        const RATE: u32 = 48_000;
+        const N: usize = 4_800;
+        let mut f64_meter = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+        for _ in 0..N {
+            f64_meter.push_f64(&[0.25]).unwrap();
+        }
+        assert_eq!(f64_meter.frame_count(), N);
+        assert_eq!(f64_meter.duration_seconds(), 0.1);
+        f64_meter.reset();
+        assert_eq!(f64_meter.frame_count(), 0);
+        assert_eq!(f64_meter.duration_seconds(), 0.0);
+
+        let mut f32_meter = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+        for _ in 0..N {
+            f32_meter.push_f32(&[0.25]).unwrap();
+        }
+        assert_eq!(f32_meter.frame_count(), N);
+        assert_eq!(f32_meter.duration_seconds(), 0.1);
+
+        let mut stereo = LoudnessMeter::new(RATE, ChannelLayout::Stereo).unwrap();
+        let left = alloc::vec![0.1f32; N];
+        let right = alloc::vec![0.1f32; N];
+        stereo.push_stereo_planar_f32(&left, &right).unwrap();
+        assert_eq!(stereo.frame_count(), N);
+        assert_eq!(stereo.duration_seconds(), 0.1);
+    }
+
+    /// A short-term value needs all 30 completed 100 ms sub-blocks; 29 is
+    /// not enough, and more does not change a steady tone's maximum.
+    #[test]
+    fn short_term_max_needs_a_full_three_second_window() {
+        const RATE: u32 = 48_000;
+        let sub_block = (SUB_BLOCK_S * f64::from(RATE)) as usize;
+        let amp = libm::pow(10.0, -6.0 / 20.0);
+        let push = |n: usize| {
+            let mut m = LoudnessMeter::new(RATE, ChannelLayout::Mono).unwrap();
+            for i in 0..n {
+                let t = i as f64 / f64::from(RATE);
+                m.push_f64(&[amp * libm::sin(2.0 * core::f64::consts::PI * 997.0 * t)])
+                    .unwrap();
+            }
+            m.finish();
+            m
+        };
+
+        let short = push(29 * sub_block);
+        assert_eq!(short.max_short_term_lufs(), f64::NEG_INFINITY);
+        assert!(short.max_momentary_lufs().is_finite());
+
+        let full = push(30 * sub_block);
+        let level = full.max_short_term_lufs();
+        assert!(level.is_finite());
+
+        let longer = push(35 * sub_block);
+        assert!((longer.max_short_term_lufs() - level).abs() < 0.01);
+    }
+
+    /// Tech 3342's percentile ranks, pinned through both the exact and the
+    /// binned histogram: 100 blocks 0.1 LU apart from -30.0 to -20.1, all
+    /// inside the relative gate, so the 10th and 95th percentiles are
+    /// 84 x 0.1 = 8.4 LU apart.
+    #[test]
+    fn loudness_range_pins_the_percentile_ranks_in_both_modes() {
+        let levels: alloc::vec::Vec<f64> = (0..100).map(|i| -30.0 + 0.1 * i as f64).collect();
+        for exact_capacity in [0usize, EXACT_BLOCKS] {
+            let mut h =
+                LoudnessHistogram::with_exact_capacity(GateComparison::AtOrAbove, exact_capacity);
+            for &level in &levels {
+                h.record(lkfs_to_mean_sq(level));
+            }
+            assert_eq!(h.is_binned(), exact_capacity == 0);
+            let range = h.loudness_range();
+            assert!(
+                (range - 8.4).abs() < 0.05,
+                "exact_capacity {exact_capacity}: got {range}"
+            );
+        }
+    }
+
+    /// The straddling-bin cut's energy interpolation, with two blocks at the
+    /// bin's top level and one at the bottom: exactly two blocks are kept,
+    /// i.e. their mean sits 10*log10(2) = 3.0103 LU above the top level.
+    #[test]
+    fn cut_keeps_the_hand_computed_number_of_blocks() {
+        let mut h = LoudnessHistogram::with_exact_capacity(GateComparison::Above, 0);
+        for level in [-30.006, -30.002, -30.002] {
+            h.record(lkfs_to_mean_sq(level));
+        }
+        assert!(h.is_binned());
+        let cut = h.cut(-30.004);
+        assert_eq!(cut.kept, 2);
+        assert_eq!(cut.bin, LoudnessHistogram::bin_of(-30.004));
+        let kept_lkfs = mean_sq_to_lkfs(cut.kept_energy);
+        assert!(
+            (kept_lkfs - (-30.002 + 3.010_299_956_639_812_5)).abs() < 1e-3,
+            "kept energy sits at {kept_lkfs} LUFS"
+        );
+    }
+
+    /// An empty measurement has no defined integrated loudness or range.
+    #[test]
+    fn an_empty_measurement_has_no_integrated_value() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Mono).unwrap();
+        meter.finish();
+        assert_eq!(meter.integrated_lufs(), f64::NEG_INFINITY);
+        assert_eq!(meter.loudness_range(), 0.0);
+    }
+
+    /// The planar-stereo entry point's sample index in a rejection must
+    /// count whole frames already accepted, not the index within this call.
+    #[test]
+    fn planar_stereo_rejection_reports_the_absolute_frame_index() {
+        let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+        meter.push_stereo_planar_f32(&[0.0, 0.0], &[0.0, 0.0]).unwrap();
+        let too_loud = f32::from_bits(0x7F7F_FFFF);
+        let err = meter
+            .push_stereo_planar_f32(&[0.1, too_loud], &[0.1, 0.1])
+            .unwrap_err();
+        match err {
+            crate::Error::SampleTooLoud { index, .. } => assert_eq!(index, 3),
+            other => panic!("expected SampleTooLoud, got {other:?}"),
+        }
     }
 }
