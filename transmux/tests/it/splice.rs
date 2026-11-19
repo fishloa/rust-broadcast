@@ -1627,3 +1627,116 @@ fn negative_dts_track_cut_is_not_saturated_to_a_wrong_index() {
         .expect("a splice point for the audio track");
     assert_eq!(point.sample_index, 199);
 }
+
+// ---------------------------------------------------------------------------
+// audit 22 — reference-track pick, boundary decode time and split boundaries
+// ---------------------------------------------------------------------------
+
+fn avc_track_from(id: u32, samples: Vec<Sample>, start: u64) -> Track {
+    Track::new_at(avc_spec(id), samples, start)
+}
+
+fn timed(dts: i64, dur: u32, sync: bool) -> Sample {
+    Sample::new(vec![0xAB; 4], Some(dts), Some(dts), Some(dur), sync).expect("valid timing")
+}
+
+#[test]
+fn concat_uses_the_video_track_as_the_single_reference() {
+    let a_audio = data_track(1, 1000, 0xA1, 5, 1000, DataCarriage::Pes, true);
+    let a_video = video_track(2, 0xB1, 7, 1000, 1);
+    let b_audio = data_track(1, 1000, 0xC1, 1, 1000, DataCarriage::Pes, true);
+    let b_video = video_track(2, 0xD1, 1, 1000, 1);
+    let a = Media::new(vec![a_audio, a_video], timescale(1000));
+    let b = Media::new(vec![b_audio, b_video], timescale(1000));
+    let out = concat(&a, &b).expect("concat");
+    let video_join = out.media.tracks[1].samples[7]
+        .timing
+        .and_then(|t| t.dts());
+    assert_eq!(
+        video_join,
+        Some(7000),
+        "the video track (index 1) anchors the shift, not track 0"
+    );
+}
+
+#[test]
+fn concat_picks_a_track_timed_on_only_one_side() {
+    let a = Media::new(
+        vec![data_track(1, 1000, 0xA1, 1, 100, DataCarriage::Pes, false)],
+        timescale(1000),
+    );
+    let b = Media::new(
+        vec![data_track_at(1, 1000, 0xB1, 1, 100, 5000, DataCarriage::Pes)],
+        timescale(1000),
+    );
+    let out = concat(&a, &b).expect("concat");
+    let joined = out.media.tracks[0].samples[1]
+        .timing
+        .and_then(|t| t.dts());
+    assert_eq!(
+        joined,
+        Some(0),
+        "a track timed only on the b side still anchors the shift"
+    );
+}
+
+#[test]
+fn splice_insert_past_the_end_of_a_track_has_no_resume_point() {
+    let a_audio = data_track(1, 1000, 0xA1, 1, 1000, DataCarriage::Pes, true);
+    let a_video = avc_track_from(
+        2,
+        vec![timed(0, 1000, true), timed(1000, 1000, true), timed(2000, 1000, true)],
+        0,
+    );
+    let ad_audio = data_track(1, 1000, 0xB1, 1, 500, DataCarriage::Pes, true);
+    let ad_video = avc_track_from(2, vec![timed(0, 500, true)], 0);
+    let base = Media::new(vec![a_audio, a_video], timescale(1000));
+    let ad = Media::new(vec![ad_audio, ad_video], timescale(1000));
+    let out = splice_insert(&base, &ad, 2000).expect("splice");
+    assert_eq!(
+        out.discontinuity_points.len(),
+        3,
+        "audio has no remainder, so it contributes only its ad-in point"
+    );
+    assert_eq!(out.media.tracks[0].samples.len(), 2, "no audio resume");
+}
+
+#[test]
+fn splice_insert_ad_in_point_reads_the_boundary_sample() {
+    let base_video = avc_track_from(
+        2,
+        vec![timed(0, 1000, true), timed(5000, 1000, true), timed(6000, 1000, true)],
+        0,
+    );
+    let ad_video = avc_track_from(2, vec![timed(0, 400, true)], 0);
+    let base = Media::new(vec![base_video], timescale(1000));
+    let ad = Media::new(vec![ad_video], timescale(1000));
+    let out = splice_insert(&base, &ad, 6000).expect("splice");
+    let presentations: Vec<u64> = out
+        .discontinuity_points
+        .iter()
+        .map(|p| p.presentation_time)
+        .collect();
+    assert_eq!(
+        presentations,
+        vec![6000, 6400],
+        "the boundary sample's own dts (6000), not the track end (7000)"
+    );
+}
+
+#[test]
+fn splice_insert_duration_sum_falls_back_additively() {
+    let untimed = |dur: u32| {
+        Sample::new(vec![0xCD; 4], None, None, Some(dur), true).expect("duration-only")
+    };
+    let base_video = avc_track_from(2, vec![untimed(100), untimed(100), untimed(100)], 1000);
+    let ad_video = avc_track_from(2, vec![timed(0, 400, true)], 0);
+    let base = Media::new(vec![base_video], timescale(1000));
+    let ad = Media::new(vec![ad_video], timescale(1000));
+    let out = splice_insert(&base, &ad, 1300).expect("splice");
+    assert_eq!(
+        out.discontinuity_points[0].presentation_time,
+        1200,
+        "start_decode_time 1000 + the two 100-tick durations"
+    );
+}

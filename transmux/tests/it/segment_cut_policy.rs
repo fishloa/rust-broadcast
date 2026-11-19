@@ -612,3 +612,34 @@ fn name_and_display_labels() {
     assert_eq!(SegmentCutPolicy::AnyRap.to_string(), "any_rap");
     assert_eq!(SegmentCutPolicy::IdrOnly.to_string(), "idr_only");
 }
+
+// ---------------------------------------------------------------------------
+// audit 22 — IdrWait::tripped is a real state transition, not a constant
+// ---------------------------------------------------------------------------
+
+#[test]
+fn idr_wait_trips_at_its_bound_not_before() {
+    use core::time::Duration;
+    use transmux::IdrWait;
+
+    let mut wait = IdrWait::new(Duration::from_secs(1));
+    assert!(!wait.tripped(), "a fresh wait has not tripped");
+    let sample = transmux::Sample::new(
+        vec![0u8; 4],
+        Some(0),
+        Some(0),
+        Some(1000),
+        true,
+    )
+    .expect("valid timing");
+    let rate = broadcast_common::timescale!(1000);
+    assert!(
+        wait.observe_dropped(&sample, rate),
+        "1000 ticks at 1 kHz reaches the 1 s bound"
+    );
+    assert!(wait.tripped(), "the bound is now reached");
+    assert!(
+        !wait.observe_dropped(&sample, rate),
+        "the trip is reported exactly once"
+    );
+}
