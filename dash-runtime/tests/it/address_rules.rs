@@ -301,6 +301,53 @@ fn an_availability_time_offset_is_subtracted_when_opted_in() {
 }
 
 #[test]
+fn an_availability_time_offset_is_read_from_each_segment_information_kind() {
+    let dynamic = |segment: &str| {
+        mpd(
+            r#"type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" timeShiftBufferDepth="PT30S""#,
+            &format!(
+                r#"<Period id="p" start="PT0S"><AdaptationSet mimeType="video/mp4">{segment}
+                   <Representation id="v" bandwidth="1"/></AdaptationSet></Period>"#
+            ),
+        )
+    };
+    let ast = unix("2026-01-01T00:00:00Z");
+    let at = RepRef::at(0, 0, 0);
+    let early = |segment: &str| {
+        plan_representation(
+            &dynamic(segment),
+            at,
+            &PlanOptions::default().with_availability_time_offset(true),
+        )
+        .unwrap_or_else(|e| panic!("{e}"))
+        .plan
+    };
+    let template = early(
+        r#"<SegmentTemplate timescale="1000" duration="2000" availabilityTimeOffset="1.0" media="$Number$.m4s"/>"#,
+    );
+    assert_eq!(
+        template.available_from(0).unwrap(),
+        Some(utc(ast + 1_000_000)),
+        "AST + 2 s - 1 s"
+    );
+    let list = early(
+        r#"<SegmentList timescale="1000" duration="2000" availabilityTimeOffset="1.0">
+           <SegmentURL media="a.m4s"/><SegmentURL media="b.m4s"/></SegmentList>"#,
+    );
+    assert_eq!(
+        list.available_from(0).unwrap(),
+        Some(utc(ast + 1_000_000)),
+        "the list-level offset is applied"
+    );
+    let base = early(r#"<SegmentBase timescale="1000" availabilityTimeOffset="1.0"/>"#);
+    assert_eq!(
+        base.available_from(0).unwrap(),
+        Some(utc(ast - 1_000_000)),
+        "the base-level offset is applied to its single undated segment"
+    );
+}
+
+#[test]
 fn the_time_shift_buffer_depth_is_taken_from_each_segment_information_kind() {
     let dynamic = |segment: &str| {
         mpd(
