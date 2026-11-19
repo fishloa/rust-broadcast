@@ -40,6 +40,7 @@ fn runs(data_type: DataType, data: &[u8]) -> Vec<PixelRun> {
     block
         .runs()
         .expect("code string sub-block")
+        .take(16)
         .collect::<Vec<_>>()
 }
 
@@ -71,192 +72,119 @@ fn interlaced(top: &[u8], bottom: &[u8], stuffing: &[u8]) -> Vec<u8> {
 
 #[test]
 fn two_bit_pixel_codes_and_runs() {
-    // 2-bitpixel-code (Table 22): a non-zero 2-bit value is one pixel.
-    for code in 1u8..=3 {
-        let mut b = Bits::new();
-        b.value(u32::from(code), 2).value(0, 6); // pixel, then end_of_string
-        assert_eq!(
-            runs(DataType::CodeString2Bit, &b.bytes()),
-            vec![run(code, 1)]
-        );
-    }
-
-    // switch_1 = 1: run_length_3-10 + 2-bitpixel-code.
     let mut b = Bits::new();
-    b.value(0, 2)
+    b.value(3, 2) // one pixel of code 3
+        .value(1, 2) // one pixel of code 1
+        .value(0, 2)
         .value(1, 1)
-        .value(3, 3)
-        .value(1, 2)
-        .value(0, 6);
-    assert_eq!(runs(DataType::CodeString2Bit, &b.bytes()), vec![run(1, 6)]);
-
-    let mut b = Bits::new();
-    b.value(0, 2)
-        .value(1, 1)
-        .value(7, 3)
-        .value(3, 2)
-        .value(0, 6);
-    assert_eq!(runs(DataType::CodeString2Bit, &b.bytes()), vec![run(3, 10)]);
-
-    // switch_2 = 1: one pixel in colour 0.
-    let mut b = Bits::new();
-    b.value(0, 2).value(0, 1).value(1, 1).value(0, 6);
-    assert_eq!(runs(DataType::CodeString2Bit, &b.bytes()), vec![run(0, 1)]);
-
-    // switch_3 = 01: two pixels in colour 0.
-    let mut b = Bits::new();
-    b.value(0, 2)
+        .value(0b101, 3)
+        .value(1, 2) // run 8 of code 1
+        .value(0, 2)
+        .value(0, 1)
+        .value(1, 1) // one pixel of code 0
+        .value(0, 2)
         .value(0, 1)
         .value(0, 1)
-        .value(0b01, 2)
-        .value(0, 6);
-    assert_eq!(runs(DataType::CodeString2Bit, &b.bytes()), vec![run(0, 2)]);
-
-    // switch_3 = 10: run_length_12-27 + 2-bitpixel-code.
-    let mut b = Bits::new();
-    b.value(0, 2)
+        .value(0b01, 2) // two pixels of code 0
+        .value(0, 2)
         .value(0, 1)
         .value(0, 1)
         .value(0b10, 2)
-        .value(15, 4)
-        .value(2, 2)
-        .value(0, 6);
-    assert_eq!(runs(DataType::CodeString2Bit, &b.bytes()), vec![run(2, 27)]);
-
-    // switch_3 = 11: run_length_29-284 + 2-bitpixel-code.
-    let mut b = Bits::new();
-    b.value(0, 2)
+        .value(0b1001, 4)
+        .value(2, 2) // run 21 of code 2
+        .value(0, 2)
         .value(0, 1)
         .value(0, 1)
         .value(0b11, 2)
-        .value(255, 8)
-        .value(3, 2)
-        .value(0, 6);
+        .value(0b0101_1010, 8)
+        .value(3, 2) // run 119 of code 3
+        .value(1, 2) // one pixel of code 1
+        .value(0, 2)
+        .value(0, 1)
+        .value(1, 1) // one pixel of code 0
+        .value(0, 6); // end_of_string
     assert_eq!(
         runs(DataType::CodeString2Bit, &b.bytes()),
-        vec![run(3, 284)]
+        vec![
+            run(3, 1),
+            run(1, 1),
+            run(1, 8),
+            run(0, 1),
+            run(0, 2),
+            run(2, 21),
+            run(3, 119),
+            run(1, 1),
+            run(0, 1),
+        ]
     );
-
-    let mut b = Bits::new();
-    b.value(0, 2)
-        .value(0, 1)
-        .value(0, 1)
-        .value(0b11, 2)
-        .value(0, 8)
-        .value(1, 2)
-        .value(0, 6);
-    assert_eq!(runs(DataType::CodeString2Bit, &b.bytes()), vec![run(1, 29)]);
 }
 
 #[test]
 fn four_bit_pixel_codes_and_runs() {
-    for code in [1u8, 5, 15] {
-        let mut b = Bits::new();
-        b.value(u32::from(code), 4).value(0, 8); // pixel, end_of_string
-        assert_eq!(
-            runs(DataType::CodeString4Bit, &b.bytes()),
-            vec![run(code, 1)]
-        );
-    }
-
-    // switch_1 = 0: run_length_3-9 in colour 0 (value + 2).
     let mut b = Bits::new();
-    b.value(0, 4).value(0, 1).value(3, 3).value(0, 8);
-    assert_eq!(runs(DataType::CodeString4Bit, &b.bytes()), vec![run(0, 5)]);
-
-    let mut b = Bits::new();
-    b.value(0, 4).value(0, 1).value(7, 3).value(0, 8);
-    assert_eq!(runs(DataType::CodeString4Bit, &b.bytes()), vec![run(0, 9)]);
-
-    // switch_2 = 0: run_length_4-7 + 4-bit_pixel-code.
-    for (n2, expected) in [(0u32, 4u32), (3, 7)] {
-        let mut b = Bits::new();
-        b.value(0, 4)
-            .value(1, 1)
-            .value(0, 1)
-            .value(n2, 2)
-            .value(9, 4)
-            .value(0, 8);
-        assert_eq!(
-            runs(DataType::CodeString4Bit, &b.bytes()),
-            vec![run(9, expected)]
-        );
-    }
-
-    // switch_3 = 00 / 01.
-    let mut b = Bits::new();
-    b.value(0, 4)
+    b.value(5, 4) // one pixel of code 5
+        .value(0, 4)
+        .value(0, 1)
+        .value(0b101, 3) // run 7 of code 0
+        .value(0, 4)
+        .value(1, 1)
+        .value(0, 1)
+        .value(0b10, 2)
+        .value(0b1010, 4) // run 6 of code 10
+        .value(0, 4)
         .value(1, 1)
         .value(1, 1)
-        .value(0b00, 2)
-        .value(0, 8);
-    assert_eq!(runs(DataType::CodeString4Bit, &b.bytes()), vec![run(0, 1)]);
-
-    let mut b = Bits::new();
-    b.value(0, 4)
+        .value(0b00, 2) // one pixel of code 0
+        .value(0, 4)
         .value(1, 1)
         .value(1, 1)
-        .value(0b01, 2)
-        .value(0, 8);
-    assert_eq!(runs(DataType::CodeString4Bit, &b.bytes()), vec![run(0, 2)]);
-
-    // switch_3 = 10: run_length_9-24 + 4-bit_pixel-code.
-    let mut b = Bits::new();
-    b.value(0, 4)
+        .value(0b01, 2) // two pixels of code 0
+        .value(0, 4)
         .value(1, 1)
         .value(1, 1)
         .value(0b10, 2)
-        .value(15, 4)
-        .value(7, 4)
-        .value(0, 8);
-    assert_eq!(runs(DataType::CodeString4Bit, &b.bytes()), vec![run(7, 24)]);
-
-    // switch_3 = 11: run_length_25-280 + 4-bit_pixel-code.
-    let mut b = Bits::new();
-    b.value(0, 4)
+        .value(0b0110, 4)
+        .value(0b1100, 4) // run 15 of code 12
+        .value(0, 4)
         .value(1, 1)
         .value(1, 1)
         .value(0b11, 2)
-        .value(255, 8)
-        .value(12, 4)
-        .value(0, 8);
+        .value(0b0101_1010, 8)
+        .value(0b0011, 4) // run 115 of code 3
+        .value(9, 4) // one pixel of code 9
+        .value(0, 4)
+        .value(1, 1)
+        .value(1, 1)
+        .value(0b01, 2) // two pixels of code 0
+        .value(0, 8); // end_of_string
     assert_eq!(
         runs(DataType::CodeString4Bit, &b.bytes()),
-        vec![run(12, 280)]
+        vec![
+            run(5, 1),
+            run(0, 7),
+            run(10, 6),
+            run(0, 1),
+            run(0, 2),
+            run(12, 15),
+            run(3, 115),
+            run(9, 1),
+            run(0, 2),
+        ]
     );
-
-    let mut b = Bits::new();
-    b.value(0, 4)
-        .value(1, 1)
-        .value(1, 1)
-        .value(0b11, 2)
-        .value(0, 8)
-        .value(1, 4)
-        .value(0, 8);
-    assert_eq!(runs(DataType::CodeString4Bit, &b.bytes()), vec![run(1, 25)]);
 }
 
 #[test]
 fn eight_bit_pixel_codes_and_runs() {
+    let data = [
+        0x5A, // one pixel of code 0x5A
+        0x00, 0x05, // run 5 of code 0
+        0x00, 0x85, 0x33, // run 5 of code 0x33
+        0x11, // one pixel of code 0x11
+        0x00, 0x00, // end_of_string
+    ];
     assert_eq!(
-        runs(DataType::CodeString8Bit, &[0x05, 0x00, 0x00]),
-        vec![run(5, 1)]
-    );
-    assert_eq!(
-        runs(DataType::CodeString8Bit, &[0x00, 0x01, 0x00, 0x00]),
-        vec![run(0, 1)]
-    );
-    assert_eq!(
-        runs(DataType::CodeString8Bit, &[0x00, 0x7F, 0x00, 0x00]),
-        vec![run(0, 127)]
-    );
-    assert_eq!(
-        runs(DataType::CodeString8Bit, &[0x00, 0x83, 0x09, 0x00, 0x00]),
-        vec![run(9, 3)]
-    );
-    assert_eq!(
-        runs(DataType::CodeString8Bit, &[0x00, 0xFF, 0x7A, 0x00, 0x00]),
-        vec![run(0x7A, 127)]
+        runs(DataType::CodeString8Bit, &data),
+        vec![run(0x5A, 1), run(0, 5), run(0x33, 5), run(0x11, 1)]
     );
     // Truncated tails stop cleanly.
     assert!(runs(DataType::CodeString8Bit, &[0x00]).is_empty());
@@ -264,76 +192,113 @@ fn eight_bit_pixel_codes_and_runs() {
     assert!(runs(DataType::CodeString8Bit, &[]).is_empty());
 }
 
+fn assert_scanned_len(data_type: u8, code_bytes: &[u8], expected: usize) {
+    let mut top = vec![data_type];
+    top.extend_from_slice(code_bytes);
+    // A map-table sub-block must start exactly where the code string ends.
+    top.extend_from_slice(&[0x20, 0xAA, 0xBB]);
+    let wire = interlaced(&top, &[], &[]);
+    let seg = ObjectDataSegment::parse(&wire).unwrap();
+    let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
+        panic!("expected interlaced payload");
+    };
+    eprintln!(
+        "actual {} expected {}",
+        ip.top_sub_blocks[0].data.len(),
+        expected
+    );
+    assert_eq!(ip.top_sub_blocks[0].data.len(), expected);
+    assert_eq!(ip.top_sub_blocks[1].data_type, DataType::MapTable2To4);
+    assert_eq!(ip.top_sub_blocks[1].data, &[0xAA, 0xBB]);
+}
+
 #[test]
 fn code_string_scanners_consume_the_right_byte_count() {
-    // 2-bit: one pixel (2 bits) + end (6 bits) = 8 bits -> 1 byte.
+    // 2-bit: six tokens of mixed lengths + end = 54 bits -> 7 bytes.
     let mut b = Bits::new();
-    b.value(0b01, 2).value(0, 6);
-    let bytes = b.bytes();
-    let mut top = vec![0x10u8];
-    top.extend_from_slice(&bytes);
-    let wire = interlaced(&top, &[], &[]);
-    let seg = ObjectDataSegment::parse(&wire).unwrap();
-    let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
-        panic!("expected interlaced payload");
-    };
-    assert_eq!(ip.top_sub_blocks[0].data, &[0x40u8]);
-
-    // 2-bit: run 3-10 token (8 bits) + end (6 bits) = 14 bits -> 2 bytes.
-    let mut b = Bits::new();
-    b.value(0, 2)
+    b.value(0b10, 2)
+        .value(0, 2)
         .value(1, 1)
-        .value(3, 3)
+        .value(0b101, 3)
         .value(1, 2)
+        .value(0, 2)
+        .value(0, 1)
+        .value(1, 1)
+        .value(0, 2)
+        .value(0, 1)
+        .value(0, 1)
+        .value(0b01, 2)
+        .value(0, 2)
+        .value(0, 1)
+        .value(0, 1)
+        .value(0b10, 2)
+        .value(0b1001, 4)
+        .value(2, 2)
+        .value(0, 2)
+        .value(0, 1)
+        .value(0, 1)
+        .value(0b11, 2)
+        .value(0b0101_1010, 8)
+        .value(3, 2)
         .value(0, 6);
-    let bytes = b.bytes();
-    assert_eq!(bytes.len(), 2);
-    let mut top = vec![0x10u8];
-    top.extend_from_slice(&bytes);
-    let wire = interlaced(&top, &[], &[]);
-    let seg = ObjectDataSegment::parse(&wire).unwrap();
-    let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
-        panic!("expected interlaced payload");
-    };
-    assert_eq!(ip.top_sub_blocks[0].data.len(), 2);
+    assert_scanned_len(0x10, &b.bytes(), 7);
 
-    // 4-bit: one pixel (4 bits) + end (8 bits) = 12 bits -> 2 bytes.
+    // 4-bit: seven tokens + end = 84 bits -> 11 bytes.
     let mut b = Bits::new();
-    b.value(1, 4).value(0, 8);
-    let bytes = b.bytes();
-    assert_eq!(bytes.len(), 2);
-    let mut top = vec![0x11u8];
-    top.extend_from_slice(&bytes);
-    let wire = interlaced(&top, &[], &[]);
-    let seg = ObjectDataSegment::parse(&wire).unwrap();
-    let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
-        panic!("expected interlaced payload");
-    };
-    assert_eq!(ip.top_sub_blocks[0].data.len(), 2);
+    b.value(5, 4)
+        .value(0, 4)
+        .value(0, 1)
+        .value(0b101, 3)
+        .value(0, 4)
+        .value(1, 1)
+        .value(0, 1)
+        .value(0b10, 2)
+        .value(0b1010, 4)
+        .value(0, 4)
+        .value(1, 1)
+        .value(1, 1)
+        .value(0b00, 2)
+        .value(0, 4)
+        .value(1, 1)
+        .value(1, 1)
+        .value(0b01, 2)
+        .value(0, 4)
+        .value(1, 1)
+        .value(1, 1)
+        .value(0b10, 2)
+        .value(0b0110, 4)
+        .value(0b1100, 4)
+        .value(0, 4)
+        .value(1, 1)
+        .value(1, 1)
+        .value(0b11, 2)
+        .value(0b0101_1010, 8)
+        .value(0b0011, 4)
+        .value(0, 8);
+    assert_scanned_len(0x11, &b.bytes(), 11);
 
-    // 4-bit: run 3-9 (8 bits) + end (8 bits) = 16 bits -> 2 bytes.
-    let mut b = Bits::new();
-    b.value(0, 4).value(0, 1).value(2, 3).value(0, 8);
-    let bytes = b.bytes();
-    let mut top = vec![0x11u8];
-    top.extend_from_slice(&bytes);
-    let wire = interlaced(&top, &[], &[]);
-    let seg = ObjectDataSegment::parse(&wire).unwrap();
-    let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
-        panic!("expected interlaced payload");
-    };
-    assert_eq!(ip.top_sub_blocks[0].data.len(), 2);
+    // 8-bit: pixel + two run codes + end = 8 bytes.
+    let data = [0x5A, 0x00, 0x05, 0x00, 0x85, 0x33, 0x00, 0x00];
+    assert_scanned_len(0x12, &data, 8);
+}
 
-    // 8-bit: one pixel + end = 24 bits -> 3 bytes.
-    let bytes = [0x05u8, 0x00, 0x00];
-    let mut top = vec![0x12u8];
-    top.extend_from_slice(&bytes);
-    let wire = interlaced(&top, &[], &[]);
-    let seg = ObjectDataSegment::parse(&wire).unwrap();
-    let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
-        panic!("expected interlaced payload");
-    };
-    assert_eq!(ip.top_sub_blocks[0].data.len(), 3);
+#[test]
+fn sub_block_type_names() {
+    assert_eq!(DataType::CodeString2Bit.name(), "2-bit_code_string");
+    assert_eq!(DataType::CodeString4Bit.name(), "4-bit_code_string");
+    assert_eq!(DataType::CodeString8Bit.name(), "8-bit_code_string");
+    assert_eq!(DataType::MapTable2To4.name(), "2_to_4_map_table");
+    assert_eq!(DataType::MapTable2To8.name(), "2_to_8_map_table");
+    assert_eq!(DataType::MapTable4To8.name(), "4_to_8_map_table");
+    assert_eq!(DataType::EndOfLine.name(), "end_of_line");
+    assert_eq!(DataType::Reserved(0x30).name(), "reserved");
+    assert_eq!(ObjectCodingMethod::Pixels.name(), "pixels");
+    assert_eq!(ObjectCodingMethod::Characters.name(), "characters");
+    assert_eq!(
+        ObjectCodingMethod::ProgressivePixels.name(),
+        "progressive_pixels"
+    );
+    assert_eq!(ObjectCodingMethod::Reserved(3).name(), "reserved");
 }
 
 #[test]
@@ -509,4 +474,200 @@ fn pixel_coding_method_and_object_fields() {
     let len = u16::from_be_bytes([short[4], short[5]]) + 1;
     short[4..6].copy_from_slice(&len.to_be_bytes());
     assert!(ObjectDataSegment::parse(&short).is_err());
+}
+
+#[test]
+fn truncated_cross_byte_reads_stop_cleanly() {
+    // The 8-bit run-length field starts at bit 6 and its second byte is
+    // missing: the zero-padded read must not slice past the data.
+    assert_eq!(
+        runs(DataType::CodeString2Bit, &[0b0000_1101]),
+        vec![run(0, 93)]
+    );
+    // 4-bit switch_3 = 10 starts at bit 6 with no second byte.
+    assert_eq!(
+        runs(DataType::CodeString4Bit, &[0b0000_1110]),
+        vec![run(0, 9)]
+    );
+}
+
+fn token_2bit(b: &mut Bits, variant: usize) {
+    match variant {
+        0 => {
+            b.value(1, 2);
+        }
+        1 => {
+            b.value(2, 2);
+        }
+        2 => {
+            b.value(0, 2).value(1, 1).value(0b011, 3).value(2, 2);
+        }
+        3 => {
+            b.value(0, 2).value(0, 1).value(1, 1);
+        }
+        4 => {
+            b.value(0, 2).value(0, 1).value(0, 1).value(0b01, 2);
+        }
+        _ => {
+            b.value(0, 2)
+                .value(0, 1)
+                .value(0, 1)
+                .value(0b10, 2)
+                .value(0b1001, 4)
+                .value(1, 2);
+        }
+    }
+}
+
+fn token_4bit(b: &mut Bits, variant: usize) {
+    match variant {
+        0 => {
+            b.value(5, 4);
+        }
+        1 => {
+            b.value(0, 4).value(0, 1).value(0b101, 3);
+        }
+        2 => {
+            b.value(0, 4)
+                .value(1, 1)
+                .value(0, 1)
+                .value(0b01, 2)
+                .value(0b1010, 4);
+        }
+        3 => {
+            b.value(0, 4).value(1, 1).value(1, 1).value(0b00, 2);
+        }
+        4 => {
+            b.value(0, 4).value(1, 1).value(1, 1).value(0b01, 2);
+        }
+        5 => {
+            b.value(0, 4)
+                .value(1, 1)
+                .value(1, 1)
+                .value(0b10, 2)
+                .value(0b0110, 4)
+                .value(0b1100, 4);
+        }
+        _ => {
+            b.value(0, 4)
+                .value(1, 1)
+                .value(1, 1)
+                .value(0b11, 2)
+                .value(0b0101_1010, 8)
+                .value(0b0011, 4);
+        }
+    }
+}
+
+#[test]
+fn scanner_byte_length_sweep() {
+    for first in 0..6 {
+        for second in 0..6 {
+            let mut b = Bits::new();
+            token_2bit(&mut b, first);
+            token_2bit(&mut b, second);
+            b.value(0, 6);
+            let expected = b.bits.len().div_ceil(8);
+            assert_scanned_len(0x10, &b.bytes(), expected);
+        }
+    }
+    for first in 0..7 {
+        for second in 0..7 {
+            let mut b = Bits::new();
+            token_4bit(&mut b, first);
+            token_4bit(&mut b, second);
+            b.value(0, 8);
+            let expected = b.bits.len().div_ceil(8);
+            assert_scanned_len(0x11, &b.bytes(), expected);
+        }
+    }
+    let cells: [&[u8]; 5] = [
+        &[0x01],
+        &[0x5A],
+        &[0x00, 0x01],
+        &[0x00, 0x83, 0x11],
+        &[0x00, 0xFF, 0x5A],
+    ];
+    for first in cells {
+        for second in cells {
+            let mut data = Vec::new();
+            data.extend_from_slice(first);
+            data.extend_from_slice(second);
+            data.extend_from_slice(&[0x00, 0x00]);
+            let expected = data.len();
+            assert_scanned_len(0x12, &data, expected);
+        }
+    }
+}
+
+fn next_rand(state: &mut u32) -> u32 {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    *state
+}
+
+#[test]
+fn scanner_random_stream_sweep() {
+    let mut state = 0x1234_5678u32;
+    for _ in 0..2000 {
+        let count = 1 + (next_rand(&mut state) as usize % 5);
+        let mut b = Bits::new();
+        for _ in 0..count {
+            token_2bit(&mut b, next_rand(&mut state) as usize % 6);
+        }
+        b.value(0, 6);
+        let expected = b.bits.len().div_ceil(8);
+        assert_scanned_len(0x10, &b.bytes(), expected);
+
+        let count = 1 + (next_rand(&mut state) as usize % 5);
+        let mut b = Bits::new();
+        for _ in 0..count {
+            token_4bit(&mut b, next_rand(&mut state) as usize % 7);
+        }
+        b.value(0, 8);
+        let expected = b.bits.len().div_ceil(8);
+        assert_scanned_len(0x11, &b.bytes(), expected);
+
+        let count = 1 + (next_rand(&mut state) as usize % 5);
+        let mut data = Vec::new();
+        for _ in 0..count {
+            match next_rand(&mut state) % 3 {
+                0 => data.push((next_rand(&mut state) as u8).max(1)),
+                1 => {
+                    data.push(0x00);
+                    data.push((next_rand(&mut state) as u8 & 0x7F).max(1));
+                }
+                _ => {
+                    data.push(0x00);
+                    data.push(0x80 | ((next_rand(&mut state) as u8 & 0x7F).max(3)));
+                    data.push(next_rand(&mut state) as u8);
+                }
+            }
+        }
+        data.extend_from_slice(&[0x00, 0x00]);
+        assert_scanned_len(0x12, &data, data.len());
+    }
+}
+
+#[test]
+fn cross_byte_iterator_reads_pin_both_bytes() {
+    // switch_3 = 11 with the 8-bit run-length field starting at bit 6: the
+    // field spans two bytes, so both halves must be combined correctly.
+    let mut b = Bits::new();
+    b.value(0, 2)
+        .value(0, 1)
+        .value(0, 1)
+        .value(0b11, 2)
+        .value(0b1011_0100, 8)
+        .value(3, 2)
+        .value(2, 2) // one pixel of code 2
+        .value(0, 2)
+        .value(0, 1)
+        .value(1, 1) // one pixel of code 0
+        .value(0, 6);
+    assert_eq!(
+        runs(DataType::CodeString2Bit, &b.bytes()),
+        vec![run(3, 209), run(2, 1), run(0, 1)]
+    );
 }
