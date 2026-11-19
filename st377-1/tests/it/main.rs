@@ -1,3 +1,4 @@
+mod eq_sensitivity;
 mod fixture_real_op1a;
 mod fixture_synthetic;
 mod reexport_paths;
