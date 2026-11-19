@@ -382,4 +382,93 @@ mod tests {
         assert!(level.is_finite(), "meter was poisoned: got {level}");
         assert!((level - (-6.02)).abs() < 1.1, "got {level}");
     }
+
+    /// BS.1770-5 Annex 2's coefficient table, read from the spec
+    /// transcription rather than the code. Column-major in the source, so
+    /// token `row * 4 + phase` is `FIR_COEFFS[phase][row]`.
+    #[test]
+    fn coefficient_table_matches_the_specification() {
+        let text = test_fixtures::spec_string(
+            "loudness/broadcast-loudness/bs1770-algorithm.md",
+            "true_peak coefficients",
+        )
+        .expect("private spec transcription not available");
+        let start = text.find("Phase 0").expect("Phase 0 column header");
+        let mut values = Vec::new();
+        for line in text[start..].lines() {
+            let token = line.trim().replace('\u{2212}', "-");
+            if token.contains('.')
+                && let Ok(value) = token.parse::<f64>()
+            {
+                values.push(value);
+                if values.len() == 48 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(values.len(), 48, "expected the 4x12 coefficient table");
+        let mut spec = [[0.0f64; 12]; 4];
+        for row in 0..12 {
+            for phase in 0..4 {
+                spec[phase][row] = values[row * 4 + phase];
+            }
+        }
+        assert_eq!(FIR_COEFFS, spec);
+    }
+
+    /// Phases 2/3 are the exact reverses of 1/0 (BS.1770-5 Annex 2's own
+    /// four columns), so a lost minus sign on one of the shared taps cannot
+    /// survive.
+    #[test]
+    fn phase_symmetry_is_pinned() {
+        let mut reversed = FIR_COEFFS[0];
+        reversed.reverse();
+        assert_eq!(FIR_COEFFS[3], reversed, "phase 3 must reverse phase 0");
+        let mut reversed = FIR_COEFFS[1];
+        reversed.reverse();
+        assert_eq!(FIR_COEFFS[2], reversed, "phase 2 must reverse phase 1");
+    }
+
+    /// A lone unit impulse's true peak is the largest interpolation
+    /// coefficient (0.9721679687500), reached only by the zero-tail flush.
+    #[test]
+    fn lone_impulse_peak_is_the_largest_coefficient() {
+        let mut m = TruePeakMeter::new();
+        m.push_f64(1.0).unwrap();
+        let want = 20.0 * libm::log10(0.972_167_968_750_0);
+        let got = m.finish();
+        assert!(
+            (got - want).abs() < 1e-12,
+            "got {got} dBTP, expected {want}"
+        );
+    }
+
+    #[test]
+    fn reset_clears_history_and_peak() {
+        let mut m = TruePeakMeter::new();
+        for _ in 0..16 {
+            m.push_f64(1.0).unwrap();
+        }
+        assert!(m.current_level().is_finite());
+        m.reset();
+        assert_eq!(m.current_level(), f64::NEG_INFINITY);
+        assert_eq!(m.finish(), f64::NEG_INFINITY);
+    }
+
+    #[test]
+    fn non_finite_error_index_counts_every_accepted_sample() {
+        let mut m = TruePeakMeter::new();
+        m.push_f64(0.5).unwrap();
+        match m.push_f64(f64::NAN) {
+            Err(Error::NonFiniteSample { index, .. }) => assert_eq!(index, 1),
+            other => panic!("expected NonFiniteSample, got {other:?}"),
+        }
+
+        let mut m = TruePeakMeter::new();
+        m.push_f64_slice(&[0.1, 0.2]).unwrap();
+        match m.push_f64_slice(&[0.3, f64::NAN, 0.4]) {
+            Err(Error::NonFiniteSample { index, .. }) => assert_eq!(index, 3),
+            other => panic!("expected NonFiniteSample, got {other:?}"),
+        }
+    }
 }

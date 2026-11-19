@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- Pin the true-peak polyphase FIR table against the BS.1770-5 Annex 2 transcription (plus phase symmetry), the lone-impulse tail flush, both resets and the non-finite error indices (#3233).
+- Pin meter resets, frame/duration accounting on every entry point, the 30-sub-block short-term boundary, the Tech 3342 percentile ranks in both histogram modes, the straddling-bin cut and the empty-measurement result (#3234).
+- Add `.cargo/mutants.toml` excluding the `loudness_meter::tests::gate_edge` helpers, which cargo-mutants otherwise treats as production code because the test module also gates on `std` (#3235).
+
 ## [0.9.0] - 2026-11-15
 
 ### Changed
