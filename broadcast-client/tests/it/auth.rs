@@ -860,4 +860,3 @@ fn hls_replays_a_401_with_basic_credentials_at_once() {
         h.events
     );
 }
-

@@ -276,7 +276,12 @@ fn a_stray_http_response_on_a_datagram_session_is_ignored() {
     }
     let conn = conn.expect("a UdpBind");
     while s.next_event().is_some() {}
-    s.on_response(conn, crate::support::status(200), &http::HeaderMap::new(), ts(1));
+    s.on_response(
+        conn,
+        crate::support::status(200),
+        &http::HeaderMap::new(),
+        ts(1),
+    );
     let mut events = Vec::new();
     while let Some(e) = s.next_event() {
         events.push(e);

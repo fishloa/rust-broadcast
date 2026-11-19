@@ -141,8 +141,11 @@ fn drain(s: &mut Session, out: &mut Outcome) {
                     .map(|t| (t.track_id.value(), t.source_pid.map_or(0, |p| p.value())))
                     .collect();
                 out.announced_pids.extend(out.pid_of.values());
-                out.video_tracks
-                    .extend(v.iter().filter(|t| t.config.is_video()).map(|t| t.track_id.value()));
+                out.video_tracks.extend(
+                    v.iter()
+                        .filter(|t| t.config.is_video())
+                        .map(|t| t.track_id.value()),
+                );
             }
             Event::Sample {
                 track,

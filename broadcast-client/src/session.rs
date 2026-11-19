@@ -1702,8 +1702,10 @@ mod tests {
 
     #[test]
     fn set_rendered_tracks_on_hls_sets_the_buffer_rendered_set_directly() {
-        let mut config = Config::default();
-        config.kind = crate::SourceKind::Hls;
+        let config = Config {
+            kind: crate::SourceKind::Hls,
+            ..Config::default()
+        };
         let mut session = Session::open(
             Url::parse("http://example/live.m3u8").unwrap(),
             config,
@@ -1720,8 +1722,10 @@ mod tests {
 
     #[test]
     fn set_rendered_tracks_on_rtsp_sets_the_buffer_rendered_set_directly() {
-        let mut config = Config::default();
-        config.kind = crate::SourceKind::Rtsp;
+        let config = Config {
+            kind: crate::SourceKind::Rtsp,
+            ..Config::default()
+        };
         let mut session = Session::open(
             Url::parse("rtsp://camera.example/live").unwrap(),
             config,
@@ -1749,13 +1753,19 @@ mod tests {
             !session.buffer.is_expecting(),
             "the source declares no unresolved kind, so nothing is awaited"
         );
+        assert!(
+            !session.buffer.is_audio_pending(),
+            "audio is not missing, so no audio-only cap is armed"
+        );
     }
 
     #[test]
     fn a_tls_connect_to_an_https_session_on_its_default_port_carries_the_identity() {
-        let mut config = Config::default();
-        config.client_identity = Some(crate::ClientIdentity::handle(7));
-        config.client_identity_scope = ClientIdentityScope::SessionOrigin;
+        let config = Config {
+            client_identity: Some(crate::ClientIdentity::handle(7)),
+            client_identity_scope: ClientIdentityScope::SessionOrigin,
+            ..Config::default()
+        };
         let session = Session::open(
             Url::parse("https://cam.example/live").unwrap(),
             config,
@@ -1772,7 +1782,13 @@ mod tests {
         let mut default_port = connect(HTTPS_DEFAULT_PORT);
         session.attach_identity(&mut default_port);
         assert!(
-            matches!(&default_port, Action::TcpConnect { identity: Some(_), .. }),
+            matches!(
+                &default_port,
+                Action::TcpConnect {
+                    identity: Some(_),
+                    ..
+                }
+            ),
             "https defaults to {HTTPS_DEFAULT_PORT}, the session origin's port"
         );
         let mut other_port = connect(8443);

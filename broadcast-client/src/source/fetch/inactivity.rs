@@ -151,7 +151,7 @@ mod tests {
         for id in 0..1_000u32 {
             watch.arm(ConnId::new(id), 0);
         }
-        watch.compact(|| Vec::<(ConnId, u64)>::new());
+        watch.compact(Vec::<(ConnId, u64)>::new);
         assert_eq!(watch.deadlines.len(), 0);
     }
 }

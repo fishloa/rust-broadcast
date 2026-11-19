@@ -773,4 +773,3 @@ fn basic_credentials_replay_a_401_at_once() {
     );
     assert!(sim.errors().is_empty(), "{:?}", sim.errors());
 }
-

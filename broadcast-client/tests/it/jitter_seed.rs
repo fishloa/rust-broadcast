@@ -41,8 +41,8 @@ fn next_wake(session: &mut Session, now: u64) -> u64 {
 /// The wait before the second reconnect: the first retry is its unjittered
 /// step, so only this one carries the seed's jitter term.
 fn second_reconnect_wait(open_us: u64) -> u64 {
-    let mut session = Session::open(Url::parse(URL).unwrap(), Config::default(), ts(open_us))
-        .expect("open");
+    let mut session =
+        Session::open(Url::parse(URL).unwrap(), Config::default(), ts(open_us)).expect("open");
     let first = next_request(&mut session, open_us);
     session.on_closed(first, Some(link_lost()), ts(open_us));
     let first_wake = next_wake(&mut session, open_us);
