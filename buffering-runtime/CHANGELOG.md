@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Tests
 - The label accessors (`State`/`Reason`/`Input`/`SampleOutcome`), `EventQueue::clear`, `MinWindow::is_empty` and the input-log error text arms are pinned by literal-value tests, so an empty or placeholder label, a no-op `clear` or a dropped field/error detail fails the suite (audit 22 finding 62).
+- The jitter estimator's exact PDV sequence, its discontinuity and outlier boundaries, the minimum-window overflow count, the anchored stall memory, the forgetting histogram's weights/quantile/interval count and the per-track liveness and step rules are pinned by value tests, so an off-by-one comparison, a wrong weight or a dead track that stays live fails the suite (audit 22 finding 61).
+- The config validators' boundaries (min window, bucket, quantile, sample cap, policy order, histogram range), the policy accessors, the controller's over-max/re-arm arithmetic, target reporting boundary and granularity floor, and the re-prime/starve hold rules are pinned by value tests, so an accepted invalid configuration, a constant accessor or a broken re-arm fails the suite (audit 22 finding 60).
 
 ## [0.4.0] - 2026-11-15
 ### Changed
