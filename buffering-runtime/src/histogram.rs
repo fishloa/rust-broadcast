@@ -96,3 +96,54 @@ impl ForgettingHistogram {
         self.intervals = 0;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::ForgettingHistogram;
+    use core::time::Duration;
+
+    fn bucket() -> Duration {
+        Duration::from_millis(10)
+    }
+
+    #[test]
+    fn an_interval_weight_halves_after_one_more_interval() {
+        let mut h = ForgettingHistogram::new(400, bucket(), 16_384, 1_000);
+        h.add(10_000);
+        assert_eq!(h.weight(1), 32_768);
+        assert_eq!(h.total_weight(), 32_768);
+        assert_eq!(h.intervals(), 1);
+        h.add(20_000);
+        assert_eq!(h.weight(1), 16_384);
+        assert_eq!(h.weight(2), 16_384);
+        h.add(10_000);
+        assert_eq!(h.weight(1), 24_576);
+        assert_eq!(h.weight(2), 8_192);
+        assert_eq!(h.total_weight(), 32_768);
+        assert_eq!(h.intervals(), 3);
+    }
+
+    #[test]
+    fn the_quantile_lands_in_the_dominant_bucket() {
+        let mut h = ForgettingHistogram::new(400, bucket(), 32_113, 990);
+        for _ in 0..100 {
+            h.add(10_000);
+        }
+        h.add(90_000);
+        assert_eq!(h.intervals(), 101);
+        assert_eq!(h.quantile_us(), 100_000);
+        let mut h = ForgettingHistogram::new(400, bucket(), 32_113, 900);
+        for _ in 0..100 {
+            h.add(10_000);
+        }
+        h.add(90_000);
+        assert_eq!(h.quantile_us(), 20_000);
+    }
+
+    #[test]
+    fn a_quantile_above_one_thousand_falls_through_to_the_histogram_range() {
+        let mut h = ForgettingHistogram::new(4, bucket(), 0, 1_001);
+        h.add(10_000);
+        assert_eq!(h.quantile_us(), 40_000);
+    }
+}

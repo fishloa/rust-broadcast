@@ -155,6 +155,56 @@ fn debug_never_prints_the_bearer_token_or_turn_credential() {
     assert!(text.contains("alice"), "{text}");
 }
 
+/// Audit-22 #3006: a WHIP endpoint behind a proxy that challenges for HTTP
+/// Basic gets the credentials pre-emptively on the first POST (RFC 7617),
+/// and — like the bearer token — never on another origin. Bite test:
+/// removing the `Basic` arm of `Origin::request` sends no `Authorization`
+/// at all, which no test covered.
+#[test]
+fn whip_client_sends_basic_credentials_to_the_endpoint_only() {
+    use broadcast_auth::Credentials;
+
+    let basic = || Credentials::Basic {
+        username: "alice".into(),
+        password: "s3cret".into(),
+    };
+
+    let mut c = WhipClient::new(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint())
+            .with_credentials(basic()),
+    );
+    let offer = c.offer(SDP_OFFER.to_vec()).expect("the offer request");
+    assert_eq!(offer.method, http::Method::POST);
+    assert_eq!(offer.url, endpoint());
+    assert_eq!(
+        bearer_of(&offer).as_deref(),
+        Some("Basic YWxpY2U6czNjcmV0"),
+        "RFC 7617 base64 of \"alice:s3cret\""
+    );
+
+    let mut c = WhipClient::new(
+        webrtc_runtime::session::client::WebRtcClientConfig::new(endpoint())
+            .with_credentials(basic()),
+    );
+    c.offer(SDP_OFFER.to_vec()).unwrap();
+    c.on_response(
+        client::HttpResponse::new(StatusCode::CREATED)
+            .with_content_type("application/sdp")
+            .unwrap()
+            .with_location("https://evil.example.net/session/1")
+            .unwrap()
+            .with_etag("e")
+            .unwrap()
+            .with_body(SDP_ANSWER.to_vec()),
+    )
+    .unwrap();
+    assert_eq!(
+        bearer_of(&c.terminate().unwrap()),
+        None,
+        "Basic credentials are bound to the endpoint's origin"
+    );
+}
+
 #[cfg(feature = "media")]
 #[test]
 fn media_transport_config_debug_hides_the_ice_passwords() {

@@ -143,6 +143,16 @@ fn a_level_of_another_codec_family_is_refused_once_announced() {
 }
 
 #[test]
+fn a_same_family_level_whose_track_spec_is_invalid_is_refused_once_announced() {
+    let broken = real_low_level().replace(
+        "CodecPrivateData=\"00000001674d400bd902847e5c0440000003004000000c83c50a920000000168ebccb2\"",
+        "CodecPrivateData=\"00\"",
+    );
+    let mut host = announced_host(&ladder_manifest(&broken));
+    assert!(!host.client.select_video_quality(1));
+}
+
+#[test]
 fn a_level_with_the_same_config_switches_without_re_announcing() {
     let mut host = announced_host(&two_quality_manifest());
     assert!(host.client.select_video_quality(1));

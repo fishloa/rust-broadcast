@@ -194,3 +194,16 @@ impl Action {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{RepId, UtcId};
+
+    #[test]
+    fn ids_carry_their_number() {
+        assert_eq!(RepId(7).get(), 7);
+        assert_eq!(UtcId(9).get(), 9);
+        assert_ne!(RepId(7), RepId(8));
+        assert_ne!(UtcId(9), UtcId(10));
+    }
+}

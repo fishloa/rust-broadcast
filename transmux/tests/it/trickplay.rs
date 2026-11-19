@@ -280,3 +280,61 @@ fn no_sync_samples_returns_error() {
         "expected Error::InvalidInput, got {err:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// audit 22 — append_iframe_track appends, rejects out of range, keeps timing
+// ---------------------------------------------------------------------------
+
+#[test]
+fn append_iframe_track_appends_a_second_track_keeping_absolute_timing() {
+    let mut media = transmux::Media::new(vec![synthetic_track()], timescale(1000));
+    let source_dts: Vec<i64> = media.tracks[0]
+        .samples
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i == 0 || *i == SYNTHETIC_SYNC2_INDEX)
+        .map(|(_, s)| s.timing.and_then(|t| t.dts()).expect("timed"))
+        .collect();
+    let source_pts: Vec<i64> = media.tracks[0]
+        .samples
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i == 0 || *i == SYNTHETIC_SYNC2_INDEX)
+        .map(|(_, s)| s.timing.and_then(|t| t.pts()).expect("timed"))
+        .collect();
+
+    transmux::trickplay::append_iframe_track(&mut media, 0).expect("append");
+    assert_eq!(media.tracks.len(), 2, "the derived track is appended");
+    let derived = &media.tracks[1];
+    assert_eq!(derived.samples.len(), 2);
+    let dts: Vec<i64> = derived
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("timed"))
+        .collect();
+    let pts: Vec<i64> = derived
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.pts()).expect("timed"))
+        .collect();
+    assert_eq!(dts, source_dts, "absolute dts is kept verbatim");
+    assert_eq!(pts, source_pts, "absolute pts is kept verbatim");
+    assert_eq!(
+        derived.samples[0]
+            .timing
+            .and_then(|t| t.duration())
+            .expect("duration"),
+        4 * SYNTHETIC_SAMPLE_DURATION,
+        "the first keyframe spans its whole GOP"
+    );
+}
+
+#[test]
+fn append_iframe_track_rejects_an_out_of_range_index() {
+    let mut media = transmux::Media::new(vec![synthetic_track()], timescale(1000));
+    let out_of_range = media.tracks.len();
+    let err = transmux::trickplay::append_iframe_track(&mut media, out_of_range)
+        .expect_err("out-of-range index");
+    assert!(matches!(err, Error::InvalidInput(_)));
+    assert_eq!(media.tracks.len(), 1, "a rejected call changes nothing");
+}

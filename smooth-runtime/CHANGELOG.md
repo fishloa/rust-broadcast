@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- **`codec_family` is pinned by its FourCC groups.** Quality switching is only allowed within one codec family, so a constant answer would let an `avc1` ladder switch to `hvc1` (or `AACL` to `EC-3`) and break the decoder, and the alternate HEVC FourCC would be classified as unknown (audit 22 finding 43, #3011).
+- **A live refresh join reports a real gap and never a first-join one.** A refreshed timeline that continues at the known end, overlaps it, or starts a fresh stream is not a discontinuity; only a start past it is, and a zero `DVRWindowLength` keeps the whole timeline (audit 22 finding 44, #3012).
+- **The 404 predicate, the `ManifestFault` labels and the selector's `Debug` are pinned.** Only 404/410 are "not (yet) there", every fault renders its own label, and a `QualitySelector` still names its type when formatted (audit 22 finding 46, #3014).
+- **The origin's fragment lookup, init accessor, prewarm contract and advertised bitrate are pinned.** A fragment is served only at the bitrate the manifest advertises, packaged from its own segment, kept cached while its chunk is still planned, and reported warm only after `prepare`; `init` returns exactly the stored segment and the interleaved ordinal follows the track id (audit 22 finding 45, #3013).
+- **The live refresh cadence, miss abandonment and drain/end lifecycle are pinned.** A drained live presentation refreshes after half its last chunk duration clamped to `[refresh_min, refresh_max]`, a stream missing from `max_refresh_misses` refreshes is abandoned while fewer are not, a live 404 schedules an immediate manifest fetch (a 500 or a static failure does not), a static presentation ends after draining and stays ended, a fatal session polls nothing and has no deadline, the held-bytes and fragment-byte caps are checked at their exact value, and the `is_*` accessors and `with_*` setters report what the session and the caller set (audit 22 finding 42, #3010).
 
 ## [0.3.0] - 2026-11-17
 ### Added

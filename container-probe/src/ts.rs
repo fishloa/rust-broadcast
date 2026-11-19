@@ -375,3 +375,61 @@ mod drift {
         );
     }
 }
+
+#[cfg(test)]
+mod selection {
+    use super::*;
+    use crate::Detail;
+
+    fn lattice(len: usize, positions: &[usize]) -> std::vec::Vec<u8> {
+        let mut data = std::vec![0u8; len];
+        for &p in positions {
+            data[p] = TS_SYNC_BYTE;
+        }
+        data
+    }
+
+    fn stride_of(outcome: Outcome) -> u16 {
+        match outcome {
+            Outcome::Match(ev) => match ev.detail {
+                Detail::Ts { stride, .. } => stride,
+                other => panic!("expected a TS lattice detail, got {other:?}"),
+            },
+            other => panic!("expected a TS lattice match, got {other:?}"),
+        }
+    }
+
+    /// A 188-byte and a 204-byte lattice of equal run length: the smaller
+    /// stride (the one examined first) wins the tie.
+    #[test]
+    fn a_tie_between_strides_prefers_the_smaller() {
+        let data = lattice(4 * 188, &[0, 188, 376, 564, 204, 408, 612]);
+        assert_eq!(stride_of(probe(&data, data.len())), 188);
+    }
+
+    /// A later stride with a strictly longer run replaces the earlier one.
+    #[test]
+    fn a_strictly_longer_later_stride_wins() {
+        let data = lattice(1020, &[0, 188, 376, 204, 408, 612, 816]);
+        assert_eq!(stride_of(probe(&data, data.len())), 204);
+    }
+
+    /// A partial lattice too short to prove the weak threshold at its own
+    /// stride is `None`, not `Insufficient`: the region is long enough that the
+    /// best observed lane could have reached eight confirmations by now.
+    #[test]
+    fn a_partial_lattice_that_could_be_proven_is_ruled_out() {
+        let data = lattice(1520, &[0, 188, 192]);
+        assert!(matches!(probe(&data, data.len()), Outcome::None));
+    }
+
+    /// A full packet with no sync byte anywhere cannot be TS: the negative is
+    /// proven, not merely undecided.
+    #[test]
+    fn a_full_packet_without_a_sync_byte_is_ruled_out() {
+        assert!(matches!(
+            probe(&std::vec![0u8; TS_PACKET_SIZE], TS_PACKET_SIZE),
+            Outcome::None
+        ));
+    }
+}

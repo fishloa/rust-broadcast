@@ -224,6 +224,45 @@ mod tests {
         assert!(matches!(err, crate::Error::BreakDurationTooLong { .. }));
     }
 
+    /// The `break_duration()` field is 33 bits: the largest expressible
+    /// duration is exactly 2^33 - 1 ticks, and 2^33 ticks is refused.
+    #[test]
+    fn the_break_duration_cap_is_the_largest_33_bit_tick_count() {
+        let largest = Duration::from_nanos(95_443_717_677_778);
+        let (_, insert) = build_splice_insert(
+            BreakEdge::Enter,
+            1,
+            pts(1_000),
+            &[pts(1_000)],
+            ticks(0),
+            Some(largest),
+        )
+        .unwrap();
+        assert_eq!(insert.break_duration.unwrap().duration, WRAP - 1);
+
+        let section = to_section(insert);
+        let bytes = section.try_to_bytes().unwrap();
+        let parsed = SpliceInfoSection::parse(&bytes).unwrap();
+        match parsed.clear.unwrap().command {
+            AnyCommand::SpliceInsert(reparsed) => {
+                assert_eq!(reparsed.break_duration.unwrap().duration, WRAP - 1);
+            }
+            other => panic!("expected SpliceInsert, got {other:?}"),
+        }
+
+        let too_long = Duration::from_nanos(95_443_717_688_889);
+        let err = build_splice_insert(
+            BreakEdge::Enter,
+            1,
+            pts(1_000),
+            &[pts(1_000)],
+            ticks(0),
+            Some(too_long),
+        )
+        .unwrap_err();
+        assert!(matches!(err, crate::Error::BreakDurationTooLong { .. }));
+    }
+
     #[test]
     fn builds_a_return_break_cue_with_no_duration() {
         let (_, insert) = build_splice_insert(

@@ -3,6 +3,9 @@
 All notable changes to this crate. Format: [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+### Fixed
+- **`Schedule::is_empty` is checked while the schedule is populated.** It was only asserted empty, so a constant answer could make a host skip a populated schedule (audit 22 finding 48, #3016).
+- **The 33-bit `break_duration()` cap sits exactly at 2^33 - 1 ticks.** A duration of 2^33 ticks or more is refused with `BreakDurationTooLong`, and the largest expressible one round-trips through the section serializer (audit 22 finding 47, #3015).
 
 ## [0.7.0] - 2026-11-15
 - `scte35-splice` 6 -> 7: `SpliceTime::pts_time` is a validated `broadcast_common::clock33::Clock33`, and `SpliceInsert` carries its flags and times in one `SpliceMode` (see that crate's changelog).

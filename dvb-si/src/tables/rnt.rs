@@ -825,6 +825,28 @@ mod tests {
     }
 
     #[test]
+    fn context_id_type_arm_boundaries_are_classified() {
+        assert_eq!(ContextIdType::from_u8(0x00), ContextIdType::BouquetId);
+        assert_eq!(
+            ContextIdType::from_u8(0x01),
+            ContextIdType::OriginalNetworkId
+        );
+        assert_eq!(ContextIdType::from_u8(0x02), ContextIdType::NetworkId);
+        assert_eq!(
+            ContextIdType::from_u8(0x03),
+            ContextIdType::DvbReserved(0x03)
+        );
+        assert_eq!(
+            ContextIdType::from_u8(0x7F),
+            ContextIdType::DvbReserved(0x7F)
+        );
+        assert_eq!(
+            ContextIdType::from_u8(0x80),
+            ContextIdType::UserDefined(0x80)
+        );
+    }
+
+    #[test]
     fn context_id_type_full_range_round_trip() {
         for byte in 0u8..=0xFF {
             let ct = ContextIdType::from_u8(byte);
@@ -856,5 +878,40 @@ mod tests {
         };
         assert_eq!(rp.reserved_info_length.get(), 0x0F);
         assert_eq!(rp.reserved_descriptors_length.get(), 0x0F);
+    }
+
+    #[test]
+    fn crid_authority_descriptors_length_high_nibble_is_written() {
+        let desc = vec![0xAAu8; 300];
+        let rp = ResolutionProvider::new(
+            DvbText::new(b"bb"),
+            RntDescriptorLoop::new(&[]),
+            vec![CridAuthority::new(
+                DvbText::new(b"au"),
+                CridAuthorityPolicy::Permanent,
+                RntDescriptorLoop::new(&desc),
+            )],
+        );
+        let rnt = RntSection::new(
+            0x0042,
+            crate::tables::SectionVersion::new(3, true, 0, 0),
+            ContextIdType::BouquetId,
+            RntDescriptorLoop::new(&[]),
+            vec![rp],
+        );
+        let mut buf = vec![0u8; rnt.serialized_len()];
+        rnt.serialize_into(&mut buf).unwrap();
+
+        assert_eq!(buf[21], 0xC1);
+        assert_eq!(buf[22], 0x2C);
+
+        let reparsed = RntSection::parse(&buf).expect("reparse");
+        assert_eq!(
+            reparsed.resolution_providers[0].crid_authorities[0]
+                .descriptors
+                .len(),
+            300
+        );
+        assert_eq!(rnt, reparsed);
     }
 }

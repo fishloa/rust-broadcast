@@ -4106,6 +4106,13 @@ mod tests {
             "no segment may stay bound to an evicted slot"
         );
         assert_eq!(
+            client.msn_init.len(),
+            MAX_INIT_SLOTS,
+            "evicting a slot drops only its own segment binding"
+        );
+        assert_eq!(client.msn_init.get(&msn(69)), Some(&69));
+        assert_eq!(client.msn_init.get(&msn(6)), Some(&6));
+        assert_eq!(
             client.init_target,
             Some(69),
             "an evicted slot was not the init_target"

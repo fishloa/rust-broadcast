@@ -1420,10 +1420,10 @@ mod tests {
         );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
-        let mut buf2 = vec![0u8; rct.serialized_len()];
-        rct.serialize_into(&mut buf2).unwrap();
-        assert_eq!(buf, buf2, "byte-exact re-serialize");
         let p = RctSection::parse(&buf).unwrap();
+        let mut buf2 = vec![0u8; p.serialized_len()];
+        p.serialize_into(&mut buf2).unwrap();
+        assert_eq!(buf, buf2, "byte-exact re-serialize");
         assert_eq!(p.links.len(), 1);
         assert_eq!(p.links[0].link_type, LinkType::BinaryLocator);
         let l = p.links[0].dvb_binary_locator.as_ref().unwrap();
@@ -1793,6 +1793,16 @@ mod tests {
     }
 
     #[test]
+    fn how_related_arm_boundaries_are_classified() {
+        assert_eq!(HowRelated::from_u8(0x00), HowRelated::Cs2004);
+        assert_eq!(HowRelated::from_u8(0x01), HowRelated::Cs2005);
+        assert_eq!(HowRelated::from_u8(0x02), HowRelated::Cs2007);
+        assert_eq!(HowRelated::from_u8(0x03), HowRelated::DvbReserved(0x03));
+        assert_eq!(HowRelated::from_u8(0x2F), HowRelated::DvbReserved(0x2F));
+        assert_eq!(HowRelated::from_u8(0x30), HowRelated::UserPrivate(0x30));
+    }
+
+    #[test]
     fn identifier_type_full_range_round_trip() {
         for v in 0u8..=0x03 {
             let it = IdentifierType::from_u8(v);
@@ -1836,5 +1846,215 @@ mod tests {
         };
         assert_eq!(loc.reserved.get(), 0x01);
         assert_eq!(loc.reserved_inline_service.get(), 0x03);
+    }
+
+    fn section_with_links(links: &[&[u8]]) -> Vec<u8> {
+        let body_len: usize = links.iter().map(|l| 2 + l.len()).sum::<usize>() + 2;
+        let total = 11 + body_len + 4;
+        let section_length = (total - 3) as u16;
+        let mut bytes = vec![
+            0x76,
+            0xB0 | ((section_length >> 8) as u8 & 0x0F),
+            (section_length & 0xFF) as u8,
+            0x00,
+            0x64,
+            0xC1,
+            0x00,
+            0x00,
+            0x07,
+            0xD3,
+            links.len() as u8,
+        ];
+        for link in links {
+            bytes.push(0xF0 | ((link.len() >> 8) as u8 & 0x0F));
+            bytes.push(link.len() as u8);
+            bytes.extend_from_slice(link);
+        }
+        bytes.extend_from_slice(&[0xF0, 0x00]);
+        let crc = broadcast_common::crc32_mpeg2::compute(&bytes);
+        bytes.extend_from_slice(&crc.to_be_bytes());
+        bytes
+    }
+
+    fn binary_locator_link(locator: &[u8]) -> Vec<u8> {
+        let mut link = vec![0x1F, 0x01, 0x23, 0xA5];
+        link.extend_from_slice(locator);
+        link.extend_from_slice(&[0xC0, 0x00, 0x00]);
+        link
+    }
+
+    /// ETSI TS 102 323 Table 31/Table 110: every locator branch, written as
+    /// wire bytes and checked field by field plus a byte-identical re-serialize
+    /// (never serialise-then-parse of the same code).
+    #[test]
+    fn locator_shapes_parse_from_wire_bytes() {
+        let triplet = DvbLocatorService::Triplet {
+            dvb_service_triplet_id: 0x2AB,
+        };
+        let full = DvbLocatorService::Full {
+            transport_stream_id: 0x0001,
+            original_network_id: 0x0002,
+            service_id: 0x0003,
+        };
+        type LocatorCase<'a> = (
+            &'a [u8],
+            bool,
+            &'a DvbLocatorService,
+            &'a DvbLocatorIdentifier,
+            Option<(u8, u8)>,
+        );
+        let cases: &[LocatorCase<'_>] = &[
+            (
+                &[0x0D, 0x56, 0xAB, 0x12, 0x34, 0x56, 0x78],
+                false,
+                &triplet,
+                &DvbLocatorIdentifier::None,
+                None,
+            ),
+            (
+                &[0x2D, 0x56, 0xAB, 0x12, 0x34, 0x56, 0x78, 0xB1],
+                true,
+                &triplet,
+                &DvbLocatorIdentifier::None,
+                Some((0x05, 0x11)),
+            ),
+            (
+                &[
+                    0x5D, 0x57, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34, 0x56, 0x78, 0x00,
+                    0x42,
+                ],
+                false,
+                &full,
+                &DvbLocatorIdentifier::EventId { event_id: 0x0042 },
+                None,
+            ),
+            (
+                &[
+                    0x9D, 0x57, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34, 0x56, 0x78, 0x00,
+                    0xAA,
+                ],
+                false,
+                &full,
+                &DvbLocatorIdentifier::TvaIdEit { tva_id: 0x00AA },
+                None,
+            ),
+            (
+                &[
+                    0xDD, 0x57, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34, 0x56, 0x78, 0x00,
+                    0xAA, 0x07,
+                ],
+                false,
+                &full,
+                &DvbLocatorIdentifier::TvaIdPes {
+                    tva_id: 0x00AA,
+                    component: 0x07,
+                },
+                None,
+            ),
+        ];
+
+        for (locator, reliability, service, identifier, windows) in cases {
+            let link = binary_locator_link(locator);
+            let bytes = section_with_links(&[&link]);
+            let section = RctSection::parse(&bytes).expect("parse");
+            assert_eq!(section.links.len(), 1);
+            let parsed = &section.links[0];
+            assert_eq!(parsed.link_type, LinkType::BinaryLocator);
+            assert_eq!(parsed.how_related, HowRelated::UserPrivate(0x30));
+            assert_eq!(parsed.term_id, 0x123);
+            assert_eq!(parsed.group_id, 0x0A);
+            assert_eq!(parsed.precedence, 0x05);
+            assert!(parsed.media_uri.is_none());
+            assert!(parsed.items.is_empty());
+
+            let loc = parsed.dvb_binary_locator.as_ref().expect("locator");
+            assert_eq!(loc.scheduled_time_reliability, *reliability);
+            assert_eq!(loc.start_date, 0x155);
+            assert_eq!(loc.start_time, 0x1234);
+            assert_eq!(loc.duration, 0x5678);
+            assert_eq!(&loc.service, *service);
+            assert_eq!(&loc.identifier, *identifier);
+            assert_eq!(
+                loc.windows,
+                windows.map(|(early_start_window, late_end_window)| DvbLocatorWindows {
+                    early_start_window,
+                    late_end_window,
+                })
+            );
+
+            let mut out = vec![0u8; section.serialized_len()];
+            section.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes, "locator {identifier:?} re-serializes");
+        }
+    }
+
+    #[test]
+    fn two_links_with_two_items_parse_from_wire_bytes() {
+        let first = [
+            0x0C, 0x00, 0x10, 0x00, 0x04, b'u', b'r', b'i', b'!', 0xC2, b'e', b'n', b'g', 0x03,
+            b'a', b'b', b'c', b'd', b'e', b'u', 0x00, 0x00, 0x00,
+        ];
+        let second = [
+            0x1F, 0x01, 0x23, 0xA5, 0x0D, 0x56, 0xAB, 0x12, 0x34, 0x56, 0x78, 0xC2, b'e', b'n',
+            b'g', 0x03, b'a', b'b', b'c', b'd', b'e', b'u', 0x00, 0x00, 0x00,
+        ];
+
+        let bytes = section_with_links(&[&first, &second]);
+        let section = RctSection::parse(&bytes).expect("parse");
+        assert_eq!(section.links.len(), 2);
+
+        let one = &section.links[0];
+        assert_eq!(one.link_type, LinkType::UriString);
+        assert_eq!(one.media_uri, Some(&b"uri!"[..]));
+        assert_eq!(one.items.len(), 2);
+        assert_eq!(one.items[0].language_code.0, *b"eng");
+        assert_eq!(one.items[0].promotional_text.raw(), b"abc");
+        assert_eq!(one.items[1].language_code.0, *b"deu");
+        assert_eq!(one.items[1].promotional_text.raw(), b"");
+
+        let two = &section.links[1];
+        assert_eq!(two.link_type, LinkType::BinaryLocator);
+        assert_eq!(two.items.len(), 2);
+        assert_eq!(two.items[0].promotional_text.raw(), b"abc");
+        assert_eq!(two.items[1].language_code.0, *b"deu");
+
+        let mut out = vec![0u8; section.serialized_len()];
+        section.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
+    #[test]
+    fn icon_descriptors_length_high_nibble_is_written() {
+        let desc = vec![0xAAu8; 300];
+        let link = LinkInfo::new(
+            LinkType::Descriptor,
+            HowRelated::Cs2004,
+            0,
+            0,
+            0,
+            None,
+            None,
+            Vec::new(),
+            true,
+            0,
+            DescriptorLoop::new(&desc),
+        );
+        let rct = RctSection::new(
+            false,
+            0x0064,
+            crate::tables::SectionVersion::new(0, true, 0, 0),
+            0x07D3,
+            vec![link],
+            DescriptorLoop::new(&[]),
+        );
+        let mut buf = vec![0u8; rct.serialized_len()];
+        rct.serialize_into(&mut buf).unwrap();
+
+        assert_eq!(buf[18], 0x81);
+        assert_eq!(buf[19], 0x2C);
+
+        let reparsed = RctSection::parse(&buf).expect("reparse");
+        assert_eq!(reparsed.links[0].descriptors.raw().len(), 300);
+        assert_eq!(rct, reparsed);
     }
 }
