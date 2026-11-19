@@ -15042,4 +15042,274 @@ pub(crate) mod tests {
             "no section_syntax_indicator, no CRC to accept"
         );
     }
+
+    // ── audit 22: live-track attribution and the PES cap boundary ───────────
+
+    fn real_h264_ts() -> Vec<u8> {
+        std::fs::read(test_fixtures::path("ts/h264-aac.ts")).expect("ts/h264-aac.ts")
+    }
+
+    fn video_pid_and_track(bytes: &[u8]) -> (u16, TrackId) {
+        let media = TsDemux::new().unpackage(bytes).expect("demux");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.config.is_video())
+            .expect("video track");
+        (
+            track.spec.source_pid.expect("source pid").value(),
+            track.spec.track_id,
+        )
+    }
+
+    fn packets_of_pid(bytes: &[u8]) -> Vec<usize> {
+        (0..bytes.len() / TS_PACKET_SIZE)
+            .filter(|i| bytes[i * TS_PACKET_SIZE] == 0x47)
+            .map(|i| i * TS_PACKET_SIZE)
+            .collect()
+    }
+
+    fn pid_of(bytes: &[u8], off: usize) -> u16 {
+        ((u16::from(bytes[off + 1]) & 0x1F) << 8) | u16::from(bytes[off + 2])
+    }
+
+    fn drain_events(demux: &mut StreamingTsDemux) -> Vec<DemuxEvent> {
+        std::iter::from_fn(|| demux.poll_event()).collect()
+    }
+
+    #[test]
+    fn a_continuity_gap_on_a_live_pid_names_its_track() {
+        let bytes = real_h264_ts();
+        let (pid, track_id) = video_pid_and_track(&bytes);
+        let mut mutated = bytes.clone();
+        let offsets: Vec<usize> = packets_of_pid(&bytes)
+            .into_iter()
+            .filter(|&off| pid_of(&bytes, off) == pid)
+            .collect();
+        let off = offsets[60];
+        mutated[off + 3] = (bytes[off + 3] & 0xF0) | (bytes[off + 3].wrapping_add(7) & 0x0F);
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&mutated).expect("feed");
+        let _ = demux.finish();
+        let gap = drain_events(&mut demux).into_iter().find_map(|ev| match ev {
+            DemuxEvent::InputDegraded {
+                track,
+                kind: InputDegradation::ContinuityGap { .. },
+                provenance,
+            } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
+            _ => None,
+        });
+        assert_eq!(
+            gap,
+            Some(Some(track_id)),
+            "a gap on a resolved PID names its live track, never None"
+        );
+    }
+
+    #[test]
+    fn a_scrambled_payload_on_a_live_pid_names_its_track() {
+        let bytes = real_h264_ts();
+        let (pid, track_id) = video_pid_and_track(&bytes);
+        let mut mutated = bytes.clone();
+        let offsets: Vec<usize> = packets_of_pid(&bytes)
+            .into_iter()
+            .filter(|&off| pid_of(&bytes, off) == pid)
+            .collect();
+        let off = offsets[60];
+        // transport_scrambling_control = 2 (even key), bits [7:6].
+        mutated[off + 3] = (bytes[off + 3] & 0x3F) | 0x80;
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&mutated).expect("feed");
+        let _ = demux.finish();
+        let scrambled = drain_events(&mut demux).into_iter().find_map(|ev| match ev {
+            DemuxEvent::InputDegraded {
+                track,
+                kind: InputDegradation::Scrambled,
+                provenance,
+            } if provenance.pid.map(|p| p.value()) == Some(pid) => Some(track),
+            _ => None,
+        });
+        assert_eq!(
+            scrambled,
+            Some(Some(track_id)),
+            "scrambled payload on a resolved PID names its live track"
+        );
+    }
+
+    #[test]
+    fn the_pes_cap_is_exclusive_and_names_the_live_track() {
+        use crate::TsMux;
+        use crate::media::{Media as IrMedia, Track as IrTrack};
+        use crate::pipeline::{CodecConfig, Sample, TrackSpec};
+        use crate::rtp_sdp::avc_config_from_sprop;
+        use broadcast_common::Package;
+
+        let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
+        let spec = TrackSpec::new(
+            TrackId::new(1),
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config: avc,
+                width: 0,
+                height: 0,
+            },
+        );
+        let samples = (0..3u32)
+            .map(|i| {
+                Sample::new(
+                    alloc::vec![0, 0, 0, 3, 0x65, 0xAA, i as u8],
+                    Some(i64::from(i) * 3_000),
+                    Some(i64::from(i) * 3_000),
+                    Some(3_000),
+                    i == 0,
+                )
+                .expect("valid timing")
+            })
+            .collect();
+        let media = IrMedia::new(
+            alloc::vec![IrTrack::new(spec, samples)],
+            VIDEO_TIMESCALE,
+        );
+        let ts_bytes = TsMux::default().package(&media).expect("mux to TS");
+
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&ts_bytes).expect("feed");
+        demux.finish().expect("finish");
+        while demux.poll_event().is_some() {}
+        let pid = *demux
+            .streams
+            .keys()
+            .find(|pid| matches!(demux.streams[pid].carrier, Carrier::Pes(_)))
+            .expect("video ES");
+        let stream = demux.streams.get_mut(&pid).expect("video ES");
+
+        let mut events = VecDeque::new();
+        let at_cap = alloc::vec![0u8; MAX_PES_BUFFER_BYTES];
+        feed_pes_bounded(stream, pid, true, &at_cap, &mut events).expect("feed at cap");
+        assert!(
+            !events.iter().any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "exactly MAX_PES_BUFFER_BYTES is accepted"
+        );
+
+        let over_cap = alloc::vec![0u8; MAX_PES_BUFFER_BYTES + 1];
+        feed_pes_bounded(stream, pid, true, &over_cap, &mut events).expect("feed over cap");
+        let track = events.iter().find_map(|e| match e {
+            DemuxEvent::Discontinuity { track, .. } => Some(*track),
+            _ => None,
+        });
+        assert_eq!(
+            track,
+            Some(Some(TrackId::new(1))),
+            "one byte over the cap drops the PES and names the live track"
+        );
+
+        // The continuation path (`prev_len + payload`) has the same boundary.
+        let mut events = VecDeque::new();
+        let start = alloc::vec![0u8; 100];
+        feed_pes_bounded(stream, pid, true, &start, &mut events).expect("start");
+        let rest = alloc::vec![0u8; MAX_PES_BUFFER_BYTES - 100];
+        feed_pes_bounded(stream, pid, false, &rest, &mut events).expect("fill");
+        assert!(
+            !events.iter().any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "prev_len + payload == MAX_PES_BUFFER_BYTES is accepted"
+        );
+        feed_pes_bounded(stream, pid, false, &[0u8], &mut events).expect("one more");
+        assert!(
+            events.iter().any(|e| matches!(e, DemuxEvent::Discontinuity { .. })),
+            "prev_len + payload == MAX + 1 drops the PES"
+        );
+
+        // A unit that ended before its declared length on this now-live PID
+        // names the track too.
+        let mut events = VecDeque::new();
+        let pes = alloc::vec![0u8, 0, 1, 0xE0, 0x00, 0x64, 0x80, 0x00, 0x00, 0xAA, 0xBB];
+        let mut epoch = ProgramEpoch {
+            last: None,
+            splice_offset: None,
+        };
+        on_completed_pes(stream, pid, &pes, &mut epoch, &mut events)
+            .expect("truncated PES is reported, not fatal");
+        let track = events.iter().find_map(|e| match e {
+            DemuxEvent::InputDegraded {
+                track,
+                kind: InputDegradation::PesUnitTruncated { .. },
+                ..
+            } => Some(*track),
+            _ => None,
+        });
+        assert_eq!(
+            track,
+            Some(Some(TrackId::new(1))),
+            "a truncated unit on a live PID names its track"
+        );
+    }
+
+    #[test]
+    fn an_adaptation_field_length_of_zero_is_not_a_discontinuity_signal() {
+        let mut demux = StreamingTsDemux::new();
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null_packet()).expect("bootstrap");
+        }
+        let pkt = |cc: u8, payload_first: u8| {
+            let mut p = [0xFFu8; TS_PACKET_SIZE];
+            p[0] = 0x47;
+            p[1] = 0x00;
+            p[2] = 0x44;
+            p[3] = 0x30 | (cc & 0x0F); // adaptation + payload
+            p[4] = 0x00; // adaptation_field_length = 0
+            p[5] = payload_first;
+            p
+        };
+        demux.feed(&pkt(0, 0x00)).expect("first");
+        // The payload's first byte has bit 7 set: with `>=` on the length this
+        // packet would be mistaken for a signalled discontinuity.
+        demux.feed(&pkt(5, 0x80)).expect("gap");
+        let gap = drain_events(&mut demux).into_iter().find_map(|ev| match ev {
+            DemuxEvent::InputDegraded {
+                kind: InputDegradation::ContinuityGap { expected, got },
+                ..
+            } => Some((expected, got)),
+            _ => None,
+        });
+        assert_eq!(gap, Some((1, 5)), "an empty adaptation field signals nothing");
+    }
+
+    #[test]
+    fn the_degraded_budget_is_released_by_draining() {
+        let mut demux = StreamingTsDemux::new().with_max_degraded_events(2);
+        for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
+            demux.feed(&null_packet()).expect("bootstrap");
+        }
+        let gap_pair = |pid_hi: u8, pid_lo: u8| {
+            let mut first = [0xFFu8; TS_PACKET_SIZE];
+            first[0] = 0x47;
+            first[1] = pid_hi & 0x1F;
+            first[2] = pid_lo;
+            first[3] = 0x10;
+            first[4] = 0xAA;
+            let mut second = first;
+            second[3] = 0x15;
+            second[4] = 0xBB;
+            (first, second)
+        };
+        for wave in 0..3u8 {
+            for k in 0..2u8 {
+                let (a, b) = gap_pair(0x05, 0x10 + wave * 2 + k);
+                demux.feed(&a).expect("first");
+                demux.feed(&b).expect("gap");
+            }
+            let delivered = drain_events(&mut demux)
+                .into_iter()
+                .filter(|e| matches!(e, DemuxEvent::InputDegraded { .. }))
+                .count();
+            assert_eq!(delivered, 2, "wave {wave}: drained budget is reusable");
+        }
+        assert_eq!(
+            demux.degraded_events_dropped(),
+            0,
+            "no phantom budget after draining"
+        );
+    }
 }
