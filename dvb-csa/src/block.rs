@@ -154,5 +154,4 @@ mod tests {
             "Vector 12 block decrypt mismatch"
         );
     }
-
 }

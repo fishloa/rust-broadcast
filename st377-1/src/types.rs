@@ -964,10 +964,7 @@ mod tests {
         let reference = StrongRef(bytes);
         assert_eq!(reference.as_bytes(), &bytes);
         assert_eq!(reference.as_ref(), &bytes[..]);
-        assert_eq!(
-            reference.to_string(),
-            "0123456789abcdeffedcba9876543210"
-        );
+        assert_eq!(reference.to_string(), "0123456789abcdeffedcba9876543210");
     }
 
     #[test]

@@ -6,9 +6,7 @@ use broadcast_common::{Parse, Serialize};
 use scte104::operations::insert_audio_provisioning::CodecIndex;
 use scte104::operations::schedule_definition::SpliceScheduleCommand;
 use scte104::operations::splice_request::SpliceInsertType;
-use scte104::time::{
-    GpiTimestamp, SmpteVitcTimestamp, Time, TimeType, Timestamp, UtcTimestamp,
-};
+use scte104::time::{GpiTimestamp, SmpteVitcTimestamp, Time, TimeType, Timestamp, UtcTimestamp};
 
 #[test]
 fn time_zero_is_eight_zero_bytes() {
@@ -85,14 +83,22 @@ fn every_timestamp_form_round_trips_with_its_literal_time_type() {
 fn splice_insert_type_bytes_and_labels_are_pinned() {
     for (byte, ty, label) in [
         (0u8, SpliceInsertType::Reserved, "reserved"),
-        (1, SpliceInsertType::SpliceStartNormal, "splice start normal"),
+        (
+            1,
+            SpliceInsertType::SpliceStartNormal,
+            "splice start normal",
+        ),
         (
             2,
             SpliceInsertType::SpliceStartImmediate,
             "splice start immediate",
         ),
         (3, SpliceInsertType::SpliceEndNormal, "splice end normal"),
-        (4, SpliceInsertType::SpliceEndImmediate, "splice end immediate"),
+        (
+            4,
+            SpliceInsertType::SpliceEndImmediate,
+            "splice end immediate",
+        ),
         (5, SpliceInsertType::SpliceCancel, "splice cancel"),
     ] {
         assert_eq!(SpliceInsertType::from_byte(byte), ty);

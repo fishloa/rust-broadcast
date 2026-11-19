@@ -7,7 +7,7 @@ use broadcast_common::Parse;
 use st377_1::{
     BerLength, ContentStorage, KlvItem, LocalSet, LocalTagEntry, MaterialPackage, MxfTimestamp,
     PackageId, PartitionLocation, PartitionPack, Preface, PrimerPack, RandomIndexPack, Sequence,
-    SourcePackage, StructuralSetKind, StrongRef, UidBatch, UlBytes, collect_klv_items,
+    SourcePackage, StrongRef, StructuralSetKind, UidBatch, UlBytes, collect_klv_items,
 };
 
 fn fixture_kvls() -> Vec<Vec<u8>> {
@@ -117,8 +117,7 @@ fn content_storage_equality_is_field_sensitive() {
             assert_ne!(a, b);
         }
         None => {
-            b.essence_container_data_batch =
-                Some(UidBatch::with_header(Vec::new(), Some([9; 8])));
+            b.essence_container_data_batch = Some(UidBatch::with_header(Vec::new(), Some([9; 8])));
             assert_eq!(
                 a, b,
                 "a built (headerless) Batch equals a parsed one with the same items"
@@ -499,4 +498,3 @@ fn local_set_and_item_equality_are_field_sensitive() {
     });
     assert_ne!(a, b);
 }
-

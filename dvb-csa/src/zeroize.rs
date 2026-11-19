@@ -33,11 +33,11 @@ impl<T: AsMut<[u8]>> Drop for Zeroizing<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "bitsliced")]
+    use crate::bitsliced::{BitslicedBlock, BitslicedStream};
     use crate::block::BlockCipher;
     use crate::key::ControlWord;
     use crate::stream::StreamCipher;
-    #[cfg(feature = "bitsliced")]
-    use crate::bitsliced::{BitslicedBlock, BitslicedStream};
 
     #[test]
     fn zeroize_clears_every_byte() {

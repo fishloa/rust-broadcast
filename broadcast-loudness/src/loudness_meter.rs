@@ -1945,7 +1945,9 @@ mod tests {
     #[test]
     fn planar_stereo_rejection_reports_the_absolute_frame_index() {
         let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
-        meter.push_stereo_planar_f32(&[0.0, 0.0], &[0.0, 0.0]).unwrap();
+        meter
+            .push_stereo_planar_f32(&[0.0, 0.0], &[0.0, 0.0])
+            .unwrap();
         let too_loud = f32::from_bits(0x7F7F_FFFF);
         let err = meter
             .push_stereo_planar_f32(&[0.1, too_loud], &[0.1, 0.1])

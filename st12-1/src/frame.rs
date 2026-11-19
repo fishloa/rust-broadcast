@@ -760,10 +760,7 @@ mod tests {
                 BinaryGroupUsage::ClockTimeDateTimeZone,
                 "clock time, date and time zone",
             ),
-            (
-                BinaryGroupUsage::ClockTimePageLine,
-                "clock time, page/line",
-            ),
+            (BinaryGroupUsage::ClockTimePageLine, "clock time, page/line"),
         ] {
             assert_eq!(usage.name(), label);
             assert_eq!(usage.to_string(), label);

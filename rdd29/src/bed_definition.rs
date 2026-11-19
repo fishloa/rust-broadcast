@@ -453,10 +453,7 @@ mod tests {
         bed.align_bits = 1;
         let mut buf = alloc::vec![0u8; bed.serialized_len()];
         assert!(
-            matches!(
-                bed.serialize_into(&mut buf),
-                Err(Error::InvalidValue(..))
-            ),
+            matches!(bed.serialize_into(&mut buf), Err(Error::InvalidValue(..))),
             "nonzero AlignBits where no padding bits exist must be rejected"
         );
     }

@@ -247,5 +247,4 @@ mod tests {
             assert_eq!(csa_stream_sboxes(a), want, "A = {a:#012x}");
         }
     }
-
 }

@@ -34,7 +34,11 @@ fn two_pairs_serialize_to_the_hand_computed_layout() {
     assert_eq!(&out[21..29], &2u64.to_be_bytes());
     assert_eq!(&out[29..33], &3u32.to_be_bytes());
     assert_eq!(&out[33..41], &4u64.to_be_bytes());
-    assert_eq!(&out[41..45], &45u32.to_be_bytes(), "trailing overall Length");
+    assert_eq!(
+        &out[41..45],
+        &45u32.to_be_bytes(),
+        "trailing overall Length"
+    );
 
     let (parsed, consumed) = RandomIndexPack::parse_prefix(&out).unwrap();
     assert_eq!(consumed, out.len());

@@ -126,7 +126,9 @@ impl BitslicedStream {
 
     /// The four register banks, read back by the zeroize-on-drop gate.
     #[cfg(test)]
-    pub(crate) fn registers(&self) -> (
+    pub(crate) fn registers(
+        &self,
+    ) -> (
         &[Word; A_BITS],
         &[Word; B_BITS],
         &[Word; PQZYX_BITS],
@@ -289,5 +291,4 @@ mod tests {
             assert_eq!(got[lane], want, "lane {lane} keystream disagrees");
         }
     }
-
 }

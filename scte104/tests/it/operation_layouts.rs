@@ -3,20 +3,18 @@
 //! §9.7/§9.8/§10.5, `private/specs-verified/scte/scte104/`).
 
 use broadcast_common::{Parse, Serialize};
+use scte104::SingleOperationMessage;
 use scte104::operations::component_mode_dpi::{ComponentModeDpi, ComponentModeEntry};
 use scte104::operations::control_word::{
-    DeleteControlWord, UpdateControlWord, DELETE_LEN, UPDATE_LEN,
+    DELETE_LEN, DeleteControlWord, UPDATE_LEN, UpdateControlWord,
 };
 use scte104::operations::insert_segmentation_descriptor::InsertSegmentationDescriptor;
 use scte104::operations::provisioning_request::{
     InjectorComponentList, ProvisioningRequest, ProvisioningService,
 };
-use scte104::operations::schedule_component_mode::{
-    ScheduleComponentEntry, ScheduleComponentMode,
-};
+use scte104::operations::schedule_component_mode::{ScheduleComponentEntry, ScheduleComponentMode};
 use scte104::operations::{AliveRequest, AnySingleOperation};
 use scte104::time::{SpliceScheduleTime, Time};
-use scte104::SingleOperationMessage;
 
 #[test]
 fn injector_component_list_offsets_and_length_are_exact() {
@@ -114,9 +112,7 @@ fn schedule_component_mode_entries_are_exactly_five_bytes_each() {
     assert_eq!(scheduled.serialize_into(&mut out).unwrap(), 15);
     assert_eq!(
         &out,
-        &[
-            0x10, 0, 0, 0, 1, 0x20, 0, 0, 0, 2, 0x30, 0, 0, 0, 3
-        ]
+        &[0x10, 0, 0, 0, 1, 0x20, 0, 0, 0, 2, 0x30, 0, 0, 0, 3]
     );
     assert_eq!(ScheduleComponentMode::parse(&out).unwrap(), scheduled);
 
@@ -158,7 +154,9 @@ fn segmentation_descriptor_tail_fields_sit_at_their_offsets() {
     assert_eq!(desc.serialize_into(&mut out).unwrap(), 23);
     assert_eq!(
         &out[..11],
-        &[0x01, 0x02, 0x03, 0x04, 0x01, 0x05, 0x06, 0x07, 0x02, 0xAA, 0xBB]
+        &[
+            0x01, 0x02, 0x03, 0x04, 0x01, 0x05, 0x06, 0x07, 0x02, 0xAA, 0xBB
+        ]
     );
     assert_eq!(
         &out[11..],

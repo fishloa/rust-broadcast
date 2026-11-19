@@ -1077,19 +1077,26 @@ mod tests {
             (ZoneId::RearLeft, "all speakers on left half of rear wall"),
             (ZoneId::RearRight, "all speakers on right half of rear wall"),
             (ZoneId::OverheadLeft, "all overhead speakers left of center"),
-            (ZoneId::OverheadRight, "all overhead speakers right of center"),
+            (
+                ZoneId::OverheadRight,
+                "all overhead speakers right of center",
+            ),
         ] {
             assert_eq!(zone.name(), label);
             assert_eq!(zone.to_string(), label);
         }
         for (mode, name, display) in [
-            (ObjectSpreadMode::Lowrez, "object spread lowrez", "object spread lowrez"),
-            (ObjectSpreadMode::OneD, "object spread 1d", "object spread 1d"),
             (
-                ObjectSpreadMode::Reserved(1),
-                "reserved",
-                "reserved(0x01)",
+                ObjectSpreadMode::Lowrez,
+                "object spread lowrez",
+                "object spread lowrez",
             ),
+            (
+                ObjectSpreadMode::OneD,
+                "object spread 1d",
+                "object spread 1d",
+            ),
+            (ObjectSpreadMode::Reserved(1), "reserved", "reserved(0x01)"),
         ] {
             assert_eq!(mode.name(), name);
             assert_eq!(mode.to_string(), display);
@@ -1097,7 +1104,10 @@ mod tests {
         for (prefix, label) in [
             (DecorCoefPrefix::NoDecorrelation, "no decorrelation"),
             (DecorCoefPrefix::MaxDecorrelation, "maximum decorrelation"),
-            (DecorCoefPrefix::CoefFollows, "decorrelation coefficient follows"),
+            (
+                DecorCoefPrefix::CoefFollows,
+                "decorrelation coefficient follows",
+            ),
             (DecorCoefPrefix::Reserved, "reserved"),
         ] {
             assert_eq!(prefix.name(), label);

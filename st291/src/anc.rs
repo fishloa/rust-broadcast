@@ -606,8 +606,12 @@ mod tests {
     /// non-word-aligned boundaries (70, 90 and 100 bits).
     #[test]
     fn record_byte_length_is_hand_computed_per_udw_count() {
-        for (n, bits, bytes) in [(0usize, 70usize, 9usize), (1, 80, 10), (2, 90, 12), (3, 100, 13)]
-        {
+        for (n, bits, bytes) in [
+            (0usize, 70usize, 9usize),
+            (1, 80, 10),
+            (2, 90, 12),
+            (3, 100, 13),
+        ] {
             let p = AncPacket {
                 c_not_y_channel_flag: false,
                 line_number: 9,
