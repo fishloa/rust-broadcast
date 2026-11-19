@@ -1479,3 +1479,64 @@ fn sat_beamhopping_loop_threshold_rejects_trailing_bytes() {
         )
     );
 }
+
+#[test]
+fn unt_target_descriptor_loop_length_ending_at_platform_end() {
+    // platform_loop_length 2: the target loop length field fits exactly; the
+    // operational loop length field is then missing.
+    assert_eq!(
+        UntSection::parse(&unt(0, &[0x00, 0x00, 0x00, 0x02, 0x00, 0x00])).unwrap_err(),
+        too_short(22, 20, "UntSection operational_descriptor_loop length")
+    );
+}
+
+#[test]
+fn unt_target_descriptor_loop_ending_at_platform_end() {
+    // platform_loop_length 4: a 2-byte target loop ends exactly at platform_end.
+    assert_eq!(
+        UntSection::parse(&unt(0, &[0x00, 0x00, 0x00, 0x04, 0x00, 0x02, 0xAA, 0xAA])).unwrap_err(),
+        too_short(24, 22, "UntSection operational_descriptor_loop length")
+    );
+}
+
+#[test]
+fn sat_beamhopping_plan_loop_threshold_three_bytes() {
+    // 24 bits cannot hold a 48-bit plan header.
+    assert_eq!(
+        SatSection::parse(&sat(3, &[0x00; 3])).unwrap_err(),
+        too_short(
+            3,
+            0,
+            "SatSection trailing body bytes after the last whole entry"
+        )
+    );
+}
+
+#[test]
+fn sat_beamhopping_plan_loop_threshold_five_bytes() {
+    // 40 bits cannot hold a 48-bit plan header.
+    assert_eq!(
+        SatSection::parse(&sat(3, &[0x00; 5])).unwrap_err(),
+        too_short(
+            5,
+            0,
+            "SatSection trailing body bytes after the last whole entry"
+        )
+    );
+}
+
+#[test]
+fn sat_beamhopping_plan_length_shorter_than_its_fields() {
+    // 39-byte body: the fixed+Mode0 fields consume 248 bits while plan_length
+    // 0 makes plan_end_bits 48.
+    let mut body = [0x00u8; 39];
+    body[6] = 0x00;
+    assert_eq!(
+        SatSection::parse(&sat(3, &body)).unwrap_err(),
+        too_short(
+            200,
+            0,
+            "SatSection Beamhopping plan_length shorter than plan fields"
+        )
+    );
+}
