@@ -416,6 +416,8 @@ impl Serialize for PartitionPack {
 mod tests {
     use super::*;
     use crate::types::UlBytes;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     fn sample(kind: PartitionKind, status: PartitionStatus) -> PartitionPack {
         PartitionPack {

@@ -607,6 +607,8 @@ impl Serialize for LocalSet<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::string::ToString;
 
     #[test]
     fn structural_set_kind_round_trips_every_named_variant() {
