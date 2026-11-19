@@ -218,13 +218,13 @@ fn cit_partial_crid_entry_header() {
 
 #[test]
 fn pat_trailing_entry_bytes() {
-    // 17-byte PAT: entries end at byte 13 with one leftover byte.
+    // 19-byte PAT: one 4-byte entry, then three leftover bytes.
     let bytes = seal(vec![
-        0x00, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE0, 0x00, 0xAA,
+        0x00, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE0, 0x00, 0xAA, 0xBB, 0xCC,
     ]);
     assert_eq!(
         PatSection::parse(&bytes).unwrap_err(),
-        too_short(4, 1, "PatSection trailing entry bytes")
+        too_short(4, 3, "PatSection trailing entry bytes")
     );
 }
 
@@ -1185,14 +1185,43 @@ fn dii_module_entry_short() {
 
 #[test]
 fn dii_module_info_past_end() {
-    let mut body = [0x00u8; 29];
+    // Module header at 20..28, module_info_length 5, then three spare bytes.
+    let mut body = [0x00u8; 31];
     body[16] = 0x00;
     body[17] = 0x00;
     body[18] = 0x00;
     body[19] = 0x01;
-    body[27] = 0x03;
+    body[27] = 0x05;
     let bytes = un_message(MESSAGE_ID_DII, 0, &body);
-    assert_eq!(UnMessage::parse(&bytes).unwrap_err(), overflow(3, 1));
+    assert_eq!(UnMessage::parse(&bytes).unwrap_err(), overflow(5, 3));
+}
+
+#[test]
+fn dii_module_info_ending_at_end_reports_the_missing_private_length_field() {
+    // Module header ends exactly at the buffer end: the private-data length
+    // field is what is missing, not a module-info overrun.
+    let mut body = [0x00u8; 28];
+    body[16] = 0x00;
+    body[17] = 0x00;
+    body[18] = 0x00;
+    body[19] = 0x01;
+    let bytes = un_message(MESSAGE_ID_DII, 0, &body);
+    assert_eq!(
+        UnMessage::parse(&bytes).unwrap_err(),
+        too_short(30, 28, "DSM-CC 16-bit length field")
+    );
+}
+
+#[test]
+fn dsi_server_id_exactly_fills_the_payload() {
+    // end == SERVER_ID_LEN is legal; the compatibility descriptor length is
+    // then the field that is missing.
+    let body = [0xAAu8; 20];
+    let bytes = un_message(MESSAGE_ID_DSI, 0, &body);
+    assert_eq!(
+        UnMessage::parse(&bytes).unwrap_err(),
+        too_short(22, 20, "compatibilityDescriptor in DSM-CC message")
+    );
 }
 
 // MARKER
