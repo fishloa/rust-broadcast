@@ -138,6 +138,35 @@ fn hem_carry_needs_the_final_byte_before_it_emits() {
 }
 
 #[test]
+fn hem_continuation_stops_one_byte_short_of_the_carry_buffer() {
+    let packet = real_ts_packet();
+    let up = &packet[1..];
+    let mut ex = CarryOverExtractor::new();
+
+    assert!(
+        ex.feed_hem(&header(Mode::HighEfficiency, 100 * 8, 0), &up[..100], false)
+            .is_empty()
+    );
+    // 86 more bytes leave the buffer at 187 of its 188 bytes: still one short.
+    assert!(
+        ex.feed_hem(
+            &header(Mode::HighEfficiency, 86 * 8, ALL_CONTINUATION),
+            &up[100..186],
+            false
+        )
+        .is_empty(),
+        "a carry one byte short must not emit"
+    );
+    let out = ex.feed_hem(
+        &header(Mode::HighEfficiency, 8, ALL_CONTINUATION),
+        &up[186..],
+        false,
+    );
+    assert_eq!(out.len(), 1);
+    assert_eq!(out[0], packet);
+}
+
+#[test]
 fn hem_mismatched_syncd_discards_the_partial() {
     let mut ex = CarryOverExtractor::new();
     assert!(
