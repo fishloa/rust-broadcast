@@ -987,6 +987,60 @@ mod tests {
         );
     }
 
+    /// The hunt bound is four times the largest possible T2-MI packet
+    /// (`HEADER_LEN(6) + 8192 + CRC_LEN(4)` = 8202 bytes).
+    #[test]
+    fn raw_hunt_cap_is_four_maximum_packets() {
+        assert_eq!(RAW_HUNT_CAP, 32808);
+    }
+
+    #[test]
+    fn raw_hunt_buffer_is_trimmed_to_the_cap() {
+        // A header-implausible, CRC-invalid 10-byte packet puts the pump into
+        // hunting with a buffer that the scan can never resync from.
+        let mut pump = T2miPump::raw();
+        let mut corrupt = vec![0x42, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF];
+        corrupt[9] ^= 0x01;
+        assert!(pump.feed_raw(&corrupt).next().is_none());
+        assert_eq!(pump.stats().crc_failures, 1);
+        assert_eq!(pump.stats().raw_resyncs, 0);
+
+        let garbage = vec![0xFFu8; 32800];
+        let _: Vec<_> = pump.feed_raw(&garbage).collect();
+        assert_eq!(pump.raw_hunt_buf.len(), RAW_HUNT_CAP);
+        assert_eq!(pump.stats().raw_hunt_bytes_discarded, 2);
+
+        let _: Vec<_> = pump.feed_raw(&[0xFFu8; 100]).collect();
+        assert_eq!(pump.raw_hunt_buf.len(), RAW_HUNT_CAP);
+        assert_eq!(pump.stats().raw_hunt_bytes_discarded, 102);
+    }
+
+    #[test]
+    fn hunting_still_finds_three_valid_packets_after_cap_sized_garbage() {
+        for garbage_len in [RAW_HUNT_CAP - 1, RAW_HUNT_CAP, RAW_HUNT_CAP + 1] {
+            let mut pump = T2miPump::raw();
+            let mut corrupt = vec![0x42, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF];
+            corrupt[9] ^= 0x01;
+            let _: Vec<_> = pump.feed_raw(&corrupt).collect();
+            assert_eq!(pump.stats().crc_failures, 1);
+
+            let _: Vec<_> = pump.feed_raw(&vec![0xFFu8; garbage_len]).collect();
+            assert!(pump.raw_hunt_buf.len() <= RAW_HUNT_CAP);
+
+            let mut stream = Vec::new();
+            for payload in [&[0x11u8][..], &[0x22][..], &[0x33][..]] {
+                stream.extend_from_slice(&make_t2mi_packet(0x20, payload));
+            }
+            let events: Vec<_> = pump.feed_raw(&stream).collect();
+            assert_eq!(
+                events.len(),
+                3,
+                "garbage of {garbage_len} bytes must not hide the packets behind it"
+            );
+            assert_eq!(pump.stats().raw_resyncs, 1);
+        }
+    }
+
     // ── (c) feed_raw with packet split across two calls → one event ──────────
 
     #[test]
