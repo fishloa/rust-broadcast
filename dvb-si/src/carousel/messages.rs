@@ -1403,10 +1403,7 @@ mod tests {
             ack_period: 7,
             t_c_download_window: 0x0000_0010,
             t_c_download_scenario: 0x0000_0020,
-            compatibility_descriptor: CompatibilityDescriptor {
-                empty_count_present: false,
-                descriptors: vec![],
-            },
+            compatibility_descriptor: nonempty_compat(),
             modules: vec![
                 DiiModule {
                     module_id: 1,
@@ -1425,14 +1422,15 @@ mod tests {
         });
         #[rustfmt::skip]
         let expected: &[u8] = &[
-            0x11, 0x03, 0x10, 0x02, 0x80, 0x02, 0x00, 0x02, 0xFF, 0x02, 0x00, 0x2F,
+            0x11, 0x03, 0x10, 0x02, 0x80, 0x02, 0x00, 0x02, 0xFF, 0x02, 0x00, 0x40,
             0xB1, 0xB2,                                     // adaptation
             0x00, 0x00, 0x00, 0xAB,                         // downloadId
             0x0F, 0xE2,                                     // blockSize = 4066
             0x05, 0x07,                                     // windowSize, ackPeriod
             0x00, 0x00, 0x00, 0x10,                         // tCDownloadWindow
             0x00, 0x00, 0x00, 0x20,                         // tCDownloadScenario
-            0x00, 0x00,                                     // compat length = 0
+            0x00, 0x11, 0x00, 0x01, 0x01, 0x0D, 0x01, 0x00, 0x15, 0x0A,
+            0x12, 0x34, 0x00, 0x01, 0x01, 0x05, 0x02, 0xAA, 0xBB, // compat
             0x00, 0x02,                                     // numberOfModules = 2
             0x00, 0x01, 0x00, 0x00, 0x1F, 0x40, 0x03, 0x02, // module 1 header
             0xDE, 0xAD,                                     // module 1 info
@@ -1440,7 +1438,7 @@ mod tests {
             0xBE, 0xEF, 0x01,                               // module 2 info
             0x00, 0x02, 0xC1, 0xC2,                         // privateData
         ];
-        assert_eq!(msg.serialized_len(), 59);
+        assert_eq!(msg.serialized_len(), 76);
         assert_eq!(msg.serialized_len(), expected.len());
         let mut buf = vec![0u8; expected.len()];
         assert_eq!(msg.serialize_into(&mut buf).unwrap(), expected.len());
@@ -1454,9 +1452,9 @@ mod tests {
 
     #[test]
     fn put_length_prefixed_returns_the_position_after_the_payload() {
-        let mut buf = [0u8; 8];
-        let end = put_length_prefixed(&mut buf, 2, &[0xAA, 0xBB, 0xCC]).unwrap();
-        assert_eq!(end, 7);
-        assert_eq!(&buf[2..7], &[0x00, 0x03, 0xAA, 0xBB, 0xCC]);
+        let mut buf = [0u8; 12];
+        let end = put_length_prefixed(&mut buf, 3, &[0xAA, 0xBB, 0xCC]).unwrap();
+        assert_eq!(end, 8);
+        assert_eq!(&buf[3..8], &[0x00, 0x03, 0xAA, 0xBB, 0xCC]);
     }
 }
