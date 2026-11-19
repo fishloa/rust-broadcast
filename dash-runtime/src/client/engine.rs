@@ -2421,3 +2421,125 @@ mod track_id_allocation_tests {
         assert_eq!(next, 401, "ids must stay monotonic, never recycled");
     }
 }
+
+#[cfg(test)]
+mod fault_label_tests {
+    use super::{address_name, plan_error_name, ranges_overlap};
+    use crate::address::AddressError;
+    use crate::address::PlanError;
+    use crate::address::template::TemplateFault;
+    use crate::error::Unsupported;
+    use broadcast_dash::inherit::InheritError;
+
+    fn transmux_error() -> transmux::Error {
+        transmux::Error::InvalidValue(broadcast_common::error::InvalidValue {
+            field: "field",
+            value: 0,
+            reason: "reason",
+        })
+    }
+
+    #[test]
+    fn every_addressing_fault_has_its_stable_label() {
+        let cases: Vec<(AddressError, &'static str)> = vec![
+            (
+                AddressError::InvalidTemplate {
+                    template: "t".to_owned(),
+                    fault: TemplateFault::UnknownIdentifier,
+                },
+                "invalid_template",
+            ),
+            (
+                AddressError::MissingTemplateValue {
+                    template: "t".to_owned(),
+                    which: "number",
+                },
+                "missing_template_value",
+            ),
+            (AddressError::Unsupported(Unsupported::DataUrl), "data_url"),
+            (AddressError::MissingMediaTemplate, "missing_media_template"),
+            (AddressError::MissingDuration, "missing_duration"),
+            (
+                AddressError::TimelineNotIncreasing { t: 1, floor: 2 },
+                "timeline_not_increasing",
+            ),
+            (
+                AddressError::NumberNotIncreasing { n: 1, expected: 2 },
+                "number_not_increasing",
+            ),
+            (AddressError::ZeroSegmentDuration, "zero_segment_duration"),
+            (
+                AddressError::TimelineTooLong { count_hint: 9 },
+                "timeline_too_long",
+            ),
+            (
+                AddressError::ListTimelineMismatch {
+                    urls: 1,
+                    segments: 2,
+                },
+                "list_timeline_mismatch",
+            ),
+            (AddressError::Sidx(transmux_error()), "bad_sidx"),
+            (AddressError::Overflow, "overflow"),
+            (AddressError::IndexRequired, "index_required"),
+            (AddressError::EmptySegmentUrl, "empty_segment_url"),
+            (AddressError::UnsupportedFeature, "unsupported_feature"),
+        ];
+        for (error, label) in cases {
+            assert_eq!(address_name(&error), label, "{error:?}");
+        }
+    }
+
+    #[test]
+    fn every_planning_fault_has_its_stable_label() {
+        assert_eq!(
+            plan_error_name(&PlanError::NoSuchRepresentation),
+            "no_such_representation"
+        );
+        assert_eq!(
+            plan_error_name(&PlanError::Inherit(InheritError::TemplateAndList)),
+            "inherit"
+        );
+        assert_eq!(
+            plan_error_name(&PlanError::Address(AddressError::Overflow)),
+            "overflow"
+        );
+        assert_eq!(
+            plan_error_name(&PlanError::PeriodUnresolved),
+            "period_unresolved"
+        );
+        assert_eq!(
+            plan_error_name(&PlanError::MissingAvailabilityStartTime),
+            "missing_availability_start_time"
+        );
+    }
+
+    #[test]
+    fn the_remembered_deliveries_stay_at_the_cap() {
+        let mut c = super::DashClient::new(
+            super::DashClientConfig::new(url::Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(super::DashConfig::default())
+                .with_limits(super::PullLimits::default()),
+        );
+        for n in 0..(super::MAX_REMEMBERED_DONE as u64 + 100) {
+            c.mark_done(super::ResourceId::Segment {
+                rep: super::RepId(0),
+                number: n,
+            });
+        }
+        assert_eq!(c.remembered_done.len(), super::MAX_REMEMBERED_DONE);
+        assert_eq!(c.done.len(), super::MAX_REMEMBERED_DONE);
+        assert_eq!(c.state_size().done, 4096);
+    }
+
+    #[test]
+    fn adjacent_byte_ranges_do_not_overlap() {
+        assert!(ranges_overlap(0, 10, 5, 10));
+        assert!(ranges_overlap(5, 10, 0, 10));
+        assert!(ranges_overlap(0, 10, 0, 10));
+        assert!(!ranges_overlap(0, 10, 10, 10), "touching, not overlapping");
+        assert!(!ranges_overlap(10, 10, 0, 10));
+        assert!(!ranges_overlap(0, 10, 20, 5));
+        assert!(!ranges_overlap(0, 0, 0, 0), "two empty ranges");
+    }
+}
