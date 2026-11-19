@@ -4,6 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 ### Tests
+- The root-element identity check is pinned: a gateway document is refused by the server entry point (and vice versa), and right-name/foreign-namespace and right-namespace/wrong-name roots are each rejected (audit 22 #3044).
 - The XML envelope's trailing-comment/PI allowance, `MultipleRoots`, `CharDataOutsideRoot` and the `drain` precedence rule (a later well-formedness error outranks an earlier semantic one) are pinned with hostile input (audit 22 #3043).
 - Every DOCTYPE refusal site is pinned with hostile input (inside a skipped subtree, between children, inside modelled text, and after a semantic error via `drain`), and a nested element inside a text-only element is shown not to absorb its text (audit 22 #3042).
 - `ObjectCarousel` serialization is round-tripped with each of its three child lists populated on its own, so a writer regression that self-closes the element whenever any list is empty cannot silently drop carousel content (audit 22 #3041).
