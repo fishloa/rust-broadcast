@@ -14,5 +14,6 @@ mod truncation;
 #[cfg(feature = "std")]
 mod unknown_attributes;
 mod unknown_children_roundtrip;
+mod validation_rules;
 mod xml_declaration;
 mod xml_escaping;
