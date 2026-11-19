@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- The 2-, 4- and 8-bit pixel-data run-length decoders are pinned to every code branch of EN 300 743 Tables 22-26 (single pixels, run-of-N in colour 0, runs with a pixel code including the 284/280/127 ceilings), the scanner's exact byte consumption including stuffing bits, the sub-block dispatch with all map-table sizes, and top/bottom field offsets plus stuffing validation (#3223).
+- Alternative CLUT 8-/10-bit entries are hand-computed byte vectors with distinct component values, and the disparity signalling segment is byte-anchored with two regions, positioned subregions, page and per-subregion update sequences, negative/positive disparities, the 4-subregion ceiling and the position-mismatch rejection (#3224).
+- Region, page, CLUT, display-definition and PES data-field layouts are pinned with distinct field values (compatibility/depth/CLUT ids, 12-bit positions, 3-region page composition with an exact remainder error, full/reduced CLUT entries, the display window, and the PES header/marker boundaries) (#3225).
 
 ## [0.9.0] - 2026-11-15
 
