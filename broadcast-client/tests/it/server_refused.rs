@@ -222,6 +222,20 @@ fn the_reason_is_sanitised_capped_decoded_and_absent_for_other_content_types() {
     let got = reason_of(Some("text/plain"), b"bad \xff byte");
     assert_eq!(got.as_deref(), Some("bad \u{fffd} byte"), "lossy utf8");
 
+    let got = reason_of(Some("text/plain"), b"abc\xe2\x82");
+    assert_eq!(
+        got.as_deref(),
+        Some("abc"),
+        "a mid-codepoint cut is trimmed, not replaced with U+FFFD"
+    );
+
+    let invalid = vec![0xFFu8; 200];
+    let got = reason_of(Some("text/plain"), &invalid).unwrap();
+    assert_eq!(got.chars().count(), 85);
+    assert_eq!(got.len(), 255);
+    assert!(got.len() <= MAX_SERVER_REFUSED_REASON_BYTES);
+    assert!(got.chars().all(|c| c == '\u{fffd}'), "{got:?}");
+
     assert_eq!(reason_of(Some("application/json"), b"{\"e\":1}"), None);
     assert_eq!(reason_of(Some("text/html"), b"<p>busy</p>"), None);
     assert_eq!(
