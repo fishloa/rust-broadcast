@@ -874,6 +874,27 @@ mod tests {
     }
 
     #[test]
+    fn action_type_arm_boundaries_are_classified() {
+        assert_eq!(UntActionType::from_u8(0x00), UntActionType::Reserved);
+        assert_eq!(
+            UntActionType::from_u8(0x01),
+            UntActionType::SystemSoftwareUpdate
+        );
+        assert_eq!(
+            UntActionType::from_u8(0x02),
+            UntActionType::DvbReserved(0x02)
+        );
+        assert_eq!(
+            UntActionType::from_u8(0x7F),
+            UntActionType::DvbReserved(0x7F)
+        );
+        assert_eq!(
+            UntActionType::from_u8(0x80),
+            UntActionType::UserDefined(0x80)
+        );
+    }
+
+    #[test]
     fn action_type_full_range_round_trip() {
         for byte in 0u8..=0xFF {
             let at = UntActionType::from_u8(byte);
