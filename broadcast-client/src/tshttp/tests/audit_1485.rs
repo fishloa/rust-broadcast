@@ -1,5 +1,6 @@
+use super::TsHttpClient;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, Event, TsHttpClient};
+use crate::tshttp::{Action, Event};
 use broadcast_common::backoff::BackoffSteps;
 use broadcast_common::stage::Timestamp;
 use std::time::Duration;
@@ -34,7 +35,7 @@ fn events(c: &mut TsHttpClient) -> Vec<Event> {
 fn stall_notices(evs: &[Event]) -> Vec<u64> {
     evs.iter()
         .filter_map(|e| match e {
-            Event::StallNotice { secs } => Some(*secs),
+            Event::StallNotice { stalled } => Some(stalled.as_secs()),
             _ => None,
         })
         .collect()
@@ -112,9 +113,12 @@ fn opening_has_a_deadline_and_it_fires_the_failure_path() {
     c.poll_timeout(ts(15_000));
     assert_eq!(
         actions(&mut c),
-        vec![Action::Abort, Action::Reconnect {
-            after: Duration::from_millis(2000),
-        }]
+        vec![
+            Action::Abort,
+            Action::Reconnect {
+                after: Duration::from_millis(2000),
+            }
+        ]
     );
     assert!(matches!(
         events(&mut c).as_slice(),
@@ -139,9 +143,12 @@ fn opening_response_in_time_cancels_the_opening_deadline() {
 fn short_played_connection_cannot_spin() {
     let mut c = playing(Config::default());
     c.on_eof(ts(0));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+    assert_eq!(
+        actions(&mut c),
+        vec![Action::Reconnect {
             after: Duration::from_millis(1000),
-        }]);
+        }]
+    );
     assert_eq!(c.next_deadline(), Some(Timestamp::from_millis(1_000)));
     c.poll_timeout(ts(999));
     assert!(actions(&mut c).is_empty());
@@ -153,9 +160,12 @@ fn short_played_connection_cannot_spin() {
 fn short_played_connection_floor_is_open_to_open() {
     let mut c = playing(Config::default());
     c.on_eof(ts(400));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+    assert_eq!(
+        actions(&mut c),
+        vec![Action::Reconnect {
             after: Duration::from_millis(600),
-        }]);
+        }]
+    );
 }
 
 #[test]
@@ -166,18 +176,24 @@ fn short_played_connection_keeps_attempt_reset() {
     c.poll_timeout(ts(1_000));
     let _ = actions(&mut c);
     c.on_response(500, &[], ts(1_000));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+    assert_eq!(
+        actions(&mut c),
+        vec![Action::Reconnect {
             after: Duration::from_millis(2000),
-        }]);
+        }]
+    );
 }
 
 #[test]
 fn long_lived_stream_reconnects_with_zero_delay() {
     let mut c = playing(Config::default());
     c.on_eof(ts(60_000));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+    assert_eq!(
+        actions(&mut c),
+        vec![Action::Reconnect {
             after: Duration::from_millis(0),
-        }]);
+        }]
+    );
     assert_eq!(c.next_deadline(), Some(Timestamp::from_millis(60_000)));
 }
 
@@ -185,9 +201,12 @@ fn long_lived_stream_reconnects_with_zero_delay() {
 fn connection_just_at_the_floor_reconnects_with_zero_delay() {
     let mut c = playing(Config::default());
     c.on_eof(ts(1_000));
-    assert_eq!(actions(&mut c), vec![Action::Reconnect {
+    assert_eq!(
+        actions(&mut c),
+        vec![Action::Reconnect {
             after: Duration::from_millis(0),
-        }]);
+        }]
+    );
 }
 
 #[test]
@@ -230,11 +249,20 @@ fn stall_catch_up_after_one_hour_jump_emits_one_notice() {
     c.poll_timeout(ts(3_605_000));
     assert_eq!(stall_notices(&events(&mut c)), vec![3_605]);
     let d = c.next_deadline().expect("deadline");
-    assert!(d > ts(3_605_000), "{d:?}");
-    c.poll_timeout(ts(3_605_999));
-    assert!(stall_notices(&events(&mut c)).is_empty());
-    c.poll_timeout(ts(3_606_000));
-    assert_eq!(stall_notices(&events(&mut c)), vec![3_606]);
+    assert_eq!(d, ts(8_000), "the repeat schedule doubles: 6 s plus 2 s");
+    let mut catch_up = 0u32;
+    while c.next_deadline().is_some_and(|d| d <= ts(3_605_999)) {
+        catch_up += 1;
+        assert!(catch_up <= 32, "the catch-up doubles towards the clock");
+        c.poll_timeout(ts(3_605_999));
+        assert_eq!(
+            stall_notices(&events(&mut c)).len(),
+            1,
+            "one notice per catch-up poll"
+        );
+    }
+    assert_eq!(catch_up, 10);
+    assert!(c.next_deadline().expect("deadline") > ts(3_605_999));
 }
 
 #[test]
@@ -245,7 +273,10 @@ fn stall_notice_arithmetic_does_not_overflow_near_u64_max() {
     assert_eq!(stall_notices(&events(&mut c)).len(), 1);
     c.poll_timeout(ts(u64::MAX - 1));
     assert!(stall_notices(&events(&mut c)).is_empty());
-    assert!(c.next_deadline().is_some());
+    assert!(
+        c.next_deadline().is_none(),
+        "an instant past the end of the clock is a timer that never fires"
+    );
 }
 
 fn hdr(k: &str, v: &str) -> Vec<(String, String)> {
@@ -401,8 +432,11 @@ fn empty_backoff_and_zero_timeouts_do_not_spin_the_client() {
     c.poll_timeout(ts(1));
     assert_eq!(
         actions(&mut c),
-        vec![Action::Abort, Action::Reconnect {
-            after: Duration::from_millis(500),
-        }]
+        vec![
+            Action::Abort,
+            Action::Reconnect {
+                after: Duration::from_millis(500),
+            }
+        ]
     );
 }

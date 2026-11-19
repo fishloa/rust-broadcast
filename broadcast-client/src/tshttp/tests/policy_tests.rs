@@ -1,5 +1,6 @@
+use super::TsHttpClient;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, TsHttpClient, TsHttpPolicy};
+use crate::tshttp::{Action, Event, StarveKind};
 use broadcast_common::stage::Timestamp;
 use std::time::Duration;
 
@@ -22,7 +23,7 @@ fn backoff_2_4_8_then_10_forever() {
         // drain reconnect
         while let Some(a) = c.poll() {
             if let Action::Reconnect { after } = a {
-                got.push(after);
+                got.push(after.as_millis() as u64);
             }
         }
         // advance backoff
@@ -35,7 +36,7 @@ fn backoff_2_4_8_then_10_forever() {
     assert_eq!(got[0], 2000);
     for (step, delay) in [4000u64, 8000, 10000, 10000, 10000].iter().zip(&got[1..]) {
         assert!(
-            (*delay as f64) >= (*step as f64) * 5.0 / 6.0 && *delay <= *step,
+            *delay >= *step * 5 / 6 && *delay <= *step,
             "a {step} ms step: {delay} ms"
         );
     }
@@ -99,9 +100,12 @@ fn server_closes_every_60s_no_stall_notice() {
             std::sync::LazyLock::new(|| test_fixtures::read("ts/h264-aac.ts"));
         c.feed(D.as_slice(), ts(i * 60000 + 1));
         c.on_eof(ts(i * 60000 + 60000));
-        assert_eq!(c.poll(), Some(Action::Reconnect {
-            after: Duration::ZERO,
-        }));
+        assert_eq!(
+            c.poll(),
+            Some(Action::Reconnect {
+                after: Duration::ZERO,
+            })
+        );
         let dl = c.next_deadline().unwrap();
         c.poll_timeout(dl);
         let _ = c.poll();
@@ -114,10 +118,7 @@ fn not_found_then_ok() {
     let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(404, &[], ts(0));
-    assert!(matches!(
-        c.poll_event(),
-        Some(Event::NotFound)
-    ));
+    assert!(matches!(c.poll_event(), Some(Event::NotFound)));
     let _ = c.poll_event(); // reconnecting
     let _ = c.poll(); // reconnect
     let dl = c.next_deadline().unwrap();
@@ -134,10 +135,7 @@ fn gone_410_is_not_found_event() {
     let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(410, &[], ts(0));
-    assert!(matches!(
-        c.poll_event(),
-        Some(Event::NotFound)
-    ));
+    assert!(matches!(c.poll_event(), Some(Event::NotFound)));
 }
 
 #[test]
@@ -199,9 +197,12 @@ fn caller_reconnect_in_every_connected_state() {
         }
         c.reconnect(ts(5));
         assert_eq!(c.poll(), Some(Action::Abort));
-        assert_eq!(c.poll(), Some(Action::Reconnect {
-            after: Duration::ZERO,
-        }));
+        assert_eq!(
+            c.poll(),
+            Some(Action::Reconnect {
+                after: Duration::ZERO,
+            })
+        );
     }
 }
 

@@ -1,5 +1,6 @@
+use super::TsHttpClient;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, Event, TsHttpClient};
+use crate::tshttp::{Action, Event};
 use broadcast_common::stage::Timestamp;
 use std::collections::BTreeMap;
 
@@ -51,13 +52,13 @@ fn eof_flushes_held_back_samples() {
 
     // oracle
     let mut d = transmux::StreamingTsDemux::new();
-    d.feed(&bytes);
-    d.finish();
+    let _ = d.feed(&bytes);
+    let _ = d.finish();
     let mut oracle = BTreeMap::new();
     // need collect from a fresh feed+finish
     let mut d2 = transmux::StreamingTsDemux::new();
-    d2.feed(&bytes);
-    d2.finish();
+    let _ = d2.feed(&bytes);
+    let _ = d2.finish();
     while let Some(e) = d2.poll_event() {
         if let transmux::DemuxEvent::Sample { track_id, .. } = e {
             *oracle.entry(track_id.value()).or_insert(0) += 1;
@@ -124,7 +125,7 @@ fn eof_with_only_flushed_sample_counts_as_played() {
     for n in 1..=bytes.len() {
         let prefix = &bytes[..n];
         let mut d = transmux::StreamingTsDemux::new();
-        d.feed(prefix);
+        let _ = d.feed(prefix);
         let mut before = 0;
         while let Some(e) = d.poll_event() {
             if matches!(e, transmux::DemuxEvent::Sample { .. }) {
@@ -135,7 +136,7 @@ fn eof_with_only_flushed_sample_counts_as_played() {
             continue;
         }
         // finish
-        d.finish();
+        let _ = d.finish();
         let mut after = 0;
         while let Some(e) = d.poll_event() {
             if matches!(e, transmux::DemuxEvent::Sample { .. }) {

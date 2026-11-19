@@ -1,5 +1,6 @@
+use super::{TsHttpClient, TsHttpPolicy};
+use crate::tshttp::Event;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Event, TsHttpClient, TsHttpPolicy};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.

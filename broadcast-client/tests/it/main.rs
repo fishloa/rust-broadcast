@@ -91,5 +91,6 @@ mod timeline_jump;
 mod srt_rejections;
 mod tracks_hold_config;
 mod ts_http_events;
+mod ts_http_wake;
 mod udp;
 mod vod;

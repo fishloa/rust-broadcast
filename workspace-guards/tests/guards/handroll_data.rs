@@ -17,11 +17,7 @@ use crate::handroll_needles::Crate as Needles;
 pub const DEHANDROLL: &[Dehandroll] = &[
     Dehandroll {
         name: "broadcast-auth",
-        allow: &[(
-            "src/cookies/differential.rs",
-            "\"a=",
-            "cookie test fixture values, not SDP attributes",
-        )],
+        allow: &[],
     },
     Dehandroll {
         name: "broadcast-common",
