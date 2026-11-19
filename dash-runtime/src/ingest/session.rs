@@ -628,6 +628,21 @@ mod tests {
     }
 
     #[test]
+    fn a_duplicate_segment_still_marks_the_end_of_the_representation() {
+        let (mut s, media) = session_with_one_header();
+        let seg = segment_of(&media, 0, 1);
+        s.on_segment("1", Some(1), None, &seg).expect("accepted");
+        let mut last = styp(&[b"msdh", b"msix", b"lmsg"]);
+        last.extend_from_slice(&seg);
+        s.on_segment("1", Some(1), None, &last)
+            .expect("a duplicate is swallowed");
+        assert!(
+            s.ingest_state.is_last("1"),
+            "the lmsg brand of a duplicate segment still marks the end"
+        );
+    }
+
+    #[test]
     fn the_demand_is_the_read_buffer() {
         let s = DashifIngestSession::new(DashifIngestConfig::default());
         let d = s.demand();
