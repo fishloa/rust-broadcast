@@ -7,8 +7,8 @@ use dvb_t2mi::packet::PacketType;
 use dvb_t2mi::payload::fef_null::{S1Field, S2Field1};
 use dvb_t2mi::payload::{
     AuxStreamType, Bandwidth, FrequencySource, GuardInterval, L1CodeRate, L1FecType, L1Modulation,
-    PaprReductionV0, PaprReductionVn, PilotPattern, PlpCodeRate, PlpFecType, PlpMode, PlpModulation,
-    PlpPayloadType, PlpType, PrbsType, SubpartVariety, T2Version, TxInputStreamType,
+    PaprReductionV0, PaprReductionVn, PilotPattern, PlpCodeRate, PlpFecType, PlpMode,
+    PlpModulation, PlpPayloadType, PlpType, PrbsType, SubpartVariety, T2Version, TxInputStreamType,
 };
 
 fn assert_names<T, F, G, N>(label: &str, mask: u8, names: &[&str], from: F, to: G, name: N)
@@ -197,7 +197,12 @@ fn papr_reduction_v0_values_and_names() {
     assert_names(
         "PaprReductionV0",
         0x0F,
-        &["No PAPR reduction", "ACE-PAPR only", "TR-PAPR only", "ACE and TR"],
+        &[
+            "No PAPR reduction",
+            "ACE-PAPR only",
+            "TR-PAPR only",
+            "ACE and TR",
+        ],
         PaprReductionV0::from_u8,
         |v| v.to_u8(),
         |v| v.name(),

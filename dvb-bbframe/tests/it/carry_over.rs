@@ -53,8 +53,16 @@ fn header(mode: Mode, dfl_bits: u16, syncd: u16) -> [u8; BBHEADER_LEN] {
             ext: 0,
             isi: 0,
         },
-        upl: if mode == Mode::Normal { (NM_UP_SIZE * 8) as u16 } else { 0 },
-        sync: if mode == Mode::Normal { TS_SYNC_BYTE } else { 0 },
+        upl: if mode == Mode::Normal {
+            (NM_UP_SIZE * 8) as u16
+        } else {
+            0
+        },
+        sync: if mode == Mode::Normal {
+            TS_SYNC_BYTE
+        } else {
+            0
+        },
         dfl: dfl_bits,
         syncd,
         mode,
@@ -127,8 +135,12 @@ fn hem_carry_needs_the_final_byte_before_it_emits() {
 fn hem_mismatched_syncd_discards_the_partial() {
     let mut ex = CarryOverExtractor::new();
     assert!(
-        ex.feed_hem(&header(Mode::HighEfficiency, 100 * 8, 0), &[0xA5; 100], false)
-            .is_empty()
+        ex.feed_hem(
+            &header(Mode::HighEfficiency, 100 * 8, 0),
+            &[0xA5; 100],
+            false
+        )
+        .is_empty()
     );
 
     // need = 188 - 101 = 87; SYNCD claims 50 bytes.
@@ -143,8 +155,12 @@ fn hem_mismatched_syncd_discards_the_partial() {
     // Stranded SYNCD matching the need but without enough bytes is also a
     // mismatch, not an out-of-bounds copy.
     assert!(
-        ex.feed_hem(&header(Mode::HighEfficiency, 100 * 8, 0), &[0xA5; 100], false)
-            .is_empty()
+        ex.feed_hem(
+            &header(Mode::HighEfficiency, 100 * 8, 0),
+            &[0xA5; 100],
+            false
+        )
+        .is_empty()
     );
     let out = ex.feed_hem(
         &header(Mode::HighEfficiency, 50 * 8, 87 * 8),
@@ -192,7 +208,10 @@ fn nm_up_split_across_three_frames_is_reassembled() {
             .is_empty()
     );
 
-    let out = ex.feed_nm(&header(Mode::Normal, 50 * 8, ALL_CONTINUATION), &up[100..150]);
+    let out = ex.feed_nm(
+        &header(Mode::Normal, 50 * 8, ALL_CONTINUATION),
+        &up[100..150],
+    );
     assert!(out.is_empty(), "150 of 188 carried bytes must not emit");
 
     let out = ex.feed_nm(&header(Mode::Normal, 38 * 8, ALL_CONTINUATION), &up[150..]);
@@ -212,7 +231,10 @@ fn nm_carry_needs_the_final_byte_before_it_emits() {
         ex.feed_nm(&header(Mode::Normal, 187 * 8, 0), &up[..NM_UP_SIZE - 1])
             .is_empty()
     );
-    let out = ex.feed_nm(&header(Mode::Normal, 8, ALL_CONTINUATION), &up[NM_UP_SIZE - 1..]);
+    let out = ex.feed_nm(
+        &header(Mode::Normal, 8, ALL_CONTINUATION),
+        &up[NM_UP_SIZE - 1..],
+    );
     assert_eq!(out.len(), 1);
     assert_eq!(out[0], packet);
 }

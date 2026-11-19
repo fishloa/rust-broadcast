@@ -79,12 +79,10 @@ fn stream_id_seven_is_encodable_and_eight_is_rejected() {
     hdr.t2mi_stream_id = 8;
     assert_eq!(
         hdr.serialize_into(&mut buf).err(),
-        Some(Error::FieldOverflow(
-            broadcast_common::len::FieldOverflow {
-                field: "t2mi_stream_id",
-                value: 8,
-                max: 7,
-            }
-        ))
+        Some(Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+            field: "t2mi_stream_id",
+            value: 8,
+            max: 7,
+        }))
     );
 }

@@ -31,7 +31,11 @@ fn roll_off_labels() {
     assert_label(RollOff::Alpha035, RollOff::Alpha035.name(), "α=0.35");
     assert_label(RollOff::Alpha025, RollOff::Alpha025.name(), "α=0.25");
     assert_label(RollOff::Alpha020, RollOff::Alpha020.name(), "α=0.20");
-    assert_label(RollOff::Reserved, RollOff::Reserved.name(), "reserved/S2X-low");
+    assert_label(
+        RollOff::Reserved,
+        RollOff::Reserved.name(),
+        "reserved/S2X-low",
+    );
 }
 
 #[test]

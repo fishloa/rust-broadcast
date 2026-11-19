@@ -9,7 +9,7 @@ use broadcast_common::{Parse, Serialize};
 use dvb_t2mi::Error;
 use dvb_t2mi::payload::{
     AddressingFunctionTag, BandwidthBody, CellIdBody, FrequencyBody, FunctionBody, FunctionEntry,
-    IndividualAddressingPayload, PrivateDataBody, TransmitterEntry, TrPaprBody,
+    IndividualAddressingPayload, PrivateDataBody, TrPaprBody, TransmitterEntry,
     TxSigAuxStreamTxIdBody, TxSigFefSeqNumBody,
 };
 
@@ -202,10 +202,7 @@ fn individual_addressing_length_maximum_is_accepted() {
     let mut buf = vec![0u8; payload.serialized_len()];
     payload.serialize_into(&mut buf).unwrap();
     assert_eq!(buf[1], 255);
-    assert_eq!(
-        IndividualAddressingPayload::parse(&buf).unwrap(),
-        payload
-    );
+    assert_eq!(IndividualAddressingPayload::parse(&buf).unwrap(), payload);
 }
 
 #[test]
