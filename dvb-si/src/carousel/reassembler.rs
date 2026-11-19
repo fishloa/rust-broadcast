@@ -658,6 +658,19 @@ mod tests {
         assert_eq!(r.pending(), 3, "one more byte would exceed the budget");
     }
 
+    /// Geometry is the pair (`module_size`, `block_size`): matching only one
+    /// of the two still means the old slot cannot accept the new DDBs.
+    #[test]
+    fn a_dii_repeat_with_only_a_block_size_change_replaces_the_slot() {
+        let mut r = ModuleReassembler::new();
+        r.note_dii(&dii(1, 2, vec![module(1, 4, 0)]));
+        r.note_dii(&dii(1, 4, vec![module(1, 4, 0)]));
+        let done = r
+            .feed_ddb(&ddb(1, 1, 0, 0, &[1, 2, 3, 4]))
+            .expect("the re-announced 4-byte block geometry completes in one block");
+        assert_eq!(done.data, [1, 2, 3, 4]);
+    }
+
     /// The completed-version FIFO is bounded by `max_slots` independently of
     /// the in-progress slot map: completing a third distinct module evicts
     /// the oldest record, so its next DII repeat re-collects it while the two
