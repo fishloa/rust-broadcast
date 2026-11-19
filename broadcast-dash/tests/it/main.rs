@@ -3,6 +3,7 @@
 mod corpus;
 mod dash_duration;
 mod descriptors;
+mod features_round_trip;
 mod inherit;
 mod limits;
 mod model_helpers;
