@@ -61,9 +61,10 @@ const PTS_MASK: u64 = (1 << 33) - 1;
 // (2, bits 5:4, fixed `'00'`) + `PES_priority`(1, bit 3, bslbf) +
 // `data_alignment_indicator`(1, bit 2, fixed `'1'`) + `copyright`(1, bit 1,
 // bslbf) + `original_or_copy`(1, bit 0, bslbf) (S291-W4, #1116).
-/// `data_alignment_indicator` bit value (bit 2 of byte 6; ST 2038 Table 2:
-/// fixed `'1'`).
-const BYTE6_DATA_ALIGNMENT_BIT: u8 = 0b0000_0100;
+/// The value ST 2038 Table 2 pins the `data_alignment_indicator` flag itself
+/// to (bit 2 of byte 6 is fixed `'1'`), as reported in
+/// [`Error::ReservedBits`].
+const DATA_ALIGNMENT_INDICATOR_VALUE: u8 = 1;
 // Field widths (bits) of the per-ANC-packet **placement** (Table 2); the
 // content field widths (DID/SDID/data_count/user_data_word/checksum) live in
 // `crate::anc_content` since they are shared with the RTP transport.
@@ -398,7 +399,7 @@ impl AncDataPacket {
         if !h.data_alignment_indicator {
             return Err(Error::ReservedBits(broadcast_common::error::ReservedBits {
                 field: "data_alignment_indicator",
-                expected: u64::from(BYTE6_DATA_ALIGNMENT_BIT & 1),
+                expected: u64::from(DATA_ALIGNMENT_INDICATOR_VALUE),
                 found: 0,
             }));
         }
@@ -589,12 +590,69 @@ mod tests {
         let mut p = sample_2packet();
         p.pts = PTS_MASK + 1;
         let mut out = vec![0u8; p.serialized_len()];
-        assert!(matches!(
+        match p.serialize_into(&mut out) {
+            Err(Error::FieldOverflow(f)) => {
+                assert_eq!(f.field, "PTS");
+                assert_eq!(f.value, PTS_MASK + 1);
+                assert_eq!(f.max, 8_589_934_591, "2^33 - 1");
+            }
+            other => panic!("expected FieldOverflow for PTS, got {other:?}"),
+        }
+    }
+
+    /// The record's bit length is the fixed 30-bit placement prefix plus the
+    /// 40-bit content header plus 10 bits per user data word; its byte
+    /// length rounds that up. Pinned per word count, including the
+    /// non-word-aligned boundaries (70, 90 and 100 bits).
+    #[test]
+    fn record_byte_length_is_hand_computed_per_udw_count() {
+        for (n, bits, bytes) in [(0usize, 70usize, 9usize), (1, 80, 10), (2, 90, 12), (3, 100, 13)]
+        {
+            let p = AncPacket {
+                c_not_y_channel_flag: false,
+                line_number: 9,
+                horizontal_offset: 0,
+                did: 0x161,
+                sdid: 0x101,
+                user_data_words: vec![0x101; n],
+            };
+            assert_eq!(p.body_bits(), bits, "n={n}");
+            assert_eq!(p.serialized_byte_len(), bytes, "n={n}");
+        }
+    }
+
+    /// `PES_packet_length` of exactly 65535 is legal and must be accepted;
+    /// 65536 is the first rejected value.
+    #[test]
+    fn pes_packet_length_ceiling_is_exact() {
+        let mut p = AncDataPacket {
+            pes_priority: false,
+            copyright: false,
+            original_or_copy: false,
+            pts: 0,
+            anc_packets: vec![AncPacket {
+                c_not_y_channel_flag: false,
+                line_number: 9,
+                horizontal_offset: 0,
+                did: 0x161,
+                sdid: 0x101,
+                user_data_words: vec![],
+            }],
+            // 9-byte record; 8 + (9 + stuffing) == 65535.
+            stuffing_bytes: 65_527 - 9,
+        };
+        assert_eq!(p.pes_packet_length(), 65_535);
+        let mut out = vec![0u8; p.serialized_len()];
+        assert_eq!(p.serialize_into(&mut out).unwrap(), 14 + 65_527);
+        assert_eq!(&out[4..6], &[0xFF, 0xFF]);
+
+        p.stuffing_bytes += 1;
+        assert_eq!(p.pes_packet_length(), 65_536);
+        let mut out = vec![0u8; p.serialized_len()];
+        assert_eq!(
             p.serialize_into(&mut out),
-            Err(Error::FieldOverflow(
-                broadcast_common::error::FieldOverflow { field: "PTS", .. }
-            ))
-        ));
+            Err(Error::PesLengthTooLarge(65_536))
+        );
     }
 
     #[test]
