@@ -230,13 +230,13 @@ fn pat_trailing_entry_bytes() {
 
 #[test]
 fn pmt_trailing_stream_bytes() {
-    // 17-byte PMT: stream loop starts at 12 with one leftover byte.
+    // 18-byte PMT: stream loop starts at 12 with two leftover bytes.
     let bytes = seal(vec![
-        0x02, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xE0, 0x00, 0xF0, 0x00, 0xAA,
+        0x02, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xE0, 0x00, 0xF0, 0x00, 0xAA, 0xBB,
     ]);
     assert_eq!(
         PmtSection::parse(&bytes).unwrap_err(),
-        too_short(1, 0, "PmtSection trailing stream bytes")
+        too_short(2, 0, "PmtSection trailing stream bytes")
     );
 }
 
@@ -284,10 +284,16 @@ fn protection_hash_entry_past_loop_end() {
 
 #[test]
 fn protection_extension_bytes_past_body_end() {
-    let bytes = protection(0x0001, &[0x00, 0x00, 0x00, 0xF0, 0x00, 0x04, 0xAA]);
+    // Body 11 bytes: extension_bytes_length 6 from byte 5 leaves 5 bytes.
+    let bytes = protection(
+        0x0001,
+        &[
+            0x00, 0x00, 0x00, 0xF0, 0x00, 0x06, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        ],
+    );
     assert_eq!(
         ProtectionMessageSection::parse(&bytes).unwrap_err(),
-        overflow(4, 1)
+        overflow(6, 5)
     );
 }
 
@@ -306,29 +312,37 @@ fn protection_key_id_length_field_inside_crc_region() {
 
 #[test]
 fn protection_key_id_past_body_end() {
-    let bytes = protection(0x0001, &[0x00, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x03, 0xAA]);
+    // Body 12 bytes: key id length 8 at byte 6, five bytes after it.
+    let bytes = protection(
+        0x0001,
+        &[
+            0x00, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x08, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+        ],
+    );
     assert_eq!(
         ProtectionMessageSection::parse(&bytes).unwrap_err(),
-        overflow(3, 1)
+        overflow(8, 5)
     );
 }
 
 #[test]
 fn protection_certificate_past_body_end() {
-    let bytes = protection(0x0100, &[0xF1, 0xF0, 0x03, 0xAA]);
+    // Body 6 bytes: certificate_length 4 from byte 1 leaves 3 bytes.
+    let bytes = protection(0x0100, &[0xF1, 0xF0, 0x04, 0xAA, 0xAA, 0xAA]);
     assert_eq!(
         ProtectionMessageSection::parse(&bytes).unwrap_err(),
-        overflow(3, 1)
+        overflow(4, 3)
     );
 }
 
 #[test]
 fn protection_certificate_trailing_bytes() {
-    let bytes = protection(0x0100, &[0xF1, 0xF0, 0x01, 0xAA, 0xBB]);
+    // Body 6 bytes: a 1-byte certificate leaves 2 trailing bytes.
+    let bytes = protection(0x0100, &[0xF1, 0xF0, 0x01, 0xAA, 0xBB, 0xCC]);
     assert_eq!(
         ProtectionMessageSection::parse(&bytes).unwrap_err(),
         too_short(
-            1,
+            2,
             0,
             "ProtectionMessageSection::CertificateCollection trailing bytes"
         )
@@ -579,6 +593,15 @@ fn rct_media_uri_past_link_end() {
 }
 
 #[test]
+fn rct_media_uri_ending_at_link_end_reports_missing_number_items() {
+    let link = [0x0C, 0x00, 0x10, 0x00, 0x02, b'a', b'b'];
+    assert_eq!(
+        RctSection::parse(&rct_link(&link)).unwrap_err(),
+        too_short(8, 7, "RctSection number_items")
+    );
+}
+
+#[test]
 fn rct_binary_locator_missing() {
     let link = [0x1F, 0x00, 0x10, 0x00];
     assert_eq!(
@@ -611,6 +634,17 @@ fn rct_promotional_text_past_link_end() {
     assert_eq!(
         RctSection::parse(&rct_link(&link)).unwrap_err(),
         too_short(12, 9, "RctSection promotional_text")
+    );
+}
+
+#[test]
+fn rct_promotional_text_ending_at_link_end_reports_missing_icon() {
+    let link = [
+        0x3C, 0x00, 0x10, 0x00, 0xC1, b'e', b'n', b'g', 0x02, b'a', b'b',
+    ];
+    assert_eq!(
+        RctSection::parse(&rct_link(&link)).unwrap_err(),
+        too_short(13, 11, "RctSection icon/desc")
     );
 }
 
