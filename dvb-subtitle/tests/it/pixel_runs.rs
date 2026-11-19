@@ -202,11 +202,6 @@ fn assert_scanned_len(data_type: u8, code_bytes: &[u8], expected: usize) {
     let ObjectDataPayload::InterlacedPixels(ip) = &seg.payload else {
         panic!("expected interlaced payload");
     };
-    eprintln!(
-        "actual {} expected {}",
-        ip.top_sub_blocks[0].data.len(),
-        expected
-    );
     assert_eq!(ip.top_sub_blocks[0].data.len(), expected);
     assert_eq!(ip.top_sub_blocks[1].data_type, DataType::MapTable2To4);
     assert_eq!(ip.top_sub_blocks[1].data, &[0xAA, 0xBB]);
