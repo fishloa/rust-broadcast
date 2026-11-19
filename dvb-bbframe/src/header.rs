@@ -473,6 +473,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn roll_off_decodes_and_encodes_the_two_ext_bits() {
+        assert_eq!(RollOff::from_bits(0), RollOff::Alpha035);
+        assert_eq!(RollOff::from_bits(1), RollOff::Alpha025);
+        assert_eq!(RollOff::from_bits(2), RollOff::Alpha020);
+        assert_eq!(RollOff::from_bits(3), RollOff::Reserved);
+
+        for v in 0u8..4 {
+            assert_eq!(RollOff::from_bits(v).to_bits(), v);
+        }
+        assert_eq!(RollOff::Alpha035.to_bits(), 0);
+        assert_eq!(RollOff::Alpha025.to_bits(), 1);
+        assert_eq!(RollOff::Alpha020.to_bits(), 2);
+        assert_eq!(RollOff::Reserved.to_bits(), 3);
+
+        // Only EXT[1:0] selects the factor; higher bits are ignored.
+        assert_eq!(RollOff::from_bits(0b101), RollOff::Alpha025);
+        assert_eq!(RollOff::from_bits(0b110), RollOff::Alpha020);
+        assert_eq!(RollOff::from_bits(0xFF), RollOff::Reserved);
+    }
+
+    #[test]
+    fn matype_roll_off_reads_ext_low_two_bits() {
+        let mut matype = Matype {
+            ts_gs: TsGs::Ts,
+            sis: true,
+            ccm: true,
+            issyi: false,
+            npd: false,
+            ext: 0b10,
+            isi: 0,
+        };
+        assert_eq!(matype.roll_off(), RollOff::Alpha020);
+        matype.ext = 0b110;
+        assert_eq!(matype.roll_off(), RollOff::Alpha020);
+        matype.ext = 0b01;
+        assert_eq!(matype.roll_off(), RollOff::Alpha025);
+    }
+
+    #[test]
     fn parse_rejects_buffer_shorter_than_10() {
         assert!(matches!(
             &(Bbheader::parse(&[0u8; 9])),

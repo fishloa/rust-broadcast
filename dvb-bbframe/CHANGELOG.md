@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Tests pin the framing arithmetic and diagnostics that survived mutation: the cross-frame `CarryOverExtractor` carry (a user packet split across BBFrames, `SYNCD=0xFFFF` continuation, a mismatched `SYNCD` discarding the partial), `BbframePump` per-PLP counter aggregation and PLP carry discard, the `DFL` ceiling on parse and serialize, `nm_stride_bytes` rejecting a non-byte-aligned `UPL`, the roll-off decode and `Matype::roll_off`, field-enum labels, and `HemTsIter`/`UpIter` `size_hint`. No functional change.
+
 ## [15.1.0] - 2026-11-17
 
 ### Changed
