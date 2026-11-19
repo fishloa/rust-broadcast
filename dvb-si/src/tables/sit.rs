@@ -544,11 +544,7 @@ mod tests {
     #[test]
     fn service_descriptors_length_high_nibble_is_written() {
         let desc = vec![0xAAu8; 300];
-        let svc = SitService::new(
-            0x0001,
-            RunningStatus::Undefined,
-            DescriptorLoop::new(&desc),
-        );
+        let svc = SitService::new(0x0001, RunningStatus::Undefined, DescriptorLoop::new(&desc));
         let sit = SitSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&[]), vec![svc]);
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();

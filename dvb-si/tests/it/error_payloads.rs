@@ -35,11 +35,7 @@ fn seal(mut bytes: Vec<u8>) -> Vec<u8> {
 }
 
 fn too_short(need: usize, have: usize, what: &'static str) -> Error {
-    Error::BufferTooShort(broadcast_common::error::BufferTooShort {
-        need,
-        have,
-        what,
-    })
+    Error::BufferTooShort(broadcast_common::error::BufferTooShort { need, have, what })
 }
 
 fn overflow(declared: usize, available: usize) -> Error {
@@ -179,11 +175,7 @@ fn ait_application_loop_length_short_of_body_end() {
     let bytes = ait(0, &[0xF0, 0x00, 0x00, 0x00]);
     assert_eq!(
         AitSection::parse(&bytes).unwrap_err(),
-        too_short(
-            2,
-            0,
-            "AitSection trailing bytes after application loop"
-        )
+        too_short(2, 0, "AitSection trailing bytes after application loop")
     );
 }
 
@@ -213,8 +205,7 @@ fn cat_ca_descriptors_truncated_descriptor() {
 fn cit_partial_crid_entry_header() {
     // 19-byte section: payload_end = 15, one 2-byte partial CRID entry at 13.
     let bytes = seal(vec![
-        0x77, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00,
-        0x00,
+        0x77, 0xF0, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x00, 0x00,
     ]);
     assert_eq!(
         CitSection::parse(&bytes).unwrap_err(),
@@ -275,11 +266,7 @@ fn protection_hash_loop_reaching_body_end_is_not_the_floor_error() {
     let bytes = protection(0x0001, &[0x00, 0x00, 0x00, 0xF0, 0x00]);
     assert_eq!(
         ProtectionMessageSection::parse(&bytes).unwrap_err(),
-        too_short(
-            6,
-            5,
-            "ProtectionMessageSection::extension_bytes_length"
-        )
+        too_short(6, 5, "ProtectionMessageSection::extension_bytes_length")
     );
 }
 
@@ -316,10 +303,7 @@ fn protection_key_id_length_field_inside_crc_region() {
 
 #[test]
 fn protection_key_id_past_body_end() {
-    let bytes = protection(
-        0x0001,
-        &[0x00, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x03, 0xAA],
-    );
+    let bytes = protection(0x0001, &[0x00, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x03, 0xAA]);
     assert_eq!(
         ProtectionMessageSection::parse(&bytes).unwrap_err(),
         overflow(3, 1)
@@ -368,10 +352,7 @@ fn rnt(common_desc_len: u16, rest: &[u8]) -> Vec<u8> {
 
 #[test]
 fn rnt_common_descriptors_past_body_end() {
-    assert_eq!(
-        RntSection::parse(&rnt(3, &[])).unwrap_err(),
-        overflow(3, 0)
-    );
+    assert_eq!(RntSection::parse(&rnt(3, &[])).unwrap_err(), overflow(3, 0));
 }
 
 #[test]
@@ -395,11 +376,7 @@ fn rnt_resolution_provider_past_body_end() {
 fn rnt_resolution_provider_name_length_short() {
     assert_eq!(
         RntSection::parse(&rnt(0, &[0xF0, 0x00, 0xAA])).unwrap_err(),
-        too_short(
-            14,
-            13,
-            "RntSection resolution_provider_name_length"
-        )
+        too_short(14, 13, "RntSection resolution_provider_name_length")
     );
 }
 
@@ -415,11 +392,7 @@ fn rnt_resolution_provider_name_past_provider_end() {
 fn rnt_resolution_provider_descriptors_length_short() {
     assert_eq!(
         RntSection::parse(&rnt(0, &[0xF0, 0x02, 0x00, 0xAA])).unwrap_err(),
-        too_short(
-            16,
-            15,
-            "RntSection resolution_provider_descriptors_length"
-        )
+        too_short(16, 15, "RntSection resolution_provider_descriptors_length")
     );
 }
 
@@ -478,7 +451,9 @@ fn tot_descriptors_past_body_end() {
 
 #[test]
 fn sdt_shorter_than_minimum() {
-    let bytes = vec![0x42, 0xF0, 0x0F, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xFF, 0x00, 0x00, 0x00];
+    let bytes = vec![
+        0x42, 0xF0, 0x0F, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xFF, 0x00, 0x00, 0x00,
+    ];
     assert_eq!(
         SdtSection::parse(&bytes).unwrap_err(),
         too_short(15, 14, "SdtSection")
@@ -498,7 +473,9 @@ fn sdt_trailing_service_bytes() {
 
 #[test]
 fn sit_shorter_than_minimum() {
-    let bytes = vec![0x7F, 0xF0, 0x0E, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x00];
+    let bytes = vec![
+        0x7F, 0xF0, 0x0E, 0x00, 0x01, 0xC1, 0x00, 0x00, 0xF0, 0x00, 0x00, 0x00, 0x00,
+    ];
     assert_eq!(
         SitSection::parse(&bytes).unwrap_err(),
         too_short(14, 13, "SitSection")
@@ -730,7 +707,10 @@ fn unt_target_descriptor_loop_length_short() {
 #[test]
 fn unt_target_descriptor_loop_past_platform_end() {
     let rest = [0x00, 0x00, 0x00, 0x03, 0xF0, 0x03, 0xAA];
-    assert_eq!(UntSection::parse(&unt(0, &rest)).unwrap_err(), overflow(3, 1));
+    assert_eq!(
+        UntSection::parse(&unt(0, &rest)).unwrap_err(),
+        overflow(3, 1)
+    );
 }
 
 #[test]
@@ -745,7 +725,10 @@ fn unt_operational_descriptor_loop_length_short() {
 #[test]
 fn unt_operational_descriptor_loop_past_platform_end() {
     let rest = [0x00, 0x00, 0x00, 0x05, 0xF0, 0x00, 0xF0, 0x03, 0xAA];
-    assert_eq!(UntSection::parse(&unt(0, &rest)).unwrap_err(), overflow(3, 1));
+    assert_eq!(
+        UntSection::parse(&unt(0, &rest)).unwrap_err(),
+        overflow(3, 1)
+    );
 }
 
 fn sat(satellite_table_id: u8, body: &[u8]) -> Vec<u8> {
@@ -818,7 +801,11 @@ fn sat_cell_fragment_obsolescent_delivery_systems_short() {
             &[0, 0, 0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01]
         ))
         .unwrap_err(),
-        too_short(10, 0, "SatSection CellFragment obsolescent_delivery_systems")
+        too_short(
+            10,
+            0,
+            "SatSection CellFragment obsolescent_delivery_systems"
+        )
     );
 }
 
@@ -951,10 +938,7 @@ fn group_info_entry_header_short() {
 #[test]
 fn group_info_compatibility_length_short() {
     assert_eq!(
-        GroupInfoIndication::parse(&group_info(&[
-            0x00, 0x01, 0, 0, 0, 1, 0, 0, 0, 2
-        ]))
-        .unwrap_err(),
+        GroupInfoIndication::parse(&group_info(&[0x00, 0x01, 0, 0, 0, 1, 0, 0, 0, 2])).unwrap_err(),
         too_short(12, 10, "GroupCompatibility length field")
     );
 }
@@ -1129,5 +1113,3 @@ fn dii_module_info_past_end() {
 }
 
 // MARKER
-
-

@@ -11,7 +11,10 @@ fn application_type_labels() {
     assert_eq!(ApplicationType::HbbTv.name(), "HbbTV");
     assert_eq!(ApplicationType::OipfDae.name(), "OIPF DAE");
     assert_eq!(ApplicationType::Reserved(0x1234).name(), "Reserved");
-    assert_eq!(ApplicationType::Reserved(0x1234).to_string(), "Reserved(0x1234)");
+    assert_eq!(
+        ApplicationType::Reserved(0x1234).to_string(),
+        "Reserved(0x1234)"
+    );
 }
 
 #[test]
@@ -107,5 +110,8 @@ fn unt_action_type_labels() {
         "System Software Update"
     );
     assert_eq!(UntActionType::DvbReserved(2).name(), "DVB Reserved");
-    assert_eq!(UntActionType::UserDefined(0x80).to_string(), "User Defined(0x80)");
+    assert_eq!(
+        UntActionType::UserDefined(0x80).to_string(),
+        "User Defined(0x80)"
+    );
 }

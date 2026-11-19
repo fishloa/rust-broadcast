@@ -840,7 +840,10 @@ mod tests {
             ContextIdType::from_u8(0x7F),
             ContextIdType::DvbReserved(0x7F)
         );
-        assert_eq!(ContextIdType::from_u8(0x80), ContextIdType::UserDefined(0x80));
+        assert_eq!(
+            ContextIdType::from_u8(0x80),
+            ContextIdType::UserDefined(0x80)
+        );
     }
 
     #[test]

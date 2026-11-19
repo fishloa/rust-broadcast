@@ -1896,7 +1896,13 @@ mod tests {
             original_network_id: 0x0002,
             service_id: 0x0003,
         };
-        let cases: &[(&[u8], bool, &DvbLocatorService, &DvbLocatorIdentifier, Option<(u8, u8)>)] = &[
+        let cases: &[(
+            &[u8],
+            bool,
+            &DvbLocatorService,
+            &DvbLocatorIdentifier,
+            Option<(u8, u8)>,
+        )] = &[
             (
                 &[0x0D, 0x56, 0xAB, 0x12, 0x34, 0x56, 0x78],
                 false,
@@ -2017,7 +2023,8 @@ mod tests {
     }
 
     #[test]
-    fn icon_descriptors_length_high_nibble_is_written() {        let desc = vec![0xAAu8; 300];
+    fn icon_descriptors_length_high_nibble_is_written() {
+        let desc = vec![0xAAu8; 300];
         let link = LinkInfo::new(
             LinkType::Descriptor,
             HowRelated::Cs2004,

@@ -3,8 +3,8 @@
 //! always-true `is_empty` or a hard-coded eviction count would otherwise ship
 //! green.
 
-use broadcast_common::time::MjdBcdDateTime;
 use broadcast_common::Serialize;
+use broadcast_common::time::MjdBcdDateTime;
 use dvb_si::collect::{EitCollector, SectionSetCollector};
 use dvb_si::descriptors::{AnyAitDescriptor, DescriptorLoop};
 use dvb_si::tables::ait::{AitSection, ApplicationType};
@@ -48,10 +48,7 @@ fn tdt_set_utc_time_encodes_mjd_bcd_on_the_wire() {
     let mut tdt = TdtSection::new([0xE4, 0x09, 0x12, 0x34, 0x56]);
     tdt.set_utc_time_decoded(utc(2024, 12, 31, 23, 59, 59))
         .unwrap();
-    assert_eq!(
-        tdt.utc_time_decoded(),
-        Some(utc(2024, 12, 31, 23, 59, 59))
-    );
+    assert_eq!(tdt.utc_time_decoded(), Some(utc(2024, 12, 31, 23, 59, 59)));
 
     let mut buf = vec![0u8; tdt.serialized_len()];
     tdt.serialize_into(&mut buf).unwrap();
@@ -63,10 +60,7 @@ fn tot_set_utc_time_encodes_mjd_bcd_on_the_wire() {
     let mut tot = TotSection::new([0xE4, 0x09, 0x12, 0x34, 0x56], DescriptorLoop::new(&[]));
     tot.set_utc_time_decoded(utc(2024, 12, 31, 23, 59, 59))
         .unwrap();
-    assert_eq!(
-        tot.utc_time_decoded(),
-        Some(utc(2024, 12, 31, 23, 59, 59))
-    );
+    assert_eq!(tot.utc_time_decoded(), Some(utc(2024, 12, 31, 23, 59, 59)));
 
     let mut buf = vec![0u8; tot.serialized_len()];
     tot.serialize_into(&mut buf).unwrap();

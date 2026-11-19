@@ -264,7 +264,15 @@ mod tests {
     #[test]
     fn bouquet_name_found_after_another_descriptor() {
         let descs: Vec<u8> = vec![
-            0x40, 0x03, b'A', b'B', b'C', DESCRIPTOR_TAG_BOUQUET_NAME, 0x02, b'H', b'I',
+            0x40,
+            0x03,
+            b'A',
+            b'B',
+            b'C',
+            DESCRIPTOR_TAG_BOUQUET_NAME,
+            0x02,
+            b'H',
+            b'I',
         ];
         let bytes = build_bat(0x0001, 0, 0, 0, &descs, &[]);
         let bat = BatSection::parse(&bytes).unwrap();

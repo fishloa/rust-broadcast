@@ -105,7 +105,13 @@ fn pat_floor_is_twelve_bytes() {
 
 #[test]
 fn pmt_floor_is_sixteen_bytes() {
-    let pmt = PmtSection::new(1, version(), Pid::from_wire_masked(0x1FFF), DescriptorLoop::new(&[]), vec![]);
+    let pmt = PmtSection::new(
+        1,
+        version(),
+        Pid::from_wire_masked(0x1FFF),
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let mut bytes = vec![0u8; pmt.serialized_len()];
     pmt.serialize_into(&mut bytes).unwrap();
     assert_floor!(PmtSection<'_>, bytes, 16, 16);
@@ -113,7 +119,13 @@ fn pmt_floor_is_sixteen_bytes() {
 
 #[test]
 fn nit_floor_is_sixteen_bytes() {
-    let nit = NitSection::new(NitKind::Actual, 1, version(), DescriptorLoop::new(&[]), vec![]);
+    let nit = NitSection::new(
+        NitKind::Actual,
+        1,
+        version(),
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let mut bytes = vec![0u8; nit.serialized_len()];
     nit.serialize_into(&mut bytes).unwrap();
     assert_floor!(NitSection<'_>, bytes, 16, 14);
@@ -179,7 +191,13 @@ fn rct_floor_is_seventeen_bytes() {
 
 #[test]
 fn rnt_floor_is_fifteen_bytes() {
-    let rnt = RntSection::new(1, version(), ContextIdType::BouquetId, RntDescriptorLoop::new(&[]), vec![]);
+    let rnt = RntSection::new(
+        1,
+        version(),
+        ContextIdType::BouquetId,
+        RntDescriptorLoop::new(&[]),
+        vec![],
+    );
     let mut bytes = vec![0u8; rnt.serialized_len()];
     rnt.serialize_into(&mut bytes).unwrap();
     assert_floor!(RntSection<'_>, bytes, 15, 15);
@@ -227,14 +245,8 @@ fn unt_floor_is_eighteen_bytes() {
 
 #[test]
 fn protection_message_floor_is_twelve_bytes() {
-    let section = ProtectionMessageSection::new(
-        0x0200,
-        0,
-        true,
-        0,
-        0,
-        ProtectionMessageBody::Raw(&[]),
-    );
+    let section =
+        ProtectionMessageSection::new(0x0200, 0, true, 0, 0, ProtectionMessageBody::Raw(&[]));
     let mut bytes = vec![0u8; section.serialized_len()];
     section.serialize_into(&mut bytes).unwrap();
     assert_floor!(ProtectionMessageSection<'_>, bytes, 12, 12);
