@@ -318,3 +318,123 @@ impl DeliveryJitter {
         self.hold.restore(m);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{DeliveryJitter, SampleOutcome, sat_i64};
+    use crate::config::JitterConfig;
+    use crate::stall_memory::StallMemorySnapshot;
+    use crate::time::Clock27;
+    use broadcast_common::clock33::PCR_WRAP_27MHZ;
+    use core::time::Duration;
+
+    fn us(n: u64) -> Duration {
+        Duration::from_micros(n)
+    }
+
+    fn ticks(n: u64) -> Clock27 {
+        Clock27::from_27mhz(n).expect("on the clock")
+    }
+
+    fn milli(n: u64) -> Clock27 {
+        Clock27::from_27mhz(n * 27_000).expect("on the clock")
+    }
+
+    fn jitter(cfg: JitterConfig) -> DeliveryJitter {
+        DeliveryJitter::new(cfg).expect("the config validates")
+    }
+
+    #[test]
+    fn the_relative_transit_difference_is_the_pdv() {
+        let mut j = jitter(JitterConfig::DEFAULT);
+        let arrivals = [0u64, 20_000, 40_000, 65_000, 80_000];
+        let media = [0u64, 20_000, 40_000, 60_000, 80_000];
+        let pdv = [0u64, 0, 0, 5_000, 0];
+        for i in 0..arrivals.len() {
+            assert_eq!(
+                j.on_chunk(us(arrivals[i]), milli(media[i] / 1_000), 0),
+                SampleOutcome::Accepted,
+                "sample {i}"
+            );
+            assert_eq!(j.estimate().pdv_last, us(pdv[i]), "sample {i}");
+        }
+        assert_eq!(j.estimate().samples, 5);
+    }
+
+    #[test]
+    fn a_value_off_the_i64_range_saturates_on_its_own_side() {
+        assert_eq!(sat_i64(i128::from(i64::MIN) - 1), i64::MIN);
+        assert_eq!(sat_i64(i128::from(i64::MAX) + 1), i64::MAX);
+    }
+
+    #[test]
+    fn a_media_step_back_exactly_the_discontinuity_is_still_a_sample() {
+        let mut j = jitter(JitterConfig::DEFAULT);
+        assert_eq!(
+            j.on_chunk(Duration::ZERO, ticks(0), 0),
+            SampleOutcome::Accepted
+        );
+        let back =
+            Clock27::from_27mhz(PCR_WRAP_27MHZ - 27_000_000).expect("one second before the wrap");
+        assert_eq!(
+            j.on_chunk(Duration::from_secs(1), back, 0),
+            SampleOutcome::Accepted
+        );
+    }
+
+    #[test]
+    fn an_interval_maximum_exactly_at_the_outlier_still_feeds_the_baseline() {
+        let mut j = jitter(JitterConfig::DEFAULT);
+        assert_eq!(
+            j.on_chunk(Duration::ZERO, ticks(0), 0),
+            SampleOutcome::Accepted
+        );
+        assert_eq!(
+            j.on_chunk(Duration::from_millis(500), ticks(1), 0),
+            SampleOutcome::Accepted
+        );
+        assert_eq!(
+            j.on_chunk(Duration::from_millis(1_000), ticks(2), 0),
+            SampleOutcome::Accepted
+        );
+        assert_eq!(j.baseline(), us(510_000));
+    }
+
+    #[test]
+    fn exceeding_the_minimum_window_cap_drops_and_counts_entries() {
+        let mut j = jitter(JitterConfig {
+            max_samples: 8,
+            ..JitterConfig::DEFAULT
+        });
+        for i in 0..10u64 {
+            assert_eq!(
+                j.on_chunk(us(i * 10), ticks(i), 0),
+                SampleOutcome::Accepted,
+                "{i}"
+            );
+        }
+        assert_eq!(j.window_overflows(), 2);
+    }
+
+    #[test]
+    fn an_anchored_stall_memory_ages_from_the_reading_it_was_restored_at() {
+        let mut j = jitter(JitterConfig::DEFAULT);
+        j.restore(StallMemorySnapshot::new(
+            Duration::from_millis(500),
+            Duration::ZERO,
+        ));
+        j.anchor(Duration::ZERO);
+        assert_eq!(j.stall_peak_at(Duration::from_secs(90)), us(250_000));
+    }
+
+    #[test]
+    fn every_sample_outcome_has_its_stable_label() {
+        assert_eq!(SampleOutcome::Accepted.name(), "accepted");
+        assert_eq!(SampleOutcome::Discontinuity.name(), "discontinuity");
+        assert_eq!(
+            SampleOutcome::NonMonotonicArrival.name(),
+            "non-monotonic arrival"
+        );
+        assert_eq!(SampleOutcome::Duplicate.name(), "duplicate");
+    }
+}

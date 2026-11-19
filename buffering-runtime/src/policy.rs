@@ -151,3 +151,28 @@ impl Policy {
         micros_as_duration(self.reprime_hold_us)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::Policy;
+    use crate::config::PolicyConfig;
+    use core::time::Duration;
+
+    #[test]
+    fn the_policy_reports_the_configured_bounds_and_target() {
+        let cfg = PolicyConfig {
+            reprime_floor: Duration::from_millis(250),
+            reprime_hold: Duration::from_millis(1_500),
+            ..PolicyConfig::DEFAULT
+        };
+        let mut p = Policy::new(cfg);
+        assert_eq!(p.max(), Duration::from_secs(3));
+        assert_eq!(p.reprime_floor(), Duration::from_millis(250));
+        assert_eq!(p.reprime_hold(), Duration::from_millis(1_500));
+        assert_eq!(p.target(), Duration::from_millis(300));
+        assert_eq!(p.target_us(), 300_000);
+        p.raise(900_000);
+        assert_eq!(p.target_us(), 900_000);
+        assert_eq!(p.target(), Duration::from_millis(900));
+    }
+}

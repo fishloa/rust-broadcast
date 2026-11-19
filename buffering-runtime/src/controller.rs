@@ -705,3 +705,348 @@ impl BufferController {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BufferController;
+    use crate::config::{ControllerConfig, JitterConfig, PolicyConfig};
+    use crate::events::{Event, Hint, Reason, State};
+    use crate::jitter::DeliveryJitter;
+    use crate::stall_memory::StallMemorySnapshot;
+    use crate::time::Clock27;
+    use crate::tracks::DEFAULT_TRACK;
+    use alloc::vec::Vec;
+    use core::time::Duration;
+
+    fn ms(n: u64) -> Duration {
+        Duration::from_millis(n)
+    }
+
+    fn us(n: u64) -> Duration {
+        Duration::from_micros(n)
+    }
+
+    fn ticks(n: u64) -> Clock27 {
+        Clock27::from_27mhz(n).expect("on the clock")
+    }
+
+    fn sample_config() -> ControllerConfig {
+        ControllerConfig {
+            jitter: JitterConfig::DEFAULT,
+            policy: PolicyConfig {
+                min: ms(20),
+                initial: ms(20),
+                max: ms(100),
+                margin: ms(75),
+                ..PolicyConfig::DEFAULT
+            },
+            starve_threshold: ms(1),
+            ..ControllerConfig::DEFAULT
+        }
+    }
+
+    fn plain_config() -> ControllerConfig {
+        ControllerConfig {
+            jitter: JitterConfig::DEFAULT,
+            policy: PolicyConfig {
+                min: ms(20),
+                initial: ms(20),
+                max: ms(100),
+                margin: Duration::ZERO,
+                ..PolicyConfig::DEFAULT
+            },
+            starve_threshold: ms(1),
+            ..ControllerConfig::DEFAULT
+        }
+    }
+
+    fn reprime_config() -> ControllerConfig {
+        ControllerConfig {
+            jitter: JitterConfig::DEFAULT,
+            policy: PolicyConfig {
+                min: ms(20),
+                initial: ms(20),
+                max: ms(1_000),
+                margin: Duration::ZERO,
+                reprime_floor: ms(200),
+                reprime_hold: ms(1_000),
+                ..PolicyConfig::DEFAULT
+            },
+            starve_threshold: ms(1),
+            track_granularity: false,
+            ..ControllerConfig::DEFAULT
+        }
+    }
+
+    fn drain(c: &mut BufferController) -> Vec<Event> {
+        let mut out = Vec::new();
+        while let Some(e) = c.poll_event() {
+            out.push(e);
+        }
+        out
+    }
+
+    fn over_max(c: &mut BufferController) -> Vec<(Duration, Duration)> {
+        drain(c)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::OverMax { need, max } => Some((need, max)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn pauses(c: &mut BufferController) -> Vec<(u64, Reason)> {
+        drain(c)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::Pause {
+                    hold_at_27mhz,
+                    reason,
+                    ..
+                } => Some((hold_at_27mhz.ticks(), reason)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn over_max_fires_once_and_rearms_at_three_quarters_of_the_cap() {
+        let mut c = BufferController::new(sample_config(), None).expect("config validates");
+        c.jitter.note_starvation(Duration::ZERO, ms(100));
+        c.after_sample(Duration::ZERO);
+        assert_eq!(over_max(&mut c), [(us(119_921), ms(100))]);
+        c.after_sample(Duration::ZERO);
+        assert!(
+            over_max(&mut c).is_empty(),
+            "a held excursion must not repeat"
+        );
+        let jc = c.config().jitter;
+        c.jitter = DeliveryJitter::new(jc).expect("config validates");
+        c.jitter.note_starvation(Duration::ZERO, ms(70));
+        c.after_sample(Duration::ZERO);
+        c.jitter.note_starvation(Duration::ZERO, ms(100));
+        c.after_sample(Duration::ZERO);
+        assert!(
+            over_max(&mut c).is_empty(),
+            "a need between the re-arm threshold and the cap must not re-arm"
+        );
+        c.jitter = DeliveryJitter::new(jc).expect("config validates");
+        c.after_sample(Duration::ZERO);
+        c.jitter.note_starvation(Duration::ZERO, ms(100));
+        c.after_sample(Duration::ZERO);
+        assert_eq!(over_max(&mut c), [(us(119_921), ms(100))]);
+    }
+
+    #[test]
+    fn a_need_exactly_at_the_cap_does_not_report_over_max() {
+        let cfg = ControllerConfig {
+            jitter: JitterConfig::DEFAULT,
+            policy: PolicyConfig {
+                min: ms(20),
+                initial: ms(20),
+                max: ms(100),
+                margin: ms(100),
+                ..PolicyConfig::DEFAULT
+            },
+            starve_threshold: ms(1),
+            ..ControllerConfig::DEFAULT
+        };
+        let mut c = BufferController::new(cfg, None).expect("config validates");
+        c.after_sample(Duration::ZERO);
+        assert!(over_max(&mut c).is_empty());
+    }
+
+    #[test]
+    fn a_target_change_is_reported_at_a_bound_or_a_whole_bucket() {
+        let mut c = BufferController::new(plain_config(), None).expect("config validates");
+        c.policy.follow(0, 0);
+        c.policy.raise(29_999);
+        c.reported_target = 29_999;
+        c.after_sample(us(100_000));
+        let changed: Vec<(Duration, Duration)> = drain(&mut c)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::TargetChanged { old, new } => Some((old, new)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(changed, [(us(29_999), ms(20))], "the floor is a bound");
+
+        let mut c = BufferController::new(plain_config(), None).expect("config validates");
+        c.policy.follow(0, 0);
+        c.reported_target = 30_000;
+        c.jitter.note_starvation(Duration::ZERO, ms(42));
+        c.after_sample(us(100_000));
+        let changed: Vec<(Duration, Duration)> = drain(&mut c)
+            .into_iter()
+            .filter_map(|e| match e {
+                Event::TargetChanged { old, new } => Some((old, new)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(changed, [(us(30_000), us(50_367))], "a whole bucket moved");
+    }
+
+    fn granularity_rig() -> BufferController {
+        let cfg = ControllerConfig {
+            jitter: JitterConfig::DEFAULT,
+            policy: PolicyConfig {
+                min: ms(20),
+                initial: ms(20),
+                max: ms(200),
+                margin: Duration::ZERO,
+                ..PolicyConfig::DEFAULT
+            },
+            starve_threshold: ms(1),
+            ..ControllerConfig::DEFAULT
+        };
+        let mut c = BufferController::new(cfg, None).expect("config validates");
+        c.on_chunk(Duration::ZERO, 1, None);
+        c.on_track_media(Duration::ZERO, DEFAULT_TRACK, ticks(0));
+        c.on_chunk(ms(60), 1, None);
+        c.on_track_media(ms(60), DEFAULT_TRACK, ticks(1_620_000));
+        c.pcr_seen = true;
+        c
+    }
+
+    #[test]
+    fn a_chunk_at_the_granularity_floor_does_not_raise_the_target() {
+        let mut c = granularity_rig();
+        c.policy.raise(60_000);
+        c.jitter.note_starvation(ms(80), ms(100));
+        drain(&mut c);
+        c.on_chunk(ms(80), 1, None);
+        assert_eq!(c.target(), ms(60));
+        assert!(
+            !drain(&mut c)
+                .iter()
+                .any(|e| matches!(e, Event::TargetChanged { .. })),
+            "the floor was already the target"
+        );
+    }
+
+    #[test]
+    fn a_track_report_at_the_granularity_floor_does_not_raise_the_target() {
+        let mut c = granularity_rig();
+        c.on_chunk(ms(80), 1, None);
+        assert_eq!(c.target(), ms(60));
+        c.jitter.note_starvation(ms(80), ms(100));
+        drain(&mut c);
+        c.on_track_media(ms(90), DEFAULT_TRACK, ticks(2_160_000));
+        assert_eq!(c.target(), ms(60));
+        assert!(
+            !drain(&mut c)
+                .iter()
+                .any(|e| matches!(e, Event::TargetChanged { .. })),
+            "the floor was already the target"
+        );
+    }
+
+    #[test]
+    fn a_later_first_delivery_behind_the_queue_start_moves_it() {
+        let mut c = BufferController::new(plain_config(), None).expect("config validates");
+        c.on_chunk(Duration::ZERO, 1, None);
+        c.on_track_media(Duration::ZERO, 0, ticks(1_000));
+        c.on_track_media(ms(1), 1, ticks(900));
+        assert_eq!(c.queue_start.map(|q| q.ticks()), Some(900));
+        c.on_track_media(ms(2), 0, ticks(800));
+        assert_eq!(
+            c.queue_start.map(|q| q.ticks()),
+            Some(900),
+            "only a track's first report can move the queue start"
+        );
+    }
+
+    #[test]
+    fn a_repeated_tick_instant_is_not_a_clock_regression() {
+        let mut c = BufferController::new(plain_config(), None).expect("config validates");
+        c.on_tick(ms(5), None);
+        c.on_tick(ms(5), None);
+        assert_eq!(c.stats().clock_regressions, 0);
+    }
+
+    fn playing(cfg: ControllerConfig) -> BufferController {
+        let mut c = BufferController::new(cfg, None).expect("config validates");
+        c.on_chunk(Duration::ZERO, 1, None);
+        c.on_track_media(Duration::ZERO, DEFAULT_TRACK, ticks(0));
+        c.on_track_media(ms(1), DEFAULT_TRACK, ticks(27_000_000));
+        c.on_tick(ms(2), Some(ticks(0)));
+        assert_eq!(c.state(), State::Playing);
+        drain(&mut c);
+        c
+    }
+
+    #[test]
+    fn a_zero_lead_holds_at_the_playback_position() {
+        let mut c = playing(reprime_config());
+        let playback = 27_000_000 - 1;
+        c.on_tick(ms(3), Some(ticks(playback)));
+        assert_eq!(pauses(&mut c), [(playback, Reason::DataArriving)]);
+    }
+
+    #[test]
+    fn a_neutral_resume_does_not_charge_the_stall_memory_to_the_last_stall() {
+        let seed = StallMemorySnapshot::new(ms(500), Duration::ZERO);
+        let mut c = BufferController::new(reprime_config(), Some(seed)).expect("config validates");
+        assert_eq!(c.stats().last_stall_depth, Duration::ZERO);
+        c.on_chunk(Duration::ZERO, 1, None);
+        c.on_track_media(Duration::ZERO, DEFAULT_TRACK, ticks(0));
+        c.on_track_media(ms(1), DEFAULT_TRACK, ticks(27_000_000));
+        c.on_tick(ms(2), Some(ticks(0)));
+        assert_eq!(c.state(), State::Playing);
+        c.on_hint(ms(3), Hint::SyncLoss);
+        assert_eq!(c.state(), State::Buffering);
+        drain(&mut c);
+        c.on_chunk(ms(4), 1, None);
+        c.on_track_media(ms(4), DEFAULT_TRACK, ticks(54_000_000));
+        c.on_track_media(ms(5), DEFAULT_TRACK, ticks(81_000_000));
+        c.on_tick(ms(6), Some(ticks(54_000_000)));
+        assert_eq!(c.state(), State::Playing);
+        assert_eq!(c.stats().last_stall_depth, Duration::ZERO);
+    }
+
+    #[test]
+    fn a_lead_above_the_reprime_floor_never_starts_the_hold() {
+        let mut c = playing(reprime_config());
+        let playback = 27_000_000 - 6_750_000;
+        c.on_tick(ms(10), Some(ticks(playback)));
+        c.on_tick(ms(1_010), Some(ticks(playback)));
+        c.on_tick(ms(2_010), Some(ticks(playback)));
+        assert!(pauses(&mut c).is_empty());
+    }
+
+    #[test]
+    fn a_lead_exactly_at_the_reprime_floor_is_not_below_it() {
+        let mut c = playing(reprime_config());
+        let playback = 27_000_000 - 5_400_000;
+        c.on_tick(ms(10), Some(ticks(playback)));
+        c.on_tick(ms(1_010), Some(ticks(playback)));
+        assert!(pauses(&mut c).is_empty());
+    }
+
+    #[test]
+    fn a_lead_held_below_the_floor_for_exactly_the_hold_reprimes_at_the_playback() {
+        let mut c = playing(reprime_config());
+        let playback = 27_000_000 - 5_373_000;
+        c.on_tick(ms(10), Some(ticks(playback)));
+        assert!(pauses(&mut c).is_empty(), "the hold has not elapsed yet");
+        c.on_tick(ms(1_010), Some(ticks(playback)));
+        assert_eq!(pauses(&mut c), [(playback, Reason::Reprime)]);
+    }
+
+    #[test]
+    fn a_reprime_resume_does_not_charge_the_stall_memory() {
+        let mut c = playing(reprime_config());
+        let playback = 27_000_000 - 5_373_000;
+        c.on_tick(ms(10), Some(ticks(playback)));
+        c.on_tick(ms(1_010), Some(ticks(playback)));
+        assert_eq!(pauses(&mut c), [(playback, Reason::Reprime)]);
+        c.on_chunk(ms(1_020), 1, None);
+        c.on_track_media(ms(1_020), DEFAULT_TRACK, ticks(54_000_000));
+        c.on_track_media(ms(1_030), DEFAULT_TRACK, ticks(81_000_000));
+        c.on_tick(ms(1_040), Some(ticks(54_000_000)));
+        assert_eq!(c.state(), State::Playing);
+        assert_eq!(c.stats().last_stall_depth, Duration::ZERO);
+    }
+}

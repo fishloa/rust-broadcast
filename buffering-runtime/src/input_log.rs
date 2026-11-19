@@ -697,3 +697,119 @@ impl InputLog {
         Ok(events)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Input, InputLogError, Reason};
+    use crate::error::{ConfigField, Error};
+    use crate::events::Hint;
+    use crate::time::Clock27;
+    use alloc::format;
+    use alloc::string::String;
+    use core::time::Duration;
+
+    fn zero() -> Clock27 {
+        Clock27::from_27mhz(0).expect("zero is on the clock")
+    }
+
+    #[test]
+    fn every_input_kind_has_its_row_label() {
+        assert_eq!(
+            Input::Chunk {
+                now_us: Duration::ZERO,
+                bytes: 1,
+                pcr: None
+            }
+            .name(),
+            "chunk"
+        );
+        assert_eq!(
+            Input::TrackMedia {
+                now_us: Duration::ZERO,
+                track: 1,
+                end: zero()
+            }
+            .name(),
+            "media"
+        );
+        assert_eq!(
+            Input::Tick {
+                now_us: Duration::ZERO,
+                pts: None
+            }
+            .name(),
+            "tick"
+        );
+        assert_eq!(
+            Input::Register {
+                now_us: Duration::ZERO,
+                track: 1
+            }
+            .name(),
+            "register"
+        );
+        assert_eq!(
+            Input::Unregister {
+                now_us: Duration::ZERO,
+                track: 1
+            }
+            .name(),
+            "unregister"
+        );
+        assert_eq!(
+            Input::Hint {
+                now_us: Duration::ZERO,
+                hint: Hint::SyncLoss
+            }
+            .name(),
+            "hint"
+        );
+    }
+
+    #[test]
+    fn every_log_reason_has_its_stable_label() {
+        assert_eq!(Reason::BadHeader.name(), "bad header");
+        assert_eq!(Reason::UnknownKind.name(), "unknown kind");
+        assert_eq!(
+            Reason::MissingField { field: "now_us" }.name(),
+            "missing field"
+        );
+        assert_eq!(Reason::BadNumber { field: "bytes" }.name(), "bad number");
+        assert_eq!(Reason::UnknownHint.name(), "unknown hint");
+        assert_eq!(Reason::UnknownConfigKey.name(), "unknown config key");
+        assert_eq!(
+            Reason::InvalidConfig(Error::InvalidConfig(ConfigField::Bucket)).name(),
+            "invalid config"
+        );
+        assert_eq!(Reason::NoConfig.name(), "no config");
+    }
+
+    fn text(reason: Reason, line: &str) -> String {
+        format!(
+            "{}",
+            InputLogError {
+                line: String::from(line),
+                reason
+            }
+        )
+    }
+
+    #[test]
+    fn a_rejected_row_names_its_field_in_the_error_text() {
+        assert_eq!(
+            text(Reason::MissingField { field: "now_us" }, "chunk"),
+            "missing field (now_us) in row \"chunk\""
+        );
+        assert_eq!(
+            text(Reason::BadNumber { field: "bytes" }, "chunk,x"),
+            "bad number (bytes) in row \"chunk,x\""
+        );
+        assert_eq!(
+            text(
+                Reason::InvalidConfig(Error::InvalidConfig(ConfigField::Bucket)),
+                "config,0,bucket,0"
+            ),
+            "invalid config (invalid configuration: bucket) in row \"config,0,bucket,0\""
+        );
+    }
+}
