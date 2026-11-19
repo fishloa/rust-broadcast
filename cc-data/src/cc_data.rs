@@ -400,4 +400,50 @@ mod tests {
             Err(Error::TooManyTriplets(32))
         ));
     }
+
+    #[test]
+    fn exactly_31_triplets_is_the_maximum_and_round_trips() {
+        let cc = CcData {
+            process_em_data_flag: false,
+            process_cc_data_flag: true,
+            additional_data_flag: false,
+            reserved_byte1: FF,
+            triplets: alloc::vec![tr(true, CcType::Dtvcc708Data, 0x42, 0x99); 31],
+        };
+        let bytes = cc.try_to_bytes().unwrap();
+        assert_eq!(bytes.len(), 2 + 31 * 3 + 1);
+        assert_eq!(bytes[0] & CC_COUNT_MASK, 31);
+        assert_eq!(CcData::parse(&bytes).unwrap(), cc);
+    }
+
+    #[test]
+    fn cc_type_names_and_bit_mapping() {
+        let table = [
+            (CcType::Ntsc608Field1, 0u8, "ntsc_608_field1"),
+            (CcType::Ntsc608Field2, 1, "ntsc_608_field2"),
+            (CcType::Dtvcc708Data, 2, "dtvcc_708_data"),
+            (CcType::Dtvcc708Start, 3, "dtvcc_708_start"),
+        ];
+        for (ty, bits, name) in table {
+            assert_eq!(ty.to_bits(), bits);
+            assert_eq!(CcType::from_bits(bits), ty);
+            assert_eq!(ty.name(), name);
+        }
+    }
+
+    #[test]
+    fn bad_triplet_fixed_bits_report_the_exact_found_value() {
+        let mut bytes = sample().try_to_bytes().unwrap();
+        // Triplet 0 header for cc_type 3, cc_valid: 1111_1111 = 0xFF. Clear
+        // bit 7 so the fixed 1111_1 prefix is 0111_1111 = 0x7F.
+        bytes[2] = 0x7F;
+        assert_eq!(
+            CcData::parse(&bytes).unwrap_err(),
+            Error::ReservedBits(broadcast_common::error::ReservedBits {
+                field: "one_bit/reserved",
+                expected: 0xF8,
+                found: 0x78,
+            })
+        );
+    }
 }
