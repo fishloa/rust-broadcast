@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Attribute edges are pinned: a non-finite `xs:double`, an inverted byte range, the resolve-to-zero xlink, and which namespace+name a `pssh`/`UrlQueryInfo` child must carry; the inheritance helpers are asserted field by field across Period/AdaptationSet/Representation (audit 22 findings 33, 34).
 
 ### Fixed
+- `MpdFeatures::service_description` is derived from the `ServiceDescription` elements the model keeps (MPD, Period, `Event`), not from any element named `ServiceDescription` anywhere in the tree, so an element the model drops no longer raises a flag the writer cannot reproduce and `parse -> to_xml -> parse` is an identity (#3138).
 - `xs_duration`'s doc claimed a hand-rolled `PT{secs}S` spelling while the function delegates to `jiff`'s ISO 8601 duration printer; the doc now states the printed form, the exact output for the common shapes is asserted, and three dead `let _` statements (here and in the MPD reader) are removed (audit 22 finding 69).
 
 ## [0.2.1] - 2026-11-17
