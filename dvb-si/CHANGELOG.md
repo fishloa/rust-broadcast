@@ -17,6 +17,9 @@
 - SAT pins the signed-field range guard of `centre_latitude`/`centre_longitude` at both boundaries, the bit-level `write_zero`/`seek_forward` helpers, the empty body of `satellite_table_id` 0/1/3, and the doubling heap fallback of its body-length calculation up to the 1 MiB cap (#3115, #3116, #3117, #3118).
 - SAT bodies are pinned against hand-derived EN 300 468 Tables 11c–11h byte vectors (Position V2 orbital and SGP4, Cell Fragment first/last, Time Association with leap flags, Beamhopping Mode 0/1/2 and Position V3 with and without acceleration), including the computed `beamhopping_time_plan_length` (#3119).
 - The UNT and RCT byte-exact round-trip tests re-serialize the parsed value instead of the original, so a symmetric parser/serializer mistake cannot pass (#3123).
+- Carousel U-N messages are sized and parsed across message boundaries with non-empty adaptation, private data, group info and multi-sub-descriptor compatibility blocks, and a two-group `GroupInfoIndication` is byte-anchored; `put_length_prefixed`'s returned position is pinned (#3120).
+- `ModuleReassembler`'s three default caps, the aggregate budget as a sum of announced sizes (including the exact boundary), the completed-version FIFO bound and `clear()` are pinned (#3121).
+- The EIT collector's 8-section segment completeness, the schedule-other table_id range and the schedule-cap eviction count are pinned (#3122).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

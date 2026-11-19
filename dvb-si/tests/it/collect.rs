@@ -5,6 +5,7 @@ use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::TransportStreamEntry;
 use dvb_si::tables::eit::{
     EitKind, EitSection, TABLE_ID_PF_ACTUAL, TABLE_ID_SCHEDULE_ACTUAL_FIRST as EIT_50,
+    TABLE_ID_SCHEDULE_OTHER_FIRST as EIT_60,
 };
 use dvb_si::tables::nit::{NitKind, NitSection};
 use dvb_si::tables::pat::{PatEntry, PatSection};
@@ -91,6 +92,38 @@ fn eit_schedule_section_sparse(
         0x0001,
         segment_last_section_number,
         last_table_id,
+        vec![],
+    );
+    let mut bytes = vec![0u8; eit.serialized_len()];
+    eit.serialize_into(&mut bytes).unwrap();
+    bytes
+}
+
+/// Build one EIT schedule section of either schedule kind with explicit
+/// service, version and section-numbering fields.
+fn eit_schedule_section_kinded(
+    kind: EitKind,
+    table_id: u8,
+    service_id: u16,
+    version_number: u8,
+    section_number: u8,
+    last_section_number: u8,
+    segment_last_section_number: u8,
+) -> Vec<u8> {
+    let eit = EitSection::new(
+        kind,
+        table_id,
+        service_id,
+        dvb_si::tables::SectionVersion::new(
+            version_number,
+            true,
+            section_number,
+            last_section_number,
+        ),
+        0x2000,
+        0x0001,
+        segment_last_section_number,
+        table_id,
         vec![],
     );
     let mut bytes = vec![0u8; eit.serialized_len()];
@@ -457,6 +490,112 @@ fn eit_schedule_collector_completes_sparse_segment_without_all_slots() {
     // Only the 3 sections actually transmitted are retained — sections 1..=7
     // were never sent and must not be conjured as empty placeholders.
     assert_eq!(schedule.table_sets()[0].section_bytes().len(), 3);
+}
+
+// A schedule segment is the fixed 8-section block `segment * 8`: segment 0 is
+// sections 0..=7, segment 1 is 8..=15 (ETSI EN 300 468 §5.2.4). With
+// `last_section_number = 8` the table spans both, so a segment-1-only view of
+// segment 0 must NOT complete it while sections 1..=7 of segment 0 are absent.
+#[test]
+fn eit_schedule_segment_completeness_uses_eight_section_segments() {
+    let table_id = EIT_50;
+    let section0 = eit_schedule_section_kinded(
+        EitKind::ScheduleActual,
+        table_id,
+        0x0100,
+        4,
+        0,
+        8,
+        7, // segment 0 declares sections 0..=7
+    );
+    let section8 = eit_schedule_section_kinded(
+        EitKind::ScheduleActual,
+        table_id,
+        0x0100,
+        4,
+        8,
+        8,
+        8, // segment 1 carries only section 8
+    );
+
+    let mut collector = EitCollector::new();
+    assert!(collector.push_section(&section0).unwrap().is_none());
+    assert!(
+        collector.push_section(&section8).unwrap().is_none(),
+        "segment 0 still lacks sections 1..=7, so the table is not complete"
+    );
+    for section_number in 1..7u8 {
+        let section = eit_schedule_section_kinded(
+            EitKind::ScheduleActual,
+            table_id,
+            0x0100,
+            4,
+            section_number,
+            8,
+            7,
+        );
+        assert!(
+            collector.push_section(&section).unwrap().is_none(),
+            "section {section_number} is still short of a complete segment 0"
+        );
+    }
+    let last = eit_schedule_section_kinded(EitKind::ScheduleActual, table_id, 0x0100, 4, 7, 8, 7);
+    assert!(
+        collector.push_section(&last).unwrap().is_some(),
+        "the table completes once every section of both segments is present"
+    );
+}
+
+// `EitKind::ScheduleOther` (table_id 0x60..=0x6F) ranges from its own first
+// table_id; a schedule-other EIT must complete through the same path as an
+// actual one.
+#[test]
+fn eit_schedule_other_tables_complete_from_their_first_table_id() {
+    let section = eit_schedule_section_kinded(EitKind::ScheduleOther, EIT_60, 0x0100, 4, 0, 0, 0);
+    let mut collector = EitCollector::new();
+    let completed = collector
+        .push_section(&section)
+        .unwrap()
+        .expect("a ScheduleOther EIT completes");
+    let CompletedEit::Schedule(schedule) = completed else {
+        panic!("expected completed schedule EIT");
+    };
+    assert_eq!(schedule.table_sets().len(), 1);
+}
+
+// The schedule cap evicts the least-recently-touched logical key when a *new*
+// key arrives at capacity, and a repeat of an already-retained key evicts
+// nothing.
+#[test]
+fn eit_schedule_cap_evicts_the_oldest_logical_key() {
+    let mut collector = EitCollector::new().with_max_logical_keys(2);
+    for service_id in 1..=2u16 {
+        let section =
+            eit_schedule_section_kinded(EitKind::ScheduleActual, EIT_50, service_id, 4, 0, 0, 0);
+        assert!(collector.push_section(&section).unwrap().is_some());
+    }
+    assert_eq!(collector.schedule_len(), 2);
+    assert_eq!(collector.schedules_evicted_for_capacity(), 0);
+
+    let third = eit_schedule_section_kinded(EitKind::ScheduleActual, EIT_50, 3, 4, 0, 0, 0);
+    assert!(collector.push_section(&third).unwrap().is_some());
+    assert_eq!(collector.schedule_len(), 2, "the cap is honoured");
+    assert_eq!(collector.schedules_evicted_for_capacity(), 1);
+
+    let second_version_bump =
+        eit_schedule_section_kinded(EitKind::ScheduleActual, EIT_50, 2, 5, 0, 0, 0);
+    assert!(
+        collector
+            .push_section(&second_version_bump)
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        collector.schedules_evicted_for_capacity(),
+        1,
+        "a repeat of a retained logical key evicts nothing"
+    );
+    assert_eq!(collector.schedule_len(), 2);
 }
 
 // A new `version_number` for the same logical table drops the stale partial,
