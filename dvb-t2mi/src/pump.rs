@@ -994,6 +994,33 @@ mod tests {
         assert_eq!(RAW_HUNT_CAP, 32808);
     }
 
+    fn implausible_corrupt() -> Vec<u8> {
+        vec![0x42, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF]
+    }
+
+    #[test]
+    fn a_plausible_partial_header_at_the_hunt_tail_straddles() {
+        let mut pump = T2miPump::raw();
+        assert!(pump.feed_raw(&implausible_corrupt()).next().is_none());
+        assert_eq!(pump.stats().raw_resyncs, 0);
+
+        let _: Vec<_> = pump.feed_raw(&[0x20, 0x01, 0x00, 0x00, 0x00]).collect();
+        assert_eq!(pump.stats().raw_resyncs, 1);
+        assert!(pump.raw_hunt_buf.is_empty());
+    }
+
+    #[test]
+    fn a_short_plausible_prefix_at_offset_zero_is_not_a_straddle() {
+        let mut hunt = vec![0x20, 0x01, 0x00];
+        let mut next = 0usize;
+        let mut emitted = Vec::new();
+        assert!(matches!(
+            hunt_extract(&mut hunt, &mut next, &mut emitted),
+            HuntStep::Nothing
+        ));
+        assert_eq!(next, 0);
+    }
+
     #[test]
     fn raw_hunt_buffer_is_trimmed_to_the_cap() {
         // A header-implausible, CRC-invalid 10-byte packet puts the pump into

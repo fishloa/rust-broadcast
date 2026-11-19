@@ -155,6 +155,26 @@ fn a_found_packet_leaves_a_private_type_neighbour_to_the_reassembler() {
 }
 
 #[test]
+fn a_crc_failing_tail_after_a_found_packet_is_counted() {
+    let corrupt = implausible_corrupt();
+    let public = t2mi_packet(0x20, &[0x11u8; 11]);
+    let mut private_bad_crc = t2mi_packet(0x42, &[0x22u8; 11]);
+    *private_bad_crc.last_mut().unwrap() ^= 0xFF;
+
+    let mut pump = T2miPump::raw();
+    assert!(pump.feed_raw(&corrupt).next().is_none());
+    assert_eq!(pump.stats().crc_failures, 1);
+
+    let mut stream = public.clone();
+    stream.extend_from_slice(&private_bad_crc);
+    let events: Vec<_> = pump.feed_raw(&stream).collect();
+    assert_eq!(events.len(), 1);
+    assert_eq!(&events[0].bytes()[..], &public[..]);
+    assert_eq!(pump.stats().crc_failures, 2, "{:?}", pump.stats());
+    assert_eq!(pump.stats().t2mi_packets, 2, "{:?}", pump.stats());
+}
+
+#[test]
 fn ts_and_raw_mode_statistics_are_distinct_counters() {
     let mut pump = T2miPump::new(Pid::from_const(0x0006));
     let payload = [0x00u8, 0x00, 0x00];
