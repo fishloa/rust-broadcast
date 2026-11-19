@@ -1663,3 +1663,869 @@ fn push_marker(lane: &mut Lane) {
         });
     }
 }
+
+#[cfg(test)]
+mod live_decision_tests {
+    use super::*;
+    use crate::client::config::{DashClockPolicy, DashConfig};
+    use crate::client::engine::DashClientConfig;
+    use crate::client::meta::ResponseMeta;
+    use crate::client::{DashClient, PullLimits};
+    use crate::timing::clock::ClockSource;
+
+    const NS: &str = "urn:mpeg:dash:schema:mpd:2011";
+    const WALL_US: i64 = 1_767_225_600 * 1_000_000;
+
+    fn mono(us: u64) -> Timestamp {
+        Timestamp::from_micros(us)
+    }
+
+    fn wall() -> jiff::Timestamp {
+        jiff::Timestamp::from_microsecond(WALL_US).unwrap()
+    }
+
+    fn mpd_of(attrs: &str, body: &str) -> String {
+        format!(r#"<?xml version="1.0"?><MPD xmlns="{NS}" {attrs}>{body}</MPD>"#)
+    }
+
+    fn dynamic(attrs: &str, body: &str) -> String {
+        mpd_of(
+            &format!(
+                r#"type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minBufferTime="PT2S" {attrs}"#
+            ),
+            body,
+        )
+    }
+
+    fn single_period(mup: bool) -> String {
+        let mup = if mup {
+            r#" minimumUpdatePeriod="PT2S""#
+        } else {
+            ""
+        };
+        dynamic(
+            mup,
+            r#"<Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" initialization="seg/init.mp4" media="seg/$Number$.m4s"/>
+               <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+        )
+    }
+
+    fn utc_element(body: &str) -> String {
+        format!(
+            r#"<UTCTiming schemeIdUri="urn:mpeg:dash:utc:http-xsdate:2014" value="http://dash.test/utc"/>{body}"#
+        )
+    }
+
+    fn fresh(now: Timestamp, text: &str) -> DashClient {
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        let _ = c.poll(now);
+        c.on_mpd(now, text.as_bytes()).unwrap();
+        c
+    }
+
+    #[test]
+    fn failure_kind_maps_the_status_that_matters() {
+        assert_eq!(failure_kind(Failure::Status(425)), FailureKind::TooEarly);
+        assert_eq!(failure_kind(Failure::Status(404)), FailureKind::Missing);
+        assert_eq!(failure_kind(Failure::Status(410)), FailureKind::Missing);
+        assert_eq!(failure_kind(Failure::Status(500)), FailureKind::Server);
+        assert_eq!(failure_kind(Failure::Transport), FailureKind::Transport);
+        assert_eq!(failure_kind(Failure::TooLarge), FailureKind::Invalid);
+    }
+
+    #[test]
+    fn live_bookkeeping_counts_the_early_waits_and_the_missing_flags() {
+        let mut live = Live::new(mono(0));
+        assert_eq!(live.bookkeeping(), 0);
+        live.early.insert(
+            ResourceId::Segment {
+                rep: crate::client::action::RepId(1),
+                number: 7,
+            },
+            Early::default(),
+        );
+        live.missing_seen.insert(crate::client::action::RepId(2));
+        assert_eq!(live.bookkeeping(), 2);
+        live.missing_seen.insert(crate::client::action::RepId(3));
+        assert_eq!(live.bookkeeping(), 3);
+    }
+
+    #[test]
+    fn utc_at_is_none_until_a_clock_exists_and_exact_afterwards() {
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        assert_eq!(c.utc_at(mono(0)), None);
+        c.set_wall_clock(mono(1_000), wall());
+        assert_eq!(c.utc_at(mono(1_000)), Some(wall()));
+        assert_eq!(
+            c.utc_at(mono(1_500)),
+            Some(jiff::Timestamp::from_microsecond(WALL_US + 500).unwrap())
+        );
+    }
+
+    #[test]
+    fn a_host_clock_alone_does_not_drop_a_gating_sampler_under_auto() {
+        let now = mono(0);
+        let mut c = fresh(
+            now,
+            &dynamic(
+                r#"minimumUpdatePeriod="PT2S""#,
+                &utc_element(
+                    r#"<Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+                   <SegmentTemplate timescale="1000" duration="2000" media="seg/$Number$.m4s"/>
+                   <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+                ),
+            ),
+        );
+        assert!(
+            c.start_sampler(now, true),
+            "the gating sampler starts when the MPD announces a UTCTiming"
+        );
+        c.set_wall_clock(mono(1_000), wall());
+        assert!(
+            c.live.as_ref().and_then(|l| l.sampler.as_ref()).is_some(),
+            "Auto keeps asking the server"
+        );
+    }
+
+    #[test]
+    fn prefer_host_drops_the_gating_sampler_and_finishes_the_ladder() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig {
+                    clock_policy: DashClockPolicy::PreferHost,
+                    ..DashConfig::default()
+                })
+                .with_limits(PullLimits::default()),
+        );
+        let _ = c.poll(now);
+        c.on_mpd(
+            now,
+            dynamic(
+                r#"minimumUpdatePeriod="PT2S""#,
+                &utc_element(
+                    r#"<Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+                   <SegmentTemplate timescale="1000" duration="2000" media="seg/$Number$.m4s"/>
+                   <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+                ),
+            )
+            .as_bytes(),
+        )
+        .unwrap();
+        assert!(c.start_sampler(now, true));
+        c.set_wall_clock(mono(1_000), wall());
+        let live = c.live.as_ref().expect("live");
+        assert!(live.sampler.is_none(), "PreferHost takes the host clock");
+        assert!(live.ready, "the ladder finished on the host clock");
+    }
+
+    #[test]
+    fn on_mpd_unchanged_needs_an_in_flight_mpd_and_a_live_presentation() {
+        let now = mono(0);
+        let meta = ResponseMeta::new(mono(0), mono(10));
+        let mut c = fresh(now, &single_period(true));
+        assert_eq!(
+            c.on_mpd_unchanged(now, &meta),
+            Err(Error::MpdNotAwaited),
+            "no MPD fetch is outstanding"
+        );
+        let mut static_c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        let _ = static_c.poll(now);
+        assert_eq!(
+            static_c.on_mpd_unchanged(now, &meta),
+            Err(Error::MpdNotAwaited),
+            "a static presentation has no live state"
+        );
+    }
+
+    #[test]
+    fn can_activate_needs_a_known_period_start_for_a_dynamic_mpd() {
+        let now = mono(0);
+        let early = dynamic(
+            r#"minimumUpdatePeriod="PT2S""#,
+            r#"<Period id="A" start="PT0S"/><Period id="B"/>"#,
+        );
+        let c = fresh(now, &early);
+        assert!(!c.can_activate(1), "Period B has no PeriodStart yet");
+        assert!(!c.can_activate(2), "past the end");
+        let known = dynamic(
+            r#"minimumUpdatePeriod="PT2S""#,
+            r#"<Period id="A" start="PT0S"/><Period id="B" start="PT4S"/>"#,
+        );
+        let c = fresh(now, &known);
+        assert!(c.can_activate(1));
+    }
+
+    #[test]
+    fn refresh_due_at_honours_each_slot_and_the_gates() {
+        let now = mono(0);
+        let mut c = fresh(now, &single_period(true));
+        {
+            let live = c.live.as_mut().expect("live");
+            live.refresh.next_at = Some(mono(5_000));
+            live.refresh.forced_at = Some(mono(3_000));
+        }
+        assert_eq!(c.refresh_due_at(), Some(mono(3_000)));
+        {
+            let live = c.live.as_mut().expect("live");
+            live.refresh.forced_at = None;
+        }
+        assert_eq!(c.refresh_due_at(), Some(mono(5_000)));
+        c.mpd_inflight = true;
+        assert_eq!(c.refresh_due_at(), None, "an MPD fetch is outstanding");
+        c.mpd_inflight = false;
+        c.want_mpd = true;
+        assert_eq!(c.refresh_due_at(), None, "an MPD fetch is already wanted");
+        c.want_mpd = false;
+        if let Some(live) = c.live.as_mut() {
+            live.refresh.awaiting_retry = true;
+        }
+        assert_eq!(c.refresh_due_at(), None, "the caller is backing off");
+        if let Some(live) = c.live.as_mut() {
+            live.refresh.awaiting_retry = false;
+        }
+        assert_eq!(c.refresh_due_at(), Some(mono(5_000)));
+    }
+
+    #[test]
+    fn refresh_is_never_due_when_the_period_cannot_grow() {
+        let now = mono(0);
+        let mut c = fresh(now, &single_period(false));
+        if let Some(live) = c.live.as_mut() {
+            live.refresh.next_at = Some(mono(1));
+        }
+        assert_eq!(
+            c.refresh_due_at(),
+            None,
+            "a dynamic MPD without a minimumUpdatePeriod never refreshes"
+        );
+    }
+
+    #[test]
+    fn tick_keeps_a_sampler_that_does_not_gate_the_ladder() {
+        let now = mono(10_000);
+        let mut c = fresh(
+            now,
+            &dynamic(
+                r#"minimumUpdatePeriod="PT2S""#,
+                &utc_element(
+                    r#"<Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+                   <SegmentTemplate timescale="1000" duration="2000" media="seg/$Number$.m4s"/>
+                   <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+                ),
+            ),
+        );
+        c.set_wall_clock(mono(0), wall());
+        assert!(
+            c.start_sampler(mono(0), false),
+            "a non-gating resync sampler starts"
+        );
+        if let Some(s) = c.live.as_mut().and_then(|l| l.sampler.as_mut()) {
+            s.gating = false;
+            s.wait_deadline = Some(mono(5_000));
+        }
+        c.tick(now);
+        assert!(
+            c.live.as_ref().and_then(|l| l.sampler.as_ref()).is_some(),
+            "a non-gating sampler is not dropped by the gate timer"
+        );
+    }
+
+    #[test]
+    fn a_due_early_retry_with_no_request_on_record_queues_nothing() {
+        let mut c = lane_client(10);
+        let id = ResourceId::Segment {
+            rep: crate::client::action::RepId(999),
+            number: 1,
+        };
+        c.live.as_mut().expect("live").early.insert(
+            id,
+            Early {
+                attempts: 1,
+                retry_at: Some(mono(0)),
+            },
+        );
+        c.queue.clear();
+        c.tick(mono(10));
+        assert!(
+            c.queue.is_empty(),
+            "an early entry whose request is gone is not requeued"
+        );
+    }
+
+    #[test]
+    fn the_fetch_instant_is_the_exchange_midpoint() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(mono(0), wall());
+        let _ = c.poll(now);
+        let meta = ResponseMeta::new(mono(0), mono(4));
+        c.on_mpd_with(now, single_period(true).as_bytes(), &meta)
+            .unwrap();
+        assert_eq!(
+            c.live.as_ref().and_then(|l| l.fetch_utc_us),
+            Some(i128::from(WALL_US) + 2),
+            "the MPD FetchTime sits at sent + rtt/2"
+        );
+    }
+
+    #[test]
+    fn announce_clock_waits_until_the_ladder_is_ready() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        assert_eq!(c.clock.anchor().map(|a| a.source), Some(ClockSource::Host));
+        let before = c
+            .outputs
+            .iter()
+            .filter(|o| matches!(o, Output::ClockSynced { .. }))
+            .count();
+        assert_eq!(before, 0, "not ready yet");
+        c.announce_clock();
+        assert_eq!(
+            c.outputs
+                .iter()
+                .filter(|o| matches!(o, Output::ClockSynced { .. }))
+                .count(),
+            0,
+            "announcing again while not ready changes nothing"
+        );
+    }
+
+    #[test]
+    fn request_resync_waits_until_the_ladder_is_ready() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        let mut l = Live::new(now);
+        l.ready = false;
+        c.live = Some(l);
+        c.request_resync(now);
+        assert_eq!(
+            c.live.as_ref().and_then(|l| l.next_resync),
+            None,
+            "not ready: no resync is requested"
+        );
+        if let Some(l) = c.live.as_mut() {
+            l.ready = true;
+        }
+        c.request_resync(now);
+        assert_eq!(c.live.as_ref().and_then(|l| l.next_resync), Some(now));
+    }
+
+    #[test]
+    fn an_exhausted_sampler_without_a_clock_is_fatal() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.live = Some(Live::new(now));
+        c.sampler_exhausted(now);
+        assert!(
+            matches!(
+                c.outputs.back(),
+                Some(Output::Fatal(FatalKind::ClockUnavailable))
+            ),
+            "{:?}",
+            c.outputs
+        );
+    }
+
+    #[test]
+    fn the_speculative_period_is_activated_at_index_len_minus_one() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.mpd = Some(Mpd::parse(single_period(true).as_bytes()).expect("MPD parses"));
+        c.speculative_activate(now);
+        assert_eq!(c.periods.len(), 1);
+        assert_eq!(c.issue, 0, "the issue cursor is the last Period");
+    }
+
+    #[test]
+    fn on_clock_ready_without_a_period_is_a_no_op() {
+        let now = mono(0);
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig::default())
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        c.on_clock_ready(now);
+        assert!(c.periods.is_empty());
+    }
+
+    #[test]
+    fn on_clock_ready_keeps_the_deliver_cursor_within_the_periods() {
+        let now = mono(0);
+        let two = dynamic(
+            r#"minimumUpdatePeriod="PT2S""#,
+            r#"<Period id="A" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" media="a/$Number$.m4s"/>
+               <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>
+               <Period id="B" start="PT30S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" media="b/$Number$.m4s"/>
+               <Representation id="W" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+        );
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig {
+                    clock_policy: DashClockPolicy::PreferHost,
+                    ..DashConfig::default()
+                })
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        let _ = c.poll(now);
+        c.on_mpd(now, two.as_bytes()).unwrap();
+        c.periods.clear();
+        c.issue = 0;
+        c.rep_loc.clear();
+        c.activate(0);
+        assert_eq!(c.periods.len(), 1);
+        if let Some(p) = c.periods.last_mut() {
+            p.started = true;
+        }
+        c.deliver = 0;
+        c.on_clock_ready(now);
+        assert_eq!(c.deliver, 0, "a deliver cursor inside the runs is kept");
+        c.deliver = 7;
+        c.on_clock_ready(now);
+        assert_eq!(c.deliver, c.periods.len() - 1);
+    }
+
+    #[test]
+    fn abandoning_the_last_run_drops_its_bookkeeping() {
+        let now = mono(0);
+        let mut c = fresh(now, &single_period(true));
+        assert_eq!(c.periods.len(), 1);
+        assert!(!c.rep_loc.is_empty(), "the period registered its reps");
+        assert!(!c.queue.is_empty(), "its init fetch is queued");
+        let key = c
+            .periods
+            .first()
+            .and_then(|p| p.lanes.first())
+            .and_then(|l| l.reps.first())
+            .map(|r| r.init_key.clone());
+        if let Some(key) = key {
+            c.inits.insert(
+                key,
+                crate::client::engine::InitEntry {
+                    state: crate::client::engine::InitState::Ready,
+                    bytes: None,
+                    specs: Vec::new(),
+                    skipped_reported: BTreeSet::new(),
+                },
+            );
+        }
+        c.abandon_last_run();
+        assert!(c.periods.is_empty(), "the run is gone");
+        assert!(
+            c.rep_loc.is_empty(),
+            "its representation locations are gone"
+        );
+        assert!(c.queue.is_empty(), "its queued fetches are gone");
+        assert_eq!(
+            c.inits
+                .values()
+                .filter(|e| e.state == crate::client::engine::InitState::Ready)
+                .count(),
+            1,
+            "a Ready init the presentation no longer uses is kept"
+        );
+    }
+
+    const SEC: i128 = 1_000_000;
+
+    fn lane_client(tsb_s: u64) -> DashClient {
+        fresh(
+            mono(0),
+            &dynamic(
+                &format!(r#"minimumUpdatePeriod="PT2S" timeShiftBufferDepth="PT{tsb_s}S""#),
+                r#"<Period id="P0" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+                   <SegmentTemplate timescale="1000" duration="2000" initialization="seg/init.mp4" media="seg/$Number$.m4s"/>
+                   <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+            ),
+        )
+    }
+
+    fn wall_us() -> i128 {
+        i128::from(WALL_US)
+    }
+
+    fn set_issue(c: &mut DashClient, next_issue: u64, expired_run: u32) {
+        let lane = &mut c.periods[0].lanes[0];
+        let rep = lane.reps.last_mut().expect("a representation");
+        rep.joined = true;
+        rep.next_issue = next_issue;
+        lane.expired_run = expired_run;
+    }
+
+    fn lane_state(c: &DashClient) -> (u64, bool, u32, Option<u64>, bool) {
+        let lane = &c.periods[0].lanes[0];
+        let rep = lane.reps.last().expect("a representation");
+        (
+            rep.next_issue,
+            rep.joined,
+            lane.expired_run,
+            rep.last_time,
+            c.outputs
+                .iter()
+                .any(|o| matches!(o, Output::Notice(Notice::FellBehind))),
+        )
+    }
+
+    #[test]
+    fn a_segment_at_its_availability_instant_is_ready() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 3, 0);
+        let from = wall_us() + 4 * 2 * SEC;
+        let mut c1 = c;
+        let ready = c1.live_lane_candidate(0, 0, from, mono(0));
+        assert!(
+            matches!(ready, Candidate::Ready(_)),
+            "at the availability instant the segment is ready"
+        );
+        let waiting = c1.live_lane_candidate(0, 0, from - 1, mono(0));
+        assert!(
+            matches!(waiting, Candidate::Wait(a) if a == from),
+            "one microsecond earlier it waits"
+        );
+    }
+
+    #[test]
+    fn a_segment_whose_window_ends_now_is_not_expired() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 3, 0);
+        let until = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        let v = c.live_lane_candidate(0, 0, until, mono(0));
+        assert!(
+            matches!(v, Candidate::Ready(_)),
+            "the window end itself is still inside"
+        );
+        assert!(!lane_state(&c).4, "no FellBehind at the boundary");
+        let _ = c.live_lane_candidate(0, 0, until + 1, mono(0));
+        assert!(lane_state(&c).4, "past the window end is a FellBehind");
+    }
+
+    #[test]
+    fn a_lane_that_has_not_joined_waits_for_its_first_segment() {
+        let mut c = lane_client(10);
+        {
+            let lane = &mut c.periods[0].lanes[0];
+            let rep = lane.reps.last_mut().expect("a representation");
+            rep.joined = false;
+        }
+        let from = wall_us() + 2 * SEC;
+        let v = c.live_lane_candidate(0, 0, from - 1, mono(0));
+        assert!(matches!(v, Candidate::Wait(a) if a == from));
+        let v = c.live_lane_candidate(0, 0, from, mono(0));
+        assert!(
+            matches!(v, Candidate::Ready(_)),
+            "at the first availability the join lands on the oldest segment"
+        );
+    }
+
+    #[test]
+    fn expiring_before_the_request_jumps_to_the_oldest_segment() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 0, 0);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        c.expire_before_request(0, 0, utc);
+        let (next, joined, _, last, noticed) = lane_state(&c);
+        assert_eq!(next, 3, "the lane jumps to the oldest segment in window");
+        assert!(joined, "it keeps its join");
+        assert_eq!(last, Some(4000), "the previous segment's media time");
+        assert!(noticed);
+    }
+
+    #[test]
+    fn expiring_exactly_at_the_next_segment_rejoins() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 3, 0);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        c.expire_before_request(0, 0, utc);
+        let (next, joined, run, _, _) = lane_state(&c);
+        assert_eq!(next, 3);
+        assert!(!joined, "nothing was skipped, so the lane rejoins");
+        assert_eq!(run, 0);
+    }
+
+    #[test]
+    fn three_expiries_in_a_row_rejoin_even_past_a_skippable_gap() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 0, 3);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        c.expire_before_request(0, 0, utc);
+        let (next, joined, run, _, _) = lane_state(&c);
+        assert_eq!(next, 0, "a rejoin does not jump");
+        assert!(!joined);
+        assert_eq!(run, 0);
+    }
+
+    #[test]
+    fn two_expiries_in_a_row_still_jump() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 0, 1);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        c.expire_before_request(0, 0, utc);
+        let (next, joined, run, _, _) = lane_state(&c);
+        assert_eq!(next, 3, "two is below the rejoin run");
+        assert!(joined);
+        assert_eq!(run, 2);
+    }
+
+    fn seg_id(c: &DashClient) -> ResourceId {
+        let rep = c.periods[0].lanes[0].reps.last().expect("a rep").id;
+        ResourceId::Segment { rep, number: 1 }
+    }
+
+    #[test]
+    fn an_expired_response_jumps_to_the_oldest_segment() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 0, 0);
+        let id = seg_id(&c);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        let class = c.expired_segment(mono(0), id, utc);
+        assert_eq!(class, FailureClass::Expired);
+        let (next, joined, _, last, noticed) = lane_state(&c);
+        assert_eq!(next, 3);
+        assert!(joined);
+        assert_eq!(last, Some(4000));
+        assert!(noticed);
+    }
+
+    #[test]
+    fn an_expired_response_behind_the_next_segment_changes_nothing() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 3, 0);
+        let id = seg_id(&c);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        let class = c.expired_segment(mono(0), id, utc);
+        assert_eq!(class, FailureClass::Expired);
+        let (next, joined, _, _, _) = lane_state(&c);
+        assert_eq!(next, 3, "the cursor is not moved backwards");
+        assert!(joined, "nothing was skipped");
+    }
+
+    #[test]
+    fn a_run_of_expired_responses_rejoins_the_live_edge() {
+        let mut c = lane_client(10);
+        set_issue(&mut c, 0, 2);
+        let id = seg_id(&c);
+        let utc = wall_us() + (3 + 2) * 2 * SEC + 10 * SEC;
+        let class = c.expired_segment(mono(0), id, utc);
+        assert_eq!(class, FailureClass::Expired);
+        let (next, joined, run, _, _) = lane_state(&c);
+        assert_eq!(next, 0, "a rejoin does not jump");
+        assert!(!joined);
+        assert_eq!(run, 0);
+    }
+
+    fn request_at(c: &mut DashClient, from: jiff::Timestamp, until: jiff::Timestamp) -> ResourceId {
+        let id = seg_id(c);
+        let rep = id.rep();
+        c.reqs.insert(
+            id,
+            crate::client::engine::ReqInfo {
+                rep,
+                reference: String::new(),
+                range: None,
+                kind: crate::client::engine::ReqKind::Segment,
+                avail_from: Some(from),
+                avail_until: Some(until),
+            },
+        );
+        id
+    }
+
+    fn ts(us: i128) -> jiff::Timestamp {
+        jiff::Timestamp::from_microsecond(i64::try_from(us).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn a_404_at_the_window_end_is_still_counted_not_expired() {
+        let mut c = lane_client(10);
+        let id = request_at(&mut c, ts(wall_us() - SEC), ts(wall_us()));
+        let class = c
+            .live_segment_failure(mono(0), id, Failure::Status(404))
+            .unwrap();
+        assert!(
+            matches!(
+                class,
+                FailureClass::Retry {
+                    kind: FailureKind::Missing,
+                    ..
+                }
+            ),
+            "the window end itself has not passed: {class:?}"
+        );
+    }
+
+    #[test]
+    fn a_404_exactly_at_the_end_of_the_grace_is_counted_not_early() {
+        let mut c = lane_client(10);
+        let id = request_at(&mut c, ts(wall_us() - SEC), ts(wall_us() + 10 * SEC));
+        let class = c
+            .live_segment_failure(mono(0), id, Failure::Status(404))
+            .unwrap();
+        assert!(
+            matches!(
+                class,
+                FailureClass::Retry {
+                    kind: FailureKind::Missing,
+                    ..
+                }
+            ),
+            "the grace has run out: {class:?}"
+        );
+    }
+
+    #[test]
+    fn a_closed_period_stays_open_for_the_grace_after_its_end() {
+        let text = format!(
+            r#"<?xml version="1.0"?><MPD xmlns="{NS}" type="dynamic" availabilityStartTime="2026-01-01T00:00:00Z" minimumUpdatePeriod="PT2S" maxSegmentDuration="PT2S" minBufferTime="PT2S"><Period id="P0" start="PT0S" duration="PT10S"><AdaptationSet contentType="video" mimeType="video/mp4"><SegmentTemplate timescale="1000" initialization="seg/init.mp4" media="seg/$Time$.m4s"><SegmentTimeline><S t="0" d="2000" r="1"/></SegmentTimeline></SegmentTemplate><Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period></MPD>"#
+        );
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig {
+                    clock_policy: DashClockPolicy::PreferHost,
+                    ..DashConfig::default()
+                })
+                .with_limits(PullLimits::default()),
+        );
+        let at = |us: i64| jiff::Timestamp::from_microsecond(WALL_US + us).unwrap();
+        c.set_wall_clock(mono(0), at(13_000_000));
+        let _ = c.poll(mono(0));
+        c.on_mpd(mono(0), text.as_bytes()).unwrap();
+        c.periods.clear();
+        c.issue = 0;
+        c.rep_loc.clear();
+        c.activate(0);
+        assert!(c.live_open());
+        c.set_wall_clock(mono(1_000), at(14_000_000));
+        assert!(
+            c.period_open(0, mono(999)),
+            "one microsecond inside the grace"
+        );
+        assert!(
+            !c.period_open(0, mono(1_000)),
+            "the grace (4 s) after a 10 s Period is over"
+        );
+    }
+
+    #[test]
+    fn on_clock_ready_does_not_retarget_a_period_that_has_started() {
+        let now = mono(0);
+        let two = dynamic(
+            r#"minimumUpdatePeriod="PT2S""#,
+            r#"<Period id="A" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" media="a/$Number$.m4s"/>
+               <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>
+               <Period id="B" start="PT30S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" media="b/$Number$.m4s"/>
+               <Representation id="W" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+        );
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig {
+                    clock_policy: DashClockPolicy::PreferHost,
+                    live_delay: Some(Duration::ZERO),
+                    ..DashConfig::default()
+                })
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        let _ = c.poll(now);
+        c.on_mpd(now, two.as_bytes()).unwrap();
+        c.periods.clear();
+        c.issue = 0;
+        c.rep_loc.clear();
+        c.activate(0);
+        if let Some(p) = c.periods.last_mut() {
+            p.started = true;
+        }
+        c.set_wall_clock(
+            mono(1_000),
+            jiff::Timestamp::from_microsecond(WALL_US + 40 * 1_000_000).unwrap(),
+        );
+        c.on_clock_ready(mono(1_000));
+        assert_eq!(
+            c.periods.last().map(|p| p.index),
+            Some(0),
+            "a started Period is not abandoned"
+        );
+    }
+
+    #[test]
+    fn on_clock_ready_retargets_a_period_that_has_not_started() {
+        let now = mono(0);
+        let two = dynamic(
+            r#"minimumUpdatePeriod="PT2S""#,
+            r#"<Period id="A" start="PT0S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" media="a/$Number$.m4s"/>
+               <Representation id="V" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>
+               <Period id="B" start="PT30S"><AdaptationSet contentType="video" mimeType="video/mp4">
+               <SegmentTemplate timescale="1000" duration="2000" media="b/$Number$.m4s"/>
+               <Representation id="W" bandwidth="1" codecs="avc1.4d400d"/></AdaptationSet></Period>"#,
+        );
+        let mut c = DashClient::new(
+            DashClientConfig::new(Url::parse("http://dash.test/manifest.mpd").unwrap())
+                .with_dash(DashConfig {
+                    clock_policy: DashClockPolicy::PreferHost,
+                    live_delay: Some(Duration::ZERO),
+                    ..DashConfig::default()
+                })
+                .with_limits(PullLimits::default()),
+        );
+        c.set_wall_clock(now, wall());
+        let _ = c.poll(now);
+        c.on_mpd(now, two.as_bytes()).unwrap();
+        c.periods.clear();
+        c.issue = 0;
+        c.rep_loc.clear();
+        c.activate(0);
+        assert_eq!(c.periods.last().map(|p| p.index), Some(0));
+        c.set_wall_clock(
+            mono(1_000),
+            jiff::Timestamp::from_microsecond(WALL_US + 40 * 1_000_000).unwrap(),
+        );
+        c.on_clock_ready(mono(1_000));
+        assert_eq!(
+            c.periods.last().map(|p| p.index),
+            Some(1),
+            "the join moves to the Period that contains the live edge"
+        );
+    }
+}
