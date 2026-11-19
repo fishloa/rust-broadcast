@@ -7,7 +7,8 @@
 use broadcast_common::{Parse, Serialize};
 use dvb_subtitle::{
     AlternativeClutEntry, AlternativeClutSegment, ClutParameters, DisparityRegion,
-    DisparityShiftInterval, DisparityShiftUpdateSequence, DisparitySignallingSegment, Subregion,
+    DisparityShiftInterval, DisparityShiftUpdateSequence, DisparitySignallingSegment,
+    DynamicRangeColourGamut, OutputBitDepth, Subregion,
 };
 
 fn alt_segment(body: &[u8]) -> Vec<u8> {
@@ -116,6 +117,7 @@ fn alternative_clut_10bit_entries_pack_exactly() {
 #[test]
 fn alternative_clut_rejects_short_input_and_trailing_entry_bytes() {
     assert!(AlternativeClutSegment::parse(&[0x0F]).is_err());
+    assert!(AlternativeClutSegment::parse(&[0x0F, 0x16]).is_err());
     let mut body = [0u8; 6];
     body[2] = 0x10; // 8-bit depth
     let mut bytes = alt_segment(&body);
@@ -263,6 +265,10 @@ fn disparity_page_update_sequence_is_followed_by_the_regions() {
 fn disparity_rejects_short_and_truncated_input() {
     // Shorter than the generic header plus the fixed body.
     assert!(DisparitySignallingSegment::parse(&[0x0F, 0x15]).is_err());
+    assert!(DisparitySignallingSegment::parse(&[0x0F, 0x15, 0x00, 0x01]).is_err());
+    assert!(DisparitySignallingSegment::parse(&[0x0F, 0x15, 0x00, 0x01, 0x00, 0x02]).is_err());
+    // The minimum well-formed segment: empty flags byte and default shift.
+    assert!(DisparitySignallingSegment::parse(&disparity_segment(&[0x00, 0x00])).is_ok());
     // A declared update-sequence length longer than the data present.
     let mut body = vec![0x58, 0x00];
     body.extend_from_slice(&[0x0A, 0x00, 0x00, 0x00, 0x05, 1, 2, 3, 4, 5]);
@@ -372,4 +378,48 @@ fn disparity_serialize_limits_and_position_mismatch() {
         ],
     }];
     assert!(mismatch.try_to_bytes().is_err());
+}
+
+#[test]
+fn alternative_clut_parameter_labels() {
+    assert_eq!(OutputBitDepth::Bit8.name(), "8-bit");
+    assert_eq!(OutputBitDepth::Bit10.name(), "10-bit");
+    assert_eq!(OutputBitDepth::Reserved(2).name(), "reserved");
+    assert_eq!(DynamicRangeColourGamut::SdrBt709.name(), "SDR_BT.709");
+    assert_eq!(DynamicRangeColourGamut::SdrBt2020.name(), "SDR_BT.2020");
+    assert_eq!(
+        DynamicRangeColourGamut::HdrBt2100Pq.name(),
+        "HDR_BT.2100_PQ"
+    );
+    assert_eq!(
+        DynamicRangeColourGamut::HdrBt2100Hlg.name(),
+        "HDR_BT.2100_HLG"
+    );
+    assert_eq!(DynamicRangeColourGamut::Reserved(4).name(), "reserved");
+}
+
+#[test]
+fn truncated_interval_list_is_rejected_with_exact_bounds() {
+    // Page update sequence: length 4 (duration + count), count 3 but no
+    // interval bytes.
+    let mut body = vec![0x58, 0x00];
+    body.extend_from_slice(&[0x04, 0x00, 0x00, 0x01, 0x03]);
+    let bytes = disparity_segment(&body);
+    match DisparitySignallingSegment::parse(&bytes) {
+        Err(dvb_subtitle::Error::BufferTooShort(e)) => {
+            assert_eq!(e.need, 7);
+            assert_eq!(e.have, 5);
+        }
+        other => panic!("expected BufferTooShort, got {other:?}"),
+    }
+}
+
+#[test]
+fn truncated_positioned_subregion_is_rejected() {
+    let mut body = vec![0x50, 0x00]; // no page sequence, shift 0
+    body.extend_from_slice(&[0x01, 0x01]); // region 1, two subregions
+    body.extend_from_slice(&[0x00, 0x10, 0x00, 0x20, 0x02, 0x10]); // first
+    body.extend_from_slice(&[0x02, 0x10]); // second starts but is cut short
+    let bytes = disparity_segment(&body);
+    assert!(DisparitySignallingSegment::parse(&bytes).is_err());
 }

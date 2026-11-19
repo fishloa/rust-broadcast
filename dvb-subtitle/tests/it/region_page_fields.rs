@@ -197,6 +197,13 @@ fn clut_definition_full_and_reduced_entries() {
     );
     assert_eq!(seg.try_to_bytes().unwrap(), bytes);
     assert!(ClutDefinitionSegment::parse(&[0x0F]).is_err());
+
+    // Zero entries is valid: only the two fixed body bytes are present.
+    let empty_body = [0x04, 0xB5];
+    let empty = segment(0x12, &empty_body);
+    let parsed = ClutDefinitionSegment::parse(&empty).unwrap();
+    assert!(parsed.entries.is_empty());
+    assert_eq!(parsed.try_to_bytes().unwrap(), empty);
 }
 
 #[test]
@@ -251,4 +258,37 @@ fn pes_data_field_header_and_boundaries() {
         PesDataField::parse(&[0x20, 0x00, 0xFE]),
         Err(Error::BadEndOfPesMarker(0xFE))
     ));
+}
+
+#[test]
+fn region_field_labels() {
+    assert_eq!(RegionLevelOfCompatibility::Reserved0.name(), "reserved");
+    assert_eq!(RegionLevelOfCompatibility::Clut2Bit.name(), "2-bit CLUT");
+    assert_eq!(RegionLevelOfCompatibility::Clut4Bit.name(), "4-bit CLUT");
+    assert_eq!(RegionLevelOfCompatibility::Clut8Bit.name(), "8-bit CLUT");
+    assert_eq!(RegionLevelOfCompatibility::Reserved(4).name(), "reserved");
+    assert_eq!(RegionDepth::Reserved0.name(), "reserved");
+    assert_eq!(RegionDepth::Depth2Bit.name(), "2-bit");
+    assert_eq!(RegionDepth::Depth4Bit.name(), "4-bit");
+    assert_eq!(RegionDepth::Depth8Bit.name(), "8-bit");
+    assert_eq!(RegionDepth::Reserved(5).name(), "reserved");
+    assert_eq!(ObjectType::BasicBitmap.name(), "basic_bitmap");
+    assert_eq!(ObjectType::BasicCharacter.name(), "basic_character");
+    assert_eq!(ObjectType::CompositeString.name(), "composite_string");
+    assert_eq!(ObjectType::Reserved(3).name(), "reserved");
+    assert_eq!(ObjectProviderFlag::InStream.name(), "in_stream");
+    assert_eq!(ObjectProviderFlag::InRom.name(), "in_rom");
+    assert_eq!(ObjectProviderFlag::Reserved(2).name(), "reserved");
+    assert_eq!(PageState::Normal.name(), "normal");
+    assert_eq!(PageState::Acquisition.name(), "acquisition");
+    assert_eq!(PageState::ModeChange.name(), "mode_change");
+    assert_eq!(PageState::Reserved(3).name(), "reserved");
+}
+
+#[test]
+fn segment_parsers_reject_short_buffers_without_panicking() {
+    assert!(PageCompositionSegment::parse(&[0x0F, 0x10, 0x00, 0x01]).is_err());
+    assert!(PageCompositionSegment::parse(&[0x0F, 0x10, 0x00, 0x01, 0x00, 0x02]).is_err());
+    assert!(ClutDefinitionSegment::parse(&[0x0F, 0x12]).is_err());
+    assert!(ClutDefinitionSegment::parse(&[0x0F, 0x12, 0x00, 0x01, 0x00]).is_err());
 }
