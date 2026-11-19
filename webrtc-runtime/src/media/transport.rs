@@ -2070,6 +2070,147 @@ mod tests {
         assert!(!c[0].starts_with("candidate:") && !c[0].starts_with("a="));
     }
 
+    // -----------------------------------------------------------------------
+    // Gathered-candidate marshalling (RFC 8445 §5.1.1/§5.1.2). The line
+    // below is what the SDP `a=candidate` carries, so every configured field
+    // must reach it: deleting any `CandidateConfig` field initialiser (the
+    // audit-22 mutants) leaves an empty network/address, a zero port or
+    // component `0` in the line.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn the_host_candidate_line_carries_component_one_and_the_local_address() {
+        let cfg = test_config(SetupRole::Passive);
+        let addr = cfg.local_addr;
+        let mt = MediaTransport::new(cfg, test_now()).unwrap();
+        let c = mt.local_candidates();
+        let fields: Vec<&str> = c[0].split_whitespace().collect();
+        // `<foundation> <component> <transport> <priority> <address> <port>
+        // typ <type>` (rtc-ice's `Candidate::marshal`).
+        assert_eq!(fields[1], "1", "component must be 1: {}", c[0]);
+        assert_eq!(fields[2], "udp", "{}", c[0]);
+        assert_eq!(fields[4], addr.ip().to_string(), "{}", c[0]);
+        assert_eq!(fields[5], addr.port().to_string(), "{}", c[0]);
+        assert_eq!(fields[6], "typ", "{}", c[0]);
+        assert_eq!(fields[7], "host", "{}", c[0]);
+    }
+
+    #[test]
+    fn a_gathered_server_reflexive_candidate_carries_the_mapped_address() {
+        let cfg = test_config(SetupRole::Passive);
+        let local = cfg.local_addr;
+        let mut mt = MediaTransport::new(cfg, test_now()).unwrap();
+        let mapped: SocketAddr = "203.0.113.9:51000".parse().unwrap();
+        let stun_server: SocketAddr = "192.0.2.1:3478".parse().unwrap();
+
+        let line = mt
+            .add_server_reflexive_candidate(mapped, stun_server)
+            .expect("a mapped address builds an srflx candidate");
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        assert_eq!(fields[1], "1", "component must be 1: {line}");
+        assert_eq!(fields[2], "udp", "{line}");
+        assert_eq!(fields[4], "203.0.113.9", "{line}");
+        assert_eq!(fields[5], "51000", "{line}");
+        assert_eq!(fields[7], "srflx", "{line}");
+        assert!(
+            line.contains(&format!("raddr {} rport {}", local.ip(), local.port())),
+            "the related address is this side's base: {line}"
+        );
+
+        let gathered = mt.local_candidates();
+        assert_eq!(gathered.len(), 2, "{gathered:?}");
+        assert!(gathered.contains(&line), "{gathered:?}");
+    }
+
+    #[test]
+    fn the_agent_accepts_only_the_configured_candidate_types() {
+        // The transport configures Host + ServerReflexive; a Relay local
+        // candidate must be refused (rtc-ice filters on `candidate_types`),
+        // while a server-reflexive one is accepted. Bite test: dropping the
+        // `candidate_types` initialiser falls back to rtc-ice's default
+        // (which includes Relay), so the relay candidate would be admitted.
+        use rtc_ice::candidate::candidate_relay::CandidateRelayConfig;
+
+        let cfg = test_config(SetupRole::Passive);
+        let mut mt = MediaTransport::new(cfg, test_now()).unwrap();
+        let relay = CandidateRelayConfig {
+            base_config: CandidateConfig {
+                network: "udp".to_string(),
+                address: "198.51.100.20".to_string(),
+                port: 5000,
+                component: 1,
+                ..Default::default()
+            },
+            rel_addr: "127.0.0.1".to_string(),
+            rel_port: 41000,
+            url: None,
+        }
+        .new_candidate_relay()
+        .unwrap();
+        assert!(
+            !mt.ice.add_local_candidate(relay).unwrap(),
+            "a relay candidate is outside the configured candidate types"
+        );
+
+        let mapped: SocketAddr = "198.51.100.7:62000".parse().unwrap();
+        let line = mt
+            .add_server_reflexive_candidate(mapped, "192.0.2.1:3478".parse().unwrap())
+            .unwrap();
+        assert!(mt.local_candidates().contains(&line));
+    }
+
+    /// Audit-22 #3009: the SDP `a=fingerprint` line (RFC 8122 §5) is read
+    /// from here; an empty or constant value breaks every handshake while a
+    /// loopback pair (both sides reading the same function) still matches.
+    #[test]
+    fn local_fingerprint_is_the_certificates_colon_hex_sha256() {
+        let cfg = test_config(SetupRole::Passive);
+        let cert = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            test_crypto().crypto(),
+        )
+        .unwrap();
+        let expected = sha256_fingerprint(cert.certificate[0].as_ref());
+        let mt = transport_with_certificate(cfg, cert);
+
+        let fingerprint = mt.local_fingerprint();
+        assert_eq!(fingerprint, expected);
+        assert_eq!(fingerprint.split(':').count(), 32, "{fingerprint}");
+        assert!(
+            fingerprint
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':'),
+            "{fingerprint}"
+        );
+    }
+
+    #[test]
+    fn ice_candidate_as_str_and_display_are_the_marshalled_line() {
+        let line = "0 1 udp 2130706431 127.0.0.1 54321 typ host";
+        let candidate = IceCandidate(line.to_string());
+        assert_eq!(candidate.as_str(), line);
+        assert_eq!(candidate.to_string(), line);
+        assert_eq!(IceCandidate::from(line).as_str(), line);
+    }
+
+    #[cfg(feature = "test-seams")]
+    #[test]
+    fn certificate_fingerprint_is_sha256_of_the_leaf_der() {
+        let cert = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            test_crypto().crypto(),
+        )
+        .unwrap();
+        let der = cert.certificate[0].as_ref();
+        let digest = Sha256::digest(der);
+        let expected = digest
+            .iter()
+            .map(|b| format!("{b:02X}"))
+            .collect::<Vec<_>>()
+            .join(":");
+        assert_eq!(certificate_fingerprint(&cert), expected);
+    }
+
     #[test]
     fn new_rejects_malformed_remote_fingerprint() {
         for bad in ["md5 00:11", "sha-256 00:11", "", "sha-256"] {
@@ -2337,6 +2478,104 @@ mod tests {
         let (read, write) = select_read_write_material(true, client, server);
         assert_eq!(read, server, "client must decrypt with server_write_*");
         assert_eq!(write, client, "client must encrypt with client_write_*");
+    }
+
+    // -----------------------------------------------------------------------
+    // SRTP protection-profile mapping (RFC 5764 §4.1.2, RFC 7714 §8/§14).
+    // Bite test: making `to_srtp_profile` return `Ok(Default::default())`
+    // (the audit-22 mutant) hands every negotiated profile
+    // `Aes128CmHmacSha1_80`, so the AEAD profiles' key/salt lengths no
+    // longer match the exporter slices below and this table fails.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn srtp_profile_mapping_covers_every_negotiable_profile() {
+        let cases = [
+            (
+                SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_80,
+                ProtectionProfile::Aes128CmHmacSha1_80,
+                16usize,
+                14usize,
+            ),
+            (
+                SrtpProtectionProfile::Srtp_Aes128_Cm_Hmac_Sha1_32,
+                ProtectionProfile::Aes128CmHmacSha1_32,
+                16,
+                14,
+            ),
+            (
+                SrtpProtectionProfile::Srtp_Aead_Aes_128_Gcm,
+                ProtectionProfile::AeadAes128Gcm,
+                16,
+                12,
+            ),
+            (
+                SrtpProtectionProfile::Srtp_Aead_Aes_256_Gcm,
+                ProtectionProfile::AeadAes256Gcm,
+                32,
+                12,
+            ),
+        ];
+        for (negotiated, expected, key_len, salt_len) in cases {
+            let mapped = to_srtp_profile(negotiated).expect("a supported profile");
+            assert_eq!(mapped as u16, expected as u16, "{negotiated:?}");
+            assert_eq!(mapped.key_len(), key_len, "{negotiated:?}");
+            assert_eq!(mapped.salt_len(), salt_len, "{negotiated:?}");
+        }
+        assert!(
+            to_srtp_profile(SrtpProtectionProfile::Unsupported).is_err(),
+            "an unnegotiable profile must be refused, never mapped to a default"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // ICE connection-state mapping. Bite test: deleting any arm of the inner
+    // `match` (the audit-22 mutants) makes that state report
+    // `IceConnectionState::Unspecified` through the wildcard arm, so the host
+    // never learns a peer failed or disconnected.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn every_ice_connection_state_maps_to_its_own_variant() {
+        use rtc_ice::state::ConnectionState as Raw;
+
+        let cases = [
+            (Raw::Unspecified, "Unspecified"),
+            (Raw::New, "New"),
+            (Raw::Checking, "Checking"),
+            (Raw::Connected, "Connected"),
+            (Raw::Completed, "Completed"),
+            (Raw::Failed, "Failed"),
+            (Raw::Disconnected, "Disconnected"),
+            (Raw::Closed, "Closed"),
+        ];
+        for (raw, expected_name) in cases {
+            let mapped = map_ice_event(IceAgentEvent::ConnectionStateChange(raw))
+                .expect("a state change is not an error")
+                .expect("a state change is reported, not swallowed");
+            let MediaEvent::IceStateChanged(state) = mapped else {
+                panic!("{raw:?} must map to IceStateChanged, got {mapped:?}");
+            };
+            assert_eq!(state.name(), expected_name, "{raw:?} mapped to {state:?}");
+        }
+    }
+
+    #[test]
+    fn ice_connection_state_names_are_pinned() {
+        let cases = [
+            (IceConnectionState::Unspecified, "Unspecified"),
+            (IceConnectionState::New, "New"),
+            (IceConnectionState::Checking, "Checking"),
+            (IceConnectionState::Connected, "Connected"),
+            (IceConnectionState::Completed, "Completed"),
+            (IceConnectionState::Failed, "Failed"),
+            (IceConnectionState::Disconnected, "Disconnected"),
+            (IceConnectionState::Closed, "Closed"),
+        ];
+        for (state, name) in cases {
+            assert_eq!(state.name(), name);
+            assert_eq!(state.to_string(), name);
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -3130,6 +3369,19 @@ mod tests {
     /// [`MediaTransportConfig::max_remote_candidates`] set to `cap` instead
     /// of the default — for tests that need to exhaust a small cap (e.g.
     /// the STUN-source-address one below).
+    /// Build one transport through the private certificate constructor, so a
+    /// test can pair two sides that already hold each other's genuine
+    /// fingerprint (impossible through `new`, which generates the
+    /// certificate internally).
+    fn transport_with_certificate(
+        config: MediaTransportConfig,
+        certificate: Certificate,
+    ) -> MediaTransport {
+        let digest = parse_fingerprint_value(&config.remote_fingerprint).unwrap();
+        MediaTransport::with_certificate(config, digest, certificate, test_crypto(), test_now())
+            .unwrap()
+    }
+
     fn loopback_pair_with_max_remote(cap: usize) -> LoopbackPair {
         let a_addr = reserve_loopback_addr();
         let b_addr = reserve_loopback_addr();
@@ -3145,7 +3397,7 @@ mod tests {
         .unwrap();
         let fp_a = sha256_fingerprint(cert_a.certificate[0].as_ref());
         let fp_b = sha256_fingerprint(cert_b.certificate[0].as_ref());
-        let mut a = MediaTransport::with_certificate(
+        let mut a = transport_with_certificate(
             MediaTransportConfig {
                 local_addr: a_addr,
                 local_ice_ufrag: "loopa0ufrag".into(),
@@ -3158,13 +3410,9 @@ mod tests {
                 remote_fingerprint: format!("sha-256 {fp_b}"),
                 max_remote_candidates: cap,
             },
-            parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
-            test_crypto(),
-            test_now(),
-        )
-        .unwrap();
-        let mut b = MediaTransport::with_certificate(
+        );
+        let mut b = transport_with_certificate(
             MediaTransportConfig {
                 local_addr: b_addr,
                 local_ice_ufrag: "loopb0ufrag".into(),
@@ -3177,12 +3425,8 @@ mod tests {
                 remote_fingerprint: format!("sha-256 {fp_a}"),
                 max_remote_candidates: cap,
             },
-            parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,
-            test_crypto(),
-            test_now(),
-        )
-        .unwrap();
+        );
         a.add_remote_candidate(&b.local_candidates()[0]).unwrap();
         b.add_remote_candidate(&a.local_candidates()[0]).unwrap();
         LoopbackPair {
@@ -3442,6 +3686,46 @@ mod tests {
         ));
     }
 
+    /// Audit-22 #3004: an ICE restart with only one of the peer's new
+    /// credentials supplied is refused *before* anything is installed. Bite
+    /// test: weakening the guard's `||` to `&&` accepts a call with one empty
+    /// credential, and the local credentials then change (a restart the peer
+    /// never agreed to).
+    #[test]
+    fn ice_restart_refuses_a_half_supplied_remote_credential() {
+        let mut transport =
+            MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
+        let local_ufrag = transport.ice.get_local_credentials().ufrag.clone();
+        let local_pwd = transport.ice.get_local_credentials().pwd.clone();
+        let remote_ufrag = transport
+            .ice
+            .get_remote_credentials()
+            .unwrap()
+            .ufrag
+            .clone();
+        let remote_pwd = transport.ice.get_remote_credentials().unwrap().pwd.clone();
+
+        let (new_ufrag, new_pwd) = ("restart0ufrag", "restart-ice-password-00000");
+        for (peer_ufrag, peer_pwd) in [("", new_pwd), (new_ufrag, "")] {
+            let result =
+                transport.restart_ice(test_now(), new_ufrag, new_pwd, peer_ufrag, peer_pwd);
+            assert!(
+                matches!(result, Err(Error::Media(MediaError::Other(_)))),
+                "({peer_ufrag:?}, {peer_pwd:?}) must be refused: {result:?}"
+            );
+            let local = transport.ice.get_local_credentials();
+            assert_eq!(
+                (local.ufrag.as_str(), local.pwd.as_str()),
+                (local_ufrag.as_str(), local_pwd.as_str())
+            );
+            let remote = transport.ice.get_remote_credentials().unwrap();
+            assert_eq!(
+                (remote.ufrag.as_str(), remote.pwd.as_str()),
+                (remote_ufrag.as_str(), remote_pwd.as_str())
+            );
+        }
+    }
+
     #[test]
     fn dtls_from_non_selected_address_is_ignored() {
         let mut pair = loopback_pair();
@@ -3492,6 +3776,176 @@ mod tests {
         }
     }
 
+    /// Audit-22 #3002: the installed-keys guard in
+    /// [`MediaTransport::on_dtls_handshake_complete`]. A second DTLS
+    /// association that presents the peer's genuine certificate (so the
+    /// RFC 8122 §5 fingerprint check passes) but completes from a different
+    /// 5-tuple must be refused, and the original SRTP keys must keep
+    /// decrypting. Bite test: flipping the guard's `!=` to `==` lets the
+    /// second association install its keys, after which the real peer's
+    /// media no longer unprotects.
+    #[test]
+    fn a_second_dtls_handshake_from_another_address_cannot_replace_srtp_keys() {
+        let a_addr = reserve_loopback_addr();
+        let b_addr = reserve_loopback_addr();
+        let d_addr = reserve_loopback_addr();
+        let cert_a = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            test_crypto().crypto(),
+        )
+        .unwrap();
+        let cert_b = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            test_crypto().crypto(),
+        )
+        .unwrap();
+        let fp_a = sha256_fingerprint(cert_a.certificate[0].as_ref());
+        let fp_b = sha256_fingerprint(cert_b.certificate[0].as_ref());
+
+        let mut pair = LoopbackPair {
+            a: transport_with_certificate(
+                MediaTransportConfig {
+                    local_addr: a_addr,
+                    local_ice_ufrag: "guarda0ufrag".into(),
+                    local_ice_pwd: "guarda-ice-password-0000000".into(),
+                    remote_ice_ufrag: "guardb0ufrag".into(),
+                    remote_ice_pwd: "guardb-ice-password-0000000".into(),
+                    is_controlling: true,
+                    local_setup: SetupRole::Active,
+                    stun_server: None,
+                    remote_fingerprint: format!("sha-256 {fp_b}"),
+                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                },
+                cert_a,
+            ),
+            b: transport_with_certificate(
+                MediaTransportConfig {
+                    local_addr: b_addr,
+                    local_ice_ufrag: "guardb0ufrag".into(),
+                    local_ice_pwd: "guardb-ice-password-0000000".into(),
+                    remote_ice_ufrag: "guarda0ufrag".into(),
+                    remote_ice_pwd: "guarda-ice-password-0000000".into(),
+                    is_controlling: false,
+                    local_setup: SetupRole::Passive,
+                    stun_server: None,
+                    remote_fingerprint: format!("sha-256 {fp_a}"),
+                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                },
+                cert_b.clone(),
+            ),
+            a_addr,
+            b_addr,
+        };
+        pair.a
+            .add_remote_candidate(&pair.b.local_candidates()[0])
+            .unwrap();
+        pair.b
+            .add_remote_candidate(&pair.a.local_candidates()[0])
+            .unwrap();
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+
+        // The second association holds B's certificate (a relay, or the same
+        // host reached on another port) but sits at a different address.
+        let mut second = transport_with_certificate(
+            MediaTransportConfig {
+                local_addr: d_addr,
+                local_ice_ufrag: "guardb1ufrag".into(),
+                local_ice_pwd: "guardb-ice-password-1111111".into(),
+                remote_ice_ufrag: "guarda0ufrag".into(),
+                remote_ice_pwd: "guarda-ice-password-0000000".into(),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                stun_server: None,
+                remote_fingerprint: format!("sha-256 {fp_a}"),
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+            },
+            cert_b,
+        );
+
+        // ICE has re-nominated the second 5-tuple on both sides; DTLS follows
+        // the selected pair (`handle_dtls_datagram`'s address gate), and this
+        // side (Active) dials the handshake.
+        pair.a.selected_pair_addr = Some(d_addr);
+        second.selected_pair_addr = Some(a_addr);
+        let start = test_now();
+        pair.a
+            .maybe_start_active_dtls(pair.a.now_at(start), d_addr)
+            .unwrap();
+
+        let mut now = start;
+        let mut guard_error = None;
+        let mut second_done = false;
+        while now.saturating_sub(start) <= Duration::from_secs(8)
+            && guard_error.is_none()
+            && !second_done
+        {
+            let mut progressed = false;
+            while let Some(dgram) = pair.a.poll_transmit() {
+                if dgram.peer != d_addr {
+                    continue;
+                }
+                match second.handle_datagram(now, a_addr, &dgram.bytes) {
+                    Ok(events) => {
+                        second_done |= events
+                            .iter()
+                            .any(|e| matches!(e, MediaEvent::DtlsHandshakeComplete));
+                    }
+                    Err(_) => second_done = true,
+                }
+                progressed = true;
+            }
+            while let Some(dgram) = second.poll_transmit() {
+                match pair.a.handle_datagram(now, d_addr, &dgram.bytes) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        guard_error = Some(e);
+                        break;
+                    }
+                }
+                progressed = true;
+            }
+            if guard_error.is_some() || second_done {
+                break;
+            }
+            if !progressed {
+                let (Some(a_next), Some(d_next)) = (pair.a.poll_timeout(), second.poll_timeout())
+                else {
+                    break;
+                };
+                let next = a_next.min(d_next);
+                now = pair
+                    .a
+                    .stamp_of(next)
+                    .checked_add(Duration::from_millis(1))
+                    .map_or_else(|| pair.a.stamp_of(next), |plus| plus.max(now));
+                pair.a.handle_timeout(now);
+                second.handle_timeout(now);
+            }
+        }
+
+        let err = guard_error.expect(
+            "a second DTLS association completing from another address must be refused, \
+             not install its keys",
+        );
+        let message = format!("{err}");
+        assert!(
+            message.contains("ignoring dtls handshake completed"),
+            "unexpected refusal: {message}"
+        );
+
+        // The original association's keys are untouched: B's media still
+        // unprotects under them.
+        let protected = pair.b.encrypt_rtp(&rtp_test_packet(12)).unwrap();
+        let events = pair
+            .a
+            .handle_datagram(test_now(), b_addr, &protected)
+            .unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 12),
+            "the original peer's SRTP keys must survive a second association: {events:?}"
+        );
+    }
+
     // -----------------------------------------------------------------------
     // Remote-candidate cap vs. `rtc-ice`'s own peer-reflexive candidate
     // creation. RFC 8445 §19.5.1 / §6.1.2.5: `rtc-ice` 0.20.0 authenticates
@@ -3517,27 +3971,79 @@ mod tests {
         remote_ufrag: &str,
         local_pwd: &str,
     ) -> Vec<u8> {
+        authenticated_stun(
+            rtc_stun::message::BINDING_REQUEST,
+            &format!("{local_ufrag}:{remote_ufrag}"),
+            local_pwd,
+        )
+    }
+
+    /// A STUN message of `msg_type` carrying a valid USERNAME and a
+    /// MESSAGE-INTEGRITY keyed with `pwd` (RFC 8489 §14.5 / §14.9).
+    fn authenticated_stun(
+        msg_type: rtc_stun::message::MessageType,
+        username: &str,
+        pwd: &str,
+    ) -> Vec<u8> {
         use rtc_stun::attributes::ATTR_USERNAME;
         use rtc_stun::fingerprint::FINGERPRINT;
         use rtc_stun::integrity::MessageIntegrity;
-        use rtc_stun::message::{BINDING_REQUEST, Message, TransactionId};
+        use rtc_stun::message::{Message, TransactionId};
         use rtc_stun::textattrs::Username;
 
-        let username = format!("{local_ufrag}:{remote_ufrag}");
         let crypto = test_crypto();
         let mut msg = Message::new();
         msg.build(&[
-            Box::new(BINDING_REQUEST),
+            Box::new(msg_type),
             Box::new(TransactionId::new()),
-            Box::new(Username::new(ATTR_USERNAME, username)),
+            Box::new(Username::new(ATTR_USERNAME, username.to_string())),
             Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
-                local_pwd.to_string(),
+                pwd.to_string(),
                 crypto.crypto(),
             )),
             Box::new(FINGERPRINT),
         ])
-        .expect("build authenticated stun binding request");
+        .expect("build authenticated stun message");
         msg.raw
+    }
+
+    /// Audit-22 #3004: `check_is_authenticated` decides whether a datagram
+    /// from a new source address may bind this session's 5-tuple, so it must
+    /// insist on all three of: a well-formed STUN message, the Binding
+    /// method, and the request class. Bite test: weakening the `||` chain to
+    /// `&&` lets a Binding *response* or a TURN Allocate request carrying
+    /// valid credentials through — and a peer that can answer a check (or
+    /// ask for an allocation) never proved it is the ICE peer.
+    #[test]
+    fn stun_authentication_accepts_only_an_authenticated_binding_request() {
+        use rtc_stun::message::{BINDING_SUCCESS, CLASS_REQUEST, METHOD_ALLOCATE, MessageType};
+
+        let transport = MediaTransport::new(test_config(SetupRole::Passive), test_now()).unwrap();
+        let username = "localufrag0:remoteufrag0";
+        let pwd = "localicepassword1234567";
+
+        let request = authenticated_stun(rtc_stun::message::BINDING_REQUEST, username, pwd);
+        assert!(transport.check_is_authenticated(&request));
+
+        assert!(
+            !transport.check_is_authenticated(&request[..12]),
+            "a truncated datagram is not a STUN message"
+        );
+        assert!(
+            !transport.check_is_authenticated(&authenticated_stun(BINDING_SUCCESS, username, pwd)),
+            "a Binding response is not a request the peer sent"
+        );
+        assert!(
+            !transport.check_is_authenticated(&authenticated_stun(
+                MessageType {
+                    method: METHOD_ALLOCATE,
+                    class: CLASS_REQUEST,
+                },
+                username,
+                pwd,
+            )),
+            "an Allocate request is not a connectivity check"
+        );
     }
 
     #[test]

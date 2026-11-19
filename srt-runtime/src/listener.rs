@@ -735,4 +735,54 @@ mod tests {
             .unwrap();
         assert!(matches!(out[0], HandshakeOutput::Send(_)));
     }
+
+    /// The CONCLUSION's ISN boundary is inclusive: exactly the 31-bit mask is
+    /// legal and connects, one more is rogue.
+    #[test]
+    fn conclusion_isn_boundary_is_the_31_bit_mask() {
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        l.feed(&caller_induction(2)).unwrap();
+        let out = l
+            .feed(&with_limits(
+                caller_conclusion(2, 1, 0xC0FF_EE00, 120),
+                1500,
+                8192,
+                crate::packet::SEQ_NUMBER_MASK,
+            ))
+            .unwrap();
+        assert!(
+            out.iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_))),
+            "the maximum legal ISN must be accepted: {out:?}"
+        );
+        assert_eq!(l.state(), ListenerHandshakeState::Connected);
+
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        l.feed(&caller_induction(2)).unwrap();
+        let out = l
+            .feed(&with_limits(
+                caller_conclusion(2, 1, 0xC0FF_EE00, 120),
+                1500,
+                8192,
+                crate::packet::SEQ_NUMBER_MASK + 1,
+            ))
+            .unwrap();
+        assert!(matches!(
+            out.last(),
+            Some(HandshakeOutput::Rejected(RejectionReason::Rogue))
+        ));
+        assert_eq!(l.state(), ListenerHandshakeState::Rejected);
+    }
+
+    #[test]
+    fn state_labels_match_the_diagram_names() {
+        assert_eq!(ListenerHandshakeState::Idle.name(), "Idle");
+        assert_eq!(
+            ListenerHandshakeState::AwaitingConclusion.name(),
+            "AwaitingConclusion"
+        );
+        assert_eq!(ListenerHandshakeState::Connected.name(), "Connected");
+        assert_eq!(ListenerHandshakeState::Rejected.name(), "Rejected");
+        assert_eq!(ListenerHandshakeState::TimedOut.name(), "TimedOut");
+    }
 }

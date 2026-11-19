@@ -298,3 +298,66 @@ fn a_map_run_with_its_own_key_decrypts_its_own_init() {
         vec![counts(&first.bytes), counts(&second.bytes)]
     );
 }
+
+#[test]
+fn an_implicit_map_iv_uses_the_maps_first_media_sequence_number() {
+    let first = source(H264_AAC);
+    let second = source(HEVC);
+    let run = first.parts.segments.len();
+    let key_line = "#EXT-X-KEY:METHOD=AES-128,URI=\"k.bin\"\n";
+    let mut client = HlsClient::new(hls_runtime::client::HlsClientConfig::new(
+        Url::parse(URL).expect("URL"),
+    ));
+    drain(&mut client);
+    client
+        .on_playlist(two_run_playlist(&first, &second, key_line).as_bytes())
+        .unwrap();
+    let key_id = drain(&mut client)
+        .into_iter()
+        .find_map(|a| match a {
+            Action::FetchKey { id, .. } => Some(id),
+            _ => None,
+        })
+        .expect("the second run's key is requested");
+    client
+        .on_resource(ResourceId::Init, &first.parts.init)
+        .unwrap();
+    drain(&mut client);
+    let iv = |msn: u64| {
+        let mut iv = [0u8; IV.len()];
+        iv[IV.len() - core::mem::size_of::<u64>()..].copy_from_slice(&msn.to_be_bytes());
+        iv
+    };
+    let cipher = aes128_encrypt_segment(&KEY, &iv(run as u64), &second.parts.init);
+    client.on_resource(ResourceId::Init, &cipher).unwrap();
+    client.on_key(key_id, &KEY).unwrap();
+    for (i, seg) in first.parts.segments.iter().enumerate() {
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(i as u64),
+                },
+                seg,
+            )
+            .unwrap();
+    }
+    for (i, seg) in second.parts.segments.iter().enumerate() {
+        let msn = (run + i) as u64;
+        let cipher = aes128_encrypt_segment(&KEY, &iv(msn), seg);
+        client
+            .on_resource(
+                ResourceId::Segment {
+                    msn: broadcast_hls::MediaSequence::new(msn),
+                },
+                &cipher,
+            )
+            .unwrap();
+    }
+    let mut seen = Seen::default();
+    collect_outputs(&mut client, &mut seen);
+    assert_eq!(
+        seen.announced,
+        vec![first.parts.init.clone(), second.parts.init.clone()],
+        "the second map's implicit IV is its first segment's number"
+    );
+}

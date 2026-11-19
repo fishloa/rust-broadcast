@@ -313,3 +313,48 @@ fn server_state_name(s: &State) -> &'static str {
         State::Closed => "closed",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audit-22 #3009: `WrongState` reports these names, so each server state
+    /// must have its own. Bite test: a constant (the mutant) makes every
+    /// error name the same state.
+    #[test]
+    fn every_server_state_has_its_own_name() {
+        let cases = [
+            (State::AwaitingOffer, "awaiting-offer"),
+            (
+                State::CounterOffered {
+                    etag: Some("e1".to_string()),
+                },
+                "counter-offered",
+            ),
+            (
+                State::Established {
+                    etag: "e1".to_string(),
+                },
+                "established",
+            ),
+            (State::Closed, "closed"),
+        ];
+        for (state, expected) in cases {
+            assert_eq!(server_state_name(&state), expected, "{state:?}");
+        }
+    }
+
+    /// Audit-22 #3009: the session's `Debug` names the profile, the resource
+    /// URL and the state. Bite test: an empty `Debug` (the mutant) hides all
+    /// three.
+    #[test]
+    fn session_debug_names_the_profile_url_and_state() {
+        let session =
+            WhipSession::new(url::Url::parse("https://whip.example.com/session/abc").unwrap());
+        let rendered = format!("{session:?}");
+        assert!(rendered.contains("whip.example.com"), "{rendered}");
+        assert!(rendered.contains("/session/abc"), "{rendered}");
+        assert!(rendered.contains("AwaitingOffer"), "{rendered}");
+        assert!(rendered.contains(Whip::SERVER_NAME), "{rendered}");
+    }
+}

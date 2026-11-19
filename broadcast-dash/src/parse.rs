@@ -240,7 +240,6 @@ fn descriptor(e: &Elem<Ns>) -> Result<Descriptor, MpdError> {
         .iter()
         .find(|c| c.ns == Ns::Cenc && c.name == "pssh")
         .map(|c| c.text.trim().to_owned());
-    let _ = url_query.as_ref();
     Ok(Descriptor {
         scheme_id_uri,
         value: opt_str(e, "value"),
@@ -469,7 +468,6 @@ fn conditional(name: &'static str, e: &Elem<Ns>) -> Result<bool, MpdError> {
 fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSet>, MpdError> {
     let link = xlink(e)?;
     if is_resolve_to_zero(&link) {
-        ctx.features.xlink_resolve_to_zero = true;
         return Ok(None);
     }
     let start_with_sap = sap_type(e, "startWithSAP")?;
@@ -512,7 +510,6 @@ fn adaptation_set(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<AdaptationSe
 fn period(e: &Elem<Ns>, ctx: &mut Ctx<'_>) -> Result<Option<Period>, MpdError> {
     let link = xlink(e)?;
     if is_resolve_to_zero(&link) {
-        ctx.features.xlink_resolve_to_zero = true;
         return Ok(None);
     }
     let mut sets = Vec::new();
@@ -816,17 +813,61 @@ fn content_steering(e: &Elem<Ns>) -> Result<ContentSteering, MpdError> {
     })
 }
 
-fn scan_features(e: &Elem<Ns>, f: &mut MpdFeatures) {
-    if e.ns == Ns::Mpd {
-        match e.name.as_str() {
-            "InbandEventStream" => f.inband_event_stream = true,
-            "ServiceDescription" => f.service_description = true,
-            _ => {}
-        }
-    }
-    for c in &e.children {
-        scan_features(c, f);
-    }
+fn retains_inband_event_stream(periods: &[Period]) -> bool {
+    periods.iter().any(|p| {
+        p.preselections
+            .iter()
+            .any(|pre| !pre.inband_event_streams.is_empty())
+            || p.adaptation_sets.iter().any(|a| {
+                !a.inband_event_streams.is_empty()
+                    || a.representations
+                        .iter()
+                        .any(|r| !r.inband_event_streams.is_empty())
+            })
+    })
+}
+
+fn retains_resolve_to_zero(periods: &[Period]) -> bool {
+    periods.iter().any(|p| {
+        is_resolve_to_zero(&p.xlink)
+            || layer_resolves_to_zero(&p.segment)
+            || p.event_streams.iter().any(|es| {
+                is_resolve_to_zero(&es.xlink)
+                    || es
+                        .request_params
+                        .iter()
+                        .any(|rp| is_resolve_to_zero(&rp.xlink))
+            })
+            || p.adaptation_sets.iter().any(|a| {
+                is_resolve_to_zero(&a.xlink)
+                    || layer_resolves_to_zero(&a.segment)
+                    || a.representations
+                        .iter()
+                        .any(|r| layer_resolves_to_zero(&r.segment))
+            })
+    })
+}
+
+fn layer_resolves_to_zero(layer: &SegmentLayer) -> bool {
+    layer
+        .list
+        .as_ref()
+        .is_some_and(|l| is_resolve_to_zero(&l.xlink))
+}
+
+fn retains_service_description(
+    service_descriptions: &[ServiceDescription],
+    periods: &[Period],
+) -> bool {
+    !service_descriptions.is_empty()
+        || periods.iter().any(|p| {
+            !p.service_descriptions.is_empty()
+                || p.event_streams.iter().any(|es| {
+                    es.events
+                        .iter()
+                        .any(|ev| !ev.service_descriptions.is_empty())
+                })
+        })
 }
 
 impl Mpd {
@@ -876,8 +917,14 @@ impl Mpd {
             .map(utc_timing)
             .collect::<Result<Vec<_>, _>>()?;
         let base = base_urls(&root, &mut ctx)?;
+        let service_descriptions = root
+            .children_named("ServiceDescription")
+            .map(service_description)
+            .collect::<Result<Vec<_>, _>>()?;
         let mut features = ctx.features;
-        scan_features(&root, &mut features);
+        features.inband_event_stream = retains_inband_event_stream(&periods);
+        features.service_description = retains_service_description(&service_descriptions, &periods);
+        features.xlink_resolve_to_zero = retains_resolve_to_zero(&periods);
         Ok(Self {
             id: opt_str(&root, "id"),
             profiles: root
@@ -909,10 +956,7 @@ impl Mpd {
                 .children_named("PatchLocation")
                 .map(patch_location)
                 .collect::<Result<Vec<_>, _>>()?,
-            service_descriptions: root
-                .children_named("ServiceDescription")
-                .map(service_description)
-                .collect::<Result<Vec<_>, _>>()?,
+            service_descriptions,
             utc_timings,
             essential_properties: descriptors(&root, "EssentialProperty")?,
             supplemental_properties: descriptors(&root, "SupplementalProperty")?,

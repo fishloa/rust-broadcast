@@ -169,6 +169,50 @@ mod tests {
         assert_eq!(conv.into_cues().len(), 0);
     }
 
+    fn t708(packet: &[u8]) -> alloc::vec::Vec<CcTriplet> {
+        packet
+            .chunks_exact(2)
+            .enumerate()
+            .map(|(i, pair)| CcTriplet {
+                cc_valid: true,
+                cc_type: if i == 0 {
+                    CcType::Dtvcc708Start
+                } else {
+                    CcType::Dtvcc708Data
+                },
+                cc_data_1: pair[0],
+                cc_data_2: pair[1],
+            })
+            .collect()
+    }
+
+    #[test]
+    fn cea708_paints_the_window_and_closes_the_cue() {
+        let mut conv = Cea708ToWebVtt::new(1);
+        // One service-1 CCP: DefineWindow 0 visible (3 rows x 16), write "HI",
+        // then a zero pad byte so the packet is a whole number of triplets.
+        let paint: [u8; 12] = [
+            0x06, 0x29, 0x98, 0x20, 0x00, 0x00, 0x02, 0x0F, 0x00, b'H', b'I', 0x00,
+        ];
+        conv.push_cc_data(0, &cc_data_bytes(&t708(&paint))).unwrap();
+        // One service-1 CCP: ClearWindows on window 0.
+        let clear: [u8; 6] = [0x03, 0x22, 0x88, 0x01, 0x00, 0x00];
+        conv.push_cc_data(90_000, &cc_data_bytes(&t708(&clear)))
+            .unwrap();
+        let vtt = conv.into_webvtt();
+        assert!(vtt.contains("HI"), "{vtt}");
+        assert!(vtt.contains("00:00:00.000 --> 00:00:01.000"), "{vtt}");
+    }
+
+    #[test]
+    fn cea708_push_cc_data_propagates_parse_errors() {
+        let mut conv = Cea708ToWebVtt::new(1);
+        assert!(matches!(
+            conv.push_cc_data(0, &[0xFF]),
+            Err(crate::error::Error::CcData(_))
+        ));
+    }
+
     #[test]
     fn cc_data_with_process_cc_data_flag_clear_is_discarded() {
         let mut conv = Cea608ToWebVtt::new(Cea608Channel::Cc1);

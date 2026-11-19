@@ -215,4 +215,134 @@ mod tests {
             Err(crate::error::Error::MethodNotValidInState { .. })
         ));
     }
+
+    /// RFC 2326 §A.1/§A.2: the next state for every state-affecting method in
+    /// every state. `None` is a combination the tables do not list.
+    const A1_A2: [(SessionState, Method, Option<SessionState>); 20] = [
+        (SessionState::Init, Method::Setup, Some(SessionState::Ready)),
+        (SessionState::Init, Method::Play, None),
+        (SessionState::Init, Method::Pause, None),
+        (SessionState::Init, Method::Record, None),
+        (
+            SessionState::Init,
+            Method::Teardown,
+            Some(SessionState::Init),
+        ),
+        (
+            SessionState::Ready,
+            Method::Setup,
+            Some(SessionState::Ready),
+        ),
+        (
+            SessionState::Ready,
+            Method::Play,
+            Some(SessionState::Playing),
+        ),
+        (SessionState::Ready, Method::Pause, None),
+        (
+            SessionState::Ready,
+            Method::Record,
+            Some(SessionState::Recording),
+        ),
+        (
+            SessionState::Ready,
+            Method::Teardown,
+            Some(SessionState::Init),
+        ),
+        (
+            SessionState::Playing,
+            Method::Setup,
+            Some(SessionState::Playing),
+        ),
+        (
+            SessionState::Playing,
+            Method::Play,
+            Some(SessionState::Playing),
+        ),
+        (
+            SessionState::Playing,
+            Method::Pause,
+            Some(SessionState::Ready),
+        ),
+        (SessionState::Playing, Method::Record, None),
+        (
+            SessionState::Playing,
+            Method::Teardown,
+            Some(SessionState::Init),
+        ),
+        (
+            SessionState::Recording,
+            Method::Setup,
+            Some(SessionState::Recording),
+        ),
+        (SessionState::Recording, Method::Play, None),
+        (
+            SessionState::Recording,
+            Method::Pause,
+            Some(SessionState::Ready),
+        ),
+        (
+            SessionState::Recording,
+            Method::Record,
+            Some(SessionState::Recording),
+        ),
+        (
+            SessionState::Recording,
+            Method::Teardown,
+            Some(SessionState::Init),
+        ),
+    ];
+
+    #[test]
+    fn the_client_state_table_is_covered_transition_by_transition() {
+        for (state, method, expected) in &A1_A2 {
+            match expected {
+                Some(next) => assert_eq!(
+                    client_next_state(*state, method).expect("a listed transition"),
+                    *next,
+                    "client {state} + {method:?}"
+                ),
+                None => assert!(
+                    matches!(
+                        client_next_state(*state, method),
+                        Err(crate::error::Error::MethodNotValidInState { .. })
+                    ),
+                    "client {state} + {method:?} must be refused"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn the_server_state_table_is_covered_transition_by_transition() {
+        for (state, method, expected) in &A1_A2 {
+            match expected {
+                Some(next) => assert_eq!(
+                    server_next_state(*state, method).expect("a listed transition"),
+                    *next,
+                    "server {state} + {method:?}"
+                ),
+                None => assert!(
+                    matches!(
+                        server_next_state(*state, method),
+                        Err(crate::error::Error::MethodNotValidInState { .. })
+                    ),
+                    "server {state} + {method:?} must be refused"
+                ),
+            }
+        }
+    }
+
+    #[test]
+    fn every_state_names_and_displays_itself() {
+        for (state, name) in [
+            (SessionState::Init, "Init"),
+            (SessionState::Ready, "Ready"),
+            (SessionState::Playing, "Playing"),
+            (SessionState::Recording, "Recording"),
+        ] {
+            assert_eq!(state.name(), name);
+            assert_eq!(state.to_string(), name);
+        }
+    }
 }

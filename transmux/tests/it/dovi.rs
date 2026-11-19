@@ -480,3 +480,108 @@ fn p81_dash_codecs_stay_hvc1() {
     let codec = transmux::rfc6381_track_codec_string(&video(&media).spec).unwrap();
     assert!(codec.starts_with("hvc1."), "{codec}");
 }
+
+// ---------------------------------------------------------------------------
+// audit 22 — each companion-AdaptationSet disqualifier suppresses it alone
+// ---------------------------------------------------------------------------
+
+fn dvh1_set_count(mpd: &str) -> usize {
+    adaptation_set_codecs(mpd)
+        .iter()
+        .filter(|codes| codes.iter().any(|c| c.starts_with("dvh1.")))
+        .count()
+}
+
+fn hevc_spec_mut(media: &mut Media) -> &mut transmux::TrackSpec {
+    &mut media
+        .tracks
+        .iter_mut()
+        .find(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
+        .expect("an HEVC track")
+        .spec
+}
+
+#[test]
+fn the_p81_record_alone_emits_a_companion_set() {
+    let Some(media) = ts_media(P81_TS) else {
+        return;
+    };
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    assert_eq!(dvh1_set_count(&mpd), 1, "{mpd}");
+}
+
+#[test]
+fn a_non_hevc_config_suppresses_the_companion_set() {
+    let Some(mut media) = ts_media(P81_TS) else {
+        return;
+    };
+    let record = transmux::AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: Vec::new(),
+        pps: Vec::new(),
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: Vec::new(),
+    };
+    hevc_spec_mut(&mut media).config = CodecConfig::Avc {
+        config: transmux::AVCConfigurationBox::new(record),
+        width: 1_920,
+        height: 1_080,
+    };
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    assert_eq!(dvh1_set_count(&mpd), 0, "{mpd}");
+}
+
+#[test]
+fn a_dual_layer_record_suppresses_the_companion_set() {
+    let Some(mut media) = ts_media(P81_TS) else {
+        return;
+    };
+    hevc_spec_mut(&mut media)
+        .dovi
+        .as_mut()
+        .expect("p81 record")
+        .el_present = true;
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    assert_eq!(dvh1_set_count(&mpd), 0, "{mpd}");
+}
+
+#[test]
+fn a_non_hevc_profile_suppresses_the_companion_set() {
+    let Some(mut media) = ts_media(P81_TS) else {
+        return;
+    };
+    hevc_spec_mut(&mut media)
+        .dovi
+        .as_mut()
+        .expect("p81 record")
+        .profile = 9;
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    assert_eq!(dvh1_set_count(&mpd), 0, "{mpd}");
+}
+
+#[test]
+fn a_non_compatible_base_layer_suppresses_the_companion_set() {
+    let Some(mut media) = ts_media(P81_TS) else {
+        return;
+    };
+    hevc_spec_mut(&mut media)
+        .dovi
+        .as_mut()
+        .expect("p81 record")
+        .bl_signal_compatibility_id = DoviBlSignalCompatibilityId::None;
+    let mpd = transmux::DashPackager::default().package(&media).unwrap();
+    let video_sets = adaptation_set_codecs(&mpd)
+        .into_iter()
+        .filter(|c| {
+            c.iter()
+                .any(|x| x.starts_with("hvc1.") || x.starts_with("dvh1."))
+        })
+        .count();
+    assert_eq!(video_sets, 1, "no separate companion set: {mpd}");
+}

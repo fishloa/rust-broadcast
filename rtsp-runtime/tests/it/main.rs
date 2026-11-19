@@ -3,6 +3,7 @@ mod client_push_methods;
 mod dependency_features;
 mod golden_wire;
 mod integration;
+mod io_audit22;
 mod io_loopback;
 mod io_push_drain;
 mod io_timeouts;

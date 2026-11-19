@@ -1667,6 +1667,30 @@ mod tests {
     }
 
     #[test]
+    fn media_fragment_run_serializes_the_derived_trun_flags() {
+        let sample = |composition_offset: i32| MediaRunSample {
+            duration: 1_000,
+            size: 40,
+            is_sync: true,
+            composition_offset,
+        };
+        let flags_of = |offset: i32| {
+            let (_, trun) = media_fragment_run(
+                TrackId::new(1),
+                [sample(offset), sample(offset)].into_iter(),
+            )
+            .expect("two-sample run");
+            let bytes = trun.try_to_bytes().expect("serialize trun");
+            u32::from_be_bytes([0, bytes[9], bytes[10], bytes[11]])
+        };
+        // data-offset-present (0x000001) | sample-duration (0x000100) |
+        // sample-size (0x000200) | sample-flags (0x000400).
+        assert_eq!(flags_of(0), 0x0000_0701);
+        // plus sample-composition-time-offset-present (0x000800).
+        assert_eq!(flags_of(1), 0x0000_0F01);
+    }
+
+    #[test]
     fn tfhd_minimal() {
         let t = TrackFragmentHeaderBox {
             flags: 0,
