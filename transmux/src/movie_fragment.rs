@@ -1819,6 +1819,52 @@ mod tests {
         assert_eq!(p.sample_description_index, None);
     }
 
+    /// The clearing mask of `effective_flags` must drop every presence bit the
+    /// values do not back (§8.8.7.1): a stored bit left behind writes a header
+    /// that promises a field the body does not carry, misframing the box and
+    /// everything after it. Any other flag bit is metadata and survives.
+    #[test]
+    fn tfhd_effective_flags_clears_stale_presence_bits() {
+        let t = TrackFragmentHeaderBox {
+            flags: TFHD_BASE_DATA_OFFSET_PRESENT
+                | TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT
+                | TFHD_DEFAULT_SAMPLE_DURATION_PRESENT
+                | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
+                | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT,
+            track_id: TrackId::new(9),
+            base_data_offset: None,
+            sample_description_index: None,
+            default_sample_duration: None,
+            default_sample_size: None,
+            default_sample_flags: None,
+        };
+        assert_eq!(t.effective_flags(), 0, "no value backs any presence bit");
+        let b = t.try_to_bytes().expect("serialize");
+        assert_eq!(b.len(), 16, "only the box header, FullBox and track_ID");
+        let p = TrackFragmentHeaderBox::parse_body(&b[8..]).expect("parse");
+        assert_eq!(p.flags, 0, "no presence bit reaches the wire");
+        assert_eq!(p.track_id, TrackId::new(9));
+
+        // A non-presence bit is not a field promise: it is preserved.
+        let t = TrackFragmentHeaderBox {
+            flags: TFHD_DEFAULT_BASE_IS_MOOF
+                | TFHD_DEFAULT_SAMPLE_DURATION_PRESENT
+                | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
+                | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT,
+            track_id: TrackId::new(9),
+            base_data_offset: None,
+            sample_description_index: None,
+            default_sample_duration: None,
+            default_sample_size: None,
+            default_sample_flags: None,
+        };
+        assert_eq!(t.effective_flags(), TFHD_DEFAULT_BASE_IS_MOOF);
+        let b = t.try_to_bytes().expect("serialize");
+        assert_eq!(b.len(), 16, "the preserved bit adds no field");
+        let p = TrackFragmentHeaderBox::parse_body(&b[8..]).expect("parse");
+        assert_eq!(p.flags, TFHD_DEFAULT_BASE_IS_MOOF);
+    }
+
     /// The `trun` half of r05-W16: presence bits derived from the values, and
     /// a gap in a per-sample field rejected rather than written as `0`.
     #[test]
