@@ -1548,12 +1548,22 @@ fn block_group_reference_block_marks_non_sync_and_damage_degrades() {
         &synth_mkv::opus_audio_track(),
         &synth_mkv::cluster(0, &[truncated, only_duration]),
     );
+    // The damaged group is the one whose framing is lost, not the one that
+    // merely carries no Block: its body is what the degradation names.
+    let group_at = file
+        .windows(4)
+        .position(|w| w == [0xA0, 0x82, 0xA1, 0x85])
+        .expect("truncated BlockGroup element in the file");
     let media = WebmDemux::new().demux(&file).expect("damaged BlockGroups");
     assert_eq!(media.degraded.len(), 1, "{:?}", media.degraded);
-    assert!(matches!(
-        media.degraded[0],
-        InputDegradation::MalformedUnit { .. }
-    ));
+    match media.degraded[0] {
+        InputDegradation::MalformedUnit { position } => assert_eq!(
+            position,
+            (group_at + 2) as u64,
+            "the degradation must name the truncated group's body"
+        ),
+        other => panic!("expected MalformedUnit, got {other:?}"),
+    }
     assert!(media.tracks.is_empty(), "neither group contributed a Block");
 }
 
