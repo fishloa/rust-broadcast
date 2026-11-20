@@ -1,41 +1,18 @@
-//! `PcrCheck` — TR 101 290 v1.4.1 Table 5.0b indicators 2.3a and 2.3b,
-//! evaluated on the PCR **value** stream of a file.
+//! `PcrCheck` — TR 101 290 v1.4.1 Table 5.0b indicator 2.3b, evaluated on
+//! the PCR **value** stream of a file.
 //!
-//! Both indicators are defined on the same quantity — the difference between
-//! two consecutive PCR values — with different thresholds. Quoting the
-//! transcription at `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`:
+//! 2.3b (`PCR_discontinuity_indicator_error`) flags a difference between two
+//! consecutive PCR values outside `0..100 ms` when the packet did not set the
+//! `discontinuity_indicator` — the transcription at
+//! `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`. A backward step
+//! is also outside the range, so it is 2.3b too.
 //!
-//! | Indicator | Definition |
-//! |---|---|
-//! | 2.3a `PCR_repetition_error` | "Time interval between two consecutive PCR values more than 100 ms" (note 2: the 40 ms limitation was removed in 2005) |
-//! | 2.3b `PCR_discontinuity_indicator_error` | "The difference between two consecutive PCR values (PCR_(i+1) - PCR_i) is outside the range of 0…100 ms without the discontinuity_indicator set" |
-//!
-//! So 2.3b covers a forward step over 100 ms **and** a backward step, unless
-//! the packet signalled the discontinuity; 2.3a covers a forward step over
-//! 100 ms. A step assigned to 2.3b is never also reported as 2.3a: a
-//! discontinuity is not also a repetition fault, and reporting one step twice
-//! both inflates the count and misdescribes it.
-//!
-//! # Severities, and what a file can and cannot show
-//!
-//! - **2.3b is an Error.** It is decidable from the values alone, and this
-//!   check reports every violating step individually — a mux paced at 104 ms
-//!   has a 2.3b violation on every pair, not one fault repeated.
-//! - **2.3a is Info.** The indicator is a statement about *time*, and a
-//!   recorded file carries no arrival timing: its byte cadence is whatever
-//!   the recorder's null-stripping and remuxing produced, which diverges
-//!   from the PCR cadence on exactly the sparse, low-bitrate streams where a
-//!   byte-derived clock would misreport (measured: on
-//!   `fixtures/scte35/ts/video-with-scte35-splice-insert.ts` the PCR
-//!   values advance in exact 100 ms steps while the packet spacing between
-//!   them varies by 6x). The PCR *value step* is the only evidence a file
-//!   offers, and on an arrival-timed source it is a sound proxy — the
-//!   encoder stamps each PCR against the clock the packets are paced by — so
-//!   an exceeding step is surfaced, at Info, and reported once per PID for
-//!   the worst step seen. The Error-severity timing question is answered
-//!   where a real arrival clock exists: the live `watch` path, fed
-//!   wall-clock `Duration`s, and `dvb-conformance`'s caller-supplied
-//!   timestamps.
+//! Indicator 2.3a (`PCR_repetition_error`) is **not emitted in file mode**:
+//! every forward step over 100 ms without the indicator is already reported as
+//! 2.3b, so a separate 2.3a finding would only duplicate it. The timing
+//! question 2.3a asks is answered where a real arrival clock exists — the live
+//! `watch` path, fed wall-clock `Duration`s, and `dvb-conformance`'s
+//! caller-supplied timestamps.
 //!
 //! PCR values on 33-bit base x 300 + 9-bit extension use modular arithmetic
 //! (modulo 2^33 x 300) to handle 33-bit wrap, matching the dvb-conformance
@@ -59,10 +36,6 @@ const TICKS_27MHZ_PER_MS: u64 = CLOCK_27MHZ / 1000;
 // `PCR_MODULUS_27MHZ` (2³³ × 300, ISO/IEC 13818-1 §2.4.3.5) is
 // `broadcast_common::clock33::PCR_WRAP_27MHZ`, imported above.
 
-/// PCR repetition error threshold: 100 ms (TR 101 290 Table 5.0b indicator
-/// 2.3a / note 2).
-const PCR_REPETITION_LIMIT_MS: u64 = 100;
-
 /// 2.3b's range is "0...100 ms" (TR 101 290 v1.4.1 Table 5.0b), inclusive of
 /// 100 ms, so a step is outside it only when strictly greater.
 const PCR_DISCONTINUITY_LIMIT_MS: u64 = 100;
@@ -72,22 +45,16 @@ const PCR_DISCONTINUITY_LIMIT_MS: u64 = 100;
 struct PcrState {
     /// Previous PCR value on this PID (27 MHz ticks).
     last_pcr: u64,
-    /// The largest value step already reported for this PID, so a run of
-    /// over-limit steps produces one finding rather than one per PCR.
-    worst_reported_step_ms: u64,
     /// Whether we have an initialised baseline.
     initialised: bool,
 }
 
-/// Checks TR 101 290 indicators 2.3a and 2.3b per PCR PID.
+/// Checks TR 101 290 indicator 2.3b per PCR PID.
 ///
-/// Flags findings when:
-/// - the difference between two consecutive PCR values is outside
-///   `0..100 ms` and the packet did not set `discontinuity_indicator`
-///   (**2.3b**, Error — includes a backward step); or
-/// - a forward PCR value step exceeds 100 ms and was not already reported as
-///   2.3b (**2.3a**, Info — see the module docs for why a file cannot
-///   support an Error here).
+/// Flags a finding when the difference between two consecutive PCR values is
+/// outside `0..100 ms` and the packet did not set `discontinuity_indicator`
+/// (2.3b, Error — includes a backward step). 2.3a is not emitted in file mode
+/// (see the module docs).
 ///
 /// Legitimate system-time-base changes signalled via
 /// `discontinuity_indicator == 1` (§2.4.3.5) are NOT flagged.
@@ -126,7 +93,6 @@ impl Diagnostic for PcrCheck {
 
             let state = pcr_states.entry(pid.value()).or_insert(PcrState {
                 last_pcr: 0,
-                worst_reported_step_ms: 0,
                 initialised: false,
             });
 
@@ -150,25 +116,9 @@ impl Diagnostic for PcrCheck {
             let delta = pcr_forward_distance(last_pcr, pcr);
             let delta_ms = delta / TICKS_27MHZ_PER_MS;
 
-            // The two indicators are defined on the *same* quantity, with
-            // different thresholds (TR 101 290 v1.4.1 Table 5.0b, transcribed
-            // at `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`):
-            //
-            //   2.3a  PCR_repetition_error: "Time interval between two
-            //         consecutive PCR values more than 100 ms" (note 2: the
-            //         40 ms limitation was removed in 2005).
-            //   2.3b  PCR_discontinuity_indicator_error: "The difference
-            //         between two consecutive PCR values (PCR_(i+1) - PCR_i)
-            //         is outside the range of 0...100 ms without the
-            //         discontinuity_indicator set".
-            //
-            // So 2.3b covers both a forward step over 100 ms *and* a
-            // backward step, unless the packet signalled the discontinuity;
-            // 2.3a covers a forward step over 100 ms. A step the spec assigns
-            // to 2.3b must not be reported a second time as 2.3a — a genuine
-            // discontinuity is not also a repetition error, and reporting it
-            // twice both inflates the count and misdescribes it (a +600 s
-            // program splice is not a PCR repetition fault).
+            // 2.3b is defined on the signed difference: a modular delta past
+            // half the modulus is a backward step. See the module docs and
+            // `private/specs-verified/dvb/dvb-conformance/tr_101_290.md`.
             let signed_step = delta; // 2.3b is defined on the signed difference.
             let backward = signed_step > PCR_MODULUS_27MHZ / 2;
             let forward_ms = delta_ms;
@@ -198,27 +148,9 @@ impl Diagnostic for PcrCheck {
                 ));
             }
 
-            // ── 2.3a: PCR_repetition_error ──────────────────────────────
-            // "Time interval between two consecutive PCR values more than
-            // 100 ms". Reported once per PID for the worst step seen (a
-            // per-step finding on every 104 ms PCR of a mux paced at 104 ms
-            // is 19 findings for one fault), and never for a step already
-            // reported as 2.3b.
-            if !backward
-                && !flagged_discontinuity
-                && forward_ms > PCR_REPETITION_LIMIT_MS
-                && forward_ms > state.worst_reported_step_ms
-            {
-                state.worst_reported_step_ms = forward_ms;
-                report.push(Finding::new(
-                    Severity::Info,
-                    Location::at_pid(i, pid),
-                    "pcr-repetition",
-                    alloc::format!(
-                        "PCR value step {forward_ms} ms exceeds the {PCR_REPETITION_LIMIT_MS} ms repetition limit on PID 0x{pid:04X} — TR 101 290 indicator 2.3a. Reported at Info: a file carries no arrival clock, so the value step is the only evidence available; `media-doctor watch` evaluates 2.3a against real arrival times",
-                    ),
-                ));
-            }
+            // 2.3a is not emitted in file mode: every forward step over
+            // 100 ms without the discontinuity_indicator is already reported
+            // above as 2.3b.
 
             state.last_pcr = pcr;
         }
@@ -296,9 +228,8 @@ mod tests {
         );
     }
 
-    /// A PCR value step over the 100 ms repetition limit is reported — but
-    /// at **Info**, not Error: a file has no arrival clock, so the value step
-    /// is advisory (module docs).
+    /// A forward value step over 100 ms is exactly one 2.3b pcr-discontinuity
+    /// and no other pcr rule (2.3a is not emitted in file mode).
     #[test]
     fn pcr_step_over_100ms_is_2_3b_not_2_3a() {
         let pid = 0x0100u16;
@@ -331,20 +262,16 @@ mod tests {
             "the finding must name indicator 2.3b; got {:?}",
             disc[0].message,
         );
-        assert!(
-            report
-                .findings()
-                .iter()
-                .all(|f| f.rule_id != "pcr-repetition"),
-            "the same step must not also be reported as 2.3a; got {:?}",
+        assert_eq!(
+            report.findings().len(),
+            1,
+            "a 150 ms forward step is exactly one pcr-discontinuity and no other pcr rule; got {:?}",
             report.findings(),
         );
+        assert_eq!(report.findings()[0].rule_id, "pcr-discontinuity");
     }
 
-    /// A value step at or below the 100 ms limit is not reported at all — the
-    /// 40 ms figure in Table 5.0b note 2 is a recommendation, and emitting an
-    /// advisory for every 80 ms PCR of an 80 ms-spaced clean capture is noise
-    /// (issue #1112 review).
+    /// A value step at or below the 100 ms limit is not reported at all.
     #[test]
     fn pcr_value_step_within_100ms_is_silent() {
         let pid = 0x0100u16;
@@ -359,22 +286,19 @@ mod tests {
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
-            report
-                .findings()
-                .iter()
-                .all(|f| f.rule_id != "pcr-repetition"),
-            "an 80 ms step is legal spacing and must not be reported; got {:?}",
+            report.is_empty(),
+            "an 80 ms step is legal spacing and must produce no findings; got {:?}",
             report.findings(),
         );
     }
 
-    /// A *long run of packets with no PCR at all* is not a 2.3a violation on
-    /// its own — the value step across it is what a file can honestly
-    /// measure, and here that step is normal. This is the false-positive mode
-    /// the old byte-position-derived clock produced on real captures
-    /// (issue #1112 review).
+    /// A *long run of packets with no PCR at all* is not decidable from a
+    /// file: the value step across it is what a file can honestly measure,
+    /// and here that step is normal. This is the false-positive mode the old
+    /// byte-position-derived clock produced on real captures (issue #1112
+    /// review).
     #[test]
-    fn packet_gap_alone_is_not_a_repetition_error() {
+    fn packet_gap_alone_is_not_flagged() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pcr_packet(Pid::from_wire_masked(pid), 0, 0, false));
@@ -397,11 +321,8 @@ mod tests {
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
-            report
-                .findings()
-                .iter()
-                .all(|f| f.rule_id != "pcr-repetition"),
-            "a long packet gap with a normal PCR value step is not decidable as 2.3a from a file and must not be reported; got {:?}",
+            report.is_empty(),
+            "a long packet gap with a normal PCR value step must produce no findings; got {:?}",
             report.findings(),
         );
     }
@@ -441,6 +362,12 @@ mod tests {
             report.findings(),
         );
         assert_eq!(disc[0].severity, Severity::Error);
+        assert_eq!(
+            report.findings().len(),
+            1,
+            "one step, one finding and no other pcr rule; got {:?}",
+            report.findings(),
+        );
     }
 
     /// A large PCR jump without discontinuity_indicator should flag a
@@ -554,23 +481,96 @@ mod tests {
         ));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
+        assert!(
+            report.is_empty(),
+            "post-discontinuity PCRs must produce no findings: {:?}",
+            report.findings()
+        );
+    }
+
+    /// A backward step reports the size of the step in milliseconds.
+    #[test]
+    fn backward_step_message_names_the_size() {
+        let pid = 0x0100u16;
+        let mut ts = Vec::new();
+        // 10 s -> 9.5 s with no discontinuity_indicator: a 500 ms backward
+        // step.
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::from_wire_masked(pid),
+            CLOCK_27MHZ * 10,
+            0,
+            false,
+        ));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::from_wire_masked(pid),
+            CLOCK_27MHZ * 10 - CLOCK_27MHZ * 500 / 1000,
+            1,
+            false,
+        ));
+        let mut report = Report::new();
+        PcrCheck.run(&ts, &mut report);
         let disc: Vec<_> = report
             .findings()
             .iter()
             .filter(|f| f.rule_id == "pcr-discontinuity")
             .collect();
+        assert_eq!(disc.len(), 1, "one backward step: {:?}", report.findings());
         assert!(
-            disc.is_empty(),
-            "post-discontinuity PCRs should be clean: {disc:?}"
+            disc[0].message.contains("PCR goes backwards by 500 ms"),
+            "the message must name the 500 ms backward step: {:?}",
+            disc[0].message
         );
-        let rep: Vec<_> = report
-            .findings()
-            .iter()
-            .filter(|f| f.rule_id == "pcr-repetition")
-            .collect();
+    }
+
+    /// A forward step of exactly half the PCR range is still forward; one
+    /// tick more is backward. Both are outside `0..100 ms`, so both are 2.3b
+    /// — the boundary decides which *direction* the finding describes.
+    #[test]
+    fn half_range_pcr_step_is_forward_not_backward() {
+        let half = PCR_MODULUS_27MHZ / 2;
+
+        fn messages_for(second: u64) -> alloc::vec::Vec<alloc::string::String> {
+            let pid = 0x0100u16;
+            let mut ts = Vec::new();
+            ts.extend_from_slice(&make_pcr_packet(Pid::from_wire_masked(pid), 0, 0, false));
+            ts.extend_from_slice(&make_pcr_packet(
+                Pid::from_wire_masked(pid),
+                second,
+                1,
+                false,
+            ));
+            let mut report = Report::new();
+            PcrCheck.run(&ts, &mut report);
+            report
+                .findings()
+                .iter()
+                .filter(|f| f.rule_id == "pcr-discontinuity")
+                .map(|f| f.message.clone())
+                .collect()
+        }
+
+        let forward = messages_for(half);
+        assert_eq!(
+            forward.len(),
+            1,
+            "a half-range step is outside 0..100 ms and is one finding; got {forward:?}",
+        );
         assert!(
-            rep.is_empty(),
-            "post-discontinuity PCR repetition should be clean: {rep:?}"
+            forward[0].contains("PCR delta") && !forward[0].contains("backwards"),
+            "exactly half the range is a forward step; got {:?}",
+            forward[0],
+        );
+
+        let backward = messages_for(half + 1);
+        assert_eq!(
+            backward.len(),
+            1,
+            "one tick past half the range is one finding; got {backward:?}",
+        );
+        assert!(
+            backward[0].contains("backwards"),
+            "one tick past half the range is backward; got {:?}",
+            backward[0],
         );
     }
 }
