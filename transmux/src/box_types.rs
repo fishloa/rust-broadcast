@@ -1116,6 +1116,16 @@ mod tests {
         assert_eq!(header.size, 0x110);
         assert!(header.has_largesize);
         assert_eq!(header.header_size(), 16);
+        assert_eq!(box_header_len(&large).unwrap(), 16);
+
+        // A largesize whose every byte differs: a 64-bit length is a promise
+        // about the box, and a read from the wrong byte of it changes it.
+        let mut huge = [0u8; 16];
+        huge[3] = 1;
+        huge[4..8].copy_from_slice(b"free");
+        huge[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+        let header = BoxHeader::parse(&huge).unwrap();
+        assert_eq!(header.size, 0x0102_0304_0506_0708);
 
         for have in 8..16usize {
             match box_header_len(&large[..have]) {

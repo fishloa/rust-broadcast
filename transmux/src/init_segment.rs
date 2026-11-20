@@ -4726,9 +4726,9 @@ mod tests {
         let mut body = alloc::vec![0u8, 0, 0, 0];
         body.extend_from_slice(&3u32.to_be_bytes());
         for chunk in 1..=3u32 {
-            body.extend_from_slice(&chunk.to_be_bytes());
-            body.extend_from_slice(&(0x10 + chunk).to_be_bytes());
-            body.extend_from_slice(&(0x20 + chunk).to_be_bytes());
+            body.extend_from_slice(&(0x1100_0000 + chunk).to_be_bytes());
+            body.extend_from_slice(&(0x2200_0000 + chunk).to_be_bytes());
+            body.extend_from_slice(&(0x3300_0000 + chunk).to_be_bytes());
         }
         let mut bytes = alloc::vec![0u8; 8];
         bytes[0..4].copy_from_slice(&((8 + body.len()) as u32).to_be_bytes());
@@ -4738,9 +4738,9 @@ mod tests {
         assert_eq!(parsed.entries.len(), 3);
         for (i, entry) in parsed.entries.iter().enumerate() {
             let chunk = i as u32 + 1;
-            assert_eq!(entry.first_chunk, chunk);
-            assert_eq!(entry.samples_per_chunk, 0x10 + chunk);
-            assert_eq!(entry.sample_description_index, 0x20 + chunk);
+            assert_eq!(entry.first_chunk, 0x1100_0000 + chunk);
+            assert_eq!(entry.samples_per_chunk, 0x2200_0000 + chunk);
+            assert_eq!(entry.sample_description_index, 0x3300_0000 + chunk);
         }
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
@@ -4766,7 +4766,7 @@ mod tests {
         let mut body = alloc::vec![0u8, 0, 0, 0];
         body.extend_from_slice(&0u32.to_be_bytes());
         body.extend_from_slice(&3u32.to_be_bytes());
-        for size in [0x0102u32, 0x0304, 0x0506] {
+        for size in [0x1102_0304u32, 0x2132_4354, 0x3162_7384] {
             body.extend_from_slice(&size.to_be_bytes());
         }
         let mut bytes = alloc::vec![0u8; 8];
@@ -4776,7 +4776,10 @@ mod tests {
         let parsed = SampleSizeBox::parse(&bytes).unwrap();
         assert_eq!(parsed.sample_size, 0);
         assert_eq!(parsed.sample_count, 3);
-        assert_eq!(parsed.entries, alloc::vec![0x0102, 0x0304, 0x0506]);
+        assert_eq!(
+            parsed.entries,
+            alloc::vec![0x1102_0304, 0x2132_4354, 0x3162_7384]
+        );
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         let mut short = bytes.clone();

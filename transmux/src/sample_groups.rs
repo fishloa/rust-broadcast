@@ -1488,14 +1488,14 @@ mod tests {
     #[test]
     fn prft_fields_and_lengths_are_pinned_in_both_versions() {
         for (version, media_time, len) in [
-            (0u8, 0x1112_1314u64, 28usize),
-            (1, 0x1112_1314_1516_1718, 32),
+            (0u8, 0x3132_3334u64, 28usize),
+            (1, 0x4142_4344_4546_4748, 32),
         ] {
             let b = ProducerReferenceTimeBox {
                 version,
-                flags: 0x0102_0304 & 0x00FF_FFFF,
-                reference_track_id: TrackId::new(0x0102_0304),
-                ntp_timestamp: 0x0102_0304_0506_0708,
+                flags: 0x01_0203,
+                reference_track_id: TrackId::new(0x1112_1314),
+                ntp_timestamp: 0x2122_2324_2526_2728,
                 media_time,
             };
             assert_eq!(b.serialized_len(), len, "v{version} serialized_len");
@@ -1505,9 +1505,9 @@ mod tests {
 
             let parsed = ProducerReferenceTimeBox::parse(&buf).unwrap();
             assert_eq!(parsed.version, version);
-            assert_eq!(parsed.flags, 0x02_0304);
-            assert_eq!(parsed.reference_track_id, TrackId::new(0x0102_0304));
-            assert_eq!(parsed.ntp_timestamp, 0x0102_0304_0506_0708);
+            assert_eq!(parsed.flags, 0x01_0203);
+            assert_eq!(parsed.reference_track_id, TrackId::new(0x1112_1314));
+            assert_eq!(parsed.ntp_timestamp, 0x2122_2324_2526_2728);
             assert_eq!(parsed.media_time, media_time);
 
             for cut in 0..buf.len() {
@@ -1517,6 +1517,15 @@ mod tests {
                         panic!("v{version} {cut}-byte prft: expected BufferTooShort, got {other:?}")
                     }
                     Ok(_) => panic!("v{version} {cut}-byte prft parsed"),
+                }
+            }
+            for cut in 0..buf.len() - 8 {
+                match ProducerReferenceTimeBox::parse_body(&buf[8..8 + cut]) {
+                    Err(Error::BufferTooShort(_)) => {}
+                    Err(other) => panic!(
+                        "v{version} {cut}-byte prft body: expected BufferTooShort, got {other:?}"
+                    ),
+                    Ok(_) => panic!("v{version} {cut}-byte prft body parsed"),
                 }
             }
             match ProducerReferenceTimeBox::parse(&buf[..27]) {

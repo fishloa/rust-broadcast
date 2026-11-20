@@ -1513,6 +1513,44 @@ mod tests {
             ProtectionSystemSpecificHeaderBox::parse_box(&bytes[..11]).unwrap_err(),
         );
         assert_eq!((b.need, b.have, b.what), (12, 11, "pssh header"));
+
+        // A v1 body that ends right after a zero KID_count: the KID table is
+        // empty, so the next missing field is the DataSize.
+        let mut empty_kid_table = alloc::vec![0x22; 16];
+        empty_kid_table.extend_from_slice(&0u32.to_be_bytes());
+        let b = buffer_too_short(
+            ProtectionSystemSpecificHeaderBox::parse_body(&empty_kid_table, 1).unwrap_err(),
+        );
+        assert_eq!((b.need, b.have, b.what), (24, 20, "pssh DataSize"));
+
+        // Cut right after the KID table of a two-KID box: the body is then
+        // 16 SystemID + 4 KID_count + 32 KIDs = 52 bytes, and DataSize needs
+        // four more.
+        let b = buffer_too_short(
+            ProtectionSystemSpecificHeaderBox::parse_box(&bytes[..64]).unwrap_err(),
+        );
+        assert_eq!((b.need, b.have, b.what), (56, 52, "pssh DataSize"));
+
+        // DataSize 0x0001_0002 — a value whose second byte differs from its
+        // first, so a read from the wrong byte of the field changes the answer.
+        let mut wide_data_size = alloc::vec![0x22; 16];
+        wide_data_size.extend_from_slice(&0u32.to_be_bytes());
+        wide_data_size.extend_from_slice(&0x0001_0002u32.to_be_bytes());
+        let b = buffer_too_short(
+            ProtectionSystemSpecificHeaderBox::parse_body(&wide_data_size, 1).unwrap_err(),
+        );
+        assert_eq!((b.need, b.have, b.what), (65_562, 24, "pssh Data"));
+    }
+
+    /// A hostile v1 KID count: the KID table's footprint (count x 16) is what
+    /// the box must hold, and the shortfall names it exactly (r05-C3).
+    #[test]
+    fn pssh_v1_hostile_kid_count_reports_the_exact_need() {
+        let mut body = alloc::vec![0x22; 16];
+        body.extend_from_slice(&0x7FFF_FFFFu32.to_be_bytes());
+        let b =
+            buffer_too_short(ProtectionSystemSpecificHeaderBox::parse_body(&body, 1).unwrap_err());
+        assert_eq!((b.need, b.have, b.what), (34_359_738_372, 20, "pssh KIDs"));
     }
 
     #[test]
@@ -1527,6 +1565,21 @@ mod tests {
 
         let b = buffer_too_short(SampleAuxInfoSizesBox::parse_box(&[0u8; 8]).unwrap_err());
         assert_eq!((b.need, b.have, b.what), (12, 8, "saiz header"));
+    }
+
+    /// A hostile `saiz` `sample_count`: the per-sample table's footprint is
+    /// what the box must hold, and its shortfall is reported exactly. The
+    /// count's high bytes are non-zero here, so a read from the wrong byte of
+    /// the field cannot produce the same answer.
+    #[test]
+    fn saiz_hostile_sample_count_reports_the_exact_need() {
+        let mut body = alloc::vec![0u8];
+        body.extend_from_slice(&0x7FFF_FFFFu32.to_be_bytes());
+        let b = buffer_too_short(SampleAuxInfoSizesBox::parse_body(&body, 0, 0).unwrap_err());
+        assert_eq!(
+            (b.need, b.have, b.what),
+            (2_147_483_652, 5, "saiz sample_info_size")
+        );
     }
 
     /// `serialize_into` must return the number of bytes it wrote, constant IV
