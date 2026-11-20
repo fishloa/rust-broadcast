@@ -1195,7 +1195,9 @@ mod tests {
     /// even the fixed fields.
     #[test]
     fn bodies_shorter_than_the_legacy_minimum_are_rejected() {
-        let twenty_one = [TAG, 21, 0x00, 0x05, 0, 0, 7, 0x80, 0, 0, 4, 0x38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let twenty_one = [
+            TAG, 21, 0x00, 0x05, 0, 0, 7, 0x80, 0, 0, 4, 0x38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert_eq!(
             J2kVideoDescriptor::parse(&twenty_one).unwrap_err(),
             Error::InvalidDescriptor {
@@ -1203,7 +1205,9 @@ mod tests {
                 reason: "J2K_video_descriptor too short (< 22 body bytes)"
             }
         );
-        let twenty_two = [TAG, 22, 0x00, 0x05, 0, 0, 7, 0x80, 0, 0, 4, 0x38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let twenty_two = [
+            TAG, 22, 0x00, 0x05, 0, 0, 7, 0x80, 0, 0, 4, 0x38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ];
         assert_eq!(
             J2kVideoDescriptor::parse(&twenty_two).unwrap_err(),
             Error::InvalidDescriptor {

@@ -400,6 +400,7 @@ impl_h222_descriptor!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
     use broadcast_common::{Parse, Serialize};
 
@@ -548,10 +549,7 @@ mod tests {
             StereoscopicServiceType::ServiceCompatible.name(),
             "service-compatible stereoscopic 3D service"
         );
-        assert_eq!(
-            StereoscopicServiceType::Reserved(2).name(),
-            "reserved"
-        );
+        assert_eq!(StereoscopicServiceType::Reserved(2).name(), "reserved");
 
         assert_eq!(UpsamplingFactor::Forbidden.name(), "forbidden");
         assert_eq!(UpsamplingFactor::Unspecified.name(), "unspecified");

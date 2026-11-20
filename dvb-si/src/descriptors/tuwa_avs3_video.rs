@@ -326,6 +326,7 @@ impl crate::traits::DescriptorDef<'_> for TuwaAvs3VideoDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
 
     fn round_trip(bytes: &[u8]) -> TuwaAvs3VideoDescriptor {

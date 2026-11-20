@@ -693,10 +693,7 @@ mod tests {
     fn explicit_format_identifiers_parse_and_round_trip() {
         let bytes = [TAG, 9, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x3F, 0x11, 0x00];
         let d = MetadataDescriptor::parse(&bytes).unwrap();
-        assert_eq!(
-            d.metadata_application_format_identifier,
-            Some(0x0102_0304)
-        );
+        assert_eq!(d.metadata_application_format_identifier, Some(0x0102_0304));
         assert_eq!(d.metadata_format, MetadataFormat::AppFormat);
         assert_eq!(d.metadata_service_id, 0x11);
         let mut out = vec![0u8; d.serialized_len()];
@@ -707,10 +704,7 @@ mod tests {
             TAG, 13, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0xFF, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x00,
         ];
         let d = MetadataDescriptor::parse(&bytes).unwrap();
-        assert_eq!(
-            d.metadata_application_format_identifier,
-            Some(0x0102_0304)
-        );
+        assert_eq!(d.metadata_application_format_identifier, Some(0x0102_0304));
         assert_eq!(d.metadata_format, MetadataFormat::Identifier);
         assert_eq!(d.metadata_format_identifier, Some(0x0A0B_0C0D));
         assert_eq!(d.metadata_service_id, 0x11);

@@ -443,7 +443,9 @@ fn mosaic_255_byte_body_is_the_widest_legal() {
         false,
         1,
         1,
-        vec![cell((0..250u8).map(|i| ElementaryCell::new(i % 64)).collect())],
+        vec![cell(
+            (0..250u8).map(|i| ElementaryCell::new(i % 64)).collect(),
+        )],
     );
     let bytes = ser(&ok).unwrap();
     assert_eq!(bytes[1], 255);
@@ -454,7 +456,9 @@ fn mosaic_255_byte_body_is_the_widest_legal() {
         false,
         1,
         1,
-        vec![cell((0..251u8).map(|i| ElementaryCell::new(i % 64)).collect())],
+        vec![cell(
+            (0..251u8).map(|i| ElementaryCell::new(i % 64)).collect(),
+        )],
     );
     assert!(matches!(
         ser(&bad),

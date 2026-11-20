@@ -406,12 +406,7 @@ mod tests {
     fn serialize_accepts_the_maximum_service_count() {
         let services = (1..=31u8)
             .map(|n| {
-                ChinaCaptionService::new(
-                    LangCode(*b"chi"),
-                    n,
-                    true,
-                    ChinaCaptionCharSet::Gb2312,
-                )
+                ChinaCaptionService::new(LangCode(*b"chi"), n, true, ChinaCaptionCharSet::Gb2312)
             })
             .collect::<Vec<_>>();
         let d = ChinaCaptionServiceDescriptor::new(services, Pid::from_const(0x100));

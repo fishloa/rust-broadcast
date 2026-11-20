@@ -1915,6 +1915,8 @@ impl MpegH3dAudioCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
+    use alloc::vec;
 
     /// Each reserved field is width-limited by its type, so a wider value is
     /// unrepresentable and cannot spill into the adjacent syntax bits.
@@ -2003,7 +2005,12 @@ mod tests {
         group.reserved = 2;
         let label = MpegH3dAudioTextLabel::new(
             5,
-            vec![TextLabelLanguage::new(*b"eng", vec![group], Vec::new(), Vec::new())],
+            vec![TextLabelLanguage::new(
+                *b"eng",
+                vec![group],
+                Vec::new(),
+                Vec::new(),
+            )],
         );
         let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioTextLabel(label));
         let mut buf = vec![0u8; d.serialized_len()];

@@ -305,7 +305,11 @@ fn announcement_and_frequency_labels_match_the_spec_tables() {
     check_label!(AnnouncementType::WeatherFlash, "Weather flash");
     check_label!(AnnouncementType::EventAnnouncement, "Event announcement");
     check_label!(AnnouncementType::PersonalCall, "Personal call");
-    check_label!(AnnouncementType::Reserved(0x0F), "reserved", "reserved(0x0F)");
+    check_label!(
+        AnnouncementType::Reserved(0x0F),
+        "reserved",
+        "reserved(0x0F)"
+    );
 
     check_label!(
         ReferenceType::UsualAudioStream,
@@ -351,10 +355,7 @@ fn content_time_base_and_fta_labels_match_the_spec_tables() {
         "private(0x08)"
     );
 
-    check_label!(
-        ControlRemoteAccess::Enabled,
-        "redistribution enabled"
-    );
+    check_label!(ControlRemoteAccess::Enabled, "redistribution enabled");
     check_label!(
         ControlRemoteAccess::EnabledManagedDomain,
         "redistribution enabled (managed domain only)"

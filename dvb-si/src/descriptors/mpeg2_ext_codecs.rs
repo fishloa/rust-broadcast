@@ -539,6 +539,7 @@ impl MediaServiceKind {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
 
     #[test]

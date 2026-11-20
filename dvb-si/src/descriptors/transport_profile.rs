@@ -123,6 +123,7 @@ impl_h222_descriptor!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
     use broadcast_common::{Parse, Serialize};
 

@@ -542,12 +542,11 @@ mod tests {
     /// surrounding format and flags bytes.
     #[test]
     fn explicit_identifiers_parse_and_round_trip() {
-        let bytes = [TAG, 11, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x3F, 0x05, 0x00, 0x12, 0x34];
+        let bytes = [
+            TAG, 11, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x3F, 0x05, 0x00, 0x12, 0x34,
+        ];
         let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
-        assert_eq!(
-            d.metadata_application_format_identifier,
-            Some(0x0102_0304)
-        );
+        assert_eq!(d.metadata_application_format_identifier, Some(0x0102_0304));
         assert_eq!(d.program_number, Some(0x1234));
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();

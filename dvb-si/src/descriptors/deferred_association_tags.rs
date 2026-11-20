@@ -284,7 +284,9 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(
             out,
-            [0x15, 9, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34]
+            [
+                0x15, 9, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34
+            ]
         );
         let back = DeferredAssociationTagsDescriptor::parse(&out).unwrap();
         let loc = back.deferred_service_location.as_ref().unwrap();

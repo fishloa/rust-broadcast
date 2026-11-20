@@ -72,6 +72,7 @@ broadcast_common::impl_spec_display!(DecoderConfigFlags, Reserved);
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn round_trip_values() {

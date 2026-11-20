@@ -252,7 +252,10 @@ fn ext_registry_iter_guards_empty_and_non_extension_bodies() {
         .collect();
     assert_eq!(items.len(), 1);
     match &items[0] {
-        Ok(ExtIterItem::CustomExtension { tag_extension, value }) => {
+        Ok(ExtIterItem::CustomExtension {
+            tag_extension,
+            value,
+        }) => {
             assert_eq!(*tag_extension, TEST_EXT);
             let concrete = value.downcast_ref::<TestExt>().expect("downcast");
             assert!(concrete.payload.is_empty());

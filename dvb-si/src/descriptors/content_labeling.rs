@@ -757,11 +757,11 @@ mod tests {
         let bytes = [TAG, 7, 0xFF, 0xFF, 0x12, 0x34, 0x56, 0x78, 0x07];
         let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.metadata_application_format, 0xFFFF);
+        assert_eq!(d.metadata_application_format_identifier, Some(0x1234_5678));
         assert_eq!(
-            d.metadata_application_format_identifier,
-            Some(0x1234_5678)
+            d.content_time_base_indicator,
+            ContentTimeBaseIndicator::None
         );
-        assert_eq!(d.content_time_base_indicator, ContentTimeBaseIndicator::None);
         assert!(d.content_reference_id_record.is_none());
         assert!(d.time_base.is_none());
         assert!(d.private_data.is_empty());
@@ -790,7 +790,10 @@ mod tests {
         // Flags byte is the last body byte and nothing follows.
         let bytes = [TAG, 3, 0x00, 0x01, 0x07];
         let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
-        assert_eq!(d.content_time_base_indicator, ContentTimeBaseIndicator::None);
+        assert_eq!(
+            d.content_time_base_indicator,
+            ContentTimeBaseIndicator::None
+        );
         assert!(d.private_data.is_empty());
     }
 
