@@ -915,4 +915,35 @@ mod tests {
         cd.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
     }
+
+    #[test]
+    fn sub_descriptor_length_overflow_is_rejected() {
+        // descriptorLength=12; one sub-descriptor declaring length 5 with a
+        // single data byte inside the entry.
+        let bytes: &[u8] = &[
+            0x00, 0x10, 0x00, 0x01, 0x01, 0x0C, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x05, 0xAA,
+        ];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::SectionLengthOverflow {
+                declared: 5,
+                available: 1,
+            })
+        );
+
+        // descriptorLength=11; the sub-descriptor declares one byte at the
+        // very end of the entry, leaving no room at all.
+        let bytes: &[u8] = &[
+            0x00, 0x0F, 0x00, 0x01, 0x01, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x01,
+        ];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::SectionLengthOverflow {
+                declared: 1,
+                available: 0,
+            })
+        );
+    }
 }

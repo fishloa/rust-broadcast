@@ -67,6 +67,7 @@
 - An entry whose `descriptorLength` runs past the compatibility body asserts `SectionLengthOverflow { declared: 32, available: 2 }` (#3548).
 - A zero-length sub-descriptor ending exactly at its entry end parses with empty data and re-serialises byte-identically (#3549).
 - The truncated sub-descriptor header test destructures `BufferTooShort { need: 17, have: 15 }` instead of matching the variant (#3550).
+- A sub-descriptor whose declared length exceeds its entry asserts `SectionLengthOverflow { declared, available }` at two remaining-room sizes (1 and 0 bytes) instead of being accepted or panicking (#3551).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
