@@ -318,8 +318,10 @@ pub(crate) struct PidStdState {
 
 impl PidStdState {
     pub(crate) fn new(tb_leak_rate: u64, now: Duration) -> Self {
+        let mut tb = StdBuffer::new(TB_SIZE, tb_leak_rate, now);
+        tb.arm_empty_interval(now);
         Self {
-            tb: StdBuffer::new(TB_SIZE, tb_leak_rate, now),
+            tb,
             first_seen: now,
             total_bytes: 0,
             empty_reported: false,
@@ -358,15 +360,13 @@ impl TstdModel {
         self.tb_sys.drain_to(now);
     }
 
-    /// Anchor every relative window in the model to the caller clock `now`.
+    /// Anchor the TBsys empty-interval window to the caller clock `now`.
     ///
     /// Called once, from the first in-sync packet (W-CONF-4, #1096). The
     /// caller's clock may start anywhere, so windows cannot be based on
-    /// `Duration::ZERO`.
+    /// `Duration::ZERO`. Per-PID TBn windows are armed where each buffer is
+    /// created ([`PidStdState::new`]), which is always after this call.
     pub(crate) fn anchor(&mut self, now: Duration) {
         self.tb_sys.arm_empty_interval(now);
-        for state in self.pid_buffers.values_mut() {
-            state.tb.arm_empty_interval(now);
-        }
     }
 }

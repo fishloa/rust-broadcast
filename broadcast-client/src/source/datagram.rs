@@ -513,3 +513,130 @@ impl Datagram {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use broadcast_common::Serialize;
+    use rtp_packet::Ssrc;
+
+    const SSRC_A: u32 = 0xA1A1_A1A1;
+    const SSRC_B: u32 = 0xB2B2_B2B2;
+
+    fn payload() -> [u8; TS_PACKET_SIZE] {
+        let mut bytes = [0u8; TS_PACKET_SIZE];
+        bytes[0] = TS_SYNC_BYTE;
+        bytes
+    }
+
+    fn rtp(seq: u16, ssrc: u32, payload: &[u8]) -> Vec<u8> {
+        let packet = RtpPacket {
+            marker: false,
+            payload_type: RTP_PAYLOAD_TYPE_MP2T,
+            sequence_number: seq.into(),
+            timestamp: u32::from(seq) * 90,
+            ssrc: Ssrc::new(ssrc),
+            csrc: Vec::new(),
+            extension: None,
+            padding: None,
+            payload,
+        };
+        let mut buf = vec![0u8; packet.serialized_len()];
+        packet.serialize_into(&mut buf).expect("serialize");
+        buf
+    }
+
+    fn ingest(window: usize) -> Ingest {
+        let config = UdpConfig {
+            reorder_packets: window,
+            ..UdpConfig::default()
+        };
+        Ingest::new(true, &config)
+    }
+
+    fn push_run(ingest: &mut Ingest, first: u16, count: u16, ssrc: u32) -> Released {
+        let body = payload();
+        let mut last = Released::default();
+        for i in 0..count {
+            last = ingest.push(&rtp(first.wrapping_add(i), ssrc, &body), 0);
+        }
+        last
+    }
+
+    #[test]
+    fn a_rtp_sequence_restart_releases_the_new_run_without_a_loss() {
+        let mut ingest = ingest(UdpConfig::default().reorder_packets);
+        push_run(&mut ingest, 100, 11, SSRC_A);
+        let body = payload();
+        let armed = ingest.push(&rtp(5_000, SSRC_A, &body), 0);
+        assert!(armed.payloads.is_empty(), "the armed probe is dropped");
+        let released = ingest.push(&rtp(5_001, SSRC_A, &body), 0);
+        assert_eq!(released.payloads, vec![body.to_vec()]);
+        assert!(released.discontinuity, "a restart is a discontinuity");
+        assert_eq!(ingest.stats().lost, 0, "the restart is not a gap");
+        ingest.push(&rtp(5_002, SSRC_A, &body), 0);
+        assert_eq!(ingest.stats().lost, 0);
+        assert_eq!(ingest.stats().resyncs, 1);
+    }
+
+    #[test]
+    fn a_packet_exactly_the_window_behind_is_late_and_one_further_resyncs() {
+        let mut ingest = ingest(8);
+        push_run(&mut ingest, 100, 11, SSRC_A);
+        assert_eq!(ingest.next_seq, 111);
+        let body = payload();
+        let late = ingest.push(&rtp(103, SSRC_A, &body), 0);
+        assert!(late.payloads.is_empty());
+        assert_eq!(ingest.stats().late, 1, "exactly the window behind is late");
+        assert_eq!(ingest.stats().resyncs, 0);
+        let resynced = ingest.push(&rtp(102, SSRC_A, &body), 0);
+        assert_eq!(resynced.payloads, vec![body.to_vec()]);
+        assert_eq!(ingest.stats().resyncs, 1, "past the window resyncs");
+    }
+
+    #[test]
+    fn a_second_ssrc_must_prove_consecutive_sequence_numbers_before_it_is_adopted() {
+        let mut ingest = ingest(UdpConfig::default().reorder_packets);
+        push_run(&mut ingest, 100, 11, SSRC_A);
+        let body = payload();
+        for seq in [10u16, 20, 30] {
+            let out = ingest.push(&rtp(seq, SSRC_B, &body), 0);
+            assert!(out.payloads.is_empty());
+        }
+        assert_eq!(ingest.ssrc, Some(SSRC_A), "spoofed non-consecutive seqs");
+        assert_eq!(ingest.stats().resyncs, 0);
+        let out = ingest.push(&rtp(200, SSRC_B, &body), 0);
+        assert!(out.payloads.is_empty());
+        let out = ingest.push(&rtp(201, SSRC_B, &body), 0);
+        assert!(out.payloads.is_empty());
+        let out = ingest.push(&rtp(202, SSRC_B, &body), 0);
+        assert_eq!(out.payloads, vec![body.to_vec()]);
+        assert!(out.discontinuity);
+        assert_eq!(ingest.ssrc, Some(SSRC_B));
+        assert_eq!(ingest.stats().resyncs, 1);
+    }
+
+    #[test]
+    fn reset_forgets_the_source_the_held_packets_and_the_validity_state() {
+        let mut ingest = ingest(UdpConfig::default().reorder_packets);
+        push_run(&mut ingest, 100, 11, SSRC_A);
+        let body = payload();
+        ingest.push(&rtp(112, SSRC_A, &body), 0);
+        assert!(!ingest.held.is_empty());
+        ingest.reset();
+        assert_eq!(ingest.ssrc, None);
+        assert!(ingest.candidate.is_none());
+        assert!(ingest.held.is_empty());
+        assert_eq!(ingest.held_bytes, 0);
+        assert_eq!(ingest.validity, SeqValidity::default());
+    }
+
+    #[test]
+    fn an_srt_url_with_port_zero_is_refused() {
+        let url = Url::parse("srt://example.test:0/").expect("url");
+        assert!(matches!(
+            Datagram::srt(&url, &SrtCallerConfig::default()),
+            Err(Error::InvalidUrl(_))
+        ));
+    }
+}

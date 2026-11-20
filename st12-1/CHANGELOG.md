@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- Pin `LtcFrame::serialized_len` to the ten-byte codeword and the `FrameRate`/`BinaryGroupUsage` labels to ST 12-1 Table 3/Table 1 text (#3212).
+
 ## [0.7.0] - 2026-11-15
 
 ### Changed
