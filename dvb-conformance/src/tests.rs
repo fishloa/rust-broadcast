@@ -3421,3 +3421,54 @@ fn tbn_is_created_only_for_non_si_non_null_pids() {
         "ES PID 0x0200 owns a TBn: the same burst must raise exactly one 3.10: {delay:#?}"
     );
 }
+
+// ── 3.9 empty-interval window semantics ─────────────────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.9 is a per-window verdict: TBsys
+/// that empties between every section is clean across several windows. The
+/// old clean test stopped at 0.6 s, before any window was evaluated.
+#[test]
+fn tbsys_empty_interval_absent_over_two_windows_of_repeated_pat() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_pat_section(&[(1, 0x0100)]);
+    let mut all = Vec::new();
+    let mut t = 5u64;
+    while t <= 3_505 {
+        let packets = packetise_section(PID_PAT, &section);
+        all.extend(feed_all(&mut monitor, &packets, ms(t), ms(1)));
+        t += 200;
+    }
+    assert!(
+        !has_indicator(&all, Indicator::EmptyBufferError),
+        "TBsys empties between every PAT: 3.9 must stay silent across 3.5 s: {all:#?}"
+    );
+}
+
+/// `StdBuffer`'s empty-interval verdict is only raised for a window in which
+/// the buffer never emptied, and only once the deadline has passed (equality
+/// still belongs to the window).
+#[test]
+fn std_buffer_empty_interval_needs_a_non_empty_window_past_its_deadline() {
+    let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
+    buf.arm_empty_interval(Duration::ZERO);
+    assert!(!buf.feed(100, Duration::ZERO), "precondition: 100 bytes fit");
+
+    assert!(
+        !buf.check_empty_interval(ms(999)),
+        "no window is evaluated before its deadline"
+    );
+    assert!(
+        !buf.check_empty_interval(ms(1_000)),
+        "the first window saw the buffer empty after its initial feed"
+    );
+    assert!(
+        buf.check_empty_interval(ms(2_000)),
+        "the second window never saw the buffer empty"
+    );
+    assert!(
+        !buf.check_empty_interval(ms(2_999)),
+        "the next window is not due before 3.000 s"
+    );
+}
