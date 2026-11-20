@@ -887,4 +887,26 @@ mod tests {
             })
         );
     }
+
+    #[test]
+    fn zero_length_sub_descriptor_at_the_entry_end_round_trips() {
+        // descriptorLength=11; subDescriptorCount=1; subDescriptorType=0x05
+        // with subDescriptorLength=0, ending exactly at the entry end.
+        let bytes: &[u8] = &[
+            0x00, 0x0F, 0x00, 0x01, 0x01, 0x0B, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x01, 0x05, 0x00,
+        ];
+        let cd = CompatibilityDescriptor::parse(bytes).unwrap();
+        assert_eq!(cd.descriptors.len(), 1);
+        assert_eq!(cd.descriptors[0].sub_descriptors.len(), 1);
+        let sub = &cd.descriptors[0].sub_descriptors[0];
+        assert_eq!(
+            sub.sub_descriptor_type,
+            SubDescriptorType::Unallocated(0x05)
+        );
+        assert!(sub.data.is_empty());
+        let mut buf = vec![0u8; cd.serialized_len()];
+        cd.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
 }
