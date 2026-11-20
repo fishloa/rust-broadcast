@@ -537,4 +537,95 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out[6], 0x7F);
     }
+
+    /// Both explicit-identifier forms, with identifier bytes distinct from the
+    /// surrounding format and flags bytes.
+    #[test]
+    fn explicit_identifiers_parse_and_round_trip() {
+        let bytes = [
+            TAG, 11, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x3F, 0x05, 0x00, 0x12, 0x34,
+        ];
+        let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.metadata_application_format_identifier, Some(0x0102_0304));
+        assert_eq!(d.program_number, Some(0x1234));
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+
+        let bytes = [
+            TAG, 11, 0x00, 0x01, 0xFF, 0x0A, 0x0B, 0x0C, 0x0D, 0x05, 0x00, 0x12, 0x34,
+        ];
+        let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.metadata_format, MetadataFormat::Identifier);
+        assert_eq!(d.metadata_format_identifier, Some(0x0A0B_0C0D));
+        assert_eq!(d.program_number, Some(0x1234));
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
+    /// Bodies truncated before the identifier, the format byte or the flags
+    /// byte are errors, never an out-of-bounds read.
+    #[test]
+    fn truncated_forms_are_errors() {
+        for bytes in [
+            &[TAG, 5, 0xFF, 0xFF, 0x01, 0x02, 0x03][..],
+            &[TAG, 2, 0x00, 0x01][..],
+            &[TAG, 5, 0x00, 0x01, 0xFF, 0x01, 0x02][..],
+            &[TAG, 4, 0x00, 0x01, 0x3F, 0x07][..],
+        ] {
+            assert!(matches!(
+                MetadataPointerDescriptor::parse(bytes).unwrap_err(),
+                Error::InvalidDescriptor { .. }
+            ));
+        }
+        // The identifier is complete in each of these; the failing field is
+        // the one named in the reason, not an earlier one.
+        assert_eq!(
+            MetadataPointerDescriptor::parse(&[TAG, 6, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04])
+                .unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "metadata_pointer_descriptor too short for metadata_format"
+            }
+        );
+        assert_eq!(
+            MetadataPointerDescriptor::parse(&[TAG, 7, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x05])
+                .unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "metadata_pointer_descriptor too short for service_id + flags"
+            }
+        );
+        assert_eq!(
+            MetadataPointerDescriptor::parse(&[TAG, 7, 0x00, 0x01, 0xFF, 0x01, 0x02, 0x03, 0x04])
+                .unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "metadata_pointer_descriptor too short for service_id + flags"
+            }
+        );
+    }
+
+    /// A locator record that is absent (length 0) or runs exactly to the end
+    /// of the body is valid; carriage flags 3 leave no program number.
+    #[test]
+    fn locator_record_ending_at_the_body_boundary_is_valid() {
+        let bytes = [TAG, 6, 0x00, 0x01, 0x3F, 0x05, 0xE0, 0x00];
+        let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.metadata_locator_record, Some(&[][..]));
+        assert_eq!(d.mpeg_carriage_flags, MpegCarriageFlags::None);
+        assert!(d.private_data.is_empty());
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+
+        let bytes = [TAG, 8, 0x00, 0x01, 0x3F, 0x05, 0xE0, 0x02, 0xAA, 0xBB];
+        let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.metadata_locator_record, Some(&[0xAA, 0xBB][..]));
+        assert!(d.private_data.is_empty());
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
 }

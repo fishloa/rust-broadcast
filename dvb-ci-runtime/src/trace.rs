@@ -233,4 +233,178 @@ mod tests {
         assert!(s.contains("W Create_T_C tcid=1"));
         assert!(s.contains("R T_SB tcid=1 DA=0"));
     }
+
+    /// Every TPDU tag (Table A.16) has its own label; an unknown one is `T_?`.
+    #[test]
+    fn every_tpdu_tag_has_its_name() {
+        for (tag, name) in [
+            (tpdu_tags::SB, "T_SB"),
+            (tpdu_tags::RCV, "T_RCV"),
+            (tpdu_tags::CREATE_T_C, "Create_T_C"),
+            (tpdu_tags::C_T_C_REPLY, "C_T_C_Reply"),
+            (tpdu_tags::DELETE_T_C, "Delete_T_C"),
+            (tpdu_tags::D_T_C_REPLY, "D_T_C_Reply"),
+            (tpdu_tags::REQUEST_T_C, "Request_T_C"),
+            (tpdu_tags::NEW_T_C, "New_T_C"),
+            (tpdu_tags::T_C_ERROR, "T_C_Error"),
+            (tpdu_tags::DATA_LAST, "T_Data_Last"),
+            (tpdu_tags::DATA_MORE, "T_Data_More"),
+            (0x00, "T_?"),
+        ] {
+            assert_eq!(tpdu_name(tag), name);
+        }
+        // …and each one reaches the decoded line, not just the helper.
+        for (tag, name) in [
+            (tpdu_tags::C_T_C_REPLY, "C_T_C_Reply"),
+            (tpdu_tags::NEW_T_C, "New_T_C"),
+            (tpdu_tags::T_C_ERROR, "T_C_Error"),
+            (tpdu_tags::DATA_MORE, "T_Data_More"),
+        ] {
+            assert!(
+                decode_frame(&[tag, 0x01, 0x01]).starts_with(name),
+                "{tag:#04x} must decode as {name}"
+            );
+        }
+    }
+
+    /// Every session SPDU tag (§7) has its own label; an unknown one is
+    /// `spdu(?)`.
+    #[test]
+    fn every_spdu_tag_has_its_name() {
+        for (tag, name) in [
+            (spdu_tags::SESSION_NUMBER, "session_number"),
+            (spdu_tags::OPEN_SESSION_REQUEST, "open_session_request"),
+            (spdu_tags::OPEN_SESSION_RESPONSE, "open_session_response"),
+            (spdu_tags::CREATE_SESSION, "create_session"),
+            (
+                spdu_tags::CREATE_SESSION_RESPONSE,
+                "create_session_response",
+            ),
+            (spdu_tags::CLOSE_SESSION_REQUEST, "close_session_request"),
+            (spdu_tags::CLOSE_SESSION_RESPONSE, "close_session_response"),
+            (0x00, "spdu(?)"),
+        ] {
+            assert_eq!(spdu_name(tag), name);
+        }
+    }
+
+    /// Wrap `spdu` in a module→host `T_Data_Last` frame on tcid 1.
+    fn data_frame(spdu: &[u8]) -> Vec<u8> {
+        let mut f = vec![tpdu_tags::DATA_LAST, (1 + spdu.len()) as u8, 0x01];
+        f.extend_from_slice(spdu);
+        f
+    }
+
+    /// The session-management labels each decode a fixed-size header, so the
+    /// guard length is the shortest SPDU that carries one: one byte less must
+    /// fall back to the plain label instead of indexing past the end.
+    #[test]
+    fn spdu_labels_guard_the_exact_header_lengths() {
+        assert_eq!(
+            decode_frame(&data_frame(&[spdu_tags::SESSION_NUMBER, 0x01, 0x00])),
+            "T_Data_Last tcid=1 · session_number"
+        );
+        assert_eq!(
+            decode_frame(&data_frame(&[spdu_tags::SESSION_NUMBER, 0x02, 0x00, 0x01])),
+            "T_Data_Last tcid=1 · session 1"
+        );
+
+        assert_eq!(
+            decode_frame(&data_frame(&[
+                spdu_tags::OPEN_SESSION_REQUEST,
+                0x03,
+                0x00,
+                0x01,
+                0x00
+            ])),
+            "T_Data_Last tcid=1 · open_session_request"
+        );
+        assert_eq!(
+            decode_frame(&data_frame(&[
+                spdu_tags::OPEN_SESSION_REQUEST,
+                0x04,
+                0x00,
+                0x01,
+                0x00,
+                0x41
+            ])),
+            "T_Data_Last tcid=1 · open_session_request resource_manager"
+        );
+
+        assert_eq!(
+            decode_frame(&data_frame(&[
+                spdu_tags::CREATE_SESSION,
+                0x05,
+                0x00,
+                0x01,
+                0x00,
+                0x41,
+                0x00
+            ])),
+            "T_Data_Last tcid=1 · create_session"
+        );
+        assert_eq!(
+            decode_frame(&data_frame(&[
+                spdu_tags::CREATE_SESSION,
+                0x06,
+                0x00,
+                0x01,
+                0x00,
+                0x41,
+                0x00,
+                0x00
+            ])),
+            "T_Data_Last tcid=1 · create_session resource_manager (nb 0)"
+        );
+
+        assert_eq!(
+            decode_frame(&data_frame(&[
+                spdu_tags::OPEN_SESSION_RESPONSE,
+                0x06,
+                0x00,
+                0x00,
+                0x01,
+                0x00,
+                0x41,
+                0x00
+            ])),
+            "T_Data_Last tcid=1 · open_session_response"
+        );
+        assert_eq!(
+            decode_frame(&data_frame(&[
+                spdu_tags::OPEN_SESSION_RESPONSE,
+                0x07,
+                0x00,
+                0x00,
+                0x01,
+                0x00,
+                0x41,
+                0x00,
+                0x00
+            ])),
+            "T_Data_Last tcid=1 · open_session_response resource_manager status=0x00 nb=0"
+        );
+    }
+
+    /// The SPDU slice ends at `t_c_id offset + length_field`; the appended
+    /// status byte after it is not part of the SPDU.
+    #[test]
+    fn a_data_tpdu_ignores_the_appended_status_byte() {
+        // length_field 5 = the 1-byte t_c_id plus a 4-byte session_number SPDU
+        // with no APDU inside it, then the module's appended T_SB.
+        let frame = [
+            0xA0,
+            0x05,
+            0x01,
+            spdu_tags::SESSION_NUMBER,
+            0x02,
+            0x00,
+            0x01,
+            0x80,
+            0x02,
+            0x01,
+            0x00,
+        ];
+        assert_eq!(decode_frame(&frame), "T_Data_Last tcid=1 · session 1");
+    }
 }

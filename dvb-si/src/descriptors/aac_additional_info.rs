@@ -47,3 +47,24 @@ impl AacAdditionalInfo {
     }
 }
 broadcast_common::impl_spec_display!(AacAdditionalInfo, Reserved);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::string::ToString;
+
+    #[test]
+    fn labels_match_table_2_95() {
+        assert_eq!(AacAdditionalInfo::AacData.name(), "AAC data");
+        assert_eq!(
+            AacAdditionalInfo::AacWithBandwidthExtension.name(),
+            "AAC with bandwidth extension"
+        );
+        assert_eq!(AacAdditionalInfo::Reserved(0x02).name(), "reserved");
+        assert_eq!(AacAdditionalInfo::AacData.to_string(), "AAC data");
+        assert_eq!(
+            AacAdditionalInfo::Reserved(0x02).to_string(),
+            "reserved(0x02)"
+        );
+    }
+}

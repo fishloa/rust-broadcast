@@ -326,6 +326,7 @@ impl crate::traits::DescriptorDef<'_> for TuwaAvs3VideoDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
     use alloc::vec;
 
     fn round_trip(bytes: &[u8]) -> TuwaAvs3VideoDescriptor {
@@ -490,6 +491,76 @@ mod tests {
         {
             assert_eq!(reserved_5.get(), 0x1F);
             assert_eq!(reserved_3.get(), 0x07);
+        }
+    }
+
+    #[test]
+    fn library_ref_labels_name_the_id_type() {
+        let peid = TuwaLibraryRef::Peid {
+            pid: Pid::from_const(0x0101),
+            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+        };
+        assert_eq!(peid.name(), "PEID");
+        assert_eq!(peid.to_string(), "PEID");
+        assert_eq!(TuwaLibraryRef::stream_id(0xE1).name(), "stream_id");
+        assert_eq!(TuwaLibraryRef::stream_id(0xE1).to_string(), "stream_id");
+    }
+
+    /// A main-stream body of exactly the fixed length is missing its reference
+    /// count byte, and the error names that byte.
+    #[test]
+    fn missing_reference_count_reports_the_next_byte_needed() {
+        // b3 bit 3 clear: not a library stream, so a count byte must follow.
+        let bytes = [TAG, 7, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00];
+        match TuwaAvs3VideoDescriptor::parse(&bytes) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, FIXED_BODY_LEN + 1);
+                assert_eq!(b.need, 8);
+                assert_eq!(b.have, FIXED_BODY_LEN);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// The reference count is 7 bits but the 8-bit descriptor_length caps the
+    /// reachable count first: 123 refs (254-byte body) is the widest that
+    /// serializes, and 124 is already rejected by the length field.
+    #[test]
+    fn reference_count_is_capped_by_the_descriptor_length() {
+        let descriptor = |refs: usize| TuwaAvs3VideoDescriptor {
+            profile_id: 0x22,
+            level_id: 0x42,
+            multiple_frame_rate_flag: false,
+            frame_rate_code: Avs3FrameRateCode::Fps30,
+            sample_precision: 2,
+            chroma_format: 1,
+            temporal_id_flag: false,
+            td_mode_flag: false,
+            library_stream_flag: false,
+            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            colour_primaries: 9,
+            transfer_characteristics: 14,
+            matrix_coefficients: 9,
+            library_refs: Some(TuwaLibraryRefs {
+                refs: (0..refs)
+                    .map(|i| TuwaLibraryRef::stream_id(i as u8))
+                    .collect(),
+                id_type_flag_if_empty: false,
+            }),
+        };
+
+        let ok = descriptor(123);
+        let mut out = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut out).unwrap();
+        assert_eq!(out[1], 254);
+        assert_eq!(TuwaAvs3VideoDescriptor::parse(&out).unwrap(), ok);
+
+        for count in [124usize, 127] {
+            let bad = descriptor(count);
+            assert!(matches!(
+                bad.serialize_into(&mut vec![0u8; bad.serialized_len()]),
+                Err(Error::FieldOverflow(_))
+            ));
         }
     }
 }

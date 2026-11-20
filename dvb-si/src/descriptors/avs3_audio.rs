@@ -785,4 +785,29 @@ mod tests {
         let d = Avs3AudioDescriptor::new(0, Avs3AudioBody::Codec2(c), 2);
         assert_eq!(d.reserved.get(), 0x3F);
     }
+
+    /// A body cut before the final resolution byte reports the exact byte the
+    /// cursor wanted.
+    #[test]
+    fn truncation_reports_the_next_byte_needed() {
+        // codec 0 body: b0, b1, b2, hi, lo; the resolution byte is missing.
+        match Avs3AudioDescriptor::parse(&[TAG, 5, 0x00, 0x00, 0x00, 0x00, 0x00]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, 6);
+                assert_eq!(b.have, 5);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// `serialized_len` must equal the count `serialize_into` writes.
+    #[test]
+    fn serialized_len_matches_the_bytes_written() {
+        let bytes = [TAG, 9, 0x1F, 0x00, 0xBB, 0x80, 0x1F, 0x02, 0xBF, 0xDE, 0xAD];
+        let d = Avs3AudioDescriptor::parse(&bytes).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        let n = d.serialize_into(&mut out).unwrap();
+        assert_eq!(d.serialized_len(), n);
+        assert_eq!(n, bytes.len());
+    }
 }

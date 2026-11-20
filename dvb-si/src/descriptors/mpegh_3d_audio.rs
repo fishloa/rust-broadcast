@@ -1915,6 +1915,8 @@ impl MpegH3dAudioCommand {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
+    use alloc::vec;
 
     /// Each reserved field is width-limited by its type, so a wider value is
     /// unrepresentable and cannot spill into the adjacent syntax bits.
@@ -1961,5 +1963,130 @@ mod tests {
         assert_eq!(group_wide.reserved_id.get(), 0x01);
         assert_eq!(group_wide.reserved_flags.get(), 0x07);
         assert_eq!(group_wide.reserved_kind.get(), 0x0F);
+    }
+
+    #[test]
+    fn drc_scope_labels_name_the_id_carried() {
+        assert_eq!(DrcScope::Plain(0).name(), "no ID");
+        assert_eq!(DrcScope::Plain(0).to_string(), "no ID");
+        assert_eq!(DrcScope::group(2, 5).name(), "mae_groupID");
+        assert_eq!(DrcScope::group(2, 5).to_string(), "mae_groupID");
+        assert_eq!(DrcScope::preset(4).name(), "mae_groupPresetID");
+        assert_eq!(DrcScope::preset(4).to_string(), "mae_groupPresetID");
+    }
+
+    /// A truncated text-label body reports the byte the reader wanted, so a
+    /// caller sizing a refill gets the right amount.
+    #[test]
+    fn text_label_truncation_reports_the_next_byte_needed() {
+        use crate::descriptors::mpeg2_extension::Mpeg2ExtensionDescriptor;
+        use broadcast_common::Parse;
+
+        // scene_info_id 5, one language, "eng", then the group-count byte is
+        // missing: the reader stops at pos 5 of a 5-byte body.
+        let bytes = [0x3F, 6, 0x0B, 0x05, 0x01, b'e', b'n', b'g'];
+        match Mpeg2ExtensionDescriptor::parse(&bytes) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, 6);
+                assert_eq!(b.have, 5);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
+
+    /// A group-description entry has 1 reserved bit ahead of its 7-bit ID; a
+    /// wider reserved value must be rejected instead of shifted out silently.
+    #[test]
+    fn text_label_group_reserved_wider_than_one_bit_is_rejected() {
+        use crate::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
+        use broadcast_common::Serialize;
+
+        let mut group = TextLabelEntry::group(1, Vec::new());
+        group.reserved = 2;
+        let label = MpegH3dAudioTextLabel::new(
+            5,
+            vec![TextLabelLanguage::new(
+                *b"eng",
+                vec![group],
+                Vec::new(),
+                Vec::new(),
+            )],
+        );
+        let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioTextLabel(label));
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+
+        let label = MpegH3dAudioTextLabel::new(
+            5,
+            vec![TextLabelLanguage::new(
+                *b"eng",
+                vec![TextLabelEntry::group(1, Vec::new())],
+                Vec::new(),
+                Vec::new(),
+            )],
+        );
+        let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioTextLabel(label));
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert_eq!(d.serialize_into(&mut buf).unwrap(), buf.len());
+    }
+
+    /// A plain scope may only name a type that carries no following ID; type 2
+    /// needs an `mae_groupID` and type 3 is the preset encoding.
+    #[test]
+    fn drc_plain_scope_rejects_types_that_carry_an_id() {
+        let mut out = Vec::new();
+        assert!(matches!(
+            write_scope(&DrcScope::Plain(2), DRC_GROUP_TYPES, &mut out),
+            Err(Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            write_scope(&DrcScope::Plain(3), DRC_GROUP_TYPES, &mut out),
+            Err(Error::InvalidDescriptor { .. })
+        ));
+        out.clear();
+        assert_eq!(
+            write_scope(&DrcScope::Plain(0), DRC_GROUP_TYPES, &mut out).unwrap(),
+            0
+        );
+        assert_eq!(
+            write_scope(&DrcScope::Plain(1), DRC_GROUP_TYPES, &mut out).unwrap(),
+            1
+        );
+    }
+
+    /// The 6-bit `dependsOnDrcSet` value is shifted into its own bits and comes
+    /// back unchanged.
+    #[test]
+    fn drc_target_loudness_packs_depends_on_drc_set() {
+        use crate::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
+        use broadcast_common::{Parse, Serialize};
+
+        let mut drc = DrcInstructions::new(DrcScope::Plain(0), 1, 2, 0);
+        drc.target_loudness = Some(DrcTargetLoudness::new(10, 0x2A, 0));
+        let info = DrcLoudnessInfo::new(vec![drc], Vec::new(), Vec::new());
+        let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioDrcLoudness(
+            MpegH3dAudioDrcLoudness::new(Some(info)),
+        ));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[14], (1 << 7) | (0x2A << 1));
+        let Mpeg2ExtensionBody::MpegH3dAudioDrcLoudness(back) =
+            &Mpeg2ExtensionDescriptor::parse(&buf).unwrap().body
+        else {
+            panic!("expected DRC/loudness body");
+        };
+        let target = back
+            .info
+            .as_ref()
+            .unwrap()
+            .drc_instructions
+            .first()
+            .unwrap()
+            .target_loudness
+            .unwrap();
+        assert_eq!(target.depends_on_drc_set, 0x2A);
     }
 }
