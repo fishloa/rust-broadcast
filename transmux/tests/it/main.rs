@@ -93,6 +93,7 @@ mod hevc_damaged_parameter_sets;
 mod hevc_sps;
 mod hevc_vps_timing;
 mod hls_discontinuity;
+mod hls_packager_playlist;
 mod hub;
 #[path = "support/hub_fixtures.rs"]
 mod hub_fixtures;
