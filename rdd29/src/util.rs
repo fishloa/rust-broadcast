@@ -96,11 +96,11 @@ pub(crate) fn write_align_bits(
 /// Assert a body [`BitReader`] has been fully consumed (no trailing bytes
 /// left unaccounted for) — a cheap but real spec-fidelity check that the
 /// element's declared `ElementSize`/`DLCSize` was fully, correctly parsed.
-pub(crate) fn expect_fully_consumed(r: &BitReader<'_>, what: &'static str) -> Result<()> {
-    let remaining = r.bits_remaining();
+pub(crate) fn expect_fully_consumed(_r: &BitReader<'_>, _what: &'static str) -> Result<()> {
+    let remaining = _r.bits_remaining();
     if remaining != 0 {
         return Err(Error::InvalidValue(broadcast_common::error::InvalidValue {
-            field: what,
+            field: _what,
             value: remaining as u64,
             reason: "trailing unparsed bits remain in the element body",
         }));
