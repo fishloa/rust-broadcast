@@ -964,6 +964,78 @@ mod tests {
         assert_eq!(out.apdus, vec![s(&ProfileEnq::default())]);
     }
 
+    /// An APDU for some other resource must not be mistaken for a
+    /// `profile_change`: that would re-enquire and clear the latched handshake,
+    /// firing a second `CamReady` for a module that already completed it.
+    #[test]
+    fn resource_manager_does_not_treat_an_unrelated_apdu_as_profile_change() {
+        use dvb_ci::objects::application_info::{ApplicationInfo, ApplicationType};
+
+        let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
+        rm.on_open().unwrap();
+        rm.on_apdu(&s(&Profile {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resources: vec![APPLICATION_INFORMATION],
+        }))
+        .unwrap();
+
+        let unrelated = s(&ApplicationInfo {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            application_type: ApplicationType::ConditionalAccess,
+            application_manufacturer: 0x1234,
+            manufacturer_code: 0x5678,
+            menu_string: b"Acme CAM",
+        });
+        assert_eq!(rm.on_apdu(&unrelated).unwrap(), ResourceOut::default());
+        assert_eq!(rm.module_resources(), &[APPLICATION_INFORMATION]);
+
+        // The handshake is still complete: a further profile does not re-ready.
+        let again = rm
+            .on_apdu(&s(&Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resources: vec![],
+            }))
+            .unwrap();
+        assert!(
+            !again.notify.contains(&Notification::CamReady),
+            "an unrelated APDU must not clear the ready/profile latch"
+        );
+    }
+
+    /// An unrelated APDU must not be parsed as a `ca_pmt_reply` (which would
+    /// surface a spurious protocol error for a perfectly good frame).
+    #[test]
+    fn conditional_access_ignores_an_unrelated_apdu() {
+        let mut h = ConditionalAccess;
+        let profile = s(&Profile {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resources: vec![],
+        });
+        assert_eq!(h.on_apdu(&profile).unwrap(), ResourceOut::default());
+    }
+
+    /// An unrelated APDU must not be parsed as a `display_control` (that would
+    /// answer the module with a nonsense `display_reply`).
+    #[test]
+    fn mmi_ignores_an_unrelated_apdu() {
+        let mut h = Mmi::default();
+        assert_eq!(
+            h.on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
+        assert!(h.chain.is_none());
+    }
+
+    /// An unrelated APDU must not be decoded as an `ask_release` event.
+    #[test]
+    fn host_control_ignores_an_unrelated_apdu() {
+        let mut h = HostControl;
+        assert_eq!(
+            h.on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
+    }
+
     #[test]
     fn application_information_surfaces_notification() {
         use dvb_ci::objects::application_info::ApplicationType;
