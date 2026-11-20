@@ -1579,4 +1579,26 @@ mod tests {
             }))
         ));
     }
+
+    #[test]
+    fn cmd_type_labels_and_ack_wire_values() {
+        for (kind, label) in [
+            (NormCmdType::Flush, "NORM_CMD(FLUSH)"),
+            (NormCmdType::Eot, "NORM_CMD(EOT)"),
+            (NormCmdType::Squelch, "NORM_CMD(SQUELCH)"),
+            (NormCmdType::Cc, "NORM_CMD(CC)"),
+            (NormCmdType::RepairAdv, "NORM_CMD(REPAIR_ADV)"),
+            (NormCmdType::AckReq, "NORM_CMD(ACK_REQ)"),
+            (NormCmdType::Application, "NORM_CMD(APPLICATION)"),
+        ] {
+            assert_eq!(kind.name(), label);
+        }
+        assert_eq!(NormCmdType::Other(9).name(), "reserved");
+
+        assert_eq!(NormAckType::Cc.to_u8(), 1);
+        assert_eq!(NormAckType::Flush.to_u8(), 2);
+        assert_eq!(NormAckType::Reserved(5).to_u8(), 5);
+        assert_eq!(NormAckType::Application(200).to_u8(), 200);
+        assert_eq!(NormAckType::from_u8(2), NormAckType::Flush);
+    }
 }

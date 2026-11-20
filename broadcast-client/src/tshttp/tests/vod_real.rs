@@ -1,5 +1,6 @@
+use super::TsHttpClient;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, Event, TsHttpClient};
+use crate::tshttp::{Action, Event};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -15,8 +16,8 @@ fn cfg() -> Config {
 fn real_finite_capture() {
     let bytes = test_fixtures::read("ts/h264-aac.ts");
     let mut oracle = transmux::StreamingTsDemux::new();
-    oracle.feed(&bytes);
-    oracle.finish();
+    let _ = oracle.feed(&bytes);
+    let _ = oracle.finish();
     let mut oracle_samples = 0usize;
     while let Some(e) = oracle.poll_event() {
         if matches!(e, transmux::DemuxEvent::Sample { .. }) {
@@ -74,7 +75,7 @@ fn real_live_capture() {
     c.on_eof(ts(60_000));
     let mut reconnect0 = false;
     while let Some(a) = c.poll() {
-        if matches!(a, Action::Reconnect {
+        if a == (Action::Reconnect {
             after: std::time::Duration::from_millis(0),
         }) {
             reconnect0 = true;

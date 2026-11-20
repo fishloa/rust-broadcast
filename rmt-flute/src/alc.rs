@@ -302,4 +302,27 @@ mod tests {
         };
         assert_ne!(mk(&[1, 2, 3, 4]), mk(&[1, 2, 3, 5]));
     }
+
+    #[test]
+    fn spi_is_the_high_psi_bit_only() {
+        let (cci, tsi) = lct_with_tsi();
+        let pkt = |psi: u8| {
+            let lct = LctHeader {
+                reserved: 0,
+                version: LCT_VERSION,
+                psi,
+                close_session: false,
+                close_object: false,
+                codepoint: 0,
+                cci: &cci,
+                tsi,
+                toi: Toi::new(0, 0).unwrap(),
+                extensions: vec![],
+            };
+            AlcPacket::new(lct, FecPayloadId::new(&[]), &[])
+        };
+        assert!(pkt(0b10).spi());
+        assert!(!pkt(0b01).spi());
+        assert!(!pkt(0).spi());
+    }
 }

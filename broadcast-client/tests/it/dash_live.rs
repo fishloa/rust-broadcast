@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::time::Duration;
 
-use broadcast_client::{ClockSource, Config, DashClockPolicy, ErrorKind, Event, Status};
+use broadcast_client::{Action, ClockSource, Config, DashClockPolicy, ErrorKind, Event, Status};
 use broadcast_common::stage::Timestamp;
 use dash_checks::*;
 use dash_common::capture::{CaptureOrigin, Livesim2Pair};
@@ -880,4 +880,31 @@ fn the_live_event_sequence_does_not_depend_on_how_the_bodies_are_chunked() {
     for chunk in [1_316usize, 4_096] {
         assert_eq!(run(chunk), reference, "chunk {chunk}");
     }
+}
+
+#[test]
+fn a_poll_exactly_at_the_armed_wake_still_arms_a_later_one() {
+    let synth =
+        Synth::new(AST_US, Addressing::Number).with_utc("http-xsdate", "http://utc.test/xsdate");
+    let mut sim = DashSim::new(
+        MPD_URL,
+        Config::default(),
+        World::new(AST_US + 41 * MICROS + 120_000),
+        Box::new(WorldBackend(synth)),
+    );
+    sim.run_for(5 * SEC);
+    let wake = sim.next_wake().expect("a wake is armed");
+    sim.world.elapsed_us = sim.world.elapsed_for_mono(wake);
+    let now = ts(sim.world.mono());
+    let mut later = None;
+    while let Some(action) = sim.session.poll(now) {
+        if let Action::WakeAt(at) = action {
+            assert!(at > now, "a wake at or before now is dropped");
+            later = Some(at);
+        }
+    }
+    assert!(
+        later.is_some(),
+        "a poll exactly at the armed wake still arms a later one"
+    );
 }

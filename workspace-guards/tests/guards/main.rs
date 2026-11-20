@@ -28,6 +28,7 @@ mod serialize_mask;
 mod serialize_mask_data;
 mod spawn_sites;
 mod spawn_sites_data;
+mod test_module_reachability;
 mod tls_provider;
 mod tls_provider_data;
 mod truncation;

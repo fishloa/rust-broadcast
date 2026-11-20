@@ -952,6 +952,79 @@ mod tests {
 
     // -- BoxHeader tests ---------------------------------------------------
 
+    /// The #204 label table, one literal per arm of `BoxType::name`. Written
+    /// out rather than derived from the arms it checks, so a deleted arm
+    /// (which silently becomes `"<unknown>"`) or a copy-paste typo fails here.
+    #[test]
+    fn box_type_names_match_their_four_cc() {
+        let table: &[(&[u8; 4], &str)] = &[
+            (b"ftyp", "ftyp"),
+            (b"moov", "moov"),
+            (b"moof", "moof"),
+            (b"trak", "trak"),
+            (b"mdia", "mdia"),
+            (b"minf", "minf"),
+            (b"stbl", "stbl"),
+            (b"dinf", "dinf"),
+            (b"edts", "edts"),
+            (b"mvex", "mvex"),
+            (b"mvhd", "mvhd"),
+            (b"tkhd", "tkhd"),
+            (b"mdhd", "mdhd"),
+            (b"hdlr", "hdlr"),
+            (b"vmhd", "vmhd"),
+            (b"smhd", "smhd"),
+            (b"stsd", "stsd"),
+            (b"stts", "stts"),
+            (b"stsc", "stsc"),
+            (b"stsz", "stsz"),
+            (b"stco", "stco"),
+            (b"co64", "co64"),
+            (b"ctts", "ctts"),
+            (b"stss", "stss"),
+            (b"stsh", "stsh"),
+            (b"elst", "elst"),
+            (b"dref", "dref"),
+            (b"tref", "tref"),
+            (b"mdat", "mdat"),
+            (b"free", "free"),
+            (b"skip", "skip"),
+            (b"uuid", "uuid"),
+            (b"mfhd", "mfhd"),
+            (b"traf", "traf"),
+            (b"tfhd", "tfhd"),
+            (b"trun", "trun"),
+            (b"tfdt", "tfdt"),
+            (b"sidx", "sidx"),
+            (b"styp", "styp"),
+            (b"mfra", "mfra"),
+            (b"tfra", "tfra"),
+            (b"mfro", "mfro"),
+            (b"emsg", "emsg"),
+            (b"avc1", "avc1"),
+            (b"mp4a", "mp4a"),
+            (b"enca", "enca"),
+            (b"encv", "encv"),
+            (b"hvc1", "hvc1"),
+            (b"avcC", "avcC"),
+            (b"hvcC", "hvcC"),
+            (b"avc2", "avc2"),
+            (b"avc3", "avc3"),
+            (b"avc4", "avc4"),
+            (b"hev1", "hev1"),
+        ];
+        assert_eq!(table.len(), 54, "every named arm is in the table");
+        for (four_cc, label) in table {
+            assert_eq!(
+                BoxType(**four_cc).name(),
+                *label,
+                "BoxType::name for {:?}",
+                core::str::from_utf8(*four_cc)
+            );
+        }
+        assert_eq!(BoxType(*b"zzzz").name(), "<unknown>");
+    }
+
     /// r04-W8: a wire header that used `size == 1` + largesize must serialize
     /// back to that same 16-byte form. Unfixed, the serializer re-derived the
     /// form from `size` (`<= u32::MAX` here), so it wrote the compact 8-byte
@@ -1023,6 +1096,163 @@ mod tests {
             BOX_HEADER_MIN_SIZE
         );
         assert_eq!(out, wire);
+    }
+
+    /// §4.2 boundaries: an empty box (`size ==` its own header) parses, and a
+    /// `size == 1` header needs exactly 16 bytes, reporting the shortfall.
+    #[test]
+    fn header_boundaries_pin_empty_and_largesize_boxes() {
+        let empty = [0, 0, 0, 8, b'f', b'r', b'e', b'e'];
+        let header = BoxHeader::parse(&empty).unwrap();
+        assert_eq!(header.size, 8);
+        assert_eq!(header.header_size(), 8);
+        assert!(!header.has_largesize);
+
+        let mut large = [0u8; 16];
+        large[3] = 1;
+        large[4..8].copy_from_slice(b"free");
+        large[8..16].copy_from_slice(&0x110u64.to_be_bytes());
+        let header = BoxHeader::parse(&large).unwrap();
+        assert_eq!(header.size, 0x110);
+        assert!(header.has_largesize);
+        assert_eq!(header.header_size(), 16);
+        assert_eq!(box_header_len(&large).unwrap(), 16);
+
+        // A largesize whose every byte differs: a 64-bit length is a promise
+        // about the box, and a read from the wrong byte of it changes it.
+        let mut huge = [0u8; 16];
+        huge[3] = 1;
+        huge[4..8].copy_from_slice(b"free");
+        huge[8..16].copy_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+        let header = BoxHeader::parse(&huge).unwrap();
+        assert_eq!(header.size, 0x0102_0304_0506_0708);
+
+        for have in 8..16usize {
+            match box_header_len(&large[..have]) {
+                Err(Error::LargesizeBufferTooShort {
+                    need,
+                    have: reported,
+                }) => assert_eq!((need, reported), (16, have)),
+                other => panic!(
+                    "box_header_len on {have} bytes: expected LargesizeBufferTooShort, got {other:?}"
+                ),
+            }
+            match BoxHeader::parse(&large[..have]) {
+                Err(Error::LargesizeBufferTooShort {
+                    need,
+                    have: reported,
+                }) => assert_eq!((need, reported), (16, have)),
+                other => panic!(
+                    "BoxHeader::parse on {have} bytes: expected LargesizeBufferTooShort, got {other:?}"
+                ),
+            }
+        }
+    }
+
+    /// A `uuid` box's 16-byte usertype follows the (optional) 8-byte
+    /// `largesize`, and the usertype guard needs exactly its 16 bytes.
+    #[test]
+    fn uuid_header_usertype_follows_the_largesize() {
+        let usertype = [
+            0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD,
+            0xAE, 0xAF,
+        ];
+
+        let mut compact = alloc::vec![0u8; 24];
+        compact[0..4].copy_from_slice(&24u32.to_be_bytes());
+        compact[4..8].copy_from_slice(b"uuid");
+        compact[8..24].copy_from_slice(&usertype);
+        let header = BoxHeader::parse(&compact).unwrap();
+        assert_eq!(header.size, 24);
+        assert_eq!(header.usertype, Some(usertype));
+        assert_eq!(header.header_size(), 24);
+
+        match BoxHeader::parse(&compact[..23]) {
+            Err(Error::UuidBufferTooShort {
+                need,
+                have: reported,
+            }) => assert_eq!((need, reported), (24, 23)),
+            other => panic!("expected UuidBufferTooShort, got {other:?}"),
+        }
+
+        let mut large = alloc::vec![0u8; 32];
+        large[3] = 1;
+        large[4..8].copy_from_slice(b"uuid");
+        large[8..16].copy_from_slice(&32u64.to_be_bytes());
+        large[16..32].copy_from_slice(&usertype);
+        let header = BoxHeader::parse(&large).unwrap();
+        assert_eq!(header.size, 32);
+        assert!(header.has_largesize);
+        assert_eq!(header.usertype, Some(usertype));
+        assert_eq!(header.header_size(), 32);
+    }
+
+    /// `FullBoxHeader`, `box_body`, `for_payload` and `Display` lengths.
+    #[test]
+    fn full_box_header_lengths_display_and_clamped_guard() {
+        let free = BoxType::from_bytes(*b"free");
+        let compact = FullBoxHeader::new(BoxHeader::new(12, free, None), 1, 0x12_3456);
+        assert_eq!(compact.serialized_len(), 12);
+        let mut buf = [0u8; 12];
+        assert_eq!(compact.serialize_into(&mut buf).unwrap(), 12);
+        assert_eq!(buf[8], 1);
+        assert_eq!(&buf[9..12], &[0x12, 0x34, 0x56]);
+
+        match write_full_box_header(&mut [0u8; 11], b"free", 12, 0, 0, true) {
+            Err(Error::OutputBufferTooSmall(_)) => {}
+            other => panic!("expected OutputBufferTooSmall, got {other:?}"),
+        }
+
+        let large = BoxHeader {
+            size: 20,
+            box_type: free,
+            usertype: None,
+            has_largesize: true,
+        };
+        let full = FullBoxHeader::new(large, 0, 0);
+        assert_eq!(full.serialized_len(), 20);
+        let mut buf = [0u8; 20];
+        assert_eq!(full.serialize_into(&mut buf).unwrap(), 20);
+        match full.serialize_into(&mut [0u8; 19]) {
+            Err(Error::OutputBufferTooSmall(_)) => {}
+            other => panic!("expected OutputBufferTooSmall, got {other:?}"),
+        }
+        match FullBoxHeader::parse(&[0u8; 11]) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (12, 11, "FullBoxHeader"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        match box_body(&[0, 0, 0, 20, b'f', b'r', b'e', b'e', 0, 0], 8, "body") {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!((b.need, b.have, b.what), (16, 10, "body"));
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+
+        let uuid = BoxHeader::for_payload(
+            BoxType::from_bytes(*b"uuid"),
+            Some([0u8; UUID_TYPE_SIZE]),
+            10,
+        );
+        assert_eq!(uuid.size, 34);
+        assert_eq!(uuid.serialized_len(), 24);
+        let plain = BoxHeader::for_payload(free, None, 10);
+        assert_eq!(plain.size, 18);
+        assert_eq!(plain.serialized_len(), 8);
+
+        assert_eq!(alloc::format!("{}", BoxType::from_bytes(*b"url ")), "url ");
+        assert_eq!(alloc::format!("{}", BoxType::from_bytes(*b"mp4v")), "mp4v");
+        assert_eq!(
+            alloc::format!("{}", BoxType::from_bytes([0x00, b'a', b'b', 0xFF])),
+            "\\x00ab\\xff"
+        );
+
+        let mut uuid_box = alloc::vec![0u8; 24];
+        uuid_box[0..4].copy_from_slice(&12u32.to_be_bytes());
+        uuid_box[4..8].copy_from_slice(b"uuid");
+        assert!(clamped_boxes(&uuid_box).next().is_none());
     }
 
     /// r04-W8: `header_size()` counts 16 bytes for a `uuid` header, so one

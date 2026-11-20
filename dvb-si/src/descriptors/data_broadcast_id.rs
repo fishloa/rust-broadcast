@@ -569,6 +569,20 @@ mod tests {
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
     }
 
+    #[test]
+    fn serialize_accepts_max_255_byte_body() {
+        // 253 selector bytes + 2 id bytes = 255, the largest legal body.
+        let sel = vec![0u8; 253];
+        let d = DataBroadcastIdDescriptor {
+            data_broadcast_id: 0x0001,
+            id_selector: &sel,
+        };
+        assert_eq!(d.serialized_len(), HEADER_LEN + 255);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[1], 0xFF);
+    }
+
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serialize_is_stable() {
@@ -753,6 +767,66 @@ mod tests {
             SsuIdSelector::parse(bytes).unwrap_err(),
             Error::InvalidDescriptor { .. }
         ));
+    }
+
+    #[test]
+    fn ssu_selector_parse_accepts_zero_oui_entries() {
+        let s = SsuIdSelector::parse(&[0x00]).unwrap();
+        assert!(s.oui_entries.is_empty());
+        assert!(s.private_data.is_empty());
+        assert!(matches!(
+            SsuIdSelector::parse(&[]).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
+    }
+
+    #[test]
+    fn ssu_selector_parse_rejects_first_entry_truncation() {
+        let bytes = [0x05, 0x00, 0x15, 0x0A, 0x02, 0x21];
+        assert!(matches!(
+            SsuIdSelector::parse(&bytes).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
+    }
+
+    #[test]
+    fn ssu_selector_multi_entry_round_trip_with_private_data() {
+        #[rustfmt::skip]
+        let bytes: &[u8] = &[
+            0x0F,                   // OUI_data_length = 9 + 6
+            0x00, 0x0A, 0x0B,       // OUI entry 1
+            0xF1,                   // reserved(1111)|update_type(1)
+            0xA3,                   // reserved(10)|uvf(1)|uversion(3)
+            0x03,                   // selector_length = 3
+            0xAA, 0xBB, 0xCC,       // selector bytes
+            0x00, 0x0A, 0x0C,       // OUI entry 2
+            0x02,                   // reserved(0)|update_type(2)
+            0x04,                   // reserved(0)|uvf(0)|uversion(4)
+            0x00,                   // selector_length = 0
+            0xDE, 0xAD,             // private_data
+        ];
+        let s = SsuIdSelector::parse(bytes).unwrap();
+        assert_eq!(s.oui_entries.len(), 2);
+        assert_eq!(s.oui_entries[0].selector, &[0xAA, 0xBB, 0xCC][..]);
+        assert_eq!(s.oui_entries[1].oui, [0x00, 0x0A, 0x0C]);
+        assert!(s.oui_entries[1].selector.is_empty());
+        assert_eq!(s.private_data, &[0xDE, 0xAD]);
+        assert_eq!(s.serialized_len(), bytes.len());
+        let mut buf = vec![0u8; s.serialized_len()];
+        s.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+        assert_eq!(IdSelector::Ssu(s.clone()).serialized_len(), bytes.len());
+    }
+
+    #[test]
+    fn id_selector_serialized_len_covers_both_variants() {
+        assert_eq!(IdSelector::Raw(&[1, 2, 3]).serialized_len(), 3);
+        let s = SsuIdSelector::parse(&[0x00]).unwrap();
+        assert_eq!(s.serialized_len(), 1);
+        assert_eq!(
+            IdSelector::Ssu(s.clone()).serialized_len(),
+            s.serialized_len()
+        );
     }
 
     #[cfg(feature = "serde")]

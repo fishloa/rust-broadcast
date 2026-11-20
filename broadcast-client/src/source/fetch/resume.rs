@@ -642,4 +642,103 @@ mod tests {
             "one prefix past the whole budget is never parked"
         );
     }
+
+    #[test]
+    fn a_prefix_exactly_the_budget_is_parked() {
+        let mut stash = Stash::new(10);
+        stash.put(1u8, parked_holding("http://a/x", 10));
+        assert_eq!(stash.len(), 1, "the budget is a ceiling, not a limit");
+        assert!(stash.take(&1, "http://a/x", None).is_some());
+    }
+
+    #[test]
+    fn prefixes_that_together_fill_the_budget_exactly_are_both_parked() {
+        let mut stash = Stash::new(10);
+        stash.put(1u8, parked_holding("http://a/x", 5));
+        stash.put(2u8, parked_holding("http://a/y", 5));
+        assert_eq!(stash.len(), 2);
+        assert!(stash.take(&1, "http://a/x", None).is_some());
+        assert!(stash.take(&2, "http://a/y", None).is_some());
+    }
+
+    #[test]
+    fn a_prefix_that_would_overrun_the_budget_evicts_the_oldest() {
+        let mut stash = Stash::new(10);
+        stash.put(1u8, parked_holding("http://a/x", 5));
+        stash.put(2u8, parked_holding("http://a/y", 5));
+        stash.put(3u8, parked_holding("http://a/z", 6));
+        assert_eq!(stash.len(), 1, "only the newest fits");
+        assert!(stash.take(&1, "http://a/x", None).is_none());
+        assert!(stash.take(&2, "http://a/y", None).is_none());
+        assert!(stash.take(&3, "http://a/z", None).is_some());
+    }
+
+    #[test]
+    fn clear_drops_every_parked_prefix() {
+        let mut stash = Stash::new(10);
+        stash.put(1u8, parked_holding("http://a/x", 5));
+        stash.clear();
+        assert_eq!(stash.len(), 0);
+        assert!(stash.take(&1, "http://a/x", None).is_none());
+    }
+
+    fn modified_basis() -> Basis {
+        Basis::of(
+            StatusCode::OK,
+            &h(&[
+                ("Last-Modified", "Tue, 15 Nov 1994 12:45:26 GMT"),
+                ("Date", "Tue, 15 Nov 1994 12:46:00 GMT"),
+                ("Accept-Ranges", "bytes"),
+                ("Content-Length", "100"),
+            ]),
+        )
+        .unwrap()
+    }
+
+    fn resumed_partial(
+        basis: Basis,
+        headers: &[(&str, &str)],
+        received: u64,
+    ) -> (HeadOutcome, BodyAcc) {
+        let mut basis = Some(basis);
+        let mut body = BodyAcc::new(1024);
+        body.push(&vec![0u8; usize::try_from(received).unwrap()])
+            .unwrap();
+        let mut from = Some(received);
+        let head = accept_head(
+            &mut body,
+            &mut basis,
+            &mut from,
+            StatusCode::PARTIAL_CONTENT,
+            &h(headers),
+            None,
+        );
+        (head, body)
+    }
+
+    #[test]
+    fn a_206_changing_the_last_modified_validator_is_a_mismatch() {
+        let (head, _) = resumed_partial(
+            modified_basis(),
+            &[
+                ("Last-Modified", "Tue, 15 Nov 1994 12:45:27 GMT"),
+                ("Content-Range", "bytes 40-99/100"),
+            ],
+            40,
+        );
+        assert_eq!(head, HeadOutcome::Fallback);
+    }
+
+    #[test]
+    fn a_206_keeping_the_last_modified_validator_continues() {
+        let (head, _) = resumed_partial(
+            modified_basis(),
+            &[
+                ("Last-Modified", "Tue, 15 Nov 1994 12:45:26 GMT"),
+                ("Content-Range", "bytes 40-99/100"),
+            ],
+            40,
+        );
+        assert_eq!(head, HeadOutcome::Accepted);
+    }
 }

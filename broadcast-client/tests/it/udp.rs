@@ -242,6 +242,88 @@ fn bad_udp_urls_and_configs_are_typed_errors() {
 }
 
 #[test]
+fn the_default_reorder_budget_and_the_largest_window_are_pinned() {
+    assert_eq!(UdpConfig::default().reorder_bytes, 4 * 1024 * 1024);
+    let with = |udp: UdpConfig| config_with(|c| c.udp = udp);
+    assert!(
+        Session::open(
+            Url::parse(GROUP).unwrap(),
+            with(udp_cfg(|c| c.reorder_packets = MAX_REORDER_PACKETS)),
+            ts(0)
+        )
+        .is_ok(),
+        "the largest allowed window is accepted"
+    );
+    assert!(matches!(
+        Session::open(
+            Url::parse(GROUP).unwrap(),
+            with(udp_cfg(|c| c.reorder_packets = MAX_REORDER_PACKETS + 1)),
+            ts(0)
+        )
+        .unwrap_err(),
+        Error::InvalidConfig(f) if f.name() == "udp.reorder_packets"
+    ));
+}
+
+#[test]
+fn a_stray_http_response_on_a_datagram_session_is_ignored() {
+    let mut s = Session::open(Url::parse(GROUP).unwrap(), Config::default(), ts(0)).unwrap();
+    let mut conn = None;
+    while let Some(a) = s.poll(ts(0)) {
+        if let Action::UdpBind { conn: c, .. } = a {
+            conn = Some(c);
+        }
+    }
+    let conn = conn.expect("a UdpBind");
+    while s.next_event().is_some() {}
+    s.on_response(
+        conn,
+        crate::support::status(200),
+        &http::HeaderMap::new(),
+        ts(1),
+    );
+    let mut events = Vec::new();
+    while let Some(e) = s.next_event() {
+        events.push(e);
+    }
+    assert!(events.is_empty(), "{events:?}");
+    let mut actions = Vec::new();
+    while let Some(a) = s.poll(ts(1)) {
+        actions.push(a);
+    }
+    assert!(actions.is_empty(), "{actions:?}");
+}
+
+#[test]
+fn on_connected_for_an_unknown_conn_on_a_datagram_session_does_nothing() {
+    let mut s = Session::open(Url::parse(GROUP).unwrap(), Config::default(), ts(0)).unwrap();
+    let mut conn = None;
+    while let Some(a) = s.poll(ts(0)) {
+        if let Action::UdpBind { conn: c, .. } = a {
+            conn = Some(c);
+        }
+    }
+    let conn = conn.expect("a UdpBind");
+    while s.next_event().is_some() {}
+    s.on_connected(ConnId::new(conn.0 + 99));
+    let mut events = Vec::new();
+    while let Some(e) = s.next_event() {
+        events.push(e);
+    }
+    assert!(events.is_empty(), "{events:?}");
+    let mut actions = Vec::new();
+    while let Some(a) = s.poll(ts(1)) {
+        actions.push(a);
+    }
+    assert!(
+        actions
+            .iter()
+            .all(|a| matches!(a, Action::WakeAt(_) | Action::Close { .. })),
+        "{actions:?}"
+    );
+}
+
+#[test]
 fn the_udp_kinds_and_schemes_must_agree() {
     let kind = |kind| config_with(|c| c.kind = kind);
     assert!(Session::open(Url::parse(GROUP).unwrap(), kind(SourceKind::Udp), ts(0)).is_ok());

@@ -34,6 +34,8 @@ struct Outcome {
     per_track: BTreeMap<u16, usize>,
     data: BTreeMap<u16, Vec<Vec<u8>>>,
     discontinuities: usize,
+    video_tracks: std::collections::BTreeSet<u32>,
+    first_join_after_discontinuity: Option<transmux::JoinDecision>,
     errors: Vec<String>,
 }
 
@@ -139,12 +141,28 @@ fn drain(s: &mut Session, out: &mut Outcome) {
                     .map(|t| (t.track_id.value(), t.source_pid.map_or(0, |p| p.value())))
                     .collect();
                 out.announced_pids.extend(out.pid_of.values());
+                out.video_tracks.extend(
+                    v.iter()
+                        .filter(|t| t.config.is_video())
+                        .map(|t| t.track_id.value()),
+                );
             }
-            Event::Sample { track, sample, .. } => {
+            Event::Sample {
+                track,
+                sample,
+                join,
+            } => {
                 out.samples += 1;
                 let pid = out.pid_of.get(&track.value()).copied().unwrap_or(0);
                 *out.per_track.entry(pid).or_default() += 1;
                 out.data.entry(pid).or_default().push(sample.data.to_vec());
+                if out.discontinuities > 0
+                    && out.first_join_after_discontinuity.is_none()
+                    && out.video_tracks.contains(&track.value())
+                    && let Some(decision) = join
+                {
+                    out.first_join_after_discontinuity = Some(*decision);
+                }
             }
             Event::Discontinuity => out.discontinuities += 1,
             Event::Error { kind, .. }
@@ -171,6 +189,13 @@ fn assert_seam_costs_only_the_tail(bytes: &[u8], what: &str) {
     let cut = run(&segs, Some(DISCONTINUITY_AT));
     assert!(cut.errors.is_empty(), "{what}: {:?}", cut.errors);
     assert_eq!(cut.discontinuities, 1, "{what}");
+    let decision = cut
+        .first_join_after_discontinuity
+        .expect("a video sample after the discontinuity");
+    assert!(
+        !matches!(decision, transmux::JoinDecision::Keep),
+        "{what}: the join state is re-anchored after the discontinuity, got {decision:?}"
+    );
     assert!(
         !plain.announced_pids.is_empty(),
         "{what}: nothing announced"
@@ -217,6 +242,14 @@ fn a_discontinuity_in_a_two_pid_stream_loses_nothing() {
     let cut = run(&segs, Some(DISCONTINUITY_AT));
     assert_eq!(cut.per_track, plain.per_track);
     assert_eq!(cut.announced_pids, plain.announced_pids);
+    assert_eq!(cut.discontinuities, 1);
+    let decision = cut
+        .first_join_after_discontinuity
+        .expect("a video sample after the discontinuity");
+    assert!(
+        !matches!(decision, transmux::JoinDecision::Keep),
+        "the join state is re-anchored after the discontinuity, got {decision:?}"
+    );
 }
 
 #[test]

@@ -1139,8 +1139,10 @@ impl Session {
     ///
     /// Queued actions other than [`Action::Close`] are dropped and every live connection gets
     /// exactly one `Close`; an RTSP session with a server-side session id first queues one
-    /// [`Action::Send`] carrying `TEARDOWN`. Afterwards `poll` and `next_event` return `None`.
-    /// `now` is the host clock at the call, which the farewell's own timers are stamped with.
+    /// [`Action::Send`] carrying `TEARDOWN`. Events queued before the call are not dropped:
+    /// `next_event` keeps returning them, and `poll` keeps returning the queued `Close` actions,
+    /// until each queue is empty; after that both return `None`. `now` is the host clock at the
+    /// call, which the farewell's own timers are stamped with.
     pub fn close(&mut self, now: Timestamp) {
         self.now_us = now.as_micros();
         if self.closed {
@@ -1698,6 +1700,105 @@ mod tests {
         let c = session.alloc_conn(url);
         assert!(c != a && c != b, "reused live id {c}");
         assert_ne!(c, ConnId::new(0));
+    }
+
+    #[test]
+    fn set_rendered_tracks_on_hls_sets_the_buffer_rendered_set_directly() {
+        let config = Config {
+            kind: crate::SourceKind::Hls,
+            ..Config::default()
+        };
+        let mut session = Session::open(
+            Url::parse("http://example/live.m3u8").unwrap(),
+            config,
+            Timestamp::ZERO,
+        )
+        .unwrap();
+        assert!(session.adaptive.is_some());
+        session.set_rendered_tracks(Timestamp::from_micros(1), &[TrackId::new(7)]);
+        assert!(
+            session.buffer.rendered_explicit(),
+            "the adaptive branch renders the declared set, not the default"
+        );
+    }
+
+    #[test]
+    fn set_rendered_tracks_on_rtsp_sets_the_buffer_rendered_set_directly() {
+        let config = Config {
+            kind: crate::SourceKind::Rtsp,
+            ..Config::default()
+        };
+        let mut session = Session::open(
+            Url::parse("rtsp://camera.example/live").unwrap(),
+            config,
+            Timestamp::ZERO,
+        )
+        .unwrap();
+        assert!(session.rtsp.is_some());
+        session.set_rendered_tracks(Timestamp::from_micros(1), &[TrackId::new(7)]);
+        assert!(
+            session.buffer.rendered_explicit(),
+            "the RTSP branch renders the declared set, not the default"
+        );
+    }
+
+    #[test]
+    fn a_pending_declaration_does_not_expect_a_kind_that_is_not_missing() {
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            Timestamp::ZERO,
+        )
+        .unwrap();
+        session.set_rendered_tracks(Timestamp::from_micros(1), &[TrackId::new(999)]);
+        assert!(
+            !session.buffer.is_expecting(),
+            "the source declares no unresolved kind, so nothing is awaited"
+        );
+        assert!(
+            !session.buffer.is_audio_pending(),
+            "audio is not missing, so no audio-only cap is armed"
+        );
+    }
+
+    #[test]
+    fn a_tls_connect_to_an_https_session_on_its_default_port_carries_the_identity() {
+        let config = Config {
+            client_identity: Some(crate::ClientIdentity::handle(7)),
+            client_identity_scope: ClientIdentityScope::SessionOrigin,
+            ..Config::default()
+        };
+        let session = Session::open(
+            Url::parse("https://cam.example/live").unwrap(),
+            config,
+            Timestamp::ZERO,
+        )
+        .unwrap();
+        let connect = |port| Action::TcpConnect {
+            conn: ConnId::new(1),
+            host: "cam.example".to_string(),
+            port,
+            tls: true,
+            identity: None,
+        };
+        let mut default_port = connect(HTTPS_DEFAULT_PORT);
+        session.attach_identity(&mut default_port);
+        assert!(
+            matches!(
+                &default_port,
+                Action::TcpConnect {
+                    identity: Some(_),
+                    ..
+                }
+            ),
+            "https defaults to {HTTPS_DEFAULT_PORT}, the session origin's port"
+        );
+        let mut other_port = connect(8443);
+        session.attach_identity(&mut other_port);
+        assert!(
+            matches!(&other_port, Action::TcpConnect { identity: None, .. }),
+            "another port of the same host is not the session origin"
+        );
     }
 
     #[test]

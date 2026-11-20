@@ -1,5 +1,6 @@
+use super::TsHttpClient;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, Event, TsHttpClient};
+use crate::tshttp::{Action, Event};
 use broadcast_common::stage::Timestamp;
 
 /// `ms` on the tshttp policy's millisecond clock, as the session's `now`.
@@ -51,7 +52,7 @@ fn bare_demuxer_oracle() {
         return;
     };
     let mut d = transmux::StreamingTsDemux::new();
-    d.feed(&bytes);
+    let _ = d.feed(&bytes);
     let mut total = 0;
     let mut tracks = std::collections::BTreeSet::new();
     while let Some(e) = d.poll_event() {
@@ -91,9 +92,12 @@ fn first_sample_moves_to_playing() {
     }
     assert!(sampled, "no Sample in the whole fixture");
     c.on_eof(ts(5_000));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(0),
-        }));
+        })
+    );
     assert_eq!(c.poll(), None);
 }
 
@@ -104,9 +108,12 @@ fn eof_before_any_sample_backs_off() {
     c.on_response(200, &[], ts(0));
     let _ = c.poll_event();
     c.on_eof(ts(5_000));
-    assert_eq!(c.poll(), Some(Action::Reconnect {
+    assert_eq!(
+        c.poll(),
+        Some(Action::Reconnect {
             after: std::time::Duration::from_millis(2000),
-        }));
+        })
+    );
 }
 
 #[test]
@@ -130,10 +137,7 @@ fn missing_headers_404() {
     let mut c = TsHttpClient::with_seed("u", Config::default(), ts(0), ts(0).as_millis());
     let _ = c.poll();
     c.on_response(status, &[], ts(0));
-    assert!(matches!(
-        c.poll_event(),
-        Some(Event::NotFound)
-    ));
+    assert!(matches!(c.poll_event(), Some(Event::NotFound)));
 }
 
 #[test]

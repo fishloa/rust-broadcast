@@ -7,6 +7,7 @@ mod pes_extension_matrix;
 mod pes_header_edges;
 mod pes_header_roundtrip_exhaustive;
 mod reproductions_2746;
+mod reproductions_2747;
 mod review_pes_header_bits_lossy;
 mod timestamp_edges;
 mod trait_round_trip;
