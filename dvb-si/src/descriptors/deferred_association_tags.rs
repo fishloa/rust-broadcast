@@ -270,6 +270,31 @@ mod tests {
         assert_eq!(out, bytes);
     }
 
+    /// A `deferred_service_location` that is exactly the 2-byte
+    /// `org_network_id` (no private bytes) is valid, not truncated.
+    #[test]
+    fn org_network_id_without_private_bytes_round_trips() {
+        let d = DeferredAssociationTagsDescriptor::new(
+            vec![1],
+            2,
+            3,
+            Some(DeferredServiceLocation::new(0x1234, &[])),
+        );
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out,
+            [
+                0x15, 9, 0x02, 0x00, 0x01, 0x00, 0x02, 0x00, 0x03, 0x12, 0x34
+            ]
+        );
+        let back = DeferredAssociationTagsDescriptor::parse(&out).unwrap();
+        let loc = back.deferred_service_location.as_ref().unwrap();
+        assert_eq!(loc.org_network_id, 0x1234);
+        assert!(loc.private_data.is_empty());
+        assert_eq!(back, d);
+    }
+
     #[test]
     fn malformed_is_rejected() {
         // odd association_tags_loop_length

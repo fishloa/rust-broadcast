@@ -442,4 +442,19 @@ mod tests {
             "608"
         );
     }
+
+    /// A/65 allows up to 16 services; the full descriptor must serialize.
+    #[test]
+    fn serialize_accepts_the_maximum_service_count() {
+        let services = (1..=16u8)
+            .map(|n| AtscCaptionService::cea708(LangCode(*b"eng"), n, false, true))
+            .collect::<Vec<_>>();
+        let d = AtscCaptionServiceDescriptor::new(services);
+        let mut out = vec![0u8; d.serialized_len()];
+        assert_eq!(d.serialize_into(&mut out).unwrap(), out.len());
+        assert_eq!(out[1], 1 + 16 * 6);
+        let back = AtscCaptionServiceDescriptor::parse(&out).unwrap();
+        assert_eq!(back.services.len(), 16);
+        assert_eq!(back, d);
+    }
 }
