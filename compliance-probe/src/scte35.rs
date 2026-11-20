@@ -404,4 +404,24 @@ mod tests {
         assert!(SpliceInfoSection::parse(&b).is_ok(), "fixture must parse");
         assert_eq!(check_section(&b, 0), Scte35Sanity::Encrypted);
     }
+
+    /// `name()` is the stable label the `kind` metric label and `Display`
+    /// use, so every variant's literal string is pinned here (audit a23cp
+    /// #3430).
+    #[test]
+    fn sanity_names_are_the_stable_labels() {
+        let cases = [
+            (Scte35Sanity::Malformed, "malformed"),
+            (Scte35Sanity::Encrypted, "encrypted"),
+            (Scte35Sanity::Cancelled, "cancelled"),
+            (Scte35Sanity::NotSpliceInsert, "not_splice_insert"),
+            (Scte35Sanity::Immediate, "immediate"),
+            (Scte35Sanity::InFuture, "in_future"),
+            (Scte35Sanity::InPast, "in_past"),
+        ];
+        for (variant, label) in cases {
+            assert_eq!(variant.name(), label);
+            assert_eq!(alloc::format!("{variant}"), label);
+        }
+    }
 }

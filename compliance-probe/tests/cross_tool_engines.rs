@@ -148,6 +148,49 @@ fn both_tools_raise_the_same_indicator_counts_on_one_fixture() {
     );
 }
 
+/// The sibling fixture carries a single packet and raises no TR 101 290
+/// event, so `indicator_counts` returning nothing at all would compare equal
+/// there. A stream that really does raise one pins the method to the
+/// monitor's own accounting (audit a23cp #3429).
+#[test]
+fn indicator_counts_reports_a_stream_that_raises_events() {
+    /// Every packet carries `transport_error_indicator` on one PID.
+    const TEI_PID: u16 = 0x0100;
+    const PACKETS: usize = 20;
+    /// ETSI TR 101 290 §5.2 Table 5.0b indicator 2.1.
+    const TRANSPORT_ERROR_INDICATOR: &str = "Transport_error";
+    /// The first four packets only acquire sync
+    /// ([`dvb_conformance`]'s indicator 1.1 hysteresis needs five consecutive
+    /// sync bytes), so the other sixteen raise the indicator.
+    const EXPECTED: u64 = 16;
+
+    let mut probe = Probe::new();
+    for index in 0..PACKETS {
+        let mut packet = [0xFFu8; TS_PACKET_SIZE];
+        packet[0] = 0x47;
+        packet[1] = 0x80 | u8::try_from(TEI_PID >> 8).expect("PID high byte");
+        packet[2] = u8::try_from(TEI_PID & 0xFF).expect("PID low byte");
+        packet[3] = 0x10 | u8::try_from(index & 0x0F).expect("masked to 4 bits");
+        probe.feed_ts_packet(&packet, clock_of(index));
+    }
+
+    let counts = probe.indicator_counts();
+    let transport_error: u64 = counts
+        .iter()
+        .filter(|count| count.indicator == TRANSPORT_ERROR_INDICATOR)
+        .map(|count| count.count)
+        .sum();
+    assert_eq!(
+        transport_error, EXPECTED,
+        "every in-sync TEI packet raises 2.1 exactly once"
+    );
+    assert_eq!(
+        probe.conformance_stats().events,
+        counts.iter().map(|count| count.count).sum::<u64>(),
+        "the probe's own event total is exactly its per-indicator sum"
+    );
+}
+
 /// The same cue, one shared tracker: the splice-balance findings
 /// media-doctor's `Scte35Check` reports are exactly what the tracker
 /// `compliance-probe` reads produces.
