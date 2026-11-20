@@ -13,7 +13,9 @@ use broadcast_common::error::InvalidValue;
 use broadcast_common::{Parse, Serialize};
 use transmux::avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
 use transmux::init_segment::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
-use transmux::track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox};
+use transmux::track_reference::{
+    AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox,
+};
 use transmux::{Error, TrackId};
 
 const TREF_FILE: &str = "mp4/tref-avcp.mp4";
@@ -186,4 +188,40 @@ fn a_parameter_set_sample_rejects_a_bad_length_size_a_truncation_and_an_overflow
         sample.try_to_bytes().unwrap_err(),
         Error::FieldOverflow(_)
     ));
+}
+
+#[test]
+fn a_tref_with_several_ids_per_type_serializes_at_the_right_offsets() {
+    let tref = TrackReferenceBox {
+        references: vec![
+            TrackReferenceTypeBox {
+                reference_type: AVCP_REFERENCE_TYPE,
+                track_ids: vec![TrackId::new(1), TrackId::new(2), TrackId::new(3)],
+            },
+            TrackReferenceTypeBox {
+                reference_type: CDSC,
+                track_ids: vec![TrackId::new(9)],
+            },
+        ],
+    };
+    let expected: Vec<u8> = vec![
+        0, 0, 0, 40, b't', b'r', b'e', b'f', // tref, 40 bytes
+        0, 0, 0, 20, b'a', b'v', b'c', b'p', // avcp, 8 + 3*4
+        0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, // ids 1, 2, 3
+        0, 0, 0, 12, b'c', b'd', b's', b'c', // cdsc, 8 + 4
+        0, 0, 0, 9, // id 9
+    ];
+    assert_eq!(tref.serialized_len(), 40);
+    let bytes = tref.try_to_bytes().expect("serialize");
+    assert_eq!(bytes, expected);
+    let mut buf = vec![0u8; tref.serialized_len()];
+    assert_eq!(tref.serialize_into(&mut buf).expect("into"), 40);
+
+    let parsed = TrackReferenceBox::parse(&bytes).expect("parse");
+    assert_eq!(parsed, tref);
+    assert_eq!(
+        parsed.track_ids(&AVCP_REFERENCE_TYPE),
+        Some(&[TrackId::new(1), TrackId::new(2), TrackId::new(3)][..])
+    );
+    assert_eq!(parsed.track_ids(&CDSC), Some(&[TrackId::new(9)][..]));
 }
