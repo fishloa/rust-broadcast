@@ -80,4 +80,19 @@ mod tests {
             assert_eq!(cf.to_u8(), v & 0x07, "value {v} round-trip mismatch");
         }
     }
+
+    #[test]
+    fn labels_match_table_2_90() {
+        assert_eq!(DecoderConfigFlags::None.name(), "none");
+        assert_eq!(DecoderConfigFlags::InDescriptor.name(), "in descriptor");
+        assert_eq!(DecoderConfigFlags::SameService.name(), "same service");
+        assert_eq!(DecoderConfigFlags::DsmccCarousel.name(), "DSM-CC carousel");
+        assert_eq!(DecoderConfigFlags::OtherService.name(), "other service");
+        assert_eq!(DecoderConfigFlags::Private.name(), "private");
+        assert_eq!(DecoderConfigFlags::Reserved(0x06).name(), "reserved");
+        assert_eq!(
+            DecoderConfigFlags::Reserved(0x06).to_string(),
+            "reserved(0x06)"
+        );
+    }
 }

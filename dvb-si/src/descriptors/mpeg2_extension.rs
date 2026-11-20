@@ -857,4 +857,24 @@ mod tests {
             "MPEG-H_3dAudio_descriptor"
         );
     }
+
+    #[test]
+    fn body_label_is_the_tag_label() {
+        assert_eq!(
+            Mpeg2ExtensionBody::MpegH3dAudioCommand(MpegH3dAudioCommand::new(vec![])).name(),
+            "MPEG-H_3dAudio_command_descriptor"
+        );
+        assert_eq!(
+            Mpeg2ExtensionBody::MpegH3dAudioConfig(MpegH3dAudioConfig::new(vec![])).name(),
+            "MPEG-H_3dAudio_config_descriptor"
+        );
+        assert_eq!(
+            Mpeg2ExtensionBody::Other {
+                extension_descriptor_tag: 0x30,
+                data: vec![],
+            }
+            .name(),
+            "reserved"
+        );
+    }
 }

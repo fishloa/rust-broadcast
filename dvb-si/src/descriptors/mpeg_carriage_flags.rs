@@ -65,4 +65,13 @@ mod tests {
             assert_eq!(cf.to_u8(), v, "value {v} round-trip mismatch");
         }
     }
+
+    #[test]
+    fn labels_match_table_2_88() {
+        assert_eq!(MpegCarriageFlags::SameTs.name(), "same TS");
+        assert_eq!(MpegCarriageFlags::DifferentTs.name(), "different TS");
+        assert_eq!(MpegCarriageFlags::ProgramStream.name(), "program stream");
+        assert_eq!(MpegCarriageFlags::None.name(), "none");
+        assert_eq!(MpegCarriageFlags::ProgramStream.to_string(), "program stream");
+    }
 }

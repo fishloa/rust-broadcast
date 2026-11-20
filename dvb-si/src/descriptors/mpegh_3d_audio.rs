@@ -1962,4 +1962,14 @@ mod tests {
         assert_eq!(group_wide.reserved_flags.get(), 0x07);
         assert_eq!(group_wide.reserved_kind.get(), 0x0F);
     }
+
+    #[test]
+    fn drc_scope_labels_name_the_id_carried() {
+        assert_eq!(DrcScope::Plain(0).name(), "no ID");
+        assert_eq!(DrcScope::Plain(0).to_string(), "no ID");
+        assert_eq!(DrcScope::group(2, 5).name(), "mae_groupID");
+        assert_eq!(DrcScope::group(2, 5).to_string(), "mae_groupID");
+        assert_eq!(DrcScope::preset(4).name(), "mae_groupPresetID");
+        assert_eq!(DrcScope::preset(4).to_string(), "mae_groupPresetID");
+    }
 }

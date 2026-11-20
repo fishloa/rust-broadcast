@@ -154,4 +154,21 @@ mod tests {
             Err(crate::error::Error::FieldOverflow(_))
         ));
     }
+
+    #[test]
+    fn labels_match_table_2_112() {
+        assert_eq!(TransportProfile::Unspecified.name(), "unspecified");
+        assert_eq!(TransportProfile::Complete.name(), "complete profile");
+        assert_eq!(TransportProfile::Adaptive.name(), "adaptive profile");
+        assert_eq!(TransportProfile::Reserved(0x0E).name(), "reserved");
+        assert_eq!(TransportProfile::UserPrivate(0x0F).name(), "user_private");
+        assert_eq!(
+            TransportProfile::Reserved(0x0E).to_string(),
+            "reserved(0x0E)"
+        );
+        assert_eq!(
+            TransportProfile::UserPrivate(0x0F).to_string(),
+            "user_private(0x0F)"
+        );
+    }
 }

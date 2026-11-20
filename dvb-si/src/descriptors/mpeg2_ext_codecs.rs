@@ -656,4 +656,25 @@ mod tests {
             Err(crate::error::Error::InvalidDescriptor { .. })
         ));
     }
+
+    #[test]
+    fn labels_match_tables_2_146_and_2_149() {
+        assert_eq!(MediaTypeIdc::Unknown.name(), "unknown");
+        assert_eq!(MediaTypeIdc::Video.name(), "video");
+        assert_eq!(MediaTypeIdc::Audio.name(), "audio");
+        assert_eq!(MediaTypeIdc::TextData.name(), "text/data");
+        assert_eq!(MediaTypeIdc::Reserved(9).name(), "reserved");
+
+        assert_eq!(ConfigurationType::Complete.name(), "complete");
+        assert_eq!(ConfigurationType::Partial.name(), "partial");
+        assert_eq!(
+            ConfigurationType::CompleteCombination.name(),
+            "complete combination"
+        );
+        assert_eq!(ConfigurationType::Reserved(9).name(), "reserved");
+        assert_eq!(
+            ConfigurationType::CompleteCombination.to_string(),
+            "complete combination"
+        );
+    }
 }

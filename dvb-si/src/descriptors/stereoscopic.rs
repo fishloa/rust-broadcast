@@ -532,4 +532,50 @@ mod tests {
             assert_eq!(reserved.get(), 0x7F);
         }
     }
+
+    #[test]
+    fn labels_match_tables_2_106_and_2_108() {
+        assert_eq!(StereoscopicServiceType::Unspecified.name(), "unspecified");
+        assert_eq!(
+            StereoscopicServiceType::Monoscopic2d.name(),
+            "2D-only (monoscopic) service"
+        );
+        assert_eq!(
+            StereoscopicServiceType::FrameCompatible.name(),
+            "frame-compatible stereoscopic 3D service"
+        );
+        assert_eq!(
+            StereoscopicServiceType::ServiceCompatible.name(),
+            "service-compatible stereoscopic 3D service"
+        );
+        assert_eq!(
+            StereoscopicServiceType::Reserved(2).name(),
+            "reserved"
+        );
+
+        assert_eq!(UpsamplingFactor::Forbidden.name(), "forbidden");
+        assert_eq!(UpsamplingFactor::Unspecified.name(), "unspecified");
+        assert_eq!(
+            UpsamplingFactor::SameAsBaseView.name(),
+            "same coded resolution as base view"
+        );
+        assert_eq!(
+            UpsamplingFactor::ThreeQuarters.name(),
+            "3/4 coded resolution of base view"
+        );
+        assert_eq!(
+            UpsamplingFactor::TwoThirds.name(),
+            "2/3 coded resolution of base view"
+        );
+        assert_eq!(
+            UpsamplingFactor::Half.name(),
+            "1/2 coded resolution of base view"
+        );
+        assert_eq!(UpsamplingFactor::Reserved(6).name(), "reserved");
+        assert_eq!(UpsamplingFactor::UserPrivate(8).name(), "user_private");
+        assert_eq!(
+            UpsamplingFactor::UserPrivate(8).to_string(),
+            "user_private(0x08)"
+        );
+    }
 }

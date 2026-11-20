@@ -492,4 +492,16 @@ mod tests {
             assert_eq!(reserved_3.get(), 0x07);
         }
     }
+
+    #[test]
+    fn library_ref_labels_name_the_id_type() {
+        let peid = TuwaLibraryRef::Peid {
+            pid: Pid::from_const(0x0101),
+            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+        };
+        assert_eq!(peid.name(), "PEID");
+        assert_eq!(peid.to_string(), "PEID");
+        assert_eq!(TuwaLibraryRef::stream_id(0xE1).name(), "stream_id");
+        assert_eq!(TuwaLibraryRef::stream_id(0xE1).to_string(), "stream_id");
+    }
 }
