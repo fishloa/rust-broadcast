@@ -4454,6 +4454,98 @@ mod segmenter_tests {
         assert_eq!(never.non_idr_ts_cuts(), 2);
     }
 
+    fn cc_data_caption_au() -> Vec<u8> {
+        fn odd(byte: u8) -> u8 {
+            if byte.count_ones() % 2 == 1 {
+                byte
+            } else {
+                byte | 0x80
+            }
+        }
+        let triplets = [
+            [0xFC, odd(0x14), odd(0x29)],
+            [0xFC, odd(b'H'), odd(b'I')],
+            [0xFC, odd(0x14), odd(0x2F)],
+        ];
+        let mut cc = vec![0xC0 | 3, 0xFF];
+        for triplet in triplets {
+            cc.extend_from_slice(&triplet);
+        }
+        cc.push(0xFF);
+        let mut payload = vec![0xB5, 0x00, 0x31, b'G', b'A', b'9', b'4', 0x03];
+        payload.extend_from_slice(&cc);
+        let mut nal = vec![0x00, 0x00, 0x01, 0x06, 0x04, payload.len() as u8];
+        nal.extend_from_slice(&payload);
+        transmux::annexb_to_length_prefixed(&nal)
+    }
+
+    #[test]
+    fn caption_scan_declares_none_exactly_at_the_ten_second_window() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+        let video = sample_at(0, true).data;
+
+        segmenter.observe_captions(TrackId::new(1), &video, Some(0));
+        let mut events = Vec::new();
+        segmenter.observe_captions(TrackId::new(1), &video, Some(891_000));
+        segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(!segmenter.captions_scan_complete);
+        assert!(
+            !events
+                .iter()
+                .any(|e| matches!(e, SegmenterEvent::ClosedCaptions { .. })),
+            "9.9 s is still inside the scan window"
+        );
+
+        segmenter.observe_captions(TrackId::new(1), &video, Some(900_000));
+        assert!(segmenter.captions_scan_complete);
+        segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SegmenterEvent::ClosedCaptions { detected, .. } if detected.is_empty()
+            )),
+            "10 s with no caption declares NONE: {events:?}"
+        );
+
+        segmenter.observe_captions(TrackId::new(1), &cc_data_caption_au(), Some(990_000));
+        segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(
+            events.iter().any(|event| matches!(
+                event,
+                SegmenterEvent::ClosedCaptions { detected, .. } if !detected.is_empty()
+            )),
+            "a later detection replaces NONE: {events:?}"
+        );
+    }
+
+    #[test]
+    fn part_target_is_published_once_and_again_only_when_it_changes() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+        let mut events = Vec::new();
+        segmenter.publish_part_target(ProgramId(0), &mut events);
+        assert!(matches!(
+            events.as_slice(),
+            [SegmenterEvent::PartTarget(target)] if *target == Duration::from_millis(250)
+        ));
+        segmenter.publish_part_target(ProgramId(0), &mut events);
+        assert_eq!(events.len(), 1, "an unchanged target is not republished");
+
+        segmenter.part_target_published = Some(Duration::from_millis(1));
+        segmenter.publish_part_target(ProgramId(0), &mut events);
+        assert_eq!(events.len(), 2, "a changed target is republished");
+
+        let (ts_trunk, ts_writer) = counted_trunk();
+        ts_writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut ts = segmenter_for(&ts_trunk, ts_config());
+        let mut ts_events = Vec::new();
+        ts.publish_part_target(ProgramId(0), &mut ts_events);
+        assert!(ts_events.is_empty(), "classic TS has no part target");
+    }
+
     #[test]
     fn try_new_with_siblings_records_part_cuts_for_an_audio_only_follower_set() {
         let (trunk, writer) = counted_trunk();
