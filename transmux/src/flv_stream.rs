@@ -1427,15 +1427,13 @@ mod tests {
         let trailer = flv.len() - 4;
         flv[trailer..trailer + 4].copy_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
         flv.extend_from_slice(&vec![0u8; 1024]);
-        let total = flv.len();
         let mut demux = StreamingFlvDemux::new();
         let err = demux.feed(&flv).unwrap_err();
         assert!(matches!(err, FlvError::Tag(_)), "got {err:?}");
-        assert!(
-            demux.pending.len() <= total,
-            "pending {} exceeds fed {}",
+        assert_eq!(
             demux.pending.len(),
-            total
+            1024,
+            "the bad tag is consumed with the bytes before it, so only the              1024 trailing bytes stay pending"
         );
     }
 
@@ -1510,5 +1508,206 @@ mod tests {
         };
         let timing = sample.timing.expect("the sample keeps its timing");
         assert_eq!((timing.dts(), timing.pts()), (Some(7), Some(9)));
+    }
+
+    /// The bytes `feed` memmoves are exactly the partial trailing unit it
+    /// keeps: a counter stuck at 0 or one that over-counts would both leave the
+    /// linear-memmove bound unbitten.
+    #[test]
+    fn bytes_moved_is_exactly_the_partial_tag_remainder() {
+        let mut flv = synthetic_avc_flv(4, 25);
+        let mut tail = Vec::new();
+        write_tag(&mut tail, 0x12, 0, &[0xAA; 8]);
+        let partial = &tail[..TAG_HEADER_LEN + 5];
+        assert_eq!(partial.len(), 16);
+        flv.extend_from_slice(partial);
+
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv).expect("a trailing partial tag is fine");
+        while demux.poll_event().is_some() {}
+        assert_eq!(
+            demux.bytes_moved, 16,
+            "only the 16-byte partial tag is left to move"
+        );
+    }
+
+    /// §E.2: `DataOffset` may be larger than the 9-byte fixed header, and the
+    /// bound on it is inclusive.
+    #[test]
+    fn a_header_at_the_maximum_data_offset_is_accepted() {
+        let mut flv = header_with_data_offset(u32::try_from(MAX_FLV_HEADER_LEN).unwrap());
+        write_tag(&mut flv, 0x12, 0, &[]);
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv).expect("a 1024-byte header is legal");
+        assert!(demux.header_seen, "the maximum-size header is consumed");
+    }
+
+    #[test]
+    fn a_header_past_the_maximum_data_offset_is_refused() {
+        let flv = header_with_data_offset(u32::try_from(MAX_FLV_HEADER_LEN + 1).unwrap());
+        let mut demux = StreamingFlvDemux::new();
+        let err = demux.feed(&flv).expect_err("1025 bytes is past the bound");
+        assert!(
+            matches!(
+                err,
+                FlvError::HeaderTooLarge {
+                    declared: 1025,
+                    max: 1024
+                }
+            ),
+            "got {err:?}"
+        );
+    }
+
+    /// A header that has fully arrived is consumed in the same `feed`, leaving
+    /// nothing pending: 9 fixed bytes + `PreviousTagSize0` = 13.
+    #[test]
+    fn a_header_of_exactly_the_minimum_is_consumed() {
+        let flv = flv_header();
+        let head = &flv[..FLV_HEADER_LEN + PREV_TAG_SIZE_LEN];
+        assert_eq!(head.len(), 13);
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(head).expect("13 bytes is a whole header");
+        assert_eq!(demux.pending.len(), 0, "the header must not stall");
+        assert_eq!(Stage::demand(&demux).want_bytes, TAG_HEADER_LEN);
+
+        let mut tag = Vec::new();
+        write_tag(&mut tag, 0x12, 0, &[0, 0, 0, 0]);
+        demux.feed(&tag).expect("one complete tag");
+        assert_eq!(demux.pending.len(), 0, "a complete tag is consumed");
+    }
+
+    /// A non-standard `DataOffset` is consumed at exactly its first tag offset
+    /// (the declared header plus `PreviousTagSize0`): 20 + 4 = 24 bytes.
+    #[test]
+    fn a_non_standard_header_is_consumed_at_its_first_tag_offset() {
+        let flv = header_with_data_offset(20);
+        assert_eq!(flv.len(), 24, "20-byte header + PreviousTagSize0");
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv).expect("a conformant 20-byte header");
+        assert_eq!(demux.pending.len(), 0);
+        assert!(demux.header_seen);
+    }
+
+    /// `want_bytes` is the exact complement of each wait: 13 bytes for a fresh
+    /// header, then the tag header, then the rest of the tag (body plus the
+    /// trailing `PreviousTagSize`), and never 0.
+    #[test]
+    fn bytes_wanted_tracks_the_exact_missing_bytes() {
+        let mut demux = StreamingFlvDemux::new();
+        assert_eq!(Stage::demand(&demux).want_bytes, 13, "fresh header");
+
+        demux.feed(&[b'F', b'L', b'V', 1, 0]).expect("5 bytes");
+        assert_eq!(Stage::demand(&demux).want_bytes, 8, "13 - 5");
+
+        let flv = flv_header();
+        demux.feed(&flv[5..]).expect("the rest of the header");
+        assert_eq!(Stage::demand(&demux).want_bytes, 11, "a tag header");
+
+        // A tag whose `DataSize` is 10: 11 header + 10 body + 4 prev = 25.
+        let mut tag = Vec::new();
+        write_tag(&mut tag, 0x12, 0, &[0u8; 10]);
+        assert_eq!(tag.len(), 25);
+        demux.feed(&tag[..4]).expect("4 bytes of a tag header");
+        assert_eq!(Stage::demand(&demux).want_bytes, 7, "11 - 4");
+        demux.feed(&tag[4..11 + 3]).expect("header + 3 body bytes");
+        assert_eq!(Stage::demand(&demux).want_bytes, 11, "10 + 4 - 3");
+        demux.feed(&tag[11 + 3..24]).expect("all but the last byte");
+        assert_eq!(Stage::demand(&demux).want_bytes, 1, "one byte left");
+        demux.feed(&tag[24..]).expect("the last byte");
+        assert_eq!(Stage::demand(&demux).want_bytes, 11, "the next tag header");
+    }
+
+    /// A non-standard header's demand is the bytes its declared offset still
+    /// needs, never 0.
+    #[test]
+    fn bytes_wanted_for_a_non_standard_header_is_never_zero() {
+        let flv = header_with_data_offset(20);
+        let mut demux = StreamingFlvDemux::new();
+        demux.feed(&flv[..13]).expect("13 of 24 header bytes");
+        // The declared `DataOffset` cannot be trusted yet, so the demand falls
+        // back to the honest minimum: at least one more byte, never 0.
+        assert_eq!(Stage::demand(&demux).want_bytes, 1);
+        demux.feed(&flv[13..20]).expect("20 header bytes");
+        // Now the 20-byte declared offset is readable: 20 + 4 - 20 = 4.
+        assert_eq!(Stage::demand(&demux).want_bytes, 4);
+        demux
+            .feed(&flv[20..])
+            .expect("the trailing PreviousTagSize0");
+        assert!(demux.header_seen, "24 bytes consume the 20-byte header");
+        assert_eq!(Stage::demand(&demux).want_bytes, 11, "the first tag header");
+    }
+
+    /// A video tag body too short to hold `AVCVIDEOPACKET` (§E.4.3.2) is
+    /// skipped, never indexed past its end.
+    #[test]
+    fn short_video_tag_bodies_are_skipped() {
+        for len in [0usize, 1, 2, 4] {
+            let mut out = flv_header();
+            write_tag(&mut out, tag_type::VIDEO, 0, &vec![0x17u8; len]);
+            let mut demux = StreamingFlvDemux::new();
+            let events = feed_and_drain(&mut demux, &out).expect("a short body is skipped");
+            assert!(events.is_empty(), "len {len} must produce no event");
+            assert_eq!(demux.pending.len(), 0, "len {len}");
+        }
+    }
+
+    /// An empty AVC sequence header is ignored, not parsed as an `avcC`.
+    #[test]
+    fn an_empty_avc_sequence_header_is_ignored() {
+        let mut out = flv_header();
+        write_tag(&mut out, tag_type::VIDEO, 0, &[0x17, 0x00, 0, 0, 0]);
+        let mut demux = StreamingFlvDemux::new();
+        let events = feed_and_drain(&mut demux, &out).expect("ignored, not an error");
+        assert!(events.is_empty(), "no TrackAdded from an empty header");
+    }
+
+    /// A NALU tag whose body is exactly the 5-byte packet header still carries
+    /// its (empty) access unit.
+    #[test]
+    fn a_five_byte_nalu_body_still_carries_its_access_unit() {
+        let mut out = flv_header();
+        let mut seq = vec![0x17u8, 0x00, 0, 0, 0];
+        seq.extend_from_slice(&minimal_avcc_bytes());
+        write_tag(&mut out, tag_type::VIDEO, 0, &seq);
+        write_tag(&mut out, tag_type::VIDEO, 0, &[0x17, 0x01, 0, 0, 0]);
+
+        let mut demux = StreamingFlvDemux::new();
+        let mut events = feed_and_drain(&mut demux, &out).expect("a 5-byte body is legal");
+        events.extend(finish_and_drain(&mut demux));
+        assert_eq!(
+            video_samples(&events).len(),
+            1,
+            "the empty access unit is still a sample"
+        );
+    }
+
+    /// An audio tag body too short for `AudioTagHeader`+`AACPacketType`
+    /// (§E.4.2) is skipped; an AAC raw tag with no data still counts as one.
+    #[test]
+    fn short_audio_tag_bodies_are_skipped_and_empty_raw_still_counts() {
+        for len in [0usize, 1] {
+            let mut out = flv_header();
+            write_tag(&mut out, tag_type::AUDIO, 0, &vec![0xAFu8; len]);
+            let mut demux = StreamingFlvDemux::new();
+            let events = feed_and_drain(&mut demux, &out).expect("a short body is skipped");
+            assert!(events.is_empty(), "len {len} must produce no event");
+        }
+
+        // A real sequence header, then an AAC raw tag with no payload.
+        let mut out = flv_header();
+        let mut seq = vec![0xAFu8, 0x00];
+        seq.extend_from_slice(&[0x12, 0x10]); // AAC-LC, 44.1 kHz, stereo ASC
+        write_tag(&mut out, tag_type::AUDIO, 0, &seq);
+        write_tag(&mut out, tag_type::AUDIO, 0, &[0xAF, 0x01]);
+
+        let mut demux = StreamingFlvDemux::new();
+        let mut events = feed_and_drain(&mut demux, &out).expect("an empty AAC raw tag");
+        events.extend(finish_and_drain(&mut demux));
+        let samples = events
+            .iter()
+            .filter(|e| matches!(e, DemuxEvent::Sample { .. }))
+            .count();
+        assert_eq!(samples, 1, "the empty access unit is still a sample");
     }
 }
