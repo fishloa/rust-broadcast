@@ -175,3 +175,68 @@ pub(crate) mod bytes_serde {
         s.serialize_bytes(bytes)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apdu_header_accepts_an_empty_body_and_the_exact_end() {
+        let (_, body) =
+            parse_apdu_header(&[0x9F, 0x80, 0x31, 0x00], crate::tag::CA_INFO, "ca_info").unwrap();
+        assert!(body.is_empty());
+        let (_, body) = parse_apdu_header(
+            &[0x9F, 0x80, 0x31, 0x02, 0xAA, 0xBB],
+            crate::tag::CA_INFO,
+            "ca_info",
+        )
+        .unwrap();
+        assert_eq!(body, [0xAA, 0xBB]);
+    }
+
+    #[test]
+    fn apdu_header_rejects_three_bytes_as_a_short_tag() {
+        assert_eq!(
+            parse_apdu_header(&[0x9F, 0x80, 0x31], crate::tag::CA_INFO, "ca_info"),
+            Err(Error::InvalidLength("empty length_field"))
+        );
+    }
+
+    #[test]
+    fn apdu_header_rejects_a_body_one_byte_short() {
+        match parse_apdu_header(
+            &[0x9F, 0x80, 0x31, 0x02, 0xAA],
+            crate::tag::CA_INFO,
+            "ca_info",
+        ) {
+            Err(Error::LengthMismatch(broadcast_common::error::LengthMismatch {
+                declared,
+                actual,
+                ..
+            })) => assert_eq!((declared, actual), (2, 1)),
+            other => panic!("expected LengthMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn overflow_reason_table_is_complete_and_distinct() {
+        let table = [
+            (4u32, "exceeds 4-bit range (0x0F)"),
+            (5, "exceeds 5-bit range (0x1F)"),
+            (7, "exceeds 7-bit range (0x7F)"),
+            (8, "exceeds 8-bit range (0xFF)"),
+            (12, "exceeds 12-bit range (0x0FFF)"),
+            (13, "exceeds 13-bit PID range (0x1FFF)"),
+            (14, "exceeds 14-bit range (0x3FFF)"),
+            (16, "exceeds 16-bit range (0xFFFF)"),
+            (24, "exceeds 24-bit range (0xFFFFFF)"),
+            (3, "exceeds field width"),
+        ];
+        for (i, &(bits, reason)) in table.iter().enumerate() {
+            assert_eq!(overflow_reason(bits), reason);
+            for &(other_bits, other_reason) in &table[i + 1..] {
+                assert_ne!(reason, other_reason, "{bits} vs {other_bits}");
+            }
+        }
+    }
+}

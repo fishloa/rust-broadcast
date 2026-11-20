@@ -1527,6 +1527,57 @@ mod tests {
     }
 
     #[test]
+    fn parse_mobile_handover_exact_three_byte_tail() {
+        let bytes = [
+            TAG, 0x0A, // length 10 = 7 fixed + 3 hand-over, no private data
+            0x00, 0x01, // ts_id
+            0x00, 0x02, // onid
+            0x00, 0x03, // sid
+            0x08, // linkage_type = mobile hand-over
+            0x1F, // hand_over_type=1, rfu=111, origin_type=1 (SDT)
+            0x00, 0x10, // network_id
+        ];
+        let d = LinkageDescriptor::parse(&bytes).unwrap();
+        match &d.linkage_data {
+            LinkageData::MobileHandOver(m) => {
+                assert_eq!(m.network_id, Some(0x0010));
+                assert_eq!(m.initial_service_id, None);
+            }
+            other => panic!("expected MobileHandOver, got {other:?}"),
+        }
+        assert!(d.private_data.is_empty());
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
+
+    #[test]
+    fn parse_mobile_handover_exact_five_byte_tail() {
+        let bytes = [
+            TAG, 0x0C, // length 12 = 7 fixed + 5 hand-over, no private data
+            0x00, 0x01, // ts_id
+            0x00, 0x02, // onid
+            0x00, 0x03, // sid
+            0x08, // linkage_type = mobile hand-over
+            0x1E, // hand_over_type=1, rfu=111, origin_type=0 (NIT)
+            0x00, 0x10, // network_id
+            0x00, 0x20, // initial_service_id
+        ];
+        let d = LinkageDescriptor::parse(&bytes).unwrap();
+        match &d.linkage_data {
+            LinkageData::MobileHandOver(m) => {
+                assert_eq!(m.network_id, Some(0x0010));
+                assert_eq!(m.initial_service_id, Some(0x0020));
+            }
+            other => panic!("expected MobileHandOver, got {other:?}"),
+        }
+        assert!(d.private_data.is_empty());
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
+
+    #[test]
     fn linkage_type_full_range_round_trip() {
         for b in 0..=0xFF_u8 {
             let lt = LinkageType::from_u8(b);

@@ -20,6 +20,18 @@
 - Carousel U-N messages are sized and parsed across message boundaries with non-empty adaptation, private data, group info and multi-sub-descriptor compatibility blocks, and a two-group `GroupInfoIndication` is byte-anchored; `put_length_prefixed`'s returned position is pinned (#3120).
 - `ModuleReassembler`'s three default caps, the aggregate budget as a sum of announced sizes (including the exact boundary), the completed-version FIFO bound and `clear()` are pinned (#3121).
 - The EIT collector's 8-section segment completeness, the schedule-other table_id range and the schedule-cap eviction count are pinned (#3122).
+- `ContentGenre::from_nibble_1` is pinned for every EN 300 468 Table 29 level-1 nibble (variant and `name()`), including `Adult` and `UserDefined` (#3236).
+- The AC-3 channel modes 4-6 decode to their Table D.5 variants, and `Ac3Descriptor::decoded_component_type` is asserted for a multichannel component_type byte (#3237).
+- `LocalTimeOffsetEntry::set_offsets` keeps the shared polarity bit set when only one of the local/next offsets is negative, and the BCD `HHMM` encoder accepts 99:59 and rejects 100 hours (#3238, #3239).
+- Mobile hand-over linkage descriptors are parsed with the minimal 3-byte (network_id only) and 5-byte (network_id + initial_service_id) tails and no private data, each re-serialising byte-identically (#3240).
+- The extended event descriptor rejects 4- and 5-byte bodies and a `length_of_items` that runs to the body end without indexing past the slice, accepts an empty item value as the last item, and reports an item-description overrun with its exact error (#3241).
+- The SSU id selector accepts an empty OUI loop and rejects an empty or truncated first entry, a two-entry selector with a non-empty selector and private data round-trips byte-identically, and `IdSelector::serialized_len` is asserted for both the `Ssu` and `Raw` variants (#3242).
+- The AAC and data broadcast id serializers accept a 255-byte body with a `0xFF` descriptor length and reject a 256-byte body (#3243).
+- `AacExtension::decoded_component_type` is asserted for every EN 300 468 Table 26 HE-AAC component_type code (0x01, 0x03, 0x05, 0x40-0x4A, 0xA0) with the full flag set (#3244).
+- The cable delivery descriptor's symbol-rate getter/setter are pinned at the field's 100 sym/s resolution, including the overflow rejection and a non-decimal BCD nibble returning `None` (#3245).
+- The terrestrial delivery descriptor's `set_centre_frequency_hz` accepts the 32-bit field maximum and rejects one unit more without changing the stored value (#3246).
+- The spec-token labels (`name()` and `Display`) of the linkage, cable, satellite, terrestrial and AAC component-type enums are asserted literally for every variant (#3247).
+- The real-capture LCN and MHP tests pin the observed section/descriptor/message counts instead of returning early when nothing is found, and the MHP `dvb_j_application` parameters are asserted (this capture carries none) rather than discarded (#3248, #3249).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
