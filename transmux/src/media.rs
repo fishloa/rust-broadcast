@@ -1772,6 +1772,16 @@ mod tests {
         );
     }
 
+    /// §4.3.3.1: `#EXT-X-TARGETDURATION` must be at least the rounded
+    /// `#EXTINF`, which the ceiling always satisfies — and a whole number of
+    /// seconds is its own ceiling, not one second more.
+    #[test]
+    fn ceil_secs_rounds_up_only_a_fractional_span() {
+        assert_eq!(ceil_secs(0.0), 0);
+        assert_eq!(ceil_secs(2.0), 2);
+        assert_eq!(ceil_secs(2.0001), 3);
+    }
+
     /// r04-W43: an fMP4 whose `avcC` declares 2-byte NAL lengths must have its
     /// samples normalised to the crate's 4-byte form, and the config the
     /// demuxer reports must be updated to match — the rest of the pipeline
@@ -1849,6 +1859,105 @@ mod tests {
         assert_eq!(
             config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
             "the reported avcC must declare the 4-byte length size"
+        );
+    }
+
+    /// The HEVC twin of the test above: an `hvcC` declaring
+    /// `lengthSizeMinusOne = 1` (2-byte NAL lengths, ISO/IEC 14496-15:2017
+    /// §8.3.3.1.2) must have its samples rewritten to the crate's 4-byte form
+    /// and its record updated to say so.
+    #[test]
+    fn fmp4_demux_normalises_two_byte_nal_lengths_hevc() {
+        use crate::annexb::NAL_LENGTH_SIZE_MINUS_ONE;
+        use crate::hevc_config::HEVCDecoderConfigurationRecord;
+        use crate::ir::{FragmentTrackData, Sample, SampleFlags};
+        use crate::pipeline::{CodecConfig, TrackSpec, build_init_segment, build_media_segment};
+        const TIMESCALE: Timescale = broadcast_common::timescale!(90_000);
+
+        let record = HEVCDecoderConfigurationRecord {
+            configuration_version: 1,
+            general_profile_space: 0,
+            general_tier_flag: false,
+            general_profile_idc: 1,
+            general_profile_compatibility_flags: 0x6000_0000,
+            general_constraint_indicator_flags: 0,
+            general_level_idc: 30,
+            min_spatial_segmentation_idc: 0,
+            parallelism_type: 0,
+            chroma_format_idc: 1,
+            bit_depth_luma_minus8: 0,
+            bit_depth_chroma_minus8: 0,
+            avg_frame_rate: 0,
+            constant_frame_rate: 0,
+            num_temporal_layers: 1,
+            temporal_id_nested: true,
+            length_size_minus_one: 1,
+            arrays: Vec::new(),
+        };
+        let spec = TrackSpec::new(
+            TrackId::new(1),
+            TIMESCALE,
+            CodecConfig::Hevc {
+                config: crate::hevc_config::HEVCConfigurationBox::new(record),
+                width: 320,
+                height: 240,
+            },
+        );
+        // One access unit, two NALs, each with a 2-byte length prefix.
+        let sample = Sample {
+            data: vec![
+                0x00, 0x05, 0x26, 0x01, 0xAF, 0x09, 0x40, 0x00, 0x02, 0x44, 0x01,
+            ]
+            .into(),
+            timing: Some(crate::ir::SampleTiming::timed_with_duration(0, 0, 1000)),
+            flags: SampleFlags::new(true),
+            provenance: None,
+            display: None,
+        };
+        let init = build_init_segment(std::slice::from_ref(&spec), TIMESCALE).expect("init");
+        let hdr = init
+            .windows(4)
+            .position(|w| w == b"hvcC")
+            .expect("hvcC present");
+        // hvcC body: configurationVersion/profile/compat/constraints/level,
+        // min_spatial_segmentation_idc, parallelism/chroma, bit depths,
+        // avgFrameRate, then the byte holding lengthSizeMinusOne in its low
+        // two bits — 21 bytes into the body.
+        assert_eq!(
+            init[hdr + 4 + 21] & 0x03,
+            1,
+            "the built init segment must declare lengthSizeMinusOne = 1"
+        );
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(
+                TrackId::new(1),
+                0,
+                std::slice::from_ref(&sample),
+            )],
+        )
+        .expect("media segment");
+        let mut file = init;
+        file.extend_from_slice(&frag);
+
+        let media = Fmp4Demux::new()
+            .unpackage(&file)
+            .expect("demux the 2-byte HEVC fMP4");
+        let track = &media.tracks[0];
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            [
+                0x00, 0x00, 0x00, 0x05, 0x26, 0x01, 0xAF, 0x09, 0x40, 0x00, 0x00, 0x00, 0x02, 0x44,
+                0x01,
+            ],
+            "2-byte NAL lengths must be rewritten to 4-byte"
+        );
+        let CodecConfig::Hevc { config, .. } = &track.spec.config else {
+            panic!("expected CodecConfig::Hevc");
+        };
+        assert_eq!(
+            config.config.length_size_minus_one, NAL_LENGTH_SIZE_MINUS_ONE,
+            "the reported hvcC must declare the 4-byte length size"
         );
     }
 }
