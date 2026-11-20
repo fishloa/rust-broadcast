@@ -3655,3 +3655,36 @@ fn wrong_table_id_sections_do_not_refresh_pat_or_pmt_presence() {
         pmt_presence.as_millis()
     );
 }
+
+/// A PAT section is handled by the PAT reassembler only; the generic SI path
+/// that includes PID 0x0000 must not re-check the same section, or a corrupt
+/// PAT raises `CRC_error` twice and a good one re-runs every SI side effect.
+#[test]
+fn pat_sections_are_crc_checked_once() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut pat = build_pat_section(&[(1, 0x0100)]);
+    corrupt_crc(&mut pat);
+    let events = feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.indicator == Indicator::CrcError)
+            .count(),
+        1,
+        "a corrupted PAT is one CRC fault: {events:#?}"
+    );
+
+    let mut clean = ConformanceMonitor::new();
+    acquire_sync(&mut clean);
+    let good = build_pat_section(&[(1, 0x0100)]);
+    let events = feed_all(&mut clean, &packetise_section(PID_PAT, &good), ms(5), ms(1));
+    assert!(events.is_empty(), "a valid PAT raises nothing: {events:#?}");
+    assert_eq!(clean.stats().events, 0);
+}
