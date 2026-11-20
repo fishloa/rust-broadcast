@@ -1935,6 +1935,21 @@ mod tests {
             (kept_lkfs - (-30.002)).abs() < 1e-6,
             "kept energy sits at {kept_lkfs} LUFS"
         );
+
+        // One block at the bin's bottom and two at its top: the very same
+        // interpolation is exactly 2, and the kept energy is two top blocks
+        // (3.0103 LU above one).
+        let mut h = LoudnessHistogram::with_exact_capacity(GateComparison::Above, 0);
+        for level in [-30.006, -30.002, -30.002] {
+            h.record(lkfs_to_mean_sq(level));
+        }
+        let cut = h.cut(-30.004);
+        assert_eq!(cut.kept, 2);
+        let kept_lkfs = mean_sq_to_lkfs(cut.kept_energy);
+        assert!(
+            (kept_lkfs - (-30.002 + 3.010_299_956_639_812_5)).abs() < 1e-3,
+            "kept energy sits at {kept_lkfs} LUFS"
+        );
     }
 
     /// `bin_of` clamps above the histogram's ceiling, so no block can index
