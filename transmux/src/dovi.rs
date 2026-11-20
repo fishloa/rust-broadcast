@@ -862,4 +862,15 @@ mod tests {
             find_video_stream_descriptor(&es_info)
         );
     }
+
+    #[test]
+    fn the_dovi_registration_descriptor_is_recognised_by_tag_and_body() {
+        let dovi = [0x05, 0x04, b'D', b'O', b'V', b'I'];
+        assert!(has_registration_descriptor(&dovi));
+        let hevc = [0x05, 0x04, b'H', b'E', b'V', b'C'];
+        assert!(!has_registration_descriptor(&hevc));
+        let wrong_tag = [0x06, 0x04, b'D', b'O', b'V', b'I'];
+        assert!(!has_registration_descriptor(&wrong_tag));
+        assert!(!has_registration_descriptor(&[]));
+    }
 }
