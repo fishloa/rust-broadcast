@@ -616,6 +616,10 @@ impl DashSim {
         self.pending.is_empty() && self.wakes.is_empty()
     }
 
+    pub fn next_wake(&self) -> Option<u64> {
+        self.wakes.iter().next().copied()
+    }
+
     pub fn terminal(&self) -> bool {
         self.events.iter().any(|e| {
             matches!(
