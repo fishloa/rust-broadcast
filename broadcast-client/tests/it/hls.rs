@@ -1304,3 +1304,36 @@ fn unsupported_container_error_is_failure_not_panic() {
     fm.run_to_end();
     assert_eq!(count(&fm.events, is_sample), 0);
 }
+
+#[test]
+fn a_reconnect_with_the_fmp4_init_in_flight_requests_it_again() {
+    let bodies = cmaf_bodies();
+    let init = format!("{CMAF_BASE}/init.mp4");
+    let mut h = Host::new(CMAF_PLAYLIST_URL, hls_config());
+    h.ok(CMAF_PLAYLIST_URL, bodies[CMAF_PLAYLIST_URL].clone());
+    h.route(&init, vec![Reply::Hang]);
+    for i in 0..3 {
+        let url = format!("{CMAF_BASE}/index{i}.m4s");
+        h.ok(&url, bodies[&url].clone());
+    }
+    for _ in 0..20 {
+        if h.hung().iter().any(|s| s.url == init) {
+            break;
+        }
+        h.step();
+    }
+    assert!(
+        h.hung().iter().any(|s| s.url == init),
+        "the init fetch is in flight"
+    );
+    assert_eq!(h.hits(&init), 1);
+    h.session.reconnect(ts(h.now));
+    h.route(&init, vec![Reply::Ok(cmaf_init())]);
+    for _ in 0..30 {
+        h.step();
+    }
+    assert!(
+        h.hits(&init) >= 2,
+        "a reconnect resumes by fetching the in-flight init again"
+    );
+}

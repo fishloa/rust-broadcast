@@ -413,7 +413,7 @@ impl SmoothSource {
         _now: u64,
         _auth: &mut AuthState,
     ) -> Result<(), Error> {
-        Ok(())
+        Err(Error::NotHls)
     }
 
     pub(crate) fn reconnect(&mut self, _now: u64, _auth: &mut AuthState) {}

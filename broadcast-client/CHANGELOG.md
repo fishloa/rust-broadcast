@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The libsrt wire oracle and the B-frame RTSP a/v-sync oracle gate their external tools through `test_fixtures::process::require_tool_probed`, so `SRT_REQUIRE_LIBSRT`/`REQUIRE_MEDIAMTX_E2E` (or a global `REQUIRE_EXTERNAL_TOOLS=1`) fails the run instead of skipping it (audit 21 finding 60).
 - Every pull golden refuses to re-record under `CI=true` (the Smooth switch gained the refusal and a regression test; the RTSP and SDP switches already had one), and each golden's PROVENANCE now names its independent oracle (audit 21 finding 62).
 - The HLS per-track join bookkeeping is pinned: a re-announced video track keeps the join it had, a dropped one is forgotten, and `rejoin` makes the next sample wait for a random access point again (audit 23 finding 40, #3291).
+- The RTSP redirect credential scope, the auth replay cap and stale re-challenge, the stale-connection guards, the starved-data notice, the AVC config gate and the keepalive wake are pinned (audit 23 findings 42-46, #3293-#3297).
+- The RTMP stale-connection and ended-stream guards, the wake dedupe and past-deadline rules, and the pending-track, display-change and give-up event mappings are pinned (audit 23 findings 47-49, #3298-#3300).
+- The Smooth error mapping for an encrypted or oversized fragment, a dropped live manifest and an unresolvable fragment URL, the request inactivity deadline measured from the last byte, the parked-request resume, the stale challenge replay and the 200-then-transport-error retry are pinned; a Smooth session now refuses `select_audio_rendition` with `Error::NotHls`, matching its documentation and `select_variant` (audit 23 findings 50-52, #3301-#3303).
+- The SRT caller socket id and initial sequence number are pinned to the seed-derived literals and to their specification ranges (audit 23 finding 53, #3304).
+- The PAT-listed programs must all have a PMT before the track hold can end (audit 23 finding 55, #3306).
+- A reconnect with the fMP4 init in flight fetches the init again (audit 23 finding 38, #3289).
 - The RTP reorder state is pinned: a sequence restart releases the new run without a gap, a packet exactly the window behind is late while one past it resyncs, a second SSRC must prove `SSRC_PROBATION` consecutive sequence numbers, `reset` forgets the source and its held packets, and `srt://host:0/` is refused (audit 23 finding 41, #3292).
 
 ## [0.7.0] - 2026-11-17

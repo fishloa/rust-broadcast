@@ -1250,6 +1250,7 @@ impl RtspSource {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::Unpackage;
 
     fn rtsp_source(url: &Url) -> RtspSource {
         RtspSource::new(url, &TsConfig::default(), 0, Timestamp::ZERO)
@@ -1301,5 +1302,254 @@ mod tests {
         source.conn = None;
         source.start_connect(Timestamp::ZERO, None);
         assert_eq!(source.conn, Some(ConnId::new(1)));
+    }
+
+    fn placeholder_avc() -> CodecConfig {
+        let text = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n\
+                    m=video 0 RTP/AVP 96\r\na=rtpmap:96 H264/90000\r\n";
+        let session = sdp_types::Session::parse(text.as_bytes()).expect("sdp");
+        transmux::sdp_track(&session.medias[0])
+            .expect("a placeholder track")
+            .config
+    }
+
+    fn track_init() -> TrackInit {
+        TrackInit {
+            track_id: TrackId::new(1),
+            kind: transmux::rtp::RtpMediaKind::H264,
+            config: placeholder_avc(),
+            clock_rate: broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+            setup_uri: "rtsp://cam.test/live/trackID=1".to_string(),
+            channel: 0,
+            rtcp_channel: 1,
+        }
+    }
+
+    #[test]
+    fn on_connected_ignores_another_connection_and_a_later_phase() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.take_actions();
+        let conn = source.conn.expect("a connecting socket");
+        source.on_connected(ConnId::new(conn.0 + 1), Timestamp::ZERO);
+        assert!(
+            source.take_actions().is_empty(),
+            "another connection's event must not start a handshake"
+        );
+        source.on_connected(conn, Timestamp::ZERO);
+        assert!(
+            !source.take_actions().is_empty(),
+            "the connecting socket sends DESCRIBE"
+        );
+        source.on_connected(conn, Timestamp::ZERO);
+        assert!(
+            source.take_actions().is_empty(),
+            "an established connection ignores a repeat on_connected"
+        );
+    }
+
+    #[test]
+    fn forget_connection_state_clears_tracks_and_timers() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.take_actions();
+        source.tracks.push(track_init());
+        source.tracks_dirty = true;
+        source.stalled = true;
+        source.next_notice_at = Some(Timestamp::ZERO);
+        source.keepalive_wake = Some(Timestamp::ZERO);
+        source.starved_data_fired = true;
+        source.starved_nodata_fired = true;
+        source.pre_sample.push(Event::Discontinuity);
+        source.forget_connection_state();
+        assert!(source.tracks.is_empty());
+        assert!(source.plan.is_none());
+        assert!(!source.tracks_dirty);
+        assert!(!source.stalled);
+        assert_eq!(source.next_notice_at, None);
+        assert_eq!(source.keepalive_wake, None);
+        assert!(!source.starved_data_fired);
+        assert!(!source.starved_nodata_fired);
+        assert!(source.pre_sample.is_empty());
+    }
+
+    #[test]
+    fn auth_retries_are_capped_then_rejected() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.take_actions();
+        source.phase = Phase::Awaiting(Req::Describe);
+        let mut auth = AuthState::new(url.clone(), Vec::new());
+        auth.set_credentials(broadcast_auth::Credentials::new("admin", "s3cret"));
+        let retry = || ClientEvent::AuthRetry {
+            method: Method::Describe,
+            cseq: 2,
+            request: vec![0x44],
+        };
+        source.on_client_event(retry(), Timestamp::ZERO, &mut auth);
+        source.on_client_event(retry(), Timestamp::ZERO, &mut auth);
+        assert_eq!(
+            source.take_actions().len(),
+            2,
+            "MAX_AUTH_REPLAYS replays are written"
+        );
+        source.on_client_event(retry(), Timestamp::ZERO, &mut auth);
+        assert!(
+            source.take_actions().is_empty(),
+            "the next replay is refused, not written"
+        );
+        assert!(source.take_events().iter().any(|e| matches!(
+            e,
+            Event::AuthRejected { status } if *status == http::StatusCode::UNAUTHORIZED
+        )));
+    }
+
+    #[test]
+    fn a_stale_rechallenge_is_replayed_once() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.conn = Some(ConnId::new(1));
+        source.phase = Phase::Awaiting(Req::Describe);
+        source.challenge =
+            Some("Digest realm=\"cam\", nonce=\"n1\", qop=\"auth\", stale=true".to_string());
+        source.take_actions();
+        let mut auth = AuthState::new(url.clone(), Vec::new());
+        auth.set_credentials(broadcast_auth::Credentials::new("admin", "s3cret"));
+        source.on_unauthorized(STATUS_PROXY_AUTH_REQUIRED, Req::Describe, Timestamp::ZERO, &mut auth);
+        assert!(source.stale_replayed);
+        assert_eq!(
+            source.take_actions().len(),
+            1,
+            "the stale challenge replays the request once"
+        );
+        source.on_unauthorized(STATUS_PROXY_AUTH_REQUIRED, Req::Describe, Timestamp::ZERO, &mut auth);
+        assert!(
+            source.take_actions().is_empty(),
+            "a second stale challenge is not replayed"
+        );
+    }
+
+    #[test]
+    fn a_stall_notice_burst_is_capped_and_rearmed_ahead() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.take_actions();
+        source.seen_first_sample = true;
+        source.starved_nodata_fired = true;
+        source.last_byte_at = Timestamp::ZERO;
+        source.cfg.stall_notice = Duration::from_secs(5);
+        source.cfg.stall_reconnect = Duration::from_secs(1_000_000);
+        source.next_notice_at = Some(Timestamp::from_micros(1_000_000));
+        let now = Timestamp::from_micros(
+            u64::from(MAX_STALL_NOTICES_PER_POLL + 5) * 1_000_000,
+        );
+        source.check_stall(now);
+        let notices = source
+            .take_events()
+            .iter()
+            .filter(|e| matches!(e, Event::Status(Status::Stalled { .. })))
+            .count();
+        assert_eq!(
+            notices,
+            usize::try_from(MAX_STALL_NOTICES_PER_POLL).unwrap(),
+            "one poll emits exactly the cap"
+        );
+        assert!(
+            source.next_notice_at.is_some_and(|next| next > now),
+            "the next notice is ahead of this instant"
+        );
+    }
+
+    #[test]
+    fn avc_config_needs_both_parameter_sets_before_it_is_used() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.take_actions();
+        source.tracks.push(track_init());
+        let data = test_fixtures::read("ts/h264-aac.ts");
+        let media = transmux::TsDemux::new()
+            .unpackage(&data[..])
+            .expect("demux the fixture");
+        let sps = media
+            .tracks
+            .iter()
+            .find_map(|t| match &t.spec.config {
+                CodecConfig::Avc { config, .. } => config.config.sps.first().cloned(),
+                _ => None,
+            })
+            .expect("an SPS in the fixture");
+        let nal = &sps.0;
+        let mut au = Vec::new();
+        au.extend_from_slice(&u32::try_from(nal.len()).unwrap().to_be_bytes());
+        au.extend_from_slice(nal);
+        let sample = Sample::timed(au, 0, 0, None);
+        assert!(
+            !source.try_complete_avc_config(TrackId::new(1), &sample),
+            "an SPS without a PPS is not a usable config"
+        );
+        match &source.tracks[0].config {
+            CodecConfig::Avc { config, .. } => assert!(
+                config.config.sps.is_empty(),
+                "the placeholder must not take the SPS alone"
+            ),
+            _ => panic!("an AVC track"),
+        }
+    }
+
+    fn feeding_source(url: &Url) -> RtspSource {
+        let mut source = rtsp_source(url);
+        source.take_actions();
+        source.phase = Phase::Playing;
+        source.tracks.push(track_init());
+        source.depa = Some(RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+            TrackId::new(1),
+            transmux::rtp::RtpMediaKind::H264,
+            placeholder_avc(),
+            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+        )]));
+        source.cfg.stall_notice = Duration::from_secs(5);
+        source.cfg.stall_reconnect = Duration::from_secs(1_000_000);
+        source
+    }
+
+    fn starved_data(source: &mut RtspSource) -> usize {
+        source
+            .take_events()
+            .iter()
+            .filter(|e| matches!(e, Event::Starved(StarveKind::Data)))
+            .count()
+    }
+
+    #[test]
+    fn bytes_without_a_sample_starve_once_after_the_notice() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = feeding_source(&url);
+        source.on_media(0, &[0xFF], Timestamp::from_micros(4_000_000));
+        assert_eq!(starved_data(&mut source), 0, "not due before the notice");
+        source.on_media(0, &[0xFF], Timestamp::from_micros(6_000_000));
+        assert_eq!(starved_data(&mut source), 1, "one notice at the deadline");
+        assert!(source.starved_data_fired);
+        source.on_media(0, &[0xFF], Timestamp::from_micros(7_000_000));
+        assert_eq!(starved_data(&mut source), 0, "not repeated while starved");
+    }
+
+    #[test]
+    fn an_avc_track_without_an_sps_is_not_announced() {
+        let url = Url::parse("rtsp://cam.test/live/").unwrap();
+        let mut source = rtsp_source(&url);
+        source.take_actions();
+        source.take_events();
+        source.depa = Some(RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
+            TrackId::new(1),
+            transmux::rtp::RtpMediaKind::H264,
+            placeholder_avc(),
+            broadcast_common::timescale::Timescale::try_new(90_000).expect("timescale"),
+        )]));
+        source.tracks_dirty = true;
+        source.announce_tracks();
+        assert!(
+            source.take_events().is_empty(),
+            "a hardware decoder cannot use an empty avcC"
+        );
     }
 }

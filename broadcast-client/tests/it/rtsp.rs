@@ -486,6 +486,11 @@ fn keepalive_sent_at_half_session_timeout_and_reply_405_ignored() {
     s.session_timeout = Some(40);
     s.options_status = 405;
     let mut host = connected(quiet_config(), s);
+    assert!(
+        wakes(&host.actions).contains(&(20 * SEC)),
+        "the keepalive wake is armed at half the session timeout: {:?}",
+        wakes(&host.actions)
+    );
     assert_eq!(keepalives_at(&mut host, 20 * SEC), 1);
     let keepalive = host
         .server
@@ -690,6 +695,60 @@ fn credentials_rejected_emits_auth_rejected() {
         1,
         "new credentials resume the handshake"
     );
+}
+
+#[test]
+fn a_redirect_keeps_credentials_only_within_the_same_scheme_host_and_port() {
+    for (target, kept) in [
+        ("rtsp://cam.test:554/live2/", true),
+        ("rtsp://cam.test:8554/live2/", false),
+        ("rtsp://other.test/live2/", false),
+        ("rtsps://cam.test/live2/", false),
+    ] {
+        let mut s = authed_server(basic_verifier());
+        s.describe_status = Some(301);
+        s.describe_location = Some(target.to_string());
+        let mut host = Host::new(BASE_URL, quiet_config(), s);
+        host.drain();
+        let conn = host.conn.expect("first TcpConnect");
+        host.session.on_connected(conn);
+        host.drain();
+        assert_eq!(host.server.count(DESCRIBE), 1, "{target}");
+        host.session
+            .set_credentials(ts(host.now), user_credentials(PASSWORD))
+            .unwrap();
+        host.drain();
+        let replay = host
+            .server
+            .log
+            .iter()
+            .filter(|r| r.method == DESCRIBE)
+            .nth(1)
+            .expect("the replay DESCRIBE");
+        assert_eq!(
+            replay.header("authorization"),
+            Some(BASIC_AUTHORIZATION),
+            "{target}: the replay answers the challenge"
+        );
+
+        host.server.describe_status = None;
+        host.server.describe_location = None;
+        let conn = host.conn.expect("the redirect's TcpConnect");
+        host.session.on_connected(conn);
+        host.drain();
+        let after = host
+            .server
+            .log
+            .iter()
+            .filter(|r| r.method == DESCRIBE)
+            .nth(2)
+            .expect("a DESCRIBE after the redirect");
+        assert_eq!(
+            after.header("authorization").is_some(),
+            kept,
+            "{target}: credentials follow only the original origin"
+        );
+    }
 }
 
 #[test]
