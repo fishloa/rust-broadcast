@@ -43,6 +43,7 @@ use transmux::{
     CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
 };
 use transmux::{Media, TsDemux};
+use transmux::media::Fmp4Demux;
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -1056,4 +1057,107 @@ fn ctr_iv_spacing_counts_subsample_protected_bytes() {
         .encrypt(&mut overlap, &cfg)
         .expect_err("32 protected bytes cover blocks 0 and 1, so IV 1 overlaps");
     assert!(matches!(err, transmux::Error::InvalidInput(_)), "got {err:?}");
+}
+
+// ---------------------------------------------------------------------------
+// issue #3665 — NAL-aware subsampling under HEVC and VVC, not just AVC
+// ---------------------------------------------------------------------------
+
+fn hevc_media() -> Media {
+    let bytes = test_fixtures::read("ts/hevc/main.ts");
+    let media = TsDemux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux ts/hevc/main.ts");
+    media
+        .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
+        .expect("HEVC video track present")
+}
+
+fn vvc_media() -> Media {
+    let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
+    let media = Fmp4Demux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux mp4/frag/vvc.frag.mp4");
+    media
+        .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Vvc { .. }))
+        .expect("VVC video track present")
+}
+
+/// Assert every NAL unit of every sample carries a subsample entry that clears
+/// exactly the 4-byte length prefix plus `header_len` header bytes (2 for
+/// HEVC/VVC — ITU-T H.265 §7.3.1.2 / H.266 §7.3.1.2) and protects the rest,
+/// and that the clear bytes are byte-identical to the cleartext.
+fn assert_nal_subsample_map(original: &Media, encrypted: &Media, header_len: usize) {
+    let mut nals = 0usize;
+    for (track, orig_track) in encrypted.tracks.iter().zip(&original.tracks) {
+        let enc = track
+            .encryption
+            .as_ref()
+            .expect("every sample must record encryption metadata");
+        assert_eq!(enc.samples.len(), track.samples.len());
+        for ((sample, orig), entry) in track
+            .samples
+            .iter()
+            .zip(&orig_track.samples)
+            .zip(&enc.samples)
+        {
+            assert!(
+                !entry.subsamples.is_empty(),
+                "a NAL-aware track must not fall back to whole-sample protection"
+            );
+            let mut off = 0usize;
+            for sub in &entry.subsamples {
+                let nal_len = u32::from_be_bytes(
+                    sample.data[off..off + 4]
+                        .try_into()
+                        .expect("4-byte NAL length"),
+                ) as usize;
+                assert_eq!(
+                    sub.bytes_of_clear_data as usize,
+                    4 + header_len,
+                    "clear run is the length prefix plus the {header_len}-byte NAL header"
+                );
+                assert_eq!(
+                    sub.bytes_of_protected_data as usize,
+                    nal_len - header_len,
+                    "protected run is the NAL payload"
+                );
+                assert_eq!(
+                    &sample.data[off..off + 4 + header_len],
+                    &orig.data[off..off + 4 + header_len],
+                    "length prefix and NAL header must stay in the clear"
+                );
+                off += 4 + nal_len;
+                nals += 1;
+            }
+            assert_eq!(
+                off,
+                sample.data.len(),
+                "the subsample map must cover the whole sample"
+            );
+        }
+    }
+    assert!(nals > 0, "fixture must carry length-prefixed NAL units");
+}
+
+#[test]
+fn nal_aware_subsampling_clears_the_two_byte_hevc_header() {
+    let original = hevc_media();
+    let mut media = hevc_media();
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt HEVC");
+    assert_nal_subsample_map(&original, &media, 2);
+}
+
+#[test]
+fn nal_aware_subsampling_clears_the_two_byte_vvc_header() {
+    let original = vvc_media();
+    let mut media = vvc_media();
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt VVC");
+    assert_nal_subsample_map(&original, &media, 2);
 }
