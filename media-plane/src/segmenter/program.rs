@@ -4325,6 +4325,136 @@ mod segmenter_tests {
     }
 
     #[test]
+    fn idr_wait_applies_is_exactly_a_classic_ts_idr_only_wait_that_has_not_fallen_back() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(
+            &trunk,
+            ts_config().with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly),
+        );
+        assert!(segmenter.idr_wait_applies());
+
+        segmenter.config = fmp4_config().with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly);
+        assert!(!segmenter.idr_wait_applies(), "only classic TS has an IDR wait");
+
+        segmenter.config = ts_config();
+        assert!(
+            !segmenter.idr_wait_applies(),
+            "an any_rap classic-TS route does not wait for an IDR"
+        );
+
+        segmenter.config = ts_config().with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly);
+        segmenter.idr_fallback_active = true;
+        assert!(
+            !segmenter.idr_wait_applies(),
+            "a route that already fell back no longer waits"
+        );
+    }
+
+    #[test]
+    fn idr_hold_starts_on_a_sync_video_sample_then_takes_everything() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, ts_config());
+
+        segmenter.hold_for_fallback(false, TrackId::new(1), non_idr_sample_at(0, false));
+        assert!(
+            segmenter.idr_hold.is_empty(),
+            "audio cannot start the hold"
+        );
+        segmenter.hold_for_fallback(true, TrackId::new(1), non_idr_sample_at(1, false));
+        assert!(
+            segmenter.idr_hold.is_empty(),
+            "a non-sync video sample cannot start the hold"
+        );
+        segmenter.hold_for_fallback(true, TrackId::new(1), non_idr_sample_at(2, true));
+        assert_eq!(segmenter.idr_hold.len(), 1, "a sync video sample starts it");
+        segmenter.hold_for_fallback(false, TrackId::new(1), non_idr_sample_at(3, false));
+        assert_eq!(
+            segmenter.idr_hold.len(),
+            2,
+            "once started, every later sample is held"
+        );
+    }
+
+    #[test]
+    fn idr_hold_is_cleared_only_when_it_exceeds_the_byte_cap() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, ts_config());
+
+        let exact = Sample::new(
+            vec![0u8; IDR_HOLD_MAX_BYTES],
+            Some(0),
+            Some(0),
+            Some(FRAME_DUR),
+            true,
+        )
+        .expect("valid timing");
+        segmenter.hold_for_fallback(true, TrackId::new(1), exact);
+        assert_eq!(segmenter.idr_hold.len(), 1);
+        assert_eq!(segmenter.idr_hold_bytes, IDR_HOLD_MAX_BYTES);
+
+        let plus_one = Sample::new(
+            vec![0u8; 1],
+            Some(FRAME_DUR.into()),
+            Some(FRAME_DUR.into()),
+            Some(FRAME_DUR),
+            false,
+        )
+        .expect("valid timing");
+        segmenter.hold_for_fallback(false, TrackId::new(1), plus_one);
+        assert!(
+            segmenter.idr_hold.is_empty(),
+            "one byte past the cap clears the hold"
+        );
+        assert_eq!(segmenter.idr_hold_bytes, 0);
+    }
+
+    #[test]
+    fn idr_wait_exhaustion_reports_fell_back_or_awaiting_and_counts_every_call() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(
+            &trunk,
+            ts_config().with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly),
+        );
+        let mut events = Vec::new();
+        segmenter.idr_wait_ran_out(ProgramId(0), &mut events);
+        assert_eq!(segmenter.non_idr_ts_cuts(), 1);
+        assert!(segmenter.idr_fallback_active);
+        assert!(matches!(
+            events.as_slice(),
+            [SegmenterEvent::TsIdrMissing(TsHlsIdrStatus::FellBack)]
+        ));
+        let AnySegmenter::Ts(ts) = &segmenter.seg else {
+            panic!("classic TS segmenter");
+        };
+        assert!(ts.idr_fallback_active(), "the TS segmenter fell back too");
+        segmenter.idr_wait_ran_out(ProgramId(0), &mut events);
+        assert_eq!(segmenter.non_idr_ts_cuts(), 2);
+
+        let (never_trunk, never_writer) = counted_trunk();
+        never_writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut never = segmenter_for(
+            &never_trunk,
+            ts_config()
+                .with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly)
+                .with_ts_idr_fallback(TsHlsIdrFallback::Never),
+        );
+        let mut events = Vec::new();
+        never.idr_wait_ran_out(ProgramId(0), &mut events);
+        assert_eq!(never.non_idr_ts_cuts(), 1);
+        assert!(!never.idr_fallback_active, "never falls back");
+        assert!(matches!(
+            events.as_slice(),
+            [SegmenterEvent::TsIdrMissing(TsHlsIdrStatus::Awaiting)]
+        ));
+        never.idr_wait_ran_out(ProgramId(0), &mut events);
+        assert_eq!(never.non_idr_ts_cuts(), 2);
+    }
+
+    #[test]
     fn try_new_with_siblings_records_part_cuts_for_an_audio_only_follower_set() {
         let (trunk, writer) = counted_trunk();
         let (audio_trunk, _audio_writer) = counted_trunk();
