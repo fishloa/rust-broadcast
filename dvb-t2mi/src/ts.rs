@@ -335,4 +335,30 @@ mod tests {
         reasm.feed(&ts, true);
         assert_eq!(&reasm.pop_packet().unwrap()[..], &good[..]);
     }
+
+    /// The raw-mode resync fix (#1095 W-T2-1): a partial accumulated under a
+    /// framing that is no longer trusted must not be spliced onto the bytes a
+    /// later PUSI brings.
+    #[test]
+    fn drop_buffered_discards_the_stale_partial() {
+        let mut reasm = PacketReassembler::new();
+        // Declares 93 payload bytes (103 total) but only 100 bytes arrive.
+        let partial = make_t2mi_packet(0x00, 0, &[0xEE; 93]);
+        let mut ts1 = vec![0x00];
+        ts1.extend_from_slice(&partial[..100]);
+        reasm.feed(&ts1, true);
+        assert!(reasm.pop_packet().is_none());
+
+        reasm.drop_buffered();
+
+        // A PUSI whose pointer says three bytes belong to the previous packet:
+        // with the stale partial dropped, the first framed packet is the new
+        // one, not 100 stale bytes plus three new ones.
+        let good = make_t2mi_packet(0x00, 7, &[0xAB, 0xCD]);
+        let mut ts2 = vec![0x03, 0xFF, 0xFF, 0xFF];
+        ts2.extend_from_slice(&good);
+        reasm.feed(&ts2, true);
+        assert_eq!(&reasm.pop_packet().unwrap()[..], &good[..]);
+        assert!(reasm.pop_packet().is_none());
+    }
 }

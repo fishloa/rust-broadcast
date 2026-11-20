@@ -7,6 +7,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Tests
+- Pin LCT CCI/TSI/TOI and `HDR_LEN` validation plus the close flags, EXT_TIME lengths with several values, NORM `serialize_into` return values and truncation guards, and the ALC SPI, partition accessors, emptiness and ack labels (#3182, #3183, #3184, #3185).
 
 ## [0.10.0] - 2026-11-15
 ### Changed

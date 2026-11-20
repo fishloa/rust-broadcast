@@ -186,12 +186,17 @@ fn an_hls_segment_on_a_cdn_origin_gets_the_identity_only_under_any_https() {
 
 #[test]
 fn malformed_identities_fail_open_with_a_typed_error() {
-    let bad: [ClientIdentity; 5] = [
+    let bad: [ClientIdentity; 7] = [
         ClientIdentity::pem("not pem", "not pem"),
         ClientIdentity::pem("", ""),
         ClientIdentity::der(Vec::new(), vec![0x30, 0x03, 0x02, 0x01, 0x00]),
         ClientIdentity::der(vec![vec![0x30, 0x03, 0x02, 0x01, 0x00]], Vec::new()),
         ClientIdentity::der(vec![vec![0x00]], vec![0x30, 0x03, 0x02, 0x01, 0x00]),
+        ClientIdentity::der(
+            vec![vec![0x31, 0x03, 0x02, 0x01, 0x00]],
+            vec![0x30, 0x03, 0x02, 0x01, 0x00],
+        ),
+        ClientIdentity::der(vec![vec![0x30, 0x00]], vec![0x30, 0x03, 0x02, 0x01, 0x00]),
     ];
     let ca = Ca::new("validity ca");
     let leaf = ca.issue("validity client", true);
@@ -223,6 +228,16 @@ fn malformed_identities_fail_open_with_a_typed_error() {
         )
         .unwrap();
     }
+    let three_byte = ClientIdentity::der(
+        vec![vec![0x30, 0x01, 0x00]],
+        vec![0x30, 0x03, 0x02, 0x01, 0x00],
+    );
+    Session::open(
+        Url::parse("https://h.example/live.ts").unwrap(),
+        cfg(|c| c.client_identity = Some(three_byte)),
+        ts(0),
+    )
+    .unwrap();
     for identity in bad {
         let config = cfg(|c| c.client_identity = Some(identity));
         match Session::open(

@@ -378,4 +378,11 @@ mod tests {
         assert_ne!(a.larger_blocks(), b.larger_blocks());
         assert_ne!(a.last_symbol_len(), b.last_symbol_len());
     }
+
+    #[test]
+    fn the_original_inputs_are_reported_verbatim() {
+        let p = SourceBlockPartition::new(10_005, 1_000, 3).unwrap();
+        assert_eq!(p.transfer_length(), 10_005);
+        assert_eq!(p.encoding_symbol_length(), 1_000);
+    }
 }

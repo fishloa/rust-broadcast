@@ -245,4 +245,30 @@ mod tests {
         let r = d.on_tracks(&[with_id(&a, 2)]);
         assert_eq!(r.rendered, None);
     }
+
+    #[test]
+    fn only_a_declared_id_that_has_never_been_announced_is_pending() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        assert!(!d.has_pending(), "no declaration is never pending");
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        d.declare(&ids(&[9]));
+        assert!(d.has_pending(), "9 has never been announced");
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2), with_id(&a, 9)]);
+        assert!(!d.has_pending(), "9 is announced now");
+    }
+
+    #[test]
+    fn a_vanished_declared_id_awaiting_its_replacement_is_not_pending() {
+        let (v, a) = specs();
+        let mut d = Declaration::default();
+        d.on_tracks(&[with_id(&v, 1), with_id(&a, 2)]);
+        d.declare(&ids(&[1]));
+        assert!(!d.has_pending());
+        d.on_tracks(&[with_id(&a, 2)]);
+        assert!(
+            !d.has_pending(),
+            "the vanished video track waits for a replacement, it is not pending"
+        );
+    }
 }

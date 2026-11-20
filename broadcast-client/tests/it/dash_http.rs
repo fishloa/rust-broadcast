@@ -5,7 +5,7 @@
 use crate::support::dash_common;
 use crate::support::dash_sim;
 
-use broadcast_client::{Config, Credentials, ErrorKind, Event, Status};
+use broadcast_client::{Config, ConnId, Credentials, ErrorKind, Event, Status};
 use broadcast_common::stage::Timestamp;
 use dash_common::loopback::{Origin, Sig, oracle};
 use dash_common::synth::{Addressing, MPD_URL, Synth};
@@ -211,9 +211,10 @@ fn a_utc_server_on_the_session_origin_gets_no_credentials_when_the_session_is_to
         .collect();
     assert!(!utc.is_empty());
     assert!(
-        utc.iter()
-            .all(|l| l.header("authorization").is_none() && l.header("cookie").is_none()),
-        "{utc:?}"
+        utc.iter().all(|l| l.header("authorization").is_none()
+            && l.header("cookie").is_none()
+            && l.header("x-probe") == Some("1")),
+        "only the credential headers are stripped: {utc:?}"
     );
     let media: Vec<&Logged> = sim
         .log
@@ -731,4 +732,233 @@ fn an_mpd_retry_waits_for_retry_after() {
     let mpd: Vec<&Logged> = sim.log.iter().filter(|l| l.is_mpd()).collect();
     assert_eq!(mpd.len(), 2);
     assert_eq!((mpd[1].send_elapsed_us - mpd[0].send_elapsed_us) / SEC, 7);
+}
+
+#[test]
+fn basic_credentials_replay_a_401_at_once() {
+    struct Gate(StaticBackend);
+    impl Backend for Gate {
+        fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+            if req.header("authorization").is_none() {
+                return Answer::status_with(
+                    401,
+                    crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"r\"")]),
+                );
+            }
+            self.0.serve(at, req)
+        }
+    }
+    let mut sim = DashSim::new(
+        &url_of(MANIFEST),
+        Config::default(),
+        World::new(AST_US),
+        Box::new(Gate(StaticBackend(Origin::new()))),
+    );
+    sim.session
+        .set_credentials(ts(0), Credentials::new("u", "p"))
+        .unwrap();
+    sim.run_for(SEC);
+    let mpd: Vec<&Logged> = sim.log.iter().filter(|l| l.is_mpd()).collect();
+    assert_eq!(mpd.len(), 2, "the 401 is replayed without a backoff wait");
+    assert!(
+        mpd[1].send_elapsed_us - mpd[0].send_elapsed_us < SEC,
+        "the replay follows at once ({} us), not after the first backoff step",
+        mpd[1].send_elapsed_us - mpd[0].send_elapsed_us
+    );
+    assert!(
+        mpd[1]
+            .header("authorization")
+            .is_some_and(|v| v.starts_with("Basic ")),
+        "{:?}",
+        mpd[1].headers
+    );
+    assert!(sim.errors().is_empty(), "{:?}", sim.errors());
+}
+
+struct SegmentsNeedAuth {
+    inner: StaticBackend,
+    seen: usize,
+}
+
+impl Backend for SegmentsNeedAuth {
+    fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+        if !req.is_mpd() {
+            self.seen += 1;
+            if self.seen >= 3 && req.header("authorization").is_none() {
+                return Answer::status_with(
+                    401,
+                    crate::support::headers(&[("WWW-Authenticate", "Bearer realm=\"r\"")]),
+                );
+            }
+        }
+        self.inner.serve(at, req)
+    }
+}
+
+fn waiting_sim(backend: Box<dyn Backend>) -> DashSim {
+    let mut sim = DashSim::new(
+        &url_of(MANIFEST),
+        Config::default(),
+        World::new(AST_US),
+        backend,
+    );
+    for _ in 0..40 {
+        sim.run_for(SEC);
+        if sim
+            .statuses()
+            .iter()
+            .any(|s| matches!(s, Status::WaitingForCredentials))
+        {
+            break;
+        }
+    }
+    assert!(
+        sim.statuses()
+            .iter()
+            .any(|s| matches!(s, Status::WaitingForCredentials)),
+        "the 401 parks the source: {:?}",
+        sim.statuses()
+    );
+    sim
+}
+
+#[test]
+fn nothing_is_requested_while_a_dash_session_waits_for_credentials() {
+    let mut sim = waiting_sim(Box::new(SegmentsNeedAuth {
+        inner: StaticBackend(Origin::new()),
+        seen: 0,
+    }));
+    assert!(
+        sim.events.iter().any(|e| matches!(e, Event::Variants(_))),
+        "the manifest was reported before the 401: {:?}",
+        sim.events
+    );
+    let before = sim.log.len();
+    let now = ts(sim.world.mono());
+    sim.session
+        .select_variant(now, 0)
+        .expect("the MPD already named a variant");
+    sim.session.reconnect(now);
+    let stray = ConnId::new(9_999);
+    sim.session
+        .on_response(stray, http::StatusCode::OK, &http::HeaderMap::new(), now);
+    sim.session.on_data(stray, b"xx", now);
+    sim.session.on_closed(stray, None, now);
+    sim.poll_all();
+    assert_eq!(
+        sim.log.len(),
+        before,
+        "no request is issued while waiting for credentials"
+    );
+    sim.session
+        .set_credentials(ts(sim.world.mono()), Credentials::bearer("tok"))
+        .unwrap();
+    sim.poll_all();
+    assert_eq!(
+        sim.log.len(),
+        before + 1,
+        "one request goes out when the credentials arrive"
+    );
+}
+
+struct HangSegments(StaticBackend);
+
+impl Backend for HangSegments {
+    fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+        if !req.is_mpd() {
+            Answer::Hang
+        } else {
+            self.0.serve(at, req)
+        }
+    }
+}
+
+#[test]
+fn reconnect_closes_an_in_flight_request_and_its_late_body_is_ignored() {
+    let mut sim = DashSim::new(
+        &url_of(SIDX),
+        Config::default(),
+        World::new(AST_US),
+        Box::new(HangSegments(StaticBackend(Origin::new()))),
+    );
+    sim.run_for(5 * SEC);
+    let segment = sim
+        .log
+        .iter()
+        .find(|l| !l.is_mpd())
+        .expect("a segment request was issued")
+        .conn;
+    sim.session.reconnect(ts(sim.world.mono()));
+    sim.poll_all();
+    assert!(
+        sim.closes.contains(&segment),
+        "reconnect closes every in-flight request: {:?}",
+        sim.closes
+    );
+    let now = ts(sim.world.mono());
+    sim.session.on_response(
+        segment,
+        http::StatusCode::OK,
+        &crate::support::headers(&[("Content-Length", "4")]),
+        now,
+    );
+    sim.session.on_data(segment, b"moof", now);
+    sim.session.on_closed(segment, None, now);
+    sim.poll_all();
+    assert!(
+        sim.samples().is_empty(),
+        "a body from the replaced connection is ignored"
+    );
+}
+
+struct RefuseSegments(StaticBackend);
+
+impl Backend for RefuseSegments {
+    fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+        if !req.is_mpd() {
+            return Answer::StallWith {
+                status: http::StatusCode::TOO_MANY_REQUESTS,
+                headers: crate::support::headers(&[
+                    ("Content-Type", "text/plain; charset=utf-8"),
+                    ("Content-Length", "5"),
+                ]),
+                body: b"later".to_vec(),
+            };
+        }
+        self.0.serve(at, req)
+    }
+}
+
+#[test]
+fn a_captured_refusal_is_flushed_when_the_next_request_is_sent() {
+    let mut sim = DashSim::new(
+        &url_of(SIDX),
+        Config::default(),
+        World::new(AST_US),
+        Box::new(RefuseSegments(StaticBackend(Origin::new()))),
+    );
+    sim.run_for(20 * SEC);
+    let refused = sim.log.iter().filter(|l| !l.is_mpd()).count();
+    assert!(refused > 0, "{:?}", sim.log);
+    assert!(
+        sim.events.iter().any(|e| matches!(
+            e,
+            Event::ServerRefused {
+                status,
+                ..
+            } if *status == http::StatusCode::TOO_MANY_REQUESTS
+        )),
+        "the captured 429 is flushed with the next request: {:?}",
+        sim.events
+    );
+    let captured: Vec<ConnId> = sim
+        .log
+        .iter()
+        .filter(|l| !l.is_mpd())
+        .map(|l| l.conn)
+        .collect();
+    assert!(
+        sim.closes.iter().any(|c| captured.contains(c)),
+        "the captured connection is closed when the refusal is flushed"
+    );
 }

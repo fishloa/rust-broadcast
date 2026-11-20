@@ -4,7 +4,6 @@
 //! `ES_rate`, `additional_copy_info`) and `Pts`/`Dts` carried an unchecked
 //! `u64`. Each now rejects the over-range value on construction/serialization.
 
-use broadcast_common::Serialize;
 use mpeg_pes::{Escr, PesHeader, PesPacket, StreamId, TrickMode};
 
 fn serialize_header<'a>(header: PesHeader<'a>) -> Result<(), mpeg_pes::Error> {
@@ -73,7 +72,9 @@ fn trick_mode_sub_fields_are_not_masked() {
 
     // `rep_cntrl` is 5 bits and used to be written with `& 0x1F`.
     let mut h = PesHeader::new();
-    h.dsm_trick_mode = Some(TrickMode::SlowMotion { rep_cntrl: 0b100000 });
+    h.dsm_trick_mode = Some(TrickMode::SlowMotion {
+        rep_cntrl: 0b100000,
+    });
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(
@@ -109,10 +110,7 @@ fn program_packet_sequence_counter_is_not_masked() {
 #[test]
 fn additional_copy_info_is_not_masked() {
     let mut h = PesHeader::new();
-    h.additional_copy_info = Some(mpeg_pes::AdditionalCopyInfo {
-        info: 0x80,
-        marker: true,
-    });
+    h.additional_copy_info = Some(mpeg_pes::AdditionalCopyInfo::new(0x80));
     assert!(matches!(
         serialize_header(h),
         Err(mpeg_pes::Error::FieldOverflow(

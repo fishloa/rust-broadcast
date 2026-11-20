@@ -286,4 +286,37 @@ mod tests {
         };
         assert_ne!(mk(0), mk(1408));
     }
+
+    #[test]
+    fn serialized_len_is_the_documented_four_bytes_for_all_three_layouts() {
+        let source = SourceFecPayloadId {
+            start_offset: 107_008,
+        };
+        assert_eq!(Serialize::serialized_len(&source), 4);
+        assert_eq!(source.try_to_bytes().unwrap().len(), 4);
+        assert!(matches!(
+            source.serialize_into(&mut [0u8; 3]),
+            Err(Error::OutputBufferTooSmall(_))
+        ));
+
+        let repair = RepairFecPayloadId {
+            sbn: 0x07,
+            esi: 0x00AB_CDEF,
+        };
+        assert_eq!(Serialize::serialized_len(&repair), 4);
+        assert_eq!(repair.try_to_bytes().unwrap().len(), 4);
+        assert!(matches!(
+            repair.serialize_into(&mut [0u8; 3]),
+            Err(Error::OutputBufferTooSmall(_))
+        ));
+
+        let route = RouteFecPayloadId::Source(source);
+        assert_eq!(route.serialized_len(), 4);
+        assert!(matches!(
+            route.serialize_into(&mut [0u8; 3]),
+            Err(Error::OutputBufferTooSmall(_))
+        ));
+        let mut out = [0u8; 4];
+        assert_eq!(route.serialize_into(&mut out).unwrap(), 4);
+    }
 }

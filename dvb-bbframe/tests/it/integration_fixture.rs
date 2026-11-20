@@ -15,7 +15,7 @@ fn rai_fixture() -> Vec<u8> {
 /// Walk a capture file and reassemble complete BBFrames from TS sections
 /// on a given PID. The section count byte `0xB8` marks the start of a new
 /// BBFrame; the final incomplete frame (if any) is discarded.
-fn extract_bbframes(data: &[u8], pid: u16) -> Vec<Vec<u8>> {
+pub(crate) fn extract_bbframes(data: &[u8], pid: u16) -> Vec<Vec<u8>> {
     let mut frames: Vec<Vec<u8>> = Vec::new();
     let mut current_frame = Vec::with_capacity(8192);
     let mut frame_started = false;

@@ -855,4 +855,80 @@ mod tests {
         );
         assert_eq!(p, before);
     }
+
+    #[test]
+    fn serialize_writes_a_real_post_2000_epoch_in_all_five_bytes() {
+        // 2026 is about 8.2e8 s after 2000: every seconds byte is significant.
+        let p = payload(Bandwidth::Mhz8, 0x0031_8000_1234, 0x7FF_FFFE, 0x1FFF);
+        let bytes = p.try_to_bytes().unwrap();
+        assert_eq!(
+            bytes,
+            [
+                0x04, 0x31, 0x80, 0x00, 0x12, 0x34, 0xFF, 0xFF, 0xFF, 0xDF, 0xFF
+            ]
+        );
+        assert_eq!(T2TimestampPayload::parse(&bytes).unwrap(), p);
+    }
+
+    #[test]
+    fn field_ceilings_accept_the_maximum_and_reject_one_more() {
+        let mut p = payload(Bandwidth::Mhz8, SECONDS_SINCE_2000_MAX, 0, 0);
+        assert!(p.try_to_bytes().is_ok());
+        p.seconds_since_2000 = SECONDS_SINCE_2000_MAX + 1;
+        assert!(matches!(
+            p.try_to_bytes(),
+            Err(crate::Error::FieldOverflow(_))
+        ));
+
+        let mut p = payload(Bandwidth::Mhz8, 0, SUBSECONDS_MAX, 0);
+        assert!(p.try_to_bytes().is_ok());
+        p.subseconds = SUBSECONDS_MAX + 1;
+        assert!(matches!(
+            p.try_to_bytes(),
+            Err(crate::Error::FieldOverflow(_))
+        ));
+
+        let mut p = payload(Bandwidth::Mhz8, 0, 0, UTCO_MAX);
+        assert!(p.try_to_bytes().is_ok());
+        p.utco = UTCO_MAX + 1;
+        assert!(matches!(
+            p.try_to_bytes(),
+            Err(crate::Error::FieldOverflow(_))
+        ));
+    }
+
+    #[test]
+    fn null_requires_all_three_fields_to_be_all_ones() {
+        assert!(!payload(Bandwidth::Mhz8, SECONDS_SINCE_2000_MAX, 0, 0).is_null());
+        assert!(!payload(Bandwidth::Mhz8, 0, SUBSECONDS_MAX, 0).is_null());
+        assert!(!payload(Bandwidth::Mhz8, 0, 0, UTCO_MAX).is_null());
+        assert!(
+            payload(
+                Bandwidth::Mhz8,
+                SECONDS_SINCE_2000_MAX,
+                SUBSECONDS_MAX,
+                UTCO_MAX
+            )
+            .is_null()
+        );
+    }
+
+    #[test]
+    fn emission_offset_carries_whole_seconds_from_the_subsecond_part() {
+        // 8 MHz: subseconds × 1000/64 ns → 134 217 727 ticks = 2 s + 97 151 984 ns.
+        let p = payload(Bandwidth::Mhz8, 5, SUBSECONDS_MAX, 0);
+        assert_eq!(
+            p.emission_offset(),
+            Some(core::time::Duration::new(7, 97_151_984))
+        );
+    }
+
+    #[cfg(feature = "jiff")]
+    #[test]
+    fn set_emission_time_utc_accepts_the_thirteen_bit_utco_maximum() {
+        let dt = utc(2023, 1, 1, 0, 0, 0);
+        let mut p = payload(Bandwidth::Mhz8, 0, 0, 0);
+        assert!(p.set_emission_time_utc(dt, UTCO_MAX).is_ok());
+        assert_eq!(p.utco, UTCO_MAX);
+    }
 }

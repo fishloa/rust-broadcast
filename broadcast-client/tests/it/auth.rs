@@ -815,3 +815,81 @@ fn drain_at(session: &mut Session, now: u64) -> Vec<Action> {
     );
     drained
 }
+
+#[test]
+fn hls_replays_a_401_with_basic_credentials_at_once() {
+    use crate::support::hls_host::{
+        Host, Reply, TS_PLAYLIST_URL, TS_SEG0_URL, TS_SEG1_URL, hls_config, ts_playlist, ts_segment,
+    };
+    let challenge = crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"tv\"")]);
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.session
+        .set_credentials(ts(0), Credentials::new("user", "pass"))
+        .unwrap();
+    h.route(
+        TS_PLAYLIST_URL,
+        vec![
+            Reply::StatusHeaders(crate::support::status(401), challenge),
+            Reply::Ok(ts_playlist()),
+        ],
+    );
+    h.ok(TS_SEG0_URL, ts_segment(0));
+    h.ok(TS_SEG1_URL, ts_segment(1));
+    for _ in 0..8 {
+        if !h.step() {
+            break;
+        }
+    }
+    h.collect();
+    let sent = h.requests_to(TS_PLAYLIST_URL);
+    assert_eq!(sent.len(), 2, "{sent:?}");
+    assert_eq!(
+        sent[1].at_us, sent[0].at_us,
+        "the replay is sent at once, not after a backoff wait"
+    );
+    assert!(
+        sent[1]
+            .authorization()
+            .is_some_and(|v| v.starts_with("Basic ")),
+        "{:?}",
+        sent[1].headers
+    );
+    assert!(
+        h.events.iter().all(|e| !matches!(e, Event::Error { .. })),
+        "{:?}",
+        h.events
+    );
+}
+
+#[test]
+fn set_credentials_refuses_a_bearer_token_with_control_characters() {
+    for token in ["a\tb", "a\u{85}b"] {
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            ts(0),
+        )
+        .unwrap();
+        let error = session
+            .set_credentials(
+                ts(0),
+                Credentials::Bearer {
+                    token: token.into(),
+                },
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, broadcast_client::Error::InvalidCredentials),
+            "{token:?}: {error:?}"
+        );
+    }
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
+    session
+        .set_credentials(ts(0), Credentials::bearer("plain-token"))
+        .unwrap();
+}

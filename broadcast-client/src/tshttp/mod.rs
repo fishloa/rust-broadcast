@@ -9,3 +9,6 @@ pub(crate) use events::Action;
 pub(crate) use events::Event;
 pub use events::StarveKind;
 pub(crate) use policy::TsHttpPolicy;
+
+#[cfg(test)]
+mod tests;

@@ -1,5 +1,6 @@
+use super::TsHttpClient;
+use crate::tshttp::Action;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 use broadcast_common::units::MICROS_PER_MILLI;
 use std::time::Duration;
@@ -40,5 +41,8 @@ fn a_requested_delay_below_the_backoff_does_not_shorten_it() {
     let mut c = TsHttpClient::with_seed(URL, Config::default(), ts(0), ts(0).as_millis());
     c.set_retry_after(Duration::from_millis(1));
     c.on_response(503, &[], ts(0));
-    assert_eq!(reconnect_after(&mut c), Duration::from_millis(FIRST_BACKOFF_MS));
+    assert_eq!(
+        reconnect_after(&mut c),
+        Duration::from_millis(FIRST_BACKOFF_MS)
+    );
 }

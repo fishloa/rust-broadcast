@@ -1304,3 +1304,210 @@ fn unsupported_container_error_is_failure_not_panic() {
     fm.run_to_end();
     assert_eq!(count(&fm.events, is_sample), 0);
 }
+
+fn requested_headers(actions: &[Action]) -> Option<(ConnId, http::HeaderMap)> {
+    actions.iter().find_map(|a| match a {
+        Action::HttpRequest { conn, headers, .. } => Some((*conn, headers.clone())),
+        _ => None,
+    })
+}
+
+#[test]
+fn a_416_to_a_resumed_segment_falls_back_to_one_full_request() {
+    let mut config = hls_config();
+    config.segment_inactivity_timeout = Duration::from_secs(5);
+    let mut s = Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), config, ts(0)).expect("open");
+    let (playlist_conn, _) = single_http_request(&drain_actions(&mut s, 0));
+    respond_ok(&mut s, playlist_conn, &ts_playlist(), 0);
+    let segments = http_requests(&drain_actions(&mut s, 0));
+    assert_eq!(segments.len(), 2);
+    let seg_conn = segments[0].0;
+    let body = ts_segment(0);
+    let sent = body.len() / 2;
+    let headers = crate::support::headers(&[
+        ("ETag", "\"v1\""),
+        ("Accept-Ranges", "bytes"),
+        ("Content-Length", &body.len().to_string()),
+    ]);
+    s.on_response(seg_conn, http::StatusCode::OK, &headers, ts(0));
+    s.on_data(seg_conn, &body[..sent], ts(0));
+    let stalled_at = 5 * SEC + 1;
+    let stalled = drain_actions(&mut s, stalled_at);
+    assert!(
+        closes(&stalled).contains(&seg_conn),
+        "the stalled request closes"
+    );
+    let at = stalled_at + 3 * SEC;
+    let retry = drain_actions(&mut s, at);
+    let (resume_conn, resume_headers) =
+        requested_headers(&retry).expect("the stalled segment is asked for again");
+    assert!(
+        resume_headers.contains_key("range"),
+        "the retry resumes: {resume_headers:?}"
+    );
+    s.on_response(
+        resume_conn,
+        http::StatusCode::RANGE_NOT_SATISFIABLE,
+        &http::HeaderMap::new(),
+        ts(at),
+    );
+    s.on_closed(resume_conn, None, ts(at));
+    let fallback = drain_actions(&mut s, at);
+    let (full_conn, full_headers) =
+        requested_headers(&fallback).expect("a 416 falls back to one full request");
+    assert_ne!(full_conn, resume_conn);
+    assert!(
+        !full_headers.contains_key("range"),
+        "the fallback asks for the whole resource"
+    );
+}
+
+#[test]
+fn a_416_to_a_first_segment_request_is_a_failure_not_an_immediate_replay() {
+    let mut s =
+        Session::open(Url::parse(TS_PLAYLIST_URL).unwrap(), hls_config(), ts(0)).expect("open");
+    let (playlist_conn, _) = single_http_request(&drain_actions(&mut s, 0));
+    respond_ok(&mut s, playlist_conn, &ts_playlist(), 0);
+    let segments = http_requests(&drain_actions(&mut s, 0));
+    assert_eq!(segments.len(), 2);
+    let seg_conn = segments[0].0;
+    s.on_response(
+        seg_conn,
+        http::StatusCode::RANGE_NOT_SATISFIABLE,
+        &http::HeaderMap::new(),
+        ts(0),
+    );
+    s.on_closed(seg_conn, None, ts(0));
+    let immediate = drain_actions(&mut s, 0);
+    assert!(
+        http_requests(&immediate).is_empty(),
+        "a 416 with no resume is a refusal, not a fallback: {immediate:?}"
+    );
+    let retry = drain_actions(&mut s, 2 * SEC);
+    assert_eq!(
+        http_requests(&retry).len(),
+        1,
+        "the retry follows the backoff"
+    );
+}
+
+#[test]
+fn hls_issues_nothing_while_waiting_for_credentials() {
+    let variant = "http://origin.test/hls/v.m3u8";
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.ok(TS_PLAYLIST_URL, master_text("v.m3u8").into_bytes());
+    h.route(
+        variant,
+        vec![Reply::StatusHeaders(
+            http::StatusCode::UNAUTHORIZED,
+            crate::support::headers(&[("WWW-Authenticate", "Basic realm=\"r\"")]),
+        )],
+    );
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Status(Status::WaitingForCredentials)))
+        },
+        32,
+    );
+    assert!(
+        h.events
+            .iter()
+            .any(|e| matches!(e, Event::Status(Status::WaitingForCredentials))),
+        "the 401/403 parks the source: {:?}",
+        h.events
+    );
+    let before = h.seen.len();
+    let now = ts(h.now);
+    let _ = h.session.select_variant(now, 0);
+    h.session.reconnect(now);
+    let stray = ConnId::new(9_999);
+    h.session
+        .on_response(stray, http::StatusCode::OK, &http::HeaderMap::new(), now);
+    h.session.on_data(stray, b"xx", now);
+    h.session.on_closed(stray, None, now);
+    h.collect();
+    assert_eq!(
+        h.seen.len(),
+        before,
+        "no request is issued while waiting for credentials"
+    );
+    h.session
+        .set_credentials(now, Credentials::new("user", "pass"))
+        .unwrap();
+    h.collect();
+    assert_eq!(
+        h.seen.len(),
+        before + 1,
+        "one request goes out when the credentials arrive"
+    );
+}
+
+#[test]
+fn hls_flushes_a_captured_refusal_when_the_next_request_is_sent() {
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.ok(TS_PLAYLIST_URL, ts_playlist());
+    let headers = crate::support::headers(&[
+        ("Content-Type", "text/plain; charset=utf-8"),
+        ("Content-Length", "5"),
+    ]);
+    h.route(
+        TS_SEG0_URL,
+        vec![Reply::StallWith(
+            http::StatusCode::TOO_MANY_REQUESTS,
+            b"later".to_vec(),
+            headers,
+        )],
+    );
+    h.ok(TS_SEG1_URL, ts_segment(1));
+    for _ in 0..64 {
+        if !h.step() {
+            break;
+        }
+        if h.events
+            .iter()
+            .any(|e| matches!(e, Event::ServerRefused { .. }))
+        {
+            break;
+        }
+    }
+    assert!(
+        h.events.iter().any(|e| matches!(
+            e,
+            Event::ServerRefused {
+                status,
+                ..
+            } if *status == http::StatusCode::TOO_MANY_REQUESTS
+        )),
+        "the captured 429 is flushed with the retry: {:?}",
+        h.events
+    );
+    let captured = h
+        .requests_to(TS_SEG0_URL)
+        .first()
+        .map(|s| s.conn)
+        .expect("the segment was requested");
+    assert!(
+        h.closes.contains(&captured),
+        "the captured connection is closed when the refusal is flushed"
+    );
+}
+
+#[test]
+fn an_ended_hls_session_refuses_an_index_past_the_variant_list() {
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.ok(TS_PLAYLIST_URL, master_text("v.m3u8").into_bytes());
+    h.ok("http://origin.test/hls/v.m3u8", ts_playlist());
+    h.ok(TS_SEG0_URL, ts_segment(0));
+    h.ok(TS_SEG1_URL, ts_segment(1));
+    h.run_to_end();
+    assert!(h.events.iter().any(is_ended), "{:?}", h.events);
+    assert!(
+        matches!(
+            h.session.select_variant(ts(h.now), 1),
+            Err(Error::NoSuchVariant(1))
+        ),
+        "one variant is known, so index 1 does not exist"
+    );
+    assert!(h.session.select_variant(ts(h.now), 0).is_ok());
+}

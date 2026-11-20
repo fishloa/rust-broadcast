@@ -79,6 +79,22 @@ fn the_sdp_tracks_are_announced_when_the_socket_is_bound_before_any_packet() {
 }
 
 #[test]
+fn only_an_sdp_session_announces_tracks() {
+    let with_sdp = UdpHost::open(URL, config(Some(sdp())));
+    assert_eq!(
+        with_sdp.count(|e| matches!(e, Event::Tracks(_))),
+        1,
+        "the SDP declares the track"
+    );
+    let raw = UdpHost::open(URL, config(None));
+    assert_eq!(
+        raw.count(|e| matches!(e, Event::Tracks(_))),
+        0,
+        "a raw RTP session declares nothing before media arrives"
+    );
+}
+
+#[test]
 fn three_access_units_yield_two_completed_samples_idr_first() {
     let mut host = UdpHost::open(URL, config(Some(sdp())));
     host.datagram(&au(1, 1000, &[0x65, 0xAA, 0xBB]));

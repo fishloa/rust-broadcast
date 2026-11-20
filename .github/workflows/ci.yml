@@ -579,9 +579,10 @@ jobs:
   # a real fixture through transmux's CMAF/progressive-MP4/TS-HLS/DASH outputs
   # (`transmux/tests/golden_gate.rs`) and hands them to an INDEPENDENT decoder
   # (`ffprobe`) to confirm they are well-formed and report the expected
-  # codec/dimensions/track-count. Non-blocking to start (continue-on-error,
-  # like clippy-canary above) because external-tool availability/behaviour
-  # varies across runner images; promote to required once stable. Uses the
+  # codec/dimensions/track-count. Required: the job installs ffmpeg itself and
+  # sets `REQUIRE_FFPROBE=1`, so the harness fails rather than skipping when the
+  # tool is missing (it was `continue-on-error` until it had been green on
+  # `main` for a week — audit 23). Uses the
   # pinned toolchain from rust-toolchain.toml — no dtolnay step needed, this
   # only needs `cargo test`, not a different channel.
   #
@@ -606,11 +607,15 @@ jobs:
   # macOS (not available on this runner) — run it there with Apple's Additional Tools for Xcode
   # installed (see the command in `CLAUDE.md`).
   golden-gate:
-    name: golden gate (ffprobe + mediastreamvalidator, non-blocking)
+    name: golden gate (ffprobe + mediastreamvalidator)
     runs-on: ubuntu-24.04
     needs: changes
     if: needs.changes.outputs.rust == 'true'
-    continue-on-error: true
+    env:
+      # This job installs ffmpeg itself, so a missing `ffprobe` here is a
+      # broken gate, not a machine without the tool: transmux's harness then
+      # fails instead of skipping every case (audit 23).
+      REQUIRE_FFPROBE: "1"
     steps:
       - uses: actions/checkout@v5
       - uses: Swatinem/rust-cache@v2

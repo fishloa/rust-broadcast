@@ -1,5 +1,6 @@
+use super::TsHttpClient;
+use crate::tshttp::Action;
 use crate::tshttp::TsHttpConfig as Config;
-use crate::tshttp::{Action, TsHttpClient};
 use broadcast_common::stage::Timestamp;
 use std::time::Duration;
 
