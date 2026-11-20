@@ -248,4 +248,80 @@ mod tests {
             "apdu_tag(0x9F9999)"
         );
     }
+
+    /// Every Table 58 constant, its spec token and its 24-bit value, taken
+    /// from the EN 50221 Table 58 entries (`private/specs/dvb_en50221_v1_common_interface.pdf`).
+    const TABLE_58: &[(ApduTag, &str, u32)] = &[
+        (PROFILE_ENQ, "profile_enq", 0x009F_8010),
+        (PROFILE, "profile", 0x009F_8011),
+        (PROFILE_CHANGE, "profile_change", 0x009F_8012),
+        (APPLICATION_INFO_ENQ, "application_info_enq", 0x009F_8020),
+        (APPLICATION_INFO, "application_info", 0x009F_8021),
+        (ENTER_MENU, "enter_menu", 0x009F_8022),
+        (CA_INFO_ENQ, "ca_info_enq", 0x009F_8030),
+        (CA_INFO, "ca_info", 0x009F_8031),
+        (CA_PMT, "ca_pmt", 0x009F_8032),
+        (CA_PMT_REPLY, "ca_pmt_reply", 0x009F_8033),
+        (TUNE, "tune", 0x009F_8400),
+        (REPLACE, "replace", 0x009F_8401),
+        (CLEAR_REPLACE, "clear_replace", 0x009F_8402),
+        (ASK_RELEASE, "ask_release", 0x009F_8403),
+        (DATE_TIME_ENQ, "date_time_enq", 0x009F_8440),
+        (DATE_TIME, "date_time", 0x009F_8441),
+        (CLOSE_MMI, "close_mmi", 0x009F_8800),
+        (DISPLAY_CONTROL, "display_control", 0x009F_8801),
+        (DISPLAY_REPLY, "display_reply", 0x009F_8802),
+        (TEXT_LAST, "text_last", 0x009F_8803),
+        (TEXT_MORE, "text_more", 0x009F_8804),
+        (KEYPAD_CONTROL, "keypad_control", 0x009F_8805),
+        (KEYPRESS, "keypress", 0x009F_8806),
+        (ENQ, "enq", 0x009F_8807),
+        (ANSW, "answ", 0x009F_8808),
+        (MENU_LAST, "menu_last", 0x009F_8809),
+        (MENU_MORE, "menu_more", 0x009F_880A),
+        (MENU_ANSW, "menu_answ", 0x009F_880B),
+        (LIST_LAST, "list_last", 0x009F_880C),
+        (LIST_MORE, "list_more", 0x009F_880D),
+        (SUBTITLE_SEGMENT_LAST, "subtitle_segment_last", 0x009F_880E),
+        (SUBTITLE_SEGMENT_MORE, "subtitle_segment_more", 0x009F_880F),
+        (DISPLAY_MESSAGE, "display_message", 0x009F_8810),
+        (SCENE_END_MARK, "scene_end_mark", 0x009F_8811),
+        (SCENE_DONE, "scene_done", 0x009F_8812),
+        (SCENE_CONTROL, "scene_control", 0x009F_8813),
+        (
+            SUBTITLE_DOWNLOAD_LAST,
+            "subtitle_download_last",
+            0x009F_8814,
+        ),
+        (
+            SUBTITLE_DOWNLOAD_MORE,
+            "subtitle_download_more",
+            0x009F_8815,
+        ),
+        (FLUSH_DOWNLOAD, "flush_download", 0x009F_8816),
+        (DOWNLOAD_REPLY, "download_reply", 0x009F_8817),
+        (COMMS_CMD, "comms_cmd", 0x009F_8C00),
+        (CONNECTION_DESCRIPTOR, "connection_descriptor", 0x009F_8C01),
+        (COMMS_REPLY, "comms_reply", 0x009F_8C02),
+        (COMMS_SEND_LAST, "comms_send_last", 0x009F_8C03),
+        (COMMS_SEND_MORE, "comms_send_more", 0x009F_8C04),
+        (COMMS_RCV_LAST, "comms_rcv_last", 0x009F_8C05),
+        (COMMS_RCV_MORE, "comms_rcv_more", 0x009F_8C06),
+    ];
+
+    #[test]
+    fn every_table_58_tag_has_its_label_and_display() {
+        assert_eq!(TABLE_58.len(), 47);
+        for &(tag, label, u24) in TABLE_58 {
+            assert_eq!(tag.as_u24(), u24, "wire value of {label}");
+            assert_eq!(tag.name(), label);
+            assert_eq!(format!("{tag}"), format!("{label}(0x{u24:06X})"));
+            assert_ne!(tag.name(), "unknown", "{label} fell through to unknown");
+        }
+        for (i, &(a, la, _)) in TABLE_58.iter().enumerate() {
+            for &(b, lb, _) in &TABLE_58[i + 1..] {
+                assert_ne!(a, b, "{la} and {lb} share a wire value");
+            }
+        }
+    }
 }

@@ -5,6 +5,8 @@ All notable changes to `dvb-ci` are documented here. The format follows
 versioning.
 
 ## [Unreleased]
+### Tests
+- Pin the EN 50221 and TS 101 699/TS 103 205 APDU labels, serialize-length returns, 12-bit length fields, 255/4095 ceilings and truncation boundaries against cargo-mutants survivors (audit 23).
 
 ## [0.13.0] - 2026-11-15
 ### Changed

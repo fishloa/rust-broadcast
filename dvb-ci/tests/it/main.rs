@@ -1,7 +1,14 @@
 mod apdu_u16_overflow;
 mod ca_pmt_builder;
+mod ci_ext_contract;
+mod ci_ext_dispatch;
+mod ci_ext_limits;
+mod ci_plus_contract;
 mod diff_libdvben50221;
 mod error_variants;
+mod objects_contract;
 mod review_round_trip_findings;
 mod short_buffers;
+mod software_download;
+mod tpdu_truncation;
 mod trailing_bytes;
