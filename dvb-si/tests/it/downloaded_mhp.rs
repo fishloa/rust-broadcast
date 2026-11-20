@@ -103,18 +103,10 @@ fn hotbird_mhp_dsmcc_parse() {
         data.len()
     );
 
-    if dsmcc_sections == 0 {
-        eprintln!(
-            "downloaded_mhp: SKIPPED — no DSM-CC carousel sections found \
-             in the capture. This may be a valid outcome."
-        );
-        return;
-    }
-
-    assert!(
-        dsi_count + dii_count + ddb_count > 0,
-        "{CAPTURE}: expected at least one DSI/DII/DDB from an MHP object carousel"
-    );
+    assert_eq!(dsmcc_sections, 3355, "{CAPTURE}: DSM-CC sections");
+    assert_eq!(dsi_count, 1305, "{CAPTURE}: DSI messages");
+    assert_eq!(dii_count, 870, "{CAPTURE}: DII messages");
+    assert_eq!(ddb_count, 1173, "{CAPTURE}: DDB messages");
 }
 
 /// AIT PIDs carrying the DVB-J application this capture signals (observed via
@@ -145,6 +137,8 @@ fn hotbird_mhp_dvb_j_descriptors_typed() {
     let mut ait_sections = 0usize;
     let mut dvb_j_app = 0usize;
     let mut dvb_j_location = 0usize;
+    let mut dvb_j_param_count = 0usize;
+    let mut dvb_j_param_bytes = 0usize;
     let mut unknown_dvb_j_tags = 0usize;
 
     for chunk in data.chunks(TS_PACKET_SIZE) {
@@ -162,8 +156,16 @@ fn hotbird_mhp_dvb_j_descriptors_typed() {
                     match desc_res.expect("per-app AIT descriptor must parse") {
                         AnyAitDescriptor::DvbJApplication(d) => {
                             dvb_j_app += 1;
-                            // Each parameter is a length-prefixed byte string.
-                            let _ = d.parameters.len();
+                            for p in &d.parameters {
+                                assert!(!p.is_empty(), "{CAPTURE}: empty dvb_j parameter");
+                                assert!(
+                                    p.iter().all(|b| b.is_ascii_graphic() || *b == b' '),
+                                    "{CAPTURE}: non-ASCII dvb_j parameter"
+                                );
+                            }
+                            dvb_j_param_count += d.parameters.len();
+                            dvb_j_param_bytes +=
+                                d.parameters.iter().map(|p| p.len()).sum::<usize>();
                         }
                         AnyAitDescriptor::DvbJApplicationLocation(d) => {
                             dvb_j_location += 1;
@@ -190,6 +192,7 @@ fn hotbird_mhp_dvb_j_descriptors_typed() {
     eprintln!(
         "downloaded_mhp: {CAPTURE} — {ait_sections} AIT sections, \
          {dvb_j_app} dvb_j_application, {dvb_j_location} dvb_j_application_location, \
+         {dvb_j_param_count} parameters ({dvb_j_param_bytes} bytes), \
          {unknown_dvb_j_tags} dvb_j tags left Unknown"
     );
 
@@ -197,9 +200,18 @@ fn hotbird_mhp_dvb_j_descriptors_typed() {
         unknown_dvb_j_tags, 0,
         "{CAPTURE}: dvb_j tags (0x03/0x04) must decode as typed variants, not Unknown"
     );
-    assert!(
-        dvb_j_app > 0 && dvb_j_location > 0,
-        "{CAPTURE}: expected typed dvb_j_application + dvb_j_application_location \
-         descriptors (found {dvb_j_app} app, {dvb_j_location} location)"
+    assert_eq!(ait_sections, 2, "{CAPTURE}: AIT sections");
+    assert_eq!(dvb_j_app, 2, "{CAPTURE}: dvb_j_application descriptors");
+    assert_eq!(
+        dvb_j_location, 2,
+        "{CAPTURE}: dvb_j_application_location descriptors"
+    );
+    assert_eq!(
+        dvb_j_param_count, 0,
+        "{CAPTURE}: dvb_j_application parameter strings"
+    );
+    assert_eq!(
+        dvb_j_param_bytes, 0,
+        "{CAPTURE}: dvb_j_application parameter bytes"
     );
 }

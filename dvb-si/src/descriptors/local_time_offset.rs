@@ -495,4 +495,48 @@ mod tests {
             Error::FieldOverflow(_)
         ));
     }
+
+    #[cfg(feature = "jiff")]
+    #[test]
+    fn set_offsets_keeps_negative_polarity_beside_zero() {
+        let mut e = LocalTimeOffsetEntry::new(LangCode(*b"FRA"), 0, false, 0, [0; 5], 0);
+        e.set_offsets(
+            jiff::SignedDuration::from_mins(-60),
+            jiff::SignedDuration::from_mins(0),
+        )
+        .unwrap();
+        assert!(e.local_time_offset_negative);
+        assert_eq!(e.local_time_offset_bcd, 0x0100);
+        assert_eq!(
+            e.local_time_offset(),
+            Some(jiff::SignedDuration::from_mins(-60))
+        );
+
+        let mut e = LocalTimeOffsetEntry::new(LangCode(*b"FRA"), 0, false, 0, [0; 5], 0);
+        e.set_offsets(
+            jiff::SignedDuration::from_mins(0),
+            jiff::SignedDuration::from_mins(-60),
+        )
+        .unwrap();
+        assert!(e.local_time_offset_negative);
+        assert_eq!(e.next_time_offset_bcd, 0x0100);
+    }
+
+    #[cfg(feature = "jiff")]
+    #[test]
+    fn set_offsets_accepts_99_59_and_rejects_100_hours() {
+        let max = jiff::SignedDuration::from_mins(99 * 60 + 59);
+        let mut e = LocalTimeOffsetEntry::new(LangCode(*b"FRA"), 0, false, 0, [0; 5], 0);
+        e.set_offsets(max, max).unwrap();
+        assert_eq!(e.local_time_offset_bcd, 0x9959);
+        assert_eq!(e.next_time_offset_bcd, 0x9959);
+        assert_eq!(e.local_time_offset(), Some(max));
+        assert!(!e.local_time_offset_negative);
+
+        let too_large = jiff::SignedDuration::from_mins(100 * 60);
+        assert!(matches!(
+            e.set_offsets(too_large, too_large),
+            Err(Error::ValueOutOfRange { .. })
+        ));
+    }
 }
