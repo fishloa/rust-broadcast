@@ -287,3 +287,46 @@ fn aac_component_type_labels_match_table_26() {
         None
     );
 }
+
+#[test]
+fn announcement_and_frequency_labels_match_the_spec_tables() {
+    // EN 300 468 Tables 19, 20 and 31.
+    use dvb_si::descriptors::announcement_support::{AnnouncementType, ReferenceType};
+    use dvb_si::descriptors::frequency_list::CodingType;
+
+    check_label!(AnnouncementType::EmergencyAlarm, "Emergency alarm");
+    check_label!(AnnouncementType::RoadTrafficFlash, "Road Traffic flash");
+    check_label!(
+        AnnouncementType::PublicTransportFlash,
+        "Public Transport flash"
+    );
+    check_label!(AnnouncementType::WarningMessage, "Warning message");
+    check_label!(AnnouncementType::NewsFlash, "News flash");
+    check_label!(AnnouncementType::WeatherFlash, "Weather flash");
+    check_label!(AnnouncementType::EventAnnouncement, "Event announcement");
+    check_label!(AnnouncementType::PersonalCall, "Personal call");
+    check_label!(AnnouncementType::Reserved(0x0F), "reserved", "reserved(0x0F)");
+
+    check_label!(
+        ReferenceType::UsualAudioStream,
+        "broadcast in the usual audio stream of the service"
+    );
+    check_label!(
+        ReferenceType::SeparateAudioStream,
+        "broadcast in a separate audio stream that is part of the service"
+    );
+    check_label!(
+        ReferenceType::DifferentServiceSameTs,
+        "broadcast by a different service within the same DVB transport stream"
+    );
+    check_label!(
+        ReferenceType::DifferentServiceDifferentTs,
+        "broadcast by a different service within a different DVB transport stream"
+    );
+    check_label!(ReferenceType::Reserved(0x05), "reserved", "reserved(0x05)");
+
+    check_label!(CodingType::Undefined, "not defined");
+    check_label!(CodingType::Satellite, "satellite");
+    check_label!(CodingType::Cable, "cable");
+    check_label!(CodingType::Terrestrial, "terrestrial");
+}
