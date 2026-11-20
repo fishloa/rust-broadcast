@@ -520,4 +520,46 @@ mod tests {
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
     }
+
+    /// The reference count is 7 bits but the 8-bit descriptor_length caps the
+    /// reachable count first: 123 refs (254-byte body) is the widest that
+    /// serializes, and 124 is already rejected by the length field.
+    #[test]
+    fn reference_count_is_capped_by_the_descriptor_length() {
+        let descriptor = |refs: usize| TuwaAvs3VideoDescriptor {
+            profile_id: 0x22,
+            level_id: 0x42,
+            multiple_frame_rate_flag: false,
+            frame_rate_code: Avs3FrameRateCode::Fps30,
+            sample_precision: 2,
+            chroma_format: 1,
+            temporal_id_flag: false,
+            td_mode_flag: false,
+            library_stream_flag: false,
+            reserved: ReservedOnes::<RESERVED_3_BITS>::FILL,
+            colour_primaries: 9,
+            transfer_characteristics: 14,
+            matrix_coefficients: 9,
+            library_refs: Some(TuwaLibraryRefs {
+                refs: (0..refs)
+                    .map(|i| TuwaLibraryRef::stream_id(i as u8))
+                    .collect(),
+                id_type_flag_if_empty: false,
+            }),
+        };
+
+        let ok = descriptor(123);
+        let mut out = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut out).unwrap();
+        assert_eq!(out[1], 254);
+        assert_eq!(TuwaAvs3VideoDescriptor::parse(&out).unwrap(), ok);
+
+        for count in [124usize, 127] {
+            let bad = descriptor(count);
+            assert!(matches!(
+                bad.serialize_into(&mut vec![0u8; bad.serialized_len()]),
+                Err(Error::FieldOverflow(_))
+            ));
+        }
+    }
 }
