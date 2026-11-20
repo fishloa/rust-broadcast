@@ -689,3 +689,99 @@ fn resegment_interleaves_huge_coprime_timescales() {
         );
     }
 }
+// ===========================================================================
+// Audit 23 finding 98 (#3572): `Media::trim` window edges and the sync snap.
+// ===========================================================================
+
+fn video_samples(data: &[u8], pts: &[i64], sync: bool) -> Vec<Sample> {
+    pts.iter()
+        .zip(data.iter())
+        .map(|(&p, &b)| {
+            Sample::new(vec![b; 4], Some(p), Some(p), Some(3_000), sync).expect("valid timing")
+        })
+        .collect()
+}
+
+fn track_samples(media: &Media, track_id: u32) -> &[Sample] {
+    &media
+        .tracks
+        .iter()
+        .find(|t| t.spec.track_id == TrackId::new(track_id))
+        .expect("track present")
+        .samples
+}
+
+/// A sample whose presentation time equals the exclusive `end` is never kept,
+/// on the anchor track or on the other track.
+#[test]
+fn trim_end_is_exclusive_for_anchor_and_other_tracks() {
+    let video = Track::new(
+        hevc_video_track(1),
+        video_samples(&[0x10, 0x11, 0x12, 0x13], &[0, 3_000, 6_000, 9_000], true),
+    );
+    let audio = Track::new(
+        hevc_video_track(2),
+        video_samples(&[0x20, 0x21, 0x22, 0x23], &[0, 3_000, 6_000, 9_000], true),
+    );
+    let media = Media::new(vec![video, audio], timescale(90_000));
+
+    let trimmed = media.trim(0, 6_000).expect("window selects samples");
+    for (id, base) in [(1u32, 0x10u8), (2, 0x20)] {
+        let kept = track_samples(&trimmed, id);
+        assert_eq!(kept.len(), 2, "track {id}: pts 0 and 3000 only");
+        assert_eq!(kept[0].data, vec![base; 4]);
+        assert_eq!(kept[1].data, vec![base + 1; 4]);
+    }
+
+    let trimmed = media.trim(3_000, 9_000).expect("window selects samples");
+    for (id, base) in [(1u32, 0x10u8), (2, 0x20)] {
+        let kept = track_samples(&trimmed, id);
+        assert_eq!(kept.len(), 2, "track {id}: pts 6000 is the exclusive end");
+        assert_eq!(kept[0].data, vec![base + 1; 4]);
+        assert_eq!(kept[1].data, vec![base + 2; 4]);
+    }
+}
+
+/// The anchor track's first sample at or past the window start may be exactly
+/// the exclusive end: it must not be selected as the snap point, which would
+/// drag the other tracks' lower edge to `end` and empty the window.
+#[test]
+fn trim_anchor_end_edge_sample_is_not_the_snap_point() {
+    let video = Track::new(hevc_video_track(1), video_samples(&[0x20], &[9_000], true));
+    let audio = Track::new(
+        hevc_video_track(2),
+        video_samples(&[0x30, 0x31], &[0, 7_000], true),
+    );
+    let media = Media::new(vec![video, audio], timescale(90_000));
+
+    let trimmed = media
+        .trim(6_000, 9_000)
+        .expect("the audio sample at 7000 is inside the window");
+    assert!(
+        track_samples(&trimmed, 1).is_empty(),
+        "anchor has no in-window sample"
+    );
+    let audio_kept = track_samples(&trimmed, 2);
+    assert_eq!(audio_kept.len(), 1);
+    assert_eq!(audio_kept[0].data, vec![0x31u8; 4]);
+}
+
+/// With no sync sample before the window start, the snap-back loop stops at
+/// index 0 instead of walking below it.
+#[test]
+fn trim_with_no_leading_sync_sample() {
+    let video = Track::new(
+        hevc_video_track(1),
+        video_samples(&[0x40, 0x41, 0x42, 0x43], &[0, 3_000, 6_000, 9_000], false),
+    );
+    let audio = Track::new(
+        hevc_video_track(2),
+        video_samples(&[0x50, 0x51, 0x52, 0x53], &[0, 3_000, 6_000, 9_000], true),
+    );
+    let media = Media::new(vec![video, audio], timescale(90_000));
+
+    let trimmed = media.trim(0, 9_000).expect("window selects samples");
+    let kept = track_samples(&trimmed, 1);
+    assert_eq!(kept.len(), 3, "pts 0, 3000, 6000");
+    assert_eq!(kept[0].data, vec![0x40u8; 4], "kept starts at index 0");
+}

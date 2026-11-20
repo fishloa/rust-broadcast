@@ -7,7 +7,10 @@ use transmux::WebmDemux;
 use transmux::ir::InputDegradation;
 use transmux::media::Media;
 
+use crate::webm_build::{encode_size_width, read_id, read_size};
+
 const CLUSTER_ID: [u8; 4] = [0x1F, 0x43, 0xB6, 0x75];
+const SEGMENT_ID: [u8; 4] = [0x18, 0x53, 0x80, 0x67];
 
 fn fixture(rel: &str) -> Vec<u8> {
     let path = test_fixtures::path(rel.trim_start_matches("fixtures/"));
@@ -122,5 +125,168 @@ fn corrupt_block_inside_a_cluster_is_dropped_the_rest_of_the_cluster_survives() 
             samples_of(&clean, t).last(),
             "later data still decoded"
         );
+    }
+}
+
+/// Append `extra` to the Segment's body and grow its size field to match, so
+/// the reader walks the appended bytes as Segment children.
+fn append_to_segment(data: &[u8], extra: &[u8]) -> Vec<u8> {
+    let mut bytes = data.to_vec();
+    let seg = bytes
+        .windows(4)
+        .position(|w| w == SEGMENT_ID)
+        .expect("fixture must contain a Segment");
+    let (_id, id_len) = read_id(&bytes, seg);
+    let (size, size_len) = read_size(&bytes, seg + id_len);
+    let field = seg + id_len;
+    bytes[field..field + size_len]
+        .copy_from_slice(&encode_size_width(size + extra.len() as u64, size_len));
+    bytes.extend_from_slice(extra);
+    bytes
+}
+
+/// A Segment body ending inside an element ID (`1A 45`, a 4-byte ID with two
+/// bytes present) is a truncated element, reported as a damaged unit; it must
+/// not slice four bytes out of a two-byte tail.
+#[test]
+fn truncated_element_id_at_the_segment_end_is_reported_not_panicked() {
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
+    let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
+
+    let bytes = append_to_segment(&clean_bytes, &[0x1A, 0x45]);
+    let damaged = WebmDemux::new()
+        .unpackage(&bytes[..])
+        .expect("a truncated trailing element ID must not fail the file");
+    assert_eq!(damaged.degraded.len(), 1, "{:?}", damaged.degraded);
+    assert!(matches!(
+        damaged.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
+    for t in 0..clean.tracks.len() {
+        assert_eq!(
+            samples_of(&damaged, t),
+            samples_of(&clean, t),
+            "track {t} must be untouched by the trailing damage"
+        );
+    }
+}
+
+/// An element ID with five leading-zero-derived bytes (`0x08` starts a 5-byte
+/// ID, but EBML IDs are 1-4 bytes) is rejected as a damaged unit, not decoded
+/// as an element. A valid empty size byte follows it, so a loosened guard would
+/// accept the bogus element silently.
+#[test]
+fn a_five_byte_element_id_is_reported_not_parsed() {
+    let clean_bytes = fixture("mkv/h264-aac.mkv");
+    let clean = WebmDemux::new().unpackage(&clean_bytes[..]).unwrap();
+
+    let bytes = append_to_segment(&clean_bytes, &[0x08, 0x01, 0x02, 0x03, 0x04, 0x80]);
+    let damaged = WebmDemux::new()
+        .unpackage(&bytes[..])
+        .expect("an over-long element ID must not fail the file");
+    assert_eq!(damaged.degraded.len(), 1, "{:?}", damaged.degraded);
+    assert!(matches!(
+        damaged.degraded[0],
+        InputDegradation::MalformedUnit { .. }
+    ));
+    for t in 0..clean.tracks.len() {
+        assert_eq!(
+            samples_of(&damaged, t),
+            samples_of(&clean, t),
+            "track {t} must be untouched by the bogus element"
+        );
+    }
+}
+
+/// Audit 23 findings 109-110 (#3583/#3584): after framing is lost the walk
+/// resumes at the next real Cluster, and each damage reports its own byte
+/// offset — never a constant, never a duplicated or re-read Cluster.
+///
+/// The Tracks element deliberately ends with `0x1F`, the first byte of the
+/// Cluster ID: searching for the resync boundary one byte too early
+/// (`at - 1`) would splice that byte onto the garbage's `43 B6 75` into a
+/// phantom Cluster that swallows every later element.
+#[test]
+fn resync_after_damage_reports_each_damage_at_its_own_offset() {
+    use crate::webm_demux::synth_mkv;
+
+    let tracks = synth_mkv::tracks(&[synth_mkv::track_entry(
+        1,
+        2,
+        b"A_OPUS",
+        &synth_mkv::opus_head(),
+        &synth_mkv::uint(synth_mkv::DEFAULT_DURATION, 0x1F),
+    )]);
+    let cluster_a = synth_mkv::cluster(
+        0,
+        &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xAA])],
+    );
+    let cluster_b = synth_mkv::cluster(
+        0,
+        &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xBB])],
+    );
+
+    let mut segment = tracks;
+    // A 4-byte garbage run that decodes as a Cluster only when read from its
+    // last preceding byte (`1F`); from its own first byte (`43`) it is a
+    // truncated 2-byte element ID that cannot fit its declared body.
+    let garbage_at = segment.len();
+    let mut phantom = vec![0x43u8, 0xB6, 0x75, 0x80];
+    segment.extend_from_slice(&phantom);
+    segment.extend_from_slice(&cluster_a);
+    segment.push(0x00);
+    segment.extend_from_slice(&cluster_b);
+    // Give the phantom Cluster a body that runs to the end of the Segment, so a
+    // walk starting at `at - 1` swallows both real Clusters.
+    let remaining = segment.len() - (garbage_at + 4);
+    assert!(remaining < 0x40, "one-byte VINT size for the phantom");
+    phantom[3] = 0x80 | remaining as u8;
+    segment[garbage_at..garbage_at + 4].copy_from_slice(&phantom);
+
+    let mut file = synth_mkv::element(synth_mkv::EBML_HEADER, &[]);
+    file.extend(synth_mkv::element(synth_mkv::SEGMENT, &segment));
+
+    let media = WebmDemux::new()
+        .demux(&file)
+        .expect("both Clusters after the damage must still be read");
+    assert_eq!(media.tracks.len(), 1);
+    let data: Vec<Vec<u8>> = media.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.data.to_vec())
+        .collect();
+    assert_eq!(
+        data,
+        vec![vec![0xAA], vec![0xBB]],
+        "exactly the two Clusters' samples, in order, no duplicates"
+    );
+
+    let cluster_starts: Vec<usize> = file
+        .windows(4)
+        .enumerate()
+        .filter(|(_, w)| *w == CLUSTER_ID)
+        .map(|(i, _)| i)
+        .collect();
+    assert!(
+        cluster_starts.len() >= 2,
+        "the two real Clusters must be present"
+    );
+    let body_start = file.len() - segment.len();
+    let expected = [
+        body_start + garbage_at,
+        body_start + garbage_at + 4 + cluster_a.len(),
+    ];
+    assert_ne!(expected[0], expected[1]);
+    assert_ne!(expected[0], 0);
+
+    assert_eq!(media.degraded.len(), 2, "{:?}", media.degraded);
+    for (entry, want) in media.degraded.iter().zip(expected) {
+        match entry {
+            InputDegradation::MalformedUnit { position } => assert_eq!(
+                *position, want as u64,
+                "damage must report its own byte offset"
+            ),
+            other => panic!("expected MalformedUnit, got {other:?}"),
+        }
     }
 }
