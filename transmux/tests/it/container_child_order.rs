@@ -17,8 +17,13 @@
 
 use broadcast_common::error::BufferTooShort;
 use broadcast_common::{Parse, Serialize};
-use transmux::TrackId;
-use transmux::{Error, MovieBox, OpaqueBox};
+use transmux::init_segment::{
+    Ac3SampleEntry, Ac4SampleEntry, AudioSampleEntryV1, DataInformationBox, DtsSampleEntry,
+    Ec3SampleEntry, FlacSampleEntry, MediaBox, MediaInformationBox, MhaSampleEntry,
+    Mp4aSampleEntry, OpusSampleEntry, SampleDescriptionBox, SampleEntryVariant, SampleTableBox,
+    StblChild, TrackBox,
+};
+use transmux::{EditListEntry, Error, MovieBox, OpaqueBox, TrackId};
 
 /// Find a top-level box by type and return its full bytes (header + body).
 fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> &'a [u8] {
@@ -551,4 +556,479 @@ fn traf_size_zero_last_child_round_trips_and_grows_safely() {
     let n = parsed.serialize_into(&mut out).expect("serialize");
     out.truncate(n);
     assert_eq!(out, traf, "a size-0 traf child round-trips byte-exactly");
+}
+
+// ---------------------------------------------------------------------------
+// Audit 23 finding 18 — every AudioSampleEntryV1-eligible entry needs stsd v1
+// ---------------------------------------------------------------------------
+
+/// Wrap `body` in a box whose four-CC is `fourcc`.
+fn boxed(fourcc: &[u8; 4], body: &[u8]) -> Vec<u8> {
+    let mut out = ((8 + body.len()) as u32).to_be_bytes().to_vec();
+    out.extend_from_slice(fourcc);
+    out.extend_from_slice(body);
+    out
+}
+
+/// Serialize `value` and assert it reports and writes exactly `bytes`.
+fn assert_round_trips<T: Serialize<Error = Error>>(value: &T, bytes: &[u8]) {
+    assert_eq!(value.serialized_len(), bytes.len(), "serialized_len");
+    let mut out = vec![0u8; value.serialized_len()];
+    let n = value.serialize_into(&mut out).expect("serialize");
+    assert_eq!(n, bytes.len(), "serialize_into return value");
+    assert_eq!(out, bytes, "byte-exact round trip");
+}
+
+/// A 28-byte audio sample entry fixed body with `entry_version` = `version`.
+fn audio_entry_body(entry_version: u16) -> Vec<u8> {
+    let mut body = vec![0u8; 28];
+    body[6..8].copy_from_slice(&1u16.to_be_bytes());
+    body[8..10].copy_from_slice(&entry_version.to_be_bytes());
+    body[16..18].copy_from_slice(&2u16.to_be_bytes());
+    body[18..20].copy_from_slice(&16u16.to_be_bytes());
+    body[24..28].copy_from_slice(&(48_000u32 << 16).to_be_bytes());
+    body
+}
+
+/// Every audio entry that can take the `AudioSampleEntryV1` form must ask for
+/// an `stsd` version 1 when its `entry_version` is 1, and version 0 when it is
+/// 0 (ISO/IEC 14496-12:2026 §12.2.3.2). The old `match` covered only `Flac`,
+/// so an `mp4a`/`ac-3`/`ec-3`/`Opus`/`ac-4`/`mha1`/`dtsc` v1 entry fell into
+/// `_ => 0` and was written into a version-0 `stsd`, which strict demuxers
+/// reject or misread.
+#[test]
+fn every_audio_entry_requires_stsd_v1_for_entry_version_one() {
+    assert_eq!(AudioSampleEntryV1::STSD_VERSION, 1);
+    assert_eq!(AudioSampleEntryV1::ENTRY_VERSION, 1);
+
+    let v1: Vec<(&str, SampleEntryVariant)> = vec![
+        (
+            "mp4a",
+            SampleEntryVariant::Mp4a(Box::new(
+                Mp4aSampleEntry::parse(&boxed(b"mp4a", &audio_entry_body(1))).expect("mp4a"),
+            )),
+        ),
+        (
+            "ac-3",
+            SampleEntryVariant::Ac3(Box::new(
+                Ac3SampleEntry::parse(&boxed(b"ac-3", &audio_entry_body(1))).expect("ac-3"),
+            )),
+        ),
+        (
+            "ec-3",
+            SampleEntryVariant::Ec3(Box::new(
+                Ec3SampleEntry::parse(&boxed(b"ec-3", &audio_entry_body(1))).expect("ec-3"),
+            )),
+        ),
+        (
+            "Opus",
+            SampleEntryVariant::Opus(Box::new(
+                OpusSampleEntry::parse(&boxed(b"Opus", &audio_entry_body(1))).expect("Opus"),
+            )),
+        ),
+        (
+            "fLaC",
+            SampleEntryVariant::Flac(Box::new(
+                FlacSampleEntry::parse(&boxed(b"fLaC", &audio_entry_body(1))).expect("fLaC"),
+            )),
+        ),
+        (
+            "ac-4",
+            SampleEntryVariant::Ac4(Box::new(
+                Ac4SampleEntry::parse(&boxed(b"ac-4", &audio_entry_body(1))).expect("ac-4"),
+            )),
+        ),
+        (
+            "mha1",
+            SampleEntryVariant::Mha(Box::new(
+                MhaSampleEntry::parse(&boxed(b"mha1", &audio_entry_body(1))).expect("mha1"),
+            )),
+        ),
+        (
+            "dtsc",
+            SampleEntryVariant::Dts(Box::new(
+                DtsSampleEntry::parse(&boxed(b"dtsc", &audio_entry_body(1))).expect("dtsc"),
+            )),
+        ),
+    ];
+    for (name, entry) in &v1 {
+        assert_eq!(
+            entry.required_stsd_version(),
+            1,
+            "{name} entry_version 1 must require an stsd version 1"
+        );
+    }
+
+    let v0: Vec<(&str, SampleEntryVariant)> = vec![
+        (
+            "mp4a",
+            SampleEntryVariant::Mp4a(Box::new(
+                Mp4aSampleEntry::parse(&boxed(b"mp4a", &audio_entry_body(0))).expect("mp4a"),
+            )),
+        ),
+        (
+            "ac-3",
+            SampleEntryVariant::Ac3(Box::new(
+                Ac3SampleEntry::parse(&boxed(b"ac-3", &audio_entry_body(0))).expect("ac-3"),
+            )),
+        ),
+        (
+            "Opus",
+            SampleEntryVariant::Opus(Box::new(
+                OpusSampleEntry::parse(&boxed(b"Opus", &audio_entry_body(0))).expect("Opus"),
+            )),
+        ),
+        (
+            "dtsc",
+            SampleEntryVariant::Dts(Box::new(
+                DtsSampleEntry::parse(&boxed(b"dtsc", &audio_entry_body(0))).expect("dtsc"),
+            )),
+        ),
+    ];
+    for (name, entry) in &v0 {
+        assert_eq!(
+            entry.required_stsd_version(),
+            0,
+            "{name} entry_version 0 must stay on an stsd version 0"
+        );
+    }
+}
+
+/// A video entry always uses the version-0 `stsd` form.
+#[test]
+fn video_entry_requires_stsd_v0() {
+    let data = subtitle_fixture();
+    let moov_bytes = find_top_box(&data, b"moov");
+    let moov = MovieBox::parse(moov_bytes).expect("moov");
+    let stsd = moov.tracks[0]
+        .mdia
+        .as_ref()
+        .expect("mdia")
+        .minf
+        .as_ref()
+        .expect("minf")
+        .stbl
+        .as_ref()
+        .expect("stbl")
+        .children
+        .iter()
+        .find_map(|c| match c {
+            StblChild::Stsd(s) => Some(s),
+            _ => None,
+        })
+        .expect("video stsd");
+    let entry = stsd.entries.first().expect("video entry");
+    assert!(
+        matches!(
+            entry,
+            SampleEntryVariant::Avc1(_) | SampleEntryVariant::Hevc1(_)
+        ),
+        "track 1 is the fixture's video track, got {entry:?}"
+    );
+    assert_eq!(entry.required_stsd_version(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Audit 23 finding 19 — co64/vmhd/smhd/edts parse into their typed fields
+// ---------------------------------------------------------------------------
+
+/// A `co64` child parsed into `StblChild::Co64` with both 8-byte offsets, and
+/// its serialize arm writes them back byte-exactly. Deleting the parse arm
+/// left a byte-identical `Opaque` child, so every byte round-trip test still
+/// passed while `StblChild::Co64` was silently absent.
+#[test]
+fn co64_child_parses_typed_with_two_offsets() {
+    let mut body = vec![0u8; 4];
+    body.extend_from_slice(&2u32.to_be_bytes());
+    body.extend_from_slice(&0x0102_0304_0506_0708u64.to_be_bytes());
+    body.extend_from_slice(&0x1112_1314_1516_1718u64.to_be_bytes());
+    let co64 = boxed(b"co64", &body);
+    let stbl_bytes = boxed(b"stbl", &co64);
+
+    let stbl = SampleTableBox::parse(&stbl_bytes).expect("stbl");
+    let StblChild::Co64(parsed) = stbl.children.first().expect("one child") else {
+        panic!(
+            "co64 must parse into StblChild::Co64, got {:?}",
+            stbl.children
+        );
+    };
+    assert_eq!(
+        parsed.entries,
+        vec![0x0102_0304_0506_0708u64, 0x1112_1314_1516_1718]
+    );
+    assert_round_trips(&stbl, &stbl_bytes);
+}
+
+/// A `minf` carrying a `vmhd`, and one carrying an `smhd`, each expose the
+/// typed header. Deleting either parse arm left the bytes intact but the field
+/// `None`, so a consumer reading the media header saw nothing.
+#[test]
+fn minf_vmhd_and_smhd_are_typed() {
+    let mut vmhd_body = vec![0u8; 4];
+    vmhd_body.extend_from_slice(&0u16.to_be_bytes()); // graphicsmode
+    vmhd_body.extend_from_slice(&0u16.to_be_bytes()); // opcolor 0
+    vmhd_body.extend_from_slice(&0u16.to_be_bytes()); // opcolor 1
+    vmhd_body.extend_from_slice(&0u16.to_be_bytes()); // opcolor 2
+    let vmhd = boxed(b"vmhd", &vmhd_body);
+    assert_eq!(vmhd.len(), 20);
+    let minf_bytes = boxed(b"minf", &vmhd);
+    let minf = MediaInformationBox::parse(&minf_bytes).expect("minf");
+    assert!(minf.vmhd.is_some(), "vmhd must be typed");
+    assert!(minf.smhd.is_none());
+    assert_round_trips(&minf, &minf_bytes);
+
+    let mut smhd_body = vec![0u8; 4];
+    smhd_body.extend_from_slice(&0u16.to_be_bytes()); // balance
+    smhd_body.extend_from_slice(&0u16.to_be_bytes()); // reserved
+    let smhd = boxed(b"smhd", &smhd_body);
+    assert_eq!(smhd.len(), 16);
+    let minf_bytes = boxed(b"minf", &smhd);
+    let minf = MediaInformationBox::parse(&minf_bytes).expect("minf");
+    assert!(minf.smhd.is_some(), "smhd must be typed");
+    assert!(minf.vmhd.is_none());
+    assert_round_trips(&minf, &minf_bytes);
+}
+
+/// A `trak` with an `edts/elst` exposes the typed edit list and its entries.
+#[test]
+fn trak_edts_elst_is_typed() {
+    let mut elst_body = vec![0u8; 4];
+    elst_body.extend_from_slice(&1u32.to_be_bytes());
+    elst_body.extend_from_slice(&1000u32.to_be_bytes()); // segment_duration
+    elst_body.extend_from_slice(&(-1i32).to_be_bytes()); // media_time
+    elst_body.extend_from_slice(&1i16.to_be_bytes()); // media_rate_integer
+    elst_body.extend_from_slice(&0i16.to_be_bytes()); // media_rate_fraction
+    let elst = boxed(b"elst", &elst_body);
+    let edts = boxed(b"edts", &elst);
+    let mut trak_body = tkhd_bytes(3);
+    trak_body.extend_from_slice(&edts);
+    let trak_bytes = boxed(b"trak", &trak_body);
+
+    let trak = TrackBox::parse(&trak_bytes).expect("trak");
+    let parsed_edts = trak.edts.as_ref().expect("edts must be typed");
+    let parsed_elst = parsed_edts.elst.as_ref().expect("elst must be typed");
+    assert_eq!(
+        parsed_elst.entries,
+        vec![EditListEntry {
+            segment_duration: 1000,
+            media_time: -1,
+            media_rate_integer: 1,
+            media_rate_fraction: 0,
+        }]
+    );
+    assert_round_trips(&trak, &trak_bytes);
+}
+
+// ---------------------------------------------------------------------------
+// Audit 23 finding 20 — opaque children of dinf/edts/mdia
+// ---------------------------------------------------------------------------
+
+/// A `dinf` with an opaque `free` child keeps its wire order, its size and its
+/// `dref`. A wrong `typed_four_ccs`/`child_order` reorders the typed child
+/// behind the opaque one, and a wrong opaque `serialized_len` mis-sizes the
+/// box header.
+#[test]
+fn dinf_opaque_child_keeps_wire_order_and_length() {
+    let mut dref_body = vec![0u8; 4];
+    dref_body.extend_from_slice(&0u32.to_be_bytes());
+    let dref = boxed(b"dref", &dref_body);
+    let free = boxed(b"free", &[0xAB; 4]);
+    for (label, children) in [
+        ("opaque first", [free.clone(), dref.clone()]),
+        ("typed first", [dref.clone(), free.clone()]),
+    ] {
+        let mut body = Vec::new();
+        for child in &children {
+            body.extend_from_slice(child);
+        }
+        let bytes = boxed(b"dinf", &body);
+        let parsed = DataInformationBox::parse(&bytes).expect(label);
+        assert!(parsed.dref.is_some(), "{label}: dref typed");
+        assert_eq!(parsed.opaque.len(), 1, "{label}: one opaque child");
+        assert_eq!(&parsed.opaque[0].box_type, b"free", "{label}");
+        assert_round_trips(&parsed, &bytes);
+    }
+}
+
+/// The opaque-only `dinf` shape: no typed child at all still preserves and
+/// sizes its single opaque child.
+#[test]
+fn dinf_single_opaque_child_round_trips() {
+    let bytes = boxed(b"dinf", &boxed(b"free", &[0x11; 4]));
+    let parsed = DataInformationBox::parse(&bytes).expect("dinf");
+    assert!(parsed.dref.is_none());
+    assert_eq!(parsed.opaque.len(), 1);
+    assert_round_trips(&parsed, &bytes);
+}
+
+/// A one-entry version-0 `elst` full box.
+fn elst_v0_one_entry() -> Vec<u8> {
+    let mut body = vec![0u8; 4];
+    body.extend_from_slice(&1u32.to_be_bytes());
+    body.extend_from_slice(&1000u32.to_be_bytes());
+    body.extend_from_slice(&(-1i32).to_be_bytes());
+    body.extend_from_slice(&1i16.to_be_bytes());
+    body.extend_from_slice(&0i16.to_be_bytes());
+    boxed(b"elst", &body)
+}
+
+/// An `edts` with an opaque `free` sibling keeps its order and length, before
+/// or after the typed `elst`.
+#[test]
+fn edts_opaque_child_keeps_wire_order_and_length() {
+    let elst = elst_v0_one_entry();
+    let free = boxed(b"free", &[0xCD; 4]);
+    for (label, children) in [
+        ("opaque first", [free.clone(), elst.clone()]),
+        ("typed first", [elst.clone(), free.clone()]),
+    ] {
+        let mut body = Vec::new();
+        for child in &children {
+            body.extend_from_slice(child);
+        }
+        let bytes = boxed(b"edts", &body);
+        let parsed = transmux::init_segment::EditBox::parse(&bytes).expect(label);
+        assert!(parsed.elst.is_some(), "{label}: elst typed");
+        assert_eq!(parsed.opaque.len(), 1, "{label}: one opaque child");
+        assert_round_trips(&parsed, &bytes);
+    }
+}
+
+/// A `mdia` with an opaque `free` sibling keeps its order and length, before
+/// or after its typed `mdhd`.
+#[test]
+fn mdia_opaque_child_keeps_wire_order_and_length() {
+    let data = subtitle_fixture();
+    let moov_bytes = find_top_box(&data, b"moov");
+    let moov = MovieBox::parse(moov_bytes).expect("moov");
+    let mdhd = moov.tracks[0]
+        .mdia
+        .as_ref()
+        .expect("mdia")
+        .mdhd
+        .as_ref()
+        .expect("mdhd")
+        .try_to_bytes()
+        .expect("mdhd bytes");
+    let free = boxed(b"free", &[0x5A; 4]);
+    for (label, children) in [
+        ("opaque first", [free.clone(), mdhd.clone()]),
+        ("typed first", [mdhd.clone(), free.clone()]),
+    ] {
+        let mut body = Vec::new();
+        for child in &children {
+            body.extend_from_slice(child);
+        }
+        let bytes = boxed(b"mdia", &body);
+        let parsed = MediaBox::parse(&bytes).expect(label);
+        assert!(parsed.mdhd.is_some(), "{label}: mdhd typed");
+        assert_eq!(parsed.opaque.len(), 1, "{label}: one opaque child");
+        assert_round_trips(&parsed, &bytes);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Audit 23 findings 21 and 22 — audio config-box scan and trailing stsd entry
+// ---------------------------------------------------------------------------
+
+/// An `mp4a` entry whose fixed 28-byte body is followed by `config`.
+fn mp4a_with_config(config: &[u8]) -> Vec<u8> {
+    let mut body = audio_entry_body(0);
+    body.extend_from_slice(config);
+    boxed(b"mp4a", &body)
+}
+
+/// An 8-byte `free` child must be kept, not end the config-box scan (the `sz <
+/// 8` bound loosened to `<=` dropped it and every following child).
+#[test]
+fn audio_sample_entry_scan_keeps_a_header_only_child() {
+    let mut config = boxed(b"free", &[]);
+    config.extend_from_slice(&boxed(b"esds", &[0, 0, 0, 0]));
+    let bytes = mp4a_with_config(&config);
+    let entry = Mp4aSampleEntry::parse(&bytes).expect("mp4a");
+    assert_eq!(entry.config_boxes.len(), 2);
+    assert_eq!(&entry.config_boxes[0].box_type, b"free");
+    assert_eq!(&entry.config_boxes[1].box_type, b"esds");
+    assert_round_trips(&entry, &bytes);
+}
+
+/// A config child of 65 552 bytes (0x0001_0010) must have its size read from
+/// the second size byte, and the following child found at the right offset.
+/// With every test box under 64 KiB the two low size bytes are identical and a
+/// wrong read is invisible.
+#[test]
+fn audio_sample_entry_scan_reads_the_second_size_byte() {
+    let free = boxed(b"free", &[0u8; 65_544]);
+    assert_eq!(free.len(), 65_552);
+    assert_eq!(&free[..4], &0x0001_0010u32.to_be_bytes());
+    let mut config = free;
+    config.extend_from_slice(&boxed(b"esds", &[0, 0, 0, 0]));
+    let bytes = mp4a_with_config(&config);
+    let entry = Mp4aSampleEntry::parse(&bytes).expect("mp4a");
+    assert_eq!(entry.config_boxes.len(), 2);
+    assert_eq!(entry.config_boxes[0].data.len(), 65_544);
+    assert_eq!(&entry.config_boxes[1].box_type, b"esds");
+    assert_eq!(entry.config_boxes[1].data, vec![0u8; 4]);
+    assert_round_trips(&entry, &bytes);
+}
+
+/// An `stsd` whose only entry is a bare 8-byte header must keep that entry
+/// rather than dropping it at `off + 8 == len`.
+#[test]
+fn stsd_keeps_a_trailing_header_only_entry() {
+    let mut bytes = vec![0u8; 16];
+    bytes[..4].copy_from_slice(&24u32.to_be_bytes());
+    bytes[4..8].copy_from_slice(b"stsd");
+    bytes[12..16].copy_from_slice(&1u32.to_be_bytes());
+    bytes.extend_from_slice(&8u32.to_be_bytes());
+    bytes.extend_from_slice(b"xxxx");
+
+    let stsd = SampleDescriptionBox::parse(&bytes).expect("stsd");
+    assert_eq!(stsd.entries.len(), 1);
+    let SampleEntryVariant::Unknown(entry) = &stsd.entries[0] else {
+        panic!("expected an Unknown entry, got {:?}", stsd.entries[0]);
+    };
+    assert_eq!(&entry.box_type, b"xxxx");
+    assert_round_trips(&stsd, &bytes);
+}
+
+/// The same trailing header-only entry after a real `avc1` entry.
+#[test]
+fn stsd_keeps_header_only_entry_after_a_real_entry() {
+    let data = subtitle_fixture();
+    let moov_bytes = find_top_box(&data, b"moov");
+    let moov = MovieBox::parse(moov_bytes).expect("moov");
+    let stsd = moov.tracks[0]
+        .mdia
+        .as_ref()
+        .expect("mdia")
+        .minf
+        .as_ref()
+        .expect("minf")
+        .stbl
+        .as_ref()
+        .expect("stbl")
+        .children
+        .iter()
+        .find_map(|c| match c {
+            StblChild::Stsd(s) => Some(s),
+            _ => None,
+        })
+        .expect("video stsd");
+    let original = stsd.try_to_bytes().expect("stsd bytes");
+    let count = u32::from_be_bytes(original[12..16].try_into().unwrap());
+
+    let mut bytes = original.clone();
+    bytes[..4].copy_from_slice(&((original.len() + 8) as u32).to_be_bytes());
+    bytes[12..16].copy_from_slice(&(count + 1).to_be_bytes());
+    bytes.extend_from_slice(&8u32.to_be_bytes());
+    bytes.extend_from_slice(b"xxxx");
+
+    let parsed = SampleDescriptionBox::parse(&bytes).expect("stsd");
+    assert_eq!(parsed.entries.len(), count as usize + 1);
+    let SampleEntryVariant::Unknown(entry) = parsed.entries.last().expect("last entry") else {
+        panic!("expected a trailing Unknown entry");
+    };
+    assert_eq!(&entry.box_type, b"xxxx");
+    assert_round_trips(&parsed, &bytes);
 }
