@@ -2108,6 +2108,57 @@ mod tests {
         );
     }
 
+    /// Feed one present/following EIT section carrying `event_id` for
+    /// `service_id`.
+    fn feed_one_event(
+        store: &mut EpgStore,
+        service_id: u16,
+        event_id: u16,
+        version: u8,
+        hour: u32,
+    ) {
+        let desc = short_event_bytes(b"E", b"");
+        let sr = start_raw(2026, 6, 10, hour);
+        let eit = serialize_eit(&crate::tables::eit::EitSection::new(
+            crate::tables::eit::EitKind::PresentFollowingActual,
+            0x4Eu8,
+            service_id,
+            crate::tables::SectionVersion::new(version, true, 0, 0),
+            1,
+            1,
+            0u8,
+            0x5Fu8,
+            vec![crate::tables::eit::EitEvent::new(
+                event_id,
+                sr,
+                [1, 0, 0],
+                crate::tables::RunningStatus::Undefined,
+                false,
+                crate::descriptors::DescriptorLoop::new(&desc),
+            )],
+        ));
+        store.feed(&eit).unwrap();
+    }
+
+    #[test]
+    fn collector_logical_key_cap_is_applied() {
+        let mut store = EpgStore::new()
+            .with_max_services(7)
+            .with_collector_max_logical_keys(1);
+        for service_id in 1..=8u16 {
+            feed_one_event(&mut store, service_id, service_id, 0, 10);
+        }
+        assert_eq!(
+            store.service_count(),
+            7,
+            "with_max_services must survive with_collector_max_logical_keys"
+        );
+        assert!(
+            store.collector_sections_evicted_for_capacity() >= 1,
+            "a collector cap of 1 cannot hold 8 distinct section-set keys"
+        );
+    }
+
     // ------------------------------------------------------------------
     // serde round-trip
     // ------------------------------------------------------------------
