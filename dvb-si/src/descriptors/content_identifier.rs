@@ -394,4 +394,21 @@ mod tests {
         assert_eq!(CridType::Recommendation.name(), "recommendation");
         assert_eq!(CridType::Reserved(0x55).name(), "reserved");
     }
+
+    /// A reference CRID followed by another entry: the presence of later bytes
+    /// must not be mistaken for a truncated reference.
+    #[test]
+    fn reference_followed_by_another_crid_parses() {
+        // Series reference 0x0042, then ItemOfContent inline "AB".
+        let bytes = [TAG, 7, (0x02 << 2) | 0x01, 0x00, 0x42, 0x01 << 2, 0x02, b'A', b'B'];
+        let d = ContentIdentifierDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.entries.len(), 2);
+        assert_eq!(d.entries[0].crid_type, CridType::Series);
+        assert_eq!(d.entries[0].location, CridLocation::Reference(0x0042));
+        assert_eq!(d.entries[1].crid_type, CridType::ItemOfContent);
+        assert_eq!(d.entries[1].location, CridLocation::Inline(b"AB"));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+    }
 }
