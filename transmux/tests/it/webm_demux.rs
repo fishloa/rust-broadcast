@@ -24,6 +24,7 @@
 use broadcast_common::Package;
 use test_fixtures::ffprobe;
 use transmux::TrackId;
+use transmux::error::Error;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
@@ -839,12 +840,12 @@ fn fixed_lacing_yields_one_sample_per_frame() {
 /// `DefaultDuration`) and `blocks`, where each block's frames are the fixture's
 /// own audio frames (so nothing is synthesised).
 ///
-/// Returns the demuxed audio track's `(dts, pts, duration, first_byte)` rows.
-fn laced_timing(
+/// The demuxed audio track of the rebuilt file.
+fn laced_audio(
     data: &[u8],
     default_duration_ns: u64,
     blocks: &[(i16, Vec<Vec<u8>>)],
-) -> Vec<(i64, i64, u32, u8)> {
+) -> transmux::ir::Track {
     let tracks = laced_mkv::set_default_duration(data, 2, default_duration_ns);
     let cluster: Vec<(u64, i16, u8, Vec<Vec<u8>>)> = blocks
         .iter()
@@ -858,12 +859,20 @@ fn laced_timing(
         "the rebuilt file must carry the audio track (bytes {} long)",
         bytes.len()
     );
-    let audio = media
+    media
         .tracks
-        .iter()
+        .into_iter()
         .find(|t| !matches!(t.spec.config, CodecConfig::Vp9 { .. }))
-        .expect("the audio track");
-    audio
+        .expect("the audio track")
+}
+
+/// Returns the demuxed audio track's `(dts, pts, duration, first_byte)` rows.
+fn laced_timing(
+    data: &[u8],
+    default_duration_ns: u64,
+    blocks: &[(i16, Vec<Vec<u8>>)],
+) -> Vec<(i64, i64, u32, u8)> {
+    laced_audio(data, default_duration_ns, blocks)
         .samples
         .iter()
         .map(|s| {
@@ -1193,6 +1202,145 @@ fn ns_to_ticks_rounds_rather_than_truncates() {
 }
 
 // ---------------------------------------------------------------------------
+// No `DefaultDuration`: the nominal step comes from the first *positive* gap
+// ---------------------------------------------------------------------------
+
+/// A block pair that shares one timestamp has no interval to derive from and
+/// must be skipped; the step comes from the next pair, which starts at a
+/// block whose `first_frame` is already past zero.
+///
+/// Three blocks: two at 0 (3 then 2 frames) and one at 40 ms (2 frames). The
+/// only positive gap is 40 ms across the middle block's 2 frames, so the step
+/// is 20 ms — not 0 (a same-timestamp pair winning), not a panic, and not the
+/// sum of the two frame indices.
+#[test]
+fn no_default_duration_skips_a_zero_gap_block_pair() {
+    let data = std::fs::read(test_fixtures::path(FIXTURE)).expect("read webm fixture");
+    let frames = fixture_audio_frames(&data);
+    let audio = laced_audio(
+        &data,
+        0, // no DefaultDuration
+        &[
+            (0, frames.clone()),
+            (0, frames[..2].to_vec()),
+            (40, frames[..2].to_vec()),
+        ],
+    );
+    let dts: Vec<i64> = audio
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.dts()).expect("dts"))
+        .collect();
+    assert_eq!(
+        dts,
+        vec![0, 20, 40, 0, 20, 40, 60],
+        "the 40 ms gap over two frames is 20 ms per frame; the same-timestamp \
+         pair contributes no interval"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Unsupported CodecIDs are skipped, never sent to another codec's parser
+// ---------------------------------------------------------------------------
+
+/// A video track that is not VP9/VP8/AVC and an audio track that is not
+/// Opus/Vorbis must be skipped (`Ok(None)`), not dispatched to the HEVC / AAC
+/// parser because a `&&` became `||`. Each unsupported track carries a sample,
+/// so `build_media` really reaches the codec dispatch for it.
+#[test]
+fn unsupported_codec_ids_are_skipped_not_dispatched_as_hevc_or_aac() {
+    let tracks = vec![
+        crate::webm_build::track_entry(1, 1, b"V_VP9", &[]),
+        crate::webm_build::track_entry(2, 1, b"V_AV1", &[]),
+        crate::webm_build::track_entry(3, 2, b"A_AC3", &[]),
+    ];
+    let bytes = crate::webm_build::file(
+        &tracks,
+        &[(1, &[0xAA, 0xBB]), (2, &[0xCC, 0xDD]), (3, &[0xEE, 0xFF])],
+    );
+    let media = WebmDemux::new()
+        .demux(&bytes)
+        .expect("an unsupported CodecID is skipped, never fatal");
+    assert_eq!(
+        media.tracks.len(),
+        1,
+        "only the VP9 track is supported, got {:?}",
+        media
+            .tracks
+            .iter()
+            .map(|t| &t.spec.config)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        matches!(media.tracks[0].spec.config, CodecConfig::Vp9 { .. }),
+        "the surviving track must be VP9, got {:?}",
+        media.tracks[0].spec.config
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Opus channel-mapping table (RFC 7845 §5.1, family != 0)
+// ---------------------------------------------------------------------------
+
+/// An `OpusHead` with `ChannelMappingFamily = 1` carries `StreamCount`,
+/// `CoupledCount` and one mapping byte per channel after the fixed part.
+///
+/// Six channels: the table is 2 + 6 bytes after the 19-byte fixed part, so a
+/// truncated head must fail rather than slice past it.
+fn opus_head_with_mapping() -> Vec<u8> {
+    let mut head = Vec::new();
+    head.extend_from_slice(b"OpusHead");
+    head.push(1); // version
+    head.push(6); // output channel count
+    head.extend_from_slice(&312u16.to_le_bytes()); // pre-skip
+    head.extend_from_slice(&48_000u32.to_le_bytes()); // input sample rate
+    head.extend_from_slice(&0i16.to_le_bytes()); // output gain
+    head.push(1); // channel mapping family
+    head.push(4); // stream count
+    head.push(2); // coupled count
+    head.extend_from_slice(&[0, 4, 1, 2, 3, 5]);
+    head
+}
+
+#[test]
+fn opus_channel_mapping_table_is_parsed() {
+    let head = opus_head_with_mapping();
+    assert_eq!(head.len(), 27, "19 fixed + 2 counts + 6 mapping bytes");
+    let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_OPUS", &head)];
+    let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
+    let media = WebmDemux::new().demux(&bytes).expect("family-1 OpusHead");
+
+    let CodecConfig::Opus { config, .. } = &media.tracks[0].spec.config else {
+        panic!("expected Opus, got {:?}", media.tracks[0].spec.config);
+    };
+    assert_eq!(config.channel_mapping_family, 1);
+    let table = config
+        .channel_mapping
+        .as_ref()
+        .expect("family 1 carries a mapping table");
+    assert_eq!(table.stream_count, 4);
+    assert_eq!(table.coupled_count, 2);
+    assert_eq!(table.channel_mapping, vec![0, 4, 1, 2, 3, 5]);
+}
+
+#[test]
+fn opus_channel_mapping_table_short_by_one_byte_is_an_error() {
+    let head = opus_head_with_mapping();
+    let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_OPUS", &head[..26])];
+    let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
+    let err = WebmDemux::new()
+        .demux(&bytes)
+        .expect_err("a head short of its mapping table must not parse");
+    match err {
+        Error::BufferTooShort(b) => {
+            assert_eq!(b.need, 27, "19 fixed + 2 counts + 6 channels");
+            assert_eq!(b.have, 26);
+            assert_eq!(b.what, "OpusHead channel-mapping table");
+        }
+        other => panic!("expected BufferTooShort, got {other:?}"),
+    }
+}
+
 // Audit 23 findings 104-108 (#3578-#3582): synthetic minimal WebM files.
 //
 // A real fixture cannot exercise a truncated VP8 key-frame header, a
