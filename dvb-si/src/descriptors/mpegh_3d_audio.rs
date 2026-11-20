@@ -2025,4 +2025,28 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         assert_eq!(d.serialize_into(&mut buf).unwrap(), buf.len());
     }
+
+    /// A plain scope may only name a type that carries no following ID; type 2
+    /// needs an `mae_groupID` and type 3 is the preset encoding.
+    #[test]
+    fn drc_plain_scope_rejects_types_that_carry_an_id() {
+        let mut out = Vec::new();
+        assert!(matches!(
+            write_scope(&DrcScope::Plain(2), DRC_GROUP_TYPES, &mut out),
+            Err(Error::InvalidDescriptor { .. })
+        ));
+        assert!(matches!(
+            write_scope(&DrcScope::Plain(3), DRC_GROUP_TYPES, &mut out),
+            Err(Error::InvalidDescriptor { .. })
+        ));
+        out.clear();
+        assert_eq!(
+            write_scope(&DrcScope::Plain(0), DRC_GROUP_TYPES, &mut out).unwrap(),
+            0
+        );
+        assert_eq!(
+            write_scope(&DrcScope::Plain(1), DRC_GROUP_TYPES, &mut out).unwrap(),
+            1
+        );
+    }
 }
