@@ -563,6 +563,27 @@ mod tests {
     }
 
     #[test]
+    fn ca_pid_of_reads_the_upper_byte_of_the_masked_field() {
+        // CA_descriptor body: CA_system_id (2 bytes), then the
+        // reserved(3)/CA_PID(13) field, whose top three bits are set on the
+        // wire and masked off (ISO/IEC 13818-1 §2.6.16).
+        assert_eq!(
+            ca_pid_of(&[0x06, 0x04, 0xE1, 0x23]),
+            Some(Pid::from_const(0x0123))
+        );
+        assert_eq!(
+            ca_pid_of(&[0x06, 0x04, 0xFF, 0xFF]),
+            Some(Pid::from_const(0x1FFF)),
+            "the three reserved bits are masked off, not read as PID bits"
+        );
+        assert_eq!(
+            ca_pid_of(&[0x06, 0x04]),
+            None,
+            "a body too short for the CA_PID field carries no PID"
+        );
+    }
+
+    #[test]
     fn record_tracks_the_service() {
         let mut m = ManagedCa::new();
         let svc = ManagedService {
