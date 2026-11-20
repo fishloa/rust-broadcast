@@ -18,6 +18,7 @@
 - A persistent PMT or referenced-PID absence is reported once: 20 further packets past the timeout raise exactly one 1.5.a and one 1.6 (audit 23 finding 151, #3493).
 - Every strict timing limit is probed at exactly the limit (clean) and one tick past it (error): PAT/PMT 500 ms, PID 5 s, SI repetition 10 s, Unreferenced_PID 500 ms, PCR repetition 100 ms, PCR delta 2 700 000 ticks, PTS 700 ms, `_other` repetition 10 s and EIT P/F pairing 2 s (audit 23 finding 152, #3494).
 - EIT P/F per-section absence (3.6.a) is pinned both ways: an alternating section 0/1 stream is clean, and a section '1' that vanishes while '0' continues is reported exactly once at 2.001 s, never blaming the surviving section (audit 23 finding 153, #3495).
+- Every legal non-`_actual` table_id is proven clean: NIT stuffing, SDT_other, BAT, stuffing on the SDT/EIT PIDs, TOT and stuffing on the TDT PID raise no `*_error` (audit 23 finding 154, #3496).
 
 ## [15.1.0] - 2026-11-17
 ### Added

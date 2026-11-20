@@ -4134,3 +4134,38 @@ fn eit_pf_section_vanishing_is_reported_once_past_the_interval() {
         "the packet at exactly 2.000 s is clean: {at_deadline:#?}"
     );
 }
+
+// ── Legal table_ids on the SI PIDs ─────────────────────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c: NIT (3.1), SDT/BAT (3.5), EIT (3.6) and
+/// TDT/TOT (3.8) each allow more than their `_actual` table_id plus stuffing.
+/// A legal id that the guard drops is falsely reported.
+#[test]
+fn legal_table_ids_on_si_pids_are_not_flagged() {
+    for (pid, table_id, indicator) in [
+        (0x0010u16, 0x72u8, Indicator::NitError),
+        (0x0011, 0x46, Indicator::SdtError),
+        (0x0011, 0x4A, Indicator::SdtError),
+        (0x0011, 0x72, Indicator::SdtError),
+        (0x0012, 0x72, Indicator::EitError),
+        (0x0014, 0x73, Indicator::TdtError),
+        (0x0014, 0x72, Indicator::TdtError),
+    ] {
+        let mut monitor = ConformanceMonitor::new();
+        acquire_sync(&mut monitor);
+
+        let mut section = build_nit_actual_section();
+        section[0] = table_id;
+        refresh_crc(&mut section);
+        let events = feed_all(
+            &mut monitor,
+            &packetise_section(pid, &section),
+            ms(5),
+            ms(1),
+        );
+        assert!(
+            !has_indicator(&events, indicator),
+            "table_id 0x{table_id:02X} is legal on PID 0x{pid:04X}: {events:#?}"
+        );
+    }
+}
