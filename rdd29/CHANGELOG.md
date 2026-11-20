@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- Pin the element-strictness checks: trailing bits in a declared BedDefinition1/ObjectDefinition1 body are rejected, AlignBits is validated at both extremes, and the ChannelCount ceiling is exclusive (#3218).
+- Pin the AtmosFrame empty-frame body length and trailing-byte count, BedDefinition1's serialized length per channel count, the BitDepth/ZoneGain wire bits, and every spec label in this crate's enums (#3219).
+
 ## [0.8.0] - 2026-11-15
 
 ### Changed

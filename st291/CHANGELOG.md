@@ -15,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `Error::ReservedBits` for a cleared `data_alignment_indicator` reported `expected: 0`, the position bit masked by `& 1`, instead of the spec value `1` (#3210).
+
+### Tests
+- Pin `Checksum_Word` bit 9 (the inverse of bit 8) with a `b8 = 0` literal and the fixture's on-wire words, and the `AncPacket::checksum()` accessor (#3209).
+- Reject each forbidden ST 2038 PES header field on its own, so the `||` chain is exercised one condition at a time (#3210).
+- Pin `PLACEMENT_BITS == 32`, the record bit/byte lengths, the exact 65535 `PES_packet_length` ceiling, `Descriptor` labels and the per-position reserved-field check (#3211).
+
 ## [0.8.0] - 2026-11-15
 ### Changed
 - BREAKING: `AncRtpPayload::extended_sequence_number` is an `ExtendedSequenceNumber` instead of a bare `u16` (#2768): the field holds the high-order bits of RFC 4175's extended 32-bit sequence number, so it now names that position (`high_half()`, `extended(rtp_sequence_number)`) rather than leaving the shift to the caller. The two wire bytes are unchanged.

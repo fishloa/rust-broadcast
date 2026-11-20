@@ -33,6 +33,11 @@ impl<T: AsMut<[u8]>> Drop for Zeroizing<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "bitsliced")]
+    use crate::bitsliced::{BitslicedBlock, BitslicedStream};
+    use crate::block::BlockCipher;
+    use crate::key::ControlWord;
+    use crate::stream::StreamCipher;
 
     #[test]
     fn zeroize_clears_every_byte() {
@@ -55,6 +60,9 @@ mod tests {
     /// same "prove it zeroed" technique the `zeroize` crate's own tests use.
     /// `u8` has no validity invariant, so reading plain bytes back from
     /// still-live (not yet reused) stack storage is sound.
+    ///
+    /// The same technique covers each cipher type: their destructors are the
+    /// crate's secret-hygiene guarantee, so every one is exercised here.
     #[test]
     #[allow(unsafe_code)]
     fn zeroizing_wrapper_clears_its_storage_on_drop() {
@@ -66,5 +74,48 @@ mod tests {
         // the pointee is valid; Drop runs exactly once (ManuallyDrop never re-drops).
         unsafe { core::ptr::drop_in_place(&mut *slot) };
         assert_eq!(slot.0, [0u8; 8]);
+
+        // SAFETY: as above; `[u8; 8]` holds no destructor, so it stays readable.
+        let mut key = core::mem::ManuallyDrop::new(ControlWord::from_bytes([
+            0x5a, 0xa5, 0x5a, 0xa5, 0x5a, 0xa5, 0x5a, 0xa5,
+        ]));
+        // SAFETY: as above.
+        unsafe { core::ptr::drop_in_place(&mut *key) };
+        assert_eq!(key.0, [0u8; 8], "control word survived its drop uncleared");
+
+        // SAFETY: as above; the round-key schedule is plain bytes.
+        let mut bc = core::mem::ManuallyDrop::new(BlockCipher::new([0xa5; 56]));
+        // SAFETY: as above.
+        unsafe { core::ptr::drop_in_place(&mut *bc) };
+        assert_eq!(bc.round_keys(), [0u8; 56], "round keys survived their drop");
+
+        // SAFETY: as above; the registers are plain integers.
+        let mut sc = core::mem::ManuallyDrop::new(StreamCipher::with_sentinel_registers());
+        // SAFETY: as above.
+        unsafe { core::ptr::drop_in_place(&mut *sc) };
+        assert_eq!(sc.registers(), [0u64; 4], "registers survived their drop");
+
+        #[cfg(feature = "bitsliced")]
+        {
+            // SAFETY: as above; the round-key schedule is plain bytes.
+            let mut bsb = core::mem::ManuallyDrop::new(BitslicedBlock::new([0xa5; 56]));
+            // SAFETY: as above.
+            unsafe { core::ptr::drop_in_place(&mut *bsb) };
+            assert_eq!(
+                bsb.round_keys(),
+                [0u8; 56],
+                "bitsliced round keys survived their drop"
+            );
+
+            // SAFETY: as above; the registers are plain integers.
+            let mut bss = core::mem::ManuallyDrop::new(BitslicedStream::with_sentinel_registers());
+            // SAFETY: as above.
+            unsafe { core::ptr::drop_in_place(&mut *bss) };
+            let (a, b, p, c) = bss.registers();
+            assert!(
+                a.iter().chain(b).chain(p).chain(c).all(|&w| w == 0),
+                "bitsliced registers survived their drop"
+            );
+        }
     }
 }

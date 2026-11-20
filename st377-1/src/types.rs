@@ -942,4 +942,79 @@ mod tests {
         assert_eq!(decode_utf16_be(&[0x00]), Err(invalid));
         assert_eq!(decode_utf16_be(&[0xD8, 0x00]), Err(invalid));
     }
+
+    #[test]
+    fn ul_bytes_from_array_and_display_are_the_wire_form() {
+        let bytes = [
+            0x06, 0x0e, 0x2b, 0x34, 0x02, 0x05, 0x01, 0x01, 0x0d, 0x01, 0x02, 0x01, 0x01, 0x11,
+            0x01, 0x00,
+        ];
+        let ul = UlBytes::from(bytes);
+        assert_eq!(ul.as_ref(), &bytes);
+        assert_eq!(ul.to_string(), "060e2b34020501010d01020101110100");
+        assert_eq!(<[u8; 16]>::from(ul), bytes);
+    }
+
+    #[test]
+    fn strong_ref_bytes_as_ref_and_display_are_the_wire_form() {
+        let bytes = [
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+            0x32, 0x10,
+        ];
+        let reference = StrongRef(bytes);
+        assert_eq!(reference.as_bytes(), &bytes);
+        assert_eq!(reference.as_ref(), &bytes[..]);
+        assert_eq!(reference.to_string(), "0123456789abcdeffedcba9876543210");
+    }
+
+    #[test]
+    fn auid_is_ul_discriminates_on_byte_0_top_bit() {
+        assert!(Auid(UlBytes([0x00; 16])).is_ul());
+        assert!(Auid(UlBytes([0x06; 16])).is_ul());
+        assert!(!Auid(UlBytes([0x80; 16])).is_ul());
+        assert!(!Auid(UlBytes([0xFF; 16])).is_ul());
+    }
+
+    #[test]
+    fn uid_batch_with_header_retains_both_parts() {
+        let items = alloc::vec![UlBytes([0xAB; 16]), UlBytes([0xCD; 16])];
+        let header = [0, 0, 0, 2, 0, 0, 0, 16];
+        let batch = UidBatch::with_header(items.clone(), Some(header));
+        assert_eq!(batch.items(), items.as_slice());
+        assert_eq!(batch.header(), Some(header));
+        assert_eq!(
+            UidBatch::with_header(items.clone(), None).header(),
+            None,
+            "a freshly built Batch has no header"
+        );
+
+        // A retained header that disagrees with the element count cannot be
+        // written; the error reports the body length (2 x 16 bytes).
+        let mismatched = UidBatch::with_header(items, Some([0, 0, 0, 3, 0, 0, 0, 16]));
+        match mismatched.serialize() {
+            Err(Error::InvalidBatchHeader {
+                count,
+                item_len,
+                buffer_len,
+            }) => {
+                assert_eq!(count, 3);
+                assert_eq!(item_len, 16);
+                assert_eq!(buffer_len, 32);
+            }
+            other => panic!("expected InvalidBatchHeader, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    #[test]
+    fn serde_bytes32_deserializes_every_byte() {
+        let bytes: alloc::vec::Vec<u8> = (0u8..32).collect();
+        let de = serde::de::value::SeqDeserializer::<_, serde::de::value::Error>::new(
+            bytes.clone().into_iter(),
+        );
+        assert_eq!(
+            serde_bytes32::deserialize(de).unwrap(),
+            <[u8; 32]>::try_from(bytes.as_slice()).unwrap()
+        );
+    }
 }

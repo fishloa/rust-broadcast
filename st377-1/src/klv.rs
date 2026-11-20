@@ -46,5 +46,18 @@ mod tests {
         assert!(is_fill_item_key(&rp210));
         assert!(is_fill_item_key(&legacy));
         assert!(!is_fill_item_key(&UlBytes([0u8; 16])));
+
+        let mut wrong_prefix = rp210;
+        wrong_prefix.0[0] ^= 0xFF;
+        assert!(
+            !is_fill_item_key(&wrong_prefix),
+            "a shared suffix alone must not make an item Fill"
+        );
+        let mut wrong_suffix = rp210;
+        wrong_suffix.0[15] ^= 0x01;
+        assert!(
+            !is_fill_item_key(&wrong_suffix),
+            "a shared prefix alone must not make an item Fill"
+        );
     }
 }

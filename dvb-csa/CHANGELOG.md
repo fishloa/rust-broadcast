@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- Pin the zeroize-on-drop guarantee for all five key-bearing types (round-key schedules, control word, both stream ciphers), so a removed `Drop` no longer passes the suite (#3206).
+- Pin the `KeyParity` labels and `Display` output (#3207).
+
 ## [0.8.0] - 2026-11-15
 
 ### Changed
