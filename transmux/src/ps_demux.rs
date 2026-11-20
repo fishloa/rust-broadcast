@@ -1271,3 +1271,126 @@ mod wrap_tests {
         assert_eq!(out[1].1, Some(WRAP + 90_000));
     }
 }
+
+#[cfg(test)]
+mod interpolate_tests {
+    use super::*;
+
+    fn units(dts: &[Option<u64>]) -> Vec<AccessUnit> {
+        dts.iter()
+            .map(|&d| AccessUnit { pts: d, dts: d })
+            .collect()
+    }
+
+    /// Audit #3570: the constant frame duration divides the stamp span by the
+    /// **index** span, and the interpolation walks from the anchor by index
+    /// distance. Stamps on access units 2 and 6 (not 0) make both signs visible:
+    /// `i1 - i0` is 4 (not 8) and `i - anchor_idx` is negative before the anchor.
+    #[test]
+    fn stamped_frame_duration_uses_the_index_span_from_the_first_stamp() {
+        let mut u = units(&[None; 7]);
+        u[2].dts = Some(90_000);
+        u[6].dts = Some(90_000 + 4 * 3_600);
+        assert_eq!(stamped_frame_duration(&u), 3_600);
+
+        let d = interpolate_dts(&u);
+        assert_eq!(d[0], 90_000 - 2 * 3_600);
+        assert_eq!(d[1], 90_000 - 3_600);
+        assert_eq!(d[2], 90_000);
+        assert_eq!(d[4], 90_000 + 2 * 3_600);
+        assert_eq!(d[6], 90_000 + 4 * 3_600);
+    }
+
+    /// Audit #3570: a backwards or repeated stamp pair yields no usable frame
+    /// period and must fall back to the 3 600-tick default (25 fps at 90 kHz).
+    #[test]
+    fn non_increasing_stamps_fall_back_to_the_default_frame_duration() {
+        let mut descending = units(&[None; 3]);
+        descending[0].dts = Some(90_000);
+        descending[2].dts = Some(90_000 - 7_200);
+        assert_eq!(stamped_frame_duration(&descending), 3_600);
+
+        let mut repeated = units(&[None; 3]);
+        repeated[0].dts = Some(90_000);
+        repeated[2].dts = Some(90_000);
+        assert_eq!(stamped_frame_duration(&repeated), 3_600);
+    }
+
+    const AC3_FIXTURE: &str = "ps/ffmpeg-mpeg2video-2xac3.a0.ac3";
+
+    /// A real AC-3 elementary stream whose second syncframe carries `stamp90`,
+    /// the first carrying 90 000. The fixture is 44.1 kHz mono, so one 1 536-
+    /// sample syncframe is 3 134.7 ticks and the frame-exact running clock sits
+    /// 1 536 track ticks per frame after the anchor.
+    fn ac3_es_with_second_stamp(stamp90: u64) -> ElementaryStream {
+        let data = std::fs::read(test_fixtures::path(AC3_FIXTURE))
+            .expect("real AC-3 elementary stream fixture");
+        let frames = split_ac3_frames(&data);
+        assert!(frames.len() >= 3, "fixture carries several syncframes");
+        ElementaryStream {
+            codec: Codec::Ac3,
+            es_bytes: data,
+            stamps: alloc::vec![
+                Stamp {
+                    offset: frames[0].0,
+                    pts: Some(90_000),
+                    dts: Some(90_000),
+                },
+                Stamp {
+                    offset: frames[1].0,
+                    pts: Some(stamp90),
+                    dts: Some(stamp90),
+                },
+            ],
+        }
+    }
+
+    fn ac3_dts(stamp90: u64) -> Vec<i64> {
+        let es = ac3_es_with_second_stamp(stamp90);
+        let track = build_ac3_track(&es, TrackId::new(1))
+            .expect("AC-3 track build")
+            .expect("the fixture is a valid AC-3 stream");
+        track
+            .samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("timed AC-3 sample"))
+            .collect()
+    }
+
+    /// The first stamp anchors at 44 100 track ticks (90 000/2 at 44.1 kHz);
+    /// each following syncframe advances by its intrinsic 1 536 samples.
+    #[test]
+    fn ac3_stamp_exactly_on_the_frame_grid_keeps_the_running_clock() {
+        let dts = ac3_dts(93_134);
+        assert_eq!(dts[0], 44_100);
+        assert_eq!(dts[1], 45_636);
+        assert_eq!(dts[2], 47_172);
+    }
+
+    /// Audit #3571: a stamp exactly `audio_discontinuity_threshold_90k` (1 800
+    /// ticks) off the predicted wire position is *not* a discontinuity.
+    #[test]
+    fn ac3_stamp_at_the_threshold_is_not_a_discontinuity() {
+        let dts = ac3_dts(93_134 + 1_800);
+        assert_eq!(dts[1], 45_636, "within the threshold the running clock wins");
+        assert_eq!(dts[2], 47_172);
+    }
+
+    /// One tick past the threshold re-anchors from the wire stamp: 94 935 ticks
+    /// rescales to 46 518 at 44.1 kHz, and the clock continues from there.
+    #[test]
+    fn ac3_stamp_one_tick_past_the_threshold_reanchors() {
+        let dts = ac3_dts(93_134 + 1_801);
+        assert_eq!(dts[1], 46_518);
+        assert_eq!(dts[2], 48_054);
+    }
+
+    /// The same drift with the opposite sign must also re-anchor (the drift is
+    /// an absolute distance): 91 333 ticks rescale to 44 753.
+    #[test]
+    fn ac3_negative_drift_past_the_threshold_reanchors() {
+        let dts = ac3_dts(93_134 - 1_801);
+        assert_eq!(dts[1], 44_753);
+        assert_eq!(dts[2], 46_289);
+    }
+}
