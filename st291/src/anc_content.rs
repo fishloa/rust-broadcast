@@ -487,6 +487,40 @@ mod parity_checksum_tests {
         assert_eq!(c.compute_checksum(), 0x101);
     }
 
+    /// §6.7 sets `b9 = !b8`. Every literal above happens to have `b8 = 1`
+    /// (`b9 = 0`), so dropping `b9` stayed invisible; this vector has
+    /// `b8 = 0` and therefore `b9 = 1`.
+    #[test]
+    fn compute_checksum_sets_the_inverted_b9_bit_when_b8_is_zero() {
+        // 0x161 + 0x101 + 0x200 (no UDWs) = 0x462; low 9 bits = 0x062,
+        // whose b8 is 0, so b9 = 1: Checksum_Word = 0x200 | 0x062 = 0x262.
+        let c = AncContent {
+            did: 0x161,
+            sdid: 0x101,
+            data_count: 0x200,
+            user_data_words: vec![],
+            checksum: 0x262,
+        };
+        assert_eq!(c.compute_checksum(), 0x262);
+        assert!(
+            c.compute_checksum() >= 0x200,
+            "b9 must be set when b8 is zero"
+        );
+        assert!(c.verify_checksum().is_ok());
+    }
+
+    /// The same two cases through `checksum_for`: a literal `b8 = 0` word and
+    /// the fixture's on-wire `b8 = 1` word (`fixtures/rtp/anc.bin`, first ANC
+    /// packet; see `tests/it/fixture_anc.rs`).
+    #[test]
+    fn checksum_for_matches_literal_vectors() {
+        assert_eq!(AncContent::checksum_for(0x161, 0x101, 0x200, &[]), 0x262);
+        assert_eq!(
+            AncContent::checksum_for(0x161, 0x101, 0x102, &[0x2CF, 0x101]),
+            0x134
+        );
+    }
+
     #[test]
     fn verify_checksum_rejects_a_bit_flipped_packet() {
         // audit issue #1116: pre-fix, a bit-flipped ANC packet (wrong

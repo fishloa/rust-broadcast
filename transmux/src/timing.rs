@@ -754,21 +754,30 @@ impl Serialize for SegmentIndexBox {
         buf[c..c + 2].copy_from_slice(&reference_count.to_be_bytes());
         c += 2;
         for r in &self.references {
+            let reference_type =
+                broadcast_common::len::fit_bits(u64::from(r.reference_type), 1, "reference_type")?
+                    as u32;
             let referenced_size = broadcast_common::len::fit_bits(
                 u64::from(r.referenced_size),
                 31,
                 "referenced_size",
             )? as u32;
-            let raw_ref = ((r.reference_type as u32) << 31) | referenced_size;
+            let raw_ref = (reference_type << 31) | referenced_size;
             buf[c..c + 4].copy_from_slice(&raw_ref.to_be_bytes());
             c += 4;
             buf[c..c + 4].copy_from_slice(&r.subsegment_duration.to_be_bytes());
             c += 4;
+            let starts_with_sap = broadcast_common::len::fit_bits(
+                u64::from(r.starts_with_sap),
+                1,
+                "starts_with_sap",
+            )? as u32;
+            let sap_type =
+                broadcast_common::len::fit_bits(u64::from(r.sap_type), 3, "sap_type")? as u32;
             let sap_delta_time =
                 broadcast_common::len::fit_bits(u64::from(r.sap_delta_time), 28, "sap_delta_time")?
                     as u32;
-            let raw_sap =
-                ((r.starts_with_sap as u32) << 31) | ((r.sap_type as u32) << 28) | sap_delta_time;
+            let raw_sap = (starts_with_sap << 31) | (sap_type << 28) | sap_delta_time;
             buf[c..c + 4].copy_from_slice(&raw_sap.to_be_bytes());
             c += 4;
         }
