@@ -1277,9 +1277,7 @@ mod interpolate_tests {
     use super::*;
 
     fn units(dts: &[Option<u64>]) -> Vec<AccessUnit> {
-        dts.iter()
-            .map(|&d| AccessUnit { pts: d, dts: d })
-            .collect()
+        dts.iter().map(|&d| AccessUnit { pts: d, dts: d }).collect()
     }
 
     /// Audit #3570: the constant frame duration divides the stamp span by the
@@ -1372,7 +1370,10 @@ mod interpolate_tests {
     #[test]
     fn ac3_stamp_at_the_threshold_is_not_a_discontinuity() {
         let dts = ac3_dts(93_134 + 1_800);
-        assert_eq!(dts[1], 45_636, "within the threshold the running clock wins");
+        assert_eq!(
+            dts[1], 45_636,
+            "within the threshold the running clock wins"
+        );
         assert_eq!(dts[2], 47_172);
     }
 

@@ -1359,7 +1359,10 @@ fn vp8_keyframe_header_needs_all_ten_bytes() {
     let frame9 = vec![0x00, 0x00, 0x00, 0x9D, 0x01, 0x2A, 0x40, 0x01, 0xF0];
     let short = synth_mkv::file(
         &synth_mkv::vp8_video_track(),
-        &synth_mkv::cluster(0, &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &frame9)]),
+        &synth_mkv::cluster(
+            0,
+            &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &frame9)],
+        ),
     );
     let mut demux = WebmDemux::new();
     assert!(
@@ -1371,10 +1374,15 @@ fn vp8_keyframe_header_needs_all_ten_bytes() {
     frame10.push(0x00);
     let full = synth_mkv::file(
         &synth_mkv::vp8_video_track(),
-        &synth_mkv::cluster(0, &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &frame10)]),
+        &synth_mkv::cluster(
+            0,
+            &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &frame10)],
+        ),
     );
     let mut demux = WebmDemux::new();
-    let media = demux.demux(&full).expect("a 10-byte header carries width/height");
+    let media = demux
+        .demux(&full)
+        .expect("a 10-byte header carries width/height");
     let CodecConfig::Vp8 { width, height } = &media.tracks[0].spec.config else {
         panic!("track is not VP8: {:?}", media.tracks[0].spec.config);
     };
@@ -1386,7 +1394,10 @@ fn vorbis_identification_header_needs_all_sixteen_bytes() {
     fn demux_with_id_len(id_header_len: usize) -> Result<Media, transmux::Error> {
         let file = synth_mkv::file(
             &synth_mkv::vorbis_audio_track(id_header_len),
-            &synth_mkv::cluster(0, &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xAA])]),
+            &synth_mkv::cluster(
+                0,
+                &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xAA])],
+            ),
         );
         WebmDemux::new().demux(&file)
     }
@@ -1413,7 +1424,10 @@ fn vorbis_identification_header_needs_all_sixteen_bytes() {
 fn an_unlaced_block_is_one_frame_whatever_its_first_payload_byte() {
     let file = synth_mkv::file(
         &synth_mkv::opus_audio_track(),
-        &synth_mkv::cluster(0, &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xFF])]),
+        &synth_mkv::cluster(
+            0,
+            &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xFF])],
+        ),
     );
     assert!(
         file.len() < 256,
@@ -1483,7 +1497,9 @@ fn a_block_shorter_than_its_header_is_a_degraded_unit() {
             )],
         ),
     );
-    let media = WebmDemux::new().demux(&full).expect("a complete block parses");
+    let media = WebmDemux::new()
+        .demux(&full)
+        .expect("a complete block parses");
     assert_eq!(media.tracks[0].samples.len(), 1);
     assert_eq!(media.tracks[0].samples[0].data, vec![0xAA]);
 }

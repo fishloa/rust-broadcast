@@ -13,9 +13,7 @@ use broadcast_common::error::InvalidValue;
 use broadcast_common::{Parse, Serialize};
 use transmux::avc_parameter_set::{AVCP_SAMPLE_ENTRY, AVCParameterSample, AVCParameterSampleEntry};
 use transmux::init_segment::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
-use transmux::track_reference::{
-    AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox,
-};
+use transmux::track_reference::{AVCP_REFERENCE_TYPE, TrackReferenceBox, TrackReferenceTypeBox};
 use transmux::{Error, TrackId};
 
 const TREF_FILE: &str = "mp4/tref-avcp.mp4";

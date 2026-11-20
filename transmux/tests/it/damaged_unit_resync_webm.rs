@@ -146,21 +146,11 @@ fn resync_after_damage_reports_each_damage_at_its_own_offset() {
     )]);
     let cluster_a = synth_mkv::cluster(
         0,
-        &[synth_mkv::simple_block(
-            1,
-            0,
-            synth_mkv::KEYFRAME,
-            &[0xAA],
-        )],
+        &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xAA])],
     );
     let cluster_b = synth_mkv::cluster(
         0,
-        &[synth_mkv::simple_block(
-            1,
-            0,
-            synth_mkv::KEYFRAME,
-            &[0xBB],
-        )],
+        &[synth_mkv::simple_block(1, 0, synth_mkv::KEYFRAME, &[0xBB])],
     );
 
     let mut segment = tracks;

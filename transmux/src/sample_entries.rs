@@ -1202,24 +1202,30 @@ mod tests {
         }
 
         // A config box carrying a real body parses.
-        assert!(AVCSampleEntry::bare_parse(
-            &AVCSampleEntry::new_avc1(make_avc_config())
-                .try_to_bytes()
-                .expect("avc1")
-        )
-        .is_ok());
-        assert!(HEVCSampleEntry::bare_parse(
-            &HEVCSampleEntry::new_hvc1(make_hevc_config())
-                .try_to_bytes()
-                .expect("hvc1")
-        )
-        .is_ok());
-        assert!(VVCSampleEntry::bare_parse(
-            &VVCSampleEntry::new_vvc1(make_vvc_config())
-                .try_to_bytes()
-                .expect("vvc1")
-        )
-        .is_ok());
+        assert!(
+            AVCSampleEntry::bare_parse(
+                &AVCSampleEntry::new_avc1(make_avc_config())
+                    .try_to_bytes()
+                    .expect("avc1")
+            )
+            .is_ok()
+        );
+        assert!(
+            HEVCSampleEntry::bare_parse(
+                &HEVCSampleEntry::new_hvc1(make_hevc_config())
+                    .try_to_bytes()
+                    .expect("hvc1")
+            )
+            .is_ok()
+        );
+        assert!(
+            VVCSampleEntry::bare_parse(
+                &VVCSampleEntry::new_vvc1(make_vvc_config())
+                    .try_to_bytes()
+                    .expect("vvc1")
+            )
+            .is_ok()
+        );
     }
 
     /// Audit #3575: the default `compressorname` every constructor stamps into a
@@ -1229,19 +1235,22 @@ mod tests {
         let avc = AVCSampleEntry::new_avc1(make_avc_config());
         assert_eq!(avc.visual.compressorname[0], 11);
         assert_eq!(&avc.visual.compressorname[1..11], b"AVC Coding");
-        let reparsed = AVCSampleEntry::bare_parse(&avc.try_to_bytes().expect("avc1")).expect("parse");
+        let reparsed =
+            AVCSampleEntry::bare_parse(&avc.try_to_bytes().expect("avc1")).expect("parse");
         assert_eq!(reparsed.visual.compressorname, avc.visual.compressorname);
 
         let hevc = HEVCSampleEntry::new_hvc1(make_hevc_config());
         assert_eq!(hevc.visual.compressorname[0], 12);
         assert_eq!(&hevc.visual.compressorname[1..12], b"HEVC Coding");
-        let reparsed = HEVCSampleEntry::bare_parse(&hevc.try_to_bytes().expect("hvc1")).expect("parse");
+        let reparsed =
+            HEVCSampleEntry::bare_parse(&hevc.try_to_bytes().expect("hvc1")).expect("parse");
         assert_eq!(reparsed.visual.compressorname, hevc.visual.compressorname);
 
         let vvc = VVCSampleEntry::new_vvc1(make_vvc_config());
         assert_eq!(vvc.visual.compressorname[0], 10);
         assert_eq!(&vvc.visual.compressorname[1..11], b"VVC Coding");
-        let reparsed = VVCSampleEntry::bare_parse(&vvc.try_to_bytes().expect("vvc1")).expect("parse");
+        let reparsed =
+            VVCSampleEntry::bare_parse(&vvc.try_to_bytes().expect("vvc1")).expect("parse");
         assert_eq!(reparsed.visual.compressorname, vvc.visual.compressorname);
     }
 

@@ -747,10 +747,7 @@ fn trim_end_is_exclusive_for_anchor_and_other_tracks() {
 /// drag the other tracks' lower edge to `end` and empty the window.
 #[test]
 fn trim_anchor_end_edge_sample_is_not_the_snap_point() {
-    let video = Track::new(
-        hevc_video_track(1),
-        video_samples(&[0x20], &[9_000], true),
-    );
+    let video = Track::new(hevc_video_track(1), video_samples(&[0x20], &[9_000], true));
     let audio = Track::new(
         hevc_video_track(2),
         video_samples(&[0x30, 0x31], &[0, 7_000], true),
@@ -760,7 +757,10 @@ fn trim_anchor_end_edge_sample_is_not_the_snap_point() {
     let trimmed = media
         .trim(6_000, 9_000)
         .expect("the audio sample at 7000 is inside the window");
-    assert!(track_samples(&trimmed, 1).is_empty(), "anchor has no in-window sample");
+    assert!(
+        track_samples(&trimmed, 1).is_empty(),
+        "anchor has no in-window sample"
+    );
     let audio_kept = track_samples(&trimmed, 2);
     assert_eq!(audio_kept.len(), 1);
     assert_eq!(audio_kept[0].data, vec![0x31u8; 4]);
