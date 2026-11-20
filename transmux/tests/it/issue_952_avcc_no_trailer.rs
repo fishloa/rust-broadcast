@@ -14,13 +14,13 @@
 //!
 //! This test must FAIL on pre-fix code with `tracks=0, skipped=1`.
 
-use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
-use transmux::Fmp4Demux;
-use transmux::TrackId;
+use broadcast_common::{Parse, Serialize, Unpackage};
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+use transmux::media::Fmp4Demux;
 use transmux::nalu_types::{AvcPps, AvcSps};
 use transmux::pipeline::{CodecConfig, TrackSpec, build_init_segment};
+use transmux::{MovieBox, StblChild, TrackId};
 
 fn timescale(value: u32) -> Timescale {
     Timescale::try_new(value).expect("a non-zero timescale")
@@ -140,5 +140,161 @@ fn genuinely_malformed_stsd_names_the_real_reason() {
         reason.contains("buffer too short") && reason.contains("SPS"),
         "reason must name the real cause (SPS NALU overrun), not a generic \
          'expected box: stsd entry'; got {reason:?}"
+    );
+}
+
+// ── The `stsd` fallback and its guard (#3465) ─────────────────────────────
+//
+// `parse_stbl_children` keeps a `stsd` that failed its typed parse as
+// `StblChild::Opaque` bytes (issue #952). Both readers of that list — the
+// track builder and the in-band probe — re-parse *only* the opaque child whose
+// four-CC really is `stsd`; any other opaque child (a `free` box, `sgpd`, a
+// vendor box) is somebody else's data and must not be read as a sample
+// description.
+
+const FTYP_HEADER_LEN: usize = 8;
+
+fn avc3_spec() -> TrackSpec {
+    let record = AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: vec![AvcSps(vec![
+            0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24,
+        ])],
+        pps: vec![AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+        sps_ext: vec![],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+    };
+    TrackSpec::new(
+        TrackId::new(1),
+        timescale(90_000),
+        CodecConfig::Avc {
+            config: AVCConfigurationBox::new(record),
+            width: 320,
+            height: 240,
+        },
+    )
+}
+
+/// A `free` box of `body_len` body bytes, as it sits inside `stbl`.
+fn free_box(body_len: usize) -> Vec<u8> {
+    let size = u32::try_from(FTYP_HEADER_LEN + body_len).expect("a small box");
+    let mut b = size.to_be_bytes().to_vec();
+    b.extend_from_slice(b"free");
+    b.extend(std::iter::repeat_n(0u8, body_len));
+    b
+}
+
+/// The `avc3` init segment (an in-band entry) with `child` inserted into its
+/// `stbl` immediately before the `stsd`.
+fn init_with_stbl_child(child: Vec<u8>) -> Vec<u8> {
+    let mut init = build_init_segment(&[avc3_spec()], timescale(90_000)).expect("init segment");
+    let entry = init
+        .windows(4)
+        .position(|w| w == b"avc1")
+        .expect("avc1 sample entry");
+    init[entry..entry + 4].copy_from_slice(b"avc3");
+    let ftyp_len = u32::from_be_bytes([init[0], init[1], init[2], init[3]]) as usize;
+    let mut moov = MovieBox::parse(&init[ftyp_len..]).expect("moov parses");
+    let stbl = moov.tracks[0]
+        .mdia
+        .as_mut()
+        .and_then(|m| m.minf.as_mut())
+        .and_then(|m| m.stbl.as_mut())
+        .expect("stbl");
+    let at = stbl
+        .children
+        .iter()
+        .position(|c| matches!(c, StblChild::Stsd(_)))
+        .expect("stsd child");
+    stbl.children.insert(at, StblChild::Opaque(child));
+    let mut out = init[..ftyp_len].to_vec();
+    let mut buf = vec![0u8; moov.serialized_len()];
+    let written = moov.serialize_into(&mut buf).expect("moov serializes");
+    out.extend_from_slice(&buf[..written]);
+    out
+}
+
+/// One access unit carrying an in-band SPS (type 7) as the first NAL.
+fn inband_sample_segment() -> Vec<u8> {
+    use transmux::ir::{FragmentTrackData, Sample};
+    let sps = [0x67u8, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24];
+    let mut data = u32::try_from(sps.len()).unwrap().to_be_bytes().to_vec();
+    data.extend_from_slice(&sps);
+    let sample =
+        Sample::new(data, Some(0), Some(0), Some(3_000), true).expect("valid sample timing");
+    transmux::pipeline::build_media_segment(
+        1,
+        &[FragmentTrackData::new(
+            TrackId::new(1),
+            0,
+            std::slice::from_ref(&sample),
+        )],
+    )
+    .expect("media segment")
+}
+
+/// A `free` box ahead of the `stsd` is not a sample description: the track
+/// must still be recovered, and its in-band (`avc3`) entry still recognised.
+#[test]
+fn an_unknown_stbl_child_before_the_stsd_does_not_hide_the_track() {
+    let mut bytes = init_with_stbl_child(free_box(4));
+    bytes.extend_from_slice(&inband_sample_segment());
+    let media = Fmp4Demux::new()
+        .unpackage(&bytes)
+        .expect("an unknown stbl child must not fail the file");
+    assert_eq!(media.skipped.len(), 0, "skipped = {:?}", media.skipped);
+    assert_eq!(media.tracks.len(), 1, "the AVC track must be recovered");
+    let track = &media.tracks[0];
+    assert_eq!(track.samples.len(), 1);
+    assert!(
+        track.samples[0].display.is_some(),
+        "the avc3 sample entry is in-band, so its access units must be tagged"
+    );
+}
+
+/// A `stsd` whose typed parse fails names the real error for an in-band
+/// (`avc3`) entry too, exactly as it does for `avc1`.
+#[test]
+fn a_failed_stsd_on_an_avc3_entry_reports_the_real_reason() {
+    let mut moov = build_init_segment(&[avc3_spec()], timescale(90_000)).expect("init segment");
+    let entry = moov
+        .windows(4)
+        .position(|w| w == b"avc1")
+        .expect("avc1 sample entry");
+    moov[entry..entry + 4].copy_from_slice(b"avc3");
+    let avcc_at = moov
+        .windows(4)
+        .position(|w| w == b"avcC")
+        .expect("avcC box");
+    let sps_len_at = avcc_at + 4 + 6;
+    moov[sps_len_at] = 0xFF;
+    moov[sps_len_at + 1] = 0xFF;
+
+    let media = Fmp4Demux::new()
+        .unpackage(&moov)
+        .expect("a malformed sample entry must skip its track, not fail the whole file");
+    assert_eq!(media.tracks.len(), 0, "the malformed track must be skipped");
+    assert_eq!(media.skipped.len(), 1);
+    let reason = &media.skipped[0].reason;
+    assert!(
+        reason.contains("buffer too short") && reason.contains("SPS"),
+        "reason must name the real cause, got {reason:?}"
+    );
+}
+
+/// A container child too short to hold a box header is a framing error to
+/// report, never an index out of range.
+#[test]
+fn a_stbl_child_shorter_than_a_box_header_does_not_panic() {
+    let bytes = init_with_stbl_child(vec![0, 0, 0, 6, b'f', b'r']);
+    assert!(
+        Fmp4Demux::new().unpackage(&bytes).is_err(),
+        "a 6-byte child cannot be framed, so the moov is rejected"
     );
 }

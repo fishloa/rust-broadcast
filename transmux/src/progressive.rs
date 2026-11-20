@@ -937,4 +937,36 @@ mod tests {
             &layout(&[0, u64::from(u32::MAX) - base + 1])
         ));
     }
+
+    /// §8.6.1.2 run-length coding: only *consecutive equal* deltas share an
+    /// entry, so a variable-rate track keeps one `stts` entry per distinct
+    /// run instead of collapsing every sample into the first delta.
+    #[test]
+    fn build_stts_run_length_codes_consecutive_equal_deltas() {
+        let stts = build_stts(&[10, 10, 20, 10]);
+        let entries: alloc::vec::Vec<(u32, u32)> = stts
+            .entries
+            .iter()
+            .map(|e| (e.sample_count, e.sample_delta))
+            .collect();
+        assert_eq!(
+            entries,
+            alloc::vec![(2, 10), (1, 20), (1, 10)],
+            "the run at the end must not merge into the leading run"
+        );
+        assert_eq!(stts.entries.len(), 3);
+    }
+
+    /// On equal chunk-start ticks the lowest track index wins, so the mdat
+    /// order (and every `stco` offset) is deterministic for A/V files whose
+    /// first chunks start together.
+    #[test]
+    fn interleave_order_breaks_ties_on_the_lowest_track_index() {
+        let ordered = interleave_order(alloc::vec![(0i64, 1usize, 0usize, 1usize), (0, 0, 0, 1),]);
+        assert_eq!(
+            ordered,
+            alloc::vec![(0, 0, 0, 1), (0, 1, 0, 1)],
+            "track 0's chunk must come first on a tie"
+        );
+    }
 }

@@ -12,7 +12,7 @@
 
 use broadcast_common::Unpackage;
 use test_alloc::ThreadCapped;
-use transmux::movie_fragment::MAX_ZERO_WIDTH_TRUN_SAMPLES;
+use transmux::movie_fragment::{MAX_ZERO_WIDTH_TRUN_SAMPLES, TRUN_SAMPLE_DURATION_PRESENT};
 use transmux::{Fmp4Demux, TrackFragmentRunBox};
 
 #[global_allocator]
@@ -90,4 +90,28 @@ fn zero_width_trun_at_the_cap_still_parses() {
 fn demuxing_the_hostile_fixture_stays_bounded() {
     let data = with_trun(0x1000_0000, 0);
     let _ = Fmp4Demux::new().unpackage(&data);
+}
+
+/// A `trun` that declares a per-sample field is four bytes wide per sample, so
+/// a hostile `sample_count` is bounded by the remaining payload — a typed
+/// short-buffer error naming the field — and must never be mistaken for the
+/// zero-width form that spends the shared sample allowance.
+#[test]
+fn a_duration_only_trun_is_bounded_by_the_payload_not_the_zero_width_cap() {
+    let mut body = Vec::new();
+    body.push(0); // version 0
+    body.extend_from_slice(&TRUN_SAMPLE_DURATION_PRESENT.to_be_bytes()[1..]);
+    body.extend_from_slice(&0x1000_0000u32.to_be_bytes()); // sample_count
+
+    let err = TrackFragmentRunBox::parse_body(&body)
+        .expect_err("the declared samples do not fit the payload");
+    assert_eq!(
+        err,
+        transmux::Error::BufferTooShort(broadcast_common::error::BufferTooShort {
+            need: 8,
+            have: 4,
+            what: "trun.dur",
+        }),
+        "a sample-duration field makes the entries four bytes wide"
+    );
 }

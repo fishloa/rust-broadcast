@@ -19,6 +19,7 @@ use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::media::Media;
 use transmux::pipeline::CodecConfig;
 use transmux::progressive::ProgressiveMux;
+use transmux::progressive_demux::ProgressiveDemux;
 use transmux::ts_demux::TsDemux;
 
 fn timescale(value: u32) -> Timescale {
@@ -945,6 +946,263 @@ fn a_small_file_uses_stco_not_co64() {
             );
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// co64: the 64-bit chunk-offset table
+// ---------------------------------------------------------------------------
+
+/// The chain of boxes enclosing `target`, outermost first (each starts before
+/// `target`, so replacing bytes at `target` leaves their start offsets valid).
+fn enclosing_chain(file: &[u8], target: usize) -> Vec<Loc> {
+    let mut chain = Vec::new();
+    let mut region = top_boxes(file);
+    while let Some(next) = region
+        .iter()
+        .find(|l| l.start <= target && target < l.start + l.size)
+        .copied()
+    {
+        chain.push(next);
+        if next.start == target {
+            break;
+        }
+        region = children(next.start + next.hdr, next.body(file));
+    }
+    chain
+}
+
+/// The same file with the video trak's `stco` rewritten as an equal-valued
+/// `co64` (8-byte entries, same order), growing every enclosing box by the
+/// difference. `faststart = false` puts `moov` last, so growing it moves no
+/// chunk and every offset stays valid.
+fn stco_as_co64(file: &[u8]) -> Vec<u8> {
+    let vtrak = video_trak(file);
+    let sc = stbl_children(file, vtrak);
+    let stco = *find(&sc, b"stco").expect("stco");
+    let offsets = parse_chunk_offsets(file, &sc);
+    let mut body = vec![0u8; 8];
+    body[4..8].copy_from_slice(&u32::try_from(offsets.len()).unwrap().to_be_bytes());
+    for off in &offsets {
+        body.extend_from_slice(&off.to_be_bytes());
+    }
+    let mut co64 = u32::try_from(body.len() + 8)
+        .unwrap()
+        .to_be_bytes()
+        .to_vec();
+    co64.extend_from_slice(b"co64");
+    co64.extend_from_slice(&body);
+
+    let delta = i64::try_from(co64.len()).unwrap() - i64::try_from(stco.size).unwrap();
+    let mut out = file.to_vec();
+    out.splice(stco.start..stco.start + stco.size, co64);
+    // Every ancestor, but not the replaced box itself: its own size field is
+    // now the `co64` header's.
+    for loc in enclosing_chain(file, stco.start)
+        .into_iter()
+        .filter(|l| l.start < stco.start)
+    {
+        let grown = i64::from(be32(&out, loc.start)) + delta;
+        out[loc.start..loc.start + 4].copy_from_slice(&u32::try_from(grown).unwrap().to_be_bytes());
+    }
+    out
+}
+
+/// A 64-bit chunk-offset table resolves every sample exactly as the 32-bit one
+/// does (§8.7.3): the entries are only wider, never different.
+#[test]
+fn a_co64_chunk_offset_table_demuxes_like_the_stco_one() {
+    let out = package(false);
+    let co64_file = stco_as_co64(&out);
+    // The rewrite really happened: `co64` present, `stco` gone.
+    let sc = stbl_children(&co64_file, video_trak(&co64_file));
+    assert!(find(&sc, b"co64").is_some(), "co64 must be present");
+    assert!(find(&sc, b"stco").is_none(), "stco must be gone");
+    assert_eq!(
+        parse_chunk_offsets(&co64_file, &sc),
+        parse_chunk_offsets(&out, &stbl_children(&out, video_trak(&out))),
+        "the 64-bit table must carry the same offsets"
+    );
+
+    let from_stco = ProgressiveDemux::new(out.len())
+        .expect("cap")
+        .unpackage(&out)
+        .expect("demux stco file");
+    let from_co64 = ProgressiveDemux::new(co64_file.len())
+        .expect("cap")
+        .unpackage(&co64_file)
+        .expect("demux co64 file");
+    assert_eq!(from_co64.tracks.len(), from_stco.tracks.len());
+    for (a, b) in from_co64.tracks.iter().zip(&from_stco.tracks) {
+        assert_eq!(a.samples.len(), b.samples.len(), "sample count");
+        for (i, (sa, sb)) in a.samples.iter().zip(&b.samples).enumerate() {
+            assert_eq!(sa.data, sb.data, "sample {i} bytes");
+        }
+    }
+}
+
+/// A `co64` entry past the end of the file is reported, never wrapped into a
+/// small offset that would silently read the wrong bytes.
+#[test]
+fn a_co64_offset_past_the_file_is_out_of_range() {
+    let out = package(false);
+    let mut co64_file = stco_as_co64(&out);
+    let sc = stbl_children(&co64_file, video_trak(&co64_file));
+    let co64 = *find(&sc, b"co64").expect("co64");
+    // First entry, 8 bytes into the box body (version/flags + entry_count).
+    let at = co64.start + co64.hdr + 8;
+    let past = u64::from(u32::MAX) + 1;
+    co64_file[at..at + 8].copy_from_slice(&past.to_be_bytes());
+    // The demuxer reports the broken track (lenient but loud), never a sample
+    // read from a wrapped, small offset.
+    let media = ProgressiveDemux::new(co64_file.len())
+        .expect("cap")
+        .unpackage(&co64_file)
+        .expect("a broken track is skipped, not fatal");
+    assert!(
+        media
+            .skipped
+            .iter()
+            .any(|s| s.reason.contains("progressive sample data")),
+        "the out-of-range chunk must be reported, skipped = {:?}",
+        media.skipped
+    );
+    assert!(
+        !media
+            .tracks
+            .iter()
+            .any(|t| t.samples.iter().any(|s| s.data.len() == 8)),
+        "no sample may come from the wrapped offset"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Sample tables from a hand-built IR (no demuxed fixture)
+// ---------------------------------------------------------------------------
+
+fn avc_spec(timescale: Timescale) -> transmux::pipeline::TrackSpec {
+    let record = transmux::avc_config::AVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        profile_indication: 66,
+        profile_compatibility: 0,
+        level_indication: 30,
+        length_size_minus_one: 3,
+        sps: vec![transmux::nalu_types::AvcSps(vec![
+            0x67, 0x42, 0xc0, 0x1e, 0xd9, 0x00, 0x80, 0x1e, 0x24,
+        ])],
+        pps: vec![transmux::nalu_types::AvcPps(vec![0x68, 0xce, 0x3c, 0x80])],
+        chroma_format: None,
+        bit_depth_luma_minus8: None,
+        bit_depth_chroma_minus8: None,
+        sps_ext: vec![],
+    };
+    transmux::pipeline::TrackSpec::new(
+        TrackId::new(1),
+        timescale,
+        CodecConfig::Avc {
+            config: transmux::avc_config::AVCConfigurationBox::new(record),
+            width: 16,
+            height: 16,
+        },
+    )
+}
+
+fn duration(ticks: u32) -> Option<core::num::NonZeroU32> {
+    core::num::NonZeroU32::new(ticks)
+}
+
+fn timed_media(samples: Vec<transmux::pipeline::Sample>, ts: Timescale) -> Media {
+    Media::new(vec![transmux::Track::new(avc_spec(ts), samples)], ts)
+}
+
+fn progressive_out(media: &Media) -> Vec<u8> {
+    ProgressiveMux { faststart: true }
+        .package(media)
+        .expect("package progressive")
+}
+
+/// A variable-duration track's `stts` runs survive a mux → demux round trip
+/// (§8.6.1.2): the last sample's longer span is its own run, not folded into
+/// the leading one.
+#[test]
+fn a_variable_duration_track_round_trips_its_stts_runs() {
+    let ts = timescale(90_000);
+    let samples = [(0i64, 3_000u32), (3_000, 3_000), (6_000, 3_600)]
+        .into_iter()
+        .map(|(dts, dur)| {
+            transmux::pipeline::Sample::timed(vec![0xAAu8; 4], dts, dts, duration(dur))
+        })
+        .collect();
+    let out = progressive_out(&timed_media(samples, ts));
+    let media = ProgressiveDemux::new(out.len())
+        .expect("cap")
+        .unpackage(&out)
+        .expect("demux");
+    let durations: Vec<u32> = media.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.timing.and_then(|t| t.duration()).expect("duration"))
+        .collect();
+    assert_eq!(durations, vec![3_000, 3_000, 3_600]);
+}
+
+/// The interleave chunk is 500 ms (§ chunking): at a 1 000 Hz movie timescale a
+/// sample starting exactly 500 ticks after the chunk start opens the next
+/// chunk, so `stsc` says 2 + 1 rather than 3.
+#[test]
+fn a_sample_at_the_chunk_boundary_starts_the_next_chunk() {
+    let ts = timescale(1_000);
+    let samples = [0i64, 250, 500]
+        .into_iter()
+        .map(|dts| transmux::pipeline::Sample::timed(vec![0u8; 4], dts, dts, duration(250)))
+        .collect();
+    let out = progressive_out(&timed_media(samples, ts));
+    let sc = stbl_children(&out, video_trak(&out));
+    assert_eq!(
+        parse_stsc(&out, &sc),
+        vec![(1, 2, 1), (2, 1, 1)],
+        "samples at 0 and 250 share chunk 1; the one at 500 starts chunk 2"
+    );
+    let offsets = parse_chunk_offsets(&out, &sc);
+    assert_eq!(offsets.len(), 2);
+    assert_eq!(
+        offsets[1] - offsets[0],
+        8,
+        "chunk 1 holds two 4-byte samples"
+    );
+}
+
+/// The `stco` → `co64` retry: the second chunk's offset lands past
+/// `u32::MAX`, so the tables must be rebuilt with 64-bit entries and carry the
+/// true offset.
+///
+/// Ignored by default: the first sample is `u32::MAX` bytes (the largest a
+/// `stsz` entry can hold), so the mux allocates ~8 GiB. Run it with
+/// `cargo test -p transmux --all-features --test it -- --ignored`.
+#[test]
+#[ignore = "allocates ~8 GiB for a past-u32::MAX mdat; run with --ignored"]
+fn a_chunk_past_u32_max_switches_the_tables_to_co64() {
+    const BIG: usize = u32::MAX as usize;
+    const BIG_U64: u64 = u32::MAX as u64;
+    let ts = timescale(90_000);
+    let samples = vec![
+        transmux::pipeline::Sample::timed(vec![0u8; BIG], 0, 0, duration(3_000)),
+        // One second later: past the 0.5 s interleave chunk.
+        transmux::pipeline::Sample::timed(vec![0u8; 4], 90_000, 90_000, duration(3_000)),
+    ];
+    let out = progressive_out(&timed_media(samples, ts));
+    let sc = stbl_children(&out, video_trak(&out));
+    assert!(
+        find(&sc, b"co64").is_some(),
+        "an offset past u32::MAX needs the 64-bit table"
+    );
+    assert!(find(&sc, b"stco").is_none());
+    let offsets = parse_chunk_offsets(&out, &sc);
+    assert_eq!(offsets.len(), 2);
+    let mdat = *find(&top_boxes(&out), b"mdat").expect("mdat");
+    let payload_start = (mdat.start + mdat.hdr) as u64;
+    assert_eq!(offsets[0], payload_start);
+    assert_eq!(offsets[1], payload_start + BIG_U64);
+    assert!(offsets[1] > u64::from(u32::MAX));
 }
 
 // ---------------------------------------------------------------------------

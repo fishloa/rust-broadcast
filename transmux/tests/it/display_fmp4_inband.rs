@@ -190,3 +190,87 @@ fn hostile_overrun_length_prefix_does_not_panic() {
     // No panic; first sample keeps a tag (seeded state).
     assert!(track2.samples[0].display.is_some());
 }
+
+// ── HEVC in-band entries: `hev1` and Dolby Vision `dvhe` ───────────────────
+//
+// ISO/IEC 14496-15:2017 §8.4.1.1: an `hev1` entry carries its parameter sets
+// in-band, exactly as `avc3` does for AVC, and a Dolby Vision `dvhe` entry is
+// an HEVC entry with `dvcC`/`dvvC` boxes. `hvc1` is the out-of-band one.
+
+const HEVC_FRAGMENTED: &str = "mp4/frag/hevc-main.frag.mp4";
+
+fn hevc_track(media: &Media) -> &transmux::Track {
+    media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
+        .expect("hevc track")
+}
+
+/// The fixture with its sample-entry four-CC rewritten, so the same bytes are
+/// read as an in-band (`hev1`/`dvhe`) or out-of-band (`hvc1`) entry.
+fn hevc_with_entry(fourcc: &[u8; 4]) -> Vec<u8> {
+    let mut bytes = test_fixtures::read(HEVC_FRAGMENTED);
+    let at = bytes
+        .windows(4)
+        .position(|w| w == b"hev1")
+        .expect("hev1 sample entry");
+    bytes[at..at + 4].copy_from_slice(fourcc);
+    bytes
+}
+
+#[test]
+fn hev1_in_band_hevc_is_tagged_per_access_unit() {
+    let media = Fmp4Demux::new()
+        .unpackage(hevc_with_entry(b"hev1").as_slice())
+        .expect("demux");
+    let track = hevc_track(&media);
+    assert!(!track.samples.is_empty());
+    for (i, s) in track.samples.iter().enumerate() {
+        let d = s
+            .display
+            .as_ref()
+            .unwrap_or_else(|| panic!("hev1 sample {i} must be tagged in-band"));
+        let g = d.geometry.as_ref().expect("hev1 geometry");
+        assert_eq!(
+            (g.coded_width, g.coded_height),
+            (320, 240),
+            "hev1 sample {i} coded size from the in-band SPS"
+        );
+        assert_eq!(
+            g.sample_aspect_ratio(),
+            Some((1u16, 1u16)),
+            "hev1 sample {i} SAR"
+        );
+    }
+}
+
+#[test]
+fn dvhe_dolby_vision_hevc_is_tagged_per_access_unit() {
+    let media = Fmp4Demux::new()
+        .unpackage(hevc_with_entry(b"dvhe").as_slice())
+        .expect("demux");
+    let track = hevc_track(&media);
+    assert!(!track.samples.is_empty());
+    for (i, s) in track.samples.iter().enumerate() {
+        assert!(
+            s.display.is_some(),
+            "dvhe sample {i} must be tagged in-band, like hev1"
+        );
+    }
+}
+
+#[test]
+fn hvc1_out_of_band_hevc_is_not_tagged() {
+    let media = Fmp4Demux::new()
+        .unpackage(hevc_with_entry(b"hvc1").as_slice())
+        .expect("demux");
+    let track = hevc_track(&media);
+    assert!(!track.samples.is_empty());
+    for (i, s) in track.samples.iter().enumerate() {
+        assert!(
+            s.display.is_none(),
+            "an hvc1 entry's parameter sets are out of band; sample {i} must not be tagged"
+        );
+    }
+}

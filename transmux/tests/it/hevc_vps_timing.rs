@@ -151,3 +151,108 @@ fn hevc_vps_timing_truncated_never_panics() {
         assert!(r.is_ok(), "panicked at prefix len {}", i);
     }
 }
+
+/// The same record fields the VPS case uses, so the inverse test below differs
+/// only in its arrays.
+fn cfg_record_with_vps(vps: &[u8]) -> HEVCDecoderConfigurationRecord {
+    HEVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        general_profile_space: 0,
+        general_tier_flag: false,
+        general_profile_idc: 1,
+        general_profile_compatibility_flags: 0,
+        general_constraint_indicator_flags: 0,
+        general_level_idc: 93,
+        min_spatial_segmentation_idc: 0,
+        parallelism_type: 0,
+        chroma_format_idc: 1,
+        bit_depth_luma_minus8: 0,
+        bit_depth_chroma_minus8: 0,
+        avg_frame_rate: 0,
+        constant_frame_rate: 0,
+        num_temporal_layers: 1,
+        temporal_id_nested: true,
+        length_size_minus_one: 3,
+        arrays: vec![HevcNalArray {
+            array_completeness: true,
+            nal_unit_type: 32,
+            nalus: vec![HevcNalUnit(vps.to_vec())],
+        }],
+    }
+}
+
+/// The VPS fallback must select the VPS array by its NAL unit type (32), not
+/// by array order: with the arrays ordered SPS-then-VPS and an SPS carrying no
+/// usable VUI timing, the frame rate can only come from the VPS.
+#[test]
+fn hevc_vps_fallback_is_selected_by_nal_unit_type_not_array_order() {
+    let sps = extract_nal("mp4/hevc-vps-timing.mp4", 33);
+    let vps = extract_nal("mp4/hevc-vps-timing.mp4", 32);
+    // Keep the SPS's leading bytes only: it still names a picture, but its VUI
+    // timing is unreadable, so the only timing left in the record is the VPS's.
+    let truncated_sps = sps[..sps.len() / 2].to_vec();
+    assert!(
+        transmux::decode_hevc_vui_timing(&truncated_sps)
+            .ok()
+            .flatten()
+            .is_none(),
+        "the truncated SPS must not yield VUI timing"
+    );
+    let record = HEVCDecoderConfigurationRecord {
+        configuration_version: 1,
+        general_profile_space: 0,
+        general_tier_flag: false,
+        general_profile_idc: 1,
+        general_profile_compatibility_flags: 0,
+        general_constraint_indicator_flags: 0,
+        general_level_idc: 93,
+        min_spatial_segmentation_idc: 0,
+        parallelism_type: 0,
+        chroma_format_idc: 1,
+        bit_depth_luma_minus8: 0,
+        bit_depth_chroma_minus8: 0,
+        avg_frame_rate: 0,
+        constant_frame_rate: 0,
+        num_temporal_layers: 1,
+        temporal_id_nested: true,
+        length_size_minus_one: 3,
+        arrays: vec![
+            HevcNalArray {
+                array_completeness: true,
+                nal_unit_type: 33,
+                nalus: vec![HevcNalUnit(truncated_sps.clone())],
+            },
+            HevcNalArray {
+                array_completeness: true,
+                nal_unit_type: 32,
+                nalus: vec![HevcNalUnit(vps.clone())],
+            },
+        ],
+    };
+    let cfg = CodecConfig::Hevc {
+        config: HEVCConfigurationBox::new(record),
+        width: 320,
+        height: 240,
+    };
+    assert_eq!(
+        nominal_frame_rate(&cfg),
+        Some((29970, transmux::FrameRateBasis::Convention))
+    );
+
+    // The inverse: with no VPS array there is no fallback, so the truncated
+    // SPS's silence is the answer.
+    let record = HEVCDecoderConfigurationRecord {
+        arrays: vec![HevcNalArray {
+            array_completeness: true,
+            nal_unit_type: 33,
+            nalus: vec![HevcNalUnit(truncated_sps)],
+        }],
+        ..cfg_record_with_vps(&vps)
+    };
+    let cfg = CodecConfig::Hevc {
+        config: HEVCConfigurationBox::new(record),
+        width: 320,
+        height: 240,
+    };
+    assert_eq!(nominal_frame_rate(&cfg), None);
+}

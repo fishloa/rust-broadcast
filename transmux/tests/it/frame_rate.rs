@@ -181,3 +181,14 @@ fn missing_sps_yields_none() {
     };
     assert_eq!(transmux::nominal_frame_rate_millihertz(&cfg), None);
 }
+
+/// The #204 label pair for [`transmux::FrameRateBasis`]: the spec tokens, with
+/// `Display` equal to `name()`.
+#[test]
+fn frame_rate_basis_labels_are_the_documented_tokens() {
+    use transmux::FrameRateBasis::{Convention, Normative};
+    assert_eq!(Normative.name(), "normative");
+    assert_eq!(Convention.name(), "convention");
+    assert_eq!(Normative.to_string(), "normative");
+    assert_eq!(Convention.to_string(), "convention");
+}
