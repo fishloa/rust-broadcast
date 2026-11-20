@@ -1698,6 +1698,61 @@ mod tests {
         assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
+    /// A version-1 `sgpd` may declare zero entries (§8.9.3.2); the
+    /// `default_length` field is still present and is written as 0.
+    #[test]
+    fn sgpd_v1_empty_writes_default_length_zero() {
+        let b = SampleGroupDescriptionBox {
+            version: 1,
+            flags: 0,
+            grouping_type: GROUPING_TYPE_ROLL,
+            default_length: 0,
+            default_group_description_index: None,
+            entries: alloc::vec![],
+        };
+        let bytes = b.try_to_bytes().unwrap();
+        assert_eq!(
+            bytes,
+            [
+                0, 0, 0, 24, b's', b'g', b'p', b'd', 1, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0,
+                0, 0, 0, 0, 0
+            ]
+        );
+        assert_eq!(b.serialized_len(), 24);
+        let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
+        assert!(parsed.entries.is_empty(), "entry_count is zero");
+        assert_eq!(parsed.default_length, 0);
+    }
+
+    /// Version 0 has no per-entry `description_length` (§8.9.3.2), so entries
+    /// of different widths are written back to back with no 4-byte prefixes.
+    #[test]
+    fn sgpd_v0_non_uniform_entries_have_no_length_prefixes() {
+        let b = SampleGroupDescriptionBox {
+            version: 0,
+            flags: 0,
+            grouping_type: GROUPING_TYPE_ROLL,
+            default_length: 0,
+            default_group_description_index: None,
+            entries: alloc::vec![
+                SgpdEntry::Roll { roll_distance: -1 },
+                SgpdEntry::Unknown(alloc::vec![1, 2, 3]),
+            ],
+        };
+        let bytes = b.try_to_bytes().unwrap();
+        assert_eq!(
+            bytes,
+            [
+                0, 0, 0, 25, b's', b'g', b'p', b'd', 0, 0, 0, 0, b'r', b'o', b'l', b'l', 0, 0, 0,
+                2, 0xFF, 0xFF, 1, 2, 3
+            ]
+        );
+        assert_eq!(b.serialized_len(), 25);
+        let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
+        assert_eq!(parsed.entries.len(), 2);
+        assert_eq!(parsed.entries[0], SgpdEntry::Roll { roll_distance: -1 });
+    }
+
     /// Version 1 with `default_length == 0`: every entry is preceded by its own
     /// `description_length` (§8.9.3.2). Values here have non-zero upper bytes so
     /// a read from the wrong byte inside the u32 changes the answer.
@@ -2266,5 +2321,57 @@ mod tests {
         let bytes = subs.try_to_bytes().unwrap();
         let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries[0].subsamples.len(), 65535);
+    }
+
+    fn subs_v2_with_csp(len: u8) -> SubSampleInformationBoxV2 {
+        SubSampleInformationBoxV2 {
+            flags: 0,
+            is_size_16_bits: true,
+            is_short_ref: true,
+            entries: alloc::vec![SubsV2Entry {
+                sample_delta: 1,
+                subsamples: alloc::vec![SubsV2Subsample {
+                    subsample_size: 10,
+                    source: SubsV2Source::Explicit(SubsampleProperties {
+                        discardable: false,
+                        subsample_priority: None,
+                        codec_specific_parameters: Some(CodecSpecificParameters { len, value: 0 }),
+                    }),
+                }],
+            }],
+        }
+    }
+
+    /// `codec_specific_parameters` is 1..=4 bytes (§8.7.7.2): a zero or
+    /// over-long length cannot produce a valid flags byte in either box.
+    #[test]
+    fn subs_v2_codec_specific_parameters_length_is_validated() {
+        for len in [0u8, 5] {
+            let err = subs_v2_with_csp(len).try_to_bytes().unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidInput(_)),
+                "subs csp len {len}: expected InvalidInput, got {err:?}"
+            );
+            let ssrt = SubSampleReferenceTableBox {
+                flags: 0,
+                is_short_ref: true,
+                entries: alloc::vec![SubsampleProperties {
+                    discardable: false,
+                    subsample_priority: None,
+                    codec_specific_parameters: Some(CodecSpecificParameters { len, value: 0 }),
+                }],
+            };
+            let err = ssrt.try_to_bytes().unwrap_err();
+            assert!(
+                matches!(err, Error::InvalidInput(_)),
+                "ssrt csp len {len}: expected InvalidInput, got {err:?}"
+            );
+        }
+        for len in [1u8, 4] {
+            assert!(
+                subs_v2_with_csp(len).try_to_bytes().is_ok(),
+                "subs csp len {len} is legal"
+            );
+        }
     }
 }

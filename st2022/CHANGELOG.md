@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Tests
+- Pin the HBRMT header-extension TLV end boundary, `is_empty`, and the inclusive `Reserved` range checks for `timestamp_ref`, `video_source_format.map` and `.sample` (#3231).
+
 ## [0.5.0] - 2026-11-15
 ### Changed
 ### Changed

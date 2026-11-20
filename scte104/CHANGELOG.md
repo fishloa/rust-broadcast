@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Tests
+- Dispatch every single-operation opID through the public entry point and assert its own variant and body round-trip, plus the declared `OperationDef::OP_ID` table (#3228).
+- Pin the time_type, Timestamp, SpliceInsertType, SpliceScheduleCommand and CodecIndex byte mappings, labels and `Time::zero` (#3229).
+- Pin the variable-length operation layouts: injector component list, component-mode entry loops and their exact `need`, the segmentation-descriptor tail offsets, control-word lengths and message-size arithmetic (#3230).
+
 ## [0.9.0] - 2026-11-15
 
 ### Changed

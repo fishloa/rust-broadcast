@@ -17,7 +17,7 @@ use mpeg_ts::ts::{
     AdaptationFieldControl, ContinuityCounter, ScramblingControl, TS_PACKET_SIZE, TsHeader,
 };
 
-use crate::{Config, ConformanceMonitor, Indicator};
+use crate::{Config, ConformanceMonitor, Indicator, Priority};
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -3128,4 +3128,1452 @@ fn declares_pcr_pid_follows_the_pmt_and_the_pat() {
         !rig.m.declares_pcr_pid(Pid::from_const(0x300)),
         "a program dropped from the PAT must not keep declaring a PCR PID"
     );
+}
+
+// ── 3.9 Empty_buffer_error on per-PID TBn (TR 101 290 Table 5.0c) ───────────
+
+/// Build a payload-free 188-byte packet on `pid` (adaptation-field only), so
+/// only the per-PID TBn model sees it: the SI/TBsys path needs payload.
+fn tbn_packet(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
+    let af = [0u8; 183];
+    make_ts_packet(pid, cc, false, true, &af, &[])
+}
+
+/// #3483: TBn is created on a PID's first packet, after the model was
+/// anchored at the first in-sync packet, so its empty-interval window must be
+/// armed where the buffer is created. A low leak estimate (idle warm-up)
+/// followed by a flow faster than that estimate leaves TBn occupied across
+/// a full one-second window: indicator 3.9 fires exactly once and latches.
+#[test]
+fn empty_buffer_error_trips_once_for_tbn_that_never_empties() {
+    let pid: u16 = 0x0200;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..10u64 {
+        events.extend(monitor.feed(&tbn_packet(pid, cc), ms(10 + i)).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    for i in 0..2_000u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 1_000);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    let counted: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::EmptyBufferError && e.pid == Some(Pid::from_wire_masked(pid))
+        })
+        .collect();
+    assert_eq!(
+        counted.len(),
+        1,
+        "TBn 0x{pid:04X} never emptied across a window; expected one 3.9: {counted:#?}"
+    );
+    assert!(
+        counted[0]
+            .detail
+            .contains("TBn not empty in the last 1 s on PID 0x0200"),
+        "detail: {}",
+        counted[0].detail
+    );
+    assert!(
+        counted[0].at >= ms(2_000),
+        "the first window (0.01 s..1.01 s) was clean; the failure is the second: {}",
+        counted[0].at.as_millis()
+    );
+
+    let mut later = Vec::new();
+    for i in 0..3_000u64 {
+        let t = ms(4_000) + Duration::from_micros(i * 1_000);
+        later.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    assert!(
+        !has_indicator(&later, Indicator::EmptyBufferError),
+        "3.9 on TBn is latched per PID; later windows must stay quiet: {later:#?}"
+    );
+}
+
+/// #3483: a clean constant-bitrate flow empties TBn between packets, so no
+/// per-PID 3.9 may be raised across three windows.
+#[test]
+fn empty_buffer_error_absent_for_tbn_cbr_that_empties() {
+    let pid: u16 = 0x0201;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..3_000u64 {
+        let t = ms(10) + Duration::from_micros(i * 1_000);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    let flagged: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.pid == Some(Pid::from_wire_masked(pid))
+                && matches!(
+                    e.indicator,
+                    Indicator::EmptyBufferError | Indicator::DataDelayError
+                )
+        })
+        .collect();
+    assert!(
+        flagged.is_empty(),
+        "a 1.5 Mbit/s CBR flow drains TBn between packets: {flagged:#?}"
+    );
+}
+
+// ── 3.10 Data_delay_error on per-PID TBn (TR 101 290 Table 5.0c) ───────────
+
+/// Feed `packets` payload-free 188-byte packets on `pid` `step_us` apart,
+/// starting at 10 ms, on a fresh monitor, and return every event raised.
+fn tbn_cbr_events(pid: u16, step_us: u64, packets: u64) -> Vec<crate::ConformanceEvent> {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..packets {
+        let t = ms(10) + Duration::from_micros(i * step_us);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    events
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicators 3.9/3.10: a clean constant-bitrate
+/// flow must drain TBn between packets, at a modest and at a high rate, so
+/// neither the empty-interval nor the data-delay check fires. A broken byte
+/// accumulation or bitrate formula collapses the leak estimate to its floor
+/// and keeps a 1.5 Mbit/s (188 000 B/s) flow buffered.
+#[test]
+fn tbn_clean_cbr_flows_raise_no_buffer_errors() {
+    for (step_us, label) in [(1_000u64, "1.5 Mbit/s"), (100u64, "15 Mbit/s")] {
+        let pid: u16 = 0x0204;
+        let events = tbn_cbr_events(pid, step_us, 3_000 * (1_000 / step_us));
+        let flagged: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.pid == Some(Pid::from_wire_masked(pid))
+                    && matches!(
+                        e.indicator,
+                        Indicator::EmptyBufferError
+                            | Indicator::DataDelayError
+                            | Indicator::BufferError
+                    )
+            })
+            .collect();
+        assert!(
+            flagged.is_empty(),
+            "{label} CBR over 3 s must keep TBn draining: {flagged:#?}"
+        );
+    }
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.10: a burst that outruns the leak
+/// estimate (which sits on the 125 kB/s floor after a slow warm-up) keeps the
+/// first byte queued for over one second. The error is latched: exactly one.
+#[test]
+fn tbn_data_delay_trips_once_for_a_burst_after_a_low_leak_estimate() {
+    let pid: u16 = 0x0202;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let t = ms(10 + i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    for i in 0..12_000u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    let delay: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::DataDelayError && e.pid == Some(Pid::from_wire_masked(pid))
+        })
+        .collect();
+    assert_eq!(delay.len(), 1, "one burst, one latched 3.10: {delay:#?}");
+    assert!(
+        delay[0]
+            .detail
+            .contains("TBn data delay exceeds 1 s on PID 0x0202"),
+        "detail: {}",
+        delay[0].detail
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.10 is a strict limit: data still
+/// queued exactly 1.000 s after the first byte is clean; at 1.001 s it trips.
+#[test]
+fn tbn_data_delay_does_not_fire_at_exactly_one_second() {
+    let pid: u16 = 0x0203;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..10u64 {
+        let t = ms(10 + i);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    let mut at_deadline = Vec::new();
+    for i in 0..=1_010u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 1_000);
+        let raised = monitor.feed(&tbn_packet(pid, cc), t);
+        if i == 1_000 {
+            at_deadline = raised.to_vec();
+        }
+        events.extend(raised.to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    assert!(
+        !has_indicator(&at_deadline, Indicator::DataDelayError),
+        "a delay of exactly 1.000 s is not more than 1 s: {at_deadline:#?}"
+    );
+    let delay: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::DataDelayError)
+        .collect();
+    assert_eq!(
+        delay.len(),
+        1,
+        "the first packet after the limit (2000 + 1010 ms) raises 3.10 once: {delay:#?}"
+    );
+    assert_eq!(
+        delay[0].at,
+        ms(3_001),
+        "the first packet after 1.000 s (2000 + 1001 ms) is where the strict limit trips"
+    );
+}
+
+/// Burst `pid` far above its leak estimate after a slow warm-up that pins the
+/// estimate to its 125 kB/s floor, then return every event raised.
+fn tbn_burst_events(pid: u16) -> Vec<crate::ConformanceEvent> {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let t = ms(10 + i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    for i in 0..12_000u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    events
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c builds per-PID TBn only for elementary-stream
+/// PIDs: PAT/CAT/NIT/SDT/EIT/RST/TDT-TOT are modelled by TBsys, and the null
+/// PID carries no stream. A burst that would trip 3.10 on an ES PID must stay
+/// silent on each excluded PID.
+#[test]
+fn tbn_is_created_only_for_non_si_non_null_pids() {
+    for pid in [
+        0x0000u16, 0x0001, 0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x1FFF,
+    ] {
+        let events = tbn_burst_events(pid);
+        let flagged: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.pid == Some(Pid::from_wire_masked(pid))
+                    && matches!(
+                        e.indicator,
+                        Indicator::DataDelayError | Indicator::EmptyBufferError
+                    )
+            })
+            .collect();
+        assert!(
+            flagged.is_empty(),
+            "PID 0x{pid:04X} must not own a TBn: {flagged:#?}"
+        );
+    }
+
+    let es_pid: u16 = 0x0200;
+    let events = tbn_burst_events(es_pid);
+    let delay: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::DataDelayError && e.pid == Some(Pid::from_wire_masked(es_pid))
+        })
+        .collect();
+    assert_eq!(
+        delay.len(),
+        1,
+        "ES PID 0x0200 owns a TBn: the same burst must raise exactly one 3.10: {delay:#?}"
+    );
+}
+
+// ── 3.9 empty-interval window semantics ─────────────────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.9 is a per-window verdict: TBsys
+/// that empties between every section is clean across several windows. The
+/// old clean test stopped at 0.6 s, before any window was evaluated.
+#[test]
+fn tbsys_empty_interval_absent_over_two_windows_of_repeated_pat() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_pat_section(&[(1, 0x0100)]);
+    let mut all = Vec::new();
+    let mut t = 5u64;
+    while t <= 3_505 {
+        let packets = packetise_section(PID_PAT, &section);
+        all.extend(feed_all(&mut monitor, &packets, ms(t), ms(1)));
+        t += 200;
+    }
+    assert!(
+        !has_indicator(&all, Indicator::EmptyBufferError),
+        "TBsys empties between every PAT: 3.9 must stay silent across 3.5 s: {all:#?}"
+    );
+}
+
+/// `StdBuffer`'s empty-interval verdict is only raised for a window in which
+/// the buffer never emptied, and only once the deadline has passed (equality
+/// still belongs to the window).
+#[test]
+fn std_buffer_empty_interval_needs_a_non_empty_window_past_its_deadline() {
+    let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
+    buf.arm_empty_interval(Duration::ZERO);
+    assert!(
+        !buf.feed(100, Duration::ZERO),
+        "precondition: 100 bytes fit"
+    );
+
+    assert!(
+        !buf.check_empty_interval(ms(999)),
+        "no window is evaluated before its deadline"
+    );
+    assert!(
+        !buf.check_empty_interval(ms(1_000)),
+        "the first window saw the buffer empty after its initial feed"
+    );
+    assert!(
+        buf.check_empty_interval(ms(2_000)),
+        "the second window never saw the buffer empty"
+    );
+    assert!(
+        !buf.check_empty_interval(ms(2_999)),
+        "the next window is not due before 3.000 s"
+    );
+}
+
+// ── Overflow-safe drain over an epoch-based or long-idle clock ──────────────
+
+/// A caller clock may jump by years (an epoch-base switch, a capture's
+/// timestamps). Draining an occupied buffer across such a gap must clamp to
+/// the occupancy instead of multiplying into a `u64` overflow.
+#[test]
+fn occupied_buffer_drains_across_a_multi_year_gap() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let payload = [0xABu8; 184];
+    monitor.feed(
+        &make_ts_packet(0x0001, 0, true, false, &[], &payload),
+        secs(1),
+    );
+    monitor.feed(
+        &make_ts_packet(0x0001, 1, true, false, &[], &payload),
+        secs(1_700_000_000),
+    );
+    assert_eq!(
+        monitor.stats().packets,
+        7,
+        "five sync packets plus the two CAT packets"
+    );
+}
+
+/// The clamp must reach zero occupancy even when the buffer was pushed above
+/// its capacity (occupancy is tracked, not truncated, so the overflow
+/// arithmetic is real).
+#[test]
+fn std_buffer_clamps_an_oversized_occupancy_across_a_multi_year_gap() {
+    let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
+    assert!(buf.feed(2_000, Duration::ZERO), "precondition: overflow");
+    buf.drain_to(Duration::from_secs(5 * 365 * 24 * 3_600));
+    assert_eq!(buf.occupancy(), 0, "a five-year gap drains everything");
+}
+
+// ── TBsys capacity and data-delay exact boundaries ─────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.10 on TBsys is strict: data
+/// queued exactly 1.000 s after the first byte is clean, 1.001 s trips.
+#[test]
+fn tbsys_data_delay_trips_only_past_exactly_one_second() {
+    let config = Config {
+        sync_acquire_packets: 1,
+        ..Config::default()
+    };
+    let mut monitor = ConformanceMonitor::with_config(config);
+
+    let payload = [0xABu8; 184];
+    let mut at_deadline = Vec::new();
+    for ms_offset in 0..=1_001u64 {
+        let pkt = make_ts_packet(
+            0x0010,
+            (ms_offset & 0x0F) as u8,
+            false,
+            false,
+            &[],
+            &payload,
+        );
+        let events = monitor.feed(&pkt, ms(ms_offset));
+        if ms_offset == 1_000 {
+            at_deadline = events.to_vec();
+        }
+        if ms_offset == 1_001 {
+            assert!(
+                has_indicator(events, Indicator::DataDelayError),
+                "1.001 s of queued TBsys data is over the strict 1 s limit: {events:#?}"
+            );
+        }
+    }
+    assert!(
+        !has_indicator(&at_deadline, Indicator::DataDelayError),
+        "a delay of exactly 1.000 s is clean: {at_deadline:#?}"
+    );
+}
+
+/// TBsys capacity is strict: 512 bytes exactly fits; 513 overflows.
+#[test]
+fn std_buffer_overflow_is_strict_above_capacity() {
+    let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
+    assert!(!buf.feed(328, Duration::ZERO), "precondition: 328 fits");
+    assert!(
+        !buf.would_overflow(184, Duration::ZERO),
+        "exactly 512 bytes is full, not overflowed"
+    );
+    assert!(
+        buf.would_overflow(185, Duration::ZERO),
+        "513 bytes exceeds the 512-byte capacity"
+    );
+}
+
+/// H.222.0 §2.4.2.1: CAT (PID 0x0001) and NIT (PID 0x0010) are PSI, so their
+/// payload bytes enter TBsys and can overflow it; the DVB SI PIDs do not.
+#[test]
+fn tbsys_is_fed_by_cat_and_nit_payloads() {
+    for (pid, label) in [(0x0010u16, "NIT"), (0x0001, "CAT")] {
+        let mut monitor = ConformanceMonitor::new();
+        acquire_sync(&mut monitor);
+
+        let payload = [0xABu8; 184];
+        let mut events = Vec::new();
+        for i in 0..6u8 {
+            let pkt = make_ts_packet(pid, i, i == 0, false, &[], &payload);
+            events.extend(monitor.feed(&pkt, ms(10)).to_vec());
+        }
+
+        let overflow: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.indicator == Indicator::BufferError && e.pid == Some(Pid::from_wire_masked(pid))
+            })
+            .collect();
+        assert_eq!(
+            overflow.len(),
+            1,
+            "{label} payloads must feed TBsys: {events:#?}"
+        );
+        assert!(
+            overflow[0].detail.starts_with("TBsys overflow"),
+            "detail: {}",
+            overflow[0].detail
+        );
+    }
+}
+
+// ── Presence timers ignore wrong-table_id sections ─────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0a 1.3.a/1.5.a count *sections of the monitored
+/// table*. A stream repeating a CRC-valid section with the wrong table_id
+/// every 200 ms never supplies that table, so both presence timeouts must
+/// still fire; a refreshing timer would stay silent forever.
+#[test]
+fn wrong_table_id_sections_do_not_refresh_pat_or_pmt_presence() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut pat = build_pat_section(&[(1, 0x0100)]);
+    pat[0] = 0x03;
+    refresh_crc(&mut pat);
+    let mut pat_presence = None;
+    let mut t = 5u64;
+    while t <= 1_400 {
+        let packets = packetise_section(PID_PAT, &pat);
+        for e in feed_all(&mut monitor, &packets, ms(t), ms(1)) {
+            if e.indicator == Indicator::PatError2 && e.detail.starts_with("no PAT section within")
+            {
+                pat_presence = Some(e.at);
+            }
+        }
+        t += 200;
+    }
+    let pat_presence = pat_presence.expect("1.3.a presence timeout must fire");
+    assert!(
+        pat_presence <= ms(605),
+        "the first packet past 500 ms from the anchor trips 1.3.a: {}",
+        pat_presence.as_millis()
+    );
+
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let good_pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &good_pat),
+        ms(5),
+        ms(1),
+    );
+
+    let mut pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    pmt[0] = 0x03;
+    refresh_crc(&mut pmt);
+    let mut pmt_presence = None;
+    let mut t = 10u64;
+    while t <= 1_400 {
+        let packets = packetise_section(0x0100, &pmt);
+        for e in feed_all(&mut monitor, &packets, ms(t), ms(1)) {
+            if e.indicator == Indicator::PmtError2
+                && e.detail.starts_with("no PMT section on program_map_PID")
+            {
+                pmt_presence = Some(e.at);
+            }
+        }
+        t += 200;
+    }
+    let pmt_presence = pmt_presence.expect("1.5.a presence timeout must fire");
+    assert!(
+        pmt_presence <= ms(610),
+        "the first packet past 500 ms from discovery trips 1.5.a: {}",
+        pmt_presence.as_millis()
+    );
+}
+
+/// A PAT section is handled by the PAT reassembler only; the generic SI path
+/// that includes PID 0x0000 must not re-check the same section, or a corrupt
+/// PAT raises `CRC_error` twice and a good one re-runs every SI side effect.
+#[test]
+fn pat_sections_are_crc_checked_once() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut pat = build_pat_section(&[(1, 0x0100)]);
+    corrupt_crc(&mut pat);
+    let events = feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    assert_eq!(
+        events
+            .iter()
+            .filter(|e| e.indicator == Indicator::CrcError)
+            .count(),
+        1,
+        "a corrupted PAT is one CRC fault: {events:#?}"
+    );
+
+    let mut clean = ConformanceMonitor::new();
+    acquire_sync(&mut clean);
+    let good = build_pat_section(&[(1, 0x0100)]);
+    let events = feed_all(&mut clean, &packetise_section(PID_PAT, &good), ms(5), ms(1));
+    assert!(events.is_empty(), "a valid PAT raises nothing: {events:#?}");
+    assert_eq!(clean.stats().events, 0);
+}
+
+// ── Presence timers on a long healthy stream ───────────────────────────────
+
+/// Feed 7 s of a healthy multiplex on an epoch-based clock: PAT and PMT every
+/// 200 ms and the referenced ES PID every 100 ms. `pcr_bearing` makes the ES
+/// packets carry a PCR advancing in step with the clock, so the run also
+/// crosses the 5 s PID window with PCR checks active.
+fn healthy_stream_events(pcr_bearing: bool) -> Vec<crate::ConformanceEvent> {
+    const EPOCH_BASE_NS: u64 = 1_700_000_000_000_000_000;
+    let at = |offset_ms: u64| Duration::from_nanos(EPOCH_BASE_NS + offset_ms * 1_000_000);
+
+    let mut monitor = ConformanceMonitor::new();
+    for i in 0..5u8 {
+        monitor.feed(
+            &make_ts_packet(0x0300, i, false, false, &[], &[]),
+            at(u64::from(i)),
+        );
+    }
+
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    let mut events = Vec::new();
+    let mut cc = 0u8;
+    for t in (5..=7_005u64).step_by(100) {
+        let pkt = if pcr_bearing {
+            pcr_only_packet(0x0200, cc, 2_700_000 + (t - 5) * 27_000)
+        } else {
+            make_ts_packet(0x0200, cc, false, false, &[], &[0xAB])
+        };
+        events.extend(monitor.feed(&pkt, at(t)).to_vec());
+        cc = cc.wrapping_add(1);
+
+        if (t - 5) % 200 == 0 {
+            events.extend(feed_all(
+                &mut monitor,
+                &packetise_section(PID_PAT, &pat),
+                at(t + 10),
+                ms(1),
+            ));
+            events.extend(feed_all(
+                &mut monitor,
+                &packetise_section(0x0100, &pmt),
+                at(t + 20),
+                ms(1),
+            ));
+        }
+    }
+    events
+}
+
+/// A healthy stream repeats its PAT, PMT and ES PID far more often than the
+/// 500 ms / 5 s presence limits. Refreshing the presence timers is what keeps
+/// 1.3.a, 1.5.a and 1.6 quiet; every existing test stops before the limits,
+/// so a no-op refresh shipped green.
+#[test]
+fn presence_timers_stay_quiet_on_a_healthy_seven_second_stream() {
+    for pcr_bearing in [false, true] {
+        let events = healthy_stream_events(pcr_bearing);
+        let flagged: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e.indicator,
+                    Indicator::PatError2 | Indicator::PmtError2 | Indicator::PidError
+                )
+            })
+            .collect();
+        assert!(
+            flagged.is_empty(),
+            "a compliant stream over 7 s (PCR bearing: {pcr_bearing}) must raise no presence error: {flagged:#?}"
+        );
+    }
+}
+
+// ── Presence errors are latched per absence, not per packet ────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0a 1.5.a: a PMT that stays absent is one
+/// error, not one per packet. Only the PAT had an emit-once test.
+#[test]
+fn pmt_timeout_emits_once_not_per_packet() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let pkt = make_ts_packet(0x0300, (i & 0x0F) as u8, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(600 + i * 10)).to_vec());
+    }
+    let pmt_errors: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::PmtError2
+                && e.detail.starts_with("no PMT section on program_map_PID")
+        })
+        .collect();
+    assert_eq!(
+        pmt_errors.len(),
+        1,
+        "20 packets past the PMT timeout raise one 1.5.a: {pmt_errors:#?}"
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0a 1.6: a referenced PID that stays absent is
+/// one error, not one per packet.
+#[test]
+fn pid_timeout_emits_once_not_per_packet() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        ms(10),
+        ms(1),
+    );
+
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let pkt = make_ts_packet(0x0300, (i & 0x0F) as u8, false, false, &[], &[0xAB]);
+        events.extend(monitor.feed(&pkt, ms(5_100 + i * 10)).to_vec());
+    }
+    let pid_errors: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::PidError && e.pid == Some(Pid::from_wire_masked(0x0200))
+        })
+        .collect();
+    assert_eq!(
+        pid_errors.len(),
+        1,
+        "20 packets past the 5 s PID timeout raise one 1.6: {pid_errors:#?}"
+    );
+}
+
+// ── Strict `>` limits are probed exactly at the limit and one ms past it ────
+
+/// A packet on an unrelated PID, at `t`, used to drive every timeout check.
+fn probe(monitor: &mut ConformanceMonitor, t: Duration) -> Vec<crate::ConformanceEvent> {
+    monitor
+        .feed(&make_ts_packet(0x0300, 0, false, false, &[], &[0xAB]), t)
+        .to_vec()
+}
+
+fn pat_presence_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PatError2)
+}
+
+#[test]
+fn pat_presence_is_strict_at_its_limit() {
+    assert!(!pat_presence_fires(505), "exactly 500 ms is clean");
+    assert!(pat_presence_fires(506), "501 ms exceeds the limit");
+}
+
+fn pmt_presence_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        ms(10),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PmtError2)
+}
+
+#[test]
+fn pmt_presence_is_strict_at_its_limit() {
+    assert!(!pmt_presence_fires(510), "exactly 500 ms is clean");
+    assert!(pmt_presence_fires(511), "501 ms exceeds the limit");
+}
+
+fn pid_absence_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pat = build_pat_section(&[(1, 0x0100)]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
+    let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
+    feed_all(
+        &mut monitor,
+        &packetise_section(0x0100, &pmt),
+        ms(10),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PidError)
+}
+
+#[test]
+fn pid_absence_is_strict_at_five_seconds() {
+    assert!(!pid_absence_fires(5_010), "exactly 5 s is clean");
+    assert!(pid_absence_fires(5_011), "5.001 s exceeds the period");
+}
+
+fn si_repetition_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let nit = build_nit_actual_section();
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_NIT, &nit),
+        ms(5),
+        ms(1),
+    );
+    has_indicator(
+        &probe(&mut monitor, ms(probe_ms)),
+        Indicator::SiRepetitionError,
+    )
+}
+
+#[test]
+fn si_repetition_is_strict_at_ten_seconds() {
+    assert!(!si_repetition_fires(10_005), "exactly 10 s is clean");
+    assert!(si_repetition_fires(10_006), "10.001 s exceeds the interval");
+}
+
+fn unreferenced_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let pkt = make_ts_packet(0x0400, 0, false, false, &[], &[0xAB]);
+    monitor.feed(&pkt, ms(5));
+    probe(&mut monitor, ms(probe_ms)).iter().any(|e| {
+        e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::from_wire_masked(0x0400))
+    })
+}
+
+#[test]
+fn unreferenced_pid_is_strict_at_its_threshold() {
+    assert!(!unreferenced_fires(505), "exactly 500 ms is clean");
+    assert!(unreferenced_fires(506), "501 ms exceeds the threshold");
+}
+
+fn pcr_repetition_fires(gap_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
+    has_indicator(
+        monitor.feed(&pcr_only_packet(0x0200, 1, 29_700_000), ms(gap_ms)),
+        Indicator::PcrRepetitionError,
+    )
+}
+
+#[test]
+fn pcr_repetition_is_strict_at_100_ms() {
+    assert!(!pcr_repetition_fires(100), "exactly 100 ms is clean");
+    assert!(pcr_repetition_fires(101), "101 ms exceeds the limit");
+}
+
+fn pcr_discontinuity_fires(second_ticks: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
+    has_indicator(
+        monitor.feed(&pcr_only_packet(0x0200, 1, second_ticks), ms(50)),
+        Indicator::PcrDiscontinuityError,
+    )
+}
+
+#[test]
+fn pcr_discontinuity_is_strict_at_its_limit() {
+    assert!(
+        !pcr_discontinuity_fires(27_000_000 + 2_700_000),
+        "a delta of exactly 2 700 000 ticks (100 ms) is clean"
+    );
+    assert!(
+        pcr_discontinuity_fires(27_000_000 + 2_700_001),
+        "one tick past the limit is an error"
+    );
+}
+
+fn pts_gap_fires(second_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    let es_pid: u16 = 0x0200;
+    setup_monitor_with_es(&mut monitor, es_pid);
+    let pes = make_pes_header_with_pts(0xE0, 10);
+    monitor.feed(&make_ts_packet(es_pid, 0, true, false, &[], &pes), ms(20));
+    has_indicator(
+        monitor.feed(
+            &make_ts_packet(es_pid, 1, true, false, &[], &pes),
+            ms(second_ms),
+        ),
+        Indicator::PtsError,
+    )
+}
+
+#[test]
+fn pts_repetition_is_strict_at_its_limit() {
+    assert!(!pts_gap_fires(720), "exactly 700 ms is clean");
+    assert!(pts_gap_fires(721), "701 ms exceeds the limit");
+}
+
+fn other_repetition_fires(second_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let section = build_sdt_other_section(0);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_SDT_BAT, &section),
+        ms(5),
+        ms(1),
+    );
+    has_indicator(
+        &feed_all(
+            &mut monitor,
+            &packetise_section(PID_SDT_BAT, &section),
+            ms(second_ms),
+            ms(1),
+        ),
+        Indicator::SdtOtherError,
+    )
+}
+
+#[test]
+fn other_repetition_is_strict_at_ten_seconds() {
+    assert!(!other_repetition_fires(10_005), "exactly 10 s is clean");
+    assert!(
+        other_repetition_fires(10_006),
+        "10.001 s exceeds the interval"
+    );
+}
+
+fn eit_pf_pairing_fires(probe_ms: u64) -> bool {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_EIT, &sec0),
+        ms(5),
+        ms(1),
+    );
+    has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::EitPfError)
+}
+
+#[test]
+fn eit_pf_pairing_is_strict_at_its_limit() {
+    assert!(!eit_pf_pairing_fires(2_005), "exactly 2 s is clean");
+    assert!(eit_pf_pairing_fires(2_006), "2.001 s exceeds the interval");
+}
+
+// ── EIT P/F per-section absence (3.6.a) ────────────────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.6.a: while both sections of a P/F
+/// sub-table alternate inside the 2 s interval, neither may be reported
+/// absent. The polarity here is load-bearing: the naive "both armed" reading
+/// fires on every perfectly healthy P/F stream.
+#[test]
+fn eit_pf_per_section_absence_absent_when_both_sections_alternate() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    let sec1 = build_eit_pf_actual_section_keyed(1, 1, 1, 1);
+    let mut events = Vec::new();
+    let mut t = 5u64;
+    while t <= 6_005 {
+        let section = if (t - 5).is_multiple_of(1_000) {
+            &sec0
+        } else {
+            &sec1
+        };
+        events.extend(feed_all(
+            &mut monitor,
+            &packetise_section(PID_EIT, section),
+            ms(t),
+            ms(1),
+        ));
+        t += 500;
+    }
+    assert!(
+        !has_indicator(&events, Indicator::EitError),
+        "both P/F sections arrive every second: {events:#?}"
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.6.a: section '1' vanishes while
+/// section '0' keeps arriving. The absence is reported once, at the first
+/// packet strictly past the 2 s interval; the surviving section is never
+/// blamed.
+#[test]
+fn eit_pf_section_vanishing_is_reported_once_past_the_interval() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    let sec1 = build_eit_pf_actual_section_keyed(1, 1, 1, 1);
+    let mut events = Vec::new();
+
+    let mut t = 5u64;
+    while t <= 2_005 {
+        let section = if (t - 5).is_multiple_of(1_000) {
+            &sec0
+        } else {
+            &sec1
+        };
+        events.extend(feed_all(
+            &mut monitor,
+            &packetise_section(PID_EIT, section),
+            ms(t),
+            ms(1),
+        ));
+        t += 500;
+    }
+
+    let last_section_1 = 1_505u64;
+    let mut at_deadline = Vec::new();
+    for t in (2_505u64..=6_505).step_by(500) {
+        let raised = feed_all(
+            &mut monitor,
+            &packetise_section(PID_EIT, &sec0),
+            ms(t),
+            ms(1),
+        );
+        if t == last_section_1 + 2_000 {
+            at_deadline = raised.clone();
+        }
+        events.extend(raised);
+        if t == last_section_1 + 2_000 {
+            events.extend(probe(&mut monitor, ms(t + 1)));
+        }
+    }
+
+    let eit_errors: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::EitError)
+        .collect();
+    let absence: Vec<_> = eit_errors
+        .iter()
+        .filter(|e| e.detail.contains("section '1' absent"))
+        .collect();
+    assert_eq!(
+        absence.len(),
+        1,
+        "section '1' absent once past the interval: {eit_errors:#?}"
+    );
+    assert_eq!(
+        absence[0].at,
+        ms(last_section_1 + 2_001),
+        "exactly 2.000 s is inside the interval; the verdict waits for 2.001 s"
+    );
+    assert!(
+        !eit_errors
+            .iter()
+            .any(|e| e.detail.contains("section '0' absent")),
+        "the section that keeps arriving must not be blamed: {eit_errors:#?}"
+    );
+    assert!(
+        !has_indicator(&at_deadline, Indicator::EitError),
+        "the packet at exactly 2.000 s is clean: {at_deadline:#?}"
+    );
+}
+
+// ── Legal table_ids on the SI PIDs ─────────────────────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c: NIT (3.1), SDT/BAT (3.5), EIT (3.6) and
+/// TDT/TOT (3.8) each allow more than their `_actual` table_id plus stuffing.
+/// A legal id that the guard drops is falsely reported.
+#[test]
+fn legal_table_ids_on_si_pids_are_not_flagged() {
+    for (pid, table_id, indicator) in [
+        (0x0010u16, 0x72u8, Indicator::NitError),
+        (0x0011, 0x46, Indicator::SdtError),
+        (0x0011, 0x4A, Indicator::SdtError),
+        (0x0011, 0x72, Indicator::SdtError),
+        (0x0012, 0x72, Indicator::EitError),
+        (0x0014, 0x73, Indicator::TdtError),
+        (0x0014, 0x72, Indicator::TdtError),
+    ] {
+        let mut monitor = ConformanceMonitor::new();
+        acquire_sync(&mut monitor);
+
+        let mut section = build_nit_actual_section();
+        section[0] = table_id;
+        refresh_crc(&mut section);
+        let events = feed_all(
+            &mut monitor,
+            &packetise_section(pid, &section),
+            ms(5),
+            ms(1),
+        );
+        assert!(
+            !has_indicator(&events, indicator),
+            "table_id 0x{table_id:02X} is legal on PID 0x{pid:04X}: {events:#?}"
+        );
+    }
+}
+
+/// ISO/IEC 13818-1 Table 2-3 reserves 0x0002..=0x000F for future use; TR 101
+/// 290 Table 5.0c indicator 3.4 exempts them. 0x0020, just past the range, is
+/// an ordinary unreferenced PID.
+#[test]
+fn reserved_for_future_use_pids_are_exempt_from_unreferenced_pid() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut events = Vec::new();
+    for t in [5u64, 605] {
+        for &pid in &[0x0002u16, 0x0008, 0x000F, 0x0020] {
+            let pkt = make_ts_packet(pid, (t & 0x0F) as u8, false, false, &[], &[0xAB]);
+            events.extend(monitor.feed(&pkt, ms(t)).to_vec());
+        }
+    }
+
+    for &pid in &[0x0002u16, 0x0008, 0x000F] {
+        assert!(
+            !events.iter().any(|e| {
+                e.indicator == Indicator::UnreferencedPid
+                    && e.pid == Some(Pid::from_wire_masked(pid))
+            }),
+            "reserved PID 0x{pid:04X} is exempt from 3.4: {events:#?}"
+        );
+    }
+    let flagged: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid
+                && e.pid == Some(Pid::from_wire_masked(0x0020))
+        })
+        .collect();
+    assert_eq!(
+        flagged.len(),
+        1,
+        "0x0020 is outside the reserved range and is flagged once: {events:#?}"
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0b indicator 2.3a for a PCR PID that keeps
+/// sending: silence is measured from the last PCR, and exactly 100 ms is
+/// still inside the limit. The old test only counted one event over 250 ms,
+/// which an immediate error and a correct one both produce.
+#[test]
+fn pcr_silence_trips_only_past_exactly_100_ms() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let pid: u16 = 0x0200;
+    monitor.feed(&pcr_only_packet(pid, 0, 27_000_000), ms(0));
+
+    let mut early = Vec::new();
+    for i in 1..=10u8 {
+        let pkt = make_ts_packet(pid, i, false, false, &[], &[0xAB]);
+        early.extend(monitor.feed(&pkt, ms(u64::from(i) * 10)).to_vec());
+    }
+    assert!(
+        !has_indicator(&early, Indicator::PcrRepetitionError),
+        "exactly 100 ms without a PCR is the limit, not a violation: {early:#?}"
+    );
+
+    let past = monitor.feed(
+        &make_ts_packet(pid, 11, false, false, &[], &[0xAB]),
+        ms(110),
+    );
+    assert!(
+        has_indicator(past, Indicator::PcrRepetitionError),
+        "110 ms of silence is past the 100 ms limit: {past:#?}"
+    );
+
+    let latched = monitor.feed(
+        &make_ts_packet(pid, 12, false, false, &[], &[0xAB]),
+        ms(120),
+    );
+    assert!(
+        !has_indicator(latched, Indicator::PcrRepetitionError),
+        "one silence, one 2.3a: {latched:#?}"
+    );
+}
+
+// ── PES-header guards in the PTS check ─────────────────────────────────────
+
+/// A PUSI packet whose TS payload is exactly `payload` bytes (the rest of the
+/// packet is adaptation-field stuffing).
+fn pusi_payload_packet(pid: u16, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
+    assert!(payload.len() <= 183, "payload must fit one TS packet");
+    let af = vec![0u8; TS_PACKET_SIZE - 5 - payload.len()];
+    make_ts_packet(pid, cc, true, true, &af, payload)
+}
+
+/// ISO/IEC 13818-1 §2.4.3.6: the PES flags byte lives at offset 6, so a
+/// payload shorter than 8 bytes cannot carry a PTS. Every short payload must
+/// be rejected without indexing past its end, and must not arm the PID.
+#[test]
+fn pts_check_rejects_short_pes_payloads_without_arming() {
+    let es_pid: u16 = 0x0200;
+    let full = [0x00u8, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x80];
+    for n in 0..=7usize {
+        let mut monitor = ConformanceMonitor::new();
+        setup_monitor_with_es(&mut monitor, es_pid);
+        let short = pusi_payload_packet(es_pid, 0, &full[..n]);
+        monitor.feed(&short, ms(20));
+
+        let pes = make_pes_header_with_pts(0xE0, 10);
+        let events = monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(900));
+        assert!(
+            !has_indicator(events, Indicator::PtsError),
+            "a {n}-byte PES payload must not arm 2.5: {events:#?}"
+        );
+    }
+}
+
+/// An exactly 8-byte PES header carries both flags bytes; the PTS check must
+/// accept it (a second PTS past the limit then reports 2.5).
+#[test]
+fn pts_check_accepts_an_exactly_eight_byte_pes_header() {
+    let es_pid: u16 = 0x0200;
+    let mut monitor = ConformanceMonitor::new();
+    setup_monitor_with_es(&mut monitor, es_pid);
+
+    let header = [0x00u8, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x80];
+    monitor.feed(&pusi_payload_packet(es_pid, 0, &header), ms(20));
+    let events = monitor.feed(&pusi_payload_packet(es_pid, 1, &header), ms(800));
+    assert!(
+        has_indicator(events, Indicator::PtsError),
+        "an 8-byte header with PTS_DTS_flags=0b10 arms 2.5: {events:#?}"
+    );
+}
+
+/// The PES start-code prefix is three bytes; a payload where only one of them
+/// is wrong is not a PES header and must not arm the PTS check.
+#[test]
+fn pts_check_rejects_partial_pes_start_codes_without_arming() {
+    let es_pid: u16 = 0x0200;
+    for prefix in [[0x01u8, 0x00, 0x01], [0x00, 0x01, 0x01], [0x00, 0x00, 0x02]] {
+        let mut monitor = ConformanceMonitor::new();
+        setup_monitor_with_es(&mut monitor, es_pid);
+
+        let mut header = [0x00u8; 8];
+        header[..3].copy_from_slice(&prefix);
+        header[3] = 0xE0;
+        header[6] = 0x80;
+        header[7] = 0x80;
+        monitor.feed(&pusi_payload_packet(es_pid, 0, &header), ms(20));
+
+        let pes = make_pes_header_with_pts(0xE0, 10);
+        let events = monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(900));
+        assert!(
+            !has_indicator(events, Indicator::PtsError),
+            "prefix {prefix:02X?} is not a PES start code: {events:#?}"
+        );
+    }
+}
+
+// ── Public label and event-text tables ─────────────────────────────────────
+
+/// The priority labels are published verbatim (TR 101 290 §5.2).
+#[test]
+fn priority_names_are_literal() {
+    assert_eq!(Priority::First.name(), "first priority");
+    assert_eq!(Priority::Second.name(), "second priority");
+    assert_eq!(Priority::Third.name(), "third priority");
+}
+
+/// Every indicator's clause citation is its TR 101 290 table and row.
+#[test]
+fn indicator_clauses_are_literal() {
+    let cases = [
+        (
+            Indicator::TsSyncLoss,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.1",
+        ),
+        (
+            Indicator::SyncByteError,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.2",
+        ),
+        (
+            Indicator::PatError2,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.3.a",
+        ),
+        (
+            Indicator::ContinuityCountError,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.4",
+        ),
+        (
+            Indicator::PmtError2,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.5.a",
+        ),
+        (
+            Indicator::PidError,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.6",
+        ),
+        (
+            Indicator::TransportError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.1",
+        ),
+        (
+            Indicator::CrcError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.2",
+        ),
+        (
+            Indicator::PcrRepetitionError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.3a",
+        ),
+        (
+            Indicator::PcrDiscontinuityError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.3b",
+        ),
+        (
+            Indicator::PtsError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.5",
+        ),
+        (
+            Indicator::CatError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.6",
+        ),
+        (
+            Indicator::NitError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.1",
+        ),
+        (
+            Indicator::SiRepetitionError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.2",
+        ),
+        (
+            Indicator::UnreferencedPid,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.4",
+        ),
+        (
+            Indicator::SdtError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.5",
+        ),
+        (
+            Indicator::EitError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.6",
+        ),
+        (
+            Indicator::RstError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.7",
+        ),
+        (
+            Indicator::TdtError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.8",
+        ),
+        (
+            Indicator::PcrAccuracyError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.4",
+        ),
+        (
+            Indicator::BufferError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.3",
+        ),
+        (
+            Indicator::EmptyBufferError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.9",
+        ),
+        (
+            Indicator::DataDelayError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.10",
+        ),
+        (
+            Indicator::EitPfError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.6.c",
+        ),
+        (
+            Indicator::NitOtherError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.1.b",
+        ),
+        (
+            Indicator::SdtOtherError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.5.b",
+        ),
+        (
+            Indicator::EitOtherError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.6.b",
+        ),
+        (
+            Indicator::SiMinGapError,
+            "TR 101 290 v1.4.1 Table 5.0c (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)",
+        ),
+    ];
+    for (indicator, expected) in cases {
+        assert_eq!(indicator.clause(), expected, "{indicator:?}");
+        assert!(expected.starts_with("TR 101 290 v1.4.1 Table 5.0"));
+    }
+}
+
+/// The PCR discontinuity detail must report the delta in milliseconds; the
+/// 1000/27 000 000 scaling and its operand order are pinned by literal text.
+#[test]
+fn pcr_discontinuity_detail_reports_delta_in_ms() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
+    let events = monitor.feed(&pcr_only_packet(0x0200, 1, 27_000_000 + 4_050_000), ms(50));
+    let event = events
+        .iter()
+        .find(|e| e.indicator == Indicator::PcrDiscontinuityError)
+        .expect("a 150 ms PCR step must be a 2.3b error");
+    assert!(
+        event
+            .detail
+            .contains("PCR delta 150 ms exceeds limit 100 ms"),
+        "detail: {}",
+        event.detail
+    );
+}
+
+/// The `_other` repetition details name the table that actually timed out and
+/// its own clause, not the EIT fallback.
+#[test]
+fn other_repetition_details_name_the_table_and_clause() {
+    for (pid, section, indicator, table, clause) in [
+        (
+            0x0010u16,
+            build_nit_other_section(0),
+            Indicator::NitOtherError,
+            "NIT_other (0x41)",
+            "(3.1.b)",
+        ),
+        (
+            0x0011,
+            build_sdt_other_section(0),
+            Indicator::SdtOtherError,
+            "SDT_other (0x46)",
+            "(3.5.b)",
+        ),
+    ] {
+        let mut monitor = ConformanceMonitor::new();
+        acquire_sync(&mut monitor);
+        feed_all(
+            &mut monitor,
+            &packetise_section(pid, &section),
+            ms(5),
+            ms(1),
+        );
+        let events = feed_all(
+            &mut monitor,
+            &packetise_section(pid, &section),
+            secs(15),
+            ms(1),
+        );
+        let event = events
+            .iter()
+            .find(|e| e.indicator == indicator)
+            .expect("a 15 s interval exceeds the 10 s `_other` limit");
+        assert!(
+            event.detail.contains(table) && event.detail.contains(clause),
+            "{indicator:?} detail: {}",
+            event.detail
+        );
+    }
 }

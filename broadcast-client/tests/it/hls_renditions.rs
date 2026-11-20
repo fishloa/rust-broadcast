@@ -1074,3 +1074,66 @@ fn status_live_after_first_sample_from_either() {
         1
     );
 }
+
+const AUDIO3_DIR: &str = "http://origin.test/hls/a3";
+const AUDIO3_PLAYLIST_URL: &str = "http://origin.test/hls/a3/index.m3u8";
+
+#[test]
+fn a_manual_audio_rendition_is_matched_by_name_and_language_in_the_new_group() {
+    let f = fixture();
+    let m = master(&[
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"lo\",NAME=\"English\",LANGUAGE=\"en\",DEFAULT=YES,AUTOSELECT=YES,URI=\"a/index.m3u8\"\n",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"lo\",NAME=\"Deutsch\",LANGUAGE=\"de-DE\",DEFAULT=NO,AUTOSELECT=YES,URI=\"a2/index.m3u8\"\n",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"hi\",NAME=\"Alpha\",LANGUAGE=\"de-DE\",DEFAULT=NO,AUTOSELECT=YES,URI=\"a/index.m3u8\"\n",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"hi\",NAME=\"Beta\",LANGUAGE=\"fr\",DEFAULT=NO,AUTOSELECT=YES,URI=\"a2/index.m3u8\"\n",
+        "#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"hi\",NAME=\"Deutsch\",LANGUAGE=\"de-DE\",DEFAULT=NO,AUTOSELECT=YES,URI=\"a3/index.m3u8\"\n",
+        "#EXT-X-STREAM-INF:BANDWIDTH=900000,AUDIO=\"lo\"\nlow/index.m3u8\n",
+        "#EXT-X-STREAM-INF:BANDWIDTH=200000,AUDIO=\"hi\"\nhi/index.m3u8\n",
+    ]);
+    let mut h = host(&f, m, hls_config());
+    add(&mut h, f.video.bodies(LOW_DIR, LOW_PLAYLIST_URL));
+    add(&mut h, f.video.bodies(HI_DIR, HI_PLAYLIST_URL));
+    add(&mut h, f.audio.bodies(AUDIO3_DIR, AUDIO3_PLAYLIST_URL));
+    h.run_until(|evs| count_audio(evs) > 0, SPLIT_STEPS);
+    h.session
+        .select_audio_rendition(ts(h.now), Some(1))
+        .expect("manual Deutsch");
+    h.collect();
+    assert_eq!(
+        audio_renditions(&h.events).last(),
+        Some(&(
+            Some(1),
+            Some("Deutsch".to_string()),
+            Some("de-DE".to_string())
+        ))
+    );
+    let seen_before = h.seen.len();
+    h.session
+        .select_variant(ts(h.now), 1)
+        .expect("switch to the other variant");
+    h.run_until(|evs| ended_count(evs) == 1, SPLIT_STEPS);
+    assert_eq!(
+        audio_renditions(&h.events).last(),
+        Some(&(
+            Some(2),
+            Some("Deutsch".to_string()),
+            Some("de-DE".to_string())
+        )),
+        "the manually chosen rendition is matched by name and language in the new group"
+    );
+    let after: Vec<&str> = h.seen[seen_before..]
+        .iter()
+        .map(|s| s.url.as_str())
+        .filter(|u| u.contains("/a"))
+        .collect();
+    assert!(
+        after.iter().any(|u| u.starts_with(AUDIO3_DIR)),
+        "the new group's matching rendition is fetched: {after:?}"
+    );
+    assert!(
+        !after
+            .iter()
+            .any(|u| u.starts_with(&format!("{AUDIO_DIR}/")) || u.starts_with(AUDIO2_DIR)),
+        "a differently named or languaged rendition is not chosen: {after:?}"
+    );
+}

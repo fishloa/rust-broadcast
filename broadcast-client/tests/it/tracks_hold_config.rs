@@ -211,3 +211,22 @@ fn zero_wall_and_media_limits_are_valid() {
     };
     assert!(Session::open(Url::parse("http://h/live.ts").unwrap(), c, ts(0)).is_ok());
 }
+
+#[test]
+fn a_disabled_hold_does_not_start_while_a_stream_is_still_unresolved() {
+    let bytes = without_pid(&test_fixtures::read("ts/france2.ts"), LAST_FRANCE2_PID);
+    let config = {
+        let mut new_config = Config::default();
+        new_config.tracks_hold_max_wall = None;
+        new_config.tracks_hold_max_media = None;
+        new_config
+    };
+    let (mut s, c) = open_live(config);
+    let (now, events) = feed_chunks(&mut s, c, &bytes, 4);
+    let sets = tracks_sets(&events);
+    assert_eq!(
+        sets.len(),
+        1,
+        "a disabled hold announces the first resolved stream at once: {sets:?} at {now}"
+    );
+}
