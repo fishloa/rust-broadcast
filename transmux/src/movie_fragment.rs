@@ -980,8 +980,7 @@ pub struct TrackFragmentBox {
     /// `seig`, `subs`, `sdtp`, an existing `senc`/`saiz`/`saio`, `meta`)
     /// survives a rewrite instead of being silently stripped. An empty `order`
     /// means "one of each typed child, in the conventional sequence" — the
-    /// state every builder in this workspace produces; see
-    /// [`TrackFragmentBox::into_bytes`].
+    /// state every builder in this workspace produces.
     pub order: Vec<TrafChild>,
 }
 
@@ -1072,17 +1071,6 @@ impl TrackFragmentBox {
             out.push(TrafChild::Trun(i));
         }
         out
-    }
-
-    /// Serialize this `traf` to its own box bytes (header + body).
-    ///
-    /// Standalone because [`protect_media_segment`] appends `senc`/`saiz`/`saio`
-    /// to the `traf` it rewrites and then has to patch the leading size field.
-    pub fn into_bytes(&self) -> Result<Vec<u8>> {
-        let mut buf = alloc::vec![0u8; self.serialized_len()];
-        let n = self.serialize_into(&mut buf)?;
-        buf.truncate(n);
-        Ok(buf)
     }
 }
 
