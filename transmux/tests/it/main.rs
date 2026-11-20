@@ -185,6 +185,7 @@ mod streaming_tshls;
 mod streaming_tshls_config_change;
 mod streaming_tshls_late_track;
 mod streaming_tshls_pmt_version;
+mod stsd_dimensions;
 mod subtitle_ac4_strictness;
 #[cfg(feature = "std")]
 mod subtitle_manifests;
