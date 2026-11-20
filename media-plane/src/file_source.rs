@@ -1131,6 +1131,125 @@ mod tests {
         }
     }
 
+    /// A single-track [`ParsedFile`] at an explicit timescale, each sample
+    /// carrying the given `pts` (with `dts = pts`, `duration = 10`).
+    fn one_track_file_at(pts: &[i64], timescale_hz: u32) -> ParsedFile {
+        let samples = pts
+            .iter()
+            .map(|&p| Sample::new(vec![0], Some(p), Some(p), Some(10), true))
+            .collect::<Result<Vec<_>, _>>()
+            .expect("valid timing");
+        ParsedFile {
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), timescale(timescale_hz)),
+                samples,
+            )],
+        }
+    }
+
+    /// The loop frame period is the track's **minimum positive PTS gap**, not
+    /// its last gap and not the declared sample duration: with gaps
+    /// `[3000, 6000, 6000]` the frame is `3000`, so a loop pass abuts the
+    /// previous one instead of overlapping or leaving a hole.
+    #[test]
+    fn frame_period_is_the_minimum_positive_pts_gap() {
+        let parsed = one_track_file(&[0, 3000, 9000, 15000]);
+        let (_, _, ranges) = parsed.build_playout();
+        assert_eq!(
+            ranges[0].frame_ticks, 3000,
+            "the frame must be the smallest positive gap, not the last one"
+        );
+        assert_eq!(ranges[0].span_ticks, 15_000);
+        assert_eq!(
+            ranges[0].frame,
+            Duration::from_nanos(33_333_333),
+            "3000 ticks at 90 kHz is one 30 fps frame"
+        );
+    }
+
+    /// A track with a single sample has no PTS gap, so its frame period comes
+    /// from the sample's own declared duration — and a declared `Some(0)` is
+    /// duration-absent, never a zero-length loop step.
+    #[test]
+    fn single_sample_track_uses_its_positive_declared_duration() {
+        let samples =
+            vec![Sample::new(vec![0], Some(0), Some(0), Some(3000), true).expect("valid timing")];
+        let parsed = ParsedFile {
+            tracks: vec![Track::new(
+                avc_spec(TrackId::new(1), timescale(90_000)),
+                samples,
+            )],
+        };
+        let (_, _, ranges) = parsed.build_playout();
+        assert_eq!(ranges[0].span_ticks, 0);
+        assert_eq!(ranges[0].frame_ticks, 3000);
+    }
+
+    /// A pacing time that cannot be a wall-clock [`Duration`] (non-finite,
+    /// negative, or overflowing) is a typed [`FileReaderError::PacingOverflow`],
+    /// never a `Duration::ZERO` and never a panic.
+    #[test]
+    fn secs_to_duration_rejects_non_representable_values() {
+        for bad in [f64::NAN, -1.0, 1e300] {
+            assert!(
+                matches!(
+                    secs_to_duration(bad),
+                    Err(FileReaderError::PacingOverflow { .. })
+                ),
+                "{bad} must be PacingOverflow"
+            );
+        }
+        assert_eq!(
+            secs_to_duration(1.5).expect("representable"),
+            Duration::from_millis(1500)
+        );
+    }
+
+    /// Tick-to-duration conversion rounds to the nearest nanosecond at the
+    /// half-way point (the `+ denom / 2` half-up step), so 1 tick at 6 Hz is
+    /// 166_666_667 ns, not the truncated 166_666_666 ns.
+    #[test]
+    fn ticks_to_duration_rounds_to_nearest_nanosecond() {
+        assert_eq!(
+            ticks_to_duration(90_000, timescale(90_000)),
+            Duration::from_secs(1)
+        );
+        assert_eq!(
+            ticks_to_duration(1, timescale(3)),
+            Duration::from_nanos(333_333_333)
+        );
+        assert_eq!(
+            ticks_to_duration(1, timescale(6)),
+            Duration::from_nanos(166_666_667)
+        );
+    }
+
+    /// A loop's second pass continues at `first pass max + one frame`, so the
+    /// 48 kHz sample-count timeline is strictly monotonic across the loop
+    /// point with no overlapping or skipped frame.
+    #[test]
+    fn second_loop_pass_continues_at_span_plus_one_frame() {
+        let parsed = one_track_file_at(&[0, 1024], 48_000);
+        let (_, _, ranges) = parsed.build_playout();
+        assert_eq!(ranges[0].span_ticks, 1024);
+        assert_eq!(ranges[0].frame_ticks, 1024);
+
+        let mut sess = FileIngestSession::new(parsed, ProgramId(0), true, false)
+            .expect("fixture must have playable samples");
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        let _setup = drain_dts(&mut sess);
+        let pass0: Vec<i64> = drain_dts(&mut sess).into_iter().map(|(_, d)| d).collect();
+        assert_eq!(pass0, vec![0, 1024]);
+
+        let _ = sess.feed((), broadcast_common::Timestamp::from_nanos(0));
+        let pass1: Vec<i64> = drain_dts(&mut sess).into_iter().map(|(_, d)| d).collect();
+        assert_eq!(
+            pass1,
+            vec![2048, 3072],
+            "pass 2 starts at span + frame (2048) and ends at max + span + frame (3072)"
+        );
+    }
+
     /// Finding 5: negative PTS (reachable from a version-1 `ctts` leading
     /// B-frame) must still merge in ascending presentation order. A
     /// `.to_bits()` key inverts negative magnitudes, so `-10` would sort after
@@ -1286,5 +1405,341 @@ mod tests {
             feeds >= burst / MAX_SAMPLES_PER_DRAIN,
             "the burst must have taken several bounded drains, took {feeds}"
         );
+    }
+
+    /// The file-route ring is a fixed multiple of one drain's bound, so its
+    /// memory is independent of the file's length. Pinned by value: if either
+    /// constant moves, the relationship (not just the product) is asserted.
+    #[test]
+    fn file_timed_ring_is_four_bounded_drains() {
+        assert_eq!(MAX_SAMPLES_PER_DRAIN, 256);
+        assert_eq!(FILE_TIMED_RING, 1024);
+        assert_eq!(FILE_TIMED_RING, MAX_SAMPLES_PER_DRAIN * 4);
+    }
+
+    /// Every [`DemuxerKind`] label is its documented token, and `Display`
+    /// renders that same token (workspace #204 convention).
+    #[test]
+    fn demuxer_kind_names_are_their_tokens() {
+        for (kind, token) in [
+            (DemuxerKind::StreamingTs, "StreamingTs"),
+            (DemuxerKind::Fmp4, "Fmp4"),
+            (DemuxerKind::Progressive, "Progressive"),
+            (DemuxerKind::Webm, "Webm"),
+            (DemuxerKind::Ps, "Ps"),
+            (DemuxerKind::StreamingFlv, "StreamingFlv"),
+        ] {
+            assert_eq!(kind.name(), token);
+            assert_eq!(format!("{kind}"), token);
+        }
+    }
+
+    /// Identify `bytes` and return the probe's format/detail — the real inputs
+    /// `select_demuxer` is handed, never a hand-built `Detail`.
+    fn identify(bytes: &[u8]) -> (Format, container_probe::Detail) {
+        match container_probe::probe(bytes) {
+            Probe::Identified { format, detail, .. } => (format, detail),
+            other => panic!("expected an identified container, got {other:?}"),
+        }
+    }
+
+    /// The ISOBMFF layout the probe reports selects exactly one demuxer: a
+    /// fragmented file gets `Fmp4`, a progressive one `Progressive`, and an
+    /// undetermined layout is refused rather than guessed.
+    #[test]
+    fn select_demuxer_maps_the_probed_isobmff_layout() {
+        let frag = test_fixtures::read("mp4/h264-aac-frag.mp4");
+        let (format, detail) = identify(&frag);
+        assert_eq!(format, Format::Isobmff);
+        assert_eq!(
+            select_demuxer(format, detail).expect("fragmented ISOBMFF is supported"),
+            DemuxerKind::Fmp4
+        );
+
+        let prog = test_fixtures::read("mp4/h264-aac-prog.mp4");
+        let (format, detail) = identify(&prog);
+        assert_eq!(format, Format::Isobmff);
+        assert_eq!(
+            select_demuxer(format, detail).expect("progressive ISOBMFF is supported"),
+            DemuxerKind::Progressive
+        );
+
+        // A prefix holding only `ftyp` identifies as ISOBMFF but cannot settle
+        // the layout — that must be refused, never answered with a demuxer.
+        let head = test_fixtures::read("mp4/cmaf/av-frag.mp4");
+        let (format, detail) = identify(&head[..64]);
+        assert_eq!(format, Format::Isobmff);
+        assert!(
+            matches!(
+                select_demuxer(format, detail),
+                Err(FileReaderError::UndeterminedLayout)
+            ),
+            "an undetermined ISOBMFF layout must not pick a demuxer"
+        );
+
+        // An ISOBMFF verdict paired with a non-ISOBMFF detail cannot name a
+        // layout either.
+        let (_, ts_detail) = identify(&test_fixtures::read("ts/h264-aac.ts"));
+        assert!(
+            matches!(
+                select_demuxer(Format::Isobmff, ts_detail),
+                Err(FileReaderError::UndeterminedLayout)
+            ),
+            "a non-ISOBMFF detail under an ISOBMFF format must not pick a demuxer"
+        );
+    }
+
+    /// A buffer far too short to identify is reported with the probe's own
+    /// `need_at_least`, and that need strictly exceeds the bytes supplied so
+    /// the documented caller loop can make progress.
+    #[test]
+    fn probe_and_demux_reports_a_too_short_file() {
+        let bytes = [0u8; 3];
+        match probe_and_demux(&bytes).err().expect("3 bytes cannot demux") {
+            FileReaderError::FileTooShortToIdentify {
+                need_at_least,
+                file_bytes,
+            } => {
+                assert_eq!(file_bytes, 3);
+                assert!(need_at_least > 3, "need {need_at_least} must exceed 3");
+            }
+            other => panic!("3 bytes must be FileTooShortToIdentify, got {other:?}"),
+        }
+    }
+
+    /// A six-packet TS lattice (weak) followed by four chained ADTS frames
+    /// ties the two probers at `LATTICE_WEAK`, which must surface as
+    /// `AmbiguousProbe` naming both candidates — never a guessed demuxer.
+    #[test]
+    fn probe_and_demux_reports_an_ambiguous_probe() {
+        const PACKET: usize = 188;
+        const PACKETS: usize = 6;
+        const ADTS_LEN: usize = 274;
+        let mut bytes = vec![0u8; PACKETS * PACKET + 4 * ADTS_LEN];
+        for i in 0..PACKETS {
+            bytes[i * PACKET] = 0x47;
+        }
+        for k in 0..4 {
+            let o = PACKETS * PACKET + k * ADTS_LEN;
+            bytes[o] = 0xFF;
+            bytes[o + 1] = 0xF1;
+            bytes[o + 4] = ((ADTS_LEN >> 3) & 0xFF) as u8;
+            bytes[o + 5] = ((ADTS_LEN & 0x07) as u8) << 5;
+        }
+        match probe_and_demux(&bytes).err().expect("the tie cannot demux") {
+            FileReaderError::AmbiguousProbe { candidates } => {
+                assert!(
+                    candidates.iter().any(|c| c == "MpegTs"),
+                    "the TS candidate must be named, got {candidates:?}"
+                );
+                assert!(
+                    candidates.iter().any(|c| c == "AdtsAac" || c == "Mp3"),
+                    "the elementary-stream candidate must be named, got {candidates:?}"
+                );
+            }
+            other => panic!("a TS/ADTS tie must be AmbiguousProbe, got {other:?}"),
+        }
+    }
+
+    /// An AVC track spec at `width` — so a mid-file config change is
+    /// observable in the collected [`Media`].
+    fn avc_spec_sized(track_id: TrackId, width: u16) -> TrackSpec {
+        let base = avc_spec(track_id, timescale(90_000));
+        let transmux::CodecConfig::Avc { config, height, .. } = base.config else {
+            panic!("the helper builds an AVC track");
+        };
+        TrackSpec::new(
+            track_id,
+            timescale(90_000),
+            transmux::CodecConfig::Avc {
+                config,
+                width,
+                height,
+            },
+        )
+    }
+
+    /// Collect a scripted [`DemuxEvent`] sequence through the real
+    /// [`collect_streaming_media`] translator.
+    fn collect_events(events: Vec<DemuxEvent>) -> Media {
+        let mut queue: VecDeque<DemuxEvent> = events.into();
+        collect_streaming_media(&mut queue, |q| q.pop_front())
+            .map_err(|_| ())
+            .expect("scripted events collect")
+    }
+
+    /// A `TrackUpdated` (a new in-band SPS, or a changed PMT descriptor) must
+    /// replace the collected track's config, so late codec config reaches the
+    /// `Media` rather than being dropped.
+    #[test]
+    fn collect_streaming_media_applies_a_track_updated_spec() {
+        let id = TrackId::new(1);
+        let sample = Sample::new(vec![0], Some(0), Some(0), Some(10), true).expect("valid timing");
+        let media = collect_events(vec![
+            DemuxEvent::TrackAdded(avc_spec_sized(id, 640)),
+            DemuxEvent::sample(id, sample.clone()),
+            DemuxEvent::TrackUpdated(avc_spec_sized(id, 1280)),
+            DemuxEvent::sample(id, sample),
+        ]);
+        assert_eq!(media.tracks.len(), 1);
+        assert_eq!(media.tracks[0].samples.len(), 2);
+        assert_eq!(
+            media.tracks[0].spec,
+            avc_spec_sized(id, 1280),
+            "the updated spec must replace the originally-collected one"
+        );
+    }
+
+    /// Every non-sample demux event is metadata: it adds no track and no
+    /// sample, and never removes the one real track.
+    #[test]
+    fn collect_streaming_media_ignores_non_sample_events() {
+        let id = TrackId::new(1);
+        let provenance = transmux::EventProvenance::default();
+        let sample = Sample::new(vec![0], Some(0), Some(0), Some(10), true).expect("valid timing");
+        let media = collect_events(vec![
+            DemuxEvent::TrackAdded(avc_spec_sized(id, 640)),
+            DemuxEvent::clock_reference(0, None, timescale(27_000_000), false, provenance),
+            DemuxEvent::discontinuity(Some(id), transmux::DiscontinuityKind::Signalled, provenance),
+            DemuxEvent::input_degraded(
+                Some(id),
+                transmux::InputDegradation::TransportError,
+                provenance,
+            ),
+            DemuxEvent::tracks_resolved(1),
+            DemuxEvent::sample(id, sample),
+            DemuxEvent::track_removed(id, provenance),
+            DemuxEvent::track_abandoned(
+                None,
+                transmux::AbandonReason::ConfigUnrecoverable,
+                provenance,
+            ),
+        ]);
+        assert_eq!(media.tracks.len(), 1);
+        assert_eq!(media.tracks[0].samples.len(), 1);
+    }
+
+    /// `drained()` is true only for a **started, finite** file whose queue has
+    /// emptied — never on a fresh session, never before the first sample
+    /// phase, and never for a looped file.
+    #[test]
+    fn drained_requires_a_started_finite_emptied_file() {
+        let mut sess =
+            FileIngestSession::new(one_track_file(&[0, 3000]), ProgramId(0), false, false)
+                .expect("playable samples");
+        assert!(!sess.drained(), "a fresh session has not started");
+        let _ = sess.feed((), broadcast_common::Timestamp::ZERO);
+        assert!(matches!(sess.poll(), Some(SessionEvent::Established)));
+        assert!(matches!(sess.poll(), Some(SessionEvent::NewProgram { .. })));
+        assert!(!sess.drained(), "announced but not yet started");
+        assert!(sess.poll().is_none(), "the start gate ends this drain");
+        assert!(!sess.drained(), "samples are still queued");
+        while sess.poll().is_some() {}
+        assert!(sess.drained(), "an emptied finite file is drained");
+
+        let mut looped =
+            FileIngestSession::new(one_track_file(&[0, 3000]), ProgramId(0), true, false)
+                .expect("playable samples");
+        let _ = looped.feed((), broadcast_common::Timestamp::ZERO);
+        while looped.poll().is_some() {}
+        assert!(
+            !looped.drained(),
+            "a looped file is never drained while looping"
+        );
+    }
+
+    /// A paced session only hands out samples whose within-pass media time has
+    /// elapsed on the wall clock, and `next_due` names the front sample's
+    /// instant — never a sample 50 ms in the future on the first call.
+    #[test]
+    fn paced_poll_holds_samples_until_their_instant() {
+        // 48 kHz: PTS 0 and 2400 are 50 ms apart.
+        let mut sess = FileIngestSession::new(
+            one_track_file_at(&[0, 2400], 48_000),
+            ProgramId(0),
+            false,
+            true,
+        )
+        .expect("playable samples");
+        assert_eq!(sess.next_due(), None, "no pass baseline before start");
+        let _ = sess.feed((), broadcast_common::Timestamp::ZERO);
+        assert!(matches!(sess.poll(), Some(SessionEvent::Established)));
+        assert!(matches!(sess.poll(), Some(SessionEvent::NewProgram { .. })));
+        assert!(sess.poll().is_none(), "the start gate ends this drain");
+        let base = sess.pass_wall_start.expect("a paced pass has a baseline");
+        assert_eq!(
+            sess.next_due(),
+            Some(base),
+            "the first sample is due at the pass baseline"
+        );
+        assert!(
+            matches!(sess.poll(), Some(SessionEvent::Sample { .. })),
+            "the sample due at the baseline is handed out"
+        );
+        assert!(
+            sess.poll().is_none(),
+            "a sample 50 ms away must not be handed out yet"
+        );
+        sess.pass_wall_start = Some(
+            base.checked_sub(Duration::from_secs(10))
+                .expect("10 s before now"),
+        );
+        assert!(
+            matches!(sess.poll(), Some(SessionEvent::Sample { .. })),
+            "once the baseline is 10 s back, the second sample is due"
+        );
+        assert_eq!(sess.next_due(), None, "an empty queue has no due instant");
+    }
+
+    /// With pacing off, no wall clock is consulted: `next_due` is always
+    /// `None`.
+    #[test]
+    fn unpaced_session_has_no_due_instant() {
+        let mut sess =
+            FileIngestSession::new(one_track_file(&[0, 3000]), ProgramId(0), false, false)
+                .expect("playable samples");
+        let _ = sess.feed((), broadcast_common::Timestamp::ZERO);
+        assert!(matches!(sess.poll(), Some(SessionEvent::Established)));
+        assert!(matches!(sess.poll(), Some(SessionEvent::NewProgram { .. })));
+        assert!(sess.poll().is_none());
+        assert_eq!(sess.next_due(), None);
+    }
+
+    /// A loop pass advances the wall-clock baseline by exactly one pass
+    /// (`span + frame`) — addition, not subtraction, or every pass after the
+    /// first would run at full speed.
+    #[test]
+    fn loop_refill_advances_the_wall_clock_baseline_by_one_pass() {
+        // 90 kHz, span 15000 ticks (0.1666..s), frame 3000 (0.0333..s): the
+        // two together are exactly 18000 ticks = 200 ms.
+        let mut sess = FileIngestSession::new(
+            one_track_file(&[0, 3000, 9000, 15000]),
+            ProgramId(0),
+            true,
+            true,
+        )
+        .expect("playable samples");
+        let _ = sess.feed((), broadcast_common::Timestamp::ZERO);
+        assert!(matches!(sess.poll(), Some(SessionEvent::Established)));
+        assert!(matches!(sess.poll(), Some(SessionEvent::NewProgram { .. })));
+        assert!(sess.poll().is_none());
+        let first = sess.pass_wall_start.expect("a paced pass has a baseline");
+        sess.queue.clear();
+        let _ = sess.feed((), broadcast_common::Timestamp::ZERO);
+        let second = sess.pass_wall_start.expect("a paced pass has a baseline");
+        assert_eq!(
+            second.duration_since(first),
+            Duration::from_millis(200),
+            "the second pass starts one span+frame (200 ms) after the first"
+        );
+    }
+
+    /// The file session asks for no particular read size (it is pulled by its
+    /// driver, not pushed a socket read).
+    #[test]
+    fn file_session_demand_is_zero() {
+        let sess = FileIngestSession::new(one_track_file(&[0, 3000]), ProgramId(0), false, false)
+            .expect("playable samples");
+        assert_eq!(sess.demand(), Demand::new(0));
     }
 }
