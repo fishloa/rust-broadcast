@@ -860,3 +860,36 @@ fn hls_replays_a_401_with_basic_credentials_at_once() {
         h.events
     );
 }
+
+#[test]
+fn set_credentials_refuses_a_bearer_token_with_control_characters() {
+    for token in ["a\tb", "a\u{85}b"] {
+        let mut session = Session::open(
+            Url::parse("http://example/live.ts").unwrap(),
+            Config::default(),
+            ts(0),
+        )
+        .unwrap();
+        let error = session
+            .set_credentials(
+                ts(0),
+                Credentials::Bearer {
+                    token: token.into(),
+                },
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, broadcast_client::Error::InvalidCredentials),
+            "{token:?}: {error:?}"
+        );
+    }
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
+    session
+        .set_credentials(ts(0), Credentials::bearer("plain-token"))
+        .unwrap();
+}
