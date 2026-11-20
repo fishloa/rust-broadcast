@@ -11,8 +11,8 @@ use broadcast_common::Parse;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 use transmux::{
-    CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,
-    Severity, StblChild, TrackSpec, build_init_segment, build_media_segment,
+    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, MovieFragmentBox, Sample,
+    SampleEntryVariant, Severity, StblChild, TrackSpec, build_init_segment, build_media_segment,
     validate::SegmentOrigin, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };
 
@@ -90,6 +90,34 @@ fn video_spec(moov: &MovieBox) -> TrackSpec {
             config: avc.config.clone(),
             width: avc.visual.width,
             height: avc.visual.height,
+        },
+    )
+}
+
+/// Build a single-audio-track spec from the fixture's real esds.
+fn audio_spec(moov: &MovieBox) -> TrackSpec {
+    let mp4a = match track_stsd_entry(moov, 1) {
+        SampleEntryVariant::Mp4a(m) => m,
+        _ => panic!("expected mp4a"),
+    };
+    let esds_body = mp4a
+        .config_boxes
+        .iter()
+        .find(|b| &b.box_type == b"esds")
+        .expect("mp4a must carry esds");
+    let mut esds_full = Vec::with_capacity(8 + esds_body.data.len());
+    esds_full.extend_from_slice(&((8 + esds_body.data.len()) as u32).to_be_bytes());
+    esds_full.extend_from_slice(b"esds");
+    esds_full.extend_from_slice(&esds_body.data);
+    let esds = EsdsBox::parse_box(&esds_full).expect("esds must parse");
+    TrackSpec::new(
+        TrackId::new(2),
+        track_timescale(moov, 1),
+        CodecConfig::Aac {
+            esds,
+            channel_count: mp4a.channelcount,
+            sample_rate: mp4a.samplerate >> 16,
+            sample_size: mp4a.samplesize,
         },
     )
 }
@@ -611,6 +639,73 @@ fn zero_duration_sample_bites() {
     assert!(
         has_code(&issues, "media.sample.zero-duration"),
         "expected media.sample.zero-duration, got {issues:?}"
+    );
+}
+
+#[test]
+fn ir_video_zero_span_with_init_is_a_warning_not_an_error() {
+    let data = fixture();
+    let (_, moov_bytes) = find_top_box(&data, b"moov");
+    let moov = MovieBox::parse(&moov_bytes).expect("fixture moov");
+    // Audio track first, video second: the handler, not the trak position,
+    // decides which track is video.
+    let init = build_init_segment(&[audio_spec(&moov), video_spec(&moov)], timescale(1000))
+        .expect("init with audio first, video second");
+
+    // A video IR sample with no stated span is written as a zero duration.
+    let mut video: Vec<Sample> = video_samples(&data).into_iter().take(3).collect();
+    for sample in &mut video {
+        let timing = sample.timing.expect("timed sample");
+        sample.timing = Some(transmux::ir::SampleTiming::timed(
+            timing.dts().expect("dts"),
+            timing.pts().expect("pts"),
+        ));
+    }
+    let video_seg = clean_media(1, 0, &video);
+    let issues = validate_cmaf_track(&init, &[&video_seg], SegmentOrigin::FromIr);
+    let timing = issues
+        .iter()
+        .find(|i| i.code == "media.sample.timing")
+        .unwrap_or_else(|| panic!("video zero span must be an unstated span: {issues:?}"));
+    assert!(
+        timing.message.contains("3 sample(s)"),
+        "the warning must name the three samples: {}",
+        timing.message
+    );
+    assert!(
+        !has_code(&issues, "media.sample.zero-duration"),
+        "a video track's zero span is unstated, not a declared zero: {issues:?}"
+    );
+
+    // The same zero span on a track the init types as audio states a zero
+    // length, which is an error.
+    let audio: Vec<Sample> = (0..3)
+        .map(|i| Sample::timed(vec![0u8; 8], i * 1024, i * 1024, None))
+        .collect();
+    let audio_seg = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(2), 0, &audio)])
+        .expect("audio media segment");
+    let issues = validate_cmaf_track(&init, &[&audio_seg], SegmentOrigin::FromIr);
+    let zero = issues
+        .iter()
+        .find(|i| i.code == "media.sample.zero-duration")
+        .unwrap_or_else(|| panic!("an audio zero span is a declared zero: {issues:?}"));
+    assert!(
+        zero.message.contains("3 sample(s)"),
+        "the error must name the three samples: {}",
+        zero.message
+    );
+    assert!(
+        !has_code(&issues, "media.sample.timing"),
+        "an audio zero is not an unstated video span: {issues:?}"
+    );
+
+    // A clean init + segment pair carries no warning at all.
+    let clean = clean_media(1, 0, &video_samples(&data));
+    let issues = validate_cmaf_track(&init, &[&clean], SegmentOrigin::FromIr);
+    assert_eq!(
+        warnings(&issues),
+        Vec::<&str>::new(),
+        "a clean track must carry no warning: {issues:?}"
     );
 }
 
