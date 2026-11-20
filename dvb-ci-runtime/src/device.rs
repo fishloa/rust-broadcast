@@ -367,6 +367,117 @@ mod tests {
         assert!(MAX_CA_FRAME >= 2 + 1 + 3 + crate::transport::MAX_SPDU_LEN + 1);
     }
 
+    /// A wrapped device failure must keep the errno reachable (it classifies
+    /// `EINVAL`/`ENODEV` per operation), name the device and the operation in
+    /// its Display, and keep the original error as its source.
+    #[test]
+    fn device_op_error_reports_errno_text_and_source() {
+        let wrapped = DeviceOpError::wrap(
+            "read (4096 bytes)",
+            "/dev/dvb/adapter3/ca0",
+            io::Error::from_raw_os_error(22),
+        );
+        let inner = wrapped
+            .get_ref()
+            .and_then(|e| e.downcast_ref::<DeviceOpError>())
+            .unwrap();
+        assert_eq!(inner.errno(), Some(22));
+        assert_eq!(DeviceOpError::errno_of(&wrapped), Some(22));
+        assert_eq!(
+            DeviceOpError::errno_of(&io::Error::from_raw_os_error(5)),
+            Some(5),
+            "a plain OS error answers for itself"
+        );
+        assert_eq!(DeviceOpError::errno_of(&io::Error::other("x")), None);
+
+        let text = wrapped.to_string();
+        assert!(text.contains("/dev/dvb/adapter3/ca0"), "{text}");
+        assert!(text.contains("read (4096 bytes)"), "{text}");
+        assert!(text.contains("Invalid argument"), "{text}");
+        assert_eq!(wrapped.kind(), io::ErrorKind::InvalidInput);
+        assert!(std::error::Error::source(inner).is_some());
+    }
+
+    /// A `read` that finds nothing must not be recorded as an (empty) Rx event,
+    /// or the trace fills with noise the CAM never sent.
+    #[test]
+    fn recording_device_ignores_an_empty_read() {
+        let mut dev = RecordingCaDevice::new(MockCaDevice::new([]));
+        let mut buf = [0u8; 16];
+        assert_eq!(dev.read(&mut buf).unwrap(), 0);
+        assert!(
+            dev.log().is_empty(),
+            "a zero-length read is not an Rx event: {:?}",
+            dev.log()
+        );
+    }
+
+    /// `slot_info` is sampled on every pump for hot-plug edge detection (#726),
+    /// so the trace keeps one entry per *change*: the first sample is logged,
+    /// a repeat of it is not, and a changed status is.
+    #[test]
+    fn recording_device_logs_slot_info_only_when_it_changes() {
+        let ready = SlotInfo {
+            num: 2,
+            module_ready: true,
+            module_present: true,
+        };
+        let mut mock = MockCaDevice::new([]);
+        mock.slot = ready;
+        let mut dev = RecordingCaDevice::new(mock);
+
+        assert_eq!(dev.slot_info().unwrap(), ready);
+        assert_eq!(
+            dev.slot_info().unwrap(),
+            ready,
+            "the wrapper returns the device's own status"
+        );
+        assert_eq!(
+            dev.log(),
+            &[LinkEvent::SlotInfo(SlotInfo {
+                num: 2,
+                module_ready: true,
+                module_present: true,
+            })],
+            "two identical samples must leave exactly one entry"
+        );
+
+        dev.inner.slot = SlotInfo {
+            num: 2,
+            module_ready: false,
+            module_present: false,
+        };
+        dev.slot_info().unwrap();
+        assert_eq!(dev.log().len(), 2);
+        assert_eq!(
+            dev.log()[1],
+            LinkEvent::SlotInfo(SlotInfo {
+                num: 2,
+                module_ready: false,
+                module_present: false,
+            })
+        );
+    }
+
+    /// `poll` must report the wrapped device's readiness, not a constant.
+    #[test]
+    fn recording_device_poll_follows_the_inner_device() {
+        let mut dev = RecordingCaDevice::new(MockCaDevice::new([]));
+        assert!(!dev.poll(std::time::Duration::ZERO).unwrap());
+        dev.inner.inbound.push_back(vec![0x80, 0x02, 0x01, 0x00]);
+        assert!(dev.poll(std::time::Duration::ZERO).unwrap());
+    }
+
+    /// The mock reports readability only while frames are queued, so a test
+    /// that reads with no data sees `Ok(0)`.
+    #[test]
+    fn mock_poll_reports_only_queued_frames() {
+        let mut dev = MockCaDevice::new([]);
+        assert!(!dev.poll(std::time::Duration::ZERO).unwrap());
+        dev.inbound.push_back(vec![0x81, 0x01, 0x01]);
+        assert!(dev.poll(std::time::Duration::ZERO).unwrap());
+    }
+
     #[test]
     fn recording_device_captures_both_directions() {
         let inner = MockCaDevice::new([vec![0x83, 0x01, 0x01]]);
