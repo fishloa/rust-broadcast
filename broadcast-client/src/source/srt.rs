@@ -502,8 +502,10 @@ mod tests {
     use crate::srt::SrtEntropySeed;
 
     fn first_handshake(seed: [u8; 32]) -> (u32, u32) {
-        let mut config = SrtCallerConfig::default();
-        config.entropy_seed = Some(SrtEntropySeed::new(seed));
+        let config = SrtCallerConfig {
+            entropy_seed: Some(SrtEntropySeed::new(seed)),
+            ..SrtCallerConfig::default()
+        };
         let mut caller = SrtCaller::new(&config).expect("caller");
         caller.on_connected(0);
         let out = caller.take_out();

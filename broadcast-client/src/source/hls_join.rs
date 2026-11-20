@@ -55,20 +55,18 @@ mod tests {
         let mut non_rap: Option<Sample> = None;
         while let Some(event) = demux.poll_event() {
             match event {
-                DemuxEvent::TrackAdded(s) => {
-                    if spec.is_none() && VideoJoin::for_config(&s.config).is_some() {
-                        spec = Some(s);
-                    }
+                DemuxEvent::TrackAdded(s)
+                    if spec.is_none() && VideoJoin::for_config(&s.config).is_some() =>
+                {
+                    spec = Some(s);
                 }
                 DemuxEvent::Sample {
                     track_id, sample, ..
-                } => {
-                    if spec.as_ref().is_some_and(|s| s.track_id == track_id) {
-                        if sample.flags.is_sync && rap.is_none() {
-                            rap = Some(sample);
-                        } else if !sample.flags.is_sync && non_rap.is_none() {
-                            non_rap = Some(sample);
-                        }
+                } if spec.as_ref().is_some_and(|s| s.track_id == track_id) => {
+                    if sample.flags.is_sync && rap.is_none() {
+                        rap = Some(sample);
+                    } else if !sample.flags.is_sync && non_rap.is_none() {
+                        non_rap = Some(sample);
                     }
                 }
                 _ => {}

@@ -547,8 +547,10 @@ mod tests {
     }
 
     fn ingest(window: usize) -> Ingest {
-        let mut config = UdpConfig::default();
-        config.reorder_packets = window;
+        let config = UdpConfig {
+            reorder_packets: window,
+            ..UdpConfig::default()
+        };
         Ingest::new(true, &config)
     }
 
