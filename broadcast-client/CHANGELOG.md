@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The buffer feeder's A/V join bookkeeping is pinned by value tests: the reorder-end half-slot rule, the lowest-id primary track, `has_video`/`rendered_explicit`, the pending-track wait boundary, the forgotten video join when no rendered video track is left, the audio end at the join point, the second-join-point and pre-join `Keep` guards, the finite-connection flush gate and the buffering-runtime `Reprime` pause mapping (audit 22 finding 63).
 - The libsrt wire oracle and the B-frame RTSP a/v-sync oracle gate their external tools through `test_fixtures::process::require_tool_probed`, so `SRT_REQUIRE_LIBSRT`/`REQUIRE_MEDIAMTX_E2E` (or a global `REQUIRE_EXTERNAL_TOOLS=1`) fails the run instead of skipping it (audit 21 finding 60).
 - Every pull golden refuses to re-record under `CI=true` (the Smooth switch gained the refusal and a regression test; the RTSP and SDP switches already had one), and each golden's PROVENANCE now names its independent oracle (audit 21 finding 62).
+- The HLS per-track join bookkeeping is pinned: a re-announced video track keeps the join it had, a dropped one is forgotten, and `rejoin` makes the next sample wait for a random access point again (audit 23 finding 40, #3291).
 
 ## [0.7.0] - 2026-11-17
 ### Added
