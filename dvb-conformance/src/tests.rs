@@ -4169,3 +4169,42 @@ fn legal_table_ids_on_si_pids_are_not_flagged() {
         );
     }
 }
+
+/// ISO/IEC 13818-1 Table 2-3 reserves 0x0002..=0x000F for future use; TR 101
+/// 290 Table 5.0c indicator 3.4 exempts them. 0x0020, just past the range, is
+/// an ordinary unreferenced PID.
+#[test]
+fn reserved_for_future_use_pids_are_exempt_from_unreferenced_pid() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut events = Vec::new();
+    for t in [5u64, 605] {
+        for &pid in &[0x0002u16, 0x0008, 0x000F, 0x0020] {
+            let pkt = make_ts_packet(pid, (t & 0x0F) as u8, false, false, &[], &[0xAB]);
+            events.extend(monitor.feed(&pkt, ms(t)).to_vec());
+        }
+    }
+
+    for &pid in &[0x0002u16, 0x0008, 0x000F] {
+        assert!(
+            !events.iter().any(|e| {
+                e.indicator == Indicator::UnreferencedPid
+                    && e.pid == Some(Pid::from_wire_masked(pid))
+            }),
+            "reserved PID 0x{pid:04X} is exempt from 3.4: {events:#?}"
+        );
+    }
+    let flagged: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid
+                && e.pid == Some(Pid::from_wire_masked(0x0020))
+        })
+        .collect();
+    assert_eq!(
+        flagged.len(),
+        1,
+        "0x0020 is outside the reserved range and is flagged once: {events:#?}"
+    );
+}
