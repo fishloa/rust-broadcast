@@ -456,6 +456,58 @@ mod tests {
     }
 
     #[test]
+    fn decode_aac_component_type_every_table_26_code() {
+        let ct = |mono, stereo, surround, visually_impaired, hard_of_hearing, supplementary, v2| {
+            AacComponentType {
+                mono,
+                stereo,
+                surround,
+                visually_impaired,
+                hard_of_hearing,
+                supplementary,
+                v2,
+                saoc_de: false,
+            }
+        };
+        let cases = [
+            (0x01, ct(true, false, false, false, false, false, false)),
+            (0x03, ct(false, true, false, false, false, false, false)),
+            (0x05, ct(false, false, true, false, false, false, false)),
+            (0x40, ct(false, false, false, true, false, false, false)),
+            (0x41, ct(false, false, false, false, true, false, false)),
+            (0x42, ct(false, false, false, false, false, true, false)),
+            (0x43, ct(false, true, false, false, false, false, true)),
+            (0x44, ct(false, false, false, true, false, false, true)),
+            (0x45, ct(false, false, false, false, true, false, true)),
+            (0x46, ct(false, false, false, false, false, true, true)),
+            (0x47, ct(false, false, false, true, false, true, false)),
+            (0x48, ct(false, false, false, true, false, true, false)),
+            (0x49, ct(false, false, false, true, false, true, true)),
+            (0x4A, ct(false, false, false, true, false, true, true)),
+        ];
+        for (code, want) in cases {
+            let ext = AacExtension::new(false, Some(code), &[]);
+            assert_eq!(
+                ext.decoded_component_type(),
+                Some(want),
+                "aac_type = 0x{code:02X}"
+            );
+        }
+        let saoc = AacExtension::new(false, Some(0xA0), &[]);
+        let want = AacComponentType {
+            mono: false,
+            stereo: false,
+            surround: false,
+            visually_impaired: false,
+            hard_of_hearing: false,
+            supplementary: false,
+            v2: false,
+            saoc_de: true,
+        };
+        assert_eq!(saoc.decoded_component_type(), Some(want));
+    }
+
+    #[test]
     fn parse_rejects_wrong_tag() {
         let bytes = [0x7B, 1, 0x50];
         assert!(matches!(

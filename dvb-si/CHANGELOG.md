@@ -27,6 +27,7 @@
 - The extended event descriptor rejects 4- and 5-byte bodies and a `length_of_items` that runs to the body end without indexing past the slice, accepts an empty item value as the last item, and reports an item-description overrun with its exact error (#3241).
 - The SSU id selector accepts an empty OUI loop and rejects an empty or truncated first entry, a two-entry selector with a non-empty selector and private data round-trips byte-identically, and `IdSelector::serialized_len` is asserted for both the `Ssu` and `Raw` variants (#3242).
 - The AAC and data broadcast id serializers accept a 255-byte body with a `0xFF` descriptor length and reject a 256-byte body (#3243).
+- `AacExtension::decoded_component_type` is asserted for every EN 300 468 Table 26 HE-AAC component_type code (0x01, 0x03, 0x05, 0x40-0x4A, 0xA0) with the full flag set (#3244).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
