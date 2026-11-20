@@ -3546,6 +3546,153 @@ mod segmenter_tests {
             "ts_hls output cannot carry AV1: AV1 is not allowed in MPEG-TS HLS segments"
         );
     }
+
+    fn any_segmenter(container: Container) -> AnySegmenter {
+        let tracks = vec![track_spec(TrackId::new(1))];
+        match container {
+            Container::Fmp4 => AnySegmenter::Fmp4(
+                LlHlsSegmenter::with_part_target(
+                    tracks,
+                    transmux::VIDEO_CLOCK_TIMESCALE,
+                    Duration::from_secs(1),
+                    Duration::from_millis(250),
+                )
+                .expect("fmp4 segmenter"),
+            ),
+            Container::MpegTs => AnySegmenter::Ts(
+                StreamingTsHlsSegmenter::new(tracks, 1, 8).expect("ts segmenter"),
+            ),
+            _ => panic!("test builds only the two delegated containers"),
+        }
+    }
+
+    fn tfdt_of(segment: &[u8]) -> u64 {
+        let at = segment
+            .windows(4)
+            .position(|w| w == b"tfdt")
+            .expect("an fMP4 segment carries a tfdt box");
+        match segment[at + 4] {
+            0 => u64::from(u32::from_be_bytes(
+                segment[at + 8..at + 12].try_into().expect("v0 tfdt is 4 bytes"),
+            )),
+            1 => u64::from_be_bytes(
+                segment[at + 8..at + 16].try_into().expect("v1 tfdt is 8 bytes"),
+            ),
+            version => panic!("unexpected tfdt version {version}"),
+        }
+    }
+
+    #[test]
+    fn any_segmenter_delegates_init_and_part_target_per_container() {
+        let fmp4 = any_segmenter(Container::Fmp4);
+        let init = fmp4.init_segment().expect("fMP4 has an init segment");
+        assert!(!init.is_empty());
+        assert_eq!(&init[4..8], b"ftyp", "the init segment starts with ftyp");
+        assert_eq!(
+            fmp4.part_target(),
+            Some(Duration::from_millis(250)),
+            "fMP4 advertises the configured part target"
+        );
+
+        let ts = any_segmenter(Container::MpegTs);
+        assert!(
+            ts.init_segment().is_none(),
+            "classic TS segments are self-initialising"
+        );
+        assert_eq!(ts.part_target(), None, "classic TS has no parts");
+    }
+
+    #[test]
+    fn any_segmenter_delegates_push_cuts_parts_segments_and_finish() {
+        for container in [Container::Fmp4, Container::MpegTs] {
+            let mut seg = any_segmenter(container);
+            seg.record_part_cuts();
+            for i in 0..60u32 {
+                seg.push(TrackId::new(1), sample_at(i, i.is_multiple_of(30)))
+                    .expect("push");
+            }
+            let parts = seg.take_ready_parts();
+            let cuts = seg.take_ready_part_cuts();
+            let mut segments = seg.take_ready_segments();
+            seg.finish().expect("finish");
+            segments.extend(seg.take_ready_segments());
+
+            match container {
+                Container::Fmp4 => {
+                    assert!(!parts.is_empty(), "fMP4 produces parts");
+                    assert!(!cuts.is_empty(), "record_part_cuts is honoured");
+                }
+                Container::MpegTs => {
+                    assert!(parts.is_empty(), "classic TS produces no parts");
+                    assert!(cuts.is_empty(), "classic TS produces no cuts");
+                }
+                _ => panic!("test builds only the two delegated containers"),
+            }
+            assert!(
+                segments.len() >= 2,
+                "{container:?}: the sync at frame 30 closes one segment and finish \
+                 flushes the trailing one, got {}",
+                segments.len()
+            );
+            assert_eq!(
+                segments[0].segment_seq.value(),
+                1,
+                "the first segment is numbered from 1"
+            );
+        }
+    }
+
+    #[test]
+    fn any_segmenter_add_track_is_in_place_only_for_classic_ts() {
+        let mut ts = any_segmenter(Container::MpegTs);
+        assert!(
+            ts.add_track(&track_spec(TrackId::new(2))),
+            "classic TS admits a track in place"
+        );
+        let mut fmp4 = any_segmenter(Container::Fmp4);
+        assert!(
+            !fmp4.add_track(&track_spec(TrackId::new(2))),
+            "fMP4 has no add_track and reports a rebuild is required"
+        );
+    }
+
+    #[test]
+    fn any_segmenter_set_start_time_offsets_the_first_segment() {
+        let mut fmp4 = any_segmenter(Container::Fmp4);
+        fmp4.set_start_time(Duration::from_secs(10));
+        for i in 0..45u32 {
+            fmp4.push(TrackId::new(1), sample_at(i, i.is_multiple_of(15)))
+                .expect("push");
+        }
+        let segments = fmp4.take_ready_segments();
+        assert_eq!(
+            tfdt_of(&segments[0].bytes),
+            900_000,
+            "10 s at 90 kHz is the first segment's tfdt"
+        );
+
+        let mut ts = any_segmenter(Container::MpegTs);
+        ts.set_start_time(Duration::from_secs(10));
+        for i in 0..45u32 {
+            ts.push(TrackId::new(1), sample_at(i, i.is_multiple_of(15)))
+                .expect("push");
+        }
+        let segments = ts.take_ready_segments();
+        use broadcast_common::mux::Unpackage;
+        let media = transmux::TsDemux::new()
+            .unpackage(&segments[0].bytes)
+            .expect("demux the muxed segment");
+        let first_pts = media
+            .tracks
+            .iter()
+            .filter_map(|track| track.samples.first())
+            .find_map(|sample| sample.timing.and_then(|t| t.pts()))
+            .expect("the first sample carries a PTS");
+        assert_eq!(
+            first_pts, 909_000,
+            "classic TS restarts at 10 s (900000) plus the muxer's 9000-tick PCR lead"
+        );
+    }
 }
 
 #[cfg(test)]
