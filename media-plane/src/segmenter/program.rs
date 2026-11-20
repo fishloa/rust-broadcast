@@ -3693,6 +3693,244 @@ mod segmenter_tests {
             "classic TS restarts at 10 s (900000) plus the muxer's 9000-tick PCR lead"
         );
     }
+
+    fn hevc_config() -> CodecConfig {
+        CodecConfig::Hevc {
+            config: transmux::HEVCConfigurationBox::new(
+                transmux::HEVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    general_profile_space: 0,
+                    general_tier_flag: false,
+                    general_profile_idc: 1,
+                    general_profile_compatibility_flags: 0,
+                    general_constraint_indicator_flags: 0,
+                    general_level_idc: 90,
+                    min_spatial_segmentation_idc: 0,
+                    parallelism_type: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_luma_minus8: 0,
+                    bit_depth_chroma_minus8: 0,
+                    avg_frame_rate: 0,
+                    constant_frame_rate: 0,
+                    num_temporal_layers: 1,
+                    temporal_id_nested: true,
+                    length_size_minus_one: 3,
+                    arrays: Vec::new(),
+                },
+            ),
+            width: 0,
+            height: 0,
+        }
+    }
+
+    fn vvc_config() -> CodecConfig {
+        CodecConfig::Vvc {
+            config: transmux::VvcConfigurationBox::new(
+                transmux::VvcDecoderConfigurationRecord {
+                    length_size_minus_one: 3,
+                    ptl_present: false,
+                    ols_idx: 0,
+                    num_sublayers: 1,
+                    constant_frame_rate: 0,
+                    chroma_format_idc: 1,
+                    bit_depth_minus8: 0,
+                    ptl: None,
+                    max_picture_width: 0,
+                    max_picture_height: 0,
+                    avg_frame_rate: 0,
+                    arrays: Vec::new(),
+                },
+            ),
+            width: 0,
+            height: 0,
+        }
+    }
+
+    fn av1_config() -> CodecConfig {
+        CodecConfig::Av1 {
+            config: transmux::Av1ConfigurationBox {
+                version: 1,
+                seq_profile: 0,
+                seq_level_idx_0: 0,
+                seq_tier_0: false,
+                high_bitdepth: false,
+                twelve_bit: false,
+                monochrome: false,
+                chroma_subsampling_x: true,
+                chroma_subsampling_y: true,
+                chroma_sample_position: 0,
+                initial_presentation_delay_minus_one: None,
+                config_obus: Vec::new(),
+            },
+            width: 0,
+            height: 0,
+        }
+    }
+
+    fn gate_sample(codec: transmux::NalCodec, idr: bool, is_sync: bool) -> Sample {
+        use transmux::NalCodec;
+        let nal: [u8; 4] = match (codec, idr) {
+            (NalCodec::Avc, true) => [0x65, 0x01, 0x00, 0x00],
+            (NalCodec::Avc, false) => [0x41, 0x01, 0x00, 0x00],
+            (NalCodec::Hevc, true) => [19 << 1, 0x01, 0x00, 0x00],
+            (NalCodec::Hevc, false) => [1 << 1, 0x01, 0x00, 0x00],
+            (NalCodec::Vvc, true) => [0x00, 7 << 3, 0x01, 0x00],
+            (NalCodec::Vvc, false) => [0x00, 1 << 3, 0x01, 0x00],
+            _ => panic!("the test builds only the codecs the gate understands"),
+        };
+        let mut data = (nal.len() as u32).to_be_bytes().to_vec();
+        data.extend_from_slice(&nal);
+        Sample::new(data, Some(0), Some(0), Some(FRAME_DUR), is_sync).expect("valid timing")
+    }
+
+    fn gate_config(container: Container, policy: transmux::SegmentCutPolicy) -> SegmenterConfig {
+        SegmenterConfig::default()
+            .with_container(container)
+            .with_ts_cut_policy(policy)
+    }
+
+    #[test]
+    fn gate_opens_on_requires_an_idr_for_ts_idr_only_per_codec() {
+        use transmux::NalCodec;
+        let config = gate_config(Container::MpegTs, transmux::SegmentCutPolicy::IdrOnly);
+        let cases = [
+            ("avc", NalCodec::Avc, track_spec(TrackId::new(1)).config),
+            ("hevc", NalCodec::Hevc, hevc_config()),
+            ("vvc", NalCodec::Vvc, vvc_config()),
+        ];
+        for (name, codec, codec_config) in cases {
+            assert!(
+                gate_opens_on(
+                    &config,
+                    Some(&codec_config),
+                    &gate_sample(codec, true, false),
+                    false
+                ),
+                "{name}: an IDR slice opens the gate even without the sync flag"
+            );
+            assert!(
+                !gate_opens_on(
+                    &config,
+                    Some(&codec_config),
+                    &gate_sample(codec, false, true),
+                    false
+                ),
+                "{name}: a non-IDR sync sample must not open an idr_only gate"
+            );
+            assert!(
+                !gate_opens_on(
+                    &config,
+                    Some(&codec_config),
+                    &gate_sample(codec, true, false),
+                    true
+                ),
+                "{name}: with fallback active the sync flag alone decides (false)"
+            );
+            assert!(
+                gate_opens_on(
+                    &config,
+                    Some(&codec_config),
+                    &gate_sample(codec, false, true),
+                    true
+                ),
+                "{name}: with fallback active a non-IDR sync sample opens the gate"
+            );
+        }
+
+        let avc = track_spec(TrackId::new(1)).config;
+        let fmp4 = gate_config(Container::Fmp4, transmux::SegmentCutPolicy::IdrOnly);
+        assert!(
+            gate_opens_on(&fmp4, Some(&avc), &gate_sample(NalCodec::Avc, false, true), false),
+            "outside classic TS the sync flag decides"
+        );
+        assert!(
+            !gate_opens_on(&fmp4, Some(&avc), &gate_sample(NalCodec::Avc, true, false), false),
+            "outside classic TS an IDR without the sync flag is not a gate opener"
+        );
+
+        let any_rap = gate_config(Container::MpegTs, transmux::SegmentCutPolicy::AnyRap);
+        assert!(
+            !gate_opens_on(
+                &any_rap,
+                Some(&avc),
+                &gate_sample(NalCodec::Avc, true, false),
+                false
+            ),
+            "an AnyRap TS route uses the sync flag, not IDR detection"
+        );
+        assert!(
+            gate_opens_on(
+                &any_rap,
+                Some(&avc),
+                &gate_sample(NalCodec::Avc, false, true),
+                false
+            ),
+            "an AnyRap TS route opens on any sync sample"
+        );
+    }
+
+    #[test]
+    fn ts_hls_tracks_acceptable_rejects_the_forbidden_codecs() {
+        let config = SegmenterConfig::default();
+        let avc = track_spec(TrackId::new(1)).config;
+        let mut events = Vec::new();
+        assert!(
+            ts_hls_tracks_acceptable(&config, &mut events, [&avc]),
+            "AVC is allowed in classic TS"
+        );
+        assert!(events.is_empty());
+
+        let mut events = Vec::new();
+        assert!(
+            !ts_hls_tracks_acceptable(&config, &mut events, [&hevc_config()]),
+            "HEVC is not allowed in classic TS"
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [SegmenterEvent::OutputFailed(TsHlsRejection::Hevc)]
+        ));
+
+        let mut events = Vec::new();
+        assert!(
+            !ts_hls_tracks_acceptable(&config, &mut events, [&av1_config()]),
+            "AV1 is not allowed in classic TS"
+        );
+        assert!(matches!(
+            events.as_slice(),
+            [SegmenterEvent::OutputFailed(TsHlsRejection::Av1)]
+        ));
+
+        let mut events = Vec::new();
+        assert!(
+            ts_hls_tracks_acceptable(&config, &mut events, [&vvc_config()]),
+            "the codec gate has no VVC rejection (it only names HEVC and AV1)"
+        );
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn round_secs_u32_rounds_half_away_from_zero_and_floors_at_one() {
+        assert_eq!(round_secs_u32(Duration::from_millis(1499)), 1);
+        assert_eq!(round_secs_u32(Duration::from_millis(1500)), 2);
+        assert_eq!(round_secs_u32(Duration::ZERO), 1);
+        assert_eq!(round_secs_u32(Duration::from_millis(6_000)), 6);
+        assert_eq!(round_secs_u32(Duration::from_millis(499)), 1);
+        assert_eq!(round_secs_u32(Duration::from_millis(2_499)), 2);
+    }
+
+    #[test]
+    fn ts_segmenter_window_is_the_configured_segment_cap() {
+        for cap in [3usize, 7] {
+            let config = SegmenterConfig::default().with_window_segments_cap(nz(cap));
+            assert_eq!(ts_segmenter_window(&config), cap);
+        }
+    }
+
+    #[test]
+    fn caption_and_idr_hold_constants_have_their_documented_values() {
+        assert_eq!(CAPTION_SCAN_WINDOW_SECS, 10);
+        assert_eq!(IDR_HOLD_MAX_BYTES, 33_554_432);
+    }
 }
 
 #[cfg(test)]

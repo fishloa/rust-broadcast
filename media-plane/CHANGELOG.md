@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- The TS-HLS start gate is pinned per codec: with `idr_only` a non-IDR sync sample must not open it and a real IDR slice must (AVC/HEVC/VVC), the fallback-active and non-TS/`any_rap` routes use the sync flag, the codec gate rejects HEVC and AV1, and the window/const/`round_secs_u32` values are literal (audit 23 finding 104, #3398).
 - `AnySegmenter`'s per-container delegation is pinned by tests: fMP4 has an init segment (`ftyp`), a part target, parts and part cuts; classic TS has none of those, admits a new track in place and reports that fMP4 needs a rebuild; `set_start_time` moves the first fMP4 `tfdt` and the first classic-TS PTS to 10 s (audit 23 finding 103, #3397).
 - `SegmenterConfig`'s builders, `resolve_audio_sources` and the unit `SiblingTrunks` are pinned by tests: every `with_*` setter stores its argument, two declared audio renditions map to their own source tracks, and a segmenter built with the unit siblings still cuts (audit 23 finding 101, #3395).
 - `MAX_COLD_WINDOW`'s literal value, the exact accept/refuse edges, `RetentionConfigError`'s label and Display text, and `RetentionDriver::pending_len` are pinned by tests (audit 21 findings 49 and 50, #2944/#2945).
