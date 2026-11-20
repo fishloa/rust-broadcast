@@ -1154,4 +1154,62 @@ mod tests {
         legacy.serialize_into(&mut out).unwrap();
         assert_eq!(&out[out.len() - 2..], [0x00, 0x3F]);
     }
+
+    /// An extended-capability body whose only sub-block is the stripe and which
+    /// ends exactly after its three bytes is valid.
+    #[test]
+    fn stripe_only_extended_body_ending_after_the_stripe_is_accepted() {
+        #[rustfmt::skip]
+        let bytes = [
+            TAG, 31,
+            0x80, 0x05,                         // extended flag + profile_and_level
+            0x00, 0x00, 0x07, 0x80,             // horizontal_size 1920
+            0x00, 0x00, 0x04, 0x38,             // vertical_size 1080
+            0x00, 0x00, 0x00, 0x00,             // max_bit_rate
+            0x00, 0x00, 0x00, 0x00,             // max_buffer_size
+            0x00, 0x00,                         // den_frame_rate
+            0x00, 0x00,                         // num_frame_rate
+            0x80,                               // stripe flag only
+            0x00,                               // still/interlaced + reserved
+            0x01, 0x10, 0x00, 0x80,             // colour parameters
+            0x03, 0x04, 0x00,                   // stripe (last bytes)
+        ];
+        let d = J2kVideoDescriptor::parse(&bytes).unwrap();
+        let ext = d.extended_capability.as_ref().unwrap();
+        assert_eq!(
+            ext.stripe,
+            Some(J2kStripe {
+                strp_max_idx: 3,
+                strp_height: 1024
+            })
+        );
+        assert!(ext.block.is_none() && ext.mdm.is_none());
+        assert!(d.private_data.is_empty());
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
+    /// A 22-byte body is the fixed fields only; the legacy branch still needs
+    /// color_specification and the still/interlaced byte, and 21 bytes is below
+    /// even the fixed fields.
+    #[test]
+    fn bodies_shorter_than_the_legacy_minimum_are_rejected() {
+        let twenty_one = [TAG, 21, 0x00, 0x05, 0, 0, 7, 0x80, 0, 0, 4, 0x38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(
+            J2kVideoDescriptor::parse(&twenty_one).unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "J2K_video_descriptor too short (< 22 body bytes)"
+            }
+        );
+        let twenty_two = [TAG, 22, 0x00, 0x05, 0, 0, 7, 0x80, 0, 0, 4, 0x38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        assert_eq!(
+            J2kVideoDescriptor::parse(&twenty_two).unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "J2K_video_descriptor too short for color_specification/still_mode"
+            }
+        );
+    }
 }
