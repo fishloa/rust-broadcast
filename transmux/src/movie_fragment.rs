@@ -1736,6 +1736,36 @@ mod tests {
         assert_eq!(b, p.try_to_bytes().unwrap());
     }
 
+    /// Every optional `tfhd` field is read from its own four bytes
+    /// (§8.8.7.1). Each field here carries four distinct non-zero bytes, so a
+    /// wrong byte index (`body[c]`, re-reading the first byte, or a backwards
+    /// `c - 3`) changes the parsed value instead of happening to agree.
+    #[test]
+    fn tfhd_optional_fields_read_their_own_bytes() {
+        let flags = TFHD_BASE_DATA_OFFSET_PRESENT
+            | TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT
+            | TFHD_DEFAULT_SAMPLE_DURATION_PRESENT
+            | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
+            | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
+        let mut body = Vec::new();
+        body.extend_from_slice(&flags.to_be_bytes()); // version 0, flags
+        body.extend_from_slice(&7u32.to_be_bytes()); // track_ID
+        body.extend_from_slice(&0x1112_1314_1516_1718u64.to_be_bytes()); // base_data_offset
+        body.extend_from_slice(&0x2122_2324u32.to_be_bytes()); // sample_description_index
+        body.extend_from_slice(&0x3132_3334u32.to_be_bytes()); // default_sample_duration
+        body.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // default_sample_size
+        body.extend_from_slice(&0x1112_1314u32.to_be_bytes()); // default_sample_flags
+
+        let t = TrackFragmentHeaderBox::parse_body(&body).expect("five-field tfhd body");
+        assert_eq!(t.flags, flags);
+        assert_eq!(t.track_id, TrackId::new(7));
+        assert_eq!(t.base_data_offset, Some(0x1112_1314_1516_1718));
+        assert_eq!(t.sample_description_index, Some(0x2122_2324));
+        assert_eq!(t.default_sample_duration, Some(0x3132_3334));
+        assert_eq!(t.default_sample_size, Some(0x0102_0304));
+        assert_eq!(t.default_sample_flags, Some(0x1112_1314));
+    }
+
     /// r05-W16: `tfhd` field presence is flag-driven (§8.8.7.1) while the
     /// values live in `Option`s. The serializer used the *stored* flags and
     /// `unwrap_or(0)` for the values, so a builder that set a presence bit
