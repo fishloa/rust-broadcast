@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 ### Fixed
 - The module-chosen session cap, the OPEN/CLOSE response arms, `create_session`'s SPDU bytes and the empty-body `session_number` edge have tests; likewise `descramble`/`descramble_programs`/`add_program`/`enter_menu`/`mmi_cancel` writing their APDUs, `ca_pids`, `next_timer`, the `send_ca_pmt_checked` overflow arithmetic, the post-reset settle boundaries and `infer_card`'s edges (audit 21 findings 51 and 52, #2946/#2947).
+- `MAX_CA_FRAME` is pinned to 65 541 bytes, so the `Driver` read buffer cannot silently shrink below the largest legal link frame (audit 23 finding 73, #3351).
 
 ## [0.21.1] - 2026-11-17
 ### Added

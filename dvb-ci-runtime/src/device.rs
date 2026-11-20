@@ -358,6 +358,15 @@ impl<D: CaDevice> CaDevice for RecordingCaDevice<D> {
 mod tests {
     use super::*;
 
+    /// The read buffer must fit the largest frame the link can encode: the
+    /// 2-byte link header, the 1-byte `tpdu_tag`, the widest `length_field`
+    /// (3 bytes) and that field's own maximum (65535) of `t_c_id` + data.
+    #[test]
+    fn max_ca_frame_fits_the_widest_link_frame() {
+        assert_eq!(MAX_CA_FRAME, 65_541);
+        assert!(MAX_CA_FRAME >= 2 + 1 + 3 + crate::transport::MAX_SPDU_LEN + 1);
+    }
+
     #[test]
     fn recording_device_captures_both_directions() {
         let inner = MockCaDevice::new([vec![0x83, 0x01, 0x01]]);
