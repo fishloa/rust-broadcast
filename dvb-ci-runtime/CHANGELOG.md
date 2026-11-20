@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `CaDescrambler::set_cat`, `update_service` and `pump` are asserted to reach the driver, so the turnkey wrapper cannot silently no-op a CAT/PMT update or a pump (audit 23 finding 77, #3355).
 - A `CA_descriptor`'s `CA_PID` above `0xFF` is decoded with its high byte asserted, so an ECM PID's upper bits cannot be dropped (audit 23 finding 78, #3356).
 - Every `HotPlug` variant's `name()` token and its `Display` are asserted, so the #204 label convention is pinned (audit 23 finding 79, #3357).
+- A bare 3-byte `apdu_tag` (the shortest legal APDU) is asserted accepted by every resource, each guarded APDU arm is asserted to ignore an unrelated tag, and an interleaved `menu_more`/`list_more` chain is asserted not to leak into the other's body (audit 23 findings 80-82, #3358/#3359/#3360).
 
 ## [0.21.1] - 2026-11-17
 ### Added
