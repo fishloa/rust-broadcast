@@ -1887,6 +1887,12 @@ mod tests {
 
         let longer = push(35 * sub_block);
         assert!((longer.max_short_term_lufs() - level).abs() < 0.01);
+        assert!(
+            (longer.max_short_term_lufs() - longer.max_momentary_lufs()).abs() < 0.1,
+            "a steady tone's 3 s and 400 ms maxima converge: {} vs {}",
+            longer.max_short_term_lufs(),
+            longer.max_momentary_lufs()
+        );
     }
 
     /// Tech 3342's percentile ranks, pinned through both the exact and the
@@ -1911,24 +1917,50 @@ mod tests {
         }
     }
 
-    /// The straddling-bin cut's energy interpolation, with two blocks at the
-    /// bin's top level and one at the bottom: exactly two blocks are kept,
-    /// i.e. their mean sits 10*log10(2) = 3.0103 LU above the top level.
+    /// The straddling-bin cut keeps one of three blocks: two sit at the
+    /// bin's bottom level and one at its top, so the interpolation
+    /// `(energy - n*min) / (max - min)` is exactly 1.
     #[test]
     fn cut_keeps_the_hand_computed_number_of_blocks() {
         let mut h = LoudnessHistogram::with_exact_capacity(GateComparison::Above, 0);
-        for level in [-30.006, -30.002, -30.002] {
+        for level in [-30.006, -30.006, -30.002] {
             h.record(lkfs_to_mean_sq(level));
         }
         assert!(h.is_binned());
         let cut = h.cut(-30.004);
-        assert_eq!(cut.kept, 2);
+        assert_eq!(cut.kept, 1);
         assert_eq!(cut.bin, LoudnessHistogram::bin_of(-30.004));
         let kept_lkfs = mean_sq_to_lkfs(cut.kept_energy);
         assert!(
-            (kept_lkfs - (-30.002 + 3.010_299_956_639_812_5)).abs() < 1e-3,
+            (kept_lkfs - (-30.002)).abs() < 1e-6,
             "kept energy sits at {kept_lkfs} LUFS"
         );
+    }
+
+    /// `bin_of` clamps above the histogram's ceiling, so no block can index
+    /// past the last bin even before the sample-magnitude limit applies.
+    #[test]
+    fn bin_of_clamps_at_the_histogram_ceiling() {
+        assert_eq!(LoudnessHistogram::bin_of(35.0), HISTOGRAM_BINS - 1);
+        assert_eq!(LoudnessHistogram::bin_of(-100.0), 0);
+    }
+
+    /// A sliding-window maximum must equal a rescan of the same power
+    /// sequence, including when the window rolls and evicts its peak.
+    #[test]
+    fn sliding_window_max_matches_a_reference_rescan() {
+        let window = 4usize;
+        let powers = [0.01, 0.02, 0.5, 0.03, 0.0, 0.7, 0.1, 0.0, 0.0001, 0.0];
+        let mut tracker = SlidingWindowMax::new(window);
+        let mut reference = f64::NEG_INFINITY;
+        for (i, &power) in powers.iter().enumerate() {
+            tracker.push(power);
+            if i + 1 >= window {
+                let sum: f64 = powers[i + 1 - window..=i].iter().sum();
+                reference = reference.max(mean_sq_to_lkfs(sum / window as f64));
+            }
+        }
+        assert_eq!(tracker.max_lkfs, reference);
     }
 
     /// An empty measurement has no defined integrated loudness or range.
