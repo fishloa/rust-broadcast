@@ -677,4 +677,24 @@ mod tests {
             "complete combination"
         );
     }
+
+    /// `lang_len_idc == 2` carries the common 3-byte ISO 639 code and must not
+    /// be treated as reserved.
+    #[test]
+    fn media_service_kind_three_byte_language_code_round_trips() {
+        let lang = MediaServiceLanguage::new(ConfigurationType::Complete, b"eng".to_vec(), vec![1]);
+        assert_eq!(lang.lang_len_idc, 2);
+        let d = MediaServiceKind::new(vec![MediaServiceKindEntry::new(
+            false,
+            MediaTypeIdc::Audio,
+            None,
+            vec![lang],
+        )]);
+        let body = d.write_body().unwrap();
+        let back = MediaServiceKind::parse_body(&body).unwrap();
+        assert_eq!(back, d);
+        assert_eq!(back.entries[0].languages.len(), 1);
+        assert_eq!(back.entries[0].languages[0].lang_len_idc, 2);
+        assert_eq!(back.entries[0].languages[0].language_code, b"eng");
+    }
 }
