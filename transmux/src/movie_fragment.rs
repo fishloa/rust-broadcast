@@ -2152,6 +2152,58 @@ mod tests {
         assert_eq!(p.samples[0].sample_composition_time_offset, Some(1024));
         assert_eq!(b, p.try_to_bytes().unwrap());
     }
+    /// `first_sample_flags`, a per-sample `sample_flags` and the version-1
+    /// composition offset each read from their own four bytes (§8.8.8.2).
+    /// Existing round trips used values whose neighbours coincided (`-1` is
+    /// `0xFF` in every byte), so these bodies carry four distinct non-zero
+    /// bytes per field.
+    #[test]
+    fn trun_optional_words_read_their_own_bytes() {
+        let flags = TRUN_DATA_OFFSET_PRESENT
+            | TRUN_FIRST_SAMPLE_FLAGS_PRESENT
+            | TRUN_SAMPLE_DURATION_PRESENT
+            | TRUN_SAMPLE_SIZE_PRESENT
+            | TRUN_SAMPLE_FLAGS_PRESENT
+            | TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
+        let mut body = Vec::new();
+        body.push(1); // version 1
+        body.extend_from_slice(&flags.to_be_bytes()[1..]); // flags
+        body.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+        body.extend_from_slice(&0x1122_3344u32.to_be_bytes()); // data_offset
+        body.extend_from_slice(&0x0203_0405u32.to_be_bytes()); // first_sample_flags
+        body.extend_from_slice(&0x5152_5354u32.to_be_bytes()); // sample_duration
+        body.extend_from_slice(&0x6162_6364u32.to_be_bytes()); // sample_size
+        body.extend_from_slice(&0x0A0B_0C0Du32.to_be_bytes()); // sample_flags
+        body.extend_from_slice(&0x0001_0203u32.to_be_bytes()); // composition offset
+
+        let run = TrackFragmentRunBox::parse_body(&body).expect("six-field v1 trun");
+        assert_eq!(run.version, 1);
+        assert_eq!(run.tr_flags, flags);
+        assert_eq!(run.data_offset, Some(0x1122_3344));
+        assert_eq!(run.first_sample_flags, Some(0x0203_0405));
+        assert_eq!(run.samples.len(), 1);
+        assert_eq!(run.samples[0].sample_duration, Some(0x5152_5354));
+        assert_eq!(run.samples[0].sample_size, Some(0x6162_6364));
+        assert_eq!(run.samples[0].sample_flags, Some(0x0A0B_0C0D));
+        assert_eq!(
+            run.samples[0].sample_composition_time_offset,
+            Some(0x0001_0203)
+        );
+
+        // Version 0's composition offset is unsigned, from its own bytes.
+        let mut body = Vec::new();
+        body.push(0); // version 0
+        body.extend_from_slice(&TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT.to_be_bytes()[1..]);
+        body.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+        body.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // composition offset
+        let run = TrackFragmentRunBox::parse_body(&body).expect("v0 composition offset");
+        assert_eq!(run.version, 0);
+        assert_eq!(
+            run.samples[0].sample_composition_time_offset,
+            Some(0x0102_0304)
+        );
+    }
+
     #[test]
     fn trun_record_stride() {
         assert_eq!(
