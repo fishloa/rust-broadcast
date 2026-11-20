@@ -684,6 +684,19 @@ fn elst_empty_box_parses_and_round_trips() {
     assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
+/// A box shorter than the 8-byte header plus version/flags plus the entry
+/// count is refused by the box guard itself.
+#[test]
+fn elst_box_short_of_its_count_errors() {
+    let bytes: [u8; 8] = [0, 0, 0, 8, b'e', b'l', b's', b't'];
+    match EditListBox::parse(&bytes) {
+        Err(transmux::Error::BufferTooShort(e)) => {
+            assert_eq!((e.need, e.have, e.what), (16, 8, "elst box"));
+        }
+        other => panic!("expected BufferTooShort, got {other:?}"),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // cslg field guards, widths and size (ISO/IEC 14496-12:2026 §8.6.1.4)
 // ---------------------------------------------------------------------------
