@@ -2172,6 +2172,37 @@ mod tests {
         );
     }
 
+    #[test]
+    fn eviction_counters_start_at_zero_and_count_every_eviction() {
+        let fresh = EpgStore::new();
+        assert_eq!(fresh.services_evicted_for_capacity(), 0);
+        assert_eq!(fresh.events_evicted_for_capacity(), 0);
+
+        let mut services = EpgStore::new().with_max_services(1);
+        for service_id in [100u16, 200, 300] {
+            feed_one_event(&mut services, service_id, 1, 0, 10);
+        }
+        assert_eq!(services.service_count(), 1);
+        assert_eq!(
+            services.services_evicted_for_capacity(),
+            2,
+            "three services at a cap of 1 evict twice"
+        );
+        assert_eq!(services.events_evicted_for_capacity(), 0);
+
+        let mut events = EpgStore::new().with_max_events_per_service(1);
+        for (version, (event_id, hour)) in [(10u16, 10u32), (20, 11), (30, 12)].iter().enumerate() {
+            feed_one_event(&mut events, 100, *event_id, version as u8, *hour);
+        }
+        assert_eq!(events.event_count(), 1);
+        assert_eq!(
+            events.events_evicted_for_capacity(),
+            2,
+            "three event_ids at a cap of 1 evict twice"
+        );
+        assert_eq!(events.services_evicted_for_capacity(), 0);
+    }
+
     // ------------------------------------------------------------------
     // serde round-trip
     // ------------------------------------------------------------------
