@@ -1081,3 +1081,67 @@ fn two_protect_calls_keep_both_enca_and_encv_entries() {
     assert!(has(b"enca"), "the audio entry must stay enca");
     assert!(has(b"encv"), "the video entry must be encv");
 }
+
+/// An init-only buffer (`ftyp`+`moov`, nothing after it) must be accepted.
+/// Every other test feeds the muxer's whole output, so the `moov` slice end
+/// `prefix_len + moov_len` could be written as `prefix_len * moov_len` and
+/// still land inside the buffer (the trailing bytes were ignored); with no
+/// suffix it runs past the end.
+#[test]
+fn protect_init_segment_accepts_an_init_only_buffer() {
+    let Some(mut media) = clear_video_media() else {
+        return;
+    };
+    let cfg = cenc_cfg(SubsamplePolicy::WholeSample);
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt");
+    let track_id = media.tracks[0].spec.track_id;
+    let enc = media.tracks[0]
+        .encryption
+        .as_ref()
+        .expect("track.encryption populated by CencEncryptor");
+
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+    let (moov_offset, moov_bytes) = find_top_box(&raw, b"moov").expect("moov present");
+    let init_only = &raw[..moov_offset + moov_bytes.len()];
+    assert!(
+        init_only.len() < raw.len(),
+        "the packaged output must carry media after the init"
+    );
+
+    let protected =
+        protect_init_segment(init_only, track_id, enc).expect("protect_init_segment (init only)");
+    let (_, protected_moov) = find_top_box(&protected, b"moov").expect("moov present");
+    let moov = MovieBox::parse(protected_moov).expect("parse moov");
+    let stsd = moov
+        .tracks
+        .iter()
+        .find(|t| t.tkhd.track_id == track_id)
+        .expect("track present")
+        .mdia
+        .as_ref()
+        .expect("mdia")
+        .minf
+        .as_ref()
+        .expect("minf")
+        .stbl
+        .as_ref()
+        .expect("stbl")
+        .children
+        .iter()
+        .find_map(|c| match c {
+            StblChild::Stsd(s) => Some(s),
+            _ => None,
+        })
+        .expect("stsd present");
+    let SampleEntryVariant::Unknown(entry) = &stsd.entries[0] else {
+        panic!("expected a protected (Unknown-wrapper) sample entry");
+    };
+    assert_eq!(&entry.box_type, b"encv", "sample entry renamed to encv");
+    const VISUAL_SAMPLE_ENTRY_FIXED_LEN: usize = 78;
+    let (_, sinf_bytes) = find_child_box(&entry.data[VISUAL_SAMPLE_ENTRY_FIXED_LEN..], b"sinf")
+        .expect("sinf child present");
+    let sinf = ProtectionSchemeInfoBox::parse(sinf_bytes).expect("parse sinf");
+    assert_eq!(&sinf.original_format.data_format, b"avc1");
+}

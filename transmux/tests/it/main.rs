@@ -101,6 +101,7 @@ mod idr_fallback;
 mod init_segment;
 mod init_segment_sweep;
 mod interlace_facts;
+mod ir_labels;
 mod ir_timing;
 mod issue_952_avcc_no_trailer;
 mod key_hygiene;
@@ -185,6 +186,7 @@ mod streaming_tshls;
 mod streaming_tshls_config_change;
 mod streaming_tshls_late_track;
 mod streaming_tshls_pmt_version;
+mod stsd_dimensions;
 mod subtitle_ac4_strictness;
 #[cfg(feature = "std")]
 mod subtitle_manifests;
@@ -227,6 +229,8 @@ mod validate;
 mod visual_ext;
 mod vp8_vorbis;
 mod vvc;
+#[path = "support/webm_build.rs"]
+mod webm_build;
 mod webm_demux;
 mod webm_demux_unknown_cluster;
 mod webm_timestamp_scale;

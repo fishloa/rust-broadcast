@@ -630,3 +630,28 @@ impl CodecConfig {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Vorbis stores its `audio_channels` directly (no separate LFE flag), so
+    /// both accessors must report it; an unspecified count (0) is no count.
+    #[test]
+    fn vorbis_reports_its_channel_count() {
+        let stereo = CodecConfig::Vorbis {
+            codec_private: Vec::new(),
+            channels: 2,
+            sample_rate: 44_100,
+        };
+        assert_eq!(stereo.audio_channel_field(), Some(2));
+        assert_eq!(stereo.channels_with_lfe(), Some(2));
+
+        let unspecified = CodecConfig::Vorbis {
+            codec_private: Vec::new(),
+            channels: 0,
+            sample_rate: 48_000,
+        };
+        assert_eq!(unspecified.channels_with_lfe(), None);
+    }
+}

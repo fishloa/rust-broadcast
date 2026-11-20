@@ -9,13 +9,24 @@
 use broadcast_common::{Package, Unpackage};
 use mpeg_ts::pid::Pid;
 use transmux::{
-    AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, MixType, TsDemux,
-    TsMux,
+    AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, HeAacProfile,
+    MixType, TsDemux, TsMux,
 };
 
 const TAG_ISO_639: u8 = 0x0A;
 const TAG_EXTENSION: u8 = 0x7F;
 const EXT_SUPPLEMENTARY_AUDIO: u8 = 0x06;
+const TAG_AAC: u8 = 0x7C;
+
+/// `AAC_descriptor` (ETSI EN 300 468 Annex H §H.2.1): `profile_and_level`,
+/// then an optional extension byte (`AAC_type_flag` set) carrying
+/// `component_type` (Table 26).
+fn aac(profile_and_level: u8, component_type: Option<u8>) -> Vec<u8> {
+    match component_type {
+        Some(ct) => vec![TAG_AAC, 3, profile_and_level, 0x80, ct],
+        None => vec![TAG_AAC, 1, profile_and_level],
+    }
+}
 
 /// `ISO_639_language_descriptor` with one entry.
 fn iso639(lang: &[u8; 3], audio_type: u8) -> Vec<u8> {
@@ -146,4 +157,38 @@ fn synthetic_pmt_through_tsmux() {
         assert_eq!(meta.languages[0].language, lang);
         assert_eq!(meta.role, expected);
     }
+}
+
+/// Only the first `AAC_descriptor` may set `he_aac`: an HE-AAC v2 descriptor
+/// followed by a plain AAC-LC one must keep `Some(V2)`. The second descriptor
+/// carries no `AAC_type`, so it proves nothing about SBR/PS.
+#[test]
+fn only_the_first_aac_descriptor_sets_he_aac() {
+    let mut loop_bytes = aac(0x00, Some(0x43)); // HE-AAC v2, stereo
+    loop_bytes.extend(aac(0x00, None)); // plain AAC-LC (no extension)
+    let meta = AudioMetadata::from_es_info(&loop_bytes);
+    assert_eq!(
+        meta.he_aac,
+        Some(HeAacProfile::V2),
+        "the later plain descriptor must not clear the first one's v2 signal"
+    );
+
+    // The same v2 descriptor alone is also v2 (the guard is not rejecting all).
+    let alone = AudioMetadata::from_es_info(&aac(0x00, Some(0x43)));
+    assert_eq!(alone.he_aac, Some(HeAacProfile::V2));
+}
+
+/// A supplementary descriptor's own language code equal to `qad` (the
+/// France 2 / TF1 audio-description tag) marks the track as audio description;
+/// any other language leaves it Main.
+#[test]
+fn supplementary_language_equal_to_the_ad_tag_marks_audio_description() {
+    assert_eq!(
+        role(&supplementary(true, 0x00, Some(b"qad"))),
+        AudioRole::AudioDescription
+    );
+    assert_eq!(
+        role(&supplementary(true, 0x00, Some(b"eng"))),
+        AudioRole::Main
+    );
 }

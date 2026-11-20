@@ -21,6 +21,7 @@
 
 use test_fixtures::ffprobe;
 use transmux::Media;
+use transmux::error::Error;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
 
@@ -176,4 +177,112 @@ fn vp9_opus_still_demuxes() {
     );
     assert_eq!(m.tracks[0].samples.len(), 50, "VP9 frame count unchanged");
     assert_eq!(m.tracks[1].samples.len(), 101, "Opus frame count unchanged");
+}
+
+// ---------------------------------------------------------------------------
+// Error payloads: the diagnostic value/need a caller (and a log) reads
+// ---------------------------------------------------------------------------
+
+/// The VP8 `key_frame` bit is bit [0] of the first frame-tag byte (RFC 6386
+/// §9.1). A tag byte of 0x11 reports the isolated bit (1), not the whole byte
+/// and not the other low bit.
+#[test]
+fn vp8_non_keyframe_reports_the_isolated_key_frame_bit() {
+    let tracks = vec![crate::webm_build::track_entry(1, 1, b"V_VP8", &[])];
+    let frame = [0x11u8, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let bytes = crate::webm_build::file(&tracks, &[(1, &frame)]);
+    let err = WebmDemux::new()
+        .demux(&bytes)
+        .expect_err("a non-key first VP8 frame cannot configure the codec");
+    match err {
+        Error::InvalidValue(v) => {
+            assert_eq!(v.field, "VP8 key_frame");
+            assert_eq!(v.value, 1, "the isolated key_frame bit, not the tag byte");
+        }
+        other => panic!("expected InvalidValue, got {other:?}"),
+    }
+}
+
+/// A Xiph lacing length run that ends on a continuation byte (`0xFF`) with no
+/// byte after it reports the first missing position (4) and the 3 bytes it
+/// had, not a wrapped or multiplied offset.
+#[test]
+fn vorbis_lace_length_run_ending_on_a_continuation_is_buffer_too_short() {
+    let cp = [2u8, 0x1E, 0xFF];
+    let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_VORBIS", &cp)];
+    let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
+    let err = WebmDemux::new()
+        .demux(&bytes)
+        .expect_err("a truncated Xiph lacing table cannot configure the codec");
+    match err {
+        Error::BufferTooShort(b) => {
+            assert_eq!(b.need, 4);
+            assert_eq!(b.have, 3);
+            assert_eq!(b.what, "Vorbis CodecPrivate Xiph lacing length");
+        }
+        other => panic!("expected BufferTooShort, got {other:?}"),
+    }
+}
+
+/// An identification header whose declared length (30) overruns the body
+/// reports `id_start + length` (3 + 30 = 33) as the need and all 18 bytes as
+/// available, so a caller sees how much of the header actually arrived.
+#[test]
+fn vorbis_identification_header_longer_than_the_body_reports_the_full_need() {
+    let mut cp = vec![2u8, 30, 5];
+    cp.extend_from_slice(&[0u8; 15]);
+    assert_eq!(cp.len(), 18);
+    let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_VORBIS", &cp)];
+    let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
+    let err = WebmDemux::new()
+        .demux(&bytes)
+        .expect_err("a short identification header cannot configure the codec");
+    match err {
+        Error::BufferTooShort(b) => {
+            assert_eq!(b.need, 33, "id_start 3 + declared header length 30");
+            assert_eq!(b.have, 18);
+            assert_eq!(b.what, "Vorbis identification header body");
+        }
+        other => panic!("expected BufferTooShort, got {other:?}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Vorbis sample rate: every byte of the 32-bit field, including above 64 kHz
+// ---------------------------------------------------------------------------
+
+/// A 44.1 kHz fixture cannot tell the sample-rate byte offsets apart (both
+/// 0x44 and 0xAC are non-zero, but the upper bytes are 0 and every mutated
+/// index lands on a 0 too). A 0x01020304 rate with non-zero bytes at every
+/// position pins the exact little-endian offsets, and channel 6 proves the
+/// channel byte is read from its own slot.
+#[test]
+fn vorbis_sample_rate_above_64_khz_reads_every_byte_offset() {
+    let mut id = vec![0x01u8];
+    id.extend_from_slice(b"vorbis");
+    id.extend_from_slice(&0u32.to_le_bytes()); // vorbis_version
+    id.push(6); // audio_channels
+    id.extend_from_slice(&0x0102_0304u32.to_le_bytes()); // audio_sample_rate
+    assert_eq!(id.len(), 16);
+
+    let mut cp = vec![2u8, 16, 1];
+    cp.extend_from_slice(&id);
+    cp.push(0x03); // comment header (opaque here)
+    cp.push(0x05); // setup header (opaque here)
+    let tracks = vec![crate::webm_build::track_entry(1, 2, b"A_VORBIS", &cp)];
+    let bytes = crate::webm_build::file(&tracks, &[(1, &[0xAA])]);
+    let media = WebmDemux::new()
+        .demux(&bytes)
+        .expect("a hand-built identification header must parse");
+
+    let CodecConfig::Vorbis {
+        channels,
+        sample_rate,
+        ..
+    } = &media.tracks[0].spec.config
+    else {
+        panic!("expected Vorbis, got {:?}", media.tracks[0].spec.config);
+    };
+    assert_eq!(*channels, 6);
+    assert_eq!(*sample_rate, 0x0102_0304);
 }
