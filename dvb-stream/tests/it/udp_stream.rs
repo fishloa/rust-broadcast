@@ -2,7 +2,7 @@
 //! OS-assigned (port 0); no fixed ports, no sleeps.
 #![cfg(feature = "udp")]
 
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4};
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -128,9 +128,10 @@ async fn udp_t2mi_stream_frames_datagrams_and_reports_stats() {
     // Wait for the first T2-MI packet to reassemble (the first datagrams also
     // carry the PAT/PMT, so it is not in the very first packets).
     let mut events = 0usize;
-    tokio::time::timeout(Duration::from_secs(20), std::future::poll_fn(|cx| {
-        Pin::new(&mut stream).poll_next(cx)
-    }))
+    tokio::time::timeout(
+        Duration::from_secs(20),
+        std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)),
+    )
     .await
     .expect("a T2-MI event must arrive")
     .expect("stream must not end");
@@ -139,10 +140,9 @@ async fn udp_t2mi_stream_frames_datagrams_and_reports_stats() {
     // Drain the rest (bounded): the pump feeds one TS packet per frame poll,
     // so the counters are only complete once every queued datagram is framed.
     for _ in 0..MAX_POLLS {
-        let polled = std::future::poll_fn(|cx| {
-            std::task::Poll::Ready(Pin::new(&mut stream).poll_next(cx))
-        })
-        .await;
+        let polled =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(Pin::new(&mut stream).poll_next(cx)))
+                .await;
         match polled {
             std::task::Poll::Ready(Some(_)) => events += 1,
             std::task::Poll::Ready(None) | std::task::Poll::Pending => break,
@@ -165,6 +165,32 @@ async fn udp_t2mi_stream_frames_datagrams_and_reports_stats() {
         JUNK as u64,
         "the junk prefix is the only thing discarded"
     );
+}
+
+/// `check_udp` refuses a cross-family join and a join its own options reject
+/// before any socket is opened, and accepts a matching-family multicast join
+/// (audit a23cp #3437).
+#[test]
+fn check_udp_accepts_a_matching_join_and_refuses_the_rest() {
+    let bind_addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+
+    let v4_join = MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(239, 255, 42, 1)))
+        .with_interface(MulticastInterface::V4(Ipv4Addr::UNSPECIFIED));
+    assert!(
+        dvb_stream::udp::check_udp(bind_addr, &UdpOptions::new().with_join(v4_join)).is_ok(),
+        "an IPv4 bind joining an IPv4 multicast group is accepted"
+    );
+
+    let v6_join = MulticastJoin::new(IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1)));
+    let error = dvb_stream::udp::check_udp(bind_addr, &UdpOptions::new().with_join(v6_join))
+        .expect_err("an IPv6 group cannot be joined from an IPv4 bind");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+
+    let unicast_join = MulticastJoin::new(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1)))
+        .with_interface(MulticastInterface::V4(Ipv4Addr::UNSPECIFIED));
+    let error = dvb_stream::udp::check_udp(bind_addr, &UdpOptions::new().with_join(unicast_join))
+        .expect_err("a join group that is not multicast is refused");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
 }
 
 #[test]
