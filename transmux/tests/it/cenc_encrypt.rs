@@ -865,3 +865,40 @@ fn counter_iv_using_the_last_iv_in_a_multi_sample_call_is_rejected() {
         "a rejected encrypt must leave every sample byte-identical"
     );
 }
+
+// ---------------------------------------------------------------------------
+// issue #3662 — next_counter() is the real snapshot callers resume from
+// ---------------------------------------------------------------------------
+
+/// `next_counter()` must report the exact number of counter IVs consumed, not
+/// just "some value that also moves for a fresh instance": a wrong snapshot
+/// makes `resume()` reuse IVs after a restart (AES-CTR keystream reuse).
+#[test]
+fn next_counter_reports_samples_consumed_and_resume_continues_from_it() {
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let mut media = counter_media(3);
+    let mut enc = CencEncryptor::resume(KEY_A, 7);
+    assert_eq!(enc.next_counter(), 7, "resume takes the given counter");
+    enc.encrypt(&mut media, &cfg).expect("encrypt 3 samples");
+    assert_eq!(enc.next_counter(), 10, "3 samples consumed counters 7,8,9");
+
+    let ivs: Vec<Vec<u8>> = all_recorded_ivs(&media);
+    assert_eq!(
+        ivs,
+        vec![
+            7u64.to_be_bytes().to_vec(),
+            8u64.to_be_bytes().to_vec(),
+            9u64.to_be_bytes().to_vec(),
+        ],
+        "the recorded IVs are the literal counters 7, 8, 9"
+    );
+
+    let mut more = counter_media(1);
+    enc.encrypt(&mut more, &cfg).expect("encrypt one more");
+    assert_eq!(
+        all_recorded_ivs(&more),
+        vec![10u64.to_be_bytes().to_vec()],
+        "a second call continues at the advanced counter, never 0 or 1"
+    );
+}
