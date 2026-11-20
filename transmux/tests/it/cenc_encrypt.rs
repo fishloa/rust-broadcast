@@ -703,6 +703,21 @@ fn whole_sample_media(data: Vec<u8>) -> Media {
     Media::new(vec![Track::new(spec, vec![sample])], timescale(1000))
 }
 
+/// A single-AVC-track [`Media`] with `sample_count` identical 16-byte samples
+/// (one AES-CTR block each), built on [`whole_sample_media`]'s track.
+fn counter_media(sample_count: usize) -> Media {
+    let mut media = whole_sample_media((0..16u8).collect());
+    let first = media.tracks[0]
+        .samples
+        .first()
+        .expect("whole_sample_media builds one sample")
+        .clone();
+    for _ in 1..sample_count {
+        media.tracks[0].samples.push(first.clone());
+    }
+    media
+}
+
 fn cbcs_encrypt(data: Vec<u8>, pattern: (u8, u8)) -> Result<Vec<u8>, transmux::Error> {
     const KEY: [u8; 16] = [0x42; 16];
     const IV: [u8; 16] = [0x11; 16];
@@ -749,4 +764,104 @@ fn cbcs_zero_crypt_with_nonzero_skip_is_rejected() {
         cbcs_encrypt(vec![0u8; 87], (0, 5)),
         Err(transmux::Error::InvalidInput(_))
     ));
+}
+
+// ---------------------------------------------------------------------------
+// issue #3661 — the counter must also fit *after* the call, not just the IV
+// ---------------------------------------------------------------------------
+
+/// `IvGen::Counter` hands out `next_counter + i`; the counter must also be
+/// representable *after* the call. A final IV of exactly `u64::MAX` is a
+/// valid IV, but leaves nothing to advance to, so the call must be rejected
+/// up front. (The old bare `+=` wrapped to 0 in release builds, and the next
+/// call replayed IVs 0.. under the same key: AES-CTR keystream reuse.)
+#[test]
+fn counter_iv_at_u64_max_is_rejected_and_leaves_state_untouched() {
+    let mut media = whole_sample_media((0..16u8).collect());
+    let before = snapshot(&media);
+    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX);
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let err = enc
+        .encrypt(&mut media, &cfg)
+        .expect_err("an IV of exactly u64::MAX cannot be advanced past");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert_eq!(enc.next_counter(), u64::MAX);
+    assert_eq!(
+        snapshot(&media),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
+    assert!(media.tracks[0].encryption.is_none());
+}
+
+/// The largest representable *start* is still usable once: `u64::MAX - 1`
+/// with one sample hands out IV `u64::MAX - 1` and leaves the counter at
+/// `u64::MAX`; the next one-sample call then has no room and is rejected.
+#[test]
+fn counter_iv_u64_max_minus_one_is_usable_once_then_rejects() {
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let mut media = whole_sample_media((0..16u8).collect());
+    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX - 1);
+    enc.encrypt(&mut media, &cfg)
+        .expect("u64::MAX - 1 is a valid IV and leaves the counter at u64::MAX");
+    assert_eq!(enc.next_counter(), u64::MAX);
+    let iv = media.tracks[0]
+        .encryption
+        .as_ref()
+        .expect("track.encryption Some")
+        .samples[0]
+        .initialization_vector
+        .clone();
+    assert_eq!(
+        iv,
+        (u64::MAX - 1).to_be_bytes().to_vec(),
+        "the 8-byte counter IV is the literal u64::MAX - 1"
+    );
+
+    let mut again = whole_sample_media((0..16u8).collect());
+    let before = snapshot(&again);
+    let err = enc
+        .encrypt(&mut again, &cfg)
+        .expect_err("the counter is already at u64::MAX");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert_eq!(enc.next_counter(), u64::MAX);
+    assert_eq!(
+        snapshot(&again),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
+}
+
+/// A multi-sample call whose *last* IV fits but whose advance (`+ 2`) does
+/// not must be rejected before either sample is ciphered: the old code
+/// checked only `next_counter + (total - 1)` and then wrapped (or panicked)
+/// on `next_counter += total`.
+#[test]
+fn counter_iv_using_the_last_iv_in_a_multi_sample_call_is_rejected() {
+    let mut media = counter_media(2);
+    let before = snapshot(&media);
+    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX - 1);
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let err = enc
+        .encrypt(&mut media, &cfg)
+        .expect_err("next_counter + 2 overflows, so the call must be rejected");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert_eq!(enc.next_counter(), u64::MAX - 1);
+    assert_eq!(
+        snapshot(&media),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
 }
