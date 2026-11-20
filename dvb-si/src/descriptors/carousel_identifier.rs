@@ -618,6 +618,46 @@ mod tests {
         assert!(matches!(err, Error::BufferTooShort(..)));
     }
 
+    /// The common real layout: `ObjectKeyLength` is exactly the bytes left
+    /// after the fixed specifier, so `private_data` is empty. An off-by-one
+    /// bound would reject it.
+    #[test]
+    fn object_key_running_exactly_to_the_end_is_accepted() {
+        #[rustfmt::skip]
+        let bytes = [
+            TAG, 24,                            // tag, body length = 5 + 16 + 3
+            0x00, 0x00, 0x00, 0x01,             // carousel_id = 1
+            0x01,                               // FormatId = Aggregated
+            0x03,                               // ModuleVersion = 3
+            0x00, 0x05,                         // ModuleId = 5
+            0x04, 0x00,                         // BlockSize = 1024
+            0x00, 0x00, 0x10, 0x00,             // ModuleSize = 4096
+            0x00,                               // CompressionMethod = 0
+            0x00, 0x00, 0x10, 0x00,             // OriginalSize = 4096
+            0x1E,                               // TimeOut = 30
+            0x03,                               // ObjectKeyLength = 3
+            0xAB, 0xCD, 0xEF,                   // ObjectKeyData (last bytes)
+        ];
+        let d = CarouselIdentifierDescriptor::parse(&bytes).unwrap();
+        let FormatSpecifier::Aggregated { object_key, .. } = &d.format else {
+            panic!("expected Aggregated");
+        };
+        assert_eq!(object_key.len(), 3);
+        assert_eq!(*object_key, &[0xAB, 0xCD, 0xEF]);
+        assert!(d.private_data.is_empty());
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
+
+        // One byte more than remains is rejected.
+        let mut bad = bytes;
+        bad[22] = 0x04;
+        assert!(matches!(
+            CarouselIdentifierDescriptor::parse(&bad).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
+    }
+
     #[test]
     fn serialize_rejects_too_small_buffer() {
         let d = anchor_descriptor();

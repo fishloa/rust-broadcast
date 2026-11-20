@@ -425,6 +425,28 @@ mod tests {
         assert_eq!(desc.centre_frequencies_bcd[0], [0x04, 0xA8, 0x58, 0xF0]);
     }
 
+    /// The terrestrial 32-bit (x10 Hz) field: the maximum is representable and
+    /// anything above it is rejected rather than wrapped by the cast.
+    #[test]
+    fn set_terrestrial_frequencies_hz_enforces_the_32_bit_limit() {
+        let max_hz = u64::from(u32::MAX) * 10;
+        let mut desc = FrequencyListDescriptor::new(CodingType::Terrestrial, vec![]);
+        desc.set_centre_frequencies_hz(&[max_hz]).unwrap();
+        assert_eq!(desc.centre_frequencies_bcd[0], u32::MAX.to_be_bytes());
+        assert_eq!(desc.centre_frequencies_hz(), vec![Some(max_hz)]);
+
+        for hz in [
+            (u64::from(u32::MAX) + 1) * 10,
+            (u64::from(u32::MAX) + 2) * 10,
+        ] {
+            let mut desc = FrequencyListDescriptor::new(CodingType::Terrestrial, vec![]);
+            assert!(matches!(
+                desc.set_centre_frequencies_hz(&[hz]),
+                Err(crate::Error::ValueOutOfRange { .. })
+            ));
+        }
+    }
+
     #[test]
     fn set_cable_frequencies_hz_round_trips() {
         let mut desc = FrequencyListDescriptor::new(CodingType::Cable, vec![]);

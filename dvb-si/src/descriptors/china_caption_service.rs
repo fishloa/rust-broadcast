@@ -399,4 +399,22 @@ mod tests {
             [TAG, 9, 0xE1, b'c', b'h', b'i', 0xC1, 0xC2, 0xFF, 0xE1, 0x00]
         );
     }
+
+    /// The 5-bit `number_of_services` reaches 31; the full descriptor must
+    /// serialize.
+    #[test]
+    fn serialize_accepts_the_maximum_service_count() {
+        let services = (1..=31u8)
+            .map(|n| {
+                ChinaCaptionService::new(LangCode(*b"chi"), n, true, ChinaCaptionCharSet::Gb2312)
+            })
+            .collect::<Vec<_>>();
+        let d = ChinaCaptionServiceDescriptor::new(services, Pid::from_const(0x100));
+        let mut out = vec![0u8; d.serialized_len()];
+        assert_eq!(d.serialize_into(&mut out).unwrap(), out.len());
+        assert_eq!(out[1], 1 + 31 * 6 + 2);
+        let back = ChinaCaptionServiceDescriptor::parse(&out).unwrap();
+        assert_eq!(back.services.len(), 31);
+        assert_eq!(back, d);
+    }
 }

@@ -748,4 +748,82 @@ mod tests {
             ]
         );
     }
+
+    /// The minimal 0xFFFF form (2 + 4 identifier + 1 flags = 7 body bytes) and
+    /// the identifier's fourth byte coming from its own position, not the flags
+    /// byte.
+    #[test]
+    fn minimal_application_format_identifier_form_round_trips() {
+        let bytes = [TAG, 7, 0xFF, 0xFF, 0x12, 0x34, 0x56, 0x78, 0x07];
+        let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.metadata_application_format, 0xFFFF);
+        assert_eq!(d.metadata_application_format_identifier, Some(0x1234_5678));
+        assert_eq!(
+            d.content_time_base_indicator,
+            ContentTimeBaseIndicator::None
+        );
+        assert!(d.content_reference_id_record.is_none());
+        assert!(d.time_base.is_none());
+        assert!(d.private_data.is_empty());
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
+    /// Bodies truncated before the identifier or before the flags byte are
+    /// errors, never an out-of-bounds read.
+    #[test]
+    fn truncated_application_format_forms_are_errors() {
+        assert!(matches!(
+            ContentLabelingDescriptor::parse(&[TAG, 5, 0xFF, 0xFF, 0x12, 0x34, 0x56]).unwrap_err(),
+            Error::InvalidDescriptor { .. }
+        ));
+        // The identifier is complete here; the missing byte is the flags byte.
+        assert_eq!(
+            ContentLabelingDescriptor::parse(&[TAG, 6, 0xFF, 0xFF, 0x12, 0x34, 0x56, 0x78])
+                .unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "content_labeling_descriptor too short for flags byte"
+            }
+        );
+        // Flags byte is the last body byte and nothing follows.
+        let bytes = [TAG, 3, 0x00, 0x01, 0x07];
+        let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
+        assert_eq!(
+            d.content_time_base_indicator,
+            ContentTimeBaseIndicator::None
+        );
+        assert!(d.private_data.is_empty());
+    }
+
+    /// Flag-set descriptors whose record-length or association-length byte is
+    /// the last one are valid with an empty block.
+    #[test]
+    fn zero_length_trailing_blocks_are_valid() {
+        // Content reference record present, length 0.
+        let bytes = [TAG, 4, 0x00, 0x01, 0x87, 0x00];
+        let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.content_reference_id_record, Some(&[][..]));
+        assert!(d.private_data.is_empty());
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+
+        // Time base association (indicator 3), length 0.
+        let bytes = [TAG, 4, 0x00, 0x01, 0x1F, 0x00];
+        let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
+        assert_eq!(
+            d.content_time_base_indicator,
+            ContentTimeBaseIndicator::Reserved(3)
+        );
+        assert_eq!(
+            d.time_base_association.as_ref().map(|a| a.data),
+            Some(&[][..])
+        );
+        assert!(d.private_data.is_empty());
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
 }

@@ -299,6 +299,19 @@ mod tests {
         ));
     }
 
+    /// 0x7FFF is the largest 15-bit application_type and must serialize.
+    #[test]
+    fn serialize_accepts_the_15_bit_application_type_maximum() {
+        let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(
+            ApplicationType::Reserved(0x7FFF),
+            0x1F,
+        )]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(ApplicationSignallingDescriptor::parse(&buf).unwrap(), d);
+    }
+
     #[test]
     fn serialize_rejects_ait_version_over_range() {
         let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(

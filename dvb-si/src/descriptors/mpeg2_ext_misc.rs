@@ -994,4 +994,19 @@ mod tests {
             assert_eq!(reserved_after.get(), 0x07);
         }
     }
+
+    #[test]
+    fn segmentation_boundary_labels_name_the_flag_branch() {
+        assert_eq!(
+            VirtualSegmentationBoundary::reference(0x1234).name(),
+            "reference partition (explicit_boundary_flag 0)"
+        );
+        assert_eq!(
+            VirtualSegmentationBoundary::Explicit {
+                maximum_duration: 0
+            }
+            .name(),
+            "explicit boundary (explicit_boundary_flag 1)"
+        );
+    }
 }

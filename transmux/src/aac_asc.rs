@@ -609,7 +609,7 @@ impl Parse<'_> for AudioSpecificConfig {
                 ((b1 as u32 & 0x7F) << 17)
                     | (bytes[2] as u32) << 9
                     | (bytes[3] as u32) << 1
-                    | (bytes[4] as u32 & 1),
+                    | (bytes[4] as u32 >> 7) & 1,
             )
         } else {
             None
@@ -1065,8 +1065,15 @@ fn extension_index_for(hz: u32) -> Option<SamplingFrequencyIndex> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_bits::BitWriter;
     use broadcast_common::Serialize;
     const KNOWN: [u8; 5] = [0x12, 0x08, 0x56, 0xe5, 0x00];
+
+    fn asc_bits(f: impl FnOnce(&mut BitWriter)) -> Vec<u8> {
+        let mut writer = BitWriter::new();
+        f(&mut writer);
+        writer.finish()
+    }
 
     #[test]
     fn parse_real_fixture() {
@@ -1166,6 +1173,86 @@ mod tests {
         assert_eq!(a2.sampling_frequency, Some(48000));
         assert_eq!(a2.channel_configuration, ChannelConfiguration::Stereo);
     }
+
+    fn escape_config(rate: u32, trailing_top: u8) -> AudioSpecificConfig {
+        AudioSpecificConfig::with_fields(
+            AudioObjectType::AacLc,
+            SamplingFrequencyIndex::Escape,
+            Some(rate),
+            ChannelConfiguration::Stereo,
+            Vec::new(),
+            Some(trailing_top),
+        )
+    }
+
+    /// The 24-bit explicit rate's last bit is bit 7 of byte 4 (ISO/IEC 14496-3
+    /// §1.6.2.1), not bit 0: bit 0 there is the `GASpecificConfig`
+    /// `extensionFlag` held in `trailing_top`. Reading bit 0 made every odd
+    /// rate parse as even (and a set extension flag fabricate an odd rate).
+    #[test]
+    fn escape_rate_lsb_is_byte4_bit7() {
+        for &rate in &[44_101u32, 0x01_FFFF, 0xFF_FFFF, 48_000, 1] {
+            for &trailing_top in &[0u8, 7] {
+                let asc = escape_config(rate, trailing_top);
+                let bytes = asc.try_to_bytes().unwrap();
+                let back = AudioSpecificConfig::parse(&bytes).unwrap();
+                assert_eq!(
+                    back.sampling_frequency,
+                    Some(rate),
+                    "rate {rate:#x}, trailing_top {trailing_top}"
+                );
+                assert_eq!(
+                    back.trailing_top,
+                    Some(trailing_top),
+                    "rate {rate:#x}, trailing_top {trailing_top}"
+                );
+                assert_eq!(
+                    back.sampling_frequency_index,
+                    SamplingFrequencyIndex::Escape
+                );
+                assert_eq!(back.channel_configuration, ChannelConfiguration::Stereo);
+                assert_eq!(
+                    back.try_to_bytes().unwrap(),
+                    bytes,
+                    "rate {rate:#x}, trailing_top {trailing_top}"
+                );
+            }
+        }
+    }
+
+    /// Hand-written escape config: AOT 2 (LC), sfi 15, rate 1, cc 2, and the GA
+    /// `extensionFlag` set. Only reading byte 4 bit 7 recovers rate 1.
+    #[test]
+    fn escape_rate_with_ga_extension_flag_set() {
+        let bytes = [0x17u8, 0x80, 0x00, 0x00, 0x91];
+        let asc = AudioSpecificConfig::parse(&bytes).unwrap();
+        assert_eq!(asc.sampling_frequency, Some(1));
+        assert_eq!(asc.trailing_top, Some(1));
+        assert_eq!(asc.channel_configuration, ChannelConfiguration::Stereo);
+        assert_eq!(asc.try_to_bytes().unwrap(), bytes);
+    }
+
+    /// The top 7 bits of the explicit rate (above 131071) are the last field
+    /// packed into byte 1 (ISO/IEC 14496-3 §1.6.2.1): 192000 and the 24-bit
+    /// maximum must survive both directions, and the bytes are pinned to the
+    /// spec layout so parse and serializer are checked against an independent
+    /// value.
+    #[test]
+    fn escape_rate_above_131071_bits() {
+        let asc = escape_config(192_000, 0);
+        assert_eq!(asc.try_to_bytes().unwrap(), [0x17, 0x81, 0x77, 0x00, 0x10]);
+        for &rate in &[192_000u32, 0x7F_FFFF] {
+            let asc = escape_config(rate, 0);
+            let bytes = asc.try_to_bytes().unwrap();
+            assert_eq!(
+                AudioSpecificConfig::parse(&bytes)
+                    .unwrap()
+                    .sampling_frequency,
+                Some(rate),
+                "rate {rate:#x}"
+            );
+        }
+    }
     #[test]
     fn mutate_config_changes_bytes() {
         let o = AudioSpecificConfig::parse(&KNOWN)
@@ -1175,6 +1262,396 @@ mod tests {
         let mut b = AudioSpecificConfig::parse(&KNOWN).unwrap();
         b.channel_configuration = ChannelConfiguration::Stereo;
         assert_ne!(o, b.try_to_bytes().unwrap());
+    }
+
+    /// Every public spec label (ISO/IEC 14496-3 Tables 1.1, 1.10, 1.11) is
+    /// pinned; `Display` is `name()`, with a reserved value rendered as
+    /// `reserved(0x..)`.
+    #[test]
+    fn audio_object_type_labels() {
+        let cases: &[(AudioObjectType, &str, &str)] = &[
+            (AudioObjectType::Null, "null", "null"),
+            (AudioObjectType::AacMain, "AAC Main", "AAC Main"),
+            (AudioObjectType::AacLc, "AAC LC", "AAC LC"),
+            (AudioObjectType::AacSsr, "AAC SSR", "AAC SSR"),
+            (AudioObjectType::AacLtp, "AAC LTP", "AAC LTP"),
+            (AudioObjectType::Reserved(5), "reserved", "reserved(0x05)"),
+            (AudioObjectType::AacScalable, "AAC Scalable", "AAC Scalable"),
+            (AudioObjectType::TwinVq, "TwinVQ", "TwinVQ"),
+            (AudioObjectType::Celp, "CELP", "CELP"),
+            (AudioObjectType::Hvxc, "HVXC", "HVXC"),
+            (AudioObjectType::Ttsi, "TTSI", "TTSI"),
+            (
+                AudioObjectType::MainSynthetic,
+                "Main synthetic",
+                "Main synthetic",
+            ),
+            (
+                AudioObjectType::WavetableSynthesis,
+                "Wavetable synthesis",
+                "Wavetable synthesis",
+            ),
+            (AudioObjectType::GeneralMidi, "General MIDI", "General MIDI"),
+            (
+                AudioObjectType::AlgorithmicSynthesis,
+                "Algorithmic Synthesis & Audio FX",
+                "Algorithmic Synthesis & Audio FX",
+            ),
+            (AudioObjectType::ErAacLc, "ER AAC LC", "ER AAC LC"),
+            (AudioObjectType::ErAacLtp, "ER AAC LTP", "ER AAC LTP"),
+            (
+                AudioObjectType::ErAacScalable,
+                "ER AAC Scalable",
+                "ER AAC Scalable",
+            ),
+            (AudioObjectType::ErTwinVq, "ER TwinVQ", "ER TwinVQ"),
+            (AudioObjectType::ErBsac, "ER BSAC", "ER BSAC"),
+            (AudioObjectType::ErAacLd, "ER AAC LD", "ER AAC LD"),
+            (AudioObjectType::ErCelp, "ER CELP", "ER CELP"),
+            (AudioObjectType::ErHvxc, "ER HVXC", "ER HVXC"),
+            (AudioObjectType::ErHiln, "ER HILN", "ER HILN"),
+            (
+                AudioObjectType::ErParametric,
+                "ER Parametric",
+                "ER Parametric",
+            ),
+        ];
+        for &(value, name, display) in cases {
+            assert_eq!(value.name(), name, "{value:?}");
+            assert_eq!(alloc::format!("{value}"), display, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn sampling_frequency_index_labels() {
+        let cases: &[(SamplingFrequencyIndex, &str, &str)] = &[
+            (SamplingFrequencyIndex::Fs96000, "96000 Hz", "96000 Hz"),
+            (SamplingFrequencyIndex::Fs88200, "88200 Hz", "88200 Hz"),
+            (SamplingFrequencyIndex::Fs64000, "64000 Hz", "64000 Hz"),
+            (SamplingFrequencyIndex::Fs48000, "48000 Hz", "48000 Hz"),
+            (SamplingFrequencyIndex::Fs44100, "44100 Hz", "44100 Hz"),
+            (SamplingFrequencyIndex::Fs32000, "32000 Hz", "32000 Hz"),
+            (SamplingFrequencyIndex::Fs24000, "24000 Hz", "24000 Hz"),
+            (SamplingFrequencyIndex::Fs22050, "22050 Hz", "22050 Hz"),
+            (SamplingFrequencyIndex::Fs16000, "16000 Hz", "16000 Hz"),
+            (SamplingFrequencyIndex::Fs12000, "12000 Hz", "12000 Hz"),
+            (SamplingFrequencyIndex::Fs11025, "11025 Hz", "11025 Hz"),
+            (SamplingFrequencyIndex::Fs8000, "8000 Hz", "8000 Hz"),
+            (SamplingFrequencyIndex::Fs7350, "7350 Hz", "7350 Hz"),
+            (
+                SamplingFrequencyIndex::Reserved(13),
+                "reserved",
+                "reserved(0x0D)",
+            ),
+            (SamplingFrequencyIndex::Escape, "escape", "escape"),
+        ];
+        for &(value, name, display) in cases {
+            assert_eq!(value.name(), name, "{value:?}");
+            assert_eq!(alloc::format!("{value}"), display, "{value:?}");
+        }
+    }
+
+    #[test]
+    fn channel_configuration_labels() {
+        let cases: &[(ChannelConfiguration, &str, &str)] = &[
+            (ChannelConfiguration::InBand, "in-band", "in-band"),
+            (ChannelConfiguration::Mono, "mono", "mono"),
+            (ChannelConfiguration::Stereo, "stereo", "stereo"),
+            (ChannelConfiguration::Ch3, "3 channels", "3 channels"),
+            (ChannelConfiguration::Ch4, "4 channels", "4 channels"),
+            (ChannelConfiguration::Ch5, "5 channels", "5 channels"),
+            (ChannelConfiguration::Ch5_1, "5.1 surround", "5.1 surround"),
+            (ChannelConfiguration::Ch7_1, "7.1 surround", "7.1 surround"),
+            (
+                ChannelConfiguration::Reserved(9),
+                "reserved",
+                "reserved(0x09)",
+            ),
+        ];
+        for &(value, name, display) in cases {
+            assert_eq!(value.name(), name, "{value:?}");
+            assert_eq!(alloc::format!("{value}"), display, "{value:?}");
+        }
+    }
+
+    /// Every 5-bit object type maps to its Table 1.1 variant and back.
+    #[test]
+    fn audio_object_type_from_and_raw_cover_every_value() {
+        let expected: [AudioObjectType; 32] = [
+            AudioObjectType::Null,
+            AudioObjectType::AacMain,
+            AudioObjectType::AacLc,
+            AudioObjectType::AacSsr,
+            AudioObjectType::AacLtp,
+            AudioObjectType::Reserved(5),
+            AudioObjectType::AacScalable,
+            AudioObjectType::TwinVq,
+            AudioObjectType::Celp,
+            AudioObjectType::Hvxc,
+            AudioObjectType::Reserved(10),
+            AudioObjectType::Reserved(11),
+            AudioObjectType::Ttsi,
+            AudioObjectType::MainSynthetic,
+            AudioObjectType::WavetableSynthesis,
+            AudioObjectType::GeneralMidi,
+            AudioObjectType::AlgorithmicSynthesis,
+            AudioObjectType::ErAacLc,
+            AudioObjectType::Reserved(18),
+            AudioObjectType::ErAacLtp,
+            AudioObjectType::ErAacScalable,
+            AudioObjectType::ErTwinVq,
+            AudioObjectType::ErBsac,
+            AudioObjectType::ErAacLd,
+            AudioObjectType::ErCelp,
+            AudioObjectType::ErHvxc,
+            AudioObjectType::ErHiln,
+            AudioObjectType::ErParametric,
+            AudioObjectType::Reserved(28),
+            AudioObjectType::Reserved(29),
+            AudioObjectType::Reserved(30),
+            AudioObjectType::Reserved(31),
+        ];
+        for (n, &want) in expected.iter().enumerate() {
+            let n = n as u8;
+            assert_eq!(AudioObjectType::from(n), want, "AOT {n}");
+            assert_eq!(AudioObjectType::from(n).raw(), n, "AOT {n}");
+            assert_eq!(AudioObjectType::from(n + 32), want, "AOT {:#04x}", n + 32);
+        }
+        assert_eq!(AudioObjectType::Reserved(13).raw(), 13);
+        assert_eq!(AudioObjectType::Reserved(0x3D).raw(), 0x1D);
+        assert_eq!(AudioObjectType::from(0x2A), AudioObjectType::Reserved(0x0A));
+    }
+
+    /// Every 4-bit sampling-frequency index maps to its Table 1.10 variant and
+    /// back, including the reserved values and the explicit-rate escape.
+    #[test]
+    fn sampling_frequency_index_from_and_raw_cover_every_value() {
+        let expected: [SamplingFrequencyIndex; 16] = [
+            SamplingFrequencyIndex::Fs96000,
+            SamplingFrequencyIndex::Fs88200,
+            SamplingFrequencyIndex::Fs64000,
+            SamplingFrequencyIndex::Fs48000,
+            SamplingFrequencyIndex::Fs44100,
+            SamplingFrequencyIndex::Fs32000,
+            SamplingFrequencyIndex::Fs24000,
+            SamplingFrequencyIndex::Fs22050,
+            SamplingFrequencyIndex::Fs16000,
+            SamplingFrequencyIndex::Fs12000,
+            SamplingFrequencyIndex::Fs11025,
+            SamplingFrequencyIndex::Fs8000,
+            SamplingFrequencyIndex::Fs7350,
+            SamplingFrequencyIndex::Reserved(13),
+            SamplingFrequencyIndex::Reserved(14),
+            SamplingFrequencyIndex::Escape,
+        ];
+        for (n, &want) in expected.iter().enumerate() {
+            let n = n as u8;
+            assert_eq!(SamplingFrequencyIndex::from(n), want, "SFI {n}");
+            assert_eq!(SamplingFrequencyIndex::from(n).raw(), n, "SFI {n}");
+            assert_eq!(
+                SamplingFrequencyIndex::from(n + 16),
+                want,
+                "SFI {:#04x}",
+                n + 16
+            );
+        }
+        assert_eq!(SamplingFrequencyIndex::Reserved(0x1D).raw(), 0x0D);
+    }
+
+    /// Every 4-bit channel configuration maps to its Table 1.11 variant and
+    /// back; 8..=15 are reserved.
+    #[test]
+    fn channel_configuration_from_and_raw_cover_every_value() {
+        let expected: [ChannelConfiguration; 8] = [
+            ChannelConfiguration::InBand,
+            ChannelConfiguration::Mono,
+            ChannelConfiguration::Stereo,
+            ChannelConfiguration::Ch3,
+            ChannelConfiguration::Ch4,
+            ChannelConfiguration::Ch5,
+            ChannelConfiguration::Ch5_1,
+            ChannelConfiguration::Ch7_1,
+        ];
+        for (n, &want) in expected.iter().enumerate() {
+            let n = n as u8;
+            assert_eq!(ChannelConfiguration::from(n), want, "CC {n}");
+            assert_eq!(ChannelConfiguration::from(n).raw(), n, "CC {n}");
+            assert_eq!(
+                ChannelConfiguration::from(n + 16),
+                want,
+                "CC {:#04x}",
+                n + 16
+            );
+        }
+        for n in 8u8..=15 {
+            assert_eq!(
+                ChannelConfiguration::from(n),
+                ChannelConfiguration::Reserved(n),
+                "CC {n}"
+            );
+            assert_eq!(ChannelConfiguration::from(n).raw(), n, "CC {n}");
+            assert_eq!(
+                ChannelConfiguration::from(n + 16),
+                ChannelConfiguration::Reserved(n),
+                "CC {:#04x}",
+                n + 16
+            );
+        }
+        assert_eq!(ChannelConfiguration::Reserved(0x1D).raw(), 0x0D);
+    }
+
+    /// AAC-LC 44100 stereo followed by the GA bits and a 0x2B7 SBR sync
+    /// extension with `sbrPresentFlag == 1` (implicit HE-AAC v1) has an
+    /// explicit SBR signal, so the core 1024-sample frame is not the
+    /// access-unit span.
+    #[test]
+    fn samples_per_frame_none_with_sync_extension_sbr() {
+        let bytes = asc_bits(|w| {
+            w.u(5, 2).u(4, 4).u(4, 2).u(3, 0);
+            w.u(11, 0x2B7).u(5, 5).u(1, 1);
+        });
+        assert_eq!(bytes.len(), 5);
+        let asc = AudioSpecificConfig::parse(&bytes).unwrap();
+        let signaling = asc.heaac_signaling();
+        assert!(signaling.sbr_present);
+        assert!(!signaling.ps_present);
+        assert_eq!(asc.samples_per_frame(), None);
+    }
+
+    /// Without an extension the core frame length applies: 1024 by default,
+    /// 960 when `frameLengthFlag` (bit 2 of the shared byte) is set.
+    #[test]
+    fn samples_per_frame_reads_the_frame_length_flag() {
+        let plain = asc_bits(|w| {
+            w.u(5, 2).u(4, 4).u(4, 2).u(3, 0);
+        });
+        assert_eq!(plain.len(), 2);
+        assert_eq!(
+            AudioSpecificConfig::parse(&plain)
+                .unwrap()
+                .samples_per_frame(),
+            Some(1024)
+        );
+        let long = asc_bits(|w| {
+            w.u(5, 2).u(4, 4).u(4, 2).u(3, 4);
+        });
+        let asc = AudioSpecificConfig::parse(&long).unwrap();
+        assert_eq!(asc.trailing_top, Some(4));
+        assert_eq!(asc.samples_per_frame(), Some(960));
+    }
+
+    /// `GetAudioObjectType()`: an object-type field of 31 is followed by six
+    /// more bits and the value is `32 + ext` (ISO/IEC 14496-3 §1.5.1.1).
+    /// `[0xF9, 0x50]` is field 31, ext `001010` = 10, so AOT 42 (USAC).
+    #[test]
+    fn get_audio_object_type_escape_is_32_plus_six_bits() {
+        let mut bit = 0usize;
+        assert_eq!(asc_get_aot(&[0xF9, 0x50, 0x00], &mut bit), Some(42));
+        assert_eq!(bit, 11);
+        let asc = AudioSpecificConfig::parse(&[0xF9, 0x50, 0x00]).unwrap();
+        assert_eq!(asc.heaac_signaling().effective_aot, 42);
+        let err = asc.to_adts_header(200).unwrap_err();
+        assert!(
+            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "audio_object_type")
+        );
+    }
+
+    /// The backward-compatible sync extension is only read for an AAC-LC
+    /// core: AAC Main followed by bytes that spell 0x2B7 is not SBR.
+    #[test]
+    fn sync_extension_ignored_for_non_lc_core() {
+        let bytes = asc_bits(|w| {
+            w.u(5, 1).u(4, 4).u(4, 2).u(3, 0);
+            w.u(11, 0x2B7).u(5, 5).u(1, 1);
+        });
+        let asc = AudioSpecificConfig::parse(&bytes).unwrap();
+        assert_eq!(asc.audio_object_type, AudioObjectType::AacMain);
+        let signaling = asc.heaac_signaling();
+        assert!(!signaling.sbr_present);
+        assert!(!signaling.ps_present);
+        assert_eq!(signaling.effective_aot, 1);
+    }
+
+    /// The SBR sync extension's own sampling-frequency index may be the escape
+    /// form; the 24-bit explicit extension rate must be skipped so the
+    /// following 0x548 PS sync is aligned and decoded.
+    #[test]
+    fn sync_extension_escape_rate_keeps_ps_aligned() {
+        let bytes = asc_bits(|w| {
+            w.u(5, 2).u(4, 4).u(4, 2).u(3, 0);
+            w.u(11, 0x2B7).u(5, 5).u(1, 1);
+            w.u(4, 0xF).u(24, 44_101);
+            w.u(11, 0x548).u(1, 1);
+        });
+        let asc = AudioSpecificConfig::parse(&bytes).unwrap();
+        let signaling = asc.heaac_signaling();
+        assert!(signaling.sbr_present);
+        assert!(signaling.ps_present);
+        assert_eq!(signaling.effective_aot, 29);
+    }
+
+    /// A bare 0x548 sync after the GA bits signals PS without SBR, and its
+    /// one-bit `psPresentFlag` is honoured.
+    #[test]
+    fn ps_only_sync_extension_flag() {
+        for &(flag, want) in &[(1u64, true), (0, false)] {
+            let bytes = asc_bits(|w| {
+                w.u(5, 2).u(4, 4).u(4, 2).u(3, 0);
+                w.u(11, 0x548).u(1, flag);
+            });
+            let signaling = AudioSpecificConfig::parse(&bytes)
+                .unwrap()
+                .heaac_signaling();
+            assert_eq!(signaling.ps_present, want, "flag {flag}");
+            assert!(!signaling.sbr_present, "flag {flag}");
+        }
+    }
+
+    /// `frame_length` is a 13-bit field: frames above 2047 must survive both
+    /// the builder and the parser, and the 8191-byte maximum is pinned.
+    #[test]
+    fn adts_frame_length_top_bits() {
+        for &len in &[2047u16, 2048, 4095, 8191] {
+            let parsed = parse_adts_header(&build_adts_header(1, 4, 2, len)).unwrap();
+            assert_eq!(parsed.frame_length, len, "frame_length {len}");
+        }
+        assert_eq!(
+            build_adts_header(1, 4, 2, 8191),
+            [0xFF, 0xF1, 0x50, 0x83, 0xFF, 0xFF, 0xFC]
+        );
+    }
+
+    /// `adts_buffer_fullness` occupies the low 5 bits of byte 5 and the top
+    /// 6 bits of byte 6; 0x7FF means VBR.
+    #[test]
+    fn adts_buffer_fullness_bits() {
+        let hdr = [0xFFu8, 0xF1, 0x50, 0x80, 0x19, 0x0A, 0x96];
+        let parsed = parse_adts_header(&hdr).unwrap();
+        assert_eq!(parsed.frame_length, 200);
+        assert_eq!(parsed.buffer_fullness, 0x2A5);
+        assert_eq!(parsed.num_raw_data_blocks, 2);
+        let built = parse_adts_header(&build_adts_header(1, 4, 2, 200)).unwrap();
+        assert_eq!(built.buffer_fullness, 0x7FF);
+    }
+
+    /// `to_adts_header` accepts exactly the 13-bit maximum and refuses one past
+    /// it, so the field cannot wrap.
+    #[test]
+    fn to_adts_header_frame_len_upper_bound() {
+        let asc = AudioSpecificConfig::parse(&KNOWN).unwrap();
+        assert_eq!(
+            parse_adts_header(&asc.to_adts_header(8191).unwrap())
+                .unwrap()
+                .frame_length,
+            8191
+        );
+        for len in [8192u16, u16::MAX] {
+            let err = asc.to_adts_header(len).unwrap_err();
+            assert!(
+                matches!(err, crate::error::Error::InvalidValue(v) if v.field == "frame_len"),
+                "frame_len {len}"
+            );
+        }
     }
 }
 
@@ -1221,7 +1698,18 @@ mod drift_agreement {
     fn mp3_layer_iii_header_rejected() {
         let hdr = [0xFFu8, 0xFB, 0x90, 0x00, 0x00, 0x00, 0x00];
         let err = parse_adts_header(&hdr).unwrap_err();
-        assert!(matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_layer"));
+        assert!(
+            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_layer" && v.value == 0x02)
+        );
+    }
+
+    #[test]
+    fn adts_syncword_error_reports_the_offending_bytes() {
+        let hdr = [0xABu8, 0xCD, 0x00, 0x00, 0x00, 0x00, 0x00];
+        let err = parse_adts_header(&hdr).unwrap_err();
+        assert!(
+            matches!(err, crate::error::Error::InvalidValue(v) if v.field == "adts_syncword" && v.value == 0xABCD)
+        );
     }
 
     #[test]

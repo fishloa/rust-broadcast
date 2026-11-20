@@ -32,6 +32,28 @@
 - The terrestrial delivery descriptor's `set_centre_frequency_hz` accepts the 32-bit field maximum and rejects one unit more without changing the stored value (#3246).
 - The spec-token labels (`name()` and `Display`) of the linkage, cable, satellite, terrestrial and AAC component-type enums are asserted literally for every variant (#3247).
 - The real-capture LCN and MHP tests pin the observed section/descriptor/message counts instead of returning early when nothing is found, and the MHP `dvb_j_application` parameters are asserted (this capture carries none) rather than discarded (#3248, #3249).
+- Every DTS Table G.2 sample-rate code and Table G.3 bit-rate code is asserted against its tabulated value, including the reserved-MSB invariance (#3307, #3308).
+- `PdcDescriptor::set_pil` accepts the day/month/hour/minute maxima (yielding label `0xFFFFF`) and rejects one past each field; the maximum label serializes and re-parses (#3309).
+- The widest legal descriptor body is serialized and re-parsed, and one byte past it rejected, for announcement support, carousel identifier, cell frequency link, cell list, DVB cell list, DTS and VBI data (#3310), application signalling, TVA id, service availability, service identifier and stuffing (#3316), association tag and mosaic (#3349), and DSNG, transport stream, short smoothing buffer and ECM repetition rate (#3442).
+- A carousel identifier whose `ObjectKeyData` runs exactly to the end of the body parses and round-trips, and one byte more is rejected (#3311).
+- A CRID reference followed by another CRID entry parses and round-trips (#3312).
+- The frequency list terrestrial 32-bit limit accepts the field maximum and rejects the next two values (#3313).
+- The labels of `AnnouncementType`, `ReferenceType`, `CodingType`, `ContentTimeBaseIndicator` and `ControlRemoteAccess` are asserted literally for every variant (#3314, #3317).
+- The 22-bit peak/smoothing rates and the 15-bit application type serialize at their maxima and reject the next value (#3315).
+- A mosaic descriptor with service, event and other-mosaic linkages each followed by another cell round-trips byte-identically, and each linkage payload one byte short is an `InvalidDescriptor` (#3347).
+- The maximum service count (16 ATSC, 31 China) serializes and re-parses (#3348).
+- A deferred association location that is exactly its 2-byte `org_network_id` round-trips (#3350).
+- The shared language-entry reader accepts an exact-fit header and a second short entry, and rejects truncated bodies (#3370).
+- Content labeling, metadata and metadata pointer parse their minimal and both explicit-identifier forms, reject truncated bodies without indexing out of bounds, and accept flag-set blocks that end exactly at the body boundary (#3371, #3372, #3373).
+- Fourteen more descriptor enums assert every variant's `name()` and `Display` spec token (#3439).
+- The `BufferTooShort` `need` payload is pinned in the MPEG-H text-label, AVS3 audio and T/UWA AVS3 video parsers (#3440).
+- The AVS2 and AVS3 audio `serialized_len` equals the bytes `serialize_into` writes (#3441).
+- The T/UWA AVS3 video reference count is pinned at its reachable ceiling (123 references; 124 already overflows the length field) (#3443).
+- J2K video accepts a stripe-only extended body ending after the stripe and pins the 22-/24-byte minimum, rejecting 21 bytes (#3444).
+- A media service kind entry encodes and parses a 3-byte language code (`lang_len_idc` 2) (#3445).
+- An HEVC operation point without a frame-rate block leaves the next operation point intact (#3446).
+- `avs_scope` opens only on AVS private data specifiers and closes on a foreign one, on both iterator types; the extension-registry walk never indexes an empty extension body nor dispatches a non-extension descriptor (#3447, #3448).
+- A text-label reserved run wider than its bits is rejected instead of shifted out (#3449); a DRC plain scope typed 2 or 3 is rejected (#3450); and a non-zero `dependsOnDrcSet` packs into its own bits and parses back (#3451).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

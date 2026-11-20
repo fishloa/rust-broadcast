@@ -90,6 +90,72 @@ fn pasp_agreement_unchanged() {
     assert_eq!(got.sample_aspect_ratio(), Some((64u16, 45u16)));
 }
 
+/// An init segment carrying the 64:45 SAR this fixture's VUI declares, with its
+/// `pasp` box's two spacings rewritten in place (ISO/IEC 14496-12:2026
+/// §12.1.4.1: `hSpacing` then `vSpacing`, 32-bit each, right after the
+/// four-CC).
+fn with_pasp_spacings(spacings: (u32, u32)) -> Option<Vec<u8>> {
+    let mut spec = avc_spec("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts")?;
+    let (w, h) = dims(&spec);
+    let g = DisplayGeometry::new(w, h, Some(AspectRatioIdc::from_wire(255, Some((64, 45)))));
+    spec = spec.with_display(Some(g));
+    let mut bytes = build(spec);
+    let at = bytes
+        .windows(4)
+        .position(|w| w == b"pasp")
+        .expect("the 64:45 SAR writes a pasp box")
+        + 4;
+    bytes[at..at + 4].copy_from_slice(&spacings.0.to_be_bytes());
+    bytes[at + 4..at + 8].copy_from_slice(&spacings.1.to_be_bytes());
+    Some(bytes)
+}
+
+/// The spacings name a ratio, not a reduced pair: `pasp` 64:54 is 32:27, and
+/// 4:2 is 2:1.
+#[test]
+fn pasp_spacings_are_reduced_by_their_gcd() {
+    for (spacings, want) in [((64u32, 54u32), (32u16, 27u16)), ((4, 2), (2, 1))] {
+        let Some(bytes) = with_pasp_spacings(spacings) else {
+            return;
+        };
+        let got = demux_display(&bytes).expect("display");
+        assert_eq!(
+            got.sample_aspect_ratio(),
+            Some(want),
+            "pasp {spacings:?} must reduce to {want:?}"
+        );
+    }
+}
+
+/// A spacing of 0 declares no ratio at all (§12.1.4.1 allows `pasp` only for
+/// two positive spacings), so the SPS's own 64:45 stands: it must never become
+/// a `0:1`/`1:0` ratio.
+#[test]
+fn a_zero_pasp_spacing_leaves_the_sps_ratio() {
+    for spacings in [(0u32, 1u32), (1, 0), (0, 0)] {
+        let Some(bytes) = with_pasp_spacings(spacings) else {
+            return;
+        };
+        let got = demux_display(&bytes).expect("display");
+        assert_eq!(
+            got.sample_aspect_ratio(),
+            Some((64u16, 45u16)),
+            "pasp {spacings:?} must be ignored"
+        );
+    }
+}
+
+/// Equal spacings are the Square ratio, not an extended SAR with a huge pair.
+#[test]
+fn equal_pasp_spacings_are_the_square_ratio() {
+    let Some(bytes) = with_pasp_spacings((2, 2)) else {
+        return;
+    };
+    let got = demux_display(&bytes).expect("display");
+    assert_eq!(got.aspect_ratio, Some(AspectRatioIdc::Square));
+    assert_eq!(got.sample_aspect_ratio(), Some((1u16, 1u16)));
+}
+
 #[test]
 fn colr_overrides_colour() {
     let Some(mut spec) = avc_spec("ts/melodie-anamorphic-sar-64-45-zenith-tv.ts") else {

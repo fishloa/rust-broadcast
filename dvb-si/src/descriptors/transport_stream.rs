@@ -136,6 +136,16 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn serialize_accepts_the_255_byte_body() {
+        let body = vec![b'D'; 255];
+        let d = TransportStreamDescriptor { bytes: &body };
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[1], 255);
+        assert_eq!(TransportStreamDescriptor::parse(&out).unwrap(), d);
+    }
+
     // No JSON serde round-trip test: the borrowed `&[u8]` field cannot
     // round-trip through serde_json (it serializes a slice as a sequence,
     // not a borrowed byte array). This matches sibling borrowed-bytes
