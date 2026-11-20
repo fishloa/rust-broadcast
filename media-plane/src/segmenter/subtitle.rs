@@ -992,6 +992,117 @@ mod tests {
         );
     }
 
+    fn page() -> TeletextPage {
+        TeletextPage {
+            source_track: TrackId::new(2),
+            language: "en".to_string(),
+            hearing_impaired: false,
+            magazine: 8,
+            page: 0x89,
+        }
+    }
+
+    fn subtitle_trunk() -> Arc<Trunk> {
+        Trunk::new(
+            crate::trunk::TrunkConfig::default()
+                .with_timed_capacity(std::num::NonZeroUsize::MIN.saturating_add(63))
+                .with_sparse_capacity(std::num::NonZeroUsize::MIN.saturating_add(15))
+                .with_segment_capacity(std::num::NonZeroUsize::MIN.saturating_add(15))
+                .with_event_capacity(std::num::NonZeroUsize::MIN.saturating_add(7))
+                .with_part_capacity(std::num::NonZeroUsize::MIN.saturating_add(63)),
+        )
+    }
+
+    #[test]
+    fn subtitle_follower_try_new_needs_a_free_segment_writer() {
+        let trunk = subtitle_trunk();
+        let follower = SubtitleFollower::try_new(
+            &page(),
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            &trunk,
+        );
+        assert!(follower.is_some());
+        assert!(
+            SubtitleFollower::try_new(
+                &page(),
+                Timescale::try_new(90_000).expect("non-zero timescale"),
+                &trunk,
+            )
+            .is_none(),
+            "a second follower cannot share the trunk's segment writer"
+        );
+        let video = video_track(TrackId::new(3));
+        assert!(
+            teletext_pages("route", 4, &[video]).is_empty(),
+            "a track with no subtitle page yields no follower to build"
+        );
+    }
+
+    #[test]
+    fn subtitle_follower_maps_a_cue_to_one_local_second_and_follows_leader_cuts() {
+        let Some(samples) = teletext_fixture() else {
+            return;
+        };
+        let trunk = subtitle_trunk();
+        let mut follower = SubtitleFollower::try_new(
+            &page(),
+            Timescale::try_new(90_000).expect("non-zero timescale"),
+            &trunk,
+        )
+        .expect("follower");
+        let mut cursor = trunk.subscribe_segments();
+
+        follower.set_start_time(Duration::from_secs(2));
+        for (pts, data) in &samples {
+            let pts = i64::try_from(*pts).expect("pts fits");
+            let sample = Sample::new(data.clone(), Some(pts), Some(pts), None, false)
+                .expect("valid timing");
+            follower.push(&sample);
+        }
+        const CUT_START: i64 = 3_856_741_433;
+        let leaders: LeaderDurations = [(1u32, TARGET_SECS), (2, TARGET_SECS)]
+            .into_iter()
+            .collect();
+        follower.on_part_cuts(&[part(MediaSequence::new(1), 0, CUT_START)], &leaders);
+        follower.on_part_cuts(
+            &[part(MediaSequence::new(2), 0, CUT_START + SEG_TICKS)],
+            &leaders,
+        );
+        follower.finish(&leaders);
+
+        let mut entries = Vec::new();
+        while let Some(item) = cursor.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                entries.push(entry);
+            }
+        }
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| e.sequence_number.value())
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "two leader segments produce two subtitle segments"
+        );
+        let first = String::from_utf8_lossy(&entries[0].bytes);
+        assert!(
+            first.contains("MPEGTS:180000"),
+            "set_start_time(2 s) moved X-TIMESTAMP-MAP: {first}"
+        );
+        assert!(
+            first.contains("00:00:01.000"),
+            "the cue at CUT_START + 1 s is local t=1 s: {first}"
+        );
+        assert!(first.contains("Un train met dix secondes"), "{first}");
+        assert_eq!(entries[0].timeline_position.as_nanos(), 2_000_000_000);
+        assert!(entries[0].meta.discontinuous);
+        assert_eq!(
+            entries[1].timeline_position.as_nanos(),
+            4_000_000_000,
+            "segment 1 is 2 s long, so segment 2 starts at 2 s + 2 s"
+        );
+    }
+
     fn core() -> Core<Scripted> {
         Core::new(Scripted::default())
     }
