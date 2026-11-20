@@ -1961,21 +1961,26 @@ mod tests {
     }
 
     /// A sliding-window maximum must equal a rescan of the same power
-    /// sequence, including when the window rolls and evicts its peak.
+    /// sequence, including when the window rolls and evicts its peak, and
+    /// when the peak is the very first full window (then silence).
     #[test]
     fn sliding_window_max_matches_a_reference_rescan() {
         let window = 4usize;
-        let powers = [0.01, 0.02, 0.5, 0.03, 0.0, 0.7, 0.1, 0.0, 0.0001, 0.0];
-        let mut tracker = SlidingWindowMax::new(window);
-        let mut reference = f64::NEG_INFINITY;
-        for (i, &power) in powers.iter().enumerate() {
-            tracker.push(power);
-            if i + 1 >= window {
-                let sum: f64 = powers[i + 1 - window..=i].iter().sum();
-                reference = reference.max(mean_sq_to_lkfs(sum / window as f64));
+        for powers in [
+            [0.01, 0.02, 0.5, 0.03, 0.0, 0.7, 0.1, 0.0, 0.0001, 0.0],
+            [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ] {
+            let mut tracker = SlidingWindowMax::new(window);
+            let mut reference = f64::NEG_INFINITY;
+            for (i, &power) in powers.iter().enumerate() {
+                tracker.push(power);
+                if i + 1 >= window {
+                    let sum: f64 = powers[i + 1 - window..=i].iter().sum();
+                    reference = reference.max(mean_sq_to_lkfs(sum / window as f64));
+                }
             }
+            assert_eq!(tracker.max_lkfs, reference);
         }
-        assert_eq!(tracker.max_lkfs, reference);
     }
 
     /// An empty measurement has no defined integrated loudness or range.
