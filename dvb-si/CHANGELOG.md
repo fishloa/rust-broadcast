@@ -31,6 +31,7 @@
 - The cable delivery descriptor's symbol-rate getter/setter are pinned at the field's 100 sym/s resolution, including the overflow rejection and a non-decimal BCD nibble returning `None` (#3245).
 - The terrestrial delivery descriptor's `set_centre_frequency_hz` accepts the 32-bit field maximum and rejects one unit more without changing the stored value (#3246).
 - The spec-token labels (`name()` and `Display`) of the linkage, cable, satellite, terrestrial and AAC component-type enums are asserted literally for every variant (#3247).
+- The real-capture LCN and MHP tests pin the observed section/descriptor/message counts instead of returning early when nothing is found, and the MHP `dvb_j_application` parameters are asserted (this capture carries none) rather than discarded (#3248, #3249).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
