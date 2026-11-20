@@ -4030,3 +4030,107 @@ fn eit_pf_pairing_is_strict_at_its_limit() {
     assert!(!eit_pf_pairing_fires(2_005), "exactly 2 s is clean");
     assert!(eit_pf_pairing_fires(2_006), "2.001 s exceeds the interval");
 }
+
+// ── EIT P/F per-section absence (3.6.a) ────────────────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.6.a: while both sections of a P/F
+/// sub-table alternate inside the 2 s interval, neither may be reported
+/// absent. The polarity here is load-bearing: the naive "both armed" reading
+/// fires on every perfectly healthy P/F stream.
+#[test]
+fn eit_pf_per_section_absence_absent_when_both_sections_alternate() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    let sec1 = build_eit_pf_actual_section_keyed(1, 1, 1, 1);
+    let mut events = Vec::new();
+    let mut t = 5u64;
+    while t <= 6_005 {
+        let section = if (t - 5) % 1_000 == 0 { &sec0 } else { &sec1 };
+        events.extend(feed_all(
+            &mut monitor,
+            &packetise_section(PID_EIT, section),
+            ms(t),
+            ms(1),
+        ));
+        t += 500;
+    }
+    assert!(
+        !has_indicator(&events, Indicator::EitError),
+        "both P/F sections arrive every second: {events:#?}"
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.6.a: section '1' vanishes while
+/// section '0' keeps arriving. The absence is reported once, at the first
+/// packet strictly past the 2 s interval; the surviving section is never
+/// blamed.
+#[test]
+fn eit_pf_section_vanishing_is_reported_once_past_the_interval() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let sec0 = build_eit_pf_actual_section_keyed(0, 1, 1, 1);
+    let sec1 = build_eit_pf_actual_section_keyed(1, 1, 1, 1);
+    let mut events = Vec::new();
+
+    let mut t = 5u64;
+    while t <= 2_005 {
+        let section = if (t - 5) % 1_000 == 0 { &sec0 } else { &sec1 };
+        events.extend(feed_all(
+            &mut monitor,
+            &packetise_section(PID_EIT, section),
+            ms(t),
+            ms(1),
+        ));
+        t += 500;
+    }
+
+    let last_section_1 = 1_505u64;
+    let mut at_deadline = Vec::new();
+    for t in (2_505u64..=6_505).step_by(500) {
+        let raised = feed_all(
+            &mut monitor,
+            &packetise_section(PID_EIT, &sec0),
+            ms(t),
+            ms(1),
+        );
+        if t == last_section_1 + 2_000 {
+            at_deadline = raised.clone();
+        }
+        events.extend(raised);
+        if t == last_section_1 + 2_000 {
+            events.extend(probe(&mut monitor, ms(t + 1)));
+        }
+    }
+
+    let eit_errors: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::EitError)
+        .collect();
+    let absence: Vec<_> = eit_errors
+        .iter()
+        .filter(|e| e.detail.contains("section '1' absent"))
+        .collect();
+    assert_eq!(
+        absence.len(),
+        1,
+        "section '1' absent once past the interval: {eit_errors:#?}"
+    );
+    assert_eq!(
+        absence[0].at,
+        ms(last_section_1 + 2_001),
+        "exactly 2.000 s is inside the interval; the verdict waits for 2.001 s"
+    );
+    assert!(
+        !eit_errors
+            .iter()
+            .any(|e| e.detail.contains("section '0' absent")),
+        "the section that keeps arriving must not be blamed: {eit_errors:#?}"
+    );
+    assert!(
+        !has_indicator(&at_deadline, Indicator::EitError),
+        "the packet at exactly 2.000 s is clean: {at_deadline:#?}"
+    );
+}
