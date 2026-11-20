@@ -964,4 +964,38 @@ mod tests {
         );
         assert!(trunk.writer().is_some());
     }
+
+    /// Each [`CachePolicy`] label is its documented lowercase token, and
+    /// `Display` renders that same token.
+    #[test]
+    fn cache_policy_names_are_their_tokens() {
+        assert_eq!(CachePolicy::Immutable.name(), "immutable");
+        assert_eq!(CachePolicy::NoCache.name(), "no-cache");
+        assert_eq!(format!("{}", CachePolicy::Immutable), "immutable");
+        assert_eq!(format!("{}", CachePolicy::NoCache), "no-cache");
+    }
+
+    /// A `ServedEgress` that does no expensive work takes the default
+    /// `is_warm` (always warm), and the default `prepare` is a no-op that
+    /// leaves it warm.
+    #[test]
+    fn served_egress_default_is_always_warm() {
+        let egress = FakeServedEgress::new();
+        assert!(egress.is_warm(&1), "the default is always warm");
+        egress.prepare(1);
+        assert!(
+            egress.is_warm(&1),
+            "the default prepare does nothing, so it stays warm"
+        );
+    }
+
+    /// A `PushEgress` that transmits nothing takes the default
+    /// `poll_transmit` — `None`, never a fabricated payload.
+    #[test]
+    fn push_egress_default_transmits_nothing() {
+        let mut egress = RecordingPushEgress {
+            received: Vec::new(),
+        };
+        assert!(egress.poll_transmit().is_none());
+    }
 }

@@ -365,4 +365,28 @@ mod tests {
         );
         assert_eq!(TapError::ZeroCapacity.name(), "zero capacity");
     }
+
+    /// A tap with a buffered item is not empty; draining it empties it again.
+    #[test]
+    fn a_tap_is_empty_only_while_it_holds_nothing() {
+        let mut tap = ByteTap::new(TapPoint::Wire, 2).expect("non-zero capacity");
+        assert!(tap.is_empty(), "a fresh tap holds nothing");
+        tap.record(Bytes::from_static(b"x"), Timestamp::from_nanos(1));
+        assert!(!tap.is_empty(), "a recorded item is buffered");
+        assert!(
+            matches!(tap.poll(), Some(TapItem::Data(..))),
+            "the buffered item is handed back"
+        );
+        assert!(tap.is_empty(), "a drained tap holds nothing again");
+    }
+
+    /// The tap error's `Display` names the constraint it enforces, rather
+    /// than rendering nothing.
+    #[test]
+    fn tap_error_display_names_the_constraint() {
+        assert_eq!(
+            format!("{}", TapError::ZeroCapacity),
+            "ByteTap capacity must be > 0"
+        );
+    }
 }
