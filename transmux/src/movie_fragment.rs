@@ -980,8 +980,7 @@ pub struct TrackFragmentBox {
     /// `seig`, `subs`, `sdtp`, an existing `senc`/`saiz`/`saio`, `meta`)
     /// survives a rewrite instead of being silently stripped. An empty `order`
     /// means "one of each typed child, in the conventional sequence" — the
-    /// state every builder in this workspace produces; see
-    /// [`TrackFragmentBox::into_bytes`].
+    /// state every builder in this workspace produces.
     pub order: Vec<TrafChild>,
 }
 
@@ -1072,17 +1071,6 @@ impl TrackFragmentBox {
             out.push(TrafChild::Trun(i));
         }
         out
-    }
-
-    /// Serialize this `traf` to its own box bytes (header + body).
-    ///
-    /// Standalone because [`protect_media_segment`] appends `senc`/`saiz`/`saio`
-    /// to the `traf` it rewrites and then has to patch the leading size field.
-    pub fn into_bytes(&self) -> Result<Vec<u8>> {
-        let mut buf = alloc::vec![0u8; self.serialized_len()];
-        let n = self.serialize_into(&mut buf)?;
-        buf.truncate(n);
-        Ok(buf)
     }
 }
 
@@ -1748,6 +1736,36 @@ mod tests {
         assert_eq!(b, p.try_to_bytes().unwrap());
     }
 
+    /// Every optional `tfhd` field is read from its own four bytes
+    /// (§8.8.7.1). Each field here carries four distinct non-zero bytes, so a
+    /// wrong byte index (`body[c]`, re-reading the first byte, or a backwards
+    /// `c - 3`) changes the parsed value instead of happening to agree.
+    #[test]
+    fn tfhd_optional_fields_read_their_own_bytes() {
+        let flags = TFHD_BASE_DATA_OFFSET_PRESENT
+            | TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT
+            | TFHD_DEFAULT_SAMPLE_DURATION_PRESENT
+            | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
+            | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
+        let mut body = Vec::new();
+        body.extend_from_slice(&flags.to_be_bytes()); // version 0, flags
+        body.extend_from_slice(&7u32.to_be_bytes()); // track_ID
+        body.extend_from_slice(&0x1112_1314_1516_1718u64.to_be_bytes()); // base_data_offset
+        body.extend_from_slice(&0x2122_2324u32.to_be_bytes()); // sample_description_index
+        body.extend_from_slice(&0x3132_3334u32.to_be_bytes()); // default_sample_duration
+        body.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // default_sample_size
+        body.extend_from_slice(&0x1112_1314u32.to_be_bytes()); // default_sample_flags
+
+        let t = TrackFragmentHeaderBox::parse_body(&body).expect("five-field tfhd body");
+        assert_eq!(t.flags, flags);
+        assert_eq!(t.track_id, TrackId::new(7));
+        assert_eq!(t.base_data_offset, Some(0x1112_1314_1516_1718));
+        assert_eq!(t.sample_description_index, Some(0x2122_2324));
+        assert_eq!(t.default_sample_duration, Some(0x3132_3334));
+        assert_eq!(t.default_sample_size, Some(0x0102_0304));
+        assert_eq!(t.default_sample_flags, Some(0x1112_1314));
+    }
+
     /// r05-W16: `tfhd` field presence is flag-driven (§8.8.7.1) while the
     /// values live in `Option`s. The serializer used the *stored* flags and
     /// `unwrap_or(0)` for the values, so a builder that set a presence bit
@@ -1799,6 +1817,52 @@ mod tests {
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.flags, 0, "the unmatched presence bit is not written");
         assert_eq!(p.sample_description_index, None);
+    }
+
+    /// The clearing mask of `effective_flags` must drop every presence bit the
+    /// values do not back (§8.8.7.1): a stored bit left behind writes a header
+    /// that promises a field the body does not carry, misframing the box and
+    /// everything after it. Any other flag bit is metadata and survives.
+    #[test]
+    fn tfhd_effective_flags_clears_stale_presence_bits() {
+        let t = TrackFragmentHeaderBox {
+            flags: TFHD_BASE_DATA_OFFSET_PRESENT
+                | TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT
+                | TFHD_DEFAULT_SAMPLE_DURATION_PRESENT
+                | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
+                | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT,
+            track_id: TrackId::new(9),
+            base_data_offset: None,
+            sample_description_index: None,
+            default_sample_duration: None,
+            default_sample_size: None,
+            default_sample_flags: None,
+        };
+        assert_eq!(t.effective_flags(), 0, "no value backs any presence bit");
+        let b = t.try_to_bytes().expect("serialize");
+        assert_eq!(b.len(), 16, "only the box header, FullBox and track_ID");
+        let p = TrackFragmentHeaderBox::parse_body(&b[8..]).expect("parse");
+        assert_eq!(p.flags, 0, "no presence bit reaches the wire");
+        assert_eq!(p.track_id, TrackId::new(9));
+
+        // A non-presence bit is not a field promise: it is preserved.
+        let t = TrackFragmentHeaderBox {
+            flags: TFHD_DEFAULT_BASE_IS_MOOF
+                | TFHD_DEFAULT_SAMPLE_DURATION_PRESENT
+                | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
+                | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT,
+            track_id: TrackId::new(9),
+            base_data_offset: None,
+            sample_description_index: None,
+            default_sample_duration: None,
+            default_sample_size: None,
+            default_sample_flags: None,
+        };
+        assert_eq!(t.effective_flags(), TFHD_DEFAULT_BASE_IS_MOOF);
+        let b = t.try_to_bytes().expect("serialize");
+        assert_eq!(b.len(), 16, "the preserved bit adds no field");
+        let p = TrackFragmentHeaderBox::parse_body(&b[8..]).expect("parse");
+        assert_eq!(p.flags, TFHD_DEFAULT_BASE_IS_MOOF);
     }
 
     /// The `trun` half of r05-W16: presence bits derived from the values, and
@@ -1866,6 +1930,36 @@ mod tests {
             matches!(err, Error::InvalidInput(_)),
             "expected InvalidInput, got {err:?}"
         );
+    }
+
+    /// `effective_flags` must clear every per-sample presence bit a non-empty
+    /// sample list does not back (§8.8.8.2) and keep any other flag bit: a
+    /// stale bit writes a header promising per-sample words the body does not
+    /// carry, so every record after it is offset wrongly.
+    #[test]
+    fn trun_effective_flags_clears_stale_presence_bits() {
+        let reserved = 0x0000_1000u32;
+        let trun = TrackFragmentRunBox {
+            version: 0,
+            tr_flags: TRUN_DATA_OFFSET_PRESENT
+                | TRUN_FIRST_SAMPLE_FLAGS_PRESENT
+                | TRUN_SAMPLE_DURATION_PRESENT
+                | TRUN_SAMPLE_SIZE_PRESENT
+                | TRUN_SAMPLE_FLAGS_PRESENT
+                | TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT
+                | reserved,
+            data_offset: None,
+            first_sample_flags: None,
+            samples: vec![TrunSample::new()],
+        };
+        assert_eq!(trun.effective_flags(), reserved);
+        let b = trun.try_to_bytes().expect("serialize");
+        assert_eq!(b.len(), 16, "header, FullBox and sample_count only");
+        let p = TrackFragmentRunBox::parse_body(&b[8..]).expect("parse");
+        assert_eq!(p.tr_flags, reserved, "no stale presence bit is written");
+        assert_eq!(TrackFragmentRunBox::record_stride(p.tr_flags), 0);
+        assert_eq!(p.samples.len(), 1);
+        assert_eq!(p.samples[0], TrunSample::new());
     }
 
     /// A v0 `trun`'s `sample_composition_time_offset` is *unsigned*
@@ -2088,6 +2182,78 @@ mod tests {
         assert_eq!(p.samples[0].sample_composition_time_offset, Some(1024));
         assert_eq!(b, p.try_to_bytes().unwrap());
     }
+    /// `first_sample_flags`, a per-sample `sample_flags` and the version-1
+    /// composition offset each read from their own four bytes (§8.8.8.2).
+    /// Existing round trips used values whose neighbours coincided (`-1` is
+    /// `0xFF` in every byte), so these bodies carry four distinct non-zero
+    /// bytes per field.
+    #[test]
+    fn trun_optional_words_read_their_own_bytes() {
+        let flags = TRUN_DATA_OFFSET_PRESENT
+            | TRUN_FIRST_SAMPLE_FLAGS_PRESENT
+            | TRUN_SAMPLE_DURATION_PRESENT
+            | TRUN_SAMPLE_SIZE_PRESENT
+            | TRUN_SAMPLE_FLAGS_PRESENT
+            | TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
+        let mut body = Vec::new();
+        body.push(1); // version 1
+        body.extend_from_slice(&flags.to_be_bytes()[1..]); // flags
+        body.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+        body.extend_from_slice(&0x1122_3344u32.to_be_bytes()); // data_offset
+        body.extend_from_slice(&0x0203_0405u32.to_be_bytes()); // first_sample_flags
+        body.extend_from_slice(&0x5152_5354u32.to_be_bytes()); // sample_duration
+        body.extend_from_slice(&0x6162_6364u32.to_be_bytes()); // sample_size
+        body.extend_from_slice(&0x0A0B_0C0Du32.to_be_bytes()); // sample_flags
+        body.extend_from_slice(&0x0001_0203u32.to_be_bytes()); // composition offset
+
+        let run = TrackFragmentRunBox::parse_body(&body).expect("six-field v1 trun");
+        assert_eq!(run.version, 1);
+        assert_eq!(run.tr_flags, flags);
+        assert_eq!(run.data_offset, Some(0x1122_3344));
+        assert_eq!(run.first_sample_flags, Some(0x0203_0405));
+        assert_eq!(run.samples.len(), 1);
+        assert_eq!(run.samples[0].sample_duration, Some(0x5152_5354));
+        assert_eq!(run.samples[0].sample_size, Some(0x6162_6364));
+        assert_eq!(run.samples[0].sample_flags, Some(0x0A0B_0C0D));
+        assert_eq!(
+            run.samples[0].sample_composition_time_offset,
+            Some(0x0001_0203)
+        );
+
+        // Version 0's composition offset is unsigned, from its own bytes.
+        let mut body = Vec::new();
+        body.push(0); // version 0
+        body.extend_from_slice(&TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT.to_be_bytes()[1..]);
+        body.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+        body.extend_from_slice(&0x0102_0304u32.to_be_bytes()); // composition offset
+        let run = TrackFragmentRunBox::parse_body(&body).expect("v0 composition offset");
+        assert_eq!(run.version, 0);
+        assert_eq!(
+            run.samples[0].sample_composition_time_offset,
+            Some(0x0102_0304)
+        );
+    }
+
+    /// A `trun` that declares a per-sample field spends no zero-width
+    /// allowance: its entries are four bytes wide each, so the buffer bounds
+    /// the count and the caller's shared budget is untouched.
+    #[test]
+    fn a_four_byte_entry_trun_spends_no_zero_width_budget() {
+        let mut body = Vec::new();
+        body.push(0); // version 0
+        body.extend_from_slice(&TRUN_SAMPLE_DURATION_PRESENT.to_be_bytes()[1..]);
+        body.extend_from_slice(&5u32.to_be_bytes()); // sample_count
+        for duration in 1..=5u32 {
+            body.extend_from_slice(&(duration * 1_000).to_be_bytes());
+        }
+        let mut budget = 10usize;
+        let run = TrackFragmentRunBox::parse_body_budgeted(&body, &mut budget)
+            .expect("a payload-bounded trun parses");
+        assert_eq!(run.samples.len(), 5);
+        assert_eq!(run.samples[4].sample_duration, Some(5_000));
+        assert_eq!(budget, 10, "four-byte entries are bounded by the payload");
+    }
+
     #[test]
     fn trun_record_stride() {
         assert_eq!(
@@ -2105,6 +2271,39 @@ mod tests {
             ),
             16
         );
+    }
+
+    /// A `trun` declaring an optional field whose bytes are not all there must
+    /// be a typed `BufferTooShort` naming that field, never a panic from the
+    /// direct index behind the guard (§8.8.8.2).
+    #[test]
+    fn truncated_trun_optional_fields_report_their_own_name() {
+        for (flags, what) in [
+            (TRUN_DATA_OFFSET_PRESENT, "trun.do"),
+            (TRUN_FIRST_SAMPLE_FLAGS_PRESENT, "trun.fsf"),
+            (TRUN_SAMPLE_DURATION_PRESENT, "trun.dur"),
+            (TRUN_SAMPLE_SIZE_PRESENT, "trun.sz"),
+            (TRUN_SAMPLE_FLAGS_PRESENT, "trun.flg"),
+            (TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, "trun.cto"),
+        ] {
+            for extra in 0..=3usize {
+                let mut body = Vec::new();
+                body.extend_from_slice(&flags.to_be_bytes()); // version 0, flags
+                body.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+                body.extend_from_slice(&[0x5A; 3][..extra]);
+                let err = TrackFragmentRunBox::parse_body(&body)
+                    .expect_err("a field cut short must be rejected");
+                assert_eq!(
+                    err,
+                    Error::BufferTooShort(BufferTooShort {
+                        need: 8,
+                        have: 4 + extra,
+                        what,
+                    }),
+                    "flags {flags:#x} with {extra} field bytes"
+                );
+            }
+        }
     }
     #[test]
     fn trun_mutation_changes_bytes() {
@@ -2453,5 +2652,111 @@ mod tests {
             .expect("protected output must still parse as a valid moof");
         assert_eq!(reparsed.traf.len(), 1);
         assert_eq!(reparsed.traf[0].trun[0].samples.len(), 2);
+    }
+
+    /// `aux_info_type_of` reads a `saiz`/`saio`'s optional `aux_info_type`:
+    /// version 1 always carries it, a version-0 box only when flag bit 0 is
+    /// set (§8.7.8.2, §8.7.9.2), and a payload too short to hold either is
+    /// absent rather than an index past the end.
+    #[test]
+    fn aux_info_type_of_gates_on_version_and_flag_bit_zero() {
+        let zeros = [0u8; 3];
+        for len in 0..4usize {
+            assert_eq!(
+                aux_info_type_of(&zeros[..len], b"saiz"),
+                None,
+                "{len} bytes is short of the FullBox word"
+            );
+        }
+        assert_eq!(
+            aux_info_type_of(&[0, 0, 0, 0, b'c', b'e', b'n', b'c'], b"saiz"),
+            None,
+            "version 0 without flag bit 0 carries no type"
+        );
+        assert_eq!(
+            aux_info_type_of(&[0, 0, 0, 1, b'c', b'e', b'n', b'c'], b"saiz"),
+            Some(*b"cenc"),
+            "version 0 with flag bit 0 carries it"
+        );
+        assert_eq!(
+            aux_info_type_of(&[0, 0, 0, 2, b'c', b'e', b'n', b'c'], b"saio"),
+            None,
+            "another flag bit alone does not"
+        );
+        assert_eq!(
+            aux_info_type_of(&[1, 0, 0, 0, b'c', b'b', b'c', b's'], b"saio"),
+            Some(*b"cbcs"),
+            "version 1 always carries it"
+        );
+        assert_eq!(
+            aux_info_type_of(&[1, 0, 0, 0], b"saio"),
+            None,
+            "version 1 with no type bytes is absent"
+        );
+    }
+
+    /// A `saiz` `sample_info_size` is the per-sample IV length plus, under
+    /// subsample encryption, a 2-byte count and a 6-byte entry per subsample
+    /// (ISO/IEC 23001-7 §12.3.2), and its `u8` width makes 255 legal and 256
+    /// an error rather than a silent truncation.
+    #[test]
+    fn build_cenc_fragment_boxes_sizes_each_sample_aux_info() {
+        let entry = |iv: u8, subsamples: usize| crate::cenc::SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0x11; usize::from(iv)],
+            subsamples: (0..subsamples)
+                .map(|i| crate::cenc::SubSampleEntry {
+                    bytes_of_clear_data: i as u16,
+                    bytes_of_protected_data: 0,
+                })
+                .collect(),
+        };
+        let entries = alloc::vec![entry(8, 1), entry(8, 3), entry(8, 0)];
+        let protection = FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &entries,
+            per_sample_iv_size: 8,
+        };
+        let built = build_cenc_fragment_boxes(&protection)
+            .expect("aux info sizes below the ceiling")
+            .expect("subsample encryption carries a senc");
+        assert_eq!(
+            built.saiz.sample_info_sizes,
+            alloc::vec![8 + 2 + 6, 8 + 2 + 18, 8 + 2],
+            "IV + 2-byte count + 6 bytes per subsample"
+        );
+        assert_eq!(built.saiz.sample_count, 3);
+        assert_eq!(built.saiz.default_sample_info_size, 0);
+        assert_eq!(
+            built.senc.flags & crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+            crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION
+        );
+
+        // 1 + 2 + 6 * 42 == 255 fits the `u8` field and stays uniform.
+        let entries = alloc::vec![entry(1, 42)];
+        let at_the_ceiling = FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &entries,
+            per_sample_iv_size: 1,
+        };
+        let built = build_cenc_fragment_boxes(&at_the_ceiling)
+            .expect("255 bytes is a legal sample_info_size")
+            .expect("senc present");
+        assert_eq!(built.saiz.default_sample_info_size, 255);
+        assert!(built.saiz.sample_info_sizes.is_empty());
+
+        // 2 + 2 + 6 * 42 == 256 does not.
+        let entries = alloc::vec![entry(2, 42)];
+        let over_the_ceiling = FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &entries,
+            per_sample_iv_size: 2,
+        };
+        let err = build_cenc_fragment_boxes(&over_the_ceiling)
+            .err()
+            .expect("256 bytes exceeds the u8 sample_info_size");
+        assert!(
+            matches!(err, Error::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
     }
 }
