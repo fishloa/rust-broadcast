@@ -596,6 +596,67 @@ mod tests {
         assert_eq!(dsn, 0);
     }
 
+    /// Table 8's four `data_mode` codes round-trip through the wire value.
+    #[test]
+    fn data_mode_bits_round_trip_for_every_wire_value() {
+        for (bits, mode) in [
+            (0u16, DataMode::Mode16),
+            (1, DataMode::Mode20),
+            (2, DataMode::Mode24),
+            (3, DataMode::Reserved),
+        ] {
+            assert_eq!(DataMode::from_bits(bits), mode, "from_bits({bits})");
+            assert_eq!(DataMode::to_bits(mode), bits, "to_bits({mode:?})");
+            assert_eq!(DataMode::from_bits(bits).to_bits(), bits);
+        }
+        assert_eq!(DataMode::Mode20.name(), "20-bit mode");
+        assert_eq!(DataMode::Mode24.name(), "24-bit mode");
+    }
+
+    fn pc_with(data_type: u8, mode: DataMode, error: bool, dependent: u8, stream: u8) -> u16 {
+        BurstPreamble {
+            data_type,
+            data_mode: mode,
+            error_flag: error,
+            data_type_dependent: dependent,
+            data_stream_number: stream,
+            length_code: 0,
+            extended: None,
+        }
+        .pack_pc()
+    }
+
+    /// Table 7's 16-bit-mode `Pc` layout, built by hand: `data_type` bits 0-4,
+    /// `data_mode` 5-6, `error_flag` 7, `data_type_dependent` 8-12,
+    /// `data_stream_number` 13-15.
+    #[test]
+    fn pc_word_matches_the_hand_built_table_7_layout() {
+        assert_eq!(
+            pc_with(0x15, DataMode::Mode20, true, 0b1_0101, 0b101),
+            0xB5B5
+        );
+        assert_eq!(pc_with(0x00, DataMode::Mode16, false, 0, 0), 0x0000);
+        assert_eq!(pc_with(0x00, DataMode::Mode16, false, 31, 7), 0xFF00);
+        assert_eq!(pc_with(0x00, DataMode::Mode16, true, 31, 7), 0xFF80);
+        assert_eq!(pc_with(0x1F, DataMode::Reserved, false, 0, 0), 0x007F);
+    }
+
+    #[test]
+    fn unpack_pc_recovers_every_field_from_the_hand_built_word() {
+        assert_eq!(
+            BurstPreamble::unpack_pc(0xB5B5),
+            (0x15, DataMode::Mode20, true, 0b1_0101, 0b101)
+        );
+        assert_eq!(
+            BurstPreamble::unpack_pc(0xFF80),
+            (0x00, DataMode::Mode16, true, 31, 7)
+        );
+        assert_eq!(
+            BurstPreamble::unpack_pc(0x007F),
+            (0x1F, DataMode::Reserved, false, 0, 0)
+        );
+    }
+
     #[test]
     fn rejects_bad_pa_sync() {
         let mut bytes = [0u8; 8];

@@ -37,8 +37,9 @@
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
 
-use broadcast_common::{Encrypt, Unpackage};
+use broadcast_common::{Encrypt, Serialize, Unpackage};
 use bytes::Bytes;
+use transmux::media::Fmp4Demux;
 use transmux::{
     CencEncryptor, CencScheme, CodecConfig, EncryptConfig, IvGen, SubsamplePolicy, Track,
 };
@@ -703,6 +704,21 @@ fn whole_sample_media(data: Vec<u8>) -> Media {
     Media::new(vec![Track::new(spec, vec![sample])], timescale(1000))
 }
 
+/// A single-AVC-track [`Media`] with `sample_count` identical 16-byte samples
+/// (one AES-CTR block each), built on [`whole_sample_media`]'s track.
+fn counter_media(sample_count: usize) -> Media {
+    let mut media = whole_sample_media((0..16u8).collect());
+    let first = media.tracks[0]
+        .samples
+        .first()
+        .expect("whole_sample_media builds one sample")
+        .clone();
+    for _ in 1..sample_count {
+        media.tracks[0].samples.push(first.clone());
+    }
+    media
+}
+
 fn cbcs_encrypt(data: Vec<u8>, pattern: (u8, u8)) -> Result<Vec<u8>, transmux::Error> {
     const KEY: [u8; 16] = [0x42; 16];
     const IV: [u8; 16] = [0x11; 16];
@@ -749,4 +765,411 @@ fn cbcs_zero_crypt_with_nonzero_skip_is_rejected() {
         cbcs_encrypt(vec![0u8; 87], (0, 5)),
         Err(transmux::Error::InvalidInput(_))
     ));
+}
+
+// ---------------------------------------------------------------------------
+// issue #3661 — the counter must also fit *after* the call, not just the IV
+// ---------------------------------------------------------------------------
+
+/// `IvGen::Counter` hands out `next_counter + i`; the counter must also be
+/// representable *after* the call. A final IV of exactly `u64::MAX` is a
+/// valid IV, but leaves nothing to advance to, so the call must be rejected
+/// up front. (The old bare `+=` wrapped to 0 in release builds, and the next
+/// call replayed IVs 0.. under the same key: AES-CTR keystream reuse.)
+#[test]
+fn counter_iv_at_u64_max_is_rejected_and_leaves_state_untouched() {
+    let mut media = whole_sample_media((0..16u8).collect());
+    let before = snapshot(&media);
+    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX);
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let err = enc
+        .encrypt(&mut media, &cfg)
+        .expect_err("an IV of exactly u64::MAX cannot be advanced past");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert_eq!(enc.next_counter(), u64::MAX);
+    assert_eq!(
+        snapshot(&media),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
+    assert!(media.tracks[0].encryption.is_none());
+}
+
+/// The largest representable *start* is still usable once: `u64::MAX - 1`
+/// with one sample hands out IV `u64::MAX - 1` and leaves the counter at
+/// `u64::MAX`; the next one-sample call then has no room and is rejected.
+#[test]
+fn counter_iv_u64_max_minus_one_is_usable_once_then_rejects() {
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let mut media = whole_sample_media((0..16u8).collect());
+    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX - 1);
+    enc.encrypt(&mut media, &cfg)
+        .expect("u64::MAX - 1 is a valid IV and leaves the counter at u64::MAX");
+    assert_eq!(enc.next_counter(), u64::MAX);
+    let iv = media.tracks[0]
+        .encryption
+        .as_ref()
+        .expect("track.encryption Some")
+        .samples[0]
+        .initialization_vector
+        .clone();
+    assert_eq!(
+        iv,
+        (u64::MAX - 1).to_be_bytes().to_vec(),
+        "the 8-byte counter IV is the literal u64::MAX - 1"
+    );
+
+    let mut again = whole_sample_media((0..16u8).collect());
+    let before = snapshot(&again);
+    let err = enc
+        .encrypt(&mut again, &cfg)
+        .expect_err("the counter is already at u64::MAX");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert_eq!(enc.next_counter(), u64::MAX);
+    assert_eq!(
+        snapshot(&again),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
+}
+
+/// A multi-sample call whose *last* IV fits but whose advance (`+ 2`) does
+/// not must be rejected before either sample is ciphered: the old code
+/// checked only `next_counter + (total - 1)` and then wrapped (or panicked)
+/// on `next_counter += total`.
+#[test]
+fn counter_iv_using_the_last_iv_in_a_multi_sample_call_is_rejected() {
+    let mut media = counter_media(2);
+    let before = snapshot(&media);
+    let mut enc = CencEncryptor::resume(KEY_A, u64::MAX - 1);
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let err = enc
+        .encrypt(&mut media, &cfg)
+        .expect_err("next_counter + 2 overflows, so the call must be rejected");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "expected InvalidInput, got {err:?}"
+    );
+    assert_eq!(enc.next_counter(), u64::MAX - 1);
+    assert_eq!(
+        snapshot(&media),
+        before,
+        "a rejected encrypt must leave every sample byte-identical"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// issue #3662 — next_counter() is the real snapshot callers resume from
+// ---------------------------------------------------------------------------
+
+/// `next_counter()` must report the exact number of counter IVs consumed, not
+/// just "some value that also moves for a fresh instance": a wrong snapshot
+/// makes `resume()` reuse IVs after a restart (AES-CTR keystream reuse).
+#[test]
+fn next_counter_reports_samples_consumed_and_resume_continues_from_it() {
+    let cfg = cenc_cfg().with_subsample(SubsamplePolicy::WholeSample);
+
+    let mut media = counter_media(3);
+    let mut enc = CencEncryptor::resume(KEY_A, 7);
+    assert_eq!(enc.next_counter(), 7, "resume takes the given counter");
+    enc.encrypt(&mut media, &cfg).expect("encrypt 3 samples");
+    assert_eq!(enc.next_counter(), 10, "3 samples consumed counters 7,8,9");
+
+    let ivs: Vec<Vec<u8>> = all_recorded_ivs(&media);
+    assert_eq!(
+        ivs,
+        vec![
+            7u64.to_be_bytes().to_vec(),
+            8u64.to_be_bytes().to_vec(),
+            9u64.to_be_bytes().to_vec(),
+        ],
+        "the recorded IVs are the literal counters 7, 8, 9"
+    );
+
+    let mut more = counter_media(1);
+    enc.encrypt(&mut more, &cfg).expect("encrypt one more");
+    assert_eq!(
+        all_recorded_ivs(&more),
+        vec![10u64.to_be_bytes().to_vec()],
+        "a second call continues at the advanced counter, never 0 or 1"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// issue #3663 — cbcs pattern components are 4-bit fields, edges included
+// ---------------------------------------------------------------------------
+
+fn cbcs_pattern_config(pattern: (u8, u8)) -> EncryptConfig {
+    EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::WholeSample)
+        .with_iv(IvGen::Constant([0x11u8; 16]))
+        .with_pattern(pattern)
+}
+
+/// 15 is the largest value a `cbcs` pattern component may take (ISO/IEC
+/// 23001-7 §12.2 packs crypt and skip into one byte, one nibble each), so
+/// `15:15` must be accepted and the `tenc` pattern byte must be the literal
+/// `(15 << 4) | 15 == 0xFF`.
+#[test]
+fn cbcs_pattern_15_15_is_accepted_and_packs_0xff() {
+    let mut media = whole_sample_media(vec![0u8; 32]);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cbcs_pattern_config((15, 15)))
+        .expect("15:15 is the maximum legal cbcs pattern");
+    let tenc = media.tracks[0]
+        .encryption
+        .as_ref()
+        .expect("track.encryption Some")
+        .tenc
+        .clone();
+    assert_eq!(tenc.default_crypt_byte_block, 15);
+    assert_eq!(tenc.default_skip_byte_block, 15);
+    let mut buf = vec![0u8; tenc.serialized_len()];
+    tenc.serialize_into(&mut buf).expect("serialize tenc");
+    // tenc body: reserved (1) + pattern byte (1) — after the 8-byte box header
+    // and the 4-byte FullBox version/flags.
+    assert_eq!(buf[13], 0xFF, "tenc pattern byte is (15 << 4) | 15");
+}
+
+/// Any component above 15 must be rejected rather than truncated into its low
+/// nibble by `tenc`'s `(crypt << 4) | skip` packing.
+#[test]
+fn cbcs_pattern_component_above_15_is_rejected() {
+    for pattern in [(1u8, 16u8), (1, 200), (16, 1)] {
+        let mut media = whole_sample_media(vec![0u8; 32]);
+        let err = CencEncryptor::new(KEY_A)
+            .encrypt(&mut media, &cbcs_pattern_config(pattern))
+            .expect_err("a cbcs pattern component above 15 must be rejected");
+        assert!(
+            matches!(err, transmux::Error::InvalidInput(_)),
+            "pattern {pattern:?}: expected InvalidInput, got {err:?}"
+        );
+        assert!(media.tracks[0].encryption.is_none());
+    }
+}
+
+// ---------------------------------------------------------------------------
+// issue #3664 — an exactly-spaced CTR IV list is valid, one block closer is not
+// ---------------------------------------------------------------------------
+
+fn media_with_samples(samples: Vec<Vec<u8>>) -> Media {
+    let mut media = whole_sample_media(samples[0].clone());
+    media.tracks[0].samples.clear();
+    for data in samples {
+        media.tracks[0].samples.push(
+            transmux::Sample::new(data, Some(0), Some(0), Some(1000), true).expect("valid timing"),
+        );
+    }
+    media
+}
+
+/// A 16-byte big-endian counter-block IV whose counter value is `value`.
+fn ctr_iv(value: u64) -> Vec<u8> {
+    let mut iv = vec![0u8; 16];
+    iv[8..].copy_from_slice(&value.to_be_bytes());
+    iv
+}
+
+fn cenc_explicit_config(ivs: Vec<Vec<u8>>) -> EncryptConfig {
+    EncryptConfig::new(CencScheme::Cenc, KID_A, SubsamplePolicy::WholeSample)
+        .with_iv(IvGen::Explicit(ivs))
+}
+
+/// One length-prefixed AVC NAL unit: 4-byte length prefix, 1-byte header,
+/// `payload` bytes of protected payload.
+fn avc_nal_sample(payload: usize) -> Vec<u8> {
+    let nal_len = 1 + payload;
+    let mut data = Vec::with_capacity(4 + nal_len);
+    data.extend_from_slice(&(nal_len as u32).to_be_bytes());
+    data.extend(std::iter::repeat_n(0x65u8, nal_len));
+    data
+}
+
+/// Under `cenc` a sample consumes one counter block per 16 protected bytes
+/// (`ceil(protected / 16)`, ISO/IEC 23001-7 §10.1), so IV spacing must be at
+/// least the previous sample's block count. Exactly that spacing is valid
+/// (adjacent ranges); one block closer overlaps. Samples of 16, 17 and 32
+/// bytes (1, 2 and 2 blocks) pin the ceiling arithmetic at a non-multiple.
+#[test]
+fn ctr_iv_spacing_must_be_at_least_the_previous_samples_block_count() {
+    let lens = [16usize, 17, 32];
+
+    let mut ok = media_with_samples(lens.iter().map(|&len| vec![0u8; len]).collect());
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut ok, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(3)]))
+        .expect("IVs spaced by exactly the previous sample's protected block count are adjacent, not overlapping");
+
+    let mut overlap = media_with_samples(lens.iter().map(|&len| vec![0u8; len]).collect());
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(
+            &mut overlap,
+            &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1), ctr_iv(2)]),
+        )
+        .expect_err("IV 2 starts inside the 17-byte sample's range [1, 3)");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "got {err:?}"
+    );
+}
+
+/// A 17-byte sample consumes two counter blocks (ceil(17/16)), so the next IV
+/// must be two blocks later: one block is an overlap.
+#[test]
+fn ctr_iv_spacing_for_a_17_byte_sample_is_two_blocks() {
+    let mut ok = media_with_samples(vec![vec![0u8; 17], vec![0u8; 17]]);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut ok, &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)]))
+        .expect("ceil(17 / 16) == 2 blocks, so spacing 2 is adjacent");
+
+    let mut overlap = media_with_samples(vec![vec![0u8; 17], vec![0u8; 17]]);
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(
+            &mut overlap,
+            &cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)]),
+        )
+        .expect_err("a 17-byte sample covers blocks 0 and 1, so IV 1 overlaps");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "got {err:?}"
+    );
+}
+
+/// The block count comes from the *protected* bytes of the subsample map, not
+/// the sample length: a single 33-byte AVC NAL (4-byte prefix + 1-byte
+/// header clear) protects 32 bytes = 2 blocks, so spacing 2 is valid and
+/// spacing 1 overlaps even though the sample itself is 37 bytes.
+#[test]
+fn ctr_iv_spacing_counts_subsample_protected_bytes() {
+    let mut ok = media_with_samples(vec![avc_nal_sample(32), avc_nal_sample(32)]);
+    let cfg =
+        cenc_explicit_config(vec![ctr_iv(0), ctr_iv(2)]).with_subsample(SubsamplePolicy::Video);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut ok, &cfg)
+        .expect("32 protected bytes are two counter blocks");
+    let entries = &ok.tracks[0].encryption.as_ref().expect("Some").samples;
+    assert_eq!(entries[0].subsamples.len(), 1, "one subsample per NAL");
+    assert_eq!(entries[0].subsamples[0].bytes_of_clear_data, 5);
+    assert_eq!(entries[0].subsamples[0].bytes_of_protected_data, 32);
+
+    let mut overlap = media_with_samples(vec![avc_nal_sample(32), avc_nal_sample(32)]);
+    let cfg =
+        cenc_explicit_config(vec![ctr_iv(0), ctr_iv(1)]).with_subsample(SubsamplePolicy::Video);
+    let err = CencEncryptor::new(KEY_A)
+        .encrypt(&mut overlap, &cfg)
+        .expect_err("32 protected bytes cover blocks 0 and 1, so IV 1 overlaps");
+    assert!(
+        matches!(err, transmux::Error::InvalidInput(_)),
+        "got {err:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// issue #3665 — NAL-aware subsampling under HEVC and VVC, not just AVC
+// ---------------------------------------------------------------------------
+
+fn hevc_media() -> Media {
+    let bytes = test_fixtures::read("ts/hevc/main.ts");
+    let media = TsDemux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux ts/hevc/main.ts");
+    media
+        .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Hevc { .. }))
+        .expect("HEVC video track present")
+}
+
+fn vvc_media() -> Media {
+    let bytes = test_fixtures::read("mp4/frag/vvc.frag.mp4");
+    let media = Fmp4Demux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux mp4/frag/vvc.frag.mp4");
+    media
+        .select_tracks_by(|t| matches!(t.spec.config, CodecConfig::Vvc { .. }))
+        .expect("VVC video track present")
+}
+
+/// Assert every NAL unit of every sample carries a subsample entry that clears
+/// exactly the 4-byte length prefix plus `header_len` header bytes (2 for
+/// HEVC/VVC — ITU-T H.265 §7.3.1.2 / H.266 §7.3.1.2) and protects the rest,
+/// and that the clear bytes are byte-identical to the cleartext.
+fn assert_nal_subsample_map(original: &Media, encrypted: &Media, header_len: usize) {
+    let mut nals = 0usize;
+    for (track, orig_track) in encrypted.tracks.iter().zip(&original.tracks) {
+        let enc = track
+            .encryption
+            .as_ref()
+            .expect("every sample must record encryption metadata");
+        assert_eq!(enc.samples.len(), track.samples.len());
+        for ((sample, orig), entry) in track
+            .samples
+            .iter()
+            .zip(&orig_track.samples)
+            .zip(&enc.samples)
+        {
+            assert!(
+                !entry.subsamples.is_empty(),
+                "a NAL-aware track must not fall back to whole-sample protection"
+            );
+            let mut off = 0usize;
+            for sub in &entry.subsamples {
+                let nal_len = u32::from_be_bytes(
+                    sample.data[off..off + 4]
+                        .try_into()
+                        .expect("4-byte NAL length"),
+                ) as usize;
+                assert_eq!(
+                    sub.bytes_of_clear_data as usize,
+                    4 + header_len,
+                    "clear run is the length prefix plus the {header_len}-byte NAL header"
+                );
+                assert_eq!(
+                    sub.bytes_of_protected_data as usize,
+                    nal_len - header_len,
+                    "protected run is the NAL payload"
+                );
+                assert_eq!(
+                    &sample.data[off..off + 4 + header_len],
+                    &orig.data[off..off + 4 + header_len],
+                    "length prefix and NAL header must stay in the clear"
+                );
+                off += 4 + nal_len;
+                nals += 1;
+            }
+            assert_eq!(
+                off,
+                sample.data.len(),
+                "the subsample map must cover the whole sample"
+            );
+        }
+    }
+    assert!(nals > 0, "fixture must carry length-prefixed NAL units");
+}
+
+#[test]
+fn nal_aware_subsampling_clears_the_two_byte_hevc_header() {
+    let original = hevc_media();
+    let mut media = hevc_media();
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt HEVC");
+    assert_nal_subsample_map(&original, &media, 2);
+}
+
+#[test]
+fn nal_aware_subsampling_clears_the_two_byte_vvc_header() {
+    let original = vvc_media();
+    let mut media = vvc_media();
+    let cfg = EncryptConfig::new(CencScheme::Cbcs, KID_A, SubsamplePolicy::Video);
+    CencEncryptor::new(KEY_A)
+        .encrypt(&mut media, &cfg)
+        .expect("encrypt VVC");
+    assert_nal_subsample_map(&original, &media, 2);
 }

@@ -1271,3 +1271,287 @@ mod wrap_tests {
         assert_eq!(out[1].1, Some(WRAP + 90_000));
     }
 }
+
+#[cfg(test)]
+mod interpolate_tests {
+    use super::*;
+
+    fn units(dts: &[Option<u64>]) -> Vec<AccessUnit> {
+        dts.iter().map(|&d| AccessUnit { pts: d, dts: d }).collect()
+    }
+
+    /// Audit #3570: the constant frame duration divides the stamp span by the
+    /// **index** span, and the interpolation walks from the anchor by index
+    /// distance. Stamps on access units 2 and 6 (not 0) make both signs visible:
+    /// `i1 - i0` is 4 (not 8) and `i - anchor_idx` is negative before the anchor.
+    #[test]
+    fn stamped_frame_duration_uses_the_index_span_from_the_first_stamp() {
+        let mut u = units(&[None; 7]);
+        u[2].dts = Some(90_000);
+        u[6].dts = Some(90_000 + 4 * 3_600);
+        assert_eq!(stamped_frame_duration(&u), 3_600);
+
+        let d = interpolate_dts(&u);
+        assert_eq!(d[0], 90_000 - 2 * 3_600);
+        assert_eq!(d[1], 90_000 - 3_600);
+        assert_eq!(d[2], 90_000);
+        assert_eq!(d[4], 90_000 + 2 * 3_600);
+        assert_eq!(d[6], 90_000 + 4 * 3_600);
+    }
+
+    /// Audit #3570: a backwards or repeated stamp pair yields no usable frame
+    /// period and must fall back to the 3 600-tick default (25 fps at 90 kHz).
+    #[test]
+    fn non_increasing_stamps_fall_back_to_the_default_frame_duration() {
+        let mut descending = units(&[None; 3]);
+        descending[0].dts = Some(90_000);
+        descending[2].dts = Some(90_000 - 7_200);
+        assert_eq!(stamped_frame_duration(&descending), 3_600);
+
+        let mut repeated = units(&[None; 3]);
+        repeated[0].dts = Some(90_000);
+        repeated[2].dts = Some(90_000);
+        assert_eq!(stamped_frame_duration(&repeated), 3_600);
+    }
+
+    const AC3_FIXTURE: &str = "ps/ffmpeg-mpeg2video-2xac3.a0.ac3";
+
+    /// A real AC-3 elementary stream whose second syncframe carries `stamp90`,
+    /// the first carrying 90 000. The fixture is 44.1 kHz mono, so one 1 536-
+    /// sample syncframe is 3 134.7 ticks and the frame-exact running clock sits
+    /// 1 536 track ticks per frame after the anchor.
+    fn ac3_es_with_second_stamp(stamp90: u64) -> ElementaryStream {
+        let data = std::fs::read(test_fixtures::path(AC3_FIXTURE))
+            .expect("real AC-3 elementary stream fixture");
+        let frames = split_ac3_frames(&data);
+        assert!(frames.len() >= 3, "fixture carries several syncframes");
+        ElementaryStream {
+            codec: Codec::Ac3,
+            es_bytes: data,
+            stamps: alloc::vec![
+                Stamp {
+                    offset: frames[0].0,
+                    pts: Some(90_000),
+                    dts: Some(90_000),
+                },
+                Stamp {
+                    offset: frames[1].0,
+                    pts: Some(stamp90),
+                    dts: Some(stamp90),
+                },
+            ],
+        }
+    }
+
+    fn ac3_dts(stamp90: u64) -> Vec<i64> {
+        let es = ac3_es_with_second_stamp(stamp90);
+        let track = build_ac3_track(&es, TrackId::new(1))
+            .expect("AC-3 track build")
+            .expect("the fixture is a valid AC-3 stream");
+        track
+            .samples
+            .iter()
+            .map(|s| s.timing.and_then(|t| t.dts()).expect("timed AC-3 sample"))
+            .collect()
+    }
+
+    /// The first stamp anchors at 44 100 track ticks (90 000/2 at 44.1 kHz);
+    /// each following syncframe advances by its intrinsic 1 536 samples.
+    #[test]
+    fn ac3_stamp_exactly_on_the_frame_grid_keeps_the_running_clock() {
+        let dts = ac3_dts(93_134);
+        assert_eq!(dts[0], 44_100);
+        assert_eq!(dts[1], 45_636);
+        assert_eq!(dts[2], 47_172);
+    }
+
+    /// Audit #3571: a stamp exactly `audio_discontinuity_threshold_90k` (1 800
+    /// ticks) off the predicted wire position is *not* a discontinuity.
+    #[test]
+    fn ac3_stamp_at_the_threshold_is_not_a_discontinuity() {
+        let dts = ac3_dts(93_134 + 1_800);
+        assert_eq!(
+            dts[1], 45_636,
+            "within the threshold the running clock wins"
+        );
+        assert_eq!(dts[2], 47_172);
+    }
+
+    /// One tick past the threshold re-anchors from the wire stamp: 94 935 ticks
+    /// rescales to 46 518 at 44.1 kHz, and the clock continues from there.
+    #[test]
+    fn ac3_stamp_one_tick_past_the_threshold_reanchors() {
+        let dts = ac3_dts(93_134 + 1_801);
+        assert_eq!(dts[1], 46_518);
+        assert_eq!(dts[2], 48_054);
+    }
+
+    /// The same drift with the opposite sign must also re-anchor (the drift is
+    /// an absolute distance): 91 333 ticks rescale to 44 753.
+    #[test]
+    fn ac3_negative_drift_past_the_threshold_reanchors() {
+        let dts = ac3_dts(93_134 - 1_801);
+        assert_eq!(dts[1], 44_753);
+        assert_eq!(dts[2], 46_289);
+    }
+}
+
+#[cfg(test)]
+mod private1_tests {
+    use super::*;
+
+    fn header(substream_id: u8, number_of_frames: u8, pointer: u16) -> Private1Header {
+        Private1Header {
+            substream_id,
+            number_of_frames,
+            first_access_unit_pointer: pointer,
+        }
+    }
+
+    /// The header's four bytes are `substream_id`, `number_of_frames` and a
+    /// **big-endian** 16-bit pointer: reading the pointer's high byte twice
+    /// equals the right value only while it is zero.
+    #[test]
+    fn parse_reads_the_pointer_big_endian() {
+        let (parsed, rest) = Private1Header::parse(&[0x80, 1, 0x01, 0x23]).expect("header");
+        assert_eq!(parsed.substream_id, 0x80);
+        assert_eq!(parsed.number_of_frames, 1);
+        assert_eq!(parsed.first_access_unit_pointer, 0x0123);
+        assert!(rest.is_empty(), "a header-only payload has no body");
+    }
+
+    /// A payload that cannot hold the whole header is refused, never indexed
+    /// past its end.
+    #[test]
+    fn a_payload_shorter_than_the_header_is_refused() {
+        assert!(Private1Header::parse(&[]).is_none());
+        assert!(Private1Header::parse(&[0x80]).is_none());
+        assert!(Private1Header::parse(&[0x80, 1]).is_none());
+        assert!(Private1Header::parse(&[0x80, 1, 2]).is_none());
+    }
+
+    /// The consistency rule (ISO/IEC 13818-1 §2.4.3.7 as the DVD/ATSC private
+    /// profiles use it): a header that claims frames must point at one, and a
+    /// pointer may address one byte past the body (an access unit that starts
+    /// at its very end) but no further.
+    #[test]
+    fn is_consistent_truth_table() {
+        // Body length for a 4-byte-header payload.
+        for (frames, pointer, body_len, want) in [
+            (1u8, 0u16, 0usize, false), // claims a frame, points nowhere
+            (0, 0, 0, true),            // no frame claimed, no pointer
+            (1, 1, 0, true),            // points at the only byte
+            (1, 2, 0, false),           // one past the last byte
+            (0, 1, 0, true),            // pointer 1 of a 0-byte body
+            (0, 0, 5, true),
+            (1, 6, 5, true),  // body_len + 1 is legal
+            (1, 7, 5, false), // body_len + 2 is not
+            (0, 6, 5, true),  // body_len + 1, no frame claimed
+            (0, 7, 5, false), // body_len + 2
+        ] {
+            assert_eq!(
+                header(0x80, frames, pointer).is_consistent(body_len + PRIVATE1_HEADER_LEN),
+                want,
+                "frames={frames} pointer={pointer} body_len={body_len}"
+            );
+        }
+    }
+
+    /// A payload shorter than the header does not underflow the body length.
+    #[test]
+    fn is_consistent_does_not_underflow_a_short_payload() {
+        assert!(header(0x80, 0, 0).is_consistent(0));
+        assert!(header(0x80, 0, 0).is_consistent(3));
+        assert!(!header(0x80, 1, 0).is_consistent(3));
+    }
+
+    /// The AC-3 probe: a payload whose probed bytes are not the 2-byte
+    /// syncword is not AC-3, whatever its length, and a payload that is
+    /// exactly the syncword is.
+    #[test]
+    fn classify_private1_probes_the_ac3_syncword() {
+        // Pointer 1 addresses the payload's first byte: no syncword there.
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x12, 0x34, 0x56]),
+            None
+        );
+        // Exactly the 2-byte syncword: a real (if minimal) AC-3 start.
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &AC3_SYNCWORD),
+            Some(Codec::Ac3)
+        );
+        // A single 0x0B byte is not the syncword.
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x0B]),
+            None
+        );
+    }
+
+    /// A `picture_start_code` in the final three bytes is not a picture: the
+    /// scan must not index past the end of the stream.
+    #[test]
+    fn split_mpeg2_pictures_handles_a_start_code_at_the_tail() {
+        // Sequence header, a picture, then a bare `00 00 01` at the very end.
+        let data = [0u8, 0, 1, 0xB3, 1, 2, 0, 0, 1];
+        assert_eq!(split_mpeg2_pictures(&data), alloc::vec![(0, data.len())]);
+
+        // Two picture start codes, the second opening the final four bytes: a
+        // new access unit begins there.
+        let data = [0u8, 0, 1, 0x00, 1, 2, 0, 0, 1, 0x00];
+        assert_eq!(
+            split_mpeg2_pictures(&data),
+            alloc::vec![(0, 6), (6, data.len())]
+        );
+    }
+
+    /// A complete, valid-looking AC-3 frame in the prefix the pointer skips
+    /// past is *not* part of the track: the first packet of a substream
+    /// starts the elementary stream at the access unit the pointer names.
+    #[test]
+    fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
+        let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
+            .expect("real AC-3 elementary stream fixture");
+        let frames = crate::ac3::split_ac3_syncframes(&es);
+        assert!(frames.len() >= 2, "fixture carries several syncframes");
+        let (first, second) = (frames[0], frames[1]);
+
+        // Body = first frame (skipped) then the second one, which the pointer
+        // names: pointer is 1-based from the first body byte.
+        let mut body = first.to_vec();
+        body.extend_from_slice(second);
+        let pointer = u16::try_from(first.len() + 1).expect("a small frame");
+        let mut payload = alloc::vec![0x80u8, 1];
+        payload.extend_from_slice(&pointer.to_be_bytes());
+        payload.extend_from_slice(&body);
+
+        let pack_header = &std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps"))
+            .expect("real PS fixture")[..14];
+        let mut ps = pack_header.to_vec();
+        ps.extend_from_slice(&[0, 0, 1, STREAM_ID_PRIVATE_1]);
+        let pes_data_len = 3 + payload.len();
+        ps.extend_from_slice(
+            &u16::try_from(pes_data_len)
+                .expect("a small PES")
+                .to_be_bytes(),
+        );
+        ps.extend_from_slice(&[0x80, 0x00, 0x00]);
+        ps.extend_from_slice(&payload);
+
+        let media = PsDemux::new().demux(&ps).expect("demux a one-packet PS");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, crate::pipeline::CodecConfig::Ac3 { .. }))
+            .expect("the AC-3 substream");
+        assert_eq!(
+            track.samples.len(),
+            1,
+            "only the access unit the pointer names is emitted"
+        );
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            second,
+            "the sample is the second frame, not the prefix frame"
+        );
+    }
+}

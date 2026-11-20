@@ -997,4 +997,43 @@ mod tests {
         assert_eq!(layout[CHUNKS as usize - 1], (CHUNKS as usize * 100, 10));
         assert!(steps <= 2 * CHUNKS as usize, "steps {steps}");
     }
+
+    /// The `file_len` bound on the wire-declared `sample_count` (#987) is a
+    /// *strict* one: no sample occupies fewer than one byte, so a count equal
+    /// to the file length is legal and one past it is not.
+    #[test]
+    fn a_sample_count_equal_to_the_file_length_is_accepted() {
+        let stsz = uniform_stsz(1, 3);
+        let stsc = stsc_of(alloc::vec![run(1, 1)]);
+        let stco = stco_of(&[0, 1, 2]);
+        assert_eq!(
+            sample_layout(&stsz, &stsc, None, Some(&stco), 3).unwrap(),
+            alloc::vec![(0, 1), (1, 1), (2, 1)]
+        );
+
+        let over = uniform_stsz(1, 4);
+        let err = sample_layout(&over, &stsc, None, Some(&stco), 3)
+            .expect_err("one sample more than the file has bytes");
+        assert!(
+            matches!(err, Error::BufferTooShort(..)),
+            "expected BufferTooShort, got {err:?}"
+        );
+    }
+
+    /// A first `stsc` run that starts at chunk 2 means chunk 1 holds no
+    /// samples at all (ISO/IEC 14496-12:2026 §8.7.4): only chunk 2 gets the
+    /// run's samples, so the sample maps to chunk 2's offset.
+    #[test]
+    fn chunks_before_the_first_run_hold_no_samples() {
+        let stsz = per_sample_stsz(&[7]);
+        let layout = sample_layout(
+            &stsz,
+            &stsc_of(alloc::vec![run(2, 1)]),
+            None,
+            Some(&stco_of(&[100, 200])),
+            1 << 20,
+        )
+        .unwrap();
+        assert_eq!(layout, alloc::vec![(200, 7)]);
+    }
 }
