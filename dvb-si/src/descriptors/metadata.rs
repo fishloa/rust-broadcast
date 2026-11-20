@@ -686,4 +686,97 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out[6], 0x0F);
     }
+
+    /// Both explicit-identifier forms, with identifier bytes that differ from
+    /// every other body byte around them.
+    #[test]
+    fn explicit_format_identifiers_parse_and_round_trip() {
+        let bytes = [TAG, 9, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x3F, 0x11, 0x00];
+        let d = MetadataDescriptor::parse(&bytes).unwrap();
+        assert_eq!(
+            d.metadata_application_format_identifier,
+            Some(0x0102_0304)
+        );
+        assert_eq!(d.metadata_format, MetadataFormat::AppFormat);
+        assert_eq!(d.metadata_service_id, 0x11);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+
+        let bytes = [
+            TAG, 13, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0xFF, 0x0A, 0x0B, 0x0C, 0x0D, 0x11, 0x00,
+        ];
+        let d = MetadataDescriptor::parse(&bytes).unwrap();
+        assert_eq!(
+            d.metadata_application_format_identifier,
+            Some(0x0102_0304)
+        );
+        assert_eq!(d.metadata_format, MetadataFormat::Identifier);
+        assert_eq!(d.metadata_format_identifier, Some(0x0A0B_0C0D));
+        assert_eq!(d.metadata_service_id, 0x11);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
+    /// Bodies truncated before the identifier, the format byte or the flags
+    /// byte are errors, never an out-of-bounds read.
+    #[test]
+    fn truncated_forms_are_errors() {
+        for bytes in [
+            &[TAG, 5, 0xFF, 0xFF, 0x01, 0x02, 0x03][..],
+            &[TAG, 2, 0x00, 0x01][..],
+            &[TAG, 5, 0x00, 0x01, 0xFF, 0x01, 0x02][..],
+            &[TAG, 3, 0x00, 0x01, 0x3F][..],
+        ] {
+            assert!(matches!(
+                MetadataDescriptor::parse(bytes).unwrap_err(),
+                Error::InvalidDescriptor { .. }
+            ));
+        }
+        // The identifier is complete in each of these; the failing field is
+        // the one named in the reason, not an earlier one.
+        assert_eq!(
+            MetadataDescriptor::parse(&[TAG, 6, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04]).unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "metadata_descriptor too short for metadata_format"
+            }
+        );
+        assert_eq!(
+            MetadataDescriptor::parse(&[TAG, 7, 0xFF, 0xFF, 0x01, 0x02, 0x03, 0x04, 0x05])
+                .unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "metadata_descriptor too short for service_id + flags"
+            }
+        );
+        assert_eq!(
+            MetadataDescriptor::parse(&[TAG, 7, 0x00, 0x01, 0xFF, 0x01, 0x02, 0x03, 0x04])
+                .unwrap_err(),
+            Error::InvalidDescriptor {
+                tag: TAG,
+                reason: "metadata_descriptor too short for service_id + flags"
+            }
+        );
+    }
+
+    /// Descriptors that end exactly on a zero length field or on the last byte
+    /// of a decoder-config block are valid.
+    #[test]
+    fn trailing_blocks_ending_at_the_body_boundary_are_valid() {
+        for bytes in [
+            &[TAG, 6, 0x00, 0x01, 0x3F, 0x05, 0x10, 0x00][..], // dsmcc si_len 0
+            &[TAG, 6, 0x00, 0x01, 0x3F, 0x05, 0x20, 0x00][..], // decoder_config len 0
+            &[TAG, 9, 0x00, 0x01, 0x3F, 0x05, 0x20, 0x03, 0xAA, 0xBB, 0xCC][..], // dc runs to end
+            &[TAG, 6, 0x00, 0x01, 0x3F, 0x05, 0x60, 0x00][..], // dec_config_identification len 0
+            &[TAG, 6, 0x00, 0x01, 0x3F, 0x05, 0xA0, 0x00][..], // reserved_data len 0
+        ] {
+            let d = MetadataDescriptor::parse(bytes).unwrap();
+            assert!(d.private_data.is_empty());
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
 }
