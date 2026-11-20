@@ -1991,4 +1991,38 @@ mod tests {
             other => panic!("expected BufferTooShort, got {other:?}"),
         }
     }
+
+    /// A group-description entry has 1 reserved bit ahead of its 7-bit ID; a
+    /// wider reserved value must be rejected instead of shifted out silently.
+    #[test]
+    fn text_label_group_reserved_wider_than_one_bit_is_rejected() {
+        use crate::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
+        use broadcast_common::Serialize;
+
+        let mut group = TextLabelEntry::group(1, Vec::new());
+        group.reserved = 2;
+        let label = MpegH3dAudioTextLabel::new(
+            5,
+            vec![TextLabelLanguage::new(*b"eng", vec![group], Vec::new(), Vec::new())],
+        );
+        let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioTextLabel(label));
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+
+        let label = MpegH3dAudioTextLabel::new(
+            5,
+            vec![TextLabelLanguage::new(
+                *b"eng",
+                vec![TextLabelEntry::group(1, Vec::new())],
+                Vec::new(),
+                Vec::new(),
+            )],
+        );
+        let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioTextLabel(label));
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert_eq!(d.serialize_into(&mut buf).unwrap(), buf.len());
+    }
 }
