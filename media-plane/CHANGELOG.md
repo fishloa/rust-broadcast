@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- `SegmenterConfig`'s builders, `resolve_audio_sources` and the unit `SiblingTrunks` are pinned by tests: every `with_*` setter stores its argument, two declared audio renditions map to their own source tracks, and a segmenter built with the unit siblings still cuts (audit 23 finding 101, #3395).
 - `MAX_COLD_WINDOW`'s literal value, the exact accept/refuse edges, `RetentionConfigError`'s label and Display text, and `RetentionDriver::pending_len` are pinned by tests (audit 21 findings 49 and 50, #2944/#2945).
 
 ### Fixed

@@ -3374,6 +3374,178 @@ mod segmenter_tests {
              segment (frame 0, 30, 60 at +1 ms per the reorder) and stay 90000 apart"
         );
     }
+
+    #[test]
+    fn segmenter_config_builders_store_their_arguments() {
+        use transmux::audio_profile::{AudioProfile, AudioProfileOverride, AudioTrackSelector};
+        let config = SegmenterConfig::default()
+            .with_container(Container::MpegTs)
+            .with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly)
+            .with_ts_idr_fallback(TsHlsIdrFallback::Targets(5))
+            .with_target_duration(Duration::from_secs(4))
+            .with_part_target(Duration::from_millis(600))
+            .with_window_segments_cap(nz(3))
+            .with_route_name("route-r7")
+            .with_audio_rendition_sources(vec![AudioTrackSelector::Index(1)])
+            .with_audio_profiles(vec![AudioProfileOverride {
+                track: AudioTrackSelector::TrackId(2),
+                audio_profile: AudioProfile::HeAac,
+            }])
+            .with_subtitles(false)
+            .with_trunk_config(TrunkConfig::default().with_segment_capacity(nz(3)));
+
+        assert_eq!(config.container, Container::MpegTs);
+        assert_eq!(config.ts_cut_policy, transmux::SegmentCutPolicy::IdrOnly);
+        assert_eq!(config.ts_idr_fallback, TsHlsIdrFallback::Targets(5));
+        assert_eq!(config.target_duration, Duration::from_secs(4));
+        assert_eq!(config.part_target, Duration::from_millis(600));
+        assert_eq!(config.window_segments_cap.get(), 3);
+        assert_eq!(config.route_name, "route-r7");
+        assert_eq!(
+            config.audio_rendition_sources,
+            vec![AudioTrackSelector::Index(1)]
+        );
+        assert_eq!(config.audio_profiles.len(), 1);
+        assert_eq!(config.audio_profiles[0].audio_profile, AudioProfile::HeAac);
+        assert_eq!(config.audio_profiles[0].track, AudioTrackSelector::TrackId(2));
+        assert!(!config.subtitles_enabled);
+        assert_eq!(config.trunk_config.segment_capacity.get(), 3);
+
+        let defaults = SegmenterConfig::default();
+        assert_ne!(config.container, defaults.container);
+        assert_ne!(config.ts_cut_policy, defaults.ts_cut_policy);
+        assert_ne!(config.ts_idr_fallback, defaults.ts_idr_fallback);
+        assert_ne!(config.target_duration, defaults.target_duration);
+        assert_ne!(config.part_target, defaults.part_target);
+        assert_ne!(config.window_segments_cap, defaults.window_segments_cap);
+        assert_ne!(config.route_name, defaults.route_name);
+        assert_ne!(
+            config.trunk_config.segment_capacity,
+            defaults.trunk_config.segment_capacity
+        );
+    }
+
+    #[test]
+    fn resolve_audio_sources_returns_both_declared_renditions() {
+        let tracks = vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+            aac_track_spec(TrackId::new(3)),
+        ];
+        let config = SegmenterConfig::default().with_audio_rendition_sources(vec![
+            transmux::audio_profile::AudioTrackSelector::Index(0),
+            transmux::audio_profile::AudioTrackSelector::Index(1),
+        ]);
+        let mapped = config.resolve_audio_sources(&tracks);
+        assert_eq!(mapped.len(), 2, "both audio renditions must map");
+        assert_eq!(mapped[0].0, 0);
+        assert_eq!(mapped[0].1.track_id, TrackId::new(2));
+        assert_eq!(mapped[1].0, 1);
+        assert_eq!(mapped[1].1.track_id, TrackId::new(3));
+    }
+
+    #[test]
+    fn unit_siblings_build_no_followers_and_the_segmenter_runs_with_them() {
+        let (trunk, writer) = video_trunk();
+        let mapped = vec![(0, aac_track_spec(TrackId::new(2)))];
+        assert!(
+            <() as SiblingTrunks>::build_audio_followers(
+                &(),
+                &trunk,
+                &mapped,
+                Duration::from_secs(1),
+                Duration::from_millis(250),
+            )
+            .is_empty()
+        );
+        assert!(
+            <() as SiblingTrunks>::build_subtitle_followers(
+                &(),
+                &trunk,
+                &[track_spec(TrackId::new(1))],
+            )
+            .is_empty()
+        );
+
+        let (segmenter, events) = ProgramSegmenter::try_new(&trunk, fmp4_config());
+        assert!(events.is_empty());
+        let mut segmenter = segmenter.expect("a segmenter builds with the unit siblings");
+        assert!(segmenter.followers.is_empty());
+        assert!(segmenter.subtitle_followers.is_empty());
+        for i in 0..45u32 {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(15)),
+            );
+        }
+        let (_, segments) = segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
+        assert!(segments >= 1, "the segmenter must still cut with no siblings");
+    }
+
+    #[test]
+    fn ts_hls_idr_fallback_labels_and_policy() {
+        assert!(TsHlsIdrFallback::Auto.falls_back());
+        assert!(TsHlsIdrFallback::Targets(7).falls_back());
+        assert!(!TsHlsIdrFallback::Never.falls_back());
+
+        assert_eq!(TsHlsIdrFallback::Auto.name(), "auto");
+        assert_eq!(TsHlsIdrFallback::Targets(2).name(), "targets");
+        assert_eq!(TsHlsIdrFallback::Never.name(), "never");
+
+        assert_eq!(
+            TsHlsIdrFallback::Auto.bound(Duration::from_secs(1)),
+            Duration::from_secs(6),
+            "auto floors at 6 s"
+        );
+        assert_eq!(
+            TsHlsIdrFallback::Auto.bound(Duration::from_secs(3)),
+            Duration::from_secs(9),
+            "auto is three target durations once past the floor"
+        );
+        assert_eq!(
+            TsHlsIdrFallback::Targets(2).bound(Duration::from_secs(3)),
+            Duration::from_secs(6),
+            "targets(n) is exactly n target durations, no floor"
+        );
+        assert_eq!(
+            TsHlsIdrFallback::Targets(5).bound(Duration::from_secs(1)),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            TsHlsIdrFallback::Never.bound(Duration::from_secs(2)),
+            Duration::from_secs(6)
+        );
+        assert_eq!(
+            TsHlsIdrFallback::Never.bound(Duration::from_secs(4)),
+            Duration::from_secs(12)
+        );
+
+        assert_eq!(TsHlsIdrStatus::FellBack.name(), "fell_back");
+        assert_eq!(TsHlsIdrStatus::Awaiting.name(), "awaiting");
+    }
+
+    #[test]
+    fn ts_hls_rejection_labels_name_the_forbidden_codec() {
+        assert_eq!(TsHlsRejection::Hevc.name(), "HEVC");
+        assert_eq!(TsHlsRejection::Av1.name(), "AV1");
+        assert_eq!(
+            TsHlsRejection::Hevc.reason(),
+            "HEVC is not allowed in MPEG-TS HLS segments"
+        );
+        assert_eq!(
+            TsHlsRejection::Av1.reason(),
+            "AV1 is not allowed in MPEG-TS HLS segments"
+        );
+        assert_eq!(
+            TsHlsRejection::Hevc.message(),
+            "ts_hls output cannot carry HEVC: HEVC is not allowed in MPEG-TS HLS segments"
+        );
+        assert_eq!(
+            TsHlsRejection::Av1.message(),
+            "ts_hls output cannot carry AV1: AV1 is not allowed in MPEG-TS HLS segments"
+        );
+    }
 }
 
 #[cfg(test)]
