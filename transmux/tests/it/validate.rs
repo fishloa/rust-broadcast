@@ -251,6 +251,23 @@ fn rename_box(data: &[u8], from: &[u8; 4], to: &[u8; 4]) -> Vec<u8> {
     out
 }
 
+/// The byte range of the `n`th (0-based) `trun` in `data`.
+fn nth_trun(data: &[u8], n: usize) -> (usize, usize) {
+    let mut found = find_box_range(data, 0, data.len(), b"trun", CONTAINERS).expect("trun present");
+    for _ in 0..n {
+        found = find_box_range(data, found.0 + found.1, data.len(), b"trun", CONTAINERS)
+            .expect("trun present");
+    }
+    found
+}
+
+/// Overwrite the `data_offset` of the `trun` starting at `trun_start`.
+fn set_trun_data_offset(data: &mut [u8], trun_start: usize, offset: i32) {
+    // FullBox word, sample_count, then data_offset.
+    let at = trun_start + 16;
+    data[at..at + 4].copy_from_slice(&offset.to_be_bytes());
+}
+
 fn has_code(issues: &[transmux::ConformanceIssue], code: &str) -> bool {
     issues.iter().any(|i| i.code == code)
 }
@@ -870,6 +887,72 @@ fn mdat_overrun_checks_every_trun_range() {
         &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.mdat.overrun"
     ));
+}
+
+/// Two `trun`s claiming the same `mdat` bytes are rejected; adjacent and
+/// disjoint runs are not.
+#[test]
+fn overlapping_trun_ranges_bite() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = build_media_segment(
+        1,
+        &[
+            FragmentTrackData::new(TrackId::new(1), 0, &samples),
+            FragmentTrackData::new(TrackId::new(2), 0, &samples),
+        ],
+    )
+    .expect("two-track media segment");
+
+    // The builder lays the second run immediately after the first: adjacent
+    // ranges (b_lo == a_hi) must not overlap.
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&clean, "media.mdat.overlap"),
+        "adjacent runs must not overlap: {clean:?}"
+    );
+
+    let (second, _) = nth_trun(&media, 1);
+    let second_off = i32::from_be_bytes([
+        media[second + 16],
+        media[second + 17],
+        media[second + 18],
+        media[second + 19],
+    ]);
+
+    // One byte of overlap.
+    let mut overlap = media.clone();
+    set_trun_data_offset(&mut overlap, second, second_off - 1);
+    let issues = validate_media_segment(&overlap, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.mdat.overlap"),
+        "a one-byte overlap must be reported: {issues:?}"
+    );
+
+    // A gap in the mdat is not an overlap; grow the mdat so it still holds the
+    // shifted run.
+    let gap = 8usize;
+    let (mdat_off, mdat_size, _) = *top_boxes(&media)
+        .iter()
+        .find(|(_, _, t)| t == b"mdat")
+        .expect("mdat present");
+    let mut disjoint = media.clone();
+    disjoint[mdat_off..mdat_off + 4].copy_from_slice(
+        &u32::try_from(mdat_size + gap)
+            .expect("small mdat")
+            .to_be_bytes(),
+    );
+    disjoint.extend_from_slice(&vec![0u8; gap]);
+    set_trun_data_offset(&mut disjoint, second, second_off + gap as i32);
+    let issues = validate_media_segment(&disjoint, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&issues, "media.mdat.overlap"),
+        "disjoint runs must not overlap: {issues:?}"
+    );
+    assert!(
+        !has_code(&issues, "media.mdat.overrun"),
+        "the widened mdat must hold the shifted run: {issues:?}"
+    );
 }
 
 /// (b) A segment holding **two** `moof`s must not report a false
