@@ -3472,3 +3472,37 @@ fn std_buffer_empty_interval_needs_a_non_empty_window_past_its_deadline() {
         "the next window is not due before 3.000 s"
     );
 }
+
+// ── Overflow-safe drain over an epoch-based or long-idle clock ──────────────
+
+/// A caller clock may jump by years (an epoch-base switch, a capture's
+/// timestamps). Draining an occupied buffer across such a gap must clamp to
+/// the occupancy instead of multiplying into a `u64` overflow.
+#[test]
+fn occupied_buffer_drains_across_a_multi_year_gap() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let payload = [0xABu8; 184];
+    monitor.feed(&make_ts_packet(0x0001, 0, true, false, &[], &payload), secs(1));
+    monitor.feed(
+        &make_ts_packet(0x0001, 1, true, false, &[], &payload),
+        secs(1_700_000_000),
+    );
+    assert_eq!(
+        monitor.stats().packets,
+        7,
+        "five sync packets plus the two CAT packets"
+    );
+}
+
+/// The clamp must reach zero occupancy even when the buffer was pushed above
+/// its capacity (occupancy is tracked, not truncated, so the overflow
+/// arithmetic is real).
+#[test]
+fn std_buffer_clamps_an_oversized_occupancy_across_a_multi_year_gap() {
+    let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
+    assert!(buf.feed(2_000, Duration::ZERO), "precondition: overflow");
+    buf.drain_to(Duration::from_secs(5 * 365 * 24 * 3_600));
+    assert_eq!(buf.occupancy(), 0, "a five-year gap drains everything");
+}

@@ -9,6 +9,7 @@
 - The per-PID TBn leak-rate estimator and `Data_delay_error` (3.10) are pinned: clean 1.5 and 15 Mbit/s CBR flows raise no T-STD event, a burst after a floor-rate warm-up raises exactly one latched 3.10, and data queued exactly 1.000 s after its first byte is clean (audit 23 finding 142, #3484).
 - The TBn eligibility set is pinned: the burst recipe trips 3.10 on an ES PID and never on PAT, CAT, NIT, SDT/BAT, EIT, RST, TDT/TOT or the null PID (audit 23 finding 143, #3485).
 - The empty-interval window is pinned at its exact deadline: a clean 3.5 s PAT run spans several windows, and `StdBuffer` does not report a first window that saw the buffer empty and does not verdict before the deadline (audit 23 finding 144, #3486).
+- The drain clamp is pinned against a multi-year caller-clock gap on an occupied, over-capacity buffer, so `elapsed_us * leak_rate` can no longer overflow into a bogus occupancy (audit 23 finding 145, #3487).
 
 ## [15.1.0] - 2026-11-17
 ### Added
