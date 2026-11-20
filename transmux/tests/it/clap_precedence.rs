@@ -74,6 +74,27 @@ fn clap_replaces_the_sps_crop_in_output_rect() {
     assert_eq!(display.output_rect, rect(8, 4, 1904, 1072));
 }
 
+/// The `clap` coordinates are those of a decoded picture of the sample entry's
+/// declared size (§12.1.4.1): an entry that declares the coded size 1920x1088
+/// anchors the aperture at (0,0) of the coded picture, so the aperture lands
+/// exactly where it is written.
+#[test]
+fn a_clap_on_an_entry_of_the_coded_size_is_anchored_at_the_origin() {
+    let mut bytes = test_fixtures::read(FIXTURE);
+    let entry = bytes
+        .windows(4)
+        .position(|w| w == b"avc1")
+        .expect("avc1 sample entry");
+    // VisualSampleEntry (§12.1.3): width/height are 28/30 bytes past the
+    // four-CC, after the 8-byte box header, six reserved bytes, the data
+    // reference index and the 2+2+12 pre-defined/reserved fields.
+    bytes[entry + 28..entry + 30].copy_from_slice(&u16::try_from(CODED.0).unwrap().to_be_bytes());
+    bytes[entry + 30..entry + 32].copy_from_slice(&u16::try_from(CODED.1).unwrap().to_be_bytes());
+    // The 1904x1072 aperture is centred in the 1920x1088 picture (§12.1.4.2):
+    // 8 samples on each side, 8 lines top and bottom.
+    assert_eq!(display_of(&bytes).output_rect, rect(8, 8, 1904, 1072));
+}
+
 #[test]
 fn signed_offsets_move_the_aperture() {
     let bytes = with_clap((1904, 1), (1072, 1), (-4, 1), (2, 1));

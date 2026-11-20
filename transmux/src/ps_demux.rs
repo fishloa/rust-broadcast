@@ -1395,3 +1395,163 @@ mod interpolate_tests {
         assert_eq!(dts[2], 46_289);
     }
 }
+
+#[cfg(test)]
+mod private1_tests {
+    use super::*;
+
+    fn header(substream_id: u8, number_of_frames: u8, pointer: u16) -> Private1Header {
+        Private1Header {
+            substream_id,
+            number_of_frames,
+            first_access_unit_pointer: pointer,
+        }
+    }
+
+    /// The header's four bytes are `substream_id`, `number_of_frames` and a
+    /// **big-endian** 16-bit pointer: reading the pointer's high byte twice
+    /// equals the right value only while it is zero.
+    #[test]
+    fn parse_reads_the_pointer_big_endian() {
+        let (parsed, rest) = Private1Header::parse(&[0x80, 1, 0x01, 0x23]).expect("header");
+        assert_eq!(parsed.substream_id, 0x80);
+        assert_eq!(parsed.number_of_frames, 1);
+        assert_eq!(parsed.first_access_unit_pointer, 0x0123);
+        assert!(rest.is_empty(), "a header-only payload has no body");
+    }
+
+    /// A payload that cannot hold the whole header is refused, never indexed
+    /// past its end.
+    #[test]
+    fn a_payload_shorter_than_the_header_is_refused() {
+        assert!(Private1Header::parse(&[]).is_none());
+        assert!(Private1Header::parse(&[0x80]).is_none());
+        assert!(Private1Header::parse(&[0x80, 1]).is_none());
+        assert!(Private1Header::parse(&[0x80, 1, 2]).is_none());
+    }
+
+    /// The consistency rule (ISO/IEC 13818-1 §2.4.3.7 as the DVD/ATSC private
+    /// profiles use it): a header that claims frames must point at one, and a
+    /// pointer may address one byte past the body (an access unit that starts
+    /// at its very end) but no further.
+    #[test]
+    fn is_consistent_truth_table() {
+        // Body length for a 4-byte-header payload.
+        for (frames, pointer, body_len, want) in [
+            (1u8, 0u16, 0usize, false), // claims a frame, points nowhere
+            (0, 0, 0, true),            // no frame claimed, no pointer
+            (1, 1, 0, true),            // points at the only byte
+            (1, 2, 0, false),           // one past the last byte
+            (0, 1, 0, true),            // pointer 1 of a 0-byte body
+            (0, 0, 5, true),
+            (1, 6, 5, true),  // body_len + 1 is legal
+            (1, 7, 5, false), // body_len + 2 is not
+            (0, 6, 5, true),  // body_len + 1, no frame claimed
+            (0, 7, 5, false), // body_len + 2
+        ] {
+            assert_eq!(
+                header(0x80, frames, pointer).is_consistent(body_len + PRIVATE1_HEADER_LEN),
+                want,
+                "frames={frames} pointer={pointer} body_len={body_len}"
+            );
+        }
+    }
+
+    /// A payload shorter than the header does not underflow the body length.
+    #[test]
+    fn is_consistent_does_not_underflow_a_short_payload() {
+        assert!(header(0x80, 0, 0).is_consistent(0));
+        assert!(header(0x80, 0, 0).is_consistent(3));
+        assert!(!header(0x80, 1, 0).is_consistent(3));
+    }
+
+    /// The AC-3 probe: a payload whose probed bytes are not the 2-byte
+    /// syncword is not AC-3, whatever its length, and a payload that is
+    /// exactly the syncword is.
+    #[test]
+    fn classify_private1_probes_the_ac3_syncword() {
+        // Pointer 1 addresses the payload's first byte: no syncword there.
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x12, 0x34, 0x56]),
+            None
+        );
+        // Exactly the 2-byte syncword: a real (if minimal) AC-3 start.
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &AC3_SYNCWORD),
+            Some(Codec::Ac3)
+        );
+        // A single 0x0B byte is not the syncword.
+        assert_eq!(
+            Codec::classify_private1(0x80, &header(0x80, 1, 1), &[0x0B]),
+            None
+        );
+    }
+
+    /// A `picture_start_code` in the final three bytes is not a picture: the
+    /// scan must not index past the end of the stream.
+    #[test]
+    fn split_mpeg2_pictures_handles_a_start_code_at_the_tail() {
+        // Sequence header, a picture, then a bare `00 00 01` at the very end.
+        let data = [0u8, 0, 1, 0xB3, 1, 2, 0, 0, 1];
+        assert_eq!(split_mpeg2_pictures(&data), alloc::vec![(0, data.len())]);
+
+        // Two picture start codes, the second opening the final four bytes: a
+        // new access unit begins there.
+        let data = [0u8, 0, 1, 0x00, 1, 2, 0, 0, 1, 0x00];
+        assert_eq!(
+            split_mpeg2_pictures(&data),
+            alloc::vec![(0, 6), (6, data.len())]
+        );
+    }
+
+    /// A complete, valid-looking AC-3 frame in the prefix the pointer skips
+    /// past is *not* part of the track: the first packet of a substream
+    /// starts the elementary stream at the access unit the pointer names.
+    #[test]
+    fn a_complete_frame_before_the_first_access_unit_is_not_emitted() {
+        let es = std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.a0.ac3"))
+            .expect("real AC-3 elementary stream fixture");
+        let frames = crate::ac3::split_ac3_syncframes(&es);
+        assert!(frames.len() >= 2, "fixture carries several syncframes");
+        let (first, second) = (frames[0], frames[1]);
+
+        // Body = first frame (skipped) then the second one, which the pointer
+        // names: pointer is 1-based from the first body byte.
+        let mut body = first.to_vec();
+        body.extend_from_slice(second);
+        let pointer = u16::try_from(first.len() + 1).expect("a small frame");
+        let mut payload = alloc::vec![0x80u8, 1];
+        payload.extend_from_slice(&pointer.to_be_bytes());
+        payload.extend_from_slice(&body);
+
+        let pack_header = &std::fs::read(test_fixtures::path("ps/ffmpeg-mpeg2video-2xac3.ps"))
+            .expect("real PS fixture")[..14];
+        let mut ps = pack_header.to_vec();
+        ps.extend_from_slice(&[0, 0, 1, STREAM_ID_PRIVATE_1]);
+        let pes_data_len = 3 + payload.len();
+        ps.extend_from_slice(
+            &u16::try_from(pes_data_len)
+                .expect("a small PES")
+                .to_be_bytes(),
+        );
+        ps.extend_from_slice(&[0x80, 0x00, 0x00]);
+        ps.extend_from_slice(&payload);
+
+        let media = PsDemux::new().demux(&ps).expect("demux a one-packet PS");
+        let track = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, crate::pipeline::CodecConfig::Ac3 { .. }))
+            .expect("the AC-3 substream");
+        assert_eq!(
+            track.samples.len(),
+            1,
+            "only the access unit the pointer names is emitted"
+        );
+        assert_eq!(
+            track.samples[0].data.as_ref(),
+            second,
+            "the sample is the second frame, not the prefix frame"
+        );
+    }
+}
