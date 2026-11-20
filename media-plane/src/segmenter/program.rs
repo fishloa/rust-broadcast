@@ -4804,6 +4804,180 @@ mod segmenter_tests {
         );
     }
 
+    fn audio_follower_segmenter() -> (
+        Arc<Trunk>,
+        crate::trunk::TrunkWriter,
+        Arc<Trunk>,
+        TestSiblings,
+        ProgramSegmenter,
+    ) {
+        let (trunk, writer) = counted_trunk();
+        let (audio_trunk, _audio_writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        let siblings = TestSiblings {
+            audio: Some(audio_trunk.clone()),
+            subtitle: None,
+        };
+        let config = fmp4_config().with_audio_rendition_sources(vec![
+            transmux::audio_profile::AudioTrackSelector::Index(0),
+        ]);
+        let (segmenter, events) =
+            ProgramSegmenter::try_new_with_siblings(&trunk, config, &siblings);
+        assert!(events.is_empty());
+        (
+            trunk,
+            writer,
+            audio_trunk,
+            siblings,
+            segmenter.expect("segmenter"),
+        )
+    }
+
+    #[test]
+    fn a_follower_publishes_the_leaders_three_segments() {
+        let (trunk, writer, audio_trunk, siblings, mut segmenter) = audio_follower_segmenter();
+        let mut leader_segments = trunk.subscribe_segments();
+        let mut audio_segments = audio_trunk.subscribe_segments();
+
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
+        for i in 0..150u32 {
+            writer.publish(TrackId::new(2), RetentionClass::Timed, audio_sample(i));
+        }
+        for i in 1..90u32 {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(15)),
+            );
+        }
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &siblings);
+        segmenter.flush();
+
+        let mut leader: Vec<(u32, Duration)> = Vec::new();
+        while let Some(item) = leader_segments.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                leader.push((entry.sequence_number.value(), entry.duration));
+            }
+        }
+        assert_eq!(leader.len(), 3, "the leader closed three segments");
+        let mut follower: Vec<(u32, Duration)> = Vec::new();
+        while let Some(item) = audio_segments.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                follower.push((entry.sequence_number.value(), entry.duration));
+            }
+        }
+        assert_eq!(
+            follower.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+            leader.iter().map(|(seq, _)| *seq).collect::<Vec<_>>(),
+            "the follower's segments carry the leader's sequence numbers"
+        );
+        assert!(
+            follower.iter().all(|(_, duration)| !duration.is_zero()),
+            "every follower segment has a duration"
+        );
+    }
+
+    #[test]
+    fn leader_parts_pairs_each_cut_with_its_own_renditions_part() {
+        let (_trunk, _writer, _audio_trunk, siblings, mut segmenter) = audio_follower_segmenter();
+        let _ = &siblings;
+        let (subtitle_trunk, _subtitle_writer) = counted_trunk();
+        segmenter.subtitle_followers = vec![
+            crate::segmenter::subtitle::SubtitleFollower::try_new(
+                &crate::segmenter::subtitle::TeletextPage {
+                    source_track: TrackId::new(2),
+                    language: "en".to_string(),
+                    hearing_impaired: false,
+                    magazine: 8,
+                    page: 0x89,
+                },
+                Timescale::try_new(90_000).expect("non-zero timescale"),
+                &subtitle_trunk,
+            )
+            .expect("subtitle follower"),
+        ];
+        let cut = |msn: u64, part: u32| LeaderPart {
+            cut: PartCutReady {
+                msn: broadcast_hls::MediaSequence::new(msn),
+                part_index: HlsPartIndex::new(part),
+                start_dts: 0,
+                timescale: Timescale::try_new(90_000).expect("non-zero timescale"),
+            },
+            duration: Duration::ZERO,
+        };
+        let cuts: Vec<LeaderPart> = vec![cut(1, 0), cut(1, 1), cut(2, 0)];
+        let parts = vec![
+            PartInfo::new(vec![2], Duration::from_millis(300), 2, HlsPartIndex::new(0)),
+            PartInfo::new(vec![1], Duration::from_millis(200), 1, HlsPartIndex::new(1)),
+            PartInfo::new(vec![0], Duration::from_millis(100), 1, HlsPartIndex::new(0)),
+        ];
+        let leader_parts = segmenter.leader_parts(
+            &cuts.iter().map(|p| p.cut).collect::<Vec<_>>(),
+            &parts,
+        );
+        assert_eq!(
+            leader_parts.iter().map(|p| p.duration).collect::<Vec<_>>(),
+            vec![
+                Duration::from_millis(100),
+                Duration::from_millis(200),
+                Duration::from_millis(300)
+            ],
+            "each cut uses its own (msn, part index) part, never another rendition's"
+        );
+    }
+
+    #[test]
+    fn note_leader_segments_remembers_recent_durations_and_bounds_history() {
+        let (_trunk, _writer, _audio, _siblings, mut segmenter) = audio_follower_segmenter();
+        let segments: Vec<ReadySegment> = (1..=513u32)
+            .map(|seq| ReadySegment {
+                bytes: vec![0u8; 4],
+                segment_seq: SegmentSeq::new(seq),
+                duration: Duration::from_millis(u64::from(seq)),
+                discontinuous: false,
+            })
+            .collect();
+        segmenter.note_leader_segments(&segments);
+        assert_eq!(segmenter.leader_durations.len(), LEADER_DURATION_HISTORY);
+        assert_eq!(
+            segmenter.leader_durations.keys().next().copied(),
+            Some(2),
+            "the oldest durations are dropped first"
+        );
+        assert_eq!(
+            segmenter.leader_durations.get(&513),
+            Some(&Duration::from_millis(513))
+        );
+    }
+
+    #[test]
+    fn queue_segment_marks_a_discontinuity_from_either_source() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+        let mut cursor = trunk.subscribe_segments();
+        let ready = |seq: u32, discontinuous: bool| ReadySegment {
+            bytes: vec![seq as u8; 4],
+            segment_seq: SegmentSeq::new(seq),
+            duration: Duration::from_secs(1),
+            discontinuous,
+        };
+
+        segmenter.mark_next_discontinuous = false;
+        segmenter.queue_segment(ready(1, true));
+        segmenter.queue_segment(ready(2, false));
+        segmenter.mark_next_discontinuous = true;
+        segmenter.queue_segment(ready(3, false));
+
+        let mut marks = Vec::new();
+        while let Some(item) = cursor.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                marks.push((entry.sequence_number.value(), entry.meta.discontinuous));
+            }
+        }
+        assert_eq!(marks, vec![(1, true), (2, false), (3, true)]);
+    }
+
     #[test]
     fn try_new_with_siblings_records_part_cuts_for_an_audio_only_follower_set() {
         let (trunk, writer) = counted_trunk();
