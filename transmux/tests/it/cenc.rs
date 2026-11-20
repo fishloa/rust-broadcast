@@ -86,6 +86,11 @@ fn schm_round_trip() {
     assert_eq!(schm.version, 0);
     assert_eq!(&schm.scheme_type, b"cenc");
     assert_eq!(schm.scheme_version, 0x0001_0000);
+    assert_eq!(schm.flags, 0, "this fixture's schm carries no scheme URI");
+    assert!(
+        schm.scheme_uri.is_none(),
+        "flags bit 0 is clear, so a URI must not be read"
+    );
 
     let mut out = vec![0u8; schm.serialized_len()];
     let n = schm.serialize_into(&mut out).unwrap();
