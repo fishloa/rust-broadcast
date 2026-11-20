@@ -3,7 +3,7 @@ use url::Url;
 
 use broadcast_common::stage::Timestamp;
 
-use broadcast_client::{Config, Session, SourceKind};
+use broadcast_client::{Config, ConfigField, Error, Session, SourceKind};
 use broadcast_common::timeouts::Timeouts;
 
 fn with(kind: SourceKind, timeouts: Timeouts) -> Config {
@@ -146,4 +146,41 @@ fn a_zero_bound_is_floored_for_every_protocol() {
         )
     );
     assert!(ts.ts_http.validate().is_ok());
+}
+
+#[test]
+fn relay_keeps_the_initial_tracks_hold_but_drops_the_start_wait_and_jump_screening() {
+    let c = Config::relay();
+    assert_eq!(c.start_pending_track_wait, Duration::ZERO);
+    assert_eq!(c.start_pending_track_hard_cap, Duration::ZERO);
+    assert!(c.timeline_jump.is_none());
+    assert_eq!(
+        c.tracks_hold_max_wall,
+        Config::default().tracks_hold_max_wall,
+        "the initial-tracks hold stays for a relay"
+    );
+}
+
+#[test]
+fn tracks_hold_accepts_a_max_equal_to_quiet_and_rejects_one_below_it() {
+    let open = |max: usize, quiet: usize| {
+        let mut config = Config::default();
+        config.tracks_hold_max_input_bytes = max;
+        config.tracks_hold_quiet_input_bytes = quiet;
+        Session::open(
+            Url::parse("http://h/live.ts").unwrap(),
+            config,
+            Timestamp::from_micros(0),
+        )
+        .map(|_| ())
+    };
+    assert!(open(100, 100).is_ok());
+    assert!(matches!(
+        open(99, 100),
+        Err(Error::InvalidConfig(ConfigField::TracksHoldMaxInputBytes))
+    ));
+    assert!(matches!(
+        open(100, 0),
+        Err(Error::InvalidConfig(ConfigField::TracksHoldQuietInputBytes))
+    ));
 }

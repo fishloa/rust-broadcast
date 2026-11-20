@@ -101,6 +101,7 @@ pub enum Reply {
     Redirect(String),
     TransportError,
     ResetMid(Vec<u8>),
+    StallWith(http::StatusCode, Vec<u8>, http::HeaderMap),
     Hang,
 }
 
@@ -293,6 +294,13 @@ impl Host {
                     }),
                     ts(self.now),
                 );
+            }
+            Reply::StallWith(status, body, headers) => {
+                self.session
+                    .on_response(conn, status, &headers, ts(self.now));
+                for chunk in body.chunks(self.chunk.max(1)) {
+                    self.session.on_data(conn, chunk, ts(self.now));
+                }
             }
             Reply::Hang => self.hung.push(req),
         }

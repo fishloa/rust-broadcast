@@ -33,6 +33,7 @@ fn config() -> Config {
 enum Resumed {
     Honoured,
     ContentRangeOffByOne,
+    Unsatisfiable,
 }
 
 struct Stall {
@@ -104,6 +105,7 @@ impl Backend for Stall {
                     body: body[usize::try_from(first + 1).unwrap()..].to_vec(),
                 }
             }
+            (true, Resumed::Unsatisfiable, _) => Answer::status(416),
             (_, _, good) => good,
         }
     }
@@ -159,6 +161,71 @@ fn stall_modes(sim: &DashSim) -> Vec<ResumeMode> {
             _ => None,
         })
         .collect()
+}
+
+struct FirstUnsatisfiable {
+    inner: Box<dyn Backend>,
+    url: String,
+    refused: bool,
+}
+
+impl Backend for FirstUnsatisfiable {
+    fn serve(&mut self, at: i64, req: &Logged) -> Answer {
+        if req.url == self.url && !self.refused {
+            self.refused = true;
+            return Answer::status(416);
+        }
+        self.inner.serve(at, req)
+    }
+}
+
+#[test]
+fn a_416_to_the_resume_falls_back_to_one_immediate_full_request() {
+    let got = run(sim(
+        MPD,
+        Stall::boxed(
+            SEGMENT,
+            None,
+            Resumed::Unsatisfiable,
+            false,
+            static_origin(),
+        ),
+    ));
+    assert_same_media(&got, &baseline(MPD));
+    let requests = media_requests(&got, SEGMENT);
+    assert_eq!(requests.len(), 3, "stalled, 416 resume, full re-fetch");
+    assert!(
+        requests[1].header("range").is_some(),
+        "the resume is ranged"
+    );
+    assert_eq!(requests[2].header("range"), None);
+    assert!(
+        requests[2].send_elapsed_us < requests[1].send_elapsed_us + FIRST_BACKOFF_US,
+        "the fallback is immediate, not a backoff retry: {} -> {}",
+        requests[1].send_elapsed_us,
+        requests[2].send_elapsed_us
+    );
+}
+
+#[test]
+fn a_416_to_a_first_segment_request_is_a_failure_not_an_immediate_replay() {
+    let got = run(sim(
+        MPD,
+        Box::new(FirstUnsatisfiable {
+            inner: static_origin(),
+            url: SEGMENT.to_owned(),
+            refused: false,
+        }),
+    ));
+    let requests = media_requests(&got, SEGMENT);
+    assert!(requests.len() >= 2, "{requests:?}");
+    assert_eq!(requests[1].header("range"), None);
+    assert!(
+        requests[1].send_elapsed_us >= requests[0].send_elapsed_us + FIRST_BACKOFF_US,
+        "a first 416 is a refusal and waits for the backoff: {} -> {}",
+        requests[0].send_elapsed_us,
+        requests[1].send_elapsed_us
+    );
 }
 
 #[test]

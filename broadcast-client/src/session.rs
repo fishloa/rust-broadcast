@@ -1139,8 +1139,10 @@ impl Session {
     ///
     /// Queued actions other than [`Action::Close`] are dropped and every live connection gets
     /// exactly one `Close`; an RTSP session with a server-side session id first queues one
-    /// [`Action::Send`] carrying `TEARDOWN`. Afterwards `poll` and `next_event` return `None`.
-    /// `now` is the host clock at the call, which the farewell's own timers are stamped with.
+    /// [`Action::Send`] carrying `TEARDOWN`. Events queued before the call are not dropped:
+    /// `next_event` keeps returning them, and `poll` keeps returning the queued `Close` actions,
+    /// until each queue is empty; after that both return `None`. `now` is the host clock at the
+    /// call, which the farewell's own timers are stamped with.
     pub fn close(&mut self, now: Timestamp) {
         self.now_us = now.as_micros();
         if self.closed {
