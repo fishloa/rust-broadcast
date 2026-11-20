@@ -745,13 +745,7 @@ impl VVCSampleEntry {
         let compact = crate::box_types::compact_form(bytes)?;
         let bytes: &[u8] = &compact;
         use crate::vvc_config::VvcConfigurationBox;
-        if bytes.len() < 8 + 78 + 8 {
-            return Err(Error::BufferTooShort(BufferTooShort {
-                need: 8 + 80 + 8,
-                have: bytes.len(),
-                what: "vvc1 bare",
-            }));
-        }
+        need_in(bytes, BARE_ENTRY_MIN_LEN, "vvc1 bare")?;
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let visual = VisualSampleEntryFields::parse_body(bytes, "vvc1")?;
         let config_region = &bytes[8 + VISUAL_SAMPLE_ENTRY_SIZE..];
@@ -1120,5 +1114,156 @@ mod tests {
             &[0u8; 16],
             "pre_defined(16)+reserved(16) after data_reference_index"
         );
+    }
+
+    fn make_vvc_config() -> crate::vvc_config::VvcConfigurationBox {
+        use crate::vvc_config::VvcConfigurationBox;
+        use crate::vvc_config::VvcDecoderConfigurationRecord;
+        VvcConfigurationBox::new(VvcDecoderConfigurationRecord {
+            length_size_minus_one: 3,
+            ptl_present: false,
+            ols_idx: 0,
+            num_sublayers: 1,
+            constant_frame_rate: 0,
+            chroma_format_idc: 1,
+            bit_depth_minus8: 0,
+            ptl: None,
+            max_picture_width: 0,
+            max_picture_height: 0,
+            avg_frame_rate: 0,
+            arrays: alloc::vec![],
+        })
+    }
+
+    /// A bare sample entry: an 8-byte box header (type = `fourcc`) followed by
+    /// the 78 fixed `VisualSampleEntry` fields.
+    fn visual_entry_prefix(fourcc: [u8; 4]) -> alloc::vec::Vec<u8> {
+        let mut fields = alloc::vec![0u8; VISUAL_SAMPLE_ENTRY_SIZE];
+        VisualSampleEntryFields::default()
+            .serialize_body_into(&mut fields)
+            .expect("78-byte field buffer");
+        let mut bytes =
+            alloc::vec![0u8; crate::box_types::BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_SIZE];
+        bytes[4..8].copy_from_slice(&fourcc);
+        bytes[8..].copy_from_slice(&fields);
+        bytes
+    }
+
+    fn expect_buffer_too_short(err: Error, need: usize, have: usize, what: &str) {
+        match err {
+            Error::BufferTooShort(b) => {
+                assert_eq!(b.need, need, "need for {what}");
+                assert_eq!(b.have, have, "have for {what}");
+                assert_eq!(b.what, what);
+            }
+            other => panic!("expected BufferTooShort for {what}, got {other:?}"),
+        }
+    }
+
+    /// Audit #3573: one byte below the 8+78+8 minimum, and a config box that is
+    /// exactly its own 8-byte header, must both report the precise shortfall for
+    /// each of avc1/hvc1/vvc1 — the boundary between the minimum-length guard
+    /// and the config-box-body guard.
+    #[test]
+    fn bare_entry_config_box_length_boundaries() {
+        for fourcc in [*b"avc1", *b"hvc1", *b"vvc1"] {
+            let mut short = visual_entry_prefix(fourcc);
+            short.extend_from_slice(&[0, 0, 0, 9, b'x', b'x', b'x', b'x']);
+            short.truncate(BARE_ENTRY_MIN_LEN - 1);
+            assert_eq!(short.len(), 93);
+            let err = match fourcc {
+                [b'a', ..] => AVCSampleEntry::bare_parse(&short).unwrap_err(),
+                [b'h', ..] => HEVCSampleEntry::bare_parse(&short).unwrap_err(),
+                _ => VVCSampleEntry::bare_parse(&short).unwrap_err(),
+            };
+            let what = match fourcc {
+                [b'a', ..] => "avc1 bare",
+                [b'h', ..] => "hvc1 bare",
+                _ => "vvc1 bare",
+            };
+            expect_buffer_too_short(err, 94, 93, what);
+        }
+
+        for (fourcc, config_type, what) in [
+            (*b"avc1", *b"avcC", "avcC body"),
+            (*b"hvc1", *b"hvcC", "hvcC body"),
+            (*b"vvc1", *b"vvcC", "vvcC body"),
+        ] {
+            let mut header_only = visual_entry_prefix(fourcc);
+            header_only.extend_from_slice(&8u32.to_be_bytes());
+            header_only.extend_from_slice(&config_type);
+            assert_eq!(header_only.len(), BARE_ENTRY_MIN_LEN);
+            let err = match fourcc {
+                [b'a', ..] => AVCSampleEntry::bare_parse(&header_only).unwrap_err(),
+                [b'h', ..] => HEVCSampleEntry::bare_parse(&header_only).unwrap_err(),
+                _ => VVCSampleEntry::bare_parse(&header_only).unwrap_err(),
+            };
+            expect_buffer_too_short(err, 8, 8, what);
+        }
+
+        // A config box carrying a real body parses.
+        assert!(AVCSampleEntry::bare_parse(
+            &AVCSampleEntry::new_avc1(make_avc_config())
+                .try_to_bytes()
+                .expect("avc1")
+        )
+        .is_ok());
+        assert!(HEVCSampleEntry::bare_parse(
+            &HEVCSampleEntry::new_hvc1(make_hevc_config())
+                .try_to_bytes()
+                .expect("hvc1")
+        )
+        .is_ok());
+        assert!(VVCSampleEntry::bare_parse(
+            &VVCSampleEntry::new_vvc1(make_vvc_config())
+                .try_to_bytes()
+                .expect("vvc1")
+        )
+        .is_ok());
+    }
+
+    /// Audit #3575: the default `compressorname` every constructor stamps into a
+    /// produced init segment must survive serialization and re-parse.
+    #[test]
+    fn constructors_write_the_compressor_name() {
+        let avc = AVCSampleEntry::new_avc1(make_avc_config());
+        assert_eq!(avc.visual.compressorname[0], 11);
+        assert_eq!(&avc.visual.compressorname[1..11], b"AVC Coding");
+        let reparsed = AVCSampleEntry::bare_parse(&avc.try_to_bytes().expect("avc1")).expect("parse");
+        assert_eq!(reparsed.visual.compressorname, avc.visual.compressorname);
+
+        let hevc = HEVCSampleEntry::new_hvc1(make_hevc_config());
+        assert_eq!(hevc.visual.compressorname[0], 12);
+        assert_eq!(&hevc.visual.compressorname[1..12], b"HEVC Coding");
+        let reparsed = HEVCSampleEntry::bare_parse(&hevc.try_to_bytes().expect("hvc1")).expect("parse");
+        assert_eq!(reparsed.visual.compressorname, hevc.visual.compressorname);
+
+        let vvc = VVCSampleEntry::new_vvc1(make_vvc_config());
+        assert_eq!(vvc.visual.compressorname[0], 10);
+        assert_eq!(&vvc.visual.compressorname[1..11], b"VVC Coding");
+        let reparsed = VVCSampleEntry::bare_parse(&vvc.try_to_bytes().expect("vvc1")).expect("parse");
+        assert_eq!(reparsed.visual.compressorname, vvc.visual.compressorname);
+    }
+
+    /// Audit #3576: a trailing child declaring one byte more than the region
+    /// holds must end the walk (keeping earlier boxes), never slice out of
+    /// bounds.
+    #[test]
+    fn parse_trailing_boxes_stops_at_a_past_region_tail() {
+        let mut bytes = visual_entry_prefix(*b"mp4v");
+        // A well-formed 20-byte `btrt`.
+        bytes.extend_from_slice(&[
+            0, 0, 0, 20, b'b', b't', b'r', b't', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        ]);
+        let region_remaining = 8;
+        // Its declared size is one more than what is actually left.
+        bytes.extend_from_slice(&((region_remaining + 1) as u32).to_be_bytes());
+        bytes.extend_from_slice(b"free");
+        assert_eq!(bytes.len(), 8 + VISUAL_SAMPLE_ENTRY_SIZE + 20 + 8);
+
+        let parsed = Mp4vSampleEntry::bare_parse(&bytes).expect("a truncated tail must not fail");
+        assert_eq!(parsed.config_boxes.len(), 1, "only the btrt is kept");
+        assert_eq!(parsed.config_boxes[0].box_type, *b"btrt");
+        assert_eq!(parsed.config_boxes[0].data.len(), 12);
     }
 }
