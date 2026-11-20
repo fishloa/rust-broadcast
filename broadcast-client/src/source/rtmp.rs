@@ -559,7 +559,10 @@ mod tests {
         source.on_connected(conn, 0);
         source.take_actions();
         source.on_data(ConnId::new(conn.0 + 1), &[0xFF; 8], 0);
-        assert!(source.take_actions().is_empty(), "another connection's bytes");
+        assert!(
+            source.take_actions().is_empty(),
+            "another connection's bytes"
+        );
         assert_eq!(source.conn, Some(conn));
         source.on_closed(ConnId::new(conn.0 + 1), None, 0);
         assert_eq!(source.conn, Some(conn), "another connection's close");
@@ -602,7 +605,10 @@ mod tests {
         let mut source = rtmp_source();
         let conn = source.conn.expect("a connecting socket");
         source.map_event(TsEvent::Connected);
-        assert!(source.on_closed(conn, None, 0), "a completed connection ended");
+        assert!(
+            source.on_closed(conn, None, 0),
+            "a completed connection ended"
+        );
     }
 
     #[test]
@@ -648,12 +654,16 @@ mod tests {
     fn drain_pending_tracks_announces_tracks_learned_just_before_the_end() {
         let mut source = rtmp_source();
         source.take_events();
-        source.tracks.insert(trailer_spec().track_id, trailer_spec());
+        source
+            .tracks
+            .insert(trailer_spec().track_id, trailer_spec());
         source.tracks_dirty = true;
         source.drain_pending_tracks();
         let events = source.take_events();
         assert!(
-            events.iter().any(|e| matches!(e, Event::Tracks(specs) if !specs.is_empty())),
+            events
+                .iter()
+                .any(|e| matches!(e, Event::Tracks(specs) if !specs.is_empty())),
             "the pending tracks are announced"
         );
         assert!(!source.tracks_dirty);
@@ -674,7 +684,11 @@ mod tests {
     fn sync_wake_arms_once_and_keeps_the_earlier_deadline() {
         let mut source = rtmp_source();
         source.take_actions();
-        let deadline = source.policy.next_deadline().expect("a deadline").as_micros();
+        let deadline = source
+            .policy
+            .next_deadline()
+            .expect("a deadline")
+            .as_micros();
         source.wake_pending = None;
         source.sync_wake(0);
         assert_eq!(wakes(&mut source), vec![deadline]);

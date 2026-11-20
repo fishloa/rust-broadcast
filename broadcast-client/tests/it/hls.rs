@@ -1337,3 +1337,34 @@ fn a_reconnect_with_the_fmp4_init_in_flight_requests_it_again() {
         "a reconnect resumes by fetching the in-flight init again"
     );
 }
+
+#[test]
+fn status_live_is_emitted_once_across_reloads() {
+    let one = live_playlist_text(0, &["index0.ts"]).into_bytes();
+    let two = live_playlist_text(0, &["index0.ts", "index1.ts"]).into_bytes();
+    let three = live_playlist_text(0, &["index0.ts", "index1.ts", "index2.ts"]).into_bytes();
+    let mut h = Host::new(TS_PLAYLIST_URL, hls_config());
+    h.route(
+        TS_PLAYLIST_URL,
+        vec![
+            Reply::Ok(one),
+            Reply::Ok(two),
+            Reply::Ok(three.clone()),
+            Reply::Ok(three.clone()),
+            Reply::Ok(three),
+        ],
+    );
+    h.ok(TS_SEG0_URL, ts_segment(0));
+    h.ok(TS_SEG1_URL, ts_segment(1));
+    h.ok("http://origin.test/hls/index2.ts", ts_segment(1));
+    h.run_until(|evs| count(evs, is_sample) > 40, 4_000);
+    assert!(
+        count(&h.events, is_sample) > 40,
+        "more than one sample batch"
+    );
+    assert_eq!(
+        count(&h.events, |e| matches!(e, Event::Status(Status::Live))),
+        1,
+        "Live is announced once, not for every sample batch"
+    );
+}

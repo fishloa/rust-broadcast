@@ -1415,14 +1415,24 @@ mod tests {
         source.take_actions();
         let mut auth = AuthState::new(url.clone(), Vec::new());
         auth.set_credentials(broadcast_auth::Credentials::new("admin", "s3cret"));
-        source.on_unauthorized(STATUS_PROXY_AUTH_REQUIRED, Req::Describe, Timestamp::ZERO, &mut auth);
+        source.on_unauthorized(
+            STATUS_PROXY_AUTH_REQUIRED,
+            Req::Describe,
+            Timestamp::ZERO,
+            &mut auth,
+        );
         assert!(source.stale_replayed);
         assert_eq!(
             source.take_actions().len(),
             1,
             "the stale challenge replays the request once"
         );
-        source.on_unauthorized(STATUS_PROXY_AUTH_REQUIRED, Req::Describe, Timestamp::ZERO, &mut auth);
+        source.on_unauthorized(
+            STATUS_PROXY_AUTH_REQUIRED,
+            Req::Describe,
+            Timestamp::ZERO,
+            &mut auth,
+        );
         assert!(
             source.take_actions().is_empty(),
             "a second stale challenge is not replayed"
@@ -1440,9 +1450,7 @@ mod tests {
         source.cfg.stall_notice = Duration::from_secs(5);
         source.cfg.stall_reconnect = Duration::from_secs(1_000_000);
         source.next_notice_at = Some(Timestamp::from_micros(1_000_000));
-        let now = Timestamp::from_micros(
-            u64::from(MAX_STALL_NOTICES_PER_POLL + 5) * 1_000_000,
-        );
+        let now = Timestamp::from_micros(u64::from(MAX_STALL_NOTICES_PER_POLL + 5) * 1_000_000);
         source.check_stall(now);
         let notices = source
             .take_events()

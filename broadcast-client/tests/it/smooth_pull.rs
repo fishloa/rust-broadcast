@@ -900,9 +900,15 @@ fn an_encrypted_fragment_is_fatal_unsupported_encryption() {
     let mut h = Host::new(manifest_url(), smooth_config());
     h.ok(manifest_url(), body("smooth/av/Manifest"));
     route_fragments(&mut h);
-    h.route(video0_url(), vec![hls_host::Reply::Ok(encrypted_fragment())]);
+    h.route(
+        video0_url(),
+        vec![hls_host::Reply::Ok(encrypted_fragment())],
+    );
     h.run_until(
-        |evs| evs.iter().any(|e| matches!(e, Event::Error { fatal: true, .. })),
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+        },
         10_000,
     );
     assert!(has_event(&h, |e| matches!(
@@ -929,7 +935,10 @@ fn a_fragment_over_the_byte_cap_is_a_fatal_fetch_failure() {
     let oversized = vec![0u8; 16 * 1024 * 1024 + 1];
     h.route(video0_url(), vec![hls_host::Reply::Ok(oversized)]);
     h.run_until(
-        |evs| evs.iter().any(|e| matches!(e, Event::Error { fatal: true, .. })),
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+        },
         10_000,
     );
     assert!(has_event(&h, |e| matches!(
@@ -1062,6 +1071,14 @@ fn a_stale_digest_401_after_an_authenticated_request_is_replayed_once() {
             hls_host::full(
                 401,
                 Vec::new(),
+                crate::support::headers(&[(
+                    "WWW-Authenticate",
+                    "Digest realm=\"cam\", nonce=\"n1\", qop=\"auth\"",
+                )]),
+            ),
+            hls_host::full(
+                401,
+                Vec::new(),
                 crate::support::headers(&[("WWW-Authenticate", stale)]),
             ),
             hls_host::Reply::Ok(body("smooth/av/Manifest")),
@@ -1076,12 +1093,16 @@ fn a_stale_digest_401_after_an_authenticated_request_is_replayed_once() {
         .set_credentials(ts(h.now), Credentials::new("u", "p"))
         .unwrap();
     h.collect();
-    for _ in 0..4 {
+    for _ in 0..6 {
         h.step();
     }
     let sent: Vec<_> = h.requests_to(manifest_url());
-    assert_eq!(sent.len(), 3, "the stale challenge is replayed once");
-    assert!(sent[2].authorization().is_some());
+    assert_eq!(
+        sent.len(),
+        4,
+        "the rejected challenge replayed, then the stale one replayed once"
+    );
+    assert!(sent[3].authorization().is_some());
 }
 
 #[test]
