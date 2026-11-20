@@ -72,9 +72,6 @@ const AVC_PPS: u8 = 8;
 /// Low five bits of the H.264 NAL header byte (`forbidden_zero_bit |
 /// nal_ref_idc | nal_unit_type`).
 const AVC_NAL_TYPE_MASK: u8 = 0x1F;
-/// `nal_unit_type` of a temporal-scalability prefix NAL, whose body is itself
-/// a complete NAL unit (H.264 §7.3.1.1, Table 7-1).
-const AVC_PREFIX_NAL: u8 = 14;
 /// Bytes of a slice NAL whose RBSP prefix is walked: the slice-header prefix
 /// is a handful of Exp-Golomb codes, and a multi-megabyte I slice must not be
 /// unescaped and copied per access unit (the bound `slice_header.rs` uses).
@@ -368,12 +365,6 @@ impl SpsTracker {
             // SEI: collect AFD / bar data (first wins).
             6 => {
                 Self::parse_sei_afd(NalCodec::Avc, nal, activation);
-            }
-            // A prefix NAL (§7.3.1.1) whose body is itself an SPS/PPS/slice.
-            AVC_PREFIX_NAL => {
-                if let Some(inner) = nal.get(1..) {
-                    self.observe_avc_nal(inner, slice_pps, activation);
-                }
             }
             _ => {}
         }
@@ -729,6 +720,43 @@ mod tests {
             t.observe(&annexb(&[p_slice_nal(0)])),
             ActivationOutcome::Unchanged
         ));
+    }
+
+    /// An H.264 SVC/MVC prefix NAL (`nal_unit_type` 14, H.264 Table 7-1): its
+    /// payload is a 3-byte SVC extension followed by `prefix_nal_unit_rbsp()`
+    /// (§7.3.2.12.2), never a nested SPS, PPS or slice.
+    fn prefix_nal(payload: &[u8]) -> Vec<u8> {
+        let mut v = vec![0x6Eu8];
+        v.extend_from_slice(payload);
+        v
+    }
+
+    #[test]
+    fn a_prefix_nal_carries_no_parameter_set() {
+        let plain = base_au();
+        let mut t = tracker();
+        let without = t.observe(&plain);
+
+        // The prefix NAL's bytes after its header happen to spell a complete
+        // SPS with a different geometry and the same id; reading them as one
+        // would replace the geometry the slices activate.
+        let mut nested = tracker();
+        let with_nested = nested.observe(&annexb(&[
+            sps_nal(0, 8, 4, None, 30),
+            prefix_nal(&sps_nal(0, 16, 1, None, 30)),
+            pps_nal(0, 0),
+            idr_slice_nal(0),
+        ]));
+        assert_eq!(with_nested, without);
+
+        let mut leading = tracker();
+        let with_leading = leading.observe(&annexb(&[
+            prefix_nal(&sps_nal(1, 16, 1, None, 30)),
+            sps_nal(0, 8, 4, None, 30),
+            pps_nal(0, 0),
+            idr_slice_nal(0),
+        ]));
+        assert_eq!(with_leading, without);
     }
 
     #[test]
