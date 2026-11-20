@@ -72,9 +72,7 @@ fn small_trunk(event_capacity: usize) -> Arc<Trunk> {
 fn scte35_event(id: u32) -> TimedEvent {
     TimedEvent::new(
         EventKind::BreakStart,
-        SourcePayload::Scte35 {
-            raw: vec![0xFC],
-        },
+        SourcePayload::Scte35 { raw: vec![0xFC] },
     )
     .with_id(id)
 }

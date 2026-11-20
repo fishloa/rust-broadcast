@@ -345,10 +345,7 @@ mod tests {
     fn repeated_pcr_at_a_later_arrival_reports_full_negative_drift() {
         let mut tracker = PcrTracker::new();
         let pid = Pid::from_const(0x0100);
-        assert_eq!(
-            tracker.observe(pid, 1_000, Duration::from_millis(1)),
-            None
-        );
+        assert_eq!(tracker.observe(pid, 1_000, Duration::from_millis(1)), None);
         let sample = tracker
             .observe(pid, 1_000, Duration::from_millis(101))
             .expect("a repeated PCR over a 100 ms wall step is a measurable interval");
@@ -476,10 +473,7 @@ mod tests {
     fn pcr_advance_of_exactly_the_guard_is_still_measured() {
         let mut tracker = PcrTracker::new();
         let pid = Pid::from_const(0x0100);
-        assert_eq!(
-            tracker.observe(pid, 0, Duration::from_secs(1)),
-            None
-        );
+        assert_eq!(tracker.observe(pid, 0, Duration::from_secs(1)), None);
         let sample = tracker.observe(pid, 10 * PCR_HZ, Duration::from_secs(11));
         let sample = sample.expect("a 10 s PCR delta over 10 s of wall time is a rate, not a gap");
         assert!(
@@ -495,10 +489,7 @@ mod tests {
     fn pcr_advance_one_tick_beyond_the_guard_is_a_discontinuity() {
         let mut tracker = PcrTracker::new();
         let pid = Pid::from_const(0x0100);
-        assert_eq!(
-            tracker.observe(pid, 0, Duration::from_secs(1)),
-            None
-        );
+        assert_eq!(tracker.observe(pid, 0, Duration::from_secs(1)), None);
         assert_eq!(
             tracker.observe(pid, 10 * PCR_HZ + 1, Duration::from_secs(11)),
             None,
