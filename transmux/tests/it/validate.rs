@@ -922,6 +922,31 @@ fn mdat_overrun_checks_every_trun_range() {
     ));
 }
 
+/// CMAF requires `tfhd.default-base-is-moof`.
+#[test]
+fn default_base_is_moof_flag_bites() {
+    let samples = video_samples(&fixture());
+    let media = clean_media(1, 0, &samples);
+    let clean = validate_media_segment(&media, SegmentOrigin::FromIr);
+    assert!(
+        !has_code(&clean, "media.tfhd.default-base-is-moof"),
+        "the builder sets the flag: {clean:?}"
+    );
+
+    let (tfhd, _) =
+        find_box_range(&media, 0, media.len(), b"tfhd", CONTAINERS).expect("tfhd present");
+    let mut broken = media.clone();
+    // Box header, then the FullBox version byte (0) and its three flag bytes.
+    broken[tfhd + 9] = 0;
+    broken[tfhd + 10] = 0;
+    broken[tfhd + 11] = 0;
+    let issues = validate_media_segment(&broken, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.tfhd.default-base-is-moof"),
+        "a tfhd without default-base-is-moof must be an error: {issues:?}"
+    );
+}
+
 /// The single-track CMAF fragment warning fires only for two or more `traf`s.
 #[test]
 fn multi_traf_warning_needs_two_trafs() {
