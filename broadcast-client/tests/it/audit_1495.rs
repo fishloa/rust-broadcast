@@ -634,3 +634,35 @@ fn a_request_issued_at_the_end_of_time_is_not_expired_by_the_next_poll() {
     assert!(session.poll(Timestamp::from_nanos(u64::MAX)).is_none());
     assert!(session.poll(ts(0)).is_none());
 }
+
+#[test]
+fn close_discards_events_queued_before_it_and_next_event_returns_none() {
+    let mut session = Session::open(
+        Url::parse("http://example/live.ts").unwrap(),
+        Config::default(),
+        ts(0),
+    )
+    .unwrap();
+    let conn = loop {
+        match session.poll(ts(0)) {
+            Some(Action::HttpRequest { conn, .. }) => break conn,
+            Some(_) => continue,
+            None => panic!("the session never asked for its first request"),
+        }
+    };
+    session.on_response(conn, support::status(403), &support::headers(&[]), ts(0));
+    session.close(ts(0));
+    assert_eq!(
+        session.next_event(),
+        None,
+        "close is terminal: the documented behaviour is None"
+    );
+    let actions: Vec<Action> = std::iter::from_fn(|| session.poll(ts(0)))
+        .take(RUNAWAY_PROBE)
+        .collect();
+    assert!(
+        actions.iter().all(|a| matches!(a, Action::Close { .. })),
+        "{actions:?}"
+    );
+    assert_eq!(session.poll(ts(0)), None);
+}
