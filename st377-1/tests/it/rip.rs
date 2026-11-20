@@ -88,6 +88,24 @@ fn a_trailing_length_disagreeing_with_the_total_is_rejected() {
     ));
 }
 
+/// A value that is neither the 4-byte trailing length alone nor a whole
+/// number of 12-byte pairs plus that length is rejected by the shape check,
+/// before any offset arithmetic runs.
+#[test]
+fn an_impossible_value_length_is_rejected_as_a_batch_header() {
+    let mut bytes = RandomIndexPack::key().as_bytes().to_vec();
+    bytes.push(8);
+    bytes.extend_from_slice(&[0u8; 8]);
+    assert!(matches!(
+        RandomIndexPack::parse(&bytes),
+        Err(Error::InvalidBatchHeader {
+            count: 0,
+            item_len: 12,
+            buffer_len: 8,
+        })
+    ));
+}
+
 #[test]
 fn the_key_is_the_table_29_constant() {
     let key = RandomIndexPack::key();
