@@ -28,6 +28,7 @@
 - The SSU id selector accepts an empty OUI loop and rejects an empty or truncated first entry, a two-entry selector with a non-empty selector and private data round-trips byte-identically, and `IdSelector::serialized_len` is asserted for both the `Ssu` and `Raw` variants (#3242).
 - The AAC and data broadcast id serializers accept a 255-byte body with a `0xFF` descriptor length and reject a 256-byte body (#3243).
 - `AacExtension::decoded_component_type` is asserted for every EN 300 468 Table 26 HE-AAC component_type code (0x01, 0x03, 0x05, 0x40-0x4A, 0xA0) with the full flag set (#3244).
+- The cable delivery descriptor's symbol-rate getter/setter are pinned at the field's 100 sym/s resolution, including the overflow rejection and a non-decimal BCD nibble returning `None` (#3245).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed
