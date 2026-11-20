@@ -2170,6 +2170,39 @@ mod tests {
             16
         );
     }
+
+    /// A `trun` declaring an optional field whose bytes are not all there must
+    /// be a typed `BufferTooShort` naming that field, never a panic from the
+    /// direct index behind the guard (§8.8.8.2).
+    #[test]
+    fn truncated_trun_optional_fields_report_their_own_name() {
+        for (flags, what) in [
+            (TRUN_DATA_OFFSET_PRESENT, "trun.do"),
+            (TRUN_FIRST_SAMPLE_FLAGS_PRESENT, "trun.fsf"),
+            (TRUN_SAMPLE_DURATION_PRESENT, "trun.dur"),
+            (TRUN_SAMPLE_SIZE_PRESENT, "trun.sz"),
+            (TRUN_SAMPLE_FLAGS_PRESENT, "trun.flg"),
+            (TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, "trun.cto"),
+        ] {
+            for extra in 0..=3usize {
+                let mut body = Vec::new();
+                body.extend_from_slice(&flags.to_be_bytes()); // version 0, flags
+                body.extend_from_slice(&1u32.to_be_bytes()); // sample_count
+                body.extend_from_slice(&[0x5A; 3][..extra]);
+                let err = TrackFragmentRunBox::parse_body(&body)
+                    .expect_err("a field cut short must be rejected");
+                assert_eq!(
+                    err,
+                    Error::BufferTooShort(BufferTooShort {
+                        need: 8,
+                        have: 4 + extra,
+                        what,
+                    }),
+                    "flags {flags:#x} with {extra} field bytes"
+                );
+            }
+        }
+    }
     #[test]
     fn trun_mutation_changes_bytes() {
         let t = TrackFragmentRunBox {
