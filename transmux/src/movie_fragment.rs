@@ -2204,6 +2204,26 @@ mod tests {
         );
     }
 
+    /// A `trun` that declares a per-sample field spends no zero-width
+    /// allowance: its entries are four bytes wide each, so the buffer bounds
+    /// the count and the caller's shared budget is untouched.
+    #[test]
+    fn a_four_byte_entry_trun_spends_no_zero_width_budget() {
+        let mut body = Vec::new();
+        body.push(0); // version 0
+        body.extend_from_slice(&TRUN_SAMPLE_DURATION_PRESENT.to_be_bytes()[1..]);
+        body.extend_from_slice(&5u32.to_be_bytes()); // sample_count
+        for duration in 1..=5u32 {
+            body.extend_from_slice(&(duration * 1_000).to_be_bytes());
+        }
+        let mut budget = 10usize;
+        let run = TrackFragmentRunBox::parse_body_budgeted(&body, &mut budget)
+            .expect("a payload-bounded trun parses");
+        assert_eq!(run.samples.len(), 5);
+        assert_eq!(run.samples[4].sample_duration, Some(5_000));
+        assert_eq!(budget, 10, "four-byte entries are bounded by the payload");
+    }
+
     #[test]
     fn trun_record_stride() {
         assert_eq!(
