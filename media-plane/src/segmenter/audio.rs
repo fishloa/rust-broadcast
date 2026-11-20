@@ -499,8 +499,7 @@ mod follower_tests {
     }
 
     fn frame(dts: i64) -> Sample {
-        Sample::new(vec![0u8; 8], Some(dts), Some(dts), Some(3_000), false)
-            .expect("valid timing")
+        Sample::new(vec![0u8; 8], Some(dts), Some(dts), Some(3_000), false).expect("valid timing")
     }
 
     fn cut_part(msn: u64, part: u32, start_dts: i64) -> PartCutReady {
@@ -565,7 +564,10 @@ mod follower_tests {
         }
         assert_eq!(follower.held.len(), MAX_HELD_SAMPLES);
         assert_eq!(
-            follower.held.front().and_then(|s| s.timing.and_then(|t| t.dts())),
+            follower
+                .held
+                .front()
+                .and_then(|s| s.timing.and_then(|t| t.dts())),
             Some(0)
         );
         follower.push(
@@ -574,7 +576,10 @@ mod follower_tests {
         );
         assert_eq!(follower.held.len(), MAX_HELD_SAMPLES);
         assert_eq!(
-            follower.held.front().and_then(|s| s.timing.and_then(|t| t.dts())),
+            follower
+                .held
+                .front()
+                .and_then(|s| s.timing.and_then(|t| t.dts())),
             Some(3_000),
             "the oldest sample is dropped first"
         );
@@ -669,7 +674,11 @@ mod follower_tests {
         let mut entries = Vec::new();
         while let Some(item) = cursor.poll() {
             if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
-                entries.push((entry.sequence_number.value(), entry.bytes.len(), entry.duration));
+                entries.push((
+                    entry.sequence_number.value(),
+                    entry.bytes.len(),
+                    entry.duration,
+                ));
             }
         }
         assert_eq!(
@@ -679,9 +688,11 @@ mod follower_tests {
         );
         assert_ne!(entries[0].1, 0, "the tail segment carries audio");
         assert!(entries[1..].iter().all(|(_, len, _)| *len == 0));
-        assert!(entries[1..]
-            .iter()
-            .all(|(_, _, duration)| *duration == Duration::from_secs(1)));
+        assert!(
+            entries[1..]
+                .iter()
+                .all(|(_, _, duration)| *duration == Duration::from_secs(1))
+        );
     }
 
     /// The follower writes into the trunk it was given, whatever capacities the
@@ -694,10 +705,7 @@ mod follower_tests {
 
         follower.push(frame(0), &leaders);
         follower.push(frame(90_000), &leaders);
-        follower.on_part_cuts(
-            vec![cut_part(5, 0, 0), cut_part(5, 1, 30_000)],
-            &leaders,
-        );
+        follower.on_part_cuts(vec![cut_part(5, 0, 0), cut_part(5, 1, 30_000)], &leaders);
         follower.finish(&leaders);
 
         assert!(
@@ -739,10 +747,7 @@ mod follower_tests {
         ];
         let mapped = resolve_sources(
             "route",
-            &selectors(&[
-                AudioTrackSelector::Index(0),
-                AudioTrackSelector::Index(1),
-            ]),
+            &selectors(&[AudioTrackSelector::Index(0), AudioTrackSelector::Index(1)]),
             &tracks,
         );
         assert_eq!(
@@ -759,10 +764,7 @@ mod follower_tests {
         let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
         let mapped = resolve_sources(
             "route",
-            &selectors(&[
-                AudioTrackSelector::Index(0),
-                AudioTrackSelector::TrackId(2),
-            ]),
+            &selectors(&[AudioTrackSelector::Index(0), AudioTrackSelector::TrackId(2)]),
             &tracks,
         );
         assert_eq!(mapped.len(), 1, "the duplicate second selector is ignored");
@@ -773,11 +775,19 @@ mod follower_tests {
     fn resolve_sources_skips_an_out_of_range_index_and_keeps_the_last() {
         let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
         assert!(
-            resolve_sources("route", &selectors(&[AudioTrackSelector::Index(2)]), &tracks)
-                .is_empty(),
+            resolve_sources(
+                "route",
+                &selectors(&[AudioTrackSelector::Index(2)]),
+                &tracks
+            )
+            .is_empty(),
             "index == len matches nothing"
         );
-        let last = resolve_sources("route", &selectors(&[AudioTrackSelector::Index(1)]), &tracks);
+        let last = resolve_sources(
+            "route",
+            &selectors(&[AudioTrackSelector::Index(1)]),
+            &tracks,
+        );
         assert_eq!(last.len(), 1);
         assert_eq!(last[0].1.track_id, TrackId::new(3));
     }
@@ -788,10 +798,7 @@ mod follower_tests {
         assert!(
             resolve_sources(
                 "route",
-                &selectors(&[
-                    AudioTrackSelector::Index(0),
-                    AudioTrackSelector::Index(1),
-                ]),
+                &selectors(&[AudioTrackSelector::Index(0), AudioTrackSelector::Index(1),]),
                 &tracks,
             )
             .is_empty(),

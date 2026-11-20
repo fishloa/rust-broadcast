@@ -584,7 +584,10 @@ mod tests {
     }
 
     fn teletext_descriptor(entries: &[(&str, TeletextType, u8, u8)]) -> Vec<u8> {
-        let mut out = vec![dvb_si::descriptors::teletext::TAG, (entries.len() * 5) as u8];
+        let mut out = vec![
+            dvb_si::descriptors::teletext::TAG,
+            (entries.len() * 5) as u8,
+        ];
         for (language, teletext_type, magazine, page) in entries {
             out.extend_from_slice(language.as_bytes());
             out.push((teletext_type.to_u8() << 3) | (magazine & 0x07));
@@ -618,12 +621,8 @@ mod tests {
                 height: 0,
             },
         );
-        spec.es_info_descriptors = teletext_descriptor(&[(
-            "eng",
-            TeletextType::SubtitlePage,
-            8,
-            0x88,
-        )]);
+        spec.es_info_descriptors =
+            teletext_descriptor(&[("eng", TeletextType::SubtitlePage, 8, 0x88)]);
         spec
     }
 
@@ -715,11 +714,7 @@ mod tests {
             ("eng", TeletextType::SubtitlePage, 8, 0x89),
             ("eng", TeletextType::SubtitlePage, 8, 0x8A),
         ]);
-        let pages = teletext_pages(
-            "route",
-            2,
-            &[data_track(TrackId::new(1), descriptors)],
-        );
+        let pages = teletext_pages("route", 2, &[data_track(TrackId::new(1), descriptors)]);
         assert_eq!(pages.len(), 2);
         assert_eq!(pages[0].number(), "888");
         assert_eq!(pages[1].number(), "889");
@@ -892,10 +887,18 @@ mod tests {
         core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
         core.note_cut(&part(MediaSequence::new(3), 0, 360_000).cut);
         let mut ready = Vec::new();
-        core.publish_segments(Some(MediaSequence::new(2)), &LeaderDurations::new(), &mut ready);
+        core.publish_segments(
+            Some(MediaSequence::new(2)),
+            &LeaderDurations::new(),
+            &mut ready,
+        );
         assert_eq!(msns(&ready), [MediaSequence::new(1)]);
         let mut ready = Vec::new();
-        core.publish_segments(Some(MediaSequence::new(2)), &LeaderDurations::new(), &mut ready);
+        core.publish_segments(
+            Some(MediaSequence::new(2)),
+            &LeaderDurations::new(),
+            &mut ready,
+        );
         assert!(
             ready.is_empty(),
             "the segment at the boundary belongs with the next part"
@@ -1055,8 +1058,8 @@ mod tests {
         follower.set_start_time(Duration::from_secs(2));
         for (pts, data) in &samples {
             let pts = i64::try_from(*pts).expect("pts fits");
-            let sample = Sample::new(data.clone(), Some(pts), Some(pts), None, false)
-                .expect("valid timing");
+            let sample =
+                Sample::new(data.clone(), Some(pts), Some(pts), None, false).expect("valid timing");
             follower.push(&sample);
         }
         const CUT_START: i64 = 3_856_741_433;

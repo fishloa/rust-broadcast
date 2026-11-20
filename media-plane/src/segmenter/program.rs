@@ -3407,7 +3407,10 @@ mod segmenter_tests {
         );
         assert_eq!(config.audio_profiles.len(), 1);
         assert_eq!(config.audio_profiles[0].audio_profile, AudioProfile::HeAac);
-        assert_eq!(config.audio_profiles[0].track, AudioTrackSelector::TrackId(2));
+        assert_eq!(
+            config.audio_profiles[0].track,
+            AudioTrackSelector::TrackId(2)
+        );
         assert!(!config.subtitles_enabled);
         assert_eq!(config.trunk_config.segment_capacity.get(), 3);
 
@@ -3480,7 +3483,10 @@ mod segmenter_tests {
             );
         }
         let (_, segments) = segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
-        assert!(segments >= 1, "the segmenter must still cut with no siblings");
+        assert!(
+            segments >= 1,
+            "the segmenter must still cut with no siblings"
+        );
     }
 
     #[test]
@@ -3559,9 +3565,9 @@ mod segmenter_tests {
                 )
                 .expect("fmp4 segmenter"),
             ),
-            Container::MpegTs => AnySegmenter::Ts(
-                StreamingTsHlsSegmenter::new(tracks, 1, 8).expect("ts segmenter"),
-            ),
+            Container::MpegTs => {
+                AnySegmenter::Ts(StreamingTsHlsSegmenter::new(tracks, 1, 8).expect("ts segmenter"))
+            }
             _ => panic!("test builds only the two delegated containers"),
         }
     }
@@ -3573,10 +3579,14 @@ mod segmenter_tests {
             .expect("an fMP4 segment carries a tfdt box");
         match segment[at + 4] {
             0 => u64::from(u32::from_be_bytes(
-                segment[at + 8..at + 12].try_into().expect("v0 tfdt is 4 bytes"),
+                segment[at + 8..at + 12]
+                    .try_into()
+                    .expect("v0 tfdt is 4 bytes"),
             )),
             1 => u64::from_be_bytes(
-                segment[at + 8..at + 16].try_into().expect("v1 tfdt is 8 bytes"),
+                segment[at + 8..at + 16]
+                    .try_into()
+                    .expect("v1 tfdt is 8 bytes"),
             ),
             version => panic!("unexpected tfdt version {version}"),
         }
@@ -3696,28 +3706,26 @@ mod segmenter_tests {
 
     fn hevc_config() -> CodecConfig {
         CodecConfig::Hevc {
-            config: transmux::HEVCConfigurationBox::new(
-                transmux::HEVCDecoderConfigurationRecord {
-                    configuration_version: 1,
-                    general_profile_space: 0,
-                    general_tier_flag: false,
-                    general_profile_idc: 1,
-                    general_profile_compatibility_flags: 0,
-                    general_constraint_indicator_flags: 0,
-                    general_level_idc: 90,
-                    min_spatial_segmentation_idc: 0,
-                    parallelism_type: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_luma_minus8: 0,
-                    bit_depth_chroma_minus8: 0,
-                    avg_frame_rate: 0,
-                    constant_frame_rate: 0,
-                    num_temporal_layers: 1,
-                    temporal_id_nested: true,
-                    length_size_minus_one: 3,
-                    arrays: Vec::new(),
-                },
-            ),
+            config: transmux::HEVCConfigurationBox::new(transmux::HEVCDecoderConfigurationRecord {
+                configuration_version: 1,
+                general_profile_space: 0,
+                general_tier_flag: false,
+                general_profile_idc: 1,
+                general_profile_compatibility_flags: 0,
+                general_constraint_indicator_flags: 0,
+                general_level_idc: 90,
+                min_spatial_segmentation_idc: 0,
+                parallelism_type: 0,
+                chroma_format_idc: 1,
+                bit_depth_luma_minus8: 0,
+                bit_depth_chroma_minus8: 0,
+                avg_frame_rate: 0,
+                constant_frame_rate: 0,
+                num_temporal_layers: 1,
+                temporal_id_nested: true,
+                length_size_minus_one: 3,
+                arrays: Vec::new(),
+            }),
             width: 0,
             height: 0,
         }
@@ -3725,22 +3733,20 @@ mod segmenter_tests {
 
     fn vvc_config() -> CodecConfig {
         CodecConfig::Vvc {
-            config: transmux::VvcConfigurationBox::new(
-                transmux::VvcDecoderConfigurationRecord {
-                    length_size_minus_one: 3,
-                    ptl_present: false,
-                    ols_idx: 0,
-                    num_sublayers: 1,
-                    constant_frame_rate: 0,
-                    chroma_format_idc: 1,
-                    bit_depth_minus8: 0,
-                    ptl: None,
-                    max_picture_width: 0,
-                    max_picture_height: 0,
-                    avg_frame_rate: 0,
-                    arrays: Vec::new(),
-                },
-            ),
+            config: transmux::VvcConfigurationBox::new(transmux::VvcDecoderConfigurationRecord {
+                length_size_minus_one: 3,
+                ptl_present: false,
+                ols_idx: 0,
+                num_sublayers: 1,
+                constant_frame_rate: 0,
+                chroma_format_idc: 1,
+                bit_depth_minus8: 0,
+                ptl: None,
+                max_picture_width: 0,
+                max_picture_height: 0,
+                avg_frame_rate: 0,
+                arrays: Vec::new(),
+            }),
             width: 0,
             height: 0,
         }
@@ -3840,11 +3846,21 @@ mod segmenter_tests {
         let avc = track_spec(TrackId::new(1)).config;
         let fmp4 = gate_config(Container::Fmp4, transmux::SegmentCutPolicy::IdrOnly);
         assert!(
-            gate_opens_on(&fmp4, Some(&avc), &gate_sample(NalCodec::Avc, false, true), false),
+            gate_opens_on(
+                &fmp4,
+                Some(&avc),
+                &gate_sample(NalCodec::Avc, false, true),
+                false
+            ),
             "outside classic TS the sync flag decides"
         );
         assert!(
-            !gate_opens_on(&fmp4, Some(&avc), &gate_sample(NalCodec::Avc, true, false), false),
+            !gate_opens_on(
+                &fmp4,
+                Some(&avc),
+                &gate_sample(NalCodec::Avc, true, false),
+                false
+            ),
             "outside classic TS an IDR without the sync flag is not a gate opener"
         );
 
@@ -4069,10 +4085,7 @@ mod segmenter_tests {
     fn try_new_gates_on_tracks_and_container_codec_rules() {
         let (valid, _writer) = video_trunk();
         let (segmenter, events) = ProgramSegmenter::try_new(&valid, ts_config());
-        assert!(
-            segmenter.is_some(),
-            "a muxable classic-TS track set builds"
-        );
+        assert!(segmenter.is_some(), "a muxable classic-TS track set builds");
         assert!(events.is_empty());
 
         let empty = Trunk::new(
@@ -4094,10 +4107,7 @@ mod segmenter_tests {
             hevc_config(),
         )]);
         let (segmenter, events) = ProgramSegmenter::try_new(&hevc_trunk, ts_config());
-        assert!(
-            segmenter.is_none(),
-            "HEVC cannot be muxed into classic TS"
-        );
+        assert!(segmenter.is_none(), "HEVC cannot be muxed into classic TS");
         assert!(matches!(
             events.as_slice(),
             [SegmenterEvent::OutputFailed(TsHlsRejection::Hevc)]
@@ -4137,7 +4147,10 @@ mod segmenter_tests {
     #[test]
     fn pump_totals_count_the_segments_it_actually_published() {
         let (trunk, writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let mut segmenter = segmenter_for(&trunk, ts_config());
         writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
         for i in 1..120u32 {
@@ -4174,7 +4187,10 @@ mod segmenter_tests {
         assert!(segmenter.backlogged, "600 items exceed one 512-item batch");
         assert!(first.0 > 0, "the first batch produced fMP4 parts");
         assert!(first.1 > 1, "the first batch closed fMP4 segments");
-        assert_eq!((segmenter.parts_produced(), segmenter.segments_produced()), first);
+        assert_eq!(
+            (segmenter.parts_produced(), segmenter.segments_produced()),
+            first
+        );
 
         let second = segmenter.pump_batch(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
         assert!(!segmenter.backlogged, "the remainder fits one batch");
@@ -4244,7 +4260,10 @@ mod segmenter_tests {
     #[test]
     fn start_gate_does_not_open_on_a_sync_audio_sample() {
         let (trunk, writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let mut segmenter = segmenter_for(&trunk, fmp4_config());
         writer.publish(TrackId::new(2), RetentionClass::Timed, sample_at(0, true));
         writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
@@ -4335,7 +4354,10 @@ mod segmenter_tests {
         assert!(segmenter.idr_wait_applies());
 
         segmenter.config = fmp4_config().with_ts_cut_policy(transmux::SegmentCutPolicy::IdrOnly);
-        assert!(!segmenter.idr_wait_applies(), "only classic TS has an IDR wait");
+        assert!(
+            !segmenter.idr_wait_applies(),
+            "only classic TS has an IDR wait"
+        );
 
         segmenter.config = ts_config();
         assert!(
@@ -4358,10 +4380,7 @@ mod segmenter_tests {
         let mut segmenter = segmenter_for(&trunk, ts_config());
 
         segmenter.hold_for_fallback(false, TrackId::new(1), non_idr_sample_at(0, false));
-        assert!(
-            segmenter.idr_hold.is_empty(),
-            "audio cannot start the hold"
-        );
+        assert!(segmenter.idr_hold.is_empty(), "audio cannot start the hold");
         segmenter.hold_for_fallback(true, TrackId::new(1), non_idr_sample_at(1, false));
         assert!(
             segmenter.idr_hold.is_empty(),
@@ -4581,7 +4600,10 @@ mod segmenter_tests {
         segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
         assert!(segmenter.start_gate_open);
 
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let mut events = Vec::new();
         segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
         assert!(
@@ -4618,7 +4640,10 @@ mod segmenter_tests {
         let (trunk, writer) = counted_trunk();
         writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let mut segmenter = segmenter_for(&trunk, fmp4_config());
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            track_spec(TrackId::new(2)),
+        ]);
         let mut events = Vec::new();
         segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
         assert!(
@@ -4660,14 +4685,23 @@ mod segmenter_tests {
             cursor.poll().is_none(),
             "a second gap must not publish another placeholder"
         );
-        assert_eq!(events.iter().filter(|e| matches!(e, SegmenterEvent::TracksActive(false))).count(), 2);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, SegmenterEvent::TracksActive(false)))
+                .count(),
+            2
+        );
     }
 
     #[test]
     fn enter_gap_remembers_the_duration_when_a_follower_needs_it() {
         let (trunk, writer) = counted_trunk();
         let (audio_trunk, _audio_writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let siblings = TestSiblings {
             audio: Some(audio_trunk),
             subtitle: None,
@@ -4718,7 +4752,10 @@ mod segmenter_tests {
     fn fmp4_rebuild_records_part_cuts_for_an_audio_only_follower_set() {
         let (trunk, writer) = counted_trunk();
         let (audio_trunk, _audio_writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let siblings = TestSiblings {
             audio: Some(audio_trunk.clone()),
             subtitle: None,
@@ -4737,7 +4774,11 @@ mod segmenter_tests {
             track_spec(TrackId::new(3)),
         ]);
         segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &siblings);
-        assert_eq!(segmenter.followers.len(), 1, "the rebuild rebuilt the follower");
+        assert_eq!(
+            segmenter.followers.len(),
+            1,
+            "the rebuild rebuilt the follower"
+        );
 
         writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
         for i in 0..120u32 {
@@ -4771,7 +4812,10 @@ mod segmenter_tests {
     fn fmp4_rebuild_records_part_cuts_for_a_subtitle_only_follower_set() {
         let (trunk, writer) = counted_trunk();
         let (subtitle_trunk, _subtitle_writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), teletext_data_track(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            teletext_data_track(TrackId::new(2)),
+        ]);
         let siblings = TestSiblings {
             audio: None,
             subtitle: Some(subtitle_trunk.clone()),
@@ -4813,7 +4857,10 @@ mod segmenter_tests {
     ) {
         let (trunk, writer) = counted_trunk();
         let (audio_trunk, _audio_writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let siblings = TestSiblings {
             audio: Some(audio_trunk.clone()),
             subtitle: None,
@@ -4911,10 +4958,8 @@ mod segmenter_tests {
             PartInfo::new(vec![1], Duration::from_millis(200), 1, HlsPartIndex::new(1)),
             PartInfo::new(vec![0], Duration::from_millis(100), 1, HlsPartIndex::new(0)),
         ];
-        let leader_parts = segmenter.leader_parts(
-            &cuts.iter().map(|p| p.cut).collect::<Vec<_>>(),
-            &parts,
-        );
+        let leader_parts =
+            segmenter.leader_parts(&cuts.iter().map(|p| p.cut).collect::<Vec<_>>(), &parts);
         assert_eq!(
             leader_parts.iter().map(|p| p.duration).collect::<Vec<_>>(),
             vec![
@@ -4982,7 +5027,10 @@ mod segmenter_tests {
     fn try_new_with_siblings_records_part_cuts_for_an_audio_only_follower_set() {
         let (trunk, writer) = counted_trunk();
         let (audio_trunk, _audio_writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+        ]);
         let siblings = TestSiblings {
             audio: Some(audio_trunk.clone()),
             subtitle: None,
@@ -4997,11 +5045,7 @@ mod segmenter_tests {
         assert_eq!(segmenter.followers.len(), 1);
         let mut audio_segments = audio_trunk.subscribe_segments();
 
-        writer.publish(
-            TrackId::new(1),
-            RetentionClass::Timed,
-            sample_at(0, true),
-        );
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
         for i in 0..120u32 {
             writer.publish(TrackId::new(2), RetentionClass::Timed, audio_sample(i));
         }
@@ -5105,7 +5149,10 @@ mod segmenter_tests {
     fn try_new_with_siblings_records_part_cuts_for_a_subtitle_only_follower_set() {
         let (trunk, writer) = counted_trunk();
         let (subtitle_trunk, _subtitle_writer) = counted_trunk();
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), teletext_data_track(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            teletext_data_track(TrackId::new(2)),
+        ]);
         let siblings = TestSiblings {
             audio: None,
             subtitle: Some(subtitle_trunk.clone()),
