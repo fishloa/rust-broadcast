@@ -3174,7 +3174,9 @@ fn empty_buffer_error_trips_once_for_tbn_that_never_empties() {
         "TBn 0x{pid:04X} never emptied across a window; expected one 3.9: {counted:#?}"
     );
     assert!(
-        counted[0].detail.contains("TBn not empty in the last 1 s on PID 0x0200"),
+        counted[0]
+            .detail
+            .contains("TBn not empty in the last 1 s on PID 0x0200"),
         "detail: {}",
         counted[0].detail
     );
@@ -3302,13 +3304,11 @@ fn tbn_data_delay_trips_once_for_a_burst_after_a_low_leak_estimate() {
             e.indicator == Indicator::DataDelayError && e.pid == Some(Pid::from_wire_masked(pid))
         })
         .collect();
-    assert_eq!(
-        delay.len(),
-        1,
-        "one burst, one latched 3.10: {delay:#?}"
-    );
+    assert_eq!(delay.len(), 1, "one burst, one latched 3.10: {delay:#?}");
     assert!(
-        delay[0].detail.contains("TBn data delay exceeds 1 s on PID 0x0202"),
+        delay[0]
+            .detail
+            .contains("TBn data delay exceeds 1 s on PID 0x0202"),
         "detail: {}",
         delay[0].detail
     );
@@ -3411,8 +3411,7 @@ fn tbn_is_created_only_for_non_si_non_null_pids() {
     let delay: Vec<_> = events
         .iter()
         .filter(|e| {
-            e.indicator == Indicator::DataDelayError
-                && e.pid == Some(Pid::from_wire_masked(es_pid))
+            e.indicator == Indicator::DataDelayError && e.pid == Some(Pid::from_wire_masked(es_pid))
         })
         .collect();
     assert_eq!(
@@ -3453,7 +3452,10 @@ fn tbsys_empty_interval_absent_over_two_windows_of_repeated_pat() {
 fn std_buffer_empty_interval_needs_a_non_empty_window_past_its_deadline() {
     let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
     buf.arm_empty_interval(Duration::ZERO);
-    assert!(!buf.feed(100, Duration::ZERO), "precondition: 100 bytes fit");
+    assert!(
+        !buf.feed(100, Duration::ZERO),
+        "precondition: 100 bytes fit"
+    );
 
     assert!(
         !buf.check_empty_interval(ms(999)),
@@ -3484,7 +3486,10 @@ fn occupied_buffer_drains_across_a_multi_year_gap() {
     acquire_sync(&mut monitor);
 
     let payload = [0xABu8; 184];
-    monitor.feed(&make_ts_packet(0x0001, 0, true, false, &[], &payload), secs(1));
+    monitor.feed(
+        &make_ts_packet(0x0001, 0, true, false, &[], &payload),
+        secs(1),
+    );
     monitor.feed(
         &make_ts_packet(0x0001, 1, true, false, &[], &payload),
         secs(1_700_000_000),
@@ -3522,7 +3527,14 @@ fn tbsys_data_delay_trips_only_past_exactly_one_second() {
     let payload = [0xABu8; 184];
     let mut at_deadline = Vec::new();
     for ms_offset in 0..=1_001u64 {
-        let pkt = make_ts_packet(0x0010, (ms_offset & 0x0F) as u8, false, false, &[], &payload);
+        let pkt = make_ts_packet(
+            0x0010,
+            (ms_offset & 0x0F) as u8,
+            false,
+            false,
+            &[],
+            &payload,
+        );
         let events = monitor.feed(&pkt, ms(ms_offset));
         if ms_offset == 1_000 {
             at_deadline = events.to_vec();
@@ -3772,7 +3784,12 @@ fn pmt_timeout_emits_once_not_per_packet() {
     acquire_sync(&mut monitor);
 
     let pat = build_pat_section(&[(1, 0x0100)]);
-    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
 
     let mut events = Vec::new();
     for i in 0..20u64 {
@@ -3801,7 +3818,12 @@ fn pid_timeout_emits_once_not_per_packet() {
     acquire_sync(&mut monitor);
 
     let pat = build_pat_section(&[(1, 0x0100)]);
-    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
     let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
     feed_all(
         &mut monitor,
@@ -3841,7 +3863,12 @@ fn pat_presence_fires(probe_ms: u64) -> bool {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
     let pat = build_pat_section(&[(1, 0x0100)]);
-    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
     has_indicator(&probe(&mut monitor, ms(probe_ms)), Indicator::PatError2)
 }
 
@@ -3855,7 +3882,12 @@ fn pmt_presence_fires(probe_ms: u64) -> bool {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
     let pat = build_pat_section(&[(1, 0x0100)]);
-    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
     let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
     feed_all(
         &mut monitor,
@@ -3876,7 +3908,12 @@ fn pid_absence_fires(probe_ms: u64) -> bool {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
     let pat = build_pat_section(&[(1, 0x0100)]);
-    feed_all(&mut monitor, &packetise_section(PID_PAT, &pat), ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_PAT, &pat),
+        ms(5),
+        ms(1),
+    );
     let pmt = build_pmt_section(1, 0x1FFF, &[0x0200]);
     feed_all(
         &mut monitor,
@@ -3897,7 +3934,12 @@ fn si_repetition_fires(probe_ms: u64) -> bool {
     let mut monitor = ConformanceMonitor::new();
     acquire_sync(&mut monitor);
     let nit = build_nit_actual_section();
-    feed_all(&mut monitor, &packetise_section(PID_NIT, &nit), ms(5), ms(1));
+    feed_all(
+        &mut monitor,
+        &packetise_section(PID_NIT, &nit),
+        ms(5),
+        ms(1),
+    );
     has_indicator(
         &probe(&mut monitor, ms(probe_ms)),
         Indicator::SiRepetitionError,
@@ -3931,7 +3973,7 @@ fn pcr_repetition_fires(gap_ms: u64) -> bool {
     acquire_sync(&mut monitor);
     monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
     has_indicator(
-        &monitor.feed(&pcr_only_packet(0x0200, 1, 29_700_000), ms(gap_ms)),
+        monitor.feed(&pcr_only_packet(0x0200, 1, 29_700_000), ms(gap_ms)),
         Indicator::PcrRepetitionError,
     )
 }
@@ -3947,7 +3989,7 @@ fn pcr_discontinuity_fires(second_ticks: u64) -> bool {
     acquire_sync(&mut monitor);
     monitor.feed(&pcr_only_packet(0x0200, 0, 27_000_000), ms(0));
     has_indicator(
-        &monitor.feed(&pcr_only_packet(0x0200, 1, second_ticks), ms(50)),
+        monitor.feed(&pcr_only_packet(0x0200, 1, second_ticks), ms(50)),
         Indicator::PcrDiscontinuityError,
     )
 }
@@ -3971,7 +4013,10 @@ fn pts_gap_fires(second_ms: u64) -> bool {
     let pes = make_pes_header_with_pts(0xE0, 10);
     monitor.feed(&make_ts_packet(es_pid, 0, true, false, &[], &pes), ms(20));
     has_indicator(
-        &monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(second_ms)),
+        monitor.feed(
+            &make_ts_packet(es_pid, 1, true, false, &[], &pes),
+            ms(second_ms),
+        ),
         Indicator::PtsError,
     )
 }
@@ -4047,7 +4092,11 @@ fn eit_pf_per_section_absence_absent_when_both_sections_alternate() {
     let mut events = Vec::new();
     let mut t = 5u64;
     while t <= 6_005 {
-        let section = if (t - 5) % 1_000 == 0 { &sec0 } else { &sec1 };
+        let section = if (t - 5).is_multiple_of(1_000) {
+            &sec0
+        } else {
+            &sec1
+        };
         events.extend(feed_all(
             &mut monitor,
             &packetise_section(PID_EIT, section),
@@ -4077,7 +4126,11 @@ fn eit_pf_section_vanishing_is_reported_once_past_the_interval() {
 
     let mut t = 5u64;
     while t <= 2_005 {
-        let section = if (t - 5) % 1_000 == 0 { &sec0 } else { &sec1 };
+        let section = if (t - 5).is_multiple_of(1_000) {
+            &sec0
+        } else {
+            &sec1
+        };
         events.extend(feed_all(
             &mut monitor,
             &packetise_section(PID_EIT, section),
@@ -4276,7 +4329,7 @@ fn pts_check_rejects_short_pes_payloads_without_arming() {
         let pes = make_pes_header_with_pts(0xE0, 10);
         let events = monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(900));
         assert!(
-            !has_indicator(&events, Indicator::PtsError),
+            !has_indicator(events, Indicator::PtsError),
             "a {n}-byte PES payload must not arm 2.5: {events:#?}"
         );
     }
@@ -4294,7 +4347,7 @@ fn pts_check_accepts_an_exactly_eight_byte_pes_header() {
     monitor.feed(&pusi_payload_packet(es_pid, 0, &header), ms(20));
     let events = monitor.feed(&pusi_payload_packet(es_pid, 1, &header), ms(800));
     assert!(
-        has_indicator(&events, Indicator::PtsError),
+        has_indicator(events, Indicator::PtsError),
         "an 8-byte header with PTS_DTS_flags=0b10 arms 2.5: {events:#?}"
     );
 }
@@ -4318,7 +4371,7 @@ fn pts_check_rejects_partial_pes_start_codes_without_arming() {
         let pes = make_pes_header_with_pts(0xE0, 10);
         let events = monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(900));
         assert!(
-            !has_indicator(&events, Indicator::PtsError),
+            !has_indicator(events, Indicator::PtsError),
             "prefix {prefix:02X?} is not a PES start code: {events:#?}"
         );
     }
@@ -4338,20 +4391,38 @@ fn priority_names_are_literal() {
 #[test]
 fn indicator_clauses_are_literal() {
     let cases = [
-        (Indicator::TsSyncLoss, "TR 101 290 v1.4.1 Table 5.0a indicator 1.1"),
-        (Indicator::SyncByteError, "TR 101 290 v1.4.1 Table 5.0a indicator 1.2"),
-        (Indicator::PatError2, "TR 101 290 v1.4.1 Table 5.0a indicator 1.3.a"),
+        (
+            Indicator::TsSyncLoss,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.1",
+        ),
+        (
+            Indicator::SyncByteError,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.2",
+        ),
+        (
+            Indicator::PatError2,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.3.a",
+        ),
         (
             Indicator::ContinuityCountError,
             "TR 101 290 v1.4.1 Table 5.0a indicator 1.4",
         ),
-        (Indicator::PmtError2, "TR 101 290 v1.4.1 Table 5.0a indicator 1.5.a"),
-        (Indicator::PidError, "TR 101 290 v1.4.1 Table 5.0a indicator 1.6"),
+        (
+            Indicator::PmtError2,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.5.a",
+        ),
+        (
+            Indicator::PidError,
+            "TR 101 290 v1.4.1 Table 5.0a indicator 1.6",
+        ),
         (
             Indicator::TransportError,
             "TR 101 290 v1.4.1 Table 5.0b indicator 2.1",
         ),
-        (Indicator::CrcError, "TR 101 290 v1.4.1 Table 5.0b indicator 2.2"),
+        (
+            Indicator::CrcError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.2",
+        ),
         (
             Indicator::PcrRepetitionError,
             "TR 101 290 v1.4.1 Table 5.0b indicator 2.3a",
@@ -4360,9 +4431,18 @@ fn indicator_clauses_are_literal() {
             Indicator::PcrDiscontinuityError,
             "TR 101 290 v1.4.1 Table 5.0b indicator 2.3b",
         ),
-        (Indicator::PtsError, "TR 101 290 v1.4.1 Table 5.0b indicator 2.5"),
-        (Indicator::CatError, "TR 101 290 v1.4.1 Table 5.0b indicator 2.6"),
-        (Indicator::NitError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.1"),
+        (
+            Indicator::PtsError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.5",
+        ),
+        (
+            Indicator::CatError,
+            "TR 101 290 v1.4.1 Table 5.0b indicator 2.6",
+        ),
+        (
+            Indicator::NitError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.1",
+        ),
         (
             Indicator::SiRepetitionError,
             "TR 101 290 v1.4.1 Table 5.0c indicator 3.2",
@@ -4371,15 +4451,30 @@ fn indicator_clauses_are_literal() {
             Indicator::UnreferencedPid,
             "TR 101 290 v1.4.1 Table 5.0c indicator 3.4",
         ),
-        (Indicator::SdtError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.5"),
-        (Indicator::EitError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.6"),
-        (Indicator::RstError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.7"),
-        (Indicator::TdtError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.8"),
+        (
+            Indicator::SdtError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.5",
+        ),
+        (
+            Indicator::EitError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.6",
+        ),
+        (
+            Indicator::RstError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.7",
+        ),
+        (
+            Indicator::TdtError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.8",
+        ),
         (
             Indicator::PcrAccuracyError,
             "TR 101 290 v1.4.1 Table 5.0b indicator 2.4",
         ),
-        (Indicator::BufferError, "TR 101 290 v1.4.1 Table 5.0c indicator 3.3"),
+        (
+            Indicator::BufferError,
+            "TR 101 290 v1.4.1 Table 5.0c indicator 3.3",
+        ),
         (
             Indicator::EmptyBufferError,
             "TR 101 290 v1.4.1 Table 5.0c indicator 3.9",
