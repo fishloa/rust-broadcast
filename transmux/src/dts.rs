@@ -889,6 +889,20 @@ mod tests {
     }
 
     #[test]
+    fn into_ddts_maps_each_frame_duration_code() {
+        for (nblks, samples, code) in [(31u8, 1024u32, 1u8), (63, 2048, 2), (127, 4096, 3)] {
+            let hdr = build_core_header(nblks, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
+            let info = DtsCoreFrameInfo::from_es(&hdr).unwrap();
+            assert_eq!(info.samples_per_frame, samples, "NBLKS {nblks}");
+            assert_eq!(
+                info.into_ddts().frame_duration,
+                code,
+                "NBLKS {nblks} -> FrameDuration code {code}"
+            );
+        }
+    }
+
+    #[test]
     fn into_ddts_open_rate_yields_zero_bitrate() {
         let hdr = build_core_header(
             FX_NBLKS,
