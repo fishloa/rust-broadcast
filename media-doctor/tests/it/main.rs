@@ -4,6 +4,7 @@ mod cli_routing;
 mod codec_v2_real_captures;
 mod dash_validator_fixture;
 mod dash_validator_golden;
+mod fps_cadence;
 mod hevc_array_findings;
 mod hls_fixture;
 mod hls_validator_fixture;

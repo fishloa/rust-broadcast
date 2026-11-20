@@ -484,6 +484,52 @@ mod tests {
         );
     }
 
+    /// A forward step of exactly half the 33-bit range is still forward (no
+    /// finding); one tick more is a backward step. Pins the boundary the
+    /// wrap-vs-backward rule turns on.
+    #[test]
+    fn half_range_step_is_forward_not_backward() {
+        fn report_after(second: u64) -> Report {
+            let pid = 0x0100;
+            let mut ts = Vec::new();
+            ts.extend_from_slice(&make_pes_packet(
+                Pid::from_wire_masked(pid),
+                0,
+                &build_pes_with_pts(0xE0, 0, &[0xAA]),
+            ));
+            ts.extend_from_slice(&make_pes_packet(
+                Pid::from_wire_masked(pid),
+                1,
+                &build_pes_with_pts(0xE0, second, &[0xBB]),
+            ));
+            let mut report = Report::new();
+            PtsCheck.run(&ts, &mut report);
+            report
+        }
+
+        let at_half = report_after(PTS_HALF);
+        assert!(
+            at_half
+                .findings()
+                .iter()
+                .all(|f| f.rule_id != "pts-backward"),
+            "exactly half the range is a forward step, got {:?}",
+            at_half.findings()
+        );
+
+        let past_half = report_after(PTS_HALF + 1);
+        assert_eq!(
+            past_half
+                .findings()
+                .iter()
+                .filter(|f| f.rule_id == "pts-backward")
+                .count(),
+            1,
+            "one tick past half the range is backward, got {:?}",
+            past_half.findings()
+        );
+    }
+
     #[test]
     fn forbidden_pts_dts_flags_detected() {
         let pid = 0x0100;
@@ -612,6 +658,137 @@ mod tests {
             bw[0].message.contains("500000"),
             "the finding must be measured against the discontinuity packet's own PTS 500000, got {:?}",
             bw[0].message
+        );
+    }
+
+    /// Only stream_ids carrying a PES optional header are checked: padding /
+    /// other non-PES ids (0xBE, 0xF0+) are skipped even when their bytes
+    /// would decode as forbidden flags.
+    #[test]
+    fn stream_id_gate_selects_only_pes_with_optional_header() {
+        // 0xBE bytes that would read as PTS_DTS_flags == 01 are skipped.
+        let padding = build_pes_forbidden_flags(0xBE, &[0xAA]);
+        let ts = make_pes_packet(Pid::from_wire_masked(0x0100), 0, &padding);
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        assert!(
+            report.findings().is_empty(),
+            "stream_id 0xBE is not a PES and must be skipped: {:?}",
+            report.findings()
+        );
+
+        // 0xF3 is outside the stream-id set this check accepts (0xBD,
+        // 0xC0..=0xEF); its forbidden-flag bytes must not be parsed as a PES.
+        let reserved = build_pes_forbidden_flags(0xF3, &[0xAA]);
+        let ts = make_pes_packet(Pid::from_wire_masked(0x0100), 0, &reserved);
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        assert!(
+            report.findings().is_empty(),
+            "stream_id 0xF3 is not an accepted PES id and must be skipped: {:?}",
+            report.findings()
+        );
+
+        // 0xBD (private_stream_1) carries a DTS: a backward step is flagged.
+        let mut ts = Vec::new();
+        ts.extend_from_slice(&make_pes_packet(
+            Pid::from_wire_masked(0x0100),
+            0,
+            &build_pes_with_pts_dts(0xBD, 90_000, 90_000, &[0xAA]),
+        ));
+        ts.extend_from_slice(&make_pes_packet(
+            Pid::from_wire_masked(0x0100),
+            1,
+            &build_pes_with_pts_dts(0xBD, 96_000, 84_000, &[0xBB]),
+        ));
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        assert_eq!(
+            report
+                .findings()
+                .iter()
+                .filter(|f| f.rule_id == "dts-backward")
+                .count(),
+            1,
+            "stream_id 0xBD is a PES and a backward DTS must be flagged: {:?}",
+            report.findings()
+        );
+
+        // 0xF0 is reserved/padding: skipped even with the same timestamps.
+        let mut ts = Vec::new();
+        ts.extend_from_slice(&make_pes_packet(
+            Pid::from_wire_masked(0x0100),
+            0,
+            &build_pes_with_pts_dts(0xF0, 90_000, 90_000, &[0xAA]),
+        ));
+        ts.extend_from_slice(&make_pes_packet(
+            Pid::from_wire_masked(0x0100),
+            1,
+            &build_pes_with_pts_dts(0xF0, 96_000, 84_000, &[0xBB]),
+        ));
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        assert!(
+            report.findings().is_empty(),
+            "stream_id 0xF0 is not a PES and must be skipped: {:?}",
+            report.findings()
+        );
+    }
+
+    /// A PUSI packet whose payload is exactly `payload` bytes, sized by a
+    /// filler adaptation field (so a sub-9-byte unit is reachable).
+    fn make_short_pes_packet(pid: Pid, cc: u8, payload: &[u8]) -> Vec<u8> {
+        let mut pkt = vec![0xFFu8; 188];
+        pkt[0] = 0x47;
+        pkt[1] = 0x40 | (((pid.value() >> 8) as u8) & 0x1F);
+        pkt[2] = (pid.value() & 0xFF) as u8;
+        pkt[3] = 0x30 | (cc & 0x0F); // AFC=11 (adaptation + payload)
+        let af_len = 188 - 5 - payload.len();
+        pkt[4] = af_len as u8;
+        pkt[5] = 0x00; // adaptation flags: nothing
+        let start = 5 + af_len;
+        pkt[start..start + payload.len()].copy_from_slice(payload);
+        pkt
+    }
+
+    /// A unit shorter than the 9-byte PES header must be skipped, not
+    /// indexed past its end; a full 9-byte unit is still checked.
+    #[test]
+    fn short_unit_guard_does_not_panic() {
+        let pid = Pid::from_wire_masked(0x0100);
+        let three = [0x00u8, 0x00, 0x01];
+        let four = [0x00u8, 0x00, 0x00, 0x00];
+        let eight = [0x00u8; 8];
+        let forbidden = build_pes_forbidden_flags(0xE0, &[]);
+        assert_eq!(
+            forbidden.len(),
+            9,
+            "the forbidden-flags PES must be exactly 9 bytes",
+        );
+
+        let mut ts = Vec::new();
+        for (cc, payload) in [
+            (0u8, &[0x00u8, 0x00][..]),
+            (1, &three[..]),
+            (2, &four[..]),
+            (3, &eight[..]),
+            (4, &forbidden[..]),
+            (5, &[0x00u8, 0x00][..]), // flushes the 9-byte unit
+        ] {
+            ts.extend_from_slice(&make_short_pes_packet(pid, cc, payload));
+        }
+
+        let mut report = Report::new();
+        PtsCheck.run(&ts, &mut report);
+        assert_eq!(
+            report
+                .findings()
+                .iter()
+                .filter(|f| f.rule_id == "pts-forbidden-flags")
+                .count(),
+            1,
+            "only the 9-byte unit is long enough to be checked: {:?}",
+            report.findings()
         );
     }
 }
