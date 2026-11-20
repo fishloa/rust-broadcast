@@ -709,6 +709,113 @@ mod follower_tests {
         );
     }
 
+    fn aac_spec(track_id: TrackId) -> TrackSpec {
+        use broadcast_common::mux::Unpackage;
+        let bytes = test_fixtures::read("ts/h264-aac.ts");
+        let media = transmux::TsDemux::new()
+            .unpackage(&bytes)
+            .expect("demux the fixture");
+        let mut spec = media
+            .tracks
+            .iter()
+            .find(|t| matches!(t.spec.config, transmux::pipeline::CodecConfig::Aac { .. }))
+            .expect("the fixture carries AAC")
+            .spec
+            .clone();
+        spec.track_id = track_id;
+        spec
+    }
+
+    fn selectors(items: &[AudioTrackSelector]) -> Vec<AudioTrackSelector> {
+        items.to_vec()
+    }
+
+    #[test]
+    fn resolve_sources_maps_each_declared_rendition_to_its_own_track() {
+        let tracks = vec![
+            aac_spec(TrackId::new(2)),
+            aac_spec(TrackId::new(3)),
+            track_spec(TrackId::new(1)),
+        ];
+        let mapped = resolve_sources(
+            "route",
+            &selectors(&[
+                AudioTrackSelector::Index(0),
+                AudioTrackSelector::Index(1),
+            ]),
+            &tracks,
+        );
+        assert_eq!(
+            mapped
+                .iter()
+                .map(|(rendition, spec)| (*rendition, spec.track_id))
+                .collect::<Vec<_>>(),
+            vec![(0, TrackId::new(2)), (1, TrackId::new(3))]
+        );
+    }
+
+    #[test]
+    fn resolve_sources_ignores_a_track_another_rendition_already_uses() {
+        let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
+        let mapped = resolve_sources(
+            "route",
+            &selectors(&[
+                AudioTrackSelector::Index(0),
+                AudioTrackSelector::TrackId(2),
+            ]),
+            &tracks,
+        );
+        assert_eq!(mapped.len(), 1, "the duplicate second selector is ignored");
+        assert_eq!(mapped[0].1.track_id, TrackId::new(2));
+    }
+
+    #[test]
+    fn resolve_sources_skips_an_out_of_range_index_and_keeps_the_last() {
+        let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
+        assert!(
+            resolve_sources("route", &selectors(&[AudioTrackSelector::Index(2)]), &tracks)
+                .is_empty(),
+            "index == len matches nothing"
+        );
+        let last = resolve_sources("route", &selectors(&[AudioTrackSelector::Index(1)]), &tracks);
+        assert_eq!(last.len(), 1);
+        assert_eq!(last[0].1.track_id, TrackId::new(3));
+    }
+
+    #[test]
+    fn resolve_sources_refuses_to_leave_the_leader_nothing() {
+        let tracks = vec![aac_spec(TrackId::new(2)), aac_spec(TrackId::new(3))];
+        assert!(
+            resolve_sources(
+                "route",
+                &selectors(&[
+                    AudioTrackSelector::Index(0),
+                    AudioTrackSelector::Index(1),
+                ]),
+                &tracks,
+            )
+            .is_empty(),
+            "mapping every muxable track leaves the primary playlist nothing"
+        );
+    }
+
+    #[test]
+    fn leader_tracks_keep_everything_except_the_mapped_rendition() {
+        let tracks = vec![
+            track_spec(TrackId::new(1)),
+            aac_spec(TrackId::new(2)),
+            aac_spec(TrackId::new(3)),
+        ];
+        let mapped = vec![(0, aac_spec(TrackId::new(2)))];
+        assert_eq!(
+            leader_tracks(&tracks, &mapped)
+                .iter()
+                .map(|t| t.track_id)
+                .collect::<Vec<_>>(),
+            vec![TrackId::new(1), TrackId::new(3)]
+        );
+    }
+
     /// The follower writes into the trunk it was given, whatever capacities the
     /// host chose for it.
     #[test]
