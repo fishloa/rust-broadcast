@@ -59,6 +59,7 @@
 - `EpgStore::with_collector_max_logical_keys` is shown to apply the cap it sets and to leave `with_max_services` in place: a cap of 1 over 8 distinct services evicts collector keys while the service cache still stops at 7 (#3540).
 - `EpgStore::collector_sections_evicted_for_capacity` is asserted to be 0 before any eviction and exactly 1 for one extra section-set key at a cap of 1 (#3541).
 - The EPG service and event eviction counters are 0 on a fresh store, 2 after three services at a cap of 1 and 2 after three event_ids at a per-service cap of 1 (#3542).
+- `EpgStore::schedule`'s half-open `[from, to)` bound is pinned with an event starting exactly at `to` (excluded) and one exactly at `from` (included) (#3543).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

@@ -1839,6 +1839,36 @@ mod tests {
         assert!(events.is_empty());
     }
 
+    #[test]
+    fn schedule_end_bound_is_exclusive() {
+        let t1000 = utc(2026, 6, 10, 10, 0, 0);
+        let t1100 = utc(2026, 6, 10, 11, 0, 0);
+        let t1200 = utc(2026, 6, 10, 12, 0, 0);
+        let sec = core::time::Duration::from_secs(3600);
+
+        let mut store = EpgStore::new();
+        let key = ServiceKey {
+            original_network_id: 1,
+            transport_stream_id: 1,
+            service_id: 100,
+        };
+        let svc = store.cache.entry(key).or_default();
+        for (id, t) in [(1, t1000), (2, t1100), (3, t1200)] {
+            svc.events.insert(id, empty_event(id, Some(t), Some(sec)));
+        }
+
+        // [10:00, 12:00) excludes the event starting exactly at 12:00.
+        let events = store.schedule(key, t1000, t1200).unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].event_id, 1);
+        assert_eq!(events[1].event_id, 2);
+
+        // [11:00, 12:00) includes the event starting exactly at 11:00.
+        let events = store.schedule(key, t1100, t1200).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, 2);
+    }
+
     // ------------------------------------------------------------------
     // Cap enforcement: max_services bounds service-count growth
     // ------------------------------------------------------------------
