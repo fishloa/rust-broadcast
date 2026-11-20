@@ -3359,3 +3359,65 @@ fn tbn_data_delay_does_not_fire_at_exactly_one_second() {
         "the first packet after 1.000 s (2000 + 1001 ms) is where the strict limit trips"
     );
 }
+
+/// Burst `pid` far above its leak estimate after a slow warm-up that pins the
+/// estimate to its 125 kB/s floor, then return every event raised.
+fn tbn_burst_events(pid: u16) -> Vec<crate::ConformanceEvent> {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let t = ms(10 + i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    for i in 0..12_000u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    events
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c builds per-PID TBn only for elementary-stream
+/// PIDs: PAT/CAT/NIT/SDT/EIT/RST/TDT-TOT are modelled by TBsys, and the null
+/// PID carries no stream. A burst that would trip 3.10 on an ES PID must stay
+/// silent on each excluded PID.
+#[test]
+fn tbn_is_created_only_for_non_si_non_null_pids() {
+    for pid in [
+        0x0000u16, 0x0001, 0x0010, 0x0011, 0x0012, 0x0013, 0x0014, 0x1FFF,
+    ] {
+        let events = tbn_burst_events(pid);
+        let flagged: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.pid == Some(Pid::from_wire_masked(pid))
+                    && matches!(
+                        e.indicator,
+                        Indicator::DataDelayError | Indicator::EmptyBufferError
+                    )
+            })
+            .collect();
+        assert!(
+            flagged.is_empty(),
+            "PID 0x{pid:04X} must not own a TBn: {flagged:#?}"
+        );
+    }
+
+    let es_pid: u16 = 0x0200;
+    let events = tbn_burst_events(es_pid);
+    let delay: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::DataDelayError
+                && e.pid == Some(Pid::from_wire_masked(es_pid))
+        })
+        .collect();
+    assert_eq!(
+        delay.len(),
+        1,
+        "ES PID 0x0200 owns a TBn: the same burst must raise exactly one 3.10: {delay:#?}"
+    );
+}

@@ -7,6 +7,7 @@
 
 ### Tests
 - The per-PID TBn leak-rate estimator and `Data_delay_error` (3.10) are pinned: clean 1.5 and 15 Mbit/s CBR flows raise no T-STD event, a burst after a floor-rate warm-up raises exactly one latched 3.10, and data queued exactly 1.000 s after its first byte is clean (audit 23 finding 142, #3484).
+- The TBn eligibility set is pinned: the burst recipe trips 3.10 on an ES PID and never on PAT, CAT, NIT, SDT/BAT, EIT, RST, TDT/TOT or the null PID (audit 23 finding 143, #3485).
 
 ## [15.1.0] - 2026-11-17
 ### Added
