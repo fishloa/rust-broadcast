@@ -14,6 +14,7 @@ use dvb_si::descriptors::announcement_support::{
 use dvb_si::descriptors::application_signalling::{
     ApplicationSignallingDescriptor, ApplicationSignallingEntry,
 };
+use dvb_si::descriptors::association_tag::AssociationTagDescriptor;
 use dvb_si::descriptors::carousel_identifier::{CarouselIdentifierDescriptor, FormatSpecifier};
 use dvb_si::descriptors::cell_frequency_link::{
     CellFrequencyLinkDescriptor, CellFrequencyLinkEntry, CellFrequencyLinkSubcell,
@@ -21,6 +22,9 @@ use dvb_si::descriptors::cell_frequency_link::{
 use dvb_si::descriptors::cell_list::{CellListDescriptor, CellListEntry, CellListSubcell};
 use dvb_si::descriptors::dts::DtsDescriptor;
 use dvb_si::descriptors::iso_639_language::{AudioType, Iso639LanguageDescriptor, LanguageEntry};
+use dvb_si::descriptors::mosaic::{
+    CellLinkage, ElementaryCell, MosaicDescriptor, MosaicLogicalCell,
+};
 use dvb_si::descriptors::network_name::NetworkNameDescriptor;
 use dvb_si::descriptors::registration::RegistrationDescriptor;
 use dvb_si::descriptors::service_availability::ServiceAvailabilityDescriptor;
@@ -396,6 +400,62 @@ fn stuffing_255_byte_body_is_the_widest_legal() {
     let bad = StuffingDescriptor {
         stuffing_bytes: &data,
     };
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn association_tag_255_byte_body_is_the_widest_legal() {
+    // prefix(5) + 250 selector bytes = 255.
+    let selector = vec![0x33u8; 250];
+    let ok = AssociationTagDescriptor {
+        association_tag: 1,
+        usage: 1,
+        selector: &selector,
+        private_data: &[],
+    };
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(AssociationTagDescriptor::parse(&bytes).unwrap(), ok);
+
+    let selector = vec![0x33u8; 251];
+    let bad = AssociationTagDescriptor {
+        association_tag: 1,
+        usage: 1,
+        selector: &selector,
+        private_data: &[],
+    };
+    assert!(matches!(
+        ser(&bad),
+        Err(dvb_si::Error::InvalidDescriptor { .. })
+    ));
+}
+
+#[test]
+fn mosaic_255_byte_body_is_the_widest_legal() {
+    let cell = |elementary_cells: Vec<ElementaryCell>| {
+        MosaicLogicalCell::new(1, 1, elementary_cells, CellLinkage::Undefined)
+    };
+    // grid(1) + header(3) + 250 elementary cells + linkage(1) = 255.
+    let ok = MosaicDescriptor::new(
+        false,
+        1,
+        1,
+        vec![cell((0..250u8).map(|i| ElementaryCell::new(i % 64)).collect())],
+    );
+    let bytes = ser(&ok).unwrap();
+    assert_eq!(bytes[1], 255);
+    assert_eq!(MosaicDescriptor::parse(&bytes).unwrap(), ok);
+
+    // One more elementary cell pushes the body to 256.
+    let bad = MosaicDescriptor::new(
+        false,
+        1,
+        1,
+        vec![cell((0..251u8).map(|i| ElementaryCell::new(i % 64)).collect())],
+    );
     assert!(matches!(
         ser(&bad),
         Err(dvb_si::Error::InvalidDescriptor { .. })
