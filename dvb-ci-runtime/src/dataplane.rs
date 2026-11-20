@@ -179,6 +179,19 @@ mod tests {
     }
 
     #[test]
+    fn partial_write_display_names_device_and_progress() {
+        let err = PartialWrite {
+            written: 188,
+            requested: 376,
+            device: "ci0".to_string(),
+        };
+        let text = err.to_string();
+        assert!(text.contains("ci0"), "{text}");
+        assert!(text.contains("188 of 376"), "{text}");
+        assert!(text.contains("1 packets"), "{text}");
+    }
+
+    #[test]
     fn rejects_unaligned_io() {
         let mut dev = MockCiDataDevice::new([]);
         assert_eq!(
