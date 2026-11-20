@@ -443,6 +443,21 @@ mod tests {
         );
     }
 
+    /// Two adjacent samples in the newest taps: phase 0's output is tap 0's
+    /// coefficient plus tap 1's (0.0126953125), so the accumulation must add
+    /// with each coefficient's own sign.
+    #[test]
+    fn oversample_sums_every_tap_with_its_sign() {
+        let mut history = [0.0; TAP_COUNT];
+        history[TAP_COUNT - 1] = 1.0;
+        history[TAP_COUNT - 2] = 1.0;
+        assert_eq!(
+            oversample_one(&history, &FIR_COEFFS[0]),
+            0.012_695_312_5,
+            "0.0017089843750 + 0.0109863281250"
+        );
+    }
+
     #[test]
     fn reset_clears_history_and_peak() {
         let mut m = TruePeakMeter::new();
