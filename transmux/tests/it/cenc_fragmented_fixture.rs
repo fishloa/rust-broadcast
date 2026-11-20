@@ -118,6 +118,25 @@ fn cenc_fragmented_demux_and_decrypt_succeeds() {
     );
 }
 
+/// #3657: the unprotected audio track the fixture's independent packager left
+/// cleartext is recorded in `Media::skipped` (never silently dropped) with
+/// its real sample-entry FourCC, not `"unknown"`.
+#[test]
+fn unprotected_track_is_skipped_with_its_sample_entry_fourcc() {
+    let file = read(CENC_MP4);
+    let dec = CencDecryptor::from_fmp4(&file).expect("harvest fragmented CENC metadata");
+    let media = dec.demux().expect("demux fragmented protected fMP4");
+    assert_eq!(
+        media.skipped.len(),
+        1,
+        "the one unprotected track must be recorded, not dropped silently"
+    );
+    assert_eq!(
+        media.skipped[0].fourcc, "mp4a",
+        "the AAC sample entry's FourCC is the label a caller sees"
+    );
+}
+
 #[test]
 fn cbcs_fragmented_demux_and_decrypt_succeeds() {
     let file = read(CBCS_MP4);

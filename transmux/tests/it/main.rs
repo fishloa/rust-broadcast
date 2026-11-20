@@ -21,6 +21,7 @@ mod captions;
 mod cea608_in_band_carriage;
 mod cenc;
 mod cenc_decrypt;
+mod cenc_decrypt_frag_synthetic;
 mod cenc_encrypt;
 mod cenc_encrypt_e2e;
 mod cenc_frag_layouts;
