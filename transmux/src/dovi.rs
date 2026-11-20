@@ -639,6 +639,27 @@ mod tests {
     }
 
     #[test]
+    fn descriptor_without_base_layer_cut_before_its_pid_is_short() {
+        let body = [0x01, 0x00, 0x0E, 0x1A, 0x00];
+        assert!(matches!(
+            DoviVideoStreamDescriptor::parse(&body),
+            Err(crate::error::Error::BufferTooShort(..))
+        ));
+    }
+
+    #[test]
+    fn descriptor_cut_before_the_compatibility_id_is_short() {
+        let body = [0x01, 0x00, 0x10, 0x1D];
+        assert!(matches!(
+            DoviVideoStreamDescriptor::parse(&body),
+            Err(crate::error::Error::BufferTooShort(..))
+        ));
+        let complete = [0x01, 0x00, 0x10, 0x1D, 0x10];
+        let d = DoviVideoStreamDescriptor::parse(&complete).unwrap();
+        assert!(d.extension.is_empty());
+    }
+
+    #[test]
     fn profile_84_is_representable() {
         let r = DoviDecoderConfigurationRecord {
             version_major: 1,
