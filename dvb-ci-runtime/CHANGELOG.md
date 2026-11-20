@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A bare 3-byte `apdu_tag` (the shortest legal APDU) is asserted accepted by every resource, each guarded APDU arm is asserted to ignore an unrelated tag, and an interleaved `menu_more`/`list_more` chain is asserted not to leak into the other's body (audit 23 findings 80-82, #3358/#3359/#3360).
 - Sending a resource APDU while the transport connection is not `Active` is asserted to surface the "transport connection is not active" error and write nothing, instead of being silently dropped (audit 23 finding 83, #3361).
 - Link-trace decoding is pinned tag by tag: every TPDU and SPDU label, the exact minimum SPDU length each session-management label needs (one byte less must fall back without panicking), and the SPDU/poll boundary that keeps an appended status byte out of the SPDU (audit 23 findings 84-86, #3362/#3363/#3364).
+- The transport's caps are pinned (`MAX_REASSEMBLY_LEN` 2 097 152, `MAX_SPDU_LEN` 65 534) and their boundaries asserted: an SPDU of exactly `MAX_SPDU_LEN` and a reassembly of exactly `MAX_REASSEMBLY_LEN` are accepted, one byte more is refused (audit 23 findings 87 and 88, #3365/#3366).
+- Every `Out.timer` is asserted to be the exact next deadline (reply timeout while a C_TPDU is in flight, remaining poll interval while idling), and a module `T_C_Error` and a status byte for a foreign `t_c_id` are asserted to be reported instead of accepted as our poll's answer (audit 23 findings 89 and 90, #3367/#3368).
 
 ## [0.21.1] - 2026-11-17
 ### Added
