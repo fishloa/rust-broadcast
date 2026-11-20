@@ -4546,6 +4546,264 @@ mod segmenter_tests {
         assert!(ts_events.is_empty(), "classic TS has no part target");
     }
 
+    fn ts_of(v: u32) -> Timescale {
+        Timescale::try_new(v).expect("non-zero timescale")
+    }
+
+    #[test]
+    fn timescale_moves_names_only_tracks_whose_declared_timescale_differs() {
+        let published = vec![track_spec(TrackId::new(1))];
+        let mut moved = track_spec(TrackId::new(1));
+        moved.timescale = ts_of(48_000);
+        let moves = timescale_moves(&published, &[moved]);
+        assert_eq!(moves.len(), 1);
+        assert_eq!(
+            moves.get(&TrackId::new(1)),
+            Some(&(ts_of(90_000), ts_of(48_000)))
+        );
+
+        assert!(
+            timescale_moves(&published, &published).is_empty(),
+            "an unchanged timescale needs no move"
+        );
+        assert!(
+            timescale_moves(&published, &[track_spec(TrackId::new(2))]).is_empty(),
+            "a track that was not published needs no move"
+        );
+    }
+
+    #[test]
+    fn ts_track_addition_is_admitted_in_place_and_does_not_rearm_the_gate() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, ts_config());
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
+        assert!(segmenter.start_gate_open);
+
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        let mut events = Vec::new();
+        segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(
+            segmenter.start_gate_open,
+            "classic TS adds the track in place, without rebuilding the segmenter"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SegmenterEvent::TrackSpecs(specs) if specs.iter().any(|t| t.track_id == TrackId::new(2)))),
+            "the in-place admission announces the new set: {events:?}"
+        );
+    }
+
+    #[test]
+    fn ts_unchanged_reannounce_rebuilds_and_rearms_the_gate() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, ts_config());
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
+        assert!(segmenter.start_gate_open);
+
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &NO_SIBLINGS);
+        assert!(
+            !segmenter.start_gate_open,
+            "an unchanged re-announce admits nothing, so it takes the rebuild path"
+        );
+    }
+
+    #[test]
+    fn fmp4_track_addition_rebuilds_and_advances_the_generation() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), track_spec(TrackId::new(2))]);
+        let mut events = Vec::new();
+        segmenter.pump(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, SegmenterEvent::BeginTrackSpecs { .. })),
+            "fMP4 has no in-place add_track, so it rebuilds: {events:?}"
+        );
+        assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+        assert_eq!(segmenter.track_generation, trunk.track_generation());
+    }
+
+    #[test]
+    fn enter_gap_publishes_one_empty_segment_and_stops_keeping_its_own_state() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+        let mut cursor = trunk.subscribe_segments();
+        let mut events = Vec::new();
+        segmenter.enter_gap(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(matches!(events[0], SegmenterEvent::TracksActive(false)));
+        assert!(segmenter.gap.is_some());
+        assert!(
+            segmenter.leader_durations.is_empty(),
+            "no follower needs a placeholder duration"
+        );
+
+        let mut gap_segments = 0;
+        while let Some(item) = cursor.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item {
+                assert!(entry.bytes.is_empty());
+                gap_segments += 1;
+            }
+        }
+        assert_eq!(gap_segments, 1, "exactly one gap segment is published");
+
+        segmenter.enter_gap(ProgramId(0), &trunk, &mut events, &NO_SIBLINGS);
+        assert!(
+            cursor.poll().is_none(),
+            "a second gap must not publish another placeholder"
+        );
+        assert_eq!(events.iter().filter(|e| matches!(e, SegmenterEvent::TracksActive(false))).count(), 2);
+    }
+
+    #[test]
+    fn enter_gap_remembers_the_duration_when_a_follower_needs_it() {
+        let (trunk, writer) = counted_trunk();
+        let (audio_trunk, _audio_writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        let siblings = TestSiblings {
+            audio: Some(audio_trunk),
+            subtitle: None,
+        };
+        let config = fmp4_config().with_audio_rendition_sources(vec![
+            transmux::audio_profile::AudioTrackSelector::Index(0),
+        ]);
+        let (segmenter, _events) =
+            ProgramSegmenter::try_new_with_siblings(&trunk, config, &siblings);
+        let mut segmenter = segmenter.expect("segmenter");
+        let mut events = Vec::new();
+        segmenter.enter_gap(ProgramId(0), &trunk, &mut events, &siblings);
+        let seq = trunk
+            .last_closed_segment()
+            .expect("a gap segment was published");
+        assert_eq!(
+            segmenter.leader_durations.get(&seq.value()),
+            Some(&Duration::from_secs(1)),
+            "a follower sizes its own gap from the leader's duration"
+        );
+    }
+
+    #[test]
+    fn last_queued_segment_sees_queued_segments_and_the_closed_log() {
+        let (trunk, writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
+        let mut segmenter = segmenter_for(&trunk, fmp4_config());
+        assert_eq!(segmenter.last_queued_segment(&trunk), None);
+
+        segmenter
+            .pending
+            .push_back(PendingPublish::Segment(fake_ready_entry(7)));
+        assert_eq!(
+            segmenter.last_queued_segment(&trunk),
+            Some(7),
+            "a queued segment counts even before it is published"
+        );
+        segmenter.pending.clear();
+
+        segmenter
+            .segment_writer
+            .publish_segment(fake_ready_entry(4))
+            .expect("publish");
+        assert_eq!(segmenter.last_queued_segment(&trunk), Some(4));
+    }
+
+    #[test]
+    fn fmp4_rebuild_records_part_cuts_for_an_audio_only_follower_set() {
+        let (trunk, writer) = counted_trunk();
+        let (audio_trunk, _audio_writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), aac_track_spec(TrackId::new(2))]);
+        let siblings = TestSiblings {
+            audio: Some(audio_trunk.clone()),
+            subtitle: None,
+        };
+        let config = fmp4_config().with_audio_rendition_sources(vec![
+            transmux::audio_profile::AudioTrackSelector::Index(0),
+        ]);
+        let (segmenter, _events) =
+            ProgramSegmenter::try_new_with_siblings(&trunk, config, &siblings);
+        let mut segmenter = segmenter.expect("segmenter");
+        let mut audio_segments = audio_trunk.subscribe_segments();
+
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            aac_track_spec(TrackId::new(2)),
+            track_spec(TrackId::new(3)),
+        ]);
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &siblings);
+        assert_eq!(segmenter.followers.len(), 1, "the rebuild rebuilt the follower");
+
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(0, true));
+        for i in 0..120u32 {
+            writer.publish(TrackId::new(2), RetentionClass::Timed, audio_sample(i));
+        }
+        for i in 1..120u32 {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(15)),
+            );
+        }
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &siblings);
+        segmenter.flush();
+
+        let mut carried_audio = 0;
+        while let Some(item) = audio_segments.poll() {
+            if let crate::trunk::SegmentCursorItem::Segment(entry) = item
+                && !entry.bytes.is_empty()
+            {
+                carried_audio += 1;
+            }
+        }
+        assert!(
+            carried_audio >= 2,
+            "a rebuilt fMP4 segmenter must record part cuts for its rebuilt audio follower"
+        );
+    }
+
+    #[test]
+    fn fmp4_rebuild_records_part_cuts_for_a_subtitle_only_follower_set() {
+        let (trunk, writer) = counted_trunk();
+        let (subtitle_trunk, _subtitle_writer) = counted_trunk();
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), teletext_data_track(TrackId::new(2))]);
+        let siblings = TestSiblings {
+            audio: None,
+            subtitle: Some(subtitle_trunk.clone()),
+        };
+        let (segmenter, _events) =
+            ProgramSegmenter::try_new_with_siblings(&trunk, fmp4_config(), &siblings);
+        let mut segmenter = segmenter.expect("segmenter");
+
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            teletext_data_track(TrackId::new(2)),
+            track_spec(TrackId::new(3)),
+        ]);
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &siblings);
+        assert_eq!(segmenter.subtitle_followers.len(), 1);
+
+        for i in 0..120u32 {
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(15)),
+            );
+        }
+        segmenter.pump(ProgramId(0), &trunk, &mut Vec::new(), &siblings);
+        segmenter.flush();
+
+        assert!(
+            subtitle_trunk.part_len() + subtitle_trunk.segment_len() > 0,
+            "a rebuilt fMP4 segmenter must record part cuts for its rebuilt subtitle follower"
+        );
+    }
+
     #[test]
     fn try_new_with_siblings_records_part_cuts_for_an_audio_only_follower_set() {
         let (trunk, writer) = counted_trunk();
