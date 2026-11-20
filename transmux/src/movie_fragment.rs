@@ -1932,6 +1932,36 @@ mod tests {
         );
     }
 
+    /// `effective_flags` must clear every per-sample presence bit a non-empty
+    /// sample list does not back (§8.8.8.2) and keep any other flag bit: a
+    /// stale bit writes a header promising per-sample words the body does not
+    /// carry, so every record after it is offset wrongly.
+    #[test]
+    fn trun_effective_flags_clears_stale_presence_bits() {
+        let reserved = 0x0000_1000u32;
+        let trun = TrackFragmentRunBox {
+            version: 0,
+            tr_flags: TRUN_DATA_OFFSET_PRESENT
+                | TRUN_FIRST_SAMPLE_FLAGS_PRESENT
+                | TRUN_SAMPLE_DURATION_PRESENT
+                | TRUN_SAMPLE_SIZE_PRESENT
+                | TRUN_SAMPLE_FLAGS_PRESENT
+                | TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT
+                | reserved,
+            data_offset: None,
+            first_sample_flags: None,
+            samples: vec![TrunSample::new()],
+        };
+        assert_eq!(trun.effective_flags(), reserved);
+        let b = trun.try_to_bytes().expect("serialize");
+        assert_eq!(b.len(), 16, "header, FullBox and sample_count only");
+        let p = TrackFragmentRunBox::parse_body(&b[8..]).expect("parse");
+        assert_eq!(p.tr_flags, reserved, "no stale presence bit is written");
+        assert_eq!(TrackFragmentRunBox::record_stride(p.tr_flags), 0);
+        assert_eq!(p.samples.len(), 1);
+        assert_eq!(p.samples[0], TrunSample::new());
+    }
+
     /// A v0 `trun`'s `sample_composition_time_offset` is *unsigned*
     /// (§8.8.8.2), so a legal offset of `0x8000_0001` must round-trip as
     /// version 0 — the old model wrapped it to a negative `i32` and then
