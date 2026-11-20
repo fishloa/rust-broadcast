@@ -182,4 +182,23 @@ mod tests {
         assert_eq!(applied.unmatched, [declared]);
         assert!(applied.refused.is_empty());
     }
+
+    /// `name()` is the config/wire string and the label `Display` renders.
+    #[test]
+    fn selector_and_profile_labels() {
+        for &(value, name) in &[
+            (AudioTrackSelector::Index(0), "index"),
+            (AudioTrackSelector::TrackId(1), "track_id"),
+        ] {
+            assert_eq!(value.name(), name);
+            assert_eq!(alloc::format!("{value}"), name);
+        }
+        for &(value, name) in &[
+            (AudioProfile::HeAac, "he-aac"),
+            (AudioProfile::HeAacV2, "he-aac-v2"),
+        ] {
+            assert_eq!(value.name(), name);
+            assert_eq!(alloc::format!("{value}"), name);
+        }
+    }
 }
