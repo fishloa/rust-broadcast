@@ -750,6 +750,32 @@ mod tests {
     }
 
     #[test]
+    fn nblks_five_is_accepted_and_four_is_rejected() {
+        let hdr = build_core_header(5, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
+        let info = DtsCoreFrameInfo::from_es(&hdr).unwrap();
+        assert_eq!(info.nblks, 5);
+        assert_eq!(info.samples_per_frame, 192);
+        let hdr = build_core_header(4, FX_FSIZE, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&hdr),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
+    fn fsize_95_is_accepted_and_94_is_rejected() {
+        let hdr = build_core_header(FX_NBLKS, 95, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
+        let info = DtsCoreFrameInfo::from_es(&hdr).unwrap();
+        assert_eq!(info.fsize, 95);
+        assert_eq!(info.frame_size, 96);
+        let hdr = build_core_header(FX_NBLKS, 94, FX_AMODE, FX_SFREQ, FX_RATE, FX_LFF);
+        assert!(matches!(
+            DtsCoreFrameInfo::from_es(&hdr),
+            Err(crate::error::Error::InvalidValue(..))
+        ));
+    }
+
+    #[test]
     fn from_es_rejects_invalid_sfreq() {
         let hdr = build_core_header(FX_NBLKS, FX_FSIZE, FX_AMODE, 0b0000, FX_RATE, FX_LFF);
         assert!(matches!(
