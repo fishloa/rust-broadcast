@@ -759,4 +759,57 @@ mod tests {
             Error::OutputBufferTooSmall(..)
         ));
     }
+
+    #[test]
+    fn type_labels_match_the_spec_tokens() {
+        use alloc::string::ToString;
+
+        for (value, name, display) in [
+            (DescriptorType::Pad, "Pad", "Pad"),
+            (
+                DescriptorType::SystemHardware,
+                "System Hardware",
+                "System Hardware",
+            ),
+            (
+                DescriptorType::SystemSoftware,
+                "System Software",
+                "System Software",
+            ),
+            (
+                DescriptorType::IsoReserved(0x03),
+                "ISO Reserved",
+                "ISO Reserved(0x03)",
+            ),
+            (
+                DescriptorType::DvbReserved(0x40),
+                "DVB Reserved",
+                "DVB Reserved(0x40)",
+            ),
+            (
+                DescriptorType::UserDefined(0xFF),
+                "User Defined",
+                "User Defined(0xFF)",
+            ),
+        ] {
+            assert_eq!(value.name(), name);
+            assert_eq!(value.to_string(), display);
+        }
+
+        for (value, name, display) in [
+            (SpecifierType::IeeeOui, "IEEE OUI", "IEEE OUI"),
+            (
+                SpecifierType::Unallocated(0x02),
+                "Unallocated",
+                "Unallocated(0x02)",
+            ),
+        ] {
+            assert_eq!(value.name(), name);
+            assert_eq!(value.to_string(), display);
+        }
+
+        let sub = SubDescriptorType::Unallocated(0x05);
+        assert_eq!(sub.name(), "Unallocated");
+        assert_eq!(sub.to_string(), "Unallocated(0x05)");
+    }
 }
