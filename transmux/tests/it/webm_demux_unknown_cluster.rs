@@ -405,3 +405,65 @@ fn decoy_cluster_id_with_a_fitting_size_is_taken_as_the_boundary() {
         );
     }
 }
+
+/// A decoy whose own size VINT is one byte wide pins the
+/// `id_len + size_len` sum: weakening the second `+` to `*` evaluates to
+/// `id_len * size_len` (4 here, not 5), so a size chosen to end one byte past
+/// the buffer is accepted.
+///
+/// The decoy is near the end of an unknown-size Cluster with one real block
+/// after it, so accepting it truncates the Cluster and loses that block.
+#[test]
+fn a_one_byte_decoy_size_pins_the_element_header_sum() {
+    use crate::webm_build::{
+        CLUSTER_TIMESTAMP, EBML_HEADER, SEGMENT, SIMPLE_BLOCK, TRACKS, element, encode_size,
+        encode_size_width, track_entry,
+    };
+
+    let block = |byte: u8| {
+        let mut payload = encode_size(1); // track-number VINT
+        payload.extend_from_slice(&0i16.to_be_bytes());
+        payload.push(0x80);
+        payload.push(byte);
+        element(SIMPLE_BLOCK, &payload)
+    };
+    let tracks = element(TRACKS, &track_entry(1, 1, b"V_VP9", &[]));
+    let timestamp = element(CLUSTER_TIMESTAMP, &[0]);
+    let before = block(0xAA);
+    let after = block(0xBB);
+
+    // The decoy's position within the Segment body (the reader's buffer):
+    // Tracks, then the Cluster id + its one-byte unknown-size marker, then
+    // Timestamp and the first block, then the Void id and its one-byte size.
+    let q = tracks.len() + 4 + 1 + timestamp.len() + before.len() + 2;
+    // After the decoy itself (its remaining 5 bytes) comes the second block.
+    let l = q + 5 + after.len();
+    let decoy_value = (l - q - 4) as u64;
+    assert_eq!(decoy_value, 8, "a one-byte size VINT value");
+
+    let mut decoy = CLUSTER_ID.to_vec();
+    decoy.extend_from_slice(&encode_size_width(decoy_value, 1));
+    let void = element(0xEC, &decoy); // EBML `Void`
+
+    let mut cluster_body = timestamp;
+    cluster_body.extend_from_slice(&before);
+    cluster_body.extend_from_slice(&void);
+    cluster_body.extend_from_slice(&after);
+    let mut segment_body = tracks;
+    segment_body.extend_from_slice(&CLUSTER_ID);
+    segment_body.push(0xFF); // RFC 8794 §6.2 unknown size
+    segment_body.extend_from_slice(&cluster_body);
+    let mut file = element(EBML_HEADER, &[]);
+    file.extend(element(SEGMENT, &segment_body));
+
+    let media = WebmDemux::new()
+        .demux(&file)
+        .expect("the one-byte decoy must not break the demux");
+    assert!(media.degraded.is_empty(), "{:?}", media.degraded);
+    assert_eq!(media.tracks.len(), 1);
+    assert_eq!(
+        media.tracks[0].samples.len(),
+        2,
+        "a decoy ending one byte past the buffer is not a boundary"
+    );
+}
