@@ -938,6 +938,64 @@ mod tests {
         assert!(h.chain.is_none());
     }
 
+    /// Chains belong to the `_last` tag their `_more` blocks anticipate: an
+    /// abandoned `menu_more` must not be prepended to an interleaved `list`.
+    #[test]
+    fn mmi_keeps_interleaved_chains_apart() {
+        use dvb_ci::objects::mmi_high::{List, Menu, Text};
+        let txt = |s: &'static [u8]| Text {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            text_chars: s,
+        };
+        let part = |t: ApduTag, b: &[u8]| {
+            let mut v = t.to_bytes().to_vec();
+            let mut l = [0u8; 3];
+            let n = dvb_ci::length::encode_into(b.len(), &mut l).unwrap();
+            v.extend_from_slice(&l[..n]);
+            v.extend_from_slice(b);
+            v
+        };
+        let whole = s(&List(Menu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            more: false,
+            choice_nb: 1,
+            title: txt(b"Entitlements"),
+            subtitle: txt(b""),
+            bottom: txt(b""),
+            choices: vec![txt(b"ORF AUT")],
+        }));
+        let (len, hdr) = dvb_ci::length::decode(&whole[3..]).unwrap();
+        let body = &whole[3 + hdr..3 + hdr + len];
+
+        let mut h = Mmi::default();
+        // A menu chunk that never gets its menu_last …
+        assert!(
+            h.on_apdu(&part(tag::MENU_MORE, &[0xFF, 0xFF]))
+                .unwrap()
+                .notify
+                .is_empty()
+        );
+        // … then a complete list body, then the list_last.
+        assert!(
+            h.on_apdu(&part(tag::LIST_MORE, body))
+                .unwrap()
+                .notify
+                .is_empty()
+        );
+        assert_eq!(
+            h.on_apdu(&part(tag::LIST_LAST, &[])).unwrap().notify,
+            vec![Notification::Mmi(MmiEvent::List(MmiMenu {
+                title: "Entitlements".to_string(),
+                subtitle: String::new(),
+                bottom: String::new(),
+                choices: vec!["ORF AUT".to_string()],
+            }))],
+            "the abandoned menu chunk must not be part of the list body"
+        );
+        assert!(h.chain.is_none());
+    }
+
     #[test]
     fn mmi_answers_display_control_set_mmi_mode() {
         use dvb_ci::objects::mmi_display::{DisplayControl, DisplayControlCmd, MmiMode};
