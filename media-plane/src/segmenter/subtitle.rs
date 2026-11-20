@@ -812,6 +812,186 @@ mod tests {
         );
     }
 
+    #[test]
+    fn render_excludes_cues_touching_either_range_edge() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.closed.push(cue(0, 180_000, "ends_at_start"));
+        core.closed.push(cue(180_000, 270_000, "starts_at_end"));
+        core.closed.push(cue(90_000, 90_000, "zero_length"));
+
+        let first = core.render(0, 180_000);
+        assert!(first.contains("ends_at_start"), "{first}");
+        assert!(!first.contains("starts_at_end"), "{first}");
+        assert!(!first.contains("zero_length"), "{first}");
+
+        let second = core.render(180_000, 360_000);
+        assert!(!second.contains("ends_at_start"), "{second}");
+        assert!(second.contains("starts_at_end"), "{second}");
+        assert!(!second.contains("zero_length"), "{second}");
+    }
+
+    #[test]
+    fn local_and_raw_round_trip_across_the_wrap() {
+        let mut core = core();
+        core.origin_raw = Some(clock33::WRAP_33BIT - 45_000);
+        core.edge = 0;
+        assert_eq!(core.local_of(15_000), 60_000);
+        assert_eq!(core.raw_of_local(60_000), 15_000);
+
+        core.edge = 180_000;
+        assert_eq!(core.local_of(45_000), 90_000);
+        let local = core.local_of(9_000);
+        assert_eq!(core.local_of(core.raw_of_local(local)), local);
+    }
+
+    #[test]
+    fn publish_segments_emits_each_closed_span_once_in_order() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        core.note_cut(&part(MediaSequence::new(3), 0, 360_000).cut);
+        let leaders: LeaderDurations = [(3u32, TARGET_SECS)].into_iter().collect();
+        core.close_spans(&leaders);
+        let mut ready = Vec::new();
+        core.publish_segments(None, &leaders, &mut ready);
+        let segments = segments(&ready);
+        assert_eq!(
+            segments.iter().map(|s| s.msn).collect::<Vec<_>>(),
+            [
+                MediaSequence::new(1),
+                MediaSequence::new(2),
+                MediaSequence::new(3)
+            ]
+        );
+        for segment in segments {
+            assert_eq!(
+                segment.duration, TARGET_SECS,
+                "each 2 s span keeps its exact duration"
+            );
+        }
+
+        core.note_cut(&part(MediaSequence::new(4), 0, 540_000).cut);
+        core.note_cut(&part(MediaSequence::new(5), 0, 720_000).cut);
+        let mut ready = Vec::new();
+        core.publish_segments(Some(MediaSequence::new(5)), &leaders, &mut ready);
+        assert_eq!(
+            msns(&ready),
+            [MediaSequence::new(4)],
+            "a segment strictly before the boundary is published"
+        );
+        let mut ready = Vec::new();
+        core.publish_segments(Some(MediaSequence::new(5)), &leaders, &mut ready);
+        assert!(ready.is_empty(), "nothing is left at the boundary");
+    }
+
+    #[test]
+    fn a_segment_at_the_boundary_is_not_published_early() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        core.note_cut(&part(MediaSequence::new(3), 0, 360_000).cut);
+        let mut ready = Vec::new();
+        core.publish_segments(Some(MediaSequence::new(2)), &LeaderDurations::new(), &mut ready);
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
+        let mut ready = Vec::new();
+        core.publish_segments(Some(MediaSequence::new(2)), &LeaderDurations::new(), &mut ready);
+        assert!(
+            ready.is_empty(),
+            "the segment at the boundary belongs with the next part"
+        );
+    }
+
+    #[test]
+    fn finish_publishes_the_final_partial_segment() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        let leaders: LeaderDurations = [(2u32, TARGET_SECS)].into_iter().collect();
+        let ready = core.finish(&leaders);
+        assert_eq!(
+            msns(&ready),
+            [MediaSequence::new(1), MediaSequence::new(2)],
+            "finish closes and publishes the trailing partial segment"
+        );
+    }
+
+    #[test]
+    fn close_spans_never_moves_an_already_closed_end() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        let two: LeaderDurations = [(1u32, TARGET_SECS)].into_iter().collect();
+        core.close_spans(&two);
+        let one: LeaderDurations = [(1u32, Duration::from_secs(1))].into_iter().collect();
+        core.close_spans(&one);
+        let mut ready = Vec::new();
+        core.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert_eq!(segments(&ready)[0].duration, TARGET_SECS);
+    }
+
+    #[test]
+    fn note_cut_closes_the_previous_span_only_for_part_zero() {
+        let mut nonzero = core();
+        nonzero.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        nonzero.note_cut(&part(MediaSequence::new(2), 1, 180_000).cut);
+        let mut ready = Vec::new();
+        nonzero.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert!(
+            ready.is_empty(),
+            "a non-zero part does not close the previous segment"
+        );
+
+        let mut z = core();
+        z.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        z.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        let mut ready = Vec::new();
+        z.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
+
+        let mut closed = core();
+        closed.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        let two: LeaderDurations = [(1u32, TARGET_SECS)].into_iter().collect();
+        closed.close_spans(&two);
+        closed.note_cut(&part(MediaSequence::new(2), 0, 270_000).cut);
+        let mut ready = Vec::new();
+        closed.publish_segments(None, &LeaderDurations::new(), &mut ready);
+        assert_eq!(
+            segments(&ready)[0].duration,
+            TARGET_SECS,
+            "a later part must not overwrite a closed span's end"
+        );
+    }
+
+    #[test]
+    fn a_closed_cue_ending_at_the_boundary_is_not_retained() {
+        let mut core = core();
+        core.note_cut(&part(MediaSequence::new(1), 0, 0).cut);
+        core.note_cut(&part(MediaSequence::new(2), 0, 180_000).cut);
+        core.closed.push(cue(90_000, 180_000, "ends_at_boundary"));
+        let mut ready = Vec::new();
+        core.publish_segments(
+            Some(MediaSequence::new(2)),
+            &LeaderDurations::new(),
+            &mut ready,
+        );
+        assert_eq!(msns(&ready), [MediaSequence::new(1)]);
+        assert!(
+            core.closed.is_empty(),
+            "a cue that ended at the segment boundary belongs to that segment only"
+        );
+    }
+
+    #[test]
+    fn render_rejects_an_open_cue_that_ends_at_the_range_end() {
+        let mut core = core();
+        core.origin_raw = Some(90_000);
+        core.decoder.open = Some((0, "early".into()));
+        assert!(
+            !core.render(-90_000, 0).contains("early"),
+            "a cue whose clamped end is the range end is not on screen in it"
+        );
+    }
+
     fn core() -> Core<Scripted> {
         Core::new(Scripted::default())
     }
