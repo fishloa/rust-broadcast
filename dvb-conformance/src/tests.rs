@@ -3227,3 +3227,135 @@ fn empty_buffer_error_absent_for_tbn_cbr_that_empties() {
         "a 1.5 Mbit/s CBR flow drains TBn between packets: {flagged:#?}"
     );
 }
+
+// ── 3.10 Data_delay_error on per-PID TBn (TR 101 290 Table 5.0c) ───────────
+
+/// Feed `packets` payload-free 188-byte packets on `pid` `step_us` apart,
+/// starting at 10 ms, on a fresh monitor, and return every event raised.
+fn tbn_cbr_events(pid: u16, step_us: u64, packets: u64) -> Vec<crate::ConformanceEvent> {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..packets {
+        let t = ms(10) + Duration::from_micros(i * step_us);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    events
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicators 3.9/3.10: a clean constant-bitrate
+/// flow must drain TBn between packets, at a modest and at a high rate, so
+/// neither the empty-interval nor the data-delay check fires. A broken byte
+/// accumulation or bitrate formula collapses the leak estimate to its floor
+/// and keeps a 1.5 Mbit/s (188 000 B/s) flow buffered.
+#[test]
+fn tbn_clean_cbr_flows_raise_no_buffer_errors() {
+    for (step_us, label) in [(1_000u64, "1.5 Mbit/s"), (100u64, "15 Mbit/s")] {
+        let pid: u16 = 0x0204;
+        let events = tbn_cbr_events(pid, step_us, 3_000 * (1_000 / step_us));
+        let flagged: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                e.pid == Some(Pid::from_wire_masked(pid))
+                    && matches!(
+                        e.indicator,
+                        Indicator::EmptyBufferError
+                            | Indicator::DataDelayError
+                            | Indicator::BufferError
+                    )
+            })
+            .collect();
+        assert!(
+            flagged.is_empty(),
+            "{label} CBR over 3 s must keep TBn draining: {flagged:#?}"
+        );
+    }
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.10: a burst that outruns the leak
+/// estimate (which sits on the 125 kB/s floor after a slow warm-up) keeps the
+/// first byte queued for over one second. The error is latched: exactly one.
+#[test]
+fn tbn_data_delay_trips_once_for_a_burst_after_a_low_leak_estimate() {
+    let pid: u16 = 0x0202;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..20u64 {
+        let t = ms(10 + i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    for i in 0..12_000u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 100);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    let delay: Vec<_> = events
+        .iter()
+        .filter(|e| {
+            e.indicator == Indicator::DataDelayError && e.pid == Some(Pid::from_wire_masked(pid))
+        })
+        .collect();
+    assert_eq!(
+        delay.len(),
+        1,
+        "one burst, one latched 3.10: {delay:#?}"
+    );
+    assert!(
+        delay[0].detail.contains("TBn data delay exceeds 1 s on PID 0x0202"),
+        "detail: {}",
+        delay[0].detail
+    );
+}
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.10 is a strict limit: data still
+/// queued exactly 1.000 s after the first byte is clean; at 1.001 s it trips.
+#[test]
+fn tbn_data_delay_does_not_fire_at_exactly_one_second() {
+    let pid: u16 = 0x0203;
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let mut cc = 0u8;
+    let mut events = Vec::new();
+    for i in 0..10u64 {
+        let t = ms(10 + i);
+        events.extend(monitor.feed(&tbn_packet(pid, cc), t).to_vec());
+        cc = cc.wrapping_add(1);
+    }
+    let mut at_deadline = Vec::new();
+    for i in 0..=1_010u64 {
+        let t = ms(2_000) + Duration::from_micros(i * 1_000);
+        let raised = monitor.feed(&tbn_packet(pid, cc), t);
+        if i == 1_000 {
+            at_deadline = raised.to_vec();
+        }
+        events.extend(raised.to_vec());
+        cc = cc.wrapping_add(1);
+    }
+
+    assert!(
+        !has_indicator(&at_deadline, Indicator::DataDelayError),
+        "a delay of exactly 1.000 s is not more than 1 s: {at_deadline:#?}"
+    );
+    let delay: Vec<_> = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::DataDelayError)
+        .collect();
+    assert_eq!(
+        delay.len(),
+        1,
+        "the first packet after the limit (2000 + 1010 ms) raises 3.10 once: {delay:#?}"
+    );
+    assert_eq!(
+        delay[0].at,
+        ms(3_001),
+        "the first packet after 1.000 s (2000 + 1001 ms) is where the strict limit trips"
+    );
+}

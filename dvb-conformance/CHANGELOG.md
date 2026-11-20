@@ -5,6 +5,9 @@
 ### Fixed
 - Per-PID `TBn` `Empty_buffer_error` (TR 101 290 indicator 3.9) can fire: each PID's transport buffer now arms its empty-interval window at creation, rather than only at the first in-sync packet, when no per-PID buffer exists yet (#3483).
 
+### Tests
+- The per-PID TBn leak-rate estimator and `Data_delay_error` (3.10) are pinned: clean 1.5 and 15 Mbit/s CBR flows raise no T-STD event, a burst after a floor-rate warm-up raises exactly one latched 3.10, and data queued exactly 1.000 s after its first byte is clean (audit 23 finding 142, #3484).
+
 ## [15.1.0] - 2026-11-17
 ### Added
 - `ConformanceMonitor::declares_pcr_pid`: whether a PID is the `PCR_PID` the latest PMT of a PAT-referenced program declares, so a consumer exporting per-PCR-PID series can restrict them to the PIDs the stream designates.
