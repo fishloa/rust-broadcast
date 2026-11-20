@@ -20,6 +20,7 @@
 - EIT P/F per-section absence (3.6.a) is pinned both ways: an alternating section 0/1 stream is clean, and a section '1' that vanishes while '0' continues is reported exactly once at 2.001 s, never blaming the surviving section (audit 23 finding 153, #3495).
 - Every legal non-`_actual` table_id is proven clean: NIT stuffing, SDT_other, BAT, stuffing on the SDT/EIT PIDs, TOT and stuffing on the TDT PID raise no `*_error` (audit 23 finding 154, #3496).
 - The reserved-for-future-use PID range (0x0002..=0x000F) is exempt from Unreferenced_PID, while 0x0020 just past it is flagged once (audit 23 finding 155, #3497).
+- PCR silence on a PID that keeps sending is timed: exactly 100 ms without a PCR is clean, 110 ms trips 2.3a once, and a further packet does not repeat it (audit 23 finding 156, #3498).
 
 ## [15.1.0] - 2026-11-17
 ### Added

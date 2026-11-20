@@ -4208,3 +4208,44 @@ fn reserved_for_future_use_pids_are_exempt_from_unreferenced_pid() {
         "0x0020 is outside the reserved range and is flagged once: {events:#?}"
     );
 }
+
+/// TR 101 290 v1.4.1 Table 5.0b indicator 2.3a for a PCR PID that keeps
+/// sending: silence is measured from the last PCR, and exactly 100 ms is
+/// still inside the limit. The old test only counted one event over 250 ms,
+/// which an immediate error and a correct one both produce.
+#[test]
+fn pcr_silence_trips_only_past_exactly_100_ms() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let pid: u16 = 0x0200;
+    monitor.feed(&pcr_only_packet(pid, 0, 27_000_000), ms(0));
+
+    let mut early = Vec::new();
+    for i in 1..=10u8 {
+        let pkt = make_ts_packet(pid, i, false, false, &[], &[0xAB]);
+        early.extend(monitor.feed(&pkt, ms(u64::from(i) * 10)).to_vec());
+    }
+    assert!(
+        !has_indicator(&early, Indicator::PcrRepetitionError),
+        "exactly 100 ms without a PCR is the limit, not a violation: {early:#?}"
+    );
+
+    let past = monitor.feed(
+        &make_ts_packet(pid, 11, false, false, &[], &[0xAB]),
+        ms(110),
+    );
+    assert!(
+        has_indicator(past, Indicator::PcrRepetitionError),
+        "110 ms of silence is past the 100 ms limit: {past:#?}"
+    );
+
+    let latched = monitor.feed(
+        &make_ts_packet(pid, 12, false, false, &[], &[0xAB]),
+        ms(120),
+    );
+    assert!(
+        !has_indicator(latched, Indicator::PcrRepetitionError),
+        "one silence, one 2.3a: {latched:#?}"
+    );
+}
