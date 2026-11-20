@@ -4249,3 +4249,77 @@ fn pcr_silence_trips_only_past_exactly_100_ms() {
         "one silence, one 2.3a: {latched:#?}"
     );
 }
+
+// ── PES-header guards in the PTS check ─────────────────────────────────────
+
+/// A PUSI packet whose TS payload is exactly `payload` bytes (the rest of the
+/// packet is adaptation-field stuffing).
+fn pusi_payload_packet(pid: u16, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
+    assert!(payload.len() <= 183, "payload must fit one TS packet");
+    let af = vec![0u8; TS_PACKET_SIZE - 5 - payload.len()];
+    make_ts_packet(pid, cc, true, true, &af, payload)
+}
+
+/// ISO/IEC 13818-1 §2.4.3.6: the PES flags byte lives at offset 6, so a
+/// payload shorter than 8 bytes cannot carry a PTS. Every short payload must
+/// be rejected without indexing past its end, and must not arm the PID.
+#[test]
+fn pts_check_rejects_short_pes_payloads_without_arming() {
+    let es_pid: u16 = 0x0200;
+    let full = [0x00u8, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x80];
+    for n in 0..=7usize {
+        let mut monitor = ConformanceMonitor::new();
+        setup_monitor_with_es(&mut monitor, es_pid);
+        let short = pusi_payload_packet(es_pid, 0, &full[..n]);
+        monitor.feed(&short, ms(20));
+
+        let pes = make_pes_header_with_pts(0xE0, 10);
+        let events = monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(900));
+        assert!(
+            !has_indicator(&events, Indicator::PtsError),
+            "a {n}-byte PES payload must not arm 2.5: {events:#?}"
+        );
+    }
+}
+
+/// An exactly 8-byte PES header carries both flags bytes; the PTS check must
+/// accept it (a second PTS past the limit then reports 2.5).
+#[test]
+fn pts_check_accepts_an_exactly_eight_byte_pes_header() {
+    let es_pid: u16 = 0x0200;
+    let mut monitor = ConformanceMonitor::new();
+    setup_monitor_with_es(&mut monitor, es_pid);
+
+    let header = [0x00u8, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0x80];
+    monitor.feed(&pusi_payload_packet(es_pid, 0, &header), ms(20));
+    let events = monitor.feed(&pusi_payload_packet(es_pid, 1, &header), ms(800));
+    assert!(
+        has_indicator(&events, Indicator::PtsError),
+        "an 8-byte header with PTS_DTS_flags=0b10 arms 2.5: {events:#?}"
+    );
+}
+
+/// The PES start-code prefix is three bytes; a payload where only one of them
+/// is wrong is not a PES header and must not arm the PTS check.
+#[test]
+fn pts_check_rejects_partial_pes_start_codes_without_arming() {
+    let es_pid: u16 = 0x0200;
+    for prefix in [[0x01u8, 0x00, 0x01], [0x00, 0x01, 0x01], [0x00, 0x00, 0x02]] {
+        let mut monitor = ConformanceMonitor::new();
+        setup_monitor_with_es(&mut monitor, es_pid);
+
+        let mut header = [0x00u8; 8];
+        header[..3].copy_from_slice(&prefix);
+        header[3] = 0xE0;
+        header[6] = 0x80;
+        header[7] = 0x80;
+        monitor.feed(&pusi_payload_packet(es_pid, 0, &header), ms(20));
+
+        let pes = make_pes_header_with_pts(0xE0, 10);
+        let events = monitor.feed(&make_ts_packet(es_pid, 1, true, false, &[], &pes), ms(900));
+        assert!(
+            !has_indicator(&events, Indicator::PtsError),
+            "prefix {prefix:02X?} is not a PES start code: {events:#?}"
+        );
+    }
+}

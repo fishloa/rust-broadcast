@@ -21,6 +21,7 @@
 - Every legal non-`_actual` table_id is proven clean: NIT stuffing, SDT_other, BAT, stuffing on the SDT/EIT PIDs, TOT and stuffing on the TDT PID raise no `*_error` (audit 23 finding 154, #3496).
 - The reserved-for-future-use PID range (0x0002..=0x000F) is exempt from Unreferenced_PID, while 0x0020 just past it is flagged once (audit 23 finding 155, #3497).
 - PCR silence on a PID that keeps sending is timed: exactly 100 ms without a PCR is clean, 110 ms trips 2.3a once, and a further packet does not repeat it (audit 23 finding 156, #3498).
+- The PTS check's PES-header guards are pinned: payloads of 0..=7 bytes and one-byte-wrong start codes neither panic nor arm 2.5, while an exactly 8-byte header with `PTS_DTS_flags=0b10` does (audit 23 finding 157, #3499).
 
 ## [15.1.0] - 2026-11-17
 ### Added
