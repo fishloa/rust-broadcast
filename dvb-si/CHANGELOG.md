@@ -61,6 +61,7 @@
 - The EPG service and event eviction counters are 0 on a fresh store, 2 after three services at a cap of 1 and 2 after three event_ids at a per-service cap of 1 (#3542).
 - `EpgStore::schedule`'s half-open `[from, to)` bound is pinned with an event starting exactly at `to` (excluded) and one exactly at `from` (included) (#3543).
 - The `name()` and `Display` labels of every `DescriptorType`, `SpecifierType` and `SubDescriptorType` variant, including each reserved/unknown arm, are asserted literally (#3544).
+- The compatibility descriptor's top-level `SectionLengthOverflow { declared, available }` (at two buffer lengths) and its `descriptorCount` `BufferTooShort { need, have }` are asserted exactly (#3545).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

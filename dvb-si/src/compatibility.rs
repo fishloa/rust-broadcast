@@ -812,4 +812,32 @@ mod tests {
         assert_eq!(sub.name(), "Unallocated");
         assert_eq!(sub.to_string(), "Unallocated(0x05)");
     }
+
+    #[test]
+    fn top_level_framing_errors_report_exact_payloads() {
+        assert_eq!(
+            CompatibilityDescriptor::parse(&[0x00, 0x05, 0x00, 0x01]),
+            Err(Error::SectionLengthOverflow {
+                declared: 5,
+                available: 2,
+            })
+        );
+        assert_eq!(
+            CompatibilityDescriptor::parse(&[0x00, 0x08, 0x00, 0x00, 0x00, 0x00]),
+            Err(Error::SectionLengthOverflow {
+                declared: 8,
+                available: 4,
+            })
+        );
+        assert_eq!(
+            CompatibilityDescriptor::parse(&[0x00, 0x01, 0xAA]),
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 4,
+                    have: 3,
+                    what: "CompatibilityDescriptor descriptorCount",
+                }
+            ))
+        );
+    }
 }
