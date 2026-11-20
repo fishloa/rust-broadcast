@@ -658,6 +658,53 @@ mod tests {
         v
     }
 
+    /// An H.265 base-layer SPS carrying only the fields the geometry needs
+    /// (`sps_seq_parameter_set_id`, chroma format, picture size); the walk past
+    /// `bit_depth_chroma_minus8` is error-swallowing, so the RBSP ends there.
+    fn hevc_sps_nal(sps_id: u32, width: u32, height: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.u(4, 0); // sps_video_parameter_set_id
+        w.u(3, 0); // sps_max_sub_layers_minus1
+        w.bit(true); // sps_temporal_id_nesting_flag
+        w.u(2, 0); // general_profile_space
+        w.bit(false); // general_tier_flag
+        w.u(5, 1); // general_profile_idc
+        w.u(32, 0); // general_profile_compatibility_flags
+        w.u(48, 0); // general_constraint_indicator_flags
+        w.u(8, 93); // general_level_idc
+        w.ue(u64::from(sps_id)); // sps_seq_parameter_set_id
+        w.ue(1); // chroma_format_idc
+        w.ue(u64::from(width)); // pic_width_in_luma_samples
+        w.ue(u64::from(height)); // pic_height_in_luma_samples
+        w.bit(false); // conformance_window_flag
+        w.ue(0); // bit_depth_luma_minus8
+        w.ue(0); // bit_depth_chroma_minus8
+        let mut v = vec![0x42u8, 0x01];
+        v.extend(w.trailing());
+        v
+    }
+
+    fn hevc_pps_nal(pps_id: u32, sps_id: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.ue(u64::from(pps_id)); // pps_pic_parameter_set_id
+        w.ue(u64::from(sps_id)); // pps_seq_parameter_set_id
+        let mut v = vec![0x44u8, 0x01];
+        v.extend(w.trailing());
+        v
+    }
+
+    fn hevc_slice_nal(nal_type: u8, pps_id: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.bit(true); // first_slice_segment_in_pic_flag
+        if (HEVC_FIRST_IRAP..=HEVC_LAST_VCL).contains(&nal_type) {
+            w.bit(false); // no_output_of_prior_pics_flag
+        }
+        w.ue(u64::from(pps_id)); // slice_pic_parameter_set_id
+        let mut v = vec![nal_type << 1, 0x01];
+        v.extend(w.trailing());
+        v
+    }
+
     fn annexb(nals: &[Vec<u8>]) -> Vec<u8> {
         let mut out = Vec::new();
         for n in nals {
@@ -894,5 +941,64 @@ mod tests {
             t.observe(&[0x00, 0x00, 0x01, 0xb3]),
             ActivationOutcome::Unknown
         ));
+    }
+
+    #[test]
+    fn hevc_ids_beyond_zero_resolve_to_their_own_sps() {
+        let mut t = SpsTracker::new(TrackCodec::Hevc);
+        let first = t.observe(&annexb(&[
+            hevc_sps_nal(0, 64, 64),
+            hevc_pps_nal(0, 0),
+            hevc_slice_nal(HEVC_IDR_W_RADL, 0),
+        ]));
+        let ActivationOutcome::Changed {
+            display,
+            random_access,
+            ..
+        } = &first
+        else {
+            panic!("expected the initial change, got {first:?}");
+        };
+        assert!(*random_access, "IDR_W_RADL is a random-access picture");
+        let g = display.geometry.as_ref().expect("geometry");
+        assert_eq!((g.coded_width, g.coded_height), (64, 64));
+
+        // SPS 1 (a different picture size) reached through PPS 2.
+        let second = t.observe(&annexb(&[
+            hevc_sps_nal(1, 128, 96),
+            hevc_pps_nal(2, 1),
+            hevc_slice_nal(HEVC_IDR_W_RADL, 2),
+        ]));
+        let ActivationOutcome::Changed {
+            display,
+            random_access,
+            ..
+        } = &second
+        else {
+            panic!("expected the change to SPS 1, got {second:?}");
+        };
+        assert!(*random_access);
+        let g = display.geometry.as_ref().expect("geometry");
+        assert_eq!((g.coded_width, g.coded_height), (128, 96));
+
+        // A CRA picture (H.265 Table 7-1, `CRA_NUT` 21) is not claimed as a
+        // coded-video-sequence start by this tracker.
+        const HEVC_CRA_NUT: u8 = 21;
+        let third = t.observe(&annexb(&[
+            hevc_sps_nal(3, 192, 108),
+            hevc_pps_nal(4, 3),
+            hevc_slice_nal(HEVC_CRA_NUT, 4),
+        ]));
+        let ActivationOutcome::Changed {
+            display,
+            random_access,
+            ..
+        } = &third
+        else {
+            panic!("expected the change to SPS 3, got {third:?}");
+        };
+        assert!(!*random_access, "a CRA does not begin a CVS here");
+        let g = display.geometry.as_ref().expect("geometry");
+        assert_eq!((g.coded_width, g.coded_height), (192, 108));
     }
 }
