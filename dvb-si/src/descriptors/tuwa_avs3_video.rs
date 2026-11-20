@@ -504,4 +504,20 @@ mod tests {
         assert_eq!(TuwaLibraryRef::stream_id(0xE1).name(), "stream_id");
         assert_eq!(TuwaLibraryRef::stream_id(0xE1).to_string(), "stream_id");
     }
+
+    /// A main-stream body of exactly the fixed length is missing its reference
+    /// count byte, and the error names that byte.
+    #[test]
+    fn missing_reference_count_reports_the_next_byte_needed() {
+        // b3 bit 3 clear: not a library stream, so a count byte must follow.
+        let bytes = [TAG, 7, 0x00, 0x00, 0x00, 0x40, 0x00, 0x00, 0x00];
+        match TuwaAvs3VideoDescriptor::parse(&bytes) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, FIXED_BODY_LEN + 1);
+                assert_eq!(b.need, 8);
+                assert_eq!(b.have, FIXED_BODY_LEN);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
 }

@@ -1972,4 +1972,23 @@ mod tests {
         assert_eq!(DrcScope::preset(4).name(), "mae_groupPresetID");
         assert_eq!(DrcScope::preset(4).to_string(), "mae_groupPresetID");
     }
+
+    /// A truncated text-label body reports the byte the reader wanted, so a
+    /// caller sizing a refill gets the right amount.
+    #[test]
+    fn text_label_truncation_reports_the_next_byte_needed() {
+        use crate::descriptors::mpeg2_extension::Mpeg2ExtensionDescriptor;
+        use broadcast_common::Parse;
+
+        // scene_info_id 5, one language, "eng", then the group-count byte is
+        // missing: the reader stops at pos 5 of a 5-byte body.
+        let bytes = [0x3F, 6, 0x0B, 0x05, 0x01, b'e', b'n', b'g'];
+        match Mpeg2ExtensionDescriptor::parse(&bytes) {
+            Err(Error::BufferTooShort(b)) => {
+                assert_eq!(b.need, 6);
+                assert_eq!(b.have, 5);
+            }
+            other => panic!("expected BufferTooShort, got {other:?}"),
+        }
+    }
 }
