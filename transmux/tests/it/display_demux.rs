@@ -1,6 +1,7 @@
 //! Demux-side display geometry (Phase 4a-2): an fMP4 / MP4 sample entry's
 //! `pasp` and `colr nclx` are applied to `TrackSpec::display`.
 
+use broadcast_common::Package;
 use broadcast_common::Unpackage;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackSpec;
@@ -260,4 +261,157 @@ fn ffmpeg_krone_pasp() {
         return;
     };
     assert_eq!(got.sample_aspect_ratio(), Some((16u16, 11u16)));
+}
+
+// ---------------------------------------------------------------------------
+// Promotion (audit 23 finding 240): the `TrackSpec` geometry is authoritative
+// ---------------------------------------------------------------------------
+
+/// A `mb` x `mb` macroblock H.264 SPS (16 luma samples per MB), no crop, SAR
+/// `idc` (1 = 1:1).
+fn avc_sps_nal(sps_id: u32, mb: u32, idc: u32) -> Vec<u8> {
+    let mut w = crate::bit_writer::BitWriter::new();
+    w.ue(u64::from(sps_id)); // seq_parameter_set_id
+    w.ue(0); // log2_max_frame_num_minus4
+    w.ue(2); // pic_order_cnt_type
+    w.ue(1); // max_num_ref_frames
+    w.bit(false); // gaps_in_frame_num_value_allowed_flag
+    w.ue(u64::from(mb - 1)); // pic_width_in_mbs_minus1
+    w.ue(u64::from(mb - 1)); // pic_height_in_map_units_minus1
+    w.bit(true); // frame_mbs_only_flag
+    w.bit(true); // direct_8x8_inference_flag
+    w.bit(false); // frame_cropping_flag
+    w.bit(true); // vui_parameters_present_flag
+    w.bit(true); // aspect_ratio_info_present_flag
+    w.u(8, u64::from(idc)); // aspect_ratio_idc
+    w.bit(false); // overscan_info_present_flag
+    w.bit(true); // video_signal_type_present_flag
+    w.u(3, 5); // video_format
+    w.bit(false); // video_full_range_flag
+    w.bit(false); // colour_description_present_flag
+    let mut v = vec![0x67u8, 66, 0x00, 30];
+    v.extend(w.trailing());
+    v
+}
+
+fn avc_pps_nal(pps_id: u32, sps_id: u32) -> Vec<u8> {
+    let mut w = crate::bit_writer::BitWriter::new();
+    w.ue(u64::from(pps_id)); // pic_parameter_set_id
+    w.ue(u64::from(sps_id)); // seq_parameter_set_id
+    w.bit(false); // entropy_coding_mode_flag
+    w.bit(false); // bottom_field_pic_order_in_frame_present_flag
+    w.ue(0); // num_slice_groups_minus1
+    w.ue(0); // num_ref_idx_l0_default_active_minus1
+    w.ue(0); // num_ref_idx_l1_default_active_minus1
+    w.bit(false); // weighted_pred_flag
+    w.u(2, 0); // weighted_bipred_idc
+    w.se(0); // pic_init_qp_minus26
+    w.se(0); // pic_init_qs_minus26
+    w.se(0); // chroma_qp_index_offset
+    w.bit(false); // deblocking_filter_control_present_flag
+    w.bit(false); // constrained_intra_pred_flag
+    w.bit(false); // redundant_pic_cnt_present_flag
+    let mut v = vec![0x68u8];
+    v.extend(w.trailing());
+    v
+}
+
+fn avc_idr_slice_nal(pps_id: u32) -> Vec<u8> {
+    let mut w = crate::bit_writer::BitWriter::new();
+    w.ue(0); // first_mb_in_slice
+    w.ue(2); // slice_type = I
+    w.ue(u64::from(pps_id)); // pic_parameter_set_id
+    w.ue(0); // frame_num
+    w.ue(0); // idr_pic_id
+    let mut v = vec![0x65u8];
+    v.extend(w.trailing());
+    v
+}
+
+fn annexb_access_unit(nals: &[Vec<u8>]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for nal in nals {
+        out.extend_from_slice(&[0, 0, 0, 1]);
+        out.extend_from_slice(nal);
+    }
+    out
+}
+
+/// An AVC track spec from the committed `ts/h264-aac.ts` fixture (its real
+/// codec config), so only the samples are synthetic.
+fn avc_track_spec() -> Option<TrackSpec> {
+    let data = test_fixtures::require_bytes("ts/h264-aac.ts", "display_demux")?;
+    let media = TsDemux::new().demux(&data).ok()?;
+    media
+        .tracks
+        .into_iter()
+        .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+        .map(|t| t.spec)
+}
+
+/// Mux AVC access units (Annex B) into a one-track TS with `TsMux`.
+fn avc_ts(spec: TrackSpec, access_units: &[Vec<u8>]) -> Vec<u8> {
+    let samples: Vec<transmux::Sample> = access_units
+        .iter()
+        .enumerate()
+        .map(|(i, au)| {
+            let dts = (i as i64) * 3000;
+            transmux::Sample::from_annexb(au, Some(dts), Some(dts), Some(3000), true)
+                .expect("valid timing")
+        })
+        .collect();
+    let track = transmux::Track::new(spec, samples);
+    transmux::TsMux::new()
+        .package(&transmux::Media::new(vec![track], timescale(90000)))
+        .expect("mux the synthetic TS")
+}
+
+/// Every video `DisplayChanged`, as `(initial, coded width)`.
+fn display_changes(ts: &[u8]) -> Vec<(bool, Option<u32>)> {
+    let mut demux = transmux::StreamingTsDemux::new();
+    demux.feed(ts).expect("feed");
+    demux.finish().expect("finish");
+    let mut out = Vec::new();
+    while let Some(ev) = demux.poll_event() {
+        if let transmux::DemuxEvent::DisplayChanged {
+            display, changed, ..
+        } = ev
+        {
+            out.push((
+                changed.initial,
+                display.geometry.as_ref().map(|g| g.coded_width),
+            ));
+        }
+    }
+    out
+}
+
+/// The backlog can leave the tracker on a different SPS than the one the
+/// codec config was recovered from (here one access unit carries two SPS with
+/// the same id, and the probe keeps the first). `TrackSpec`'s geometry is
+/// authoritative for the initial event, and the switch to the second SPS is
+/// still reported for the access unit that activates it.
+#[test]
+fn promotion_restores_the_track_spec_geometry() {
+    let Some(spec) = avc_track_spec() else {
+        return;
+    };
+    let first = annexb_access_unit(&[
+        avc_sps_nal(0, 8, 1),
+        avc_sps_nal(0, 16, 1),
+        avc_pps_nal(0, 0),
+        avc_idr_slice_nal(0),
+    ]);
+    let second = annexb_access_unit(&[
+        avc_sps_nal(0, 16, 1),
+        avc_pps_nal(0, 0),
+        avc_idr_slice_nal(0),
+    ]);
+    let ts = avc_ts(spec, &[first, second.clone(), second]);
+    let changes = display_changes(&ts);
+    assert_eq!(
+        changes,
+        vec![(true, Some(128)), (false, Some(256))],
+        "the initial event carries the TrackSpec geometry, then the switch"
+    );
 }

@@ -934,6 +934,36 @@ mod tests {
         );
     }
 
+    fn geometry_state(width: u32) -> Option<Arc<DisplayInfo>> {
+        DisplayInfo::from_geometry(Some(DisplayGeometry::new(width, width, None))).map(Arc::new)
+    }
+
+    fn state_width(t: &SpsTracker) -> Option<u32> {
+        t.state()
+            .and_then(|s| s.geometry.as_ref())
+            .map(|g| g.coded_width)
+    }
+
+    #[test]
+    fn seed_full_only_fills_an_empty_state() {
+        let mut t = tracker();
+        t.seed_full(geometry_state(8));
+        assert_eq!(state_width(&t), Some(8));
+        t.seed_full(geometry_state(16));
+        assert_eq!(state_width(&t), Some(8), "the first state is kept");
+    }
+
+    #[test]
+    fn set_state_replaces_the_state_unconditionally() {
+        let mut t = tracker();
+        t.set_state(geometry_state(8));
+        assert_eq!(state_width(&t), Some(8));
+        t.set_state(geometry_state(16));
+        assert_eq!(state_width(&t), Some(16));
+        t.set_state(None);
+        assert_eq!(state_width(&t), None);
+    }
+
     #[test]
     fn a_non_video_access_unit_resolves_nothing() {
         let mut t = tracker();
