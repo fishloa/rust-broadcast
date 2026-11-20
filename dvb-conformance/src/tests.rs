@@ -3506,3 +3506,51 @@ fn std_buffer_clamps_an_oversized_occupancy_across_a_multi_year_gap() {
     buf.drain_to(Duration::from_secs(5 * 365 * 24 * 3_600));
     assert_eq!(buf.occupancy(), 0, "a five-year gap drains everything");
 }
+
+// ── TBsys capacity and data-delay exact boundaries ─────────────────────────
+
+/// TR 101 290 v1.4.1 Table 5.0c indicator 3.10 on TBsys is strict: data
+/// queued exactly 1.000 s after the first byte is clean, 1.001 s trips.
+#[test]
+fn tbsys_data_delay_trips_only_past_exactly_one_second() {
+    let config = Config {
+        sync_acquire_packets: 1,
+        ..Config::default()
+    };
+    let mut monitor = ConformanceMonitor::with_config(config);
+
+    let payload = [0xABu8; 184];
+    let mut at_deadline = Vec::new();
+    for ms_offset in 0..=1_001u64 {
+        let pkt = make_ts_packet(0x0010, (ms_offset & 0x0F) as u8, false, false, &[], &payload);
+        let events = monitor.feed(&pkt, ms(ms_offset));
+        if ms_offset == 1_000 {
+            at_deadline = events.to_vec();
+        }
+        if ms_offset == 1_001 {
+            assert!(
+                has_indicator(events, Indicator::DataDelayError),
+                "1.001 s of queued TBsys data is over the strict 1 s limit: {events:#?}"
+            );
+        }
+    }
+    assert!(
+        !has_indicator(&at_deadline, Indicator::DataDelayError),
+        "a delay of exactly 1.000 s is clean: {at_deadline:#?}"
+    );
+}
+
+/// TBsys capacity is strict: 512 bytes exactly fits; 513 overflows.
+#[test]
+fn std_buffer_overflow_is_strict_above_capacity() {
+    let mut buf = crate::tstd::StdBuffer::new(512, 125_000, Duration::ZERO);
+    assert!(!buf.feed(328, Duration::ZERO), "precondition: 328 fits");
+    assert!(
+        !buf.would_overflow(184, Duration::ZERO),
+        "exactly 512 bytes is full, not overflowed"
+    );
+    assert!(
+        buf.would_overflow(185, Duration::ZERO),
+        "513 bytes exceeds the 512-byte capacity"
+    );
+}
