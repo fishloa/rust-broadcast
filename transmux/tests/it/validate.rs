@@ -565,6 +565,39 @@ fn moof_without_mdat_bites() {
 }
 
 #[test]
+fn moof_followed_by_a_non_mdat_box_bites() {
+    let data = fixture();
+    let samples = video_samples(&data);
+    let media = clean_media(1, 0, &samples);
+
+    // A same-size `free` where the mdat was: the moof's next box exists, but it
+    // is not an mdat.
+    let renamed = rename_box(&media, b"mdat", b"free");
+    let issues = validate_media_segment(&renamed, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.mdat.missing"),
+        "a moof followed by free must report a missing mdat, got {:?}",
+        errors(&issues)
+    );
+
+    // A free box between the moof and the mdat.
+    let (mdat_off, _, _) = *top_boxes(&media)
+        .iter()
+        .find(|(_, _, t)| t == b"mdat")
+        .expect("mdat present");
+    let mut separated = media[..mdat_off].to_vec();
+    separated.extend_from_slice(&8u32.to_be_bytes());
+    separated.extend_from_slice(b"free");
+    separated.extend_from_slice(&media[mdat_off..]);
+    let issues = validate_media_segment(&separated, SegmentOrigin::FromIr);
+    assert!(
+        has_code(&issues, "media.mdat.missing"),
+        "a box between moof and mdat must report a missing mdat, got {:?}",
+        errors(&issues)
+    );
+}
+
+#[test]
 fn mdat_orphan_bites() {
     // A bare mdat with no preceding moof.
     let mut buf = Vec::new();
