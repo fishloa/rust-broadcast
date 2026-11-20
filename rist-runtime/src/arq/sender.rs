@@ -533,4 +533,66 @@ mod tests {
         let at_boundary = s.on_range_nack(&nack, T0 + MIN_RETRANSMIT_INTERVAL);
         assert_eq!(at_boundary.len(), 10);
     }
+
+    /// RFC 4585 §6.2.1: BLP bit *i* (1-indexed) marks exactly `PID + i`, so
+    /// only the set bits expand — a request expands to the packages actually
+    /// asked for, never a full 16-packet window.
+    #[test]
+    fn expand_fci_expands_only_the_set_blp_bits() {
+        assert_eq!(
+            expand_fci(NackFci {
+                pid: 100,
+                blp: 0b0000_0000_0000_0101,
+            }),
+            alloc::vec![100, 101, 103]
+        );
+        assert_eq!(
+            expand_fci(NackFci {
+                pid: 100,
+                blp: 0x8000,
+            }),
+            alloc::vec![100, 116]
+        );
+        assert_eq!(
+            expand_fci(NackFci {
+                pid: 0xFFFF,
+                blp: 0,
+            }),
+            alloc::vec![0xFFFF]
+        );
+    }
+
+    /// The BLP window wraps the 16-bit sequence space.
+    #[test]
+    fn expand_fci_wraps_the_sequence_space() {
+        assert_eq!(
+            expand_fci(NackFci {
+                pid: 0xFFFE,
+                blp: 0b11,
+            }),
+            alloc::vec![0xFFFE, 0xFFFF, 0x0000]
+        );
+    }
+
+    /// A sparse BLP requests exactly the stored packets it names, so the
+    /// sender never retransmits on behalf of an unset bit.
+    #[test]
+    fn a_sparse_blp_retransmits_only_the_named_packets() {
+        let mut s = Sender::new(16);
+        for seq in 100..104u16 {
+            s.on_sent(seq, u32::from(seq), b"x");
+        }
+        let nack = GenericNack {
+            ssrc_sender: 0,
+            ssrc_media: 1,
+            nacks: alloc::vec![NackFci {
+                pid: 100,
+                blp: 0b0000_0000_0000_0101,
+            }],
+            padding: Vec::new(),
+        };
+        let out = s.on_generic_nack(&nack, T0);
+        let seqs: Vec<u16> = out.iter().map(|r| r.seq).collect();
+        assert_eq!(seqs, alloc::vec![100, 101, 103]);
+    }
 }
