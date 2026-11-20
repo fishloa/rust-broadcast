@@ -2694,4 +2694,69 @@ mod tests {
             "version 1 with no type bytes is absent"
         );
     }
+
+    /// A `saiz` `sample_info_size` is the per-sample IV length plus, under
+    /// subsample encryption, a 2-byte count and a 6-byte entry per subsample
+    /// (ISO/IEC 23001-7 §12.3.2), and its `u8` width makes 255 legal and 256
+    /// an error rather than a silent truncation.
+    #[test]
+    fn build_cenc_fragment_boxes_sizes_each_sample_aux_info() {
+        let entry = |iv: u8, subsamples: usize| crate::cenc::SampleEncryptionEntry {
+            initialization_vector: alloc::vec![0x11; usize::from(iv)],
+            subsamples: (0..subsamples)
+                .map(|i| crate::cenc::SubSampleEntry {
+                    bytes_of_clear_data: i as u16,
+                    bytes_of_protected_data: 0,
+                })
+                .collect(),
+        };
+        let entries = alloc::vec![entry(8, 1), entry(8, 3), entry(8, 0)];
+        let protection = FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &entries,
+            per_sample_iv_size: 8,
+        };
+        let built = build_cenc_fragment_boxes(&protection)
+            .expect("aux info sizes below the ceiling")
+            .expect("subsample encryption carries a senc");
+        assert_eq!(
+            built.saiz.sample_info_sizes,
+            alloc::vec![8 + 2 + 6, 8 + 2 + 18, 8 + 2],
+            "IV + 2-byte count + 6 bytes per subsample"
+        );
+        assert_eq!(built.saiz.sample_count, 3);
+        assert_eq!(built.saiz.default_sample_info_size, 0);
+        assert_eq!(
+            built.senc.flags & crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION,
+            crate::cenc::SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION
+        );
+
+        // 1 + 2 + 6 * 42 == 255 fits the `u8` field and stays uniform.
+        let entries = alloc::vec![entry(1, 42)];
+        let at_the_ceiling = FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &entries,
+            per_sample_iv_size: 1,
+        };
+        let built = build_cenc_fragment_boxes(&at_the_ceiling)
+            .expect("255 bytes is a legal sample_info_size")
+            .expect("senc present");
+        assert_eq!(built.saiz.default_sample_info_size, 255);
+        assert!(built.saiz.sample_info_sizes.is_empty());
+
+        // 2 + 2 + 6 * 42 == 256 does not.
+        let entries = alloc::vec![entry(2, 42)];
+        let over_the_ceiling = FragmentProtection {
+            track_id: TrackId::new(1),
+            entries: &entries,
+            per_sample_iv_size: 2,
+        };
+        let err = build_cenc_fragment_boxes(&over_the_ceiling)
+            .err()
+            .expect("256 bytes exceeds the u8 sample_info_size");
+        assert!(
+            matches!(err, Error::InvalidInput(_)),
+            "expected InvalidInput, got {err:?}"
+        );
+    }
 }
