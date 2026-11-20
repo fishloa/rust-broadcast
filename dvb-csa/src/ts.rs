@@ -173,6 +173,8 @@ fn ts_payload_mut(packet: &mut [u8; TS_PACKET_SIZE]) -> Result<&mut [u8], Error>
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::format;
 
     /// Minimal TS packet: sync byte, PID 0x0100, no adaptation field, and a
     /// non-zero payload — `tsc_bits` sets `transport_scrambling_control`.
@@ -293,5 +295,15 @@ mod tests {
         );
         let err = descramble_ts_packet(&cw, KeyParity::Even, &mut packet).unwrap_err();
         assert!(matches!(err, Error::NoPayload), "got: {err:?}");
+    }
+
+    /// The parity label is read by error messages and logs, so it is pinned
+    /// literally (issue #204 `name()`/`Display` convention).
+    #[test]
+    fn key_parity_labels_are_pinned() {
+        assert_eq!(KeyParity::Even.name(), "even");
+        assert_eq!(KeyParity::Odd.name(), "odd");
+        assert_eq!(format!("{}", KeyParity::Even), "even");
+        assert_eq!(format!("{}", KeyParity::Odd), "odd");
     }
 }

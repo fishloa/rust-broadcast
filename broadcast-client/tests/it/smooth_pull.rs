@@ -795,3 +795,386 @@ fn smooth_select_variant_switches_the_quality_of_later_fragments() {
             .any(|s| s.url.contains("QualityLevels(30000)/Fragments(video="))
     );
 }
+
+fn live_manifest() -> Vec<u8> {
+    let text = String::from_utf8(body("smooth/av/Manifest")).expect("utf8");
+    text.replace("MinorVersion=\"0\"", "MinorVersion=\"0\" IsLive=\"TRUE\"")
+        .into_bytes()
+}
+
+fn video0_url() -> &'static str {
+    "http://origin.test/QualityLevels(64528)/Fragments(video=0)"
+}
+
+fn has_event(h: &Host, pred: impl Fn(&Event) -> bool) -> bool {
+    h.events.iter().any(pred)
+}
+
+#[test]
+fn a_manifest_refresh_failure_is_a_non_fatal_smooth_manifest_error() {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.route(
+        manifest_url(),
+        vec![
+            hls_host::Reply::Ok(live_manifest()),
+            hls_host::status_only(500),
+        ],
+    );
+    route_fragments(&mut h);
+    h.run_until(
+        |evs| {
+            evs.iter().any(|e| {
+                matches!(
+                    e,
+                    Event::Error {
+                        kind: ErrorKind::SmoothManifest { .. },
+                        fatal: false
+                    }
+                )
+            })
+        },
+        20_000,
+    );
+    assert!(
+        has_event(&h, |e| matches!(
+            e,
+            Event::Error {
+                kind: ErrorKind::SmoothManifest { .. },
+                fatal: false
+            }
+        )),
+        "a dropped live manifest refresh is reported non-fatally: {:?}",
+        h.events
+    );
+}
+
+#[test]
+fn an_unresolvable_fragment_url_is_a_non_fatal_fetch_failure() {
+    let text = String::from_utf8(body("smooth/av/Manifest")).expect("utf8");
+    let text = text.replace(
+        "QualityLevels({bitrate})/Fragments(video={start time})",
+        "http://[bad",
+    );
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.ok(manifest_url(), text.into_bytes());
+    h.run_until(
+        |evs| {
+            evs.iter().any(|e| {
+                matches!(
+                    e,
+                    Event::Error {
+                        kind: ErrorKind::SegmentFetchFailed { status: None },
+                        fatal: false
+                    }
+                )
+            })
+        },
+        20_000,
+    );
+    assert!(has_event(&h, |e| matches!(
+        e,
+        Event::Error {
+            kind: ErrorKind::SegmentFetchFailed { status: None },
+            fatal: false
+        }
+    )));
+}
+
+fn encrypted_fragment() -> Vec<u8> {
+    let mut senc = Vec::new();
+    senc.extend_from_slice(&8u32.to_be_bytes());
+    senc.extend_from_slice(b"senc");
+    let mut traf = Vec::new();
+    traf.extend_from_slice(&u32::try_from(8 + senc.len()).unwrap().to_be_bytes());
+    traf.extend_from_slice(b"traf");
+    traf.extend_from_slice(&senc);
+    let mut moof = Vec::new();
+    moof.extend_from_slice(&u32::try_from(8 + traf.len()).unwrap().to_be_bytes());
+    moof.extend_from_slice(b"moof");
+    moof.extend_from_slice(&traf);
+    moof
+}
+
+#[test]
+fn an_encrypted_fragment_is_fatal_unsupported_encryption() {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    h.route(
+        video0_url(),
+        vec![hls_host::Reply::Ok(encrypted_fragment())],
+    );
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+        },
+        10_000,
+    );
+    assert!(has_event(&h, |e| matches!(
+        e,
+        Event::Error {
+            kind: ErrorKind::UnsupportedEncryption { method },
+            fatal: true
+        } if method == "fragment"
+    )));
+    assert!(!has_event(&h, |e| matches!(
+        e,
+        Event::Error {
+            kind: ErrorKind::SmoothManifest { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn a_fragment_over_the_byte_cap_is_a_fatal_fetch_failure() {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    let oversized = vec![0u8; 16 * 1024 * 1024 + 1];
+    h.route(video0_url(), vec![hls_host::Reply::Ok(oversized)]);
+    h.run_until(
+        |evs| {
+            evs.iter()
+                .any(|e| matches!(e, Event::Error { fatal: true, .. }))
+        },
+        10_000,
+    );
+    assert!(has_event(&h, |e| matches!(
+        e,
+        Event::Error {
+            kind: ErrorKind::SegmentFetchFailed { status: None },
+            fatal: true
+        }
+    )));
+    assert!(!has_event(&h, |e| matches!(
+        e,
+        Event::Error {
+            kind: ErrorKind::SmoothManifest { .. },
+            ..
+        }
+    )));
+}
+
+#[test]
+fn closing_with_a_fragment_in_flight_closes_its_connection() {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    h.route(video0_url(), vec![hls_host::Reply::Hang]);
+    for _ in 0..8 {
+        if !h.hung().is_empty() {
+            break;
+        }
+        h.step();
+    }
+    assert!(!h.hung().is_empty(), "the video fragment is in flight");
+    h.session.close(ts(h.now));
+    h.collect();
+    assert!(
+        !h.closes.is_empty(),
+        "a session closed with a fragment in flight closes its socket"
+    );
+}
+
+#[test]
+fn a_fragment_is_aborted_only_after_the_inactivity_timeout_from_its_start() {
+    let mut cfg = smooth_config();
+    cfg.segment_inactivity_timeout = std::time::Duration::from_millis(100);
+    let mut h = Host::new(manifest_url(), cfg);
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    h.route(video0_url(), vec![hls_host::Reply::Hang]);
+    for _ in 0..8 {
+        if !h.hung().is_empty() {
+            break;
+        }
+        h.step();
+    }
+    let started = h.hung()[0].at_us;
+    h.now = started + 100_000 - 1;
+    h.collect();
+    assert!(
+        !has_event(&h, |e| matches!(
+            e,
+            Event::Status(Status::RequestStalled { .. })
+        )),
+        "not stalled a microsecond before the timeout"
+    );
+    h.now = started + 100_000;
+    h.collect();
+    assert!(
+        has_event(&h, |e| matches!(
+            e,
+            Event::Status(Status::RequestStalled { .. })
+        )),
+        "stalled exactly at the timeout"
+    );
+}
+
+#[test]
+fn a_401_without_credentials_asks_and_resumes_after_set_credentials() {
+    use broadcast_client::Credentials;
+
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.route(
+        manifest_url(),
+        vec![
+            hls_host::full(
+                401,
+                Vec::new(),
+                crate::support::headers(&[(
+                    "WWW-Authenticate",
+                    "Digest realm=\"cam\", nonce=\"n1\", qop=\"auth\"",
+                )]),
+            ),
+            hls_host::Reply::Ok(body("smooth/av/Manifest")),
+        ],
+    );
+    route_fragments(&mut h);
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::AuthRequired { .. })),
+        100,
+    );
+    assert!(has_event(&h, |e| matches!(e, Event::AuthRequired { .. })));
+    assert_eq!(h.hits(manifest_url()), 1, "a 401 without credentials waits");
+    h.session
+        .set_credentials(ts(h.now), Credentials::new("u", "p"))
+        .unwrap();
+    h.collect();
+    let sent: Vec<_> = h.requests_to(manifest_url());
+    assert_eq!(sent.len(), 2, "the parked request is resumed");
+    assert!(
+        sent[1].authorization().is_some(),
+        "the resumed request carries the credentials"
+    );
+}
+
+#[test]
+fn a_stale_digest_401_after_an_authenticated_request_is_replayed_once() {
+    use broadcast_client::Credentials;
+
+    let stale = "Digest realm=\"cam\", nonce=\"n2\", qop=\"auth\", stale=true";
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.route(
+        manifest_url(),
+        vec![
+            hls_host::full(
+                401,
+                Vec::new(),
+                crate::support::headers(&[(
+                    "WWW-Authenticate",
+                    "Digest realm=\"cam\", nonce=\"n1\", qop=\"auth\"",
+                )]),
+            ),
+            hls_host::full(
+                401,
+                Vec::new(),
+                crate::support::headers(&[(
+                    "WWW-Authenticate",
+                    "Digest realm=\"cam\", nonce=\"n1\", qop=\"auth\"",
+                )]),
+            ),
+            hls_host::full(
+                401,
+                Vec::new(),
+                crate::support::headers(&[("WWW-Authenticate", stale)]),
+            ),
+            hls_host::Reply::Ok(body("smooth/av/Manifest")),
+        ],
+    );
+    route_fragments(&mut h);
+    h.run_until(
+        |evs| evs.iter().any(|e| matches!(e, Event::AuthRequired { .. })),
+        100,
+    );
+    h.session
+        .set_credentials(ts(h.now), Credentials::new("u", "p"))
+        .unwrap();
+    h.collect();
+    for _ in 0..6 {
+        h.step();
+    }
+    let sent: Vec<_> = h.requests_to(manifest_url());
+    assert_eq!(
+        sent.len(),
+        4,
+        "the rejected challenge replayed, then the stale one replayed once"
+    );
+    assert!(sent[3].authorization().is_some());
+}
+
+#[test]
+fn a_fragment_closed_with_an_error_after_a_200_is_retried() {
+    let mut h = Host::new(manifest_url(), smooth_config());
+    h.ok(manifest_url(), body("smooth/av/Manifest"));
+    route_fragments(&mut h);
+    h.route(
+        video0_url(),
+        vec![
+            hls_host::Reply::ResetMid(body("smooth/av/QualityLevels(64528)/Fragments(video=0)")),
+            hls_host::Reply::Ok(body("smooth/av/QualityLevels(64528)/Fragments(video=0)")),
+        ],
+    );
+    h.run_until(|_| false, 20_000);
+    assert!(
+        h.hits(video0_url()) >= 2,
+        "a success header followed by a transport error is a retry, not a body"
+    );
+}
+
+#[test]
+fn smooth_select_audio_rendition_is_not_hls() {
+    let mut session =
+        Session::open(Url::parse(manifest_url()).unwrap(), smooth_config(), ts(0)).unwrap();
+    assert!(matches!(
+        session.select_audio_rendition(ts(0), Some(0)),
+        Err(broadcast_client::Error::NotHls)
+    ));
+}
+
+#[test]
+fn a_request_that_received_bytes_stalls_from_the_last_byte_not_from_its_start() {
+    use broadcast_client::Action;
+
+    let mut cfg = smooth_config();
+    cfg.segment_inactivity_timeout = std::time::Duration::from_millis(100);
+    let mut session = Session::open(Url::parse(manifest_url()).unwrap(), cfg, ts(0)).unwrap();
+    let headers = crate::support::headers(&[]);
+    let now = 0u64;
+
+    let manifest_conn = loop {
+        if let Some(Action::HttpRequest { conn, url, .. }) = session.poll(ts(now))
+            && url.as_str() == manifest_url()
+        {
+            break conn;
+        }
+    };
+    session.on_response(manifest_conn, http::StatusCode::OK, &headers, ts(now));
+    session.on_data(manifest_conn, &body("smooth/av/Manifest"), ts(now));
+    session.on_closed(manifest_conn, None, ts(now));
+
+    let mut fragment_conns = Vec::new();
+    while let Some(action) = session.poll(ts(now)) {
+        if let Action::HttpRequest { conn, url, .. } = action
+            && url.as_str().contains("Fragments")
+        {
+            fragment_conns.push(conn);
+        }
+    }
+    assert!(!fragment_conns.is_empty(), "a fragment is requested");
+    for conn in &fragment_conns {
+        session.on_response(*conn, http::StatusCode::OK, &headers, ts(now));
+        session.on_data(*conn, &[0u8; 1], ts(now + 1_000));
+    }
+    while session.next_event().is_some() {}
+
+    session.poll(ts(100_000));
+    let stalled = std::iter::from_fn(|| session.next_event())
+        .any(|e| matches!(e, Event::Status(Status::RequestStalled { .. })));
+    assert!(
+        !stalled,
+        "a byte 1 ms into the request moves its inactivity deadline to 101 ms"
+    );
+}

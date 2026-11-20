@@ -237,6 +237,7 @@ mod serde_bytes_compat {
 mod tests {
     use super::*;
     extern crate alloc;
+    use alloc::string::ToString;
     use alloc::vec;
 
     #[test]
@@ -366,5 +367,27 @@ mod tests {
             AncDataDescriptor::parse(&b),
             Err(Error::BufferTooShort(..))
         ));
+    }
+
+    /// The label pair is read by logs and errors, and `serialized_len` sizes
+    /// the caller's output buffer, so both are pinned literally.
+    #[test]
+    fn descriptor_label_and_serialized_len_are_pinned() {
+        let d = Descriptor::Other {
+            tag: 0xC4,
+            body: &[0x01, 0x02, 0x03],
+        };
+        assert_eq!(d.name(), "other");
+        assert_eq!(d.to_string(), "other(0xC4)");
+        assert_eq!(d.serialized_len(), 5, "tag + length + 3 body octets");
+        assert_eq!(
+            Serialize::serialized_len(&d),
+            5,
+            "the Serialize impl callers size their buffers from"
+        );
+        let mut out = vec![0u8; d.serialized_len()];
+        let n = d.serialize_into(&mut out).unwrap();
+        assert_eq!(n, 5);
+        assert_eq!(out, [0xC4, 0x03, 0x01, 0x02, 0x03]);
     }
 }

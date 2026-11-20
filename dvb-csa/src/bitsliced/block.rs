@@ -9,7 +9,6 @@
 //! selected bit-words rather than a XOR against data.
 use super::circuits::{PERM_BIT, block_sbox};
 use super::{BITS_PER_BYTE, BLOCK_BITS, BLOCK_BYTES, Word};
-use crate::zeroize::zeroize;
 
 /// Rounds in the DVB-CSA2 block cipher; one round key byte each.
 const ROUNDS: usize = 56;
@@ -23,14 +22,14 @@ type BlockSlice = [ByteSlice; BLOCK_BYTES];
 ///
 /// Not `Copy` (holds key-derived round-key bytes shared by every lane; see
 /// [`Drop for BitslicedBlock`](BitslicedBlock)).
-pub(super) struct BitslicedBlock {
+pub(crate) struct BitslicedBlock {
     sch: [u8; ROUNDS],
 }
 
 /// Zero the round-key schedule on drop — see the `zeroize` module.
 impl Drop for BitslicedBlock {
     fn drop(&mut self) {
-        zeroize(&mut self.sch);
+        crate::zeroize::zeroize(&mut self.sch);
     }
 }
 
@@ -89,8 +88,14 @@ fn pack(b: &BlockSlice, m: &mut [Word; BLOCK_BITS]) {
 }
 
 impl BitslicedBlock {
-    pub(super) fn new(sch: [u8; ROUNDS]) -> Self {
+    pub(crate) fn new(sch: [u8; ROUNDS]) -> Self {
         Self { sch }
+    }
+
+    /// The round-key schedule, read back by the zeroize-on-drop gate.
+    #[cfg(test)]
+    pub(crate) fn round_keys(&self) -> &[u8] {
+        &self.sch
     }
 
     /// Encrypt [`LANES`](super::LANES) blocks in place, rounds 0..56 forward.

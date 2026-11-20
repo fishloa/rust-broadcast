@@ -1998,4 +1998,133 @@ mod tests {
             })
         ));
     }
+
+    /// §3.4: a TLV whose value ends exactly at the end of the extension area
+    /// is complete; the boundary is `>` the remaining length, not `>=`.
+    #[test]
+    fn a_tlv_ending_exactly_at_the_end_is_parsed() {
+        let extension = HeaderExtension::new(&[0x01, 0x02, 0xAA, 0xBB]).expect("valid extension");
+        assert!(!extension.is_empty(), "an extension is never empty");
+        let items: alloc::vec::Vec<_> = extension.items().collect();
+        assert_eq!(items.len(), 1);
+        match &items[0] {
+            Ok(ExtensionItem::Tlv { tag, value }) => {
+                assert_eq!(*tag, 0x01);
+                assert_eq!(*value, &[0xAA, 0xBB]);
+            }
+            other => panic!("expected one complete TLV, got {other:?}"),
+        }
+    }
+
+    /// The `Reserved` range checks are inclusive of the mask (`>` not `>=`),
+    /// and the canonical-value rule is what rejects a code that names a
+    /// defined variant.
+    #[test]
+    fn reserved_field_range_checks_accept_the_largest_reserved_code() {
+        let vsf = VideoSourceFormat {
+            map: MapStructure::Reserved(15),
+            frame: FrameStructure::Hd1080i,
+            frate: FrameRate::Hz25,
+            sample: SampleStructure::Reserved(15),
+            fmt_reserve: 0,
+        };
+        assert!(
+            PayloadHeader::new(
+                VideoSourceId::Primary,
+                0,
+                TimestampRef::NotLocked,
+                Scrambling::NotScrambled,
+                FecUsage::None,
+                ClockFrequency::NoTimestamp,
+                0,
+                Some(vsf),
+                None,
+                None,
+            )
+            .is_ok(),
+            "Reserved(15) is the largest 4-bit reserved code and must be accepted"
+        );
+
+        for map in [MapStructure::Reserved(16), MapStructure::Reserved(0xFF)] {
+            let err = PayloadHeader::new(
+                VideoSourceId::Primary,
+                0,
+                TimestampRef::NotLocked,
+                Scrambling::NotScrambled,
+                FecUsage::None,
+                ClockFrequency::NoTimestamp,
+                0,
+                Some(VideoSourceFormat {
+                    map,
+                    frame: FrameStructure::Hd1080i,
+                    frate: FrameRate::Hz25,
+                    sample: SampleStructure::Yuv422At10Bit,
+                    fmt_reserve: 0,
+                }),
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                err,
+                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "video_source_format.map",
+                    ..
+                })
+            ));
+        }
+
+        for sample in [
+            SampleStructure::Reserved(16),
+            SampleStructure::Reserved(0xFF),
+        ] {
+            let err = PayloadHeader::new(
+                VideoSourceId::Primary,
+                0,
+                TimestampRef::NotLocked,
+                Scrambling::NotScrambled,
+                FecUsage::None,
+                ClockFrequency::NoTimestamp,
+                0,
+                Some(VideoSourceFormat {
+                    map: MapStructure::Direct,
+                    frame: FrameStructure::Hd1080i,
+                    frate: FrameRate::Hz25,
+                    sample,
+                    fmt_reserve: 0,
+                }),
+                None,
+                None,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                err,
+                Error::InvalidValue(broadcast_common::error::InvalidValue {
+                    field: "video_source_format.sample",
+                    ..
+                })
+            ));
+        }
+
+        let err = PayloadHeader::new(
+            VideoSourceId::Primary,
+            0,
+            TimestampRef::Reserved(3),
+            Scrambling::NotScrambled,
+            FecUsage::None,
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        match err {
+            Error::InvalidValue(iv) => assert_eq!(
+                iv.reason, "Reserved(..) carries a defined code; use the named variant",
+                "Reserved(3) is within the 2-bit mask; the canonical-value rule rejects it"
+            ),
+            other => panic!("expected InvalidValue, got {other:?}"),
+        }
+    }
 }

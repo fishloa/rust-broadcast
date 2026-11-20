@@ -292,6 +292,38 @@ mod tests {
         assert_eq!(PrimerPack::parse(&buf).unwrap(), pack);
     }
 
+    /// §9.2 Table 15's header states both the entry count and the 18-byte
+    /// entry size; each is rejected on its own.
+    #[test]
+    fn primer_rejects_a_bad_item_len_and_a_bad_count_separately() {
+        let mut value = alloc::vec![0u8, 0, 0, 1, 0, 0, 0, 17];
+        value.extend_from_slice(&[0x3B, 0x02]);
+        value.extend_from_slice(&[0xAA; 16]);
+        let mut bytes = alloc::vec![0u8; 16 + 1 + value.len()];
+        bytes[..16].copy_from_slice(PrimerPack::key().as_ref());
+        bytes[16] = value.len() as u8;
+        bytes[17..].copy_from_slice(&value);
+        assert!(
+            matches!(
+                PrimerPack::parse(&bytes),
+                Err(Error::InvalidBatchHeader { item_len: 17, .. })
+            ),
+            "item_len 17 must be rejected"
+        );
+
+        // Only the count is wrong this time (2 entries declared, 1 present).
+        value[3] = 2;
+        value[7] = 16;
+        bytes[17..].copy_from_slice(&value);
+        assert!(
+            matches!(
+                PrimerPack::parse(&bytes),
+                Err(Error::InvalidBatchHeader { count: 2, .. })
+            ),
+            "a count/body mismatch must be rejected"
+        );
+    }
+
     /// Issue #1047 (audit MX-C1): a non-minimal (fixed-width long-form) BER
     /// length token must round-trip byte-identically.
     #[test]

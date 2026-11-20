@@ -68,3 +68,17 @@ fn byte_exact_round_trip() {
     // And serialize -> parse -> equal.
     assert_eq!(AncDataPacket::parse(&out).unwrap(), pkt);
 }
+
+/// The public `checksum()` accessor must reproduce the `Checksum_Word` the
+/// capture carries on the wire (a `b8 = 1` case), and the `b8 = 0` case must
+/// set `b9` to 1.
+#[test]
+fn checksum_matches_the_fixture_on_wire_words() {
+    let data = fixture();
+    let pkt = AncDataPacket::parse(&data).unwrap();
+    assert_eq!(pkt.anc_packets[0].checksum().unwrap(), 0x134);
+    assert_eq!(pkt.anc_packets[1].checksum().unwrap(), 0x1AC);
+
+    let b8_zero = AncPacket::build(false, 9, 0, 0x61, 0x01, &[]).unwrap();
+    assert_eq!(b8_zero.checksum().unwrap(), 0x262);
+}

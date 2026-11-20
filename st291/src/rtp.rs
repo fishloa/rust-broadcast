@@ -792,4 +792,36 @@ mod tests {
             ))
         ));
     }
+
+    /// RFC 8331 §2.1's placement fields are `1+11+12+1+7 = 32` bits, so the
+    /// per-packet word alignment depends only on the content that follows.
+    #[test]
+    fn placement_header_is_one_word() {
+        assert_eq!(PLACEMENT_BITS, 32);
+        assert_eq!(
+            PLACEMENT_BITS,
+            (W_C + W_LINE_NUMBER + W_HORIZONTAL_OFFSET + W_S + W_STREAM_NUM) as usize
+        );
+    }
+
+    /// The 22-bit reserved field spans byte 5's low bits plus bytes 6 and 7;
+    /// each position is rejected on its own so combining them with AND (or
+    /// missing one) cannot slip through.
+    #[test]
+    fn reserved_field_is_rejected_from_every_position() {
+        for (what, buf) in [
+            ("byte 5 low bits", [0u8, 0, 0, 8, 0, 0x01, 0, 0]),
+            ("byte 6", [0u8, 0, 0, 8, 0, 0x00, 0x01, 0]),
+            ("byte 7", [0u8, 0, 0, 8, 0, 0x00, 0x00, 0x01]),
+        ] {
+            match AncRtpPayload::parse(&buf) {
+                Err(crate::Error::ReservedBits(rb)) => {
+                    assert_eq!(rb.field, "reserved (RFC 8331 §2.1)", "{what}");
+                    assert_eq!(rb.expected, 0, "{what}");
+                    assert_ne!(rb.found, 0, "{what}");
+                }
+                other => panic!("{what}: expected ReservedBits, got {other:?}"),
+            }
+        }
+    }
 }

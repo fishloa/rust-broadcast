@@ -1,0 +1,8 @@
+# cargo-mutants configuration.
+#
+# `broadcast-loudness`'s `loudness_meter::tests` module is gated
+# `#[cfg(all(test, feature = "std"))]` (it reads std-only meter fields), so the
+# tool does not recognise the module's helper functions as test-only and
+# mutates them, reporting survivors that no assertion can kill by design.
+# Exclude just that test module; every production function stays in scope.
+exclude_re = ["tests::gate_edge"]
