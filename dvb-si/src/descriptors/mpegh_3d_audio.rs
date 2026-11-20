@@ -2049,4 +2049,37 @@ mod tests {
             1
         );
     }
+
+    /// The 6-bit `dependsOnDrcSet` value is shifted into its own bits and comes
+    /// back unchanged.
+    #[test]
+    fn drc_target_loudness_packs_depends_on_drc_set() {
+        use crate::descriptors::mpeg2_extension::{Mpeg2ExtensionBody, Mpeg2ExtensionDescriptor};
+        use broadcast_common::{Parse, Serialize};
+
+        let mut drc = DrcInstructions::new(DrcScope::Plain(0), 1, 2, 0);
+        drc.target_loudness = Some(DrcTargetLoudness::new(10, 0x2A, 0));
+        let info = DrcLoudnessInfo::new(vec![drc], Vec::new(), Vec::new());
+        let d = Mpeg2ExtensionDescriptor::new(Mpeg2ExtensionBody::MpegH3dAudioDrcLoudness(
+            MpegH3dAudioDrcLoudness::new(Some(info)),
+        ));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[14], (1 << 7) | (0x2A << 1));
+        let Mpeg2ExtensionBody::MpegH3dAudioDrcLoudness(back) =
+            &Mpeg2ExtensionDescriptor::parse(&buf).unwrap().body
+        else {
+            panic!("expected DRC/loudness body");
+        };
+        let target = back
+            .info
+            .as_ref()
+            .unwrap()
+            .drc_instructions
+            .first()
+            .unwrap()
+            .target_loudness
+            .unwrap();
+        assert_eq!(target.depends_on_drc_set, 0x2A);
+    }
 }
