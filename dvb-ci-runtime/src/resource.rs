@@ -1233,4 +1233,46 @@ mod tests {
             assert!(HostControl.on_apdu(&buf).is_err(), "HC len {len}");
         }
     }
+
+    /// A bare 3-byte `apdu_tag` with no body is the shortest legal APDU: each
+    /// resource must accept it (and, where the tag carries no body, answer or
+    /// ignore it), not reject it as short.
+    #[test]
+    fn a_tag_only_apdu_is_accepted_by_every_resource() {
+        let out = ResourceManager::new(vec![RESOURCE_MANAGER])
+            .on_apdu(&tag::PROFILE_ENQ.to_bytes())
+            .unwrap();
+        assert_eq!(out.apdus.len(), 1, "profile_enq is answered");
+        assert_eq!(peek_tag(&out.apdus[0]), Some(tag::PROFILE));
+
+        assert_eq!(
+            ApplicationInformation
+                .on_apdu(&tag::CA_INFO.to_bytes())
+                .unwrap(),
+            ResourceOut::default(),
+            "an unrelated tag-only APDU is ignored, not an error"
+        );
+        assert_eq!(
+            ConditionalAccess
+                .on_apdu(&tag::APPLICATION_INFO.to_bytes())
+                .unwrap(),
+            ResourceOut::default()
+        );
+        assert_eq!(
+            DateTime::default()
+                .on_apdu(&tag::PROFILE_ENQ.to_bytes())
+                .unwrap(),
+            ResourceOut::default()
+        );
+        assert_eq!(
+            Mmi::default()
+                .on_apdu(&tag::CA_INFO.to_bytes())
+                .unwrap(),
+            ResourceOut::default()
+        );
+        assert_eq!(
+            HostControl.on_apdu(&tag::CA_INFO.to_bytes()).unwrap(),
+            ResourceOut::default()
+        );
+    }
 }
