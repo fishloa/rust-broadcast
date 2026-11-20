@@ -2653,4 +2653,45 @@ mod tests {
         assert_eq!(reparsed.traf.len(), 1);
         assert_eq!(reparsed.traf[0].trun[0].samples.len(), 2);
     }
+
+    /// `aux_info_type_of` reads a `saiz`/`saio`'s optional `aux_info_type`:
+    /// version 1 always carries it, a version-0 box only when flag bit 0 is
+    /// set (§8.7.8.2, §8.7.9.2), and a payload too short to hold either is
+    /// absent rather than an index past the end.
+    #[test]
+    fn aux_info_type_of_gates_on_version_and_flag_bit_zero() {
+        let zeros = [0u8; 3];
+        for len in 0..4usize {
+            assert_eq!(
+                aux_info_type_of(&zeros[..len], b"saiz"),
+                None,
+                "{len} bytes is short of the FullBox word"
+            );
+        }
+        assert_eq!(
+            aux_info_type_of(&[0, 0, 0, 0, b'c', b'e', b'n', b'c'], b"saiz"),
+            None,
+            "version 0 without flag bit 0 carries no type"
+        );
+        assert_eq!(
+            aux_info_type_of(&[0, 0, 0, 1, b'c', b'e', b'n', b'c'], b"saiz"),
+            Some(*b"cenc"),
+            "version 0 with flag bit 0 carries it"
+        );
+        assert_eq!(
+            aux_info_type_of(&[0, 0, 0, 2, b'c', b'e', b'n', b'c'], b"saio"),
+            None,
+            "another flag bit alone does not"
+        );
+        assert_eq!(
+            aux_info_type_of(&[1, 0, 0, 0, b'c', b'b', b'c', b's'], b"saio"),
+            Some(*b"cbcs"),
+            "version 1 always carries it"
+        );
+        assert_eq!(
+            aux_info_type_of(&[1, 0, 0, 0], b"saio"),
+            None,
+            "version 1 with no type bytes is absent"
+        );
+    }
 }
