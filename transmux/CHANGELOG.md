@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- **The first-sample sync rule honours the §8.8.8.1 three-level flag precedence.** `trun.first_sample_flags`, then the sample's own `sample_flags`, then `tfhd.default_sample_flags`, and only bit `[16]` marking non-sync, were completely unobserved: a segment opening mid-GOP was never flagged and the default-flags fallback had no guard. Each level now decides on its own, the first level wins, and the neighbouring bits plus `0x0100` stay sync (audit 23 finding 88, #3562).
 - **A `tfhd` without `default-base-is-moof` is an error.** The `&` guard could invert (`flags | MASK == 0`, never true) and no test cleared the bit, so a fragment lacking the CMAF flag validated clean. Clearing it on a real fragment now reports `media.tfhd.default-base-is-moof` (audit 23 finding 87, #3561).
 - **The single-track CMAF fragment warning fires on exactly two or more `traf`s.** Only an untested `>` decided it, so it could warn on a single-traf fragment or never fire on a multi-track one. Zero trafs now reports only `media.traf.missing`, one traf no warning, and two trafs exactly one `media.moof.multi-traf` (audit 23 finding 86, #3560).
 - **A `moof` followed by anything but an `mdat` is reported, not just a missing box.** The pairing guard could be forced true and only the "no next box" case was tested, so a `moof` followed by `free` (or a box between the `moof` and its `mdat`) validated clean. Both shapes now report `media.mdat.missing` (audit 23 finding 85, #3559).

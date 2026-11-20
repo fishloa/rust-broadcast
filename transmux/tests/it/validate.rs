@@ -8,12 +8,21 @@
 
 use crate::box_walk::find_box_range;
 use broadcast_common::Parse;
+use broadcast_common::Serialize;
 use broadcast_common::timescale::Timescale;
 use transmux::TrackId;
+use transmux::movie_fragment::{
+    TFHD_DEFAULT_BASE_IS_MOOF, TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT, TRUN_DATA_OFFSET_PRESENT,
+    TRUN_FIRST_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_DURATION_PRESENT, TRUN_SAMPLE_FLAGS_PRESENT,
+    TRUN_SAMPLE_SIZE_PRESENT,
+};
+use transmux::segments::{MediaDataBox, SegmentTypeBox};
 use transmux::{
-    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, MovieFragmentBox, Sample,
-    SampleEntryVariant, Severity, StblChild, TrackSpec, build_init_segment, build_media_segment,
-    validate::SegmentOrigin, validate_cmaf_track, validate_init_segment, validate_media_segment,
+    CodecConfig, EsdsBox, FragmentTrackData, MovieBox, MovieFragmentBox, MovieFragmentHeaderBox,
+    Sample, SampleEntryVariant, Severity, StblChild, TrackFragmentBaseMediaDecodeTimeBox,
+    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrackSpec, TrunSample,
+    build_init_segment, build_media_segment, validate::SegmentOrigin, validate_cmaf_track,
+    validate_init_segment, validate_media_segment,
 };
 
 // ---------------------------------------------------------------------------
@@ -920,6 +929,111 @@ fn mdat_overrun_checks_every_trun_range() {
         &validate_media_segment(&media, SegmentOrigin::FromIr),
         "media.mdat.overrun"
     ));
+}
+
+/// One `moof`/`mdat` media segment with the given fragment-wide and per-run
+/// sample flags (ISO/IEC 14496-12:2026 §8.8.7/§8.8.8).
+fn flagged_segment(
+    tfhd_default: Option<u32>,
+    first_sample: Option<u32>,
+    sample_flags: Option<u32>,
+) -> Vec<u8> {
+    let sample = TrunSample {
+        sample_duration: Some(1000),
+        sample_size: Some(1),
+        sample_flags,
+        sample_composition_time_offset: None,
+    };
+    let mut tr_flags =
+        TRUN_DATA_OFFSET_PRESENT | TRUN_SAMPLE_DURATION_PRESENT | TRUN_SAMPLE_SIZE_PRESENT;
+    if sample_flags.is_some() {
+        tr_flags |= TRUN_SAMPLE_FLAGS_PRESENT;
+    }
+    if first_sample.is_some() {
+        tr_flags |= TRUN_FIRST_SAMPLE_FLAGS_PRESENT;
+    }
+    let run = TrackFragmentRunBox {
+        version: 0,
+        tr_flags,
+        data_offset: Some(0),
+        first_sample_flags: first_sample,
+        samples: vec![sample, sample],
+    };
+    let mut tfhd_flags = TFHD_DEFAULT_BASE_IS_MOOF;
+    if tfhd_default.is_some() {
+        tfhd_flags |= TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
+    }
+    let tfhd = TrackFragmentHeaderBox {
+        flags: tfhd_flags,
+        track_id: TrackId::new(1),
+        base_data_offset: None,
+        sample_description_index: None,
+        default_sample_duration: None,
+        default_sample_size: None,
+        default_sample_flags: tfhd_default,
+    };
+    let traf = TrackFragmentBox::new(
+        tfhd,
+        Some(TrackFragmentBaseMediaDecodeTimeBox::new_v1(0)),
+        vec![run],
+    );
+    let mut moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(1), vec![traf]);
+    moof.traf[0].trun[0].data_offset =
+        Some(i32::try_from(moof.serialized_len() + 8).expect("small moof"));
+    let styp = SegmentTypeBox {
+        major_brand: *b"msdh",
+        minor_version: 0,
+        compatible_brands: vec![*b"msdh", *b"msix"],
+    };
+    let mdat = MediaDataBox { data: vec![0u8, 0] };
+    let mut out = vec![0u8; styp.serialized_len() + moof.serialized_len() + mdat.serialized_len()];
+    let mut c = 0;
+    c += styp.serialize_into(&mut out[c..]).expect("styp");
+    c += moof.serialize_into(&mut out[c..]).expect("moof");
+    c += mdat.serialize_into(&mut out[c..]).expect("mdat");
+    out.truncate(c);
+    out
+}
+
+/// The three-level sample-flag precedence decides whether a fragment begins at
+/// a sync sample (§8.8.8.1).
+#[test]
+fn non_sync_first_sample_precedence() {
+    /// `sample_is_non_sync_sample`: bit `[16]` (§8.8.3.1).
+    const NON_SYNC: u32 = 0x0001_0000;
+    const SYNC: u32 = 0x0200_0000;
+    let has = |segment: &[u8]| {
+        has_code(
+            &validate_media_segment(segment, SegmentOrigin::FromIr),
+            "media.sample.non-sync-first",
+        )
+    };
+
+    assert!(
+        has(&flagged_segment(None, Some(NON_SYNC), None)),
+        "first_sample_flags = non-sync must warn"
+    );
+    assert!(
+        !has(&flagged_segment(None, Some(SYNC), Some(NON_SYNC))),
+        "first_sample_flags wins over sample_flags"
+    );
+    assert!(
+        has(&flagged_segment(None, None, Some(NON_SYNC))),
+        "sample_flags = non-sync must warn when first_sample_flags is absent"
+    );
+    assert!(
+        has(&flagged_segment(Some(NON_SYNC), None, None)),
+        "tfhd.default_sample_flags = non-sync must warn as the last fallback"
+    );
+    assert!(
+        !has(&flagged_segment(Some(SYNC), None, Some(SYNC))),
+        "all-sync flags must not warn"
+    );
+
+    // Only bit 16 marks a non-sync sample: the neighbouring bits do not.
+    assert!(!has(&flagged_segment(None, Some(0x0002_0000), None)));
+    assert!(!has(&flagged_segment(None, Some(0x0000_8000), None)));
+    assert!(!has(&flagged_segment(None, Some(0x0000_0100), None)));
 }
 
 /// CMAF requires `tfhd.default-base-is-moof`.
