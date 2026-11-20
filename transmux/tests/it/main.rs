@@ -100,6 +100,7 @@ mod idr_fallback;
 mod init_segment;
 mod init_segment_sweep;
 mod interlace_facts;
+mod ir_labels;
 mod ir_timing;
 mod issue_952_avcc_no_trailer;
 mod key_hygiene;
