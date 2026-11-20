@@ -62,6 +62,7 @@
 - `EpgStore::schedule`'s half-open `[from, to)` bound is pinned with an event starting exactly at `to` (excluded) and one exactly at `from` (included) (#3543).
 - The `name()` and `Display` labels of every `DescriptorType`, `SpecifierType` and `SubDescriptorType` variant, including each reserved/unknown arm, are asserted literally (#3544).
 - The compatibility descriptor's top-level `SectionLengthOverflow { declared, available }` (at two buffer lengths) and its `descriptorCount` `BufferTooShort { need, have }` are asserted exactly (#3545).
+- A truncated *second* compatibility entry header asserts `BufferTooShort { need: 17, have: 16 }`, so the `pos` offset cannot be wrong (#3546).
 
 ## [15.1.0] - 2026-11-17
 ### Fixed

@@ -840,4 +840,24 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn truncated_second_entry_header_reports_offsets() {
+        // descriptorCount=2; the first entry is a complete 11-byte header,
+        // then one stray byte where the second entry's header should start.
+        let bytes: &[u8] = &[
+            0x00, 0x0E, 0x00, 0x02, 0x01, 0x09, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0xFF,
+        ];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::BufferTooShort(
+                broadcast_common::error::BufferTooShort {
+                    need: 17,
+                    have: 16,
+                    what: "CompatibilityDescriptor entry header",
+                }
+            ))
+        );
+    }
 }
