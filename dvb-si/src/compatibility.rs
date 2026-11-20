@@ -860,4 +860,18 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn entry_header_exactly_filling_body_is_an_invalid_descriptor() {
+        // descriptorLength=0, and its 2-byte header ends exactly at the body
+        // end: that is a too-short length, not a truncated header.
+        let bytes: &[u8] = &[0x00, 0x04, 0x00, 0x01, 0x01, 0x00];
+        assert_eq!(
+            CompatibilityDescriptor::parse(bytes),
+            Err(Error::InvalidDescriptor {
+                tag: 0x01,
+                reason: "descriptorLength shorter than fixed fields",
+            })
+        );
+    }
 }
