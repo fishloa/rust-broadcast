@@ -9,9 +9,9 @@
 #![cfg(feature = "cenc")]
 
 use broadcast_common::{Decrypt, Encrypt, Package, Unpackage};
+use transmux::TrackFragmentRunBox;
 use transmux::init_segment::protect_init_segment;
 use transmux::movie_fragment::{FragmentProtection, MovieFragmentBox, protect_media_segment};
-use transmux::TrackFragmentRunBox;
 use transmux::{
     CencDecryptor, CencEncryptor, CencScheme, CmafMux, CodecConfig, EncryptConfig, KeyMap, Media,
     Sample, SubsamplePolicy, Track, TrackId, TrackSpec, TsDemux,
@@ -391,7 +391,11 @@ fn trun_sample_flags_drive_is_sync_after_decryption() {
     let dec = CencDecryptor::from_fmp4(&protected).expect("harvest");
     let mut out = dec.demux().expect("demux");
     dec.decrypt(&mut out, &keys()).expect("decrypt");
-    let got: Vec<bool> = out.tracks[0].samples.iter().map(|s| s.flags.is_sync).collect();
+    let got: Vec<bool> = out.tracks[0]
+        .samples
+        .iter()
+        .map(|s| s.flags.is_sync)
+        .collect();
     assert!(got[0], "the sync sample stays a sync sample");
     assert!(
         got[1..].iter().all(|&is_sync| !is_sync),

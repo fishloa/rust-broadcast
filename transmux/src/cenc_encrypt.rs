@@ -581,12 +581,12 @@ impl Encrypt for CencEncryptor {
         // operation keeps the advance from wrapping to 0, which would replay
         // IVs 0.. under the same key (AES-CTR keystream reuse).
         if matches!(cfg.iv, IvGen::Counter) {
-            self.next_counter = self
-                .next_counter
-                .checked_add(total_samples as u64)
-                .ok_or(Error::InvalidInput(
-                    "CENC IV counter overflow (next_counter + sample_index)",
-                ))?;
+            self.next_counter =
+                self.next_counter
+                    .checked_add(total_samples as u64)
+                    .ok_or(Error::InvalidInput(
+                        "CENC IV counter overflow (next_counter + sample_index)",
+                    ))?;
         }
         Ok(())
     }
